@@ -20,6 +20,7 @@ use umsh_ux_communicator::model::{
 };
 use umsh_ux_communicator::nav::{ChatMenu, DevicePage, MemberFrom, Screen, Unsent, keys};
 use umsh_ux_communicator::model::Cue;
+use umsh_ux_communicator::model::WifiStatus;
 use umsh_ux_communicator::model::{Leg, PeerRoute, PingView, RouteKind};
 use umsh_ux_communicator::{fixture, ui, zones};
 
@@ -2710,6 +2711,26 @@ fn shut_down_asks_first_and_then_ends_input() {
 }
 
 #[test]
+fn restart_asks_first() {
+    let store = store();
+    let mut app = app!(store);
+    open_device(&mut app);
+    turn_to(&mut app, keys::RESTART);
+    // Cancel is focused, and Backspace cancels too.
+    run(&mut app, &[Input::Press]);
+    assert_eq!(focus(app.state()), Some(keys::RESTART_CANCEL));
+    run(&mut app, &[Input::Backspace]);
+    assert_eq!(focus(app.state()), Some(keys::RESTART));
+    assert_eq!(store.restarts(), 0);
+
+    run(&mut app, &[Input::Press]);
+    turn_to(&mut app, keys::RESTART_CONFIRM);
+    run(&mut app, &[Input::Press]);
+    assert_eq!(store.restarts(), 1);
+    assert_eq!(focus(app.state()), Some(keys::RESTART));
+}
+
+#[test]
 fn factory_reset_asks_twice_with_its_choices_swapped() {
     let store = store();
     let mut app = app!(store);
@@ -4220,4 +4241,188 @@ fn a_peer_forgotten_while_its_ping_is_open_backs_out() {
     input::events(&mut app, 0);
     assert!(matches!(app.state().screen(), Screen::Chats { .. }));
     assert!(app.state().peer(peer).is_none());
+}
+
+/// Device › Wi-Fi, its switch focused.
+fn open_wifi<V, F>(app: &mut App<V, State, F>)
+where
+    V: ViewLayout<State>,
+    V::FocusTree: DefaultFocus,
+    V::Renderables: AnimatedJoin,
+    F: Fn(&State) -> V,
+{
+    open_category(app, keys::WIFI);
+    assert_eq!(focus(app.state()), Some(keys::WIFI_ENABLED));
+}
+
+/// Where Nearby lists `ssid`.
+fn nearby(state: &State, ssid: &[u8]) -> usize {
+    state
+        .wifi
+        .nearby
+        .iter()
+        .position(|network| network.ssid == ssid)
+        .expect("heard")
+}
+
+/// Where Saved lists `ssid`.
+fn saved(state: &State, ssid: &[u8]) -> usize {
+    state
+        .wifi
+        .saved
+        .iter()
+        .position(|network| network.ssid == ssid)
+        .expect("saved")
+}
+
+#[test]
+fn wifi_lists_the_network_in_use_then_saved_and_nearby() {
+    let mut app = app!();
+    open_wifi(&mut app);
+    let wifi = &app.state().wifi;
+    assert_eq!(wifi.current, b"Okafor-5G");
+    assert_eq!(wifi.status, WifiStatus::Connected);
+    // Opening it scanned; what is saved is not listed again as nearby.
+    assert!(wifi.nearby.iter().any(|network| network.ssid == b"NETGEAR47"));
+    assert!(!wifi.nearby.iter().any(|network| network.ssid == b"Home"));
+    run(&mut app, &[Input::Turn(1)]);
+    assert_eq!(focus(app.state()), Some(keys::WIFI_CURRENT));
+    run(&mut app, &[Input::Turn(1)]);
+    assert_eq!(focus(app.state()), Some(keys::wifi_saved(saved(app.state(), b"Home"))));
+}
+
+#[test]
+fn ip_multicast_is_the_last_row_and_a_switch() {
+    let mut app = app!();
+    open_wifi(&mut app);
+    assert_eq!(app.state().wifi.address, Some([192, 168, 1, 23]));
+    assert_eq!(app.state().wifi.ip_multicast, Some(false));
+    turn_to(&mut app, keys::WIFI_IP_MULTICAST);
+    run(&mut app, &[Input::Turn(1)]);
+    assert_eq!(focus(app.state()), Some(keys::WIFI_IP_MULTICAST));
+    run(&mut app, &[Input::Press]);
+    assert_eq!(app.state().wifi.ip_multicast, Some(true));
+    run(&mut app, &[Input::Press]);
+    assert_eq!(app.state().wifi.ip_multicast, Some(false));
+}
+
+#[test]
+fn a_nearby_network_joins_once_its_password_is_typed() {
+    let mut app = app!();
+    open_wifi(&mut app);
+    let index = nearby(app.state(), b"NETGEAR47");
+    turn_to(&mut app, keys::wifi_nearby(index));
+    run(&mut app, &[Input::Press]);
+    assert_eq!(focus(app.state()), Some(keys::WIFI_PASSWORD_FIELD));
+    // Too short to be a password: Enter does nothing.
+    run(&mut app, &typed("router"));
+    run(&mut app, &[Input::Enter]);
+    assert_eq!(focus(app.state()), Some(keys::WIFI_PASSWORD_FIELD));
+    run(&mut app, &typed("-47"));
+    run(&mut app, &[Input::Enter]);
+    let wifi = &app.state().wifi;
+    assert_eq!(wifi.current, b"NETGEAR47");
+    assert_eq!(wifi.status, WifiStatus::Connected);
+    assert!(wifi.saved.iter().any(|network| network.ssid == b"NETGEAR47" && network.auto_join));
+}
+
+#[test]
+fn an_open_network_joins_on_the_press() {
+    let mut app = app!();
+    open_wifi(&mut app);
+    let index = nearby(app.state(), "Trailhead Café".as_bytes());
+    turn_to(&mut app, keys::wifi_nearby(index));
+    run(&mut app, &[Input::Press]);
+    assert_eq!(app.state().wifi.current, "Trailhead Café".as_bytes());
+}
+
+#[test]
+fn a_wrong_password_is_named_and_its_sheet_offers_a_new_one_first() {
+    let mut app = app!();
+    open_wifi(&mut app);
+    let index = nearby(app.state(), b"NETGEAR47");
+    turn_to(&mut app, keys::wifi_nearby(index));
+    run(&mut app, &[Input::Press]);
+    run(&mut app, &typed("not-the-one"));
+    run(&mut app, &[Input::Enter]);
+    assert_eq!(app.state().wifi.status, WifiStatus::WrongPassword);
+    turn_to(&mut app, keys::WIFI_CURRENT);
+    run(&mut app, &[Input::Press]);
+    assert_eq!(focus(app.state()), Some(keys::WIFI_CHANGE_PASSWORD));
+    run(&mut app, &[Input::Press]);
+    assert_eq!(focus(app.state()), Some(keys::WIFI_PASSWORD_FIELD));
+    run(&mut app, &typed("router-47"));
+    run(&mut app, &[Input::Enter]);
+    // Back on the list, joined.
+    assert!(matches!(
+        app.state().screen(),
+        Screen::Device {
+            page: DevicePage::Wifi { .. },
+            ..
+        }
+    ));
+    assert_eq!(app.state().wifi.status, WifiStatus::Connected);
+}
+
+#[test]
+fn disconnect_leaves_and_a_saved_network_joins_from_its_sheet() {
+    let mut app = app!();
+    open_wifi(&mut app);
+    turn_to(&mut app, keys::WIFI_CURRENT);
+    run(&mut app, &[Input::Press]);
+    assert_eq!(focus(app.state()), Some(keys::WIFI_ACT));
+    run(&mut app, &[Input::Press]);
+    let wifi = &app.state().wifi;
+    assert!(wifi.current.is_empty());
+    assert!(!wifi.searching, "Disconnect joins nothing by itself");
+    let index = saved(app.state(), b"Home");
+    turn_to(&mut app, keys::wifi_saved(index));
+    run(&mut app, &[Input::Press]);
+    run(&mut app, &[Input::Press]);
+    assert_eq!(app.state().wifi.current, b"Home");
+}
+
+#[test]
+fn join_automatically_turns_off_without_a_password() {
+    let mut app = app!();
+    open_wifi(&mut app);
+    turn_to(&mut app, keys::WIFI_CURRENT);
+    run(&mut app, &[Input::Press]);
+    turn_to(&mut app, keys::WIFI_AUTO_JOIN);
+    run(&mut app, &[Input::Press]);
+    let index = saved(app.state(), b"Okafor-5G");
+    assert!(!app.state().wifi.saved[index].auto_join);
+}
+
+#[test]
+fn forgetting_a_network_asks_first() {
+    let mut app = app!();
+    open_wifi(&mut app);
+    let index = saved(app.state(), b"Home");
+    turn_to(&mut app, keys::wifi_saved(index));
+    run(&mut app, &[Input::Press]);
+    turn_to(&mut app, keys::WIFI_FORGET);
+    run(&mut app, &[Input::Press]);
+    assert_eq!(focus(app.state()), Some(keys::WIFI_FORGET_CANCEL));
+    run(&mut app, &[Input::Backspace]);
+    assert_eq!(focus(app.state()), Some(keys::WIFI_FORGET));
+    assert!(app.state().wifi.saved(b"Home").is_some());
+    run(&mut app, &[Input::Press]);
+    turn_to(&mut app, keys::WIFI_FORGET_CONFIRM);
+    run(&mut app, &[Input::Press]);
+    assert!(app.state().wifi.saved(b"Home").is_none());
+}
+
+#[test]
+fn wifi_turned_off_is_only_its_switches() {
+    let mut app = app!();
+    open_wifi(&mut app);
+    run(&mut app, &[Input::Press]);
+    assert_eq!(app.state().wifi.enabled, Some(false));
+    run(&mut app, &[Input::Turn(1)]);
+    assert_eq!(focus(app.state()), Some(keys::WIFI_IP_MULTICAST));
+    run(&mut app, &[Input::Turn(1)]);
+    assert_eq!(focus(app.state()), Some(keys::WIFI_IP_MULTICAST));
+    run(&mut app, &[Input::Turn(-1), Input::Press]);
+    assert_eq!(app.state().wifi.current, b"Okafor-5G");
 }

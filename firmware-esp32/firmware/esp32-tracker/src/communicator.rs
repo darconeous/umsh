@@ -424,10 +424,11 @@ fn links() -> (Option<Bluetooth>, Option<Wifi>, Option<Gnss>) {
     let wifi = {
         use umsh_ux_display_tracker::wifi::WifiState;
         let menu = wifi::ui_snapshot();
+        // A fan only while a network is named.
         match menu.state {
-            _ if !menu.enabled => None,
-            WifiState::Off => None,
-            WifiState::Disconnected => Some(Wifi::Disconnected),
+            _ if !menu.enabled || menu.network.is_none() => None,
+            WifiState::Off | WifiState::Disconnected | WifiState::Searching => None,
+            WifiState::Failing => Some(Wifi::Disconnected),
             WifiState::Connecting => Some(Wifi::Joining),
             WifiState::Connected => Some(Wifi::Connected),
         }
@@ -672,17 +673,17 @@ const PHASES: usize = 6;
 
 /// What the stack's report calls each screen.
 #[cfg(feature = "debug-log")]
-const SCREENS: [&str; 21] = [
+const SCREENS: [&str; 22] = [
     "chats", "find", "peers", "device", "conv", "menu", "resend", "details", "member", "peer",
     "page", "setup", "address", "join", "lock", "share", "nearby", "exchange", "channel", "route",
-    "ping",
+    "ping", "wifi",
 ];
 
 /// The screen `state` shows, as an index into [`SCREENS`].
 #[cfg(feature = "debug-log")]
 fn screen(state: &State) -> usize {
     use umsh_ux_communicator::model::Section;
-    use umsh_ux_communicator::nav::{Screen, keys};
+    use umsh_ux_communicator::nav::{DevicePage, Screen, keys};
     if state.lock.locked {
         return 14;
     }
@@ -709,6 +710,10 @@ fn screen(state: &State) -> usize {
         Screen::Details { .. } => 7,
         Screen::Member { .. } => 8,
         Screen::Peer { .. } => 9,
+        Screen::Device {
+            page: DevicePage::Wifi { .. },
+            ..
+        } => 21,
         Screen::Device { .. } => 10,
         Screen::Setup { .. } => 11,
         Screen::EnterAddress { .. } => 12,

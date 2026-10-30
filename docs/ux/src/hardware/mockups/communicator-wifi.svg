@@ -1,0 +1,1059 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="3240" height="5018" viewBox="0 0 3240 5018" role="img" aria-labelledby="t" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif"><title id="t">Wi-Fi on the communicator, mockups</title><defs><filter id="shadow" x="-5%" y="-5%" width="110%" height="110%"><feDropShadow dx="0" dy="3" stdDeviation="8" flood-opacity="0.22"/></filter></defs><rect width="3240" height="5018" fill="#ECECEF"/>
+<text x="80.0" y="130.0" font-size="56" fill="#1C1C1E" font-weight="700">Wi-Fi · communicator</text>
+<text x="80.0" y="178.0" font-size="22" fill="#3A3A3C">T-LoRa Pager, 480×222, drawn at 2×. Turn moves, press selects, Backspace goes back.</text>
+<text x="80.0" y="270.0" font-size="34" fill="#1C1C1E" font-weight="700">Joining a network</text>
+<text x="80.0" y="308.0" font-size="19" fill="#3A3A3C">Device › Wi-Fi turns the station on and off and joins networks on the device itself, keyboard and all. Saved networks join by themselves, as on a phone. A phone can do the same over ULCP and is never needed.</text>
+<text x="80.0" y="366.0" font-size="22" fill="#1C1C1E" font-weight="700">1 · Device, Wi-Fi focused</text>
+<rect x="80.0" y="380.0" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
+<clipPath id="scr1"><rect width="480" height="222"/></clipPath>
+<g transform="translate(92,392) scale(2)"><g clip-path="url(#scr1)">
+<rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
+<clipPath id="cl12"><rect x="66" y="22" width="414" height="200"/></clipPath><g clip-path="url(#cl12)">
+<text x="78.0" y="47.0" font-size="20" fill="#EEF1F5">Clock</text>
+<path d="M460 34.0 L466 40.0 L460 46.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="450.0" y="46.0" font-size="17" fill="#9AA3AE" text-anchor="end">GNSS</text>
+<path d="M78.0 57.5 L480.0 57.5" stroke="#20252C" stroke-width="1"/>
+<text x="78.0" y="83.0" font-size="20" fill="#EEF1F5">Sounds</text>
+<path d="M460 70.0 L466 76.0 L460 82.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M78.0 93.5 L480.0 93.5" stroke="#20252C" stroke-width="1"/>
+<text x="78.0" y="119.0" font-size="20" fill="#EEF1F5">Bluetooth</text>
+<path d="M460 106.0 L466 112.0 L460 118.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="450.0" y="118.0" font-size="17" fill="#9AA3AE" text-anchor="end">Connected</text>
+<path d="M78.0 129.5 L480.0 129.5" stroke="#20252C" stroke-width="1"/>
+<rect x="70.0" y="131.0" width="406.0" height="34.0" fill="#18304D" rx="8" stroke="#4DA3FF" stroke-width="1.6"/>
+<text x="78.0" y="155.0" font-size="20" fill="#EEF1F5" font-weight="700">Wi-Fi</text>
+<path d="M460 142.0 L466 148.0 L460 154.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="450.0" y="154.0" font-size="17" fill="#9AA3AE" text-anchor="end">Okafor-5G</text>
+<text x="78.0" y="191.0" font-size="20" fill="#EEF1F5">GNSS</text>
+<path d="M460 178.0 L466 184.0 L460 190.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M78.0 201.5 L480.0 201.5" stroke="#20252C" stroke-width="1"/>
+<text x="78.0" y="227.0" font-size="20" fill="#EEF1F5">Battery</text>
+<path d="M460 214.0 L466 220.0 L460 226.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="450.0" y="226.0" font-size="17" fill="#9AA3AE" text-anchor="end">82%</text>
+<path d="M78.0 237.5 L480.0 237.5" stroke="#20252C" stroke-width="1"/>
+</g>
+<rect x="0.0" y="22.0" width="66.0" height="200.0" fill="#0E1115"/>
+<path d="M65.5 22.0 L65.5 222.0" stroke="#20252C" stroke-width="1"/>
+<g transform="translate(33.0,48.0) scale(1.5) translate(-33.0,-48.0)">
+<path d="M28.5 41.0 H37.5 Q41.0 41.0 41.0 44.5 V49.0 Q41.0 52.5 37.5 52.5 H28.5 Q25.0 52.5 25.0 49.0 V44.5 Q25.0 41.0 28.5 41.0 Z" fill="none" stroke="#7F8995" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M29.0 52.5 L27.5 56.0 L33.0 52.5" fill="none" stroke="#7F8995" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<text x="33.0" y="78.0" font-size="16" fill="#7F8995" font-weight="500" text-anchor="middle">Chats</text>
+<circle cx="46.0" cy="37.0" r="8.5" fill="#FF6B5E"/>
+<text x="46.0" y="41.5" font-size="12.5" fill="#fff" font-weight="700" text-anchor="middle">1</text>
+<g transform="translate(33.0,114.7) scale(1.5) translate(-33.0,-114.7)">
+<path d="M33.0 108.66666666666667 L26.0 119.66666666666667 L40.0 119.66666666666667 Z" fill="none" stroke="#7F8995" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="33.0" cy="108.7" r="2.6" fill="#0E1115" stroke="#7F8995" stroke-width="1.4"/>
+<circle cx="26.0" cy="119.7" r="2.6" fill="#0E1115" stroke="#7F8995" stroke-width="1.4"/>
+<circle cx="40.0" cy="119.7" r="2.6" fill="#0E1115" stroke="#7F8995" stroke-width="1.4"/>
+</g>
+<text x="33.0" y="144.7" font-size="16" fill="#7F8995" font-weight="500" text-anchor="middle">Peers</text>
+<rect x="0.0" y="165.3" width="4.0" height="46.7" fill="#4DA3FF" rx="2"/>
+<g transform="translate(33.0,181.3) scale(1.5) translate(-33.0,-181.3)">
+<circle cx="33.0" cy="181.3" r="4.6" fill="none" stroke="#4DA3FF" stroke-width="1.6"/>
+<circle cx="33.0" cy="181.3" r="1.4" fill="#4DA3FF"/>
+<path d="M39.00 181.33 L41.20 181.33" fill="none" stroke="#4DA3FF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M37.24 185.58 L38.80 187.13" fill="none" stroke="#4DA3FF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M33.00 187.33 L33.00 189.53" fill="none" stroke="#4DA3FF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M28.76 185.58 L27.20 187.13" fill="none" stroke="#4DA3FF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M27.00 181.33 L24.80 181.33" fill="none" stroke="#4DA3FF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M28.76 177.09 L27.20 175.54" fill="none" stroke="#4DA3FF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M33.00 175.33 L33.00 173.13" fill="none" stroke="#4DA3FF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M37.24 177.09 L38.80 175.54" fill="none" stroke="#4DA3FF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<text x="33.0" y="211.3" font-size="16" fill="#4DA3FF" font-weight="700" text-anchor="middle">Device</text>
+<rect x="0.0" y="0.0" width="480.0" height="22.0" fill="#0E1115"/>
+<text x="8.0" y="16.5" font-size="16" fill="#9AA3AE" font-weight="600">Juniper</text>
+<text x="240.0" y="16.5" font-size="16" fill="#EEF1F5" font-weight="700" text-anchor="middle">14:32</text>
+<g transform="translate(459.0,11.0) scale(1.3) translate(-459.0,-11.0)">
+<rect x="449.0" y="6.5" width="19.0" height="9.0" fill="none" rx="2" stroke="#9AA3AE" stroke-width="1"/>
+<rect x="468.5" y="9.0" width="1.8" height="4.0" fill="#9AA3AE" rx="0.6"/>
+<rect x="451.0" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="454.9" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="458.8" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+</g>
+<g transform="translate(426.0,11.0) scale(1.3) translate(-426.0,-11.0)">
+<circle cx="426.0" cy="11.0" r="3.6" fill="none" stroke="#9AA3AE" stroke-width="1.1"/>
+<circle cx="426.0" cy="11.0" r="1.1" fill="#9AA3AE"/>
+<path d="M426 5 V7 M426 15 V17 M420 11 H422 M430 11 H432" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(406.0,11.0) scale(1.3) translate(-406.0,-11.0)">
+<path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(386.0,12.0) scale(1.3)" stroke-linecap="round">
+<path d="M-1.1 3.7 A1.1 1.1 0 1 0 1.1 3.7 A1.1 1.1 0 1 0 -1.1 3.7 Z" fill="#EEF1F5"/>
+<path d="M-1.98 1.72 A2.8 2.8 0 0 1 1.98 1.72" fill="none" stroke="#EEF1F5" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-3.96 -0.26 A5.6 5.6 0 0 1 3.96 -0.26" fill="none" stroke="#EEF1F5" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-5.94 -2.24 A8.4 8.4 0 0 1 5.94 -2.24" fill="none" stroke="#EEF1F5" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g></g>
+<text x="82.0" y="878.0" font-size="17" fill="#3A3A3C">Wi-Fi sits after Bluetooth, on boards with a station. Its value is the network it is on, and nothing otherwise.</text>
+<text x="1128.0" y="366.0" font-size="22" fill="#1C1C1E" font-weight="700">2 · Off</text>
+<rect x="1128.0" y="380.0" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
+<clipPath id="scr2"><rect width="480" height="222"/></clipPath>
+<g transform="translate(1140,392) scale(2)"><g clip-path="url(#scr2)">
+<rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
+<clipPath id="cl13"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl13)">
+<rect x="4.0" y="53.0" width="472.0" height="34.0" fill="#18304D" rx="8" stroke="#4DA3FF" stroke-width="1.6"/>
+<text x="12.0" y="77.0" font-size="20" fill="#EEF1F5" font-weight="700">Wi-Fi</text>
+<rect x="426.0" y="59.0" width="40.0" height="22.0" fill="#3A414B" rx="11.0"/>
+<circle cx="437.0" cy="70.0" r="8.5" fill="#C9CED6"/>
+</g>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="22.0" y="44.0" font-size="20" fill="#EEF1F5" font-weight="700">Wi-Fi</text>
+<rect x="0.0" y="0.0" width="480.0" height="22.0" fill="#0E1115"/>
+<text x="8.0" y="16.5" font-size="16" fill="#9AA3AE" font-weight="600">Juniper</text>
+<text x="240.0" y="16.5" font-size="16" fill="#EEF1F5" font-weight="700" text-anchor="middle">14:32</text>
+<g transform="translate(459.0,11.0) scale(1.3) translate(-459.0,-11.0)">
+<rect x="449.0" y="6.5" width="19.0" height="9.0" fill="none" rx="2" stroke="#9AA3AE" stroke-width="1"/>
+<rect x="468.5" y="9.0" width="1.8" height="4.0" fill="#9AA3AE" rx="0.6"/>
+<rect x="451.0" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="454.9" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="458.8" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+</g>
+<g transform="translate(426.0,11.0) scale(1.3) translate(-426.0,-11.0)">
+<circle cx="426.0" cy="11.0" r="3.6" fill="none" stroke="#9AA3AE" stroke-width="1.1"/>
+<circle cx="426.0" cy="11.0" r="1.1" fill="#9AA3AE"/>
+<path d="M426 5 V7 M426 15 V17 M420 11 H422 M430 11 H432" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(406.0,11.0) scale(1.3) translate(-406.0,-11.0)">
+<path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g></g>
+<text x="1130.0" y="878.0" font-size="17" fill="#3A3A3C">Only the switch. Off powers the station down and forgets nothing. Turned on, it joins a saved network in range by itself.</text>
+<text x="2176.0" y="366.0" font-size="22" fill="#1C1C1E" font-weight="700">3 · On, nothing saved</text>
+<rect x="2176.0" y="380.0" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
+<clipPath id="scr3"><rect width="480" height="222"/></clipPath>
+<g transform="translate(2188,392) scale(2)"><g clip-path="url(#scr3)">
+<rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
+<clipPath id="cl14"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl14)">
+<text x="12.0" y="63.0" font-size="20" fill="#EEF1F5">Wi-Fi</text>
+<rect x="426.0" y="45.0" width="40.0" height="22.0" fill="#4DA3FF" rx="11.0"/>
+<circle cx="455.0" cy="56.0" r="8.5" fill="#fff"/>
+<path d="M12.0 73.5 L480.0 73.5" stroke="#20252C" stroke-width="1"/>
+<text x="12.0" y="95.0" font-size="16" fill="#9AA3AE" font-weight="700">Nearby</text>
+<circle cx="80.7" cy="83.0" r="1.9" fill="#25496E"/>
+<circle cx="84.9" cy="84.8" r="1.9" fill="#2F6FB0"/>
+<circle cx="86.7" cy="89.0" r="1.9" fill="#4DA3FF"/>
+<circle cx="84.9" cy="93.2" r="1.9" fill="#2A3038"/>
+<circle cx="80.7" cy="95.0" r="1.9" fill="#2A3038"/>
+<circle cx="76.4" cy="93.2" r="1.9" fill="#2A3038"/>
+<circle cx="74.7" cy="89.0" r="1.9" fill="#2A3038"/>
+<circle cx="76.4" cy="84.8" r="1.9" fill="#2A3038"/>
+<text x="12.0" y="127.0" font-size="20" fill="#EEF1F5">Trailhead Café</text>
+<path d="M12.0 137.5 L480.0 137.5" stroke="#20252C" stroke-width="1"/>
+<g transform="translate(457.0,120.0) scale(1.35)" stroke-linecap="round">
+<path d="M-1.1 3.7 A1.1 1.1 0 1 0 1.1 3.7 A1.1 1.1 0 1 0 -1.1 3.7 Z" fill="#9AA3AE"/>
+<path d="M-1.98 1.72 A2.8 2.8 0 0 1 1.98 1.72" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-3.96 -0.26 A5.6 5.6 0 0 1 3.96 -0.26" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-5.94 -2.24 A8.4 8.4 0 0 1 5.94 -2.24" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<rect x="4.0" y="139.0" width="472.0" height="34.0" fill="#18304D" rx="8" stroke="#4DA3FF" stroke-width="1.6"/>
+<text x="12.0" y="163.0" font-size="20" fill="#EEF1F5" font-weight="700">Okafor-5G</text>
+<g transform="translate(457.0,156.0) scale(1.35)" stroke-linecap="round">
+<path d="M-1.1 3.7 A1.1 1.1 0 1 0 1.1 3.7 A1.1 1.1 0 1 0 -1.1 3.7 Z" fill="#9AA3AE"/>
+<path d="M-1.98 1.72 A2.8 2.8 0 0 1 1.98 1.72" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-3.96 -0.26 A5.6 5.6 0 0 1 3.96 -0.26" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-5.94 -2.24 A8.4 8.4 0 0 1 5.94 -2.24" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(432.0,157.0) scale(0.85) translate(-432.0,-157.0)">
+<path d="M428.5 156.0 V153.0 Q428.5 149.0 432 149.0 Q435.5 149.0 435.5 153.0 V156.0" fill="none" stroke="#7F8995" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="426.5" y="156.0" width="11.0" height="8.5" fill="#7F8995" rx="1.5"/>
+</g>
+<text x="12.0" y="199.0" font-size="20" fill="#EEF1F5">NETGEAR47</text>
+<path d="M12.0 209.5 L480.0 209.5" stroke="#20252C" stroke-width="1"/>
+<g transform="translate(457.0,192.0) scale(1.35)" stroke-linecap="round">
+<path d="M-1.1 3.7 A1.1 1.1 0 1 0 1.1 3.7 A1.1 1.1 0 1 0 -1.1 3.7 Z" fill="#9AA3AE"/>
+<path d="M-1.98 1.72 A2.8 2.8 0 0 1 1.98 1.72" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-3.96 -0.26 A5.6 5.6 0 0 1 3.96 -0.26" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-5.94 -2.24 A8.4 8.4 0 0 1 5.94 -2.24" fill="none" stroke="#3A414B" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(432.0,193.0) scale(0.85) translate(-432.0,-193.0)">
+<path d="M428.5 192.0 V189.0 Q428.5 185.0 432 185.0 Q435.5 185.0 435.5 189.0 V192.0" fill="none" stroke="#7F8995" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="426.5" y="192.0" width="11.0" height="8.5" fill="#7F8995" rx="1.5"/>
+</g>
+<text x="12.0" y="235.0" font-size="20" fill="#EEF1F5">Basin Library</text>
+<path d="M12.0 245.5 L480.0 245.5" stroke="#20252C" stroke-width="1"/>
+<g transform="translate(457.0,228.0) scale(1.35)" stroke-linecap="round">
+<path d="M-1.1 3.7 A1.1 1.1 0 1 0 1.1 3.7 A1.1 1.1 0 1 0 -1.1 3.7 Z" fill="#9AA3AE"/>
+<path d="M-1.98 1.72 A2.8 2.8 0 0 1 1.98 1.72" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-3.96 -0.26 A5.6 5.6 0 0 1 3.96 -0.26" fill="none" stroke="#3A414B" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-5.94 -2.24 A8.4 8.4 0 0 1 5.94 -2.24" fill="none" stroke="#3A414B" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="22.0" y="44.0" font-size="20" fill="#EEF1F5" font-weight="700">Wi-Fi</text>
+<rect x="0.0" y="0.0" width="480.0" height="22.0" fill="#0E1115"/>
+<text x="8.0" y="16.5" font-size="16" fill="#9AA3AE" font-weight="600">Juniper</text>
+<text x="240.0" y="16.5" font-size="16" fill="#EEF1F5" font-weight="700" text-anchor="middle">14:32</text>
+<g transform="translate(459.0,11.0) scale(1.3) translate(-459.0,-11.0)">
+<rect x="449.0" y="6.5" width="19.0" height="9.0" fill="none" rx="2" stroke="#9AA3AE" stroke-width="1"/>
+<rect x="468.5" y="9.0" width="1.8" height="4.0" fill="#9AA3AE" rx="0.6"/>
+<rect x="451.0" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="454.9" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="458.8" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+</g>
+<g transform="translate(426.0,11.0) scale(1.3) translate(-426.0,-11.0)">
+<circle cx="426.0" cy="11.0" r="3.6" fill="none" stroke="#9AA3AE" stroke-width="1.1"/>
+<circle cx="426.0" cy="11.0" r="1.1" fill="#9AA3AE"/>
+<path d="M426 5 V7 M426 15 V17 M420 11 H422 M430 11 H432" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(406.0,11.0) scale(1.3) translate(-406.0,-11.0)">
+<path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g></g>
+<text x="2178.0" y="878.0" font-size="17" fill="#3A3A3C">Opening the screen while on scans once. Networks appear as they are heard, one row per name, strongest first; the dots beside</text>
+<text x="2178.0" y="902.0" font-size="17" fill="#3A3A3C">Nearby spin until the scan ends. A padlock means it takes a password.</text>
+<text x="80.0" y="992.0" font-size="22" fill="#1C1C1E" font-weight="700">4 · Nearby, end of the list</text>
+<rect x="80.0" y="1006.0" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
+<clipPath id="scr4"><rect width="480" height="222"/></clipPath>
+<g transform="translate(92,1018) scale(2)"><g clip-path="url(#scr4)">
+<rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
+<clipPath id="cl15"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl15)">
+<text x="12.0" y="73.0" font-size="20" fill="#EEF1F5">NETGEAR47</text>
+<path d="M12.0 83.5 L480.0 83.5" stroke="#20252C" stroke-width="1"/>
+<g transform="translate(457.0,66.0) scale(1.35)" stroke-linecap="round">
+<path d="M-1.1 3.7 A1.1 1.1 0 1 0 1.1 3.7 A1.1 1.1 0 1 0 -1.1 3.7 Z" fill="#9AA3AE"/>
+<path d="M-1.98 1.72 A2.8 2.8 0 0 1 1.98 1.72" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-3.96 -0.26 A5.6 5.6 0 0 1 3.96 -0.26" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-5.94 -2.24 A8.4 8.4 0 0 1 5.94 -2.24" fill="none" stroke="#3A414B" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(432.0,67.0) scale(0.85) translate(-432.0,-67.0)">
+<path d="M428.5 66.0 V63.0 Q428.5 59.0 432 59.0 Q435.5 59.0 435.5 63.0 V66.0" fill="none" stroke="#7F8995" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="426.5" y="66.0" width="11.0" height="8.5" fill="#7F8995" rx="1.5"/>
+</g>
+<text x="12.0" y="109.0" font-size="20" fill="#EEF1F5">Basin Library</text>
+<path d="M12.0 119.5 L480.0 119.5" stroke="#20252C" stroke-width="1"/>
+<g transform="translate(457.0,102.0) scale(1.35)" stroke-linecap="round">
+<path d="M-1.1 3.7 A1.1 1.1 0 1 0 1.1 3.7 A1.1 1.1 0 1 0 -1.1 3.7 Z" fill="#9AA3AE"/>
+<path d="M-1.98 1.72 A2.8 2.8 0 0 1 1.98 1.72" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-3.96 -0.26 A5.6 5.6 0 0 1 3.96 -0.26" fill="none" stroke="#3A414B" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-5.94 -2.24 A8.4 8.4 0 0 1 5.94 -2.24" fill="none" stroke="#3A414B" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<text x="12.0" y="145.0" font-size="20" fill="#EEF1F5">Pat's iPhone</text>
+<path d="M12.0 155.5 L480.0 155.5" stroke="#20252C" stroke-width="1"/>
+<g transform="translate(457.0,138.0) scale(1.35)" stroke-linecap="round">
+<path d="M-1.1 3.7 A1.1 1.1 0 1 0 1.1 3.7 A1.1 1.1 0 1 0 -1.1 3.7 Z" fill="#9AA3AE"/>
+<path d="M-1.98 1.72 A2.8 2.8 0 0 1 1.98 1.72" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-3.96 -0.26 A5.6 5.6 0 0 1 3.96 -0.26" fill="none" stroke="#3A414B" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-5.94 -2.24 A8.4 8.4 0 0 1 5.94 -2.24" fill="none" stroke="#3A414B" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(432.0,139.0) scale(0.85) translate(-432.0,-139.0)">
+<path d="M428.5 138.0 V135.0 Q428.5 131.0 432 131.0 Q435.5 131.0 435.5 135.0 V138.0" fill="none" stroke="#7F8995" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="426.5" y="138.0" width="11.0" height="8.5" fill="#7F8995" rx="1.5"/>
+</g>
+<text x="12.0" y="181.0" font-size="20" fill="#EEF1F5">Other network</text>
+<path d="M460 168.0 L466 174.0 L460 180.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M12.0 191.5 L480.0 191.5" stroke="#20252C" stroke-width="1"/>
+<rect x="4.0" y="193.0" width="472.0" height="34.0" fill="#18304D" rx="8" stroke="#4DA3FF" stroke-width="1.6"/>
+<text x="12.0" y="217.0" font-size="20" fill="#EEF1F5" font-weight="700">Scan again</text>
+</g>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="22.0" y="44.0" font-size="20" fill="#EEF1F5" font-weight="700">Wi-Fi</text>
+<rect x="0.0" y="0.0" width="480.0" height="22.0" fill="#0E1115"/>
+<text x="8.0" y="16.5" font-size="16" fill="#9AA3AE" font-weight="600">Juniper</text>
+<text x="240.0" y="16.5" font-size="16" fill="#EEF1F5" font-weight="700" text-anchor="middle">14:32</text>
+<g transform="translate(459.0,11.0) scale(1.3) translate(-459.0,-11.0)">
+<rect x="449.0" y="6.5" width="19.0" height="9.0" fill="none" rx="2" stroke="#9AA3AE" stroke-width="1"/>
+<rect x="468.5" y="9.0" width="1.8" height="4.0" fill="#9AA3AE" rx="0.6"/>
+<rect x="451.0" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="454.9" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="458.8" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+</g>
+<g transform="translate(426.0,11.0) scale(1.3) translate(-426.0,-11.0)">
+<circle cx="426.0" cy="11.0" r="3.6" fill="none" stroke="#9AA3AE" stroke-width="1.1"/>
+<circle cx="426.0" cy="11.0" r="1.1" fill="#9AA3AE"/>
+<path d="M426 5 V7 M426 15 V17 M420 11 H422 M430 11 H432" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(406.0,11.0) scale(1.3) translate(-406.0,-11.0)">
+<path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g></g>
+<text x="82.0" y="1504.0" font-size="17" fill="#3A3A3C">Other network joins one that hides its name. Scan again is last. Networks this device cannot join (enterprise, WEP) are left out.</text>
+<text x="1128.0" y="992.0" font-size="22" fill="#1C1C1E" font-weight="700">5 · Password</text>
+<rect x="1128.0" y="1006.0" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
+<clipPath id="scr5"><rect width="480" height="222"/></clipPath>
+<g transform="translate(1140,1018) scale(2)"><g clip-path="url(#scr5)">
+<rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
+<clipPath id="cl16"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl16)">
+<text x="12.0" y="74.0" font-size="16" fill="#9AA3AE" font-weight="700">Password</text>
+<rect x="8.0" y="82.0" width="464.0" height="34.0" fill="#1A2333" rx="12" stroke="#4DA3FF" stroke-width="2.2"/>
+<text x="20.0" y="106.0" font-size="20" fill="#EEF1F5">trailmix29</text>
+<rect x="106.6" y="89.0" width="2.5" height="20.0" fill="#4DA3FF"/>
+<text x="12.0" y="149.0" font-size="20" fill="#EEF1F5">Join</text>
+<path d="M12.0 159.5 L480.0 159.5" stroke="#20252C" stroke-width="1"/>
+</g>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="22.0" y="44.0" font-size="20" fill="#EEF1F5" font-weight="700">Okafor-5G</text>
+<rect x="0.0" y="0.0" width="480.0" height="22.0" fill="#0E1115"/>
+<text x="8.0" y="16.5" font-size="16" fill="#9AA3AE" font-weight="600">Juniper</text>
+<text x="240.0" y="16.5" font-size="16" fill="#EEF1F5" font-weight="700" text-anchor="middle">14:32</text>
+<g transform="translate(459.0,11.0) scale(1.3) translate(-459.0,-11.0)">
+<rect x="449.0" y="6.5" width="19.0" height="9.0" fill="none" rx="2" stroke="#9AA3AE" stroke-width="1"/>
+<rect x="468.5" y="9.0" width="1.8" height="4.0" fill="#9AA3AE" rx="0.6"/>
+<rect x="451.0" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="454.9" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="458.8" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+</g>
+<g transform="translate(426.0,11.0) scale(1.3) translate(-426.0,-11.0)">
+<circle cx="426.0" cy="11.0" r="3.6" fill="none" stroke="#9AA3AE" stroke-width="1.1"/>
+<circle cx="426.0" cy="11.0" r="1.1" fill="#9AA3AE"/>
+<path d="M426 5 V7 M426 15 V17 M420 11 H422 M430 11 H432" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(406.0,11.0) scale(1.3) translate(-406.0,-11.0)">
+<path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g></g>
+<text x="1130.0" y="1504.0" font-size="17" fill="#3A3A3C">Pressing a network with a padlock asks for its password, the field already active. It shows as typed. Enter joins; Join stays dim</text>
+<text x="1130.0" y="1528.0" font-size="17" fill="#3A3A3C">until the length is one the network's mode allows. An open network joins on the press, with no screen.</text>
+<text x="2176.0" y="992.0" font-size="22" fill="#1C1C1E" font-weight="700">6 · Joining</text>
+<rect x="2176.0" y="1006.0" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
+<clipPath id="scr6"><rect width="480" height="222"/></clipPath>
+<g transform="translate(2188,1018) scale(2)"><g clip-path="url(#scr6)">
+<rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
+<clipPath id="cl17"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl17)">
+<text x="12.0" y="77.0" font-size="20" fill="#EEF1F5">Wi-Fi</text>
+<rect x="426.0" y="59.0" width="40.0" height="22.0" fill="#4DA3FF" rx="11.0"/>
+<circle cx="455.0" cy="70.0" r="8.5" fill="#fff"/>
+<path d="M12.0 87.5 L480.0 87.5" stroke="#20252C" stroke-width="1"/>
+<rect x="4.0" y="89.0" width="472.0" height="50.0" fill="#18304D" rx="8" stroke="#4DA3FF" stroke-width="1.6"/>
+<g transform="translate(27.0,115.0) scale(1.9)" stroke-linecap="round">
+<path d="M-1.1 3.7 A1.1 1.1 0 1 0 1.1 3.7 A1.1 1.1 0 1 0 -1.1 3.7 Z" fill="#9AA3AE"/>
+<path d="M-1.98 1.72 A2.8 2.8 0 0 1 1.98 1.72" fill="none" stroke="#9AA3AE" stroke-width="0.95" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-3.96 -0.26 A5.6 5.6 0 0 1 3.96 -0.26" fill="none" stroke="#9AA3AE" stroke-width="0.95" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-5.94 -2.24 A8.4 8.4 0 0 1 5.94 -2.24" fill="none" stroke="#3A414B" stroke-width="0.95" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<text x="52.0" y="111.0" font-size="20" fill="#EEF1F5" font-weight="700">Okafor-5G</text>
+<circle cx="60.0" cy="120.5" r="1.9" fill="#2A3038"/>
+<circle cx="63.5" cy="122.0" r="1.9" fill="#25496E"/>
+<circle cx="65.0" cy="125.5" r="1.9" fill="#2F6FB0"/>
+<circle cx="63.5" cy="129.0" r="1.9" fill="#4DA3FF"/>
+<circle cx="60.0" cy="130.5" r="1.9" fill="#2A3038"/>
+<circle cx="56.5" cy="129.0" r="1.9" fill="#2A3038"/>
+<circle cx="55.0" cy="125.5" r="1.9" fill="#2A3038"/>
+<circle cx="56.5" cy="122.0" r="1.9" fill="#2A3038"/>
+<text x="72.0" y="131.0" font-size="16" fill="#9AA3AE" font-weight="500">Joining</text>
+<path d="M460 108.0 L466 114.0 L460 120.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="12.0" y="161.0" font-size="16" fill="#9AA3AE" font-weight="700">Nearby</text>
+<text x="12.0" y="193.0" font-size="20" fill="#EEF1F5">Trailhead Café</text>
+<path d="M12.0 203.5 L480.0 203.5" stroke="#20252C" stroke-width="1"/>
+<g transform="translate(457.0,186.0) scale(1.35)" stroke-linecap="round">
+<path d="M-1.1 3.7 A1.1 1.1 0 1 0 1.1 3.7 A1.1 1.1 0 1 0 -1.1 3.7 Z" fill="#9AA3AE"/>
+<path d="M-1.98 1.72 A2.8 2.8 0 0 1 1.98 1.72" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-3.96 -0.26 A5.6 5.6 0 0 1 3.96 -0.26" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-5.94 -2.24 A8.4 8.4 0 0 1 5.94 -2.24" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<text x="12.0" y="229.0" font-size="20" fill="#EEF1F5">NETGEAR47</text>
+<path d="M12.0 239.5 L480.0 239.5" stroke="#20252C" stroke-width="1"/>
+<g transform="translate(457.0,222.0) scale(1.35)" stroke-linecap="round">
+<path d="M-1.1 3.7 A1.1 1.1 0 1 0 1.1 3.7 A1.1 1.1 0 1 0 -1.1 3.7 Z" fill="#9AA3AE"/>
+<path d="M-1.98 1.72 A2.8 2.8 0 0 1 1.98 1.72" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-3.96 -0.26 A5.6 5.6 0 0 1 3.96 -0.26" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-5.94 -2.24 A8.4 8.4 0 0 1 5.94 -2.24" fill="none" stroke="#3A414B" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(432.0,223.0) scale(0.85) translate(-432.0,-223.0)">
+<path d="M428.5 222.0 V219.0 Q428.5 215.0 432 215.0 Q435.5 215.0 435.5 219.0 V222.0" fill="none" stroke="#7F8995" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="426.5" y="222.0" width="11.0" height="8.5" fill="#7F8995" rx="1.5"/>
+</g>
+</g>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="22.0" y="44.0" font-size="20" fill="#EEF1F5" font-weight="700">Wi-Fi</text>
+<rect x="0.0" y="0.0" width="480.0" height="22.0" fill="#0E1115"/>
+<text x="8.0" y="16.5" font-size="16" fill="#9AA3AE" font-weight="600">Juniper</text>
+<text x="240.0" y="16.5" font-size="16" fill="#EEF1F5" font-weight="700" text-anchor="middle">14:32</text>
+<g transform="translate(459.0,11.0) scale(1.3) translate(-459.0,-11.0)">
+<rect x="449.0" y="6.5" width="19.0" height="9.0" fill="none" rx="2" stroke="#9AA3AE" stroke-width="1"/>
+<rect x="468.5" y="9.0" width="1.8" height="4.0" fill="#9AA3AE" rx="0.6"/>
+<rect x="451.0" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="454.9" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="458.8" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+</g>
+<g transform="translate(426.0,11.0) scale(1.3) translate(-426.0,-11.0)">
+<circle cx="426.0" cy="11.0" r="3.6" fill="none" stroke="#9AA3AE" stroke-width="1.1"/>
+<circle cx="426.0" cy="11.0" r="1.1" fill="#9AA3AE"/>
+<path d="M426 5 V7 M426 15 V17 M420 11 H422 M430 11 H432" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(406.0,11.0) scale(1.3) translate(-406.0,-11.0)">
+<path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(386.0,12.0) scale(1.3)" stroke-linecap="round">
+<path d="M-1.1 3.7 A1.1 1.1 0 1 0 1.1 3.7 A1.1 1.1 0 1 0 -1.1 3.7 Z" fill="#EEF1F5"/>
+<path d="M-1.98 1.72 A2.8 2.8 0 0 1 1.98 1.72" fill="none" stroke="#EEF1F5" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-3.96 -0.26 A5.6 5.6 0 0 1 3.96 -0.26" fill="none" stroke="#EEF1F5" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-5.94 -2.24 A8.4 8.4 0 0 1 5.94 -2.24" fill="none" stroke="#3A414B" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g></g>
+<text x="2178.0" y="1504.0" font-size="17" fill="#3A3A3C">Join saves the network, set to join automatically, joins it, and comes back here with focus on it. The strip's fan shows while the</text>
+<text x="2178.0" y="1528.0" font-size="17" fill="#3A3A3C">station names a network: on it, joining it, or failing.</text>
+<text x="80.0" y="1618.0" font-size="22" fill="#1C1C1E" font-weight="700">7 · Connected</text>
+<rect x="80.0" y="1632.0" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
+<clipPath id="scr7"><rect width="480" height="222"/></clipPath>
+<g transform="translate(92,1644) scale(2)"><g clip-path="url(#scr7)">
+<rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
+<clipPath id="cl18"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl18)">
+<text x="12.0" y="77.0" font-size="20" fill="#EEF1F5">Wi-Fi</text>
+<rect x="426.0" y="59.0" width="40.0" height="22.0" fill="#4DA3FF" rx="11.0"/>
+<circle cx="455.0" cy="70.0" r="8.5" fill="#fff"/>
+<path d="M12.0 87.5 L480.0 87.5" stroke="#20252C" stroke-width="1"/>
+<rect x="4.0" y="89.0" width="472.0" height="50.0" fill="#18304D" rx="8" stroke="#4DA3FF" stroke-width="1.6"/>
+<g transform="translate(27.0,115.0) scale(1.9)" stroke-linecap="round">
+<path d="M-1.1 3.7 A1.1 1.1 0 1 0 1.1 3.7 A1.1 1.1 0 1 0 -1.1 3.7 Z" fill="#EEF1F5"/>
+<path d="M-1.98 1.72 A2.8 2.8 0 0 1 1.98 1.72" fill="none" stroke="#EEF1F5" stroke-width="0.95" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-3.96 -0.26 A5.6 5.6 0 0 1 3.96 -0.26" fill="none" stroke="#EEF1F5" stroke-width="0.95" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-5.94 -2.24 A8.4 8.4 0 0 1 5.94 -2.24" fill="none" stroke="#EEF1F5" stroke-width="0.95" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<text x="52.0" y="111.0" font-size="20" fill="#EEF1F5" font-weight="700">Okafor-5G</text>
+<text x="52.0" y="131.0" font-size="16" fill="#3DD68C" font-weight="500">Connected</text>
+<path d="M460 108.0 L466 114.0 L460 120.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="12.0" y="161.0" font-size="16" fill="#9AA3AE" font-weight="700">Saved</text>
+<text x="12.0" y="193.0" font-size="20" fill="#EEF1F5">Home</text>
+<path d="M460 180.0 L466 186.0 L460 192.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M12.0 203.5 L480.0 203.5" stroke="#20252C" stroke-width="1"/>
+<g transform="translate(441.0,186.0) scale(1.35)" stroke-linecap="round">
+<path d="M-1.1 3.7 A1.1 1.1 0 1 0 1.1 3.7 A1.1 1.1 0 1 0 -1.1 3.7 Z" fill="#9AA3AE"/>
+<path d="M-1.98 1.72 A2.8 2.8 0 0 1 1.98 1.72" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-3.96 -0.26 A5.6 5.6 0 0 1 3.96 -0.26" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-5.94 -2.24 A8.4 8.4 0 0 1 5.94 -2.24" fill="none" stroke="#3A414B" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(416.0,187.0) scale(0.85) translate(-416.0,-187.0)">
+<path d="M412.5 186.0 V183.0 Q412.5 179.0 416 179.0 Q419.5 179.0 419.5 183.0 V186.0" fill="none" stroke="#7F8995" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="410.5" y="186.0" width="11.0" height="8.5" fill="#7F8995" rx="1.5"/>
+</g>
+<text x="12.0" y="229.0" font-size="20" fill="#7F8995">Basecamp</text>
+<path d="M460 216.0 L466 222.0 L460 228.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M12.0 239.5 L480.0 239.5" stroke="#20252C" stroke-width="1"/>
+<g transform="translate(444.0,223.0) scale(0.85) translate(-444.0,-223.0)">
+<path d="M440.5 222.0 V219.0 Q440.5 215.0 444 215.0 Q447.5 215.0 447.5 219.0 V222.0" fill="none" stroke="#7F8995" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="438.5" y="222.0" width="11.0" height="8.5" fill="#7F8995" rx="1.5"/>
+</g>
+</g>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="22.0" y="44.0" font-size="20" fill="#EEF1F5" font-weight="700">Wi-Fi</text>
+<rect x="0.0" y="0.0" width="480.0" height="22.0" fill="#0E1115"/>
+<text x="8.0" y="16.5" font-size="16" fill="#9AA3AE" font-weight="600">Juniper</text>
+<text x="240.0" y="16.5" font-size="16" fill="#EEF1F5" font-weight="700" text-anchor="middle">14:32</text>
+<g transform="translate(459.0,11.0) scale(1.3) translate(-459.0,-11.0)">
+<rect x="449.0" y="6.5" width="19.0" height="9.0" fill="none" rx="2" stroke="#9AA3AE" stroke-width="1"/>
+<rect x="468.5" y="9.0" width="1.8" height="4.0" fill="#9AA3AE" rx="0.6"/>
+<rect x="451.0" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="454.9" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="458.8" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+</g>
+<g transform="translate(426.0,11.0) scale(1.3) translate(-426.0,-11.0)">
+<circle cx="426.0" cy="11.0" r="3.6" fill="none" stroke="#9AA3AE" stroke-width="1.1"/>
+<circle cx="426.0" cy="11.0" r="1.1" fill="#9AA3AE"/>
+<path d="M426 5 V7 M426 15 V17 M420 11 H422 M430 11 H432" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(406.0,11.0) scale(1.3) translate(-406.0,-11.0)">
+<path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(386.0,12.0) scale(1.3)" stroke-linecap="round">
+<path d="M-1.1 3.7 A1.1 1.1 0 1 0 1.1 3.7 A1.1 1.1 0 1 0 -1.1 3.7 Z" fill="#EEF1F5"/>
+<path d="M-1.98 1.72 A2.8 2.8 0 0 1 1.98 1.72" fill="none" stroke="#EEF1F5" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-3.96 -0.26 A5.6 5.6 0 0 1 3.96 -0.26" fill="none" stroke="#EEF1F5" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-5.94 -2.24 A8.4 8.4 0 0 1 5.94 -2.24" fill="none" stroke="#EEF1F5" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g></g>
+<text x="82.0" y="2130.0" font-size="17" fill="#3A3A3C">The network in use is its own row under the switch. Saved lists the others, heard or not; a press opens one. Nearby follows,</text>
+<text x="82.0" y="2154.0" font-size="17" fill="#3A3A3C">without what is already saved.</text>
+<text x="1128.0" y="1618.0" font-size="22" fill="#1C1C1E" font-weight="700">8 · Searching</text>
+<rect x="1128.0" y="1632.0" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
+<clipPath id="scr8"><rect width="480" height="222"/></clipPath>
+<g transform="translate(1140,1644) scale(2)"><g clip-path="url(#scr8)">
+<rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
+<clipPath id="cl19"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl19)">
+<text x="12.0" y="77.0" font-size="20" fill="#EEF1F5">Wi-Fi</text>
+<rect x="426.0" y="59.0" width="40.0" height="22.0" fill="#4DA3FF" rx="11.0"/>
+<circle cx="455.0" cy="70.0" r="8.5" fill="#fff"/>
+<path d="M12.0 87.5 L480.0 87.5" stroke="#20252C" stroke-width="1"/>
+<circle cx="27.0" cy="100.0" r="1.9" fill="#25496E"/>
+<circle cx="32.7" cy="102.3" r="1.9" fill="#2F6FB0"/>
+<circle cx="35.0" cy="108.0" r="1.9" fill="#4DA3FF"/>
+<circle cx="32.7" cy="113.7" r="1.9" fill="#2A3038"/>
+<circle cx="27.0" cy="116.0" r="1.9" fill="#2A3038"/>
+<circle cx="21.3" cy="113.7" r="1.9" fill="#2A3038"/>
+<circle cx="19.0" cy="108.0" r="1.9" fill="#2A3038"/>
+<circle cx="21.3" cy="102.3" r="1.9" fill="#2A3038"/>
+<text x="52.0" y="115.0" font-size="20" fill="#9AA3AE">Searching</text>
+<path d="M12.0 127.5 L480.0 127.5" stroke="#20252C" stroke-width="1"/>
+<text x="12.0" y="149.0" font-size="16" fill="#9AA3AE" font-weight="700">Saved</text>
+<rect x="4.0" y="157.0" width="472.0" height="34.0" fill="#18304D" rx="8" stroke="#4DA3FF" stroke-width="1.6"/>
+<text x="12.0" y="181.0" font-size="20" fill="#7F8995" font-weight="700">Okafor-5G</text>
+<path d="M460 168.0 L466 174.0 L460 180.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<g transform="translate(444.0,175.0) scale(0.85) translate(-444.0,-175.0)">
+<path d="M440.5 174.0 V171.0 Q440.5 167.0 444 167.0 Q447.5 167.0 447.5 171.0 V174.0" fill="none" stroke="#7F8995" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="438.5" y="174.0" width="11.0" height="8.5" fill="#7F8995" rx="1.5"/>
+</g>
+<text x="12.0" y="217.0" font-size="20" fill="#7F8995">Home</text>
+<path d="M460 204.0 L466 210.0 L460 216.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M12.0 227.5 L480.0 227.5" stroke="#20252C" stroke-width="1"/>
+<g transform="translate(444.0,211.0) scale(0.85) translate(-444.0,-211.0)">
+<path d="M440.5 210.0 V207.0 Q440.5 203.0 444 203.0 Q447.5 203.0 447.5 207.0 V210.0" fill="none" stroke="#7F8995" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="438.5" y="210.0" width="11.0" height="8.5" fill="#7F8995" rx="1.5"/>
+</g>
+</g>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="22.0" y="44.0" font-size="20" fill="#EEF1F5" font-weight="700">Wi-Fi</text>
+<rect x="0.0" y="0.0" width="480.0" height="22.0" fill="#0E1115"/>
+<text x="8.0" y="16.5" font-size="16" fill="#9AA3AE" font-weight="600">Juniper</text>
+<text x="240.0" y="16.5" font-size="16" fill="#EEF1F5" font-weight="700" text-anchor="middle">14:32</text>
+<g transform="translate(459.0,11.0) scale(1.3) translate(-459.0,-11.0)">
+<rect x="449.0" y="6.5" width="19.0" height="9.0" fill="none" rx="2" stroke="#9AA3AE" stroke-width="1"/>
+<rect x="468.5" y="9.0" width="1.8" height="4.0" fill="#9AA3AE" rx="0.6"/>
+<rect x="451.0" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="454.9" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="458.8" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+</g>
+<g transform="translate(426.0,11.0) scale(1.3) translate(-426.0,-11.0)">
+<circle cx="426.0" cy="11.0" r="3.6" fill="none" stroke="#9AA3AE" stroke-width="1.1"/>
+<circle cx="426.0" cy="11.0" r="1.1" fill="#9AA3AE"/>
+<path d="M426 5 V7 M426 15 V17 M420 11 H422 M430 11 H432" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(406.0,11.0) scale(1.3) translate(-406.0,-11.0)">
+<path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g></g>
+<text x="1130.0" y="2130.0" font-size="17" fill="#3A3A3C">No saved network in range, so the device looks for one, backing off between scans. Searching takes the network row's place and</text>
+<text x="1130.0" y="2154.0" font-size="17" fill="#3A3A3C">is not a stop. No fan in the strip: there is no network to show.</text>
+<text x="80.0" y="2278.0" font-size="34" fill="#1C1C1E" font-weight="700">A network</text>
+<text x="80.0" y="2316.0" font-size="19" fill="#3A3A3C">Pressing the network in use, or a saved one, opens its sheet. Backspace returns to the list.</text>
+<text x="80.0" y="2374.0" font-size="22" fill="#1C1C1E" font-weight="700">9 · The network in use</text>
+<rect x="80.0" y="2388.0" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
+<clipPath id="scr9"><rect width="480" height="222"/></clipPath>
+<g transform="translate(92,2400) scale(2)"><g clip-path="url(#scr9)">
+<rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
+<clipPath id="cl20"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl20)">
+<rect x="4.0" y="53.0" width="472.0" height="34.0" fill="#18304D" rx="8" stroke="#4DA3FF" stroke-width="1.6"/>
+<text x="12.0" y="77.0" font-size="20" fill="#EEF1F5" font-weight="700">Disconnect</text>
+<text x="12.0" y="113.0" font-size="20" fill="#EEF1F5">Join automatically</text>
+<rect x="426.0" y="95.0" width="40.0" height="22.0" fill="#4DA3FF" rx="11.0"/>
+<circle cx="455.0" cy="106.0" r="8.5" fill="#fff"/>
+<path d="M12.0 123.5 L480.0 123.5" stroke="#20252C" stroke-width="1"/>
+<text x="12.0" y="149.0" font-size="20" fill="#EEF1F5">Change password</text>
+<path d="M460 136.0 L466 142.0 L460 148.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M12.0 159.5 L480.0 159.5" stroke="#20252C" stroke-width="1"/>
+<text x="12.0" y="185.0" font-size="20" fill="#EEF1F5">Signal</text>
+<text x="466.0" y="184.0" font-size="17" fill="#9AA3AE" text-anchor="end">−58 dBm</text>
+<path d="M12.0 195.5 L480.0 195.5" stroke="#20252C" stroke-width="1"/>
+<g transform="translate(381.5,178.0) scale(1.35)" stroke-linecap="round">
+<path d="M-1.1 3.7 A1.1 1.1 0 1 0 1.1 3.7 A1.1 1.1 0 1 0 -1.1 3.7 Z" fill="#9AA3AE"/>
+<path d="M-1.98 1.72 A2.8 2.8 0 0 1 1.98 1.72" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-3.96 -0.26 A5.6 5.6 0 0 1 3.96 -0.26" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-5.94 -2.24 A8.4 8.4 0 0 1 5.94 -2.24" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<text x="12.0" y="221.0" font-size="20" fill="#EEF1F5">Address</text>
+<text x="466.0" y="220.0" font-size="17" fill="#9AA3AE" text-anchor="end">192.168.1.42</text>
+<path d="M12.0 231.5 L480.0 231.5" stroke="#20252C" stroke-width="1"/>
+</g>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="22.0" y="44.0" font-size="20" fill="#EEF1F5" font-weight="700">Okafor-5G</text>
+<text x="131.0" y="43.0" font-size="16" fill="#3DD68C" font-weight="500">Connected</text>
+<rect x="0.0" y="0.0" width="480.0" height="22.0" fill="#0E1115"/>
+<text x="8.0" y="16.5" font-size="16" fill="#9AA3AE" font-weight="600">Juniper</text>
+<text x="240.0" y="16.5" font-size="16" fill="#EEF1F5" font-weight="700" text-anchor="middle">14:32</text>
+<g transform="translate(459.0,11.0) scale(1.3) translate(-459.0,-11.0)">
+<rect x="449.0" y="6.5" width="19.0" height="9.0" fill="none" rx="2" stroke="#9AA3AE" stroke-width="1"/>
+<rect x="468.5" y="9.0" width="1.8" height="4.0" fill="#9AA3AE" rx="0.6"/>
+<rect x="451.0" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="454.9" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="458.8" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+</g>
+<g transform="translate(426.0,11.0) scale(1.3) translate(-426.0,-11.0)">
+<circle cx="426.0" cy="11.0" r="3.6" fill="none" stroke="#9AA3AE" stroke-width="1.1"/>
+<circle cx="426.0" cy="11.0" r="1.1" fill="#9AA3AE"/>
+<path d="M426 5 V7 M426 15 V17 M420 11 H422 M430 11 H432" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(406.0,11.0) scale(1.3) translate(-406.0,-11.0)">
+<path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(386.0,12.0) scale(1.3)" stroke-linecap="round">
+<path d="M-1.1 3.7 A1.1 1.1 0 1 0 1.1 3.7 A1.1 1.1 0 1 0 -1.1 3.7 Z" fill="#EEF1F5"/>
+<path d="M-1.98 1.72 A2.8 2.8 0 0 1 1.98 1.72" fill="none" stroke="#EEF1F5" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-3.96 -0.26 A5.6 5.6 0 0 1 3.96 -0.26" fill="none" stroke="#EEF1F5" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-5.94 -2.24 A8.4 8.4 0 0 1 5.94 -2.24" fill="none" stroke="#EEF1F5" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g></g>
+<text x="82.0" y="2886.0" font-size="17" fill="#3A3A3C">What the link is doing beside the name. Join automatically is on for every network saved here; off, the device joins it only when</text>
+<text x="82.0" y="2910.0" font-size="17" fill="#3A3A3C">told to.</text>
+<text x="1128.0" y="2374.0" font-size="22" fill="#1C1C1E" font-weight="700">10 · Disconnected</text>
+<rect x="1128.0" y="2388.0" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
+<clipPath id="scr10"><rect width="480" height="222"/></clipPath>
+<g transform="translate(1140,2400) scale(2)"><g clip-path="url(#scr10)">
+<rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
+<clipPath id="cl21"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl21)">
+<text x="12.0" y="77.0" font-size="20" fill="#EEF1F5">Wi-Fi</text>
+<rect x="426.0" y="59.0" width="40.0" height="22.0" fill="#4DA3FF" rx="11.0"/>
+<circle cx="455.0" cy="70.0" r="8.5" fill="#fff"/>
+<path d="M12.0 87.5 L480.0 87.5" stroke="#20252C" stroke-width="1"/>
+<g transform="translate(27.0,109.0) scale(1.9)" stroke-linecap="round">
+<path d="M-1.1 3.7 A1.1 1.1 0 1 0 1.1 3.7 A1.1 1.1 0 1 0 -1.1 3.7 Z" fill="#3A414B"/>
+<path d="M-1.98 1.72 A2.8 2.8 0 0 1 1.98 1.72" fill="none" stroke="#3A414B" stroke-width="0.95" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-3.96 -0.26 A5.6 5.6 0 0 1 3.96 -0.26" fill="none" stroke="#3A414B" stroke-width="0.95" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-5.94 -2.24 A8.4 8.4 0 0 1 5.94 -2.24" fill="none" stroke="#3A414B" stroke-width="0.95" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<text x="52.0" y="115.0" font-size="20" fill="#9AA3AE">Disconnected</text>
+<path d="M12.0 127.5 L480.0 127.5" stroke="#20252C" stroke-width="1"/>
+<text x="12.0" y="149.0" font-size="16" fill="#9AA3AE" font-weight="700">Saved</text>
+<rect x="4.0" y="157.0" width="472.0" height="34.0" fill="#18304D" rx="8" stroke="#4DA3FF" stroke-width="1.6"/>
+<text x="12.0" y="181.0" font-size="20" fill="#EEF1F5" font-weight="700">Okafor-5G</text>
+<path d="M460 168.0 L466 174.0 L460 180.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<g transform="translate(441.0,174.0) scale(1.35)" stroke-linecap="round">
+<path d="M-1.1 3.7 A1.1 1.1 0 1 0 1.1 3.7 A1.1 1.1 0 1 0 -1.1 3.7 Z" fill="#9AA3AE"/>
+<path d="M-1.98 1.72 A2.8 2.8 0 0 1 1.98 1.72" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-3.96 -0.26 A5.6 5.6 0 0 1 3.96 -0.26" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-5.94 -2.24 A8.4 8.4 0 0 1 5.94 -2.24" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(416.0,175.0) scale(0.85) translate(-416.0,-175.0)">
+<path d="M412.5 174.0 V171.0 Q412.5 167.0 416 167.0 Q419.5 167.0 419.5 171.0 V174.0" fill="none" stroke="#7F8995" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="410.5" y="174.0" width="11.0" height="8.5" fill="#7F8995" rx="1.5"/>
+</g>
+<text x="12.0" y="217.0" font-size="20" fill="#EEF1F5">Home</text>
+<path d="M460 204.0 L466 210.0 L460 216.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M12.0 227.5 L480.0 227.5" stroke="#20252C" stroke-width="1"/>
+<g transform="translate(441.0,210.0) scale(1.35)" stroke-linecap="round">
+<path d="M-1.1 3.7 A1.1 1.1 0 1 0 1.1 3.7 A1.1 1.1 0 1 0 -1.1 3.7 Z" fill="#9AA3AE"/>
+<path d="M-1.98 1.72 A2.8 2.8 0 0 1 1.98 1.72" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-3.96 -0.26 A5.6 5.6 0 0 1 3.96 -0.26" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-5.94 -2.24 A8.4 8.4 0 0 1 5.94 -2.24" fill="none" stroke="#3A414B" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(416.0,211.0) scale(0.85) translate(-416.0,-211.0)">
+<path d="M412.5 210.0 V207.0 Q412.5 203.0 416 203.0 Q419.5 203.0 419.5 207.0 V210.0" fill="none" stroke="#7F8995" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="410.5" y="210.0" width="11.0" height="8.5" fill="#7F8995" rx="1.5"/>
+</g>
+</g>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="22.0" y="44.0" font-size="20" fill="#EEF1F5" font-weight="700">Wi-Fi</text>
+<rect x="0.0" y="0.0" width="480.0" height="22.0" fill="#0E1115"/>
+<text x="8.0" y="16.5" font-size="16" fill="#9AA3AE" font-weight="600">Juniper</text>
+<text x="240.0" y="16.5" font-size="16" fill="#EEF1F5" font-weight="700" text-anchor="middle">14:32</text>
+<g transform="translate(459.0,11.0) scale(1.3) translate(-459.0,-11.0)">
+<rect x="449.0" y="6.5" width="19.0" height="9.0" fill="none" rx="2" stroke="#9AA3AE" stroke-width="1"/>
+<rect x="468.5" y="9.0" width="1.8" height="4.0" fill="#9AA3AE" rx="0.6"/>
+<rect x="451.0" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="454.9" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="458.8" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+</g>
+<g transform="translate(426.0,11.0) scale(1.3) translate(-426.0,-11.0)">
+<circle cx="426.0" cy="11.0" r="3.6" fill="none" stroke="#9AA3AE" stroke-width="1.1"/>
+<circle cx="426.0" cy="11.0" r="1.1" fill="#9AA3AE"/>
+<path d="M426 5 V7 M426 15 V17 M420 11 H422 M430 11 H432" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(406.0,11.0) scale(1.3) translate(-406.0,-11.0)">
+<path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g></g>
+<text x="1130.0" y="2886.0" font-size="17" fill="#3A3A3C">Disconnect leaves and joins nothing by itself, the network kept. Pressing a saved network and Join ends that, as does turning</text>
+<text x="1130.0" y="2910.0" font-size="17" fill="#3A3A3C">Wi-Fi off and on, or restarting.</text>
+<text x="2176.0" y="2374.0" font-size="22" fill="#1C1C1E" font-weight="700">11 · Turned to the end</text>
+<rect x="2176.0" y="2388.0" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
+<clipPath id="scr11"><rect width="480" height="222"/></clipPath>
+<g transform="translate(2188,2400) scale(2)"><g clip-path="url(#scr11)">
+<rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
+<clipPath id="cl22"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl22)">
+<text x="12.0" y="-41.0" font-size="20" fill="#EEF1F5">Disconnect</text>
+<path d="M12.0 -30.5 L480.0 -30.5" stroke="#20252C" stroke-width="1"/>
+<text x="12.0" y="-5.0" font-size="20" fill="#EEF1F5">Join automatically</text>
+<rect x="426.0" y="-23.0" width="40.0" height="22.0" fill="#4DA3FF" rx="11.0"/>
+<circle cx="455.0" cy="-12.0" r="8.5" fill="#fff"/>
+<path d="M12.0 5.5 L480.0 5.5" stroke="#20252C" stroke-width="1"/>
+<text x="12.0" y="31.0" font-size="20" fill="#EEF1F5">Change password</text>
+<path d="M460 18.0 L466 24.0 L460 30.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M12.0 41.5 L480.0 41.5" stroke="#20252C" stroke-width="1"/>
+<text x="12.0" y="67.0" font-size="20" fill="#EEF1F5">Signal</text>
+<text x="466.0" y="66.0" font-size="17" fill="#9AA3AE" text-anchor="end">−58 dBm</text>
+<path d="M12.0 77.5 L480.0 77.5" stroke="#20252C" stroke-width="1"/>
+<g transform="translate(381.5,60.0) scale(1.35)" stroke-linecap="round">
+<path d="M-1.1 3.7 A1.1 1.1 0 1 0 1.1 3.7 A1.1 1.1 0 1 0 -1.1 3.7 Z" fill="#9AA3AE"/>
+<path d="M-1.98 1.72 A2.8 2.8 0 0 1 1.98 1.72" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-3.96 -0.26 A5.6 5.6 0 0 1 3.96 -0.26" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-5.94 -2.24 A8.4 8.4 0 0 1 5.94 -2.24" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<text x="12.0" y="103.0" font-size="20" fill="#EEF1F5">Address</text>
+<text x="466.0" y="102.0" font-size="17" fill="#9AA3AE" text-anchor="end">192.168.1.42</text>
+<path d="M12.0 113.5 L480.0 113.5" stroke="#20252C" stroke-width="1"/>
+<text x="12.0" y="139.0" font-size="20" fill="#EEF1F5">Channel</text>
+<text x="466.0" y="138.0" font-size="17" fill="#9AA3AE" text-anchor="end">36 · 5 GHz</text>
+<path d="M12.0 149.5 L480.0 149.5" stroke="#20252C" stroke-width="1"/>
+<text x="12.0" y="175.0" font-size="20" fill="#EEF1F5">Security</text>
+<text x="466.0" y="174.0" font-size="17" fill="#9AA3AE" text-anchor="end">WPA2</text>
+<path d="M12.0 185.5 L480.0 185.5" stroke="#20252C" stroke-width="1"/>
+<rect x="4.0" y="187.0" width="472.0" height="34.0" fill="#18304D" rx="8" stroke="#4DA3FF" stroke-width="1.6"/>
+<text x="12.0" y="211.0" font-size="20" fill="#FF6B5E" font-weight="700">Forget</text>
+</g>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="22.0" y="44.0" font-size="20" fill="#EEF1F5" font-weight="700">Okafor-5G</text>
+<text x="131.0" y="43.0" font-size="16" fill="#3DD68C" font-weight="500">Connected</text>
+<rect x="0.0" y="0.0" width="480.0" height="22.0" fill="#0E1115"/>
+<text x="8.0" y="16.5" font-size="16" fill="#9AA3AE" font-weight="600">Juniper</text>
+<text x="240.0" y="16.5" font-size="16" fill="#EEF1F5" font-weight="700" text-anchor="middle">14:32</text>
+<g transform="translate(459.0,11.0) scale(1.3) translate(-459.0,-11.0)">
+<rect x="449.0" y="6.5" width="19.0" height="9.0" fill="none" rx="2" stroke="#9AA3AE" stroke-width="1"/>
+<rect x="468.5" y="9.0" width="1.8" height="4.0" fill="#9AA3AE" rx="0.6"/>
+<rect x="451.0" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="454.9" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="458.8" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+</g>
+<g transform="translate(426.0,11.0) scale(1.3) translate(-426.0,-11.0)">
+<circle cx="426.0" cy="11.0" r="3.6" fill="none" stroke="#9AA3AE" stroke-width="1.1"/>
+<circle cx="426.0" cy="11.0" r="1.1" fill="#9AA3AE"/>
+<path d="M426 5 V7 M426 15 V17 M420 11 H422 M430 11 H432" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(406.0,11.0) scale(1.3) translate(-406.0,-11.0)">
+<path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(386.0,12.0) scale(1.3)" stroke-linecap="round">
+<path d="M-1.1 3.7 A1.1 1.1 0 1 0 1.1 3.7 A1.1 1.1 0 1 0 -1.1 3.7 Z" fill="#EEF1F5"/>
+<path d="M-1.98 1.72 A2.8 2.8 0 0 1 1.98 1.72" fill="none" stroke="#EEF1F5" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-3.96 -0.26 A5.6 5.6 0 0 1 3.96 -0.26" fill="none" stroke="#EEF1F5" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-5.94 -2.24 A8.4 8.4 0 0 1 5.94 -2.24" fill="none" stroke="#EEF1F5" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g></g>
+<text x="2178.0" y="2886.0" font-size="17" fill="#3A3A3C">Readouts are not stops for the wheel. Address is the IPv4 address in use. Forget is last.</text>
+<text x="80.0" y="3000.0" font-size="22" fill="#1C1C1E" font-weight="700">12 · Forget</text>
+<rect x="80.0" y="3014.0" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
+<clipPath id="scr12"><rect width="480" height="222"/></clipPath>
+<g transform="translate(92,3026) scale(2)"><g clip-path="url(#scr12)">
+<rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
+<clipPath id="cl23"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl23)">
+<text x="12.0" y="-41.0" font-size="20" fill="#EEF1F5">Disconnect</text>
+<path d="M12.0 -30.5 L480.0 -30.5" stroke="#20252C" stroke-width="1"/>
+<text x="12.0" y="-5.0" font-size="20" fill="#EEF1F5">Join automatically</text>
+<rect x="426.0" y="-23.0" width="40.0" height="22.0" fill="#4DA3FF" rx="11.0"/>
+<circle cx="455.0" cy="-12.0" r="8.5" fill="#fff"/>
+<path d="M12.0 5.5 L480.0 5.5" stroke="#20252C" stroke-width="1"/>
+<text x="12.0" y="31.0" font-size="20" fill="#EEF1F5">Change password</text>
+<path d="M460 18.0 L466 24.0 L460 30.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M12.0 41.5 L480.0 41.5" stroke="#20252C" stroke-width="1"/>
+<text x="12.0" y="67.0" font-size="20" fill="#EEF1F5">Signal</text>
+<text x="466.0" y="66.0" font-size="17" fill="#9AA3AE" text-anchor="end">−58 dBm</text>
+<path d="M12.0 77.5 L480.0 77.5" stroke="#20252C" stroke-width="1"/>
+<g transform="translate(381.5,60.0) scale(1.35)" stroke-linecap="round">
+<path d="M-1.1 3.7 A1.1 1.1 0 1 0 1.1 3.7 A1.1 1.1 0 1 0 -1.1 3.7 Z" fill="#9AA3AE"/>
+<path d="M-1.98 1.72 A2.8 2.8 0 0 1 1.98 1.72" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-3.96 -0.26 A5.6 5.6 0 0 1 3.96 -0.26" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-5.94 -2.24 A8.4 8.4 0 0 1 5.94 -2.24" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<text x="12.0" y="103.0" font-size="20" fill="#EEF1F5">Address</text>
+<text x="466.0" y="102.0" font-size="17" fill="#9AA3AE" text-anchor="end">192.168.1.42</text>
+<path d="M12.0 113.5 L480.0 113.5" stroke="#20252C" stroke-width="1"/>
+<text x="12.0" y="139.0" font-size="20" fill="#EEF1F5">Channel</text>
+<text x="466.0" y="138.0" font-size="17" fill="#9AA3AE" text-anchor="end">36 · 5 GHz</text>
+<path d="M12.0 149.5 L480.0 149.5" stroke="#20252C" stroke-width="1"/>
+<text x="12.0" y="175.0" font-size="20" fill="#EEF1F5">Security</text>
+<text x="466.0" y="174.0" font-size="17" fill="#9AA3AE" text-anchor="end">WPA2</text>
+<path d="M12.0 185.5 L480.0 185.5" stroke="#20252C" stroke-width="1"/>
+<rect x="4.0" y="187.0" width="472.0" height="34.0" fill="#18304D" rx="8" stroke="#4DA3FF" stroke-width="1.6"/>
+<text x="12.0" y="211.0" font-size="20" fill="#FF6B5E" font-weight="700">Forget</text>
+</g>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="22.0" y="44.0" font-size="20" fill="#EEF1F5" font-weight="700">Okafor-5G</text>
+<text x="131.0" y="43.0" font-size="16" fill="#3DD68C" font-weight="500">Connected</text>
+<rect x="0.0" y="0.0" width="480.0" height="22.0" fill="#0E1115"/>
+<text x="8.0" y="16.5" font-size="16" fill="#9AA3AE" font-weight="600">Juniper</text>
+<text x="240.0" y="16.5" font-size="16" fill="#EEF1F5" font-weight="700" text-anchor="middle">14:32</text>
+<g transform="translate(459.0,11.0) scale(1.3) translate(-459.0,-11.0)">
+<rect x="449.0" y="6.5" width="19.0" height="9.0" fill="none" rx="2" stroke="#9AA3AE" stroke-width="1"/>
+<rect x="468.5" y="9.0" width="1.8" height="4.0" fill="#9AA3AE" rx="0.6"/>
+<rect x="451.0" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="454.9" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="458.8" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+</g>
+<g transform="translate(426.0,11.0) scale(1.3) translate(-426.0,-11.0)">
+<circle cx="426.0" cy="11.0" r="3.6" fill="none" stroke="#9AA3AE" stroke-width="1.1"/>
+<circle cx="426.0" cy="11.0" r="1.1" fill="#9AA3AE"/>
+<path d="M426 5 V7 M426 15 V17 M420 11 H422 M430 11 H432" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(406.0,11.0) scale(1.3) translate(-406.0,-11.0)">
+<path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(386.0,12.0) scale(1.3)" stroke-linecap="round">
+<path d="M-1.1 3.7 A1.1 1.1 0 1 0 1.1 3.7 A1.1 1.1 0 1 0 -1.1 3.7 Z" fill="#EEF1F5"/>
+<path d="M-1.98 1.72 A2.8 2.8 0 0 1 1.98 1.72" fill="none" stroke="#EEF1F5" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-3.96 -0.26 A5.6 5.6 0 0 1 3.96 -0.26" fill="none" stroke="#EEF1F5" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-5.94 -2.24 A8.4 8.4 0 0 1 5.94 -2.24" fill="none" stroke="#EEF1F5" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<rect x="0.0" y="22.0" width="480.0" height="200.0" fill="#000" opacity="0.45"/>
+<rect x="131.0" y="86.0" width="220.0" height="78.0" fill="#000" rx="12" opacity="0.5"/>
+<rect x="130.0" y="83.0" width="220.0" height="78.0" fill="#1B2027" rx="12" stroke="#2E3540" stroke-width="1"/>
+<text x="146.0" y="111.0" font-size="20" fill="#FF6B5E">Forget</text>
+<rect x="135.0" y="122.0" width="210.0" height="32.0" fill="#18304D" rx="7" stroke="#4DA3FF" stroke-width="1.6"/>
+<text x="146.0" y="145.0" font-size="20" fill="#EEF1F5" font-weight="700">Cancel</text>
+</g></g>
+<text x="82.0" y="3512.0" font-size="17" fill="#3A3A3C">Confirmed, Cancel focused. Forgetting the network in use sends the device looking for another saved one.</text>
+<text x="1128.0" y="3000.0" font-size="22" fill="#1C1C1E" font-weight="700">13 · Wrong password</text>
+<rect x="1128.0" y="3014.0" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
+<clipPath id="scr13"><rect width="480" height="222"/></clipPath>
+<g transform="translate(1140,3026) scale(2)"><g clip-path="url(#scr13)">
+<rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
+<clipPath id="cl24"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl24)">
+<text x="12.0" y="77.0" font-size="20" fill="#EEF1F5">Wi-Fi</text>
+<rect x="426.0" y="59.0" width="40.0" height="22.0" fill="#4DA3FF" rx="11.0"/>
+<circle cx="455.0" cy="70.0" r="8.5" fill="#fff"/>
+<path d="M12.0 87.5 L480.0 87.5" stroke="#20252C" stroke-width="1"/>
+<rect x="4.0" y="89.0" width="472.0" height="50.0" fill="#18304D" rx="8" stroke="#4DA3FF" stroke-width="1.6"/>
+<g transform="translate(27.0,115.0) scale(1.9)" stroke-linecap="round">
+<path d="M-3.96 -0.26 A5.6 5.6 0 0 1 3.96 -0.26" fill="none" stroke="#F5B544" stroke-width="0.95" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-5.94 -2.24 A8.4 8.4 0 0 1 5.94 -2.24" fill="none" stroke="#F5B544" stroke-width="0.95" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-1.5 2.2 L1.5 5.2 M1.5 2.2 L-1.5 5.2" fill="none" stroke="#F5B544" stroke-width="0.95" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<text x="52.0" y="111.0" font-size="20" fill="#EEF1F5" font-weight="700">Okafor-5G</text>
+<text x="52.0" y="131.0" font-size="16" fill="#F5B544" font-weight="500">Wrong password</text>
+<path d="M460 108.0 L466 114.0 L460 120.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="12.0" y="161.0" font-size="16" fill="#9AA3AE" font-weight="700">Saved</text>
+<text x="12.0" y="193.0" font-size="20" fill="#EEF1F5">Home</text>
+<path d="M460 180.0 L466 186.0 L460 192.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M12.0 203.5 L480.0 203.5" stroke="#20252C" stroke-width="1"/>
+<g transform="translate(441.0,186.0) scale(1.35)" stroke-linecap="round">
+<path d="M-1.1 3.7 A1.1 1.1 0 1 0 1.1 3.7 A1.1 1.1 0 1 0 -1.1 3.7 Z" fill="#9AA3AE"/>
+<path d="M-1.98 1.72 A2.8 2.8 0 0 1 1.98 1.72" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-3.96 -0.26 A5.6 5.6 0 0 1 3.96 -0.26" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-5.94 -2.24 A8.4 8.4 0 0 1 5.94 -2.24" fill="none" stroke="#3A414B" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(416.0,187.0) scale(0.85) translate(-416.0,-187.0)">
+<path d="M412.5 186.0 V183.0 Q412.5 179.0 416 179.0 Q419.5 179.0 419.5 183.0 V186.0" fill="none" stroke="#7F8995" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="410.5" y="186.0" width="11.0" height="8.5" fill="#7F8995" rx="1.5"/>
+</g>
+</g>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="22.0" y="44.0" font-size="20" fill="#EEF1F5" font-weight="700">Wi-Fi</text>
+<rect x="0.0" y="0.0" width="480.0" height="22.0" fill="#0E1115"/>
+<text x="8.0" y="16.5" font-size="16" fill="#9AA3AE" font-weight="600">Juniper</text>
+<text x="240.0" y="16.5" font-size="16" fill="#EEF1F5" font-weight="700" text-anchor="middle">14:32</text>
+<g transform="translate(459.0,11.0) scale(1.3) translate(-459.0,-11.0)">
+<rect x="449.0" y="6.5" width="19.0" height="9.0" fill="none" rx="2" stroke="#9AA3AE" stroke-width="1"/>
+<rect x="468.5" y="9.0" width="1.8" height="4.0" fill="#9AA3AE" rx="0.6"/>
+<rect x="451.0" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="454.9" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="458.8" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+</g>
+<g transform="translate(426.0,11.0) scale(1.3) translate(-426.0,-11.0)">
+<circle cx="426.0" cy="11.0" r="3.6" fill="none" stroke="#9AA3AE" stroke-width="1.1"/>
+<circle cx="426.0" cy="11.0" r="1.1" fill="#9AA3AE"/>
+<path d="M426 5 V7 M426 15 V17 M420 11 H422 M430 11 H432" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(406.0,11.0) scale(1.3) translate(-406.0,-11.0)">
+<path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(386.0,12.0) scale(1.3)" stroke-linecap="round">
+<path d="M-3.96 -0.26 A5.6 5.6 0 0 1 3.96 -0.26" fill="none" stroke="#EEF1F5" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-5.94 -2.24 A8.4 8.4 0 0 1 5.94 -2.24" fill="none" stroke="#EEF1F5" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-1.5 2.2 L1.5 5.2 M1.5 2.2 L-1.5 5.2" fill="none" stroke="#EEF1F5" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g></g>
+<text x="1130.0" y="3512.0" font-size="17" fill="#3A3A3C">The row says why the network is not joined yet: Wrong password, Not in range, Refused. Getting address is between joined and</text>
+<text x="1130.0" y="3536.0" font-size="17" fill="#3A3A3C">an address. A network picked by hand keeps being tried; one the device chose gives way to the next saved network in range.</text>
+<text x="2176.0" y="3000.0" font-size="22" fill="#1C1C1E" font-weight="700">14 · Its sheet</text>
+<rect x="2176.0" y="3014.0" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
+<clipPath id="scr14"><rect width="480" height="222"/></clipPath>
+<g transform="translate(2188,3026) scale(2)"><g clip-path="url(#scr14)">
+<rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
+<clipPath id="cl25"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl25)">
+<rect x="4.0" y="53.0" width="472.0" height="34.0" fill="#18304D" rx="8" stroke="#4DA3FF" stroke-width="1.6"/>
+<text x="12.0" y="77.0" font-size="20" fill="#EEF1F5" font-weight="700">Change password</text>
+<path d="M460 64.0 L466 70.0 L460 76.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="12.0" y="113.0" font-size="20" fill="#EEF1F5">Disconnect</text>
+<path d="M12.0 123.5 L480.0 123.5" stroke="#20252C" stroke-width="1"/>
+<text x="12.0" y="149.0" font-size="20" fill="#EEF1F5">Join automatically</text>
+<rect x="426.0" y="131.0" width="40.0" height="22.0" fill="#4DA3FF" rx="11.0"/>
+<circle cx="455.0" cy="142.0" r="8.5" fill="#fff"/>
+<path d="M12.0 159.5 L480.0 159.5" stroke="#20252C" stroke-width="1"/>
+<text x="12.0" y="185.0" font-size="20" fill="#EEF1F5">Security</text>
+<text x="466.0" y="184.0" font-size="17" fill="#9AA3AE" text-anchor="end">WPA2</text>
+<path d="M12.0 195.5 L480.0 195.5" stroke="#20252C" stroke-width="1"/>
+<text x="12.0" y="221.0" font-size="20" fill="#FF6B5E">Forget</text>
+<path d="M12.0 231.5 L480.0 231.5" stroke="#20252C" stroke-width="1"/>
+</g>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="22.0" y="44.0" font-size="20" fill="#EEF1F5" font-weight="700">Okafor-5G</text>
+<text x="131.0" y="43.0" font-size="16" fill="#F5B544" font-weight="500">Wrong password</text>
+<rect x="0.0" y="0.0" width="480.0" height="22.0" fill="#0E1115"/>
+<text x="8.0" y="16.5" font-size="16" fill="#9AA3AE" font-weight="600">Juniper</text>
+<text x="240.0" y="16.5" font-size="16" fill="#EEF1F5" font-weight="700" text-anchor="middle">14:32</text>
+<g transform="translate(459.0,11.0) scale(1.3) translate(-459.0,-11.0)">
+<rect x="449.0" y="6.5" width="19.0" height="9.0" fill="none" rx="2" stroke="#9AA3AE" stroke-width="1"/>
+<rect x="468.5" y="9.0" width="1.8" height="4.0" fill="#9AA3AE" rx="0.6"/>
+<rect x="451.0" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="454.9" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="458.8" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+</g>
+<g transform="translate(426.0,11.0) scale(1.3) translate(-426.0,-11.0)">
+<circle cx="426.0" cy="11.0" r="3.6" fill="none" stroke="#9AA3AE" stroke-width="1.1"/>
+<circle cx="426.0" cy="11.0" r="1.1" fill="#9AA3AE"/>
+<path d="M426 5 V7 M426 15 V17 M420 11 H422 M430 11 H432" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(406.0,11.0) scale(1.3) translate(-406.0,-11.0)">
+<path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(386.0,12.0) scale(1.3)" stroke-linecap="round">
+<path d="M-3.96 -0.26 A5.6 5.6 0 0 1 3.96 -0.26" fill="none" stroke="#EEF1F5" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-5.94 -2.24 A8.4 8.4 0 0 1 5.94 -2.24" fill="none" stroke="#EEF1F5" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-1.5 2.2 L1.5 5.2 M1.5 2.2 L-1.5 5.2" fill="none" stroke="#EEF1F5" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g></g>
+<text x="2178.0" y="3512.0" font-size="17" fill="#3A3A3C">Change password comes first when the password is what failed.</text>
+<text x="80.0" y="3626.0" font-size="22" fill="#1C1C1E" font-weight="700">15 · Change password</text>
+<rect x="80.0" y="3640.0" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
+<clipPath id="scr15"><rect width="480" height="222"/></clipPath>
+<g transform="translate(92,3652) scale(2)"><g clip-path="url(#scr15)">
+<rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
+<clipPath id="cl26"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl26)">
+<text x="12.0" y="74.0" font-size="16" fill="#9AA3AE" font-weight="700">Password</text>
+<rect x="8.0" y="82.0" width="464.0" height="34.0" fill="#1A2333" rx="12" stroke="#4DA3FF" stroke-width="2.2"/>
+<text x="20.0" y="106.0" font-size="20" fill="#EEF1F5">trailmix2</text>
+<rect x="95.4" y="89.0" width="2.5" height="20.0" fill="#4DA3FF"/>
+<text x="12.0" y="149.0" font-size="20" fill="#EEF1F5">Save</text>
+<path d="M12.0 159.5 L480.0 159.5" stroke="#20252C" stroke-width="1"/>
+</g>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="22.0" y="44.0" font-size="20" fill="#EEF1F5" font-weight="700">Okafor-5G</text>
+<text x="131.0" y="43.0" font-size="16" fill="#F5B544" font-weight="500">Wrong password</text>
+<rect x="0.0" y="0.0" width="480.0" height="22.0" fill="#0E1115"/>
+<text x="8.0" y="16.5" font-size="16" fill="#9AA3AE" font-weight="600">Juniper</text>
+<text x="240.0" y="16.5" font-size="16" fill="#EEF1F5" font-weight="700" text-anchor="middle">14:32</text>
+<g transform="translate(459.0,11.0) scale(1.3) translate(-459.0,-11.0)">
+<rect x="449.0" y="6.5" width="19.0" height="9.0" fill="none" rx="2" stroke="#9AA3AE" stroke-width="1"/>
+<rect x="468.5" y="9.0" width="1.8" height="4.0" fill="#9AA3AE" rx="0.6"/>
+<rect x="451.0" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="454.9" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="458.8" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+</g>
+<g transform="translate(426.0,11.0) scale(1.3) translate(-426.0,-11.0)">
+<circle cx="426.0" cy="11.0" r="3.6" fill="none" stroke="#9AA3AE" stroke-width="1.1"/>
+<circle cx="426.0" cy="11.0" r="1.1" fill="#9AA3AE"/>
+<path d="M426 5 V7 M426 15 V17 M420 11 H422 M430 11 H432" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(406.0,11.0) scale(1.3) translate(-406.0,-11.0)">
+<path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(386.0,12.0) scale(1.3)" stroke-linecap="round">
+<path d="M-3.96 -0.26 A5.6 5.6 0 0 1 3.96 -0.26" fill="none" stroke="#EEF1F5" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-5.94 -2.24 A8.4 8.4 0 0 1 5.94 -2.24" fill="none" stroke="#EEF1F5" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-1.5 2.2 L1.5 5.2 M1.5 2.2 L-1.5 5.2" fill="none" stroke="#EEF1F5" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g></g>
+<text x="82.0" y="4138.0" font-size="17" fill="#3A3A3C">The old password is never shown; this replaces it. Save retries at once.</text>
+<text x="1128.0" y="3626.0" font-size="22" fill="#1C1C1E" font-weight="700">16 · A saved network</text>
+<rect x="1128.0" y="3640.0" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
+<clipPath id="scr16"><rect width="480" height="222"/></clipPath>
+<g transform="translate(1140,3652) scale(2)"><g clip-path="url(#scr16)">
+<rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
+<clipPath id="cl27"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl27)">
+<rect x="4.0" y="53.0" width="472.0" height="34.0" fill="#18304D" rx="8" stroke="#4DA3FF" stroke-width="1.6"/>
+<text x="12.0" y="77.0" font-size="20" fill="#EEF1F5" font-weight="700">Join</text>
+<text x="12.0" y="113.0" font-size="20" fill="#EEF1F5">Join automatically</text>
+<rect x="426.0" y="95.0" width="40.0" height="22.0" fill="#3A414B" rx="11.0"/>
+<circle cx="437.0" cy="106.0" r="8.5" fill="#C9CED6"/>
+<path d="M12.0 123.5 L480.0 123.5" stroke="#20252C" stroke-width="1"/>
+<text x="12.0" y="149.0" font-size="20" fill="#EEF1F5">Change password</text>
+<path d="M460 136.0 L466 142.0 L460 148.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M12.0 159.5 L480.0 159.5" stroke="#20252C" stroke-width="1"/>
+<text x="12.0" y="185.0" font-size="20" fill="#EEF1F5">Security</text>
+<text x="466.0" y="184.0" font-size="17" fill="#9AA3AE" text-anchor="end">WPA2</text>
+<path d="M12.0 195.5 L480.0 195.5" stroke="#20252C" stroke-width="1"/>
+<text x="12.0" y="221.0" font-size="20" fill="#FF6B5E">Forget</text>
+<path d="M12.0 231.5 L480.0 231.5" stroke="#20252C" stroke-width="1"/>
+</g>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="22.0" y="44.0" font-size="20" fill="#EEF1F5" font-weight="700">Home</text>
+<rect x="0.0" y="0.0" width="480.0" height="22.0" fill="#0E1115"/>
+<text x="8.0" y="16.5" font-size="16" fill="#9AA3AE" font-weight="600">Juniper</text>
+<text x="240.0" y="16.5" font-size="16" fill="#EEF1F5" font-weight="700" text-anchor="middle">14:32</text>
+<g transform="translate(459.0,11.0) scale(1.3) translate(-459.0,-11.0)">
+<rect x="449.0" y="6.5" width="19.0" height="9.0" fill="none" rx="2" stroke="#9AA3AE" stroke-width="1"/>
+<rect x="468.5" y="9.0" width="1.8" height="4.0" fill="#9AA3AE" rx="0.6"/>
+<rect x="451.0" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="454.9" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="458.8" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+</g>
+<g transform="translate(426.0,11.0) scale(1.3) translate(-426.0,-11.0)">
+<circle cx="426.0" cy="11.0" r="3.6" fill="none" stroke="#9AA3AE" stroke-width="1.1"/>
+<circle cx="426.0" cy="11.0" r="1.1" fill="#9AA3AE"/>
+<path d="M426 5 V7 M426 15 V17 M420 11 H422 M430 11 H432" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(406.0,11.0) scale(1.3) translate(-406.0,-11.0)">
+<path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(386.0,12.0) scale(1.3)" stroke-linecap="round">
+<path d="M-1.1 3.7 A1.1 1.1 0 1 0 1.1 3.7 A1.1 1.1 0 1 0 -1.1 3.7 Z" fill="#EEF1F5"/>
+<path d="M-1.98 1.72 A2.8 2.8 0 0 1 1.98 1.72" fill="none" stroke="#EEF1F5" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-3.96 -0.26 A5.6 5.6 0 0 1 3.96 -0.26" fill="none" stroke="#EEF1F5" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-5.94 -2.24 A8.4 8.4 0 0 1 5.94 -2.24" fill="none" stroke="#EEF1F5" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g></g>
+<text x="1130.0" y="4138.0" font-size="17" fill="#3A3A3C">Join comes first, and joining one leaves the network in use. This one joins only when told to.</text>
+<text x="80.0" y="4262.0" font-size="34" fill="#1C1C1E" font-weight="700">Hidden networks</text>
+<text x="80.0" y="4300.0" font-size="19" fill="#3A3A3C">A network that hides its name is joined by typing it.</text>
+<text x="80.0" y="4358.0" font-size="22" fill="#1C1C1E" font-weight="700">17 · Other network</text>
+<rect x="80.0" y="4372.0" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
+<clipPath id="scr17"><rect width="480" height="222"/></clipPath>
+<g transform="translate(92,4384) scale(2)"><g clip-path="url(#scr17)">
+<rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
+<clipPath id="cl28"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl28)">
+<rect x="8.0" y="60.0" width="464.0" height="34.0" fill="#1A2333" rx="12" stroke="#4DA3FF" stroke-width="2.2"/>
+<text x="20.0" y="84.0" font-size="20" fill="#EEF1F5">Basecamp</text>
+<rect x="115.5" y="67.0" width="2.5" height="20.0" fill="#4DA3FF"/>
+<text x="12.0" y="125.0" font-size="20" fill="#EEF1F5">Security</text>
+<path d="M460 112.0 L466 118.0 L460 124.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="450.0" y="124.0" font-size="17" fill="#9AA3AE" text-anchor="end">WPA2</text>
+<path d="M12.0 135.5 L480.0 135.5" stroke="#20252C" stroke-width="1"/>
+<rect x="8.0" y="140.0" width="464.0" height="34.0" fill="#161A20" rx="12" stroke="#2E3540" stroke-width="1.2"/>
+<text x="20.0" y="164.0" font-size="20" fill="#7F8995">Password</text>
+<text x="12.0" y="205.0" font-size="20" fill="#7F8995">Join</text>
+<path d="M12.0 215.5 L480.0 215.5" stroke="#20252C" stroke-width="1"/>
+</g>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="22.0" y="44.0" font-size="20" fill="#EEF1F5" font-weight="700">Other network</text>
+<rect x="0.0" y="0.0" width="480.0" height="22.0" fill="#0E1115"/>
+<text x="8.0" y="16.5" font-size="16" fill="#9AA3AE" font-weight="600">Juniper</text>
+<text x="240.0" y="16.5" font-size="16" fill="#EEF1F5" font-weight="700" text-anchor="middle">14:32</text>
+<g transform="translate(459.0,11.0) scale(1.3) translate(-459.0,-11.0)">
+<rect x="449.0" y="6.5" width="19.0" height="9.0" fill="none" rx="2" stroke="#9AA3AE" stroke-width="1"/>
+<rect x="468.5" y="9.0" width="1.8" height="4.0" fill="#9AA3AE" rx="0.6"/>
+<rect x="451.0" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="454.9" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="458.8" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+</g>
+<g transform="translate(426.0,11.0) scale(1.3) translate(-426.0,-11.0)">
+<circle cx="426.0" cy="11.0" r="3.6" fill="none" stroke="#9AA3AE" stroke-width="1.1"/>
+<circle cx="426.0" cy="11.0" r="1.1" fill="#9AA3AE"/>
+<path d="M426 5 V7 M426 15 V17 M420 11 H422 M430 11 H432" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(406.0,11.0) scale(1.3) translate(-406.0,-11.0)">
+<path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g></g>
+<text x="82.0" y="4870.0" font-size="17" fill="#3A3A3C">Name, Security (the modes this device can join), and Password, which goes away for Open. Join saves it as hidden, so the</text>
+<text x="82.0" y="4894.0" font-size="17" fill="#3A3A3C">device asks for it by name.</text>
+</svg>

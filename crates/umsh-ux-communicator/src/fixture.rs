@@ -12,12 +12,13 @@ use crate::model::{
     ChatId, ChatKind, ChatSummary, Chats, ClockSettings, ClockSource, Contact, ContactUri,
     DEFAULT_AUTO_LOCK_S, Delivery, Details, Direction, EventQueue, Exchange, ExchangeEnd, Fix,
     Gnss, GnssReading, Heard, Invite, KeyboardFirmware, KeyboardSettings, LatestSent, Leg, Links,
-    MAX_CHATS, MAX_HEARD, MAX_PATH, MAX_PEERS, MESSAGE_LEN, MeetState, Member, Message, MessageId,
-    NearbyDevice, NearbyId, Neighbor, Node, NodeEvent, Parts, PeerDetail, PeerEntry, PeerId,
-    PeerRoute, PeerSummary, Peers, PingReply, PingView, Presence, Profile, Quote, RadioSettings,
-    Reacted, Reaction, Reactions, Reactor, Repeater, RouteKind, Rule, Sender, Setting, ShareUri,
-    Shareable, Signal, State, Statistics, StatusStrip, TRANSMIT_POWER, Via, brightness_at,
-    route_text, word_match,
+    MAX_CHATS, MAX_HEARD, MAX_NEARBY_NETWORKS, MAX_PATH, MAX_PEERS, MAX_SAVED_NETWORKS,
+    MESSAGE_LEN, MeetState, Member, Message, MessageId, NearbyDevice, NearbyId, NearbyNetwork,
+    Neighbor, Node, NodeEvent, Parts, PeerDetail, PeerEntry, PeerId, PeerRoute, PeerSummary, Peers,
+    PingReply, PingView, Presence, Profile, Quote, RadioSettings, Reacted, Reaction, Reactions,
+    Reactor, Repeater, RouteKind, Rule, SavedNetwork, Sender, Setting, ShareUri, Shareable, Signal,
+    Ssid, State, Statistics, StatusStrip, TRANSMIT_POWER, Via, WifiReading, WifiSecurity,
+    WifiStatus, brightness_at, route_text, word_match,
 };
 use crate::models;
 use crate::picker::RecentText;
@@ -750,6 +751,8 @@ pub struct Store {
     setup_complete: Cell<bool>,
     /// How many times the device was reset to how it left the factory.
     factory_resets: Cell<u32>,
+    /// How many times the device was restarted.
+    restarts: Cell<u32>,
     gnss: Cell<bool>,
     /// What Add peer shows, and whether the other holder of the exchange
     /// pressed Same.
@@ -777,6 +780,163 @@ pub struct Store {
     repeater_identified: Cell<bool>,
     /// The repeaters the last repeater asked who it is was asked by way of.
     repeater_route: RefCell<Vec<[u8; 2], MAX_PATH>>,
+    wifi: RefCell<FakeWifi>,
+}
+
+/// The access points the fixture's Wi-Fi hears: name, signal, security,
+/// password, and channel. The first two are saved to begin with.
+const AIR: [(&str, i8, WifiSecurity, &str, u8); 6] = [
+    (
+        "Okafor-5G",
+        -48,
+        WifiSecurity::Wpa2Wpa3,
+        "okafor-family",
+        36,
+    ),
+    ("Home", -64, WifiSecurity::Wpa2, "home-sweet-home", 6),
+    ("Trailhead Café", -50, WifiSecurity::Open, "", 1),
+    ("NETGEAR47", -63, WifiSecurity::Wpa2, "router-47", 11),
+    ("Basin Library", -79, WifiSecurity::Owe, "", 6),
+    (
+        "Pat's iPhone",
+        -81,
+        WifiSecurity::Wpa2Wpa3,
+        "pat-hotspot",
+        6,
+    ),
+];
+
+/// The fixture's Wi-Fi station. Joins and scans are instant.
+#[derive(Debug)]
+struct FakeWifi {
+    /// The saved networks have been made.
+    made: bool,
+    enabled: bool,
+    /// Saved networks, with their passwords.
+    saved: Vec<(SavedNetwork, String<63>), MAX_SAVED_NETWORKS>,
+    current: Ssid,
+    status: WifiStatus,
+    /// Joins nothing by itself.
+    paused: bool,
+    scanned: bool,
+    ip_multicast: bool,
+}
+
+impl FakeWifi {
+    const fn new() -> Self {
+        Self {
+            made: false,
+            enabled: true,
+            saved: Vec::new(),
+            current: Vec::new(),
+            status: WifiStatus::Joining,
+            paused: false,
+            scanned: false,
+            ip_multicast: false,
+        }
+    }
+
+    fn make(&mut self) {
+        if core::mem::replace(&mut self.made, true) {
+            return;
+        }
+        for (ssid, _, security, password, _) in &AIR[..2] {
+            _ = self.saved.push((
+                SavedNetwork {
+                    ssid: Vec::from_slice(ssid.as_bytes()).unwrap_or_default(),
+                    rssi: None,
+                    security: *security,
+                    auto_join: true,
+                    hidden: false,
+                },
+                s(password),
+            ));
+        }
+        self.settle();
+    }
+
+    fn heard(ssid: &[u8]) -> Option<&'static (&'static str, i8, WifiSecurity, &'static str, u8)> {
+        AIR.iter().find(|ap| ap.0.as_bytes() == ssid)
+    }
+
+    fn try_join(&mut self, ssid: &[u8]) {
+        self.current = Vec::from_slice(ssid).unwrap_or_default();
+        let password = self
+            .saved
+            .iter()
+            .find(|(network, _)| network.ssid == ssid)
+            .map(|(_, password)| password.as_str());
+        self.status = match (Self::heard(ssid), password) {
+            (None, _) => WifiStatus::NotInRange,
+            (Some(ap), Some(password)) if ap.3 == password => WifiStatus::Connected,
+            (Some(_), _) => WifiStatus::WrongPassword,
+        };
+    }
+
+    /// Choose a network, as the device would: the strongest saved one
+    /// heard that joins by itself, keeping one already joined.
+    fn settle(&mut self) {
+        if !self.enabled {
+            self.current.clear();
+            return;
+        }
+        if self.paused || (!self.current.is_empty() && self.status == WifiStatus::Connected) {
+            return;
+        }
+        let best = AIR
+            .iter()
+            .filter(|ap| {
+                self.saved.iter().any(|(network, password)| {
+                    network.auto_join && network.ssid == ap.0.as_bytes() && password == ap.3
+                })
+            })
+            .max_by_key(|ap| ap.1);
+        match best {
+            Some(ap) => self.try_join(ap.0.as_bytes()),
+            None if self.status.failing() && !self.current.is_empty() => {}
+            None => self.current.clear(),
+        }
+    }
+
+    fn read(&self, reading: &mut WifiReading) {
+        reading.enabled = Some(self.enabled);
+        reading.current = self.current.clone();
+        reading.status = self.status;
+        reading.searching = self.enabled
+            && !self.paused
+            && self.current.is_empty()
+            && self.saved.iter().any(|(network, _)| network.auto_join);
+        let joined = (self.status == WifiStatus::Connected)
+            .then(|| Self::heard(&self.current))
+            .flatten();
+        reading.rssi = joined.map(|ap| ap.1);
+        reading.channel = joined.map(|ap| ap.4);
+        reading.address = joined.map(|_| [192, 168, 1, 23]);
+        reading.ip_multicast = Some(self.ip_multicast);
+        reading.saved = self
+            .saved
+            .iter()
+            .map(|(network, _)| SavedNetwork {
+                rssi: Self::heard(&network.ssid).map(|ap| ap.1),
+                ..network.clone()
+            })
+            .collect();
+        reading.scanning = false;
+        reading.nearby.clear();
+        if self.scanned {
+            let mut nearby: Vec<NearbyNetwork, MAX_NEARBY_NETWORKS> = AIR
+                .iter()
+                .filter(|ap| !self.saved.iter().any(|(n, _)| n.ssid == ap.0.as_bytes()))
+                .map(|ap| NearbyNetwork {
+                    ssid: Vec::from_slice(ap.0.as_bytes()).unwrap_or_default(),
+                    rssi: ap.1,
+                    security: ap.2,
+                })
+                .collect();
+            nearby.sort_unstable_by(|a, b| b.rssi.cmp(&a.rssi));
+            reading.nearby = nearby;
+        }
+    }
 }
 
 impl Store {
@@ -831,6 +991,7 @@ impl Store {
             volume: Cell::new(191),
             setup_complete: Cell::new(true),
             factory_resets: Cell::new(0),
+            restarts: Cell::new(0),
             gnss: Cell::new(true),
             meet: RefCell::new(MeetState::new()),
             meet_theirs: Cell::new(false),
@@ -845,6 +1006,7 @@ impl Store {
             repeater_at: Cell::new(None),
             repeater_identified: Cell::new(false),
             repeater_route: RefCell::new(Vec::new()),
+            wifi: RefCell::new(FakeWifi::new()),
         }
     }
 
@@ -1438,6 +1600,12 @@ impl Store {
     #[must_use]
     pub fn factory_resets(&self) -> u32 {
         self.factory_resets.get()
+    }
+
+    /// How many times the device has been restarted.
+    #[must_use]
+    pub fn restarts(&self) -> u32 {
+        self.restarts.get()
     }
 
     /// The radio is set, by other means than this interface, to settings
@@ -2639,8 +2807,137 @@ impl Node for Store {
         self.factory_resets.set(self.factory_resets.get() + 1);
     }
 
+    fn can_restart(&self) -> bool {
+        true
+    }
+
+    fn restart(&self) {
+        self.restarts.set(self.restarts.get() + 1);
+    }
+
     fn clear_pairings(&self) {
         self.setting(Setting::Pairing, || true);
+    }
+
+    fn wifi(&self, reading: &mut WifiReading) {
+        let mut wifi = self.wifi.borrow_mut();
+        wifi.make();
+        wifi.read(reading);
+    }
+
+    fn set_wifi_enabled(&self, on: bool) {
+        self.setting(Setting::Wifi, || {
+            let mut wifi = self.wifi.borrow_mut();
+            wifi.make();
+            wifi.enabled = on;
+            wifi.paused = false;
+            if !on {
+                wifi.current.clear();
+                wifi.scanned = false;
+            }
+            wifi.settle();
+            true
+        });
+    }
+
+    fn scan_wifi(&self) {
+        self.setting(Setting::Wifi, || {
+            let mut wifi = self.wifi.borrow_mut();
+            wifi.scanned = wifi.enabled;
+            wifi.enabled
+        });
+    }
+
+    fn watch_wifi(&self, _on: bool) {}
+
+    fn join_wifi(&self, ssid: &[u8]) {
+        self.setting(Setting::Wifi, || {
+            let mut wifi = self.wifi.borrow_mut();
+            wifi.paused = false;
+            wifi.try_join(ssid);
+            true
+        });
+    }
+
+    fn disconnect_wifi(&self) {
+        self.setting(Setting::Wifi, || {
+            let mut wifi = self.wifi.borrow_mut();
+            wifi.paused = true;
+            wifi.current.clear();
+            true
+        });
+    }
+
+    fn save_wifi(&self, ssid: &[u8], security: WifiSecurity, password: &str, hidden: bool) {
+        let mut wifi = self.wifi.borrow_mut();
+        wifi.make();
+        if wifi.saved.is_full() && !wifi.saved.iter().any(|(n, _)| n.ssid == ssid) {
+            drop(wifi);
+            self.queue(NodeEvent::SettingRefused(Setting::WifiFull));
+            return;
+        }
+        wifi.saved.retain(|(network, _)| network.ssid != ssid);
+        _ = wifi.saved.push((
+            SavedNetwork {
+                ssid: Vec::from_slice(ssid).unwrap_or_default(),
+                rssi: None,
+                security,
+                auto_join: true,
+                hidden,
+            },
+            String::try_from(password).unwrap_or_default(),
+        ));
+        wifi.paused = false;
+        wifi.try_join(ssid);
+        drop(wifi);
+        self.queue(NodeEvent::SettingsChanged);
+    }
+
+    fn set_wifi_auto_join(&self, ssid: &[u8], on: bool) {
+        self.setting(Setting::Wifi, || {
+            let mut wifi = self.wifi.borrow_mut();
+            let Some((network, _)) = wifi.saved.iter_mut().find(|(n, _)| n.ssid == ssid) else {
+                return false;
+            };
+            network.auto_join = on;
+            true
+        });
+    }
+
+    fn change_wifi_password(&self, ssid: &[u8], password: &str) {
+        self.setting(Setting::Wifi, || {
+            let mut wifi = self.wifi.borrow_mut();
+            let Some((_, kept)) = wifi.saved.iter_mut().find(|(n, _)| n.ssid == ssid) else {
+                return false;
+            };
+            *kept = String::try_from(password).unwrap_or_default();
+            if wifi.current == ssid {
+                wifi.try_join(ssid);
+            }
+            true
+        });
+    }
+
+    fn forget_wifi(&self, ssid: &[u8]) {
+        self.setting(Setting::Wifi, || {
+            let mut wifi = self.wifi.borrow_mut();
+            wifi.saved.retain(|(network, _)| network.ssid != ssid);
+            if wifi.current == ssid {
+                wifi.current.clear();
+                wifi.status = WifiStatus::Joining;
+            }
+            wifi.settle();
+            true
+        });
+    }
+
+    fn set_ip_multicast(&self, on: bool) {
+        self.setting(Setting::IpMulticast, || {
+            let mut wifi = self.wifi.borrow_mut();
+            wifi.make();
+            wifi.ip_multicast = on;
+            true
+        });
     }
 
     fn auto_lock(&self) -> Option<u16> {

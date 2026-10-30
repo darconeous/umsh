@@ -7,8 +7,11 @@
 //! fails to decode is held as the octets the device reported, and a write
 //! the device adjusts is reported as the device adjusted it.
 
+use alloc::vec::Vec;
+
 use umsh_ulcp::PropertyType;
 use umsh_ulcp::ids::{cap, prop};
+use umsh_ulcp::wifi;
 
 /// What may be done to a property.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -42,6 +45,34 @@ pub enum Kind {
     /// `CMD_PROP_REMOVED`—in its reported form, which omits any key
     /// material.
     Items { item_len: u8, reported_len: u8 },
+    /// Length-prefixed items of varying length, each named by `key`. An
+    /// insert replaces the item with the same name, and
+    /// `CMD_PROP_REMOVED` reports the name alone.
+    Prefixed { key: ItemKey },
+}
+
+/// What names an item of a [`Kind::Prefixed`] table.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ItemKey {
+    /// A stored network, by SSID.
+    Ssid,
+    /// A scan result, by BSSID.
+    Bssid,
+}
+
+impl ItemKey {
+    /// The name of `item`, in either of its forms. `None` when it does
+    /// not decode.
+    pub fn of(self, item: &[u8]) -> Option<Vec<u8>> {
+        match self {
+            Self::Ssid => wifi::NetworkEntry::decode(item)
+                .ok()
+                .map(|entry| entry.ssid.to_vec()),
+            Self::Bssid => wifi::ScanResult::decode(item)
+                .ok()
+                .map(|result| result.bssid.to_vec()),
+        }
+    }
 }
 
 /// One covered property.
@@ -97,6 +128,23 @@ const fn table(key: u32, gate: u32, item_len: u8, reported_len: u8) -> Descripto
             reported_len,
         },
         max_len: item_len as usize,
+    }
+}
+
+const fn prefixed(
+    key: u32,
+    gate: u32,
+    access: Access,
+    item_key: ItemKey,
+    max_item: usize,
+) -> Descriptor {
+    Descriptor {
+        key,
+        codec: PropertyType::Bytes,
+        gate: Some(gate),
+        access,
+        kind: Kind::Prefixed { key: item_key },
+        max_len: max_item,
     }
 }
 
@@ -348,6 +396,80 @@ pub const COVERED: &[Descriptor] = &[
         Some(cap::IDENT),
         Access::OnDemand,
         0,
+    ),
+    // Wi-Fi: the station, what it is on, and what it heard. Signal and
+    // scan results are read while someone is looking.
+    scalar(
+        prop::WIFI_ENABLED,
+        PropertyType::Bool,
+        Some(cap::WIFI),
+        Access::ReadWrite,
+        1,
+    ),
+    prefixed(
+        prop::WIFI_NETWORKS,
+        cap::WIFI,
+        Access::Table,
+        ItemKey::Ssid,
+        wifi::NETWORK_ENTRY_MAX_LEN,
+    ),
+    scalar(
+        prop::WIFI_NETWORK,
+        PropertyType::Bytes,
+        Some(cap::WIFI),
+        Access::ReadWrite,
+        wifi::SSID_MAX_LEN,
+    ),
+    scalar(
+        prop::WIFI_SCANNING,
+        PropertyType::Bool,
+        Some(cap::WIFI_SCAN),
+        Access::ReadWrite,
+        1,
+    ),
+    prefixed(
+        prop::WIFI_SCAN_RESULTS,
+        cap::WIFI_SCAN,
+        Access::OnDemand,
+        ItemKey::Bssid,
+        wifi::SCAN_RESULT_MAX_LEN,
+    ),
+    scalar(
+        prop::WIFI_LINK,
+        PropertyType::Bytes,
+        Some(cap::WIFI),
+        Access::ReadOnly,
+        0,
+    ),
+    scalar(
+        prop::WIFI_RSSI,
+        PropertyType::I8,
+        Some(cap::WIFI),
+        Access::OnDemand,
+        0,
+    ),
+    scalar(
+        prop::IPV4_STATE,
+        PropertyType::U8,
+        Some(cap::IPV4),
+        Access::ReadOnly,
+        0,
+    ),
+    scalar(
+        prop::IPV4_ADDRESS,
+        PropertyType::Bytes,
+        Some(cap::IPV4),
+        Access::ReadOnly,
+        0,
+    ),
+    // UMSH over IP multicast. Only a forwarding device has the switch:
+    // with `CAP_LAN_BEARER` but not `CAP_REPEATER`, it reads unavailable.
+    scalar(
+        prop::LAN_BEARER_ENABLED,
+        PropertyType::Bool,
+        Some(cap::LAN_BEARER),
+        Access::ReadWrite,
+        1,
     ),
     // The device identity's tables.
     table(prop::DEV_PEERS, cap::DEV_IDENTITY, 32, 32),

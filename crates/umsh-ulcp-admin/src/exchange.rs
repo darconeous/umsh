@@ -31,6 +31,9 @@ pub enum Request<'a> {
     /// `CMD_FACTORY_RESET`, which the device answers only by refusing: it
     /// erases everything and restarts, and the link drops.
     FactoryReset,
+    /// `CMD_REBOOT`, which the device answers only by refusing: it
+    /// restarts, and the link drops.
+    Reboot,
 }
 
 impl Request<'_> {
@@ -45,6 +48,7 @@ impl Request<'_> {
             Self::Remove { key, selector } => frame::prop_remove(out, tid, key, selector),
             Self::Save => frame::save(out, tid),
             Self::FactoryReset => frame::factory_reset(out, tid),
+            Self::Reboot => frame::reboot(out, tid),
         }
     }
 }

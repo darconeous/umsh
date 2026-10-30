@@ -18,6 +18,7 @@ use crate::model::{
     NearbyId, PeerDetail, PeerEntry, PeerId, PingView, Profile, RadioSettings, Reaction, Repeater,
     Section, Shareable, State, TRANSMIT_POWER, word_match,
 };
+pub use crate::wifi_settings::{NetworkText, PasswordText, WifiPage};
 
 use crate::text::SharedText;
 use umsh_sound::Cue;
@@ -81,6 +82,9 @@ pub mod keys {
     const NEARBY: u32 = 0x2000_0000;
     const AUTO_LOCK_ROW: u32 = 0x2400_0000;
     const PATH: u32 = 0x2B00_0000;
+    const WIFI_ROW: u32 = 0x2E00_0000;
+    /// Nearby networks' rows, after the saved ones'.
+    const WIFI_NEARBY: u32 = 0x100;
 
     /// A conversation's composer. Only one conversation is shown at a time.
     pub const COMPOSER: FocusKey = FocusKey(0x0400_0000);
@@ -174,11 +178,13 @@ pub mod keys {
     /// The Device list's categories.
     pub const IDENTITY: FocusKey = FocusKey(DEVICE);
     pub const CHANNELS: FocusKey = FocusKey(DEVICE | 1);
+    pub const WIFI: FocusKey = FocusKey(DEVICE | 3);
     pub const RADIO: FocusKey = FocusKey(DEVICE | 2);
     pub const DISPLAY: FocusKey = FocusKey(DEVICE | 4);
     pub const BLUETOOTH: FocusKey = FocusKey(DEVICE | 5);
     pub const SHUT_DOWN: FocusKey = FocusKey(DEVICE | 7);
     pub const FACTORY_RESET: FocusKey = FocusKey(DEVICE | 15);
+    pub const RESTART: FocusKey = FocusKey(DEVICE | 16);
     pub const KEYBOARD: FocusKey = FocusKey(DEVICE | 8);
     pub const CLOCK: FocusKey = FocusKey(DEVICE | 9);
     pub const GNSS: FocusKey = FocusKey(DEVICE | 10);
@@ -201,6 +207,58 @@ pub mod keys {
     pub const CLEAR_PAIRINGS: FocusKey = FocusKey(0x1E00_0005);
     pub const CLEAR_PAIRINGS_CONFIRM: FocusKey = FocusKey(0x1E00_0006);
     pub const CLEAR_PAIRINGS_CANCEL: FocusKey = FocusKey(0x1E00_0007);
+    /// The Wi-Fi screens' rows: the switch, the network in use, Other
+    /// network, Scan again, and IP multicast; a sheet's Join or Disconnect, Join
+    /// automatically, Change password, Forget and its confirmation; a
+    /// password's field and the row that submits it; and Other network's
+    /// name and security.
+    pub const WIFI_ENABLED: FocusKey = FocusKey(0x2D00_0000);
+    pub const WIFI_CURRENT: FocusKey = FocusKey(0x2D00_0001);
+    pub const WIFI_OTHER: FocusKey = FocusKey(0x2D00_0002);
+    pub const WIFI_SCAN: FocusKey = FocusKey(0x2D00_0003);
+    pub const WIFI_ACT: FocusKey = FocusKey(0x2D00_0004);
+    pub const WIFI_AUTO_JOIN: FocusKey = FocusKey(0x2D00_0005);
+    pub const WIFI_CHANGE_PASSWORD: FocusKey = FocusKey(0x2D00_0006);
+    pub const WIFI_FORGET: FocusKey = FocusKey(0x2D00_0007);
+    pub const WIFI_FORGET_CONFIRM: FocusKey = FocusKey(0x2D00_0008);
+    pub const WIFI_FORGET_CANCEL: FocusKey = FocusKey(0x2D00_0009);
+    pub const WIFI_PASSWORD_FIELD: FocusKey = FocusKey(0x2D00_000A);
+    pub const WIFI_SUBMIT: FocusKey = FocusKey(0x2D00_000B);
+    pub const WIFI_NAME_FIELD: FocusKey = FocusKey(0x2D00_000C);
+    pub const WIFI_SECURITY: FocusKey = FocusKey(0x2D00_000D);
+    pub const WIFI_IP_MULTICAST: FocusKey = FocusKey(0x2D00_000E);
+    /// Rows of Wi-Fi's list that never take focus, named so the list can
+    /// tell its rows apart.
+    pub const WIFI_IDLE: FocusKey = FocusKey(0x2D00_0020);
+    pub const WIFI_SAVED_LABEL: FocusKey = FocusKey(0x2D00_0021);
+    pub const WIFI_NEARBY_LABEL: FocusKey = FocusKey(0x2D00_0022);
+    pub const WIFI_ADDRESS: FocusKey = FocusKey(0x2D00_0023);
+
+    /// The readout at `index` on a Wi-Fi network's sheet: Signal, Address,
+    /// Channel, Security. Never focused.
+    #[must_use]
+    pub const fn wifi_readout(index: usize) -> FocusKey {
+        FocusKey(0x2D00_0030 + index as u32)
+    }
+
+    /// The choice of [`crate::wifi_settings::OTHER_SECURITY`] at `index`.
+    #[must_use]
+    pub const fn wifi_security(index: usize) -> FocusKey {
+        FocusKey(0x2D00_0010 + index as u32)
+    }
+
+    /// The row of the saved network at `index`.
+    #[must_use]
+    pub const fn wifi_saved(index: usize) -> FocusKey {
+        FocusKey(WIFI_ROW | index as u32)
+    }
+
+    /// The row of the nearby network at `index`.
+    #[must_use]
+    pub const fn wifi_nearby(index: usize) -> FocusKey {
+        FocusKey(WIFI_ROW | WIFI_NEARBY | index as u32)
+    }
+
     /// The GNSS screen's switch.
     pub const GNSS_ENABLED: FocusKey = FocusKey(0x1F00_0000);
     /// The Sounds screen's rows, in order.
@@ -228,7 +286,9 @@ pub mod keys {
         match key {
             COMPOSER => Some(Field::Prose),
             NAME_FIELD | JOIN_NAME | IDENTITY_NAME | CHANNEL_NAME | PEER_ALIAS => Some(Field::Name),
-            FIND_FIELD | PEER_FIELD | CHANNEL_FIELD => Some(Field::Literal),
+            FIND_FIELD | PEER_FIELD | CHANNEL_FIELD | WIFI_PASSWORD_FIELD | WIFI_NAME_FIELD => {
+                Some(Field::Literal)
+            }
             POWER_FIELD => Some(Field::Number),
             _ => None,
         }
@@ -249,6 +309,9 @@ pub mod keys {
     pub const FACTORY_RESET_CANCEL: FocusKey = FocusKey(0x1600_0003);
     pub const ERASE_CONFIRM: FocusKey = FocusKey(0x1600_0004);
     pub const ERASE_CANCEL: FocusKey = FocusKey(0x1600_0005);
+    /// Restart's confirmation.
+    pub const RESTART_CONFIRM: FocusKey = FocusKey(0x1600_0006);
+    pub const RESTART_CANCEL: FocusKey = FocusKey(0x1600_0007);
     /// The Radio screen's switch, its Profile, and its other switches.
     pub const RADIO_ENABLED: FocusKey = FocusKey(0x0E00_0005);
     pub const PROFILE: FocusKey = FocusKey(0x0E00_0000);
@@ -496,6 +559,8 @@ pub enum DevicePage {
     TransmitPower { text: PowerText },
     /// The clock's settings, and the screens they open.
     Clock { page: ClockPage },
+    /// Wi-Fi's settings, and the screens they open.
+    Wifi { page: WifiPage },
     /// Bluetooth's settings and what it is doing; while `confirm`,
     /// clearing the pairings asks to be confirmed.
     Bluetooth { confirm: bool },
@@ -541,6 +606,7 @@ pub enum DeviceConfirm {
     /// Factory reset, asked again, its choices the other way around, so
     /// that pressing twice in one place does not erase the device.
     Erase,
+    Restart,
 }
 
 /// A screen on the navigation stack.
@@ -1721,6 +1787,7 @@ impl State {
         self.status.device_name = node.device_name();
         self.status.silent = node.sound_enabled() == Some(false);
         self.clock = node.clock();
+        node.wifi(&mut self.wifi);
         for screen in &mut self.screens {
             match screen {
                 Screen::Device {
@@ -2001,6 +2068,22 @@ impl State {
         self.node.factory_reset();
     }
 
+    /// Asks to confirm restarting the device.
+    pub fn ask_restart(&mut self) {
+        self.device_confirm(Some(DeviceConfirm::Restart), keys::RESTART_CANCEL);
+    }
+
+    /// Keeps the device running after all.
+    pub fn cancel_restart(&mut self) {
+        self.device_confirm(None, keys::RESTART);
+    }
+
+    /// Restarts the device, confirmed. It comes back as it was.
+    pub fn restart(&mut self) {
+        self.device_confirm(None, keys::RESTART);
+        self.node.restart();
+    }
+
     /// Stops asking the Device list to confirm anything.
     pub fn cancel_device_confirm(&mut self) {
         match self.screen() {
@@ -2008,6 +2091,10 @@ impl State {
                 confirm: Some(DeviceConfirm::ShutDown),
                 ..
             } => self.cancel_shut_down(),
+            Screen::Chats {
+                confirm: Some(DeviceConfirm::Restart),
+                ..
+            } => self.cancel_restart(),
             Screen::Chats {
                 confirm: Some(_), ..
             } => self.cancel_factory_reset(),
@@ -2393,6 +2480,7 @@ impl State {
                 }
             );
         self.node.watch_statistics(counting);
+        self.node.watch_wifi(!self.lock.locked && self.wifi_shown());
     }
 
     /// Keeps Add peer's session open while Nearby or the exchange is shown
@@ -2730,6 +2818,17 @@ impl State {
         if let Screen::Ping {
             settled_at: None, ..
         } = screen
+        {
+            return Some(step);
+        }
+        // Wi-Fi's spinners: a scan, and looking for a saved network.
+        if let Screen::Device {
+            page: DevicePage::Wifi {
+                page: WifiPage::Main,
+            },
+            ..
+        } = screen
+            && (self.wifi.scanning || self.wifi.searching)
         {
             return Some(step);
         }

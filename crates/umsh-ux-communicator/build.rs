@@ -368,6 +368,50 @@ const ICONS: &[(&str, u32, f32, &[Layer])] = &[
             stroke(WIFI_MIDDLE, 1.1),
         ],
     ),
+    // A network's row: its fan, drawn whole and dim with its lit arcs over
+    // it, so a weaker signal lights fewer; and a padlock on those that take
+    // a password.
+    (
+        "FAN",
+        16,
+        1.15,
+        &[
+            fill(WIFI_DOT),
+            stroke(WIFI_INNER, 1.2),
+            stroke(WIFI_MIDDLE, 1.2),
+            stroke(WIFI_OUTER, 1.2),
+        ],
+    ),
+    (
+        "FAN_2",
+        16,
+        1.15,
+        &[
+            fill(WIFI_DOT),
+            stroke(WIFI_INNER, 1.2),
+            stroke(WIFI_MIDDLE, 1.2),
+        ],
+    ),
+    (
+        "FAN_1",
+        16,
+        1.15,
+        &[fill(WIFI_DOT), stroke(WIFI_INNER, 1.2)],
+    ),
+    (
+        "LOCK_SMALL",
+        12,
+        0.75,
+        &[
+            stroke(
+                "M-3.5 0.05 V-2.95 Q-3.5 -6.95 0 -6.95 Q3.5 -6.95 3.5 -2.95 V0.05",
+                1.8,
+            ),
+            fill(
+                "M-4 0.05 H4 Q5.5 0.05 5.5 1.55 V7.05 Q5.5 8.55 4 8.55 H-4 Q-5.5 8.55 -5.5 7.05 V1.55 Q-5.5 0.05 -4 0.05 Z",
+            ),
+        ],
+    ),
     (
         "WIFI_LOST",
         18,

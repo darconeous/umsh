@@ -1,0 +1,35 @@
+# Device's Wi-Fi.
+backspace
+turn 2
+press
+turn 8
+shot device-wifi
+press
+shot wifi
+turn 1
+press
+shot wifi-sheet
+turn 6
+press
+shot wifi-forget
+backspace
+backspace
+turn 3
+press
+shot wifi-password
+type wrong-password
+enter
+shot wifi-wrong
+turn -4
+press
+shot wifi-sheet-wrong
+backspace
+turn 20
+shot wifi-list-end
+turn -2
+press
+shot wifi-other
+backspace
+turn -30
+press
+shot wifi-off

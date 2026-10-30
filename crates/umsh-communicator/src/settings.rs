@@ -31,8 +31,11 @@
 //! [`ChannelCrypto::starting_keys`](crate::ChannelCrypto::starting_keys)).
 
 use umsh_core::ChannelTag;
+use umsh_ulcp::Status;
 use umsh_ulcp::ids::{DEFAULT_SOUND_VOLUME, cap, keyboard_aids, prop, saved};
+use umsh_ulcp::ip::FamilyState;
 use umsh_ulcp::profiles::VETTED;
+use umsh_ulcp::wifi::{LinkReason, LinkState, NetworkEntry, SecurityMode};
 use umsh_ulcp_admin::descriptor::Value;
 use umsh_ulcp_admin::{
     Event, Freshness, LocalExchange, LocalPort, Model, Refusal, WriteId, WriteOutcome,
@@ -40,8 +43,9 @@ use umsh_ulcp_admin::{
 use umsh_ux_communicator::avatar::{AvatarStyle, PeerShape};
 use umsh_ux_communicator::heapless::{Deque, String, Vec};
 use umsh_ux_communicator::model::{
-    ClockSettings, DEFAULT_AUTO_LOCK_S, KeyboardSettings, NodeEvent, Profile, RadioSettings, Rule,
-    Setting, ShareUri, Statistics, brightness_at,
+    ClockSettings, DEFAULT_AUTO_LOCK_S, KeyboardSettings, MAX_NEARBY_NETWORKS, NearbyNetwork,
+    NodeEvent, Profile, RadioSettings, Rule, SavedNetwork, Setting, ShareUri, Ssid, Statistics,
+    WifiReading, WifiSecurity, WifiStatus, brightness_at,
 };
 
 use crate::chat::address;
@@ -73,6 +77,9 @@ const STATISTICS: [u32; 13] = [
     prop::STAT_MESHCORE_FORWARDED_FLOOD,
     prop::STAT_MESHCORE_DECLINED,
 ];
+
+/// How often the Wi-Fi signal is read while it is watched.
+pub const WIFI_READ_MS: u64 = 5_000;
 
 /// The screen's brightness until the device reports it.
 pub const DEFAULT_BRIGHTNESS: u8 = brightness_at(5);
@@ -112,6 +119,11 @@ pub struct Settings<P> {
     airtime_at: u64,
     /// When the counters are next read, while they are watched.
     statistics_at: Option<u64>,
+    /// When the Wi-Fi signal is next read, while it is watched.
+    wifi_at: Option<u64>,
+    /// A network being saved: the insert, its name, and the mode to try
+    /// instead should the device not do the one tried.
+    wifi_save: Option<(WriteId, Ssid, bool, Option<SecurityMode>)>,
     now_ms: u64,
 }
 
@@ -132,6 +144,8 @@ impl<P: LocalPort> Settings<P> {
             boot_checked: false,
             airtime_at: AIRTIME_READ_MS,
             statistics_at: None,
+            wifi_at: None,
+            wifi_save: None,
             now_ms: 0,
         }
     }
@@ -159,6 +173,10 @@ impl<P: LocalPort> Settings<P> {
             self.statistics_at = Some(now_ms + STATISTICS_READ_MS);
             self.read_statistics();
         }
+        if self.wifi_at.is_some_and(|at| now_ms >= at) {
+            self.wifi_at = Some(now_ms + WIFI_READ_MS);
+            self.model.read(prop::WIFI_RSSI);
+        }
         if self.save_at.is_some_and(|at| now_ms >= at) {
             self.save_at = None;
             // The device refuses a save only when it has no saved state to
@@ -183,7 +201,7 @@ impl<P: LocalPort> Settings<P> {
     /// When [`Settings::pump`] next has something to do without being
     /// woken by the device.
     pub fn next_deadline(&self) -> Option<u64> {
-        [self.save_at, self.statistics_at]
+        [self.save_at, self.statistics_at, self.wifi_at]
             .into_iter()
             .flatten()
             .fold(Some(self.airtime_at), |next, at| {
@@ -219,6 +237,14 @@ impl<P: LocalPort> Settings<P> {
         match event {
             Event::Changed(_) | Event::Resync => events(NodeEvent::SettingsChanged),
             Event::Written { id, outcome, .. } => {
+                if self
+                    .wifi_save
+                    .as_ref()
+                    .is_some_and(|(write, ..)| *write == id)
+                {
+                    self.wifi_saved(outcome, events);
+                    return;
+                }
                 if self.peer_writes.iter().any(|(write, ..)| *write == id) {
                     self.peer_writes.retain(|(write, ..)| *write != id);
                     events(NodeEvent::SettingsChanged);
@@ -354,6 +380,12 @@ impl<P: LocalPort> Settings<P> {
         self.model.factory_reset().is_ok()
     }
 
+    /// Restarts the device, keeping what it has saved. Returns whether it
+    /// was asked.
+    pub fn restart(&mut self) -> bool {
+        self.model.reboot().is_ok()
+    }
+
     pub fn set_gnss_enabled(&mut self, on: bool) -> bool {
         let write = self.model.set_gnss_enabled(on);
         self.written(Setting::Gnss, write)
@@ -412,6 +444,161 @@ impl<P: LocalPort> Settings<P> {
     pub fn set_auto_lock(&mut self, seconds: u16) -> bool {
         let write = self.model.set_display_timeout(seconds);
         self.written(Setting::AutoLock, write)
+    }
+
+    // ─── Wi-Fi ───────────────────────────────────────────────────────
+
+    pub fn set_wifi_enabled(&mut self, on: bool) -> bool {
+        let write = self.model.set_wifi_enabled(on);
+        self.written(Setting::Wifi, write)
+    }
+
+    /// Scans, after reading what the last one heard so the list has
+    /// something until this one reports.
+    pub fn scan_wifi(&mut self) -> bool {
+        if self.model.raw(prop::WIFI_SCAN_RESULTS).is_none() {
+            self.model.read(prop::WIFI_SCAN_RESULTS);
+        }
+        let write = self.model.scan_wifi();
+        self.written(Setting::Wifi, write)
+    }
+
+    /// Keeps the signal being read while `on`: at the next pump, and
+    /// every [`WIFI_READ_MS`] after.
+    pub fn watch_wifi(&mut self, on: bool) {
+        self.wifi_at = on.then_some(self.now_ms);
+    }
+
+    /// Joins the saved network `ssid` and stays on it; the empty name
+    /// leaves the network in use and joins nothing.
+    pub fn join_wifi(&mut self, ssid: &[u8]) -> bool {
+        let write = self.model.set_wifi_network(ssid);
+        self.written(Setting::Wifi, write)
+    }
+
+    /// Saves a network to join by itself, then joins it once saved. A
+    /// network that offers WPA2 and WPA3 is saved at WPA2, so it joins
+    /// either way; Enhanced Open steps down to open where the device has
+    /// no Enhanced Open.
+    pub fn save_wifi(
+        &mut self,
+        ssid: &[u8],
+        security: WifiSecurity,
+        password: &str,
+        hidden: bool,
+    ) -> bool {
+        let (mode, fallback) = match security {
+            WifiSecurity::Open => (SecurityMode::Open, None),
+            WifiSecurity::Owe => (SecurityMode::Owe, Some(SecurityMode::Open)),
+            WifiSecurity::Wpa => (SecurityMode::Wpa, None),
+            WifiSecurity::Wpa2 | WifiSecurity::Wpa2Wpa3 => (SecurityMode::Wpa2, None),
+            WifiSecurity::Wpa3 => (SecurityMode::Wpa3, None),
+            WifiSecurity::Other => return false,
+        };
+        let Ok(name) = Ssid::from_slice(ssid) else {
+            return false;
+        };
+        let write = self.model.save_wifi_network(&NetworkEntry {
+            hidden,
+            raw_key: false,
+            manual: false,
+            security: mode,
+            ssid,
+            credential: password.as_bytes(),
+        });
+        let Ok(id) = write else {
+            return false;
+        };
+        self.wifi_save = Some((id, name, hidden, fallback));
+        true
+    }
+
+    /// How a save went: joined once applied, tried again in the mode to
+    /// step down to, or refused.
+    fn wifi_saved(&mut self, outcome: WriteOutcome, events: &mut impl FnMut(NodeEvent)) {
+        let Some((_, ssid, hidden, fallback)) = self.wifi_save.take() else {
+            return;
+        };
+        match (outcome, fallback) {
+            (WriteOutcome::Applied | WriteOutcome::Adjusted, _) => {
+                self.save_if_unsaved();
+                if !self.join_wifi(&ssid) {
+                    events(NodeEvent::SettingRefused(Setting::Wifi));
+                }
+            }
+            (WriteOutcome::Refused(Status::UNIMPLEMENTED), Some(mode)) => {
+                let write = self.model.save_wifi_network(&NetworkEntry {
+                    hidden,
+                    raw_key: false,
+                    manual: false,
+                    security: mode,
+                    ssid: &ssid,
+                    credential: &[],
+                });
+                match write {
+                    Ok(id) => self.wifi_save = Some((id, ssid, hidden, None)),
+                    Err(_) => events(NodeEvent::SettingRefused(Setting::Wifi)),
+                }
+            }
+            (WriteOutcome::Refused(Status::NOMEM), _) => {
+                events(NodeEvent::SettingRefused(Setting::WifiFull));
+            }
+            _ => events(NodeEvent::SettingRefused(Setting::Wifi)),
+        }
+    }
+
+    /// Whether the saved network `ssid` joins by itself. Its password
+    /// stays as it is.
+    pub fn set_wifi_auto_join(&mut self, ssid: &[u8], on: bool) -> bool {
+        let Some(saved) = self.saved_wifi(ssid) else {
+            return false;
+        };
+        let entry = NetworkEntry {
+            manual: !on,
+            credential: &[],
+            ..saved
+        };
+        let write = self.model.save_wifi_network(&entry);
+        self.written(Setting::Wifi, write)
+    }
+
+    pub fn change_wifi_password(&mut self, ssid: &[u8], password: &str) -> bool {
+        let Some(saved) = self.saved_wifi(ssid) else {
+            return false;
+        };
+        let entry = NetworkEntry {
+            credential: password.as_bytes(),
+            ..saved
+        };
+        let write = self.model.save_wifi_network(&entry);
+        self.written(Setting::Wifi, write)
+    }
+
+    /// The saved network `ssid` as the device reports it, credential-free,
+    /// under the name asked for.
+    fn saved_wifi<'a>(&self, ssid: &'a [u8]) -> Option<NetworkEntry<'a>> {
+        let saved = self
+            .model
+            .wifi_networks()
+            .find(|entry| entry.ssid == ssid)?;
+        Some(NetworkEntry {
+            hidden: saved.hidden,
+            raw_key: false,
+            manual: saved.manual,
+            security: saved.security,
+            ssid,
+            credential: &[],
+        })
+    }
+
+    pub fn forget_wifi(&mut self, ssid: &[u8]) -> bool {
+        let write = self.model.forget_wifi_network(ssid);
+        self.written(Setting::Wifi, write)
+    }
+
+    pub fn set_ip_multicast(&mut self, on: bool) -> bool {
+        let write = self.model.set_lan_bearer_enabled(on);
+        self.written(Setting::IpMulticast, write)
     }
 
     /// Keeps `key` among the device's peers.
@@ -651,8 +838,9 @@ impl<P: LocalPort> Settings<P> {
         self.u8(prop::SOUND_VOLUME).unwrap_or(DEFAULT_SOUND_VOLUME)
     }
 
-    /// Whether the device can be reset to how it left the factory.
-    pub fn can_factory_reset(&self) -> bool {
+    /// Whether the device restarts on command, and so can also be reset
+    /// to how it left the factory.
+    pub fn can_restart(&self) -> bool {
         self.model.has_cap(cap::REBOOT) == Some(true)
     }
 
@@ -689,6 +877,109 @@ impl<P: LocalPort> Settings<P> {
             self.u16(prop::DISPLAY_TIMEOUT)
                 .unwrap_or(DEFAULT_AUTO_LOCK_S)
         })
+    }
+
+    /// Wi-Fi as it stands, read into `reading`. While a scan has cleared
+    /// what it heard and heard nothing yet, the networks listed before
+    /// stay listed.
+    pub fn wifi(&self, reading: &mut WifiReading) {
+        reading.enabled = self
+            .model
+            .has_cap(cap::WIFI)
+            .and_then(|has| has.then(|| self.model.wifi_enabled().unwrap_or(false)));
+        reading.current =
+            Ssid::from_slice(self.model.wifi_network().unwrap_or_default()).unwrap_or_default();
+        let link = self.model.wifi_link().unwrap_or_default();
+        let addressed = self.model.ipv4_state() == Some(FamilyState::Ready);
+        reading.status = match (link.state, link.reason) {
+            (LinkState::Up, _) if addressed || self.model.has_cap(cap::IPV4) != Some(true) => {
+                WifiStatus::Connected
+            }
+            (LinkState::Up, _) => WifiStatus::GettingAddress,
+            (_, LinkReason::Auth) => WifiStatus::WrongPassword,
+            (_, LinkReason::NotFound) => WifiStatus::NotInRange,
+            (_, LinkReason::Rejected | LinkReason::Other) => WifiStatus::Refused,
+            _ => WifiStatus::Joining,
+        };
+        reading.searching = reading.current.is_empty() && link.state == LinkState::Connecting;
+        let up = link.state == LinkState::Up;
+        reading.rssi = self.model.wifi_rssi().filter(|_| up);
+        reading.channel = link
+            .association
+            .filter(|_| up)
+            .and_then(|association| channel(association.frequency_mhz));
+        reading.address = self
+            .model
+            .ipv4_address()
+            .filter(|_| up && addressed)
+            .map(|address| address.address);
+        let forwards = self.model.has_cap(cap::LAN_BEARER) == Some(true)
+            && self.model.has_cap(cap::REPEATER) == Some(true);
+        reading.ip_multicast = forwards.then(|| self.model.lan_bearer_enabled() == Some(true));
+        reading.saved.clear();
+        for entry in self.model.wifi_networks() {
+            _ = reading.saved.push(SavedNetwork {
+                ssid: Ssid::from_slice(entry.ssid).unwrap_or_default(),
+                rssi: None,
+                security: match entry.security {
+                    SecurityMode::Open => WifiSecurity::Open,
+                    SecurityMode::Owe => WifiSecurity::Owe,
+                    SecurityMode::Wpa => WifiSecurity::Wpa,
+                    SecurityMode::Wpa2 => WifiSecurity::Wpa2,
+                    SecurityMode::Wpa3 => WifiSecurity::Wpa3,
+                    _ => WifiSecurity::Other,
+                },
+                auto_join: !entry.manual,
+                hidden: entry.hidden,
+            });
+        }
+        reading.scanning = self.model.wifi_scanning() == Some(true);
+        let mut heard = self.model.wifi_scan_results().peekable();
+        if reading.scanning && heard.peek().is_none() {
+            return;
+        }
+        reading.nearby.clear();
+        for result in heard {
+            if let Some(saved) = reading
+                .saved
+                .iter_mut()
+                .find(|saved| saved.ssid == result.ssid)
+            {
+                saved.rssi = Some(
+                    saved
+                        .rssi
+                        .map_or(result.rssi_dbm, |r| r.max(result.rssi_dbm)),
+                );
+                continue;
+            }
+            let security = offered(result.modes);
+            if result.ssid.is_empty() || security == WifiSecurity::Other {
+                continue;
+            }
+            match reading
+                .nearby
+                .iter_mut()
+                .find(|nearby| nearby.ssid == result.ssid)
+            {
+                Some(nearby) => nearby.rssi = nearby.rssi.max(result.rssi_dbm),
+                None => {
+                    let network = NearbyNetwork {
+                        ssid: Ssid::from_slice(result.ssid).unwrap_or_default(),
+                        rssi: result.rssi_dbm,
+                        security,
+                    };
+                    if reading.nearby.len() < MAX_NEARBY_NETWORKS {
+                        _ = reading.nearby.push(network);
+                    } else if let Some(weakest) =
+                        reading.nearby.iter_mut().min_by_key(|nearby| nearby.rssi)
+                        && weakest.rssi < network.rssi
+                    {
+                        *weakest = network;
+                    }
+                }
+            }
+        }
+        reading.nearby.sort_unstable_by(|a, b| b.rssi.cmp(&a.rssi));
     }
 
     /// The device's counters, as last read.
@@ -754,6 +1045,30 @@ impl<P: LocalPort> Settings<P> {
 
 /// Whether losing a change to `setting` would matter enough to save one.
 /// The time is never saved: the board's real-time clock keeps it.
+/// How a network offering `modes` is joined, as far as the screen goes.
+fn offered(modes: u16) -> WifiSecurity {
+    let has = |mode: SecurityMode| modes & mode.bit() != 0;
+    match () {
+        _ if has(SecurityMode::Wpa2) && has(SecurityMode::Wpa3) => WifiSecurity::Wpa2Wpa3,
+        _ if has(SecurityMode::Wpa3) => WifiSecurity::Wpa3,
+        _ if has(SecurityMode::Wpa2) => WifiSecurity::Wpa2,
+        _ if has(SecurityMode::Wpa) => WifiSecurity::Wpa,
+        _ if has(SecurityMode::Owe) => WifiSecurity::Owe,
+        _ if has(SecurityMode::Open) || modes == 0 => WifiSecurity::Open,
+        _ => WifiSecurity::Other,
+    }
+}
+
+/// The channel number of a primary channel centered at `mhz`.
+fn channel(mhz: u16) -> Option<u8> {
+    match mhz {
+        2484 => Some(14),
+        2412..=2472 => Some(((mhz - 2407) / 5) as u8),
+        5000..=5900 => Some(((mhz - 5000) / 5) as u8),
+        _ => None,
+    }
+}
+
 const fn matters(setting: Setting) -> bool {
     !matches!(
         setting,

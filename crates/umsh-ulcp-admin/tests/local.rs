@@ -228,6 +228,10 @@ fn writes_the_device_cannot_take_never_leave() {
     let (mut model, exchange) = device();
     assert_eq!(model.set_forwarding(true), Err(Refusal::Unsupported));
     assert_eq!(
+        model.set_lan_bearer_enabled(true),
+        Err(Refusal::Unsupported)
+    );
+    assert_eq!(
         model.set(prop::PHY_LORA_SW, &[0x12, 0x34]),
         Err(Refusal::WrongAccess)
     );
@@ -246,6 +250,14 @@ fn writes_the_device_cannot_take_never_leave() {
     assert_eq!(model.set(prop::ALERT, &[1]), Err(Refusal::NotCovered));
     assert!(!model.busy());
     assert!(exchange.port().sent.is_empty());
+}
+
+#[test]
+fn a_restart_goes_out_as_cmd_reboot() {
+    let (mut model, mut exchange) = device();
+    model.reboot().unwrap();
+    model.pump(&mut exchange, 2_000);
+    assert_eq!(commands(&exchange), [Cmd::Reboot]);
 }
 
 #[test]
@@ -377,4 +389,76 @@ fn a_switch_turned_at_the_device_is_taken_in_without_asking() {
     assert_eq!(events(&mut model), [Event::Changed(prop::BLE_ENABLED)]);
     assert_eq!(model.bluetooth_enabled(), Some(!was));
     assert!(exchange.port().sent.is_empty());
+}
+
+#[test]
+fn wifi_networks_are_kept_by_name_and_scans_arrive_as_published() {
+    use umsh_ulcp::wifi::{NetworkEntry, SecurityMode};
+    let mut sim = SimulatedDevice::new(SessionConfig {
+        wifi: Some(umsh_ulcp_simdev::WifiConfig::STATION),
+        ..config()
+    });
+    sim.open_device_interface();
+    let mut exchange = LocalExchange::new(Port {
+        sim,
+        sent: Vec::new(),
+        overrun: false,
+    });
+    let mut model = Model::new();
+    model.refresh();
+    model.pump(&mut exchange, 1_000);
+    assert_eq!(model.has_cap(cap::WIFI), Some(true));
+    assert_eq!(model.wifi_networks().count(), 0);
+
+    model.set_wifi_enabled(true).unwrap();
+    let office = NetworkEntry {
+        hidden: false,
+        raw_key: false,
+        manual: false,
+        security: SecurityMode::Wpa2,
+        ssid: b"Field Office",
+        credential: b"fieldwork",
+    };
+    model.save_wifi_network(&office).unwrap();
+    model.pump(&mut exchange, 2_000);
+    // Joined by itself, and published.
+    assert_eq!(model.wifi_network(), Some(&b"Field Office"[..]));
+    let saved: Vec<_> = model.wifi_networks().collect();
+    assert_eq!(saved.len(), 1);
+    assert!(saved[0].credential.is_empty());
+
+    // Join only by hand, keeping the password: the item is replaced, not
+    // added beside the old one.
+    model
+        .save_wifi_network(&NetworkEntry {
+            manual: true,
+            credential: b"",
+            ..office
+        })
+        .unwrap();
+    model.pump(&mut exchange, 3_000);
+    let saved: Vec<_> = model.wifi_networks().collect();
+    assert_eq!(saved.len(), 1);
+    assert!(saved[0].manual);
+
+    // A scan clears what is kept and fills it as the device hears.
+    model.read(prop::WIFI_SCAN_RESULTS);
+    model.scan_wifi().unwrap();
+    model.pump(&mut exchange, 4_000);
+    let heard = model.wifi_scan_results().count();
+    assert!(heard >= 3, "heard {heard}");
+    assert_eq!(model.wifi_scanning(), Some(false));
+
+    // Forgotten by name; the station leaves it.
+    model.forget_wifi_network(b"Field Office").unwrap();
+    model.pump(&mut exchange, 5_000);
+    assert_eq!(model.wifi_networks().count(), 0);
+    assert_eq!(model.wifi_network(), Some(&b""[..]));
+    assert!(events(&mut model).iter().all(|event| !matches!(
+        event,
+        Event::Written {
+            outcome: WriteOutcome::Refused(_) | WriteOutcome::Unknown,
+            ..
+        }
+    )));
 }

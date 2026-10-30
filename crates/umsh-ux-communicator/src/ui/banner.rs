@@ -28,7 +28,27 @@ pub fn view(state: &State, notice: Notice) -> impl View<Rgb565, State> + use<> {
     match_view!(notice, {
         Notice::Message(chat) => state.chat(chat).map(|summary| message(m, summary)),
         Notice::BatteryLow { percent } => battery(m, percent),
+        Notice::WifiFull => wifi_full(m),
     })
+}
+
+/// A network could not be saved.
+fn wifi_full(m: &'static Metrics) -> impl View<Rgb565, State> + use<> {
+    card(
+        m,
+        HStack::new((
+            label::<32>(
+                "Saved networks are full",
+                &font::BOLD,
+                m.secondary,
+                theme::AMBER,
+            )
+            .fixed_size(true, false),
+            Spacer::default(),
+        ))
+        .with_spacing(6),
+        BATTERY_WIDTH,
+    )
 }
 
 /// The chat as the list shows it: its name and last message.

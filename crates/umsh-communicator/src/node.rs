@@ -22,7 +22,7 @@ use umsh_ux_communicator::model::{
     Details, EventQueue, Heard, Invite, KeyboardSettings, LatestSent, MAX_HEARD, MAX_PATH,
     MeetState, Member, Message, MessageId, NearbyId, Neighbor, Node, NodeEvent, PeerDetail,
     PeerEntry, PeerId, PeerRoute, PeerSummary, Peers, PingView, RadioSettings, Reaction, Setting,
-    ShareUri, Shareable, Statistics,
+    ShareUri, Shareable, Statistics, WifiReading, WifiSecurity,
 };
 use umsh_ux_communicator::picker::RecentText;
 use umsh_ux_communicator::text::TextHeap;
@@ -863,11 +863,19 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
     }
 
     fn can_factory_reset(&self) -> bool {
-        self.settings.borrow().can_factory_reset()
+        self.settings.borrow().can_restart()
     }
 
     fn factory_reset(&self) {
         self.settings.borrow_mut().factory_reset();
+    }
+
+    fn can_restart(&self) -> bool {
+        self.settings.borrow().can_restart()
+    }
+
+    fn restart(&self) {
+        self.settings.borrow_mut().restart();
     }
 
     fn gnss_enabled(&self) -> Option<bool> {
@@ -876,6 +884,60 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
 
     fn set_gnss_enabled(&self, on: bool) {
         self.change(Setting::Gnss, |settings| settings.set_gnss_enabled(on));
+    }
+
+    // ─── Wi-Fi ───────────────────────────────────────────────────────
+
+    fn wifi(&self, reading: &mut WifiReading) {
+        self.settings.borrow().wifi(reading);
+    }
+
+    fn set_wifi_enabled(&self, on: bool) {
+        self.change(Setting::Wifi, |settings| settings.set_wifi_enabled(on));
+    }
+
+    fn scan_wifi(&self) {
+        self.change(Setting::Wifi, Settings::scan_wifi);
+    }
+
+    fn watch_wifi(&self, on: bool) {
+        self.settings.borrow_mut().watch_wifi(on);
+    }
+
+    fn join_wifi(&self, ssid: &[u8]) {
+        self.change(Setting::Wifi, |settings| settings.join_wifi(ssid));
+    }
+
+    fn disconnect_wifi(&self) {
+        self.change(Setting::Wifi, |settings| settings.join_wifi(&[]));
+    }
+
+    fn save_wifi(&self, ssid: &[u8], security: WifiSecurity, password: &str, hidden: bool) {
+        self.change(Setting::Wifi, |settings| {
+            settings.save_wifi(ssid, security, password, hidden)
+        });
+    }
+
+    fn set_wifi_auto_join(&self, ssid: &[u8], on: bool) {
+        self.change(Setting::Wifi, |settings| {
+            settings.set_wifi_auto_join(ssid, on)
+        });
+    }
+
+    fn change_wifi_password(&self, ssid: &[u8], password: &str) {
+        self.change(Setting::Wifi, |settings| {
+            settings.change_wifi_password(ssid, password)
+        });
+    }
+
+    fn forget_wifi(&self, ssid: &[u8]) {
+        self.change(Setting::Wifi, |settings| settings.forget_wifi(ssid));
+    }
+
+    fn set_ip_multicast(&self, on: bool) {
+        self.change(Setting::IpMulticast, |settings| {
+            settings.set_ip_multicast(on)
+        });
     }
 
     // ─── Contact exchange ────────────────────────────────────────────

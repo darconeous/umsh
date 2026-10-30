@@ -55,6 +55,7 @@ mod sounds;
 mod statistics;
 mod status;
 mod typing;
+mod wifi;
 
 pub use typing::picker_columns;
 

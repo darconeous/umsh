@@ -13,12 +13,12 @@ use heapless::String;
 use super::conversation::header;
 use super::setting::{End, card, choice, readout, row};
 use crate::board::Metrics;
-use crate::model::{BatteryReading, Bluetooth, ChatKind, RadioSettings, State};
+use crate::model::{BatteryReading, Bluetooth, ChatKind, RadioSettings, State, WifiStatus};
 use crate::nav::{DeviceConfirm, DevicePage, Screen, keys};
 use crate::theme;
 
 const ROW: u32 = 36;
-/// Shut down's and Factory reset's confirmations.
+/// Shut down's, Factory reset's and Restart's confirmations.
 const CONFIRM_WIDTH: u32 = 220;
 
 /// The categories, beside the rail.
@@ -84,6 +84,15 @@ pub fn view(state: &State) -> impl View<Rgb565, State> + use<> {
                         },
                     )
                 }),
+                state.wifi.enabled.map(|on| {
+                    let joined = on && state.wifi.status == WifiStatus::Connected;
+                    let name = if joined {
+                        crate::wifi_settings::ssid_text(&state.wifi.current)
+                    } else {
+                        String::new()
+                    };
+                    category("Wi-Fi", keys::WIFI, State::open_wifi, &name)
+                }),
                 state
                     .node
                     .gnss_enabled()
@@ -116,6 +125,17 @@ pub fn view(state: &State) -> impl View<Rgb565, State> + use<> {
                         "Factory reset",
                         keys::FACTORY_RESET,
                         State::ask_factory_reset,
+                        End::Nothing,
+                        false,
+                        ROW,
+                    )
+                }),
+                state.node.can_restart().then(|| {
+                    row(
+                        m,
+                        "Restart",
+                        keys::RESTART,
+                        State::ask_restart,
                         End::Nothing,
                         false,
                         ROW,
@@ -189,6 +209,18 @@ fn confirmation(m: &'static Metrics, confirm: DeviceConfirm) -> impl View<Rgb565
             ),
             State::cancel_factory_reset,
         ),
+        DeviceConfirm::Restart => (
+            choice(
+                m,
+                text("Restart"),
+                keys::RESTART_CONFIRM,
+                State::restart,
+                theme::TEXT,
+                None,
+            ),
+            cancel(keys::RESTART_CANCEL, State::cancel_restart),
+            State::cancel_restart,
+        ),
     };
     card(
         m,
@@ -200,6 +232,14 @@ fn confirmation(m: &'static Metrics, confirm: DeviceConfirm) -> impl View<Rgb565
 }
 
 /// A screen under Device.
+///
+/// Never inlined, so its builders stay out of `ui::screens`. Xtensa's
+/// `l32r` reaches a literal at most 256 KB back from the code that loads
+/// it, and a function's literals sit ahead of the whole function, so a
+/// `screens` that builds every screen inline fails to link ("dangerous
+/// relocation: l32r: literal target out of range") once it grows past
+/// that. The Device pages are the largest and fastest-growing group.
+#[inline(never)]
 pub fn page(state: &State, page: &DevicePage) -> impl View<Rgb565, State> + use<> {
     let m = state.metrics();
     match_view!(page, {
@@ -212,7 +252,8 @@ pub fn page(state: &State, page: &DevicePage) -> impl View<Rgb565, State> + use<
         DevicePage::Keyboard { settings } => super::typing::settings(m, settings, state.keyboard_firmware),
         DevicePage::TransmitPower { text } => super::typing::transmit_power(m, text),
         DevicePage::Clock { page } => super::clock::page(state, page),
-        DevicePage::Bluetooth { .. }
+        DevicePage::Wifi { .. }
+        | DevicePage::Bluetooth { .. }
         | DevicePage::Gnss
         | DevicePage::Battery
         | DevicePage::Sounds { .. }
@@ -228,6 +269,7 @@ pub fn page(state: &State, page: &DevicePage) -> impl View<Rgb565, State> + use<
 /// counters, and what it is and runs. Apart from [`page`], whose arms `match_view!` limits.
 fn board_page(state: &State, page: &DevicePage) -> impl View<Rgb565, State> + use<> {
     match_view!(page, {
+        DevicePage::Wifi { page } => super::wifi::view(state, page),
         DevicePage::Bluetooth { confirm } => super::links::bluetooth(state, *confirm),
         DevicePage::Gnss => super::links::gnss(state),
         DevicePage::Battery => super::battery::view(state),

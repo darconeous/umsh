@@ -46,4 +46,5 @@ pub mod text;
 pub mod theme;
 pub mod typeface;
 pub mod ui;
+pub mod wifi_settings;
 pub mod zones;

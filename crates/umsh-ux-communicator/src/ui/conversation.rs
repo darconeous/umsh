@@ -353,13 +353,25 @@ pub(super) fn titled(
     avatar: Option<&AvatarStyle>,
     about: &str,
 ) -> impl View<Rgb565, State> + use<> {
+    titled_with(m, name, color, avatar, about, theme::TEXT_TERTIARY)
+}
+
+/// [`titled`], with `about` in `about_color`.
+pub(super) fn titled_with(
+    m: &'static Metrics,
+    name: &str,
+    color: Rgb565,
+    avatar: Option<&AvatarStyle>,
+    about: &str,
+    about_color: Rgb565,
+) -> impl View<Rgb565, State> + use<> {
     HStack::new((
         back(m, |s| _ = s.back()),
         HStack::new((
             avatar.map(|style| super::avatar::view(style, AVATAR)),
             // An emoji's name, a channel's title, runs past a name's 32.
             label::<48>(name, &font::BOLD, m.body, color).fixed_size(true, false),
-            label::<16>(about, &font::MEDIUM, m.small, theme::TEXT_TERTIARY),
+            label::<16>(about, &font::MEDIUM, m.small, about_color),
             Spacer::default(),
         ))
         .with_spacing(6),

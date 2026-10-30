@@ -21,14 +21,16 @@ use alloc::vec::Vec;
 
 use umsh_ulcp::frame::{Cmd, Frame, MultiEntries, PropPayload};
 use umsh_ulcp::ids::{cap, prop};
+use umsh_ulcp::ip::{FamilyState, V4Address};
 use umsh_ulcp::profiles::PhyProfile;
-use umsh_ulcp::{Status, pui};
+use umsh_ulcp::wifi::{Link, NetworkEntry, ScanResult};
+use umsh_ulcp::{Status, items, pui};
 
 use crate::descriptor::{self, Access, COVERED, Descriptor, Kind, Value};
 use crate::exchange::{Arrival, Busy, Exchange, Request, Ticket};
 
 /// The most properties one `CMD_PROP_MULTI_GET` asks for.
-pub const BUNDLE_MAX: usize = 32;
+pub const BUNDLE_MAX: usize = 48;
 
 /// How far the cache can be trusted for one property.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -145,6 +147,7 @@ enum Write {
     },
     Save,
     FactoryReset,
+    Reboot,
 }
 
 impl Write {
@@ -153,7 +156,7 @@ impl Write {
         let (set, single) = match self {
             Self::Set(entries) => (Some(entries), None),
             Self::Insert { key, .. } | Self::Remove { key, .. } => (None, Some(*key)),
-            Self::Save | Self::FactoryReset => (None, None),
+            Self::Save | Self::FactoryReset | Self::Reboot => (None, None),
         };
         set.into_iter().flatten().map(|(key, _)| *key).chain(single)
     }
@@ -336,6 +339,21 @@ impl Model {
         Ok(id)
     }
 
+    /// Restart the device, keeping everything it has saved, `CMD_REBOOT`.
+    /// The device answers only a refusal; once it obeys, it restarts and
+    /// the link drops.
+    pub fn reboot(&mut self) -> Result<WriteId, Refusal> {
+        if self.has_cap(cap::REBOOT) != Some(true) {
+            return Err(Refusal::Unsupported);
+        }
+        let id = self.next_id();
+        self.queue.push_back(Queued::Write {
+            id,
+            write: Write::Reboot,
+        });
+        Ok(id)
+    }
+
     fn next_id(&mut self) -> WriteId {
         let id = WriteId(self.next_write);
         self.next_write = self.next_write.wrapping_add(1);
@@ -352,13 +370,18 @@ impl Model {
 
     fn check_item(&self, key: u32, item: &[u8]) -> Result<(), Refusal> {
         let descriptor = self.check(key)?;
-        let Kind::Items { item_len, .. } = descriptor.kind else {
+        if !descriptor.is_table() {
             return Err(Refusal::WrongAccess);
-        };
-        if item.len() != usize::from(item_len) {
-            return Err(Refusal::BadLength);
         }
-        Ok(())
+        let fits = match descriptor.kind {
+            Kind::Items { item_len, .. } => item.len() == usize::from(item_len),
+            Kind::Prefixed { .. } => !item.is_empty() && item.len() <= descriptor.max_len,
+            Kind::Scalar | Kind::Puis => return Err(Refusal::WrongAccess),
+        };
+        match fits {
+            true => Ok(()),
+            false => Err(Refusal::BadLength),
+        }
     }
 
     // ─── Traffic ─────────────────────────────────────────────────────
@@ -695,7 +718,7 @@ impl Model {
                 self.events.push_back(Event::Saved { id, result });
             }
             // Only a refusal is ever answered; there is nothing to keep.
-            Write::FactoryReset => {}
+            Write::FactoryReset | Write::Reboot => {}
         }
     }
 
@@ -795,8 +818,12 @@ impl Model {
 
     /// An item, in reported form, joined or left a table.
     fn table_change(&mut self, key: u32, item: &[u8], inserted: bool) {
-        let Some(Kind::Items { reported_len, .. }) = descriptor::descriptor(key).map(|d| d.kind)
-        else {
+        let kind = descriptor::descriptor(key).map(|d| d.kind);
+        if let Some(Kind::Prefixed { key: name }) = kind {
+            self.prefixed_change(key, name, item, inserted);
+            return;
+        }
+        let Some(Kind::Items { reported_len, .. }) = kind else {
             return;
         };
         let reported_len = usize::from(reported_len);
@@ -830,6 +857,57 @@ impl Model {
         if changed {
             self.events.push_back(Event::Changed(key));
         }
+    }
+
+    /// An item joined a length-prefixed table, replacing any of the same
+    /// name, or the item `item` names left it.
+    fn prefixed_change(
+        &mut self,
+        key: u32,
+        name: descriptor::ItemKey,
+        item: &[u8],
+        inserted: bool,
+    ) {
+        let Some(entry) = self.entries.get_mut(&key) else {
+            return;
+        };
+        let Some(value) = entry.value.as_ref() else {
+            self.read(key);
+            return;
+        };
+        let parsed: Result<Vec<&[u8]>, _> = items::prefixed_items(value).collect();
+        let named = match inserted {
+            true => name.of(item),
+            false => Some(item.to_vec()),
+        };
+        let (Ok(mut list), Some(named)) = (parsed, named) else {
+            entry.freshness = Freshness::Stale;
+            self.read(key);
+            return;
+        };
+        let position = list
+            .iter()
+            .position(|existing| name.of(existing).as_deref() == Some(named.as_slice()));
+        match (position, inserted) {
+            (Some(index), true) if list[index] == item => return,
+            (Some(index), true) => list[index] = item,
+            (None, true) => list.push(item),
+            (Some(index), false) => {
+                list.remove(index);
+            }
+            (None, false) => return,
+        }
+        let mut encoded = Vec::new();
+        for item in list {
+            let mut prefix = [0u8; 5];
+            let Ok(len) = pui::encode(item.len() as u32, &mut prefix) else {
+                return;
+            };
+            encoded.extend_from_slice(&prefix[..len]);
+            encoded.extend_from_slice(item);
+        }
+        entry.value = Some(encoded);
+        self.events.push_back(Event::Changed(key));
     }
 
     fn end_read(&mut self, key: u32) {
@@ -904,6 +982,13 @@ impl Model {
     }
 
     /// The items of a table, in reported form.
+    pub fn prefixed(&self, key: u32) -> Option<impl Iterator<Item = &[u8]>> {
+        let Kind::Prefixed { .. } = descriptor::descriptor(key)?.kind else {
+            return None;
+        };
+        Some(items::prefixed_items(self.raw(key)?).map_while(Result::ok))
+    }
+
     pub fn items(&self, key: u32) -> Option<core::slice::ChunksExact<'_, u8>> {
         let Kind::Items { reported_len, .. } = descriptor::descriptor(key)?.kind else {
             return None;
@@ -1189,6 +1274,96 @@ impl Model {
         self.remove(prop::DEV_CHANNEL_KEYS, key)
     }
 
+    // ─── Wi-Fi ───────────────────────────────────────────────────────
+
+    pub fn wifi_enabled(&self) -> Option<bool> {
+        self.bool(prop::WIFI_ENABLED)
+    }
+
+    pub fn set_wifi_enabled(&mut self, enabled: bool) -> Result<WriteId, Refusal> {
+        self.set(prop::WIFI_ENABLED, &[enabled as u8])
+    }
+
+    /// The stored networks, in reported form: no credential.
+    pub fn wifi_networks(&self) -> impl Iterator<Item = NetworkEntry<'_>> {
+        self.prefixed(prop::WIFI_NETWORKS)
+            .into_iter()
+            .flatten()
+            .filter_map(|item| NetworkEntry::decode(item).ok())
+    }
+
+    /// Store a network, replacing any of its name. An entry with no
+    /// credential, in a mode that takes one, keeps the stored one.
+    pub fn save_wifi_network(&mut self, entry: &NetworkEntry<'_>) -> Result<WriteId, Refusal> {
+        let mut item = [0u8; umsh_ulcp::wifi::NETWORK_ENTRY_MAX_LEN];
+        let len = entry.encode(&mut item).map_err(|_| Refusal::BadLength)?;
+        self.insert(prop::WIFI_NETWORKS, &item[..len])
+    }
+
+    pub fn forget_wifi_network(&mut self, ssid: &[u8]) -> Result<WriteId, Refusal> {
+        self.remove(prop::WIFI_NETWORKS, ssid)
+    }
+
+    /// The network the station is on or joining; empty for none.
+    pub fn wifi_network(&self) -> Option<&[u8]> {
+        self.raw(prop::WIFI_NETWORK)
+    }
+
+    /// Join `ssid` and stay on it, or pause with the empty name.
+    pub fn set_wifi_network(&mut self, ssid: &[u8]) -> Result<WriteId, Refusal> {
+        self.set(prop::WIFI_NETWORK, ssid)
+    }
+
+    pub fn wifi_scanning(&self) -> Option<bool> {
+        self.bool(prop::WIFI_SCANNING)
+    }
+
+    /// Scan. Results arrive as the device hears them.
+    pub fn scan_wifi(&mut self) -> Result<WriteId, Refusal> {
+        self.set(prop::WIFI_SCANNING, &[1])
+    }
+
+    /// What the last scan heard, as the device keeps it. Read with
+    /// [`Model::read`] when first wanted; a scan keeps it current.
+    pub fn wifi_scan_results(&self) -> impl Iterator<Item = ScanResult<'_>> {
+        self.prefixed(prop::WIFI_SCAN_RESULTS)
+            .into_iter()
+            .flatten()
+            .filter_map(|item| ScanResult::decode(item).ok())
+    }
+
+    pub fn wifi_link(&self) -> Option<Link> {
+        Link::decode(self.raw(prop::WIFI_LINK)?).ok()
+    }
+
+    /// Read with [`Model::read`] while someone is looking.
+    pub fn wifi_rssi(&self) -> Option<i8> {
+        match self.value(prop::WIFI_RSSI)? {
+            Value::I8(dbm) => Some(dbm),
+            _ => None,
+        }
+    }
+
+    pub fn ipv4_state(&self) -> Option<FamilyState> {
+        FamilyState::from_code(self.u8(prop::IPV4_STATE)?)
+    }
+
+    /// `PROP_LAN_BEARER_ENABLED`: whether UMSH runs over IP multicast.
+    pub fn lan_bearer_enabled(&self) -> Option<bool> {
+        self.bool(prop::LAN_BEARER_ENABLED)
+    }
+
+    pub fn set_lan_bearer_enabled(&mut self, enabled: bool) -> Result<WriteId, Refusal> {
+        self.set(prop::LAN_BEARER_ENABLED, &[u8::from(enabled)])
+    }
+
+    pub fn ipv4_address(&self) -> Option<V4Address> {
+        let first = items::prefixed_items(self.raw(prop::IPV4_ADDRESS)?)
+            .next()?
+            .ok()?;
+        V4Address::decode(first).ok()
+    }
+
     fn bool(&self, key: u32) -> Option<bool> {
         match self.value(key)? {
             Value::Bool(value) => Some(value),
@@ -1255,6 +1430,7 @@ fn submit_write<E: Exchange>(exchange: &mut E, write: &Write) -> Result<Ticket, 
         }),
         Write::Save => exchange.submit(&Request::Save),
         Write::FactoryReset => exchange.submit(&Request::FactoryReset),
+        Write::Reboot => exchange.submit(&Request::Reboot),
     }
 }
 

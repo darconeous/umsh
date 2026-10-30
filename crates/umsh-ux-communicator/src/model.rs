@@ -143,6 +143,151 @@ pub struct BluetoothReading {
     pub pin: Option<u32>,
 }
 
+/// The most saved networks a device keeps.
+pub const MAX_SAVED_NETWORKS: usize = 4;
+/// The most nearby networks Wi-Fi lists.
+pub const MAX_NEARBY_NETWORKS: usize = 12;
+
+/// A Wi-Fi network's name: any octets, at most 32.
+pub type Ssid = Vec<u8, 32>;
+
+/// How a Wi-Fi network is secured, as far as joining it goes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WifiSecurity {
+    #[default]
+    Open,
+    /// Enhanced Open: encrypted, with no password.
+    Owe,
+    Wpa,
+    Wpa2,
+    /// WPA2 and WPA3 both, as most networks are now.
+    Wpa2Wpa3,
+    Wpa3,
+    /// Something a password alone cannot join, such as enterprise.
+    Other,
+}
+
+impl WifiSecurity {
+    /// Whether joining takes a password.
+    #[must_use]
+    pub const fn takes_password(self) -> bool {
+        matches!(self, Self::Wpa | Self::Wpa2 | Self::Wpa2Wpa3 | Self::Wpa3)
+    }
+
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Open => "None",
+            Self::Owe => "Enhanced Open",
+            Self::Wpa => "WPA",
+            Self::Wpa2 => "WPA2",
+            Self::Wpa2Wpa3 => "WPA2/WPA3",
+            Self::Wpa3 => "WPA3",
+            Self::Other => "Enterprise",
+        }
+    }
+}
+
+/// Where the network in use stands.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WifiStatus {
+    #[default]
+    Joining,
+    GettingAddress,
+    Connected,
+    WrongPassword,
+    NotInRange,
+    Refused,
+}
+
+impl WifiStatus {
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Joining => "Joining",
+            Self::GettingAddress => "Getting address",
+            Self::Connected => "Connected",
+            Self::WrongPassword => "Wrong password",
+            Self::NotInRange => "Not in range",
+            Self::Refused => "Refused",
+        }
+    }
+
+    /// Whether joining has failed and is being tried again.
+    #[must_use]
+    pub const fn failing(self) -> bool {
+        matches!(self, Self::WrongPassword | Self::NotInRange | Self::Refused)
+    }
+}
+
+/// A network the device keeps.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SavedNetwork {
+    pub ssid: Ssid,
+    /// The strongest of its access points the last scan heard, in dBm.
+    pub rssi: Option<i8>,
+    pub security: WifiSecurity,
+    /// Joined by itself; otherwise only when told.
+    pub auto_join: bool,
+    /// Does not announce its name.
+    pub hidden: bool,
+}
+
+/// A network the last scan heard, and not saved.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct NearbyNetwork {
+    pub ssid: Ssid,
+    /// The strongest of its access points, in dBm.
+    pub rssi: i8,
+    pub security: WifiSecurity,
+}
+
+/// Wi-Fi as it stands.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WifiReading {
+    /// Whether the station is on. `None` where the board has none.
+    pub enabled: Option<bool>,
+    /// The network in use; empty for none.
+    pub current: Ssid,
+    /// Where the network in use stands.
+    pub status: WifiStatus,
+    /// With no network in use: looking for a saved one, rather than told
+    /// to join nothing.
+    pub searching: bool,
+    /// The signal, in dBm, while joined and watched.
+    pub rssi: Option<i8>,
+    /// The channel of the access point joined.
+    pub channel: Option<u8>,
+    /// The IPv4 address, while there is one.
+    pub address: Option<[u8; 4]>,
+    /// Whether UMSH runs over IP multicast. `None` where the device
+    /// cannot.
+    pub ip_multicast: Option<bool>,
+    pub saved: Vec<SavedNetwork, MAX_SAVED_NETWORKS>,
+    /// Strongest first.
+    pub nearby: Vec<NearbyNetwork, MAX_NEARBY_NETWORKS>,
+    /// A scan is running.
+    pub scanning: bool,
+}
+
+impl WifiReading {
+    /// The saved network called `ssid`.
+    #[must_use]
+    pub fn saved(&self, ssid: &[u8]) -> Option<&SavedNetwork> {
+        self.saved.iter().find(|network| network.ssid == ssid)
+    }
+}
+
+/// Bars of a signal of `rssi` dBm, 1 to 3.
+#[must_use]
+pub const fn wifi_bars(rssi: i8) -> u8 {
+    match rssi {
+        -60..=0 => 3,
+        -72..=-61 => 2,
+        _ => 1,
+    }
+}
+
 /// The GNSS receiver's solution as it stands.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct GnssReading {
@@ -1252,6 +1397,10 @@ pub enum Setting {
     Sound,
     Volume,
     Setup,
+    Wifi,
+    /// A network could not be saved: the device keeps no more.
+    WifiFull,
+    IpMulticast,
 }
 
 /// What changed in the node without the interface asking. An event names
@@ -1708,6 +1857,44 @@ pub trait Node {
     /// Forgets every paired phone.
     fn clear_pairings(&self);
 
+    // ─── Wi-Fi ───────────────────────────────────────────────────────
+
+    /// Wi-Fi as it stands, read into `reading`. Changes come as
+    /// [`NodeEvent::SettingsChanged`].
+    fn wifi(&self, reading: &mut WifiReading);
+
+    fn set_wifi_enabled(&self, on: bool);
+
+    /// Scans. What it hears comes as [`NodeEvent::SettingsChanged`].
+    fn scan_wifi(&self);
+
+    /// Keeps the signal being read while `on`.
+    fn watch_wifi(&self, on: bool);
+
+    /// Joins the saved network `ssid`, and stays on it.
+    fn join_wifi(&self, ssid: &[u8]);
+
+    /// Leaves the network in use, and joins nothing by itself.
+    fn disconnect_wifi(&self);
+
+    /// Saves `ssid`, secured as `security` with `password`, to join by
+    /// itself, and joins it. A refusal comes as
+    /// [`NodeEvent::SettingRefused`] of [`Setting::WifiFull`] when the
+    /// device keeps no more networks.
+    fn save_wifi(&self, ssid: &[u8], security: WifiSecurity, password: &str, hidden: bool);
+
+    /// Whether the saved network `ssid` joins by itself.
+    fn set_wifi_auto_join(&self, ssid: &[u8], on: bool);
+
+    /// Gives the saved network `ssid` a new password.
+    fn change_wifi_password(&self, ssid: &[u8], password: &str);
+
+    /// Forgets the saved network `ssid`.
+    fn forget_wifi(&self, ssid: &[u8]);
+
+    /// Whether UMSH runs over IP multicast on the network in use.
+    fn set_ip_multicast(&self, on: bool);
+
     /// Whether the GNSS receiver is on. `None` where the board has none.
     fn gnss_enabled(&self) -> Option<bool>;
 
@@ -1736,6 +1923,12 @@ pub trait Node {
 
     /// Erases everything the device keeps, and restarts it as new.
     fn factory_reset(&self);
+
+    /// Whether the device can restart.
+    fn can_restart(&self) -> bool;
+
+    /// Restarts the device, keeping everything it has saved.
+    fn restart(&self);
 }
 
 /// At or below this charge, in percent, the battery is low.
@@ -1775,6 +1968,8 @@ pub enum Notice {
     Message(ChatId),
     /// The charge has fallen low, to `percent`.
     BatteryLow { percent: u8 },
+    /// A network could not be saved: the device keeps no more.
+    WifiFull,
 }
 
 /// A chat that got a message while the interface was locked, as the lock
@@ -1817,6 +2012,8 @@ pub struct State {
     pub wall_time: Option<u32>,
     /// The clock's settings, as the node last said.
     pub clock: ClockSettings,
+    /// Wi-Fi, as the node last said, while its screens are open.
+    pub wifi: WifiReading,
     /// The open chat's messages, while one is open.
     pub conversation: Option<Conversation>,
     /// The screens, the one shown last. The Chats screen is always first.
@@ -1974,6 +2171,7 @@ impl State {
             peers: Vec::new(),
             wall_time: None,
             clock: ClockSettings::default(),
+            wifi: WifiReading::default(),
             conversation: None,
             screens,
             node,
@@ -2189,6 +2387,13 @@ impl State {
             NodeEvent::PingSettled(peer) => self.refresh_ping(Some(peer)),
             // The route screen reads the node as it is drawn.
             NodeEvent::RouteChanged(_) => self.refresh_peer(),
+            NodeEvent::SettingRefused(Setting::WifiFull) => {
+                self.banner = Some(Banner {
+                    notice: Notice::WifiFull,
+                    until: self.uptime + BANNER_MS,
+                });
+                self.refresh_settings();
+            }
             NodeEvent::SettingsChanged | NodeEvent::SettingRefused(_) => self.refresh_settings(),
             NodeEvent::Airtime { wait } => self.airtime_wait = wait,
             NodeEvent::MeetChanged => self.refresh_meet(),

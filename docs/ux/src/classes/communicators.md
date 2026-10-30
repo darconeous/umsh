@@ -191,6 +191,44 @@ since power-on are not read off the clock and may still show.
 - **Every time shown** is in the offset its zone kept at that instant, so a
   message from before a daylight-saving change keeps its own hour.
 
+## Wi-Fi
+
+**Device › Wi-Fi**, on a board with a station, joins networks on the device
+itself, as the [Wi-Fi mockups](../hardware/mockups/communicator-wifi.svg)
+draw it. Saved networks join by themselves, as on a phone. A phone can do
+the same over ULCP and is never needed. The Device row's value is the network
+the device is on.
+
+- **The switch** powers the station (`PROP_WIFI_ENABLED`). Off, the screen is
+  only the switch and IP multicast; turning it off forgets nothing.
+- **The network in use** is its own row under the switch, with the strip's fan
+  and what the link is doing: Joining, Getting address, Connected, or why it
+  is not on yet (Wrong password, Not in range, Refused). With no network,
+  the row says **Searching** while the device looks for a saved one, or
+  **Disconnected** after Disconnect. Once the device has an address, an
+  **IP address** readout follows it.
+- **Saved** lists the other saved networks, heard or not. **Nearby** lists what
+  the last scan heard and is not saved, one row per name, strongest first,
+  with a padlock on those that take a password. Opening the screen scans once;
+  **Scan again** ends the list.
+- **Joining** a nearby network asks for its password, typed in the clear, and
+  saves it to join automatically. An open network joins on the press. **Other
+  network** joins one that hides its name: name, security, and password.
+- **A network's sheet** opens from its row. The one in use offers
+  **Disconnect**, **Join automatically**, and **Change password**, then its
+  signal, IPv4 address, channel, and security, and last **Forget**,
+  confirmed. A saved one offers **Join** first. When the password is what
+  failed, Change password comes first. No password is ever shown again.
+- **Disconnect** leaves and joins nothing by itself until a network is
+  joined from its sheet, Wi-Fi is turned off and on, or the device restarts.
+- **IP multicast**, last, carries UMSH over IP multicast on whatever network
+  is in use (`PROP_LAN_BEARER_ENABLED`). It shows only on a device that
+  forwards over it.
+- **The strip's fan** shows while the device is on, joining, or failing to
+  join a network: full when joined, smaller while joining, crossed while it
+  is failing. Searching and Disconnected show none. It says nothing about the
+  Internet or a bridge.
+
 ## Identity and channels
 
 **Device › Identity** is this device's own sheet, laid out as a saved peer's:

@@ -2,7 +2,7 @@
 backspace
 turn 2
 press
-turn 6
+turn 7
 shot device-links
 press
 shot bluetooth
@@ -11,6 +11,6 @@ press
 shot bluetooth-clear
 backspace
 backspace
-turn 1
+turn 2
 press
 shot gnss
