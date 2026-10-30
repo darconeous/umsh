@@ -29,12 +29,16 @@ struct RemoteWifiScreen: View {
         reading?.properties.wifiNetworks ?? []
     }
 
-    /// Which of them the device is set to use, if any. An empty value is a
-    /// value: it means the operator deselected everything.
-    private var selectedSSID: Data? {
-        guard let selected = edits.network.value, !selected.isEmpty else { return nil }
-        return selected
+    /// The network the device is on or joining, if any. Live: it follows
+    /// the device rather than an edit, since the device chooses by itself.
+    private var currentSSID: Data? {
+        guard let current = reading?.properties.wifiNetwork, !current.isEmpty else { return nil }
+        return current
     }
+
+    /// Whether the station is on as the device last reported it, which is
+    /// what decides whether a network can be joined right now.
+    private var stationIsOn: Bool { reading?.properties.wifiEnabled == true }
 
     var body: some View {
         Form {
@@ -66,11 +70,7 @@ struct RemoteWifiScreen: View {
             }
             Button("Cancel", role: .cancel) { forgetting = nil }
         } message: {
-            Text(
-                forgetting == selectedSSID
-                    ? "The device is using this network, so forgetting it disconnects the device. Its passphrase is forgotten with it."
-                    : "The device forgets this network and its passphrase."
-            )
+            Text("The device forgets this network and its password.")
         }
         .remoteCategoryChrome(
             model: model,
@@ -110,6 +110,9 @@ struct RemoteWifiScreen: View {
     @ViewBuilder
     private var connectionSection: some View {
         Section {
+            if let currentSSID {
+                LabeledContent("Network") { WifiNameLabel(ssid: currentSSID) }
+            }
             RemoteValueRow("Status", value: connectionSummary)
             if let link = reading?.properties.wifiLink, let bssid = link.bssid {
                 RemoteValueRow("Access point", value: macAddressText(bssid))
@@ -167,37 +170,62 @@ struct RemoteWifiScreen: View {
                 joining = WifiJoinTarget(ssid: Data(), hidden: true, offered: nil)
             }
         } header: {
-            RemoteFieldTitle("Networks", problem: problems[edits.network.property])
-        } footer: {
-            Text(
-                "The device joins the network with a check beside it. Tap another to switch, or tap the checked one to disconnect. Swipe a network to forget it."
-            )
+            Text("Networks")
         }
     }
 
     private func knownNetworkRow(_ network: UlcpWifiNetworkRecord) -> some View {
-        Button {
-            // Tapping the selected entry deselects it, which is how a
-            // device is told to stay off a network it still knows.
-            edits.network.edited = network.ssid == selectedSSID ? Data() : network.ssid
-        } label: {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    WifiNameLabel(ssid: network.ssid)
-                    HStack(spacing: 6) {
-                        Text("Minimum: \(wifiSecurityName(network.security))")
-                        if network.hidden { Text("Hidden") }
+        let isCurrent = network.ssid == currentSSID
+        return HStack {
+            // Tapping a network joins it now; the device's own choice is
+            // what the auto-join switch in the menu governs.
+            Button {
+                Task { await model.joinKnownNetwork(ssid: network.ssid) }
+            } label: {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        WifiNameLabel(ssid: network.ssid)
+                        HStack(spacing: 6) {
+                            Text("Minimum: \(wifiSecurityName(network.security))")
+                            if network.hidden { Text("Hidden") }
+                            if !network.autoJoin {
+                                Text("Joins only when chosen", comment: "A saved Wi-Fi network the device never joins by itself")
+                            }
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                     }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    Spacer()
+                    if isCurrent {
+                        Image(systemName: "checkmark").foregroundStyle(.tint)
+                    }
                 }
-                Spacer()
-                if network.ssid == selectedSSID {
-                    Image(systemName: "checkmark").foregroundStyle(.tint)
-                }
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .disabled(!stationIsOn || isCurrent || model.isBusy)
+            Menu {
+                Toggle(
+                    "Join Automatically",
+                    isOn: Binding(
+                        get: { network.autoJoin },
+                        set: { on in Task { await model.setAutoJoin(network, on) } }
+                    )
+                )
+                if isCurrent {
+                    Button("Disconnect") {
+                        Task { await model.disconnectNetwork() }
+                    }
+                }
+                Button("Forget", role: .destructive) { forgetting = network.ssid }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .accessibilityLabel(Text("Network options"))
+            }
+            .buttonStyle(.borderless)
+            .disabled(model.isBusy)
+            .accessibilityIdentifier("wifi-network-options")
         }
-        .tint(.primary)
         .swipeActions {
             Button("Forget", role: .destructive) { forgetting = network.ssid }
         }
@@ -329,14 +357,14 @@ struct RemoteWifiScreen: View {
         }
     }
 
-    /// The two settings on this screen that Apply writes.
+    /// The one setting on this screen that Apply writes.
     ///
     /// Scanning is not one: it is a button, not a field. Neither is the
-    /// network table, which is edited an item at a time because a
+    /// network the device is on, which is live and moves by itself, nor
+    /// the network table, which is edited an item at a time because a
     /// credential can only be sent and never read back.
     private struct Edits {
         var enabled = RemoteField<Bool>(0, nil)
-        var network = RemoteField<Data>(0, nil)
         var isEmpty = true
         var held = UlcpDevicePropertiesRecord.empty
 
@@ -346,7 +374,6 @@ struct RemoteWifiScreen: View {
             let id = ulcpProperties
             held = reading?.properties ?? UlcpDevicePropertiesRecord.empty
             enabled = RemoteField(id.wifiEnabled, held.wifiEnabled)
-            network = RemoteField(id.wifiNetwork, held.wifiNetwork)
             isEmpty = reading == nil
         }
 
@@ -354,7 +381,6 @@ struct RemoteWifiScreen: View {
             self.init(reading)
             guard !old.isEmpty else { return }
             enabled = enabled.preserving(old.enabled)
-            network = network.preserving(old.network)
         }
 
         /// Whether Apply would switch the station off. Only an edit counts:
@@ -364,14 +390,12 @@ struct RemoteWifiScreen: View {
         var dirty: Set<UInt32> {
             var dirty: Set<UInt32> = []
             if enabled.isDirty { dirty.insert(enabled.property) }
-            if network.isDirty { dirty.insert(network.property) }
             return dirty
         }
 
         var desired: UlcpDevicePropertiesRecord {
             var desired = held
             desired.wifiEnabled = enabled.value
-            desired.wifiNetwork = network.value
             return desired
         }
     }
@@ -506,6 +530,9 @@ struct WifiJoinSheet: View {
     /// is enough to try.
     private var isSubmittable: Bool {
         guard !ssid.isEmpty, ssid.count <= 32 else { return false }
+        // An empty password would be the form that keeps a stored one,
+        // which a network being added does not have.
+        guard !needsCredential || !credential.isEmpty else { return false }
         return (try? item()) != nil
     }
 
@@ -514,6 +541,7 @@ struct WifiJoinSheet: View {
             ssid: ssid,
             security: security,
             hidden: target.hidden,
+            autoJoin: true,
             credential: Data(credential.utf8)
         )
     }

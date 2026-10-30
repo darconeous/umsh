@@ -715,23 +715,31 @@ final class ManageDeviceModel {
         }
     }
 
-    /// Store and select a network, then save both in one snapshot. Saving
-    /// before selection would leave Join working only until the next boot.
+    /// Store a network, turn the station on if it is off, join the network
+    /// now, and save. The save keeps the network and the switch; which
+    /// network the device is on is live state and is never saved.
     ///
     /// Returns the refusal status where there was one, so the join sheet
     /// can offer a weaker security mode against `STATUS_UNIMPLEMENTED`
     /// rather than making the operator start again.
     func joinNetwork(item: Data, ssid: Data) async -> UInt32? {
         var refusal: UInt32?
+        let enabled = readings[.wifi]?.properties.wifiEnabled == true
         await run { [self] in
             do {
                 try await management.insertNetwork(address, item)
-                let answers = try await management.write(address, [
-                    MobileMeshPropertyWriteRecord(
-                        propertyId: ulcpProperties.wifiNetwork,
-                        value: ssid
-                    )
-                ])
+                var writes: [MobileMeshPropertyWriteRecord] = []
+                if !enabled {
+                    writes.append(MobileMeshPropertyWriteRecord(
+                        propertyId: ulcpProperties.wifiEnabled,
+                        value: Data([1])
+                    ))
+                }
+                writes.append(MobileMeshPropertyWriteRecord(
+                    propertyId: ulcpProperties.wifiNetwork,
+                    value: ssid
+                ))
+                let answers = try await management.write(address, writes)
                 if let refused = answers.first(where: { $0.value == nil }) {
                     throw RemoteManagementError.refused(status: refused.statusCode ?? 0)
                 }
@@ -746,6 +754,41 @@ final class ManageDeviceModel {
             await refreshCategory(.wifi)
         }
         return refusal
+    }
+
+    /// Join a network the device already knows, now.
+    func joinKnownNetwork(ssid: Data) async {
+        await write([
+            MobileMeshPropertyWriteRecord(propertyId: ulcpProperties.wifiNetwork, value: ssid)
+        ])
+    }
+
+    /// Leave the current network and stay off every network until one is
+    /// joined or the station is turned off and on.
+    func disconnectNetwork() async {
+        await write([
+            MobileMeshPropertyWriteRecord(propertyId: ulcpProperties.wifiNetwork, value: Data())
+        ])
+    }
+
+    /// Let the device choose a known network by itself, or not, and save.
+    ///
+    /// The insert carries an empty password, which keeps the one the
+    /// device holds: this phone may never have had it.
+    func setAutoJoin(_ network: UlcpWifiNetworkRecord, _ autoJoin: Bool) async {
+        await run { [self] in
+            let item = try ulcpWifiNetworkItem(
+                ssid: network.ssid,
+                security: network.security,
+                hidden: network.hidden,
+                autoJoin: autoJoin,
+                credential: Data()
+            )
+            try await management.insertNetwork(address, item)
+            try await management.save(address)
+        }
+        guard problem == nil else { return }
+        await refreshCategory(.wifi)
     }
 
     /// Forget one network by name, and save.

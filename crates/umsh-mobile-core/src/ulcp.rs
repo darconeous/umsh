@@ -5383,6 +5383,9 @@ pub fn inspect_ulcp_device_card(
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct UlcpWifiNetworkRecord {
     pub hidden: bool,
+    /// Whether the device may choose this network by itself. False means
+    /// it joins only when a host names it.
+    pub auto_join: bool,
     /// A `WIFI_SEC_*` code.
     pub security: u8,
     /// Arbitrary octets, not text: a display renders them as UTF-8 when
@@ -5650,9 +5653,9 @@ pub struct UlcpDevicePropertiesRecord {
     pub wifi_enabled: Option<bool>,
     /// The networks the device knows, without their credentials.
     pub wifi_networks: Option<Vec<UlcpWifiNetworkRecord>>,
-    /// The selected network's SSID. **Present and empty** means the
-    /// device is deselected, which is a state; absent means the property
-    /// was not read.
+    /// The network the station is on or joining. Live, never saved.
+    /// **Present and empty** means it is searching, paused, or off;
+    /// absent means the property was not read.
     pub wifi_network: Option<Vec<u8>>,
     /// Whether a scan is running.
     pub wifi_scanning: Option<bool>,
@@ -7045,11 +7048,17 @@ fn encode_resolver_list(resolvers: &[Vec<u8>]) -> Result<Vec<u8>, MobileError> {
 /// validated against its mode before it is encoded, so a passphrase the
 /// device would refuse never reaches the air, and the octets are not
 /// retained anywhere afterward.
+///
+/// An empty credential for a mode that takes one builds the insert that
+/// keeps the passphrase the device already holds for that SSID and
+/// security, which is how a host changes `auto_join` on a network whose
+/// password it never had.
 #[uniffi::export]
 pub fn ulcp_wifi_network_item(
     ssid: Vec<u8>,
     security: u8,
     hidden: bool,
+    auto_join: bool,
     credential: Vec<u8>,
 ) -> Result<Vec<u8>, MobileError> {
     let security = wifi::SecurityMode::from_code(security).ok_or(MobileError::InvalidUlcpFrame)?;
@@ -7058,12 +7067,13 @@ pub fn ulcp_wifi_network_item(
         // A host that holds a raw key is not a case the phone has: it
         // has the passphrase the operator typed.
         raw_key: false,
+        manual: !auto_join,
         security,
         ssid: &ssid,
         credential: &credential,
     };
     entry
-        .validate()
+        .validate_insert()
         .map_err(|_| MobileError::InvalidUlcpFrame)?;
     let mut out = vec![0u8; wifi::NETWORK_ENTRY_MAX_LEN];
     let len = entry
@@ -7096,6 +7106,7 @@ fn decode_wifi_networks(value: &[u8]) -> Result<Vec<UlcpWifiNetworkRecord>, Mobi
         let entry = wifi::NetworkEntry::decode(item).map_err(|_| MobileError::InvalidUlcpFrame)?;
         networks.push(UlcpWifiNetworkRecord {
             hidden: entry.hidden,
+            auto_join: !entry.manual,
             security: entry.security.code(),
             ssid: entry.ssid.to_vec(),
         });
@@ -12575,6 +12586,7 @@ mod tests {
         let entry_len = wifi::NetworkEntry {
             hidden: true,
             raw_key: false,
+            manual: true,
             security: wifi::SecurityMode::Wpa3,
             ssid: b"home",
             credential: b"",
@@ -12612,6 +12624,7 @@ mod tests {
             properties.wifi_networks,
             Some(vec![UlcpWifiNetworkRecord {
                 hidden: true,
+                auto_join: false,
                 security: wifi::SecurityMode::Wpa3.code(),
                 ssid: b"home".to_vec(),
             }]),
@@ -12638,12 +12651,37 @@ mod tests {
     }
 
     #[test]
-    fn a_deselected_station_is_a_value_not_an_absence() {
+    fn a_network_item_may_keep_the_stored_password() {
+        let wpa2 = wifi::SecurityMode::Wpa2.code();
+        // Empty credential: the keep-password form, carrying only the
+        // flags a host is changing.
+        let keep =
+            ulcp_wifi_network_item(b"home".to_vec(), wpa2, false, false, Vec::new()).unwrap();
+        let entry = wifi::NetworkEntry::decode(&keep).unwrap();
+        assert!(entry.manual);
+        assert!(entry.keeps_credential());
+        // A credential still has to fit its mode when there is one.
+        assert!(
+            ulcp_wifi_network_item(b"home".to_vec(), wpa2, false, true, b"short".to_vec()).is_err()
+        );
+        let full = ulcp_wifi_network_item(
+            b"home".to_vec(),
+            wpa2,
+            false,
+            true,
+            b"correct horse".to_vec(),
+        )
+        .unwrap();
+        assert!(!wifi::NetworkEntry::decode(&full).unwrap().manual);
+    }
+
+    #[test]
+    fn an_empty_network_is_a_value_not_an_absence() {
         let properties = inspect_ulcp_properties(vec![response(prop::WIFI_NETWORK, b"")]);
         assert_eq!(
             properties.wifi_network,
             Some(Vec::new()),
-            "empty means deselected, which a screen shows differently from unread"
+            "empty means searching, paused, or off, which a screen shows differently from unread"
         );
         assert_eq!(
             inspect_ulcp_properties(Vec::new()).wifi_network,
@@ -13032,6 +13070,7 @@ mod tests {
             b"home".to_vec(),
             wifi::SecurityMode::Wpa2.code(),
             false,
+            true,
             b"correct horse".to_vec(),
         )
         .unwrap();
@@ -13045,6 +13084,7 @@ mod tests {
                 b"home".to_vec(),
                 wifi::SecurityMode::Wpa2.code(),
                 false,
+                true,
                 b"short".to_vec()
             )
             .is_err()
@@ -13055,6 +13095,7 @@ mod tests {
                 b"home".to_vec(),
                 wifi::SecurityMode::Open.code(),
                 false,
+                true,
                 b"unexpected".to_vec()
             )
             .is_err()
@@ -13064,6 +13105,7 @@ mod tests {
                 b"home".to_vec(),
                 wifi::SecurityMode::Open.code(),
                 false,
+                true,
                 Vec::new()
             )
             .is_ok()
@@ -13074,6 +13116,7 @@ mod tests {
                 b"home".to_vec(),
                 wifi::SecurityMode::Wpa2Ent.code(),
                 false,
+                true,
                 Vec::new()
             )
             .is_err()
@@ -13084,6 +13127,7 @@ mod tests {
                 Vec::new(),
                 wifi::SecurityMode::Open.code(),
                 false,
+                true,
                 Vec::new()
             )
             .is_err()

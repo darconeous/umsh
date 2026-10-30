@@ -11147,9 +11147,9 @@ public struct UlcpDevicePropertiesRecord: Equatable, Hashable {
      */
     public var wifiNetworks: [UlcpWifiNetworkRecord]?
     /**
-     * The selected network's SSID. **Present and empty** means the
-     * device is deselected, which is a state; absent means the property
-     * was not read.
+     * The network the station is on or joining. Live, never saved.
+     * **Present and empty** means it is searching, paused, or off;
+     * absent means the property was not read.
      */
     public var wifiNetwork: Data?
     /**
@@ -11298,9 +11298,9 @@ public struct UlcpDevicePropertiesRecord: Equatable, Hashable {
          * The networks the device knows, without their credentials.
          */wifiNetworks: [UlcpWifiNetworkRecord]?,
         /**
-         * The selected network's SSID. **Present and empty** means the
-         * device is deselected, which is a state; absent means the property
-         * was not read.
+         * The network the station is on or joining. Live, never saved.
+         * **Present and empty** means it is searching, paused, or off;
+         * absent means the property was not read.
          */wifiNetwork: Data?,
         /**
          * Whether a scan is running.
@@ -14594,6 +14594,11 @@ public func FfiConverterTypeUlcpWifiLinkRecord_lower(_ value: UlcpWifiLinkRecord
 public struct UlcpWifiNetworkRecord: Equatable, Hashable {
     public var hidden: Bool
     /**
+     * Whether the device may choose this network by itself. False means
+     * it joins only when a host names it.
+     */
+    public var autoJoin: Bool
+    /**
      * A `WIFI_SEC_*` code.
      */
     public var security: UInt8
@@ -14607,6 +14612,10 @@ public struct UlcpWifiNetworkRecord: Equatable, Hashable {
     // declare one manually.
     public init(hidden: Bool,
         /**
+         * Whether the device may choose this network by itself. False means
+         * it joins only when a host names it.
+         */autoJoin: Bool,
+        /**
          * A `WIFI_SEC_*` code.
          */security: UInt8,
         /**
@@ -14614,6 +14623,7 @@ public struct UlcpWifiNetworkRecord: Equatable, Hashable {
          * they decode and as hex when they do not.
          */ssid: Data) {
         self.hidden = hidden
+        self.autoJoin = autoJoin
         self.security = security
         self.ssid = ssid
     }
@@ -14635,6 +14645,7 @@ public struct FfiConverterTypeUlcpWifiNetworkRecord: FfiConverterRustBuffer {
         return
             try UlcpWifiNetworkRecord(
                 hidden: FfiConverterBool.read(from: &buf),
+                autoJoin: FfiConverterBool.read(from: &buf),
                 security: FfiConverterUInt8.read(from: &buf),
                 ssid: FfiConverterData.read(from: &buf)
         )
@@ -14642,6 +14653,7 @@ public struct FfiConverterTypeUlcpWifiNetworkRecord: FfiConverterRustBuffer {
 
     public static func write(_ value: UlcpWifiNetworkRecord, into buf: inout [UInt8]) {
         FfiConverterBool.write(value.hidden, into: &buf)
+        FfiConverterBool.write(value.autoJoin, into: &buf)
         FfiConverterUInt8.write(value.security, into: &buf)
         FfiConverterData.write(value.ssid, into: &buf)
     }
@@ -21605,14 +21617,20 @@ public func ulcpSupportedBandwidthsHz() -> [UInt32]  {
  * validated against its mode before it is encoded, so a passphrase the
  * device would refuse never reaches the air, and the octets are not
  * retained anywhere afterward.
+ *
+ * An empty credential for a mode that takes one builds the insert that
+ * keeps the passphrase the device already holds for that SSID and
+ * security, which is how a host changes `auto_join` on a network whose
+ * password it never had.
  */
-public func ulcpWifiNetworkItem(ssid: Data, security: UInt8, hidden: Bool, credential: Data)throws  -> Data  {
+public func ulcpWifiNetworkItem(ssid: Data, security: UInt8, hidden: Bool, autoJoin: Bool, credential: Data)throws  -> Data  {
     return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
         uniffiCallStatus in
     uniffi_umsh_mobile_core_fn_func_ulcp_wifi_network_item(
         FfiConverterData.lower(ssid),
         FfiConverterUInt8.lower(security),
         FfiConverterBool.lower(hidden),
+        FfiConverterBool.lower(autoJoin),
         FfiConverterData.lower(credential),uniffiCallStatus
     )
 })
@@ -21654,7 +21672,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_generate_channel_key() != 31413) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_func_generate_identity_secret() != 13745) {
+    if (uniffi_umsh_mobile_core_checksum_func_generate_identity_secret() != 48507) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_inspect_channel_name() != 40184) {
@@ -21840,7 +21858,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_supported_bandwidths_hz() != 65256) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_func_ulcp_wifi_network_item() != 36496) {
+    if (uniffi_umsh_mobile_core_checksum_func_ulcp_wifi_network_item() != 39528) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileidentity_public_identity() != 38823) {

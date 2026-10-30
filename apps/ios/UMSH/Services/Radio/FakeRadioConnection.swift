@@ -782,10 +782,17 @@ actor FakeRadioConnection: RadioConnection {
             play { await $0.runScan() }
             return .handled
         case id.wifiEnabled:
-            let enabling = write.value.first == 1
-            play { await $0.settleLink(up: enabling) }
+            // Coming up, the station chooses a network by itself; going
+            // down, it is on none. Either way the live network moves.
+            let chosen = write.value.first == 1 ? managedDevice.firstAutoJoinNetwork : nil
+            managedDevice.values[id.wifiNetwork] = chosen ?? Data()
+            push(id.wifiNetwork, chosen ?? Data())
+            play { await $0.settleLink(up: chosen != nil) }
             return .store
         case id.wifiNetwork:
+            // `INVALID_STATE` while off, then `ITEM_NOT_FOUND`, in the
+            // order the chapter gives them. Empty pauses.
+            guard managedDevice.values[id.wifiEnabled]?.first == 1 else { return .refused(4) }
             guard managedDevice.knowsNetwork(ssid: write.value) else { return .refused(20) }
             play { [selected = write.value] in await $0.settleLink(up: !selected.isEmpty) }
             return .store
@@ -1761,15 +1768,25 @@ struct FakeManagedDevice: Sendable {
         let ssid = item.subdata(in: item.startIndex + 3 ..< item.startIndex + 3 + nameLength)
         let credential = item.subdata(in: item.startIndex + 3 + nameLength ..< item.endIndex)
         guard security != 3 else { return 2 }
-        if security == 2 || security == 4 {
-            guard (8...63).contains(credential.count) else { return 3 }
-        }
         var entries = networkEntries
         let replacing = entries.firstIndex { Self.ssid(ofEntry: $0) == ssid }
+        var flags = item[item.startIndex]
+        if security == 2 || security == 4 {
+            if credential.isEmpty {
+                // The keep-password form: only the flags change, and only
+                // on an entry this device holds under the same security.
+                guard let replacing else { return 20 }
+                let stored = entries[replacing]
+                guard stored[stored.startIndex + 1] == security else { return 3 }
+                flags = (flags & ~0x02) | (stored[stored.startIndex] & 0x02)
+            } else {
+                guard (8...63).contains(credential.count) else { return 3 }
+            }
+        }
         if replacing == nil, entries.count >= 4 { return 11 }
         // Never the credential: a device stores it, and the table it
         // reports has never carried one.
-        let reported = Data([item[item.startIndex], security, UInt8(nameLength)]) + ssid
+        let reported = Data([flags, security, UInt8(nameLength)]) + ssid
         if let replacing {
             entries[replacing] = reported
         } else {
@@ -1794,8 +1811,13 @@ struct FakeManagedDevice: Sendable {
         return nil
     }
 
+    /// The first known network the station may choose by itself.
+    var firstAutoJoinNetwork: Data? {
+        networkEntries.first { ($0.first ?? 0) & 0x04 == 0 }.map(Self.ssid(ofEntry:))
+    }
+
     /// Whether this device knows a network by that name. An empty name is
-    /// the deselection every device accepts.
+    /// the pause every device accepts.
     func knowsNetwork(ssid: Data) -> Bool {
         ssid.isEmpty || networkEntries.contains { Self.ssid(ofEntry: $0) == ssid }
     }
