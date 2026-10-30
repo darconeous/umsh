@@ -19,20 +19,21 @@ source, or a binding a client could attach through is a capability of
 its own.
 
 Everything here is [device-domain](ulcp-core.md#device-domain) state.
-The configuration properties, the two switches, the network table, the
-selection, and the access point's network, are part of a [saved
+The configuration properties, the two switches, the network table, and
+the access point's network, are part of a [saved
 snapshot](ulcp-saved-state.md#saved-state) and survive a change of
-host. The rest is live: what a scan found, what the link is doing, who
-is on the access point. Live state is never saved, and `CMD_RST`
-reaches it only through the configuration it reverts, so each live
-property's post-reset value is declared as whatever the fact is at the
-time.
+host. The rest is live: which network the station is on, what a scan
+found, what the link is doing, who is on the access point. Live state
+is never saved, and `CMD_RST` reaches it only through the configuration
+it reverts, so each live property's post-reset value is declared as
+whatever the fact is at the time.
 
-A device with a station and a network selected tries to be on that
-network whenever it is enabled, with no host present and none ever
-required. That is why nothing here is a command: a device on Wi-Fi is
-infrastructure, and infrastructure that needs a phone to get back on
-the network after a power cut is not.
+A device with a station behaves as a phone does: whenever it is
+enabled, it joins a known network in range and stays on it, with no
+host present and none ever required. That is why nothing here is a
+command: a device on Wi-Fi is infrastructure, and infrastructure that
+needs a phone to get back on the network after a power cut is not.
+[Choosing a Network](#choosing-a-network) says which network it joins.
 
 ## Capabilities {#capabilities}
 
@@ -80,7 +81,7 @@ Id   | Mnemonic                 | Commands                   | Description
 -----|--------------------------|----------------------------|-------------
 4880 | `PROP_WIFI_ENABLED`      | Get, Set, Is               | Whether the station is up
 4881 | `PROP_WIFI_NETWORKS`     | Get, Set, Insert, Remove   | Known networks and their credentials
-4882 | `PROP_WIFI_NETWORK`      | Get, Set, Is               | The selected network, or empty
+4882 | `PROP_WIFI_NETWORK`      | Get, Set, Is               | The network the station is on or joining, or empty
 4883 | `PROP_WIFI_SCANNING`     | Get, Set, Is               | Whether a scan is in progress
 4884 | `PROP_WIFI_SCAN_RESULTS` | Get, Is, Inserted          | What the current or last scan has found
 4885 | `PROP_WIFI_LINK`         | Get, Is                    | Link state, failure reason, and association
@@ -109,10 +110,11 @@ promise rather than `PROP_BLE_ENABLED`'s: on a battery-powered node a
 Wi-Fi radio that is merely idle is still the largest load on the board,
 and a property that only stopped reporting would solve nothing.
 
-Set again, the device comes back up and, if a network is selected,
-starts joining it. The known-network table and the selection are
-configuration and are not disturbed in either direction, so turning the
-station off and on is not a way to forget anything.
+Set again, the device comes back up and [chooses a
+network](#choosing-a-network) to join. The known-network table is
+configuration and is not disturbed in either direction, so turning the
+station off and on is not a way to forget anything. It does end a
+[pause](#prop-wifi-network).
 
 Off by default, for the reason `PROP_GNSS_ENABLED` is: a device that
 has never been given a network has nothing to spend the power on. Saved
@@ -156,8 +158,11 @@ probes for it by name rather than waiting to hear it. Bit 1 set means
 the credential is a raw 32-octet pairwise master key rather than a
 passphrase, which is valid only for the modes that derive one; a host
 that holds the key need never hand the device the passphrase, and a
-device never has to run the derivation. Bits 2 through 7 are reserved
-and **MUST** be zero.
+device never has to run the derivation. Bit 2 set means the device
+joins the network only when [told to](#prop-wifi-network), never on its
+own; clear, the network is one the device [chooses
+from](#choosing-a-network). Bits 3 through 7 are reserved and **MUST**
+be zero.
 
 **SECURITY** is the minimum acceptable station security, using these mode codes:
 
@@ -221,8 +226,8 @@ An insert is refused with `STATUS_INVALID_ARGUMENT` when it is not
 well-formed: an empty SSID, a mode with no credential form, a
 credential of the wrong length or kind for its mode, a reserved mode, a
 reserved flag bit set. The SSID is never empty because an empty
-`PROP_WIFI_NETWORK` means no selection, so an entry with no name could
-be stored and never chosen; a hidden network has a real name, and it is
+`PROP_WIFI_NETWORK` means no network, so an entry with no name could
+be stored and never joined; a hidden network has a real name, and it is
 only the advertisement that is blank. An insert is refused with
 `STATUS_UNIMPLEMENTED` when it is well-formed and this device cannot do
 it: a WPA3 entry on a chip without SAE, or a WPA entry on a device that
@@ -275,6 +280,19 @@ way to change its credential: a host cannot read one back to compare
 it. Writes that carry a credential are subject to the same transport
 requirement as key material.
 
+An insert that replaces an entry may instead **keep** its credential:
+when the SSID matches a stored entry, **SECURITY** is unchanged, and
+**CREDENTIAL** is empty, the device keeps the stored credential, in
+whatever form it was given, and takes only the new flags; bit 1 of such
+an insert is ignored. This is how a host that never held the passphrase
+changes whether a network joins on its own or is hidden. The insert
+does not disturb an association, and the device reports the merged
+entry. An empty credential with a changed **SECURITY** is refused with
+`STATUS_INVALID_ARGUMENT`, since a new mode needs a credential of its
+own, and an empty credential for a mode that takes one, naming an SSID
+not in the table, with `STATUS_ITEM_NOT_FOUND`: there is nothing to
+keep. A whole-table `CMD_PROP_SET` carries every credential.
+
 A device bounds the table and refuses an insert past its capacity with
 `STATUS_NOMEM`. Four entries is enough for anything a device of this
 class does, and a device **SHOULD** hold at least that many. The bound
@@ -283,13 +301,15 @@ redacted form, inside one frame on every transport the device exposes,
 so that a `CMD_PROP_GET` always answers in one piece. At under forty
 octets per reported entry that constrains nothing a device would want.
 
-Removing the selected network, whether by `CMD_PROP_REMOVE` or a
-whole-table `CMD_PROP_SET` that omits it, clears the selection: the
-device drops the association, publishes `PROP_WIFI_NETWORK` as empty,
-and publishes the link going down. Replacing the selected network's
+Removing the network in `PROP_WIFI_NETWORK`, whether by
+`CMD_PROP_REMOVE` or a whole-table `CMD_PROP_SET` that omits it, drops
+any association with it; the device publishes `PROP_WIFI_NETWORK` and
+the link as they change and chooses again. Replacing that network's
 entry drops any association it holds and starts a fresh join with the
 new entry at once, because a host that has just corrected a passphrase
-should not wait out a backoff to learn whether it worked.
+should not wait out a backoff to learn whether it worked. Inserting an
+entry the device may choose, while it is looking for one, makes it a
+candidate at once.
 
 The table is part of the saved snapshot, credentials included, which is
 what lets the device rejoin unattended. `CMD_CLEAR` erases the
@@ -305,38 +325,46 @@ as it stores key material.
 * Asynchronous Updates: Yes
 * Required: `CAP_WIFI`
 * Value Type: 1 to 32 octets (an SSID), or empty
-* Post-Reset Value: Empty, or restored from saved state
+* Post-Reset Value: the network the station is on or joining; empty when there is none
 
-The network the device is on, or is to be on: the SSID of one entry in
-[`PROP_WIFI_NETWORKS`](#prop-wifi-networks). This is "connect" and
-"disconnect" both.
+The network the station is on, or is joining: the SSID of one entry in
+[`PROP_WIFI_NETWORKS`](#prop-wifi-networks), or empty when it is on
+none. The device fills it in as it [chooses
+networks](#choosing-a-network), and a host writes it to join one now or
+to leave. This is "connect" and "disconnect" both.
 
-Writing an SSID selects that network. If the station is enabled, the
-device drops any current association and starts joining the new one; if
-it is not, the selection waits for it, so a whole configuration can be
-staged and the station enabled last. Writing the SSID that is already
-selected changes nothing and disturbs nothing, like any other property
-written with its own value.
+Writing an SSID joins that network. The device drops any current
+association and starts joining the new one, whether or not the entry is
+one it may choose by itself, and holds it: the device keeps trying that
+network, with backoff and whatever the failure, until the host writes
+something else, the station is disabled, the entry is removed, or the
+network has been joined and is then no longer heard, at which point the
+device chooses again. Writing the SSID already there disturbs nothing:
+an association up or in progress carries on, and a network the device
+chose becomes one it holds.
 
 An SSID not in the table is refused with `STATUS_ITEM_NOT_FOUND`: the
-credential lives in the table, and the selection only names it. A host
+credential lives in the table, and this property only names it. A host
 acts on that differently from `STATUS_INVALID_ARGUMENT`, one being
-"insert it first" and the other a bug.
+"insert it first" and the other a bug. Any write while the station is
+disabled answers `STATUS_INVALID_STATE`, since there is no station to
+join with and nothing is staged here; the device chooses a network
+when it is enabled.
 
-Writing the **empty** value deselects. The device leaves the network
-and associates with nothing until something is selected again. This is
-a stable state, not a moment: the station stays up, scans on request,
-and joins nothing, which is what a phone with Wi-Fi on and no network
-in range is doing. A device **MUST NOT** select a network on its own,
-because a disconnect the device undoes by itself is not one.
+Writing the **empty** value leaves the network and **pauses** the
+station: it stays up, scans on request, and joins nothing on its own
+until a host writes an SSID or the station is disabled and enabled
+again. A pause is reported as the empty value with
+[`PROP_WIFI_LINK`](#prop-wifi-link) at `WIFI_LINK_DOWN`. The empty
+value while the link is `WIFI_LINK_CONNECTING` is the device looking
+for a network to choose, so writing empty then is not a write of the
+value already there: it is a request to be on no network, which the
+device answers by pausing. A pause is live state. It is not saved, and a
+device that restarts chooses as it always does.
 
-The device **MUST** publish the property when it changes it: a removal
-from the table that empties the selection, or a picker on the device's
-own screen.
-
-The selection is the network the device will spend its unattended life
-trying to reach, so it is saved with the table. A device restored from
-a snapshot comes up joining what it was joining.
+The device **MUST** publish the property whenever it changes without a
+write: a network it chose, a network it left, a removal from the table,
+or a picker on the device's own screen.
 
 ### PROP 4883: `PROP_WIFI_SCANNING` {#prop-wifi-scanning}
 
@@ -386,7 +414,8 @@ active or passive, and on which channels, is the device's business,
 except that a device with a station **MUST** probe by name for a hidden
 network in its table so that it can appear.
 
-A scan the device starts from its own menu is reported the same way,
+A scan the device starts itself, from its own menu or while
+[looking for a network](#choosing-a-network), is reported the same way,
 inserts and all. An attached host pays twenty-odd small frames once per
 scan, which is nothing against the scan itself, and a picker that
 appears as networks are heard is the difference between a list that
@@ -520,17 +549,18 @@ Figure: Link state format
 
 Value | Name                   | Meaning
 ------|------------------------|---------
-0     | `WIFI_LINK_DOWN`       | Not trying: the station is off, or nothing is selected
-1     | `WIFI_LINK_CONNECTING` | A network is selected and the device is not on it yet, or not any more
+0     | `WIFI_LINK_DOWN`       | Not trying: the station is off, it is paused, or no known network is one it may choose
+1     | `WIFI_LINK_CONNECTING` | Trying: joining the network in `PROP_WIFI_NETWORK`, or looking for one to choose while that is empty
 2     | `WIFI_LINK_UP`         | Associated
 
 **REASON** says why the device is in `WIFI_LINK_CONNECTING` rather than
-`WIFI_LINK_UP`, and is `0` in the other two states:
+`WIFI_LINK_UP`, and is `0` in the other two states. It describes the
+network in `PROP_WIFI_NETWORK`, or, while that is empty, the search:
 
 Value | Name                    | Meaning
 ------|-------------------------|---------
 0     | `WIFI_REASON_NONE`      | No attempt has failed yet
-1     | `WIFI_REASON_NOT_FOUND` | The network was not heard and did not answer a probe
+1     | `WIFI_REASON_NOT_FOUND` | The network was not heard and did not answer a probe; while looking, no network the device may choose was
 2     | `WIFI_REASON_AUTH`      | The network rejected the credential
 3     | `WIFI_REASON_REJECTED`  | The network refused the association for another reason
 4     | `WIFI_REASON_LOST`      | The association was up and dropped
@@ -542,14 +572,15 @@ is a different layer's fact and belongs to the [family state
 properties](ulcp-ip.md#prop-ipv4-state), which report it.
 
 `WIFI_LINK_CONNECTING` is the whole of trying, including the waits
-between attempts. While the station is enabled and a network is
-selected, the device **MUST** retry indefinitely with backoff and
-**MUST NOT** give up: a wrong passphrase is a device that retries a few
-times an hour until someone fixes it, which costs nothing and is what
-unattended infrastructure should do. `WIFI_LINK_DOWN` is reserved for
-the two states in which the device is not trying at all, so that a host
-reading `DOWN` knows the fix is configuration and a host reading
-`CONNECTING` knows the fix is in the reason.
+between attempts. While the station is enabled, not paused, and holding
+a network or knowing one it may choose, the device **MUST** retry
+indefinitely with backoff and **MUST NOT** give up: a wrong passphrase
+is a device that retries a few times an hour until someone fixes it,
+which costs nothing and is what unattended infrastructure should do.
+`WIFI_LINK_DOWN` is reserved for the states in which the device is not
+trying at all, so that a host reading `DOWN` knows the fix is
+configuration and a host reading `CONNECTING` knows the fix is in the
+reason.
 
 The device **MUST** publish the property on every change of state and
 on every change of reason, and on nothing else. Retrying and failing
@@ -802,6 +833,45 @@ view, so the ordinary property model applies without amendment. The
 bound **MUST** keep the whole list in one frame, which at eleven octets
 an item constrains nothing.
 
+## Choosing a Network {#choosing-a-network}
+
+While the station is enabled, not paused, and holding no network, the
+device chooses one. Its **candidates** are the entries in
+[`PROP_WIFI_NETWORKS`](#prop-wifi-networks) without `FLAGS` bit 2; it
+**MUST NOT** join any other entry on its own. A network a host writes to
+[`PROP_WIFI_NETWORK`](#prop-wifi-network), or one picked on the device's
+own screen, is held instead, and nothing in this section applies to it
+until the hold ends.
+
+**Which one.** Of the candidates heard, or for a hidden one answering a
+probe, the device **SHOULD** prefer the one it was associated with most
+recently, then the strongest. A device with storage **SHOULD** remember
+which that was across a power cycle; the memory is the device's own and
+not a property. The order of the table means nothing.
+
+**Staying.** The device **MUST NOT** leave a working association for
+another candidate, however much stronger it is. It chooses again only
+when the link is lost. A move between access points of one network is
+a roam within it, reported as a change of BSSID.
+
+**Failing.** When a join fails, the device tries the next candidate
+heard and returns to the one that failed after its backoff; a candidate
+that has failed ranks after any that have not. With one candidate this
+is retrying that network indefinitely, as
+[`PROP_WIFI_LINK`](#prop-wifi-link) requires. `PROP_WIFI_NETWORK` names
+whichever candidate the device is attempting and is published as that
+changes, so a host reads each failure against the network it belongs to.
+
+**Looking.** With no candidate heard, `PROP_WIFI_NETWORK` is empty, the
+link is `WIFI_LINK_CONNECTING`, and the device scans for candidates,
+probing by name for hidden ones. It backs off between scans to an
+interval a battery can bear and a mesh radio sharing the antenna can
+afford; the interval is the device's business.
+
+**On a wall.** A device meant to stay on one network is given one
+candidate, alone or among entries with `FLAGS` bit 2 set. What it does
+then depends on nothing in the air but that network.
+
 ## Sharing the Radio {#sharing-the-radio}
 
 **One radio, one channel.** Where the access point and the station are
@@ -828,7 +898,7 @@ transmission in progress or drop the clients it is serving.
 **Enable in either order.** The two switches are independent, and a
 platform that cannot run both refuses the second `1` with
 `STATUS_INVALID_STATE` and leaves the first alone. Nothing about the
-station's table, selection, or link changes when the access point comes
+station's table, network, or link changes when the access point comes
 up or goes down, and nothing about the access point's configuration
 changes with the station's.
 
@@ -851,9 +921,10 @@ is `0`.
 The flows a host runs, in terms of the properties above. None of them
 needs anything the property grammar does not already provide.
 
-**Turn on.** Write `PROP_WIFI_ENABLED` to `1`. If a network is
-selected, `PROP_WIFI_LINK` publishes `CONNECTING` and then `UP` or a
-reason.
+**Turn on.** Write `PROP_WIFI_ENABLED` to `1`. If the table holds a
+candidate, `PROP_WIFI_LINK` publishes `CONNECTING`, `PROP_WIFI_NETWORK`
+names the network the device tries, and the link then publishes `UP` or
+a reason.
 
 **Scan.** Write `PROP_WIFI_SCANNING` to `1`; clear the list on the
 `CMD_PROP_IS` that follows; add or replace an entry per
@@ -868,8 +939,9 @@ carries them.
 the SSID from the scan result, the strongest mode in its offered set,
 and the passphrase from the operator; on `STATUS_UNIMPLEMENTED`, insert
 again with the next mode down. Then write the SSID to
-`PROP_WIFI_NETWORK`. Two writes rather than one because the credential
-has one home and the selection only names it. There is no safe
+`PROP_WIFI_NETWORK` to join it now rather than when the device next
+chooses. Two writes rather than one because the credential has one home
+and `PROP_WIFI_NETWORK` only names it. There is no safe
 one-frame shortcut: a whole-table `CMD_PROP_SET` replaces every entry,
 and since credentials cannot be read back, a host can only write a
 whole table it holds every credential for. That is the first host
@@ -882,15 +954,23 @@ outcome.
 
 **Switch networks.** Write the other SSID to `PROP_WIFI_NETWORK`.
 
+**Join only by hand.** Insert the entry with `FLAGS` bit 2 set. The
+device joins it when it is written to `PROP_WIFI_NETWORK` and never
+chooses it. To change a saved entry either way, insert it again with
+its SSID, its **SECURITY**, the new flags, and an empty credential,
+which keeps the passphrase the host never had.
+
 **Reconnect.** There is no such flow. The device is already retrying,
 and a host that wants a fresh start with the same credentials has the
-honest two-step: deselect, then select, each of which is a real state.
+honest two-step: write empty, then the SSID, each of which is a real
+state.
 
 **Disconnect.** Write `PROP_WIFI_NETWORK` empty. The device leaves and
-stays off the network with the station still up.
+pauses with the station still up, until a network is written or the
+station is turned off and on.
 
-**Forget.** Remove the entry from `PROP_WIFI_NETWORKS`. If it was
-selected the selection empties and the link drops, both published.
+**Forget.** Remove the entry from `PROP_WIFI_NETWORKS`. If the device
+was on it, the link drops and the device chooses again, all published.
 
 **Turn off.** Write `PROP_WIFI_ENABLED` to `0`. Nothing is forgotten.
 
@@ -906,9 +986,10 @@ and credential, then `PROP_WIFI_AP_ENABLED` to `1`. Watch
 `PROP_WIFI_AP_STATE` for the channel it landed on and
 `PROP_WIFI_AP_CLIENTS` for who arrives.
 
-**Commission for unattended use.** Do any of the above, then
-`CMD_SAVE`. The station comes up and rejoins, and the access point
-comes up, at every boot after that.
+**Commission for unattended use.** Insert the networks, enable the
+station or the access point, then `CMD_SAVE`. The station comes up and
+joins a candidate, and the access point comes up, at every boot after
+that.
 
 **Synchronize on attach.** Read `PROP_WIFI_ENABLED`,
 `PROP_WIFI_NETWORK`, `PROP_WIFI_LINK`, and, where the device has one,
@@ -922,7 +1003,7 @@ Property                 | Saved | `CMD_RST` | Detach | Station off
 -------------------------|-------|-----------|--------|-------------
 `PROP_WIFI_ENABLED`      | yes   | reverts   | kept   | —
 `PROP_WIFI_NETWORKS`     | yes   | reverts   | kept   | kept
-`PROP_WIFI_NETWORK`      | yes   | reverts   | kept   | kept
+`PROP_WIFI_NETWORK`      | no    | follows   | kept   | empty
 `PROP_WIFI_SCANNING`     | no    | follows   | kept   | abandoned
 `PROP_WIFI_SCAN_RESULTS` | no    | follows   | kept   | cleared
 `PROP_WIFI_LINK`         | no    | follows   | kept   | `DOWN`
@@ -938,10 +1019,13 @@ snapshot is the saved one. "Follows" means the live state ends up
 wherever the reverted configuration puts it, and nowhere else. A
 `CMD_RST` on a device whose live configuration already matches its
 snapshot leaves a running scan running, an association up, and an
-access point beaconing; one that reverts the selection or its
-credential drops the association and joins the restored entry; and one
+access point beaconing; one that reverts the entry of the network the
+station is on drops the association and joins with the restored entry,
+or chooses again if none was restored; and one
 on a device with no snapshot takes the station and the access point
-down and everything live with them.
+down and everything live with them. A held network and a pause outlast
+either command unless it removes the held entry, which ends the hold,
+or turns the station off, which ends both.
 
 `CMD_RESTORE` is the same column: in either of its forms it reverts the
 configuration properties to the snapshot and the live state follows.
@@ -994,6 +1078,9 @@ framing. Everything else is a few.
 * Scan results are what the device heard, and an SSID is what its
   sender chose to call itself. A host displays them as untrusted
   strings.
+* A candidate with no credential, open or OWE, is joined wherever
+  anything calls itself by that name. A host that saves one for a
+  single visit sets `FLAGS` bit 2, or forgets it after.
 * A scan result list is a location fingerprint of wherever the device
   is standing, precise to a building, which is exactly why a tracker
   wants one. It is readable only by an admitted party, like everything
@@ -1038,11 +1125,10 @@ Deliberately absent, with the reason:
   hash-to-element, transition-disable: the device does what the mode
   requires and the host never sees them. WPS and Easy Connect are
   provisioning methods rather than modes.
-* **Auto-join across the table.** There is none. The device joins the
-  network it was told to and no other, because a device that picks
-  networks by itself is a device whose behavior depends on what is in
-  the air around it, which is the wrong property for a repeater on a
-  wall.
+* **A priority order.** The device prefers the network it was on last,
+  then the strongest. A ranked table would need a field in every entry
+  and a reordering surface on every host, to settle a choice that only
+  arises where two known networks overlap.
 * **Regulatory country.** The channel set follows the platform's
   regulatory configuration, which may later be tied to the device's
   region; nothing here decides how that configuration is set. What is
@@ -1055,5 +1141,5 @@ Deliberately absent, with the reason:
   write with a side effect when written with the value it already holds
   is a command in a costume, and it breaks the moment a host replays
   its configuration. It is also unnecessary, since the device retries
-  on its own and replacing the selected entry restarts the join at
-  once.
+  on its own and replacing the entry of the network it is joining
+  restarts the join at once.

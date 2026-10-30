@@ -2,16 +2,16 @@
 //! stack, and what it leaves to the platform.
 //!
 //! The split is the point. A station's *configuration* is protocol state:
-//! which network to join, how to get an address, which resolvers to use.
-//! It is written by a host, saved with the rest of the snapshot, and
-//! restored on the next boot, so the session owns it. A station's
-//! *behavior* is not: the credential the driver holds, the access points
-//! it can hear, the lease it was handed. Those live where the driver
-//! lives, and the session reaches them through effects.
+//! whether it is on, the networks it knows, how to get an address, which
+//! resolvers to use. It is written by a host, saved with the rest of the
+//! snapshot, and restored on the next boot, so the session owns it, the
+//! credentials included. A station's *behavior* is not: which network it
+//! chooses, the access points it can hear, the lease it was handed. Those
+//! live where the driver lives; the session hands the platform a
+//! [`StationIntent`] and hears back what it did.
 //!
-//! With the `wifi` feature, the session also owns the credential table
-//! and saves it in the same transaction as selection and enablement.
-//! Platforms without that feature retain the deferred table hooks.
+//! A station needs the `wifi` feature, which is what gives the session
+//! its network table. Without it a device can scan and nothing more.
 
 use umsh_ulcp::{ip, wifi};
 
@@ -216,18 +216,38 @@ pub enum ResolverError {
     TooMany,
 }
 
-/// The name of the stored network the station should use
-/// (`PROP_WIFI_NETWORK`).
-///
-/// Empty is a value and not an absence: it is a host saying "join
-/// nothing", which is different from a host that has said nothing at all.
+/// What a host or the device's menu has told the station to do, as the
+/// platform reads it: hold one network, stay paused, or choose for
+/// itself. Live: none of it is saved.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct StationIntent {
+    /// A network written to `PROP_WIFI_NETWORK`, which the station keeps
+    /// trying until another write, the station turning off, the entry
+    /// going, or the network being joined and then no longer heard.
+    /// Empty when the station chooses.
+    pub hold: NetworkName,
+    /// `PROP_WIFI_NETWORK` was written empty: join nothing until a
+    /// network is written or the station is turned off and on.
+    pub paused: bool,
+    /// Moves with every change of intent. The platform tags what it
+    /// reports with the epoch it acted on, and the session drops a report
+    /// from an older one.
+    pub epoch: u32,
+    /// Moves with every change that must drop an association: a pause,
+    /// or the station turning off. Separate from `epoch` so that a pause
+    /// followed at once by a write of the same network, read together,
+    /// still leaves and rejoins.
+    pub leaves: u32,
+}
+
+/// An SSID the station holds or is on (`PROP_WIFI_NETWORK`), or none.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SelectedNetwork {
+pub struct NetworkName {
     ssid: [u8; wifi::SSID_MAX_LEN],
     len: usize,
 }
 
-impl Default for SelectedNetwork {
+impl Default for NetworkName {
     fn default() -> Self {
         Self {
             ssid: [0; wifi::SSID_MAX_LEN],
@@ -236,7 +256,7 @@ impl Default for SelectedNetwork {
     }
 }
 
-impl SelectedNetwork {
+impl NetworkName {
     pub fn as_bytes(&self) -> &[u8] {
         &self.ssid[..self.len]
     }
@@ -271,6 +291,7 @@ mod tests {
         let mut entry = wifi::NetworkEntry {
             hidden: false,
             raw_key: false,
+            manual: false,
             security: wifi::SecurityMode::Wpa2,
             ssid: "Café".as_bytes(),
             credential: b"password",
@@ -357,8 +378,8 @@ mod tests {
     }
 
     #[test]
-    fn the_selected_network_holds_arbitrary_octets_and_the_empty_choice() {
-        let mut selected = SelectedNetwork::default();
+    fn a_network_name_holds_arbitrary_octets_and_none() {
+        let mut selected = NetworkName::default();
         assert!(selected.is_empty());
         assert_eq!(selected.set(&[0xFF, 0x00, 0x80]), Ok(()));
         assert_eq!(selected.as_bytes(), [0xFF, 0x00, 0x80]);

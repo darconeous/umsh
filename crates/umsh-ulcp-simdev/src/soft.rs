@@ -108,9 +108,9 @@ pub trait SoftPlatform {
     }
     /// A host frame was served: bring the platform's view up to date with
     /// what the session now holds, as a board's drivers react to the
-    /// device-domain mirror.
-    fn settle(&mut self, session: &mut DeviceSession, emit: &mut dyn FnMut(&[u8])) {
-        let _ = (session, emit);
+    /// device-domain mirror. `now_ms` is the device's clock.
+    fn settle(&mut self, session: &mut DeviceSession, now_ms: u64, emit: &mut dyn FnMut(&[u8])) {
+        let _ = (session, now_ms, emit);
     }
 }
 
@@ -301,8 +301,9 @@ impl<P: SoftPlatform> SoftDevice<P> {
         self.execute(effect, &mut emitted);
         self.session.end_admin_exchange();
         let mut published = Vec::new();
+        let now_ms = self.device_ms();
         self.platform
-            .settle(&mut self.session, &mut |frame: &[u8]| {
+            .settle(&mut self.session, now_ms, &mut |frame: &[u8]| {
                 published.push(frame.to_vec())
             });
         for frame in emitted {
@@ -422,8 +423,9 @@ impl<P: SoftPlatform> SoftDevice<P> {
                 }
             }
         }
+        let now_ms = self.device_ms();
         self.platform
-            .settle(&mut self.session, &mut |frame: &[u8]| {
+            .settle(&mut self.session, now_ms, &mut |frame: &[u8]| {
                 emitted.push(frame.to_vec())
             });
         self.queue_emitted(emitted);

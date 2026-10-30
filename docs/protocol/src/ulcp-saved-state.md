@@ -54,7 +54,8 @@ if it is a repeater.
   are ordinary configuration and are saved.
 
   What a network link is currently doing is excluded on the statistics'
-  reasoning. [`PROP_WIFI_SCANNING`](ulcp-wifi.md#prop-wifi-scanning),
+  reasoning. [`PROP_WIFI_NETWORK`](ulcp-wifi.md#prop-wifi-network),
+  [`PROP_WIFI_SCANNING`](ulcp-wifi.md#prop-wifi-scanning),
   [`PROP_WIFI_SCAN_RESULTS`](ulcp-wifi.md#prop-wifi-scan-results),
   [`PROP_WIFI_LINK`](ulcp-wifi.md#prop-wifi-link),
   [`PROP_WIFI_RSSI`](ulcp-wifi.md#prop-wifi-rssi),

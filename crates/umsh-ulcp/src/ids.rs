@@ -498,8 +498,8 @@ pub mod prop {
     /// and powers the station down. Unlike [`BLE_ENABLED`] this does
     /// promise the hardware is idle: on a battery-powered node a Wi-Fi
     /// radio that is merely not reporting is still the largest load on
-    /// the board. The known networks and the selection survive both
-    /// directions.
+    /// the board. The known networks survive both directions; turning
+    /// the station back on ends a pause.
     pub const WIFI_ENABLED: u32 = 4880;
     /// The networks the device knows and their credentials
     /// (`PROP_WIFI_NETWORKS`), multi-value, keyed by SSID. Requires
@@ -507,22 +507,25 @@ pub mod prop {
     ///
     /// Each item is flags, a security mode, and a length-prefixed SSID,
     /// followed by a credential whose form the mode defines. The
-    /// credential is write-only: the reported form stops at the SSID,
-    /// so replacing an entry is the only way to change one. An insert
-    /// whose SSID matches an existing entry replaces it, which is the
-    /// path for a corrected passphrase.
+    /// credential is write-only: the reported form stops at the SSID. An
+    /// insert whose SSID matches an existing entry replaces it, which is
+    /// the path for a corrected passphrase; one with the same mode and
+    /// an empty credential keeps the stored one and changes only the
+    /// flags. Entries without the manual flag are the ones the device
+    /// joins on its own.
     ///
     /// Saved, credentials included, which is what lets a device rejoin
     /// unattended.
     pub const WIFI_NETWORKS: u32 = 4881;
-    /// The selected network (`PROP_WIFI_NETWORK`), an SSID naming one
-    /// entry of [`WIFI_NETWORKS`], or empty. Requires `CAP_WIFI`.
+    /// The network the station is on or joining (`PROP_WIFI_NETWORK`),
+    /// an SSID naming one entry of [`WIFI_NETWORKS`], or empty while it
+    /// looks for one or is paused. Requires `CAP_WIFI`. Live, not saved.
     ///
-    /// This is connect and disconnect both. An SSID absent from the
-    /// table answers `STATUS_ITEM_NOT_FOUND`; the empty value deselects
-    /// and is a stable state, not a moment. The device never selects a
-    /// network on its own, because a disconnect it undoes by itself is
-    /// not one.
+    /// Writing an SSID joins that network and holds it; writing empty
+    /// leaves and pauses until a network is written or the station is
+    /// turned off and on. Any write while the station is off answers
+    /// `STATUS_INVALID_STATE`, and an SSID absent from the table
+    /// `STATUS_ITEM_NOT_FOUND`.
     pub const WIFI_NETWORK: u32 = 4882;
     /// Whether a scan is in progress (`PROP_WIFI_SCANNING`), BOOL.
     /// Requires `CAP_WIFI_SCAN`.

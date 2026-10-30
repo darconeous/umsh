@@ -404,9 +404,9 @@ host that turned the radio off did not turn IPv6 off.
 properties are writable while the link is down and while the radio is
 disabled, and they are ordinary `CMD_PROP_SET` targets, so a static
 commissioning is one `CMD_PROP_MULTI_SET` where `CAP_CMD_MULTI` is
-present: `PROP_IPV4_CONFIG`, `PROP_IP_DNS`, `PROP_WIFI_NETWORK`,
-`PROP_WIFI_ENABLED`, in that order, then `CMD_SAVE`. The network insert
-still stands apart, being an insert.
+present: `PROP_IPV4_CONFIG`, `PROP_IP_DNS`, `PROP_WIFI_ENABLED`, in
+that order, then `CMD_SAVE`. The network insert still stands apart,
+being an insert, and the station joins it on its own.
 
 **Synchronizing on attach** adds the family states to the link's read:
 `PROP_WIFI_ENABLED`, `PROP_WIFI_NETWORK`, `PROP_WIFI_LINK`,

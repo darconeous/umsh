@@ -35,10 +35,14 @@ pub mod lan_bearer;
 pub mod listeners;
 pub mod net;
 pub mod session;
+#[cfg(feature = "wifi")]
+pub mod station;
 
 pub use duty::{DutyExceeded, DutyLedger, DutyTracker};
 pub use lan_bearer::LanBearerRole;
-pub use net::{IpConfig, MAX_RESOLVERS, ResolverError, Resolvers, SelectedNetwork, WifiConfig};
+pub use net::{
+    IpConfig, MAX_RESOLVERS, NetworkName, ResolverError, Resolvers, StationIntent, WifiConfig,
+};
 #[cfg(feature = "wifi")]
 pub mod known_networks;
 pub use session::{

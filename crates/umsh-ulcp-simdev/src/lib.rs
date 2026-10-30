@@ -40,6 +40,7 @@ use umsh_ulcp::wifi::{
     Association, Link, LinkReason, LinkState, NetworkEntry, ScanResult, SecurityMode,
 };
 use umsh_ulcp::{Status, items};
+use umsh_ulcp_device::station::{Chooser, Next};
 use umsh_ulcp_device::{AnnounceRequest, Effect};
 
 use soft::{DeviceSession, SoftDevice, SoftPlatform};
@@ -204,46 +205,75 @@ const SIMULATED_ACCESS_POINTS: &[(u16, i8, [u8; 6], &[u8])] = &[
     (5745, -83, [0x02, 0x9E, 0x44, 0x2D, 0x88, 0x01], b""),
 ];
 
+/// The name the nameless access point answers a probe with.
+const SIMULATED_HIDDEN_SSID: &[u8] = b"Back Room";
+
+/// The passphrase each simulated network accepts; the guest network is
+/// open. Anything else is a wrong password.
+const SIMULATED_PASSPHRASES: &[(&[u8], &[u8])] = &[
+    (b"Field Office", b"fieldwork"),
+    (SIMULATED_HIDDEN_SSID, b"backroom"),
+];
+
 /// The station's own address, which never changes.
 const SIMULATED_WIFI_MAC: [u8; 6] = [0x02, 0x55, 0x4D, 0x53, 0x48, 0x01];
 
 /// The simulated Wi-Fi station and IP stack.
 ///
-/// Where the driver would be: the network table with its credentials, the
+/// Where the driver would be: the station choosing and joining, the
 /// results of a scan, and whatever the link and the stack have made of
-/// the configuration the session holds. Nothing here is protocol state —
+/// the configuration the session holds. Nothing here is protocol state—
 /// the session owns that—which is exactly the division the effects
-/// exist to draw.
+/// exist to draw. Scans and joins are instant.
 #[derive(Default)]
 struct SimulatedNetwork {
-    /// Stored networks in item form, credential included, keyed by SSID.
-    networks: Vec<Vec<u8>>,
-    /// Whether the station is currently on the selected network.
-    associated: bool,
+    chooser: Chooser,
     /// Whether a scan has run. A device that has never looked reports an
     /// empty table rather than the results of a scan nobody asked for.
     scanned: bool,
 }
 
 impl SimulatedNetwork {
-    /// Where a stored network with this SSID sits, if one does.
-    fn position(&self, ssid: &[u8]) -> Option<usize> {
-        self.networks
+    fn associated(&self) -> bool {
+        self.chooser.associated().is_some()
+    }
+
+    /// The strongest access point answering to `ssid`, the hidden one
+    /// included.
+    fn access_point(ssid: &[u8]) -> Option<(u16, i8, [u8; 6])> {
+        SIMULATED_ACCESS_POINTS
             .iter()
-            .position(|entry| Self::ssid_of(entry) == ssid)
+            .filter(|ap| match ap.3 {
+                b"" => ssid == SIMULATED_HIDDEN_SSID,
+                name => name == ssid,
+            })
+            .max_by_key(|ap| ap.1)
+            .map(|&(frequency, rssi, bssid, _)| (frequency, rssi, bssid))
     }
 
-    fn ssid_of(entry: &[u8]) -> &[u8] {
-        NetworkEntry::decode(entry)
-            .map(|entry| entry.ssid)
-            .unwrap_or(&[])
-    }
-
-    /// Store an entry, replacing any held under the same name.
-    fn store(&mut self, entry: &[u8]) {
-        match self.position(Self::ssid_of(entry)) {
-            Some(index) => self.networks[index] = entry.to_vec(),
-            None => self.networks.push(entry.to_vec()),
+    /// How a join of `ssid` goes.
+    fn attempt(entry: Option<NetworkEntry<'_>>) -> Result<(), LinkReason> {
+        let entry = entry.ok_or(LinkReason::NotFound)?;
+        Self::access_point(entry.ssid).ok_or(LinkReason::NotFound)?;
+        let offered = SimulatedPlatform::simulated_modes(entry.ssid);
+        let allowed = [
+            SecurityMode::Open,
+            SecurityMode::Owe,
+            SecurityMode::Wpa2,
+            SecurityMode::Wpa3,
+        ]
+        .into_iter()
+        .any(|mode| offered & mode.bit() != 0 && entry.security.permits(mode, entry.raw_key));
+        if !allowed {
+            return Err(LinkReason::Rejected);
+        }
+        let passphrase = SIMULATED_PASSPHRASES
+            .iter()
+            .find(|(name, _)| *name == entry.ssid)
+            .map_or(&b""[..], |(_, passphrase)| passphrase);
+        match !entry.raw_key && entry.credential == passphrase {
+            true => Ok(()),
+            false => Err(LinkReason::Auth),
         }
     }
 }
@@ -487,19 +517,6 @@ impl SimulatedPlatform {
             }
         };
         match key {
-            // Reported form: the credential stops here and goes no
-            // further, which is the entire point of the table living
-            // with the driver.
-            prop::WIFI_NETWORKS => {
-                for entry in &self.network.networks {
-                    let mut reported = [0u8; umsh_ulcp::wifi::NETWORK_ENTRY_MAX_LEN];
-                    let encoded = NetworkEntry::decode(entry)
-                        .and_then(|entry| entry.encode_reported(&mut reported));
-                    if let Ok(len) = encoded {
-                        push(&reported[..len]);
-                    }
-                }
-            }
             // Whatever the last scan heard, strongest first, which is
             // how a device reports its retained table.
             prop::WIFI_SCAN_RESULTS if self.network.scanned => {
@@ -517,7 +534,7 @@ impl SimulatedPlatform {
                     }
                 }
             }
-            prop::IPV4_ADDRESS if self.network.associated => {
+            prop::IPV4_ADDRESS if self.network.associated() => {
                 let mut buf = [0u8; umsh_ulcp::ip::V4_ADDRESS_LEN];
                 let address = V4Address {
                     address: [192, 168, 8, 42],
@@ -528,7 +545,7 @@ impl SimulatedPlatform {
                     push(&buf[..len]);
                 }
             }
-            prop::IPV6_ADDRESSES if self.network.associated => {
+            prop::IPV6_ADDRESSES if self.network.associated() => {
                 let mut address = [0u8; 16];
                 address[..2].copy_from_slice(&[0x20, 0x01]);
                 address[2..4].copy_from_slice(&[0x0d, 0xb8]);
@@ -553,7 +570,7 @@ impl SimulatedPlatform {
             // What the stack resolves through: the device's own list
             // where it has one, and the network's offer where it does
             // not.
-            prop::IP_RESOLVERS if self.network.associated => {
+            prop::IP_RESOLVERS if self.network.associated() => {
                 let configured: Vec<Vec<u8>> =
                     session.dns_resolvers().iter().map(<[u8]>::to_vec).collect();
                 match configured.is_empty() {
@@ -570,43 +587,82 @@ impl SimulatedPlatform {
     ///
     /// Where a driver would react to the device-domain mirror. Called
     /// after every frame, so a write that switches the station off or
-    /// picks a different network is followed by the state that write
-    /// produced.
-    fn settle_network(&mut self, session: &mut DeviceSession, mut emit: &mut dyn FnMut(&[u8])) {
+    /// holds a different network is followed by the state that write
+    /// produced. The station runs the shared chooser until it has nothing
+    /// to do before the next scan or retry.
+    fn settle_network(
+        &mut self,
+        session: &mut DeviceSession,
+        now_ms: u64,
+        mut emit: &mut dyn FnMut(&[u8]),
+    ) {
         if !session.wifi_station() {
             return;
         }
         session.set_wifi_mac(SIMULATED_WIFI_MAC);
-        let selected = session.selected_network().to_vec();
-        let associated = session.wifi_enabled()
-            && !selected.is_empty()
-            && session
-                .known_networks()
-                .get(&selected)
-                .is_some_and(|entry| {
-                    // The office AP advertises WPA2/WPA3 transition mode.
-                    // Upgrading its offered mode set never changes the saved
-                    // minimum or allows a weaker authentication method.
-                    [SecurityMode::Wpa3, SecurityMode::Wpa2]
-                        .into_iter()
-                        .any(|mode| entry.security.permits(mode, entry.raw_key))
-                        || entry.security.permits(SecurityMode::Open, entry.raw_key)
-                });
-        self.network.associated = associated;
-        let link = match associated {
-            true => Link {
+        let net = &mut self.network;
+        for _ in 0..16 {
+            net.chooser.configure(
+                session.wifi_enabled(),
+                session.station_intent(),
+                session.known_networks(),
+                now_ms,
+            );
+            let epoch = net.chooser.epoch();
+            match net.chooser.step(now_ms) {
+                Next::Wait(_) => break,
+                Next::Scan { probe_hidden } => {
+                    net.chooser.scan_started();
+                    for &(_, rssi_dbm, _, ssid) in SIMULATED_ACCESS_POINTS {
+                        match ssid {
+                            b"" if probe_hidden => {
+                                net.chooser.heard(SIMULATED_HIDDEN_SSID, rssi_dbm)
+                            }
+                            b"" => {}
+                            ssid => net.chooser.heard(ssid, rssi_dbm),
+                        }
+                    }
+                    net.chooser.scan_finished(now_ms);
+                }
+                Next::Join(name) => {
+                    let ssid = name.as_bytes();
+                    match SimulatedNetwork::attempt(session.known_networks().get(ssid)) {
+                        Ok(()) => {
+                            net.chooser.joined(ssid);
+                            session.set_wifi_network(ssid, false, epoch, &mut emit);
+                        }
+                        Err(reason) => {
+                            if net.chooser.failed(ssid, reason, now_ms) {
+                                session.set_wifi_network(b"", true, epoch, &mut emit);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let epoch = net.chooser.epoch();
+        if let Some(naming) = net.chooser.naming() {
+            session.set_wifi_network(naming.as_bytes(), false, epoch, &mut emit);
+        }
+        let up = net
+            .chooser
+            .associated()
+            .and_then(|name| SimulatedNetwork::access_point(name.as_bytes()));
+        let link = match up {
+            Some((frequency_mhz, _, bssid)) => Link {
                 state: LinkState::Up,
                 reason: LinkReason::None,
                 association: Some(Association {
-                    bssid: SIMULATED_ACCESS_POINTS[0].2,
-                    frequency_mhz: SIMULATED_ACCESS_POINTS[0].0,
+                    bssid,
+                    frequency_mhz,
                 }),
             },
-            false => Link::default(),
+            None => net.chooser.link_down(),
         };
-        session.set_wifi_link(link, &mut emit);
-        session.set_wifi_rssi(associated.then_some(SIMULATED_ACCESS_POINTS[0].1));
-        let state = match associated {
+        session.set_wifi_link(link, epoch, &mut emit);
+        session.set_wifi_rssi(up.map(|(_, rssi_dbm, _)| rssi_dbm));
+        let state = match up.is_some() {
             true => FamilyState::Ready,
             false => FamilyState::NoLink,
         };
@@ -697,8 +753,8 @@ impl SoftPlatform for SimulatedPlatform {
         self.bond_count = 0;
     }
 
-    fn settle(&mut self, session: &mut DeviceSession, emit: &mut dyn FnMut(&[u8])) {
-        self.settle_network(session, emit);
+    fn settle(&mut self, session: &mut DeviceSession, now_ms: u64, emit: &mut dyn FnMut(&[u8])) {
+        self.settle_network(session, now_ms, emit);
     }
 
     fn peripheral(
@@ -836,38 +892,6 @@ impl SoftPlatform for SimulatedPlatform {
                     );
                 }
                 session.set_wifi_scanning(false, &mut emit);
-            }
-            Effect::SelectWifiNetwork { tid } => {
-                let ssid = session.pending_network().to_vec();
-                let result = match ssid.is_empty() || self.network.position(&ssid).is_some() {
-                    true => Ok(()),
-                    false => Err(Status::ITEM_NOT_FOUND),
-                };
-                session.respond_wifi_network(tid, result, &mut emit);
-            }
-            Effect::InsertWifiNetwork { tid } => {
-                let entry = session.pending_network_entry().to_vec();
-                // A mode the simulated hardware does not do, so that a
-                // host's step-down path has something to step down from.
-                let result = match NetworkEntry::decode(&entry).map(|entry| entry.security) {
-                    Ok(SecurityMode::Wpa3Ent192) => Err(Status::UNIMPLEMENTED),
-                    _ => {
-                        self.network.store(&entry);
-                        Ok(())
-                    }
-                };
-                session.respond_wifi_network_stored(tid, result, &mut emit);
-            }
-            Effect::RemoveWifiNetwork { tid } => {
-                let ssid = session.pending_network().to_vec();
-                let result = match self.network.position(&ssid) {
-                    Some(index) => {
-                        self.network.networks.remove(index);
-                        Ok(())
-                    }
-                    None => Err(Status::ITEM_NOT_FOUND),
-                };
-                session.respond_wifi_network_forgotten(tid, result, &mut emit);
             }
             Effect::ReadNetworkTable { tid, key } => {
                 let items = self.network_table(session, key);
@@ -1075,6 +1099,87 @@ mod tests {
         let full = temperature_get(&mut sim, prop::TEMPERATURE_NAMES);
         assert_eq!(sim.append_temperature_sensor("b", 0), Err(Status::NOMEM));
         assert_eq!(temperature_get(&mut sim, prop::TEMPERATURE_NAMES), full);
+    }
+
+    /// The reply to a host request: the frame answering `tid`.
+    fn answer(sim: &mut SimulatedDevice, request: &[u8], tid: u8) -> Vec<u8> {
+        exchange(sim, request)
+            .into_iter()
+            .find(|frame| Frame::parse(frame).is_ok_and(|frame| frame.header.tid() == tid))
+            .expect("an answer")
+    }
+
+    fn wifi_get(sim: &mut SimulatedDevice, key: u32) -> Vec<u8> {
+        let mut request = [0; 16];
+        let len = frame::prop_get(&mut request, 2, key).unwrap();
+        let response = answer(sim, &request[..len], 2);
+        let response = Frame::parse(&response).unwrap();
+        PropPayload::parse(response.payload).unwrap().value.to_vec()
+    }
+
+    fn wifi_set(sim: &mut SimulatedDevice, key: u32, value: &[u8]) {
+        let mut request = [0; 64];
+        let len = frame::prop_set(&mut request, 3, key, value).unwrap();
+        answer(sim, &request[..len], 3);
+    }
+
+    fn save_network(sim: &mut SimulatedDevice, ssid: &[u8], passphrase: &[u8], manual: bool) {
+        let mut item = [0; umsh_ulcp::wifi::NETWORK_ENTRY_MAX_LEN];
+        let len = NetworkEntry {
+            hidden: false,
+            raw_key: false,
+            manual,
+            security: SecurityMode::Wpa2,
+            ssid,
+            credential: passphrase,
+        }
+        .encode(&mut item)
+        .unwrap();
+        let mut request = [0; 160];
+        let len = frame::prop_insert(&mut request, 4, prop::WIFI_NETWORKS, &item[..len]).unwrap();
+        answer(sim, &request[..len], 4);
+    }
+
+    fn link(sim: &mut SimulatedDevice) -> Link {
+        Link::decode(&wifi_get(sim, prop::WIFI_LINK)).unwrap()
+    }
+
+    #[test]
+    fn the_station_joins_by_itself_and_pauses_when_told() {
+        let mut sim = SimulatedDevice::new(test_config());
+        attach(&mut sim);
+        wifi_set(&mut sim, prop::WIFI_ENABLED, &[1]);
+        assert_eq!(link(&mut sim).state, LinkState::Down, "nothing to choose");
+
+        // A wrong passphrase is retried, named, and reported.
+        save_network(&mut sim, b"Field Office", b"wrong-guess", false);
+        assert_eq!(wifi_get(&mut sim, prop::WIFI_NETWORK), b"Field Office");
+        let failing = link(&mut sim);
+        assert_eq!(failing.state, LinkState::Connecting);
+        assert_eq!(failing.reason, LinkReason::Auth);
+
+        // The right one joins without a word from the host.
+        save_network(&mut sim, b"Field Office", b"fieldwork", false);
+        assert_eq!(link(&mut sim).state, LinkState::Up);
+        assert_eq!(wifi_get(&mut sim, prop::WIFI_NETWORK), b"Field Office");
+
+        // A network only joined by hand is never chosen; out of range,
+        // a held one reads Not found.
+        save_network(&mut sim, b"Faraway", b"password", true);
+        wifi_set(&mut sim, prop::WIFI_NETWORK, b"Faraway");
+        assert_eq!(wifi_get(&mut sim, prop::WIFI_NETWORK), b"Faraway");
+        assert_eq!(link(&mut sim).reason, LinkReason::NotFound);
+
+        // Empty pauses, and stays paused.
+        wifi_set(&mut sim, prop::WIFI_NETWORK, b"");
+        assert!(wifi_get(&mut sim, prop::WIFI_NETWORK).is_empty());
+        assert_eq!(link(&mut sim).state, LinkState::Down);
+
+        // Off and on again chooses.
+        wifi_set(&mut sim, prop::WIFI_ENABLED, &[0]);
+        wifi_set(&mut sim, prop::WIFI_ENABLED, &[1]);
+        assert_eq!(wifi_get(&mut sim, prop::WIFI_NETWORK), b"Field Office");
+        assert_eq!(link(&mut sim).state, LinkState::Up);
     }
 
     #[test]

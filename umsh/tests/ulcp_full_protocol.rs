@@ -134,8 +134,6 @@ struct SimDevice {
     epoch: Option<u32>,
     /// Per-command capture, both directions.
     log: Vec<String>,
-    /// The stored networks a Wi-Fi driver would hold, credential and all.
-    networks: Vec<Vec<u8>>,
     /// Announcements the host asked for, in the order they were queued.
     announcements: Vec<AnnounceRequest>,
     /// The one peripheral on the simulated bus.
@@ -160,7 +158,6 @@ impl SimDevice {
             now_ms: 0,
             epoch: None,
             log: Vec::new(),
-            networks: Vec::new(),
             announcements: Vec::new(),
             i2c: Default::default(),
         }))
@@ -198,19 +195,6 @@ impl SimDevice {
         snapshot.sats_in_view = Some(13);
         snapshot.set_location(&[0x8a, 0x1f, 0x4c, 0x00, 0xd3]);
         snapshot
-    }
-
-    /// Where a stored network with this name sits, if one does.
-    fn network_index(&self, ssid: &[u8]) -> Option<usize> {
-        self.networks
-            .iter()
-            .position(|entry| Self::entry_ssid(entry) == ssid)
-    }
-
-    fn entry_ssid(entry: &[u8]) -> &[u8] {
-        umsh_ulcp::wifi::NetworkEntry::decode(entry)
-            .map(|entry| entry.ssid)
-            .unwrap_or(&[])
     }
 
     /// Execute one session effect the way the firmware's effect arms
@@ -358,58 +342,11 @@ impl SimDevice {
                 }
                 self.session.set_wifi_scanning(false, &mut emit);
             }
-            Some(Effect::SelectWifiNetwork { tid }) => {
-                let ssid = self.session.pending_network().to_vec();
-                let result = match ssid.is_empty() || self.network_index(&ssid).is_some() {
-                    true => Ok(()),
-                    false => Err(Status::ITEM_NOT_FOUND),
-                };
-                self.session.respond_wifi_network(tid, result, &mut emit);
-            }
-            Some(Effect::InsertWifiNetwork { tid }) => {
-                let entry = self.session.pending_network_entry().to_vec();
-                let ssid = Self::entry_ssid(&entry).to_vec();
-                match self.network_index(&ssid) {
-                    Some(index) => self.networks[index] = entry,
-                    None => self.networks.push(entry),
-                }
-                self.session
-                    .respond_wifi_network_stored(tid, Ok(()), &mut emit);
-            }
-            Some(Effect::RemoveWifiNetwork { tid }) => {
-                let ssid = self.session.pending_network().to_vec();
-                let result = match self.network_index(&ssid) {
-                    Some(index) => {
-                        self.networks.remove(index);
-                        Ok(())
-                    }
-                    None => Err(Status::ITEM_NOT_FOUND),
-                };
-                self.session
-                    .respond_wifi_network_forgotten(tid, result, &mut emit);
-            }
-            // Only the stored networks are answered from anything: the
-            // rest of the tables belong to a stack this simulator does
-            // not have, and an empty list is a truthful answer for them.
+            // The tables belong to a stack this simulator does not have,
+            // and an empty list is a truthful answer for them.
             Some(Effect::ReadNetworkTable { tid, key }) => {
-                let mut items = Vec::new();
-                if key == umsh_ulcp::ids::prop::WIFI_NETWORKS {
-                    for entry in &self.networks {
-                        let mut reported = [0u8; umsh_ulcp::wifi::NETWORK_ENTRY_MAX_LEN];
-                        let encoded = umsh_ulcp::wifi::NetworkEntry::decode(entry)
-                            .and_then(|entry| entry.encode_reported(&mut reported));
-                        if let Ok(len) = encoded {
-                            items.push(reported[..len].to_vec());
-                        }
-                    }
-                }
-                let mut encoded = Vec::new();
-                for item in &items {
-                    encoded.push(item.len() as u8);
-                    encoded.extend_from_slice(item);
-                }
                 self.session
-                    .respond_network_table(tid, key, Ok(&encoded), &mut emit);
+                    .respond_network_table(tid, key, Ok(&[]), &mut emit);
             }
             Some(Effect::I2cTransfer { tid }) => {
                 let request = self.session.i2c_request();
@@ -1499,7 +1436,7 @@ async fn a_scan_streams_its_results_and_completes() {
     );
 }
 
-/// Storing a network, choosing it, reading the table back, and forgetting
+/// Storing a network, joining it, reading the table back, and forgetting
 /// it: the four table operations against the real session, with the
 /// credential travelling in exactly one direction.
 #[tokio::test]
@@ -1511,6 +1448,7 @@ async fn a_network_is_stored_chosen_read_back_and_forgotten() {
     let len = umsh_ulcp::wifi::NetworkEntry {
         hidden: false,
         raw_key: false,
+        manual: false,
         security: umsh_ulcp::wifi::SecurityMode::Wpa2,
         ssid: b"Field Office",
         credential: b"hunter2hunter2",
@@ -1518,8 +1456,17 @@ async fn a_network_is_stored_chosen_read_back_and_forgotten() {
     .encode(&mut item)
     .unwrap();
 
-    // Choosing a name the device does not hold is refused, and the
-    // selection stays empty.
+    // With the station off there is nothing to join with; on, a name
+    // the device does not hold is refused, and nothing is joined.
+    let refusal = radio
+        .set_prop(prop::WIFI_NETWORK, b"Field Office")
+        .await
+        .expect_err("the station is off");
+    assert!(
+        matches!(refusal, UlcpError::Status(Status::INVALID_STATE)),
+        "unexpected refusal: {refusal:?}"
+    );
+    assert_eq!(radio.set_prop(prop::WIFI_ENABLED, &[1]).await.unwrap(), [1]);
     let refusal = radio
         .set_prop(prop::WIFI_NETWORK, b"Field Office")
         .await
@@ -1568,7 +1515,7 @@ async fn a_network_is_stored_chosen_read_back_and_forgotten() {
     );
     assert!(
         radio.get_prop(prop::WIFI_NETWORK).await.unwrap().is_empty(),
-        "forgetting the chosen network clears the choice"
+        "forgetting the network leaves it"
     );
     assert!(
         radio

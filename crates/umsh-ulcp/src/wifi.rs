@@ -41,8 +41,11 @@ pub const FLAG_HIDDEN: u8 = 1 << 0;
 /// `FLAGS` bit 1: the credential is a raw [`PMK_LEN`]-octet pairwise
 /// master key rather than a passphrase.
 pub const FLAG_RAW_KEY: u8 = 1 << 1;
+/// `FLAGS` bit 2: the device joins the network only when told to, and
+/// never chooses it on its own.
+pub const FLAG_MANUAL: u8 = 1 << 2;
 
-const FLAGS_RESERVED: u8 = !(FLAG_HIDDEN | FLAG_RAW_KEY);
+const FLAGS_RESERVED: u8 = !(FLAG_HIDDEN | FLAG_RAW_KEY | FLAG_MANUAL);
 
 /// Largest encoded [`NetworkEntry`]: flags, mode, length, a full SSID,
 /// and the longest credential any mode defines.
@@ -237,10 +240,12 @@ pub struct NetworkEntry<'a> {
     /// `credential` is a raw pairwise master key rather than a
     /// passphrase.
     pub raw_key: bool,
+    /// The device joins the network only when told to, never on its own.
+    pub manual: bool,
     pub security: SecurityMode,
-    /// 1 to [`SSID_MAX_LEN`] octets. Never empty: an empty selection
-    /// means no selection, so an entry with no name could be stored and
-    /// never chosen.
+    /// 1 to [`SSID_MAX_LEN`] octets. Never empty: an empty
+    /// `PROP_WIFI_NETWORK` means no network, so an entry with no name
+    /// could be stored and never joined.
     pub ssid: &'a [u8],
     /// Empty in the reported form, and for the modes that take none.
     pub credential: &'a [u8],
@@ -256,7 +261,30 @@ impl<'a> NetworkEntry<'a> {
         if self.raw_key {
             flags |= FLAG_RAW_KEY;
         }
+        if self.manual {
+            flags |= FLAG_MANUAL;
+        }
         flags
+    }
+
+    /// Whether this is an insert that keeps a stored entry's credential:
+    /// a mode that takes one, offered with none. The device takes only
+    /// the flags from it, and `raw_key` means nothing here.
+    pub fn keeps_credential(&self) -> bool {
+        self.credential.is_empty() && self.security.passphrase_len_bounds().is_some()
+    }
+
+    /// [`Self::validate`] for an insert, which may also be the form that
+    /// [keeps](Self::keeps_credential) a stored credential. Whether there
+    /// is one to keep is the table's question, not this one.
+    pub fn validate_insert(&self) -> Result<(), WifiError> {
+        if self.keeps_credential() {
+            if self.ssid.is_empty() || self.ssid.len() > SSID_MAX_LEN {
+                return Err(WifiError::NotWellFormed);
+            }
+            return Ok(());
+        }
+        self.validate()
     }
 
     /// Whether this entry is one a device may be asked to store.
@@ -330,6 +358,7 @@ impl<'a> NetworkEntry<'a> {
         Ok(Self {
             hidden: flags & FLAG_HIDDEN != 0,
             raw_key: flags & FLAG_RAW_KEY != 0,
+            manual: flags & FLAG_MANUAL != 0,
             security,
             ssid: &bytes[3..3 + ssid_len],
             credential: &bytes[3 + ssid_len..],
@@ -405,8 +434,8 @@ impl<'a> ScanResult<'a> {
 /// `PROP_WIFI_LINK` states.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum LinkState {
-    /// `WIFI_LINK_DOWN`: not trying. The station is off, or nothing is
-    /// selected.
+    /// `WIFI_LINK_DOWN`: not trying. The station is off, it is paused,
+    /// or no known network is one it may choose.
     #[default]
     Down = 0,
     /// `WIFI_LINK_CONNECTING`: the whole of trying, including the waits
@@ -872,6 +901,7 @@ mod tests {
         let entry = NetworkEntry {
             hidden: true,
             raw_key: false,
+            manual: false,
             security: SecurityMode::Wpa2,
             ssid: SSID,
             credential: b"correct horse",
@@ -891,6 +921,7 @@ mod tests {
         let entry = NetworkEntry {
             hidden: false,
             raw_key: false,
+            manual: false,
             security: SecurityMode::Wpa3,
             ssid: SSID,
             credential: b"a password nobody should read back",
@@ -911,6 +942,7 @@ mod tests {
         let entry = |security, raw_key, credential| NetworkEntry {
             hidden: false,
             raw_key,
+            manual: false,
             security,
             ssid: SSID,
             credential,
@@ -974,6 +1006,7 @@ mod tests {
         let entry = |security, credential| NetworkEntry {
             hidden: false,
             raw_key: true,
+            manual: false,
             security,
             ssid: SSID,
             credential,
@@ -1008,6 +1041,7 @@ mod tests {
         let entry = |credential| NetworkEntry {
             hidden: false,
             raw_key: false,
+            manual: false,
             security: SecurityMode::Wpa2,
             ssid: SSID,
             credential,
@@ -1026,6 +1060,7 @@ mod tests {
         let entry = NetworkEntry {
             hidden: false,
             raw_key: false,
+            manual: false,
             security: SecurityMode::Open,
             ssid: b"",
             credential: b"",
@@ -1041,11 +1076,64 @@ mod tests {
     #[test]
     fn a_reserved_flag_bit_is_malformed() {
         let mut buf = [0u8; 8];
-        buf[0] = 1 << 2;
+        buf[0] = 1 << 3;
         buf[1] = SecurityMode::Open.code();
         buf[2] = 1;
         buf[3] = b'x';
         assert_eq!(NetworkEntry::decode(&buf[..4]), Err(WifiError::Malformed));
+    }
+
+    #[test]
+    fn the_manual_flag_round_trips() {
+        let entry = NetworkEntry {
+            hidden: false,
+            raw_key: false,
+            manual: true,
+            security: SecurityMode::Open,
+            ssid: b"x",
+            credential: b"",
+        };
+        let mut buf = [0u8; 8];
+        let len = entry.encode(&mut buf).expect("encodes");
+        assert_eq!(buf[0], FLAG_MANUAL);
+        assert_eq!(NetworkEntry::decode(&buf[..len]), Ok(entry));
+    }
+
+    #[test]
+    fn an_insert_may_keep_a_stored_credential() {
+        let entry = |security, raw_key, credential| NetworkEntry {
+            hidden: false,
+            raw_key,
+            manual: true,
+            security,
+            ssid: SSID,
+            credential,
+        };
+        // A stored entry needs its credential; an insert may leave it to
+        // the table, raw-key flag or not.
+        let keep = entry(SecurityMode::Wpa2, false, b"");
+        assert!(keep.keeps_credential());
+        assert_eq!(keep.validate(), Err(WifiError::NotWellFormed));
+        assert_eq!(keep.validate_insert(), Ok(()));
+        assert_eq!(
+            entry(SecurityMode::Wpa2, true, b"").validate_insert(),
+            Ok(())
+        );
+        assert_eq!(
+            entry(SecurityMode::Wpa3, false, b"").validate_insert(),
+            Ok(())
+        );
+        // Open takes no credential, so empty is the whole entry, not a
+        // request to keep one.
+        assert!(!entry(SecurityMode::Open, false, b"").keeps_credential());
+        // The keep form still needs a name, and a short passphrase is
+        // still short.
+        let unnamed = NetworkEntry { ssid: b"", ..keep };
+        assert_eq!(unnamed.validate_insert(), Err(WifiError::NotWellFormed));
+        assert_eq!(
+            entry(SecurityMode::Wpa2, false, b"short").validate_insert(),
+            Err(WifiError::NotWellFormed)
+        );
     }
 
     #[test]
@@ -1253,6 +1341,7 @@ mod tests {
         let entry = NetworkEntry {
             hidden: false,
             raw_key: false,
+            manual: false,
             security: SecurityMode::Open,
             ssid: SSID,
             credential: b"",

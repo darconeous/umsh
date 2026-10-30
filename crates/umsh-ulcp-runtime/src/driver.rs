@@ -176,7 +176,7 @@ pub enum InEvent {
     /// unconditionally.
     Toggle(Setting),
     #[cfg(feature = "wifi")]
-    SelectWifiNetwork(umsh_ulcp_device::net::SelectedNetwork),
+    SelectWifiNetwork(umsh_ulcp_device::net::NetworkName),
     /// The hold-through-power-on ceremony fired: `PROP_BLE_ENABLED` must
     /// end up on, whatever it was. Not a toggle—the same gesture on a
     /// device already reachable would otherwise strand it—and ignored
@@ -469,13 +469,18 @@ pub struct NetworkConfig<'a> {
     /// `PROP_WIFI_ENABLED`: whether the station should be powered.
     /// Always false on a board without `CAP_WIFI`.
     pub wifi_enabled: bool,
+    /// `PROP_WIFI_NETWORKS`: the networks the station knows, credentials
+    /// included. A platform compares an entry with the one it last had to
+    /// tell a new credential, which restarts a join, from new flags,
+    /// which do not.
     #[cfg(feature = "wifi")]
     pub known_networks: &'a umsh_ulcp_device::known_networks::KnownNetworks,
+    /// What the station has been told: hold a network, stay paused, or
+    /// choose. A platform acts on it only when its epoch moves, and drops
+    /// any association whenever `leaves` moves.
     #[cfg(feature = "wifi")]
-    pub credential_revision: u32,
+    pub intent: umsh_ulcp_device::StationIntent,
     pub device_name: &'a [u8],
-    /// `PROP_WIFI_NETWORK`: which stored network to use, empty for none.
-    pub network: &'a [u8],
     /// `PROP_IPV4_CONFIG`: how IPv4 is configured.
     pub v4: umsh_ulcp::ip::V4Config,
     /// `PROP_IPV6_CONFIG`: how IPv6 is configured.
@@ -533,10 +538,20 @@ pub enum PublishEvent {
     /// [`ScanResult`](umsh_ulcp::wifi::ScanResult) because that borrows
     /// its SSID, and an event crossing a channel owns what it carries.
     WifiScanResult(heapless::Vec<u8, { umsh_ulcp::wifi::SCAN_RESULT_MAX_LEN }>),
-    /// How far the station has got with the network it was told to join.
-    /// Associating, losing an access point and being rejected all happen
-    /// below the session.
-    WifiLink(umsh_ulcp::wifi::Link),
+    /// How far the station has got with the network it is joining, under
+    /// the [`StationIntent::epoch`](umsh_ulcp_device::StationIntent::epoch)
+    /// it acted on. Associating, losing an access point and being
+    /// rejected all happen below the session.
+    WifiLink(umsh_ulcp::wifi::Link, u32),
+    /// Which network the station is on or joining, as it chose or was
+    /// told, under the epoch it acted on; `hold_ended` says a held
+    /// network was joined and is no longer heard.
+    #[cfg(feature = "wifi")]
+    WifiNetwork {
+        ssid: umsh_ulcp_device::NetworkName,
+        hold_ended: bool,
+        epoch: u32,
+    },
     /// The signal of the current association, or `None` with nothing to
     /// measure. Stored rather than announced—`PROP_WIFI_RSSI` is read,
     /// never pushed—so this only refreshes what a read would answer.
@@ -807,35 +822,6 @@ pub trait DeviceEnv {
     /// what makes a scan watchable rather than a wait.
     async fn set_wifi_scanning(&mut self, scanning: bool) -> Result<bool, Status> {
         let _ = scanning;
-        Err(Status::UNIMPLEMENTED)
-    }
-    /// A `PROP_WIFI_NETWORK` write: use this stored network, or none where
-    /// `ssid` is empty.
-    ///
-    /// The platform holds the table, so only the platform can say whether
-    /// the name is one it knows; `STATUS_ITEM_NOT_FOUND` says it is not.
-    /// The session records the selection only once this succeeds.
-    async fn select_wifi_network(&mut self, ssid: &[u8]) -> Result<(), Status> {
-        let _ = ssid;
-        Err(Status::UNIMPLEMENTED)
-    }
-    /// A `PROP_WIFI_NETWORKS` insert: store this entry durably, replacing
-    /// any entry under the same SSID.
-    ///
-    /// `entry` is a validated [`NetworkEntry`](umsh_ulcp::wifi::NetworkEntry)
-    /// in its item form, credential included—this hook is the credential's
-    /// destination and the only layer that sees it. What is left to decide
-    /// is whether the hardware can do that security mode
-    /// (`STATUS_UNIMPLEMENTED`) and whether there is room (`STATUS_NOMEM`).
-    async fn store_wifi_network(&mut self, entry: &[u8]) -> Result<(), Status> {
-        let _ = entry;
-        Err(Status::UNIMPLEMENTED)
-    }
-    /// A `PROP_WIFI_NETWORKS` remove: forget this network and its
-    /// credential. `STATUS_ITEM_NOT_FOUND` for a name the table does not
-    /// hold.
-    async fn forget_wifi_network(&mut self, ssid: &[u8]) -> Result<(), Status> {
-        let _ = ssid;
         Err(Status::UNIMPLEMENTED)
     }
     /// Read one of the tables the platform owns rather than the session:
@@ -1352,9 +1338,6 @@ async fn apply_effect<A, S, const TXQ: usize, M, const RX: usize, const TX: usiz
         | Some(Effect::ClearBleBonds { .. })
         | Some(Effect::SetBlePairing { .. })
         | Some(Effect::SetWifiScanning { .. })
-        | Some(Effect::SelectWifiNetwork { .. })
-        | Some(Effect::InsertWifiNetwork { .. })
-        | Some(Effect::RemoveWifiNetwork { .. })
         | Some(Effect::ReadNetworkTable { .. })
         | Some(Effect::I2cTransfer { .. })
         | Some(Effect::I2cScan { .. })
@@ -1571,9 +1554,8 @@ fn sync_dev_domain<A, S, const TXQ: usize, E>(
         #[cfg(feature = "wifi")]
         known_networks: session.known_networks(),
         #[cfg(feature = "wifi")]
-        credential_revision: session.wifi_credential_revision(),
+        intent: session.station_intent(),
         device_name: session.device_name().as_bytes(),
-        network: session.selected_network(),
         v4: session.ipv4_config(),
         v6: session.ipv6_config(),
         resolvers: session.dns_resolvers(),
@@ -1858,29 +1840,6 @@ where
             Some(Effect::SetWifiScanning { tid, scanning }) => {
                 let result = env.set_wifi_scanning(scanning).await;
                 session.respond_wifi_scanning(tid, result, &mut |frame: &[u8]| emitter.push(frame));
-                emitter.flush(sink).await;
-            }
-            Some(Effect::SelectWifiNetwork { tid }) => {
-                let result = env.select_wifi_network(session.pending_network()).await;
-                session.respond_wifi_network(tid, result, &mut |frame: &[u8]| emitter.push(frame));
-                emitter.flush(sink).await;
-            }
-            Some(Effect::InsertWifiNetwork { tid }) => {
-                // The one place a Wi-Fi credential is handled, and
-                // deliberately untraced.
-                let result = env
-                    .store_wifi_network(session.pending_network_entry())
-                    .await;
-                session.respond_wifi_network_stored(tid, result, &mut |frame: &[u8]| {
-                    emitter.push(frame)
-                });
-                emitter.flush(sink).await;
-            }
-            Some(Effect::RemoveWifiNetwork { tid }) => {
-                let result = env.forget_wifi_network(session.pending_network()).await;
-                session.respond_wifi_network_forgotten(tid, result, &mut |frame: &[u8]| {
-                    emitter.push(frame)
-                });
                 emitter.flush(sink).await;
             }
             Some(Effect::ReadNetworkTable { tid, key }) => {
@@ -2296,10 +2255,9 @@ where
             Either4::First(InEvent::SelectWifiNetwork(network)) => {
                 let result = session
                     .choose_wifi_network(network.as_bytes(), &mut |frame| emitter.push(frame));
+                // Which network the station is on is live, so nothing is
+                // saved.
                 emitter.flush(&mut ReplySink::host(&arbitration, &rt)).await;
-                if result.is_ok() {
-                    note_device_change(session, &mut save_due);
-                }
                 env.wifi_selection_result(result);
             }
             Either4::First(InEvent::ForceBluetoothOn) => {
@@ -2476,8 +2434,16 @@ where
                             session.publish_scan_result(&result, emit);
                         }
                     }
-                    PublishEvent::WifiLink(link) => {
-                        session.set_wifi_link(link, emit);
+                    PublishEvent::WifiLink(link, epoch) => {
+                        session.set_wifi_link(link, epoch, emit);
+                    }
+                    #[cfg(feature = "wifi")]
+                    PublishEvent::WifiNetwork {
+                        ssid,
+                        hold_ended,
+                        epoch,
+                    } => {
+                        session.set_wifi_network(ssid.as_bytes(), hold_ended, epoch, emit);
                     }
                     PublishEvent::WifiRssi(dbm) => {
                         session.set_wifi_rssi(dbm);

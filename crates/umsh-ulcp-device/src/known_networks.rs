@@ -4,6 +4,9 @@ use umsh_ulcp::{Status, items, wifi};
 
 pub const MAX_NETWORKS: usize = 4;
 
+/// One encoded entry, credential included.
+pub type EntryBytes = Vec<u8, { wifi::NETWORK_ENTRY_MAX_LEN }>;
+
 #[derive(Clone, PartialEq, Eq)]
 pub struct KnownNetworks {
     entries: Vec<Vec<u8, { wifi::NETWORK_ENTRY_MAX_LEN }>, MAX_NETWORKS>,
@@ -14,6 +17,19 @@ impl Default for KnownNetworks {
         Self {
             entries: Vec::new(),
         }
+    }
+}
+
+/// Names only: a credential is never formatted.
+impl core::fmt::Debug for KnownNetworks {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_list()
+            .entries(
+                self.entries()
+                    .filter_map(|bytes| wifi::NetworkEntry::decode(bytes).ok())
+                    .map(|entry| entry.ssid),
+            )
+            .finish()
     }
 }
 
@@ -28,6 +44,41 @@ impl KnownNetworks {
             .find(|entry| entry.ssid == ssid)
     }
 
+    /// The entry an insert of `bytes` stores. That is `bytes` itself,
+    /// unless it is the form that keeps a stored credential: then the
+    /// stored entry's credential and raw-key flag under the new flags.
+    /// Answers `STATUS_ITEM_NOT_FOUND` when there is no entry to keep a
+    /// credential from, and `STATUS_INVALID_ARGUMENT` when the mode
+    /// changed, since a new mode needs a credential of its own.
+    pub fn resolve(&self, bytes: &[u8]) -> Result<EntryBytes, Status> {
+        let entry = wifi::NetworkEntry::decode(bytes).map_err(|_| Status::INVALID_ARGUMENT)?;
+        entry
+            .validate_insert()
+            .map_err(|_| Status::INVALID_ARGUMENT)?;
+        if !entry.keeps_credential() {
+            return Vec::from_slice(bytes).map_err(|_| Status::INVALID_ARGUMENT);
+        }
+        let stored = self.get(entry.ssid).ok_or(Status::ITEM_NOT_FOUND)?;
+        if stored.security != entry.security {
+            return Err(Status::INVALID_ARGUMENT);
+        }
+        let merged = wifi::NetworkEntry {
+            raw_key: stored.raw_key,
+            credential: stored.credential,
+            ..entry
+        };
+        let mut out = EntryBytes::new();
+        out.resize_default(wifi::NETWORK_ENTRY_MAX_LEN)
+            .map_err(|_| Status::INTERNAL_ERROR)?;
+        let len = merged
+            .encode(&mut out)
+            .map_err(|_| Status::INTERNAL_ERROR)?;
+        out.truncate(len);
+        Ok(out)
+    }
+
+    /// Store a whole entry, replacing any with its SSID. The keep form
+    /// goes through [`Self::resolve`] first.
     pub fn insert(&mut self, bytes: &[u8]) -> Result<(), Status> {
         let entry = wifi::NetworkEntry::decode(bytes).map_err(|_| Status::INVALID_ARGUMENT)?;
         entry.validate().map_err(|_| Status::INVALID_ARGUMENT)?;
@@ -117,6 +168,50 @@ mod tests {
             Err(Status::INVALID_ARGUMENT)
         ));
         assert_eq!(table.get(b"office").unwrap().credential, b"password");
+    }
+
+    #[test]
+    fn an_insert_without_a_credential_keeps_the_stored_one() {
+        let mut table = KnownNetworks::default();
+        table.insert(&entry(b"office", b"password")).unwrap();
+        // Manual, same mode, no credential.
+        let keep = [
+            wifi::FLAG_MANUAL | wifi::FLAG_RAW_KEY,
+            2,
+            6,
+            b'o',
+            b'f',
+            b'f',
+            b'i',
+            b'c',
+            b'e',
+        ];
+        let merged = table.resolve(&keep).unwrap();
+        let decoded = wifi::NetworkEntry::decode(&merged).unwrap();
+        assert!(decoded.manual);
+        // The stored credential was a passphrase, whatever bit 1 said.
+        assert!(!decoded.raw_key);
+        assert_eq!(decoded.credential, b"password");
+        table.insert(&merged).unwrap();
+        assert!(table.get(b"office").unwrap().manual);
+        assert_eq!(table.get(b"office").unwrap().credential, b"password");
+        // A new mode needs its own credential; an unknown name has none
+        // to keep.
+        let mut wpa3 = keep;
+        wpa3[1] = 3;
+        assert_eq!(table.resolve(&wpa3), Err(Status::INVALID_ARGUMENT));
+        let unknown = [0, 2, 4, b'h', b'o', b'm', b'e'];
+        assert_eq!(table.resolve(&unknown), Err(Status::ITEM_NOT_FOUND));
+        // A whole entry resolves to itself, and a whole-table write
+        // still needs every credential.
+        let whole = entry(b"home", b"password");
+        assert_eq!(table.resolve(&whole).unwrap().as_slice(), whole.as_slice());
+        let mut set = std::vec![keep.len() as u8];
+        set.extend_from_slice(&keep);
+        assert!(matches!(
+            KnownNetworks::replacement(&set, |_| Ok(())),
+            Err(Status::INVALID_ARGUMENT)
+        ));
     }
 
     #[test]
