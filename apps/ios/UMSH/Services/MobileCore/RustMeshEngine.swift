@@ -114,6 +114,10 @@ actor RustMeshEngine: MeshEngine {
         }
     }
 
+    func generateIdentitySecret() -> Data {
+        UMSHMobileCore.generateIdentitySecret()
+    }
+
     func generateChannelKey() -> Data {
         UMSHMobileCore.generateChannelKey()
     }

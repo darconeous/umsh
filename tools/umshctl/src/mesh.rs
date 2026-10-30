@@ -108,8 +108,11 @@ fn load_or_create_identity(path: &Path) -> Result<SoftwareIdentity> {
                 std::fs::create_dir_all(parent)
                     .with_context(|| format!("creating {}", parent.display()))?;
             }
-            let mut secret = [0u8; 32];
-            rng().fill_bytes(&mut secret);
+            let secret = umsh::crypto::software::generate_identity_secret(|secret| {
+                rng().fill_bytes(secret);
+                Ok::<_, std::convert::Infallible>(())
+            })
+            .unwrap_or_else(|never| match never {});
             std::fs::write(path, secret).with_context(|| format!("writing {}", path.display()))?;
             note("generated a new administrator identity");
             Ok(SoftwareIdentity::from_secret_bytes(&secret))

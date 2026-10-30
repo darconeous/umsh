@@ -13,8 +13,11 @@ use anyhow::{Context, Result, bail};
 use crate::identity::{BridgeIdentity, format_seed};
 
 pub fn write_identity(path: &Path, force: bool) -> Result<()> {
-    let mut seed = [0u8; 32];
-    rand::fill(&mut seed);
+    let seed = umsh_crypto::software::generate_identity_secret(|seed| {
+        rand::fill(seed);
+        Ok::<_, std::convert::Infallible>(())
+    })
+    .unwrap_or_else(|never| match never {});
     let identity = BridgeIdentity::from_seed(&seed);
 
     write_secret(path, &format!("{}\n", format_seed(&seed)), force)?;

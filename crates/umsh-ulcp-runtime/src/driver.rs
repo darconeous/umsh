@@ -28,7 +28,7 @@ use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant, Timer};
 
-use umsh_crypto::software::SoftwareIdentity;
+use umsh_crypto::software::{SoftwareIdentity, generate_identity_secret};
 use umsh_crypto::{AesProvider, NodeIdentity as _, Sha256Provider};
 use umsh_hal::RxOrigin;
 use umsh_journal_store::proto;
@@ -1465,11 +1465,10 @@ async fn regenerate_device_identity<A, S, const TXQ: usize, E>(
     S: Sha256Provider,
     E: DeviceEnv,
 {
-    let mut secret = [0u8; 32];
-    if env.fill_secret(&mut secret).is_err() {
+    let Ok(secret) = generate_identity_secret(|secret| env.fill_secret(secret)) else {
         env.trace(format_args!("device identity regenerate: entropy FAILED"));
         return;
-    }
+    };
     let (public_key, payload) = device_identity_record(&secret);
     match env.persist_identity(&payload).await {
         Ok(()) => {
@@ -1795,8 +1794,7 @@ where
                         let secret = match source {
                             IdentitySource::Install(secret) => Ok(secret),
                             IdentitySource::Generate => {
-                                let mut secret = [0u8; 32];
-                                env.fill_secret(&mut secret).map(|()| secret)
+                                generate_identity_secret(|secret| env.fill_secret(secret))
                             }
                         };
                         match secret {

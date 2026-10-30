@@ -50,6 +50,15 @@ pub trait SoftPlatform {
     fn store_identity(&mut self, secret: Option<&[u8; 32]>) -> Result<(), ()>;
     /// A fresh identity secret.
     fn generate_secret(&mut self) -> [u8; 32];
+    /// A fresh identity secret from [`generate_secret`](Self::generate_secret),
+    /// redrawn while the hint filter matches its key.
+    fn generate_identity_secret(&mut self) -> [u8; 32] {
+        umsh_crypto::software::generate_identity_secret(|secret| {
+            *secret = self.generate_secret();
+            Ok::<_, core::convert::Infallible>(())
+        })
+        .unwrap_or_else(|never| match never {})
+    }
     /// Whether a device with no stored identity makes one as it comes up,
     /// as firmware does, rather than waiting for a host to ask.
     fn generates_identity_at_boot(&self) -> bool {
@@ -180,7 +189,7 @@ impl<P: SoftPlatform> SoftDevice<P> {
             match self.platform.load_identity() {
                 Some(secret) => Some(secret),
                 None if self.platform.generates_identity_at_boot() => {
-                    let secret = self.platform.generate_secret();
+                    let secret = self.platform.generate_identity_secret();
                     self.platform
                         .store_identity(Some(&secret))
                         .ok()
@@ -514,7 +523,7 @@ impl<P: SoftPlatform> SoftDevice<P> {
                     Some(source) => {
                         let secret = match source {
                             IdentitySource::Install(secret) => secret,
-                            IdentitySource::Generate => self.platform.generate_secret(),
+                            IdentitySource::Generate => self.platform.generate_identity_secret(),
                         };
                         self.platform
                             .store_identity(Some(&secret))

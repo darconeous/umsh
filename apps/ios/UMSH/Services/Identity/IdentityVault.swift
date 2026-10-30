@@ -30,7 +30,6 @@ enum StoredIdentity: Equatable, Sendable {
 enum IdentityVaultError: Error, Equatable, Sendable {
     case identityAlreadyExists
     case protectedDataUnavailable
-    case randomGenerationFailed
     case keychainFailure
     case coreFailure
 }
@@ -137,14 +136,7 @@ actor KeychainIdentityVault: IdentityVault {
     }
 
     func createIdentity() async throws -> LocalIdentitySnapshot {
-        var secret = Data(count: 32)
-
-        let randomStatus = secret.withUnsafeMutableBytes { bytes in
-            SecRandomCopyBytes(kSecRandomDefault, bytes.count, bytes.baseAddress!)
-        }
-        guard randomStatus == errSecSuccess else {
-            throw IdentityVaultError.randomGenerationFailed
-        }
+        let secret = await meshEngine.generateIdentitySecret()
 
         let item: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,

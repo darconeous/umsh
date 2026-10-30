@@ -134,6 +134,14 @@ actor FakeMeshEngine: MeshEngine {
         )
     }
 
+    func generateIdentitySecret() -> Data {
+        var secret = Data(count: 32)
+        for index in secret.indices {
+            secret[index] = UInt8.random(in: 0...255)
+        }
+        return secret
+    }
+
     func generateChannelKey() -> Data {
         var key = Data(count: 32)
         for index in key.indices {

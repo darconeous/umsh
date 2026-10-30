@@ -225,8 +225,11 @@ fn load_or_create_identity(path: &Path) -> Result<SoftwareIdentity, Box<dyn std:
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
-            let mut secret = [0u8; 32];
-            rand::rng().fill_bytes(&mut secret);
+            let secret = umsh::crypto::software::generate_identity_secret(|secret| {
+                rand::rng().fill_bytes(secret);
+                Ok::<_, std::convert::Infallible>(())
+            })
+            .unwrap_or_else(|never| match never {});
             std::fs::write(path, secret)?;
             Ok(SoftwareIdentity::from_secret_bytes(&secret))
         }

@@ -971,11 +971,46 @@ pub mod software {
         public: PublicKey,
     }
 
+    /// Draw a fresh identity secret.
+    ///
+    /// `fill` is called for each draw; a key that
+    /// [`umsh_core::hint_filter::is_avoided`] matches is discarded and
+    /// another drawn. There is no attempt limit: an entropy source that
+    /// never produces an acceptable key is broken. An error from `fill` is
+    /// returned as is.
+    pub fn generate_identity_secret<E>(
+        fill: impl FnMut(&mut [u8; 32]) -> Result<(), E>,
+    ) -> Result<[u8; 32], E> {
+        generate_identity_secret_against(&umsh_core::hint_filter::FILTER, fill)
+    }
+
+    pub(crate) fn generate_identity_secret_against<E>(
+        filter: &umsh_core::hint_filter::Filter,
+        mut fill: impl FnMut(&mut [u8; 32]) -> Result<(), E>,
+    ) -> Result<[u8; 32], E> {
+        let mut secret = [0u8; 32];
+        loop {
+            if let Err(error) = fill(&mut secret) {
+                secret.zeroize();
+                return Err(error);
+            }
+            let public = PublicKey(SigningKey::from_bytes(&secret).verifying_key().to_bytes());
+            if !filter.avoids(&public) {
+                return Ok(secret);
+            }
+        }
+    }
+
     impl SoftwareIdentity {
         pub fn generate(rng: &mut impl CryptoRngCore) -> Self {
-            let secret = SigningKey::generate(rng);
-            let public = PublicKey(secret.verifying_key().to_bytes());
-            Self { secret, public }
+            let mut secret = generate_identity_secret(|secret| {
+                rng.fill_bytes(secret);
+                Ok::<_, core::convert::Infallible>(())
+            })
+            .unwrap_or_else(|never| match never {});
+            let identity = Self::from_secret_bytes(&secret);
+            secret.zeroize();
+            identity
         }
 
         pub fn from_secret_bytes(bytes: &[u8; 32]) -> Self {
@@ -2010,6 +2045,54 @@ mod tests {
         let ss1 = id1.shared_secret_with(id2.public_key()).unwrap();
         let ss2 = id2.shared_secret_with(id1.public_key()).unwrap();
         assert_eq!(ss1.0, ss2.0);
+    }
+
+    // ── generate_identity_secret ──────────────────────────────────────────────
+
+    #[cfg(feature = "software-crypto")]
+    fn filter_avoiding(secret: &[u8; 32]) -> umsh_core::hint_filter::Filter {
+        use umsh_core::hint_filter::{Filter, text_key};
+
+        let public = *SoftwareIdentity::from_secret_bytes(secret).public_key();
+        let digits = umsh_core::base58::encode(&public.0);
+        let mut filter = Filter::empty(0);
+        filter.insert(text_key(&digits[..4]).unwrap());
+        assert!(filter.avoids(&public));
+        filter
+    }
+
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn generate_identity_secret_redraws_avoided_keys() {
+        let filter = filter_avoiding(&[1; 32]);
+        let clean = SoftwareIdentity::from_secret_bytes(&[2; 32]);
+        assert!(!filter.avoids(clean.public_key()));
+
+        let mut draws = [[1u8; 32], [1; 32], [2; 32]].into_iter();
+        let secret = generate_identity_secret_against(&filter, |secret| {
+            *secret = draws.next().unwrap();
+            Ok::<_, ()>(())
+        });
+        assert_eq!(secret, Ok([2; 32]));
+        assert_eq!(draws.next(), None);
+    }
+
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn generate_identity_secret_returns_entropy_errors() {
+        let filter = filter_avoiding(&[1; 32]);
+        let mut calls = 0;
+        let secret = generate_identity_secret_against(&filter, |secret| {
+            calls += 1;
+            if calls == 1 {
+                *secret = [1; 32];
+                Ok(())
+            } else {
+                Err("no entropy")
+            }
+        });
+        assert_eq!(secret, Err("no entropy"));
+        assert_eq!(calls, 2);
     }
 
     // ── seal_blind_packet wrong packet type ───────────────────────────────────

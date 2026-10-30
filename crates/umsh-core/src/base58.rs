@@ -10,7 +10,8 @@ use core::fmt::Write;
 use crate::error::AddressParseError;
 
 /// Base58 digit alphabet (Bitcoin variant).
-const ALPHABET: &[u8; 58] = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+pub(crate) const ALPHABET: &[u8; 58] =
+    b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
 /// Length of the fixed-width base58 encoding of a 32-byte value.
 pub const ENCODED_LEN: usize = 44;

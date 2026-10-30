@@ -144,7 +144,7 @@ impl Board {
         let secret = match files.load_identity() {
             Some(secret) => secret,
             None => {
-                let secret = files.generate_secret();
+                let secret = files.generate_identity_secret();
                 files
                     .store_identity(Some(&secret))
                     .map_err(|()| io::Error::other("the device identity was not kept"))?;

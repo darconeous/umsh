@@ -3732,8 +3732,11 @@ async fn main(spawner: Spawner) {
     let boot_identity_keys = match stored_identity {
         StoredIdentity::Keys { secret, public } => Some((secret, public)),
         StoredIdentity::Absent | StoredIdentity::Unparseable => {
-            let mut secret = [0u8; 32];
-            pool_draw(b"device-identity", &mut secret);
+            let secret = umsh_crypto::software::generate_identity_secret(|secret| {
+                pool_draw(b"device-identity", secret);
+                Ok::<_, core::convert::Infallible>(())
+            })
+            .unwrap_or_else(|never| match never {});
             let (public, record) = driver::device_identity_record(&secret);
             if stored_identity == StoredIdentity::Unparseable {
                 let key = umsh_core::PublicKey(public);

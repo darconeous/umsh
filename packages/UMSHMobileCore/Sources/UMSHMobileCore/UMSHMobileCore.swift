@@ -20736,6 +20736,18 @@ public func generateChannelKey() -> Data  {
 })
 }
 /**
+ * Generate a fresh 32-octet secret for a new local identity.
+ *
+ * Redrawn while the hint filter matches its key.
+ */
+public func generateIdentitySecret() -> Data  {
+    return try!  FfiConverterData.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_generate_identity_secret(uniffiCallStatus
+    )
+})
+}
+/**
  * Derive a public channel from a plain name, without a URI.
  *
  * This is the join-by-name path. The returned `canonical_name` is the
@@ -21640,6 +21652,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_generate_channel_key() != 31413) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_func_generate_identity_secret() != 13745) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_inspect_channel_name() != 40184) {

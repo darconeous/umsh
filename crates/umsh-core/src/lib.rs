@@ -43,6 +43,7 @@
 pub mod base58;
 mod builder;
 mod error;
+pub mod hint_filter;
 pub mod options;
 mod packet;
 #[cfg(feature = "region-codec")]

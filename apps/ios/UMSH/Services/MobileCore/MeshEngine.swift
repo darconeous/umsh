@@ -171,6 +171,9 @@ protocol MeshEngine: Actor {
     func lockIdentity()
     func inspectChannelURI(_ uri: String) throws -> MeshChannelPreview
     func inspectChannelName(_ name: String) throws -> MeshChannelPreview
+    /// A fresh secret for a new local identity, redrawn while the hint
+    /// filter matches its key.
+    func generateIdentitySecret() -> Data
     func generateChannelKey() -> Data
     func deriveChannelID(key: Data) throws -> Data
     /// The full sixteen-octet channel identifier, which is what a radio

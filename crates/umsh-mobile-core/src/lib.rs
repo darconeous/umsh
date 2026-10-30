@@ -72,7 +72,7 @@ uniffi::setup_scaffolding!();
 ///
 /// Increment this when a binding-visible operation, record, or error contract
 /// changes incompatibly. It is independent of the UMSH wire version.
-pub const MOBILE_API_VERSION: u16 = 61;
+pub const MOBILE_API_VERSION: u16 = 62;
 
 /// Stable error categories consumed by platform adapters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Error)]
@@ -414,6 +414,23 @@ pub fn inspect_channel_uri(uri: String) -> Result<ChannelPreviewRecord, MobileEr
 #[uniffi::export]
 pub fn inspect_channel_name(name: String) -> Result<ChannelPreviewRecord, MobileError> {
     named_channel_preview(&name)
+}
+
+/// Generate a fresh 32-octet secret for a new local identity.
+///
+/// Redrawn while the hint filter matches its key.
+#[uniffi::export]
+pub fn generate_identity_secret() -> Vec<u8> {
+    use rand::Rng;
+
+    let mut secret = umsh_crypto::software::generate_identity_secret(|secret| {
+        rand::rng().fill_bytes(secret);
+        Ok::<_, std::convert::Infallible>(())
+    })
+    .unwrap_or_else(|never| match never {});
+    let bytes = secret.to_vec();
+    secret.zeroize();
+    bytes
 }
 
 /// Generate a fresh 32-octet key for a new private channel.
