@@ -170,7 +170,7 @@ the phone's identity key.
 
 The production ULCP device `Session` owns the host receive filters, auto-ack
 policy, and inbound queue (`crates/umsh-ulcp-device/src/session.rs:1904`), and
-reports queued frames through `QueuedNotice { class, muted, depth }`
+reports queued frames through `QueuedNotice { class, cue, depth }`
 (`session.rs:820-835`). The phone already drains with `CMD_QUEUE_DRAIN`,
 provisions pairwise keys for open direct conversations, sets
 `PROP_HOST_AUTO_ACK`, and handles `RxBuffered` on drained frames. A T1000-E

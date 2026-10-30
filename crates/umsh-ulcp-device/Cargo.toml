@@ -16,6 +16,7 @@ umsh-ulcp = { path = "../umsh-ulcp" }
 umsh-core = { path = "../umsh-core", default-features = false, features = ["region-codec"] }
 umsh-crypto = { path = "../umsh-crypto", default-features = false }
 umsh-hal = { path = "../umsh-hal", default-features = false }
+umsh-text = { path = "../umsh-text", default-features = false }
 embassy-sync = { version = "0.8", default-features = false }
 heapless.workspace = true
 

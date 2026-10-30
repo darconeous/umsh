@@ -959,8 +959,8 @@ pub trait DeviceEnv {
         let _ = enabled;
     }
     /// A covered frame was queued for an attached-or-future host
-    /// (T-1000E: the attention LED, and a chirp the notice's class
-    /// chooses unless the host muted its source).
+    /// (T-1000E: the attention LED, and, when the notice calls for a
+    /// cue, a chirp its class chooses).
     fn frame_queued(&mut self, notice: QueuedNotice) {
         let _ = notice;
     }

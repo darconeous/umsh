@@ -69,7 +69,7 @@ final class LanRadioProvider: NEAppPushProvider, @unchecked Sendable {
 /// Tells the user of frames that arrive while the app is away.
 private final class QueuedNotifier: MobileVirtualRadioListener, @unchecked Sendable {
     func onQueued(notice: MobileQueuedNoticeRecord) {
-        guard !notice.muted else { return }
+        guard notice.cue else { return }
         let content = UNMutableNotificationContent()
         switch notice.`class` {
         case .direct:

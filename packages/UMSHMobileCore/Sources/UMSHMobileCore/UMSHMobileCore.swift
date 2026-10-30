@@ -8938,10 +8938,11 @@ public func FfiConverterTypeMobilePeerRegistrationRecord_lower(_ value: MobilePe
 public struct MobileQueuedNoticeRecord: Equatable, Hashable {
     public var `class`: MobileQueuedClass
     /**
-     * The source is muted: counts still stand, but the frame earns no
-     * notification of its own.
+     * The frame earns a notification of its own: a message for the
+     * user, in a conversation that is not muted. Counts follow every
+     * frame regardless.
      */
-    public var muted: Bool
+    public var cue: Bool
     /**
      * Frames in the queue after this one.
      */
@@ -8951,14 +8952,15 @@ public struct MobileQueuedNoticeRecord: Equatable, Hashable {
     // declare one manually.
     public init(`class`: MobileQueuedClass,
         /**
-         * The source is muted: counts still stand, but the frame earns no
-         * notification of its own.
-         */muted: Bool,
+         * The frame earns a notification of its own: a message for the
+         * user, in a conversation that is not muted. Counts follow every
+         * frame regardless.
+         */cue: Bool,
         /**
          * Frames in the queue after this one.
          */depth: UInt32) {
         self.`class` = `class`
-        self.muted = muted
+        self.cue = cue
         self.depth = depth
     }
 
@@ -8979,14 +8981,14 @@ public struct FfiConverterTypeMobileQueuedNoticeRecord: FfiConverterRustBuffer {
         return
             try MobileQueuedNoticeRecord(
                 class: FfiConverterTypeMobileQueuedClass.read(from: &buf),
-                muted: FfiConverterBool.read(from: &buf),
+                cue: FfiConverterBool.read(from: &buf),
                 depth: FfiConverterUInt32.read(from: &buf)
         )
     }
 
     public static func write(_ value: MobileQueuedNoticeRecord, into buf: inout [UInt8]) {
         FfiConverterTypeMobileQueuedClass.write(value.`class`, into: &buf)
-        FfiConverterBool.write(value.muted, into: &buf)
+        FfiConverterBool.write(value.cue, into: &buf)
         FfiConverterUInt32.write(value.depth, into: &buf)
     }
 }

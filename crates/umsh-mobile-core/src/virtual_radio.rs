@@ -67,9 +67,10 @@ pub enum MobileQueuedClass {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct MobileQueuedNoticeRecord {
     pub class: MobileQueuedClass,
-    /// The source is muted: counts still stand, but the frame earns no
-    /// notification of its own.
-    pub muted: bool,
+    /// The frame earns a notification of its own: a message for the
+    /// user, in a conversation that is not muted. Counts follow every
+    /// frame regardless.
+    pub cue: bool,
     /// Frames in the queue after this one.
     pub depth: u32,
 }
@@ -81,7 +82,7 @@ impl From<QueuedNotice> for MobileQueuedNoticeRecord {
                 QueuedClass::Direct => MobileQueuedClass::Direct,
                 QueuedClass::Group => MobileQueuedClass::Group,
             },
-            muted: notice.muted,
+            cue: notice.cue,
             depth: u32::try_from(notice.depth).unwrap_or(u32::MAX),
         }
     }

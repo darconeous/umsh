@@ -4220,6 +4220,7 @@ dependencies = [
  "umsh-core",
  "umsh-crypto",
  "umsh-hal",
+ "umsh-text",
  "umsh-ulcp",
 ]
 

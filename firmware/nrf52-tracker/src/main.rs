@@ -1335,8 +1335,8 @@ mod firmware {
     /// Express a frame having been taken in for a host that is not here.
     ///
     /// The count and the attention LED report the queue, so they follow
-    /// every frame; the chirp addresses the operator, so it follows what
-    /// the host asked to hear about.
+    /// every frame; the chirp addresses the operator, so it follows the
+    /// notice's cue.
     fn set_queue_indication(notice: umsh_ulcp_device::QueuedNotice) {
         QUEUED_FRAMES.store(
             notice.depth.min(u16::MAX as usize) as u16,
@@ -1346,7 +1346,7 @@ mod firmware {
         umsh_bsp_t1000e::indicator::request_attention();
         #[cfg(feature = "has-display")]
         UI_REFRESH.signal(());
-        if notice.muted {
+        if !notice.cue {
             return;
         }
         // The engine already declines to play while the operator has the

@@ -388,7 +388,7 @@ is incomplete. The counter wraps modulo 2^32.
 * Remove Selector: the item
 * Post-Reset Value: Empty
 
-The channels whose queued frames raise no
+The channels whose queued messages raise no
 [receipt cue](ulcp-host.md#receipt-cues). A frame matches when the
 provisioned channel key that authenticated it derives a listed identifier;
 the match is made after verification, against the full identifier, never
@@ -405,9 +405,10 @@ channel the host did not name.
 * Remove Selector: the item
 * Post-Reset Value: Empty
 
-The peers whose queued frames raise no
+The peers whose direct messages, once queued, raise no
 [receipt cue](ulcp-host.md#receipt-cues). A frame matches when its resolved
-source is a listed key. Items are full public keys rather than 3-byte
+sender is a listed key; a peer's posts to a channel are governed by
+`PROP_HOST_MUTED_CHANNELS` alone. Items are full public keys rather than 3-byte
 hints: hints collide, and the detached receive path resolves the full key
 already.
 
@@ -418,20 +419,30 @@ not attached—a sound, a light, a count on a panel. What form the
 indication takes, and whether a device makes one at all, is a property of
 the board rather than of the protocol.
 
-`PROP_HOST_MUTED_CHANNELS` and `PROP_HOST_MUTED_PEERS` name sources whose
-frames are taken in without one. They govern the indication and nothing
-else: a frame from a muted source is filtered, queued, acknowledged, and
-drained exactly as any other, and counts toward
-`PROP_HOST_RX_QUEUE_COUNT` and `PROP_HOST_RX_QUEUE_DROPPED` the same way.
+An indication of one arrival is reserved for a message the operator
+reads: a frame the device authenticated with a provisioned key whose
+payload is a [text message](app-text-messages.md) of type basic or
+status, counted once, at its first fragment. Resend requests, Message
+Unavailable responses, continuation fragments, a message whose Message
+Type, Regarding, or Editing option does not decode, and every other
+payload type are queued without one, as is any frame the device could
+not authenticate, since its content is unreadable.
+
+`PROP_HOST_MUTED_CHANNELS` and `PROP_HOST_MUTED_PEERS` name conversations
+whose messages are taken in without one: a channel, matched by the key
+that authenticated the frame, or a direct conversation, matched by its
+sender. They govern the indication and nothing else: a frame in a muted
+conversation is filtered, queued, acknowledged, and drained exactly as
+any other, and counts toward `PROP_HOST_RX_QUEUE_COUNT` and
+`PROP_HOST_RX_QUEUE_DROPPED` the same way.
+
 Indications that describe the queue as a whole rather than one arrival—a
-queued count, a "something is waiting" light—still follow every frame,
+queued count, a "something is waiting" light—follow every queued frame,
 because they describe what a drain will deliver.
 
 The tables are not validated against the key tables. An entry naming a
-source the device holds no key for is simply inert, as an entry in
-`PROP_HOST_RX_FILTERS` is independent of the key tables. A frame accepted
-by an explicit filter alone has no resolved source and therefore matches
-no entry.
+conversation the device holds no key for is simply inert, as an entry in
+`PROP_HOST_RX_FILTERS` is independent of the key tables.
 
 ## Receive Filtering {#receive-filtering}
 

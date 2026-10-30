@@ -6,7 +6,7 @@ use heapless::{Deque, Vec as HeaplessVec};
 use umsh_core::options::{OptionDecoder, OptionEncoder, TraceSignalEntry};
 use umsh_core::{
     ChannelKey, EncodeError, NodeHint, OptionNumber, PacketBuilder, PacketHeader, PacketType,
-    ParsedOptions, RegionCode, RouteEvidence, SourceAddrRef, established_route_slack,
+    ParsedOptions, PayloadType, RegionCode, RouteEvidence, SourceAddrRef, established_route_slack,
 };
 use umsh_crypto::replay::{ReplayVerdict, ReplayWindow};
 use umsh_crypto::{AesProvider, CryptoEngine, PairwiseKeys, Sha256Provider};
@@ -958,12 +958,13 @@ enum SecureRx {
     Plain,
     /// Authenticated and new. `ack` is present when the frame requests
     /// acknowledgement (never for multicast); `identity` keys later
-    /// duplicate coalescing and deferred ack marking; `muted` says the
-    /// host asked for this source to raise no receipt cue.
+    /// duplicate coalescing and deferred ack marking; `cue` says the
+    /// frame carries a message the operator reads, in a conversation
+    /// the host has not muted.
     New {
         ack: Option<AckPlan>,
         identity: Option<RxIdentity>,
-        muted: bool,
+        cue: bool,
     },
     /// Authenticated duplicate of a previously accepted frame: it is
     /// coalesced rather than queued again. `ack` is present when the
@@ -993,10 +994,11 @@ pub enum QueuedClass {
 pub struct QueuedNotice {
     /// Which cue the frame calls for.
     pub class: QueuedClass,
-    /// The frame's source is in a mute table: aggregate indications (a
-    /// queued count, an attention light) still stand, but the frame
-    /// earns no cue of its own.
-    pub muted: bool,
+    /// The frame earns a cue of its own: it carries a message for the
+    /// operator, in a conversation no mute table names. Aggregate
+    /// indications (a queued count, an attention light) follow every
+    /// frame regardless.
+    pub cue: bool,
     /// Frames in the queue after the push.
     pub depth: usize,
 }
@@ -3233,6 +3235,37 @@ fn queued_class(data: &[u8]) -> QueuedClass {
     }
 }
 
+/// Whether a decrypted payload is a message the operator reads, and so
+/// earns a receipt cue: basic or status text, replies and reactions
+/// included, counted once at its first fragment. Resend requests and
+/// unavailability notices are text-protocol bookkeeping, and every
+/// other payload type is traffic no one reads.
+fn is_readable_message(payload: &[u8]) -> bool {
+    let Some((&payload_type, body)) = payload.split_first() else {
+        return false;
+    };
+    if PayloadType::from_byte(payload_type) != Some(PayloadType::TextMessage) {
+        return false;
+    }
+    let Ok((message, info)) = umsh_text::text_message::parse_with_info(body) else {
+        return false;
+    };
+    // The options that decide what a message is: a receiver shows
+    // nothing when it cannot decode one of them.
+    use umsh_text::model::option::{EDITING, MESSAGE_TYPE, REGARDING};
+    ![MESSAGE_TYPE, REGARDING, EDITING]
+        .into_iter()
+        .any(|number| info.undecodable(number))
+        && matches!(
+            message.message_type,
+            umsh_text::MessageType::Basic | umsh_text::MessageType::Status
+        )
+        && message
+            .sequence
+            .and_then(|sequence| sequence.fragment)
+            .is_none_or(|fragment| fragment.index == 0)
+}
+
 /// A channel-key option value: the raw symmetric key.
 fn channel_key_item(value: &[u8]) -> Result<[u8; items::CHANNEL_KEY_LEN], SnapshotError> {
     value.try_into().map_err(|_| SnapshotError::InvalidValue)
@@ -4603,14 +4636,10 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 }
                 verdict => {
                     // An unauthenticated frame reaches the queue on the
-                    // strength of a receive filter alone, so its source
-                    // is unattributed and no mute can apply to it.
-                    let (ack, identity, muted) = match verdict {
-                        SecureRx::New {
-                            ack,
-                            identity,
-                            muted,
-                        } => (ack, identity, muted),
+                    // strength of a receive filter alone: its content
+                    // is unreadable, so nothing says it is a message.
+                    let (ack, identity, cue) = match verdict {
+                        SecureRx::New { ack, identity, cue } => (ack, identity, cue),
                         _ => (None, None, false),
                     };
                     // Entries start unacknowledged: RX_FLAG_ACKED is
@@ -4621,7 +4650,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     let seq = self.host.queue.push(data, info, now_ms, identity);
                     self.queued_notice = Some(QueuedNotice {
                         class: queued_class(data),
-                        muted,
+                        cue,
                         depth: self.host.queue.len,
                     });
                     ack.and_then(|plan| self.stage_ack(plan, Some(seq), now_ms))
@@ -4769,13 +4798,11 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     k_enc: derived.k_enc,
                     k_mic: derived.k_mic,
                 };
-                if self
-                    .engine
-                    .open_packet(scratch, &header, &channel_pairwise)
-                    .is_err()
-                {
+                let Ok(body_range) = self.engine.open_packet(scratch, &header, &channel_pairwise)
+                else {
                     return SecureRx::Plain;
-                }
+                };
+                let readable = is_readable_message(&scratch[body_range]);
                 let Some(sec_info) = header.sec_info else {
                     return SecureRx::Plain;
                 };
@@ -4802,7 +4829,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                         // two-octet on-wire identifier: identifiers
                         // collide, and a collision must not mute the
                         // wrong channel.
-                        muted: self.channel_muted(&channel_key),
+                        cue: readable && !self.channel_muted(&channel_key),
                     }
                 };
             }
@@ -4839,6 +4866,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         if let Some(plan) = plan.as_mut() {
             plan.replay = identity.map(|identity| (peer_index, identity));
         }
+        let readable = is_readable_message(&scratch[body_range]);
         let muted = self.host.muted_peers.contains(
             &self.host.peer_keys.entries[peer_index]
                 .as_ref()
@@ -4858,7 +4886,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 SecureRx::New {
                     ack: plan,
                     identity,
-                    muted,
+                    cue: readable && !muted,
                 }
             }
             ReplayVerdict::Replay => {
@@ -15687,6 +15715,20 @@ mod tests {
     /// A sealed UNAR from the test peer to the host (unencrypted body,
     /// 8-byte MIC), authenticated with `keys`.
     fn sealed_unar(counter: u32, keys: &PairwiseKeys, full_source: bool) -> Vec<u8> {
+        sealed_unar_carrying(counter, keys, full_source, TEXT_PAYLOAD)
+    }
+
+    /// A basic text message with no options: the payload-type byte, the
+    /// option-list end marker, and the body.
+    const TEXT_PAYLOAD: &[u8] = &[3, 0xFF, b'h', b'i'];
+
+    /// The same frame carrying `payload` (payload-type byte included).
+    fn sealed_unar_carrying(
+        counter: u32,
+        keys: &PairwiseKeys,
+        full_source: bool,
+        payload: &[u8],
+    ) -> Vec<u8> {
         let mut buf = [0u8; 96];
         let builder = PacketBuilder::new(&mut buf).unicast(NodeHint([0xC4, 0xC4, 0xC4]));
         let builder = if full_source {
@@ -15698,7 +15740,7 @@ mod tests {
             .frame_counter(counter)
             .ack_requested()
             .mic_size(MicSize::Mic8)
-            .payload(&[3, 1, 2])
+            .payload(payload)
             .build()
             .unwrap();
         test_engine().seal_packet(&mut packet, keys).unwrap();
@@ -17185,7 +17227,7 @@ mod tests {
             .source_hint(NodeHint([0x0A, 0x0A, 0x0A]))
             .frame_counter(counter)
             .mic_size(MicSize::Mic8)
-            .payload(&[3, fill])
+            .payload(&[3, 0xFF, fill])
             .build()
             .unwrap();
         let keys = PairwiseKeys {
@@ -17296,7 +17338,7 @@ mod tests {
         assert!(effect.is_some(), "a muted frame is still acked");
         let notice = session.take_queued_notice().expect("the frame was queued");
         assert_eq!(notice.class, QueuedClass::Direct);
-        assert!(notice.muted);
+        assert!(!notice.cue);
         assert_eq!(notice.depth, 1);
 
         // Un-muting reaches the very next frame.
@@ -17304,7 +17346,36 @@ mod tests {
         remove_item(&mut session, prop::HOST_MUTED_PEERS, &PEER_PUB);
         session.detach();
         rx_effect(&mut session, &sealed_unar(2, &test_pairwise(), true), 5_000);
-        assert!(!session.take_queued_notice().expect("queued").muted);
+        assert!(session.take_queued_notice().expect("queued").cue);
+    }
+
+    #[test]
+    fn only_a_message_for_the_operator_raises_a_cue() {
+        let mut session = auto_ack_session();
+        let keys = test_pairwise();
+        let mut counter = 0;
+        let mut cue_for = |payload: &[u8]| {
+            counter += 1;
+            let frame = sealed_unar_carrying(counter, &keys, true, payload);
+            let effect = rx_effect(&mut session, &frame, u64::from(counter) * 5_000);
+            // Every kind is still queued and acked.
+            expect_ack_transmit(&mut session, effect, None);
+            session.take_queued_notice().expect("queued").cue
+        };
+
+        assert!(cue_for(TEXT_PAYLOAD), "basic text");
+        // Status text, which a reaction is: Message Type 1.
+        assert!(cue_for(&[3, 0x01, 1, 0xFF, b'+', b'1']), "status text");
+        // A fragmented message cues once, at its first fragment.
+        assert!(cue_for(&[3, 0x23, 7, 0, 2, 0xFF, b'a']), "first fragment");
+        assert!(!cue_for(&[3, 0x23, 7, 1, 2, 0xFF, b'b']), "continuation");
+        // Text-protocol bookkeeping: a resend request, an unavailability.
+        assert!(!cue_for(&[3, 0x01, 2, 0x21, 7]), "resend request");
+        assert!(!cue_for(&[3, 0x01, 3, 0x21, 7]), "message unavailable");
+        assert!(!cue_for(&[3, 0x02, 1, 1]), "malformed text");
+        // Payloads no one reads.
+        assert!(!cue_for(&[8, 0x01, 0x02]), "node-management request");
+        assert!(!cue_for(&[]), "empty payload");
     }
 
     #[test]
@@ -17327,18 +17398,17 @@ mod tests {
         rx_effect(&mut session, &sealed_multicast(1, &channel_key, 0x11), 0);
         let notice = session.take_queued_notice().expect("queued");
         assert_eq!(notice.class, QueuedClass::Group);
-        assert!(notice.muted);
+        assert!(!notice.cue);
 
         rx_effect(&mut session, &sealed_multicast(2, &other_key, 0x11), 0);
         let notice = session.take_queued_notice().expect("queued");
-        assert!(!notice.muted, "the other channel was never muted");
+        assert!(notice.cue, "the other channel was never muted");
     }
 
     #[test]
-    fn an_unattributed_frame_is_never_muted() {
-        // Accepted by an explicit filter with no key to authenticate it:
-        // there is no source to match a mute entry against, so it
-        // chirps. Muting it would mean muting everything unresolvable.
+    fn an_unattributed_frame_raises_no_cue() {
+        // Accepted by an explicit filter with no key to open it: nothing
+        // says it carries a message, so it is queued without a cue.
         let mut session = test_session();
         enable(&mut session);
         insert_item(
@@ -17356,7 +17426,7 @@ mod tests {
         receive_detached(&mut session, &sealed_multicast(9, &[0x42; 32], 0x11), 0);
         let notice = session.take_queued_notice().expect("queued");
         assert_eq!(notice.class, QueuedClass::Group);
-        assert!(!notice.muted);
+        assert!(!notice.cue);
     }
 
     #[test]

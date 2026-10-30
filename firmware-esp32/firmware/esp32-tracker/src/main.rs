@@ -1608,7 +1608,7 @@ impl DeviceEnv for BoardDeviceEnv {
     }
 
     /// No sounder here, so the queued count on the status page carries
-    /// the whole report and the notice's class and mute have nothing to
+    /// the whole report and the notice's class and cue have nothing to
     /// steer.
     fn frame_queued(&mut self, notice: umsh_ulcp_device::QueuedNotice) {
         QUEUED_FRAMES.store(
