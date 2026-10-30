@@ -1588,8 +1588,10 @@ where
             0b00000100000,
             0,
         ],
-        WifiState::Connecting => [0, 0, 0, 0b00011111000, 0b00100000100, 0, 0b00000100000, 0],
-        WifiState::Disconnected => [
+        WifiState::Connecting | WifiState::Searching => {
+            [0, 0, 0, 0b00011111000, 0b00100000100, 0, 0b00000100000, 0]
+        }
+        WifiState::Disconnected | WifiState::Failing => [
             0b00111111100,
             0b11000000011,
             0,

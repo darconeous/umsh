@@ -553,7 +553,7 @@ pub(crate) async fn display_task(
                     Some(UiEffect::SelectWifiNetwork(name)) => {
                         #[cfg(feature = "wifi")]
                         {
-                            let mut selected = umsh_ulcp_device::net::SelectedNetwork::default();
+                            let mut selected = umsh_ulcp_device::net::NetworkName::default();
                             if selected.set(name.as_bytes()).is_ok() {
                                 INPUT_CH.send(InEvent::SelectWifiNetwork(selected)).await;
                                 redraw = false;

@@ -81,16 +81,17 @@ until their sensor and mounting orientation are qualified.
 ### WiFi
 
 WiFi appears only on boards with station support. The radio toggle changes
-power without forgetting credentials. Saved networks lists only configured
-profiles, with `*` marking the selected network. Select changes that choice;
-it does not turn the radio on. An empty list says `No saved networks` and
-retains Back. Adding a network or changing its password uses device management
-from a phone or computer.
+power without forgetting credentials; while on, the device joins a saved
+network by itself. Saved networks lists only configured profiles, with `*`
+marking the network in use. Select joins that network and stays on it; with
+WiFi off it does nothing. An empty list says `No saved networks` and retains
+Back. Adding a network or changing its password uses device management from a
+phone or computer.
 
 The header's status widgets occupy space from the right, ahead of the device
 name. Battery and charging retain their corner; WiFi appears beside them while
-enabled. A full fan means associated, a small fan means connecting, and a
-crossed fan means disconnected. Turning WiFi off removes its icon. The icon
+enabled. A full fan means associated, a small fan means joining or looking
+for a network, and a crossed fan means on but joining nothing. Turning WiFi off removes its icon. The icon
 describes the WiFi link, not Internet or bridge availability. Only visible
 indicators consume width: an absent battery body or charging bolt leaves no
 reserved slot, and the remaining icons shift right. Bluetooth sits to the left

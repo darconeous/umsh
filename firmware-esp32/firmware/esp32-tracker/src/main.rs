@@ -1572,7 +1572,7 @@ impl DeviceEnv for BoardDeviceEnv {
 
     #[cfg(feature = "wifi")]
     async fn set_wifi_scanning(&mut self, scanning: bool) -> Result<bool, Status> {
-        Ok(wifi::scan(scanning))
+        wifi::scan(scanning)
     }
 
     #[cfg(feature = "wifi")]

@@ -725,7 +725,8 @@ impl UiModel {
                 },
                 UiInput::Select,
             ) => {
-                if wifi.networks().any(|known| known == name) {
+                // Joining needs the station on: the toggle is one row up.
+                if wifi.enabled && wifi.networks().any(|known| known == name) {
                     Some(UiEffect::SelectWifiNetwork(name))
                 } else {
                     self.set_notice(UiNotice::NetworkUnavailable);
@@ -860,6 +861,7 @@ mod tests {
         let first = NetworkName::new(b"A long shared network name one").unwrap();
         let second = NetworkName::new(b"A long shared network name two").unwrap();
         let mut wifi = WifiMenu {
+            enabled: true,
             networks: [Some(first), Some(second), None, None],
             ..Default::default()
         };
@@ -885,6 +887,14 @@ mod tests {
             ui.apply_with_wifi(UiInput::Select, &wifi),
             Some(UiEffect::SelectWifiNetwork(second))
         );
+        // Off, there is no station to join with.
+        wifi.enabled = false;
+        assert_eq!(ui.apply_with_wifi(UiInput::Select, &wifi), None);
+        assert_eq!(ui.notice(), Some(UiNotice::NetworkUnavailable));
+        wifi.enabled = true;
+        ui.page = Page::WifiNetworks {
+            selected: Some(second),
+        };
         wifi.networks[0] = None;
         assert_eq!(ui.apply_with_wifi(UiInput::Select, &wifi), None);
         assert_eq!(ui.notice(), Some(UiNotice::NetworkUnavailable));

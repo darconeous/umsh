@@ -31,8 +31,14 @@ impl NetworkName {
 pub enum WifiState {
     #[default]
     Off,
+    /// On, joining nothing: paused, or no saved network it may choose.
     Disconnected,
+    /// Looking for a saved network to join.
+    Searching,
+    /// Joining the named network.
     Connecting,
+    /// Joining the named network has failed, and is tried again.
+    Failing,
     Connected,
 }
 

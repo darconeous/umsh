@@ -1,16 +1,17 @@
 //! Station ownership and the private ULCP-to-network boundary.
 use core::cell::RefCell;
+use core::sync::atomic::{AtomicBool, Ordering};
 use embassy_futures::select::{Either3, select, select3};
 use embassy_sync::{
     blocking_mutex::{Mutex, raw::CriticalSectionRawMutex},
     channel::Channel,
     signal::Signal,
 };
-use embassy_time::{Duration, Timer, with_timeout};
+use embassy_time::{Duration, Instant, Timer, with_timeout};
 use esp_radio::wifi::{
     AuthenticationMethod as Auth, AuthenticationMethodConfig as AuthConfig, Config,
-    ControllerConfig, Interface, PowerSaveMode, WifiController, ap::AccessPointInfo,
-    scan::ScanConfig, sta::StationConfig,
+    ConnectionError, ControllerConfig, DisconnectReason, Interface, PowerSaveMode, WifiController,
+    ap::AccessPointInfo, scan::ScanConfig, sta::StationConfig,
 };
 use umsh_ulcp::{
     Status,
@@ -19,7 +20,10 @@ use umsh_ulcp::{
     wifi::{Link, LinkReason, LinkState, NetworkEntry, ScanResult, SecurityMode},
 };
 use umsh_ulcp_device::NETWORK_TABLE_MAX;
-use umsh_ulcp_runtime::driver::{NetworkConfig, PublishEvent};
+use umsh_ulcp_device::known_networks::KnownNetworks;
+use umsh_ulcp_device::net::{NetworkName as StationName, StationIntent};
+use umsh_ulcp_device::station::{Chooser, Mode, Next};
+use umsh_ulcp_runtime::driver::{self, NetworkConfig, PublishEvent};
 use umsh_ux_display_tracker::wifi::{NetworkName, WifiMenu, WifiState};
 
 const _: () = assert!(
@@ -54,22 +58,29 @@ pub const CONFIG: umsh_ulcp_device::net::WifiConfig = umsh_ulcp_device::net::Wif
 #[derive(Clone, PartialEq, Eq)]
 pub(super) struct Settings {
     enabled: bool,
-    entry: heapless::Vec<u8, { umsh_ulcp::wifi::NETWORK_ENTRY_MAX_LEN }>,
-    hidden: heapless::Vec<heapless::Vec<u8, 32>, 4>,
+    networks: KnownNetworks,
+    intent: StationIntent,
     pub v4: ip::V4Config,
     pub hostname: heapless::String<63>,
 }
 
-static SETTINGS: Mutex<CriticalSectionRawMutex, RefCell<Option<Settings>>> =
-    Mutex::new(RefCell::new(None));
+/// The settings, and a count of their changes, so the task can tell a
+/// change without copying the credentials out to compare them.
+static SETTINGS: Mutex<CriticalSectionRawMutex, RefCell<(u32, Option<Settings>)>> =
+    Mutex::new(RefCell::new((0, None)));
 static CHANGED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 static SCAN_CHANGED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 static SCAN: Mutex<CriticalSectionRawMutex, RefCell<(bool, u32)>> =
     Mutex::new(RefCell::new((false, 0)));
+/// A join is in flight. A scan would cancel it, so a host's is refused.
+static CONNECTING: AtomicBool = AtomicBool::new(false);
 static EVENTS: Channel<CriticalSectionRawMutex, (Option<u32>, PublishEvent), 4> = Channel::new();
 type Item = heapless::Vec<u8, { umsh_ulcp::wifi::SCAN_RESULT_MAX_LEN }>;
+/// The retained scan table, bounded by bytes as well as count so a whole
+/// read fits one frame on the device's own settings link.
 static RESULTS: Mutex<CriticalSectionRawMutex, RefCell<heapless::Vec<Item, 10>>> =
     Mutex::new(RefCell::new(heapless::Vec::new()));
+const RESULTS_MAX_BYTES: usize = driver::FRAME_IN_MAX - 16;
 static ADDRESSES: Mutex<CriticalSectionRawMutex, RefCell<heapless::Vec<u8, 16>>> =
     Mutex::new(RefCell::new(heapless::Vec::new()));
 static RESOLVERS: Mutex<CriticalSectionRawMutex, RefCell<heapless::Vec<u8, 64>>> =
@@ -79,7 +90,6 @@ pub fn apply(config: NetworkConfig<'_>) {
     UI.lock(|cell| {
         let mut ui = cell.borrow_mut();
         ui.enabled = config.wifi_enabled;
-        ui.network = NetworkName::new(config.network);
         ui.networks = [None; 4];
         for (slot, entry) in ui.networks.iter_mut().zip(
             config
@@ -91,27 +101,11 @@ pub fn apply(config: NetworkConfig<'_>) {
         }
         if !ui.enabled {
             ui.state = WifiState::Off;
+            ui.network = None;
         } else if ui.state == WifiState::Off {
             ui.state = WifiState::Disconnected;
         }
     });
-    let mut entry = heapless::Vec::new();
-    if let Some(selected) = config.known_networks.get(config.network) {
-        let mut bytes = [0; umsh_ulcp::wifi::NETWORK_ENTRY_MAX_LEN];
-        if let Ok(len) = selected.encode(&mut bytes) {
-            entry.extend_from_slice(&bytes[..len]).unwrap();
-        }
-    }
-    let hidden = config
-        .known_networks
-        .entries()
-        .filter_map(|raw| {
-            let entry = NetworkEntry::decode(raw).ok()?;
-            entry
-                .hidden
-                .then(|| heapless::Vec::from_slice(entry.ssid).unwrap())
-        })
-        .collect();
     let mut hostname = heapless::String::new();
     for byte in config.device_name.iter().copied() {
         let c = if byte.is_ascii_alphanumeric() {
@@ -134,17 +128,18 @@ pub fn apply(config: NetworkConfig<'_>) {
     }
     let next = Settings {
         enabled: config.wifi_enabled,
-        entry,
-        hidden,
+        networks: config.known_networks.clone(),
+        intent: config.intent,
         v4: config.v4,
         hostname,
     };
     let changed = SETTINGS.lock(|cell| {
         let mut state = cell.borrow_mut();
-        if state.as_ref() == Some(&next) {
+        if state.1.as_ref() == Some(&next) {
             false
         } else {
-            *state = Some(next);
+            state.0 = state.0.wrapping_add(1);
+            state.1 = Some(next);
             true
         }
     });
@@ -153,32 +148,64 @@ pub fn apply(config: NetworkConfig<'_>) {
     }
 }
 
-fn settings() -> Option<Settings> {
-    SETTINGS.lock(|cell| cell.borrow().clone())
+/// The settings, if they changed since `seen`, with their count.
+fn settings_since(seen: Option<u32>) -> Option<(u32, Settings)> {
+    SETTINGS.lock(|cell| {
+        let state = cell.borrow();
+        match (seen == Some(state.0), &state.1) {
+            (false, Some(settings)) => Some((state.0, settings.clone())),
+            _ => None,
+        }
+    })
+}
+
+fn settings_generation() -> u32 {
+    SETTINGS.lock(|cell| cell.borrow().0)
 }
 
 /// The station's DHCP host name, which is also its mDNS one.
 #[cfg(feature = "lan-bearer")]
 pub(super) fn hostname() -> Option<heapless::String<63>> {
-    SETTINGS.lock(|cell| cell.borrow().as_ref().map(|s| s.hostname.clone()))
+    SETTINGS.lock(|cell| cell.borrow().1.as_ref().map(|s| s.hostname.clone()))
 }
 fn scan_state() -> (bool, u32) {
     SCAN.lock(|cell| *cell.borrow())
 }
 
-pub fn scan(request: bool) -> bool {
+/// A host's scan request. A scan already running, the device's own
+/// included, is the one it gets.
+pub fn scan(request: bool) -> Result<bool, Status> {
     SCAN.lock(|cell| {
         let mut state = cell.borrow_mut();
-        if state.0 != request {
-            state.0 = request;
-            state.1 = state.1.wrapping_add(1);
-            if request {
-                RESULTS.lock(|cell| cell.borrow_mut().clear());
-            }
-            SCAN_CHANGED.signal(());
+        if state.0 == request {
+            return Ok(request);
         }
-    });
-    request
+        if request && CONNECTING.load(Ordering::Relaxed) {
+            return Err(Status::BUSY);
+        }
+        state.0 = request;
+        state.1 = state.1.wrapping_add(1);
+        if request {
+            RESULTS.lock(|cell| cell.borrow_mut().clear());
+        }
+        SCAN_CHANGED.signal(());
+        Ok(request)
+    })
+}
+
+/// Start a scan of the device's own, reported as a host's is. `None`
+/// when one is already running.
+fn begin_scan() -> Option<u32> {
+    SCAN.lock(|cell| {
+        let mut state = cell.borrow_mut();
+        if state.0 {
+            return None;
+        }
+        state.0 = true;
+        state.1 = state.1.wrapping_add(1);
+        RESULTS.lock(|cell| cell.borrow_mut().clear());
+        Some(state.1)
+    })
 }
 
 pub async fn event() -> PublishEvent {
@@ -191,22 +218,46 @@ pub async fn event() -> PublishEvent {
 }
 
 pub(super) async fn publish(event: PublishEvent) {
-    if let PublishEvent::WifiLink(link) = &event {
-        UI.lock(|cell| {
-            let mut ui = cell.borrow_mut();
-            ui.state = if !ui.enabled {
-                WifiState::Off
-            } else {
-                match link.state {
-                    LinkState::Up => WifiState::Connected,
-                    LinkState::Connecting => WifiState::Connecting,
-                    _ => WifiState::Disconnected,
-                }
-            };
-        });
+    EVENTS.send((None, event)).await;
+}
+
+/// Show the station on the device's own screen.
+fn show(chooser: &Chooser, link: &Link) {
+    let named = match chooser.mode() {
+        Mode::Hold(ssid) => NetworkName::new(ssid),
+        Mode::Choose => chooser
+            .naming()
+            .and_then(|name| NetworkName::new(name.as_bytes())),
+        Mode::Paused => None,
+    };
+    let changed = UI.lock(|cell| {
+        let mut ui = cell.borrow_mut();
+        let before = *ui;
+        ui.network = named.filter(|_| ui.enabled);
+        ui.state = match (ui.enabled, link.state) {
+            (false, _) => WifiState::Off,
+            (true, LinkState::Up) => WifiState::Connected,
+            (true, LinkState::Connecting)
+                if ui.network.is_some()
+                    && matches!(
+                        link.reason,
+                        LinkReason::NotFound
+                            | LinkReason::Auth
+                            | LinkReason::Rejected
+                            | LinkReason::Other
+                    ) =>
+            {
+                WifiState::Failing
+            }
+            (true, LinkState::Connecting) if ui.network.is_some() => WifiState::Connecting,
+            (true, LinkState::Connecting) => WifiState::Searching,
+            (true, LinkState::Down) => WifiState::Disconnected,
+        };
+        *ui != before
+    });
+    if changed {
         super::UI_REFRESH.signal(());
     }
-    EVENTS.send((None, event)).await;
 }
 
 pub fn read_table(key: u32, out: &mut [u8]) -> Result<usize, Status> {
@@ -369,15 +420,17 @@ async fn report_ap(ap: &AccessPointInfo, generation: u32) {
         {
             results.remove(index);
         }
-        if results.is_full() {
-            if ScanResult::decode(results.last().unwrap())
-                .unwrap()
-                .rssi_dbm
-                >= ap.signal_strength
-            {
-                return;
+        let bytes = |results: &heapless::Vec<Item, 10>| {
+            results.iter().map(|raw| 1 + raw.len()).sum::<usize>()
+        };
+        // The weakest go first, the new one included.
+        while results.is_full() || bytes(&results) + 1 + item.len() > RESULTS_MAX_BYTES {
+            match results.last() {
+                Some(raw) if ScanResult::decode(raw).unwrap().rssi_dbm < ap.signal_strength => {
+                    results.pop();
+                }
+                _ => return,
             }
-            results.pop();
         }
         results.push(item.clone()).unwrap();
         results.sort_unstable_by_key(|raw| {
@@ -467,15 +520,132 @@ async fn harvest_while_parked(peripheral: &mut esp_hal::peripherals::WIFI<'stati
     core::future::pending::<()>().await;
 }
 
+/// What a failed join says about the network.
+fn failure(error: &ConnectionError) -> LinkReason {
+    let ConnectionError::Failed(info) = error else {
+        return LinkReason::Other;
+    };
+    match info.reason {
+        DisconnectReason::NoAccessPointFound | DisconnectReason::BeaconTimeout => {
+            LinkReason::NotFound
+        }
+        DisconnectReason::AuthenticationFailed
+        | DisconnectReason::AuthenticationExpired
+        | DisconnectReason::FourWayHandshakeTimeout
+        | DisconnectReason::HandshakeTimeout
+        | DisconnectReason::MicFailure => LinkReason::Auth,
+        _ => LinkReason::Rejected,
+    }
+}
+
+/// Every channel, then each hidden network in `probe` by name, feeding
+/// what is heard to the results and the chooser. Stops early when the
+/// scan is cancelled or the settings change; the upstream scan future
+/// does not stop the radio when dropped, so each bounded channel scan is
+/// finished before that is checked.
+async fn run_scan(
+    controller: &mut WifiController<'_>,
+    generation: u32,
+    settings: u32,
+    probe: &[heapless::Vec<u8, 32>],
+    chooser: &mut Chooser,
+) {
+    let live = || scan_state() == (true, generation) && settings_generation() == settings;
+    chooser.scan_started();
+    let names = core::iter::once(None).chain(probe.iter().map(Some));
+    'scan: for name in names {
+        for channel in 1..=11 {
+            if !live() {
+                break 'scan;
+            }
+            let mut config = ScanConfig::default()
+                .with_channel(channel)
+                .with_show_hidden(true)
+                .with_max(32);
+            if let Some(name) = name {
+                config = config.with_ssid(name.as_slice().try_into().expect("validated SSID"));
+            }
+            let Ok(aps) = controller.scan_async(&config).await else {
+                break 'scan;
+            };
+            if settings_generation() != settings {
+                break 'scan;
+            }
+            for ap in &aps {
+                chooser.heard(ap.ssid.as_str().as_bytes(), ap.signal_strength);
+                report_ap(ap, generation).await;
+            }
+            // Leave the shared antenna to Bluetooth between channels.
+            Timer::after_millis(20).await;
+        }
+    }
+    chooser.scan_finished(Instant::now().as_millis());
+    if scan_state() == (true, generation) {
+        SCAN.lock(|cell| cell.borrow_mut().0 = false);
+        EVENTS
+            .send((Some(generation), PublishEvent::WifiScanning(false)))
+            .await;
+    }
+}
+
+/// Join `entry`, unless the settings change or a scan is asked for first.
+/// `None` when cancelled.
+async fn join(
+    controller: &mut WifiController<'_>,
+    entry: NetworkEntry<'_>,
+) -> Option<Result<(), LinkReason>> {
+    let Some(config) = station(entry) else {
+        return Some(Err(LinkReason::Rejected));
+    };
+    if set_station_config(controller, config, entry.security).is_err() {
+        return Some(Err(LinkReason::Rejected));
+    }
+    super::debug_log(format_args!(
+        "wifi: connection attempt (minimum={:?})",
+        entry.security
+    ));
+    CONNECTING.store(true, Ordering::Relaxed);
+    let outcome = select3(
+        with_timeout(Duration::from_secs(20), controller.connect_async()),
+        CHANGED.wait(),
+        SCAN_CHANGED.wait(),
+    )
+    .await;
+    CONNECTING.store(false, Ordering::Relaxed);
+    let result = match outcome {
+        Either3::First(Ok(Ok(info))) => {
+            let negotiated = match info.authmode {
+                Auth::None => Some(SecurityMode::Open),
+                Auth::Wpa => Some(SecurityMode::Wpa),
+                Auth::Wpa2Personal => Some(SecurityMode::Wpa2),
+                Auth::Wpa3Personal => Some(SecurityMode::Wpa3),
+                _ => None,
+            };
+            if negotiated.is_some_and(|mode| entry.security.permits(mode, entry.raw_key)) {
+                super::debug_log(format_args!("wifi: connected ({:?})", negotiated));
+                return Some(Ok(()));
+            }
+            Err(LinkReason::Rejected)
+        }
+        Either3::First(Ok(Err(error))) => Err(failure(&error)),
+        Either3::First(Err(_)) => Err(LinkReason::Other),
+        _ => {
+            let _ = controller.disconnect_async().await;
+            return None;
+        }
+    };
+    let _ = controller.disconnect_async().await;
+    Some(result)
+}
+
 #[embassy_executor::task]
 pub async fn task(
     mut peripheral: esp_hal::peripherals::WIFI<'static>,
     stack: embassy_net::Stack<'static>,
 ) {
-    let mut link = Link::default();
     let mut network = super::ip::network();
     loop {
-        let Some(mut current) = settings() else {
+        let Some((mut seen, mut current)) = settings_since(None) else {
             select(CHANGED.wait(), harvest_while_parked(&mut peripheral)).await;
             continue;
         };
@@ -502,9 +672,11 @@ pub async fn task(
             Timer::after_secs(5).await;
             continue;
         }
-        let mut active: Option<heapless::Vec<u8, { umsh_ulcp::wifi::NETWORK_ENTRY_MAX_LEN }>> =
-            None;
-        let mut backoff = 1;
+        // Remembers the last network joined only while the controller is
+        // up; after that the strongest wins, as after a restart.
+        let mut chooser = Chooser::default();
+        let mut link: Option<(Link, u32)> = None;
+        let mut named: Option<(StationName, u32)> = None;
         loop {
             #[cfg(feature = "debug-log")]
             super::memory_probe::sample();
@@ -516,124 +688,68 @@ pub async fn task(
             // already-observed wake before starting cancelable work.
             CHANGED.reset();
             SCAN_CHANGED.reset();
-            if let Some(next) = settings() {
-                if current.entry != next.entry || current.enabled != next.enabled {
-                    backoff = 1;
-                    link.reason = LinkReason::None;
-                }
+            if let Some((generation, next)) = settings_since(Some(seen)) {
+                seen = generation;
                 current = next;
+            }
+            let now = Instant::now().as_millis();
+            if chooser.configure(current.enabled, current.intent, &current.networks, now) {
+                let _ = controller.disconnect_async().await;
             }
             if !current.enabled && !scan_state().0 {
                 break;
             }
-            if active
-                .as_ref()
-                .is_some_and(|entry| !current.enabled || *entry != current.entry)
-            {
-                let _ = controller.disconnect_async().await;
-                active = None;
-                backoff = 1;
-            }
             let connected = controller.is_connected();
-            let state = if connected {
-                LinkState::Up
-            } else if current.enabled && !current.entry.is_empty() {
-                LinkState::Connecting
-            } else {
-                LinkState::Down
-            };
-            let association = if connected {
-                controller
-                    .ap_info()
-                    .ok()
-                    .map(|ap| umsh_ulcp::wifi::Association {
-                        bssid: ap.bssid,
-                        frequency_mhz: 2407 + u16::from(ap.channel) * 5,
+            if !connected && chooser.associated().is_some() {
+                chooser.lost();
+            }
+            let epoch = chooser.epoch();
+            if let Some(naming) = chooser.naming() {
+                if named != Some((naming, epoch)) {
+                    named = Some((naming, epoch));
+                    publish(PublishEvent::WifiNetwork {
+                        ssid: naming,
+                        hold_ended: false,
+                        epoch,
                     })
-            } else {
-                None
-            };
-            let next_link = Link {
-                state,
-                reason: if state == LinkState::Connecting {
-                    if link.state == LinkState::Up {
-                        LinkReason::Lost
-                    } else {
-                        link.reason
-                    }
-                } else {
-                    LinkReason::None
+                    .await;
+                }
+            }
+            let association = connected
+                .then(|| controller.ap_info().ok())
+                .flatten()
+                .map(|ap| umsh_ulcp::wifi::Association {
+                    bssid: ap.bssid,
+                    frequency_mhz: 2407 + u16::from(ap.channel) * 5,
+                });
+            let next_link = match association {
+                Some(association) => Link {
+                    state: LinkState::Up,
+                    reason: LinkReason::None,
+                    association: Some(association),
                 },
-                association,
+                None => chooser.link_down(),
             };
-            if next_link != link {
-                link = next_link;
-                publish(PublishEvent::WifiLink(link)).await;
+            show(&chooser, &next_link);
+            if link != Some((next_link, epoch)) {
+                link = Some((next_link, epoch));
+                publish(PublishEvent::WifiLink(next_link, epoch)).await;
             }
             // The update reads the stack itself, so only later changes count.
             network.try_changed();
             super::ip::update(stack, &current, connected).await;
+            let hidden = || {
+                current
+                    .networks
+                    .entries()
+                    .filter_map(|raw| NetworkEntry::decode(raw).ok())
+                    .filter(|entry| entry.hidden)
+                    .map(|entry| heapless::Vec::<u8, 32>::from_slice(entry.ssid).unwrap())
+                    .collect::<heapless::Vec<_, 4>>()
+            };
             let (scanning, generation) = scan_state();
             if scanning {
-                // The upstream scan future does not stop the radio when
-                // dropped. Finish each bounded channel scan, then observe
-                // cancellation before publishing or starting another one.
-                for channel in 1..=11 {
-                    let config = ScanConfig::default()
-                        .with_channel(channel)
-                        .with_show_hidden(true)
-                        .with_max(32);
-                    match controller.scan_async(&config).await {
-                        Ok(aps) => {
-                            if settings().as_ref() != Some(&current) {
-                                break;
-                            }
-                            for ap in &aps {
-                                report_ap(ap, generation).await;
-                            }
-                        }
-                        _ => {
-                            break;
-                        }
-                    }
-                    if scan_state() != (true, generation) || settings().as_ref() != Some(&current) {
-                        break;
-                    }
-                }
-                for ssid in &current.hidden {
-                    if scan_state() != (true, generation) || settings().as_ref() != Some(&current) {
-                        break;
-                    }
-                    for channel in 1..=11 {
-                        if scan_state() != (true, generation)
-                            || settings().as_ref() != Some(&current)
-                        {
-                            break;
-                        }
-                        let config = ScanConfig::default()
-                            .with_ssid(ssid.as_slice().try_into().expect("validated SSID"))
-                            .with_channel(channel)
-                            .with_show_hidden(true)
-                            .with_max(32);
-                        match controller.scan_async(&config).await {
-                            Ok(aps) => {
-                                if settings().as_ref() != Some(&current) {
-                                    break;
-                                }
-                                for ap in &aps {
-                                    report_ap(ap, generation).await;
-                                }
-                            }
-                            Err(_) => break,
-                        }
-                    }
-                }
-                if scan_state() == (true, generation) {
-                    SCAN.lock(|cell| cell.borrow_mut().0 = false);
-                    EVENTS
-                        .send((Some(generation), PublishEvent::WifiScanning(false)))
-                        .await;
-                }
+                run_scan(&mut controller, generation, seen, &hidden(), &mut chooser).await;
                 continue;
             }
             if connected {
@@ -657,77 +773,63 @@ pub async fn task(
                 .await;
                 continue;
             }
-            if current.enabled && !current.entry.is_empty() {
-                let entry = NetworkEntry::decode(&current.entry).unwrap();
-                if let Some(config) = station(entry) {
-                    if set_station_config(&mut controller, config, entry.security).is_ok() {
-                        active = Some(current.entry.clone());
-                        super::debug_log(format_args!(
-                            "wifi: connection attempt (minimum={:?})",
-                            entry.security
-                        ));
-                        match select3(
-                            with_timeout(Duration::from_secs(20), controller.connect_async()),
-                            CHANGED.wait(),
-                            SCAN_CHANGED.wait(),
-                        )
-                        .await
-                        {
-                            Either3::First(Ok(Ok(info))) => {
-                                let negotiated = match info.authmode {
-                                    Auth::None => Some(SecurityMode::Open),
-                                    Auth::Wpa => Some(SecurityMode::Wpa),
-                                    Auth::Wpa2Personal => Some(SecurityMode::Wpa2),
-                                    Auth::Wpa3Personal => Some(SecurityMode::Wpa3),
-                                    _ => None,
-                                };
-                                if negotiated
-                                    .is_some_and(|mode| entry.security.permits(mode, entry.raw_key))
-                                {
-                                    super::debug_log(format_args!(
-                                        "wifi: connected ({:?})",
-                                        negotiated
-                                    ));
-                                    backoff = 1;
-                                    continue;
-                                }
-                                let _ = controller.disconnect_async().await;
-                                link.reason = LinkReason::Rejected;
-                            }
-                            Either3::First(_) => {
-                                let _ = controller.disconnect_async().await;
-                                link.reason = LinkReason::Auth;
-                            }
-                            _ => {
-                                let _ = controller.disconnect_async().await;
-                                continue;
+            match chooser.step(now) {
+                Next::Join(name) => {
+                    let Some(entry) = current.networks.get(name.as_bytes()) else {
+                        continue;
+                    };
+                    match join(&mut controller, entry).await {
+                        None => {}
+                        Some(Ok(())) => chooser.joined(name.as_bytes()),
+                        Some(Err(reason)) => {
+                            super::debug_log(format_args!("wifi: join failed ({:?})", reason));
+                            let now = Instant::now().as_millis();
+                            if chooser.failed(name.as_bytes(), reason, now) {
+                                publish(PublishEvent::WifiNetwork {
+                                    ssid: StationName::default(),
+                                    hold_ended: true,
+                                    epoch,
+                                })
+                                .await;
                             }
                         }
-                    } else {
-                        link.reason = LinkReason::Rejected;
                     }
-                } else {
-                    link.reason = LinkReason::Rejected;
                 }
-                publish(PublishEvent::WifiLink(link)).await;
+                Next::Scan { probe_hidden } => {
+                    if let Some(generation) = begin_scan() {
+                        EVENTS
+                            .send((Some(generation), PublishEvent::WifiScanning(true)))
+                            .await;
+                        let probe = if probe_hidden {
+                            hidden()
+                        } else {
+                            heapless::Vec::new()
+                        };
+                        run_scan(&mut controller, generation, seen, &probe, &mut chooser).await;
+                    }
+                }
+                Next::Wait(until) => {
+                    let until = async {
+                        match until {
+                            Some(at) => Timer::at(Instant::from_millis(at)).await,
+                            None => core::future::pending().await,
+                        }
+                    };
+                    select3(CHANGED.wait(), SCAN_CHANGED.wait(), until).await;
+                }
             }
-            if !current.entry.is_empty() {
-                super::debug_log(format_args!(
-                    "wifi: retry in {} s ({:?})",
-                    backoff, link.reason
-                ));
-            }
-            select3(
-                CHANGED.wait(),
-                SCAN_CHANGED.wait(),
-                Timer::after(Duration::from_secs(backoff)),
-            )
-            .await;
-            backoff = (backoff * 2).min(60);
         }
         drop(controller);
-        link = Link::default();
-        publish(PublishEvent::WifiLink(Default::default())).await;
+        publish(PublishEvent::WifiLink(
+            Default::default(),
+            current.intent.epoch,
+        ))
+        .await;
+        UI.lock(|cell| {
+            let mut ui = cell.borrow_mut();
+            ui.network = None;
+            ui.state = WifiState::Off;
+        });
         super::ip::update(stack, &current, false).await;
     }
 }
