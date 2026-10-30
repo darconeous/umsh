@@ -1219,6 +1219,21 @@ fn a_message_sounds_as_it_is_sent_and_again_as_it_comes_out() {
 }
 
 #[test]
+fn the_mute_key_switches_sounds_anywhere() {
+    let mut app = app!();
+    run(&mut app, &[Input::Mute]);
+    assert_eq!(app.state().node.sound_enabled(), Some(false));
+    assert!(app.state().status.silent);
+    // Locked too.
+    app.state_mut().lock();
+    app.finalize_view();
+    assert!(app.state().lock.locked);
+    run(&mut app, &[Input::Mute]);
+    assert_eq!(app.state().node.sound_enabled(), Some(true));
+    assert!(!app.state().status.silent);
+}
+
+#[test]
 fn with_sounds_off_nothing_sounds_and_the_strip_says_so() {
     let store = store();
     let mut app = app!(store);
@@ -2879,6 +2894,32 @@ fn alt_then_space_opens_the_picker_and_a_press_types_from_it() {
 }
 
 #[test]
+fn the_picker_key_opens_and_closes_the_picker_and_only_while_typing() {
+    let mut app = app!();
+    // Nothing to type into.
+    run(&mut app, &[Input::Picker]);
+    assert!(app.state().picker.is_none());
+
+    open_trail_crew(&mut app);
+    run(&mut app, &keys_for("a"));
+    run(&mut app, &[Input::Picker]);
+    assert_eq!(picked(app.state()), Some(Pick::Emoji(0)));
+    run(&mut app, &[Input::Picker]);
+    assert!(app.state().picker.is_none());
+    assert_eq!(app.state().keyboard.latches(), (Latch::Off, Latch::Off));
+    run(&mut app, &keys_for("b"));
+    assert_eq!(draft(app.state(), TRAIL_CREW), "Ab");
+
+    // Locked, it does nothing, and leaves nothing behind.
+    app.state_mut().lock();
+    app.finalize_view();
+    run(&mut app, &[Input::Picker]);
+    assert!(app.state().lock.locked);
+    assert!(app.state().picker.is_none());
+    assert_eq!(app.state().keyboard.latches(), (Latch::Off, Latch::Off));
+}
+
+#[test]
 fn letters_in_the_picker_find_by_name_and_backspace_takes_them_off() {
     let mut app = app!();
     open_trail_crew(&mut app);
@@ -3022,6 +3063,19 @@ fn a_keyboard_with_its_own_symbols_types_transmit_power_as_it_is() {
         app.state().screen(),
         Screen::Device { page: DevicePage::TransmitPower { text }, .. } if text.text() == "221"
     ));
+}
+
+#[test]
+fn a_keyboard_that_reports_its_latches_shows_them() {
+    let mut app = app!();
+    let report = |shift, symbol| Input::Latches { shift, symbol };
+    run(&mut app, &[report(Latch::Once, Latch::Off)]);
+    assert_eq!(app.state().keyboard.latches(), (Latch::Once, Latch::Off));
+    run(&mut app, &[report(Latch::Off, Latch::Locked)]);
+    assert_eq!(app.state().keyboard.latches(), (Latch::Off, Latch::Locked));
+    // With none reported, the interface's own show again.
+    run(&mut app, &[report(Latch::Off, Latch::Off)]);
+    assert_eq!(app.state().keyboard.latches(), (Latch::Off, Latch::Off));
 }
 
 #[test]

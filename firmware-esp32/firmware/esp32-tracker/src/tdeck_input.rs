@@ -27,7 +27,7 @@ use umsh_tdeck_peripherals::gt911::{Gt911, Polarity, Report};
 use umsh_tdeck_peripherals::keyboard::{self as keys, Key};
 use umsh_tdeck_peripherals::trackball::{Direction, Trackball};
 use umsh_ux_communicator::input::{Arrow, Input as UiItem, TouchPhase};
-use umsh_ux_communicator::keyboard::Modifier;
+use umsh_ux_communicator::keyboard::Latch;
 use umsh_ux_communicator::model::KeyboardFirmware;
 use umsh_ux_display_tracker::input_power::{Gesture, Mode};
 use umsh_ux_tracker::debounce::{Debounce, PressLatch};
@@ -310,6 +310,8 @@ async fn run_keyboard(bus: &'static board::I2cBus) {
     // asked when it first answers, and again after it stops answering,
     // since it may have restarted.
     let mut identity: Option<Option<keys::Identity>> = None;
+    // The latches last shown, from firmware that reports them.
+    let mut shown_latches = (Latch::Off, Latch::Off);
     // Its only receiver: there is one keyboard task, run once.
     let mut touch_quiet = TOUCH_QUIET.receiver().unwrap();
     loop {
@@ -354,7 +356,10 @@ async fn run_keyboard(bus: &'static board::I2cBus) {
             continue;
         }
         let answer = match identity {
-            Some(_) => read_key(&mut keyboard).await,
+            Some(found) => {
+                let status = found.is_some_and(|it| it.reports_status());
+                read_key(&mut keyboard, status).await
+            }
             None => identify_keyboard(&mut keyboard).await.map(|(found, byte)| {
                 match found {
                     Some(it) => debug_log(format_args!(
@@ -365,17 +370,21 @@ async fn run_keyboard(bus: &'static board::I2cBus) {
                 }
                 identity = Some(found);
                 publish_identity(identity);
-                byte
+                (byte, None)
             }),
         };
         match answer {
-            Ok(byte) => {
+            Ok((byte, status)) => {
                 retry = KEYBOARD_RETRY_FIRST;
                 light_from.get_or_insert_with(|| Instant::now() + KEYBOARD_LIGHT_SETTLE);
                 if !core::mem::take(&mut stale)
                     && let Some(key) = keys::key(byte)
                 {
                     deliver(key);
+                }
+                let latches = latches(status);
+                if latches != shown_latches && show_latches(latches) {
+                    shown_latches = latches;
                 }
             }
             Err(()) => {
@@ -429,12 +438,44 @@ fn answered<E>(transfer: Result<Result<(), E>, TimeoutError>) -> bool {
     matches!(transfer, Ok(Ok(())))
 }
 
-/// One key-mode read.
-async fn read_key(keyboard: &mut impl embedded_hal_async::i2c::I2c) -> Result<u8, ()> {
-    let mut byte = [0];
-    answered(with_timeout(KEYBOARD_TRANSFER, keyboard.read(keys::ADDRESS, &mut byte)).await)
-        .then_some(byte[0])
-        .ok_or(())
+/// One key-mode read: the key byte, and the status after it from firmware
+/// that reports one, when `status`.
+async fn read_key(
+    keyboard: &mut impl embedded_hal_async::i2c::I2c,
+    status: bool,
+) -> Result<(u8, Option<keys::Status>), ()> {
+    let mut reply = [0; keys::KEY_STATUS_LEN];
+    let len = if status { reply.len() } else { 1 };
+    answered(
+        with_timeout(
+            KEYBOARD_TRANSFER,
+            keyboard.read(keys::ADDRESS, &mut reply[..len]),
+        )
+        .await,
+    )
+    .then(|| (reply[0], status.then(|| keys::status(reply[1]))))
+    .ok_or(())
+}
+
+/// The communicator's latches for what the keyboard reports: Sym is its
+/// symbol layer. Without a report, none.
+fn latches(status: Option<keys::Status>) -> (Latch, Latch) {
+    match status.map(|status| status.latch) {
+        Some(keys::Latch::ShiftNext) => (Latch::Once, Latch::Off),
+        Some(keys::Latch::CapsLock) => (Latch::Locked, Latch::Off),
+        Some(keys::Latch::SymNext) => (Latch::Off, Latch::Once),
+        Some(keys::Latch::SymLock) => (Latch::Off, Latch::Locked),
+        Some(keys::Latch::None) | None => (Latch::Off, Latch::Off),
+    }
+}
+
+/// Shows `latches` in the status strip, as a tap would: a dimmed panel
+/// wakes instead. Returns whether they reached the interface; if not, the
+/// next read tries again.
+fn show_latches((shift, symbol): (Latch, Latch)) -> bool {
+    let gesture = start_gesture();
+    finish_gesture(UiItem::Latches { shift, symbol }, gesture);
+    gesture == Gesture::Navigate
 }
 
 /// Asks the controller what it is. Stock firmware ignores the question and
@@ -466,7 +507,7 @@ async fn identify_keyboard(
 /// the key it reads is from before the sleep, and goes no further.
 async fn wake_keyboard(keyboard: &mut impl embedded_hal_async::i2c::I2c) -> bool {
     for _ in 0..KEYBOARD_WAKE_TRIES {
-        if read_key(keyboard).await.is_ok() {
+        if read_key(keyboard, false).await.is_ok() {
             return true;
         }
         Timer::after(KEYBOARD_WAKE_RETRY).await;
@@ -480,21 +521,8 @@ fn deliver(key: Key) {
         Key::Space => UiItem::Space,
         Key::Enter => UiItem::Enter,
         Key::Backspace => UiItem::Backspace,
-        // The picker's chord, Alt and Space, which is all Alt+C is for.
-        Key::AltC => {
-            let alt = |down| UiItem::Modifier {
-                modifier: Modifier::Alt,
-                down,
-            };
-            let gesture = start_gesture();
-            let delivered = gesture == Gesture::Navigate;
-            finish_gesture(alt(true), gesture);
-            if delivered {
-                send(UiItem::Space);
-                send(alt(false));
-            }
-            return;
-        }
+        Key::Mute => UiItem::Mute,
+        Key::AltC => UiItem::Picker,
     };
     finish_gesture(input, start_gesture());
 }

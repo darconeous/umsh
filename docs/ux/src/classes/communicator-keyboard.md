@@ -68,6 +68,22 @@ is a one-shot Shift and is canceled the same way.
 |---|---|
 | ![Caps lock](../hardware/mockups/tlora-pager-native/54-caps-lock.png) | ![Alt one-shot](../hardware/mockups/tlora-pager-native/55-alt-once.png) |
 
+### Keyboards with their own modifiers
+
+The T-Deck's keyboard applies Shift and Sym itself and sends finished
+characters. Its controller keeps the latches, by the rules above with Sym in
+Alt's place, except that the two never combine: tapping one replaces the
+other's state, so there is no lock made of the pair. Any key that types, Enter
+and Backspace included, uses up a one-shot.
+
+The strip shows what the keyboard reports, Sym with Alt's icons. A
+[Capitalize sentences](#capitalize-sentences) Shift shows while the keyboard
+reports nothing.
+
+Shift+`$`, the key under the speaker legend, switches sounds on and off,
+locked or not. Alt+C opens the [character picker](#character-picker) and
+closes it again.
+
 ## Typing aids
 
 Both aids act only inside an active text field, and only in fields that allow

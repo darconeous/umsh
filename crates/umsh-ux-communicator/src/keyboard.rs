@@ -151,6 +151,9 @@ pub struct Keyboard {
     settled: Option<(usize, usize)>,
     run: Run,
     kind: KeyboardKind,
+    /// Shift's and the symbol layer's latches, from a keyboard that
+    /// applies its own modifiers and reports them.
+    reported: (Latch, Latch),
 }
 
 impl Keyboard {
@@ -163,10 +166,20 @@ impl Keyboard {
         }
     }
 
-    /// Shift's and Alt's states, for the status strip.
+    /// Shift's and Alt's states, for the status strip. A keyboard that
+    /// reports its own latches shows them, while it has one.
     #[must_use]
     pub fn latches(&self) -> (Latch, Latch) {
-        (self.shift.latch, self.alt.latch)
+        match self.reported {
+            (Latch::Off, Latch::Off) => (self.shift.latch, self.alt.latch),
+            reported => reported,
+        }
+    }
+
+    /// A keyboard that applies its own modifiers reports where Shift and
+    /// its symbol layer stand.
+    pub fn report(&mut self, shift: Latch, symbol: Latch) {
+        self.reported = (shift, symbol);
     }
 
     /// Whether Alt is held down.

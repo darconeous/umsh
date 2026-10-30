@@ -1,7 +1,7 @@
 use crate::battery::Rail;
 use crate::es7210;
 use crate::gt911::{Gt911, Point, Polarity, Report, landscape};
-use crate::keyboard::{Identity, Key, identity, key};
+use crate::keyboard::{Identity, Key, Latch, Status, identity, key, status};
 use crate::trackball::{AXIS_LOCK_MS, Direction::*, IDLE_MS, Trackball};
 use embedded_hal::i2c::{ErrorKind, ErrorType};
 use embedded_hal_async::i2c::{I2c, Operation};
@@ -55,8 +55,8 @@ fn key_mode_bytes_map_to_keys() {
     assert_eq!(key(0x0d), Some(Key::Enter));
     assert_eq!(key(0x08), Some(Key::Backspace));
     assert_eq!(key(0x0c), Some(Key::AltC));
-    // Shift on a symbol.
-    assert_eq!(key(0x04), Some(Key::Character('$')));
+    assert_eq!(key(0x04), Some(Key::Mute));
+    // Shift on a symbol, from stock firmware.
     assert_eq!(key(0x11), Some(Key::Character('1')));
     assert_eq!(key(0x7f), None);
     assert_eq!(key(0xe0), None);
@@ -82,6 +82,58 @@ fn umsh_firmware_identifies_itself_and_stock_gives_a_key() {
     assert_eq!(identity(&damaged), None);
     // Stock firmware: a key, then whatever the bus gives.
     assert_eq!(identity(&[b'q', 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]), None);
+}
+
+#[test]
+fn protocol_1_2_reports_its_status() {
+    // Sleep and status.
+    let found = identity(&[0xa5, 0x5a, 1, 2, 0x00, 0x03, 0xb4]).unwrap();
+    assert!(found.sleeps() && found.reports_status());
+    // Protocol 1.1 does not.
+    assert!(
+        !Identity {
+            major: 1,
+            minor: 1,
+            capabilities: 1
+        }
+        .reports_status()
+    );
+}
+
+#[test]
+fn the_status_byte_decodes() {
+    assert_eq!(status(0), Status::default());
+    let latches = [
+        (1, Latch::ShiftNext),
+        (2, Latch::SymNext),
+        // Alt next, which nothing sends yet.
+        (3, Latch::None),
+        (4, Latch::CapsLock),
+        (5, Latch::SymLock),
+        (6, Latch::None),
+        (7, Latch::None),
+    ];
+    for (code, latch) in latches {
+        assert_eq!(status(code).latch, latch);
+    }
+    assert_eq!(
+        status(0b1111_1100),
+        Status {
+            latch: Latch::CapsLock,
+            light: true,
+            left_shift: true,
+            right_shift: true,
+            alt: true,
+            repeat: true,
+        }
+    );
+    assert_eq!(
+        status(0b0001_0000),
+        Status {
+            left_shift: true,
+            ..Status::default()
+        }
+    );
 }
 
 #[test]

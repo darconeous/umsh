@@ -26,7 +26,7 @@ use buoyant::view::{EditBuffer, EditText, ViewLayout};
 use core::time::Duration;
 use embedded_touch::{Phase, Tool, Touch, TouchPoint};
 
-use crate::keyboard::{Field, Modifier, Spaced, starts_sentence};
+use crate::keyboard::{Field, Latch, Modifier, Spaced, starts_sentence};
 use crate::model::{HOLD_MS, Press, Reaction, State, TouchHold};
 use crate::nav::keys;
 
@@ -56,6 +56,17 @@ pub enum Input {
     /// Text from a keyboard that applies its own modifiers. Only the
     /// typing aids apply to it.
     Character(char),
+    /// Where Shift and the symbol layer stand on a keyboard that applies
+    /// its own modifiers.
+    Latches {
+        shift: Latch,
+        symbol: Latch,
+    },
+    /// A keyboard's mute key: sounds on or off.
+    Mute,
+    /// A keyboard's own key for the character picker: opens it, or closes
+    /// it.
+    Picker,
     /// A trackball rolled a step toward this arrow.
     Move(Arrow),
     /// A finger touched the screen, moved on it, or left it, at this point,
@@ -181,6 +192,20 @@ where
         return;
     }
     advance_clock(app, now);
+    // Neither depends on focus, and both apply while locked.
+    match input {
+        Input::Latches { shift, symbol } => {
+            app.state_mut().keyboard.report(shift, symbol);
+            app.finalize_view();
+            return;
+        }
+        Input::Mute => {
+            app.state_mut().toggle_sound();
+            app.finalize_view();
+            return;
+        }
+        _ => {}
+    }
     if let Input::Touch { phase, x, y, at } = input {
         // Timed when the panel reported it, not when it is taken in, so a
         // flick keeps its speed through a slow frame.
@@ -282,7 +307,10 @@ where
         | Input::Key { .. }
         | Input::Space
         | Input::Character(_)
-        | Input::Touch { .. } => {}
+        | Input::Touch { .. }
+        | Input::Latches { .. }
+        | Input::Mute
+        | Input::Picker => {}
     }
 }
 
@@ -479,13 +507,7 @@ where
                     press(app, Key::Character('.'));
                     press(app, Key::Character(' '));
                 }
-                Spaced::Picker => {
-                    // Only into a field being edited, that takes more
-                    // than numbers.
-                    if state.keyboard.active() && state.keyboard.field() != Some(Field::Number) {
-                        state.open_picker();
-                    }
-                }
+                Spaced::Picker => state.open_picker_to_type(),
                 Spaced::Light => state.switch_keyboard_light(now),
             }
         }
@@ -501,8 +523,13 @@ where
             }
         }
         Input::Move(direction) => roll(app, direction, now),
-        // Taken before anything else, in `apply`.
-        Input::Touch { .. } => {}
+        // Taken before anything else, in `apply_before`.
+        Input::Picker => {
+            let mut state = app.state_mut();
+            state.prepare_typing();
+            state.open_picker_to_type();
+        }
+        Input::Touch { .. } | Input::Latches { .. } | Input::Mute => {}
     }
 }
 
@@ -611,6 +638,10 @@ where
                 state.keyboard.other();
             }
         }
+        Input::Picker => {
+            state.picker = None;
+            state.keyboard.other();
+        }
         Input::Space => {
             state.picker = None;
             state.keyboard.other();
@@ -626,7 +657,7 @@ where
                 picker.type_letter(c);
             }
         }
-        Input::Release | Input::Touch { .. } => {}
+        Input::Release | Input::Touch { .. } | Input::Latches { .. } | Input::Mute => {}
     }
 }
 
@@ -668,6 +699,14 @@ impl State {
     fn prepare_typing(&mut self) {
         if self.keyboard.field().is_some() && !self.keyboard.active() {
             self.settle_capitals();
+        }
+    }
+
+    /// Opens the character picker, but only into a field being edited
+    /// that takes more than numbers.
+    fn open_picker_to_type(&mut self) {
+        if self.keyboard.active() && self.keyboard.field() != Some(Field::Number) {
+            self.open_picker();
         }
     }
 
