@@ -124,6 +124,9 @@ struct PeerDetailView: View {
                         } icon: {
                             Image(systemName: "person.crop.circle.badge.plus")
                         }
+                        // A list row tints a label's icon with the accent
+                        // color, the button's own fill, which hides it.
+                        .foregroundStyle(.white)
                         .font(.headline)
                         .frame(maxWidth: .infinity, minHeight: 34)
                     }
