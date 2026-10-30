@@ -33,7 +33,9 @@ than the host.
 Differences from stock that no host can see: the light is set up before the
 I²C target starts (on stock firmware an early `01` could be undone by setup),
 nothing is scanned while no key is down, keys are debounced, and raw mode
-reports the debounced matrix.
+reports the debounced matrix. Differences a host can see are all in key mode:
+the queue, the latches, the status byte, and Shift and Sym leaving alone the
+keys they do not change.
 
 ## Protocol
 
@@ -59,32 +61,69 @@ command missing its operand does nothing.
 
 | Mode | Reply |
 |---|---|
-| Key | One byte: the last key pressed, or `00`. Reading clears it. |
+| Key | The next character typed, or `00`; then the status byte; then `00`. A stock host reads the first byte alone. |
 | Raw | Five bytes, one per column; bit *r* is set while row *r* is down. |
 | After `A0` | The identify reply, once. |
 
-A read longer than the reply gets `FF` for the rest.
+A raw or identify read longer than the reply gets `FF` for the rest. In key
+mode, bytes 2–6 are `00`, reserved for later fields, and bytes past those are
+`FF`.
 
 ### Key mode
 
-One byte is held; a newer key replaces an unread one. For each newly pressed
-key, in row-major matrix order, that has a legend on either layer: the Sym
-legend while Sym is held, else the base legend (a missing legend is `00`);
-either Shift subtracts 32, wrapping. Then:
+Characters wait in a queue of 16, oldest first; one typed into a full queue is
+dropped. Reading takes one. Each newly pressed key, in row-major matrix order,
+sends its base legend, or:
+
+- With Sym, its Sym legend, or the base legend where it has none.
+- With Shift, the capital of a letter, and `04` for `$` (the speaker key).
+  Other keys send their base legend.
+- With Caps Lock, the capital of a letter. Other keys send their base legend.
+
+Sym and Shift never combine: of the two, the one pressed last applies. A key
+with no legend, such as Mic without Sym, sends nothing. Then:
 
 - Enter sends `0D`, Backspace `08`.
-- Alt+B toggles the key light and clears the held byte.
+- Alt+B toggles the key light and sends nothing.
 - Alt+C sends `0C`.
 
-So Shift on a symbol gives a control code, Shift+Space and Mic alone give
-`00`, and Shift+Mic gives `E0`. Every byte key mode can send is `00`–`7A` or
-`E0`. The legends and modifier positions are in `src/keymap.rs`.
+Every byte key mode sends is `01`–`7A`. The legends and modifier positions are
+in `src/keymap.rs`.
+
+Sym and Shift latch, sending what holding them would. The latch is one state
+at a time:
+
+- One press applies to the next key, held or not.
+- A second press within 500 ms of the first locks it on (Caps Lock, Sym Lock)
+  until the next press.
+- A second press after that lets it go.
+- A press of the other modifier replaces the state with its own.
+
+#### Status byte
+
+Read fresh, except bit 7, which belongs to the character beside it.
+
+| Bits | Meaning |
+|---|---|
+| 0–2 | Latch: 0 none, 1 Shift next, 2 Sym next, 3 Alt next (reserved), 4 Caps Lock, 5 Sym Lock, 6–7 reserved |
+| 3 | Key light on |
+| 4 | Left Shift held |
+| 5 | Right Shift held |
+| 6 | Alt held |
+| 7 | The character is a held key's repeat; never set beside `00` (reserved, not yet sent) |
+
+Hosts read the status byte only once identify reports it.
 
 ### Identify
 
 `A5 5A <major> <minor> <capabilities: u16, big-endian> <PEC>`, where PEC is
 CRC-8 with the SMBus polynomial over the six bytes before it. This is protocol
-1.1. Capability bit 0 is set when `50` is understood.
+1.2.
+
+| Capability bit | Set when |
+|---|---|
+| 0 | `50` is understood. |
+| 1 | A key-mode read's second byte is the status byte. |
 
 `A5` is never a key-mode byte, so the probe is safe on a stock keyboard: a
 host that reads anything else has stock firmware and treats the first byte as

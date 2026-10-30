@@ -7,7 +7,7 @@
 //! Asleep, nothing is driven or watched, and no key is down.
 
 use embassy_futures::select::{select, select_array};
-use embassy_time::{Duration, Ticker, Timer};
+use embassy_time::{Duration, Instant, Ticker, Timer};
 use esp_hal::{
     gpio::{AnyPin, Flex, InputConfig, Level, OutputConfig, Pull},
     rtc_cntl::WakeLock,
@@ -103,7 +103,7 @@ pub async fn task(mut matrix: Matrix) {
         // as far as anyone knows, and a key still held on waking is
         // pressed anew.
         matrix.park();
-        with_keyboard(|keyboard| keyboard.on_scan(Snapshot::EMPTY));
+        with_keyboard(|keyboard| keyboard.on_scan(Snapshot::EMPTY, Instant::now().as_millis()));
         asleep.park_until_awake(Part::Scan).await;
     }
 }
@@ -114,7 +114,7 @@ async fn run(matrix: &mut Matrix, debouncer: &mut Debouncer) {
         let mut ticker = Ticker::every(SCAN_PERIOD);
         loop {
             let keys = debouncer.update(matrix.scan().await);
-            with_keyboard(|keyboard| keyboard.on_scan(keys));
+            with_keyboard(|keyboard| keyboard.on_scan(keys, Instant::now().as_millis()));
             if debouncer.is_idle() {
                 break;
             }

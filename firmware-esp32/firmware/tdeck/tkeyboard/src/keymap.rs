@@ -15,6 +15,13 @@ pub const BACKSPACE: Key = Key::new(4, 3);
 pub const B: Key = Key::new(3, 4);
 /// Alt+C sends 0x0C.
 pub const C: Key = Key::new(2, 5);
+/// The speaker key. Shift+`$` sends 0x04.
+pub const DOLLAR: Key = Key::new(4, 4);
+
+/// Sym, Alt, and the Shifts, which send nothing alone.
+pub fn is_modifier(key: Key) -> bool {
+    [SYM, ALT, LEFT_SHIFT, RIGHT_SHIFT].contains(&key)
+}
 
 /// The base layer, by column and then row.
 pub const BASE: [[u8; ROWS]; COLS] = [

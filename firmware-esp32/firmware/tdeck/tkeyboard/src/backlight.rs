@@ -59,6 +59,11 @@ impl Backlight {
         };
     }
 
+    /// Whether the light is on, as Alt+B and the host last left it.
+    pub fn is_lit(&self) -> bool {
+        self.lit
+    }
+
     /// The duty to drive, 0 (off) to 255 (fully on).
     pub fn output(&self) -> u8 {
         self.output

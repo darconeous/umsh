@@ -10,7 +10,7 @@ pub const CMD_BACKLIGHT: u8 = 0x01;
 pub const CMD_ALT_B_BACKLIGHT: u8 = 0x02;
 /// Reads return the matrix, one byte per column.
 pub const CMD_MODE_RAW: u8 = 0x03;
-/// Reads return the last key pressed (the power-on mode).
+/// Reads return the next character typed (the power-on mode).
 pub const CMD_MODE_KEY: u8 = 0x04;
 /// Low-power mode: the keyboard stops answering until the bus is next
 /// used, and sleeps whenever it has nothing to do. Keys pressed meanwhile
@@ -23,11 +23,13 @@ pub const CMD_IDENTIFY: u8 = 0xa0;
 /// so a host that reads anything else from a stock keyboard has a key.
 pub const IDENTIFY_MAGIC: [u8; 2] = [0xa5, 0x5a];
 pub const PROTOCOL_MAJOR: u8 = 1;
-pub const PROTOCOL_MINOR: u8 = 1;
+pub const PROTOCOL_MINOR: u8 = 2;
 /// [`CMD_SLEEP`] is understood.
 pub const CAP_SLEEP: u16 = 1 << 0;
+/// A key-mode read's second byte is the status byte.
+pub const CAP_STATUS: u16 = 1 << 1;
 /// Capabilities beyond the stock protocol and identify.
-pub const CAPABILITIES: u16 = CAP_SLEEP;
+pub const CAPABILITIES: u16 = CAP_SLEEP | CAP_STATUS;
 pub const IDENTIFY_LEN: usize = 7;
 
 /// What one write asks for.

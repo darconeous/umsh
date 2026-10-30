@@ -477,7 +477,9 @@ A 1-byte read returns the last key pressed, or `0x00` for none.
   matrix cell, about 35 ms in all, so poll at least that often.
 - Press edges only: no release, no auto-repeat, no modifier events.
 - `Enter` sends `0x0D` and `Backspace` sends `0x08`, unaffected by modifiers.
-- **Sym** (held) selects the symbol layer.
+- **Sym** (held) selects the symbol layer. Firmware before the 2024-12-24
+  fix for issue #70 latches it instead: a press applies to the next
+  printable key only, held or not.
 - **Shift** (either, held) subtracts 32 from the resulting byte, symbols
   included: Shift+Space gives `0x00` (lost), Shift+`$` gives `0x04`,
   Shift+Sym+W (`1`) gives `0x11`, and Shift+Mic gives `0xE0` from the

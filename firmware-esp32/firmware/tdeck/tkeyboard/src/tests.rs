@@ -1,13 +1,15 @@
 //! [`Controller`] held against the stock firmware, exhaustively where the
-//! space allows.
+//! space allows. Where key mode means to differ from it (Sym and Shift
+//! latching, Shift on letters and `$` only, the queue, the status byte),
+//! the tests say so.
 
 use std::vec::Vec;
 
 use crate::Controller;
 use crate::controller::{MAX_REPLY, Power};
-use crate::keymap;
 use crate::matrix::{COLS, Debouncer, Key, ROWS, Snapshot};
 use crate::protocol::{self, Command};
+use crate::{keymap, legacy};
 
 /// LilyGO's `Keyboard_ESP32C3.ino` (2025-06-12), transliterated as
 /// literally as Rust allows: the same arrays, the same order, the same
@@ -168,10 +170,13 @@ impl Stock {
     }
 }
 
-/// The stock model and ours, fed the same things.
+/// The stock model and ours, fed the same things. A read compares what
+/// stock firmware returns, which in key mode is the character alone.
 struct Pair {
     stock: Stock,
     ours: Controller,
+    /// Milliseconds, a scan period apart.
+    ms: u64,
 }
 
 impl Pair {
@@ -179,13 +184,15 @@ impl Pair {
         Self {
             stock: Stock::new(),
             ours: Controller::new(),
+            ms: 0,
         }
     }
 
     fn scan(&mut self, keys: &[Key]) {
         let snapshot: Snapshot = keys.iter().copied().collect();
         self.stock.scan(&snapshot);
-        self.ours.on_scan(snapshot);
+        self.ms += 5;
+        self.ours.on_scan(snapshot, self.ms);
         self.check_backlight();
     }
 
@@ -200,8 +207,16 @@ impl Pair {
         let stock = self.stock.on_request();
         let mut reply = [0; MAX_REPLY];
         let len = self.ours.on_read(&mut reply);
-        assert_eq!(stock, &reply[..len]);
+        assert!(len >= stock.len());
+        assert_eq!(stock, &reply[..stock.len()]);
         stock
+    }
+
+    /// A key-mode read on each, uncompared: stock's byte and ours.
+    fn read_key(&mut self) -> (u8, u8) {
+        let mut reply = [0; MAX_REPLY];
+        self.ours.on_read(&mut reply);
+        (self.stock.on_request()[0], reply[0])
     }
 
     fn check_backlight(&self) {
@@ -232,53 +247,158 @@ fn with(keys: &[Key], more: &[Key]) -> Vec<Key> {
     keys.iter().chain(more).copied().collect()
 }
 
+/// Every key but the modifiers.
+fn typed_keys() -> impl Iterator<Item = Key> {
+    Key::all().filter(|&key| !keymap::is_modifier(key))
+}
+
+/// What `key` sends with `mods` held, pressed in that order, or `None`.
+fn expected(mods: &[Key], key: Key) -> Option<u8> {
+    let alt = mods.contains(&keymap::ALT);
+    if keymap::is_modifier(key) || alt && key == keymap::B {
+        return None;
+    }
+    if alt && key == keymap::C {
+        return Some(0x0c);
+    }
+    if key == keymap::ENTER {
+        return Some(0x0d);
+    }
+    if key == keymap::BACKSPACE {
+        return Some(0x08);
+    }
+    let (base, symbol) = (keymap::base(key), keymap::symbol(key));
+    // Of Sym and Shift, the one pressed last.
+    let byte = match mods.iter().rev().find(|&&m| m != keymap::ALT) {
+        Some(&m) if m == keymap::SYM && symbol != 0 => symbol,
+        Some(&m) if m == keymap::SYM => base,
+        Some(_) if key == keymap::DOLLAR => 0x04,
+        Some(_) => base.to_ascii_uppercase(),
+        None => base,
+    };
+    (byte != 0).then_some(byte)
+}
+
+/// Where stock firmware sends something else for `key` under `mods`: Sym
+/// with Shift, Shift on anything but a letter or `$`, and Sym on a key
+/// with no Sym legend.
+fn differs_from_stock(mods: &[Key], key: Key) -> bool {
+    let alt = mods.contains(&keymap::ALT);
+    if keymap::is_modifier(key)
+        || [keymap::ENTER, keymap::BACKSPACE].contains(&key)
+        || alt && [keymap::B, keymap::C].contains(&key)
+    {
+        return false;
+    }
+    let sym = mods.contains(&keymap::SYM);
+    let shift = mods.contains(&keymap::LEFT_SHIFT) || mods.contains(&keymap::RIGHT_SHIFT);
+    let (base, symbol) = (keymap::base(key), keymap::symbol(key));
+    sym && shift
+        || shift && !base.is_ascii_lowercase() && key != keymap::DOLLAR
+        || sym && symbol == 0
+}
+
 #[test]
 fn every_key_under_every_modifier_set() {
     let mut sent = Vec::new();
     for mods in modifier_sets() {
         for key in Key::all() {
-            // Modifiers first, then the key.
+            let want = expected(&mods, key).unwrap_or(0);
+            // Modifiers one at a time, then the key.
             let mut pair = Pair::new();
-            pair.scan(&mods);
-            pair.read();
+            for n in 1..=mods.len() {
+                pair.scan(&mods[..n]);
+            }
             pair.scan(&with(&mods, &[key]));
-            sent.extend(pair.read());
-            pair.scan(&mods);
-            pair.read();
+            let (stock, ours) = pair.read_key();
+            assert_eq!(ours, want, "{mods:?} {key:?}");
+            if !differs_from_stock(&mods, key) {
+                assert_eq!(stock, ours, "{mods:?} {key:?}");
+            }
+            sent.push(ours);
+            assert_eq!(pair.read_key().1, 0);
             pair.scan(&[]);
             pair.read();
             // Everything in one scan.
             let mut pair = Pair::new();
             pair.scan(&with(&mods, &[key]));
-            sent.extend(pair.read());
-            pair.read();
+            let (stock, ours) = pair.read_key();
+            assert_eq!(ours, want, "{mods:?} {key:?}");
+            if !differs_from_stock(&mods, key) {
+                assert_eq!(stock, ours, "{mods:?} {key:?}");
+            }
         }
     }
     // What makes the identify probe safe on a stock keyboard.
-    assert!(sent.iter().all(|&b| b <= 0x7a || b == 0xe0));
+    assert!(sent.iter().all(|&b| b <= 0x7a));
     assert!(!sent.contains(&protocol::IDENTIFY_MAGIC[0]));
+}
+
+/// Every character waiting in `keyboard`, oldest first.
+fn drain(keyboard: &mut Controller) -> Vec<u8> {
+    let mut reply = [0; MAX_REPLY];
+    core::iter::from_fn(|| {
+        keyboard.on_read(&mut reply);
+        (reply[0] != 0).then_some(reply[0])
+    })
+    .collect()
 }
 
 #[test]
 fn every_two_keys_under_every_modifier_set() {
     for mods in modifier_sets() {
-        for first in Key::all() {
-            for second in Key::all() {
-                // In one scan: the later in scan order wins.
-                let mut pair = Pair::new();
-                pair.scan(&with(&mods, &[first, second]));
-                pair.read();
-                // One after the other, unread in between: the second
-                // replaces the first, or Alt+B clears it.
-                let mut pair = Pair::new();
-                pair.scan(&with(&mods, &[first]));
-                pair.scan(&with(&mods, &[first, second]));
-                pair.read();
-                pair.scan(&[]);
-                pair.read();
+        for first in typed_keys() {
+            for second in typed_keys().filter(|&key| key != first) {
+                let bytes = |keys: &[Key]| -> Vec<u8> {
+                    keys.iter().filter_map(|&k| expected(&mods, k)).collect()
+                };
+                // In one scan: in scan order, with Enter, Backspace, and
+                // Alt+C after the rest, as stock firmware has them.
+                let mut keyboard = Controller::new();
+                keyboard.on_scan(mods.iter().copied().collect(), 0);
+                keyboard.on_scan(with(&mods, &[first, second]).into_iter().collect(), 10);
+                let late = |&k: &Key| {
+                    k == keymap::ENTER
+                        || k == keymap::BACKSPACE
+                        || mods.contains(&keymap::ALT) && k == keymap::C
+                };
+                let (mut early, mut after): (Vec<Key>, Vec<Key>) = Key::all()
+                    .filter(|k| [first, second].contains(k))
+                    .partition(|k| !late(k));
+                after.sort_by_key(|&k| {
+                    [keymap::ENTER, keymap::BACKSPACE, keymap::C]
+                        .iter()
+                        .position(|&l| l == k)
+                });
+                early.extend(after);
+                assert_eq!(drain(&mut keyboard), bytes(&early));
+                // One after the other, unread in between: both wait.
+                let mut keyboard = Controller::new();
+                keyboard.on_scan(mods.iter().copied().collect(), 0);
+                keyboard.on_scan(with(&mods, &[first]).into_iter().collect(), 10);
+                keyboard.on_scan(with(&mods, &[first, second]).into_iter().collect(), 20);
+                assert_eq!(drain(&mut keyboard), bytes(&[first, second]));
             }
         }
     }
+}
+
+#[test]
+fn the_queue_holds_what_the_host_has_not_read() {
+    let mut keyboard = Controller::new();
+    let keys: Vec<Key> = typed_keys()
+        .filter(|&key| keymap::base(key).is_ascii_lowercase())
+        .collect();
+    for (n, &key) in keys.iter().enumerate() {
+        keyboard.on_scan([key].into_iter().collect(), 100 * n as u64);
+        keyboard.on_scan(Snapshot::EMPTY, 100 * n as u64 + 50);
+    }
+    // A full queue drops what comes after.
+    let want: Vec<u8> = keys[..legacy::QUEUE_LEN]
+        .iter()
+        .map(|&key| keymap::base(key))
+        .collect();
+    assert_eq!(drain(&mut keyboard), want);
 }
 
 #[test]
@@ -289,11 +409,274 @@ fn raw_mode_reports_the_matrix() {
             pair.write(&[protocol::CMD_MODE_RAW]);
             pair.scan(&with(&mods, &[key]));
             pair.read();
-            // The key byte is still encoded and waits for key mode.
+            // The character still waits for key mode.
             pair.write(&[protocol::CMD_MODE_KEY]);
-            pair.read();
+            assert_eq!(pair.read_key().1, expected(&mods, key).unwrap_or(0));
         }
     }
+}
+
+/// Someone typing on a [`Controller`], a tap at a time.
+struct Typist {
+    keyboard: Controller,
+    ms: u64,
+}
+
+impl Typist {
+    /// Taps are this far apart unless a test waits.
+    const BRISK_MS: u64 = 150;
+
+    fn new() -> Self {
+        Self {
+            keyboard: Controller::new(),
+            ms: 0,
+        }
+    }
+
+    /// Lets `ms` pass before the next tap.
+    fn wait(&mut self, ms: u64) {
+        self.ms += ms - Self::BRISK_MS;
+    }
+
+    /// Presses `keys` together, holds them through `held`, releases
+    /// everything, and reads the character.
+    fn tap_holding(&mut self, held: &[Key], keys: &[Key]) -> u8 {
+        self.ms += Self::BRISK_MS;
+        self.keyboard
+            .on_scan(held.iter().copied().collect(), self.ms - 50);
+        self.keyboard
+            .on_scan(with(held, keys).into_iter().collect(), self.ms);
+        self.keyboard.on_scan(Snapshot::EMPTY, self.ms + 50);
+        self.read()[0]
+    }
+
+    fn tap(&mut self, keys: &[Key]) -> u8 {
+        self.tap_holding(&[], keys)
+    }
+
+    fn read(&mut self) -> [u8; MAX_REPLY] {
+        let mut reply = [0; MAX_REPLY];
+        self.keyboard.on_read(&mut reply);
+        reply
+    }
+
+    /// The latch the status byte reports.
+    fn latch(&mut self) -> u8 {
+        self.read()[1] & legacy::STATUS_LATCH
+    }
+}
+
+const Q: Key = Key::new(0, 0);
+const SPACE: Key = keymap::SPACE;
+
+#[test]
+fn one_tap_applies_to_the_next_key_only() {
+    for modifier in [keymap::SYM, keymap::LEFT_SHIFT, keymap::RIGHT_SHIFT] {
+        for key in typed_keys() {
+            let mut typist = Typist::new();
+            typist.tap(&[modifier]);
+            assert_eq!(typist.tap(&[key]), expected(&[modifier], key).unwrap_or(0));
+            assert_eq!(typist.tap(&[key]), expected(&[], key).unwrap_or(0));
+        }
+    }
+}
+
+#[test]
+fn the_other_modifier_replaces_a_latch() {
+    let mut typist = Typist::new();
+    typist.tap(&[keymap::SYM]);
+    typist.tap(&[keymap::LEFT_SHIFT]);
+    assert_eq!(typist.tap(&[Q]), b'Q');
+    typist.tap(&[keymap::LEFT_SHIFT]);
+    typist.tap(&[keymap::SYM]);
+    assert_eq!(typist.tap(&[Q]), b'#');
+    // Out of Caps Lock, for one symbol.
+    typist.tap(&[keymap::RIGHT_SHIFT]);
+    typist.tap(&[keymap::RIGHT_SHIFT]);
+    typist.tap(&[keymap::SYM]);
+    assert_eq!(typist.tap(&[Q]), b'#');
+    assert_eq!(typist.tap(&[Q]), b'q');
+}
+
+#[test]
+fn two_quick_taps_lock_until_the_next_tap() {
+    let mut typist = Typist::new();
+    typist.tap(&[keymap::LEFT_SHIFT]);
+    typist.tap(&[keymap::RIGHT_SHIFT]);
+    for _ in 0..3 {
+        assert_eq!(typist.tap(&[Q]), b'Q');
+    }
+    // Caps Lock is for letters.
+    assert_eq!(typist.tap(&[keymap::DOLLAR]), b'$');
+    assert_eq!(typist.tap(&[keymap::ENTER]), 0x0d);
+    assert_eq!(typist.tap(&[Q]), b'Q');
+    typist.tap(&[keymap::LEFT_SHIFT]);
+    assert_eq!(typist.tap(&[Q]), b'q');
+
+    typist.tap(&[keymap::SYM]);
+    typist.tap(&[keymap::SYM]);
+    for _ in 0..3 {
+        assert_eq!(typist.tap(&[Q]), b'#');
+    }
+    typist.tap(&[keymap::SYM]);
+    assert_eq!(typist.tap(&[Q]), b'q');
+}
+
+#[test]
+fn three_quick_taps_cancel() {
+    for modifier in [keymap::SYM, keymap::LEFT_SHIFT] {
+        let mut typist = Typist::new();
+        for _ in 0..3 {
+            typist.tap(&[modifier]);
+        }
+        assert_eq!(typist.tap(&[Q]), b'q');
+    }
+}
+
+#[test]
+fn a_tap_after_a_pause_cancels() {
+    let mut typist = Typist::new();
+    typist.tap(&[keymap::LEFT_SHIFT]);
+    typist.wait(legacy::DOUBLE_TAP_MS + 1);
+    typist.tap(&[keymap::RIGHT_SHIFT]);
+    assert_eq!(typist.tap(&[Q]), b'q');
+    // At the limit, it still locks.
+    let mut typist = Typist::new();
+    typist.tap(&[keymap::SYM]);
+    typist.wait(legacy::DOUBLE_TAP_MS);
+    typist.tap(&[keymap::SYM]);
+    assert_eq!(typist.tap(&[Q]), b'#');
+    assert_eq!(typist.tap(&[Q]), b'#');
+}
+
+#[test]
+fn a_held_modifier_applies_to_every_key_until_released() {
+    let held: [&[Key]; 5] = [
+        &[keymap::SYM],
+        &[keymap::LEFT_SHIFT],
+        &[keymap::RIGHT_SHIFT],
+        &[keymap::SYM, keymap::LEFT_SHIFT],
+        &[keymap::RIGHT_SHIFT, keymap::SYM],
+    ];
+    for mods in held {
+        let mut keyboard = Controller::new();
+        for n in 1..=mods.len() {
+            keyboard.on_scan(mods[..n].iter().copied().collect(), 10 * n as u64);
+        }
+        for (n, key) in typed_keys().enumerate() {
+            let ms = 100 + 100 * n as u64;
+            keyboard.on_scan(with(mods, &[key]).into_iter().collect(), ms);
+            keyboard.on_scan(mods.iter().copied().collect(), ms + 50);
+            let mut reply = [0; MAX_REPLY];
+            keyboard.on_read(&mut reply);
+            assert_eq!(
+                reply[0],
+                expected(mods, key).unwrap_or(0),
+                "{mods:?} {key:?}"
+            );
+        }
+        // Released, it is gone.
+        let mut typist = Typist {
+            keyboard,
+            ms: 10_000,
+        };
+        assert_eq!(typist.tap(&[Q]), b'q');
+    }
+}
+
+#[test]
+fn a_hold_then_a_quick_tap_does_not_lock() {
+    let mut typist = Typist::new();
+    assert_eq!(typist.tap_holding(&[keymap::LEFT_SHIFT], &[Q]), b'Q');
+    typist.tap(&[keymap::LEFT_SHIFT]);
+    assert_eq!(typist.tap(&[Q]), b'Q');
+    assert_eq!(typist.tap(&[Q]), b'q');
+}
+
+#[test]
+fn enter_uses_one_tap_up_but_not_a_lock() {
+    let mut typist = Typist::new();
+    typist.tap(&[keymap::LEFT_SHIFT]);
+    assert_eq!(typist.tap(&[keymap::ENTER]), 0x0d);
+    assert_eq!(typist.tap(&[Q]), b'q');
+    typist.tap(&[keymap::SYM]);
+    typist.tap(&[keymap::SYM]);
+    assert_eq!(typist.tap(&[keymap::ENTER]), 0x0d);
+    assert_eq!(typist.tap(&[Q]), b'#');
+}
+
+#[test]
+fn shift_changes_letters_and_the_speaker_key_alone() {
+    let mut typist = Typist::new();
+    assert_eq!(typist.tap_holding(&[keymap::LEFT_SHIFT], &[SPACE]), b' ');
+    assert_eq!(
+        typist.tap_holding(&[keymap::LEFT_SHIFT], &[keymap::DOLLAR]),
+        0x04
+    );
+    assert_eq!(
+        typist.tap_holding(&[keymap::RIGHT_SHIFT], &[keymap::MIC]),
+        0
+    );
+    // Sym on a key with no Sym legend sends the base one.
+    assert_eq!(typist.tap_holding(&[keymap::SYM], &[SPACE]), b' ');
+    assert_eq!(typist.tap_holding(&[keymap::SYM], &[keymap::DOLLAR]), b'$');
+    assert_eq!(typist.tap_holding(&[keymap::SYM], &[keymap::MIC]), b'0');
+}
+
+#[test]
+fn the_status_byte_reports_the_latch() {
+    let mut typist = Typist::new();
+    assert_eq!(typist.latch(), 0);
+    typist.tap(&[keymap::LEFT_SHIFT]);
+    assert_eq!(typist.latch(), 1);
+    typist.tap(&[keymap::LEFT_SHIFT]);
+    assert_eq!(typist.latch(), 4);
+    typist.tap(&[keymap::SYM]);
+    assert_eq!(typist.latch(), 2);
+    typist.tap(&[keymap::SYM]);
+    assert_eq!(typist.latch(), 5);
+    typist.tap(&[keymap::SYM]);
+    assert_eq!(typist.latch(), 0);
+    // A character's own read already shows the latch it used up.
+    typist.tap(&[keymap::SYM]);
+    typist.ms += Typist::BRISK_MS;
+    typist
+        .keyboard
+        .on_scan([Q].into_iter().collect(), typist.ms);
+    let reply = typist.read();
+    assert_eq!((reply[0], reply[1] & legacy::STATUS_LATCH), (b'#', 0));
+}
+
+#[test]
+fn the_status_byte_reports_held_keys_and_the_light() {
+    let mut keyboard = Controller::new();
+    let status = |keyboard: &mut Controller| {
+        let mut reply = [0xff; MAX_REPLY];
+        keyboard.on_read(&mut reply);
+        // Nothing past the status byte yet, and no repeat beside nothing.
+        assert!(reply[2..].iter().all(|&b| b == 0));
+        assert_eq!(reply[1] & legacy::STATUS_REPEAT, 0);
+        reply[1] & !legacy::STATUS_LATCH
+    };
+    assert_eq!(status(&mut keyboard), 0);
+    for (key, bit) in [
+        (keymap::LEFT_SHIFT, legacy::STATUS_LEFT_SHIFT),
+        (keymap::RIGHT_SHIFT, legacy::STATUS_RIGHT_SHIFT),
+        (keymap::ALT, legacy::STATUS_ALT),
+    ] {
+        keyboard.on_scan([key].into_iter().collect(), 0);
+        assert_eq!(status(&mut keyboard), bit);
+        keyboard.on_scan(Snapshot::EMPTY, 0);
+        assert_eq!(status(&mut keyboard), 0);
+    }
+    keyboard.on_scan([keymap::ALT].into_iter().collect(), 0);
+    keyboard.on_scan([keymap::ALT, keymap::B].into_iter().collect(), 0);
+    keyboard.on_scan(Snapshot::EMPTY, 0);
+    assert_eq!(status(&mut keyboard), legacy::STATUS_BACKLIGHT);
+    let _ = keyboard.on_write(&[protocol::CMD_BACKLIGHT, 0]);
+    assert_eq!(status(&mut keyboard), 0);
+    let _ = keyboard.on_write(&[protocol::CMD_BACKLIGHT, 0x80]);
+    assert_eq!(status(&mut keyboard), legacy::STATUS_BACKLIGHT);
 }
 
 /// After a write, the light and the next read agree, and so does what
@@ -343,7 +726,7 @@ fn every_three_byte_light_write() {
 #[test]
 fn identify_is_latched_for_one_read() {
     let mut keyboard = Controller::new();
-    keyboard.on_scan([Key::new(0, 0)].into_iter().collect());
+    keyboard.on_scan([Key::new(0, 0)].into_iter().collect(), 0);
     assert_eq!(keyboard.on_write(&[protocol::CMD_IDENTIFY]), Power::Awake);
     let mut reply = [0; MAX_REPLY];
     let len = keyboard.on_read(&mut reply);
@@ -351,10 +734,11 @@ fn identify_is_latched_for_one_read() {
     assert_eq!(reply[2], protocol::PROTOCOL_MAJOR);
     let capabilities = u16::from_be_bytes([reply[4], reply[5]]);
     assert_ne!(capabilities & protocol::CAP_SLEEP, 0);
+    assert_ne!(capabilities & protocol::CAP_STATUS, 0);
     // A CRC over the data and its own value leaves nothing.
     assert_eq!(protocol::pec(&reply[..len]), 0);
     // The key pressed before the probe is still there.
-    assert_eq!(keyboard.on_read(&mut reply), 1);
+    keyboard.on_read(&mut reply);
     assert_eq!(reply[0], b'q');
 }
 
@@ -368,9 +752,9 @@ fn sleep_keeps_the_keyboard_as_it_was() {
     assert_eq!(keyboard.on_write(&[protocol::CMD_SLEEP]), Power::Sleep);
     assert_eq!(keyboard.backlight(), 0x80);
     // A key pressed while asleep is there when the host comes back.
-    keyboard.on_scan([Key::new(0, 0)].into_iter().collect());
+    keyboard.on_scan([Key::new(0, 0)].into_iter().collect(), 0);
     let mut reply = [0; MAX_REPLY];
-    assert_eq!(keyboard.on_read(&mut reply), 1);
+    keyboard.on_read(&mut reply);
     assert_eq!(reply[0], b'q');
 }
 
