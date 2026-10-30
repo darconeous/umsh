@@ -62,7 +62,7 @@ lan-bearer = [
 # selected by `default` separately, so the same board can be checked without
 # that optional host interface. The feature table is kept in step across
 # the ESP32 device images by `scripts/check_esp32_manifests.py`.
-default = ["board-tdeck", "ble", "ulcp-i2c", "psram", "coex", "bridge-client", "communicator"]
+default = ["board-tdeck", "ble", "ulcp-i2c", "psram", "coex", "bridge-client", "lan-bearer", "communicator"]
 board-heltec-v2 = [
     "ulcp-i2c",
     "chip-esp32",
