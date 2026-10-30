@@ -6,6 +6,7 @@
 use std::vec::Vec;
 
 use crate::Controller;
+use crate::backlight::{FADE_MS, Fade};
 use crate::controller::{MAX_REPLY, Power};
 use crate::matrix::{COLS, Debouncer, Key, ROWS, Snapshot};
 use crate::protocol::{self, Command};
@@ -750,12 +751,102 @@ fn sleep_keeps_the_keyboard_as_it_was() {
         Power::Awake
     );
     assert_eq!(keyboard.on_write(&[protocol::CMD_SLEEP]), Power::Sleep);
-    assert_eq!(keyboard.backlight(), 0x80);
     // A key pressed while asleep is there when the host comes back.
     keyboard.on_scan([Key::new(0, 0)].into_iter().collect(), 0);
+    keyboard.on_wake();
     let mut reply = [0; MAX_REPLY];
     keyboard.on_read(&mut reply);
     assert_eq!(reply[0], b'q');
+    // The light counts as on, though it is dark until it is restored.
+    assert_ne!(reply[1] & legacy::STATUS_BACKLIGHT, 0);
+    assert_eq!(keyboard.backlight(), 0);
+    keyboard.restore_light();
+    assert_eq!(keyboard.backlight(), 0x80);
+}
+
+#[test]
+fn the_light_stays_dark_through_a_sleep_until_restored() {
+    let mut keyboard = Controller::new();
+    let _ = keyboard.on_write(&[protocol::CMD_BACKLIGHT, 0x80]);
+    let _ = keyboard.on_write(&[protocol::CMD_SLEEP]);
+    assert_eq!(keyboard.backlight(), 0);
+    // Not before a wake.
+    keyboard.restore_light();
+    assert_eq!(keyboard.backlight(), 0);
+    keyboard.on_wake();
+    assert_eq!(keyboard.backlight(), 0);
+    // Back to sleep before the restore: it waits for the next wake.
+    let _ = keyboard.on_write(&[protocol::CMD_SLEEP]);
+    keyboard.restore_light();
+    assert_eq!(keyboard.backlight(), 0);
+    keyboard.on_wake();
+    keyboard.restore_light();
+    assert_eq!(keyboard.backlight(), 0x80);
+    // A restore with no sleep before it changes nothing.
+    let _ = keyboard.on_write(&[protocol::CMD_BACKLIGHT, 0x40]);
+    keyboard.restore_light();
+    assert_eq!(keyboard.backlight(), 0x40);
+}
+
+#[test]
+fn a_light_set_on_waking_wins_over_the_restore() {
+    let mut keyboard = Controller::new();
+    let _ = keyboard.on_write(&[protocol::CMD_BACKLIGHT, 0x80]);
+    let _ = keyboard.on_write(&[protocol::CMD_SLEEP]);
+    keyboard.on_wake();
+    let _ = keyboard.on_write(&[protocol::CMD_BACKLIGHT, 0x20]);
+    assert_eq!(keyboard.backlight(), 0x20);
+    keyboard.restore_light();
+    assert_eq!(keyboard.backlight(), 0x20);
+    // Turned off on waking, it stays off.
+    let _ = keyboard.on_write(&[protocol::CMD_SLEEP]);
+    keyboard.on_wake();
+    let _ = keyboard.on_write(&[protocol::CMD_BACKLIGHT, 0]);
+    keyboard.restore_light();
+    assert_eq!(keyboard.backlight(), 0);
+}
+
+#[test]
+fn alt_b_duty_on_waking_does_not_set_the_light() {
+    let mut keyboard = Controller::new();
+    let _ = keyboard.on_write(&[protocol::CMD_BACKLIGHT, 0x80]);
+    let _ = keyboard.on_write(&[protocol::CMD_SLEEP]);
+    keyboard.on_wake();
+    let _ = keyboard.on_write(&[protocol::CMD_ALT_B_BACKLIGHT, 0x60]);
+    assert_eq!(keyboard.backlight(), 0);
+    keyboard.restore_light();
+    assert_eq!(keyboard.backlight(), 0x80);
+}
+
+#[test]
+fn a_fade_starts_and_ends_exactly_where_it_says() {
+    for from in 0..=u8::MAX {
+        for to in 0..=u8::MAX {
+            let fade = Fade::new(from, to, 1000);
+            assert_eq!(fade.level(1000), from, "{from} to {to}");
+            assert!(!fade.done(1000 + FADE_MS - 1));
+            assert_eq!(fade.level(1000 + FADE_MS), to, "{from} to {to}");
+            assert!(fade.done(1000 + FADE_MS));
+        }
+    }
+}
+
+#[test]
+fn a_fade_moves_one_way_and_slowly_at_the_dim_end() {
+    for (from, to) in [(0, u8::MAX), (u8::MAX, 0), (20, 200), (127, 30)] {
+        let fade = Fade::new(from, to, 0);
+        let levels: Vec<u8> = (0..=FADE_MS).map(|at| fade.level(at)).collect();
+        let one_way = levels.windows(2).all(|pair| {
+            if from < to {
+                pair[0] <= pair[1]
+            } else {
+                pair[0] >= pair[1]
+            }
+        });
+        assert!(one_way, "{from} to {to}: {levels:?}");
+    }
+    // Halfway up from dark is a quarter of the duty.
+    assert_eq!(Fade::new(0, u8::MAX, 0).level(FADE_MS / 2), 64);
 }
 
 #[test]

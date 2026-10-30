@@ -1,6 +1,6 @@
 //! The T-Deck keyboard's ESP32-C3: three tasks around the library's
 //! [`Controller`]. `scan` feeds it the matrix, `host` answers the S3 on
-//! I²C, and `light` drives the key light at the duty it asks for.
+//! I²C, and `light` fades the key light to the duty it asks for.
 //!
 //! The chip light-sleeps whenever every task is waiting and no wake lock
 //! is held; `power` has the rule for who holds one.

@@ -18,7 +18,7 @@ tasks around it:
 |---|---|
 | `scan` | Waits with every column driven low for any row to fall, then scans every 5 ms until every key is up and settled. Two agreeing scans debounce a key. |
 | `host` | The I²C target at `0x55`. A read is answered while the host's clock is held. |
-| `light` | Drives the key light (GPIO9, LEDC, 1 kHz, 8-bit) at the duty the controller asks for. |
+| `light` | Drives the key light (GPIO9, LEDC, 1 kHz, 8-bit), fading to each duty the controller asks for. |
 
 The chip light-sleeps whenever every task is waiting and no wake lock is held.
 A task that needs the chip awake holds a lock for exactly as long as it does:
@@ -33,9 +33,9 @@ than the host.
 Differences from stock that no host can see: the light is set up before the
 I²C target starts (on stock firmware an early `01` could be undone by setup),
 nothing is scanned while no key is down, keys are debounced, and raw mode
-reports the debounced matrix. Differences a host can see are all in key mode:
-the queue, the latches, the status byte, and Shift and Sym leaving alone the
-keys they do not change.
+reports the debounced matrix. Differences a host can see are the light's
+fades and its return after a sleep, and in key mode the queue, the latches,
+the status byte, and Shift and Sym leaving alone the keys they do not change.
 
 ## Protocol
 
@@ -50,12 +50,16 @@ command missing its operand does nothing.
 
 | Write | Effect |
 |---|---|
-| `01 d` | Key light duty `d` (0 off, 255 fully on), now. The light counts as on when `d > 0`. Then, as on stock firmware, a following byte is taken as `02`'s operand. |
+| `01 d` | Key light duty `d` (0 off, 255 fully on). The light counts as on when `d > 0`. Then, as on stock firmware, a following byte is taken as `02`'s operand. |
 | `02 d` | Alt+B's duty, used when the duty set by `01` is 0. Taken only when `d > 30`. Default 127. |
 | `03` | Raw mode. |
 | `04` | Key mode (the power-on mode). |
 | `50` | Sleep, in a write of its own (after `01 d` it would be taken as Alt+B's duty). |
 | `A0` | Identify: the next read returns the identify reply. |
+
+The light fades to each new duty over 250 ms, evenly in the duty's square
+root, from wherever it is, including partway through another fade. Alt+B fades
+the same way.
 
 ### Reads
 
@@ -135,13 +139,18 @@ bytes of any other command as commands.
 
 `50` takes the keyboard off the bus until the bus is next used. Meanwhile the
 matrix is not scanned, keys are not wake sources, and the key light is off; the
-C3 is in light sleep.
+C3 is in light sleep. A lit light fades out first, from wherever it is.
 
-Any traffic on the bus wakes it, including traffic for other devices. The
-transaction that wakes it goes unanswered (NAK), and the host retries it until
-it is answered, a few milliseconds at most. The keyboard then answers as before,
-with the light back at the duty last set. A key that was down when it went to
-sleep counts as pressed again if it is still down on waking.
+Any traffic on the bus wakes it, including traffic for other devices, and
+including traffic while the light is still fading out. The transaction that
+wakes it goes unanswered (NAK), and the host retries it until it is answered, a
+few milliseconds at most. The keyboard then answers as before. A key that was
+down when it went to sleep counts as pressed again if it is still down on
+waking.
+
+The light stays dark for 100 ms after waking, then fades back to the duty last
+set. A `01` in that time sets the light instead. The status byte reports the
+light as on or off as it was set, dark or not.
 
 Stock firmware ignores `50`, so only identify tells a host whether the keyboard
 will sleep.

@@ -5,8 +5,10 @@
 //! lock, the other tasks park, and the task waits for SCL to fall, which
 //! any traffic on the bus does. With nothing else awake the chip sleeps
 //! until then. The transaction that woke it goes unanswered, and the host
-//! retries it.
+//! retries it. Traffic while the others are still parking, as the light
+//! fades out, wakes the keyboard just the same.
 
+use embassy_futures::select::{Either, select};
 use esp_hal::{
     gpio::{AnyPin, Flex, InputConfig},
     i2c::slave::{self, Command, I2cSlave},
@@ -34,14 +36,18 @@ pub struct Bus {
 pub async fn task(mut bus: Bus) {
     loop {
         serve(&mut bus).await;
-        power::park().await;
         // SCL has its pull-up on the board. A pin being waited on is a
         // wake source.
         let mut scl = Flex::new(bus.scl.reborrow());
         scl.apply_input_config(&InputConfig::default());
         scl.set_input_enable(true);
-        scl.wait_for_low().await;
+        // The host may come back before the light is out: a host retries
+        // a sleeping keyboard for only a few milliseconds.
+        if let Either::First(()) = select(power::park(), scl.wait_for_low()).await {
+            scl.wait_for_low().await;
+        }
         power::wake();
+        with_keyboard(|keyboard| keyboard.on_wake());
     }
 }
 

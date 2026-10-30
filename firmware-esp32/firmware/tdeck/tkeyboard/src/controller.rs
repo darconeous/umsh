@@ -1,5 +1,6 @@
 //! Everything the keyboard does, behind three inputs (a debounced scan, a
-//! host write, a host read) and one output (the key light's duty).
+//! host write, a host read) and one output (the key light's duty). Waking
+//! from sleep, and a short time after, matter only to the light.
 
 use crate::backlight::Backlight;
 use crate::keymap;
@@ -84,7 +85,10 @@ impl Controller {
                 Command::AltBBacklight(duty) => self.backlight.set_alt_b(duty),
                 Command::ModeRaw => self.mode = Mode::Raw,
                 Command::ModeKey => self.mode = Mode::Key,
-                Command::Sleep => power = Power::Sleep,
+                Command::Sleep => {
+                    self.backlight.sleep();
+                    power = Power::Sleep;
+                }
                 Command::Identify => self.latched = Some(protocol::identify_reply()),
             }
         }
@@ -140,8 +144,26 @@ impl Controller {
         status
     }
 
-    /// The key light's duty, 0 (off) to 255 (fully on).
+    /// The key light's duty, 0 (off) to 255 (fully on): where it is
+    /// fading to.
     pub fn backlight(&self) -> u8 {
         self.backlight.output()
+    }
+
+    /// The keyboard woke from the sleep a host sent it to. The light stays
+    /// dark for [`backlight::RESTORE_MS`], unless the host sets it.
+    ///
+    /// [`backlight::RESTORE_MS`]: crate::backlight::RESTORE_MS
+    pub fn on_wake(&mut self) {
+        self.backlight.woke();
+    }
+
+    /// [`backlight::RESTORE_MS`] after [`on_wake`](Self::on_wake): the
+    /// light comes back as it was before the sleep, if the host has left it
+    /// alone.
+    ///
+    /// [`backlight::RESTORE_MS`]: crate::backlight::RESTORE_MS
+    pub fn restore_light(&mut self) {
+        self.backlight.restore();
     }
 }
