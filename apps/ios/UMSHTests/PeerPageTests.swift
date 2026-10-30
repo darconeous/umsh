@@ -215,12 +215,20 @@ struct PresentationTests {
 
     @Test func agesSayJustNowThenWholeUnits() {
         let since = Date(timeIntervalSinceReferenceDate: 0)
-        #expect(AgePresentation.text(since: since, now: since.addingTimeInterval(3), locale: english) == "just now")
-        #expect(AgePresentation.text(since: since, now: since.addingTimeInterval(59), locale: english) == "just now")
-        #expect(AgePresentation.text(since: since, now: since.addingTimeInterval(179), locale: english) == "2 min. ago")
-        #expect(AgePresentation.text(since: since, now: since.addingTimeInterval(3 * 3_600 + 59 * 60), locale: english) == "3 hr. ago")
+        func age(_ seconds: TimeInterval) -> String {
+            AgePresentation.text(since: since, now: since.addingTimeInterval(seconds), locale: english)
+        }
+        #expect(age(3) == "just now")
+        #expect(age(59) == "just now")
+        // The system words the units, and its wording differs between iOS
+        // releases, so what is checked is that an age rounds down to a
+        // whole unit.
+        #expect(age(179) == age(120))
+        #expect(age(179) != age(180))
+        #expect(age(3 * 3_600 + 59 * 60) == age(3 * 3_600))
+        #expect(age(3 * 3_600 + 59 * 60) != age(4 * 3_600))
         // A clock a little behind the node's still reads as now.
-        #expect(AgePresentation.text(since: since, now: since.addingTimeInterval(-5), locale: english) == "just now")
+        #expect(age(-5) == "just now")
     }
 
     @Test func agesRedrawOnlyWhenTheirWordsChange() {

@@ -47,7 +47,7 @@ struct CanonicalAddressView: View {
 
     /// The address in groups of four separated by spaces, which wrap like
     /// words: six groups and five on a phone held upright.
-    static func grouped(_ address: String) -> String {
+    nonisolated static func grouped(_ address: String) -> String {
         var groups: [Substring] = []
         var rest = address[...]
         while !rest.isEmpty {

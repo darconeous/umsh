@@ -87,7 +87,7 @@ struct RouteScreen: View {
 
     /// The legs of a cached route, numbered in send order. A flood names no
     /// repeaters, so its one leg is a dashed stretch for the hops it spent.
-    static func legs(for route: PeerRoute) -> [PathRailLeg] {
+    nonisolated static func legs(for route: PeerRoute) -> [PathRailLeg] {
         switch route.kind {
         case .unknown, .unavailable:
             return [.pending]
