@@ -1232,6 +1232,15 @@ impl Model {
         self.set(prop::SETUP_COMPLETE, &[u8::from(complete)])
     }
 
+    /// `PROP_TEST_MESSAGE_ALERTS`.
+    pub fn test_message_alerts(&self) -> Option<bool> {
+        self.bool(prop::TEST_MESSAGE_ALERTS)
+    }
+
+    pub fn set_test_message_alerts(&mut self, alerts: bool) -> Result<WriteId, Refusal> {
+        self.set(prop::TEST_MESSAGE_ALERTS, &[u8::from(alerts)])
+    }
+
     /// `PROP_KEYBOARD_AIDS`, as [`umsh_ulcp::ids::keyboard_aids`] flags.
     pub fn keyboard_aids(&self) -> Option<u8> {
         self.u8(prop::KEYBOARD_AIDS)

@@ -562,7 +562,7 @@ actor SQLiteApplicationStore {
     /// store refuses to open any database above this constant, so a stale value
     /// lets the new schema apply once and then locks the user out of their own
     /// data on the next launch. ``migrate(_:)`` checks the two agree.
-    static let currentSchemaVersion: Int32 = 27
+    static let currentSchemaVersion: Int32 = 28
 
     nonisolated(unsafe) private let database: OpaquePointer
 
@@ -2145,7 +2145,7 @@ actor SQLiteApplicationStore {
           WHERE u.owner_identity_id = \(owner)
             AND u.conversation_address = \(address)
             AND u.direction = 0 AND u.deleted = 0 AND u.presence = 0
-            AND u.is_reaction = 0
+            AND u.is_reaction = 0 AND u.silent = 0
             AND u.created_at_ms > c.last_read_at_ms)
         """
     }
@@ -2553,8 +2553,9 @@ actor SQLiteApplicationStore {
             for archive in batch.archives {
                 try upsertChatArchive(ownerIdentityID: ownerIdentityID, archive)
             }
+            // What this phone composes is never a message arriving.
             for mutation in batch.mutations {
-                try applyChatMutation(ownerIdentityID: ownerIdentityID, mutation)
+                try applyChatMutation(ownerIdentityID: ownerIdentityID, mutation, silentTestsIn: nil)
             }
         }
     }
@@ -2564,15 +2565,24 @@ actor SQLiteApplicationStore {
     /// revision (see ``materializeOrphanEdit``). The engine could not flag
     /// those `notify`, since only the platform knows the original was
     /// missing; the caller treats them as the message arrivals they are.
+    ///
+    /// `silentTestsIn` names `EMERGENCY`'s conversation while its test
+    /// messages are to arrive silently: one arriving there is kept and shown,
+    /// but never counts as unread.
     @discardableResult
     func applyChatMutations(
         ownerIdentityID: String,
-        mutations: [MobileChatMutationRecord]
+        mutations: [MobileChatMutationRecord],
+        silentTestsIn: String? = nil
     ) throws -> [MobileChatMutationRecord] {
         var materialized: [MobileChatMutationRecord] = []
         try transaction {
             for mutation in mutations {
-                if try applyChatMutation(ownerIdentityID: ownerIdentityID, mutation) {
+                if try applyChatMutation(
+                    ownerIdentityID: ownerIdentityID,
+                    mutation,
+                    silentTestsIn: silentTestsIn
+                ) {
                     materialized.append(mutation)
                 }
             }
@@ -3943,7 +3953,8 @@ actor SQLiteApplicationStore {
     @discardableResult
     private func applyChatMutation(
         ownerIdentityID: String,
-        _ mutation: MobileChatMutationRecord
+        _ mutation: MobileChatMutationRecord,
+        silentTestsIn: String?
     ) throws -> Bool {
         let sessionID = String(mutation.sessionId)
         let ledger = try prepare(
@@ -3997,9 +4008,9 @@ actor SQLiteApplicationStore {
                     rx_route_hints, rx_source_authenticated,
                     is_reaction, regarding_wire_id, regarding_direction, regarding_sender_hint,
                     regarding_target_session_id, regarding_target_handle,
-                    delivery_session_id, delivery_handle
+                    delivery_session_id, delivery_handle, silent
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?,
-                          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(owner_identity_id, session_id, handle) DO UPDATE SET
                     body = excluded.body,
                     complete = excluded.complete,
@@ -4042,7 +4053,8 @@ actor SQLiteApplicationStore {
                     ),
                     regarding_target_handle = COALESCE(
                         excluded.regarding_target_handle, chat_message.regarding_target_handle
-                    )
+                    ),
+                    silent = MAX(chat_message.silent, excluded.silent)
                 """
             )
             defer { sqlite3_finalize(statement) }
@@ -4098,6 +4110,9 @@ actor SQLiteApplicationStore {
             // A fresh row reports its own transmission until an edit re-aims it.
             try bind(sessionID, to: statement, at: 37)
             try check(sqlite3_bind_int64(statement, 38, Int64(mutation.handle)))
+            let silent = direction == .inbound && peerAddress == silentTestsIn
+                && isTestMessageBody(body: body)
+            try check(sqlite3_bind_int(statement, 39, silent ? 1 : 0))
             try stepDone(statement)
             // A reaction or a reply can outrun the message it is about—
             // repaired gaps and channel-group reordering both do it. Whenever
@@ -4127,7 +4142,10 @@ actor SQLiteApplicationStore {
                     rx_lqi = COALESCE(?, rx_lqi),
                     rx_hop_count = COALESCE(?, rx_hop_count),
                     rx_route_hints = COALESCE(?, rx_route_hints),
-                    rx_source_authenticated = COALESCE(?, rx_source_authenticated)
+                    rx_source_authenticated = COALESCE(?, rx_source_authenticated),
+                    -- What completes in EMERGENCY's conversation, inbound,
+                    -- as a test message no one asked to hear of.
+                    silent = MAX(silent, direction = 0 AND conversation_address IS ? AND ?)
                 WHERE owner_identity_id = ? AND session_id = ? AND handle = ?
                 """
             )
@@ -4149,9 +4167,11 @@ actor SQLiteApplicationStore {
                 to: statement,
                 at: 12
             )
-            try bind(ownerIdentityID, to: statement, at: 13)
-            try bind(sessionID, to: statement, at: 14)
-            try check(sqlite3_bind_int64(statement, 15, Int64(mutation.handle)))
+            try bindOptional(silentTestsIn, to: statement, at: 13)
+            try check(sqlite3_bind_int(statement, 14, isTestMessageBody(body: body) ? 1 : 0))
+            try bind(ownerIdentityID, to: statement, at: 15)
+            try bind(sessionID, to: statement, at: 16)
+            try check(sqlite3_bind_int64(statement, 17, Int64(mutation.handle)))
             try stepDone(statement)
         case .edit, .delete:
             let body = mutation.kind == .delete ? "" : (mutation.body ?? "")
@@ -5469,6 +5489,26 @@ actor SQLiteApplicationStore {
                     ALTER TABLE chat_message ADD COLUMN delivery_progress_at_ms INTEGER;
 
                     PRAGMA user_version = 27;
+                    """
+                )
+                try execute(database, sql: "COMMIT")
+            } catch {
+                try? execute(database, sql: "ROLLBACK")
+                throw error
+            }
+        }
+
+        if version < 28 {
+            try execute(database, sql: "BEGIN IMMEDIATE")
+            do {
+                // A test message on EMERGENCY that arrived while no one
+                // asked to hear of them: kept and shown, never unread.
+                try execute(
+                    database,
+                    sql: """
+                    ALTER TABLE chat_message ADD COLUMN silent INTEGER NOT NULL DEFAULT 0;
+
+                    PRAGMA user_version = 28;
                     """
                 )
                 try execute(database, sql: "COMMIT")

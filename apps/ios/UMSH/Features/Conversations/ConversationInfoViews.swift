@@ -20,6 +20,9 @@ struct ChannelConversationDetailView: View {
     /// even though the write is on its way.
     @State private var pendingNotifications: Bool?
     @State private var messageCount: Int?
+    /// Whether test messages on `EMERGENCY` notify. The runtime reads the
+    /// same key.
+    @AppStorage("notifications.testMessages") private var testMessageAlerts = false
 
     var body: some View {
         Form {
@@ -56,6 +59,16 @@ struct ChannelConversationDetailView: View {
                 ))
             } footer: {
                 Text("Messages in this channel still arrive and still count as unread. This decides only whether they interrupt you.")
+            }
+            if conversation.channel.isEmergency {
+                // Its own section: the footer above describes the switch for
+                // the whole channel, and test messages never count as unread.
+                Section {
+                    Toggle(
+                        String(localized: "Test Messages", comment: "Switch on the EMERGENCY channel's page: whether messages starting with TEST: notify."),
+                        isOn: $testMessageAlerts
+                    )
+                }
             }
             ConversationMetadataSection(
                 identifierLabel: "Identifier", identifier: conversation.channel.channelIDHex,

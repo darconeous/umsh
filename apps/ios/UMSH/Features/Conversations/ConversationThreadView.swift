@@ -74,6 +74,9 @@ struct ConversationThreadView: View {
     @State private var editDraft = ""
     @State private var deletingMessage: ChatMessageSummary?
     @State private var resendingMessage: ChatMessageSummary?
+    /// The warning before the first message sent on `EMERGENCY` since
+    /// launch is open.
+    @State private var showsEmergencyWarning = false
     @State private var inspectedMember: InspectedMember?
     @State private var inspectedMessage: ChatMessageSummary?
     /// The message the draft replies to. Held here, like the communicator's
@@ -88,6 +91,7 @@ struct ConversationThreadView: View {
     @Environment(\.visibleConversationReporter) private var visibleConversationReporter
     @Environment(\.transcriptLoader) private var transcriptLoader
     @Environment(\.showOnMap) private var showOnMap
+    @Environment(\.dismiss) private var dismiss
     @State private var transcript = TranscriptWindow()
     /// Where the reader is, held by reference so that following a scroll costs
     /// nothing to draw. Every one of these changes many times per drag, and as
@@ -576,6 +580,19 @@ struct ConversationThreadView: View {
                 },
                 cancel: { editingMessage = nil }
             )
+        }
+        // Turning the warning down, by Cancel or a swipe, leaves EMERGENCY
+        // too. The draft stays.
+        .sheet(isPresented: $showsEmergencyWarning, onDismiss: {
+            if !channelActions.emergencyCertified() { dismiss() }
+        }) {
+            EmergencyWarningSheet {
+                channelActions.certifyEmergency()
+                showsEmergencyWarning = false
+                Task { await send() }
+            } cancel: {
+                showsEmergencyWarning = false
+            }
         }
         .confirmationDialog(
             "Delete this message?",
@@ -1216,6 +1233,10 @@ struct ConversationThreadView: View {
             showsBlockedReason = true
             return
         }
+        if channelConversation?.channel.isEmergency == true, !channelActions.emergencyCertified() {
+            showsEmergencyWarning = true
+            return
+        }
         let replying = replyTarget
         let result = if let replying {
             await messageActions.reply(conversation, replying, body)
@@ -1642,4 +1663,65 @@ private struct LearnedPathOffer: Identifiable {
     let peer: PeerSummary
     let route: PeerRoute
     var id: Int64 { peer.id }
+}
+
+/// The warning before the first message sent on `EMERGENCY` since launch.
+/// Red throughout, so that it reads as no ordinary confirmation.
+private struct EmergencyWarningSheet: View {
+    /// The channel's name, which is never translated.
+    private static let channelName = "EMERGENCY"
+
+    let certify: () -> Void
+    let cancel: () -> Void
+
+    var body: some View {
+        VStack(spacing: 16) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 44, weight: .bold))
+                        .accessibilityHidden(true)
+                    Text("Emergencies Only", comment: "Title of the warning shown before the first message sent on the EMERGENCY channel.")
+                        .font(.title.bold())
+                        .accessibilityAddTraits(.isHeader)
+                    Text(
+                        "\(Self.channelName) is only for reporting or responding to genuine emergencies involving potential loss of life or significant imminent property damage.",
+                        comment: "The warning before the first message sent on the EMERGENCY channel. The placeholder is the channel's name, EMERGENCY, which is not translated."
+                    )
+                    .font(.body.weight(.semibold))
+                    Text(
+                        "This channel is not encrypted and your identity will be made public.",
+                        comment: "The warning before the first message sent on the EMERGENCY channel: what sending there gives away."
+                    )
+                    .font(.body.weight(.semibold))
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            VStack(spacing: 12) {
+                Button(action: certify) {
+                    Text("Certify and Send", comment: "Button: certify that a message on the EMERGENCY channel is about a genuine emergency, and send it.")
+                        .font(.headline.bold())
+                        .foregroundStyle(.red)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .buttonBorderShape(.capsule)
+                .tint(.white)
+                .accessibilityIdentifier("emergency-warning-certify")
+                Button(action: cancel) {
+                    Text("Cancel", comment: "Button: close the EMERGENCY warning without sending.")
+                        .font(.body.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderless)
+                .accessibilityIdentifier("emergency-warning-cancel")
+            }
+            .controlSize(.large)
+        }
+        .foregroundStyle(.white)
+        .padding(24)
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        .presentationBackground(Color.red)
+    }
 }

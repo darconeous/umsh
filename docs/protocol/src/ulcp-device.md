@@ -274,6 +274,7 @@ Id | Mnemonic                    | Commands                 | Description
 4891 | `PROP_SOUND_ENABLED`      | Get, Set, Is             | Whether optional sounds are played
 4892 | `PROP_SOUND_VOLUME`       | Get, Set, Is             | How loud optional sounds are played
 4893 | `PROP_SETUP_COMPLETE`     | Get, Set, Is             | Whether the device has been set up through its own interface
+4894 | `PROP_TEST_MESSAGE_ALERTS` | Get, Set, Is            | Whether test messages on `EMERGENCY` call for attention
 4866 | `PROP_TIME`               | Get, Set, Is             | Wall clock, or empty when unknown
 4888 | `PROP_TZ_RULE`            | Get, Set, Is             | Local time zone, as a POSIX TZ rule
 4889 | `PROP_TIME_24H`           | Get, Set, Is             | Whether shown clocks use 24-hour time
@@ -2281,3 +2282,18 @@ The property is included in `CMD_SAVE`, so `CMD_FACTORY_RESET` clears it
 with the rest of the saved state. It is asynchronous because the device
 sets it itself (see [Changes Made at the
 Device](ulcp-saved-state.md#changes-made-at-the-device)).
+
+### PROP 4894: `PROP_TEST_MESSAGE_ALERTS` {#prop-test-message-alerts}
+
+* Type: Single-Value, Read-Write
+* Asynchronous Updates: Yes
+* Value Type: BOOL
+* Post-Reset Value: 0 (false), or restored from saved state
+
+Whether [test messages](app-text-messages.md#test-messages) on `EMERGENCY`
+call for attention like any other message. Cleared, a test message earns
+no [receipt cue](ulcp-host.md#receipt-cues), and a device with an
+interface of its own neither alerts for it nor counts it unread. The
+message is still queued, stored, and shown.
+
+The property is included in `CMD_SAVE`.

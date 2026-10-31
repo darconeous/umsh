@@ -71,6 +71,11 @@ pub const LEVEL_OFF: Rgb565 = rgb(0x3A414B);
 /// The rail joining the nodes of a path.
 pub const RAIL: Rgb565 = rgb(0x3A414B);
 pub const MENU_LINE: Rgb565 = rgb(0x2E3540);
+/// `EMERGENCY`'s red, which its badge is filled with, and the warning
+/// before sending there is framed in.
+pub const EMERGENCY: Rgb565 = rgb(0xFF453A);
+/// Behind that warning's words.
+pub const EMERGENCY_FIELD: Rgb565 = rgb(0x3A1412);
 /// Behind each reaction in the actions menu's palette.
 pub const REACTION_PAD: Rgb565 = rgb(0x2A313B);
 /// A reaction chip of someone else's; mine is in [`OUTBOUND`], or

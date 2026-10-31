@@ -12511,10 +12511,11 @@ public struct UlcpManagedPropertyIds: Equatable, Hashable {
     public var meshcoreRegions: UInt32
     public var devPeers: UInt32
     public var devAdmins: UInt32
+    public var testMessageAlerts: UInt32
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(caps: UInt32, deviceVersion: UInt32, deviceModel: UInt32, deviceName: UInt32, battery: UInt32, illuminance: UInt32, temperatures: UInt32, temperatureNames: UInt32, batteryCurrent: UInt32, batteryRemainingCapacity: UInt32, batteryFullCapacity: UInt32, batteryDesignCapacity: UInt32, batteryExtPowerPresent: UInt32, batteryPresent: UInt32, batteryGaugeFull: UInt32, batteryGaugeInitialized: UInt32, batteryGaugeSmoothing: UInt32, batteryChargeVoltageRequest: UInt32, batteryGaugeFormat: UInt32, batteryGaugeStatus: UInt32, batteryGaugeOperationStatus: UInt32, phyEnabled: UInt32, frequency: UInt32, transmitPower: UInt32, loraBandwidth: UInt32, loraSpreadingFactor: UInt32, loraCodingRate: UInt32, dutyCycleNow: UInt32, dutyCycleLimit: UInt32, statTxPackets: UInt32, statTxChannelBusy: UInt32, statRxPackets: UInt32, statRxBadCrc: UInt32, statRxNonUmsh: UInt32, statRxAccepted: UInt32, statForwarded: UInt32, statForwardDropped: UInt32, statForwardCancelled: UInt32, statMeshcoreSeen: UInt32, statMeshcoreForwardedRouted: UInt32, statMeshcoreForwardedFlood: UInt32, statMeshcoreDeclined: UInt32, identRole: UInt32, identMobile: UInt32, identLocation: UInt32, identAltitude: UInt32, devDiscoverable: UInt32, gnssIdentUpdate: UInt32, gnssIdentPrecision: UInt32, uptime: UInt32, advertInterval: UInt32, beaconInterval: UInt32, startupBeacon: UInt32, gnssEnabled: UInt32, displayMotionWakeEnabled: UInt32, gnssTimeTrust: UInt32, bleEnabled: UInt32, bleBondCount: UInt32, bleLink: UInt32, blePairing: UInt32, wifiEnabled: UInt32, bridgeEnabled: UInt32, bridgeHost: UInt32, bridgePort: UInt32, bridgeServerKey: UInt32, bridgeLink: UInt32, lanBearerEnabled: UInt32, lanBearerGroup: UInt32, lanBearerIngressLimit: UInt32, lanBearerState: UInt32, devKey: UInt32, wifiNetworks: UInt32, wifiNetwork: UInt32, wifiScanning: UInt32, wifiScanResults: UInt32, wifiLink: UInt32, wifiRssi: UInt32, wifiMac: UInt32, ipv4State: UInt32, ipv4Config: UInt32, ipv4Address: UInt32, ipv6State: UInt32, ipv6Config: UInt32, ipv6Addresses: UInt32, ipDns: UInt32, ipResolvers: UInt32, time: UInt32, tzRule: UInt32, time24h: UInt32, alert: UInt32, repeaterEnabled: UInt32, repeaterRegions: UInt32, repeaterDefaultRegion: UInt32, repeaterMinRssi: UInt32, repeaterMinSnr: UInt32, meshcoreForwardingEnabled: UInt32, meshcoreRegionPolicy: UInt32, meshcoreRegions: UInt32, devPeers: UInt32, devAdmins: UInt32) {
+    public init(caps: UInt32, deviceVersion: UInt32, deviceModel: UInt32, deviceName: UInt32, battery: UInt32, illuminance: UInt32, temperatures: UInt32, temperatureNames: UInt32, batteryCurrent: UInt32, batteryRemainingCapacity: UInt32, batteryFullCapacity: UInt32, batteryDesignCapacity: UInt32, batteryExtPowerPresent: UInt32, batteryPresent: UInt32, batteryGaugeFull: UInt32, batteryGaugeInitialized: UInt32, batteryGaugeSmoothing: UInt32, batteryChargeVoltageRequest: UInt32, batteryGaugeFormat: UInt32, batteryGaugeStatus: UInt32, batteryGaugeOperationStatus: UInt32, phyEnabled: UInt32, frequency: UInt32, transmitPower: UInt32, loraBandwidth: UInt32, loraSpreadingFactor: UInt32, loraCodingRate: UInt32, dutyCycleNow: UInt32, dutyCycleLimit: UInt32, statTxPackets: UInt32, statTxChannelBusy: UInt32, statRxPackets: UInt32, statRxBadCrc: UInt32, statRxNonUmsh: UInt32, statRxAccepted: UInt32, statForwarded: UInt32, statForwardDropped: UInt32, statForwardCancelled: UInt32, statMeshcoreSeen: UInt32, statMeshcoreForwardedRouted: UInt32, statMeshcoreForwardedFlood: UInt32, statMeshcoreDeclined: UInt32, identRole: UInt32, identMobile: UInt32, identLocation: UInt32, identAltitude: UInt32, devDiscoverable: UInt32, gnssIdentUpdate: UInt32, gnssIdentPrecision: UInt32, uptime: UInt32, advertInterval: UInt32, beaconInterval: UInt32, startupBeacon: UInt32, gnssEnabled: UInt32, displayMotionWakeEnabled: UInt32, gnssTimeTrust: UInt32, bleEnabled: UInt32, bleBondCount: UInt32, bleLink: UInt32, blePairing: UInt32, wifiEnabled: UInt32, bridgeEnabled: UInt32, bridgeHost: UInt32, bridgePort: UInt32, bridgeServerKey: UInt32, bridgeLink: UInt32, lanBearerEnabled: UInt32, lanBearerGroup: UInt32, lanBearerIngressLimit: UInt32, lanBearerState: UInt32, devKey: UInt32, wifiNetworks: UInt32, wifiNetwork: UInt32, wifiScanning: UInt32, wifiScanResults: UInt32, wifiLink: UInt32, wifiRssi: UInt32, wifiMac: UInt32, ipv4State: UInt32, ipv4Config: UInt32, ipv4Address: UInt32, ipv6State: UInt32, ipv6Config: UInt32, ipv6Addresses: UInt32, ipDns: UInt32, ipResolvers: UInt32, time: UInt32, tzRule: UInt32, time24h: UInt32, alert: UInt32, repeaterEnabled: UInt32, repeaterRegions: UInt32, repeaterDefaultRegion: UInt32, repeaterMinRssi: UInt32, repeaterMinSnr: UInt32, meshcoreForwardingEnabled: UInt32, meshcoreRegionPolicy: UInt32, meshcoreRegions: UInt32, devPeers: UInt32, devAdmins: UInt32, testMessageAlerts: UInt32) {
         self.caps = caps
         self.deviceVersion = deviceVersion
         self.deviceModel = deviceModel
@@ -12615,6 +12616,7 @@ public struct UlcpManagedPropertyIds: Equatable, Hashable {
         self.meshcoreRegions = meshcoreRegions
         self.devPeers = devPeers
         self.devAdmins = devAdmins
+        self.testMessageAlerts = testMessageAlerts
     }
 
 
@@ -12732,7 +12734,8 @@ public struct FfiConverterTypeUlcpManagedPropertyIds: FfiConverterRustBuffer {
                 meshcoreRegionPolicy: FfiConverterUInt32.read(from: &buf),
                 meshcoreRegions: FfiConverterUInt32.read(from: &buf),
                 devPeers: FfiConverterUInt32.read(from: &buf),
-                devAdmins: FfiConverterUInt32.read(from: &buf)
+                devAdmins: FfiConverterUInt32.read(from: &buf),
+                testMessageAlerts: FfiConverterUInt32.read(from: &buf)
         )
     }
 
@@ -12837,6 +12840,7 @@ public struct FfiConverterTypeUlcpManagedPropertyIds: FfiConverterRustBuffer {
         FfiConverterUInt32.write(value.meshcoreRegions, into: &buf)
         FfiConverterUInt32.write(value.devPeers, into: &buf)
         FfiConverterUInt32.write(value.devAdmins, into: &buf)
+        FfiConverterUInt32.write(value.testMessageAlerts, into: &buf)
     }
 }
 
@@ -20842,6 +20846,19 @@ public func inspectPublicIdentityBytes(publicKey: Data)throws  -> PublicIdentity
 })
 }
 /**
+ * Whether `body`, the text of a message on `EMERGENCY`, marks it as a
+ * test message (`app-text-messages.md` §Test Messages). Only a message on
+ * `EMERGENCY` can be one: that part is the caller's to know.
+ */
+public func isTestMessageBody(body: String) -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_is_test_message_body(
+        FfiConverterString.lower(body),uniffiCallStatus
+    )
+})
+}
+/**
  * Return the binding-visible mobile API version.
  */
 public func mobileApiVersion() -> UInt16  {
@@ -21693,6 +21710,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_inspect_public_identity_bytes() != 8491) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_func_is_test_message_body() != 38113) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_mobile_api_version() != 62014) {

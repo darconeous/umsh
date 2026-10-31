@@ -1397,6 +1397,7 @@ pub enum Setting {
     Sound,
     Volume,
     Setup,
+    TestMessageAlerts,
     Wifi,
     /// A network could not be saved: the device keeps no more.
     WifiFull,
@@ -1918,6 +1919,12 @@ pub trait Node {
 
     fn set_setup_complete(&self, complete: bool);
 
+    /// Whether test messages on `EMERGENCY` call for attention like any
+    /// other message. False where the device does not say.
+    fn test_message_alerts(&self) -> bool;
+
+    fn set_test_message_alerts(&self, on: bool);
+
     /// Whether the device can be reset to how it left the factory.
     fn can_factory_reset(&self) -> bool;
 
@@ -2022,6 +2029,10 @@ pub struct State {
     /// Seconds until sending is allowed again, while the airtime it may use
     /// is spent.
     pub airtime_wait: Option<u16>,
+    /// Whether the warning before sending on `EMERGENCY` has been
+    /// certified since the device started. Never kept: every start asks
+    /// again.
+    pub(crate) emergency_certified: bool,
     /// A message that arrived in a chat not on screen, shown for a moment.
     pub banner: Option<Banner>,
     /// The panel is dark: nothing on it is being read.
@@ -2176,6 +2187,7 @@ impl State {
             screens,
             node,
             airtime_wait: None,
+            emergency_certified: false,
             banner: None,
             dark: false,
             lock: Lock::default(),
@@ -2264,7 +2276,8 @@ impl State {
 
     /// Sends the draft of `chat`: it becomes the newest message, and the
     /// chat moves to the top of the list. A draft stays a draft while airtime
-    /// is spent, or when the node has no room for it.
+    /// is spent, or when the node has no room for it, or while the warning
+    /// before the first message on `EMERGENCY` waits to be certified.
     pub fn send(&mut self, chat: ChatId) {
         if self.airtime_wait.is_some() {
             return;
@@ -2276,6 +2289,10 @@ impl State {
         else {
             return;
         };
+        if self.must_certify(chat) {
+            self.ask_certify(None);
+            return;
+        }
         let reply_to = match self.screens.last() {
             Some(Screen::Conversation {
                 chat: shown, reply, ..
@@ -2583,8 +2600,8 @@ impl State {
             return None;
         };
         let message = unsent.take()?.message();
-        focus.request(keys::message(message));
-        Some(message)
+        focus.request(message.map_or(keys::COMPOSER, keys::message));
+        message
     }
 
     /// Sends the message whose choices are open again, as it was to go.

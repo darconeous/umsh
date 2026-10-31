@@ -4902,6 +4902,7 @@ pub struct UlcpManagedPropertyIds {
     pub meshcore_regions: u32,
     pub dev_peers: u32,
     pub dev_admins: u32,
+    pub test_message_alerts: u32,
 }
 
 /// The property numbers, from the constants themselves.
@@ -5008,6 +5009,7 @@ pub fn ulcp_managed_property_ids() -> UlcpManagedPropertyIds {
         meshcore_regions: prop::MESHCORE_REGIONS,
         dev_peers: prop::DEV_PEERS,
         dev_admins: prop::DEV_ADMINS,
+        test_message_alerts: prop::TEST_MESSAGE_ALERTS,
     }
 }
 

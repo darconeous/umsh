@@ -960,11 +960,13 @@ enum SecureRx {
     /// acknowledgement (never for multicast); `identity` keys later
     /// duplicate coalescing and deferred ack marking; `cue` says the
     /// frame carries a message the operator reads, in a conversation
-    /// the host has not muted.
+    /// the host has not muted; `silent` says it is a test message no one
+    /// asked to be told of.
     New {
         ack: Option<AckPlan>,
         identity: Option<RxIdentity>,
         cue: bool,
+        silent: bool,
     },
     /// Authenticated duplicate of a previously accepted frame: it is
     /// coalesced rather than queued again. `ack` is present when the
@@ -997,8 +999,13 @@ pub struct QueuedNotice {
     /// The frame earns a cue of its own: it carries a message for the
     /// operator, in a conversation no mute table names. Aggregate
     /// indications (a queued count, an attention light) follow every
-    /// frame regardless.
+    /// frame regardless, except a silent one.
     pub cue: bool,
+    /// The frame is a test message on `EMERGENCY` while
+    /// `PROP_TEST_MESSAGE_ALERTS` is clear: nothing calls for attention,
+    /// neither a cue nor an attention light. Only the queued count
+    /// follows it.
+    pub silent: bool,
     /// Frames in the queue after the push.
     pub depth: usize,
 }
@@ -1141,6 +1148,9 @@ struct DeviceDomain {
     sound_volume: u8,
     /// `PROP_SETUP_COMPLETE`. Meaningful only under [`Config::keyboard`].
     setup_complete: bool,
+    /// `PROP_TEST_MESSAGE_ALERTS`: whether test messages on `EMERGENCY`
+    /// earn a receipt cue like any other message.
+    test_message_alerts: bool,
     /// `PROP_GNSS_IDENT_UPDATE`: whether fixes refresh the advertised node
     /// identity's location. Off by default: broadcasting where you are is
     /// a decision, not a default.
@@ -1229,6 +1239,7 @@ impl DeviceDomain {
             sound_enabled: true,
             sound_volume: DEFAULT_SOUND_VOLUME,
             setup_complete: false,
+            test_message_alerts: false,
             gnss_ident_update: false,
             gnss_ident_precision: DEFAULT_IDENT_PRECISION,
             gnss_time_trust: true,
@@ -2500,6 +2511,7 @@ const SAVED_SCHEMA: &[SavedProperty] = &[
     saved(prop::SOUND_ENABLED, ApplyPhase::Config, false),
     saved(prop::SOUND_VOLUME, ApplyPhase::Config, false),
     saved(prop::SETUP_COMPLETE, ApplyPhase::Config, false),
+    saved(prop::TEST_MESSAGE_ALERTS, ApplyPhase::Config, false),
     saved(prop::IPV4_CONFIG, ApplyPhase::Config, false),
     saved(prop::IPV6_CONFIG, ApplyPhase::Config, false),
     saved(prop::IP_DNS, ApplyPhase::Config, true),
@@ -2653,6 +2665,7 @@ struct SavedState {
     sound_enabled: bool,
     sound_volume: u8,
     setup_complete: bool,
+    test_message_alerts: bool,
     gnss_ident_update: bool,
     gnss_ident_precision: u8,
     gnss_time_trust: bool,
@@ -2711,6 +2724,7 @@ impl SavedState {
             sound_enabled: device.sound_enabled,
             sound_volume: device.sound_volume,
             setup_complete: device.setup_complete,
+            test_message_alerts: device.test_message_alerts,
             gnss_ident_update: device.gnss_ident_update,
             gnss_ident_precision: device.gnss_ident_precision,
             gnss_time_trust: device.gnss_time_trust,
@@ -2777,6 +2791,7 @@ impl SavedState {
             sound_enabled: true,
             sound_volume: DEFAULT_SOUND_VOLUME,
             setup_complete: false,
+            test_message_alerts: false,
             gnss_ident_update: false,
             gnss_ident_precision: DEFAULT_IDENT_PRECISION,
             gnss_time_trust: true,
@@ -2924,6 +2939,7 @@ impl SavedState {
             prop::SOUND_ENABLED => encoder.put(number, &[self.sound_enabled as u8]),
             prop::SOUND_VOLUME => encoder.put(number, &[self.sound_volume]),
             prop::SETUP_COMPLETE => encoder.put(number, &[self.setup_complete as u8]),
+            prop::TEST_MESSAGE_ALERTS => encoder.put(number, &[self.test_message_alerts as u8]),
             prop::PHY_DUTY_LIMIT => encoder.put(number, &self.duty_limit.to_le_bytes()),
             prop::DEV_ADMINS => {
                 for public_key in self.dev_admins.iter() {
@@ -3145,6 +3161,9 @@ impl SavedState {
             prop::SOUND_ENABLED => self.sound_enabled = parse_bool(value).map_err(invalid)?,
             prop::SOUND_VOLUME => self.sound_volume = parse_u8(value).map_err(invalid)?,
             prop::SETUP_COMPLETE => self.setup_complete = parse_bool(value).map_err(invalid)?,
+            prop::TEST_MESSAGE_ALERTS => {
+                self.test_message_alerts = parse_bool(value).map_err(invalid)?
+            }
             // Aids a newer firmware saved are dropped, not the snapshot.
             prop::KEYBOARD_AIDS => {
                 self.keyboard_aids = parse_u8(value).map_err(invalid)? & keyboard_aids::ALL
@@ -3235,25 +3254,28 @@ fn queued_class(data: &[u8]) -> QueuedClass {
     }
 }
 
-/// Whether a decrypted payload is a message the operator reads, and so
-/// earns a receipt cue: basic or status text, replies and reactions
-/// included, counted once at its first fragment. Resend requests and
-/// unavailability notices are text-protocol bookkeeping, and every
-/// other payload type is traffic no one reads.
-fn is_readable_message(payload: &[u8]) -> bool {
-    let Some((&payload_type, body)) = payload.split_first() else {
-        return false;
-    };
+/// A decrypted payload that is a message the operator reads.
+#[derive(Clone, Copy)]
+struct Readable {
+    /// Its body marks a test message, should it be on `EMERGENCY`.
+    test_body: bool,
+}
+
+/// The message in a decrypted payload, when it is one the operator reads
+/// and so earns a receipt cue: basic or status text, replies and
+/// reactions included, counted once at its first fragment. Resend
+/// requests and unavailability notices are text-protocol bookkeeping,
+/// and every other payload type is traffic no one reads.
+fn readable_message(payload: &[u8]) -> Option<Readable> {
+    let (&payload_type, body) = payload.split_first()?;
     if PayloadType::from_byte(payload_type) != Some(PayloadType::TextMessage) {
-        return false;
+        return None;
     }
-    let Ok((message, info)) = umsh_text::text_message::parse_with_info(body) else {
-        return false;
-    };
+    let (message, info) = umsh_text::text_message::parse_with_info(body).ok()?;
     // The options that decide what a message is: a receiver shows
     // nothing when it cannot decode one of them.
     use umsh_text::model::option::{EDITING, MESSAGE_TYPE, REGARDING};
-    ![MESSAGE_TYPE, REGARDING, EDITING]
+    let readable = ![MESSAGE_TYPE, REGARDING, EDITING]
         .into_iter()
         .any(|number| info.undecodable(number))
         && matches!(
@@ -3263,7 +3285,10 @@ fn is_readable_message(payload: &[u8]) -> bool {
         && message
             .sequence
             .and_then(|sequence| sequence.fragment)
-            .is_none_or(|fragment| fragment.index == 0)
+            .is_none_or(|fragment| fragment.index == 0);
+    readable.then(|| Readable {
+        test_body: umsh_text::text_message::is_test_body(message.body),
+    })
 }
 
 /// A channel-key option value: the raw symmetric key.
@@ -3354,6 +3379,9 @@ pub struct Session<A: AesProvider, S: Sha256Provider, const TX: usize = 1> {
     /// authentication and delegated acknowledgement with
     /// `CAP_HOST_AUTO_ACK`).
     engine: CryptoEngine<A, S>,
+    /// The `EMERGENCY` channel's key, whose test messages
+    /// `PROP_TEST_MESSAGE_ALERTS` governs.
+    emergency_key: [u8; 32],
     device: DeviceDomain,
     host: HostDomain,
     session: SessionState<TX>,
@@ -3641,9 +3669,14 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     pub fn new(config: SessionConfig, boot_status: Status, engine: CryptoEngine<A, S>) -> Self {
         debug_assert!(usize::from(config.mtu) <= MAX_MTU);
         debug_assert!(valid_device_name(config.default_device_name.as_bytes()));
+        let emergency_key = engine
+            .derive_named_channel_key(umsh_text::emergency::CHANNEL_NAME)
+            .expect("the EMERGENCY name is short ASCII")
+            .0;
         Self {
             config,
             engine,
+            emergency_key,
             device: DeviceDomain::post_reset(&config),
             host: HostDomain::default(),
             session: SessionState::default(),
@@ -4100,6 +4133,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     prop::SOUND_ENABLED => self.device.sound_enabled = saved.sound_enabled,
                     prop::SOUND_VOLUME => self.device.sound_volume = saved.sound_volume,
                     prop::SETUP_COMPLETE => self.device.setup_complete = saved.setup_complete,
+                    prop::TEST_MESSAGE_ALERTS => {
+                        self.device.test_message_alerts = saved.test_message_alerts
+                    }
                     prop::PHY_DUTY_LIMIT => self.config.duty.set_limit(saved.duty_limit),
                     prop::TZ_RULE => self.device.tz_rule = saved.tz_rule.clone(),
                     prop::TIME_24H => self.device.time_24h = saved.time_24h,
@@ -4638,9 +4674,14 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     // An unauthenticated frame reaches the queue on the
                     // strength of a receive filter alone: its content
                     // is unreadable, so nothing says it is a message.
-                    let (ack, identity, cue) = match verdict {
-                        SecureRx::New { ack, identity, cue } => (ack, identity, cue),
-                        _ => (None, None, false),
+                    let (ack, identity, cue, silent) = match verdict {
+                        SecureRx::New {
+                            ack,
+                            identity,
+                            cue,
+                            silent,
+                        } => (ack, identity, cue, silent),
+                        _ => (None, None, false, false),
                     };
                     // Entries start unacknowledged: RX_FLAG_ACKED is
                     // earned only when the ack transmission actually
@@ -4651,6 +4692,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     self.queued_notice = Some(QueuedNotice {
                         class: queued_class(data),
                         cue,
+                        silent,
                         depth: self.host.queue.len,
                     });
                     ack.and_then(|plan| self.stage_ack(plan, Some(seq), now_ms))
@@ -4802,7 +4844,12 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 else {
                     return SecureRx::Plain;
                 };
-                let readable = is_readable_message(&scratch[body_range]);
+                let readable = readable_message(&scratch[body_range]);
+                // A test message on `EMERGENCY` calls for no one's
+                // attention unless the operator asked to hear them.
+                let silent = readable.is_some_and(|message| message.test_body)
+                    && channel_key == self.emergency_key
+                    && !self.device.test_message_alerts;
                 let Some(sec_info) = header.sec_info else {
                     return SecureRx::Plain;
                 };
@@ -4829,7 +4876,8 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                         // two-octet on-wire identifier: identifiers
                         // collide, and a collision must not mute the
                         // wrong channel.
-                        cue: readable && !self.channel_muted(&channel_key),
+                        cue: readable.is_some() && !silent && !self.channel_muted(&channel_key),
+                        silent,
                     }
                 };
             }
@@ -4866,7 +4914,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         if let Some(plan) = plan.as_mut() {
             plan.replay = identity.map(|identity| (peer_index, identity));
         }
-        let readable = is_readable_message(&scratch[body_range]);
+        let readable = readable_message(&scratch[body_range]).is_some();
         let muted = self.host.muted_peers.contains(
             &self.host.peer_keys.entries[peer_index]
                 .as_ref()
@@ -4887,6 +4935,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     ack: plan,
                     identity,
                     cue: readable && !muted,
+                    silent: false,
                 }
             }
             ReplayVerdict::Replay => {
@@ -5461,6 +5510,11 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// `PROP_SETUP_COMPLETE`; false on a board without a keyboard.
     pub fn setup_complete(&self) -> bool {
         self.config.keyboard && self.device.setup_complete
+    }
+
+    /// `PROP_TEST_MESSAGE_ALERTS`.
+    pub fn test_message_alerts(&self) -> bool {
+        self.device.test_message_alerts
     }
 
     /// `PROP_KEYBOARD_AIDS`, as [`keyboard_aids`] flags; none on a board
@@ -7658,6 +7712,11 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 self.bump_dev_domain();
                 Ok(false)
             }
+            prop::TEST_MESSAGE_ALERTS => {
+                self.device.test_message_alerts = parse_bool(value)?;
+                self.bump_dev_domain();
+                Ok(false)
+            }
             prop::KEYBOARD_AIDS if self.config.keyboard => {
                 self.device.keyboard_aids = parse_keyboard_aids(value)?;
                 self.bump_dev_domain();
@@ -8852,6 +8911,10 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             }
             prop::SETUP_COMPLETE if self.config.keyboard => {
                 out[0] = self.device.setup_complete as u8;
+                1
+            }
+            prop::TEST_MESSAGE_ALERTS => {
+                out[0] = self.device.test_message_alerts as u8;
                 1
             }
             prop::KEYBOARD_AIDS if self.config.keyboard => {
@@ -17219,6 +17282,10 @@ mod tests {
     /// A sealed multicast frame on `channel_key` (channel keys act as
     /// the pairwise keys for multicast sealing).
     fn sealed_multicast(counter: u32, channel_key: &[u8; 32], fill: u8) -> Vec<u8> {
+        sealed_multicast_carrying(counter, channel_key, &[3, 0xFF, fill])
+    }
+
+    fn sealed_multicast_carrying(counter: u32, channel_key: &[u8; 32], payload: &[u8]) -> Vec<u8> {
         let engine = test_engine();
         let derived = engine.derive_channel_keys(&ChannelKey(*channel_key));
         let mut buf = [0u8; 96];
@@ -17227,7 +17294,7 @@ mod tests {
             .source_hint(NodeHint([0x0A, 0x0A, 0x0A]))
             .frame_counter(counter)
             .mic_size(MicSize::Mic8)
-            .payload(&[3, 0xFF, fill])
+            .payload(payload)
             .build()
             .unwrap();
         let keys = PairwiseKeys {
@@ -17403,6 +17470,72 @@ mod tests {
         rx_effect(&mut session, &sealed_multicast(2, &other_key, 0x11), 0);
         let notice = session.take_queued_notice().expect("queued");
         assert!(notice.cue, "the other channel was never muted");
+    }
+
+    #[test]
+    fn a_test_message_on_emergency_is_silent_unless_asked_for() {
+        let emergency = test_engine()
+            .derive_named_channel_key(umsh_text::emergency::CHANNEL_NAME)
+            .unwrap()
+            .0;
+        let other_key = [0x43u8; 32];
+        let mut session = auto_ack_session();
+        session.attach(true);
+        install_channel_key(&mut session, &emergency);
+        install_channel_key(&mut session, &other_key);
+        session.detach();
+        let test = b"\x03\xFF  test: radio check";
+        let mut counter = 0;
+        let mut notice_for = |session: &mut TestSession, key: &[u8; 32], payload: &[u8]| {
+            counter += 1;
+            rx_effect(
+                session,
+                &sealed_multicast_carrying(counter, key, payload),
+                0,
+            );
+            session.take_queued_notice().expect("queued")
+        };
+
+        let notice = notice_for(&mut session, &emergency, test);
+        assert!(notice.silent);
+        assert!(!notice.cue);
+        assert_eq!(notice.depth, 1, "it is still queued for the host");
+        let notice = notice_for(&mut session, &emergency, b"\x03\xFFFire on the ridge");
+        assert!(!notice.silent);
+        assert!(notice.cue);
+        let notice = notice_for(&mut session, &other_key, test);
+        assert!(!notice.silent, "only EMERGENCY has test messages");
+        assert!(notice.cue);
+
+        session.attach(true);
+        set(&mut session, prop::TEST_MESSAGE_ALERTS, &[1]);
+        assert_eq!(get(&mut session, prop::TEST_MESSAGE_ALERTS), [1]);
+        session.detach();
+        let notice = notice_for(&mut session, &emergency, test);
+        assert!(!notice.silent);
+        assert!(notice.cue);
+    }
+
+    #[test]
+    fn test_message_alerts_is_a_saved_device_setting() {
+        let mut session = test_session();
+        session.attach(true);
+        assert_eq!(get(&mut session, prop::TEST_MESSAGE_ALERTS), [0]);
+        set(&mut session, prop::TEST_MESSAGE_ALERTS, &[1]);
+        assert!(session.test_message_alerts());
+
+        save(&mut session);
+        let mut bytes = [0; SNAPSHOT_MAX];
+        let len = session.encode_snapshot(&mut bytes).unwrap();
+        let mut booted: TestSession =
+            Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
+        booted.restore_at_boot(&bytes[..len]).unwrap();
+        assert!(booted.test_message_alerts());
+
+        // A snapshot from before it existed restores it clear.
+        let old = strip_snapshot_options(&bytes[..len], &[prop::TEST_MESSAGE_ALERTS]);
+        booted.restore_at_boot(&old).unwrap();
+        assert!(!booted.test_message_alerts());
     }
 
     #[test]

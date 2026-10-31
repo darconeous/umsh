@@ -143,6 +143,9 @@ final class AppRuntime {
     let regionService = RegionService()
     private let identityVault: any IdentityVault
     var stateLoadError: AppOperationError?
+    /// Whether the warning before sending on `EMERGENCY` has been certified
+    /// since the app launched. Never kept: every launch asks again.
+    var emergencyCertified = false
     private var failedReadAddress: String?
     private let identityOperations: IdentityOperations
     private let drafts: ConversationDraftStore
@@ -277,7 +280,16 @@ final class AppRuntime {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.rearmSchedules() }
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.rearmSchedules()
+                // Compared with what the radio last held, so an unrelated
+                // write costs a comparison.
+                if let held = self.coordinator.lastReconciledTestMessageAlerts,
+                   held != self.testMessageAlerts {
+                    Task { await self.reconcileTestMessageAlerts() }
+                }
+            }
         })
     }
 
@@ -356,6 +368,7 @@ final class AppRuntime {
             await reconcileHostChannels()
             await reconcileHostPeers()
             await reconcileHostMutes()
+            await reconcileTestMessageAlerts()
             await reconcileHostDestinations()
             await drainOfflineQueueIfNeeded()
         }
@@ -561,6 +574,12 @@ final class AppRuntime {
     /// cell size.
     private var phoneSharesLocation: Bool {
         UserDefaults.standard.bool(forKey: "phone.shareLocation")
+    }
+
+    /// Whether test messages on `EMERGENCY` call for attention like any
+    /// other message. Off unless asked for.
+    private var testMessageAlerts: Bool {
+        UserDefaults.standard.bool(forKey: "notifications.testMessages")
     }
 
     private var phoneLocationPrecision: Int {
@@ -2227,6 +2246,43 @@ final class AppRuntime {
         }
     }
 
+    /// Tell the radio whether a test message on `EMERGENCY` earns its
+    /// receipt cue, as this phone's own switch says: a companion holding
+    /// messages for a phone that is away chirps for them only when its
+    /// owner asked to hear of them. Read first and written only when it
+    /// differs, since the write is saved. A radio from before the setting
+    /// has no such property, and stays as it is.
+    private func reconcileTestMessageAlerts() async {
+        guard radioSnapshot.linkState == .attached || radioSnapshot.linkState == .ready,
+              radioSnapshot.hostState == .matchesCurrentIdentity,
+              radioSnapshot.provisioning?.supportsOfflineQueue == true
+        else {
+            coordinator.lastReconciledTestMessageAlerts = nil
+            return
+        }
+        let desired = testMessageAlerts
+        guard coordinator.lastReconciledTestMessageAlerts != desired else { return }
+        let property = ulcpManagedPropertyIds().testMessageAlerts
+        let value = Data([desired ? 1 : 0])
+        do {
+            let held = try await radioConnection.fetchCompanionProperties([property]).first
+            guard held?.statusCode == nil else {
+                coordinator.lastReconciledTestMessageAlerts = desired
+                return
+            }
+            if held?.value != value {
+                let answer = try await radioConnection.writeCompanionProperties([
+                    MobileMeshPropertyWriteRecord(propertyId: property, value: value)
+                ]).first
+                guard answer?.statusCode == nil else { return }
+                try await radioConnection.saveCompanionDevice()
+            }
+            coordinator.lastReconciledTestMessageAlerts = desired
+        } catch {
+            // Retried on the next attach or change of the setting.
+        }
+    }
+
     /// Replay the radio's offline queue, once per attach, after the host
     /// tables are reconciled. The backlog arrives through the ordinary
     /// receive path wearing buffered metadata, so the MAC skips the
@@ -2489,7 +2545,8 @@ final class AppRuntime {
         _ conversation: ConversationListItem,
         _ body: String
     ) async -> MessageSendResult {
-        await performChatCompose(conversation, clearsDraft: true) { clientToken in
+        if let refusal = uncertifiedEmergencyRefusal(conversation) { return refusal }
+        return await performChatCompose(conversation, clearsDraft: true) { clientToken in
             try await radioConnection.composeText(
                 conversationAddress: conversation.conversationAddress,
                 clientToken: clientToken,
@@ -2727,7 +2784,8 @@ final class AppRuntime {
         _ message: ChatMessageSummary,
         _ body: String
     ) async -> MessageSendResult {
-        await performChatCompose(conversation, clearsDraft: true) { clientToken in
+        if let refusal = uncertifiedEmergencyRefusal(conversation) { return refusal }
+        return await performChatCompose(conversation, clearsDraft: true) { clientToken in
             try await radioConnection.composeReply(
                 conversationAddress: conversation.conversationAddress,
                 clientToken: clientToken,
@@ -2735,6 +2793,20 @@ final class AppRuntime {
                 body: body
             )
         }
+    }
+
+    /// A send to `EMERGENCY` refused because its warning has not been
+    /// certified since launch. The thread view asks first; this catches
+    /// what has no screen to ask on, such as a reply from a notification.
+    private func uncertifiedEmergencyRefusal(_ conversation: ConversationListItem) -> MessageSendResult? {
+        guard case let .channel(item) = conversation, item.channel.isEmergency, !emergencyCertified else {
+            return nil
+        }
+        let channelName = "EMERGENCY"
+        return .failed(String(
+            localized: "Open the conversation to send on \(channelName).",
+            comment: "Why a reply from a notification was not sent: the channel's warning must be certified in the app first. The placeholder is the channel's name, EMERGENCY, which is not translated."
+        ))
     }
 
     /// The engine accepts either the live handle (same facade session) or
@@ -3825,7 +3897,8 @@ final class AppRuntime {
             if !update.mutations.isEmpty {
                 materialized = try await applicationStore.applyChatMutations(
                     ownerIdentityID: localIdentity.id,
-                    mutations: update.mutations
+                    mutations: update.mutations,
+                    silentTestsIn: testMessageAlerts ? nil : emergencyConversationAddress
                 )
                 for address in Set(update.mutations.compactMap(\.conversationAddress)) {
                     if Self.isChannelAddress(address) {
@@ -3983,7 +4056,7 @@ final class AppRuntime {
     private func postNotifications(for mutations: [MobileChatMutationRecord]) async {
         var subjects: [ChatNotificationSubject] = []
         for mutation in mutations where mutation.notify {
-            if let target = await notificationSubject(for: mutation) {
+            if let target = await notificationSubject(for: mutation), !isSilentTest(target) {
                 subjects.append(target)
             }
         }
@@ -4071,6 +4144,19 @@ final class AppRuntime {
                 )
             }
         }
+    }
+
+    /// The address of `EMERGENCY`'s conversation, while it is joined.
+    private var emergencyConversationAddress: String? {
+        channels.first(where: \.isEmergency).flatMap { coordinator.channelAddresses[$0.id] }
+    }
+
+    /// Whether `subject` is a test message on `EMERGENCY` that no one asked
+    /// to hear of: it raises no banner, and is never counted toward one.
+    private func isSilentTest(_ subject: ChatNotificationSubject) -> Bool {
+        !testMessageAlerts
+            && subject.conversationAddress == emergencyConversationAddress
+            && isTestMessageBody(body: subject.body)
     }
 
     /// Whether a direct conversation may notify. A conversation this phone
@@ -4530,6 +4616,9 @@ private final class AppStateCoordinator {
     var lastReconciledHostPeers: [String]?
     /// The mute lists last written to the radio, gating the same way.
     var lastReconciledHostMutes: HostMuteLists?
+    /// Whether the radio was last found or set to cue for test messages on
+    /// `EMERGENCY`, gating the same way.
+    var lastReconciledTestMessageAlerts: Bool?
     /// The node hints of the mesh session's own addresses besides the phone
     /// identity's, as last reported.
     var localDestinationHints: [Data] = []

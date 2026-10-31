@@ -29,6 +29,13 @@ Maintenance actions should not compete visually with messaging.
   can prove it), and failed. Never invent a stronger delivery claim.
 - Provide an explicit cancel path for queued work when technically possible.
 
+The first send on `EMERGENCY` after each boot opens a warning instead: the
+channel is for genuine emergencies only, and it is unencrypted and names the
+sender. It is drawn in the channel's red, unlike any other confirmation, and
+starts on **Cancel**, which leaves the channel with the draft kept. **Certify
+and Send** sends the message, and the channel asks no more until the next
+boot. Nothing about it is saved.
+
 ## Adding peers
 
 Every communicator adds peers without anyone typing an address. A board
@@ -246,6 +253,9 @@ chat's opens **Show peer**):
 - **Name** is what it is called here, edited where it stands. Emptied, it goes
   by its own name again.
 - **Notifications** decides whether its messages interrupt with a banner.
+- **Test Messages**, on `EMERGENCY` alone, decides whether its test messages
+  (those starting `TEST:`) alert at all. Off, they wake nothing, sound
+  nothing, and count as read.
 - **Leave**, last and confirmed, lets go of its key and its chat. Rejoining a
   private channel takes a new invitation.
 

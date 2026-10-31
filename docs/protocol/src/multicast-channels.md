@@ -112,6 +112,8 @@ The emergency channel (written `EMERGENCY` here for emphasis, but derived from `
 
 These requirements ensure that emergency traffic is universally readable, attributable to a specific node, and cryptographically authenticated against impersonation.
 
+Text messages beginning with `TEST:` are [test messages](app-text-messages.md#test-messages), which raise no alert by default.
+
 ## Payload Reuse
 
 Application-layer channel communication reuses the same payload types as unicast. For example, group chat uses the same [text message](app-text-messages.md) and [chat room](app-chat-rooms.md) payload formats as direct messaging. However, not all application types are valid over multicast—see [Payload Types](payload-format.md) for compatibility.

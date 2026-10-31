@@ -138,7 +138,9 @@ struct AppRootView: View {
                         startAfterJoin: runtime.startConversationAfterJoin,
                         delete: runtime.deleteChannelConversation,
                         requestMemberIdentity: runtime.requestMemberIdentity,
-                        setNotifications: runtime.setChannelNotifications
+                        setNotifications: runtime.setChannelNotifications,
+                        emergencyCertified: { runtime.emergencyCertified },
+                        certifyEmergency: { runtime.emergencyCertified = true }
                     ),
                     channelManagementActions: channelManagementActions,
                     markRead: runtime.markConversationRead,

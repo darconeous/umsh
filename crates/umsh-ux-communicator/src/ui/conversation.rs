@@ -146,6 +146,7 @@ pub fn view(state: &State, chat: ChatId) -> impl View<Rgb565, State> + use<> {
         .or(unsent.map(|unsent| match unsent {
             Unsent::Resend(_) => Over::Resend,
             Unsent::ConfirmDelete(_) => Over::ConfirmDelete,
+            Unsent::CertifyEmergency { .. } => Over::CertifyEmergency,
         }));
     let quoted = find(reply).map(|message| quote(m, &message, summary.map_or("", |s| &s.name)));
     let kind = summary.map(|s| s.kind);
@@ -215,11 +216,13 @@ pub fn view(state: &State, chat: ChatId) -> impl View<Rgb565, State> + use<> {
             Over::Unconfirmed => unconfirmed_menu(m),
             Over::Resend => resend_choices(m),
             Over::ConfirmDelete => delete_choices(m),
+            Over::CertifyEmergency => emergency_warning(m),
         })
     })
-    // A tap outside closes either, as Backspace does, choosing nothing.
+    // A tap outside closes either, as Backspace does, choosing nothing; the
+    // EMERGENCY warning, turned down, leaves the conversation too.
     .on_blur(|s: &mut State| {
-        if s.cancel_resend().is_none() {
+        if !s.decline_emergency() && s.cancel_resend().is_none() {
             s.close_actions();
         }
         Dismissal::Dismiss
@@ -238,6 +241,101 @@ enum Over {
     Resend,
     /// Deleting an unconfirmed message, asking to be confirmed.
     ConfirmDelete,
+    /// The warning before the first message sent on `EMERGENCY`.
+    CertifyEmergency,
+}
+
+/// What `EMERGENCY` is for, and what sending there gives away.
+const EMERGENCY_USE: &str = "EMERGENCY is only for reporting or responding to genuine \
+    emergencies involving potential loss of life or significant imminent property damage.";
+const EMERGENCY_PUBLIC: &str =
+    "This channel is not encrypted and your identity will be made public.";
+/// The corners of the warning before sending on `EMERGENCY`.
+const WARNING_RADIUS: u16 = 12;
+
+/// The warning before the first message sent on `EMERGENCY` since the
+/// device started, in red so that it reads as no ordinary confirmation.
+/// Cancel is focused, so that pressing twice in one place sends nothing.
+#[inline(never)]
+fn emergency_warning(m: &'static Metrics) -> impl View<Rgb565, State> + use<> {
+    let text = |text: &str| heapless::String::try_from(text).unwrap_or_default();
+    let paragraph = |body: &'static str| {
+        Text::new(body, &font::REGULAR)
+            .with_font_size(m.secondary)
+            .foreground_color(theme::TEXT)
+            .flex_infinite_width(HorizontalAlignment::Leading)
+    };
+    let top = CornerRadii {
+        top_left: WARNING_RADIUS,
+        top_right: WARNING_RADIUS,
+        bottom_left: 0,
+        bottom_right: 0,
+    };
+    let bottom = CornerRadii {
+        top_left: 0,
+        top_right: 0,
+        bottom_left: WARNING_RADIUS,
+        bottom_right: WARNING_RADIUS,
+    };
+    VStack::new((
+        Text::new("Emergencies Only", &font::BOLD)
+            .with_font_size(m.body)
+            .with_line_limit(1)
+            .foreground_color(theme::TEXT)
+            .hint_background_color(theme::EMERGENCY)
+            .flex_infinite_width(HorizontalAlignment::Leading)
+            .padding(Edges::Horizontal, 12)
+            .padding(Edges::Vertical, 3)
+            .background_color(theme::EMERGENCY, RoundedRectangle::with_radii(top)),
+        VStack::new((paragraph(EMERGENCY_USE), paragraph(EMERGENCY_PUBLIC)))
+            .with_spacing(4)
+            .with_alignment(HorizontalAlignment::Leading)
+            .hint_background_color(theme::EMERGENCY_FIELD)
+            .padding(Edges::Horizontal, 12)
+            .padding(Edges::Vertical, 5)
+            .background_color(theme::EMERGENCY_FIELD, Rectangle),
+        // Certify's words are the longer, and take what Cancel leaves.
+        HStack::new((
+            choice(
+                m,
+                text("Cancel"),
+                keys::EMERGENCY_CANCEL,
+                |s| _ = s.decline_emergency(),
+                theme::TEXT,
+                None,
+            )
+            .frame()
+            .with_width(m.width / 3),
+            choice(
+                m,
+                text("Certify and Send"),
+                keys::EMERGENCY_CERTIFY,
+                State::certify_emergency,
+                theme::EMERGENCY,
+                None,
+            ),
+        ))
+        .with_spacing(0)
+        .padding(Edges::Top, 3)
+        .background_color(theme::MENU, RoundedRectangle::with_radii(bottom)),
+    ))
+    .with_spacing(0)
+    .overlay(
+        Alignment::Center,
+        RoundedRectangle::new(WARNING_RADIUS)
+            .stroked(2)
+            .foreground_color(theme::EMERGENCY),
+    )
+    .padding(Edges::Horizontal, 8)
+    .flex_infinite_width(HorizontalAlignment::Center)
+    .flex_infinite_height(VerticalAlignment::Center)
+    .on_key(|key, s: &mut State| match key {
+        Key::Backspace => {
+            _ = s.decline_emergency();
+            KeyResponse::Handled
+        }
+        _ => KeyResponse::Ignored,
+    })
 }
 
 /// Deleting an unconfirmed message, asking to be confirmed, Cancel

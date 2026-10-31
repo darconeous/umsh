@@ -34,6 +34,7 @@ pub fn view(
     m: &'static Metrics,
     summary: &ChatSummary,
     name: &JoinName,
+    test_messages: Option<bool>,
     confirm: bool,
 ) -> impl View<Rgb565, State> + use<> {
     let about = match summary.kind {
@@ -80,6 +81,17 @@ pub fn view(
                 false,
                 ROW,
             ),
+            test_messages.map(|on| {
+                row(
+                    m,
+                    "Test Messages",
+                    keys::CHANNEL_TEST_MESSAGES,
+                    State::toggle_test_messages,
+                    End::Switch(on),
+                    false,
+                    ROW,
+                )
+            }),
             row(
                 m,
                 "Leave",

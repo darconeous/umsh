@@ -381,6 +381,13 @@ pub const COVERED: &[Descriptor] = &[
         Access::ReadWrite,
         1,
     ),
+    scalar(
+        prop::TEST_MESSAGE_ALERTS,
+        PropertyType::Bool,
+        None,
+        Access::ReadWrite,
+        1,
+    ),
     // The device identity as it advertises itself, signed.
     scalar(
         prop::IDENT,

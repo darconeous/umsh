@@ -795,6 +795,69 @@ fn a_public_message_arrives_with_its_sender_and_details() {
     assert!(!node.chat(chat).unwrap().unread);
 }
 
+/// A test message on `EMERGENCY` is kept and shown, but asks for no one's
+/// attention until the operator asks to hear of them: it does not arrive,
+/// and leaves its chat read.
+#[test]
+fn a_test_message_on_emergency_is_quiet_unless_asked_for() {
+    let sim = device();
+    let (node, clock) = started(&sim);
+    let emergency = WellKnownChannels::derive().emergency;
+    // Each from someone new: one sender's session would start each
+    // message at the same sequence number, as a repeat of the first.
+    let arrived = |from: u8, text: &str| {
+        let sender = PublicKey([from; 32]);
+        let payload = composed(sender, emergency, "Robin", text);
+        node.arrive(Arrival::Text(received(&emergency, sender, &payload)));
+        events(&node).into_iter().find_map(|event| match event {
+            NodeEvent::Arrived { chat, .. } => Some(chat),
+            _ => None,
+        })
+    };
+
+    clock.set(5_000);
+    assert_eq!(arrived(0x37, " test: radio check"), None);
+    let chat = chats(&node)
+        .into_iter()
+        .find(|summary| summary.name == "EMERGENCY")
+        .expect("joined from the start");
+    assert!(!chat.unread);
+    assert_eq!(chat.preview, "Robin:  test: radio check");
+
+    clock.set(6_000);
+    assert_eq!(
+        arrived(0x38, "Smoke at the trailhead"),
+        Some(chat.id),
+        "anything else on EMERGENCY arrives"
+    );
+    node.opened(chat.id);
+
+    assert!(!node.test_message_alerts());
+    node.set_test_message_alerts(true);
+    clock.set(7_000);
+    node.pump();
+    assert!(node.test_message_alerts());
+    assert_eq!(arrived(0x39, "TEST: again"), Some(chat.id));
+    assert!(node.chat(chat.id).unwrap().unread);
+}
+
+/// Only `EMERGENCY` has test messages: anywhere else, `TEST:` is words.
+#[test]
+fn test_on_another_channel_arrives_like_anything_else() {
+    let sim = device();
+    let (node, clock) = started(&sim);
+    let public = WellKnownChannels::derive().public;
+    let robin = PublicKey([0x37; 32]);
+    let payload = composed(robin, public, "Robin", "TEST: radio check");
+    clock.set(5_000);
+    node.arrive(Arrival::Text(received(&public, robin, &payload)));
+    assert!(
+        events(&node)
+            .iter()
+            .any(|event| matches!(event, NodeEvent::Arrived { .. }))
+    );
+}
+
 /// A sender who gives no name is shown by their address.
 #[test]
 fn a_sender_without_a_name_is_shown_by_address() {

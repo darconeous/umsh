@@ -22,7 +22,7 @@ impl WellKnownChannels {
     /// The canonical name of the `public` channel.
     pub const PUBLIC_NAME: &str = "public";
     /// The canonical name of the `EMERGENCY` channel, after case folding.
-    pub const EMERGENCY_NAME: &str = "emergency";
+    pub const EMERGENCY_NAME: &str = crate::emergency::CHANNEL_NAME;
 
     /// Derive both keys from their canonical names, rather than writing them
     /// down as literals that could drift from the derivation every other

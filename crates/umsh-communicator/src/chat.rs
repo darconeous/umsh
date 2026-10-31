@@ -7,6 +7,7 @@
 //! `EMERGENCY` are known by name, a channel joined here brings its own,
 //! and the device node hands over the rest.
 
+use alloc::borrow::Cow;
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::vec;
 use alloc::vec::Vec;
@@ -227,6 +228,11 @@ pub(crate) struct Chats<S> {
     /// what they are: a commit can change whether a message is on its way
     /// again, and how one sent fared.
     rows: RefCell<Option<Rows>>,
+    /// `EMERGENCY`'s conversation, the one with test messages.
+    emergency: ConversationKey,
+    /// Whether test messages on `EMERGENCY` call for attention, as the
+    /// device last said: the node sets it before each use.
+    pub(crate) test_message_alerts: bool,
 }
 
 impl<S: ChatStore> Chats<S> {
@@ -258,6 +264,10 @@ impl<S: ChatStore> Chats<S> {
             commands: VecDeque::new(),
             saved: Vec::new(),
             body: RefCell::new(vec![0; BODY_MAX]),
+            emergency: ConversationKey::ChannelGroup {
+                channel: (crypto.tag)(&crypto.well_known.emergency),
+            },
+            test_message_alerts: false,
             rows: RefCell::new(None),
         }
     }
@@ -499,6 +509,7 @@ impl<S: ChatStore> Chats<S> {
         time: Option<u32>,
         events: &mut dyn FnMut(NodeEvent),
     ) {
+        let outputs = &*self.quiet_tests(outputs);
         // How the messages whose delivery this reports stood before it, so
         // that one it brings to an outcome is announced as settled. One
         // being sent again has no outcome yet, whatever it last came to.
@@ -579,6 +590,56 @@ impl<S: ChatStore> Chats<S> {
             .map(|(id, _)| id)
             .collect();
         self.announce(&committed, &arrived, &settled, events);
+    }
+
+    /// `outputs`, with each test message on `EMERGENCY` no longer asking to
+    /// be noticed, unless the operator asked to hear of them: it is kept
+    /// and shown like any other, but never counted unread, and arrives
+    /// only as a change.
+    fn quiet_tests<'a>(&self, outputs: &'a [ChatOutput]) -> Cow<'a, [ChatOutput]> {
+        if self.test_message_alerts || !outputs.iter().any(|output| self.noticed_test(output)) {
+            return Cow::Borrowed(outputs);
+        }
+        let quiet = |output: &ChatOutput| {
+            let mut output = output.clone();
+            if self.noticed_test(&output)
+                && let ChatOutput::Mutation(mutation) = &mut output
+            {
+                match &mut mutation.change {
+                    Change::Insert(insert) => insert.notify = false,
+                    Change::UpdateBody { notify, .. } => *notify = false,
+                    Change::Edit { .. } | Change::Delete { .. } => {}
+                }
+            }
+            output
+        };
+        Cow::Owned(outputs.iter().map(quiet).collect())
+    }
+
+    /// Whether `output` asks for a test message on `EMERGENCY` to be
+    /// noticed.
+    fn noticed_test(&self, output: &ChatOutput) -> bool {
+        let ChatOutput::Mutation(mutation) = output else {
+            return false;
+        };
+        let (conversation, body) = match &mutation.change {
+            Change::Insert(insert) if insert.notify => (Some(insert.conversation), &insert.body),
+            // A message completing: its conversation is the one its
+            // first fragment was kept in.
+            Change::UpdateBody {
+                notify: true, body, ..
+            } => {
+                let conversation = self
+                    .handles
+                    .get(&mutation.handle)
+                    .and_then(|&id| self.store.message(id).ok().flatten())
+                    .and_then(|record| self.conversation(record.chat.0));
+                (conversation, body)
+            }
+            _ => return false,
+        };
+        conversation == Some(self.emergency)
+            && umsh_text::text_message::is_test_body(body.as_bytes())
     }
 
     /// Tells the interface what a commit changed. The messages in

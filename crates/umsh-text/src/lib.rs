@@ -29,6 +29,7 @@ extern crate alloc;
 compile_error!("feature `std` requires feature `alloc`");
 
 pub mod codec;
+pub mod emergency;
 mod error;
 pub mod model;
 pub mod validate;
@@ -64,4 +65,5 @@ pub use node_adapter::MulticastTextChatWrapper;
 /// Namespace for raw text-message codec functions.
 pub mod text_message {
     pub use crate::codec::{encode, parse, parse_with_info};
+    pub use crate::emergency::is_test_body;
 }

@@ -749,6 +749,7 @@ pub struct Store {
     volume: Cell<u8>,
     /// Whether first run has finished: a fixture device has been set up.
     setup_complete: Cell<bool>,
+    test_message_alerts: Cell<bool>,
     /// How many times the device was reset to how it left the factory.
     factory_resets: Cell<u32>,
     /// How many times the device was restarted.
@@ -990,6 +991,7 @@ impl Store {
             sound: Cell::new(true),
             volume: Cell::new(191),
             setup_complete: Cell::new(true),
+            test_message_alerts: Cell::new(false),
             factory_resets: Cell::new(0),
             restarts: Cell::new(0),
             gnss: Cell::new(true),
@@ -2795,6 +2797,17 @@ impl Node for Store {
     fn set_setup_complete(&self, complete: bool) {
         self.setting(Setting::Setup, || {
             self.setup_complete.set(complete);
+            true
+        });
+    }
+
+    fn test_message_alerts(&self) -> bool {
+        self.test_message_alerts.get()
+    }
+
+    fn set_test_message_alerts(&self, on: bool) {
+        self.setting(Setting::TestMessageAlerts, || {
+            self.test_message_alerts.set(on);
             true
         });
     }

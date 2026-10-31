@@ -18,6 +18,9 @@ struct ChannelDetailView: View {
     @State private var confirmsLeave = false
     @State private var deviceProblem: String?
     @State private var isWorking = false
+    /// Whether test messages on `EMERGENCY` notify. The runtime reads the
+    /// same key.
+    @AppStorage("notifications.testMessages") private var testMessageAlerts = false
 
     private struct ChannelInvitation: Identifiable {
         let id = UUID()
@@ -153,6 +156,12 @@ struct ChannelDetailView: View {
                 get: { channel.notificationsEnabled },
                 set: { enabled in Task { await saveDetails(notificationsEnabled: enabled) } }
             ))
+            if channel.isEmergency {
+                Toggle(
+                    String(localized: "Test Messages", comment: "Switch on the EMERGENCY channel's page: whether messages starting with TEST: notify."),
+                    isOn: $testMessageAlerts
+                )
+            }
             if let regionProblem {
                 Text(regionProblem)
                     .font(.caption)

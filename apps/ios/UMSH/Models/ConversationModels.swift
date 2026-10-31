@@ -674,13 +674,20 @@ struct ChannelConversationActions: Sendable {
     /// tab carries, reachable from the conversation it actually affects.
     /// Unread counts are unaffected—muting silences banners, not the channel.
     let setNotifications: @Sendable (ChannelSummary, Bool) async -> Void
+    /// Whether the warning before sending on `EMERGENCY` has been certified
+    /// since the app launched.
+    let emergencyCertified: @MainActor @Sendable () -> Bool
+    /// Certify that warning, until the app next launches.
+    let certifyEmergency: @MainActor @Sendable () -> Void
 
     static let unavailable = ChannelConversationActions(
         start: { _ in nil },
         startAfterJoin: { _ in nil },
         delete: { _ in },
         requestMemberIdentity: { _, _ in },
-        setNotifications: { _, _ in }
+        setNotifications: { _, _ in },
+        emergencyCertified: { false },
+        certifyEmergency: {}
     )
 }
 

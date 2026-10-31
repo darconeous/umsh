@@ -195,3 +195,9 @@ The message body is a UTF-8 string.
 ### Channel Invitations
 
 A basic text message whose entire body, ignoring leading and trailing whitespace, is a [channel URI](uri-formats.md#channel-uris) invites its recipients to that channel. A receiver that recognizes the URI MAY present the message as an invitation to join; one that does not displays the body as text.
+
+### Test Messages
+
+A basic or status text message on the [`EMERGENCY`](multicast-channels.md#emergency) channel is a *test message* when its body, ignoring leading whitespace, begins with `TEST:` in any ASCII letter case. For a fragmented message, the body of fragment zero decides.
+
+Unless the user has opted in to test messages, a receiver SHOULD NOT raise any alert for a test message: no sound, vibration, notification, screen wake, or unread indication. The message is still stored and displayed.

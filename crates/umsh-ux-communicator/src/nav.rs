@@ -13,10 +13,10 @@ use crate::avatar::Title;
 pub use crate::clock_settings::{ClockPage, DateParts, Part, ZoneFind};
 use crate::keyboard::Field;
 use crate::model::{
-    AUTO_LOCK_CHOICES, ChannelEntry, ChatId, ChatKind, ChatSummary, Details, Exchange, Found,
-    FoundKind, Invite, KeyboardSettings, MAX_FOUND, MAX_PATH, MAX_REPEATERS, Member, MessageId,
-    NearbyId, PeerDetail, PeerEntry, PeerId, PingView, Profile, RadioSettings, Reaction, Repeater,
-    Section, Shareable, State, TRANSMIT_POWER, word_match,
+    AUTO_LOCK_CHOICES, ChannelAccess, ChannelEntry, ChatId, ChatKind, ChatSummary, Details,
+    Exchange, Found, FoundKind, Invite, KeyboardSettings, MAX_FOUND, MAX_PATH, MAX_REPEATERS,
+    Member, MessageId, NearbyId, PeerDetail, PeerEntry, PeerId, PingView, Profile, RadioSettings,
+    Reaction, Repeater, Section, Shareable, State, TRANSMIT_POWER, word_match,
 };
 pub use crate::wifi_settings::{NetworkText, PasswordText, WifiPage};
 
@@ -172,6 +172,7 @@ pub mod keys {
     pub const CHANNEL_CODE: FocusKey = FocusKey(0x2900_0001);
     pub const CHANNEL_NAME: FocusKey = FocusKey(0x2900_0002);
     pub const CHANNEL_NOTIFICATIONS: FocusKey = FocusKey(0x2900_0003);
+    pub const CHANNEL_TEST_MESSAGES: FocusKey = FocusKey(0x2900_0007);
     pub const CHANNEL_LEAVE: FocusKey = FocusKey(0x2900_0004);
     pub const LEAVE_CONFIRM: FocusKey = FocusKey(0x2900_0005);
     pub const LEAVE_CANCEL: FocusKey = FocusKey(0x2900_0006);
@@ -301,6 +302,9 @@ pub mod keys {
     /// Deleting a message, asking to be confirmed.
     pub const DELETE_MESSAGE_CONFIRM: FocusKey = FocusKey(0x1900_0003);
     pub const DELETE_MESSAGE_CANCEL: FocusKey = FocusKey(0x1900_0004);
+    /// The warning before the first message sent on `EMERGENCY`.
+    pub const EMERGENCY_CERTIFY: FocusKey = FocusKey(0x1900_0005);
+    pub const EMERGENCY_CANCEL: FocusKey = FocusKey(0x1900_0006);
     /// Shut down's confirmation.
     pub const SHUT_DOWN_CONFIRM: FocusKey = FocusKey(0x1600_0000);
     pub const SHUT_DOWN_CANCEL: FocusKey = FocusKey(0x1600_0001);
@@ -509,20 +513,26 @@ impl ChatMenu {
     }
 }
 
-/// What is open over an unconfirmed message.
+/// What is open over a message not yet sent, or not confirmed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Unsent {
     /// How to send again one that was to go under forward secrecy.
     Resend(MessageId),
     /// Its Delete, or its channel's Leave, asking to be confirmed.
     ConfirmDelete(MessageId),
+    /// The warning before the first message sent on `EMERGENCY` since
+    /// the device started, asking to be certified. What waits on it is the
+    /// draft, or the contact of a peer.
+    CertifyEmergency { contact: Option<PeerId> },
 }
 
 impl Unsent {
+    /// The message it is open over, if it is open over one.
     #[must_use]
-    pub const fn message(self) -> MessageId {
+    pub const fn message(self) -> Option<MessageId> {
         match self {
-            Self::Resend(message) | Self::ConfirmDelete(message) => message,
+            Self::Resend(message) | Self::ConfirmDelete(message) => Some(message),
+            Self::CertifyEmergency { .. } => None,
         }
     }
 }
@@ -1122,22 +1132,98 @@ impl State {
         if self.airtime_wait.is_some() {
             return;
         }
-        let Some(index) = self.chats.iter().position(|c| c.id == chat) else {
+        if self.must_certify(chat) {
+            // Asked where it would go, as a message typed there would be.
+            self.go_to_chat(chat);
+            self.ask_certify(Some(peer));
             return;
+        }
+        if self.send_contact_to(chat, peer) {
+            self.go_to_chat(chat);
+        }
+    }
+
+    /// Sends the contact of `peer` to `chat`. Returns whether it went.
+    fn send_contact_to(&mut self, chat: ChatId, peer: PeerId) -> bool {
+        let Some(index) = self.chats.iter().position(|c| c.id == chat) else {
+            return false;
         };
         let Some(link) = self.node.contact_uri(peer) else {
-            return;
+            return false;
         };
         let forward_secret = self.chats[index].forward_secret;
         let Some(message) = self.node.send(chat, &link, None, forward_secret) else {
-            return;
+            return false;
         };
         let mut summary = self.chats.remove(index);
         summary.preview(&message);
         summary.last_activity = message.time;
         _ = self.chats.insert(0, summary);
         self.chime(Cue::Sent);
-        self.go_to_chat(chat);
+        true
+    }
+
+    /// Whether sending to `chat` waits on the warning first: it is
+    /// `EMERGENCY`, and nothing has been sent there since the device
+    /// started.
+    pub(crate) fn must_certify(&self, chat: ChatId) -> bool {
+        !self.emergency_certified
+            && self.chat(chat).is_some_and(|summary| {
+                matches!(
+                    summary.kind,
+                    ChatKind::Channel {
+                        access: ChannelAccess::Clear
+                    }
+                )
+            })
+    }
+
+    /// Opens the warning over the conversation shown, Cancel focused, with
+    /// the contact of `contact` waiting on it, or else the draft.
+    pub(crate) fn ask_certify(&mut self, contact: Option<PeerId>) {
+        if let Some(Screen::Conversation { unsent, focus, .. }) = self.screens.last_mut() {
+            *unsent = Some(Unsent::CertifyEmergency { contact });
+            focus.request(keys::EMERGENCY_CANCEL);
+        }
+    }
+
+    /// Certifies the warning, and sends what waited on it. Nothing asks
+    /// again until the device restarts.
+    pub fn certify_emergency(&mut self) {
+        let Some(Screen::Conversation {
+            chat,
+            unsent,
+            focus,
+            ..
+        }) = self.screens.last_mut()
+        else {
+            return;
+        };
+        let Some(Unsent::CertifyEmergency { contact }) = *unsent else {
+            return;
+        };
+        let chat = *chat;
+        *unsent = None;
+        focus.request(keys::COMPOSER);
+        self.emergency_certified = true;
+        match contact {
+            Some(peer) => _ = self.send_contact_to(chat, peer),
+            None => self.send(chat),
+        }
+    }
+
+    /// Turns the warning down: closes it, and leaves the conversation with
+    /// its draft kept. Returns `false`, doing nothing, when the warning is
+    /// not open.
+    pub fn decline_emergency(&mut self) -> bool {
+        let Some(Screen::Conversation { unsent, .. }) = self.screens.last_mut() else {
+            return false;
+        };
+        if !matches!(unsent, Some(Unsent::CertifyEmergency { .. })) {
+            return false;
+        }
+        *unsent = None;
+        self.back()
     }
 
     /// Shows the channel the message whose actions menu is open invites to,
@@ -2329,6 +2415,17 @@ impl State {
             self.node.set_muted(chat, !muted);
             self.refresh_chat(chat);
         }
+    }
+
+    /// Whether test messages on `EMERGENCY` call for attention.
+    pub fn test_message_alerts(&self) -> bool {
+        self.node.test_message_alerts()
+    }
+
+    /// Turns attention for test messages on `EMERGENCY` on or off.
+    pub fn toggle_test_messages(&mut self) {
+        let on = self.node.test_message_alerts();
+        self.node.set_test_message_alerts(!on);
     }
 
     /// Asks to confirm leaving the channel shown, Cancel focused.

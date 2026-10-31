@@ -286,8 +286,14 @@ impl<P: LocalPort, S: ChatStore> CommunicatorNode<P, S> {
         f: impl FnOnce(&mut ChatHalf<S>, u64, Option<u32>, &mut dyn FnMut(NodeEvent)) -> R,
     ) -> R {
         let mut events = self.events.borrow_mut();
+        let mut chats = self.chats.borrow_mut();
+        chats.test_message_alerts = self
+            .settings
+            .borrow()
+            .test_message_alerts()
+            .unwrap_or(false);
         f(
-            &mut self.chats.borrow_mut(),
+            &mut chats,
             self.clock.now_ms(),
             self.clock.wall(),
             &mut |event| events.push(event),
@@ -855,6 +861,19 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
     fn set_setup_complete(&self, complete: bool) {
         self.change(Setting::Setup, |settings| {
             settings.set_setup_complete(complete)
+        });
+    }
+
+    fn test_message_alerts(&self) -> bool {
+        self.settings
+            .borrow()
+            .test_message_alerts()
+            .unwrap_or(false)
+    }
+
+    fn set_test_message_alerts(&self, on: bool) {
+        self.change(Setting::TestMessageAlerts, |settings| {
+            settings.set_test_message_alerts(on)
         });
     }
 

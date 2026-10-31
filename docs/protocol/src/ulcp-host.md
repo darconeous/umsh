@@ -436,9 +436,15 @@ conversation is filtered, queued, acknowledged, and drained exactly as
 any other, and counts toward `PROP_HOST_RX_QUEUE_COUNT` and
 `PROP_HOST_RX_QUEUE_DROPPED` the same way.
 
+A [test message](app-text-messages.md#test-messages) on `EMERGENCY` raises
+no indication of its arrival, and lights nothing that asks for attention,
+unless [`PROP_TEST_MESSAGE_ALERTS`](ulcp-device.md#prop-test-message-alerts)
+is set. Like a muted one, it is otherwise queued and drained as any other
+frame.
+
 Indications that describe the queue as a whole rather than one arrival—a
-queued count, a "something is waiting" light—follow every queued frame,
-because they describe what a drain will deliver.
+queued count, a "something is waiting" light—follow every other queued
+frame, because they describe what a drain will deliver.
 
 The tables are not validated against the key tables. An entry naming a
 conversation the device holds no key for is simply inert, as an entry in

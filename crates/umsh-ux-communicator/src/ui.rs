@@ -14,7 +14,7 @@ use buoyant::view::scroll_view::ScrollBarVisibility;
 use embedded_graphics::pixelcolor::Rgb565;
 
 use crate::board::Metrics;
-use crate::model::{ChatKind, Ending, Overlay, Section, State};
+use crate::model::{ChannelAccess, ChatKind, Ending, Overlay, Section, State};
 use crate::nav::{MemberFrom, Screen, keys};
 use crate::{font, theme};
 
@@ -220,9 +220,17 @@ fn channel_screen(state: &State) -> Option<impl View<Rgb565, State> + use<>> {
     else {
         return None;
     };
-    state
-        .chat(*chat)
-        .map(|summary| channel::view(state.metrics(), summary, name, *confirm))
+    state.chat(*chat).map(|summary| {
+        // Only `EMERGENCY` has test messages.
+        let tests = matches!(
+            summary.kind,
+            ChatKind::Channel {
+                access: ChannelAccess::Clear
+            }
+        )
+        .then(|| state.test_message_alerts());
+        channel::view(state.metrics(), summary, name, tests, *confirm)
+    })
 }
 
 /// Add peer's screens: Nearby, an exchange in its place, and Enter an

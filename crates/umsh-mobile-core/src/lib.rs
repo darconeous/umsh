@@ -72,7 +72,7 @@ uniffi::setup_scaffolding!();
 ///
 /// Increment this when a binding-visible operation, record, or error contract
 /// changes incompatibly. It is independent of the UMSH wire version.
-pub const MOBILE_API_VERSION: u16 = 64;
+pub const MOBILE_API_VERSION: u16 = 65;
 
 /// Stable error categories consumed by platform adapters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Error)]
@@ -414,6 +414,14 @@ pub fn inspect_channel_uri(uri: String) -> Result<ChannelPreviewRecord, MobileEr
 #[uniffi::export]
 pub fn inspect_channel_name(name: String) -> Result<ChannelPreviewRecord, MobileError> {
     named_channel_preview(&name)
+}
+
+/// Whether `body`, the text of a message on `EMERGENCY`, marks it as a
+/// test message (`app-text-messages.md` §Test Messages). Only a message on
+/// `EMERGENCY` can be one: that part is the caller's to know.
+#[uniffi::export]
+pub fn is_test_message_body(body: String) -> bool {
+    umsh_text::text_message::is_test_body(body.as_bytes())
 }
 
 /// Generate a fresh 32-octet secret for a new local identity.

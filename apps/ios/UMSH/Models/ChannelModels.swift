@@ -73,6 +73,12 @@ struct ChannelSummary: Identifiable, Hashable, Sendable {
         }
     }
 
+    /// Whether this is `EMERGENCY`, keyed on the canonical name for the same
+    /// reason as `protocolMaxFloodHops`.
+    var isEmergency: Bool {
+        canonicalName == "emergency"
+    }
+
     /// How this channel behaves, where the protocol decides it.
     ///
     /// Written as statements of fact, not instructions: the app applies these

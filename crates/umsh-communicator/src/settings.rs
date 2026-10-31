@@ -364,6 +364,11 @@ impl<P: LocalPort> Settings<P> {
         self.written(Setting::Setup, write)
     }
 
+    pub fn set_test_message_alerts(&mut self, on: bool) -> bool {
+        let write = self.model.set_test_message_alerts(on);
+        self.written(Setting::TestMessageAlerts, write)
+    }
+
     pub fn set_pairing(&mut self, open: bool) -> bool {
         let write = self.model.set_pairing(open);
         self.written(Setting::Pairing, write)
@@ -847,6 +852,11 @@ impl<P: LocalPort> Settings<P> {
     /// Whether the device has been set up, once read.
     pub fn setup_complete(&self) -> Option<bool> {
         self.bool(prop::SETUP_COMPLETE)
+    }
+
+    /// Whether test messages on `EMERGENCY` call for attention, once read.
+    pub fn test_message_alerts(&self) -> Option<bool> {
+        self.bool(prop::TEST_MESSAGE_ALERTS)
     }
 
     /// Whether the GNSS receiver is on, where the device has one.

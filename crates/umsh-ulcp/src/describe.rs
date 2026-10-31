@@ -134,6 +134,7 @@ pub const fn property_name(key: u32) -> Option<&'static str> {
         prop::SOUND_ENABLED => "PROP_SOUND_ENABLED",
         prop::SOUND_VOLUME => "PROP_SOUND_VOLUME",
         prop::SETUP_COMPLETE => "PROP_SETUP_COMPLETE",
+        prop::TEST_MESSAGE_ALERTS => "PROP_TEST_MESSAGE_ALERTS",
         prop::WIFI_ENABLED => "PROP_WIFI_ENABLED",
         prop::BRIDGE_ENABLED => "PROP_BRIDGE_ENABLED",
         prop::BRIDGE_HOST => "PROP_BRIDGE_HOST",
@@ -293,6 +294,7 @@ pub const PROPERTIES: &[u32] = &[
     prop::SOUND_ENABLED,
     prop::SOUND_VOLUME,
     prop::SETUP_COMPLETE,
+    prop::TEST_MESSAGE_ALERTS,
     prop::WIFI_ENABLED,
     prop::WIFI_NETWORKS,
     prop::WIFI_NETWORK,
@@ -435,6 +437,7 @@ pub const fn property_type(key: u32) -> Option<PropertyType> {
         prop::SOUND_ENABLED => Bool,
         prop::SOUND_VOLUME => U8,
         prop::SETUP_COMPLETE => Bool,
+        prop::TEST_MESSAGE_ALERTS => Bool,
         prop::GNSS_ALTITUDE => I32,
         prop::GNSS_FIX => U8,
         prop::GNSS_PRECISION => U16,
@@ -771,6 +774,13 @@ mod tests {
         assert_eq!(property_name(4893), Some("PROP_SETUP_COMPLETE"));
         assert_eq!(property_type(4893), Some(PropertyType::Bool));
         assert!(PROPERTIES.contains(&4893));
+    }
+
+    #[test]
+    fn the_test_message_property_has_a_name_and_type() {
+        assert_eq!(property_name(4894), Some("PROP_TEST_MESSAGE_ALERTS"));
+        assert_eq!(property_type(4894), Some(PropertyType::Bool));
+        assert!(PROPERTIES.contains(&4894));
     }
 
     #[test]

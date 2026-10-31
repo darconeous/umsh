@@ -490,6 +490,15 @@ pub mod prop {
     /// The device sets it when its first-run setup finishes. While it is
     /// clear, unlocking the device's interface opens that setup.
     pub const SETUP_COMPLETE: u32 = 4893;
+    /// Whether test messages on `EMERGENCY` call for the operator's
+    /// attention like any other message (`PROP_TEST_MESSAGE_ALERTS`)—BOOL,
+    /// default false. Saved.
+    ///
+    /// While it is clear, a test message (`app-text-messages.md` §Test
+    /// Messages) earns no receipt cue and no attention indication, and a
+    /// device with its own interface neither counts it unread nor alerts
+    /// for it.
+    pub const TEST_MESSAGE_ALERTS: u32 = 4894;
 
     /// Whether the Wi-Fi station is up (`PROP_WIFI_ENABLED`), BOOL,
     /// default 0. Requires `CAP_WIFI`.

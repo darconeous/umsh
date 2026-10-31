@@ -987,7 +987,7 @@ const SECRET: u32 = (STATES << 8) | 7;
 
 fn unsent(state: &State) -> Option<u32> {
     match state.screen() {
-        Screen::Conversation { unsent, .. } => unsent.map(Unsent::message),
+        Screen::Conversation { unsent, .. } => unsent.and_then(Unsent::message),
         _ => None,
     }
 }
@@ -1774,10 +1774,110 @@ fn emergency_is_open_and_its_sends_end_at_sent() {
     run(&mut app, &[Input::Enter]);
     run(&mut app, &typed("Heading down"));
     run(&mut app, &[Input::Enter]);
+    certify(&mut app);
     assert_eq!(
         messages(app.state()).last().map(|m| m.delivery),
         Some(Delivery::Sent)
     );
+}
+
+fn warned(state: &State) -> bool {
+    matches!(
+        state.screen(),
+        Screen::Conversation {
+            unsent: Some(Unsent::CertifyEmergency { .. }),
+            ..
+        }
+    )
+}
+
+/// Turns from Cancel, which the warning opens on, to Certify and Send,
+/// and presses it.
+fn certify<V, F>(app: &mut App<V, State, F>)
+where
+    V: ViewLayout<State>,
+    V::FocusTree: DefaultFocus,
+    V::Renderables: AnimatedJoin,
+    F: Fn(&State) -> V,
+{
+    assert!(warned(app.state()));
+    assert_eq!(focus(app.state()), Some(keys::EMERGENCY_CANCEL));
+    run(app, &[Input::Turn(1)]);
+    assert_eq!(focus(app.state()), Some(keys::EMERGENCY_CERTIFY));
+    run(app, &[Input::Press]);
+    assert!(!warned(app.state()));
+}
+
+#[test]
+fn the_first_message_on_emergency_waits_on_the_warning() {
+    let mut app = app!();
+    open_chat(&mut app, EMERGENCY);
+    let before = messages(app.state()).len();
+    run(&mut app, &[Input::Enter]);
+    run(&mut app, &typed("Smoke on the ridge"));
+    run(&mut app, &[Input::Enter]);
+    assert!(warned(app.state()));
+    assert_eq!(messages(app.state()).len(), before, "nothing went");
+
+    // Cancel, as Backspace and pressing twice in one place are, sends
+    // nothing and leaves the channel, keeping the draft.
+    run(&mut app, &[Input::Press]);
+    assert!(matches!(app.state().screen(), Screen::Chats { .. }));
+    let draft = app.state().chat(EMERGENCY).map(|c| c.draft.text().to_owned());
+    assert_eq!(draft.as_deref(), Some("Smoke on the ridge"));
+
+    open_chat(&mut app, EMERGENCY);
+    assert_eq!(messages(app.state()).len(), before);
+    run(&mut app, &[Input::Enter, Input::Enter]);
+    certify(&mut app);
+    assert_eq!(messages(app.state()).len(), before + 1);
+
+    // Once certified, EMERGENCY is like any other channel.
+    run(&mut app, &[Input::Enter]);
+    run(&mut app, &typed("Crew on scene"));
+    run(&mut app, &[Input::Enter]);
+    assert!(!warned(app.state()));
+    assert_eq!(messages(app.state()).len(), before + 2);
+}
+
+#[test]
+fn backspace_on_the_warning_leaves_the_channel() {
+    let mut app = app!();
+    open_chat(&mut app, EMERGENCY);
+    run(&mut app, &[Input::Enter]);
+    run(&mut app, &typed("Smoke"));
+    run(&mut app, &[Input::Enter]);
+    assert!(warned(app.state()));
+    run(&mut app, &[Input::Backspace]);
+    assert!(matches!(app.state().screen(), Screen::Chats { .. }));
+}
+
+#[test]
+fn every_start_asks_again() {
+    let mut app = app!();
+    open_chat(&mut app, EMERGENCY);
+    run(&mut app, &[Input::Enter]);
+    run(&mut app, &typed("One"));
+    run(&mut app, &[Input::Enter]);
+    certify(&mut app);
+
+    // The same node, as a restarted device's interface finds it.
+    let mut restarted = app!();
+    open_chat(&mut restarted, EMERGENCY);
+    run(&mut restarted, &[Input::Enter]);
+    run(&mut restarted, &typed("Two"));
+    run(&mut restarted, &[Input::Enter]);
+    assert!(warned(restarted.state()));
+}
+
+#[test]
+fn only_emergency_asks() {
+    let mut app = app!();
+    open_chat(&mut app, RIDGE);
+    run(&mut app, &[Input::Enter]);
+    run(&mut app, &typed("TEST: check"));
+    run(&mut app, &[Input::Enter]);
+    assert!(!warned(app.state()));
 }
 
 #[test]
