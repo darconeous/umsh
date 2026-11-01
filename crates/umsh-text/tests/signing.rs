@@ -171,7 +171,7 @@ impl Station {
     /// What one frame to `conversation` carries, as the adapter measures it.
     fn budget(&self, conversation: ConversationKey) -> usize {
         let query = BudgetQuery::new(self.chat.channels(), &policy(), conversation).unwrap();
-        block_on(payload_budget(&self.node, &query))
+        block_on(payload_budget(&self.node, &query)).unwrap()
     }
 
     /// The frames the MAC has queued to send, oldest first.
@@ -645,6 +645,23 @@ fn text(body: &str) -> ComposeIntent<'_> {
         body,
         status: false,
     }
+}
+
+/// A peer's frames are measured only once the node has registered it, and
+/// measuring registers nobody.
+#[test]
+fn a_peer_is_measured_once_registered() {
+    let sender = station(1, &[]);
+    let peer = PublicKey([0x33; 32]);
+    let conversation = ConversationKey::Direct { peer };
+    let query = BudgetQuery::new(sender.chat.channels(), &policy(), conversation).unwrap();
+    assert_eq!(query.peer(), Some(peer));
+    assert_eq!(block_on(payload_budget(&sender.node, &query)), None);
+    assert_eq!(block_on(payload_budget(&sender.node, &query)), None);
+
+    block_on(sender.node.peer(peer)).unwrap();
+    let budget = block_on(payload_budget(&sender.node, &query)).unwrap();
+    assert!(budget > 0 && budget <= MAX_FRAME);
 }
 
 /// An edit's replacement is planned against the budget the edit is

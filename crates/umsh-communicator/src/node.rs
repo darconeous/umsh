@@ -221,9 +221,9 @@ impl<P: LocalPort, S: ChatStore> CommunicatorNode<P, S> {
         self.chats.borrow().budget_queries()
     }
 
-    /// Takes `budget`, what the device node measured one frame to
-    /// `conversation` to carry.
-    pub fn learn_budget(&self, conversation: ConversationKey, budget: usize) {
+    /// Takes what the device node measured one frame to `conversation` to
+    /// carry, `None` when it could not.
+    pub fn learn_budget(&self, conversation: ConversationKey, budget: Option<usize>) {
         self.chats.borrow_mut().learn_budget(conversation, budget);
     }
 

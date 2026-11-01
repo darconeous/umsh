@@ -101,6 +101,14 @@ async fn board(radio: SimulatedRadio, secret: [u8; 32]) -> Board {
     let id = handle.add_identity(identity).await.unwrap();
     let mut host = Host::new(handle);
     let mesh = host.add_node(id);
+    // The device node's MAC holds the channels its device does, the
+    // well-known two among them.
+    let well_known = WellKnownChannels::derive();
+    for key in [well_known.public, well_known.emergency] {
+        mesh.join(&umsh::node::Channel::private(key, ""))
+            .await
+            .unwrap();
+    }
 
     let inbox: &'static Inbox<NoopRawMutex> = Box::leak(Box::new(Inbox::new()));
     std::mem::forget(task::listen(&mesh, inbox, key, WellKnownChannels::derive()));
@@ -130,6 +138,16 @@ async fn board(radio: SimulatedRadio, secret: [u8; 32]) -> Board {
         )
         .await;
     });
+    // Nothing is composed until the device node has measured what a frame
+    // carries.
+    until("what a frame carries was never measured", || {
+        let mut chats = Chats::new();
+        node.chats(&mut chats);
+        chats
+            .iter()
+            .any(|chat| node.max_body_len(chat.id).is_some())
+    })
+    .await;
     board
 }
 

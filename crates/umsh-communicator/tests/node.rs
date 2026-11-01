@@ -89,7 +89,16 @@ fn node(sim: &Rc<RefCell<SimulatedDevice>>) -> (CommunicatorNode<Port>, &'static
     );
     node.pump();
     assert!(node.primed());
+    measure(&node);
     (node, clock)
+}
+
+/// Answers what the chats ask the device node to measure, as the run loop
+/// would: room for a whole text frame.
+fn measure<S: umsh_communicator::ChatStore>(node: &CommunicatorNode<Port, S>) {
+    for query in node.budget_queries() {
+        node.learn_budget(query.conversation(), Some(umsh_text::engine::MAX_FRAME));
+    }
 }
 
 /// Gives `sim` an identity, as whoever holds the device may.
@@ -1172,6 +1181,47 @@ fn address_of(key: &PublicKey) -> String {
         .collect()
 }
 
+/// Nothing is composed before the device node has measured what a frame
+/// carries, and a conversation it has not measured takes the least any
+/// measured one carries.
+#[test]
+fn an_unmeasured_conversation_takes_the_smallest_budget() {
+    let sim = device();
+    let (node, _) = started(&sim);
+    let robin = PublicKey([0x37; 32]);
+    let chat = node
+        .direct_chat(&address_of(&robin), "Robin", &node.avatar())
+        .unwrap();
+    for query in node.budget_queries() {
+        node.learn_budget(query.conversation(), None);
+    }
+    assert_eq!(node.max_body_len(chat.id), None);
+    assert!(node.send(chat.id, "On my way", None, false).is_none());
+
+    // Robin is not registered with the device node, so its chat goes
+    // unmeasured.
+    let mut smallest = usize::MAX;
+    for (budget, query) in (90..).zip(node.budget_queries()) {
+        let measured = query.peer().is_none().then_some(budget);
+        if let Some(budget) = measured {
+            smallest = smallest.min(budget);
+        }
+        node.learn_budget(query.conversation(), measured);
+    }
+    assert_eq!(smallest, 90);
+    let body: String = core::iter::repeat_n('x', 400).collect();
+    node.send(chat.id, &body, None, false).unwrap();
+    let mut frames = 0;
+    while let Some(departure) = node.depart() {
+        assert!(departure.payload().len() <= smallest);
+        frames += 1;
+        if !node.departed(departure, Sent::Unsendable) {
+            break;
+        }
+    }
+    assert!(frames > 1);
+}
+
 /// A direct message is kept as Sending and handed to the device node; a
 /// frame that cannot go makes it Unconfirmed, and a retry sends it again.
 #[test]
@@ -1252,6 +1302,7 @@ fn node_on(
     node.pump();
     assert!(node.started());
     while node.next_event().is_some() {}
+    measure(&node);
     node
 }
 

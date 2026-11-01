@@ -4655,17 +4655,25 @@ fn chat_policy(flood_hops: FloodHopSettings, well_known: WellKnownChannels) -> T
 }
 
 /// What one frame to `conversation` carries for the text engine, as the
-/// node measures it now.
+/// node measures it now. A peer is registered first, as sending to it
+/// would; what cannot be measured keeps the engine's default.
 async fn chat_budget<M: MacBackend>(
     node: &LocalNode<M>,
     channels: &ChannelRegistry,
     policy: &TransmitPolicy,
     conversation: Option<ConversationKey>,
 ) -> usize {
-    match conversation.and_then(|conversation| BudgetQuery::new(channels, policy, conversation)) {
-        Some(query) => payload_budget(node, &query).await,
-        None => MAX_FRAME,
+    let Some(query) =
+        conversation.and_then(|conversation| BudgetQuery::new(channels, policy, conversation))
+    else {
+        return MAX_FRAME;
+    };
+    if let Some(peer) = query.peer()
+        && node.peer(peer).await.is_err()
+    {
+        return MAX_FRAME;
     }
+    payload_budget(node, &query).await.unwrap_or(MAX_FRAME)
 }
 
 /// Send what the chat queue holds while its window has room, and publish

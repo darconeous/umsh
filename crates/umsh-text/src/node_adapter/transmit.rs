@@ -100,6 +100,15 @@ impl BudgetQuery {
     pub fn conversation(&self) -> ConversationKey {
         self.conversation
     }
+
+    /// The peer the frames go to, when they go to one alone: the node
+    /// measures them only once it has registered the peer.
+    pub fn peer(&self) -> Option<PublicKey> {
+        match self.route {
+            Route::Peer { peer, .. } | Route::ChannelPeer { peer, .. } => Some(peer),
+            Route::Channel { .. } => None,
+        }
+    }
 }
 
 /// What one frame to the query's conversation carries for the text engine,
@@ -107,14 +116,15 @@ impl BudgetQuery {
 /// [`ChatFacade::archive_result_within`] take it: the node's capacity for
 /// the destination, less the payload-type byte.
 ///
-/// [`MAX_FRAME`] when the destination cannot be measured—a peer the node
-/// cannot register—since its frames fail at departure anyway.
-pub async fn payload_budget<M: MacBackend>(node: &LocalNode<M>, query: &BudgetQuery) -> usize {
+/// `None` when the node cannot measure it: a peer it has not registered,
+/// whose capacity rests on a route it does not hold. Measuring registers
+/// nobody, so it costs no peer slot.
+pub async fn payload_budget<M: MacBackend>(
+    node: &LocalNode<M>,
+    query: &BudgetQuery,
+) -> Option<usize> {
     let capacity = match &query.route {
         Route::Peer { peer, options } => {
-            if node.peer(*peer).await.is_err() {
-                return MAX_FRAME;
-            }
             node.payload_capacity(SendDestination::Unicast(peer), options)
                 .await
         }
@@ -123,16 +133,13 @@ pub async fn payload_budget<M: MacBackend>(node: &LocalNode<M>, query: &BudgetQu
                 .await
         }
         Route::ChannelPeer { key, peer, options } => {
-            if node.peer(*peer).await.is_err() {
-                return MAX_FRAME;
-            }
             let destination = SendDestination::BlindUnicast { peer, channel: key };
             node.payload_capacity(destination, options).await
         }
     };
-    capacity.map_or(MAX_FRAME, |capacity| {
-        capacity.saturating_sub(1).min(MAX_FRAME)
-    })
+    capacity
+        .ok()
+        .map(|capacity| capacity.saturating_sub(1).min(MAX_FRAME))
 }
 
 /// A transmission that has stayed in flight past [`TRANSMISSION_STALL_MS`].
