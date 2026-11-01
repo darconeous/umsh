@@ -4,15 +4,16 @@
 use alloc::collections::{BTreeSet, VecDeque};
 use alloc::vec::Vec;
 
-use umsh_core::{ChannelKey, ChannelTag, PayloadType, PublicKey};
-use umsh_mac::{ECHO_WATCH_MS, SendOptions, SendReceipt};
+use umsh_core::{ChannelKey, ChannelTag, PacketType, PayloadType, PublicKey};
+use umsh_mac::{ECHO_WATCH_MS, SendDestination, SendOptions, SendReceipt};
 #[cfg(feature = "software-crypto")]
 use umsh_node::{BoundChannel, Transport};
 use umsh_node::{LocalNode, MacBackend, SendProgressTicket};
 
+use crate::ConversationKey;
 use crate::chat::{ChannelRegistry, ChatFacade, Outbound, Repeats, TransmitUpdate};
 use crate::engine::sequence::MessageHandle;
-use crate::engine::{Destination, Transmission};
+use crate::engine::{Destination, MAX_FRAME, Transmission, destination_for};
 use crate::node_adapter::WellKnownChannels;
 use crate::validate::TextProfile;
 
@@ -71,6 +72,67 @@ pub fn bound_channel<M: MacBackend>(
 ) -> Option<BoundChannel<M>> {
     let key = channels.key(channel)?;
     node.bound_channel(&umsh_node::Channel::private(key, ""))
+}
+
+/// A destination whose frames are to be measured for the text engine,
+/// resolved against the channels as [`TransmitQueue::depart`] resolves a
+/// frame's, so [`payload_budget`] needs only the node.
+pub struct BudgetQuery {
+    conversation: ConversationKey,
+    route: Route,
+}
+
+impl BudgetQuery {
+    /// The query for `conversation`'s frames, sent as to a peer that does
+    /// not know us yet. `None` for a channel no longer held.
+    pub fn new(
+        channels: &ChannelRegistry,
+        policy: &TransmitPolicy,
+        conversation: ConversationKey,
+    ) -> Option<Self> {
+        let route = Route::to(channels, policy, destination_for(&conversation), false)?;
+        Some(Self {
+            conversation,
+            route,
+        })
+    }
+
+    pub fn conversation(&self) -> ConversationKey {
+        self.conversation
+    }
+}
+
+/// What one frame to the query's conversation carries for the text engine,
+/// as [`ChatFacade::compose_within`] and
+/// [`ChatFacade::archive_result_within`] take it: the node's capacity for
+/// the destination, less the payload-type byte.
+///
+/// [`MAX_FRAME`] when the destination cannot be measured—a peer the node
+/// cannot register—since its frames fail at departure anyway.
+pub async fn payload_budget<M: MacBackend>(node: &LocalNode<M>, query: &BudgetQuery) -> usize {
+    let capacity = match &query.route {
+        Route::Peer { peer, options } => {
+            if node.peer(*peer).await.is_err() {
+                return MAX_FRAME;
+            }
+            node.payload_capacity(SendDestination::Unicast(peer), options)
+                .await
+        }
+        Route::Channel { key, options } => {
+            node.payload_capacity(SendDestination::Multicast(key), options)
+                .await
+        }
+        Route::ChannelPeer { key, peer, options } => {
+            if node.peer(*peer).await.is_err() {
+                return MAX_FRAME;
+            }
+            let destination = SendDestination::BlindUnicast { peer, channel: key };
+            node.payload_capacity(destination, options).await
+        }
+    };
+    capacity.map_or(MAX_FRAME, |capacity| {
+        capacity.saturating_sub(1).min(MAX_FRAME)
+    })
 }
 
 /// A transmission that has stayed in flight past [`TRANSMISSION_STALL_MS`].
@@ -256,7 +318,10 @@ impl TransmitQueue {
     ///   misses a fragment can address a resend request to us.
     /// - A channel-direct frame is a blind unicast, registering the peer on
     ///   the way out.
-    /// - `EMERGENCY` goes out unencrypted, so any node in range can read it.
+    /// - `EMERGENCY` goes out unencrypted, so any node in range can read it,
+    ///   and whatever goes to the whole of it is signed, so a reader knows
+    ///   who sent it. A frame to one member is a blind unicast, whose
+    ///   pairwise MIC already says so.
     ///
     /// A frame on a channel no longer held comes back undeliverable.
     pub fn depart(
@@ -283,34 +348,9 @@ impl TransmitQueue {
             self.pending.push_front(queued);
             return None;
         }
-        let route = match transmission.destination {
-            Destination::Peer(peer) => {
-                let options = with_flood_reach(SendOptions::default(), policy.default_flood_hops)
-                    .with_ack_requested(true);
-                let options = if self.pipeline_ready.contains(&peer.0) {
-                    options
-                } else {
-                    options.with_full_source()
-                };
-                Route::Peer { peer, options }
-            }
-            Destination::Channel(channel) => {
-                let Some(key) = channels.key(&channel) else {
-                    return Some(Err(Undeliverable::of(&queued)));
-                };
-                let options = channel_options(channels, policy, &channel, &key);
-                Route::Channel { key, options }
-            }
-            // A repair request; the engine owns retrying it, so no
-            // acknowledgment is asked for. Repairs carry the same message
-            // the multicast did, so they are held to the same rules.
-            Destination::ChannelPeer { channel, peer } => {
-                let Some(key) = channels.key(&channel) else {
-                    return Some(Err(Undeliverable::of(&queued)));
-                };
-                let options = channel_options(channels, policy, &channel, &key);
-                Route::ChannelPeer { key, peer, options }
-            }
+        let introduced = gate_peer.is_some_and(|peer| self.pipeline_ready.contains(&peer.0));
+        let Some(route) = Route::to(channels, policy, transmission.destination, introduced) else {
+            return Some(Err(Undeliverable::of(&queued)));
         };
         let mut payload = Vec::with_capacity(transmission.payload.len() + 1);
         payload.push(PayloadType::TextMessage as u8);
@@ -570,6 +610,38 @@ enum Route {
     },
 }
 
+impl Route {
+    /// How a frame to `destination` goes, resolved against `channels`;
+    /// `introduced` when it goes to a peer that has shown it knows us.
+    /// `None` for a channel no longer held.
+    fn to(
+        channels: &ChannelRegistry,
+        policy: &TransmitPolicy,
+        destination: Destination,
+        introduced: bool,
+    ) -> Option<Self> {
+        Some(match destination {
+            Destination::Peer(peer) => Self::Peer {
+                peer,
+                options: peer_options(policy, introduced),
+            },
+            Destination::Channel(channel) => {
+                let key = channels.key(&channel)?;
+                let options = multicast_options(channels, policy, &channel, &key);
+                Self::Channel { key, options }
+            }
+            // A repair request; the engine owns retrying it, so no
+            // acknowledgment is asked for. Repairs carry the same message
+            // the multicast did, so they are held to the same rules.
+            Destination::ChannelPeer { channel, peer } => {
+                let key = channels.key(&channel)?;
+                let options = channel_options(channels, policy, &channel, &key);
+                Self::ChannelPeer { key, peer, options }
+            }
+        })
+    }
+}
+
 /// How a send went.
 pub enum Sent {
     Ticket(SendProgressTicket),
@@ -733,14 +805,46 @@ impl<E> From<Result<SendProgressTicket, E>> for Sent {
     }
 }
 
+/// Options for a frame to a peer: as far as the default reach, asking for an
+/// acknowledgment, and naming us by full key until the peer has shown it
+/// knows us by acknowledging one.
+fn peer_options(policy: &TransmitPolicy, introduced: bool) -> SendOptions {
+    let options = with_flood_reach(SendOptions::default(), policy.default_flood_hops)
+        .with_ack_requested(true);
+    if introduced {
+        options
+    } else {
+        options.with_full_source()
+    }
+}
+
+/// Options for a text frame to the whole of a channel: as for any channel
+/// frame, and signed where the channel's readers must know who sent it.
+fn multicast_options(
+    channels: &ChannelRegistry,
+    policy: &TransmitPolicy,
+    channel: &ChannelTag,
+    key: &ChannelKey,
+) -> SendOptions {
+    let options = channel_options(channels, policy, channel, key);
+    if policy.well_known.frame_signature_required(
+        PacketType::Multicast,
+        Some(key),
+        &[PayloadType::TextMessage as u8],
+    ) {
+        options.with_signature()
+    } else {
+        options
+    }
+}
+
 /// Options for a frame on a channel: as far as the channel reaches, naming
 /// us by full key, and on `EMERGENCY` unencrypted.
 ///
 /// An emergency message only members can read is not an emergency message.
 /// The full source key keeps it attributable without encryption. An
 /// unencrypted blind unicast still names its channel, which is what a
-/// repeater decides to forward on. The spec also asks `EMERGENCY` chat to be
-/// signed, but the text-message format has no signature yet, so none is sent.
+/// repeater decides to forward on.
 fn channel_options(
     channels: &ChannelRegistry,
     policy: &TransmitPolicy,

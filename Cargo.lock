@@ -5006,8 +5006,11 @@ version = "0.1.0"
 dependencies = [
  "heapless 0.8.0",
  "umsh-core",
+ "umsh-crypto",
+ "umsh-hal",
  "umsh-mac",
  "umsh-node",
+ "umsh-sync",
 ]
 
 [[package]]

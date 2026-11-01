@@ -512,6 +512,19 @@ impl<M: MacBackend> LocalNode<M> {
         removed
     }
 
+    /// The most payload a send from this node to `destination` with
+    /// `options` can carry, accounting for everything the MAC adds.
+    pub async fn payload_capacity(
+        &self,
+        destination: umsh_mac::SendDestination<'_>,
+        options: &SendOptions,
+    ) -> Result<usize, NodeError<M>> {
+        Ok(self
+            .mac
+            .payload_capacity(self.identity_id, destination, options)
+            .await?)
+    }
+
     /// Return the live TX frame counter for this node's identity, if available.
     pub async fn frame_counter(&self) -> Option<u32> {
         self.mac.frame_counter(self.identity_id).await

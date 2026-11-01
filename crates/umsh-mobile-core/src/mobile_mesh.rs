@@ -42,11 +42,11 @@ use umsh_node::{
 };
 use umsh_sync::AsyncRefCell;
 use umsh_text::chat::{ChannelRegistry, Seeds, TextSource};
-use umsh_text::engine::ArchiveResult;
+use umsh_text::engine::{ArchiveResult, MAX_FRAME};
 use umsh_text::model::ConversationKey;
 use umsh_text::node_adapter::{
-    self, Inbound, InboundText, Refusal, RxSummary, TransmitPolicy, TransmitQueue,
-    WellKnownChannels,
+    self, BudgetQuery, Inbound, InboundText, Refusal, RxSummary, TransmitPolicy, TransmitQueue,
+    WellKnownChannels, payload_budget,
 };
 use umsh_ulcp::{frame, ids::prop, items};
 
@@ -3452,6 +3452,9 @@ async fn run_worker(
                     Refusal::AnonymousEmergency => {
                         "an emergency-channel text frame: missing its full source key"
                     }
+                    Refusal::UnsignedEmergency => {
+                        "an emergency-channel text frame: not signed by its sender"
+                    }
                     Refusal::AnonymousPublic => {
                         "a public-channel text frame: missing its full source key"
                     }
@@ -4109,22 +4112,35 @@ async fn run_worker(
                             let result = if chat.has_pending_batch() {
                                 Err(MobileMeshError::OperationInProgress)
                             } else if let Some(conversation) = conversation {
+                                let budget = chat_budget(
+                                    &node,
+                                    chat.facade.channels(),
+                                    &chat_policy(flood_hops, well_known),
+                                    Some(conversation),
+                                )
+                                .await;
                                 let now_ms = handle.now_ms().await;
                                 let composed = match &request {
-                                    ChatComposeRequest::Text { body } => {
-                                        chat.compose_text(conversation, client_token, body, now_ms)
-                                    }
+                                    ChatComposeRequest::Text { body } => chat.compose_text(
+                                        conversation,
+                                        client_token,
+                                        body,
+                                        budget,
+                                        now_ms,
+                                    ),
                                     ChatComposeRequest::Edit { original, body } => chat.compose_edit(
                                         conversation,
                                         client_token,
                                         original,
                                         body,
+                                        budget,
                                         now_ms,
                                     ),
                                     ChatComposeRequest::Delete { original } => chat.compose_delete(
                                         conversation,
                                         client_token,
                                         original,
+                                        budget,
                                         now_ms,
                                     ),
                                     ChatComposeRequest::Reaction { target, body } => chat
@@ -4133,6 +4149,7 @@ async fn run_worker(
                                             client_token,
                                             target,
                                             body,
+                                            budget,
                                             now_ms,
                                         ),
                                     ChatComposeRequest::Reply { target, body } => chat
@@ -4141,6 +4158,7 @@ async fn run_worker(
                                             client_token,
                                             target,
                                             body,
+                                            budget,
                                             now_ms,
                                         ),
                                 };
@@ -4229,6 +4247,13 @@ async fn run_worker(
                             kind,
                             payload,
                         }) => {
+                            let budget = chat_budget(
+                                &node,
+                                chat.facade.channels(),
+                                &chat_policy(flood_hops, well_known),
+                                chat.facade.lookup_conversation(request_id),
+                            )
+                            .await;
                             let now_ms = handle.now_ms().await;
                             let result = match kind {
                                 MobileChatArchiveResultKind::Found => {
@@ -4238,7 +4263,8 @@ async fn run_worker(
                                 MobileChatArchiveResultKind::Evicted => ArchiveResult::Evicted,
                                 MobileChatArchiveResultKind::Unknown => ArchiveResult::Unknown,
                             };
-                            chat.facade.archive_result(request_id, result, now_ms);
+                            chat.facade
+                                .archive_result_within(request_id, result, budget, now_ms);
                             publish_chat_drain(chat.drain(), &mut chat_queue, &chat_events);
                             let sent = pump_chat(
                                 &node,
@@ -4625,6 +4651,20 @@ fn chat_policy(flood_hops: FloodHopSettings, well_known: WellKnownChannels) -> T
     TransmitPolicy {
         default_flood_hops: flood_hops.default_hops,
         well_known,
+    }
+}
+
+/// What one frame to `conversation` carries for the text engine, as the
+/// node measures it now.
+async fn chat_budget<M: MacBackend>(
+    node: &LocalNode<M>,
+    channels: &ChannelRegistry,
+    policy: &TransmitPolicy,
+    conversation: Option<ConversationKey>,
+) -> usize {
+    match conversation.and_then(|conversation| BudgetQuery::new(channels, policy, conversation)) {
+        Some(query) => payload_budget(node, &query).await,
+        None => MAX_FRAME,
     }
 }
 

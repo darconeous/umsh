@@ -19,8 +19,9 @@ pub use inbound::{Inbound, InboundText, Refusal, RxSummary, inbound_text};
 #[cfg(feature = "software-crypto")]
 pub use transmit::bound_channel;
 pub use transmit::{
-    Departed, Departure, Sent, Stall, TRANSMISSION_STALL_MS, TransmitPolicy, TransmitQueue,
-    Undeliverable, WELL_KNOWN_CHANNEL_MAX_FLOOD_HOPS, channel_reach, transmit, with_flood_reach,
+    BudgetQuery, Departed, Departure, Sent, Stall, TRANSMISSION_STALL_MS, TransmitPolicy,
+    TransmitQueue, Undeliverable, WELL_KNOWN_CHANNEL_MAX_FLOOD_HOPS, channel_reach, payload_budget,
+    transmit, with_flood_reach,
 };
 
 use umsh_core::{PacketType, PayloadType};

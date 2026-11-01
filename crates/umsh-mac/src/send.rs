@@ -1260,8 +1260,10 @@ impl<'a> ReceivedPacketRef<'a> {
         Self { acceptance, ..self }
     }
 
-    /// The packet with what its signature showed.
-    pub(crate) fn with_signature(self, signature: SignatureStatus) -> Self {
+    /// The packet with what its signature showed. Like the rest of what
+    /// [`ReceivedPacketRef::new`] is told, it is taken on trust: the MAC
+    /// sets it from its own check.
+    pub fn with_signature(self, signature: SignatureStatus) -> Self {
         Self { signature, ..self }
     }
 

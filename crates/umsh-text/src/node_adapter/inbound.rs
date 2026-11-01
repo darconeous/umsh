@@ -135,6 +135,8 @@ pub enum Refusal {
     EncryptedEmergency,
     /// `EMERGENCY` chat must name its sender by full key.
     AnonymousEmergency,
+    /// `EMERGENCY` chat must be signed by the key it names.
+    UnsignedEmergency,
     /// `public` chat is shown only with its sender's full key.
     AnonymousPublic,
 }
@@ -151,8 +153,9 @@ pub enum Refusal {
 /// is deliberately incurious about what it carries. A frame that fails one is
 /// refused rather than shown unmarked—a message the reader would act on in an
 /// emergency must not arrive with its origin or its reach in question.
-/// `EMERGENCY` chat must also be signed, but the text-message format has no
-/// signature yet, so that requirement is neither sent nor checked.
+/// [`WellKnownChannels::frame_signature_required`] decides which frames must
+/// also have been signed by their sender, so the detached device's receipt
+/// cue holds them to the same rule.
 pub fn inbound_text(
     packet: &ReceivedPacketRef<'_>,
     local_key: &PublicKey,
@@ -180,6 +183,14 @@ pub fn inbound_text(
             }
             if !packet.has_full_source() || packet.from_key().is_none() {
                 return Some(Inbound::Refused(Refusal::AnonymousEmergency));
+            }
+            if well_known.frame_signature_required(
+                packet.packet_type(),
+                Some(key),
+                packet.payload_bytes(),
+            ) && !packet.sender_authenticated()
+            {
+                return Some(Inbound::Refused(Refusal::UnsignedEmergency));
             }
         } else if well_known.is_public(key)
             && family == PacketFamily::Multicast

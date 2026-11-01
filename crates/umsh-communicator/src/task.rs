@@ -24,7 +24,7 @@ use umsh_node::{
     LocalNode, MacBackend, NodeIdentityPayload, Subscription, identity_is_trustworthy,
 };
 use umsh_text::node_adapter::{
-    Inbound, InboundText, RxSummary, WellKnownChannels, inbound_text, transmit,
+    Inbound, InboundText, RxSummary, WellKnownChannels, inbound_text, payload_budget, transmit,
 };
 use umsh_ulcp_admin::LocalPort;
 
@@ -329,17 +329,29 @@ where
         while let Some(arrival) = inbox.take() {
             node.arrive(arrival);
         }
+        // What a frame carries changes with the channels held and with how
+        // the device node is set up, so it is measured again on each tick
+        // and whenever a channel's key arrives.
+        let mut measure = false;
         // A channel joined elsewhere is listed by its tag; its key is the
         // device node's.
         if node.misses_channel_keys() {
             let mut keys = Vec::new();
             mesh.for_each_channel(&mut |key| keys.push(*key)).await;
             node.learn_channel_keys(&keys);
+            measure = true;
         }
         node.service();
         if node.clock().now_ms() >= tick_at {
             node.tick();
             tick_at = node.clock().now_ms() + TICK_MS;
+            measure = true;
+        }
+        if measure {
+            for query in node.budget_queries() {
+                let budget = payload_budget(mesh, &query).await;
+                node.learn_budget(query.conversation(), budget);
+            }
         }
         if node.has_events() {
             notify();

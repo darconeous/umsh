@@ -22,7 +22,7 @@ use umsh_text::engine::{
     RegardingRef,
 };
 use umsh_text::node_adapter::{
-    Departed, Departure, InboundText, Sent, TransmitPolicy, TransmitQueue,
+    BudgetQuery, Departed, Departure, InboundText, Sent, TransmitPolicy, TransmitQueue,
     WELL_KNOWN_CHANNEL_MAX_FLOOD_HOPS, WellKnownChannels,
 };
 use umsh_text::validate::DirectChannelProfile;
@@ -202,6 +202,10 @@ pub(crate) struct Chats<S> {
     /// The frames the facade released, on their way to the device node.
     outbox: TransmitQueue,
     policy: TransmitPolicy,
+    /// What one frame to each channel carries, as the device node last
+    /// measured it. A channel not yet measured, and every peer, take the
+    /// engine's default.
+    budgets: BTreeMap<ChannelTag, usize>,
     /// What each composed message is told apart by.
     token: u32,
     /// Messages sent again that have had no word since.
@@ -253,6 +257,7 @@ impl<S: ChatStore> Chats<S> {
                 default_flood_hops: FLOOD_HOPS,
                 well_known: crypto.well_known,
             },
+            budgets: BTreeMap::new(),
             token: 0,
             retrying: BTreeSet::new(),
             heard: BTreeMap::new(),
@@ -360,6 +365,47 @@ impl<S: ChatStore> Chats<S> {
         if self.held.contains(&tag) {
             self.register(tag, key, events);
         }
+    }
+
+    /// The frames the device node is to measure: those to each channel the
+    /// chats hold.
+    pub fn budget_queries(&self) -> Vec<BudgetQuery> {
+        let Some(facade) = &self.facade else {
+            return Vec::new();
+        };
+        facade
+            .channels()
+            .tags()
+            .filter_map(|channel| {
+                let conversation = ConversationKey::ChannelGroup { channel };
+                BudgetQuery::new(facade.channels(), &self.policy, conversation)
+            })
+            .collect()
+    }
+
+    /// Takes `budget`, what the device node measured one frame to
+    /// `conversation` to carry.
+    pub fn learn_budget(&mut self, conversation: ConversationKey, budget: usize) {
+        if let ConversationKey::ChannelGroup { channel } = conversation {
+            self.budgets.insert(channel, budget);
+        }
+    }
+
+    /// What one frame to `conversation` carries.
+    fn budget(&self, conversation: &ConversationKey) -> usize {
+        match conversation {
+            ConversationKey::ChannelGroup { channel } => {
+                self.budgets.get(channel).copied().unwrap_or(MAX_FRAME)
+            }
+            _ => MAX_FRAME,
+        }
+    }
+
+    /// The longest message `chat` takes.
+    pub fn max_body_len(&self, chat: model::ChatId) -> Option<usize> {
+        let conversation = self.conversation(chat)?;
+        let facade = self.facade.as_ref()?;
+        Some(facade.max_body_len(&conversation, self.budget(&conversation)))
     }
 
     /// Holds the channel `key` names in the facade, and keeps a chat for
@@ -489,8 +535,9 @@ impl<S: ChatStore> Chats<S> {
                             Ok(Some(payload)) => ArchiveResult::Found { payload },
                             _ => ArchiveResult::Unknown,
                         };
+                        let budget = self.budget(&lookup.key.conversation);
                         if let Some(facade) = &mut self.facade {
-                            facade.archive_result(lookup.request_id, result, now_ms);
+                            facade.archive_result_within(lookup.request_id, result, budget, now_ms);
                         }
                     }
                     ChatOutput::SenderResolved(_) => events(NodeEvent::IdentitiesLearned),
@@ -917,13 +964,21 @@ impl<S: ChatStore> Chats<S> {
         time: Option<u32>,
         events: &mut dyn FnMut(NodeEvent),
     ) -> Option<Committed> {
+        let budget = self.budget(&conversation);
         let facade = self.facade.as_mut()?;
         self.token = self.token.wrapping_add(1);
         // The stored checkpoint carries the conversation's sequence on when
         // the engine no longer remembers it.
         let stored = self.store.checkpoint(&conversation);
         let composed = facade
-            .compose(conversation, self.token, intent, stored.as_ref(), now_ms)
+            .compose_within(
+                conversation,
+                self.token,
+                intent,
+                stored.as_ref(),
+                budget,
+                now_ms,
+            )
             .ok()?;
         let kept = {
             let handles = &self.handles;

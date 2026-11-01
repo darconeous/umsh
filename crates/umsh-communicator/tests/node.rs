@@ -24,7 +24,7 @@ use umsh_core::{
 use umsh_crypto::CryptoEngine;
 use umsh_crypto::NodeIdentity;
 use umsh_crypto::software::{SoftwareAes, SoftwareIdentity, SoftwareSha256};
-use umsh_mac::{CachedRoute, ChannelInfoRef, ReceivedPacketRef, RxMetadata, Snr};
+use umsh_mac::{CachedRoute, ChannelInfoRef, ReceivedPacketRef, RxMetadata, SignatureStatus, Snr};
 use umsh_node::{NodeCapabilities, NodeIdentityPayload, NodeRole};
 use umsh_text::ConversationKey;
 use umsh_text::chat::ChatFacade;
@@ -189,7 +189,15 @@ fn channel_frame(key: &ChannelKey, from: PublicKey, full_key: bool, payload: &[u
         }),
         RxMetadata::new(Some(-97), Some(Snr::from_centibels(65)), None, None),
     );
-    match inbound_text(&packet, &LOCAL, &WellKnownChannels::derive()) {
+    // Signed where a member's chat signs it, and verified, as the MAC
+    // would have.
+    let well_known = WellKnownChannels::derive();
+    let packet = if well_known.is_emergency(key) {
+        packet.with_signature(SignatureStatus::Verified)
+    } else {
+        packet
+    };
+    match inbound_text(&packet, &LOCAL, &well_known) {
         Some(Inbound::Text(text)) => text,
         _ => panic!("not a text frame"),
     }
