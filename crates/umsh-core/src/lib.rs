@@ -340,4 +340,174 @@ mod tests {
         let header = PacketHeader::parse(&bytes).unwrap();
         assert_eq!(header.sec_info.unwrap().wire_len(), 5);
     }
+
+    /// Every range a successful parse reports must lie inside the frame, and
+    /// fields that follow the options must end before the MIC.
+    fn assert_ranges_sane(header: &PacketHeader, len: usize) {
+        for range in [&header.options_range, &header.body_range, &header.mic_range] {
+            assert!(range.start <= range.end, "inverted range {range:?}");
+            assert!(range.end <= len, "range {range:?} past frame of {len}");
+        }
+        assert!(header.total_len <= len);
+        let trailer = header.mic_range.start;
+        match header.source {
+            SourceAddrRef::FullKeyAt { offset } => assert!(offset + 32 <= trailer),
+            SourceAddrRef::Encrypted { offset, len } => assert!(offset + len <= trailer),
+            SourceAddrRef::Hint(_) | SourceAddrRef::None => {}
+        }
+    }
+
+    fn sample_frames() -> Vec<Vec<u8>> {
+        let src = PublicKey([0xA1; 32]);
+        let hint = NodeHint([0xA1, 0xB2, 0x03]);
+        let dst = NodeHint([0xC3, 0xD4, 0x25]);
+        let channel = crate::ChannelId([0x7E, 0x5F]);
+        let mut frames = Vec::new();
+
+        let mut buf = [0u8; 255];
+        let frame = PacketBuilder::new(&mut buf)
+            .broadcast()
+            .source_hint(hint)
+            .region_code([0x12, 0x34])
+            .payload(b"hello")
+            .build()
+            .unwrap();
+        frames.push(frame.to_vec());
+
+        let mut buf = [0u8; 255];
+        let frame = PacketBuilder::new(&mut buf)
+            .unicast(dst)
+            .source_hint(hint)
+            .frame_counter(9)
+            .region_code([0x12, 0x34])
+            .encrypted()
+            .mic_size(MicSize::Mic8)
+            .payload(b"hello")
+            .build()
+            .unwrap();
+        frames.push(frame.as_bytes().to_vec());
+
+        for encrypted in [false, true] {
+            for full in [false, true] {
+                let mut buf = [0u8; 255];
+                let builder = PacketBuilder::new(&mut buf).multicast(channel);
+                let builder = if full {
+                    builder.source_full(&src)
+                } else {
+                    builder.source_hint(hint)
+                };
+                let mut builder = builder.frame_counter(3).mic_size(MicSize::Mic4);
+                if encrypted {
+                    builder = builder.encrypted();
+                }
+                let frame = builder.payload(b"hi").build().unwrap();
+                frames.push(frame.as_bytes().to_vec());
+
+                let mut buf = [0u8; 255];
+                let builder = PacketBuilder::new(&mut buf).blind_unicast(channel, dst);
+                let builder = if full {
+                    builder.source_full(&src)
+                } else {
+                    builder.source_hint(hint)
+                };
+                let mut builder = builder.frame_counter(3);
+                if !encrypted {
+                    builder = builder.unencrypted();
+                }
+                let frame = builder.payload(b"hi").build().unwrap();
+                frames.push(frame.as_bytes().to_vec());
+            }
+        }
+
+        let mut buf = [0u8; 255];
+        let frame = PacketBuilder::new(&mut buf)
+            .mac_ack([1, 2, 3, 4, 5, 6, 7, 8])
+            .region_code([0x12, 0x34])
+            .build()
+            .unwrap();
+        frames.push(frame.to_vec());
+        frames
+    }
+
+    #[test]
+    fn truncated_and_corrupted_frames_never_yield_out_of_range_fields() {
+        for frame in sample_frames() {
+            assert_ranges_sane(&PacketHeader::parse(&frame).unwrap(), frame.len());
+            for cut in 0..frame.len() {
+                if let Ok(header) = PacketHeader::parse(&frame[..cut]) {
+                    assert_ranges_sane(&header, cut);
+                }
+            }
+            for at in 0..frame.len() {
+                for value in [0x00, 0x0F, 0xD0, 0xE0, 0xEE, 0xFF] {
+                    let mut corrupted = frame.clone();
+                    corrupted[at] = value;
+                    if let Ok(header) = PacketHeader::parse(&corrupted) {
+                        assert_ranges_sane(&header, corrupted.len());
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn source_after_options_must_end_before_the_mic() {
+        // FCF | CHANNEL | SECINFO (unencrypted, 4-byte MIC) | MIC: no options
+        // and no end-of-options marker. A parser that bounded SRC by the
+        // buffer instead of the MIC read the hint out of the MIC and reported
+        // an inverted body range.
+        let fcf = Fcf::new(PacketType::Multicast, false, false).0;
+        for encrypted in [false, true] {
+            let scf = Scf::new(encrypted, MicSize::Mic4, false).0;
+            let frame = [fcf, 0x7E, 0x5F, scf, 0, 0, 0, 1, 0xAA, 0xBB, 0xCC, 0xDD];
+            assert_eq!(
+                PacketHeader::parse(&frame),
+                Err(crate::ParseError::Truncated)
+            );
+        }
+        let fcf = Fcf::new(PacketType::BlindUnicast, false, false).0;
+        for encrypted in [false, true] {
+            let scf = Scf::new(encrypted, MicSize::Mic4, false).0;
+            let frame = [
+                fcf, 0x7E, 0x5F, scf, 0, 0, 0, 1, 0xAA, 0xBB, 0xCC, 0xDD, 0x11, 0x22,
+            ];
+            assert_eq!(
+                PacketHeader::parse(&frame),
+                Err(crate::ParseError::Truncated)
+            );
+        }
+    }
+
+    #[test]
+    fn option_numbers_past_0xffff_are_malformed() {
+        // An extended delta of 0xFFFF + 269 does not fit sixteen bits.
+        let single = [0xE0, 0xFF, 0xFF];
+        // Two in-range deltas whose running sum passes 0xFFFF.
+        let first = 0xFF00u16 - 269;
+        let second = 0x0200u16 - 269;
+        let summed = [
+            0xE0,
+            (first >> 8) as u8,
+            first as u8,
+            0xE0,
+            (second >> 8) as u8,
+            second as u8,
+        ];
+        for options in [&single[..], &summed[..]] {
+            let decoded: Result<Vec<_>, _> = OptionDecoder::new(options).collect();
+            assert_eq!(decoded, Err(crate::ParseError::MalformedOption));
+
+            let mut frame = vec![
+                Fcf::new(PacketType::Broadcast, false, false).0,
+                0x8B,
+                0x60,
+                0xF5,
+            ];
+            frame.extend_from_slice(options);
+            assert_eq!(
+                PacketHeader::parse(&frame),
+                Err(crate::ParseError::MalformedOption)
+            );
+        }
+    }
 }

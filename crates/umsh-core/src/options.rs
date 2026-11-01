@@ -1,3 +1,5 @@
+use core::ops::Range;
+
 use crate::{EncodeError, ParseError};
 
 /// Incremental encoder for CoAP-style delta/length option blocks.
@@ -299,54 +301,75 @@ impl<'a> Iterator for OptionDecoder<'a> {
             return None;
         }
 
-        let first = self.data[self.pos];
-        if first == 0xFF {
-            self.pos += 1;
-            self.finished = true;
-            return None;
+        match decode_record(self.data, self.pos, self.last_number) {
+            Ok(Record::End { next }) => {
+                self.pos = next;
+                self.finished = true;
+                None
+            }
+            Ok(Record::Option {
+                number,
+                value,
+                next,
+            }) => {
+                self.pos = next;
+                self.last_number = number;
+                Some(Ok((number, &self.data[value])))
+            }
+            Err(err) => {
+                self.errored = true;
+                Some(Err(err))
+            }
         }
-
-        self.pos += 1;
-        let delta_nibble = first >> 4;
-        let len_nibble = first & 0x0F;
-        let (delta, delta_len) = match read_extended(&self.data[self.pos..], delta_nibble) {
-            Ok(value) => value,
-            Err(err) => {
-                self.errored = true;
-                return Some(Err(err));
-            }
-        };
-        self.pos += delta_len;
-        let (len, len_len) = match read_extended(&self.data[self.pos..], len_nibble) {
-            Ok(value) => value,
-            Err(err) => {
-                self.errored = true;
-                return Some(Err(err));
-            }
-        };
-        self.pos += len_len;
-
-        if self.pos + len as usize > self.data.len() {
-            self.errored = true;
-            return Some(Err(ParseError::Truncated));
-        }
-
-        let number = self
-            .last_number
-            .checked_add(delta)
-            .ok_or(ParseError::MalformedOption);
-        let number = match number {
-            Ok(value) => value,
-            Err(err) => {
-                self.errored = true;
-                return Some(Err(err));
-            }
-        };
-        let value = &self.data[self.pos..self.pos + len as usize];
-        self.pos += len as usize;
-        self.last_number = number;
-        Some(Ok((number, value)))
     }
+}
+
+/// One step through an encoded option block.
+pub(crate) enum Record {
+    /// The `0xFF` end-of-options marker; `next` is the offset just past it.
+    End { next: usize },
+    /// An option record: its absolute number, where its value sits, and the
+    /// offset of the byte after it.
+    Option {
+        number: u16,
+        value: Range<usize>,
+        next: usize,
+    },
+}
+
+/// Decode the record starting at `data[pos]`, given the option number in
+/// effect before it.
+///
+/// This is the one place option records are decoded, so every parser applies
+/// the same overflow rules: an extended field that does not fit sixteen bits,
+/// and a running option number that would pass `0xFFFF`, are both malformed.
+/// `pos` must be less than `data.len()`.
+pub(crate) fn decode_record(
+    data: &[u8],
+    pos: usize,
+    last_number: u16,
+) -> Result<Record, ParseError> {
+    let first = data[pos];
+    if first == 0xFF {
+        return Ok(Record::End { next: pos + 1 });
+    }
+    let mut cursor = pos + 1;
+    let (delta, delta_len) = read_extended(&data[cursor..], first >> 4)?;
+    cursor += delta_len;
+    let (len, len_len) = read_extended(&data[cursor..], first & 0x0F)?;
+    cursor += len_len;
+    let end = cursor
+        .checked_add(usize::from(len))
+        .filter(|end| *end <= data.len())
+        .ok_or(ParseError::Truncated)?;
+    let number = last_number
+        .checked_add(delta)
+        .ok_or(ParseError::MalformedOption)?;
+    Ok(Record::Option {
+        number,
+        value: cursor..end,
+        next: end,
+    })
 }
 
 fn encoded_len(value: u16) -> usize {
@@ -393,7 +416,7 @@ fn read_extended(data: &[u8], nibble: u8) -> Result<(u16, usize), ParseError> {
             }
             let value = u16::from_be_bytes([data[0], data[1]])
                 .checked_add(269)
-                .ok_or(ParseError::InvalidOptionNibble)?;
+                .ok_or(ParseError::MalformedOption)?;
             Ok((value, 2))
         }
         _ => Err(ParseError::InvalidOptionNibble),
