@@ -630,6 +630,7 @@ struct RemoteStatisticsScreen: View {
             id.statRxBadCrc,
             id.statRxNonUmsh,
             id.statRxAccepted,
+            id.statRadioResets,
             id.statForwarded,
             id.statForwardDropped,
             id.statForwardCancelled,
@@ -723,6 +724,15 @@ struct RemoteStatisticsScreen: View {
             }
 
             Section {
+                if let value = stats.statRadioResets {
+                    RemoteValueRow(
+                        String(
+                            localized: "Radio resets",
+                            comment: "Statistics row: how many times the device reset its radio chip. A noun."
+                        ),
+                        value: value.formatted()
+                    )
+                }
                 if let uptime = currentUptime {
                     TimelineView(.periodic(from: .now, by: 1)) { context in
                         RemoteValueRow(

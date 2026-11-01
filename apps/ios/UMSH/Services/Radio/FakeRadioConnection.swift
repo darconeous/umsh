@@ -1573,6 +1573,7 @@ struct FakeManagedDevice: Sendable {
             id.statRxBadCrc: UInt32(46).littleEndianData,
             id.statRxNonUmsh: UInt32(119).littleEndianData,
             id.statRxAccepted: UInt32(2_405).littleEndianData,
+            id.statRadioResets: UInt32(0).littleEndianData,
             id.statForwarded: UInt32(1_733).littleEndianData,
             id.statForwardDropped: UInt32(82).littleEndianData,
             id.statForwardCancelled: UInt32(14).littleEndianData,

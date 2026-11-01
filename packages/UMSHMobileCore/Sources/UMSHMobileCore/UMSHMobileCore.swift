@@ -11076,6 +11076,7 @@ public struct UlcpDevicePropertiesRecord: Equatable, Hashable {
     public var statRxBadCrc: UInt32?
     public var statRxNonUmsh: UInt32?
     public var statRxAccepted: UInt32?
+    public var statRadioResets: UInt32?
     public var statForwarded: UInt32?
     public var statForwardDropped: UInt32?
     public var statForwardCancelled: UInt32?
@@ -11258,7 +11259,7 @@ public struct UlcpDevicePropertiesRecord: Equatable, Hashable {
          */illuminanceMillilux: UInt32?,
         /**
          * Tenths of kelvin; inner None is an unavailable sensor.
-         */temperatures: [UInt16?]?, temperatureNames: [String]?, phyEnabled: Bool?, frequencyKhz: UInt32?, transmitPowerDbm: Int8?, bandwidthHz: UInt32?, spreadingFactor: UInt8?, codingRateDenom: UInt8?, dutyCycleNow: UInt16?, dutyCycleLimit: UInt16?, statTxPackets: UInt32?, statTxChannelBusy: UInt32?, statRxPackets: UInt32?, statRxBadCrc: UInt32?, statRxNonUmsh: UInt32?, statRxAccepted: UInt32?, statForwarded: UInt32?, statForwardDropped: UInt32?, statForwardCancelled: UInt32?, statMeshcoreSeen: UInt32?, statMeshcoreForwardedRouted: UInt32?, statMeshcoreForwardedFlood: UInt32?, statMeshcoreDeclined: UInt32?, deviceName: String?,
+         */temperatures: [UInt16?]?, temperatureNames: [String]?, phyEnabled: Bool?, frequencyKhz: UInt32?, transmitPowerDbm: Int8?, bandwidthHz: UInt32?, spreadingFactor: UInt8?, codingRateDenom: UInt8?, dutyCycleNow: UInt16?, dutyCycleLimit: UInt16?, statTxPackets: UInt32?, statTxChannelBusy: UInt32?, statRxPackets: UInt32?, statRxBadCrc: UInt32?, statRxNonUmsh: UInt32?, statRxAccepted: UInt32?, statRadioResets: UInt32?, statForwarded: UInt32?, statForwardDropped: UInt32?, statForwardCancelled: UInt32?, statMeshcoreSeen: UInt32?, statMeshcoreForwardedRouted: UInt32?, statMeshcoreForwardedFlood: UInt32?, statMeshcoreDeclined: UInt32?, deviceName: String?,
         /**
          * `None` is the device deriving its own role, which reads the same
          * as never having been told.
@@ -11390,6 +11391,7 @@ public struct UlcpDevicePropertiesRecord: Equatable, Hashable {
         self.statRxBadCrc = statRxBadCrc
         self.statRxNonUmsh = statRxNonUmsh
         self.statRxAccepted = statRxAccepted
+        self.statRadioResets = statRadioResets
         self.statForwarded = statForwarded
         self.statForwardDropped = statForwardDropped
         self.statForwardCancelled = statForwardCancelled
@@ -11495,6 +11497,7 @@ public struct FfiConverterTypeUlcpDevicePropertiesRecord: FfiConverterRustBuffer
                 statRxBadCrc: FfiConverterOptionUInt32.read(from: &buf),
                 statRxNonUmsh: FfiConverterOptionUInt32.read(from: &buf),
                 statRxAccepted: FfiConverterOptionUInt32.read(from: &buf),
+                statRadioResets: FfiConverterOptionUInt32.read(from: &buf),
                 statForwarded: FfiConverterOptionUInt32.read(from: &buf),
                 statForwardDropped: FfiConverterOptionUInt32.read(from: &buf),
                 statForwardCancelled: FfiConverterOptionUInt32.read(from: &buf),
@@ -11586,6 +11589,7 @@ public struct FfiConverterTypeUlcpDevicePropertiesRecord: FfiConverterRustBuffer
         FfiConverterOptionUInt32.write(value.statRxBadCrc, into: &buf)
         FfiConverterOptionUInt32.write(value.statRxNonUmsh, into: &buf)
         FfiConverterOptionUInt32.write(value.statRxAccepted, into: &buf)
+        FfiConverterOptionUInt32.write(value.statRadioResets, into: &buf)
         FfiConverterOptionUInt32.write(value.statForwarded, into: &buf)
         FfiConverterOptionUInt32.write(value.statForwardDropped, into: &buf)
         FfiConverterOptionUInt32.write(value.statForwardCancelled, into: &buf)
@@ -12454,6 +12458,7 @@ public struct UlcpManagedPropertyIds: Equatable, Hashable {
     public var statRxBadCrc: UInt32
     public var statRxNonUmsh: UInt32
     public var statRxAccepted: UInt32
+    public var statRadioResets: UInt32
     public var statForwarded: UInt32
     public var statForwardDropped: UInt32
     public var statForwardCancelled: UInt32
@@ -12523,7 +12528,7 @@ public struct UlcpManagedPropertyIds: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(caps: UInt32, deviceVersion: UInt32, deviceModel: UInt32, deviceName: UInt32, battery: UInt32, illuminance: UInt32, temperatures: UInt32, temperatureNames: UInt32, batteryCurrent: UInt32, batteryRemainingCapacity: UInt32, batteryFullCapacity: UInt32, batteryDesignCapacity: UInt32, batteryExtPowerPresent: UInt32, batteryPresent: UInt32, batteryGaugeFull: UInt32, batteryGaugeInitialized: UInt32, batteryGaugeSmoothing: UInt32, batteryChargeVoltageRequest: UInt32, batteryGaugeFormat: UInt32, batteryGaugeStatus: UInt32, batteryGaugeOperationStatus: UInt32, phyEnabled: UInt32, frequency: UInt32, transmitPower: UInt32, loraBandwidth: UInt32, loraSpreadingFactor: UInt32, loraCodingRate: UInt32, dutyCycleNow: UInt32, dutyCycleLimit: UInt32, statTxPackets: UInt32, statTxChannelBusy: UInt32, statRxPackets: UInt32, statRxBadCrc: UInt32, statRxNonUmsh: UInt32, statRxAccepted: UInt32, statForwarded: UInt32, statForwardDropped: UInt32, statForwardCancelled: UInt32, statMeshcoreSeen: UInt32, statMeshcoreForwardedRouted: UInt32, statMeshcoreForwardedFlood: UInt32, statMeshcoreDeclined: UInt32, identRole: UInt32, identMobile: UInt32, identLocation: UInt32, identAltitude: UInt32, devDiscoverable: UInt32, gnssIdentUpdate: UInt32, gnssIdentPrecision: UInt32, uptime: UInt32, advertInterval: UInt32, beaconInterval: UInt32, startupBeacon: UInt32, gnssEnabled: UInt32, displayMotionWakeEnabled: UInt32, gnssTimeTrust: UInt32, bleEnabled: UInt32, bleBondCount: UInt32, bleLink: UInt32, blePairing: UInt32, wifiEnabled: UInt32, bridgeEnabled: UInt32, bridgeHost: UInt32, bridgePort: UInt32, bridgeServerKey: UInt32, bridgeLink: UInt32, lanBearerEnabled: UInt32, lanBearerGroup: UInt32, lanBearerIngressLimit: UInt32, lanBearerState: UInt32, devKey: UInt32, wifiNetworks: UInt32, wifiNetwork: UInt32, wifiScanning: UInt32, wifiScanResults: UInt32, wifiLink: UInt32, wifiRssi: UInt32, wifiMac: UInt32, ipv4State: UInt32, ipv4Config: UInt32, ipv4Address: UInt32, ipv6State: UInt32, ipv6Config: UInt32, ipv6Addresses: UInt32, ipDns: UInt32, ipResolvers: UInt32, time: UInt32, tzRule: UInt32, time24h: UInt32, alert: UInt32, repeaterEnabled: UInt32, repeaterRegions: UInt32, repeaterDefaultRegion: UInt32, repeaterMinRssi: UInt32, repeaterMinSnr: UInt32, meshcoreForwardingEnabled: UInt32, meshcoreRegionPolicy: UInt32, meshcoreRegions: UInt32, devPeers: UInt32, devAdmins: UInt32, testMessageAlerts: UInt32) {
+    public init(caps: UInt32, deviceVersion: UInt32, deviceModel: UInt32, deviceName: UInt32, battery: UInt32, illuminance: UInt32, temperatures: UInt32, temperatureNames: UInt32, batteryCurrent: UInt32, batteryRemainingCapacity: UInt32, batteryFullCapacity: UInt32, batteryDesignCapacity: UInt32, batteryExtPowerPresent: UInt32, batteryPresent: UInt32, batteryGaugeFull: UInt32, batteryGaugeInitialized: UInt32, batteryGaugeSmoothing: UInt32, batteryChargeVoltageRequest: UInt32, batteryGaugeFormat: UInt32, batteryGaugeStatus: UInt32, batteryGaugeOperationStatus: UInt32, phyEnabled: UInt32, frequency: UInt32, transmitPower: UInt32, loraBandwidth: UInt32, loraSpreadingFactor: UInt32, loraCodingRate: UInt32, dutyCycleNow: UInt32, dutyCycleLimit: UInt32, statTxPackets: UInt32, statTxChannelBusy: UInt32, statRxPackets: UInt32, statRxBadCrc: UInt32, statRxNonUmsh: UInt32, statRxAccepted: UInt32, statRadioResets: UInt32, statForwarded: UInt32, statForwardDropped: UInt32, statForwardCancelled: UInt32, statMeshcoreSeen: UInt32, statMeshcoreForwardedRouted: UInt32, statMeshcoreForwardedFlood: UInt32, statMeshcoreDeclined: UInt32, identRole: UInt32, identMobile: UInt32, identLocation: UInt32, identAltitude: UInt32, devDiscoverable: UInt32, gnssIdentUpdate: UInt32, gnssIdentPrecision: UInt32, uptime: UInt32, advertInterval: UInt32, beaconInterval: UInt32, startupBeacon: UInt32, gnssEnabled: UInt32, displayMotionWakeEnabled: UInt32, gnssTimeTrust: UInt32, bleEnabled: UInt32, bleBondCount: UInt32, bleLink: UInt32, blePairing: UInt32, wifiEnabled: UInt32, bridgeEnabled: UInt32, bridgeHost: UInt32, bridgePort: UInt32, bridgeServerKey: UInt32, bridgeLink: UInt32, lanBearerEnabled: UInt32, lanBearerGroup: UInt32, lanBearerIngressLimit: UInt32, lanBearerState: UInt32, devKey: UInt32, wifiNetworks: UInt32, wifiNetwork: UInt32, wifiScanning: UInt32, wifiScanResults: UInt32, wifiLink: UInt32, wifiRssi: UInt32, wifiMac: UInt32, ipv4State: UInt32, ipv4Config: UInt32, ipv4Address: UInt32, ipv6State: UInt32, ipv6Config: UInt32, ipv6Addresses: UInt32, ipDns: UInt32, ipResolvers: UInt32, time: UInt32, tzRule: UInt32, time24h: UInt32, alert: UInt32, repeaterEnabled: UInt32, repeaterRegions: UInt32, repeaterDefaultRegion: UInt32, repeaterMinRssi: UInt32, repeaterMinSnr: UInt32, meshcoreForwardingEnabled: UInt32, meshcoreRegionPolicy: UInt32, meshcoreRegions: UInt32, devPeers: UInt32, devAdmins: UInt32, testMessageAlerts: UInt32) {
         self.caps = caps
         self.deviceVersion = deviceVersion
         self.deviceModel = deviceModel
@@ -12559,6 +12564,7 @@ public struct UlcpManagedPropertyIds: Equatable, Hashable {
         self.statRxBadCrc = statRxBadCrc
         self.statRxNonUmsh = statRxNonUmsh
         self.statRxAccepted = statRxAccepted
+        self.statRadioResets = statRadioResets
         self.statForwarded = statForwarded
         self.statForwardDropped = statForwardDropped
         self.statForwardCancelled = statForwardCancelled
@@ -12678,6 +12684,7 @@ public struct FfiConverterTypeUlcpManagedPropertyIds: FfiConverterRustBuffer {
                 statRxBadCrc: FfiConverterUInt32.read(from: &buf),
                 statRxNonUmsh: FfiConverterUInt32.read(from: &buf),
                 statRxAccepted: FfiConverterUInt32.read(from: &buf),
+                statRadioResets: FfiConverterUInt32.read(from: &buf),
                 statForwarded: FfiConverterUInt32.read(from: &buf),
                 statForwardDropped: FfiConverterUInt32.read(from: &buf),
                 statForwardCancelled: FfiConverterUInt32.read(from: &buf),
@@ -12783,6 +12790,7 @@ public struct FfiConverterTypeUlcpManagedPropertyIds: FfiConverterRustBuffer {
         FfiConverterUInt32.write(value.statRxBadCrc, into: &buf)
         FfiConverterUInt32.write(value.statRxNonUmsh, into: &buf)
         FfiConverterUInt32.write(value.statRxAccepted, into: &buf)
+        FfiConverterUInt32.write(value.statRadioResets, into: &buf)
         FfiConverterUInt32.write(value.statForwarded, into: &buf)
         FfiConverterUInt32.write(value.statForwardDropped, into: &buf)
         FfiConverterUInt32.write(value.statForwardCancelled, into: &buf)

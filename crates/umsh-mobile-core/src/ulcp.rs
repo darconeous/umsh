@@ -4837,6 +4837,7 @@ pub struct UlcpManagedPropertyIds {
     pub stat_rx_bad_crc: u32,
     pub stat_rx_non_umsh: u32,
     pub stat_rx_accepted: u32,
+    pub stat_radio_resets: u32,
     pub stat_forwarded: u32,
     pub stat_forward_dropped: u32,
     pub stat_forward_cancelled: u32,
@@ -4944,6 +4945,7 @@ pub fn ulcp_managed_property_ids() -> UlcpManagedPropertyIds {
         stat_rx_bad_crc: prop::STAT_RX_BAD_CRC,
         stat_rx_non_umsh: prop::STAT_RX_NON_UMSH,
         stat_rx_accepted: prop::STAT_RX_ACCEPTED,
+        stat_radio_resets: prop::STAT_RADIO_RESETS,
         stat_forwarded: prop::STAT_FORWARDED,
         stat_forward_dropped: prop::STAT_FORWARD_DROPPED,
         stat_forward_cancelled: prop::STAT_FORWARD_CANCELLED,
@@ -5087,6 +5089,8 @@ pub fn ulcp_category_properties(
                     prop::UPTIME,
                 ],
             );
+            // Discovered per property: older firmware answers it with a status.
+            when(has(cap::STATS), &[prop::STAT_RADIO_RESETS]);
             when(
                 has(cap::STATS) && has(cap::REPEATER),
                 &[
@@ -5599,6 +5603,7 @@ pub struct UlcpDevicePropertiesRecord {
     pub stat_rx_bad_crc: Option<u32>,
     pub stat_rx_non_umsh: Option<u32>,
     pub stat_rx_accepted: Option<u32>,
+    pub stat_radio_resets: Option<u32>,
     pub stat_forwarded: Option<u32>,
     pub stat_forward_dropped: Option<u32>,
     pub stat_forward_cancelled: Option<u32>,
@@ -5850,6 +5855,7 @@ pub fn inspect_ulcp_properties(
         stat_rx_bad_crc: optional_value(at, prop::STAT_RX_BAD_CRC, decode_u32),
         stat_rx_non_umsh: optional_value(at, prop::STAT_RX_NON_UMSH, decode_u32),
         stat_rx_accepted: optional_value(at, prop::STAT_RX_ACCEPTED, decode_u32),
+        stat_radio_resets: optional_value(at, prop::STAT_RADIO_RESETS, decode_u32),
         stat_forwarded: optional_value(at, prop::STAT_FORWARDED, decode_u32),
         stat_forward_dropped: optional_value(at, prop::STAT_FORWARD_DROPPED, decode_u32),
         stat_forward_cancelled: optional_value(at, prop::STAT_FORWARD_CANCELLED, decode_u32),
@@ -6065,6 +6071,7 @@ pub fn ulcp_dirty_writes(
             | prop::STAT_RX_BAD_CRC
             | prop::STAT_RX_NON_UMSH
             | prop::STAT_RX_ACCEPTED
+            | prop::STAT_RADIO_RESETS
             | prop::STAT_FORWARDED
             | prop::STAT_FORWARD_DROPPED
             | prop::STAT_FORWARD_CANCELLED
@@ -13317,6 +13324,7 @@ mod tests {
                 prop::STAT_RX_ACCEPTED,
                 prop::PHY_DUTY_NOW,
                 prop::UPTIME,
+                prop::STAT_RADIO_RESETS,
                 prop::STAT_FORWARDED,
                 prop::STAT_FORWARD_DROPPED,
                 prop::STAT_FORWARD_CANCELLED,
@@ -13341,7 +13349,7 @@ mod tests {
                 encoded_capabilities(&[cap::STATS])
             )
             .unwrap(),
-            full[..8],
+            full[..9],
             "forwarding counters need CAP_REPEATER, MeshCore ones CAP_MESHCORE_FORWARDER"
         );
         assert_eq!(
@@ -13350,7 +13358,7 @@ mod tests {
                 encoded_capabilities(&[cap::STATS, cap::DEV_IDENTITY, cap::REPEATER])
             )
             .unwrap(),
-            full[..11],
+            full[..12],
             "MeshCore counters need CAP_MESHCORE_FORWARDER"
         );
 
@@ -13359,6 +13367,7 @@ mod tests {
             response(prop::STAT_RX_BAD_CRC, &4u32.to_le_bytes()),
             response(prop::PHY_DUTY_NOW, &655u16.to_le_bytes()),
             response(prop::UPTIME, &3600u32.to_le_bytes()),
+            response(prop::STAT_RADIO_RESETS, &2u32.to_le_bytes()),
             response(prop::STAT_MESHCORE_SEEN, &120u32.to_le_bytes()),
             response(prop::STAT_MESHCORE_FORWARDED_ROUTED, &7u32.to_le_bytes()),
             response(prop::STAT_MESHCORE_FORWARDED_FLOOD, &31u32.to_le_bytes()),
@@ -13368,6 +13377,7 @@ mod tests {
         assert_eq!(record.stat_rx_bad_crc, Some(4));
         assert_eq!(record.duty_cycle_now, Some(655));
         assert_eq!(record.uptime_seconds, Some(3600));
+        assert_eq!(record.stat_radio_resets, Some(2));
         assert_eq!(record.stat_meshcore_seen, Some(120));
         assert_eq!(record.stat_meshcore_forwarded_routed, Some(7));
         assert_eq!(record.stat_meshcore_forwarded_flood, Some(31));
@@ -13383,6 +13393,7 @@ mod tests {
                     prop::STAT_MESHCORE_FORWARDED_ROUTED,
                     prop::STAT_MESHCORE_FORWARDED_FLOOD,
                     prop::STAT_MESHCORE_DECLINED,
+                    prop::STAT_RADIO_RESETS,
                 ],
             )
             .unwrap(),
@@ -13393,6 +13404,7 @@ mod tests {
                 (prop::STAT_MESHCORE_FORWARDED_ROUTED, vec![0, 0, 0, 0]),
                 (prop::STAT_MESHCORE_FORWARDED_FLOOD, vec![0, 0, 0, 0]),
                 (prop::STAT_MESHCORE_DECLINED, vec![0, 0, 0, 0]),
+                (prop::STAT_RADIO_RESETS, vec![0, 0, 0, 0]),
             ],
             "counter reset writes do not require invented desired values"
         );
