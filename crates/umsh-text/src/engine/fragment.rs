@@ -546,7 +546,7 @@ pub fn render_slot<const SLOTS: usize, const PAGES: usize>(
     }
 }
 
-/// The body exceeds the wire maximum of 10 fragments × 160 bytes.
+/// The body needs more than [`FRAGMENT_COUNT_MAX`] fragments.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BodyTooLarge;
 
@@ -555,39 +555,60 @@ pub struct BodyTooLarge;
 pub struct FragmentPlan {
     pub count: u8,
     body_len: usize,
+    /// What the first fragment carries; the rest is shared evenly among
+    /// the continuations.
+    first_len: usize,
 }
 
 impl FragmentPlan {
     /// Plan fragmentation for a body. Returns `None` when the body fits in a
-    /// single frame (given its encoded option overhead) and `Some` plan
-    /// otherwise. Errors when the body exceeds the wire maximum.
-    pub fn plan(body_len: usize, single_frame_budget: usize) -> Result<Option<Self>, BodyTooLarge> {
-        if body_len <= single_frame_budget && body_len <= FRAGMENT_BODY_MAX {
+    /// single frame and `Some` plan otherwise. Errors when the body needs
+    /// more than [`FRAGMENT_COUNT_MAX`] fragments.
+    ///
+    /// Each budget is the body one frame carries after its encoded options:
+    /// `single_budget` unfragmented, `first_cap` as the first fragment, which
+    /// carries the message's metadata, and `cont_cap` as a continuation. A
+    /// fragment never carries more than [`FRAGMENT_BODY_MAX`] whatever the
+    /// frame would hold.
+    pub fn plan(
+        body_len: usize,
+        single_budget: usize,
+        first_cap: usize,
+        cont_cap: usize,
+    ) -> Result<Option<Self>, BodyTooLarge> {
+        if body_len <= single_budget.min(FRAGMENT_BODY_MAX) {
             return Ok(None);
         }
-        let count = body_len.div_ceil(FRAGMENT_BODY_MAX);
-        if count > FRAGMENT_COUNT_MAX as usize || count < 2 {
-            if count < 2 {
-                // Options alone exceed the frame; still send as two fragments.
-                return Ok(Some(Self { count: 2, body_len }));
-            }
-            return Err(BodyTooLarge);
-        }
+        let first_cap = first_cap.min(FRAGMENT_BODY_MAX);
+        let cont_cap = cont_cap.min(FRAGMENT_BODY_MAX);
+        // At least two: a body that misses a single frame only by its
+        // options still goes as fragments.
+        let count = (2..=FRAGMENT_COUNT_MAX)
+            .find(|&count| first_cap + (count as usize - 1) * cont_cap >= body_len)
+            .ok_or(BodyTooLarge)?;
+        let continuations = count as usize - 1;
+        // An even share, unless the continuations cannot carry what that
+        // would leave them.
+        let first_len = body_len
+            .div_ceil(count as usize)
+            .min(first_cap)
+            .max(body_len.saturating_sub(continuations * cont_cap));
         Ok(Some(Self {
-            count: count as u8,
+            count,
             body_len,
+            first_len,
         }))
     }
 
     /// Byte range of fragment `index` within the body.
     pub fn range(&self, index: u8) -> core::ops::Range<usize> {
-        let per = self
-            .body_len
-            .div_ceil(self.count as usize)
-            .min(FRAGMENT_BODY_MAX);
-        let start = per * index as usize;
-        let end = (start + per).min(self.body_len);
-        start..end
+        if index == 0 {
+            return 0..self.first_len;
+        }
+        let rest = self.body_len - self.first_len;
+        let continuations = self.count as usize - 1;
+        let at = |nth: usize| self.first_len + nth * rest / continuations;
+        at(index as usize - 1)..at(index as usize)
     }
 }
 
@@ -707,17 +728,73 @@ mod tests {
         }
     }
 
-    #[test]
-    fn fragment_plan_ranges_cover_body() {
-        let plan = FragmentPlan::plan(400, 200).unwrap().unwrap();
-        assert_eq!(plan.count, 3);
+    /// Every fragment of `plan` within its cap, together covering the body.
+    fn assert_covers(plan: &FragmentPlan, body_len: usize, first_cap: usize, cont_cap: usize) {
         let mut covered = 0;
         for index in 0..plan.count {
             let range = plan.range(index);
             assert_eq!(range.start, covered);
+            let cap = if index == 0 { first_cap } else { cont_cap };
+            assert!(
+                range.len() <= cap.min(FRAGMENT_BODY_MAX),
+                "{index}: {range:?}"
+            );
             covered = range.end;
-            assert!(range.len() <= FRAGMENT_BODY_MAX);
         }
-        assert_eq!(covered, 400);
+        assert_eq!(covered, body_len);
+    }
+
+    #[test]
+    fn fragment_plan_ranges_cover_body() {
+        let plan = FragmentPlan::plan(400, 200, 200, 200).unwrap().unwrap();
+        assert_eq!(plan.count, 3);
+        assert_covers(&plan, 400, 200, 200);
+    }
+
+    #[test]
+    fn a_body_within_one_frame_is_not_fragmented() {
+        assert_eq!(FragmentPlan::plan(120, 120, 110, 115), Ok(None));
+        // Never more than a fragment's worth, whatever the frame holds.
+        assert!(FragmentPlan::plan(200, 230, 225, 228).unwrap().is_some());
+    }
+
+    #[test]
+    fn the_count_follows_the_budgets() {
+        // A frame with room for 100 bytes after a first fragment's metadata
+        // and 110 after a continuation's.
+        for (body_len, count) in [(101, 2), (210, 2), (211, 3), (1_090, 10)] {
+            let plan = FragmentPlan::plan(body_len, 100, 100, 110)
+                .unwrap()
+                .unwrap();
+            assert_eq!(plan.count, count, "{body_len}");
+            assert_covers(&plan, body_len, 100, 110);
+        }
+        assert_eq!(FragmentPlan::plan(1_091, 100, 100, 110), Err(BodyTooLarge));
+    }
+
+    /// Ranges stay even, but never at a continuation's expense when the
+    /// first fragment has more room than the rest.
+    #[test]
+    fn ranges_are_balanced_within_each_cap() {
+        let plan = FragmentPlan::plan(200, 150, 160, 50).unwrap().unwrap();
+        assert_eq!(plan.count, 2);
+        assert_eq!(plan.range(0), 0..150);
+        assert_eq!(plan.range(1), 150..200);
+
+        let plan = FragmentPlan::plan(301, 120, 120, 120).unwrap().unwrap();
+        let lengths = [0, 1, 2].map(|index| plan.range(index).len());
+        assert_eq!((plan.count, lengths), (3, [101, 100, 100]));
+
+        // A small first fragment leaves the continuations the rest.
+        let plan = FragmentPlan::plan(300, 40, 40, 140).unwrap().unwrap();
+        assert_eq!(plan.count, 3);
+        assert_covers(&plan, 300, 40, 140);
+    }
+
+    #[test]
+    fn options_alone_past_the_frame_still_fragment() {
+        let plan = FragmentPlan::plan(5, 0, 3, 3).unwrap().unwrap();
+        assert_eq!(plan.count, 2);
+        assert_covers(&plan, 5, 3, 3);
     }
 }

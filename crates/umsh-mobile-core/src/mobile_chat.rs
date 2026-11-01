@@ -350,6 +350,7 @@ impl MobileChatState {
         conversation: ConversationKey,
         client_token: u32,
         body: &str,
+        budget: usize,
         now_ms: u64,
     ) -> Result<ComposedChatBatch, ComposeFailure> {
         self.compose_batch(
@@ -359,6 +360,7 @@ impl MobileChatState {
                 body,
                 status: false,
             },
+            budget,
             now_ms,
         )
     }
@@ -369,6 +371,7 @@ impl MobileChatState {
         client_token: u32,
         original: &MobileChatOriginalRef,
         body: &str,
+        budget: usize,
         now_ms: u64,
     ) -> Result<ComposedChatBatch, ComposeFailure> {
         let original = self.compose_ref(original).ok_or(ComposeFailure::Refused)?;
@@ -376,6 +379,7 @@ impl MobileChatState {
             conversation,
             client_token,
             ComposeIntent::Edit { original, body },
+            budget,
             now_ms,
         )
     }
@@ -385,6 +389,7 @@ impl MobileChatState {
         conversation: ConversationKey,
         client_token: u32,
         original: &MobileChatOriginalRef,
+        budget: usize,
         now_ms: u64,
     ) -> Result<ComposedChatBatch, ComposeFailure> {
         let original = self.compose_ref(original).ok_or(ComposeFailure::Refused)?;
@@ -392,6 +397,7 @@ impl MobileChatState {
             conversation,
             client_token,
             ComposeIntent::Delete { original },
+            budget,
             now_ms,
         )
     }
@@ -406,6 +412,7 @@ impl MobileChatState {
         client_token: u32,
         target: &MobileChatRegardingRef,
         body: &str,
+        budget: usize,
         now_ms: u64,
     ) -> Result<ComposedChatBatch, ComposeFailure> {
         let regarding = self.regarding_ref(target).ok_or(ComposeFailure::Refused)?;
@@ -417,6 +424,7 @@ impl MobileChatState {
                 regarding,
                 status: true,
             },
+            budget,
             now_ms,
         )
     }
@@ -430,10 +438,11 @@ impl MobileChatState {
         client_token: u32,
         target: &MobileChatRegardingRef,
         body: &str,
+        budget: usize,
         now_ms: u64,
     ) -> Result<ComposedChatBatch, ComposeFailure> {
         let Some(regarding) = self.regarding_ref(target) else {
-            return self.compose_text(conversation, client_token, body, now_ms);
+            return self.compose_text(conversation, client_token, body, budget, now_ms);
         };
         let reply = self.compose_batch(
             conversation,
@@ -443,13 +452,14 @@ impl MobileChatState {
                 regarding,
                 status: false,
             },
+            budget,
             now_ms,
         );
         // Anything else the engine refuses a reply for, it refuses the
         // plain message for too.
         match reply {
             Err(ComposeFailure::Refused) => {
-                self.compose_text(conversation, client_token, body, now_ms)
+                self.compose_text(conversation, client_token, body, budget, now_ms)
             }
             composed => composed,
         }
@@ -552,6 +562,7 @@ impl MobileChatState {
         conversation: ConversationKey,
         client_token: u32,
         intent: ComposeIntent<'_>,
+        budget: usize,
         now_ms: u64,
     ) -> Result<ComposedChatBatch, ComposeFailure> {
         // Rooms have no address in this facade, so nothing composed to one
@@ -561,7 +572,7 @@ impl MobileChatState {
         };
         let batch = self
             .facade
-            .compose(conversation, client_token, intent, None, now_ms)
+            .compose_within(conversation, client_token, intent, None, budget, now_ms)
             .map_err(|error| match error {
                 ChatComposeError::BatchPending => ComposeFailure::Pending,
                 ChatComposeError::Engine(_) | ChatComposeError::Incomplete => {
@@ -994,6 +1005,7 @@ fn decode_address(value: &str) -> Option<PublicKey> {
 mod tests {
     use super::*;
     use umsh_core::ChannelKey;
+    use umsh_text::engine::MAX_FRAME;
 
     const LOCAL: PublicKey = PublicKey([0xAA; 32]);
     const PEER: PublicKey = PublicKey([0x11; 32]);
@@ -1035,7 +1047,7 @@ mod tests {
         let (mut first, tag) = state_with_channel();
         let conversation = ConversationKey::ChannelGroup { channel: tag };
         let composed = first
-            .compose_text(conversation, 5, "on my way", 0)
+            .compose_text(conversation, 5, "on my way", MAX_FRAME, 0)
             .expect("composing into a held channel succeeds");
         let checkpoint = composed.record.checkpoint;
         assert_eq!(checkpoint.conversation_address, channel_address(tag));
@@ -1050,7 +1062,7 @@ mod tests {
         // Continuity proves the restore landed on the same stream: a cold
         // engine would hand out the ID the first message already used.
         let next = restarted
-            .compose_text(conversation, 6, "still moving", 1)
+            .compose_text(conversation, 6, "still moving", MAX_FRAME, 1)
             .expect("composing after restore succeeds");
         assert_ne!(
             next.record.mutations[0].wire_id, composed.record.mutations[0].wire_id,
@@ -1065,7 +1077,13 @@ mod tests {
     fn a_checkpoint_for_an_unheld_channel_is_diagnosed() {
         let (mut held, tag) = state_with_channel();
         let checkpoint = held
-            .compose_text(ConversationKey::ChannelGroup { channel: tag }, 1, "hi", 0)
+            .compose_text(
+                ConversationKey::ChannelGroup { channel: tag },
+                1,
+                "hi",
+                MAX_FRAME,
+                0,
+            )
             .expect("composing into a held channel succeeds")
             .record
             .checkpoint;
@@ -1087,7 +1105,7 @@ mod tests {
     fn edit_by_persisted_reference_after_facade_restart() {
         let mut first = empty_state();
         let composed = first
-            .compose_text(direct(), 7, "v1", 0)
+            .compose_text(direct(), 7, "v1", MAX_FRAME, 0)
             .expect("compose succeeds");
         let insert = composed
             .record
@@ -1111,7 +1129,7 @@ mod tests {
         );
         let _ = restarted.restore(std::slice::from_ref(&checkpoint), 0);
         let edited = restarted
-            .compose_edit(direct(), 8, &original, "v2", 1)
+            .compose_edit(direct(), 8, &original, "v2", MAX_FRAME, 1)
             .expect("wire-referenced edit composes after restart");
         let edit = edited
             .record
@@ -1145,7 +1163,7 @@ mod tests {
         // Deleting retires the archive without replacing it.
         assert!(restarted.commit(edited.record.batch_id).is_some());
         let deleted = restarted
-            .compose_delete(direct(), 9, &original, 2)
+            .compose_delete(direct(), 9, &original, MAX_FRAME, 2)
             .expect("delete composes");
         assert!(
             deleted
@@ -1165,7 +1183,10 @@ mod tests {
         // Without continuity (no restored checkpoint) the same reference is
         // rejected instead of silently starting a dangling edit.
         let mut cold = empty_state();
-        assert!(cold.compose_delete(direct(), 9, &original, 0).is_err());
+        assert!(
+            cold.compose_delete(direct(), 9, &original, MAX_FRAME, 0)
+                .is_err()
+        );
     }
 
     /// The ordinary reaction: the target is a message the peer sent, and no
@@ -1186,7 +1207,7 @@ mod tests {
             epoch: Some(0),
         };
         let composed = state
-            .compose_reaction(conversation, 1, &target, "+1", 0)
+            .compose_reaction(conversation, 1, &target, "+1", MAX_FRAME, 0)
             .expect("reaction composes against a persisted target");
         let insert = composed
             .record
@@ -1208,7 +1229,7 @@ mod tests {
         // or a delete, which would target the emote row instead.
         assert!(state.commit(composed.record.batch_id).is_some());
         let withdrawn = state
-            .compose_reaction(conversation, 2, &target, "", 1)
+            .compose_reaction(conversation, 2, &target, "", MAX_FRAME, 1)
             .expect("withdrawal composes");
         let insert = withdrawn
             .record
@@ -1226,7 +1247,7 @@ mod tests {
     fn reaction_target_from_prior_session_uses_wire_ref() {
         let mut first = empty_state();
         let composed = first
-            .compose_text(direct(), 7, "mine", 0)
+            .compose_text(direct(), 7, "mine", MAX_FRAME, 0)
             .expect("compose succeeds");
         let insert = composed
             .record
@@ -1247,7 +1268,7 @@ mod tests {
         let mut restarted = empty_state();
         let _ = restarted.restore(std::slice::from_ref(&checkpoint), 0);
         let reacted = restarted
-            .compose_reaction(direct(), 8, &target, "<3", 1)
+            .compose_reaction(direct(), 8, &target, "<3", MAX_FRAME, 1)
             .expect("wire-referenced reaction composes after restart");
         let emote = reacted
             .record
@@ -1266,7 +1287,7 @@ mod tests {
         // rather than aimed at whatever now holds that wire ID.
         let mut cold = empty_state();
         assert!(
-            cold.compose_reaction(direct(), 9, &target, "<3", 0)
+            cold.compose_reaction(direct(), 9, &target, "<3", MAX_FRAME, 0)
                 .is_err()
         );
     }
@@ -1287,7 +1308,14 @@ mod tests {
             epoch: Some(0),
         };
         let composed = state
-            .compose_reply(conversation, 1, &target, "Spikes were plenty.", 0)
+            .compose_reply(
+                conversation,
+                1,
+                &target,
+                "Spikes were plenty.",
+                MAX_FRAME,
+                0,
+            )
             .expect("reply composes against a persisted target");
         let insert = composed
             .record
@@ -1311,7 +1339,7 @@ mod tests {
     fn reply_to_unnamed_original_goes_as_plain_text() {
         let mut first = empty_state();
         let composed = first
-            .compose_text(direct(), 7, "mine", 0)
+            .compose_text(direct(), 7, "mine", MAX_FRAME, 0)
             .expect("compose succeeds");
         let insert = composed
             .record
@@ -1331,7 +1359,7 @@ mod tests {
         // No continuity: the engine refuses the reference.
         let mut cold = empty_state();
         let plain = cold
-            .compose_reply(direct(), 8, &target, "still going", 0)
+            .compose_reply(direct(), 8, &target, "still going", MAX_FRAME, 0)
             .expect("the text still composes");
         let insert = plain
             .record
@@ -1352,7 +1380,7 @@ mod tests {
             ..target
         };
         let plain = cold
-            .compose_reply(direct(), 9, &unnamed, "again", 1)
+            .compose_reply(direct(), 9, &unnamed, "again", MAX_FRAME, 1)
             .expect("the text still composes");
         assert!(
             plain
@@ -1373,16 +1401,18 @@ mod tests {
         let conversation = ConversationKey::ChannelGroup { channel: tag };
         state.facade.set_local_handle("Ada");
         let stored = state
-            .compose_text(conversation, 1, "kept", 0)
+            .compose_text(conversation, 1, "kept", MAX_FRAME, 0)
             .expect("compose succeeds");
         let checkpoint = stored.record.checkpoint.clone();
         assert!(state.commit(stored.record.batch_id).is_some());
 
         let lost = state
-            .compose_text(conversation, 2, "lost", 1)
+            .compose_text(conversation, 2, "lost", MAX_FRAME, 1)
             .expect("compose succeeds");
         assert_eq!(
-            state.compose_text(conversation, 3, "early", 1).err(),
+            state
+                .compose_text(conversation, 3, "early", MAX_FRAME, 1)
+                .err(),
             Some(ComposeFailure::Pending)
         );
         let old_session = state.session_id();
@@ -1401,7 +1431,7 @@ mod tests {
         assert_ne!(state.session_id(), old_session);
 
         let next = state
-            .compose_text(conversation, 4, "again", 3)
+            .compose_text(conversation, 4, "again", MAX_FRAME, 3)
             .expect("compose succeeds after a rejection");
         assert_eq!(
             next.record.mutations[0].wire_id, lost.record.mutations[0].wire_id,
