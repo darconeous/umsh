@@ -336,6 +336,61 @@ change the protocol but they do add a pole with the trace/pin capacitance;
 if SPI misbehaves above a few MHz, lower the clock before suspecting anything
 else.
 
+### Transmit brown-out at 8 dBm and above
+
+Observed 2026-11-01 under UMSH on more than one kit, powered from USB with a
+charged 3000 mAh cell attached and the antenna connected: a transmit at 8 dBm
+or more never completes, while one at 2 dBm always does. Once a full-power
+transmit has gone out, later ones keep going out. The one that fails is the
+first full-power transmit after the chip is initialized, and a 2 dBm transmit
+beforehand does not reliably prevent it.
+
+The SX1262 resets itself as the PA keys up. Status and registers read just
+before SetTx, and again after the transmit has had twice its airtime plus
+250 ms:
+
+| Read | Status | Device errors | OCP | TX clamp | XTA trim | Packet type |
+|---|---|---|---|---|---|---|
+| before SetTx | `0xA2` STBY_RC | none | `0x38` | `0xFE` | `0x2F` | LoRa |
+| after the deadline | `0xAA` STBY_RC, command failed | `0x0020` XOSC_START_ERR | `0x18` | `0xC8` | `0x12` | GFSK |
+
+Every value in the second row is the chip's power-on default, and
+XOSC_START_ERR in STBY_RC is the flag a TCXO-clocked SX126x raises at power-on.
+The module's supply dips below the SX1262's power-on-reset threshold. No IRQ
+follows, and the TCXO mode, DIO2 switch control, and all other configuration
+are gone until the driver resets and cold-starts the chip. That reinitialized
+chip is again on its first transmit, so retrying at full power fails the same
+way.
+
+The failure follows PA current, not configuration: 2 dBm and 8 dBm use the same
+PA setting (SetPaConfig `0x02`/`0x02`) and differ only in the SetTxParams power
+byte.
+
+Each of these still failed:
+
+- a TCXO start-up allowance of 5, 10, 100, and 500 ms
+- a 200 µs PA ramp instead of 40 µs
+- the SX1262's LDO instead of its DC-DC regulator
+- other PHY profiles, cold sleep between transmits, and no CAD gate
+- the nRF52840's REG0/REG1 DC/DC converters (see
+  [Clock, power, and USB](#clock-power-and-usb))
+
+The radio configuration matches RadioLib's as MeshCore and Meshtastic use it on
+this kit: TCXO setup, STBY_RC before each transmit, the PA table, the 140 mA
+current limit, DIO2 switch control, and RXEN low during TX.
+
+Still open: why only the first full-power transmit browns out, and why
+RadioLib-based firmware gets through it. The measurements that would settle it
+are battery-only against USB-only, a bulk capacitor across the module's `VCC`,
+and the 3V3 rail on a scope at PA key-up. The SenseCAP Solar Node shares this
+radio wiring, but this path has not been run on one.
+
+UMSH bounds every transmit, so a failure costs only that frame. The radio
+runner gives the CAD gate and transmit twice the frame's airtime plus 250 ms,
+then resets and cold-starts the chip and fails the request with
+`TransmitTimeout` (`perform_tx` in `crates/umsh-radio-loraphy`). The MAC drops
+the frame and carries on.
+
 ## D0 and the missing button
 
 The Wio-SX1262 for XIAO schematic shows, on `D0` / `P0.02`:
@@ -582,8 +637,9 @@ LPCOMP on AIN7 against 3/8 VDD with upward detection and 50 mV of hysteresis
 (`umsh-bsp-nrf52840`'s `arm_lpcomp_wake_up`, called from
 `umsh-bsp-xiao-nrf52`'s shutdown teardown), and `P0.14` stays LOW on every
 path, so the deviation above never arises. The VDD dependence turns out to be
-benign here: the cell feeds VDDH and REG0 holds VDD at 3.3 V, and while the
-regulator is in dropout the tap sits at 0.338 × VDD—below the 0.375 × VDD it
+benign here: VDD comes from a 3.3 V regulator outside the nRF52840 (see
+[Clock, power, and USB](#clock-power-and-usb)), and while that regulator is in
+dropout the tap sits at 0.338 × VDD—below the 0.375 × VDD it
 would have to cross—so the comparator cannot trip until the rail is back in
 regulation. One effective wake point at ≈3.66 V of cell, not a sliding one.
 
@@ -807,7 +863,15 @@ need for the `lfclk-rc` fallback that the Wio Tracker L1 required.
 
 **DC/DC regulators fitted.** The schematic shows the `DCC` / `DCCH` / `VDDH`
 inductor network populated, and MeshCore derives its board class from
-`NRF52BoardDCDC`. Enable the nRF52840 REG0/REG1 DC/DC converters.
+`NRF52BoardDCDC`.
+
+**VDD comes from outside the SoC.** A retail kit reads `POWER.MAINREGSTATUS` = 0:
+the nRF52840 runs in normal-voltage mode, with VDD supplied on its VDD pins.
+REG0 is not in the supply path, so neither REG0's DC/DC nor `UICR.REGOUT0`
+(erased on this unit, which would otherwise mean 1.8 V) affects the 3V3 rail
+the radio runs from. Only REG1's DC/DC changes anything, and only consumption.
+UMSH currently enables neither, and enabling both made no difference to the
+[transmit brown-out](#transmit-brown-out-at-8-dbm-and-above).
 
 **USB.** Native nRF52840 USB on a USB-C connector with 5.1 kΩ CC pulldowns. VBUS
 is visible to the MCU through the USB regulator status register, which is the
@@ -1219,7 +1283,9 @@ the volume name and family ID depend on which bootloader Seeed loaded.
   radio still responds.
 - Verify RX with RXEN driven, then TX at low power first.
 - Measure current and connector power before enabling 22 dBm; confirm the 3V3
-  rail holds up under TX on battery alone.
+  rail holds up under TX on battery alone. Under UMSH it fails even on USB
+  with a cell attached: see
+  [Transmit brown-out at 8 dBm and above](#transmit-brown-out-at-8-dbm-and-above).
 - Confirm SPI integrity through the 22 Ω series resistors at the intended clock.
 - Confirm nothing on the LED pins interferes with the radio.
 
@@ -1277,6 +1343,9 @@ the volume name and family ID depend on which bootloader Seeed loaded.
    gesture, given that the bootloader samples `P0.03` (the radio's DIO1) as an
    OTA input? And does a bare switch with no hardware debounce need a longer
    software debounce than the other UMSH boards use?
+10. Why does the first full-power transmit after initialization reset the
+    SX1262, and what lets RadioLib-based firmware past it? See
+    [Transmit brown-out at 8 dBm and above](#transmit-brown-out-at-8-dbm-and-above).
 
 ## Source references
 
@@ -1381,6 +1450,9 @@ The genuine risks are:
   UF2-writable window ends at **`0xEA000`**, not `0xED000`—also verified—
   so an over-long image is truncated with no error, and any NV store placed "at
   the top of the app window" must sit below that line.
+- **Full-power transmit.** Under UMSH the first transmit at 8 dBm or more after
+  the radio is initialized resets the SX1262, and the cause is still open. See
+  [Transmit brown-out at 8 dBm and above](#transmit-brown-out-at-8-dbm-and-above).
 - **Power budget.** There is no power switch, no load switch, and no way to cut
   the GNSS module's supply. Deep-sleep behavior on this board is entirely a
   firmware discipline problem.
