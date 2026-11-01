@@ -55,9 +55,9 @@ pub(super) enum Hop {
 
 /// The path from this device to the peer `peer`, an avatar and a name:
 /// through `repeaters`, the nearest first, then `unnamed` more nobody
-/// named, `None` when how many is not known. `hops` are the hops between the rows, in the same order. The
-/// repeaters `identifying` were asked who they are, and spin at `phase`.
-/// A `dim` path is one not known yet.
+/// named, `None` when how many is not known. `hops` are the hops between
+/// the rows, in the same order. The repeaters `identifying` were asked who
+/// they are, and spin at `phase`. A `dim` path is one not known yet.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn view(
     m: &'static Metrics,

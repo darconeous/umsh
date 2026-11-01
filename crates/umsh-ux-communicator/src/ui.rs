@@ -182,6 +182,11 @@ fn screens(state: &State) -> impl View<Rgb565, State> + use<> {
 }
 
 /// A saved peer's screens, and a channel's.
+// Kept out of line: inlined into `screens`, it grows that function past
+// what the esp toolchain's Xtensa back end estimates, and LLVM aborts with
+// `Unable to properly handle scavenged register for indirect jump`
+// (rustc 1.95.0-nightly esp).
+#[inline(never)]
 fn peer_or_channel(state: &State) -> impl View<Rgb565, State> + use<> {
     let m = state.metrics();
     match_view!(state.screen(), {
