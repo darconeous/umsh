@@ -5,7 +5,7 @@ use core::cell::RefCell;
 use core::num::NonZeroU32;
 
 use umsh_core::options::HopSignal;
-use umsh_core::{ChannelId, NodeHint, PublicKey, RouterHint};
+use umsh_core::{ChannelKey, NodeHint, PublicKey, RouterHint};
 use umsh_mac::{CachedRoute, LocalIdentityId, SendOptions};
 
 #[cfg(feature = "software-crypto")]
@@ -779,7 +779,7 @@ impl<M: MacBackend> LocalNode<M> {
             from_hint: packet.from_hint(),
             source_authenticated: packet.source_authenticated(),
             has_full_source: packet.has_full_source(),
-            channel: packet.channel().map(|c| c.id()),
+            channel: packet.channel().map(|c| *c.key),
             family: packet.packet_family(),
             filters,
             rssi: packet.rssi(),
@@ -803,7 +803,7 @@ impl<M: MacBackend> LocalNode<M> {
     pub async fn send_response_tracked(
         &self,
         to: &PublicKey,
-        channel: Option<ChannelId>,
+        channel: Option<ChannelKey>,
         payload: &[u8],
         ack_mic: Option<[u8; 4]>,
     ) -> Result<SendProgressTicket, crate::MacBackendError<M::SendError, M::CapacityError>> {
@@ -834,7 +834,7 @@ impl<M: MacBackend> LocalNode<M> {
     pub async fn send_response(
         &self,
         to: &PublicKey,
-        channel: Option<ChannelId>,
+        channel: Option<ChannelKey>,
         payload: &[u8],
         options: &SendOptions,
     ) -> Result<Option<umsh_mac::SendReceipt>, crate::MacBackendError<M::SendError, M::CapacityError>>
@@ -1060,7 +1060,7 @@ impl<M: MacBackend> LocalNode<M> {
     pub(crate) async fn answer_peer_repeaters_request(
         &self,
         to: PublicKey,
-        channel: Option<ChannelId>,
+        channel: Option<ChannelKey>,
         request: &[u8],
     ) {
         if !self.peer_repeaters_responder_enabled() {
@@ -1769,7 +1769,7 @@ impl<M: MacBackend> LocalNode<M> {
     pub(crate) async fn handle_pfs_command(
         &self,
         from: &PublicKey,
-        channel: Option<ChannelId>,
+        channel: Option<ChannelKey>,
         command: &OwnedMacCommand,
         options: &SendOptions,
     ) -> Result<Option<PfsLifecycle>, NodeError<M>> {
@@ -2154,7 +2154,7 @@ impl<M: MacBackend> Transport for BoundChannel<M> {
             .send_blind_unicast(
                 self.node.identity_id,
                 to,
-                self.channel.channel_id(),
+                self.channel.key(),
                 payload,
                 options,
             )
@@ -2171,12 +2171,7 @@ impl<M: MacBackend> Transport for BoundChannel<M> {
         let receipt = self
             .node
             .mac
-            .send_multicast(
-                self.node.identity_id,
-                self.channel.channel_id(),
-                payload,
-                options,
-            )
+            .send_multicast(self.node.identity_id, self.channel.key(), payload, options)
             .await?;
         Ok(self
             .node

@@ -21,19 +21,16 @@ struct Setup {
     local_id: LocalIdentityId,
     peer_key: PublicKey,
     peer_id: PeerId,
-    channel_id: ChannelId,
 }
 
 fn fresh() -> Setup {
     let (mut mac, local_id, peer_key, peer_id) = mac_with_keyed_peer();
     mac.add_channel(CHANNEL_KEY).unwrap();
-    let channel_id = mac.crypto().derive_channel_keys(&CHANNEL_KEY).channel_id;
     Setup {
         mac,
         local_id,
         peer_key,
         peer_id,
-        channel_id,
     }
 }
 
@@ -41,11 +38,11 @@ impl Setup {
     fn destination(&self, kind: Kind) -> SendDestination<'_> {
         match kind {
             Kind::Broadcast => SendDestination::Broadcast,
-            Kind::Multicast => SendDestination::Multicast(&self.channel_id),
+            Kind::Multicast => SendDestination::Multicast(&CHANNEL_KEY),
             Kind::Unicast => SendDestination::Unicast(&self.peer_key),
             Kind::BlindUnicast => SendDestination::BlindUnicast {
                 peer: &self.peer_key,
-                channel: &self.channel_id,
+                channel: &CHANNEL_KEY,
             },
         }
     }
@@ -65,7 +62,7 @@ impl Setup {
         options: &SendOptions,
     ) -> Result<Option<SendReceipt>, SendError> {
         let payload = std::vec![0x5A; payload_len];
-        let (local_id, peer_key, channel_id) = (self.local_id, self.peer_key, self.channel_id);
+        let (local_id, peer_key, channel) = (self.local_id, self.peer_key, CHANNEL_KEY);
         match kind {
             Kind::Broadcast => self
                 .mac
@@ -73,15 +70,14 @@ impl Setup {
                 .map(Some),
             Kind::Multicast => self
                 .mac
-                .queue_multicast(local_id, &channel_id, &payload, options)
+                .queue_multicast(local_id, &channel, &payload, options)
                 .map(Some),
             Kind::Unicast => self
                 .mac
                 .queue_unicast(local_id, &peer_key, &payload, options),
-            Kind::BlindUnicast => {
-                self.mac
-                    .queue_blind_unicast(local_id, &peer_key, &channel_id, &payload, options)
-            }
+            Kind::BlindUnicast => self
+                .mac
+                .queue_blind_unicast(local_id, &peer_key, &channel, &payload, options),
         }
     }
 

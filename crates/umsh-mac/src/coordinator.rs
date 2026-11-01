@@ -116,7 +116,8 @@ const LOST_REPLY_RETRY_WINDOW_MS: u64 = crate::route_score::CONFIRMATION_TTL_MS;
 #[derive(Clone, Copy)]
 pub(crate) enum ReplyCarriage<'a> {
     Unicast,
-    Blind(&'a DerivedChannelKeys),
+    /// Blind unicast under the exact key that opened the request.
+    Blind(&'a ChannelKey),
 }
 
 /// What a frame along a peer's route is, as far as the flood slack past the
@@ -613,8 +614,9 @@ impl<I: NodeIdentity, const PEERS: usize, const ACKS: usize, const FRAME: usize>
 /// [`SendOptions`](crate::send::SendOptions).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChannelPolicy {
-    /// Channel to which this policy applies.
-    pub channel_id: ChannelId,
+    /// Channel to which this policy applies. Named by its key: distinct
+    /// keys can share a two-byte identifier.
+    pub channel_key: ChannelKey,
     /// Whether the channel must be sent unencrypted.
     pub require_unencrypted: bool,
     /// Whether the channel requires the full source public key.
@@ -1895,7 +1897,7 @@ impl<
     pub fn queue_multicast(
         &mut self,
         from: LocalIdentityId,
-        channel_id: &ChannelId,
+        channel: &ChannelKey,
         payload: &[u8],
         options: &SendOptions,
     ) -> Result<SendReceipt, SendError> {
@@ -1904,14 +1906,13 @@ impl<
         // TODO: surface this drop as a debug-level event (see the matching
         // TODO on `queue_broadcast`) so callers can detect when their
         // requested flags were not applied.
-        let destination = SendDestination::Multicast(channel_id);
+        let destination = SendDestination::Multicast(channel);
         let options = &Self::sanitized_send_options(destination, options);
-        self.enforce_send_policy(Some(*channel_id), options, false)?;
+        self.enforce_send_policy(Some(channel), options, false)?;
 
         let derived = self
             .channels
-            .lookup_by_id(channel_id)
-            .next()
+            .lookup_by_key(channel)
             .ok_or(SendError::ChannelMissing)?
             .derived
             .clone();
@@ -1940,7 +1941,7 @@ impl<
         let salt = self.take_salt(options);
         let mut buf = [0u8; FRAME];
         let ShapedFrame::Secured(mut packet) = build_shaped(
-            SendTarget::Multicast(*channel_id),
+            SendTarget::Multicast(derived.channel_id),
             &source_key,
             &shape,
             frame_counter,
@@ -1961,11 +1962,11 @@ impl<
     pub async fn send_multicast(
         &mut self,
         from: LocalIdentityId,
-        channel_id: &ChannelId,
+        channel: &ChannelKey,
         payload: &[u8],
         options: &SendOptions,
     ) -> Result<SendReceipt, SendError> {
-        self.queue_multicast(from, channel_id, payload, options)
+        self.queue_multicast(from, channel, payload, options)
     }
 
     /// Enqueue an ACK carrying `ack_trailer` as given, using the cached
@@ -2361,37 +2362,18 @@ impl<
         &mut self,
         from: LocalIdentityId,
         peer: &PublicKey,
-        channel_id: &ChannelId,
+        channel: &ChannelKey,
         payload: &[u8],
         options: &SendOptions,
     ) -> Result<Option<SendReceipt>, SendError> {
-        let channel_keys = self
+        self.enforce_send_policy(Some(channel), options, true)?;
+        let channel_keys = &self
             .channels
-            .lookup_by_id(channel_id)
-            .next()
+            .lookup_by_key(channel)
             .ok_or(SendError::ChannelMissing)?
             .derived
             .clone();
-        self.queue_blind_unicast_with_keys(from, peer, &channel_keys, payload, options)
-    }
-
-    /// Enqueues a blind-unicast frame sealed under channel keys the caller
-    /// already holds.
-    ///
-    /// A reply takes this path rather than [`Self::queue_blind_unicast`]:
-    /// looking the channel up again by its two-byte identifier would pick the
-    /// first key that derives to it, which need not be the key that opened the
-    /// frame being answered.
-    fn queue_blind_unicast_with_keys(
-        &mut self,
-        from: LocalIdentityId,
-        peer: &PublicKey,
-        channel_keys: &DerivedChannelKeys,
-        payload: &[u8],
-        options: &SendOptions,
-    ) -> Result<Option<SendReceipt>, SendError> {
         let channel_id = channel_keys.channel_id;
-        self.enforce_send_policy(Some(channel_id), options, true)?;
         let (peer_id, _) = self
             .peer_registry
             .lookup_by_key(peer)
@@ -2405,10 +2387,7 @@ impl<
             .pairwise_keys
             .clone();
         let blind_keys = self.crypto.derive_blind_keys(&pairwise_keys, channel_keys);
-        let destination = SendDestination::BlindUnicast {
-            peer,
-            channel: &channel_id,
-        };
+        let destination = SendDestination::BlindUnicast { peer, channel };
         let source_key = *self
             .identity(from)
             .ok_or(SendError::IdentityMissing)?
@@ -2508,7 +2487,7 @@ impl<
         &mut self,
         from: LocalIdentityId,
         peer: &PublicKey,
-        channel_id: &ChannelId,
+        channel: &ChannelKey,
         payload: &[u8],
         options: &SendOptions,
     ) -> Result<Option<SendReceipt>, SendError> {
@@ -2517,7 +2496,7 @@ impl<
             .lookup_by_key(peer)
             .ok_or(SendError::PeerMissing)?;
         let _ = self.ensure_peer_crypto(from, peer_id).await?;
-        self.queue_blind_unicast(from, peer, channel_id, payload, options)
+        self.queue_blind_unicast(from, peer, channel, payload, options)
     }
 
     /// Send a response over the carriage its request arrived on.
@@ -2534,13 +2513,9 @@ impl<
     ) -> Result<Option<SendReceipt>, SendError> {
         match carriage {
             ReplyCarriage::Unicast => self.send_unicast(from, peer, payload, options).await,
-            ReplyCarriage::Blind(channel_keys) => {
-                let (peer_id, _) = self
-                    .peer_registry
-                    .lookup_by_key(peer)
-                    .ok_or(SendError::PeerMissing)?;
-                let _ = self.ensure_peer_crypto(from, peer_id).await?;
-                self.queue_blind_unicast_with_keys(from, peer, channel_keys, payload, options)
+            ReplyCarriage::Blind(channel) => {
+                self.send_blind_unicast(from, peer, channel, payload, options)
+                    .await
             }
         }
     }
@@ -3549,77 +3524,73 @@ impl<
         let mut original = [0u8; FRAME];
         original[..frame_len].copy_from_slice(&buf[..frame_len]);
         let delivered = if let Some(channel_id) = header.channel {
-            let channel_info = {
-                self.channels
-                    .lookup_by_id(&channel_id)
-                    .next()
-                    .map(|channel| (channel.channel_key.clone(), channel.derived.clone()))
-            };
-            if let Some((channel_key, derived)) = channel_info {
+            // Distinct keys can share the two-byte identifier, so each is
+            // tried until one authenticates the frame. A failed open leaves
+            // the buffer as it found it.
+            let opened = self.channels.lookup_by_id(&channel_id).find_map(|channel| {
                 let keys = PairwiseKeys {
-                    k_enc: derived.k_enc,
-                    k_mic: derived.k_mic,
+                    k_enc: channel.derived.k_enc,
+                    k_mic: channel.derived.k_mic,
                 };
-                if let Ok(body_range) =
-                    self.crypto
-                        .open_packet(&mut buf[..frame_len], header, &keys, None)
+                self.crypto
+                    .open_packet(&mut buf[..frame_len], header, &keys, None)
+                    .ok()
+                    .map(|body_range| (channel.channel_key, body_range))
+            });
+            if let Some((channel_key, body_range)) = opened {
+                if !Self::payload_is_allowed(header.packet_type(), &buf[body_range.clone()])
+                    || self.refuse_delivery(&original[..frame_len], header)
                 {
-                    if !Self::payload_is_allowed(header.packet_type(), &buf[body_range.clone()])
-                        || self.refuse_delivery(&original[..frame_len], header)
-                    {
-                        false
-                    } else if let Some(source) =
-                        self.resolve_multicast_source(&buf[..frame_len], header)
-                    {
-                        let accepted = if let Some(peer_id) = source.peer_id {
-                            let accepted = self.accept_multicast_replay(
-                                channel_id,
-                                peer_id,
-                                header,
-                                &buf[..frame_len],
-                            );
-                            if accepted {
-                                self.learn_route_for_peer(peer_id, &buf[..frame_len], header, rx);
-                            }
-                            accepted
-                        } else {
-                            self.accept_unknown_multicast_replay(header, &buf[..frame_len])
-                        };
+                    false
+                } else if let Some(source) =
+                    self.resolve_multicast_source(&buf[..frame_len], header)
+                {
+                    let accepted = if let Some(peer_id) = source.peer_id {
+                        let accepted = self.accept_multicast_replay(
+                            &channel_key,
+                            peer_id,
+                            header,
+                            &buf[..frame_len],
+                        );
                         if accepted {
-                            let mut delivered = false;
-                            for (index, slot) in self.identities.iter().enumerate() {
-                                if slot.is_none() {
-                                    continue;
-                                }
-                                delivered = true;
-                                on_event(
-                                    LocalIdentityId(index as u8),
-                                    crate::MacEventRef::Received(crate::ReceivedPacketRef::new(
-                                        &original[..frame_len],
-                                        &buf[body_range.clone()],
-                                        header.clone(),
-                                        ParsedOptions::extract(
-                                            &original[..frame_len],
-                                            header.options_range.clone(),
-                                        )
-                                        .unwrap_or_default(),
-                                        source.public_key,
-                                        source
-                                            .hint
-                                            .or_else(|| source.public_key.map(|key| key.hint())),
-                                        true,
-                                        Some(crate::ChannelInfoRef {
-                                            id: channel_id,
-                                            key: &channel_key,
-                                        }),
-                                        rx_metadata(rx, received_at_ms),
-                                    )),
-                                );
-                            }
-                            delivered
-                        } else {
-                            false
+                            self.learn_route_for_peer(peer_id, &buf[..frame_len], header, rx);
                         }
+                        accepted
+                    } else {
+                        self.accept_unknown_multicast_replay(header, &buf[..frame_len])
+                    };
+                    if accepted {
+                        let mut delivered = false;
+                        for (index, slot) in self.identities.iter().enumerate() {
+                            if slot.is_none() {
+                                continue;
+                            }
+                            delivered = true;
+                            on_event(
+                                LocalIdentityId(index as u8),
+                                crate::MacEventRef::Received(crate::ReceivedPacketRef::new(
+                                    &original[..frame_len],
+                                    &buf[body_range.clone()],
+                                    header.clone(),
+                                    ParsedOptions::extract(
+                                        &original[..frame_len],
+                                        header.options_range.clone(),
+                                    )
+                                    .unwrap_or_default(),
+                                    source.public_key,
+                                    source
+                                        .hint
+                                        .or_else(|| source.public_key.map(|key| key.hint())),
+                                    true,
+                                    Some(crate::ChannelInfoRef {
+                                        id: channel_id,
+                                        key: &channel_key,
+                                    }),
+                                    rx_metadata(rx, received_at_ms),
+                                )),
+                            );
+                        }
+                        delivered
                     } else {
                         false
                     }
@@ -3746,7 +3717,7 @@ impl<
                                             local_id,
                                             peer_id,
                                             peer_key,
-                                            ReplyCarriage::Blind(&channel_keys),
+                                            ReplyCarriage::Blind(&resolved_channel_key),
                                             header,
                                             &buf[..frame_len],
                                             &original[..frame_len],
@@ -3846,7 +3817,7 @@ impl<
                                                         local_id,
                                                         peer_id,
                                                         peer_key,
-                                                        ReplyCarriage::Blind(&channel_keys),
+                                                        ReplyCarriage::Blind(&resolved_channel_key),
                                                         &original[..frame_len],
                                                         ack_v,
                                                         rx,
@@ -3862,7 +3833,7 @@ impl<
                                                     local_id,
                                                     peer_id,
                                                     peer_key,
-                                                    ReplyCarriage::Blind(&channel_keys),
+                                                    ReplyCarriage::Blind(&resolved_channel_key),
                                                 )
                                                 .await;
                                             }
@@ -3926,7 +3897,7 @@ impl<
                                 .send_response(
                                     local_id,
                                     &peer_key,
-                                    ReplyCarriage::Blind(&channel_keys),
+                                    ReplyCarriage::Blind(&resolved_channel_key),
                                     response.as_slice(),
                                     &options,
                                 )
@@ -4467,20 +4438,20 @@ impl<
 
     fn enforce_send_policy(
         &self,
-        channel_id: Option<ChannelId>,
+        channel: Option<&ChannelKey>,
         options: &SendOptions,
         blind_unicast: bool,
     ) -> Result<(), SendError> {
         let _authority = self.classify_send_authority(options, blind_unicast)?;
 
-        let Some(channel_id) = channel_id else {
+        let Some(channel) = channel else {
             return Ok(());
         };
         let Some(policy) = self
             .operating_policy
             .channel_policies
             .iter()
-            .find(|policy| policy.channel_id == channel_id)
+            .find(|policy| policy.channel_key == *channel)
         else {
             return Ok(());
         };
@@ -5642,9 +5613,12 @@ impl<
         }
     }
 
+    /// Judge a multicast from a known peer against the window kept for it
+    /// on the channel whose key opened the frame. Channels that share an
+    /// identifier keep separate windows.
     fn accept_multicast_replay(
         &mut self,
-        channel_id: ChannelId,
+        channel_key: &ChannelKey,
         peer_id: PeerId,
         header: &PacketHeader,
         frame: &[u8],
@@ -5653,7 +5627,7 @@ impl<
             return false;
         };
         let now_ms = self.clock.now_ms();
-        let Some(channel) = self.channels.get_mut_by_id(&channel_id) else {
+        let Some(channel) = self.channels.lookup_by_key_mut(channel_key) else {
             return false;
         };
 

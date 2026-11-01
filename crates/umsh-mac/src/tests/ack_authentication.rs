@@ -361,7 +361,7 @@ fn a_blind_unicast_ack_verifies_under_the_combined_keys() {
     let receipt = block_on(alice.send_blind_unicast(
         local_id,
         bob.public_key(),
-        &channel_keys.channel_id,
+        &channel,
         b"hello",
         &SendOptions::default().with_ack_requested(true).no_flood(),
     ))

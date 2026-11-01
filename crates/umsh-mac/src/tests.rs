@@ -1,5 +1,7 @@
 mod ack_authentication;
 mod bearer;
+#[cfg(feature = "software-crypto")]
+mod colliding_channels;
 mod routing_reliability;
 mod send_shapes;
 
@@ -685,7 +687,7 @@ fn peer_registry_looks_up_by_hint_and_updates_route() {
 }
 
 #[test]
-fn channel_table_updates_existing_channel() {
+fn channel_table_keeps_colliding_keys_apart() {
     let mut table = ChannelTable::<2>::new();
     let key_a = ChannelKey([0x11; 32]);
     let key_b = ChannelKey([0x22; 32]);
@@ -700,12 +702,24 @@ fn channel_table_updates_existing_channel() {
         channel_id: ChannelId([0xAA, 0xBB]),
     };
 
-    table.try_add(key_a, derived_a).unwrap();
-    table.try_add(key_b.clone(), derived_b.clone()).unwrap();
+    table.try_add(key_a, derived_a.clone()).unwrap();
+    table.try_add(key_b, derived_b.clone()).unwrap();
 
-    let stored = table.lookup_by_id(&derived_b.channel_id).next().unwrap();
-    assert_eq!(stored.channel_key.0, key_b.0);
-    assert_eq!(stored.derived.k_enc, derived_b.k_enc);
+    // A colliding key leaves the first in place.
+    let stored: std::vec::Vec<_> = table
+        .lookup_by_id(&derived_b.channel_id)
+        .map(|channel| channel.channel_key)
+        .collect();
+    assert_eq!(stored, [key_a, key_b]);
+
+    // The same key again refreshes its own entry.
+    let refreshed = umsh_crypto::DerivedChannelKeys {
+        k_enc: [5; 32],
+        ..derived_a
+    };
+    table.try_add(key_a, refreshed).unwrap();
+    assert_eq!(table.len(), 2);
+    assert_eq!(table.lookup_by_key(&key_a).unwrap().derived.k_enc, [5; 32]);
 }
 
 #[test]
@@ -1235,7 +1249,7 @@ fn queue_blind_unicast_requires_known_channel() {
         mac.queue_blind_unicast(
             local_id,
             &peer_key,
-            &ChannelId([0xAA, 0xBB]),
+            &ChannelKey([0xAA; 32]),
             b"hello",
             &SendOptions::default()
         ),
@@ -1318,7 +1332,6 @@ fn licensed_only_mode_rejects_encrypted_blind_unicast() {
     let peer_key = test_pubkey(0xAB);
     let peer_id = mac.add_peer(peer_key).unwrap();
     let channel_key = ChannelKey([0x5A; 32]);
-    let channel_id = mac.crypto().derive_channel_id(&channel_key);
     mac.install_pairwise_keys(
         local_id,
         peer_id,
@@ -1334,7 +1347,7 @@ fn licensed_only_mode_rejects_encrypted_blind_unicast() {
         mac.queue_blind_unicast(
             local_id,
             &peer_key,
-            &channel_id,
+            &channel_key,
             b"hello",
             &SendOptions::default()
         ),
@@ -1353,7 +1366,6 @@ fn licensed_only_mode_allows_unencrypted_blind_unicast_with_operator_callsign() 
     let peer_key = test_pubkey(0xAB);
     let peer_id = mac.add_peer(peer_key).unwrap();
     let channel_key = ChannelKey([0x5A; 32]);
-    let channel_id = mac.crypto().derive_channel_id(&channel_key);
     mac.install_pairwise_keys(
         local_id,
         peer_id,
@@ -1369,7 +1381,7 @@ fn licensed_only_mode_allows_unencrypted_blind_unicast_with_operator_callsign() 
         mac.queue_blind_unicast(
             local_id,
             &peer_key,
-            &channel_id,
+            &channel_key,
             b"hello",
             &SendOptions::default().unencrypted()
         )
@@ -1415,7 +1427,6 @@ fn unlicensed_mode_allows_blind_unicast_without_operator_callsign() {
     let peer_key = test_pubkey(0xAB);
     let peer_id = mac.add_peer(peer_key).unwrap();
     let channel_key = ChannelKey([0x5A; 32]);
-    let channel_id = mac.crypto().derive_channel_id(&channel_key);
     mac.install_pairwise_keys(
         local_id,
         peer_id,
@@ -1431,7 +1442,7 @@ fn unlicensed_mode_allows_blind_unicast_without_operator_callsign() {
         mac.queue_blind_unicast(
             local_id,
             &peer_key,
-            &channel_id,
+            &channel_key,
             b"hello",
             &SendOptions::default()
         )
@@ -1580,11 +1591,10 @@ fn receive_one_drops_multicast_with_incompatible_payload_type() {
 fn channel_policy_requires_full_source_for_multicast() {
     let mut mac = make_mac();
     let channel_key = ChannelKey([0x5A; 32]);
-    let channel_id = mac.crypto().derive_channel_id(&channel_key);
     mac.operating_policy_mut()
         .channel_policies
         .push(ChannelPolicy {
-            channel_id,
+            channel_key,
             require_unencrypted: false,
             require_full_source: true,
             max_flood_hops: None,
@@ -1597,7 +1607,7 @@ fn channel_policy_requires_full_source_for_multicast() {
     assert_eq!(
         mac.queue_multicast(
             local_id,
-            &channel_id,
+            &channel_key,
             b"hello",
             &SendOptions::default().unencrypted()
         ),
@@ -1609,11 +1619,10 @@ fn channel_policy_requires_full_source_for_multicast() {
 fn channel_policy_requires_unencrypted_multicast() {
     let mut mac = make_mac();
     let channel_key = ChannelKey([0x5A; 32]);
-    let channel_id = mac.crypto().derive_channel_id(&channel_key);
     mac.operating_policy_mut()
         .channel_policies
         .push(ChannelPolicy {
-            channel_id,
+            channel_key,
             require_unencrypted: true,
             require_full_source: false,
             max_flood_hops: None,
@@ -1624,7 +1633,7 @@ fn channel_policy_requires_unencrypted_multicast() {
     mac.add_channel(channel_key).unwrap();
 
     assert_eq!(
-        mac.queue_multicast(local_id, &channel_id, b"hello", &SendOptions::default()),
+        mac.queue_multicast(local_id, &channel_key, b"hello", &SendOptions::default()),
         Err(SendError::PolicyViolation)
     );
 }
@@ -1633,11 +1642,10 @@ fn channel_policy_requires_unencrypted_multicast() {
 fn channel_policy_rejects_excess_flood_hops() {
     let mut mac = make_mac();
     let channel_key = ChannelKey([0x5A; 32]);
-    let channel_id = mac.crypto().derive_channel_id(&channel_key);
     mac.operating_policy_mut()
         .channel_policies
         .push(ChannelPolicy {
-            channel_id,
+            channel_key,
             require_unencrypted: false,
             require_full_source: false,
             max_flood_hops: Some(1),
@@ -1650,7 +1658,7 @@ fn channel_policy_rejects_excess_flood_hops() {
     assert_eq!(
         mac.queue_multicast(
             local_id,
-            &channel_id,
+            &channel_key,
             b"hello",
             &SendOptions::default().with_flood_hops(2).unencrypted()
         ),
@@ -1665,7 +1673,6 @@ fn queue_blind_unicast_enqueues_frame_and_pending_ack() {
     let peer_key = test_pubkey(0xAB);
     let peer_id = mac.add_peer(peer_key).unwrap();
     let channel_key = ChannelKey([0x5A; 32]);
-    let channel_id = mac.crypto().derive_channel_id(&channel_key);
     mac.install_pairwise_keys(
         local_id,
         peer_id,
@@ -1681,7 +1688,7 @@ fn queue_blind_unicast_enqueues_frame_and_pending_ack() {
         .queue_blind_unicast(
             local_id,
             &peer_key,
-            &channel_id,
+            &channel_key,
             b"hello",
             &SendOptions::default().with_ack_requested(true),
         )
@@ -1705,10 +1712,9 @@ fn queue_multicast_enqueues_frame_for_known_channel() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let channel_key = ChannelKey([0x5A; 32]);
-    let channel_id = mac.crypto().derive_channel_id(&channel_key);
     mac.add_channel(channel_key).unwrap();
 
-    mac.queue_multicast(local_id, &channel_id, b"hello", &SendOptions::default())
+    mac.queue_multicast(local_id, &channel_key, b"hello", &SendOptions::default())
         .unwrap();
     assert_eq!(mac.tx_queue().len(), 1);
 }
@@ -3142,7 +3148,6 @@ fn receive_one_emits_ack_received_for_matching_blind_unicast_ack() {
     let peer_key = test_pubkey(0xAB);
     let peer_id = mac.add_peer(peer_key).unwrap();
     let channel_key = ChannelKey([0x5A; 32]);
-    let channel_id = mac.crypto().derive_channel_id(&channel_key);
     mac.install_pairwise_keys(
         local_id,
         peer_id,
@@ -3158,7 +3163,7 @@ fn receive_one_emits_ack_received_for_matching_blind_unicast_ack() {
         .queue_blind_unicast(
             local_id,
             &peer_key,
-            &channel_id,
+            &channel_key,
             b"hello",
             &SendOptions::default().with_ack_requested(true),
         )
@@ -10571,14 +10576,14 @@ fn modeled_unknown_multicast_senders_deliver_unique_messages_without_peer_regist
     let sender_a = 0usize;
     let sender_b = 1usize;
     let receiver = 3usize;
-    let channel_id = install_channel_on_all(&mut scenario, ChannelKey([0x7B; 32]));
+    let channel_key = install_channel_on_all(&mut scenario, ChannelKey([0x7B; 32]));
 
     {
         let mut sender_mac = scenario.macs[sender_a].borrow_mut();
         sender_mac
             .queue_multicast(
                 scenario.identity_ids[sender_a],
-                &channel_id,
+                &channel_key,
                 b"group-from-a",
                 &SendOptions::default(),
             )
@@ -10589,7 +10594,7 @@ fn modeled_unknown_multicast_senders_deliver_unique_messages_without_peer_regist
         sender_mac
             .queue_multicast(
                 scenario.identity_ids[sender_b],
-                &channel_id,
+                &channel_key,
                 b"group-from-b",
                 &SendOptions::default(),
             )
@@ -10906,7 +10911,7 @@ fn modeled_mixed_packet_classes_coexist_on_the_same_mesh() {
     let alice = 0usize;
     let bob = 3usize;
     install_pairwise_keys_between(&mut scenario, alice, bob);
-    let channel_id = install_channel_on_all(&mut scenario, ChannelKey([0x66; 32]));
+    let channel_key = install_channel_on_all(&mut scenario, ChannelKey([0x66; 32]));
 
     let bob_unicast = Cell::new(0usize);
     let unicast_receipt = {
@@ -10956,7 +10961,7 @@ fn modeled_mixed_packet_classes_coexist_on_the_same_mesh() {
         alice_mac
             .queue_multicast(
                 scenario.identity_ids[alice],
-                &channel_id,
+                &channel_key,
                 b"mixed-multicast",
                 &SendOptions::default(),
             )
@@ -10988,7 +10993,7 @@ fn modeled_mixed_packet_classes_coexist_on_the_same_mesh() {
             .queue_blind_unicast(
                 scenario.identity_ids[bob],
                 &scenario.keys[alice],
-                &channel_id,
+                &channel_key,
                 b"mixed-blind",
                 &SendOptions::default()
                     .with_ack_requested(true)
@@ -12842,12 +12847,11 @@ fn an_overheard_multicast_forward_is_reported() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let channel_key = ChannelKey([0x5A; 32]);
-    let channel_id = mac.crypto().derive_channel_id(&channel_key);
     mac.add_channel(channel_key).unwrap();
     let receipt = mac
         .queue_multicast(
             local_id,
-            &channel_id,
+            &channel_key,
             b"hello",
             &SendOptions::default().with_flood_hops(3),
         )
@@ -12869,12 +12873,11 @@ fn a_forward_after_the_echo_watch_is_not_reported() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let channel_key = ChannelKey([0x5A; 32]);
-    let channel_id = mac.crypto().derive_channel_id(&channel_key);
     mac.add_channel(channel_key).unwrap();
     let _ = mac
         .queue_multicast(
             local_id,
-            &channel_id,
+            &channel_key,
             b"hello",
             &SendOptions::default().with_flood_hops(3),
         )
@@ -13248,14 +13251,13 @@ fn dfu_reply_receipts_track_unicast_transmission_without_wire_acknowledgments() 
             )
             .unwrap();
             let key = ChannelKey([0x5A; 32]);
-            let channel = mac.crypto().derive_channel_id(&key);
             mac.add_channel(key).unwrap();
             let options = SendOptions {
                 track_transmission: true,
                 ..SendOptions::default().no_flood()
             };
             let receipt = if blind {
-                mac.queue_blind_unicast(local, &peer, &channel, b"dfu reply", &options)
+                mac.queue_blind_unicast(local, &peer, &key, b"dfu reply", &options)
             } else {
                 mac.queue_unicast(local, &peer, b"dfu reply", &options)
             }
@@ -13673,15 +13675,11 @@ fn pump_modeled_until(
     panic!("timed out waiting for {waiting_for}");
 }
 
-fn install_channel_on_all(scenario: &mut ModeledScenario, channel_key: ChannelKey) -> ChannelId {
-    let channel_id = scenario.macs[0]
-        .borrow()
-        .crypto()
-        .derive_channel_id(&channel_key);
+fn install_channel_on_all(scenario: &mut ModeledScenario, channel_key: ChannelKey) -> ChannelKey {
     for mac in &scenario.macs {
-        mac.borrow_mut().add_channel(channel_key.clone()).unwrap();
+        mac.borrow_mut().add_channel(channel_key).unwrap();
     }
-    channel_id
+    channel_key
 }
 
 fn build_reserved5_frame(

@@ -4746,8 +4746,10 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         let scratch = &mut self.scratch[..data.len()];
         scratch.copy_from_slice(data);
 
-        // Establish the frame's keys, destination, and source peer.
-        let (keys, peer_index, blind_addr) = match packet_type {
+        // Establish the frame's keys, destination, and source peer. A blind
+        // unicast is opened while its candidate channels are tried, and
+        // brings its body range along.
+        let (keys, peer_index, blind_addr, opened) = match packet_type {
             PacketType::Unicast | PacketType::UnicastAckReq => {
                 if header.dst != Some(host_hint) {
                     return SecureRx::Plain;
@@ -4766,52 +4768,59 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     },
                     index,
                     None,
+                    None,
                 )
             }
             PacketType::BlindUnicast | PacketType::BlindUnicastAckReq => {
                 // BUAR/BUNI require the channel key both to reveal the
                 // concealed addressing and to form the combined blind
-                // payload keys.
+                // payload keys. Distinct keys share identifiers, so each
+                // matching one is tried, every attempt from the wire bytes.
                 let Some(channel) = header.channel else {
                     return SecureRx::Plain;
                 };
-                let Some(channel_key) = self
-                    .host
-                    .channel_keys
-                    .iter()
-                    .find(|candidate| candidate.channel_id() == channel.0)
-                    .map(|candidate| candidate.key)
-                else {
-                    return SecureRx::Plain;
-                };
-                let channel_keys = self.engine.derive_channel_keys(&ChannelKey(channel_key));
-                let Ok(opened) = self
-                    .engine
-                    .decrypt_blind_addr(scratch, &header, &channel_keys)
-                else {
-                    return SecureRx::Plain;
-                };
-                let (dst, source) = (opened.dst, opened.source);
-                if dst != host_hint {
-                    return SecureRx::Plain;
+                let mut opened = None;
+                for candidate in self.host.channel_keys.iter() {
+                    if candidate.channel_id() != channel.0 {
+                        continue;
+                    }
+                    scratch.copy_from_slice(data);
+                    let channel_keys = self.engine.derive_channel_keys(&ChannelKey(candidate.key));
+                    let Ok(addr) = self
+                        .engine
+                        .decrypt_blind_addr(scratch, &header, &channel_keys)
+                    else {
+                        continue;
+                    };
+                    if addr.dst != host_hint {
+                        continue;
+                    }
+                    // The decrypted address block lives in the scratch copy.
+                    let Some(index) = self.host.peer_keys.resolve_source(&addr.source, scratch)
+                    else {
+                        continue;
+                    };
+                    let entry = &self.host.peer_keys.entries[index]
+                        .as_ref()
+                        .expect("resolved index is populated")
+                        .entry;
+                    let pairwise = PairwiseKeys {
+                        k_enc: entry.k_enc,
+                        k_mic: entry.k_mic,
+                    };
+                    let keys = self.engine.derive_blind_keys(&pairwise, &channel_keys);
+                    if let Ok(body_range) =
+                        self.engine
+                            .open_packet(scratch, &header, &keys, Some(&addr.addr))
+                    {
+                        opened = Some((keys, index, Some(addr.addr), Some(body_range)));
+                        break;
+                    }
                 }
-                // The decrypted address block lives in the scratch copy.
-                let Some(index) = self.host.peer_keys.resolve_source(&source, scratch) else {
+                let Some(opened) = opened else {
                     return SecureRx::Plain;
                 };
-                let entry = &self.host.peer_keys.entries[index]
-                    .as_ref()
-                    .expect("resolved index is populated")
-                    .entry;
-                let pairwise = PairwiseKeys {
-                    k_enc: entry.k_enc,
-                    k_mic: entry.k_mic,
-                };
-                (
-                    self.engine.derive_blind_keys(&pairwise, &channel_keys),
-                    index,
-                    Some(opened.addr),
-                )
+                opened
             }
             // Multicast the device holds the channel key for is
             // authenticated for queue-local duplicate coalescing only:
@@ -4822,23 +4831,25 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 let Some(channel) = header.channel else {
                     return SecureRx::Plain;
                 };
-                let Some(channel_key) = self
+                // Each key sharing the identifier is tried; a failed open
+                // leaves the scratch copy as it was.
+                let engine = &self.engine;
+                let Some((channel_key, body_range)) = self
                     .host
                     .channel_keys
                     .iter()
-                    .find(|candidate| candidate.channel_id() == channel.0)
-                    .map(|candidate| candidate.key)
-                else {
-                    return SecureRx::Plain;
-                };
-                let derived = self.engine.derive_channel_keys(&ChannelKey(channel_key));
-                let channel_pairwise = PairwiseKeys {
-                    k_enc: derived.k_enc,
-                    k_mic: derived.k_mic,
-                };
-                let Ok(body_range) =
-                    self.engine
-                        .open_packet(scratch, &header, &channel_pairwise, None)
+                    .filter(|candidate| candidate.channel_id() == channel.0)
+                    .find_map(|candidate| {
+                        let derived = engine.derive_channel_keys(&ChannelKey(candidate.key));
+                        let channel_pairwise = PairwiseKeys {
+                            k_enc: derived.k_enc,
+                            k_mic: derived.k_mic,
+                        };
+                        engine
+                            .open_packet(scratch, &header, &channel_pairwise, None)
+                            .ok()
+                            .map(|body_range| (candidate.key, body_range))
+                    })
                 else {
                     return SecureRx::Plain;
                 };
@@ -4883,11 +4894,15 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         };
 
         // Authenticate (and decrypt, in the scratch copy).
-        let Ok(body_range) = self
-            .engine
-            .open_packet(scratch, &header, &keys, blind_addr.as_ref())
-        else {
-            return SecureRx::Plain;
+        let body_range = match opened {
+            Some(body_range) => body_range,
+            None => match self
+                .engine
+                .open_packet(scratch, &header, &keys, blind_addr.as_ref())
+            {
+                Ok(body_range) => body_range,
+                Err(_) => return SecureRx::Plain,
+            },
         };
         let Some(sec_info) = header.sec_info else {
             return SecureRx::Plain;
@@ -17531,6 +17546,49 @@ mod tests {
         rx_effect(&mut session, &sealed_multicast(2, &other_key, 0x11), 0);
         let notice = session.take_queued_notice().expect("queued");
         assert!(notice.cue, "the other channel was never muted");
+    }
+
+    /// A key other than `[0x42; 32]` with the same two-octet identifier:
+    /// the first `n ‖ 77…77`, counting `n` up from zero, that has it.
+    fn colliding_with_0x42() -> [u8; 32] {
+        let mut key = [0x77; 32];
+        key[..4].copy_from_slice(&0x2A2Du32.to_be_bytes());
+        let engine = test_engine();
+        assert_eq!(
+            engine.derive_channel_id(&ChannelKey(key)),
+            engine.derive_channel_id(&ChannelKey([0x42; 32]))
+        );
+        key
+    }
+
+    /// Keys that share an identifier are each tried, in either order, so
+    /// a frame is matched to the key that sealed it, and muting one leaves
+    /// the other heard.
+    #[test]
+    fn colliding_channels_are_told_apart_by_the_key_that_opened_the_frame() {
+        let muted = [0x42u8; 32];
+        let heard = colliding_with_0x42();
+        for order in [[muted, heard], [heard, muted]] {
+            let mut session = auto_ack_session();
+            session.attach(true);
+            for key in order {
+                install_channel_key(&mut session, &key);
+            }
+            insert_item(
+                &mut session,
+                prop::HOST_MUTED_CHANNELS,
+                &channel_tag(&muted),
+            );
+            session.detach();
+
+            rx_effect(&mut session, &sealed_multicast(1, &heard, 0x11), 0);
+            let notice = session.take_queued_notice().expect("queued");
+            assert!(notice.cue, "opened under the unmuted key");
+
+            rx_effect(&mut session, &sealed_multicast(2, &muted, 0x11), 0);
+            let notice = session.take_queued_notice().expect("queued");
+            assert!(!notice.cue, "opened under the muted key");
+        }
     }
 
     #[test]

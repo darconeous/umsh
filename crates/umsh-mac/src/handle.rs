@@ -1,7 +1,7 @@
 use core::future::poll_fn;
 
 use rand::Rng;
-use umsh_core::{ChannelId, ChannelKey, PublicKey};
+use umsh_core::{ChannelKey, PublicKey};
 use umsh_hal::{Clock, CounterStore};
 use umsh_sync::AsyncRefCell;
 
@@ -394,7 +394,7 @@ impl<
     pub async fn send_multicast(
         &self,
         from: LocalIdentityId,
-        channel: &ChannelId,
+        channel: &ChannelKey,
         payload: &[u8],
         options: &SendOptions,
     ) -> Result<SendReceipt, SendError> {
@@ -425,7 +425,7 @@ impl<
         &self,
         from: LocalIdentityId,
         dst: &PublicKey,
-        channel: &ChannelId,
+        channel: &ChannelKey,
         payload: &[u8],
         options: &SendOptions,
     ) -> Result<Option<SendReceipt>, SendError> {

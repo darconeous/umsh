@@ -19,7 +19,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use heapless::Deque;
-use umsh_core::{ChannelId, NodeHint, PayloadType, PublicKey, RouterHint, options::TraceRef};
+use umsh_core::{ChannelKey, NodeHint, PayloadType, PublicKey, RouterHint, options::TraceRef};
 use umsh_mac::{PacketFamily, Snr};
 
 use crate::identity::{NodeCapabilities, NodeIdentityPayload, NodeRole};
@@ -204,7 +204,7 @@ pub struct IdentityRequestContext<'a> {
     pub has_full_source: bool,
     /// The channel the request arrived on, if any (`None` for plain
     /// broadcast/unicast).
-    pub channel: Option<ChannelId>,
+    pub channel: Option<ChannelKey>,
     /// Coarse packet family (Unicast / Broadcast / Multicast / BlindUnicast).
     pub family: PacketFamily,
     /// The request's filter/option block, for policies that inspect it further.
@@ -340,7 +340,7 @@ pub(crate) struct IdentityResponsePlan {
     /// in the clear would name them. A multicast or broadcast solicitation
     /// carries a channel too but is answered by targeted unicast, which is what
     /// keeps one solicitation from drawing a crowd of channel-wide replies.
-    pub(crate) channel: Option<ChannelId>,
+    pub(crate) channel: Option<ChannelKey>,
     /// The framed reply payload: `PayloadType::NodeIdentity` + encoded identity.
     pub(crate) framed: Vec<u8>,
 }

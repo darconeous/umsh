@@ -130,7 +130,7 @@ impl<M: MacBackend> Host<M> {
         let pending_pfs = Rc::new(RefCell::new(Vec::<(
             LocalIdentityId,
             umsh_core::PublicKey,
-            Option<umsh_core::ChannelId>,
+            Option<umsh_core::ChannelKey>,
             OwnedMacCommand,
         )>::new()));
         let pending_pfs_ref = pending_pfs.clone();
@@ -141,7 +141,7 @@ impl<M: MacBackend> Host<M> {
         let pending_peer_repeaters = Rc::new(RefCell::new(Vec::<(
             LocalNode<M>,
             umsh_core::PublicKey,
-            Option<umsh_core::ChannelId>,
+            Option<umsh_core::ChannelKey>,
             Vec<u8>,
         )>::new()));
         let pending_peer_repeaters_ref = pending_peer_repeaters.clone();
@@ -213,7 +213,7 @@ impl<M: MacBackend> Host<M> {
         let queued: Vec<(
             LocalIdentityId,
             umsh_core::PublicKey,
-            Option<umsh_core::ChannelId>,
+            Option<umsh_core::ChannelKey>,
             OwnedMacCommand,
         )> = pending_pfs.borrow_mut().drain(..).collect();
         // Forward secrecy needs the software crypto back end; without it, a
@@ -235,7 +235,7 @@ impl<M: MacBackend> Host<M> {
         let peer_repeater_requests: Vec<(
             LocalNode<M>,
             umsh_core::PublicKey,
-            Option<umsh_core::ChannelId>,
+            Option<umsh_core::ChannelKey>,
             Vec<u8>,
         )> = pending_peer_repeaters.borrow_mut().drain(..).collect();
         for (node, from, channel, request) in peer_repeater_requests {
@@ -299,7 +299,7 @@ impl<M: MacBackend> Host<M> {
         &mut self,
         identity_id: LocalIdentityId,
         from: umsh_core::PublicKey,
-        channel: Option<umsh_core::ChannelId>,
+        channel: Option<umsh_core::ChannelKey>,
         command: OwnedMacCommand,
     ) {
         let Some(node) = self.route_node(identity_id) else {
@@ -441,7 +441,7 @@ fn dispatch_payload_callbacks<M: MacBackend>(
             Vec<(
                 LocalIdentityId,
                 umsh_core::PublicKey,
-                Option<umsh_core::ChannelId>,
+                Option<umsh_core::ChannelKey>,
                 OwnedMacCommand,
             )>,
         >,
@@ -452,7 +452,7 @@ fn dispatch_payload_callbacks<M: MacBackend>(
             Vec<(
                 LocalNode<M>,
                 umsh_core::PublicKey,
-                Option<umsh_core::ChannelId>,
+                Option<umsh_core::ChannelKey>,
                 Vec<u8>,
             )>,
         >,
@@ -522,7 +522,7 @@ fn dispatch_payload_callbacks<M: MacBackend>(
             // for itself how to answer a multicast or broadcast solicitation.
             let reply_channel =
                 matches!(packet.packet_family(), umsh_mac::PacketFamily::BlindUnicast)
-                    .then(|| packet.channel().map(|c| c.id()))
+                    .then(|| packet.channel().map(|c| *c.key))
                     .flatten();
             // Match borrowed variants before converting to owned.
             if let mac_command::MacCommand::EchoResponse { data } = command {

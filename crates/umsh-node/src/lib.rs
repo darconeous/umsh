@@ -1111,7 +1111,7 @@ mod tests {
         payload: Vec<u8>,
         options: SendOptions,
         /// The channel a blind unicast went out on; `None` for plain unicast.
-        channel: Option<ChannelId>,
+        channel: Option<ChannelKey>,
     }
 
     #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]

@@ -2135,11 +2135,15 @@ mod tests {
         let mut wire = packet.as_bytes().to_vec();
         let header = PacketHeader::parse(&wire).unwrap();
         wire[header.body_range.start] ^= 0x01;
+        let tampered = wire.clone();
 
         assert!(matches!(
             engine.open_packet(&mut wire, &header, &keys, None),
             Err(CryptoError::AuthenticationFailed)
         ));
+        // A failed open leaves its input exactly as it was, so the next
+        // candidate key starts from the wire bytes.
+        assert_eq!(wire, tampered);
     }
 
     // ── decrypt_blind_addr: encrypted hint source (len == 3) ─────────────────

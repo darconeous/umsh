@@ -1,4 +1,4 @@
-use umsh_core::{ChannelId, ChannelKey, PublicKey};
+use umsh_core::{ChannelKey, PublicKey};
 use umsh_mac::{
     AddPeerError, CachedRoute, CapacityError, LocalIdentityId, MacError, MacEventRef, MacHandle,
     PeerId, Platform, SendDestination, SendError, SendOptions, SendReceipt,
@@ -86,7 +86,7 @@ pub trait MacBackend: Clone {
     async fn send_multicast(
         &self,
         from: LocalIdentityId,
-        channel: &ChannelId,
+        channel: &ChannelKey,
         payload: &[u8],
         options: &SendOptions,
     ) -> Result<SendReceipt, MacBackendError<Self::SendError, Self::CapacityError>>;
@@ -103,7 +103,7 @@ pub trait MacBackend: Clone {
         &self,
         from: LocalIdentityId,
         dst: &PublicKey,
-        channel: &ChannelId,
+        channel: &ChannelKey,
         payload: &[u8],
         options: &SendOptions,
     ) -> Result<Option<SendReceipt>, MacBackendError<Self::SendError, Self::CapacityError>>;
@@ -379,7 +379,7 @@ impl<
     async fn send_multicast(
         &self,
         from: LocalIdentityId,
-        channel: &ChannelId,
+        channel: &ChannelKey,
         payload: &[u8],
         options: &SendOptions,
     ) -> Result<SendReceipt, MacBackendError<Self::SendError, Self::CapacityError>> {
@@ -404,7 +404,7 @@ impl<
         &self,
         from: LocalIdentityId,
         dst: &PublicKey,
-        channel: &ChannelId,
+        channel: &ChannelKey,
         payload: &[u8],
         options: &SendOptions,
     ) -> Result<Option<SendReceipt>, MacBackendError<Self::SendError, Self::CapacityError>> {

@@ -19,29 +19,40 @@ use umsh_core::MicSize;
 pub enum SendDestination<'a> {
     /// A broadcast.
     Broadcast,
-    /// A multicast on a configured channel.
-    Multicast(&'a ChannelId),
+    /// A multicast on a configured channel, named by its key.
+    Multicast(&'a ChannelKey),
     /// A unicast to a registered peer.
     Unicast(&'a PublicKey),
     /// A blind unicast to a registered peer over a configured channel.
     BlindUnicast {
         /// The destination.
         peer: &'a PublicKey,
-        /// The channel it is sealed under.
-        channel: &'a ChannelId,
+        /// The configured channel it is sealed under, named by its key.
+        channel: &'a ChannelKey,
     },
 }
 
 impl SendDestination<'_> {
-    fn target(&self) -> SendTarget {
+    /// `channel_id` is the identifier the destination's channel key
+    /// derives, for the kinds that have one. Only its width matters to a
+    /// measurement.
+    fn target(&self, channel_id: Option<ChannelId>) -> SendTarget {
+        let channel_id = || channel_id.unwrap_or(ChannelId([0; 2]));
         match *self {
             Self::Broadcast => SendTarget::Broadcast,
-            Self::Multicast(channel) => SendTarget::Multicast(*channel),
+            Self::Multicast(_) => SendTarget::Multicast(channel_id()),
             Self::Unicast(peer) => SendTarget::Unicast(peer.hint()),
-            Self::BlindUnicast { peer, channel } => SendTarget::BlindUnicast {
-                channel: *channel,
+            Self::BlindUnicast { peer, .. } => SendTarget::BlindUnicast {
+                channel: channel_id(),
                 dst: peer.hint(),
             },
+        }
+    }
+
+    fn channel(&self) -> Option<&ChannelKey> {
+        match *self {
+            Self::Multicast(channel) | Self::BlindUnicast { channel, .. } => Some(channel),
+            Self::Broadcast | Self::Unicast(_) => None,
         }
     }
 
@@ -329,6 +340,11 @@ impl<
         destination: SendDestination<'_>,
         options: &SendOptions,
     ) -> Result<ShapeChain, SendError> {
+        if let Some(channel) = destination.channel()
+            && self.channels.lookup_by_key(channel).is_none()
+        {
+            return Err(SendError::ChannelMissing);
+        }
         let base = SendShape {
             full_source: options.full_source,
             ack_requested: options.ack_requested,
@@ -434,8 +450,12 @@ impl<
         // exactly what the real values will.
         let mut buf = [0u8; FRAME];
         let salt = shape.salted.then_some(0);
+        let channel_id = destination
+            .channel()
+            .and_then(|key| self.channels.lookup_by_key(key))
+            .map(|channel| channel.derived.channel_id);
         let frame = build_shaped(
-            destination.target(),
+            destination.target(channel_id),
             source,
             shape,
             0,

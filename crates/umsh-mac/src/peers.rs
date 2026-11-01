@@ -1017,18 +1017,27 @@ impl<const N: usize, const RN: usize, const HN: usize> ChannelTable<N, RN, HN> {
         self.channels.is_empty()
     }
 
-    /// Iterate over channels whose derived identifier matches `id`.
+    /// Iterate over channels whose derived identifier matches `id`, in the
+    /// order they were added. Distinct keys can share an identifier, so a
+    /// frame naming `id` is tried against each until one authenticates it.
     pub fn lookup_by_id(&self, id: &ChannelId) -> impl Iterator<Item = &ChannelState<RN, HN>> {
         self.channels
             .iter()
             .filter(move |channel| channel.derived.channel_id == *id)
     }
 
-    /// Mutably borrow the first channel whose derived identifier matches `id`.
-    pub fn get_mut_by_id(&mut self, id: &ChannelId) -> Option<&mut ChannelState<RN, HN>> {
+    /// The channel holding exactly this key.
+    pub fn lookup_by_key(&self, key: &ChannelKey) -> Option<&ChannelState<RN, HN>> {
+        self.channels
+            .iter()
+            .find(|channel| channel.channel_key == *key)
+    }
+
+    /// Mutably borrow the channel holding exactly this key.
+    pub fn lookup_by_key_mut(&mut self, key: &ChannelKey) -> Option<&mut ChannelState<RN, HN>> {
         self.channels
             .iter_mut()
-            .find(|channel| channel.derived.channel_id == *id)
+            .find(|channel| channel.channel_key == *key)
     }
 
     /// Iterate over all channel states.
@@ -1048,7 +1057,7 @@ impl<const N: usize, const RN: usize, const HN: usize> ChannelTable<N, RN, HN> {
         let Some(index) = self
             .channels
             .iter()
-            .position(|channel| channel.channel_key.0 == key.0)
+            .position(|channel| channel.channel_key == *key)
         else {
             return false;
         };
@@ -1056,14 +1065,15 @@ impl<const N: usize, const RN: usize, const HN: usize> ChannelTable<N, RN, HN> {
         true
     }
 
-    /// Add or replace a channel entry.
+    /// Add a channel, or refresh the entry already holding this key. A
+    /// different key that derives the same identifier gets an entry of its
+    /// own: identifiers are two bytes and collide.
     pub fn try_add(
         &mut self,
         key: ChannelKey,
         derived: DerivedChannelKeys,
     ) -> Result<(), CapacityError> {
-        if let Some(channel) = self.get_mut_by_id(&derived.channel_id) {
-            channel.channel_key = key;
+        if let Some(channel) = self.lookup_by_key_mut(&key) {
             channel.derived = derived;
             return Ok(());
         }
