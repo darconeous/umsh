@@ -338,9 +338,13 @@ else.
 
 ### Transmit brown-out at 8 dBm and above
 
-Observed 2026-11-01 under UMSH on more than one kit, powered from USB with a
-charged 3000 mAh cell attached and the antenna connected: a transmit at 8 dBm
-or more never completes, while one at 2 dBm always does. Once a full-power
+Observed 2026-11-01 under UMSH, powered from USB with a charged 3000 mAh cell
+attached and the antenna connected: a transmit at 8 dBm or more never
+completes, while one at 2 dBm always does. The readings below all come from one
+unit, which also has the [receive wedge](#receive-wedge-on-one-unit) a second
+kit does not, so the brown-out may be that unit's fault rather than the
+design's. A transmit failure was seen on another board too, but before the two
+faults could be told apart. Once a full-power
 transmit has gone out, later ones keep going out. The one that fails is the
 first full-power transmit after the chip is initialized, and a 2 dBm transmit
 beforehand does not reliably prevent it.
@@ -356,7 +360,8 @@ before SetTx, and again after the transmit has had twice its airtime plus
 
 Every value in the second row is the chip's power-on default, and
 XOSC_START_ERR in STBY_RC is the flag a TCXO-clocked SX126x raises at power-on.
-The module's supply dips below the SX1262's power-on-reset threshold. No IRQ
+The readings fit the module's supply dipping below the SX1262's
+power-on-reset threshold. No IRQ
 follows, and the TCXO mode, DIO2 switch control, and all other configuration
 are gone until the driver resets and cold-starts the chip. That reinitialized
 chip is again on its first transmit, so retrying at full power fails the same
@@ -379,8 +384,9 @@ The radio configuration matches RadioLib's as MeshCore and Meshtastic use it on
 this kit: TCXO setup, STBY_RC before each transmit, the PA table, the 140 mA
 current limit, DIO2 switch control, and RXEN low during TX.
 
-Still open: why only the first full-power transmit browns out, and why
-RadioLib-based firmware gets through it. The measurements that would settle it
+Still open: whether a sound kit browns out at all, and if one does, why only
+the first full-power transmit browns out and why RadioLib-based firmware gets
+through it. The measurements that would settle it
 are battery-only against USB-only, a bulk capacitor across the module's `VCC`,
 and the 3V3 rail on a scope at PA key-up. The SenseCAP Solar Node shares this
 radio wiring, but this path has not been run on one.
@@ -390,6 +396,24 @@ runner gives the CAD gate and transmit twice the frame's airtime plus 250 ms,
 then resets and cold-starts the chip and fails the request with
 `TransmitTimeout` (`perform_tx` in `crates/umsh-radio-loraphy`). The MAC drops
 the frame and carries on.
+
+### Receive wedge on one unit
+
+Observed 2026-11-01 under UMSH on the unit above, at SF10/500 kHz: after an IRQ
+raised during reception, BUSY stays high, with DIO1 still high, for longer than
+a maximum-length frame could last, until the chip is reset. With mesh traffic
+on the air this happens every few seconds, and the unit receives almost
+nothing. A second kit on the same firmware, beside it, received normally and
+never overran. Swapping antennas between the two and reseating the unit's
+boards changed nothing.
+
+UMSH gives every chip operation a limit, resets the chip when one passes, and
+counts the reset in `PROP_STAT_RADIO_RESETS` (`radio resets` in
+`umshctl info stats`). On a sound kit the count stays at zero, so one that
+climbs marks a unit like this one.
+
+Still open: whether the fault is in the radio board or on the XIAO's side.
+Moving each XIAO to the other radio board would tell.
 
 ## D0 and the missing button
 
@@ -1283,8 +1307,8 @@ the volume name and family ID depend on which bootloader Seeed loaded.
   radio still responds.
 - Verify RX with RXEN driven, then TX at low power first.
 - Measure current and connector power before enabling 22 dBm; confirm the 3V3
-  rail holds up under TX on battery alone. Under UMSH it fails even on USB
-  with a cell attached: see
+  rail holds up under TX on battery alone. One unit fails even on USB with a
+  cell attached: see
   [Transmit brown-out at 8 dBm and above](#transmit-brown-out-at-8-dbm-and-above).
 - Confirm SPI integrity through the 22 Ω series resistors at the intended clock.
 - Confirm nothing on the LED pins interferes with the radio.
@@ -1343,8 +1367,9 @@ the volume name and family ID depend on which bootloader Seeed loaded.
    gesture, given that the bootloader samples `P0.03` (the radio's DIO1) as an
    OTA input? And does a bare switch with no hardware debounce need a longer
    software debounce than the other UMSH boards use?
-10. Why does the first full-power transmit after initialization reset the
-    SX1262, and what lets RadioLib-based firmware past it? See
+10. Does the first full-power transmit after initialization reset the SX1262
+    on a sound kit, as it does on the faulty unit, and if so, what lets
+    RadioLib-based firmware past it? See
     [Transmit brown-out at 8 dBm and above](#transmit-brown-out-at-8-dbm-and-above).
 
 ## Source references
@@ -1450,8 +1475,9 @@ The genuine risks are:
   UF2-writable window ends at **`0xEA000`**, not `0xED000`—also verified—
   so an over-long image is truncated with no error, and any NV store placed "at
   the top of the app window" must sit below that line.
-- **Full-power transmit.** Under UMSH the first transmit at 8 dBm or more after
-  the radio is initialized resets the SX1262, and the cause is still open. See
+- **Full-power transmit.** On one unit, which also has a receive fault, the
+  first transmit at 8 dBm or more after the radio is initialized resets the
+  SX1262. Whether a sound kit does the same is still open. See
   [Transmit brown-out at 8 dBm and above](#transmit-brown-out-at-8-dbm-and-above).
 - **Power budget.** There is no power switch, no load switch, and no way to cut
   the GNSS module's supply. Deep-sleep behavior on this board is entirely a

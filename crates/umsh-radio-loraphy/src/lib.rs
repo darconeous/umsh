@@ -74,9 +74,10 @@ fn note_bad_crc(stats: Option<&'static StatsLedger>) {
 }
 
 /// Time allowed beyond a maximum-length frame's airtime before a chip
-/// operation outside a transmit is presumed wedged. The SX1262 can hold
-/// BUSY high until the frame it is receiving has ended, so reading the
-/// status of an IRQ raised mid-frame legitimately waits that long.
+/// operation outside a transmit is presumed wedged. A sound chip finishes
+/// any of these operations in milliseconds; the limit is a whole frame
+/// time anyway, because a late reset costs only the frame on the air, and
+/// one that cuts off a slow but healthy chip could cost every frame.
 const CHIP_OP_SLACK_MS: u64 = 250;
 
 /// The limit for a chip operation with no modulation to size it by:
