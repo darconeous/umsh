@@ -1287,10 +1287,11 @@ const QUIESCE_TX_DEADLINE: Duration = Duration::from_secs(3);
 /// How long a caller waits for the quiesce to answer at all.
 ///
 /// The drain deadline is only checked between MAC borrows, and a borrow
-/// lasts a whole transmit, so this allows the drain deadline plus the
-/// longest transmit the radio runner permits at the slowest vetted
-/// profile, plus the counter flush. Past it the node is presumed wedged.
-const QUIESCE_ANSWER_LIMIT: Duration = Duration::from_secs(15);
+/// lasts a whole transmit, so a frame still on the air when the drain
+/// deadline passes can outlast this too. The reboot then goes ahead
+/// without waiting for it, and without the counter flush that would have
+/// followed it.
+const QUIESCE_ANSWER_LIMIT: Duration = Duration::from_secs(4);
 
 /// Settle the mesh before a deliberate reset: let queued transmissions
 /// finish, then force every frame-counter boundary to flash.
