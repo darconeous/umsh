@@ -54,7 +54,7 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal;
 use embassy_sync::watch::Watch;
-use embassy_time::{Duration, Instant, Timer};
+use embassy_time::{Duration, Instant, Timer, with_timeout};
 
 use umsh_core::{ChannelKey, PublicKey};
 use umsh_crypto::CryptoEngine;
@@ -1270,8 +1270,11 @@ pub async fn identity_profile_loop<CS: CounterStore + 'static>(node: DeviceNode<
 /// is single-executor `Rc`/`RefCell` state and cannot live in a `static`
 /// at all, and this is the same shape the pairing-PIN round trip already
 /// uses.
-static QUIESCE_REQUEST: Signal<NodeMutex, ()> = Signal::new();
-static QUIESCE_DONE: Signal<NodeMutex, Result<(), ()>> = Signal::new();
+static QUIESCE_REQUEST: Signal<NodeMutex, u32> = Signal::new();
+static QUIESCE_DONE: Signal<NodeMutex, (u32, Result<(), ()>)> = Signal::new();
+/// Numbers each quiesce, so an answer that arrives after its caller gave
+/// up is never taken for the answer to a later one.
+static QUIESCE_SEQ: AtomicU32 = AtomicU32::new(0);
 
 /// How long a pending transmission may hold up a reboot.
 ///
@@ -1280,6 +1283,14 @@ static QUIESCE_DONE: Signal<NodeMutex, Result<(), ()>> = Signal::new();
 /// spreading factor; short enough that a jammed channel cannot turn a
 /// reboot command into a device that never reboots.
 const QUIESCE_TX_DEADLINE: Duration = Duration::from_secs(3);
+
+/// How long a caller waits for the quiesce to answer at all.
+///
+/// The drain deadline is only checked between MAC borrows, and a borrow
+/// lasts a whole transmit, so this allows the drain deadline plus the
+/// longest transmit the radio runner permits at the slowest vetted
+/// profile, plus the counter flush. Past it the node is presumed wedged.
+const QUIESCE_ANSWER_LIMIT: Duration = Duration::from_secs(15);
 
 /// Settle the mesh before a deliberate reset: let queued transmissions
 /// finish, then force every frame-counter boundary to flash.
@@ -1300,26 +1311,43 @@ const QUIESCE_TX_DEADLINE: Duration = Duration::from_secs(3);
 /// while the drain waited is inside the persisted boundary too.
 ///
 /// A node that never came up has accepted nothing and holds no
-/// acknowledgment; the call returns immediately.
+/// acknowledgment; the call returns immediately. A node that does not
+/// answer within [`QUIESCE_ANSWER_LIMIT`] is given up on: a wedged node
+/// must not also wedge the reboot that would clear it.
 pub async fn quiesce_for_reboot() {
     let _ = prepare_for_dfu().await;
 }
 
 /// Preserve accepted replay counters before acknowledging a DFU request.
-/// Unlike unconditional reboot, DFU must refuse if persistence fails.
+/// Unlike unconditional reboot, DFU must refuse if persistence fails,
+/// or if the node never answers.
 pub async fn prepare_for_dfu() -> Result<(), ()> {
     if !NODE_UP.load(Ordering::Relaxed) {
         return Ok(());
     }
+    let seq = QUIESCE_SEQ.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
     QUIESCE_DONE.reset();
-    QUIESCE_REQUEST.signal(());
-    QUIESCE_DONE.wait().await
+    QUIESCE_REQUEST.signal(seq);
+    let answer = async {
+        loop {
+            let (done, result) = QUIESCE_DONE.wait().await;
+            if done == seq {
+                return result;
+            }
+        }
+    };
+    with_timeout(QUIESCE_ANSWER_LIMIT, answer)
+        .await
+        .unwrap_or_else(|_| {
+            debug_log(format_args!("reboot quiesce: no answer, giving up"));
+            Err(())
+        })
 }
 
 /// Answers [`QUIESCE_REQUEST`]; see [`quiesce_for_reboot`].
 pub async fn reboot_quiesce_loop<CS: CounterStore + 'static>(mac: DeviceNodeHandle<CS>) {
     loop {
-        QUIESCE_REQUEST.wait().await;
+        let seq = QUIESCE_REQUEST.wait().await;
         let deadline = Instant::now() + QUIESCE_TX_DEADLINE;
         while !mac.tx_queue_empty().await {
             if Instant::now() >= deadline {
@@ -1334,7 +1362,7 @@ pub async fn reboot_quiesce_loop<CS: CounterStore + 'static>(mac: DeviceNodeHand
             // refuse before emitting success when persistence fails.
             debug_log(format_args!("reboot quiesce: counter flush FAILED"));
         }
-        QUIESCE_DONE.signal(result);
+        QUIESCE_DONE.signal((seq, result));
     }
 }
 
