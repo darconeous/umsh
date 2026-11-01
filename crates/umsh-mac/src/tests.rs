@@ -4,6 +4,58 @@ mod bearer;
 mod colliding_channels;
 mod routing_reliability;
 mod send_shapes;
+#[cfg(feature = "software-crypto")]
+mod signed_frames;
+
+/// The test platform with real AES and SHA-256. Under the stub hash every
+/// channel key derives the same keys, and nothing a signature covers can be
+/// told apart.
+#[cfg(feature = "software-crypto")]
+struct CryptoPlatform;
+
+#[cfg(feature = "software-crypto")]
+impl Platform for CryptoPlatform {
+    type Identity = DummyIdentity;
+    type Aes = umsh_crypto::software::SoftwareAes;
+    type Sha = umsh_crypto::software::SoftwareSha256;
+    type Radio = DummyRadio;
+    type Delay = DummyDelay;
+    type Clock = DummyClock;
+    type Rng = DummyRng;
+    type CounterStore = DummyCounterStore;
+    type KeyValueStore = DummyKeyValueStore;
+}
+
+#[cfg(feature = "software-crypto")]
+type CryptoMac = Mac<
+    CryptoPlatform,
+    4,
+    16,
+    8,
+    16,
+    16,
+    256,
+    64,
+    { crate::DEFAULT_CHANNEL_REPLAY },
+    { crate::DEFAULT_CHANNEL_HINT_REPLAY },
+    4,
+>;
+
+#[cfg(feature = "software-crypto")]
+fn make_crypto_mac() -> CryptoMac {
+    use umsh_crypto::software::{SoftwareAes, SoftwareSha256};
+    Mac::new(
+        DummyRadio::default(),
+        CryptoEngine::new(SoftwareAes, SoftwareSha256),
+        DummyClock {
+            now_ms: Cell::new(123),
+        },
+        DummyRng(7),
+        DummyCounterStore::default(),
+        RepeaterConfig::default(),
+        OperatingPolicy::default(),
+    )
+}
 
 use super::*;
 use core::convert::Infallible;
@@ -695,11 +747,13 @@ fn channel_table_keeps_colliding_keys_apart() {
         k_enc: [1; 32],
         k_mic: [2; 32],
         channel_id: ChannelId([0xAA, 0xBB]),
+        commitment: umsh_core::ChannelCommitment([0; 32]),
     };
     let derived_b = umsh_crypto::DerivedChannelKeys {
         k_enc: [3; 32],
         k_mic: [4; 32],
         channel_id: ChannelId([0xAA, 0xBB]),
+        commitment: umsh_core::ChannelCommitment([0; 32]),
     };
 
     table.try_add(key_a, derived_a.clone()).unwrap();
@@ -13737,6 +13791,8 @@ fn build_reserved5_frame(
 
 struct DummyIdentity {
     public_key: PublicKey,
+    #[cfg(feature = "software-crypto")]
+    seed: [u8; 32],
 }
 impl DummyIdentity {
     /// Construct a dummy identity whose public key is a valid Ed25519
@@ -13757,7 +13813,11 @@ impl DummyIdentity {
         };
         #[cfg(not(feature = "software-crypto"))]
         let public_key = PublicKey(seed);
-        Self { public_key }
+        Self {
+            public_key,
+            #[cfg(feature = "software-crypto")]
+            seed,
+        }
     }
 }
 
@@ -13792,7 +13852,14 @@ impl NodeIdentity for DummyIdentity {
     fn public_key(&self) -> &PublicKey {
         &self.public_key
     }
+    /// A real signature with `software-crypto`, zeros without.
     async fn sign(&self, _message: &[u8]) -> Result<[u8; 64], Self::Error> {
+        #[cfg(feature = "software-crypto")]
+        return umsh_crypto::software::SoftwareIdentity::from_secret_bytes(&self.seed)
+            .sign(_message)
+            .await
+            .map_err(|_| ());
+        #[cfg(not(feature = "software-crypto"))]
         Ok([0u8; 64])
     }
     async fn agree(&self, _peer: &PublicKey) -> Result<SharedSecret, Self::Error> {

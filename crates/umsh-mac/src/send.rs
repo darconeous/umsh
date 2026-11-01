@@ -122,6 +122,10 @@ pub struct SendOptions {
     /// piggy-backed acknowledgment (the Ack MIC option). Unicast and blind
     /// unicast only; left off when it would not fit the frame.
     pub ack_mic: Option<[u8; 4]>,
+    /// Whether to sign the frame with the sending identity: a Frame
+    /// Signature option on a broadcast, `D` on a frame with SECINFO. Only
+    /// the async broadcast and multicast sends sign.
+    pub signed: bool,
 }
 
 impl Default for SendOptions {
@@ -140,6 +144,7 @@ impl Default for SendOptions {
             salt: false,
             tx_delay_ms: None,
             ack_mic: None,
+            signed: false,
         }
     }
 }
@@ -206,6 +211,12 @@ impl SendOptions {
         self.flood_hops
             .get_or_insert(route.len().min(u8::MAX as usize) as u8);
         Ok(self)
+    }
+
+    /// Sign the frame with the sending identity.
+    pub fn with_signature(mut self) -> Self {
+        self.signed = true;
+        self
     }
 
     /// Request a random salt in SECINFO.
@@ -1076,6 +1087,22 @@ impl Iterator for RepeaterHints<'_> {
     }
 }
 
+/// What a received frame's signature showed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SignatureStatus {
+    /// The frame carries no signature.
+    #[default]
+    Unsigned,
+    /// The frame carries a signature that was not verified: no key to check
+    /// it against, a signature that failed, or a build that cannot check
+    /// one. The frame counts as unsigned.
+    NotVerified,
+    /// The signature verified against the sender's key. A broadcast or
+    /// multicast so signed has also passed replay detection against the
+    /// signer's receive window.
+    Verified,
+}
+
 /// Borrowed view of one accepted inbound packet together with parsed on-wire metadata.
 ///
 /// `ReceivedPacketRef` is meant to stay close to the original packet rather than eagerly
@@ -1097,6 +1124,7 @@ pub struct ReceivedPacketRef<'a> {
     /// Its sender spoke under a session with forward secrecy.
     forward_secret: bool,
     acceptance: Option<RxAcceptance>,
+    signature: SignatureStatus,
     channel: Option<ChannelInfoRef<'a>>,
     rx: RxMetadata,
 }
@@ -1132,6 +1160,7 @@ impl<'a> ReceivedPacketRef<'a> {
             source_authenticated,
             forward_secret: false,
             acceptance: None,
+            signature: SignatureStatus::Unsigned,
             channel,
             rx,
         }
@@ -1231,10 +1260,33 @@ impl<'a> ReceivedPacketRef<'a> {
         Self { acceptance, ..self }
     }
 
+    /// The packet with what its signature showed.
+    pub(crate) fn with_signature(self, signature: SignatureStatus) -> Self {
+        Self { signature, ..self }
+    }
+
+    /// What the frame's signature showed.
+    pub fn signature(&self) -> SignatureStatus {
+        self.signature
+    }
+
+    /// Whether the sender is authenticated as the key the frame names: its
+    /// signature verified, or a unicast or blind-unicast MIC authenticated
+    /// it pairwise. A multicast MIC alone never counts; it proves only that
+    /// the sender holds the channel key.
+    pub fn sender_authenticated(&self) -> bool {
+        self.signature == SignatureStatus::Verified
+            || (self.source_authenticated
+                && matches!(
+                    self.packet_family(),
+                    PacketFamily::Unicast | PacketFamily::BlindUnicast
+                ))
+    }
+
     /// How the frame's counter stood against its sender's receive window
     /// when it was accepted. `None` for a frame no sender's window judged:
-    /// anything but unicast and blind unicast, and a held frame its sender
-    /// vouched for.
+    /// unsigned broadcast and multicast, and a held frame its sender vouched
+    /// for.
     pub fn acceptance(&self) -> Option<RxAcceptance> {
         self.acceptance
     }

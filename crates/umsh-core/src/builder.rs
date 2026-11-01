@@ -1,8 +1,9 @@
 use core::{marker::PhantomData, ops::Range};
 
 use crate::{
-    BuildError, ChannelId, Fcf, FloodHops, MicSize, NodeHint, OptionNumber, PacketType, PublicKey,
-    Scf, SecInfo, UnsealedPacket, options::OptionEncoder,
+    BuildError, ChannelId, FRAME_SIGNATURE_OPTION_LEN, Fcf, FloodHops, MicSize, NodeHint,
+    OptionNumber, PacketType, PublicKey, SIGNATURE_LEN, Scf, SecInfo, UnsealedPacket,
+    options::OptionEncoder,
 };
 
 /// Typestate markers used by [`PacketBuilder`] and its specialized builders.
@@ -118,6 +119,7 @@ pub struct Builder<'a, K, S> {
     encrypted: bool,
     mic_size: MicSize,
     salt: Option<u16>,
+    signed: bool,
     flood_hops: Option<FloodHops>,
     payload: Option<Range<usize>>,
     blind_addr: Option<Range<usize>>,
@@ -143,6 +145,7 @@ impl<'a, K, S> Builder<'a, K, S> {
             ),
             mic_size: MicSize::Mic16,
             salt: None,
+            signed: false,
             flood_hops: None,
             payload: None,
             blind_addr: None,
@@ -165,6 +168,7 @@ impl<'a, K, S> Builder<'a, K, S> {
             encrypted: self.encrypted,
             mic_size: self.mic_size,
             salt: self.salt,
+            signed: self.signed,
             flood_hops: self.flood_hops,
             payload: self.payload,
             blind_addr: self.blind_addr,
@@ -199,7 +203,8 @@ impl<'a, K, S> Builder<'a, K, S> {
 
     fn sec_info(&self) -> Result<SecInfo, BuildError> {
         Ok(SecInfo {
-            scf: Scf::new(self.encrypted, self.mic_size, self.salt.is_some()),
+            scf: Scf::new(self.encrypted, self.mic_size, self.salt.is_some())
+                .with_signed(self.signed),
             frame_counter: self.frame_counter.ok_or(BuildError::MissingFrameCounter)?,
             salt: self.salt,
         })
@@ -347,6 +352,23 @@ impl<'a, K, S> Builder<'a, K, S> {
         self.buf.copy_within(payload, start);
         *cursor = end;
         Ok(start..end)
+    }
+
+    /// Write the zeroed trailer, `[SIG] ‖ MIC`, at `cursor`. Returns the
+    /// signature slot when the frame is signed, and the MIC slot.
+    fn write_trailer(
+        &mut self,
+        cursor: &mut usize,
+    ) -> Result<(Option<Range<usize>>, Range<usize>), BuildError> {
+        let signature = self.signed.then(|| *cursor..*cursor + SIGNATURE_LEN);
+        let mic_start = signature.as_ref().map_or(*cursor, |range| range.end);
+        let mic_end = mic_start + self.mic_size.byte_len();
+        self.buf
+            .get_mut(*cursor..mic_end)
+            .ok_or(BuildError::BufferTooSmall)?
+            .fill(0);
+        *cursor = mic_end;
+        Ok((signature, mic_start..mic_end))
     }
 
     fn stage_blind_addr(&mut self, cursor: &mut usize) -> Result<Range<usize>, BuildError> {
@@ -523,6 +545,13 @@ impl<'a> UnicastBuilder<'a, state::Configuring> {
         self
     }
 
+    /// Set `D` and reserve a zeroed signature slot before the MIC, to be
+    /// filled through [`UnsealedPacket::signature_slot_mut`] before sealing.
+    pub fn signed(mut self) -> Self {
+        self.signed = true;
+        self
+    }
+
     /// Stage the application payload and advance to the terminal builder state.
     pub fn payload(mut self, data: &[u8]) -> UnicastBuilder<'a, state::Complete> {
         self.stage_payload(data);
@@ -546,6 +575,13 @@ impl<'a> MulticastBuilder<'a, state::Configuring> {
     /// Attach an explicit salt value to SECINFO.
     pub fn salt(mut self, salt: u16) -> Self {
         self.salt = Some(salt);
+        self
+    }
+
+    /// Set `D` and reserve a zeroed signature slot before the MIC, to be
+    /// filled through [`UnsealedPacket::signature_slot_mut`] before sealing.
+    pub fn signed(mut self) -> Self {
+        self.signed = true;
         self
     }
 
@@ -591,6 +627,13 @@ impl<'a> BlindUnicastBuilder<'a, state::Configuring> {
         self
     }
 
+    /// Set `D` and reserve a zeroed signature slot before the MIC, to be
+    /// filled through [`UnsealedPacket::signature_slot_mut`] before sealing.
+    pub fn signed(mut self) -> Self {
+        self.signed = true;
+        self
+    }
+
     /// Stage the application payload and advance to the terminal builder state.
     pub fn payload(mut self, data: &[u8]) -> BlindUnicastBuilder<'a, state::Complete> {
         self.stage_payload(data);
@@ -599,6 +642,17 @@ impl<'a> BlindUnicastBuilder<'a, state::Configuring> {
 }
 
 impl<'a> BroadcastBuilder<'a, state::Configuring> {
+    /// Add a Frame Signature option carrying `counter` and a zeroed
+    /// signature, to be filled once the frame is built (its location is
+    /// [`crate::PacketHeader::signature`]). Option 0 leads every other
+    /// option, so it is added first.
+    pub fn signed(mut self, counter: u32) -> Self {
+        let mut value = [0u8; FRAME_SIGNATURE_OPTION_LEN];
+        value[..4].copy_from_slice(&counter.to_be_bytes());
+        self.push_option(OptionNumber::FrameSignature.as_u16(), &value);
+        self
+    }
+
     /// Stage a broadcast payload.
     pub fn payload(mut self, data: &[u8]) -> BroadcastBuilder<'a, state::Complete> {
         self.stage_payload(data);
@@ -678,19 +732,14 @@ impl<'a> UnicastBuilder<'a, state::Configuring> {
         } else {
             body_start..body_start
         };
-        let mic_start = cursor;
-        let mic_end = mic_start + self.mic_size.byte_len();
-        self.buf
-            .get_mut(mic_start..mic_end)
-            .ok_or(BuildError::BufferTooSmall)?
-            .fill(0);
-        cursor = mic_end;
+        let (signature_range, mic_range) = self.write_trailer(&mut cursor)?;
         Ok(UnsealedPacket::new(
             self.buf,
             cursor,
             body_range,
             None,
-            mic_start..mic_end,
+            signature_range,
+            mic_range,
             sec_start..sec_start + sec_info.wire_len(),
             opts_range,
         ))
@@ -731,19 +780,14 @@ impl<'a> MulticastBuilder<'a, state::Configuring> {
         } else {
             payload_range
         };
-        let mic_start = cursor;
-        let mic_end = mic_start + self.mic_size.byte_len();
-        self.buf
-            .get_mut(mic_start..mic_end)
-            .ok_or(BuildError::BufferTooSmall)?
-            .fill(0);
-        cursor = mic_end;
+        let (signature_range, mic_range) = self.write_trailer(&mut cursor)?;
         Ok(UnsealedPacket::new(
             self.buf,
             cursor,
             body_range,
             None,
-            mic_start..mic_end,
+            signature_range,
+            mic_range,
             sec_start..sec_start + sec_info.wire_len(),
             opts_range,
         ))
@@ -778,19 +822,14 @@ impl<'a> BlindUnicastBuilder<'a, state::Configuring> {
         let opts_range = self.emit_options(&mut cursor, true)?;
         let blind_addr_range = self.stage_blind_addr(&mut cursor)?;
         let body_range = self.copy_staged_payload(&mut cursor)?;
-        let mic_start = cursor;
-        let mic_end = mic_start + self.mic_size.byte_len();
-        self.buf
-            .get_mut(mic_start..mic_end)
-            .ok_or(BuildError::BufferTooSmall)?
-            .fill(0);
-        cursor = mic_end;
+        let (signature_range, mic_range) = self.write_trailer(&mut cursor)?;
         Ok(UnsealedPacket::new(
             self.buf,
             cursor,
             body_range,
             Some(blind_addr_range),
-            mic_start..mic_end,
+            signature_range,
+            mic_range,
             sec_start..sec_start + sec_info.wire_len(),
             opts_range,
         ))
@@ -943,6 +982,66 @@ mod tests {
                 .build()
                 .map(|packet| packet.as_bytes().to_vec())
         });
+    }
+
+    /// A signed frame of each type fills the frame exactly, including a
+    /// full-source broadcast with its 70-byte Frame Signature option.
+    #[test]
+    fn signed_frames_fill_max_frame() {
+        assert_exact_fit(|buf, payload| {
+            PacketBuilder::new(buf)
+                .broadcast()
+                .source_full(&SRC_FULL)
+                .signed(7)
+                .payload(payload)
+                .build()
+                .map(<[u8]>::to_vec)
+        });
+        assert_exact_fit(|buf, payload| {
+            PacketBuilder::new(buf)
+                .unicast(DST)
+                .source_full(&SRC_FULL)
+                .frame_counter(42)
+                .signed()
+                .payload(payload)
+                .build()
+                .map(|packet| packet.as_bytes().to_vec())
+        });
+        assert_exact_fit(|buf, payload| {
+            PacketBuilder::new(buf)
+                .multicast(CHANNEL)
+                .source_full(&SRC_FULL)
+                .frame_counter(42)
+                .encrypted()
+                .signed()
+                .flood_hops(5)
+                .payload(payload)
+                .build()
+                .map(|packet| packet.as_bytes().to_vec())
+        });
+        assert_exact_fit(|buf, payload| {
+            PacketBuilder::new(buf)
+                .blind_unicast(CHANNEL, DST)
+                .source_full(&SRC_FULL)
+                .frame_counter(42)
+                .signed()
+                .payload(payload)
+                .build()
+                .map(|packet| packet.as_bytes().to_vec())
+        });
+
+        // The full-source signed broadcast leaves 151 payload bytes.
+        let mut probe = [0u8; 2 * MAX_FRAME];
+        let overhead = PacketBuilder::new(&mut probe)
+            .broadcast()
+            .source_full(&SRC_FULL)
+            .signed(7)
+            .payload(&[0])
+            .build()
+            .unwrap()
+            .len()
+            - 1;
+        assert_eq!(MAX_FRAME - overhead, 151);
     }
 
     /// A MAC ACK has no payload, so its options fill the frame instead.

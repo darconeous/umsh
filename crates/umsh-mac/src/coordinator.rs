@@ -4,9 +4,10 @@ use hamaddr::HamAddr;
 use heapless::{Deque, LinearMap, Vec};
 use rand::{Rng, RngExt as _};
 use umsh_core::{
-    BlindAddr, BuildError, ChannelId, ChannelKey, FloodHops, NodeHint, OptionNumber, PacketBuilder,
-    PacketHeader, PacketType, ParseError, ParsedOptions, PayloadType, PublicKey, RouteEvidence,
-    RouterHint, SourceAddrRef, UnsealedPacket, established_route_slack,
+    BlindAddr, BuildError, ChannelCommitment, ChannelId, ChannelKey, FloodHops, NodeHint,
+    OptionNumber, PacketBuilder, PacketHeader, PacketType, ParseError, ParsedOptions, PayloadType,
+    PublicKey, RouteEvidence, RouterHint, SIGNATURE_INPUT_MAX, SourceAddrRef, UnsealedPacket,
+    established_route_slack,
     options::{HopSignal, OptionEncoder, TraceRecord, TraceRef},
 };
 use umsh_crypto::{
@@ -17,7 +18,7 @@ use umsh_hal::{Clock, CounterStore, Radio, RxInfo, RxOrigin, Snr, TxError, TxOpt
 
 mod shape;
 pub use shape::SendDestination;
-use shape::{SendTarget, ShapedFrame, build_shaped, route_retry_eligible};
+use shape::{PreparedSend, SendTarget, ShapedFrame, build_shaped, route_retry_eligible};
 
 use crate::{
     AddPeerError, CapacityError, DEFAULT_ACKS, DEFAULT_CHANNEL_HINT_REPLAY, DEFAULT_CHANNEL_REPLAY,
@@ -35,7 +36,7 @@ use crate::{
     rx_windows::{NeedsRestore, RxWindow, RxWindows},
     send::{
         CompletionSignal, PendingAck, PendingAckError, QueuedTx, ResendRecord, RxBaselineAdoption,
-        SendOptions, SendReceipt, TxPriority, TxQueue,
+        SendOptions, SendReceipt, SignatureStatus, TxPriority, TxQueue,
     },
     uplinks::Uplink,
 };
@@ -922,6 +923,12 @@ pub enum SendError {
     /// reservation boundary. Call [`Mac::service_counter_persistence`] to flush a new
     /// boundary to the counter store before retrying.
     CounterPersistenceLag,
+    /// This send path does not sign. Signing awaits the identity, so the
+    /// synchronous `queue_*` calls never do, and only broadcast and multicast
+    /// have a signing send.
+    SigningUnsupported,
+    /// The identity failed to sign the frame.
+    SigningFailed,
 }
 
 impl From<BuildError> for SendError {
@@ -1164,6 +1171,9 @@ pub struct Mac<
     /// Keys [`Self::verify_nonce`]. Drawn the first time a frame is held,
     /// kept only in RAM, and so new on every boot.
     verify_key: Option<[u8; 32]>,
+    /// A frame's signature input, assembled here rather than on the stack or
+    /// in a send's future.
+    sig_input: [u8; SIGNATURE_INPUT_MAX],
 }
 
 impl<
@@ -1220,6 +1230,7 @@ impl<
             counters: MacCounters::default(),
             held_frames: Vec::new(),
             verify_key: None,
+            sig_input: [0; SIGNATURE_INPUT_MAX],
         }
     }
 
@@ -1829,71 +1840,33 @@ impl<
         payload: &[u8],
         options: &SendOptions,
     ) -> Result<SendReceipt, SendError> {
-        // Broadcasts are always unencrypted, never ack-requested, and never
-        // salted by the MAC. Sanitize before policy classification so a reused
-        // `SendOptions` (whose default `encrypted = true`) doesn't get rejected
-        // as a `PolicyViolation` in `LicensedOnly` mode for a send that will
-        // in fact go out unencrypted.
+        if options.signed {
+            return Err(SendError::SigningUnsupported);
+        }
         let destination = SendDestination::Broadcast;
-        let options = &Self::sanitized_send_options(destination, options);
-        self.enforce_send_policy(None, options, false)?;
-
-        let source_key = *self
-            .identity(from)
-            .ok_or(SendError::IdentityMissing)?
-            .identity()
-            .public_key();
-        let chain = self.resolve_send_shapes(destination, options)?;
-        let shape = self.choose_send_shape(
-            destination,
-            &source_key,
-            &chain,
-            payload,
-            options.flood_hops,
-        )?;
-        let receipt = self
-            .identity_mut(from)
-            .ok_or(SendError::IdentityMissing)?
-            .next_receipt();
-        let mut buf = [0u8; FRAME];
-        let ShapedFrame::Plain(frame) = build_shaped(
-            SendTarget::Broadcast,
-            &source_key,
-            &shape,
-            0,
-            None,
-            payload,
-            &mut buf,
-        )?
-        else {
-            unreachable!("a broadcast is built unsealed");
-        };
-        let not_before_ms = self.tx_not_before_ms(options);
-        self.tx_queue
-            .enqueue_with_state(
-                TxPriority::Application,
-                frame,
-                Some(receipt),
-                Some(from),
-                not_before_ms,
-                0,
-                0,
-            )
-            .map_err(|_| SendError::QueueFull)?;
-        Ok(receipt)
+        let prepared = self.prepare_send(from, destination, payload, options)?;
+        self.finish_send(from, destination, payload, &prepared, None)
     }
 
-    /// Enqueue a broadcast frame for transmission.
+    /// Enqueue a broadcast frame for transmission, signed by `from` when
+    /// `options` asks for a signature.
     pub async fn send_broadcast(
         &mut self,
         from: LocalIdentityId,
         payload: &[u8],
         options: &SendOptions,
     ) -> Result<SendReceipt, SendError> {
-        self.queue_broadcast(from, payload, options)
+        self.send_signable(from, SendDestination::Broadcast, payload, options)
+            .await
     }
 
     /// Enqueues a multicast frame using the configured channel keys.
+    ///
+    /// Multicast has no unicast receiver to ack, so an `ack_requested` flag
+    /// carried over from shared `SendOptions` is silently ignored.
+    /// TODO: surface this drop as a debug-level event (see the matching TODO
+    /// on `queue_broadcast`) so callers can detect when their requested flags
+    /// were not applied.
     pub fn queue_multicast(
         &mut self,
         from: LocalIdentityId,
@@ -1901,25 +1874,60 @@ impl<
         payload: &[u8],
         options: &SendOptions,
     ) -> Result<SendReceipt, SendError> {
-        // Multicast has no unicast receiver to ack, so an `ack_requested`
-        // flag carried over from shared `SendOptions` is silently ignored.
-        // TODO: surface this drop as a debug-level event (see the matching
-        // TODO on `queue_broadcast`) so callers can detect when their
-        // requested flags were not applied.
+        if options.signed {
+            return Err(SendError::SigningUnsupported);
+        }
         let destination = SendDestination::Multicast(channel);
-        let options = &Self::sanitized_send_options(destination, options);
-        self.enforce_send_policy(Some(channel), options, false)?;
+        let prepared = self.prepare_send(from, destination, payload, options)?;
+        self.finish_send(from, destination, payload, &prepared, None)
+    }
 
-        let derived = self
-            .channels
-            .lookup_by_key(channel)
-            .ok_or(SendError::ChannelMissing)?
-            .derived
-            .clone();
-        let keys = PairwiseKeys {
-            k_enc: derived.k_enc,
-            k_mic: derived.k_mic,
+    /// Enqueue a multicast frame for transmission, signed by `from` when
+    /// `options` asks for a signature.
+    pub async fn send_multicast(
+        &mut self,
+        from: LocalIdentityId,
+        channel: &ChannelKey,
+        payload: &[u8],
+        options: &SendOptions,
+    ) -> Result<SendReceipt, SendError> {
+        self.send_signable(from, SendDestination::Multicast(channel), payload, options)
+            .await
+    }
+
+    /// Send a broadcast or multicast, signing it first when `options` asks.
+    async fn send_signable(
+        &mut self,
+        from: LocalIdentityId,
+        destination: SendDestination<'_>,
+        payload: &[u8],
+        options: &SendOptions,
+    ) -> Result<SendReceipt, SendError> {
+        let prepared = self.prepare_send(from, destination, payload, options)?;
+        let signature = if prepared.shape.signed {
+            let len = self.write_signature_input(from, destination, payload, &prepared)?;
+            Some(self.sign_with_identity(from, len).await?)
+        } else {
+            None
         };
+        self.finish_send(from, destination, payload, &prepared, signature.as_ref())
+    }
+
+    /// Choose a broadcast or multicast's shape and take its receipt, frame
+    /// counter and salt.
+    fn prepare_send(
+        &mut self,
+        from: LocalIdentityId,
+        destination: SendDestination<'_>,
+        payload: &[u8],
+        options: &SendOptions,
+    ) -> Result<PreparedSend, SendError> {
+        // Sanitize before policy classification so a reused `SendOptions`
+        // (whose default `encrypted = true`) is not refused as a
+        // `PolicyViolation` in `LicensedOnly` mode for a broadcast that goes
+        // out unencrypted anyway.
+        let options = &Self::sanitized_send_options(destination, options);
+        self.enforce_send_policy(destination.channel(), options, false)?;
         let source_key = *self
             .identity(from)
             .ok_or(SendError::IdentityMissing)?
@@ -1937,36 +1945,182 @@ impl<
             .identity_mut(from)
             .ok_or(SendError::IdentityMissing)?
             .next_receipt();
-        let (source_key, frame_counter) = self.identity_and_advance(from)?;
+        // An unsigned broadcast carries no counter. A signed one draws from
+        // the same sequence as every secured frame.
+        let frame_counter = if matches!(destination, SendDestination::Broadcast) && !shape.signed {
+            0
+        } else {
+            self.identity_and_advance(from)?.1
+        };
         let salt = self.take_salt(options);
-        let mut buf = [0u8; FRAME];
-        let ShapedFrame::Secured(mut packet) = build_shaped(
-            SendTarget::Multicast(derived.channel_id),
-            &source_key,
-            &shape,
+        Ok(PreparedSend {
+            shape,
+            receipt,
             frame_counter,
             salt,
-            payload,
-            &mut buf,
-        )?
-        else {
-            unreachable!("a multicast is built for sealing");
-        };
-        self.crypto.seal_packet(&mut packet, &keys)?;
-        let not_before_ms = self.tx_not_before_ms(options);
-        self.enqueue_packet(packet, Some(receipt), Some(from), not_before_ms)?;
-        Ok(receipt)
+            not_before_ms: self.tx_not_before_ms(options),
+        })
     }
 
-    /// Enqueue a multicast frame for transmission.
-    pub async fn send_multicast(
+    /// Build a prepared send's frame into `buf`.
+    fn build_prepared<'b>(
+        &self,
+        from: LocalIdentityId,
+        destination: SendDestination<'_>,
+        payload: &[u8],
+        prepared: &PreparedSend,
+        buf: &'b mut [u8],
+    ) -> Result<ShapedFrame<'b>, SendError> {
+        let source_key = *self
+            .identity(from)
+            .ok_or(SendError::IdentityMissing)?
+            .identity()
+            .public_key();
+        let channel_id = match destination.channel() {
+            Some(key) => Some(
+                self.channels
+                    .lookup_by_key(key)
+                    .ok_or(SendError::ChannelMissing)?
+                    .derived
+                    .channel_id,
+            ),
+            None => None,
+        };
+        Ok(build_shaped(
+            destination.target(channel_id),
+            &source_key,
+            &prepared.shape,
+            prepared.frame_counter,
+            prepared.salt,
+            payload,
+            buf,
+        )?)
+    }
+
+    /// Assemble a prepared send's signature input into `sig_input`, returning
+    /// its length.
+    fn write_signature_input(
         &mut self,
         from: LocalIdentityId,
-        channel: &ChannelKey,
+        destination: SendDestination<'_>,
         payload: &[u8],
-        options: &SendOptions,
+        prepared: &PreparedSend,
+    ) -> Result<usize, SendError> {
+        let commitment = match destination.channel() {
+            Some(key) => Some(
+                self.channels
+                    .lookup_by_key(key)
+                    .ok_or(SendError::ChannelMissing)?
+                    .derived
+                    .commitment,
+            ),
+            None => None,
+        };
+        let mut buf = [0u8; FRAME];
+        let frame = self.build_prepared(from, destination, payload, prepared, &mut buf)?;
+        let bytes = match &frame {
+            ShapedFrame::Plain(frame) => *frame,
+            ShapedFrame::Secured(packet) => packet.as_bytes(),
+        };
+        let header = PacketHeader::parse(bytes)?;
+        umsh_core::signature_input(
+            &header,
+            bytes,
+            None,
+            commitment.as_ref(),
+            &mut self.sig_input,
+        )
+        .map_err(|_| SendError::Build(BuildError::InvalidPacket))
+    }
+
+    /// Sign the first `len` bytes of `sig_input` with `from`.
+    async fn sign_with_identity(
+        &self,
+        from: LocalIdentityId,
+        len: usize,
+    ) -> Result<[u8; 64], SendError> {
+        let message = &self.sig_input[..len];
+        match self
+            .identity(from)
+            .ok_or(SendError::IdentityMissing)?
+            .identity()
+        {
+            LocalIdentity::LongTerm(identity) => identity
+                .sign(message)
+                .await
+                .map_err(|_| SendError::SigningFailed),
+            #[cfg(feature = "software-crypto")]
+            LocalIdentity::Ephemeral(identity) => identity
+                .sign(message)
+                .await
+                .map_err(|_| SendError::SigningFailed),
+        }
+    }
+
+    /// Build a prepared send's frame, write its signature, seal it if it is
+    /// secured, and queue it.
+    ///
+    /// The frame is built again rather than held across the identity's
+    /// signature: the shape, counter and salt fix every byte of it.
+    fn finish_send(
+        &mut self,
+        from: LocalIdentityId,
+        destination: SendDestination<'_>,
+        payload: &[u8],
+        prepared: &PreparedSend,
+        signature: Option<&[u8; 64]>,
     ) -> Result<SendReceipt, SendError> {
-        self.queue_multicast(from, channel, payload, options)
+        let mut buf = [0u8; FRAME];
+        match self.build_prepared(from, destination, payload, prepared, &mut buf)? {
+            ShapedFrame::Plain(frame) => {
+                let len = frame.len();
+                if let Some(signature) = signature {
+                    let range = PacketHeader::parse(&buf[..len])?
+                        .signature()
+                        .ok_or(SendError::Build(BuildError::InvalidPacket))?
+                        .range
+                        .clone();
+                    buf[range].copy_from_slice(signature);
+                }
+                self.tx_queue
+                    .enqueue_with_state(
+                        TxPriority::Application,
+                        &buf[..len],
+                        Some(prepared.receipt),
+                        Some(from),
+                        prepared.not_before_ms,
+                        0,
+                        0,
+                    )
+                    .map_err(|_| SendError::QueueFull)?;
+            }
+            ShapedFrame::Secured(mut packet) => {
+                if let Some(signature) = signature {
+                    packet
+                        .signature_slot_mut()
+                        .ok_or(SendError::Build(BuildError::InvalidPacket))?
+                        .copy_from_slice(signature);
+                }
+                let channel = destination.channel().ok_or(SendError::ChannelMissing)?;
+                let derived = &self
+                    .channels
+                    .lookup_by_key(channel)
+                    .ok_or(SendError::ChannelMissing)?
+                    .derived;
+                let keys = PairwiseKeys {
+                    k_enc: derived.k_enc,
+                    k_mic: derived.k_mic,
+                };
+                self.crypto.seal_packet(&mut packet, &keys)?;
+                self.enqueue_packet(
+                    packet,
+                    Some(prepared.receipt),
+                    Some(from),
+                    prepared.not_before_ms,
+                )?;
+            }
+        }
+        Ok(prepared.receipt)
     }
 
     /// Enqueue an ACK carrying `ack_trailer` as given, using the cached
@@ -2238,6 +2392,9 @@ impl<
         payload: &[u8],
         options: &SendOptions,
     ) -> Result<Option<SendReceipt>, SendError> {
+        if options.signed {
+            return Err(SendError::SigningUnsupported);
+        }
         self.enforce_send_policy(None, options, false)?;
         let (peer_id, _) = self
             .peer_registry
@@ -2366,6 +2523,9 @@ impl<
         payload: &[u8],
         options: &SendOptions,
     ) -> Result<Option<SendReceipt>, SendError> {
+        if options.signed {
+            return Err(SendError::SigningUnsupported);
+        }
         self.enforce_send_policy(Some(channel), options, true)?;
         let channel_keys = &self
             .channels
@@ -3064,6 +3224,7 @@ impl<
         match header.packet_type() {
             PacketType::Broadcast => {
                 self.process_broadcast(buf, frame_len, &header, rx, received_at_ms, &mut on_event)
+                    .await
             }
             PacketType::MacAck => self.process_mac_ack(
                 buf,
@@ -3086,15 +3247,18 @@ impl<
                 )
                 .await
             }
-            PacketType::Multicast => self.process_multicast(
-                buf,
-                frame_len,
-                &header,
-                rx,
-                received_at_ms,
-                forwarding_confirmed,
-                &mut on_event,
-            ),
+            PacketType::Multicast => {
+                self.process_multicast(
+                    buf,
+                    frame_len,
+                    &header,
+                    rx,
+                    received_at_ms,
+                    forwarding_confirmed,
+                    &mut on_event,
+                )
+                .await
+            }
             PacketType::BlindUnicast | PacketType::BlindUnicastAckReq => {
                 self.process_blind_unicast(
                     buf,
@@ -3112,7 +3276,7 @@ impl<
         }
     }
 
-    fn process_broadcast(
+    async fn process_broadcast(
         &mut self,
         buf: &[u8; FRAME],
         frame_len: usize,
@@ -3128,37 +3292,61 @@ impl<
         if !Self::payload_is_allowed(header.packet_type(), &buf[header.body_range.clone()]) {
             return false;
         }
-        let refused = self.refuse_delivery(&buf[..frame_len], header);
         let mut delivered = false;
-        for (index, slot) in self.identities.iter().enumerate() {
-            if refused {
-                break;
+        if !self.refuse_delivery(&buf[..frame_len], header) {
+            // A hint-only signer can be verified only by a receiver that
+            // already holds its key.
+            let signer = from_key.or_else(|| {
+                header
+                    .signature()
+                    .and_then(|_| self.resolve_unique_hint(from_hint))
+                    .map(|(_, key)| key)
+            });
+            if let Some((signature, acceptance)) = self
+                .classify_signed_frame(&buf[..frame_len], header, signer, None)
+                .await
+            {
+                let from_key = if signature == SignatureStatus::Verified {
+                    signer
+                } else {
+                    from_key
+                };
+                for (index, slot) in self.identities.iter().enumerate() {
+                    // An ephemeral identity takes only unicast addressed to
+                    // it: a broadcast reaches the long-term identity it
+                    // answers for once, not again through each of its
+                    // sessions.
+                    let Some(slot) = slot else {
+                        continue;
+                    };
+                    if slot.identity().is_ephemeral() {
+                        continue;
+                    }
+                    delivered = true;
+                    on_event(
+                        LocalIdentityId(index as u8),
+                        crate::MacEventRef::Received(
+                            crate::ReceivedPacketRef::new(
+                                &buf[..frame_len],
+                                &buf[header.body_range.clone()],
+                                header.clone(),
+                                ParsedOptions::extract(
+                                    &buf[..frame_len],
+                                    header.options_range.clone(),
+                                )
+                                .unwrap_or_default(),
+                                from_key,
+                                Some(from_hint),
+                                false,
+                                None,
+                                rx_metadata(rx, received_at_ms),
+                            )
+                            .with_signature(signature)
+                            .with_acceptance(acceptance),
+                        ),
+                    );
+                }
             }
-            // An ephemeral identity takes only unicast addressed to it: a
-            // broadcast reaches the long-term identity it answers for once,
-            // not again through each of its sessions.
-            let Some(slot) = slot else {
-                continue;
-            };
-            if slot.identity().is_ephemeral() {
-                continue;
-            }
-            delivered = true;
-            on_event(
-                LocalIdentityId(index as u8),
-                crate::MacEventRef::Received(crate::ReceivedPacketRef::new(
-                    &buf[..frame_len],
-                    &buf[header.body_range.clone()],
-                    header.clone(),
-                    ParsedOptions::extract(&buf[..frame_len], header.options_range.clone())
-                        .unwrap_or_default(),
-                    from_key,
-                    Some(from_hint),
-                    false,
-                    None,
-                    rx_metadata(rx, received_at_ms),
-                )),
-            );
         }
         // Broadcast delivery does not consume the packet. Broadcast remains a
         // routable mesh packet and may still be forwarded by a repeater after
@@ -3479,6 +3667,11 @@ impl<
                         .await;
                 }
 
+                // The pairwise window judged the counter; the signature,
+                // checked against the key that opened the frame, only says
+                // whether it verified.
+                let signature =
+                    self.signature_status(header, &buf[..frame_len], Some(&peer_key), None, None);
                 on_event(
                     local_id,
                     crate::MacEventRef::Received(
@@ -3497,7 +3690,8 @@ impl<
                             None,
                             rx_metadata(rx, received_at_ms),
                         )
-                        .with_acceptance(acceptance),
+                        .with_acceptance(acceptance)
+                        .with_signature(signature),
                     ),
                 );
                 handled = true;
@@ -3511,7 +3705,8 @@ impl<
         handled || forwarding_confirmed || forwarded
     }
 
-    fn process_multicast(
+    #[allow(clippy::too_many_arguments)]
+    async fn process_multicast(
         &mut self,
         buf: &mut [u8; FRAME],
         frame_len: usize,
@@ -3523,88 +3718,120 @@ impl<
     ) -> bool {
         let mut original = [0u8; FRAME];
         original[..frame_len].copy_from_slice(&buf[..frame_len]);
-        let delivered = if let Some(channel_id) = header.channel {
-            // Distinct keys can share the two-byte identifier, so each is
-            // tried until one authenticates the frame. A failed open leaves
-            // the buffer as it found it.
-            let opened = self.channels.lookup_by_id(&channel_id).find_map(|channel| {
-                let keys = PairwiseKeys {
-                    k_enc: channel.derived.k_enc,
-                    k_mic: channel.derived.k_mic,
-                };
-                self.crypto
-                    .open_packet(&mut buf[..frame_len], header, &keys, None)
-                    .ok()
-                    .map(|body_range| (channel.channel_key, body_range))
-            });
-            if let Some((channel_key, body_range)) = opened {
-                if !Self::payload_is_allowed(header.packet_type(), &buf[body_range.clone()])
-                    || self.refuse_delivery(&original[..frame_len], header)
-                {
-                    false
-                } else if let Some(source) =
-                    self.resolve_multicast_source(&buf[..frame_len], header)
-                {
-                    let accepted = if let Some(peer_id) = source.peer_id {
-                        let accepted = self.accept_multicast_replay(
-                            &channel_key,
-                            peer_id,
-                            header,
-                            &buf[..frame_len],
-                        );
-                        if accepted {
-                            self.learn_route_for_peer(peer_id, &buf[..frame_len], header, rx);
-                        }
-                        accepted
-                    } else {
-                        self.accept_unknown_multicast_replay(header, &buf[..frame_len])
-                    };
-                    if accepted {
-                        let mut delivered = false;
-                        for (index, slot) in self.identities.iter().enumerate() {
-                            if slot.is_none() {
-                                continue;
-                            }
-                            delivered = true;
-                            on_event(
-                                LocalIdentityId(index as u8),
-                                crate::MacEventRef::Received(crate::ReceivedPacketRef::new(
-                                    &original[..frame_len],
-                                    &buf[body_range.clone()],
-                                    header.clone(),
-                                    ParsedOptions::extract(
-                                        &original[..frame_len],
-                                        header.options_range.clone(),
-                                    )
-                                    .unwrap_or_default(),
-                                    source.public_key,
-                                    source
-                                        .hint
-                                        .or_else(|| source.public_key.map(|key| key.hint())),
-                                    true,
-                                    Some(crate::ChannelInfoRef {
-                                        id: channel_id,
-                                        key: &channel_key,
-                                    }),
-                                    rx_metadata(rx, received_at_ms),
-                                )),
-                            );
-                        }
-                        delivered
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                }
-            } else {
-                false
-            }
-        } else {
-            false
-        };
+        let delivered = self
+            .deliver_multicast(
+                buf,
+                &original[..frame_len],
+                header,
+                rx,
+                received_at_ms,
+                &mut on_event,
+            )
+            .await;
         let forwarded = self.maybe_forward_received(&original[..frame_len], header, rx, false);
         delivered || forwarding_confirmed || forwarded
+    }
+
+    /// Open a multicast, judge it, and deliver it to every identity.
+    ///
+    /// Which replay check applies follows from the signature, not from `D`:
+    /// a verified frame was judged by its signer's window, and any other
+    /// takes the path an unsigned frame from the same source would.
+    async fn deliver_multicast(
+        &mut self,
+        buf: &mut [u8; FRAME],
+        original: &[u8],
+        header: &PacketHeader,
+        rx: &RxInfo,
+        received_at_ms: u64,
+        on_event: &mut impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
+    ) -> bool {
+        let frame_len = original.len();
+        let Some(channel_id) = header.channel else {
+            return false;
+        };
+        // Distinct keys can share the two-byte identifier, so each is tried
+        // until one authenticates the frame. A failed open leaves the buffer
+        // as it found it.
+        let opened = self.channels.lookup_by_id(&channel_id).find_map(|channel| {
+            let keys = PairwiseKeys {
+                k_enc: channel.derived.k_enc,
+                k_mic: channel.derived.k_mic,
+            };
+            self.crypto
+                .open_packet(&mut buf[..frame_len], header, &keys, None)
+                .ok()
+                .map(|body_range| (channel.channel_key, channel.derived.commitment, body_range))
+        });
+        let Some((channel_key, commitment, body_range)) = opened else {
+            return false;
+        };
+        if !Self::payload_is_allowed(header.packet_type(), &buf[body_range.clone()])
+            || self.refuse_delivery(original, header)
+        {
+            return false;
+        }
+        let Some(source) = self.resolve_multicast_source(&buf[..frame_len], header) else {
+            return false;
+        };
+        // The signature is checked against the channel whose key opened the
+        // frame, never one matched by identifier alone.
+        let Some((signature, acceptance)) = self
+            .classify_signed_frame(
+                &buf[..frame_len],
+                header,
+                source.public_key,
+                Some(&commitment),
+            )
+            .await
+        else {
+            return false;
+        };
+        let accepted = match (signature, source.peer_id) {
+            (SignatureStatus::Verified, _) => true,
+            (_, Some(peer_id)) => {
+                self.accept_multicast_replay(&channel_key, peer_id, header, &buf[..frame_len])
+            }
+            (_, None) => self.accept_unknown_multicast_replay(header, &buf[..frame_len]),
+        };
+        if !accepted {
+            return false;
+        }
+        if let Some(peer_id) = source.peer_id {
+            self.learn_route_for_peer(peer_id, &buf[..frame_len], header, rx);
+        }
+        let mut delivered = false;
+        for (index, slot) in self.identities.iter().enumerate() {
+            if slot.is_none() {
+                continue;
+            }
+            delivered = true;
+            on_event(
+                LocalIdentityId(index as u8),
+                crate::MacEventRef::Received(
+                    crate::ReceivedPacketRef::new(
+                        original,
+                        &buf[body_range.clone()],
+                        header.clone(),
+                        ParsedOptions::extract(original, header.options_range.clone())
+                            .unwrap_or_default(),
+                        source.public_key,
+                        source
+                            .hint
+                            .or_else(|| source.public_key.map(|key| key.hint())),
+                        true,
+                        Some(crate::ChannelInfoRef {
+                            id: channel_id,
+                            key: &channel_key,
+                        }),
+                        rx_metadata(rx, received_at_ms),
+                    )
+                    .with_signature(signature)
+                    .with_acceptance(acceptance),
+                ),
+            );
+        }
+        delivered
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3904,6 +4131,17 @@ impl<
                                 .await;
                         }
 
+                        let commitment = self
+                            .channels
+                            .lookup_by_key(&resolved_channel_key)
+                            .map(|channel| channel.derived.commitment);
+                        let signature = self.signature_status(
+                            header,
+                            &buf[..frame_len],
+                            Some(&peer_key),
+                            Some(&blind_addr.addr),
+                            commitment.as_ref(),
+                        );
                         on_event(
                             local_id,
                             crate::MacEventRef::Received(
@@ -3925,7 +4163,8 @@ impl<
                                     }),
                                     rx_metadata(rx, received_at_ms),
                                 )
-                                .with_acceptance(acceptance),
+                                .with_acceptance(acceptance)
+                                .with_signature(signature),
                             ),
                         );
                         handled = true;
@@ -6345,6 +6584,167 @@ impl<
             }
             SourceAddrRef::Encrypted { .. } | SourceAddrRef::None => None,
         }
+    }
+
+    /// Whether `frame`'s signature verifies against `key`, as a
+    /// [`SignatureStatus`]. The frame must already be open. `channel` is the
+    /// commitment of the channel whose key opened it, for the frames that
+    /// name one; a blind unicast needs its plaintext address block.
+    ///
+    /// A build without `software-crypto` cannot check a signature, and
+    /// reports every one as not verified.
+    fn signature_status(
+        &mut self,
+        header: &PacketHeader,
+        frame: &[u8],
+        key: Option<&PublicKey>,
+        blind_addr: Option<&BlindAddr>,
+        channel: Option<&ChannelCommitment>,
+    ) -> SignatureStatus {
+        if header.signature().is_none() {
+            return SignatureStatus::Unsigned;
+        }
+        let Some(key) = key else {
+            return SignatureStatus::NotVerified;
+        };
+        #[cfg(feature = "software-crypto")]
+        let verified = umsh_crypto::software::verify_frame_signature(
+            header,
+            frame,
+            key,
+            blind_addr,
+            channel,
+            &mut self.sig_input,
+        );
+        #[cfg(not(feature = "software-crypto"))]
+        let verified = {
+            let _ = (frame, key, blind_addr, channel);
+            false
+        };
+        if verified {
+            SignatureStatus::Verified
+        } else {
+            SignatureStatus::NotVerified
+        }
+    }
+
+    /// Classify a broadcast or multicast by its signature, and judge a
+    /// verified one's counter against its signer's receive window.
+    ///
+    /// `signer` is the key the frame names: its full source key, or a hint
+    /// that resolves to exactly one known peer. `frame` must already be
+    /// open. The steps, in order:
+    ///
+    /// 1. An exact duplicate of a frame already accepted from `signer`
+    ///    (same counter and MIC, or signature prefix for a broadcast) is
+    ///    dropped without any Ed25519 work: the MIC covers the signature, so
+    ///    the bytes match a frame that already verified. Counter occupancy
+    ///    alone never drops a frame before it is verified.
+    /// 2. A signature that does not verify makes the frame
+    ///    [`NotVerified`](SignatureStatus::NotVerified). It never touches a
+    ///    signer's window; the caller takes it down the unsigned path.
+    /// 3. A verified frame is judged by the signer's window: accepted, or
+    ///    dropped as a replay or stale. A stale frame from a known peer far
+    ///    behind its baseline starts a counter resynchronization.
+    ///
+    /// `None` means drop the frame.
+    async fn classify_signed_frame(
+        &mut self,
+        frame: &[u8],
+        header: &PacketHeader,
+        signer: Option<PublicKey>,
+        channel: Option<&ChannelCommitment>,
+    ) -> Option<(SignatureStatus, Option<RxAcceptance>)> {
+        let Some(signature) = header.signature() else {
+            return Some((SignatureStatus::Unsigned, None));
+        };
+        let Some(signer) = signer else {
+            return Some((SignatureStatus::NotVerified, None));
+        };
+        let counter = signature.counter;
+        let tag = Self::signed_replay_tag(header, frame)?;
+        let now_ms = self.clock.now_ms();
+        if self.rx_windows.get(&signer).is_some_and(|entry| {
+            entry
+                .replay_window
+                .duplicate_age_ms(counter, tag, now_ms)
+                .is_some()
+        }) {
+            return None;
+        }
+        if self.signature_status(header, frame, Some(&signer), None, channel)
+            != SignatureStatus::Verified
+        {
+            return Some((SignatureStatus::NotVerified, None));
+        }
+
+        let peer_id = self
+            .peer_registry
+            .lookup_by_key(&signer)
+            .map(|(peer_id, _)| peer_id);
+        let entry = match peer_id {
+            Some(peer_id) => {
+                if !self.prepare_rx_window(peer_id).await {
+                    return None;
+                }
+                self.judging_rx_window(peer_id, now_ms)?
+            }
+            None => match self.rx_windows.get_or_insert_stranger(signer, now_ms) {
+                Some(entry) => entry,
+                // A table that keeps no strangers takes every first
+                // contact at face value.
+                None => return Some((SignatureStatus::Verified, Some(RxAcceptance::FirstContact))),
+            },
+        };
+        let gap = entry.replay_window.last_accepted.wrapping_sub(counter);
+        match entry.replay_window.check(counter, tag, now_ms) {
+            ReplayVerdict::Accept => Some((
+                SignatureStatus::Verified,
+                Some(entry.accept(counter, tag, now_ms)),
+            )),
+            ReplayVerdict::Replay => None,
+            ReplayVerdict::OutOfWindow | ReplayVerdict::Stale => {
+                // Only a gap reordering cannot explain starts a resync, over
+                // the pairwise relationship only a known peer has. The
+                // frame is dropped behind the probe either way.
+                if let Some(peer_id) = peer_id
+                    && gap >= COUNTER_RESYNC_GAP_THRESHOLD
+                    && let Some(local_id) = self.long_term_identity()
+                {
+                    self.maybe_request_counter_resync(
+                        local_id,
+                        peer_id,
+                        signer,
+                        ReplyCarriage::Unicast,
+                    )
+                    .await;
+                }
+                None
+            }
+        }
+    }
+
+    /// What a signed frame's replay cache keys on beside its counter: the
+    /// MIC, or for a broadcast, which has none, the first 16 bytes of its
+    /// signature.
+    fn signed_replay_tag<'f>(header: &PacketHeader, frame: &'f [u8]) -> Option<&'f [u8]> {
+        if header.sec_info.is_some() {
+            frame.get(header.mic_range.clone())
+        } else {
+            frame.get(header.signature()?.range.start..)?.get(..16)
+        }
+    }
+
+    /// The first long-term identity, which answers for this node in
+    /// exchanges that no frame addressed to an identity started.
+    fn long_term_identity(&self) -> Option<LocalIdentityId> {
+        self.identities
+            .iter()
+            .position(|slot| {
+                slot.as_ref()
+                    .is_some_and(|slot| !slot.identity().is_ephemeral())
+            })
+            .map(|index| LocalIdentityId(index as u8))
     }
 
     /// Whether an endpoint refuses a frame that reached it: one carrying a

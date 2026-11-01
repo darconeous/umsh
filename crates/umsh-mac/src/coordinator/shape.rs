@@ -36,7 +36,7 @@ impl SendDestination<'_> {
     /// `channel_id` is the identifier the destination's channel key
     /// derives, for the kinds that have one. Only its width matters to a
     /// measurement.
-    fn target(&self, channel_id: Option<ChannelId>) -> SendTarget {
+    pub(super) fn target(&self, channel_id: Option<ChannelId>) -> SendTarget {
         let channel_id = || channel_id.unwrap_or(ChannelId([0; 2]));
         match *self {
             Self::Broadcast => SendTarget::Broadcast,
@@ -49,7 +49,7 @@ impl SendDestination<'_> {
         }
     }
 
-    fn channel(&self) -> Option<&ChannelKey> {
+    pub(super) fn channel(&self) -> Option<&ChannelKey> {
         match *self {
             Self::Multicast(channel) | Self::BlindUnicast { channel, .. } => Some(channel),
             Self::Broadcast | Self::Unicast(_) => None,
@@ -93,6 +93,19 @@ pub(super) struct SendShape {
     /// The MAC would Route-Retry this frame if its ack timed out, so its
     /// retry form has to fit too.
     pub route_retry: bool,
+    /// A Frame Signature option on a broadcast, `D` on anything else.
+    pub signed: bool,
+}
+
+/// A broadcast or multicast between choosing its shape and being queued.
+/// Signing awaits the identity in between, and the frame is rebuilt from
+/// this afterward rather than held across the wait.
+pub(super) struct PreparedSend {
+    pub shape: SendShape,
+    pub receipt: SendReceipt,
+    pub frame_counter: u32,
+    pub salt: Option<u16>,
+    pub not_before_ms: u64,
 }
 
 /// A send's shapes, most preferred first.
@@ -116,7 +129,9 @@ impl ShapedFrame<'_> {
 
 /// Apply the shape's options, which every builder type spells the same way
 /// but no trait unites. They go in ascending number order: Source Route (3),
-/// Operator Callsign (4), Trace (7), Ack MIC (8), Region Code (11).
+/// Operator Callsign (4), Trace (7), Ack MIC (8), Region Code (11). A
+/// broadcast's Frame Signature (0) goes ahead of them all, added by
+/// [`build_shaped`].
 macro_rules! apply_shape {
     ($builder:expr, $shape:expr) => {{
         let shape: &SendShape = $shape;
@@ -168,13 +183,19 @@ pub(super) fn build_shaped<'b>(
             if let Some(salt) = salt {
                 builder = builder.salt(salt);
             }
+            if shape.signed {
+                builder = builder.signed();
+            }
             apply_shape!(builder, shape).payload(payload).build()
         }};
     }
     let builder = PacketBuilder::new(buf);
     Ok(match target {
         SendTarget::Broadcast => {
-            let builder = with_source!(builder.broadcast());
+            let mut builder = with_source!(builder.broadcast());
+            if shape.signed {
+                builder = builder.signed(frame_counter);
+            }
             ShapedFrame::Plain(apply_shape!(builder, shape).payload(payload).build()?)
         }
         SendTarget::Multicast(channel) => {
@@ -361,6 +382,7 @@ impl<
             ack_mic: options.ack_mic,
             region_code: options.region_code,
             route_retry: false,
+            signed: options.signed,
         };
         let mut chain = ShapeChain::new();
         let mut push = |shape: SendShape| {

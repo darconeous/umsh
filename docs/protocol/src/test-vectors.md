@@ -30,9 +30,9 @@ The generated examples use fixed Ed25519 private keys so the appendix covers the
 
 ```text
   7   6   5   4   3   2   1   0
-+---+-------+---+---------------+
-| E |  MIC  | S |   RESERVED    |
-+---+-------+---+---------------+
++---+-------+---+---+-----------+
+| E |  MIC  | S | D | RESERVED  |
++---+-------+---+---+-----------+
 ```
 
 ## Example 1: Broadcast Beacon (S=0)
@@ -270,3 +270,123 @@ C8 44 5B BB 08 2C FE A5 FD 44 15 B2 56 E4
 ```
 
 Total: 14 bytes.
+
+## Signed Frames
+
+Examples 12 to 14 are signed with Node A's Ed25519 key. Each shows its signature input: `"UMSH-SIG"`, the frame's AAD with a broadcast's Frame Signature zeroed, the channel commitment for a multicast, and the plaintext the MIC's S2 covers without the signature.
+
+- Channel commitment of the channel key above: `B08D B3C1 400A 1C11 F1D1 464D D6BA 945F D037 2DDD 38CA 63A1 84D3 6FD1 11FE BA40`
+
+## Example 12: Signed Authenticated Multicast (E=0, D=1)
+
+An unencrypted multicast from Node A carrying its full key, signed. `SRC || PAYLOAD || SIG` is the MIC's S2.
+
+| Field | Value | Hex |
+|---|---|---|
+| FCF | VER=3, TYPE=4 (multicast), S=1, R=0, H=0 | `E4` |
+| CHANNEL | Derived channel identifier | `B0 8D` |
+| SCF | E=0, MIC=3 (16-byte), S=0, D=1 | `68` |
+| Frame Counter | 12 | `00 00 00 0C` |
+| End of options | No options | `FF` |
+| SRC | Node A public key | `ED 54 A5 9F B1 AC 3A 51 23 93 51 36 29 41 B8 68 E8 5A 60 E3 D7 B2 48 5D 82 88 21 DC 7A 69 C2 79` |
+| Payload | `03 || "Help"` | `03 48 65 6C 70` |
+| SIG | Ed25519 signature | `64 60 E7 36 CF 31 6B B3 2F 43 8C A2 81 DE 0D E0 2C 3B BE B7 A6 CB 19 5A 5C 60 55 BD 46 A9 F5 E7 53 2C 96 AE F7 CC E8 06 C7 F4 FC 46 2C D9 B8 61 CC 60 D4 47 65 F6 6E 4E 3A 5D DB 10 91 3D 6D 05` |
+| MIC | 16 bytes | `59 96 7A 9D 75 D9 FC DC AA 9F AD 4C 50 3B 2E 47` |
+
+```text
+E4 B0 8D 68 00 00 00 0C FF ED 54 A5 9F B1 AC 3A
+51 23 93 51 36 29 41 B8 68 E8 5A 60 E3 D7 B2 48
+5D 82 88 21 DC 7A 69 C2 79 03 48 65 6C 70 64 60
+E7 36 CF 31 6B B3 2F 43 8C A2 81 DE 0D E0 2C 3B
+BE B7 A6 CB 19 5A 5C 60 55 BD 46 A9 F5 E7 53 2C
+96 AE F7 CC E8 06 C7 F4 FC 46 2C D9 B8 61 CC 60
+D4 47 65 F6 6E 4E 3A 5D DB 10 91 3D 6D 05 59 96
+7A 9D 75 D9 FC DC AA 9F AD 4C 50 3B 2E 47
+```
+
+Total: 126 bytes.
+
+Signature input (87 bytes):
+
+```text
+55 4D 53 48 2D 53 49 47 E4 B0 8D 68 00 00 00 0C
+FF FF B0 8D B3 C1 40 0A 1C 11 F1 D1 46 4D D6 BA
+94 5F D0 37 2D DD 38 CA 63 A1 84 D3 6F D1 11 FE
+BA 40 ED 54 A5 9F B1 AC 3A 51 23 93 51 36 29 41
+B8 68 E8 5A 60 E3 D7 B2 48 5D 82 88 21 DC 7A 69
+C2 79 03 48 65 6C 70
+```
+
+## Example 13: Signed Encrypted Multicast (E=1, D=1)
+
+An encrypted multicast from Node A, signed. The signature is encrypted with the source hint and the payload.
+
+| Field | Value | Hex |
+|---|---|---|
+| FCF | VER=3, TYPE=4 (multicast), S=0, R=0, H=0 | `E0` |
+| CHANNEL | Derived channel identifier | `B0 8D` |
+| SCF | E=1, MIC=3 (16-byte), S=0, D=1 | `E8` |
+| Frame Counter | 13 | `00 00 00 0D` |
+| End of options | No options | `FF` |
+| Encrypted data | ENCRYPT(`SRC || "Hello" || SIG`) | `69 2E 61 79 21 A2 08 42 BF 2E 1C D8 6F 88 A1 4A E7 EF 44 BC DF 11 34 EC 85 6F 93 06 39 96 0C 99 D6 70 79 87 08 EA A8 0E 61 BA DA 28 E2 B2 A8 58 97 D5 9C C2 8A 12 33 DB 1B 21 18 53 85 5E CE 11 00 79 F3 6C 99 1C 24 10` |
+| MIC | 16 bytes | `02 BB 9A 22 FE F4 1A 6E 91 9D 34 72 41 AA 42 B9` |
+
+```text
+E0 B0 8D E8 00 00 00 0D FF 69 2E 61 79 21 A2 08
+42 BF 2E 1C D8 6F 88 A1 4A E7 EF 44 BC DF 11 34
+EC 85 6F 93 06 39 96 0C 99 D6 70 79 87 08 EA A8
+0E 61 BA DA 28 E2 B2 A8 58 97 D5 9C C2 8A 12 33
+DB 1B 21 18 53 85 5E CE 11 00 79 F3 6C 99 1C 24
+10 02 BB 9A 22 FE F4 1A 6E 91 9D 34 72 41 AA 42
+B9
+```
+
+Total: 97 bytes.
+
+Signature input (58 bytes):
+
+```text
+55 4D 53 48 2D 53 49 47 E0 B0 8D E8 00 00 00 0D
+FF FF B0 8D B3 C1 40 0A 1C 11 F1 D1 46 4D D6 BA
+94 5F D0 37 2D DD 38 CA 63 A1 84 D3 6F D1 11 FE
+BA 40 ED 54 A5 48 65 6C 6C 6F
+```
+
+## Example 14: Signed Broadcast
+
+A broadcast from Node A carrying its full key and a Frame Signature option (0) with counter 14. In the signature input the option's 64 signature bytes are zeros.
+
+| Field | Value | Hex |
+|---|---|---|
+| FCF | VER=3, TYPE=0 (broadcast), S=1, R=0, H=0 | `C4` |
+| SRC | Node A public key | `ED 54 A5 9F B1 AC 3A 51 23 93 51 36 29 41 B8 68 E8 5A 60 E3 D7 B2 48 5D 82 88 21 DC 7A 69 C2 79` |
+| Option header | Delta 0, length 68 (13 + `37`) | `0D 37` |
+| Counter | 14 | `00 00 00 0E` |
+| SIG | Ed25519 signature | `03 79 A8 FA 3A B8 6E 4F 59 C7 6F 0E E6 5C 76 6B D2 F1 03 38 0E 62 D9 AD 4E E8 66 E5 89 B3 56 C0 54 AC F8 50 AF D6 9A DD B7 A3 8B 7C 18 E8 77 A6 AA 55 84 68 F7 01 2F E0 91 24 4E 6B 89 52 BE 0C` |
+| End of options | Payload follows | `FF` |
+| Payload | `"Hi"` | `48 69` |
+
+```text
+C4 ED 54 A5 9F B1 AC 3A 51 23 93 51 36 29 41 B8
+68 E8 5A 60 E3 D7 B2 48 5D 82 88 21 DC 7A 69 C2
+79 0D 37 00 00 00 0E 03 79 A8 FA 3A B8 6E 4F 59
+C7 6F 0E E6 5C 76 6B D2 F1 03 38 0E 62 D9 AD 4E
+E8 66 E5 89 B3 56 C0 54 AC F8 50 AF D6 9A DD B7
+A3 8B 7C 18 E8 77 A6 AA 55 84 68 F7 01 2F E0 91
+24 4E 6B 89 52 BE 0C FF 48 69
+```
+
+Total: 106 bytes.
+
+Signature input (117 bytes):
+
+```text
+55 4D 53 48 2D 53 49 47 C4 ED 54 A5 9F B1 AC 3A
+51 23 93 51 36 29 41 B8 68 E8 5A 60 E3 D7 B2 48
+5D 82 88 21 DC 7A 69 C2 79 00 00 00 44 00 00 00
+0E 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 FF FF 48 69
+```

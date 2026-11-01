@@ -8,7 +8,10 @@ use std::fmt::Write;
 use hamaddr::HamAddr;
 
 use crate::{
-    core::{ChannelKey, MicSize, NodeHint, OptionNumber, PacketBuilder, PacketHeader, PublicKey},
+    core::{
+        ChannelKey, MicSize, NodeHint, OptionNumber, PacketBuilder, PacketHeader, PublicKey,
+        SIGNATURE_INPUT_MAX, signature_input,
+    },
     crypto::{
         CryptoEngine, DerivedChannelKeys, NodeIdentity, PairwiseKeys, SharedSecret,
         software::{SoftwareAes, SoftwareIdentity, SoftwareSha256},
@@ -122,9 +125,9 @@ pub fn render_phase1_test_vectors_markdown() -> String {
     writeln!(&mut out).unwrap();
     writeln!(&mut out, "```text").unwrap();
     writeln!(&mut out, "  7   6   5   4   3   2   1   0").unwrap();
-    writeln!(&mut out, "+---+-------+---+---------------+").unwrap();
-    writeln!(&mut out, "| E |  MIC  | S |   RESERVED    |").unwrap();
-    writeln!(&mut out, "+---+-------+---+---------------+").unwrap();
+    writeln!(&mut out, "+---+-------+---+---+-----------+").unwrap();
+    writeln!(&mut out, "| E |  MIC  | S | D | RESERVED  |").unwrap();
+    writeln!(&mut out, "+---+-------+---+---+-----------+").unwrap();
     writeln!(&mut out, "```").unwrap();
 
     render_example(
@@ -473,7 +476,172 @@ pub fn render_phase1_test_vectors_markdown() -> String {
         &vectors.mac_ack_callsign,
     );
 
+    render_signed_examples(&mut out, &vectors);
+
     out
+}
+
+/// Examples 12 to 14: frames signed by Node A.
+fn render_signed_examples(out: &mut String, vectors: &Phase1Vectors) {
+    let signed = &vectors.signed;
+    writeln!(out).unwrap();
+    writeln!(out, "## Signed Frames").unwrap();
+    writeln!(out).unwrap();
+    writeln!(
+        out,
+        "Examples 12 to 14 are signed with Node A's Ed25519 key. Each shows its signature input: `\"UMSH-SIG\"`, the frame's AAD with a broadcast's Frame Signature zeroed, the channel commitment for a multicast, and the plaintext the MIC's S2 covers without the signature."
+    )
+    .unwrap();
+    writeln!(out).unwrap();
+    writeln!(
+        out,
+        "- Channel commitment of the channel key above: `{}`",
+        hex_words(&vectors.channel.commitment.0)
+    )
+    .unwrap();
+
+    let header = parse_header(&signed.multicast_authenticated.frame);
+    let frame = &signed.multicast_authenticated.frame;
+    let protected = header.protected_range();
+    render_example(
+        out,
+        "Example 12: Signed Authenticated Multicast (E=0, D=1)",
+        "An unencrypted multicast from Node A carrying its full key, signed. `SRC || PAYLOAD || SIG` is the MIC's S2.",
+        &[
+            (
+                "FCF",
+                "VER=3, TYPE=4 (multicast), S=1, R=0, H=0",
+                hex_spaced(&frame[..1]),
+            ),
+            (
+                "CHANNEL",
+                "Derived channel identifier",
+                hex_spaced(&vectors.channel.channel_id.0),
+            ),
+            (
+                "SCF",
+                "E=0, MIC=3 (16-byte), S=0, D=1",
+                hex_spaced(&frame[3..4]),
+            ),
+            ("Frame Counter", "12", hex_spaced(&12u32.to_be_bytes())),
+            ("End of options", "No options", "FF".into()),
+            (
+                "SRC",
+                "Node A public key",
+                hex_spaced(&frame[protected.start..header.body_range.start]),
+            ),
+            (
+                "Payload",
+                "`03 || \"Help\"`",
+                hex_spaced(&frame[header.body_range.clone()]),
+            ),
+            (
+                "SIG",
+                "Ed25519 signature",
+                hex_spaced(&frame[header.signature().unwrap().range.clone()]),
+            ),
+            (
+                "MIC",
+                "16 bytes",
+                hex_spaced(&frame[header.mic_range.clone()]),
+            ),
+        ],
+        frame,
+    );
+    render_signature_input(out, &signed.multicast_authenticated.input);
+
+    let header = parse_header(&signed.multicast_encrypted.frame);
+    let frame = &signed.multicast_encrypted.frame;
+    render_example(
+        out,
+        "Example 13: Signed Encrypted Multicast (E=1, D=1)",
+        "An encrypted multicast from Node A, signed. The signature is encrypted with the source hint and the payload.",
+        &[
+            (
+                "FCF",
+                "VER=3, TYPE=4 (multicast), S=0, R=0, H=0",
+                hex_spaced(&frame[..1]),
+            ),
+            (
+                "CHANNEL",
+                "Derived channel identifier",
+                hex_spaced(&vectors.channel.channel_id.0),
+            ),
+            (
+                "SCF",
+                "E=1, MIC=3 (16-byte), S=0, D=1",
+                hex_spaced(&frame[3..4]),
+            ),
+            ("Frame Counter", "13", hex_spaced(&13u32.to_be_bytes())),
+            ("End of options", "No options", "FF".into()),
+            (
+                "Encrypted data",
+                "ENCRYPT(`SRC || \"Hello\" || SIG`)",
+                hex_spaced(&frame[header.protected_range()]),
+            ),
+            (
+                "MIC",
+                "16 bytes",
+                hex_spaced(&frame[header.mic_range.clone()]),
+            ),
+        ],
+        frame,
+    );
+    render_signature_input(out, &signed.multicast_encrypted.input);
+
+    let header = parse_header(&signed.broadcast.frame);
+    let frame = &signed.broadcast.frame;
+    let signature = header.signature().unwrap().range.clone();
+    let option_start = header.options_range.start;
+    render_example(
+        out,
+        "Example 14: Signed Broadcast",
+        "A broadcast from Node A carrying its full key and a Frame Signature option (0) with counter 14. In the signature input the option's 64 signature bytes are zeros.",
+        &[
+            (
+                "FCF",
+                "VER=3, TYPE=0 (broadcast), S=1, R=0, H=0",
+                hex_spaced(&frame[..1]),
+            ),
+            (
+                "SRC",
+                "Node A public key",
+                hex_spaced(&frame[1..option_start]),
+            ),
+            (
+                "Option header",
+                "Delta 0, length 68 (13 + `37`)",
+                hex_spaced(&frame[option_start..signature.start - 4]),
+            ),
+            (
+                "Counter",
+                "14",
+                hex_spaced(&frame[signature.start - 4..signature.start]),
+            ),
+            (
+                "SIG",
+                "Ed25519 signature",
+                hex_spaced(&frame[signature.clone()]),
+            ),
+            ("End of options", "Payload follows", "FF".into()),
+            (
+                "Payload",
+                "`\"Hi\"`",
+                hex_spaced(&frame[header.body_range.clone()]),
+            ),
+        ],
+        frame,
+    );
+    render_signature_input(out, &signed.broadcast.input);
+}
+
+fn render_signature_input(out: &mut String, input: &[u8]) {
+    writeln!(out).unwrap();
+    writeln!(out, "Signature input ({} bytes):", input.len()).unwrap();
+    writeln!(out).unwrap();
+    writeln!(out, "```text").unwrap();
+    writeln!(out, "{}", wrap_hex_lines(input, 16)).unwrap();
+    writeln!(out, "```").unwrap();
 }
 
 /// Example 9: contact exchange derivations, with Node A asking Node B.
@@ -572,6 +740,19 @@ struct Phase1Vectors {
     blind_unicast: Vec<u8>,
     mac_ack: Vec<u8>,
     mac_ack_callsign: Vec<u8>,
+    signed: SignedVectors,
+}
+
+/// A signed frame and the bytes its signature covers.
+struct SignedVector {
+    frame: Vec<u8>,
+    input: Vec<u8>,
+}
+
+struct SignedVectors {
+    multicast_authenticated: SignedVector,
+    multicast_encrypted: SignedVector,
+    broadcast: SignedVector,
 }
 
 fn generate_phase1_vectors() -> Phase1Vectors {
@@ -642,8 +823,104 @@ fn generate_phase1_vectors() -> Phase1Vectors {
             &node_a_public,
             node_b_public.hint(),
         ),
+        signed: SignedVectors {
+            multicast_authenticated: build_signed_multicast(
+                &engine,
+                &channel,
+                &node_a_identity,
+                false,
+            ),
+            multicast_encrypted: build_signed_multicast(&engine, &channel, &node_a_identity, true),
+            broadcast: build_signed_broadcast(&node_a_identity),
+        },
         channel,
     }
+}
+
+/// Sign `input` with `identity`, whose signing never waits.
+fn sign_now(identity: &SoftwareIdentity, input: &[u8]) -> [u8; 64] {
+    use std::{
+        future::Future,
+        pin::pin,
+        task::{Context, Poll, Waker},
+    };
+    match pin!(identity.sign(input)).poll(&mut Context::from_waker(Waker::noop())) {
+        Poll::Ready(signature) => signature.unwrap(),
+        Poll::Pending => unreachable!("software signing is synchronous"),
+    }
+}
+
+/// Example 12 (`encrypted` false: full source, counter 12) or Example 13
+/// (hint source, counter 13).
+fn build_signed_multicast(
+    engine: &SoftwareCryptoEngine,
+    channel: &DerivedChannelKeys,
+    node_a: &SoftwareIdentity,
+    encrypted: bool,
+) -> SignedVector {
+    let mut buf = [0u8; 256];
+    let builder = PacketBuilder::new(&mut buf).multicast(channel.channel_id);
+    let mut packet = if encrypted {
+        builder
+            .source_hint(node_a.public_key().hint())
+            .frame_counter(13)
+            .encrypted()
+            .signed()
+            .payload(b"Hello")
+            .build()
+    } else {
+        builder
+            .source_full(node_a.public_key())
+            .frame_counter(12)
+            .signed()
+            .payload(b"\x03Help")
+            .build()
+    }
+    .unwrap();
+    let header = packet.header().unwrap();
+    let mut input = vec![0u8; SIGNATURE_INPUT_MAX];
+    let len = signature_input(
+        &header,
+        packet.as_bytes(),
+        None,
+        Some(&channel.commitment),
+        &mut input,
+    )
+    .unwrap();
+    input.truncate(len);
+    packet
+        .signature_slot_mut()
+        .unwrap()
+        .copy_from_slice(&sign_now(node_a, &input));
+    let keys = PairwiseKeys {
+        k_enc: channel.k_enc,
+        k_mic: channel.k_mic,
+    };
+    engine.seal_packet(&mut packet, &keys).unwrap();
+    SignedVector {
+        frame: packet.as_bytes().to_vec(),
+        input,
+    }
+}
+
+/// Example 14.
+fn build_signed_broadcast(node_a: &SoftwareIdentity) -> SignedVector {
+    let mut buf = [0u8; 256];
+    let mut frame = PacketBuilder::new(&mut buf)
+        .broadcast()
+        .source_full(node_a.public_key())
+        .signed(14)
+        .payload(b"Hi")
+        .build()
+        .unwrap()
+        .to_vec();
+    let header = parse_header(&frame);
+    let mut input = vec![0u8; SIGNATURE_INPUT_MAX];
+    let len = signature_input(&header, &frame, None, None, &mut input).unwrap();
+    input.truncate(len);
+    let signature = sign_now(node_a, &input);
+    frame[header.signature().unwrap().range.clone()].copy_from_slice(&signature);
+    SignedVector { frame, input }
 }
 
 fn build_broadcast_hint(node_a: &PublicKey) -> Vec<u8> {
@@ -875,7 +1152,52 @@ fn parse_header(bytes: &[u8]) -> PacketHeader {
 mod tests {
     use std::fs;
 
-    use super::render_phase1_test_vectors_markdown;
+    use super::{generate_phase1_vectors, parse_header, render_phase1_test_vectors_markdown};
+    use crate::{
+        core::SIGNATURE_INPUT_MAX,
+        crypto::{
+            PairwiseKeys,
+            software::{SoftwareAes, SoftwareSha256, verify_frame_signature},
+        },
+    };
+
+    /// The signed examples open under the channel and verify against Node
+    /// A's key, and each shows the input its signature covers.
+    #[test]
+    fn signed_vectors_verify() {
+        let vectors = generate_phase1_vectors();
+        let engine = super::SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
+        let keys = PairwiseKeys {
+            k_enc: vectors.channel.k_enc,
+            k_mic: vectors.channel.k_mic,
+        };
+        let commitment = vectors.channel.commitment;
+        let mut scratch = [0u8; SIGNATURE_INPUT_MAX];
+        for (vector, channel) in [
+            (&vectors.signed.multicast_authenticated, Some(&commitment)),
+            (&vectors.signed.multicast_encrypted, Some(&commitment)),
+            (&vectors.signed.broadcast, None),
+        ] {
+            let mut frame = vector.frame.clone();
+            let header = parse_header(&frame);
+            if channel.is_some() {
+                engine
+                    .open_packet(&mut frame, &header, &keys, None)
+                    .unwrap();
+            }
+            assert!(verify_frame_signature(
+                &header,
+                &frame,
+                &vectors.node_a_public,
+                None,
+                channel,
+                &mut scratch,
+            ));
+            let len =
+                crate::core::signature_input(&header, &frame, None, channel, &mut scratch).unwrap();
+            assert_eq!(scratch[..len], vector.input[..]);
+        }
+    }
 
     #[test]
     fn phase1_vectors_match_protocol_appendix() {

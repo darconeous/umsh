@@ -27,8 +27,8 @@
 use core::ops::Range;
 
 use umsh_core::{
-    BlindAddr, ChannelId, ChannelKey, ChannelTag, NodeHint, PacketHeader, PacketType,
-    ParsedOptions, PublicKey, SourceAddrRef, UnsealedPacket, feed_aad,
+    BlindAddr, ChannelCommitment, ChannelId, ChannelKey, ChannelTag, NodeHint, PacketHeader,
+    PacketType, ParsedOptions, PublicKey, SourceAddrRef, UnsealedPacket, feed_aad,
 };
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
@@ -147,6 +147,9 @@ pub struct DerivedChannelKeys {
     pub k_enc: [u8; 32],
     pub k_mic: [u8; 32],
     pub channel_id: ChannelId,
+    /// What a frame signature on this channel covers. Cached so receive
+    /// paths need not rerun HKDF per frame.
+    pub commitment: ChannelCommitment,
 }
 
 impl Zeroize for DerivedChannelKeys {
@@ -360,13 +363,26 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
         ChannelTag(out)
     }
 
+    /// Derive the channel commitment, which a frame signature on the channel
+    /// covers.
+    ///
+    /// Same derivation as the channel tag, run to 32 bytes: 128 bits would
+    /// leave a 2^64 collision search to someone choosing both channels, and
+    /// the commitment is never transmitted, so its length costs nothing.
+    pub fn derive_channel_commitment(&self, channel_key: &ChannelKey) -> ChannelCommitment {
+        let mut out = [0u8; 32];
+        self.hkdf(&channel_key.0, b"UMSH-CHAN-ID", b"", &mut out);
+        ChannelCommitment(out)
+    }
+
     /// Derive multicast transport keys and the channel identifier.
     ///
     /// As with [`derive_pairwise_keys`](Self::derive_pairwise_keys), the
     /// 64-byte HKDF output is the RFC 5297 AES-SIV key: S2V key first, CTR
     /// key second.
     pub fn derive_channel_keys(&self, channel_key: &ChannelKey) -> DerivedChannelKeys {
-        let channel_id = self.derive_channel_id(channel_key);
+        let commitment = self.derive_channel_commitment(channel_key);
+        let channel_id = commitment.channel_tag().channel_id();
         let mut info = [0u8; 15];
         info[..13].copy_from_slice(b"UMSH-MCAST-V2");
         info[13..15].copy_from_slice(&channel_id.0);
@@ -376,6 +392,7 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
             k_enc: [0u8; 32],
             k_mic: [0u8; 32],
             channel_id,
+            commitment,
         };
         derived.k_mic.copy_from_slice(&okm[..32]);
         derived.k_enc.copy_from_slice(&okm[32..64]);
@@ -561,7 +578,7 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
 
         let body_range = match (header.packet_type(), header.source) {
             (PacketType::Multicast, SourceAddrRef::Encrypted { len, .. }) => {
-                (protected.start + len)..protected.end
+                (protected.start + len)..header.body_range.end
             }
             _ => header.body_range.clone(),
         };
@@ -1086,6 +1103,34 @@ pub mod software {
     /// malformed peer keys before they can poison the peer registry.
     pub fn is_valid_ed25519_public_key(pk: &PublicKey) -> bool {
         decode_canonical_point(pk).is_some()
+    }
+
+    /// Verify a frame's signature against `key`, the sender's key.
+    ///
+    /// `channel` is the commitment of the channel key that authenticated the
+    /// frame's MIC, never one matched by identifier alone; it is `None`
+    /// exactly for frames that name no channel. A blind unicast needs its
+    /// plaintext address block. The frame must already be open. `scratch`
+    /// holds the signature input.
+    pub fn verify_frame_signature(
+        header: &PacketHeader,
+        buf: &[u8],
+        key: &PublicKey,
+        blind_addr: Option<&BlindAddr>,
+        channel: Option<&ChannelCommitment>,
+        scratch: &mut [u8; umsh_core::SIGNATURE_INPUT_MAX],
+    ) -> bool {
+        let Some(signature) = header
+            .signature()
+            .and_then(|sig| buf.get(sig.range.clone()))
+            .and_then(|sig| <[u8; 64]>::try_from(sig).ok())
+        else {
+            return false;
+        };
+        match umsh_core::signature_input(header, buf, blind_addr, channel, scratch) {
+            Ok(len) => verify_ed25519_signature(key, &scratch[..len], &signature),
+            Err(_) => false,
+        }
     }
 
     /// Verify a detached Ed25519 signature against `pk`. Used for standalone
@@ -2413,5 +2458,366 @@ mod tests {
         // contract. (Today: accepted as a valid point.)
         let zero = PublicKey([0u8; 32]);
         assert!(is_valid_ed25519_public_key(&zero));
+    }
+}
+
+#[cfg(all(test, feature = "software-crypto"))]
+mod frame_signature_tests {
+    extern crate std;
+    use std::vec::Vec;
+
+    use ed25519_dalek::{Signer, SigningKey};
+    use umsh_core::{
+        ChannelCommitment, MAX_FRAME_LEN, OptionNumber, PacketBuilder, SIGNATURE_INPUT_MAX,
+        signature_input,
+    };
+
+    use super::{software::*, *};
+
+    const SIGNER_SEED: [u8; 32] = [0x11; 32];
+    const CHANNEL_A: ChannelKey = ChannelKey([0x5A; 32]);
+
+    fn engine() -> SoftwareCryptoEngine {
+        SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256)
+    }
+
+    fn signer() -> (SigningKey, PublicKey) {
+        let key = SigningKey::from_bytes(&SIGNER_SEED);
+        let public = PublicKey(key.verifying_key().to_bytes());
+        (key, public)
+    }
+
+    /// A key other than [`CHANNEL_A`] that derives the same identifier.
+    fn channel_b() -> ChannelKey {
+        let mut bytes = [0x77; 32];
+        bytes[..4].copy_from_slice(&0x0001_D29Au32.to_be_bytes());
+        let key = ChannelKey(bytes);
+        assert_eq!(
+            engine().derive_channel_id(&key),
+            engine().derive_channel_id(&CHANNEL_A)
+        );
+        key
+    }
+
+    fn channel_pairwise(derived: &DerivedChannelKeys) -> PairwiseKeys {
+        PairwiseKeys {
+            k_enc: derived.k_enc,
+            k_mic: derived.k_mic,
+        }
+    }
+
+    fn sign(
+        frame: &[u8],
+        blind_addr: Option<&BlindAddr>,
+        channel: Option<&ChannelCommitment>,
+    ) -> [u8; 64] {
+        let header = PacketHeader::parse(frame).unwrap();
+        let mut input = [0u8; SIGNATURE_INPUT_MAX];
+        let len = signature_input(&header, frame, blind_addr, channel, &mut input).unwrap();
+        signer().0.sign(&input[..len]).to_bytes()
+    }
+
+    /// A multicast from the signer, with `signature` in its slot (or a fresh
+    /// one over the channel's commitment), sealed under `channel`.
+    fn multicast(channel: &ChannelKey, encrypted: bool, signature: Option<[u8; 64]>) -> Vec<u8> {
+        let derived = engine().derive_channel_keys(channel);
+        let (_, public) = signer();
+        let mut buf = [0u8; 256];
+        let builder = PacketBuilder::new(&mut buf)
+            .multicast(derived.channel_id)
+            .source_hint(public.hint())
+            .frame_counter(77)
+            .signed();
+        let builder = if encrypted {
+            builder.encrypted()
+        } else {
+            builder
+        };
+        let mut packet = builder.payload(b"mayday").build().unwrap();
+        let signature =
+            signature.unwrap_or_else(|| sign(packet.as_bytes(), None, Some(&derived.commitment)));
+        packet
+            .signature_slot_mut()
+            .unwrap()
+            .copy_from_slice(&signature);
+        engine()
+            .seal_packet(&mut packet, &channel_pairwise(&derived))
+            .unwrap();
+        packet.as_bytes().to_vec()
+    }
+
+    /// Open `frame` under `channel` and check its signature against that
+    /// channel's commitment. `None` if the MIC fails.
+    fn open_and_verify(frame: &[u8], channel: &ChannelKey) -> Option<(Vec<u8>, bool)> {
+        let derived = engine().derive_channel_keys(channel);
+        let mut frame = frame.to_vec();
+        let header = PacketHeader::parse(&frame).unwrap();
+        let payload = engine()
+            .open_packet(&mut frame, &header, &channel_pairwise(&derived), None)
+            .ok()?;
+        let (_, public) = signer();
+        let mut scratch = [0u8; SIGNATURE_INPUT_MAX];
+        let verified = verify_frame_signature(
+            &header,
+            &frame,
+            &public,
+            None,
+            Some(&derived.commitment),
+            &mut scratch,
+        );
+        Some((frame[payload].to_vec(), verified))
+    }
+
+    #[test]
+    fn the_channel_commitment_begins_with_the_tag_and_identifier() {
+        let engine = engine();
+        let commitment = engine.derive_channel_commitment(&CHANNEL_A);
+        assert_eq!(
+            commitment.channel_tag(),
+            engine.derive_channel_tag(&CHANNEL_A)
+        );
+        assert_eq!(
+            commitment.channel_tag().channel_id(),
+            engine.derive_channel_id(&CHANNEL_A)
+        );
+        assert_eq!(
+            engine.derive_channel_keys(&CHANNEL_A).commitment,
+            commitment
+        );
+    }
+
+    #[test]
+    fn a_signed_multicast_opens_and_verifies_with_either_e() {
+        for encrypted in [false, true] {
+            let frame = multicast(&CHANNEL_A, encrypted, None);
+            let (payload, verified) = open_and_verify(&frame, &CHANNEL_A).unwrap();
+            assert_eq!(payload, b"mayday", "E={encrypted}");
+            assert!(verified, "E={encrypted}");
+        }
+    }
+
+    /// The MIC covers the signature, encrypted or not.
+    #[test]
+    fn a_flipped_signature_bit_fails_the_mic() {
+        for encrypted in [false, true] {
+            let mut frame = multicast(&CHANNEL_A, encrypted, None);
+            let header = PacketHeader::parse(&frame).unwrap();
+            frame[header.signature().unwrap().range.start + 5] ^= 0x20;
+            assert!(
+                open_and_verify(&frame, &CHANNEL_A).is_none(),
+                "E={encrypted}"
+            );
+        }
+    }
+
+    /// Someone holding both colliding keys re-seals a signed multicast under
+    /// the other key. Its MIC verifies there, but the signature, made over
+    /// the first channel's commitment, does not.
+    #[test]
+    fn a_signed_multicast_transplanted_to_a_colliding_channel_fails_its_signature() {
+        let channel_b = channel_b();
+        for encrypted in [false, true] {
+            let original = multicast(&CHANNEL_A, encrypted, None);
+            let (_, verified) = open_and_verify(&original, &CHANNEL_A).unwrap();
+            assert!(verified);
+
+            let mut opened = original.clone();
+            let header = PacketHeader::parse(&opened).unwrap();
+            let derived_a = engine().derive_channel_keys(&CHANNEL_A);
+            engine()
+                .open_packet(&mut opened, &header, &channel_pairwise(&derived_a), None)
+                .unwrap();
+            let signature: [u8; 64] = opened[header.signature().unwrap().range.clone()]
+                .try_into()
+                .unwrap();
+
+            let transplanted = multicast(&channel_b, encrypted, Some(signature));
+            let (payload, verified) = open_and_verify(&transplanted, &channel_b).unwrap();
+            assert_eq!(payload, b"mayday");
+            assert!(!verified, "E={encrypted}");
+        }
+    }
+
+    /// The same transplant for a blind unicast, which also needs the
+    /// pairwise keys.
+    #[test]
+    fn a_signed_blind_unicast_transplanted_to_a_colliding_channel_fails_its_signature() {
+        let engine = engine();
+        let (_, public) = signer();
+        let pairwise = PairwiseKeys {
+            k_enc: [3; 32],
+            k_mic: [4; 32],
+        };
+        let dst = NodeHint([0xC3, 0xD4, 0x25]);
+        let seal = |channel: &ChannelKey, signature: Option<[u8; 64]>| {
+            let derived = engine.derive_channel_keys(channel);
+            let blind_keys = engine.derive_blind_keys(&pairwise, &derived);
+            let mut buf = [0u8; 256];
+            let mut packet = PacketBuilder::new(&mut buf)
+                .blind_unicast(derived.channel_id, dst)
+                .source_full(&public)
+                .frame_counter(5)
+                .signed()
+                .payload(b"hello")
+                .build()
+                .unwrap();
+            let addr = BlindAddr::from_plaintext(packet.blind_addr().unwrap()).unwrap();
+            let signature = signature
+                .unwrap_or_else(|| sign(packet.as_bytes(), Some(&addr), Some(&derived.commitment)));
+            packet
+                .signature_slot_mut()
+                .unwrap()
+                .copy_from_slice(&signature);
+            engine
+                .seal_blind_packet(&mut packet, &blind_keys, &derived)
+                .unwrap();
+            (packet.as_bytes().to_vec(), signature)
+        };
+        let open = |frame: &[u8], channel: &ChannelKey| {
+            let derived = engine.derive_channel_keys(channel);
+            let blind_keys = engine.derive_blind_keys(&pairwise, &derived);
+            let mut frame = frame.to_vec();
+            let header = PacketHeader::parse(&frame).unwrap();
+            let opened = engine
+                .decrypt_blind_addr(&mut frame, &header, &derived)
+                .unwrap();
+            engine
+                .open_packet(&mut frame, &header, &blind_keys, Some(&opened.addr))
+                .unwrap();
+            let mut scratch = [0u8; SIGNATURE_INPUT_MAX];
+            verify_frame_signature(
+                &header,
+                &frame,
+                &public,
+                Some(&opened.addr),
+                Some(&derived.commitment),
+                &mut scratch,
+            )
+        };
+
+        let (original, signature) = seal(&CHANNEL_A, None);
+        assert!(open(&original, &CHANNEL_A));
+        let (transplanted, _) = seal(&channel_b(), Some(signature));
+        assert!(!open(&transplanted, &channel_b()));
+    }
+
+    /// A signed unicast opens, and its signature verifies without a
+    /// commitment.
+    #[test]
+    fn a_signed_unicast_round_trips() {
+        let engine = engine();
+        let (_, public) = signer();
+        let keys = PairwiseKeys {
+            k_enc: [1; 32],
+            k_mic: [2; 32],
+        };
+        let mut buf = [0u8; 256];
+        let mut packet = PacketBuilder::new(&mut buf)
+            .unicast(NodeHint([0xC3, 0xD4, 0x25]))
+            .source_full(&public)
+            .frame_counter(3)
+            .encrypted()
+            .signed()
+            .payload(b"hi")
+            .build()
+            .unwrap();
+        let signature = sign(packet.as_bytes(), None, None);
+        packet
+            .signature_slot_mut()
+            .unwrap()
+            .copy_from_slice(&signature);
+        engine.seal_packet(&mut packet, &keys).unwrap();
+        let mut frame = packet.as_bytes().to_vec();
+        let header = PacketHeader::parse(&frame).unwrap();
+        let payload = engine
+            .open_packet(&mut frame, &header, &keys, None)
+            .unwrap();
+        assert_eq!(&frame[payload], b"hi");
+        let mut scratch = [0u8; SIGNATURE_INPUT_MAX];
+        assert!(verify_frame_signature(
+            &header,
+            &frame,
+            &public,
+            None,
+            None,
+            &mut scratch
+        ));
+    }
+
+    fn signed_broadcast(
+        options: impl FnOnce(
+            umsh_core::BroadcastBuilder<'_, umsh_core::state::Configuring>,
+        ) -> umsh_core::BroadcastBuilder<'_, umsh_core::state::Configuring>,
+        payload: &[u8],
+    ) -> Vec<u8> {
+        let (_, public) = signer();
+        let mut buf = [0u8; 512];
+        let builder = PacketBuilder::new(&mut buf)
+            .broadcast()
+            .source_full(&public)
+            .signed(0x0000_0100);
+        let builder = options(builder);
+        let mut frame = if payload.is_empty() {
+            builder.build()
+        } else {
+            builder.payload(payload).build()
+        }
+        .unwrap()
+        .to_vec();
+        let signature = sign(&frame, None, None);
+        let range = PacketHeader::parse(&frame)
+            .unwrap()
+            .signature()
+            .unwrap()
+            .range
+            .clone();
+        frame[range].copy_from_slice(&signature);
+        frame
+    }
+
+    fn verify_broadcast(frame: &[u8]) -> bool {
+        let (_, public) = signer();
+        let header = PacketHeader::parse(frame).unwrap();
+        let mut scratch = [0u8; SIGNATURE_INPUT_MAX];
+        verify_frame_signature(&header, frame, &public, None, None, &mut scratch)
+    }
+
+    #[test]
+    fn a_signed_broadcast_covers_its_counter_and_payload() {
+        let frame = signed_broadcast(|builder| builder, b"advert");
+        assert!(verify_broadcast(&frame));
+
+        let mut tampered = frame.clone();
+        *tampered.last_mut().unwrap() ^= 1;
+        assert!(!verify_broadcast(&tampered));
+
+        let mut tampered = frame.clone();
+        let counter = PacketHeader::parse(&frame)
+            .unwrap()
+            .signature()
+            .unwrap()
+            .range
+            .start
+            - 1;
+        tampered[counter] ^= 1;
+        assert!(!verify_broadcast(&tampered));
+    }
+
+    /// The largest input a parsed frame can produce signs and verifies.
+    #[test]
+    fn the_largest_signature_input_signs_and_verifies() {
+        let frame = signed_broadcast(
+            |mut builder| {
+                // FCF and full SRC (33), option 0 (70), then empty option
+                // 16s: two bytes for the first, one for each repeat.
+                for _ in 0..MAX_FRAME_LEN - 33 - 70 - 1 {
+                    builder = builder.option(OptionNumber::Unknown(16), &[]);
+                }
+                builder
+            },
+            &[],
+        );
+        assert_eq!(frame.len(), MAX_FRAME_LEN);
+        assert!(verify_broadcast(&frame));
     }
 }

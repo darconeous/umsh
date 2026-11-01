@@ -365,7 +365,7 @@ pub use rx_windows::{NeedsRestore, RX_COUNTER_PERSIST_INTERVAL, RxWindow, RxWind
 pub use send::{
     AckState, ChannelInfoRef, CompletionSignal, MacEventRef, PacketFamily, PendingAck,
     PendingAckError, QueuedTx, ReceivedPacketRef, RepeaterHints, ResendRecord, RxMetadata,
-    SendOptions, SendReceipt, TxPriority, TxQueue,
+    SendOptions, SendReceipt, SignatureStatus, TxPriority, TxQueue,
 };
 pub use umsh_hal::{BearerId, Snr};
 

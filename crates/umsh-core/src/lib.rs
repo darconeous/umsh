@@ -54,12 +54,16 @@ pub use builder::{
     BlindUnicastBuilder, BroadcastBuilder, MacAckBuilder, MulticastBuilder, PacketBuilder,
     UnicastBuilder, state,
 };
-pub use error::{AddressParseError, BuildError, EncodeError, HintInputError, ParseError};
+pub use error::{
+    AddressParseError, BuildError, EncodeError, HintInputError, ParseError, SignatureInputError,
+};
 pub use packet::{
-    BlindAddr, ChannelId, ChannelKey, ChannelTag, Fcf, FloodHops, MicSize, NodeHint, OptionNumber,
+    BlindAddr, ChannelCommitment, ChannelId, ChannelKey, ChannelTag, FRAME_SIGNATURE_OPTION_LEN,
+    Fcf, FloodHops, FrameSignatureRef, MAX_FRAME_LEN, MicSize, NodeHint, OptionNumber,
     PacketHeader, PacketType, ParsedOptions, PayloadType, PublicKey, RouterHint,
-    RouterHintCandidates, Scf, SecInfo, SourceAddr, SourceAddrRef, UMSH_VERSION, UnsealedPacket,
-    feed_aad, iter_options,
+    RouterHintCandidates, SIGNATURE_INPUT_MAX, SIGNATURE_LABEL, SIGNATURE_LEN, Scf, SecInfo,
+    SourceAddr, SourceAddrRef, UMSH_VERSION, UnsealedPacket, feed_aad, iter_options,
+    signature_input,
 };
 #[cfg(feature = "region-codec")]
 pub use region::{REGION_NAME_MAX_LEN, RegionCode, RegionCodeError};

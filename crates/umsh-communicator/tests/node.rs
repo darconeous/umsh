@@ -170,6 +170,7 @@ fn channel_frame(key: &ChannelKey, from: PublicKey, full_key: bool, payload: &[u
             SourceAddrRef::Hint(from.hint())
         },
         sec_info: None,
+        signature: None,
         body_range: 0..0,
         mic_range: 0..0,
         total_len: 0,

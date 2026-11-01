@@ -6,50 +6,10 @@
 
 use super::*;
 
-use umsh_crypto::software::{SoftwareAes, SoftwareSha256};
-
-/// The test platform with real AES and SHA-256: under the stub hash every
-/// channel key derives the same keys, so channels could not be told apart.
-struct ChannelPlatform;
-
-impl Platform for ChannelPlatform {
-    type Identity = DummyIdentity;
-    type Aes = SoftwareAes;
-    type Sha = SoftwareSha256;
-    type Radio = DummyRadio;
-    type Delay = DummyDelay;
-    type Clock = DummyClock;
-    type Rng = DummyRng;
-    type CounterStore = DummyCounterStore;
-    type KeyValueStore = DummyKeyValueStore;
-}
-
-type ChannelMac = Mac<
-    ChannelPlatform,
-    4,
-    16,
-    8,
-    16,
-    16,
-    256,
-    64,
-    { crate::DEFAULT_CHANNEL_REPLAY },
-    { crate::DEFAULT_CHANNEL_HINT_REPLAY },
-    4,
->;
+type ChannelMac = CryptoMac;
 
 fn make_channel_mac() -> ChannelMac {
-    Mac::new(
-        DummyRadio::default(),
-        CryptoEngine::new(SoftwareAes, SoftwareSha256),
-        DummyClock {
-            now_ms: Cell::new(123),
-        },
-        DummyRng(7),
-        DummyCounterStore::default(),
-        RepeaterConfig::default(),
-        OperatingPolicy::default(),
-    )
+    make_crypto_mac()
 }
 
 /// An encrypted multicast from `source` sealed under `key`, with `counter`.

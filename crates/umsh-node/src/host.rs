@@ -604,6 +604,7 @@ mod tests {
             channel: None,
             source: umsh_core::SourceAddrRef::Hint(from.hint()),
             sec_info: None,
+            signature: None,
             body_range: 0..wire.len(),
             mic_range: wire.len()..wire.len(),
             total_len: wire.len(),
