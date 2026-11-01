@@ -2402,6 +2402,7 @@ fn a_ping_answer_keeps_its_path_and_how_each_hop_was_heard() {
         round_trip_ms: 1_380,
         rx: heard,
         signal: vec![HopSignal::new(-104, 38), HopSignal::POINT_TO_POINT],
+        truncated: false,
     });
     assert!(events(&node).contains(&NodeEvent::PingSettled(peer)));
     let Some(PingView::Reply(reply)) = node.ping_view(peer) else {
@@ -2412,7 +2413,7 @@ fn a_ping_answer_keeps_its_path_and_how_each_hop_was_heard() {
     let named: Vec<[u8; 2]> = reply.repeaters.iter().map(|r| r.hint).collect();
     assert_eq!(named, [[0xA1, 0x01], [0xB2, 0x02]]);
     // One hop more than were traced: a repeater that named none.
-    assert_eq!(reply.unnamed, 1);
+    assert_eq!(reply.unnamed, Some(1));
     assert_eq!(
         reply.legs.as_slice(),
         [
@@ -2426,6 +2427,41 @@ fn a_ping_answer_keeps_its_path_and_how_each_hop_was_heard() {
     );
     // The answer can have taught the device node a route.
     assert!(matches!(node.command(), Some(Command::ReadRoute { peer }) if peer == robin));
+}
+
+/// An answer whose trace lost its farthest hops shows the repeaters it
+/// names and that more went unnamed: how many when the answer flooded and
+/// counted its hops, and an unknown number when it was source-routed and
+/// did not. A trace that kept no hop at all is not a direct answer.
+#[test]
+fn a_truncated_ping_answer_never_shows_a_whole_path() {
+    let sim = device();
+    let (node, clock) = started(&sim);
+    let (robin, peer) = saved_robin(&sim, &node, clock);
+    let nearest = vec![RouterHint([0xA1, 0x01])];
+    for (hop_count, route_hints, unnamed) in [
+        (Some(5), nearest.clone(), Some(3)),
+        (None, nearest.clone(), None),
+        (None, Vec::new(), None),
+    ] {
+        node.ping(peer);
+        let mut heard = rx(1);
+        heard.hop_count = hop_count;
+        heard.route_hints = route_hints.clone();
+        node.arrive(Arrival::Pong {
+            peer: robin,
+            round_trip_ms: 2_000,
+            rx: heard,
+            signal: Vec::new(),
+            truncated: true,
+        });
+        let Some(PingView::Reply(reply)) = node.ping_view(peer) else {
+            panic!("no reply");
+        };
+        assert_eq!(reply.hops, hop_count);
+        assert_eq!(reply.repeaters.len(), route_hints.len());
+        assert_eq!(reply.unnamed, unnamed, "{hop_count:?} {route_hints:?}");
+    }
 }
 
 /// A ping nobody answers ends as no reply; word of a timeout with no ping

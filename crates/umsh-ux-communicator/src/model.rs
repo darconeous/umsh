@@ -1353,8 +1353,8 @@ pub struct PingReply {
     /// The repeaters that carried it, the one nearest this device first.
     pub repeaters: Vec<Repeater, MAX_PATH>,
     /// How many more it crossed without naming them, past the last one
-    /// named.
-    pub unnamed: u8,
+    /// named; `None` when it crossed more but how many is not known.
+    pub unnamed: Option<u8>,
     /// Its hops, in the same order: the first into this device, and each
     /// after it beyond the repeater before it.
     pub legs: Vec<Leg, { MAX_PATH + 1 }>,

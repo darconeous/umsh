@@ -188,7 +188,8 @@ impl<P: LocalPort, S: ChatStore> CommunicatorNode<P, S> {
                 round_trip_ms,
                 rx,
                 signal,
-            } => chats.pong(peer, round_trip_ms, &rx, &signal, now_ms, events),
+                truncated,
+            } => chats.pong(peer, round_trip_ms, &rx, &signal, truncated, now_ms, events),
             Arrival::PingTimeout { peer } => chats.ping_timed_out(peer, now_ms, events),
             Arrival::Route {
                 peer,

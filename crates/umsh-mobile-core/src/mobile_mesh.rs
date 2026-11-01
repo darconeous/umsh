@@ -37,7 +37,7 @@ use umsh_mac::{Mac, MacHandle, OperatingPolicy, RepeaterConfig, SendDestination,
 use umsh_node::meet::MeetCommand;
 use umsh_node::{
     Host, LocalNode, MacBackend, NodeCapabilities, NodeIdentityPayload, NodeIdentityProfile,
-    NodeRole, Transport,
+    NodeRole, PongMetadata, Transport,
     location::{MAX_PRECISION, NodeLocation},
 };
 use umsh_sync::AsyncRefCell;
@@ -178,11 +178,13 @@ pub struct MobileMeshPingEventRecord {
     pub round_trip_milliseconds: Option<u64>,
     /// Radio links the response crossed, counting the final one into this
     /// device: a direct response is one hop. Absent on a reply that was
-    /// source-routed without a trace route—it crossed hops nobody recorded,
-    /// so no count is claimed.
+    /// source-routed without a complete trace—it crossed hops nobody
+    /// recorded, so no count is claimed.
     pub hop_count: Option<u8>,
     /// Authenticated intermediate-router hints, the repeater nearest this
-    /// device first. The two endpoints are not included.
+    /// device first. The two endpoints are not included. Empty when the
+    /// response's trace lost hops in transit, since it would name only part
+    /// of the path.
     pub route_hints: Vec<Vec<u8>>,
     /// How each repeater in `route_hints` heard the node one step farther
     /// from this device, entry for entry. Empty unless the response carried
@@ -192,6 +194,35 @@ pub struct MobileMeshPingEventRecord {
     pub rssi_dbm: Option<i16>,
     pub snr_centibels: Option<i16>,
     pub lqi: Option<u8>,
+}
+
+/// The record of a ping answered as `metadata` says. The record has no way
+/// to say its path is partial, so a trace that lost hops in transit is
+/// withheld rather than shown whole.
+fn ping_reply_record(operation_id: u64, metadata: &PongMetadata) -> MobileMeshPingEventRecord {
+    let traced = !metadata.trace_truncated;
+    MobileMeshPingEventRecord {
+        operation_id,
+        outcome: MobileMeshPingOutcome::Reply,
+        round_trip_milliseconds: Some(metadata.round_trip_ms),
+        hop_count: metadata.hop_count,
+        route_hints: metadata
+            .route_hints
+            .iter()
+            .filter(|_| traced)
+            .map(|hint| hint.0.to_vec())
+            .collect(),
+        trace_signal: metadata
+            .trace_signal
+            .iter()
+            .filter(|_| traced)
+            .copied()
+            .map(MobileTraceSignalRecord::from)
+            .collect(),
+        rssi_dbm: metadata.rssi_dbm,
+        snr_centibels: metadata.snr_centibels,
+        lqi: metadata.lqi,
+    }
 }
 
 /// One repeater's reading of the hop it received a response over. Both
@@ -3566,26 +3597,7 @@ async fn run_worker(
     let pong_events = events.clone();
     let pong_subscription = node.on_pong_with_metadata(move |peer, metadata| {
         if let Some(operation_id) = pong_pending.borrow_mut().remove(&peer.0) {
-            let _ = pong_events.send(MobileMeshPingEventRecord {
-                operation_id,
-                outcome: MobileMeshPingOutcome::Reply,
-                round_trip_milliseconds: Some(metadata.round_trip_ms),
-                hop_count: metadata.hop_count,
-                route_hints: metadata
-                    .route_hints
-                    .iter()
-                    .map(|hint| hint.0.to_vec())
-                    .collect(),
-                trace_signal: metadata
-                    .trace_signal
-                    .iter()
-                    .copied()
-                    .map(MobileTraceSignalRecord::from)
-                    .collect(),
-                rssi_dbm: metadata.rssi_dbm,
-                snr_centibels: metadata.snr_centibels,
-                lqi: metadata.lqi,
-            });
+            let _ = pong_events.send(ping_reply_record(operation_id, metadata));
         }
     });
     let timeout_pending = pending.clone();
@@ -4939,6 +4951,33 @@ mod tests {
         let bridged = MobileTraceSignalRecord::from(umsh_core::options::HopSignal::POINT_TO_POINT);
         assert_eq!(bridged.rssi_dbm, None);
         assert_eq!(bridged.snr_centibels, None);
+    }
+
+    /// A complete trace is reported hop for hop; one that lost hops in
+    /// transit is withheld, keeping the hop count, so it is never drawn as
+    /// the whole path.
+    #[test]
+    fn a_truncated_ping_trace_is_withheld() {
+        let metadata = |trace_truncated, hop_count| PongMetadata {
+            round_trip_ms: 900,
+            hop_count,
+            route_hints: vec![umsh_core::RouterHint([0xA1, 0x01])],
+            trace_signal: vec![umsh_core::options::HopSignal::new(-97, 65)],
+            trace_truncated,
+            rssi_dbm: Some(-90),
+            snr_centibels: Some(40),
+            lqi: None,
+        };
+        let whole = ping_reply_record(7, &metadata(false, Some(2)));
+        assert_eq!(whole.route_hints, [vec![0xA1, 0x01]]);
+        assert_eq!(whole.trace_signal.len(), 1);
+        for hop_count in [Some(5), None] {
+            let partial = ping_reply_record(7, &metadata(true, hop_count));
+            assert!(partial.route_hints.is_empty());
+            assert!(partial.trace_signal.is_empty());
+            assert_eq!(partial.hop_count, hop_count);
+            assert_eq!(partial.rssi_dbm, Some(-90));
+        }
     }
 
     fn identity(seed: u8) -> Arc<MobileIdentity> {

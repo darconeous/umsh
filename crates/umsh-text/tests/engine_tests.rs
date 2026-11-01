@@ -470,6 +470,57 @@ fn compose_edit_and_delete_reuse_original_reference() {
     )));
 }
 
+/// A delete carries no body, but its options must still fit the frame. One
+/// that does not is refused before anything is sent or its original's
+/// archive is retired.
+#[test]
+fn a_bodyless_message_is_held_to_the_budget() {
+    let mut engine = engine();
+    let original = engine
+        .compose(
+            direct_conv(),
+            1,
+            ComposeIntent::Text {
+                body: "v1",
+                status: false,
+            },
+            0,
+        )
+        .unwrap();
+    drain(&mut engine);
+
+    let delete = ComposeIntent::Delete {
+        original: ComposeRef::Handle(original),
+    };
+    let error = engine
+        .compose_within(direct_conv(), 2, delete, 0, 1)
+        .unwrap_err();
+    assert_eq!(error, ComposeError::TooLarge);
+    let outputs = drain(&mut engine);
+    assert!(!outputs.iter().any(|output| matches!(
+        output,
+        Drained::Transmit { .. } | Drained::DeleteArchive { .. } | Drained::Delete { .. }
+    )));
+
+    // Within the budget, the same delete goes out.
+    engine
+        .compose_within(direct_conv(), 3, delete, 4, 2)
+        .unwrap();
+    let outputs = drain(&mut engine);
+    let Some(Drained::Transmit { payload, .. }) = outputs
+        .iter()
+        .find(|output| matches!(output, Drained::Transmit { .. }))
+    else {
+        panic!("expected transmit");
+    };
+    assert!(payload.len() <= 4);
+    assert!(
+        outputs
+            .iter()
+            .any(|output| matches!(output, Drained::DeleteArchive { .. }))
+    );
+}
+
 #[test]
 fn wire_referenced_edit_survives_process_restart() {
     // First process: compose the original and persist its checkpoint plus

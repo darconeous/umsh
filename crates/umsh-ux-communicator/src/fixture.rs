@@ -1497,7 +1497,7 @@ impl Store {
             round_trip_ms,
             hops: u8::try_from(repeaters.len() + 1).ok().map(|h| h + unnamed),
             repeaters,
-            unnamed,
+            unnamed: Some(unnamed),
             legs: legs.iter().copied().collect(),
         })
     }

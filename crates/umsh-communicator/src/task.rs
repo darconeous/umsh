@@ -64,11 +64,14 @@ pub enum Arrival {
     },
     /// A peer answered a ping. `signal` is what each repeater the answer
     /// came by measured, the nearest first, when there is one for each.
+    /// `truncated` says the answer's trace lost its farthest hops in
+    /// transit, so `rx.route_hints` names only the nearest.
     Pong {
         peer: PublicKey,
         round_trip_ms: u64,
         rx: RxSummary,
         signal: Vec<HopSignal>,
+        truncated: bool,
     },
     /// A ping went unanswered, or could not be sent.
     PingTimeout { peer: PublicKey },
@@ -274,6 +277,7 @@ where
                     buffered_age_s: 0,
                 },
                 signal: pong.trace_signal.clone(),
+                truncated: pong.trace_truncated,
             });
         }),
         node.on_ping_timeout(move |peer| inbox.push(Arrival::PingTimeout { peer })),

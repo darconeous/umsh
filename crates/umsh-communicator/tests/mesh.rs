@@ -1020,7 +1020,7 @@ async fn a_ping_through_a_repeater_names_it_and_reads_each_hop() {
             assert_eq!(reply.hops, Some(2));
             let named: Vec<[u8; 2]> = reply.repeaters.iter().map(|r| r.hint).collect();
             assert_eq!(named, [[ridge.0[0], ridge.0[1]]]);
-            assert_eq!(reply.unnamed, 0);
+            assert_eq!(reply.unnamed, Some(0));
             assert_eq!(reply.legs.len(), 2);
             assert!(
                 reply.legs.iter().all(|leg| matches!(leg, Leg::Heard(_))),

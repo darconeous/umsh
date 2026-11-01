@@ -2498,6 +2498,11 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
             let mut message = *template;
             message.body = body;
             let len = codec::encode(&message, &mut buffer).map_err(ComposeError::Encode)?;
+            // The plan sizes bodies only: a message with none, such as a
+            // delete, can still have options that outgrow the budget.
+            if len > budget {
+                return Err(ComposeError::TooLarge);
+            }
             let mut frame = heapless::Vec::new();
             let _ = frame.extend_from_slice(&buffer[..len]);
             self.queue_transmit(
