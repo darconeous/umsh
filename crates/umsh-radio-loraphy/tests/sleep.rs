@@ -297,6 +297,50 @@ fn tx_request() -> TxRequest {
     }
 }
 
+/// A disabled radio refuses transmits at once rather than leaving them
+/// queued, without waking the chip, and transmits again once re-enabled.
+#[test]
+fn disabled_radio_refuses_transmits_without_waking() {
+    let chip = Rc::new(RefCell::new(Chip::default()));
+    let (lora, channel, control) = fixture(chip.clone());
+    let mut runner = core::pin::pin!(device_runner(
+        lora,
+        channel,
+        control,
+        8,
+        32,
+        RxStrategy::Continuous,
+        None,
+        TestClock::default(),
+    ));
+    // Before the first configuration, and after an explicit disable.
+    for enabled in [None, Some(false)] {
+        if let Some(enabled) = enabled {
+            control.apply(settings(true));
+            assert!(poll(runner.as_mut()).is_pending());
+            control.apply(settings(enabled));
+        }
+        assert!(poll(runner.as_mut()).is_pending());
+        assert_eq!(chip.borrow().mode, Mode::Sleeping);
+        let count = chip.borrow().commands.len();
+        for _ in 0..3 {
+            assert!(channel.tx.try_send(tx_request()).is_ok());
+            assert!(poll(runner.as_mut()).is_pending());
+            assert!(matches!(
+                poll(core::pin::pin!(channel.tx_done.wait())),
+                Poll::Ready(Err(TxError::CadTimeout))
+            ));
+        }
+        assert_eq!(chip.borrow().commands.len(), count);
+        assert_eq!(chip.borrow().mode, Mode::Sleeping);
+    }
+    control.apply(settings(true));
+    assert!(poll(runner.as_mut()).is_pending());
+    assert!(channel.tx.try_send(tx_request()).is_ok());
+    assert!(poll(runner.as_mut()).is_pending());
+    assert_eq!(chip.borrow().mode, Mode::Transmitting);
+}
+
 /// A detected preamble holds off transmits for one maximum-length frame
 /// time, however often they are retried, and no longer.
 #[test]
@@ -346,6 +390,55 @@ fn preamble_refuses_transmits_until_a_max_frame_could_have_ended() {
     // The preamble never became a frame: once one could no longer be on
     // the air, the stale detection stops blocking.
     clock.0.set(1_000 + WINDOW_MS);
+    assert!(channel.tx.try_send(tx_request()).is_ok());
+    assert!(poll(runner.as_mut()).is_pending());
+    assert_eq!(chip.borrow().mode, Mode::Transmitting);
+}
+
+/// A transmit the chip never completes fails once its deadline passes,
+/// and the runner cold-starts the chip and goes back to receiving.
+#[test]
+fn transmit_without_completion_times_out_and_cold_starts_the_chip() {
+    let chip = Rc::new(RefCell::new(Chip::default()));
+    let (lora, channel, control) = fixture(chip.clone());
+    let clock = TestClock::default();
+    let mut runner = core::pin::pin!(device_runner(
+        lora,
+        channel,
+        control,
+        8,
+        32,
+        RxStrategy::Continuous,
+        None,
+        clock.clone(),
+    ));
+    control.apply(settings(true));
+    assert!(poll(runner.as_mut()).is_pending());
+
+    // No TX-done IRQ ever arrives. Well inside the deadline the runner
+    // keeps waiting.
+    assert!(channel.tx.try_send(tx_request()).is_ok());
+    assert!(poll(runner.as_mut()).is_pending());
+    assert_eq!(chip.borrow().mode, Mode::Transmitting);
+    clock.0.set(200);
+    assert!(poll(runner.as_mut()).is_pending());
+    assert_eq!(poll(core::pin::pin!(channel.tx_done.wait())), Poll::Pending);
+
+    let set_tx = chip.borrow().commands.len();
+    clock.0.set(10_000);
+    assert!(poll(runner.as_mut()).is_pending());
+    assert!(matches!(
+        poll(core::pin::pin!(channel.tx_done.wait())),
+        Poll::Ready(Err(TxError::Io(RadioError::TransmitTimeout)))
+    ));
+    // The cold start restores the TCXO mode a refused SetTx can clear.
+    assert!(
+        chip.borrow().commands[set_tx..]
+            .iter()
+            .any(|cmd| cmd[0] == 0x97)
+    );
+    assert_eq!(chip.borrow().mode, Mode::Receiving);
+
     assert!(channel.tx.try_send(tx_request()).is_ok());
     assert!(poll(runner.as_mut()).is_pending());
     assert_eq!(chip.borrow().mode, Mode::Transmitting);

@@ -305,6 +305,12 @@ impl RxBusyGate {
     }
 }
 
+/// Time allowed beyond twice a frame's airtime before its transmit is
+/// presumed lost. It absorbs the work around the frame that airtime does
+/// not price: the CAD symbols, image calibration on a band change, and
+/// the TCXO's start-up.
+const TX_DEADLINE_SLACK_MS: u64 = 250;
+
 /// Execute one transmit request: CAD gate (listen-before-talk) per the
 /// request's [`CadPolicy`], then transmit.
 ///
@@ -312,11 +318,21 @@ impl RxBusyGate {
 /// `Gate`: the MAC coordinator already owns retry pacing by backing off on
 /// [`TxError::CadTimeout`] and re-queueing the frame.
 ///
-/// NOT cancel-safe (`cad`, `prepare_for_tx`, and `tx` must all run to
-/// completion)—call outside any `select` branch, like the TX arm it
-/// replaces.
-async fn perform_tx<RK, DLY>(
+/// The CAD gate and the transmit together get twice the frame's airtime
+/// plus [`TX_DEADLINE_SLACK_MS`]. A chip that refuses a command raises no
+/// IRQ, so without a limit one refused `SetTx` parks the runner, and every
+/// radio client behind it, for good. When the deadline passes the attempt
+/// is abandoned and the chip reset and cold-started, which also restores
+/// any configuration a fault cleared (an SX126x reporting XOSC_START_ERR
+/// drops its TCXO mode), and the request fails with
+/// [`RadioError::TransmitTimeout`].
+///
+/// Otherwise NOT cancel-safe (`cad`, `prepare_for_tx`, and `tx` must
+/// all run to completion or be followed by a reset)—call outside any
+/// `select` branch, like the TX arm it replaces.
+async fn perform_tx<RK, DLY, C>(
     lora: &mut LoRa<RK, DLY>,
+    clock: &C,
     mdltn: &ModulationParams,
     tx_pkt: &mut PacketParams,
     default_power_dbm: i32,
@@ -325,26 +341,49 @@ async fn perform_tx<RK, DLY>(
 where
     RK: RadioKind,
     DLY: embedded_hal_async::delay::DelayNs,
+    C: Clock,
 {
-    if !matches!(tx_req.cad, CadPolicy::Skip) {
-        let busy = async {
-            lora.prepare_for_cad(mdltn).await?;
-            lora.cad(mdltn).await
+    let airtime_ms = umsh_ulcp::airtime::lora_airtime_ms_with_preamble(
+        sf_value(mdltn.spreading_factor) as u8,
+        bw_value_hz(mdltn.bandwidth),
+        mdltn.coding_rate.denom() as u8,
+        tx_req.data.len(),
+        tx_pkt.preamble_length,
+    );
+    let deadline_ms = clock
+        .now_ms()
+        .saturating_add(2 * u64::from(airtime_ms) + TX_DEADLINE_SLACK_MS);
+    let attempt = async {
+        if !matches!(tx_req.cad, CadPolicy::Skip) {
+            let busy = async {
+                lora.prepare_for_cad(mdltn).await?;
+                lora.cad(mdltn).await
+            }
+            .await
+            .map_err(TxError::Io)?;
+            if busy {
+                return Err(TxError::CadTimeout);
+            }
+        }
+        let power = tx_req.power_dbm.unwrap_or(default_power_dbm);
+        async {
+            lora.prepare_for_tx(mdltn, tx_pkt, power, &tx_req.data)
+                .await?;
+            lora.tx().await
         }
         .await
-        .map_err(TxError::Io)?;
-        if busy {
-            return Err(TxError::CadTimeout);
+        .map_err(TxError::Io)
+    };
+    let expired = core::future::poll_fn(|cx| clock.poll_delay_until(cx, deadline_ms));
+    match select(attempt, expired).await {
+        Either::First(result) => result,
+        Either::Second(()) => {
+            // A failed reset is left for the next prepare to retry: init
+            // marks the chip for a cold start before it touches the bus.
+            let _ = lora.init().await;
+            Err(TxError::Io(RadioError::TransmitTimeout))
         }
     }
-    let power = tx_req.power_dbm.unwrap_or(default_power_dbm);
-    async {
-        lora.prepare_for_tx(mdltn, tx_pkt, power, &tx_req.data)
-            .await?;
-        lora.tx().await
-    }
-    .await
-    .map_err(TxError::Io)
 }
 
 /// Background loop: owns the `lora_phy::LoRa` instance, switches between
@@ -353,15 +392,17 @@ where
 /// Wrap this in a `#[embassy_executor::task]` in the binary crate so the
 /// concrete monomorphisation is visible to the linker.
 ///
-/// `clock` times the receive-busy gate (see [`rx_busy_window_ms`]).
+/// `clock` times the receive-busy gate (see [`rx_busy_window_ms`]) and
+/// each transmit's deadline.
 ///
 /// # Cancellation safety
 ///
 /// `wait_for_irq` is the only `await` point that may be cancelled (it just
 /// awaits a DIO edge and is safe to drop). `process_irq_event`,
 /// `prepare_for_tx`, and `tx` all run to completion outside any `select`
-/// branch—cancelling those leaves the radio in a wedged state from which
-/// `prepare_for_tx` will hang forever (lora-phy explicitly warns against
+/// branch, the transmit deadline aside, which resets the chip after it
+/// cancels one—cancelling those otherwise leaves the radio in a wedged
+/// state from which `prepare_for_tx` will hang forever (lora-phy explicitly warns against
 /// dropping `process_irq_event` futures). The convenience `lora.rx()`
 /// helper internally calls `complete_rx`/`process_irq_event`, so it is
 /// **not** safe inside a `select` either; we hand-roll the IRQ loop here
@@ -463,7 +504,8 @@ where
                     // TX is also NOT cancel-safe—run the CAD gate and
                     // prepare_for_tx + tx to completion outside any select.
                     let result =
-                        perform_tx(&mut lora, &mdltn, &mut tx_pkt, power_dbm, &tx_req).await;
+                        perform_tx(&mut lora, &clock, &mdltn, &mut tx_pkt, power_dbm, &tx_req)
+                            .await;
                     ch.tx_done.signal(result);
                     continue 'outer; // chip is left in standby—re-prepare RX
                 }
@@ -767,14 +809,20 @@ pub fn coding_rate_from_denom(cr: u8) -> Option<CodingRate> {
 /// [`DeviceControl`] at runtime instead of being fixed at spawn.
 ///
 /// The radio sleeps until the first enabled settings
-/// arrive. While disabled, TX requests stay queued—the ULCP session
-/// rejects transmits with `STATUS_INVALID_STATE` before they reach
-/// this queue, so nothing accumulates in practice.
+/// arrive. While disabled, every TX request is answered at once with
+/// [`TxError::CadTimeout`]. The ULCP session rejects its own transmits
+/// before they get here, but it is not the only client: the device node
+/// keeps beaconing and advertising whatever the radio's state, and a
+/// request left unanswered would hold the node's MAC mid-transmit until
+/// the radio came back—blocking everything that borrows it, the
+/// pre-reboot quiesce included. The busy verdict is the one transmit
+/// error the MAC sheds without tearing down its pump.
 ///
 /// `rx_strategy` picks how the radio listens between frames; the
 /// duty-cycle windows are recomputed from each new set of modulation
 /// settings (see [`duty_cycle_rx_mode`]). `clock` times the receive-busy
-/// gate, which is likewise resized for each set (see [`rx_busy_window_ms`]).
+/// gate, which is likewise resized for each set (see [`rx_busy_window_ms`]),
+/// and each transmit's deadline.
 ///
 /// Cancellation-safety analysis is identical to [`runner`]: only
 /// `wait_for_irq` and the two channel/signal waits are cancelled by the
@@ -836,22 +884,29 @@ where
     let mut settings: Option<DeviceSettings> = None;
     let mut sleeping = false;
 
-    // Wait for new settings while idle, failing any RSSI request that
-    // arrives meanwhile so the requester never hangs. The session gates
-    // RSSI reads on `enabled`, but enable→RX is asynchronous (and the
-    // params-failure path below idles while the session still believes
-    // the radio is enabled), so a request can race into an idle window.
-    async fn wait_settings_while_idle<M: RawMutex>(ctl: &DeviceControl<M>) -> DeviceSettings {
+    // Wait for new settings while idle, failing any TX or RSSI request
+    // that arrives meanwhile so the requester never hangs. The session
+    // gates RSSI reads on `enabled`, but enable→RX is asynchronous (and
+    // the params-failure path below idles while the session still
+    // believes the radio is enabled), so a request can race into an idle
+    // window. Transmits are not gated at all on the node's side.
+    async fn wait_settings_while_idle<M: RawMutex, const RX: usize, const TX: usize>(
+        ch: &Channels<M, RX, TX>,
+        ctl: &DeviceControl<M>,
+    ) -> DeviceSettings {
         loop {
-            match select(
+            match select4(
                 ctl.settings.wait(),
-                select(ctl.rssi_req.wait(), ctl.temperature_req.wait()),
+                ch.tx.receive(),
+                ctl.rssi_req.wait(),
+                ctl.temperature_req.wait(),
             )
             .await
             {
-                Either::First(new_settings) => return new_settings,
-                Either::Second(Either::First(())) => ctl.rssi_resp.signal(Err(())),
-                Either::Second(Either::Second(id)) => {
+                Either4::First(new_settings) => return new_settings,
+                Either4::Second(_) => ch.tx_done.signal(Err(TxError::CadTimeout)),
+                Either4::Third(()) => ctl.rssi_resp.signal(Err(())),
+                Either4::Fourth(id) => {
                     // Keep a disabled radio asleep, including during the
                     // enable-to-RX transition or a configuration failure.
                     ctl.temperature_resp.signal((id, None));
@@ -886,7 +941,7 @@ where
                     }
                     // No periodic work while disabled. A failed sleep is
                     // retried on the next configuration request.
-                    settings = Some(wait_settings_while_idle(ctl).await);
+                    settings = Some(wait_settings_while_idle(ch, ctl).await);
                 }
             }
         };
@@ -910,7 +965,7 @@ where
             Ok::<_, RadioError>((mdltn, rx_pkt, tx_pkt))
         })();
         let Ok((mdltn, rx_pkt, mut tx_pkt)) = params else {
-            settings = Some(wait_settings_while_idle(ctl).await);
+            settings = Some(wait_settings_while_idle(ch, ctl).await);
             continue 'reconfigure;
         };
         ch.spreading_factor
@@ -986,9 +1041,15 @@ where
                             ch.tx_done.signal(Err(TxError::CadTimeout));
                             continue;
                         }
-                        let result =
-                            perform_tx(&mut lora, &mdltn, &mut tx_pkt, active.power_dbm, &tx_req)
-                                .await;
+                        let result = perform_tx(
+                            &mut lora,
+                            &clock,
+                            &mdltn,
+                            &mut tx_pkt,
+                            active.power_dbm,
+                            &tx_req,
+                        )
+                        .await;
                         ch.tx_done.signal(result);
                         continue 'rx;
                     }

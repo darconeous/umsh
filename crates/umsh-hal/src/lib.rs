@@ -276,15 +276,18 @@ pub trait Clock {
     /// the implementation MUST register `cx.waker()` with a platform timer and
     /// return `Poll::Pending`, so the task is woken when the deadline elapses.
     ///
-    /// The default implementation has no real timer: it schedules an immediate
-    /// re-poll (via `cx.waker().wake_by_ref()`) and returns `Poll::Pending`, causing
-    /// the caller to busy-poll until the monotonic clock reaches the deadline.
-    /// This is correct but wastes CPU; platform clocks backed by a real timer
-    /// (tokio, embassy, etc.) MUST override this to sleep efficiently. A default
-    /// that returned `Ready` unconditionally would spin just as hard; one that
-    /// returned `Pending` without waking would stall timer-driven work entirely.
+    /// The default implementation has no real timer: until the deadline it
+    /// schedules an immediate re-poll (via `cx.waker().wake_by_ref()`) and
+    /// returns `Poll::Pending`, causing the caller to busy-poll until the
+    /// monotonic clock reaches the deadline. This is correct but wastes CPU;
+    /// platform clocks backed by a real timer (tokio, embassy, etc.) MUST
+    /// override this to sleep efficiently. A default that returned `Ready`
+    /// unconditionally would spin just as hard; one that returned `Pending`
+    /// without waking would stall timer-driven work entirely.
     fn poll_delay_until(&self, cx: &mut Context<'_>, deadline_ms: u64) -> Poll<()> {
-        let _ = deadline_ms;
+        if self.now_ms() >= deadline_ms {
+            return Poll::Ready(());
+        }
         cx.waker().wake_by_ref();
         Poll::Pending
     }
