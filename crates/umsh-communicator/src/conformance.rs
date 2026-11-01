@@ -257,6 +257,16 @@ impl Rig {
 
     /// The peer composes `intent` in `conversation` and this node hears
     /// it. Returns the peer's handle and what this node committed.
+    /// What the radio said of each frame [`hear`](Self::hear) delivers.
+    const HEARD: LinkInfo = LinkInfo {
+        rssi_dbm: Some(-91),
+        snr_centibels: Some(55),
+        hop_count: Some(1),
+        authenticated: true,
+        sender_verified: true,
+        forward_secret: false,
+    };
+
     fn hear<S: ChatStore>(
         &mut self,
         store: &mut S,
@@ -304,15 +314,8 @@ impl Rig {
                 .receive(&envelope, Some(PEER), &payload, self.now_ms)
                 .expect("this node takes it");
         }
-        let link = LinkInfo {
-            rssi_dbm: Some(-91),
-            snr_centibels: Some(55),
-            hop_count: Some(1),
-            authenticated: true,
-            forward_secret: false,
-        };
         let committed = self
-            .drain(store, Some(link))
+            .drain(store, Some(Self::HEARD))
             .result
             .expect("what was heard commits");
         (handle, committed)
@@ -435,7 +438,7 @@ pub fn transcript<H: Harness>(harness: &mut H) {
     assert_eq!(heard.chat, chat);
     assert_eq!(heard.direction, Direction::Inbound);
     assert_eq!(heard.sender, SenderScope::Peer(PEER));
-    assert_eq!(heard.link.and_then(|link| link.rssi_dbm), Some(-91));
+    assert_eq!(heard.link, Some(Rig::HEARD), "what the radio said is kept");
     assert_eq!(heard.time, Some(rig.time - 1));
     assert_eq!(record(&store, one).direction, Direction::Outbound);
 

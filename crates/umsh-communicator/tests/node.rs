@@ -801,6 +801,10 @@ fn a_public_message_arrives_with_its_sender_and_details() {
     assert_eq!(details.time, Some(STARTED + 5));
     assert_eq!(details.rssi, Some(-97));
     assert_eq!(details.snr, Some(65));
+    assert!(
+        !details.sender_verified,
+        "a channel's key proves only membership"
+    );
 
     let member = node.member(chat, message).unwrap();
     assert_eq!(member.sender.name, "Robin");
@@ -811,6 +815,27 @@ fn a_public_message_arrives_with_its_sender_and_details() {
 
     node.opened(chat);
     assert!(!node.chat(chat).unwrap().unread);
+}
+
+/// A message on `EMERGENCY` is signed, so its details say its sender is
+/// who it claims to be.
+#[test]
+fn an_emergency_message_shows_its_sender_verified() {
+    let sim = device();
+    let (node, clock) = started(&sim);
+    let emergency = WellKnownChannels::derive().emergency;
+    let robin = PublicKey([0x37; 32]);
+    let payload = composed(robin, emergency, "Robin", "Smoke at the trailhead");
+
+    clock.set(5_000);
+    node.arrive(Arrival::Text(received(&emergency, robin, &payload)));
+    let Some((chat, message)) = events(&node).into_iter().find_map(|event| match event {
+        NodeEvent::Arrived { chat, message } => Some((chat, message)),
+        _ => None,
+    }) else {
+        panic!("nothing arrived");
+    };
+    assert!(node.details(chat, message).unwrap().sender_verified);
 }
 
 /// A test message on `EMERGENCY` is kept and shown, but asks for no one's
@@ -1620,6 +1645,7 @@ fn rx(hop_count: u8) -> RxSummary {
         hop_count: Some(hop_count),
         route_hints: Vec::new(),
         source_authenticated: true,
+        sender_authenticated: true,
         forward_secret: false,
         buffered_age_s: 0,
     }

@@ -537,6 +537,7 @@ impl<S: ChatStore> Chats<S> {
             snr_centibels: inbound.rx.snr_centibels,
             hop_count: inbound.rx.hop_count,
             authenticated: inbound.rx.source_authenticated,
+            sender_verified: inbound.rx.sender_authenticated,
             forward_secret: inbound.rx.forward_secret,
         };
         self.settle(Some(link), now_ms, time, events);
@@ -1387,6 +1388,7 @@ impl<S: ChatStore> Chats<S> {
             details.rssi = link.rssi_dbm;
             details.snr = link.snr_centibels;
             details.forward_secret = link.forward_secret;
+            details.sender_verified = link.sender_verified;
         }
         // Mine went under forward secrecy if it went at all.
         if record.direction == engine::Direction::Outbound {

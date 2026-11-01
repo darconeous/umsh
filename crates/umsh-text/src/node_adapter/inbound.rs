@@ -23,6 +23,10 @@ pub struct RxSummary {
     /// truncated in transit.
     pub route_hints: Vec<RouterHint>,
     pub source_authenticated: bool,
+    /// The sender is authenticated as the key the frame names: its frame
+    /// signature verified, or a unicast's MIC named it. A channel's MIC
+    /// alone never counts.
+    pub sender_authenticated: bool,
     /// It came under a session with forward secrecy.
     pub forward_secret: bool,
     /// Seconds the frame spent queued on the radio before delivery; zero
@@ -44,6 +48,7 @@ impl RxSummary {
                 .flatten()
                 .collect(),
             source_authenticated: packet.source_authenticated(),
+            sender_authenticated: packet.sender_authenticated(),
             forward_secret: packet.forward_secret(),
             buffered_age_s: packet.rx().buffered_age_s(),
         }

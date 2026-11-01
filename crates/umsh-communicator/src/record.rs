@@ -152,6 +152,10 @@ pub struct LinkInfo {
     pub hop_count: Option<u8>,
     /// The frame authenticated its source.
     pub authenticated: bool,
+    /// The sender is authenticated as the key the frame names: its frame
+    /// signature verified, or a unicast's MIC named it. A channel's MIC
+    /// alone never counts.
+    pub sender_verified: bool,
     /// It came under a session with forward secrecy.
     pub forward_secret: bool,
 }

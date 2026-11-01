@@ -1250,6 +1250,9 @@ pub struct Details {
     /// It came, or for mine was to go, under a session with forward
     /// secrecy.
     pub forward_secret: bool,
+    /// Its sender is authenticated as who it claims to be: the frame's
+    /// signature verified. A channel's key alone proves only membership.
+    pub sender_verified: bool,
     /// Who reacted to it, and how, in the order they did.
     pub reactors: Vec<Reactor, MAX_REACTORS>,
     /// The repeaters overheard carrying mine that named themselves, in the

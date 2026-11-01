@@ -162,7 +162,9 @@ pub(super) fn record(disk: &Disk, key: &RecordKey, out: &mut Vec<u8>) -> bool {
                 out.option(link.rssi_dbm, Out::i16);
                 out.option(link.snr_centibels, Out::i16);
                 out.option(link.hop_count, Out::u8);
-                out.u8(u8::from(link.authenticated) | u8::from(link.forward_secret) << 1);
+                out.u8(u8::from(link.authenticated)
+                    | u8::from(link.forward_secret) << 1
+                    | u8::from(link.sender_verified) << 2);
             });
             out.option(record.time, Out::u32);
             out.u32(message.revision);
@@ -431,6 +433,9 @@ fn message(id: u32, input: &mut In<'_>) -> Option<MessageEntry> {
             hop_count,
             authenticated: flags & 1 != 0,
             forward_secret: flags & 2 != 0,
+            // Kept before senders could be verified, a record has no bit
+            // here and reads as not verified.
+            sender_verified: flags & 4 != 0,
         })
     })?;
     let time = input.option(In::u32)?;

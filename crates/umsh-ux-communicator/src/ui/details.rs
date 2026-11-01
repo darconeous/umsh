@@ -143,9 +143,17 @@ fn rows(
             let value = text(format_args!("{sign}{}.{} dB", tenths / 10, tenths % 10));
             row(m, "Signal-to-noise", &value, false)
         }),
-        // A channel message only claims its sender: anyone who holds the
-        // channel's key could have sent it.
-        (inbound && !direct).then(|| row(m, "Sender", "Not verified", false)),
+        // A channel message only claims its sender, since anyone who holds
+        // the channel's key could have sent it, unless its frame signature
+        // verified.
+        (inbound && !direct).then(|| {
+            let verified = if details.sender_verified {
+                "Verified"
+            } else {
+                "Not verified"
+            };
+            row(m, "Sender", verified, false)
+        }),
         direct.then(|| {
             row(
                 m,
