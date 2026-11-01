@@ -2,7 +2,7 @@
 
 ## Broadcast Packet
 
-Broadcast packets carry a source and payload, but no security info.
+Broadcast packets carry a source and payload, with no SECINFO and no MIC. A broadcast may carry a [Frame Signature option](packet-options.md#frame-signature-option-0), which supplies a frame counter and an Ed25519 signature that attributes the frame to its source key.
 
 ```text
 +-----+-------+-----+---------+---------+
@@ -22,7 +22,7 @@ the final destination MAY retransmit the same acknowledgement without accepting
 or delivering the original packet again, subject to the bounded
 [duplicate-acknowledgement window](security.md#duplicate-acknowledgement-window).
 
-The ack carries two fixed trailer fields: an **ack MIC**—the first four bytes of the original packet's MIC, which lets the original sender (and any repeater that forwarded the original) correlate the ack with the packet it acknowledges—and an **ack tag**—a MIC over the ack's static options, bound to the packet it acknowledges, that only the original sender can verify. The ack carries no destination hint. See [Ack Tag Construction](security.md#ack-tag-construction) for the derivation, and [Ack Authentication Transition](ack-transition.md) for the legacy tag some nodes still send.
+The ack carries two fixed trailer fields: an **ack MIC**—the first four bytes of the original packet's MIC, which lets the original sender (and any repeater that forwarded the original) correlate the ack with the packet it acknowledges—and an **ack tag**—a MIC over the ack's static options, bound to the packet it acknowledges, that only the original sender can verify. The ack carries no destination hint. See [Ack Tag Construction](security.md#ack-tag-construction) for the derivation.
 
 ```text
 +-----+-------+---------+---------+---------+
@@ -38,7 +38,7 @@ Where:
 
 The `ACK MIC` is public—any observer who received the original packet can compute it—so it provides correlation, not authentication. Authentication comes from the `ACK TAG`, which requires knowledge of the pairwise `K_mic` and cannot be produced by an observer who lacks it, even one who received the original packet in its entirety. The tag covers the ack's static options, such as an [operator callsign](packet-options.md#operator-callsign-option-4), so those cannot be altered in transit; dynamic options and the flood hop count remain open to repeaters, as on any packet. Because the ack carries no destination hint and the correlation handle is only a prefix of the (already public) original MIC, the ack adds no explicit endpoint identifier: an observer who received the original packet learns that it was delivered, but the ack itself names neither party. This removes the direct sender-identity leak a destination hint would introduce; it does not by itself defeat correlation by other means (timing, RF fingerprinting, or tying the ack back to an original packet that already exposed endpoint hints). For blind unicast, whose forward frame conceals both endpoints from non-channel observers, this keeps the ack from undoing that concealment.
 
-Because the ack carries no destination hint, it is a return-routed token: it is routed back to the original sender using whatever routing state is available—a cached source route, a cached flood response scoped by `FHOPS_ACC` and any learned region-code options, or both. See [Route Learning](beacons.md#route-learning) for how nodes learn and cache routing information from incoming packets. For reliable ack delivery over long source-routed paths, the original sender should include a trace-route option. The original sender matches an incoming ack to an outstanding request by its `ACK MIC`, then verifies the `ACK TAG`; a colliding `ACK MIC` from an unrelated exchange fails tag verification and is discarded.
+Because the ack carries no destination hint, it is a return-routed token: it is routed back to the original sender using whatever routing state is available—a cached source route, a cached flood response scoped by `FHOPS_ACC` and any learned region-code options, or both. See [Route Learning](beacons.md#route-learning) for how nodes learn and cache routing information from incoming packets. For reliable ack delivery over long source-routed paths, the original sender should include a [Trace option](packet-options.md#trace-option-7). The original sender matches an incoming ack to an outstanding request by its `ACK MIC`, then verifies the `ACK TAG`; a colliding `ACK MIC` from an unrelated exchange fails tag verification and is discarded.
 
 Because the ack trailer (`ACK MIC` followed by `ACK TAG`) is a known fixed length and no payload follows, the options field MUST be followed immediately by the trailer with no intervening bytes. The `0xFF` end-of-options marker MAY be omitted (the trailer length is what bounds the options region). If the marker is present it MUST be the last byte of the options region—receivers MUST reject packets that carry trailing bytes between the marker and the ack trailer.
 
@@ -47,13 +47,13 @@ Because the ack trailer (`ACK MIC` followed by `ACK TAG`) is a known fixed lengt
 Unicast packets are addressed by destination hint and carry the source address.
 
 ```text
-+-----+-------+-----+-----+---------+---------+---------+------+
-| FCF |[FHOPS]| DST | SRC | SECINFO | OPTIONS |[PAYLOAD]| MIC  |
-+-----+-------+-----+-----+---------+---------+---------+------+
-  1 B  0/1 B   3 B  3/32B   5/7 B    variable    var.   4-16 B
++-----+-------+-----+-----+---------+---------+---------+-------+------+
+| FCF |[FHOPS]| DST | SRC | SECINFO | OPTIONS |[PAYLOAD]| [SIG] | MIC  |
++-----+-------+-----+-----+---------+---------+---------+-------+------+
+  1 B  0/1 B   3 B  3/32B   5/7 B    variable    var.    0/64 B 4-16 B
 ```
 
-`DST` is the first three bytes of the recipient's public key.
+`DST` is the first three bytes of the recipient's public key. `SIG` is present when the SCF's `D` bit is set (see [Frame Signatures](security.md#frame-signatures)); this holds for every packet type that carries SECINFO.
 
 Receivers first use `DST` as a cheap filter, then use the source public key (or its cached equivalent when only a hint is present) and their own key to derive the shared secret and authenticate/decrypt the packet.
 
@@ -62,10 +62,10 @@ Receivers first use `DST` as a cheap filter, then use the source public key (or 
 This is identical to unicast, but the packet-type value signals that a MAC acknowledgement is requested.
 
 ```text
-+-----+-------+-----+------+---------+---------+---------+------+
-| FCF |[FHOPS]| DST | SRC  | SECINFO | OPTIONS |[PAYLOAD]| MIC  |
-+-----+-------+-----+------+---------+---------+---------+------+
-  1 B  0/1 B   3 B   3/32B   5/7 B    variable    var.   4-16 B
++-----+-------+-----+------+---------+---------+---------+-------+------+
+| FCF |[FHOPS]| DST | SRC  | SECINFO | OPTIONS |[PAYLOAD]| [SIG] | MIC  |
++-----+-------+-----+------+---------+---------+---------+-------+------+
+  1 B  0/1 B   3 B   3/32B   5/7 B    variable    var.    0/64 B 4-16 B
 ```
 
 Semantics differ, wire layout does not.
@@ -81,17 +81,17 @@ channel_identifier = HKDF-SHA256(channel_key, salt="UMSH-CHAN-ID", info="", L=16
 channel_id         = first_2_bytes( channel_identifier )
 ```
 
-The `CHANNEL` field carries `channel_id`. The full 16-byte channel identifier is what names a channel where two channels must be told apart without revealing either key—two keys can derive the same 2-byte `channel_id`, and management interfaces cannot leave that ambiguous.
+The `CHANNEL` field carries `channel_id`. The full 16-byte channel identifier is what names a channel where two channels must be told apart without revealing either key—two keys can derive the same 2-byte `channel_id`, and management interfaces cannot leave that ambiguous. The same derivation extended to 32 bytes is the [channel commitment](security.md#channel-commitment) that binds a frame signature to its channel.
 
 ### Encrypted Multicast (E = 1)
 
 When encryption is enabled, the source address is encrypted together with the payload, concealing the sender's identity from observers who do not possess the channel key.
 
 ```text
-+-----+-------+---------+---------+---------+----------------------+------+
-| FCF |[FHOPS]| CHANNEL | SECINFO | OPTIONS | ENCRYPT(SRC+PAYLOAD) | MIC  |
-+-----+-------+---------+---------+---------+----------------------+------+
-  1 B  0/1 B     2 B     5/7 B    variable       3/32 + var.      4-16 B
++-----+-------+---------+---------+---------+----------------------------+------+
+| FCF |[FHOPS]| CHANNEL | SECINFO | OPTIONS | ENCRYPT(SRC+PAYLOAD+[SIG]) | MIC  |
++-----+-------+---------+---------+---------+----------------------------+------+
+  1 B  0/1 B     2 B     5/7 B    variable       3/32 + var. + 0/64     4-16 B
 ```
 
 The `SRC` inside the ciphertext follows the `S` flag convention: a 3-byte hint when `S` is clear, or the full 32-byte public key when `S` is set.
@@ -101,13 +101,14 @@ Only a node with the correct channel key can recover the source address and payl
 ### Unencrypted Multicast (E = 0)
 
 When encryption is not enabled, the source address appears in cleartext, but in the same
-place that it appeared in encrypted multicast:
+place that it appeared in encrypted multicast. `SRC` is covered by the MIC as part of the
+plaintext, just as when it is encrypted (see [Associated Data](security.md#associated-data)):
 
 ```text
-+-----+-------+---------+---------+---------+------+---------+------+
-| FCF |[FHOPS]| CHANNEL | SECINFO | OPTIONS | SRC  | PAYLOAD | MIC  |
-+-----+-------+---------+---------+---------+------+---------+------+
-  1 B  0/1 B     2 B     5/7 B    variable  3/32 B    var.   4-16 B
++-----+-------+---------+---------+---------+------+---------+-------+------+
+| FCF |[FHOPS]| CHANNEL | SECINFO | OPTIONS | SRC  | PAYLOAD | [SIG] | MIC  |
++-----+-------+---------+---------+---------+------+---------+-------+------+
+  1 B  0/1 B     2 B     5/7 B    variable  3/32 B    var.    0/64 B 4-16 B
 ```
 
 ## Blind Unicast Packet
@@ -122,10 +123,10 @@ Like other channel-addressed packets, blind unicast honors the `E` flag in `SECI
 +-----+-------+---------+---------+---------+-------------+-------------+------+
 | FCF |[FHOPS]| CHANNEL | SECINFO | OPTIONS | ENC_DST_SRC | ENC_PAYLOAD | MIC  |
 +-----+-------+---------+---------+---------+-------------+-------------+------+
-  1 B  0/1 B     2 B     5/7 B    variable      6/35 B         var.     4-16 B
+  1 B  0/1 B     2 B     5/7 B    variable      6/35 B    var. + 0/64   4-16 B
 ```
 
-The `MIC` is computed over the payload using the [blind unicast payload keys](security.md#blind-unicast-payload-keys), which combine the pairwise shared secret with the channel key. `ENC_DST_SRC` is encrypted using the channel's derived encryption key `K_enc_channel` (see [Multicast Packet Keys](security.md#multicast-packet-keys)) and an IV derived from the `MIC` (see [Security & Cryptography](security.md#blind-unicast-address-encryption)). Because `ENC_DST_SRC` decryption depends on the `MIC`, any tampering with the source address will produce an incorrect public key, causing pairwise key derivation to fail and payload authentication to reject.
+The `MIC` is computed using the [blind unicast payload keys](security.md#blind-unicast-payload-keys), which combine the pairwise shared secret with the channel key. It covers the payload, and the plaintext `DST` and `SRC` as part of the [associated data](security.md#associated-data). `ENC_DST_SRC` is encrypted using the channel's derived encryption key `K_enc_channel` (see [Multicast Packet Keys](security.md#multicast-packet-keys)) and an IV derived from the `MIC` (see [Blind Unicast Address Encryption](security.md#blind-unicast-address-encryption)). Any change to `ENC_DST_SRC` changes the recovered destination or source address, and the MIC check rejects the packet.
 
 ### Unencrypted Blind Unicast (E = 0)
 
@@ -134,10 +135,10 @@ the blind-unicast packet type, but the destination hint, source address, and
 payload appear in cleartext:
 
 ```text
-+-----+-------+---------+---------+---------+-----+------+---------+------+
-| FCF |[FHOPS]| CHANNEL | SECINFO | OPTIONS | DST | SRC  | PAYLOAD | MIC  |
-+-----+-------+---------+---------+---------+-----+------+---------+------+
-  1 B  0/1 B     2 B     5/7 B    variable   3 B  3/32 B    var.   4-16 B
++-----+-------+---------+---------+---------+-----+------+---------+-------+------+
+| FCF |[FHOPS]| CHANNEL | SECINFO | OPTIONS | DST | SRC  | PAYLOAD | [SIG] | MIC  |
++-----+-------+---------+---------+---------+-----+------+---------+-------+------+
+  1 B  0/1 B     2 B     5/7 B    variable   3 B  3/32 B    var.    0/64 B 4-16 B
 ```
 
 In this mode, the packet remains channel-associated and authenticated with the
@@ -155,9 +156,9 @@ unicast semantics without encryption.
 6. Receiver converts its own Ed25519 private key into an X25519 private key.
 7. Receiver performs ECDH and derives the stable pairwise keys.
 8. Receiver computes the [blind unicast payload keys](security.md#blind-unicast-payload-keys) by XORing the pairwise keys with the channel keys.
-9. Receiver authenticates the packet using the blind-unicast MIC.
-10. If `E = 1`, receiver decrypts `ENC_PAYLOAD` using the blind unicast payload keys.
-11. If authentication fails, the packet is rejected.
+9. If `E = 1`, receiver decrypts `ENC_PAYLOAD` using the blind unicast payload keys.
+10. Receiver verifies the blind-unicast MIC, whose associated data includes the plaintext `DST` and `SRC` whether or not `E` is set.
+11. If verification fails, the packet is rejected. This covers a tampered address block as well as a tampered payload.
 
 Some repeaters may decline to forward blind unicast packets for unknown channels.
 
@@ -169,5 +170,5 @@ Same wire layout as blind unicast, but with ack-requested semantics.
 +-----+-------+---------+---------+---------+-------------+-------------+------+
 | FCF |[FHOPS]| CHANNEL | SECINFO | OPTIONS | ENC_DST_SRC | ENC_PAYLOAD | MIC  |
 +-----+-------+---------+---------+---------+-------------+-------------+------+
-  1 B  0/1 B      2 B     5/7 B    variable     6/35 B         var.     4-16 B
+  1 B  0/1 B      2 B     5/7 B    variable     6/35 B    var. + 0/64   4-16 B
 ```

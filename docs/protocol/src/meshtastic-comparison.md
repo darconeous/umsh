@@ -65,13 +65,13 @@ The most significant cryptographic difference is that Meshtastic's channel-encry
 
 UMSH authenticates every secured packet with an S2V MIC (4–16 bytes; see [MIC Size Selection Guidance](security.md#mic-size-selection-guidance)). Even with a 4-byte MIC, UMSH provides 2^-32 forgery resistance, which is qualitatively different from the absence of an integrity check on Meshtastic channel traffic. A UMSH channel packet cannot be modified in transit or injected by a non-member without detection.
 
-The second bullet above, however, describes a property UMSH multicast shares, and it is not a difference between the two protocols. A shared symmetric key proves channel membership but cannot distinguish one member from another, so a UMSH channel member can likewise claim another member's source address; see [Multicast Sender Authentication](limitations.md#multicast-sender-authentication). What UMSH provides on channel traffic is integrity and membership authentication against outsiders, not per-sender attribution within the channel. Attribution to a specific sender requires unicast, where pairwise keys bind the source.
+The second bullet above, however, describes a property UMSH multicast shares, and it is not a difference between the two protocols. A shared symmetric key proves channel membership but cannot distinguish one member from another, so a UMSH channel member can likewise claim another member's source address; see [Multicast Sender Authentication](limitations.md#multicast-sender-authentication). What an unsigned UMSH channel packet provides is integrity and membership authentication against outsiders, not per-sender attribution within the channel. Attribution to a specific sender requires unicast, where pairwise keys bind the source, or a [frame signature](security.md#frame-signatures), which a sender can add to any multicast.
 
 ### PKC for Eligible Unicast Traffic
 
 Meshtastic uses Curve25519 ECDH with AES-CCM for eligible unicast traffic, providing confidentiality and authentication against the public key associated with the claimed sender node number. It is not limited to text direct messages. The firmware considers PKC automatically for locally originated, non-broadcast application traffic when keys are available, except for position, node info, routing, traceroute, amateur operation, and certain serial/GPIO cases. Broadcast traffic such as position, telemetry, and channel text remains in channel mode and therefore unauthenticated.
 
-UMSH applies the same S2V-based construction to secured unicast and multicast, so there is no secured traffic class left unauthenticated and no separate authenticated mode to opt into. [Broadcast packets](packet-types.md#broadcast-packet) carry no security information and make no claim of authenticity.
+UMSH applies the same S2V-based construction to secured unicast and multicast, so there is no secured traffic class left unauthenticated and no separate authenticated mode to opt into. [Broadcast packets](packet-types.md#broadcast-packet) carry no SECINFO or MIC; an unsigned broadcast makes no claim of authenticity, while one carrying a [Frame Signature option](packet-options.md#frame-signature-option-0) is attributable to its sender's key.
 
 ### Key Derivation
 
@@ -93,13 +93,13 @@ UMSH uses HKDF-SHA256 with domain-separated labels to derive independent encrypt
 | Channel access | CAD with random backoff; SNR-based contention windows | CAD with random backoff; channel-utilization-based local contention and SNR-based flood contention |
 | Signal-quality controls | Min RSSI and min SNR eligibility options | Lower-SNR/farther flood candidates tend to transmit earlier; infrastructure roles also affect priority |
 | Region-scoped flooding | Region code option | Not defined |
-| Traceroute | Trace-route option on any packet | Dedicated `TRACEROUTE_APP` port |
+| Traceroute | Trace option on any packet, with per-hop signal | Dedicated `TRACEROUTE_APP` port |
 
 Both protocols use flood-based routing as their primary discovery and fallback mechanism. Meshtastic's managed flood gives lower-SNR receptions smaller contention windows, treating apparent distance from the sender as a heuristic for useful forwarding progress. `ROUTER` nodes receive a separate early-transmission advantage. Most roles cancel a queued rebroadcast after overhearing a duplicate, while infrastructure roles such as `ROUTER` may intentionally transmit anyway. UMSH instead provides explicit signal-quality thresholds that allow the sender to control flood-relay eligibility per packet.
 
 Meshtastic's 3-bit field encodes a maximum hop budget of 7, but this is not an unconditional cap on the physical number of relays. After the first hop, selected transitions between configured `ROUTER`, `ROUTER_LATE`, or `CLIENT_BASE` infrastructure nodes can preserve the budget when the previous relay is a favorite. UMSH's 4-bit flood hop count permits up to 15 flood hops, while source-routed hops consume packet space rather than flood budget.
 
-Meshtastic v2.6+ added next-hop routing for unicast: after a successful ACK exchange, the firmware learns which relay carried the response and uses that relay as the designated next hop for subsequent packets. UMSH achieves directed delivery through source-route options learned via trace routes. The recipient can cache the accumulated trace directly as a source route for subsequent communication with the sender because the trace is already built most-recent hop first; see [Route Learning](beacons.md#route-learning).
+Meshtastic v2.6+ added next-hop routing for unicast: after a successful ACK exchange, the firmware learns which relay carried the response and uses that relay as the designated next hop for subsequent packets. UMSH achieves directed delivery through source-route options learned via traces. The recipient can cache the accumulated trace directly as a source route for subsequent communication with the sender because the trace is already built most-recent hop first; see [Route Learning](beacons.md#route-learning).
 
 Both protocols perform channel activity detection and randomized contention. Meshtastic sizes normal local-send contention from recent channel utilization and uses received SNR for flood-rebroadcast contention. UMSH uses CAD with random backoff and SNR-based contention windows as defined by its channel-access rules.
 
@@ -244,7 +244,7 @@ UMSH repeaters do not need to decrypt or verify the application payload before f
 
 Meshtastic is a full-featured mesh communication system with a large and active user community. It provides a rich application ecosystem, broad hardware support, and an easy on-ramp for non-technical users. Its channel-based encryption model is simple to configure and deploy, while eligible unicast traffic can use PKC when peer keys are available.
 
-UMSH prioritizes authenticated secured traffic, compact encoding, metadata-concealment modes, and explicit MAC/application boundaries. Secured unicast and multicast packets carry authentication; unsecured broadcast packets intentionally make no authenticity claim.
+UMSH prioritizes authenticated secured traffic, compact encoding, metadata-concealment modes, and explicit MAC/application boundaries. Secured unicast and multicast packets carry authentication; unsigned broadcast packets intentionally make no authenticity claim, and any packet can carry a frame signature that attributes it to its sender.
 
 Key tradeoffs:
 

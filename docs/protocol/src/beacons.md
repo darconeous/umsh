@@ -9,24 +9,25 @@ A **Beacon** is defined as either:
 
 Beacons are used to announce the presence of a node on the network without carrying additional data. Because beacons have no payload, they omit the `0xFF` end-of-options marker; the options block is parsed until the end of the packet. The minimum beacon size is unchanged.
 
-A beacon with a trace-route option can inform listeners of both:
+A beacon with a [Trace option](packet-options.md#trace-option-7) can inform listeners of both:
 
 - the node's presence
 - a repeater path that may be usable to reach it
 
 This is particularly useful when a receiver already knows the node's identity information.
 
-Pairing the trace-route option with [Trace
-Signal](packet-options.md#trace-signal-option-10) makes the beacon report
-the quality of each hop as well as its identity, which is what
-distinguishes a path that merely works from one worth using.
+A trace that carries signal reports the quality of each hop as well as its
+identity, which is what distinguishes a path that merely works from one worth using.
 
 ## Advertisements
 
 An **advertisement** is a broadcast or multicast packet whose payload is a
 [node identity](node-identity.md) payload—a beacon that additionally
 identifies and describes its sender. Advertisements are sent unsolicited,
-announcing presence, name, role, and capabilities. To obtain a specific
+announcing presence, name, role, and capabilities. An advertisement carries
+a [frame signature](security.md#frame-signatures), which is what
+authenticates the identity it carries (see [Signature
+Usage](node-identity.md#signature-usage)). To obtain a specific
 node's identity, use the [Identity Request](mac-commands.md#identity-request-1)
 MAC command, which is answered with a targeted unicast identity response
 rather than a broadcast advertisement.
@@ -36,8 +37,8 @@ rather than a broadcast advertisement.
 A node MAY emit beacons and advertisements on periods of its own. The two
 are configured separately because they announce different things at very
 different costs: a beacon publishes a path for a handful of bytes, while
-an advertisement carries a signed identity and is the largest frame a node
-originates unprompted. A mesh is normally best served by refreshing the
+an advertisement carries an identity in a signed frame and is the largest
+frame a node originates unprompted. A mesh is normally best served by refreshing the
 path often and restating the identity rarely.
 
 A scheduled advertisement SHOULD be sent without flood hops. What it
@@ -69,32 +70,30 @@ these periods are the advertisement-policy properties.
 
 UMSH does not define a dedicated path-discovery packet type. Instead, path discovery is performed using existing primitives:
 
-1. **Outbound discovery**: Node A sends a unicast packet to Node B with the trace-route option present and an appropriate flood hop count. The packet floods through the mesh; repeaters prepend their router hints to the trace-route option as they forward.
+1. **Outbound discovery**: Node A sends a unicast packet to Node B with the Trace option present and an appropriate flood hop count. The packet floods through the mesh; repeaters prepend their records to the Trace option as they forward.
 
-2. **Path learning**: When Node B receives the packet, the trace-route option contains the sequence of repeater hints traversed, ordered most-recent first. Node B can use this list directly as a candidate source route back to Node A.
+2. **Path learning**: When Node B receives the packet, the Trace option contains the sequence of repeaters traversed, ordered most-recent first. If the trace is complete, Node B can use its router hints directly as a candidate source route back to Node A.
 
 3. **Return path**: Node B can now send unicast packets to Node A using the learned source route. If the packet was ack-requested, Node B's MAC ack also traverses the mesh, allowing Node A to confirm reachability.
 
 4. **Bidirectional establishment**: The trace Node A sent taught Node B a path back, and nothing else. Node B's response—MAC ack, beacon, or application payload—teaches Node A a path only if it carries a trace of its own. Where the response is a MAC ack, that ack is the whole of what Node A receives.
 
-### When to Include a Trace Route
+### When to Include a Trace
 
-A beacon or advertisement that permits flooding SHOULD always carry a trace route: publishing a path back to its sender is much of what it is for, and every listener it reaches may lack one.
+A beacon or advertisement that permits flooding SHOULD always carry a trace: publishing a path back to its sender is much of what it is for, and every listener it reaches may lack one.
 
-A trace route gives the destination a path back to the sender, so a sender spends one when the destination may not hold a working path back. A sender SHOULD include a trace route on a unicast or blind unicast when any of the following holds:
+A trace gives the destination a path back to the sender, so a sender spends one when the destination may not hold a working path back. A sender SHOULD include a trace on a unicast or blind unicast when any of the following holds:
 
 - it holds no route to the destination
 - the packet answers one from the destination that arrived with `FHOPS_ACC` greater than zero; a MAC ack is such an answer
 - no packet from the destination has arrived with `FHOPS_ACC` of zero in the last 5 minutes; a MAC ack correlated to the destination counts as a packet from it
 - it is a [Route Retry](repeater-operation.md#route-failure-recovery) resend
 
-A packet that arrives with `FHOPS_ACC` of zero, off the sender's own transmitter or along a source route, shows that its sender holds a working path to the receiver. That is what a trace route would otherwise give it. A packet that had to flood to arrive shows the opposite. The 5-minute window bounds how long the evidence is trusted, since a path that worked can stop working.
+A packet that arrives with `FHOPS_ACC` of zero, off the sender's own transmitter or along a source route, shows that its sender holds a working path to the receiver. That is what a trace would otherwise give it. A packet that had to flood to arrive shows the opposite. The 5-minute window bounds how long the evidence is trusted, since a path that worked can stop working.
 
-A response to a packet that carried a trace route MAY carry one. Any other packet MAY carry one, but a sender SHOULD otherwise prefer the smaller frame.
+A response to a packet that carried a trace MAY carry one. Any other packet MAY carry one, but a sender SHOULD otherwise prefer the smaller frame.
 
-A packet that carries a trace route SHOULD also carry a [trace signal](packet-options.md#trace-signal-option-10). The hints say which repeaters a path crossed; the signal entries say how well each hop held, which is what lets the node learning the path choose between paths.
-
-A packet carrying neither flood hops nor a source route SHOULD NOT carry a trace route at all, whatever the sender knows. No repeater may forward such a packet, so the option can only arrive as empty as it left, and its arrival already proves what an empty trace would have said.
+A packet carrying neither flood hops nor a source route SHOULD NOT carry a trace at all, whatever the sender knows. No repeater may forward such a packet, so the option can only arrive as empty as it left, and its arrival already proves what an empty trace would have said.
 
 Because router hints are only two bytes, different repeaters may share the same hint, which may result in redundant (but harmless) forwarding along a source route.
 
@@ -102,35 +101,35 @@ Because router hints are only two bytes, different repeaters may share the same 
 
 A destination may overhear a frame while source-route hints remain unconsumed. The way back is then the remaining hints in reverse, followed by the trace: the whole path the sender chose, through the repeaters still to forward it. The trace alone would describe a shortcut past those repeaters, and a repeater being audible at the destination does not establish that it hears the destination. Historical buffered frames do not establish current reachability.
 
-Copies of one packet, or of one MAC ack, that arrive over different paths each describe a path, and the first to arrive is not necessarily the best. A node MAY weigh them against each other and against the route it holds, using the [Trace Signal option](packet-options.md#trace-signal-option-10) where the copies carry one. A copy that arrives long after the first is a replay rather than evidence of a current path.
+Copies of one packet, or of one MAC ack, that arrive over different paths each describe a path, and the first to arrive is not necessarily the best. A node MAY weigh them against each other and against the route it holds, using the per-hop signal of their [traces](packet-options.md#trace-option-7) where the copies carry it. A copy that arrives long after the first is a replay rather than evidence of a current path.
 
 When a node successfully processes other live incoming packets, it can update its routing state for the sender:
 
-- **Trace route**: if the packet contains a trace-route option, the node caches that trace route as a source route for future packets back to the sender. Because the trace route is accumulated most-recent first, it already describes the return path from the receiver back toward the original sender. This is the primary mechanism for learning precise multi-hop paths.
+- **Trace**: if the packet contains a complete [trace](packet-options.md#trace-option-7), with signal or hints only, the node caches its router hints as a source route for future packets back to the sender. Because the trace is accumulated most-recent first, it already describes the return path from the receiver back toward the original sender. This is the primary mechanism for learning precise multi-hop paths. A truncated trace is not a complete path, and no route is learned from it.
 - **Flood hop count**: if the packet contains a flood hop count, the node caches the sender's `FHOPS_ACC` value together with any region-code options that arrived on the packet. When no source route is available, these cached flood parameters can be reused for flood responses—scoping the flood to approximately the right radius and regional domain rather than flooding the entire network.
 
-- **Neither**: a packet that arrives carrying no flood hop count and no source route was one that no repeater had permission to forward, so it reached the receiver off the sender's own transmitter. The node SHOULD cache the sender as a direct neighbor. This is the same conclusion an empty trace route supports, drawn from the packet's structure rather than from an option, which is what lets an unforwardable packet leave the trace route off.
+- **Neither**: a packet that arrives carrying no flood hop count and no source route was one that no repeater had permission to forward, so it reached the receiver off the sender's own transmitter. The node SHOULD cache the sender as a direct neighbor. This is the same conclusion an empty trace supports, drawn from the packet's structure rather than from an option, which is what lets an unforwardable packet leave the trace off.
 
 A MAC ack can also supply routing evidence. It names no source, but its [ack trailer](security.md#ack-tag-construction) correlates it to an outstanding request and so to the peer that sent it. Its trace can establish a route or replace a provisional direct observation with a repeater path. An ACK confirms that the exchange succeeded; its return path may differ from the outbound path, so it need not replace a working source route. Route selection and retention are local policy.
 
 A packet that arrives carrying a source-route option—including one whose hints are all consumed—spends flood hops only after the route runs out, so its `FHOPS_ACC` counts the tail of the path rather than its length. Such a packet SHOULD NOT be used to derive a flood-distance estimate.
 
-This routing state applies to all subsequent communication with the sender—replies, acknowledgments, and new messages alike. A node MAY replace a cached route when a newer packet provides a fresher trace route, and SHOULD discard cached routes that have proven unreachable.
+This routing state applies to all subsequent communication with the sender—replies, acknowledgments, and new messages alike. A node MAY replace a cached route when a newer packet provides a fresher trace, and SHOULD discard cached routes that have proven unreachable.
 
 An ACK timeout is evidence that the exchange failed, not proof that the outbound leg alone failed. When an ACK-requested packet exhausts its retry budget on a cached route, the sender can return to route discovery:
 
 - discard or demote the cached source route
 - send the same logical packet again using flood hops instead of the stale source route
-- include a trace-route option so that a fresh source route can be learned from the peer's reply
+- include a Trace option so that a fresh source route can be learned from the peer's reply
 - set the [Route Retry option](packet-options.md#route-retry-option-6) so intermediate repeaters treat the rerouted attempt as a new forwarding opportunity even though the packet's MIC and frame counter are unchanged
 
 Trading a source route for flood hops rewrites only fields the [associated data](security.md#associated-data) excludes. Adding `FHOPS` sets the FCF's `H` bit, which the AAD clears, so the MIC carries over unchanged.
 
 Recovery stays within the sender's original flood ceiling; disabled flooding does not authorize a flooded retry. Once a replacement route is learned, normal routed transmission can resume. An ACK following Route Retry confirms delivery of the logical packet but does not identify which attempt delivered it.
 
-A sender that held no route and flooded at its whole budget has no route to discard, yet the timeout may still be the destination's fault: a route back to the sender that no longer works, on which the ACK died. When it has heard from the destination recently, the sender sends one Route Retry anyway, at the same budget and with a trace route. A logical packet gets at most one Route Retry.
+A sender that held no route and flooded at its whole budget has no route to discard, yet the timeout may still be the destination's fault: a route back to the sender that no longer works, on which the ACK died. When it has heard from the destination recently, the sender sends one Route Retry anyway, at the same budget and with a trace. A logical packet gets at most one Route Retry.
 
-The destination learns from that retry. A Route Retry duplicating a packet it already acknowledged shows the ACK was lost, so the destination retires or demotes the route the ACK followed and re-acknowledges by a flood scoped to the retry's `FHOPS_ACC` plus one hop, within the retry's regions, carrying a trace route. A path the retry traced may become an ordinary route candidate; the re-acknowledgment does not follow it. See [Lost Acknowledgments](repeater-operation.md#lost-acknowledgments).
+The destination learns from that retry. A Route Retry duplicating a packet it already acknowledged shows the ACK was lost, so the destination retires or demotes the route the ACK followed and re-acknowledges by a flood scoped to the retry's `FHOPS_ACC` plus one hop, within the retry's regions, carrying a trace. A path the retry traced may become an ordinary route candidate; the re-acknowledgment does not follow it. See [Lost Acknowledgments](repeater-operation.md#lost-acknowledgments).
 
 ## Scoping Flood Hops to a Known Route
 
@@ -140,7 +139,7 @@ A wide flood hop count is a first-contact cost. Once routing state exists for a 
 - **Flood distance**: the cached `FHOPS_ACC` is the radius at which the destination was last heard.
 - **Direct observation**: no repeater carried the observed packet.
 
-The margin is one flood hop. It keeps delivery self-healing when the destination has moved since the path was learned, without paying for a mesh-wide flood on every packet. What decides it is the path's *last hop*: the link between the destination and the first node that heard it. For a direct observation that node is the sender itself; for a traced path it is the earliest repeater in the trace, whose [trace signal](packet-options.md#trace-signal-option-10) entry records how it heard the destination. A cached flood distance names no last hop. The sender SHOULD include the margin when:
+The margin is one flood hop. It keeps delivery self-healing when the destination has moved since the path was learned, without paying for a mesh-wide flood on every packet. What decides it is the path's *last hop*: the link between the destination and the first node that heard it. For a direct observation that node is the sender itself; for a traced path it is the earliest repeater in the trace, whose [trace](packet-options.md#trace-option-7) record holds how it heard the destination, when the trace still carries signal. A cached flood distance names no last hop. The sender SHOULD include the margin when:
 
 - the destination advertises itself as mobile (the `MOB` bit of its [capabilities](node-identity.md#capability-bitmap)), unless it was observed directly and strongly;
 - the last hop was never measured; or
@@ -161,7 +160,7 @@ One possible future improvement would be to allow a sender to occasionally perfo
 A conservative version of this idea would look like:
 
 - only perform exploratory refresh when the sender is believed to be mobile or moving
-- use a normal cached source route, but also include a trace-route option
+- use a normal cached source route, but also include a Trace option
 - allow only a small flood budget, capped at one flood hop more than the source route has hints
 - perform this no more than occasionally, for example no more than once every `N` successful transmissions and no more than once every `T` minutes, whichever is longer
 

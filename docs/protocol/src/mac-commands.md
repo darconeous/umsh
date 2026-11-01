@@ -93,13 +93,12 @@ A request steered by a Route option reaches its destination neighborhood with
 that option emptied, since each repeater consumes its own hint. The nodes there
 are strangers to the requester: they hold no route to it, and their replies carry
 no flood budget for a repeater to spend. Such a request therefore carries a
-[Trace Route option](packet-options.md#trace-route-option-2), and a node answering
+[Trace option](packet-options.md#trace-option-7), and a node answering
 it sends the response as a source route built from the trace the request arrived
-with. Repeaters prepend when forwarding, so the accumulated trace already reads
+with, when that trace is complete. Repeaters prepend when forwarding, so the accumulated trace already reads
 as the path back and is used as-is, without reversal.
 
-The response carries a Trace Route option of its own, and a [Trace
-Signal](packet-options.md#trace-signal-option-10) where the request carried one.
+The response carries a Trace option of its own.
 The trace on the request is what taught the responder a path home, and it taught
 the requester nothing: a broadcast solicitation leaves no route behind at the
 requester, and the response reaches it with its own Route option consumed and its
@@ -107,7 +106,7 @@ requester, and the response reaches it with its own Route option consumed and it
 the requester ends the exchange holding no route to the node it just identified.
 A broadcast solicitation names no responder, so even one that arrived without
 flooding gives the requester no path to whoever answers it; the response traces
-regardless of the [general rule](beacons.md#when-to-include-a-trace-route).
+regardless of the [general rule](beacons.md#when-to-include-a-trace).
 
 A repeater consumes its own hint while forwarding, not while receiving, so a
 request whose Route option still names a repeater is one that repeater drops.
@@ -141,7 +140,7 @@ Non-filter options (such as NONCE) do not participate in this matching.
 | Key | Critical | Name | Value | Description |
 |---:|---|---|---|---|
 | 1 | Yes | NONCE | 4 bytes | Correlation identifier the responder MUST echo in its response's [Nonce option](node-identity.md#nonce-option-5). Not a filter. |
-| 3 | Yes | FILTER_NODE_HINT | 1–3 bytes | Respond only if this is a leading part of the responder's own [node hint](addressing.md#node-hint). A 3-byte value is the whole hint; a 2-byte value is the [router hint](addressing.md#router-hint), which is all a [Source Route](packet-options.md#source-route-option-3) or [Trace Route](packet-options.md#trace-route-option-2) reveals about the hops it names. A zero-length value matches nothing. |
+| 3 | Yes | FILTER_NODE_HINT | 1–3 bytes | Respond only if this is a leading part of the responder's own [node hint](addressing.md#node-hint). A 3-byte value is the whole hint; a 2-byte value is the [router hint](addressing.md#router-hint), which is all a [Source Route](packet-options.md#source-route-option-3) or [Trace](packet-options.md#trace-option-7) reveals about the hops it names. A zero-length value matches nothing. |
 | 5 | Yes | FILTER_NODE_ROLE | 1 byte | Respond only if the responder's [primary role](node-identity.md#node-primary-role) equals this value. |
 | 7 | Yes | FILTER_NODE_CAPS | 1 byte | Respond only if the responder's [capability bitmap](node-identity.md#capability-bitmap) has every bit set that is set in this value. |
 
@@ -182,7 +181,7 @@ Carries a response to a prior Echo Request, including any echo data from the req
 |---|---:|---|
 | Echo data | 0+ bytes | Copied verbatim from the Echo Request |
 
-The response SHOULD carry the same [trace route](packet-options.md#trace-route-option-2) and [trace signal](packet-options.md#trace-signal-option-10) options the request carried. An echo measures a path, and a response traced differently from the request measures a different one; pairing the two options is what makes the measurement per-hop rather than end to end.
+The response SHOULD carry a [Trace option](packet-options.md#trace-option-7) when the request carried one. An echo measures a path, and a response traced differently from the request measures a different one; the per-hop signal in the two traces is what makes the measurement per-hop rather than end to end.
 
 ## PFS Session Request (6)
 
@@ -219,7 +218,7 @@ type that requests an ACK.
 
 Asks the destination—typically a repeater—for its list of known peer repeaters.
 
-The list is the responder's repeater neighborhood: the repeaters it has heard from their own transmitters. A repeater enters it in one of two ways. Forwarding a frame the responder receives is one—a repeater prepends its router hint to the frame's [Trace Route](packet-options.md#trace-route-option-2), so the first hint names the repeater whose transmission was just heard. Advertising is the other—a [node identity](node-identity.md) claiming the repeater role or capability, heard directly rather than forwarded. Frames heard from nodes that are not repeaters, and identities that arrived through a repeater, put nothing in the list. Nor does anything naming the responder itself: a trace that begins with its own router hint, or its own identity. A neighbor need not be on the air: a repeater reached over a point-to-point link, such as an attached host, is listed the same way and simply carries no signal measurements.
+The list is the responder's repeater neighborhood: the repeaters it has heard from their own transmitters. A repeater enters it in one of two ways. Forwarding a frame the responder receives is one—a repeater prepends its record to the frame's [Trace](packet-options.md#trace-option-7), so the first hint names the repeater whose transmission was just heard. Advertising is the other—a [node identity](node-identity.md) claiming the repeater role or capability, heard directly rather than forwarded. Frames heard from nodes that are not repeaters, and identities that arrived through a repeater, put nothing in the list. Nor does anything naming the responder itself: a trace that begins with its own router hint, or its own identity. A neighbor need not be on the air: a repeater reached over a point-to-point link, such as an attached host, is listed the same way and simply carries no signal measurements.
 
 The command-specific payload is a CoAP-style option list, using the delta-length encoding defined in [Packet Options](packet-options.md#attribute-encoding):
 

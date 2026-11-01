@@ -182,8 +182,8 @@ where every node has already seen the frame and suppresses it as a
 duplicate.
 
 A bridge that repeats a group reception prepends a
-[Trace Signal](packet-options.md#trace-signal-option-10) entry of two zero
-bytes, the entry for a hop that measured nothing.
+[Trace](packet-options.md#trace-option-7) record with zero signal bytes,
+the record for a hop that measured nothing.
 
 The [duty cycle](channel-access.md) a radio spends repeating group receptions
 counts against its limit like any other forward. Copies sent to the group

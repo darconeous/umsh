@@ -63,7 +63,8 @@ A packet crosses in four steps:
 4. Each receiving participant hands the frame to its own device's node,
    which receives it as a packet carrying no measurements and forwards
    it by the same procedure: a second duplicate check, a second hop
-   accounting, a trace signal entry recording that nothing was measured,
+   accounting, a [trace](packet-options.md#trace-option-7) record whose
+   zero signal bytes say that nothing was measured,
    and no [contention window](channel-access.md#flood-forwarding-contention-window),
    since nobody else heard it.
 
@@ -315,8 +316,8 @@ Frames delivered to a host **MUST** carry no signal measurements. The
 measurement that accompanied such a frame across the tunnel describes a
 reception on another segment by another radio, and reporting it here
 would attribute it to a reception that did not happen. This is the same
-fact the crossing model already records as a trace signal entry saying
-nothing was measured.
+fact the crossing model already records as a trace record whose zero
+signal bytes say nothing was measured.
 
 The server **MUST** rate-limit each host interface. A host spends no
 airtime of its own, which removes the natural bound a radio imposes,
@@ -437,9 +438,9 @@ cannot repair that: the restored flood is clamped the same way.
 Source-routed hops spend nothing from `FHOPS`, so explicit routes cross
 bridges at any depth. Ack-requesting traffic that crosses a bridge
 **SHOULD** either carry a
-[trace-route option](packet-options.md#trace-route-option-2)—the
+[Trace option](packet-options.md#trace-option-7)—the
 participants' nodes record themselves in it, which is what makes the
-reversed trace routable—or be sent along a known source route.
+trace routable—or be sent along a known source route.
 
 ## Operational Guidance
 

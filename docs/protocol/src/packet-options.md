@@ -1,31 +1,39 @@
 # Packet Options
 
-UMSH packet options use the delta-length encoding described in [Packet Structure](packet-structure.md#options-field). Each option has a numeric option number whose two least significant bits encode two semantic attributes:
+UMSH packet options use the delta-length encoding described in [Packet Structure](packet-structure.md#options-field). Each option has a numeric option number whose low four bits encode its semantic attributes:
 
-- **Bit 0**: Critical (1) / Non-Critical (0)
+- **Bit 0**: Forwarding-Critical (1) / not (0)
 - **Bit 1**: Dynamic (1) / Static (0)
+- **Bits 2 and 3**: both set on a static option (`(number & 0xE) == 0xC`): Delivery-Critical
 
 This means a node can determine an unrecognized option's attributes by inspecting its option number without consulting a registry.
 
 ## Attribute Encoding
 
-The four attribute combinations and their option number patterns:
+The attribute combinations and their option number patterns, by the low four bits of the number:
 
-| Low 2 bits | Option numbers | Classification |
+| Low 4 bits | Option numbers | Classification |
 |---:|---|---|
-| `0b00` | 0, 4, 8, 12, ... | Non-Critical, Static |
-| `0b01` | 1, 5, 9, 13, ... | Critical, Static |
-| `0b10` | 2, 6, 10, 14, ... | Non-Critical, Dynamic |
-| `0b11` | 3, 7, 11, 15, ... | Critical, Dynamic |
+| 0, 4, 8 | 0, 4, 8, 16, 20, 24, ... | Non-Critical, Static |
+| 1, 5, 9 | 1, 5, 9, 17, 21, 25, ... | Forwarding-Critical, Static |
+| 2, 6, 10, 14 | 2, 6, 10, 14, 18, ... | Non-Critical, Dynamic |
+| 3, 7, 11, 15 | 3, 7, 11, 15, 19, ... | Forwarding-Critical, Dynamic |
+| 12 | 12, 28, 44, ... | Delivery-Critical, Static |
+| 13 | 13, 29, 45, ... | Forwarding-Critical, Delivery-Critical, Static |
 
-## Critical vs. Non-Critical
+Dynamic options are never delivery-critical. Delivery-criticality is an end-to-end demand from the sender, and only a static option, which the MIC and any [frame signature](security.md#frame-signatures) cover, can carry one.
 
-These determine behavior when a node encounters an unknown option:
+## Forwarding and Delivery Criticality
 
-- **Critical** (bit 0 set): if unrecognized, the packet must be dropped
-- **Non-Critical** (bit 0 clear): if unrecognized, the option is ignored and the node continues processing
+These determine behavior when a node encounters an unknown option. The two classes are independent, and a node that both forwards and receives a packet applies each check to its own role.
 
-A recognized critical option whose value the node cannot interpret, such as one of the wrong length, is handled as unrecognized.
+- **Forwarding-Critical** (bit 0 set): if unrecognized, a repeater does not forward the packet. It can still deliver the packet locally.
+- **Delivery-Critical** (low four bits 12 or 13): if unrecognized, an endpoint does not accept, deliver, or acknowledge the packet. It drops the packet and counts the drop. Repeaters forward it as normal.
+- **Non-Critical**: if unrecognized, the option is ignored and the node continues processing.
+
+A recognized option whose value the node cannot interpret, such as one of the wrong length, is handled as unrecognized, within the option's own classes.
+
+[MAC acks](packet-types.md#mac-ack-packet) are exempt from delivery-critical interpretation. An ack delivers nothing, so a receiver accepts an otherwise valid ack whatever delivery-critical options it carries. Every static option on an ack, recognized or not, is still covered by its [ack tag](security.md#ack-tag-construction).
 
 ## Dynamic vs. Static
 
@@ -34,38 +42,37 @@ These determine whether an option is covered by the MIC:
 - **Dynamic** (bit 1 set): not protected by the security MIC; may be modified in transit by repeaters
 - **Static** (bit 1 clear): protected by the security MIC; must not be modified in transit
 
-This distinction allows forwarding-related metadata (source routes, trace routes, station callsigns) to be modified by repeaters without invalidating end-to-end authentication.
+This distinction allows forwarding-related metadata (source routes, traces, station callsigns) to be modified by repeaters without invalidating end-to-end authentication.
 
 ## Defined Options
 
 | Number | Name | Classification | Value |
 |---:|---|---|---|
-| 0 | *RESERVED* | Non-Critical, Static | |
-| 1 | *UNASSIGNED* | Critical, Static | |
-| 2 | Trace Route | Non-Critical, Dynamic | 0+ bytes |
-| 3 | Source Route | Critical, Dynamic | 0+ bytes |
+| 0 | Frame Signature | Non-Critical, Static | 68 bytes |
+| 1 | *UNASSIGNED* | Forwarding-Critical, Static | |
+| 2 | *UNASSIGNED* | Non-Critical, Dynamic | |
+| 3 | Source Route | Forwarding-Critical, Dynamic | 0+ bytes |
 | 4 | Operator Callsign | Non-Critical, Static | ARNCE/HAM-64 |
-| 5 | Minimum RSSI | Critical, Static | 0–1 bytes |
+| 5 | Minimum RSSI | Forwarding-Critical, Static | 0–1 bytes |
 | 6 | Route Retry | Non-Critical, Dynamic | 0 bytes |
-| 7 | Station Callsign | Critical, Dynamic | ARNCE/HAM-64 |
+| 7 | Trace | Forwarding-Critical, Dynamic | 0+ bytes |
 | 8 | Ack MIC | Non-Critical, Static | 4 bytes|
-| 9 | Minimum SNR | Critical, Static | 0–1 bytes |
-| 10 | Trace Signal | Non-Critical, Dynamic | 0+ bytes |
-| 11 | Region Code | Critical, Dynamic | 2 bytes |
+| 9 | Minimum SNR | Forwarding-Critical, Static | 0–1 bytes |
+| 10 | *UNASSIGNED* | Non-Critical, Dynamic | |
+| 11 | Region Code | Forwarding-Critical, Dynamic | 2 bytes |
+| 15 | Station Callsign | Forwarding-Critical, Dynamic | ARNCE/HAM-64 |
 
-### Trace Route (option 2)
-- Semantics: if present, repeaters prepend their own repeater hint before retransmitting.
-- If absent, no trace-route information is added automatically.
-- A sender MUST NOT include more than one. A receiver reads the first and ignores the rest, and a forwarder carries only the first.
-- Value layout: see [Trace Route Option Value](#trace-route-option-value).
-- If implemented, Trace Signal (option 10) **MUST** also be implemented.
-
-> [!IMPORTANT]
-> If a repeater supports the Trace Route option, it **MUST** also implement the Trace Signal option (even if it is just adding placeholder values). Failure to do this breaks the one-to-one relationship between the Trace option and the Trace Signal options, making the Trace Signal value useless.
+### Frame Signature (option 0)
+- Type: `FRAME COUNTER (4 B, big-endian) ‖ SIG (64 B)`, exactly 68 bytes.
+- Semantics: a [frame signature](security.md#frame-signatures) for a broadcast, which has no SECINFO to carry a counter or the `D` bit. `SIG` is an Ed25519 signature by the source key over the [signature input](security.md#signature-input), in which this option's 64 signature bytes are replaced by zeros. `FRAME COUNTER` is drawn from the sender's [one counter sequence](security.md#frame-counter), and a verified frame is judged by the [signed-frame counter rules](security.md#signed-frame-counters).
+- Defined for broadcast only. A sender MUST NOT include it on a packet type that carries SECINFO, which signs with the SCF's `D` bit instead; a receiver ignores it there.
+- A value of any other length is handled as an unrecognized option.
+- A sender MUST NOT include more than one. A broadcast carrying more than one is treated as unsigned.
+- The full source key is not required. A hint-only signed broadcast can be verified only by a receiver that already holds the sender's key.
 
 ### Source Route (option 3)
 - Semantics: contains an ordered list of repeater hints designating the forwarding path.
-- A sender MUST NOT include more than one. A packet carrying more than one is handled as carrying an unrecognized critical option.
+- A sender MUST NOT include more than one. A packet carrying more than one is handled as carrying an unrecognized forwarding-critical option.
 - Repeater behavior:
   - Only the repeater matching the first hint may forward the packet.
   - That repeater removes its own hint before retransmission.
@@ -83,7 +90,7 @@ This distinction allows forwarding-related metadata (source routes, trace routes
 
 ### Minimum RSSI (option 5)
 - Type: unsigned 1-byte integer, interpreted as a negative dBm value
-- A sender MUST NOT include more than one. A packet carrying more than one is handled as carrying an unrecognized critical option.
+- A sender MUST NOT include more than one. A packet carrying more than one is handled as carrying an unrecognized forwarding-critical option.
 - Semantics: packet must be received with at least this RSSI to be flood-forwarded. This option does not apply to source-routed hops.
 - Example: value `130` means `-130 dBm`
 - If present with no value (length 0), default is `-100 dBm` (THIS VALUE IS SUBJECT TO CHANGE)
@@ -101,20 +108,26 @@ This distinction allows forwarding-related metadata (source routes, trace routes
 - A sender using this option for route recovery typically:
   - removes the stale source-route option, if one was present
   - adds or refreshes flood hops, up to but not beyond the budget the sending application was willing to spend; a packet that already flooded at that budget keeps it
-  - includes a trace-route option to learn a replacement route
+  - includes a [Trace option](#trace-option-7) to learn a replacement route
   - preserves the same frame counter and payload
 
   Each of these rewrites a field the [associated data](security.md#associated-data) excludes, which is what lets the retry reuse the original MIC unchanged. Adding `FHOPS` to a packet that had none also sets the FCF's `H` bit, and the AAD clears that bit for this reason.
 
-### Station Callsign (option 7)
-- Encoding: ARNCE/HAM-64 (2, 4, 6, or 8 bytes; encodes callsigns up to 12 characters)
-- Semantics: identifies the transmitting station's amateur radio callsign.
-- If absent, the station callsign is assumed to equal the source callsign (if present)
-- This option is critical because repeaters must replace or remove it during forwarding.
-- Use:
-  - in `Licensed-Only` mode, repeaters replace or insert it on every forwarded packet
-  - in `Hybrid` mode, repeaters also replace or insert it on every forwarded packet
-  - in `Unlicensed` mode, repeaters remove it if present and do not add their own
+### Trace (option 7)
+- Semantics: if present, each hop that forwards the packet prepends a record of itself before retransmitting, so the value lists the hops the packet took, most recent first. If absent, no trace information is added.
+- Each record names the hop's [router hint](addressing.md#router-hint) and the signal with which that hop received the packet. Value layout and forms: see [Trace Option Value](#trace-option-value).
+- The option is forwarding-critical. A repeater that does not implement it does not forward a traced packet, so a trace never silently skips a hop; that repeater still forwards untraced packets.
+- A sender MUST NOT include more than one. A receiver reads the first and ignores the rest, and a forwarder carries only the first.
+- A malformed value is handled as unrecognized: a repeater does not forward the packet, and a receiver ignores the trace and still delivers the packet.
+
+**Signal.** A record's RSSI byte is the **negative** of the RSSI in dBm (so −90 dBm becomes 90), and its SNR byte is the signed SNR in cB (centibels, or tenths of a dB). A hop that received the packet over a point-to-point link rather than the air—a [bridge](internet-bridging.md), for example—writes zero for both. The zero entry marks a hop with no radio in it, so it has no signal to report and does not lose packets to fading. A hop that received the packet over the air never writes it: a reading of 0 dBm or stronger is carried as an RSSI byte of 1.
+
+**Sender.** A sender that includes a Trace option originates the packet at least one byte below the frame limit, which leaves room for the [last-resort form](#trace-option-value) on a link with the same limit when the repeater adds nothing else. A repeater that also inserts a Region Code or inserts or lengthens a Station Callsign may need more than that byte; if even the last-resort form does not fit, the repeater does not forward the packet on that link.
+
+**Receiver.**
+- A complete trace, with signal or hints only, is a complete path. It is used for routes and hop counts; a hints-only trace lacks only the per-hop signal, and the receiver still measures the final link's signal itself.
+- A truncated trace reports the most recent hops but is not a complete path. Nothing builds a route from it: [route learning](beacons.md#route-learning), acknowledgement return routes, and source routes built from observed hints all require a complete trace.
+- The hop count of a packet with a truncated trace is `FHOPS_ACC + 1` if the packet carries no Source Route option, and unknown if it carries one.
 
 ### Ack MIC (option 8)
 
@@ -134,17 +147,8 @@ On a [Verify Frame](mac-commands.md#verify-frame-12) the option names the packet
 - Type: signed 1-byte integer, in dB
 - Semantics: packet must be received with at least this SNR to be flood-forwarded. This option does not apply to source-routed hops.
 - If present with no value (length 0), default is `-3 dB`. (THIS VALUE IS SUBJECT TO CHANGE)
-- A sender MUST NOT include more than one. A packet carrying more than one is handled as carrying an unrecognized critical option.
+- A sender MUST NOT include more than one. A packet carrying more than one is handled as carrying an unrecognized forwarding-critical option.
 - If a repeater has a locally configured minimum SNR, it must use the higher of the packet's minimum SNR and the repeater's configured minimum SNR.
-
-### Trace Signal (option 10)
-- A sender MUST NOT include more than one. A receiver reads the first and ignores the rest, and a forwarder carries only the first.
-
-This option works very much like the Trace Route option, except that repeaters append signal quality information instead of router hints.
-
-When this option is present, each repeater that will repeat the packet must first prepend the signal quality metrics for the packet they received to the value of this option. The signal quality metrics are two bytes: the first byte is the **negative** RSSI in dBm (so -90 becomes 90, for example), and the second is the signed SNR in cB (centibells, or 1/10ths of a dB).
-
-A hop that received the packet over a point-to-point link rather than the air—a [bridge](internet-bridging.md), for example—prepends two zero bytes. The zero entry marks a hop with no radio in it, so it has no signal to report and does not lose packets to fading. A repeater that received the packet over the air never writes it: a reading of 0 dBm or stronger is carried as an RSSI byte of 1. Such a hop still prepends an entry: the one-to-one pairing with the Trace Route option is what makes any entry in the list attributable, and a hop that skipped its own would misattribute every entry before it.
 
 ### Region Code (option 11)
 - Type: 2-byte region identifier
@@ -236,6 +240,16 @@ A region name MUST NOT exceed 24 bytes of UTF-8. Names travel on the wire in [id
 
 **Capitalization.** Folding applies to derivation and comparison, not to storage: wherever a region is held or carried in its string form—a repeater's configured list, the Supported Regions identity option—it keeps the capitalization it was written with. A set of regions holds at most one entry per folded string; writing a region already present in a different capitalization respells the entry rather than adding a second one. A short code is displayed uppercase whatever case it was written in.
 
+### Station Callsign (option 15)
+- Encoding: ARNCE/HAM-64 (2, 4, 6, or 8 bytes; encodes callsigns up to 12 characters)
+- Semantics: identifies the transmitting station's amateur radio callsign.
+- If absent, the station callsign is assumed to equal the source callsign (if present)
+- This option is forwarding-critical because repeaters must replace or remove it during forwarding.
+- Use:
+  - in `Licensed-Only` mode, repeaters replace or insert it on every forwarded packet
+  - in `Hybrid` mode, repeaters also replace or insert it on every forwarded packet
+  - in `Unlicensed` mode, repeaters remove it if present and do not add their own
+
 ## Routing Option Layouts
 
 ### Source Route Option Value
@@ -261,21 +275,40 @@ An empty source-route option indicates that all explicit routing hints have been
 - For forwarding purposes, an empty source-route option behaves the same as an absent source-route option: there is no remaining explicit next hop.
 - However, it is still semantically useful and should be preserved when produced by forwarding, because it records that the packet did in fact traverse an explicit source-routed path before the hints were exhausted.
 
-### Trace Route Option Value
+### Trace Option Value
 
-A trace-route option also contains zero or more router hints:
-
-```text
-+----------+----------+----------+-----+
-|  RH[0]   |  RH[1]   |  RH[2]   | ... |
-+----------+----------+----------+-----+
-    2 B         2 B       2 B
-```
-
-Repeaters prepend their 2-byte router hint:
+A complete trace with signal contains zero or more 4-byte records:
 
 ```text
-new_trace = my_router_hint || old_trace
++----------+--------+--------+----------+--------+--------+-----+
+|  RH[0]   | RSSI[0]| SNR[0] |  RH[1]   | RSSI[1]| SNR[1] | ... |
++----------+--------+--------+----------+--------+--------+-----+
+    2 B       1 B      1 B       2 B       1 B      1 B
 ```
 
-So the list is ordered most-recent repeater first.
+Each hop prepends its own record:
+
+```text
+new_trace = my_router_hint || rssi || snr || old_trace
+```
+
+So the list is ordered most-recent hop first. A [bridge](internet-bridging.md) prepends a record as a repeater does, with zero signal bytes.
+
+A trace can outgrow the frame limit as hops add records: each record adds 4 bytes, and the option's length field gains a byte once the value passes 12 bytes. The path matters more than the per-hop signal, so a trace that no longer fits first sheds its signal and only then drops hops. The value takes one of three forms:
+
+| Form | First byte | Length | Contents |
+|---|---|---|---|
+| Complete, with signal | any | multiple of 4 | 4-byte records |
+| Complete, hints only | `0xFE` | odd | `0xFE ‖` 2-byte router hints |
+| Truncated, hints only | `0xFF` | odd | `0xFF ‖` 2-byte router hints, oldest dropped |
+
+Hints are most recent first in every form, and a lone `0xFE` or `0xFF` is valid. The length tells the hints-only forms apart from a record list whose first router hint happens to begin with `0xFE` or `0xFF`. Every other value is malformed: a length of 2 modulo 4, or an odd length beginning with any other byte.
+
+Before forwarding a traced packet, a repeater computes the exact size of the forwarded packet on the outgoing link, including any options it inserts, and takes the first of these that fits:
+
+1. Add its own entry in the trace's current form: a 4-byte record to a trace with signal, or its 2-byte hint to a `0xFE` or `0xFF` trace.
+2. For a trace with signal: convert it to `0xFE ‖` hints and add its own hint.
+3. Convert it to `0xFF ‖` hints, add its own hint, and drop hints from the end, oldest first, until the packet fits. A lone `0xFF` is the last resort.
+4. If even a lone `0xFF` does not fit, do not forward the packet on that link, and count the drop.
+
+Forms only degrade. No repeater adds signal to a hints-only trace, so the forms never mix, and a `0xFF` trace never returns to `0xFE`.

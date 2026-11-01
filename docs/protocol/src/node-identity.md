@@ -224,11 +224,17 @@ The intuition that quantization backstops the noise is exactly backwards: determ
 
 ## Signature Usage
 
-The optional 64-byte EdDSA signature is generally included only when the identity data must stand on its own without any authentication, such as:
+The optional 64-byte EdDSA signature lets an identity stand on its own, apart from any frame, as in QR codes and exported identities.
 
-- QR codes
-- broadcasts
+An identity carried in a frame is authenticated by that frame instead, and need not carry the embedded signature. An [advertisement](beacons.md#advertisements) is authenticated by its [frame signature](security.md#frame-signatures), and an identity response by its unicast MIC.
 
-When the enclosing packet already carries a MIC, the EdDSA signature MAY be omitted.
+A receiver believes an identity only when one of these holds:
 
-A signature is checkable only against the sending node's public key, so a signed broadcast [advertisement](beacons.md#advertisements) MUST carry its source address in full-key form. A hint-only advertisement can be verified only by a receiver that already holds the key, which is not the audience an advertisement is for.
+- its embedded signature verifies against the sender's key;
+- it has no embedded signature, and its frame authenticates the sender: a verified frame signature, or a unicast or blind unicast MIC.
+
+A multicast MIC alone does not authenticate the sender, since any channel member can produce one under any source address. An identity whose embedded signature does not verify is not believed.
+
+A frame signature is checkable only against the sender's public key. An advertisement meant for receivers that may not yet hold that key MUST therefore carry its source address in full-key form; a hint-only advertisement can be verified only by a receiver that already holds the key.
+
+An identity authenticated by its frame SHOULD replace stored details only when that frame advanced the sender's established receive baseline (see [Replay Detection](security.md#replay-detection)). A frame accepted as first contact, or one accepted from behind the baseline, MAY fill details that are missing but SHOULD NOT replace stored ones: a late frame can carry details older than those already stored. A baseline restored from storage is established.

@@ -13,7 +13,7 @@ In `Unlicensed` mode, the node operates only under non-amateur rules.
 - Encryption is enabled by default.
 - A repeater MAY forward any packet it may lawfully retransmit under unlicensed rules.
 - Maximum transmit power and duty cycle are determined by local rules for unlicensed operation.
-- If a forwarded packet carries a [station callsign](packet-options.md#station-callsign-option-7), the repeater MUST remove it rather than replacing it.
+- If a forwarded packet carries a [station callsign](packet-options.md#station-callsign-option-15), the repeater MUST remove it rather than replacing it.
 - The repeater SHOULD NOT add its own station callsign.
 
 The specific requirements for unlicensed transmission vary by jurisdiction and frequency, but may include restrictions on transmit power, antenna gain, and/or duty cycle.
@@ -27,7 +27,7 @@ as amateur-radio traffic.
 - Locally originated packets, [MAC Acks](packet-types.md#mac-ack-packet) included, MUST include an [operator callsign](packet-options.md#operator-callsign-option-4).
 - Restrictions on transmit power and duty cycle are generally more relaxed.
 - A repeater SHALL NOT forward packets that are missing an operator callsign.
-- A repeater SHALL replace or insert the station callsign option with its own callsign on every forwarded packet.
+- A repeater SHALL replace or insert the [station callsign](packet-options.md#station-callsign-option-15) option with its own callsign on every forwarded packet.
 
 > [!TIP]
 > While blind unicast is not categorically forbidden by this mode, the expected utility of using it without encryption is limited.

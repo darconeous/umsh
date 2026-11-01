@@ -10,14 +10,14 @@ The routing model is governed by a few simple rules:
   - In the current protocol this includes broadcast, MAC ack, unicast, multicast, and blind unicast packets.
   - Reserved or opaque packet types are not routable until the protocol defines their forwarding semantics (there is only one at the moment, type 5).
 - A repeater forwards other nodes' traffic, never its own and never traffic that has arrived.
-  - A repeater MUST NOT forward a packet whose source address identifies one of its own identities, by hint or in full-key form. Re-flooding its own transmission wastes airtime, and prepending its hint to the trace route would fabricate a hop that never happened.
+  - A repeater MUST NOT forward a packet whose source address identifies one of its own identities, by hint or in full-key form. Re-flooding its own transmission wastes airtime, and prepending its record to the trace would fabricate a hop that never happened.
   - A repeater MUST NOT forward a packet whose destination address identifies one of its own identities. Such a packet has reached its destination; whether the repeater could actually process it is a separate question.
 - A packet is forwarded as either a source-routed hop or a flood hop, never both.
   - A hop named in the source route is a source-routed hop, including the hop that consumes the final hint.
   - Every other forwarded hop is a flood hop.
   - Rules written for flood forwarding—[flood hop accounting](packet-structure.md#flood-hop-count), signal-quality thresholds, [region policy](#forwarding-procedure), and forwarding contention—apply to flood hops only.
-- Repeaters MUST mutate specific dynamic routing metadata while forwarding ([source route](packet-options.md#source-route-option-3), [trace route](packet-options.md#trace-route-option-2), [hop count](packet-structure.md#flood-hop-count), etc)
-  - Typical examples are flood hop counts, trace routes, source routes.
+- Repeaters MUST mutate specific dynamic routing metadata while forwarding ([source route](packet-options.md#source-route-option-3), [trace](packet-options.md#trace-option-7), [hop count](packet-structure.md#flood-hop-count), etc)
+  - Typical examples are flood hop counts, traces, source routes.
   - A repeater SHALL NOT simply repeat a packet verbatim under any circumstances.
   - The Route Retry flag MUST NOT be added to a packet by anyone other than the original sender.
   - These mutations do **not** create a new logical packet.
@@ -81,8 +81,8 @@ Each cache entry is small (equal to the cache key size—typically 4 to 16 bytes
 3. **Locally-handled unicast**
    - If this packet was a unicast (blind or direct) packet that was fully handled and processed according to [Packet Processing](packet-processing.md), do not forward. This covers the blind-unicast case, where the destination address is encrypted and step 2 cannot see it.
 
-4. **Unknown critical options**
-   - If the packet contains any critical option the repeater does not understand, do not forward.
+4. **Unknown forwarding-critical options**
+   - If the packet contains any [forwarding-critical](packet-options.md#forwarding-and-delivery-criticality) option the repeater does not understand, or whose value it cannot interpret, do not forward. Delivery-critical options do not affect forwarding.
 
 5. **Policy checks**
    - If the packet does not satisfy local repeater policy, do not forward.
@@ -94,7 +94,7 @@ Each cache entry is small (equal to the cache key size—typically 4 to 16 bytes
    - If the repeater mutates a source-route option, it MUST preserve the option on the forwarded packet even when no hints remain.
      - In that case, the forwarded packet carries a source-route option with zero remaining hops.
      - This preserves provenance: downstream nodes can still determine that the packet arrived via explicit source routing rather than by pure flooding.
-   - If this repeater matched a source-route hint, it is forwarding a source-routed hop. Skip directly to step 10 (trace route processing), **including when the hint just removed was the last one**. Steps 7 through 9 describe flood forwarding and MUST NOT be applied to a source-routed hop.
+   - If this repeater matched a source-route hint, it is forwarding a source-routed hop. Skip directly to step 10 (trace processing), **including when the hint just removed was the last one**. Steps 7 through 9 describe flood forwarding and MUST NOT be applied to a source-routed hop.
 
 7. **Region policy** *(flood forwarding only!)*
    - If the router has no region configuration at all, skip this section. A repeater with no configured regions applies no regional restriction and forwards a tagged packet whatever its region.
@@ -112,8 +112,8 @@ Each cache entry is small (equal to the cache key size—typically 4 to 16 bytes
    - If either the packet or repeater imposes a minimum SNR, the effective threshold is the higher of the two. If the received SNR is below the effective threshold, do not forward.
    - These thresholds ask how well the packet was heard. A packet handed to the repeater over a point-to-point link rather than a radio was not heard at all, and carries no measurement to compare; the thresholds do not apply to it.
 
-10. **Trace route processing**
-   - If the packet contains a trace-route option, prepend this repeater's hint. If prepending the hint would cause the packet to exceed the maximum frame size, drop the packet.
+10. **Trace processing**
+   - If the packet contains a [Trace option](packet-options.md#trace-option-7), add this repeater's own entry, degrading the trace's form as needed to fit the outgoing link ([Trace Option Value](packet-options.md#trace-option-value)). If even a lone `0xFF` does not fit, do not forward the packet on that link, and count the drop.
 
 11. **Retransmit**
    - If this is a flood forward, implement the [flood forwarding contention window](channel-access.md#flood-forwarding-contention-window)
@@ -188,14 +188,14 @@ A practical recovery rule is:
    - preserve the same frame counter, payload, and MIC
    - remove the stale source-route option, if one was present
    - add or refresh flood hops
-   - include a trace-route option if route rediscovery is desired
+   - include a Trace option if route rediscovery is desired
    - set the [Route Retry option](packet-options.md#route-retry-option-6)
 
 These edits touch only fields the [associated data](security.md#associated-data) excludes, which is what lets the MIC carry over. Adding `FHOPS` where the original had none also sets the FCF's `H` bit, and the AAD clears that bit for this reason.
 
 The restored flood radius SHOULD be the one the sending application asked for. A radius the application chose for itself is not a failed cache entry, and recovery MUST NOT widen it: a sender that was told to reach no further than one hop has not made a stale assumption, it has been given an instruction.
 
-A sender that assumed nothing—it held no route and flooded at the whole budget it was allowed—has no cached route to discard, but its timeout is no more specific about which leg failed. The destination may hold a route back that no longer works, and its acknowledgment may have died on it. A MAC ack is never itself acknowledged, so the destination cannot discover this on its own. Such a sender SHOULD send one Route Retry of the packet when it has heard from the destination recently—within 10 minutes is a reasonable window—at the same flood budget and with a trace route. A sender that has not heard from the destination recently SHOULD NOT: a destination that is unreachable answers a second full flood no more than the first.
+A sender that assumed nothing—it held no route and flooded at the whole budget it was allowed—has no cached route to discard, but its timeout is no more specific about which leg failed. The destination may hold a route back that no longer works, and its acknowledgment may have died on it. A MAC ack is never itself acknowledged, so the destination cannot discover this on its own. Such a sender SHOULD send one Route Retry of the packet when it has heard from the destination recently—within 10 minutes is a reasonable window—at the same flood budget and with a trace. A sender that has not heard from the destination recently SHOULD NOT: a destination that is unreachable answers a second full flood no more than the first.
 
 Either way, a sender MUST NOT send a Route Retry of a packet that already carries the Route Retry option. A logical packet gets at most one.
 
@@ -204,7 +204,7 @@ Either way, a sender MUST NOT send a Route Retry of a packet that already carrie
 A Route Retry that arrives at the destination as a duplicate of a packet it has already acknowledged, after the [duplicate acknowledgment holdoff](security.md#duplicate-acknowledgement-window), shows that the acknowledgment did not reach the sender: the sender sends a Route Retry only once its whole acknowledgment timeout has run out. The destination SHOULD then:
 
 - retire or demote the route its acknowledgment followed, and not relearn that same path from the retry for a while
-- re-acknowledge by a scoped flood rather than along any cached route: `FHOPS_REM` set to the retry's `FHOPS_ACC` plus a one-hop margin, the retry's region codes, and a trace route with its [trace signal](packet-options.md#trace-signal-option-10), so that the sender learns a path back
+- re-acknowledge by a scoped flood rather than along any cached route: `FHOPS_REM` set to the retry's `FHOPS_ACC` plus a one-hop margin, the retry's region codes, and a [trace](packet-options.md#trace-option-7), so that the sender learns a path back
 
 A path the retry itself traced MAY still be adopted as an ordinary route candidate, but the re-acknowledgment does not follow it. A route the application has fixed in place MAY stay; the re-acknowledgment floods regardless.
 

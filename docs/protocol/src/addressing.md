@@ -39,7 +39,7 @@ A **router hint** is defined as:
 Router hints are used in:
 
 - source-route options
-- trace-route options
+- trace options
 
 Because router hints are only 2 bytes, collisions are possible in dense networks but are handled gracefully: the MIC-based duplicate suppression ensures that each repeater forwards a given packet at most once, so a router hint collision causes a spurious forward but not a loop or incorrect delivery.
 
