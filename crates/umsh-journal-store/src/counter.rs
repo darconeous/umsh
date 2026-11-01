@@ -2,8 +2,9 @@
 //! increment 4).
 //!
 //! The MAC's `CounterStore` contract is per-context `store` calls
-//! followed by one `flush` per persistence cycle, already batched to
-//! one write per `COUNTER_PERSIST_BLOCK_SIZE` (128) secured frames.
+//! followed by one `flush` per persistence cycle, already batched: a TX
+//! boundary per 128 secured frames sent, an RX boundary per
+//! `RX_COUNTER_PERSIST_INTERVAL` (16) frames accepted from one peer.
 //! This map is the RAM image behind that contract: `store` upserts
 //! here, and `flush` serializes the *whole* map into a single
 //! [`proto`](crate::proto) record in the firmware's counter journal.

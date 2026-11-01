@@ -170,6 +170,7 @@ ef.truncated    = ProtoExpert.new("umsh.truncated",    "Packet truncated",      
 ef.mic_bad      = ProtoExpert.new("umsh.mic_bad",      "MIC verification failed",  expert.group.CHECKSUM,   expert.severity.WARN)
 ef.mic_ok       = ProtoExpert.new("umsh.mic_ok",       "MIC verified OK",          expert.group.CHECKSUM,   expert.severity.NOTE)
 ef.no_key       = ProtoExpert.new("umsh.no_key",       "No key for decryption",    expert.group.UNDECODED,  expert.severity.NOTE)
+ef.no_peer_key  = ProtoExpert.new("umsh.no_peer_key",  "Unknown peer key",         expert.group.UNDECODED,  expert.severity.NOTE)
 ef.unk_crit_opt = ProtoExpert.new("umsh.unknown_crit", "Unknown critical option",  expert.group.PROTOCOL,   expert.severity.WARN)
 ef.rsvd_type    = ProtoExpert.new("umsh.reserved_type","Reserved packet type",     expert.group.PROTOCOL,   expert.severity.WARN)
 -- Named apart from the `umsh.violation` field on purpose: an expert and a
@@ -179,7 +180,7 @@ ef.violation    = ProtoExpert.new("umsh.prohibited",   "Protocol violation",    
 
 umsh.experts = {
   ef.bad_version, ef.truncated, ef.mic_bad, ef.mic_ok,
-  ef.no_key, ef.unk_crit_opt, ef.rsvd_type, ef.violation,
+  ef.no_key, ef.no_peer_key, ef.unk_crit_opt, ef.rsvd_type, ef.violation,
 }
 
 -- ──────────────────────────────────────────────────────────────────────────
@@ -445,22 +446,34 @@ end
 
 -- SRC is a 3-byte hint or a full 32-byte key, per the FCF S flag.
 local function add_src_addr(tree, buf, off, src_bytes, full_src)
-  local name, pubkey
+  local name
   if full_src then
     tree:add(f.src_key, buf(off, 32)):set_text(
       "Source Public Key: " .. base58.key_full(src_bytes))
-    name   = keystore.lookup_node_by_key(src_bytes)
-    pubkey = src_bytes
+    name = keystore.lookup_node_by_key(src_bytes)
   else
     tree:add(f.src_hint, buf(off, 3)):set_text(
       "Source Hint: " .. hint_label(src_bytes))
-    name, pubkey = keystore.lookup_node(src_bytes)
+    name = keystore.lookup_node(src_bytes)
   end
   tree:add(f.src_addr, buf(off, #src_bytes), addr_short(src_bytes)):set_hidden()
   if name and name ~= "" then
     tree:add(f.src_name, buf(off, #src_bytes), name)
   end
-  return name, pubkey
+  return name
+end
+
+-- Why a pairwise frame did not verify, from crypto.try_pairwise's status:
+-- a seed was the destination but the source's key is unknown, or a pairing
+-- was tried and its MIC failed, or no seed is the destination at all.
+local function add_pairwise_failure(tree, status)
+  if status == "unknown peer key" then
+    tree:add_proto_expert_info(ef.no_peer_key)
+  elseif status == "mic_mismatch" then
+    tree:add_proto_expert_info(ef.mic_bad)
+  else
+    tree:add_proto_expert_info(ef.no_key)
+  end
 end
 
 -- ──────────────────────────────────────────────────────────────────────────
@@ -880,7 +893,7 @@ local function dissect_unicast(buf, pinfo, tree, off, full_src, fcf_byte, static
   local src_len = full_src and 32 or 3
   if off + src_len > buf_len then tree:add_proto_expert_info(ef.truncated); return end
   local src_bytes = tvb_bytes(buf, off, src_len)
-  local src_name, src_pubkey = add_src_addr(tree, buf, off, src_bytes, full_src)
+  local src_name = add_src_addr(tree, buf, off, src_bytes, full_src)
   off = off + src_len
 
   -- SECINFO
@@ -933,19 +946,18 @@ local function dissect_unicast(buf, pinfo, tree, off, full_src, fcf_byte, static
   -- Crypto: try to decrypt / verify MIC
   if not crypto then return end
   local pkt_info = {
-    fcf_byte                 = fcf_byte,
-    static_opts              = static_opts,
-    dst_hint                 = dst_bytes,
-    src_bytes                = src_bytes,
-    src_pubkey_from_keystore = src_pubkey,
-    secinfo_raw              = secinfo_raw,
-    body_bytes               = body_bytes,
-    mic_bytes                = mic_bytes,
-    is_encrypted             = is_enc,
+    fcf_byte     = fcf_byte,
+    static_opts  = static_opts,
+    dst_hint     = dst_bytes,
+    src_bytes    = src_bytes,
+    secinfo_raw  = secinfo_raw,
+    body_bytes   = body_bytes,
+    mic_bytes    = mic_bytes,
+    is_encrypted = is_enc,
   }
   local privkeys = keystore.get_all_privkeys()
   local ok, plain, status, dec_keys, full_cmac =
-    pcall(crypto.try_decrypt_unicast, pkt_info, privkeys, full_src)
+    pcall(crypto.try_decrypt_unicast, pkt_info, privkeys, keystore.peer_keys)
   if ok and plain then
     tree:add_proto_expert_info(ef.mic_ok)
     if is_enc then
@@ -986,7 +998,7 @@ local function dissect_unicast(buf, pinfo, tree, off, full_src, fcf_byte, static
       end
     end
   else
-    tree:add_proto_expert_info(ef.no_key)
+    add_pairwise_failure(tree, ok and status)
   end
 end
 
@@ -1211,7 +1223,7 @@ local function dissect_blind_unicast(buf, pinfo, tree, off, full_src, fcf_byte, 
     local privkeys = keystore.get_all_privkeys()
     local ok2, payload, dst_hint, dec_src, status, dec_keys, full_cmac =
       pcall(crypto.try_decrypt_blind_unicast, pkt_info, privkeys,
-            keystore.get_all_channels(), full_src)
+            keystore.get_all_channels(), full_src, keystore.peer_keys)
     if ok2 and payload then
       tree:add_proto_expert_info(ef.mic_ok)
       local d_name, s_name
@@ -1263,10 +1275,8 @@ local function dissect_blind_unicast(buf, pinfo, tree, off, full_src, fcf_byte, 
             string.format("ACK Response Time: %.3f ms", back.rsp_time * 1000))
         end
       end
-    elseif ok2 and status == "mic_mismatch" then
-      tree:add_proto_expert_info(ef.mic_bad)
     else
-      tree:add_proto_expert_info(ef.no_key)
+      add_pairwise_failure(tree, ok2 and status)
     end
 
   else
@@ -1279,7 +1289,7 @@ local function dissect_blind_unicast(buf, pinfo, tree, off, full_src, fcf_byte, 
     local src_len = full_src and 32 or 3
     if off + src_len > buf_len then tree:add_proto_expert_info(ef.truncated); return end
     local src_bytes = tvb_bytes(buf, off, src_len)
-    local src_name, src_pubkey = add_src_addr(tree, buf, off, src_bytes, full_src)
+    local src_name = add_src_addr(tree, buf, off, src_bytes, full_src)
     off = off + src_len
 
     local body_len = buf_len - off - mic_len
@@ -1324,86 +1334,53 @@ local function dissect_blind_unicast(buf, pinfo, tree, off, full_src, fcf_byte, 
     end
 
     local privkeys = keystore.get_all_privkeys()
+    -- The cleartext DST precedes the channel in the AAD.
     local pkt_info = {
       fcf_byte         = fcf_byte,
       static_opts      = static_opts,
-      dst_or_chan      = chan_bytes,
+      dst_or_chan      = dst_bytes .. chan_bytes,
       src_bytes_or_nil = src_bytes,
       secinfo_raw      = secinfo_raw,
       body_bytes       = body_bytes,
       mic_bytes        = mic_bytes,
       is_encrypted     = false,
     }
-    local found = false
-    for _, pk in ipairs(privkeys) do
-      local ok_s, x25519_priv = pcall(crypto.ed25519_seed_to_x25519_scalar, pk.seed_bytes)
-      if not (ok_s and x25519_priv) then goto continue end
-
-      -- Try with known peer Ed25519 pubkey (S=1 or keystore lookup)
-      local peer_ed_pubkey = src_pubkey or (full_src and src_bytes)
-      local peer_x25519_list = {}
-      if peer_ed_pubkey then
-        local ok_p, xp = pcall(crypto.ed25519_pub_to_x25519_pub, peer_ed_pubkey)
-        if ok_p and xp then peer_x25519_list[1] = xp end
-      else
-        -- Try other privkeys as potential peer
-        for _, pk2 in ipairs(privkeys) do
-          if pk2 ~= pk and pk2.x25519_pubkey then
-            peer_x25519_list[#peer_x25519_list+1] = pk2.x25519_pubkey
-          end
+    local ok2, plain, status, blind_keys, full_cmac =
+      pcall(crypto.try_pairwise, privkeys, dst_bytes, keystore.peer_keys(src_bytes),
+            crypto.blind_attempt(ch_entry.derived_keys, pkt_info))
+    if ok2 and plain then
+      tree:add_proto_expert_info(ef.mic_ok)
+      _ctx.mic_verified = true
+      if app then pcall(app.dissect, plain, tree, pinfo, keystore, crypto, _ctx) end
+      -- ACK tracking for E=0 BUAR
+      if ack_req and blind_keys and full_cmac then
+        if not pinfo.visited and mic_len >= 4 then
+          local mic_hex = bytes_to_hex(mic_bytes:sub(1, 4))
+          local entry = _ack_by_mic[mic_hex] or {
+            frame     = pinfo.number,
+            timestamp = pinfo.abs_ts,
+            src_label = sl,
+            dst_label = dl,
+            src_addr  = addr_short(src_bytes),
+            dst_addr  = hint_short(dst_bytes),
+            src_name  = src_name,
+            dst_name  = dst_name,
+          }
+          entry.ack_v    = full_cmac
+          entry.ack_keys = blind_keys
+          _ack_by_mic[mic_hex] = entry
+        end
+        local back = _ack_by_frame[pinfo.number]
+        if back then
+          tree:add(f.ack_rsp_frame, buf(0, 0), back.ack_frame)
+          tree:add(f.ack_rsp_time, buf(0, 0),
+            string.format("%.6f seconds", back.rsp_time)):set_text(
+            string.format("ACK Response Time: %.3f ms", back.rsp_time * 1000))
         end
       end
-
-      for _, x25519_peer in ipairs(peer_x25519_list) do
-        local ok2, plain, status, blind_keys, full_cmac = pcall(function()
-          local ss    = crypto.x25519(x25519_priv, x25519_peer)
-          local pw    = crypto.derive_pairwise_keys(ss)
-          if not pw then return nil, "no_pw" end
-          local blind = crypto.derive_blind_keys(pw, ch_entry.derived_keys)
-          local b, s, fc = crypto.verify_and_decrypt(blind, pkt_info)
-          if b then return b, s, blind, fc end
-          return nil, s
-        end)
-        if ok2 and plain then
-          tree:add_proto_expert_info(ef.mic_ok)
-          _ctx.mic_verified = true
-          if app then pcall(app.dissect, plain, tree, pinfo, keystore, crypto, _ctx) end
-          -- ACK tracking for E=0 BUAR
-          if ack_req and blind_keys and full_cmac then
-            if not pinfo.visited and mic_len >= 4 then
-              local mic_hex = bytes_to_hex(mic_bytes:sub(1, 4))
-              local entry = _ack_by_mic[mic_hex] or {
-                frame     = pinfo.number,
-                timestamp = pinfo.abs_ts,
-                src_label = sl,
-                dst_label = dl,
-                src_addr  = addr_short(src_bytes),
-                dst_addr  = hint_short(dst_bytes),
-                src_name  = src_name,
-                dst_name  = dst_name,
-              }
-              entry.ack_v    = full_cmac
-              entry.ack_keys = blind_keys
-              _ack_by_mic[mic_hex] = entry
-            end
-            local back = _ack_by_frame[pinfo.number]
-            if back then
-              tree:add(f.ack_rsp_frame, buf(0, 0), back.ack_frame)
-              tree:add(f.ack_rsp_time, buf(0, 0),
-                string.format("%.6f seconds", back.rsp_time)):set_text(
-                string.format("ACK Response Time: %.3f ms", back.rsp_time * 1000))
-            end
-          end
-          found = true; break
-        elseif ok2 and status == "mic_mismatch" then
-          tree:add_proto_expert_info(ef.mic_bad)
-          found = true; break
-        end
-      end
-      if found then break end
-      ::continue::
+    else
+      add_pairwise_failure(tree, ok2 and status)
     end
-    if not found then tree:add_proto_expert_info(ef.no_key) end
   end
 end
 

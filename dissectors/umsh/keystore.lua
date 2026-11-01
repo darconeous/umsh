@@ -14,7 +14,7 @@ function M.set_crypto(c) crypto_ref = c end
 -- ---------------------------------------------------------------------------
 
 local nodes    = {}   -- list of {pubkey_hex, pubkey_bytes, hint3_bytes, name}
-local privkeys = {}   -- list of {seed_bytes, seed_hex, name, x25519_pubkey}
+local privkeys = {}   -- list of {seed_bytes, seed_hex, name, ed25519_pubkey, hint3_bytes}
 local channels = {}   -- list of {raw_key_bytes, name, channel_id, derived_keys}
 
 -- ---------------------------------------------------------------------------
@@ -69,6 +69,32 @@ local function compute_channel_entry(raw_key_bytes, name, builtin)
       if ok2 then entry.derived_keys = dk end
     end
   end
+  return entry
+end
+
+-- ---------------------------------------------------------------------------
+-- Private-key entries
+-- The seed's own Ed25519 public key is derived once, here: its hint says
+-- which frames the seed can be the destination of, and the whole key is the
+-- peer when another seed is the destination.
+-- ---------------------------------------------------------------------------
+
+local function derive_privkey_pubkey(entry)
+  if not crypto_ref then return end
+  local ok, pub = pcall(crypto_ref.ed25519_pubkey_from_seed, entry.seed_bytes)
+  if ok and pub then
+    entry.ed25519_pubkey = pub
+    entry.hint3_bytes    = pub:sub(1, 3)
+  end
+end
+
+local function privkey_entry(seed_bytes, name)
+  local entry = {
+    seed_bytes = seed_bytes,
+    seed_hex   = bytes_to_hex(seed_bytes),
+    name       = name,
+  }
+  derive_privkey_pubkey(entry)
   return entry
 end
 
@@ -193,22 +219,9 @@ function M.add(node_pref, privkey_pref, channel_pref)
   end
 
   -- Private keys (Ed25519 seed : name)
-  -- We store only seeds; X25519 public keys are derived for cross-pair decryption.
   for _, item in ipairs(parse_key_name_lines(privkey_pref or "")) do
     local b = parse_key_material(item.key)
-    if b then
-      local x25519_pub = nil
-      if crypto_ref then
-        local ok, p = pcall(crypto_ref.x25519_pubkey_from_seed, b)
-        if ok then x25519_pub = p end
-      end
-      privkeys[#privkeys+1] = {
-        seed_bytes    = b,
-        seed_hex      = bytes_to_hex(b),
-        name          = item.name,
-        x25519_pubkey = x25519_pub,
-      }
-    end
+    if b then privkeys[#privkeys+1] = privkey_entry(b, item.name) end
   end
 
   -- Channel keys
@@ -263,19 +276,7 @@ function M.rebuild_from_uat(uat_rows)
 
     elseif ktype == "privkey" then
       local b = parse_key_material(key)
-      if b then
-        local x25519_pub = nil
-        if crypto_ref then
-          local ok, p = pcall(crypto_ref.x25519_pubkey_from_seed, b)
-          if ok then x25519_pub = p end
-        end
-        privkeys[#privkeys+1] = {
-          seed_bytes    = b,
-          seed_hex      = bytes_to_hex(b),
-          name          = label,
-          x25519_pubkey = x25519_pub,
-        }
-      end
+      if b then privkeys[#privkeys+1] = privkey_entry(b, label) end
 
     elseif ktype == "channel" then
       -- Named channel: umsh:cs:<name>
@@ -341,12 +342,9 @@ function M.refresh_channel_crypto()
       end
     end
   end
-  -- Also compute X25519 pubkeys for privkeys that are missing them
+  -- Also derive the public keys of privkeys loaded before crypto was set
   for _, pk in ipairs(privkeys) do
-    if not pk.x25519_pubkey and crypto_ref then
-      local ok, pub = pcall(crypto_ref.x25519_pubkey_from_seed, pk.seed_bytes)
-      if ok then pk.x25519_pubkey = pub end
-    end
+    if not pk.ed25519_pubkey then derive_privkey_pubkey(pk) end
   end
 end
 
@@ -373,6 +371,24 @@ function M.lookup_node_by_key(pubkey_bytes)
     end
   end
   return nil
+end
+
+-- The Ed25519 keys a frame's source may hold, best first: the key itself
+-- when SRC is a full 32-byte key; for a hint, every node entry and then
+-- every private-key entry whose hint it is.
+function M.peer_keys(src_bytes)
+  if #src_bytes == 32 then return {src_bytes} end
+  local keys, seen = {}, {}
+  local function add(key)
+    if key and not seen[key] then seen[key] = true; keys[#keys+1] = key end
+  end
+  for _, n in ipairs(nodes) do
+    if n.hint3_bytes == src_bytes then add(n.pubkey_bytes) end
+  end
+  for _, pk in ipairs(privkeys) do
+    if pk.hint3_bytes == src_bytes then add(pk.ed25519_pubkey) end
+  end
+  return keys
 end
 
 -- Find a channel entry by its 2-byte channel ID.

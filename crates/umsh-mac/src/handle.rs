@@ -8,7 +8,7 @@ use umsh_sync::AsyncRefCell;
 use crate::{
     AddPeerError, CapacityError, DEFAULT_ACKS, DEFAULT_CHANNEL_HINT_REPLAY, DEFAULT_CHANNEL_REPLAY,
     DEFAULT_CHANNELS, DEFAULT_DUP, DEFAULT_FRAME, DEFAULT_IDENTITIES, DEFAULT_PEERS,
-    DEFAULT_ROUTE_HOLDS, DEFAULT_TX, Platform,
+    DEFAULT_ROUTE_HOLDS, DEFAULT_RX_STRANGERS, DEFAULT_TX, Platform,
     coordinator::{CounterPersistenceError, LocalIdentityId, Mac, MacError, SendError},
     peers::PeerId,
     send::{SendOptions, SendReceipt},
@@ -33,8 +33,11 @@ pub struct MacHandle<
     const RN: usize = DEFAULT_CHANNEL_REPLAY,
     const HN: usize = DEFAULT_CHANNEL_HINT_REPLAY,
     const HOLDS: usize = DEFAULT_ROUTE_HOLDS,
+    const RX_STRANGERS: usize = DEFAULT_RX_STRANGERS,
 > {
-    mac: &'a AsyncRefCell<Mac<P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP, RN, HN, HOLDS>>,
+    mac: &'a AsyncRefCell<
+        Mac<P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP, RN, HN, HOLDS, RX_STRANGERS>,
+    >,
 }
 
 impl<
@@ -50,7 +53,23 @@ impl<
     const RN: usize,
     const HN: usize,
     const HOLDS: usize,
-> Copy for MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP, RN, HN, HOLDS>
+    const RX_STRANGERS: usize,
+> Copy
+    for MacHandle<
+        'a,
+        P,
+        IDENTITIES,
+        PEERS,
+        CHANNELS,
+        ACKS,
+        TX,
+        FRAME,
+        DUP,
+        RN,
+        HN,
+        HOLDS,
+        RX_STRANGERS,
+    >
 {
 }
 
@@ -67,7 +86,23 @@ impl<
     const RN: usize,
     const HN: usize,
     const HOLDS: usize,
-> Clone for MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP, RN, HN, HOLDS>
+    const RX_STRANGERS: usize,
+> Clone
+    for MacHandle<
+        'a,
+        P,
+        IDENTITIES,
+        PEERS,
+        CHANNELS,
+        ACKS,
+        TX,
+        FRAME,
+        DUP,
+        RN,
+        HN,
+        HOLDS,
+        RX_STRANGERS,
+    >
 {
     fn clone(&self) -> Self {
         *self
@@ -87,12 +122,13 @@ impl<
     const RN: usize,
     const HN: usize,
     const HOLDS: usize,
-> MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP, RN, HN, HOLDS>
+    const RX_STRANGERS: usize,
+> MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP, RN, HN, HOLDS, RX_STRANGERS>
 {
     /// Creates a cloneable handle backed by shared coordinator state.
     pub fn new(
         mac: &'a AsyncRefCell<
-            Mac<P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP, RN, HN, HOLDS>,
+            Mac<P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP, RN, HN, HOLDS, RX_STRANGERS>,
         >,
     ) -> Self {
         Self { mac }
@@ -155,14 +191,12 @@ impl<
         self.mac.borrow().await.tx_queue().is_empty()
     }
 
-    /// Load persisted RX counter boundaries for all registered peers from
-    /// durable storage, storing them in each peer's [`PeerInfo::initial_rx_counter`].
+    /// Restore every registered peer's receive baseline from durable storage
+    /// now, rather than when its first frame arrives
+    /// ([`Mac::load_all_persisted_rx_counters`](crate::Mac::load_all_persisted_rx_counters)).
     ///
-    /// Call this once at boot, after all known peers have been registered with
-    /// [`add_peer`](Self::add_peer), and before the first call to
-    /// [`next_event`](crate::Mac::next_event). When pairwise keys are later
-    /// derived for a peer, the replay window is automatically initialized to
-    /// the loaded boundary.
+    /// Optional: a registered peer's baseline is restored before its first
+    /// frame is judged in any case.
     pub async fn load_all_persisted_rx_counters(
         &self,
     ) -> Result<usize, <P::CounterStore as CounterStore>::Error> {
@@ -721,6 +755,7 @@ impl<
 
     /// Invoke `f` for each peer with an established crypto state for `id`,
     /// passing the peer's public key, last-accepted RX counter, and persisted RX boundary.
+    /// The counters are the peer's own, shared by every identity it talks to.
     pub async fn for_each_peer_counter(
         &self,
         id: LocalIdentityId,
@@ -730,14 +765,17 @@ impl<
         let Some(slot) = mac.identity(id) else {
             return;
         };
-        for (peer_id, state) in slot.peer_crypto().iter() {
+        for (peer_id, _) in slot.peer_crypto().iter() {
             let Some(info) = mac.peer_registry().get(*peer_id) else {
+                continue;
+            };
+            let Some(entry) = mac.rx_windows().get(&info.public_key) else {
                 continue;
             };
             f(
                 info.public_key,
-                state.replay_window.last_accepted,
-                state.persisted_rx_counter,
+                entry.replay_window.last_accepted,
+                entry.persisted_rx_counter(),
             );
         }
     }

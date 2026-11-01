@@ -3,7 +3,7 @@ use heapless::Deque;
 // Replay detection is a Security-chapter concept and lives in
 // umsh-crypto so the device can share it without depending on
 // the MAC; re-exported here so this crate's public API is unchanged.
-pub use umsh_crypto::replay::{RecentMic, ReplayVerdict, ReplayWindow};
+pub use umsh_crypto::replay::{RecentMic, ReplayVerdict, ReplayWindow, RxAcceptance};
 
 /// Duplicate-suppression key derived from an accepted packet.
 #[derive(Clone, Debug, PartialEq, Eq)]

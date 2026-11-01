@@ -150,12 +150,6 @@ pub struct PeerInfo {
     /// the application configured. Use [`PeerInfo::heard_within`] to
     /// read it.
     pub last_seen_ms: u64,
-    /// Highest RX frame counter loaded from persistent storage at boot.
-    ///
-    /// Non-zero means a stored boundary was found. When pairwise keys are
-    /// first installed for this peer, the replay window is initialized to
-    /// this value so that frames from before the reboot are rejected.
-    pub initial_rx_counter: u32,
 }
 
 impl PeerInfo {
@@ -174,7 +168,6 @@ impl PeerInfo {
             unflooded_arrival_s: None,
             trace_owed: false,
             last_seen_ms,
-            initial_rx_counter: 0,
         }
     }
 
@@ -894,19 +887,15 @@ fn better_candidate(
     Some(if replace { offer.into() } else { candidate })
 }
 
-/// Per-peer secure transport state.
+/// Secure transport state for one local identity and one remote peer.
+///
+/// Only the pairwise keys are per identity pair. Replay state follows the
+/// sender's one counter sequence, so it lives in
+/// [`RxWindows`](crate::RxWindows), keyed by the remote key alone.
 #[derive(Clone)]
 pub struct PeerCryptoState {
     /// Pairwise encryption and MIC keys.
     pub pairwise_keys: PairwiseKeys,
-    /// Replay state for traffic from this peer.
-    pub replay_window: ReplayWindow,
-    /// Highest `last_accepted` value written to persistent storage.
-    /// Updated by `service_rx_counter_persistence` after each flush.
-    pub persisted_rx_counter: u32,
-    /// Set when `last_accepted` has advanced `COUNTER_PERSIST_BLOCK_SIZE`
-    /// beyond `persisted_rx_counter`. Cleared after the next flush.
-    pub needs_rx_persist: bool,
 }
 
 /// Fixed-capacity map of per-peer secure transport state.

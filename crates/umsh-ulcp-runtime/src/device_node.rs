@@ -20,7 +20,7 @@
 //! - **The counter store** is the board's—the `CS` parameter—so TX
 //!   reservation boundaries for the device identity and per-peer RX
 //!   replay boundaries survive power cycles, flushed from inside the MAC
-//!   pump one whole-map record per persist block.
+//!   pump as one whole-map record per persistence pass with anything due.
 //!
 //! The node **always exists**: a device identity is generated and
 //! persisted at first boot, so bring-up is unconditional and the only
@@ -179,6 +179,9 @@ pub const NODE_PEERS: usize = 2 * MAX_NODE_PEERS;
 pub const NODE_IDENTITIES: usize = 1;
 #[cfg(feature = "communicator")]
 pub const NODE_IDENTITIES: usize = 1 + 4;
+/// Strangers—senders not registered as peers—whose receive windows the
+/// device node's MAC keeps.
+pub const NODE_RX_STRANGERS: usize = 8;
 
 /// Pending acknowledgments and transmit slots: beacons and answers alone,
 /// or on a communicator its chats' frames as well.
@@ -201,7 +204,8 @@ pub const NODE_TX: usize = 8;
 /// sender): 4 full-key + 2 hint-only senders per channel keeps the whole
 /// table ~2 KiB/channel; extra concurrent senders on one channel fail
 /// closed (dropped, never accepted unchecked). No route holds (a device
-/// has no person choosing paths).
+/// has no person choosing paths). [`NODE_RX_STRANGERS`] stranger receive
+/// windows beside one per peer.
 pub type DeviceNodeMac<CS> = umsh_mac::Mac<
     DeviceNodePlatform<CS>,
     NODE_IDENTITIES,
@@ -214,6 +218,7 @@ pub type DeviceNodeMac<CS> = umsh_mac::Mac<
     4,
     2,
     0,
+    NODE_RX_STRANGERS,
 >;
 pub type DeviceNodeHandle<CS> = MacHandle<
     'static,
@@ -228,6 +233,7 @@ pub type DeviceNodeHandle<CS> = MacHandle<
     4,
     2,
     0,
+    NODE_RX_STRANGERS,
 >;
 pub type DeviceNodeHost<CS> = Host<DeviceNodeHandle<CS>>;
 pub type DeviceNode<CS> = LocalNode<DeviceNodeHandle<CS>>;
@@ -343,6 +349,8 @@ static MAC_FORWARD_CANCELLED: AtomicU32 = AtomicU32::new(0);
 static MAC_FORWARD_DROPPED_POLICY: AtomicU32 = AtomicU32::new(0);
 static MAC_RX_OWN_HINT: AtomicU32 = AtomicU32::new(0);
 static MAC_RX_DELIVERY_REFUSED: AtomicU32 = AtomicU32::new(0);
+static MAC_RX_COUNTER_PERSIST_FAILURES: AtomicU32 = AtomicU32::new(0);
+static MAC_RX_COUNTER_RESTORE_FAILURES: AtomicU32 = AtomicU32::new(0);
 
 /// The most recently published MAC tallies.
 ///
@@ -360,6 +368,8 @@ pub fn mac_counters() -> MacCounters {
         forward_dropped_policy: MAC_FORWARD_DROPPED_POLICY.load(Ordering::Relaxed),
         rx_own_hint: MAC_RX_OWN_HINT.load(Ordering::Relaxed),
         rx_delivery_refused: MAC_RX_DELIVERY_REFUSED.load(Ordering::Relaxed),
+        rx_counter_persist_failures: MAC_RX_COUNTER_PERSIST_FAILURES.load(Ordering::Relaxed),
+        rx_counter_restore_failures: MAC_RX_COUNTER_RESTORE_FAILURES.load(Ordering::Relaxed),
     }
 }
 
@@ -373,6 +383,8 @@ fn publish_mac_counters(counters: MacCounters) {
     MAC_FORWARD_DROPPED_POLICY.store(counters.forward_dropped_policy, Ordering::Relaxed);
     MAC_RX_OWN_HINT.store(counters.rx_own_hint, Ordering::Relaxed);
     MAC_RX_DELIVERY_REFUSED.store(counters.rx_delivery_refused, Ordering::Relaxed);
+    MAC_RX_COUNTER_PERSIST_FAILURES.store(counters.rx_counter_persist_failures, Ordering::Relaxed);
+    MAC_RX_COUNTER_RESTORE_FAILURES.store(counters.rx_counter_restore_failures, Ordering::Relaxed);
 }
 
 /// The transmit power the radio was last configured with, in dBm, offset
@@ -686,10 +698,10 @@ pub async fn dev_sync_loop<CS: CounterStore + 'static>(
                 let _ = registered.push(*public_key);
             }
         }
-        // Seed persisted RX replay boundaries for the registered peers (a
-        // repeat only refreshes each peer's initial boundary; live replay
-        // windows are untouched). Without this, a peer's replay floor
-        // would restart at zero after every power cycle.
+        // Restore persisted RX replay baselines for the registered peers
+        // now rather than on each one's first frame. Optional: the MAC
+        // restores a registered peer's baseline before judging its first
+        // frame either way.
         if !snapshot.peers.is_empty() {
             let _ = mac.load_all_persisted_rx_counters().await;
         }

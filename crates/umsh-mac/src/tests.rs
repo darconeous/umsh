@@ -589,10 +589,9 @@ fn counter_resync_probes_a_blind_peer_on_the_same_channel() {
         .public_key()
         .hint();
 
-    mac.identity_mut(local_id)
-        .unwrap()
-        .peer_crypto_mut()
-        .get_mut(&peer_id)
+    let key = mac.peer_registry().get(peer_id).unwrap().public_key;
+    mac.rx_windows_mut()
+        .get_mut(&key)
         .unwrap()
         .replay_window
         .reset(10_000, 1);
@@ -1978,11 +1977,11 @@ fn secure_send_blocks_when_counter_window_exhausted() {
 /// would move the boundary, so nothing left in the system can reopen it.
 #[test]
 fn secure_send_survives_the_boundary_when_the_counter_starts_late_in_its_block() {
-    use crate::coordinator::COUNTER_PERSIST_BLOCK_SIZE;
+    use crate::coordinator::TX_COUNTER_PERSIST_BLOCK_SIZE;
 
     // Every block position a random initial counter could land on, not just
     // the handful past the renewal offset that exposed the bug.
-    for start in 0..COUNTER_PERSIST_BLOCK_SIZE {
+    for start in 0..TX_COUNTER_PERSIST_BLOCK_SIZE {
         let mut mac = make_mac();
         let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
         // A fresh identity: nothing persisted yet, random nonzero counter at
@@ -2007,7 +2006,7 @@ fn secure_send_survives_the_boundary_when_the_counter_starts_late_in_its_block()
 
         // The event loop flushes pending boundaries after every wake; a send
         // and a flush in turn is the cadence a running node actually has.
-        for send in 0..(3 * COUNTER_PERSIST_BLOCK_SIZE) {
+        for send in 0..(3 * TX_COUNTER_PERSIST_BLOCK_SIZE) {
             mac.queue_unicast(
                 local_id,
                 &peer_key,
@@ -2030,52 +2029,29 @@ fn secure_send_survives_the_boundary_when_the_counter_starts_late_in_its_block()
 }
 
 /// A deliberate reboot must persist every RX boundary, however little it
-/// advanced. The block cadence deliberately leaves up to a block of
-/// accepted counters in RAM; a device that resets on command inside that
-/// window would accept the same command again from the sender's retry—
-/// the reboot-on-repeat failure this call exists to prevent.
+/// advanced. The regular cadence deliberately leaves a few accepted frames
+/// in RAM; a device that resets on command inside that window would accept
+/// the same command again from the sender's retry—the reboot-on-repeat
+/// failure this call exists to prevent.
 #[test]
-fn persist_all_rx_counters_flushes_sub_block_boundaries_the_cadence_would_not() {
-    use crate::coordinator::COUNTER_PERSIST_BLOCK_SIZE;
-
+fn persist_all_rx_counters_flushes_baselines_the_cadence_would_not() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
-    let peer_id = mac.add_peer(test_pubkey(0xAB)).unwrap();
-    mac.install_pairwise_keys(
-        local_id,
-        peer_id,
-        PairwiseKeys {
-            k_enc: [1; 32],
-            k_mic: [2; 32],
-        },
-    )
-    .unwrap();
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let keys = rx_test_peer(&mut mac, local_id, &remote);
 
-    // A handful of accepted frames: far inside the persist block, so the
-    // cadence path sees nothing worth writing.
-    let advanced = COUNTER_PERSIST_BLOCK_SIZE / 8;
-    {
-        let state = mac
-            .identity_mut(local_id)
-            .unwrap()
-            .peer_crypto_mut()
-            .get_mut(&peer_id)
-            .unwrap();
-        state.replay_window.last_accepted = advanced;
-        assert!(!state.needs_rx_persist);
+    // A handful of accepted frames: short of the interval, so the cadence
+    // path sees nothing worth writing.
+    for counter in 1..=3 {
+        receive_rx_test_unicast(&mut mac, local_id, &remote, &keys, counter);
     }
     assert_eq!(block_on(mac.service_rx_counter_persistence()).unwrap(), 0);
 
     // The forced flush writes it anyway and settles the bookkeeping.
     assert_eq!(block_on(mac.persist_all_rx_counters()).unwrap(), 1);
-    let state = mac
-        .identity(local_id)
-        .unwrap()
-        .peer_crypto()
-        .get(&peer_id)
-        .unwrap();
-    assert_eq!(state.persisted_rx_counter, advanced);
-    assert!(!state.needs_rx_persist);
+    let entry = mac.rx_windows().get(remote.public_key()).unwrap();
+    assert_eq!(entry.persisted_rx_counter(), 3);
+    assert!(!entry.needs_persist());
 
     // Nothing new accepted: a second force writes nothing.
     assert_eq!(block_on(mac.persist_all_rx_counters()).unwrap(), 0);
@@ -2124,6 +2100,392 @@ fn restored_rx_boundary_rejects_counters_just_below_it() {
         }));
     }
     assert_eq!(delivered, [1_001u32.to_be_bytes().to_vec()]);
+}
+
+/// The key a peer's receive baseline is stored under.
+fn rx_store_key(peer: &PublicKey) -> std::vec::Vec<u8> {
+    [b"mac.rx:".as_slice(), &peer.0].concat()
+}
+
+/// Register `remote` as a peer, returning the pairwise keys its unicasts
+/// to `local_id` are sealed under.
+fn rx_test_peer(
+    mac: &mut TestMac,
+    local_id: LocalIdentityId,
+    remote: &DummyIdentity,
+) -> PairwiseKeys {
+    mac.add_peer(*remote.public_key()).unwrap();
+    rx_test_keys(mac, local_id, remote)
+}
+
+/// The pairwise keys `remote`'s unicasts to `local_id` are sealed under.
+fn rx_test_keys(mac: &TestMac, local_id: LocalIdentityId, remote: &DummyIdentity) -> PairwiseKeys {
+    mac.crypto().derive_pairwise_keys(
+        &SharedSecret([0u8; 32]),
+        mac.identity(local_id).unwrap().identity().public_key(),
+        remote.public_key(),
+    )
+}
+
+/// Receive a unicast from `remote` to `local_id` carrying `counter`.
+/// Returns the acceptance it was delivered with, or `None` when it was not
+/// delivered.
+fn receive_rx_test_unicast(
+    mac: &mut TestMac,
+    local_id: LocalIdentityId,
+    remote: &DummyIdentity,
+    keys: &PairwiseKeys,
+    counter: u32,
+) -> Option<RxAcceptance> {
+    let dst_hint = mac
+        .identity(local_id)
+        .unwrap()
+        .identity()
+        .public_key()
+        .hint();
+    mac.radio_mut().queue_received_unicast_with_counter(
+        remote,
+        keys,
+        &dst_hint,
+        &counter.to_be_bytes(),
+        false,
+        counter,
+    );
+    let mut delivered = None;
+    let _ = block_on(mac.receive_one(|_, event| {
+        if let Some(packet) = received_of_type(&event, PacketType::Unicast) {
+            assert_eq!(packet.payload_bytes(), counter.to_be_bytes());
+            delivered = Some(packet.acceptance().expect("a unicast is judged"));
+        }
+    }));
+    delivered
+}
+
+/// The same MAC after a restart: a fresh coordinator over the counter
+/// store's contents.
+fn restarted_mac(mac: &TestMac) -> TestMac {
+    let restarted = make_mac();
+    restarted
+        .counter_store()
+        .loaded
+        .replace(mac.counter_store().loaded.borrow().clone());
+    restarted
+}
+
+/// Receive baselines are written by accepted frames: a peer with
+/// `RX_COUNTER_PERSIST_INTERVAL` frames since its last write is written, one
+/// with a frame fewer is not.
+#[test]
+fn rx_baseline_is_written_after_the_interval_of_accepted_frames() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let keys = rx_test_peer(&mut mac, local_id, &remote);
+
+    let interval = u32::from(crate::RX_COUNTER_PERSIST_INTERVAL);
+    assert_eq!(interval, 16);
+    for counter in 1..interval {
+        assert!(receive_rx_test_unicast(&mut mac, local_id, &remote, &keys, counter).is_some());
+    }
+    assert_eq!(block_on(mac.service_rx_counter_persistence()).unwrap(), 0);
+    assert!(mac.counter_store().stored.borrow().is_empty());
+
+    assert!(receive_rx_test_unicast(&mut mac, local_id, &remote, &keys, interval).is_some());
+    assert_eq!(block_on(mac.service_rx_counter_persistence()).unwrap(), 1);
+    assert_eq!(
+        *mac.counter_store().stored.borrow(),
+        [(rx_store_key(remote.public_key()), interval)]
+    );
+    assert_eq!(block_on(mac.service_rx_counter_persistence()).unwrap(), 0);
+}
+
+/// A sender's counter advances across all its destinations, so one frame
+/// can move the baseline a long way. That alone is no reason to write.
+#[test]
+fn a_counter_jump_alone_does_not_write_the_rx_baseline() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let keys = rx_test_peer(&mut mac, local_id, &remote);
+
+    receive_rx_test_unicast(&mut mac, local_id, &remote, &keys, 1).unwrap();
+    assert_eq!(
+        receive_rx_test_unicast(&mut mac, local_id, &remote, &keys, 1_001),
+        Some(RxAcceptance::Advanced)
+    );
+    assert_eq!(block_on(mac.service_rx_counter_persistence()).unwrap(), 0);
+    assert!(mac.counter_store().stored.borrow().is_empty());
+}
+
+/// A write that fails is counted and stays due; the next pass writes it.
+#[test]
+fn failed_rx_baseline_write_is_counted_and_retried() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let keys = rx_test_peer(&mut mac, local_id, &remote);
+    for counter in 1..=u32::from(crate::RX_COUNTER_PERSIST_INTERVAL) {
+        receive_rx_test_unicast(&mut mac, local_id, &remote, &keys, counter).unwrap();
+    }
+
+    mac.counter_store().failing_stores.set(1);
+    assert!(block_on(mac.service_rx_counter_persistence()).is_err());
+    assert_eq!(mac.counters().rx_counter_persist_failures, 1);
+    assert!(
+        mac.rx_windows()
+            .get(remote.public_key())
+            .unwrap()
+            .needs_persist()
+    );
+
+    assert_eq!(block_on(mac.service_rx_counter_persistence()).unwrap(), 1);
+    assert_eq!(mac.counters().rx_counter_persist_failures, 1);
+    assert_eq!(
+        mac.counter_store()
+            .loaded
+            .borrow()
+            .get(&rx_store_key(remote.public_key())),
+        Some(&16)
+    );
+}
+
+/// A restart before the scheduled write comes back at the last baseline
+/// written. The frames accepted since are accepted once more, and nothing
+/// at or behind that baseline is.
+#[test]
+fn restart_before_the_scheduled_write_restores_the_last_written_baseline() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let keys = rx_test_peer(&mut mac, local_id, &remote);
+    for counter in 1..=16 {
+        receive_rx_test_unicast(&mut mac, local_id, &remote, &keys, counter).unwrap();
+    }
+    assert_eq!(block_on(mac.service_rx_counter_persistence()).unwrap(), 1);
+    for counter in 17..=20 {
+        receive_rx_test_unicast(&mut mac, local_id, &remote, &keys, counter).unwrap();
+    }
+    assert_eq!(block_on(mac.service_rx_counter_persistence()).unwrap(), 0);
+
+    let mut mac = restarted_mac(&mac);
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let keys = rx_test_peer(&mut mac, local_id, &remote);
+    for counter in [16, 10] {
+        assert_eq!(
+            receive_rx_test_unicast(&mut mac, local_id, &remote, &keys, counter),
+            None
+        );
+    }
+    // The restored baseline is established: the next frame advances it.
+    assert_eq!(
+        receive_rx_test_unicast(&mut mac, local_id, &remote, &keys, 17),
+        Some(RxAcceptance::Advanced)
+    );
+    for counter in 18..=20 {
+        assert!(receive_rx_test_unicast(&mut mac, local_id, &remote, &keys, counter).is_some());
+    }
+    for counter in 17..=20 {
+        assert_eq!(
+            receive_rx_test_unicast(&mut mac, local_id, &remote, &keys, counter),
+            None
+        );
+    }
+}
+
+/// A peer registered after boot—as mobile-core's `RegisterPeers` does,
+/// through `add_peer`, or by auto-registration—gets its stored baseline
+/// before its first frame is judged, with no warm-up call.
+#[test]
+fn peer_registered_after_boot_is_restored_before_its_first_frame() {
+    for auto_registered in [false, true] {
+        let mut mac = make_mac();
+        let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+        let remote = DummyIdentity::new([0xAB; 32]);
+        mac.counter_store()
+            .loaded
+            .borrow_mut()
+            .insert(rx_store_key(remote.public_key()), 1_000);
+        let keys = if auto_registered {
+            mac.set_auto_register_full_key_peers(true);
+            rx_test_keys(&mac, local_id, &remote)
+        } else {
+            rx_test_peer(&mut mac, local_id, &remote)
+        };
+
+        assert_eq!(
+            receive_rx_test_unicast(&mut mac, local_id, &remote, &keys, 995),
+            None,
+            "auto-registered: {auto_registered}"
+        );
+        assert!(
+            mac.peer_registry()
+                .lookup_by_key(remote.public_key())
+                .is_some()
+        );
+        assert_eq!(
+            receive_rx_test_unicast(&mut mac, local_id, &remote, &keys, 1_001),
+            Some(RxAcceptance::Advanced),
+            "auto-registered: {auto_registered}"
+        );
+    }
+}
+
+/// A baseline that cannot be read drops the frame and is counted, and
+/// nothing else: the next frame reads it again.
+#[test]
+fn unreadable_rx_baseline_drops_the_frame_and_retries() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let remote = DummyIdentity::new([0xAB; 32]);
+    mac.counter_store()
+        .loaded
+        .borrow_mut()
+        .insert(rx_store_key(remote.public_key()), 1_000);
+    let keys = rx_test_peer(&mut mac, local_id, &remote);
+
+    mac.counter_store().failing_loads.set(1);
+    assert_eq!(
+        receive_rx_test_unicast(&mut mac, local_id, &remote, &keys, 1_001),
+        None
+    );
+    assert_eq!(mac.counters().rx_counter_restore_failures, 1);
+    assert!(
+        !mac.rx_windows()
+            .get(remote.public_key())
+            .unwrap()
+            .is_restored()
+    );
+    assert_eq!(
+        receive_rx_test_unicast(&mut mac, local_id, &remote, &keys, 999),
+        None
+    );
+    assert_eq!(
+        receive_rx_test_unicast(&mut mac, local_id, &remote, &keys, 1_001),
+        Some(RxAcceptance::Advanced)
+    );
+}
+
+/// A forged unicast naming a stranger auto-registers it before its MIC
+/// fails. The stranger's window comes along, so a frame it had accepted is
+/// still spent.
+#[test]
+fn forged_unicast_promotion_keeps_the_stranger_window() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let peer_key = *remote.public_key();
+    mac.set_auto_register_full_key_peers(true);
+    let now_ms = mac.clock().now_ms();
+    mac.rx_windows_mut()
+        .get_or_insert_stranger(peer_key, now_ms)
+        .unwrap()
+        .accept(100, &[0x5A; 16], now_ms);
+
+    let forged = PairwiseKeys {
+        k_enc: [0xEE; 32],
+        k_mic: [0xEF; 32],
+    };
+    assert_eq!(
+        receive_rx_test_unicast(&mut mac, local_id, &remote, &forged, 100),
+        None
+    );
+    assert!(mac.peer_registry().lookup_by_key(&peer_key).is_some());
+    assert!(mac.rx_windows().is_registered(&peer_key));
+
+    let keys = rx_test_keys(&mac, local_id, &remote);
+    assert_eq!(
+        receive_rx_test_unicast(&mut mac, local_id, &remote, &keys, 100),
+        None
+    );
+    assert_eq!(
+        receive_rx_test_unicast(&mut mac, local_id, &remote, &keys, 101),
+        Some(RxAcceptance::Advanced)
+    );
+}
+
+/// Registering a stranger merges the stored baseline into its live window
+/// rather than picking one of the two.
+#[test]
+fn promotion_merges_the_stored_baseline_as_a_floor() {
+    // (stored, probe, delivered, baseline after the probe)
+    for (stored, probe, delivered, baseline) in [
+        // 109 is unspent in the live window, but storage rules it out.
+        (109, 109, false, 110),
+        // The live window's slots above the floor stay open.
+        (105, 109, true, 110),
+        // A stored baseline ahead of the live one replaces it.
+        (120, 119, false, 120),
+    ] {
+        let mut mac = make_mac();
+        let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+        let remote = DummyIdentity::new([0xAB; 32]);
+        let peer_key = *remote.public_key();
+        let now_ms = mac.clock().now_ms();
+        let window = mac
+            .rx_windows_mut()
+            .get_or_insert_stranger(peer_key, now_ms)
+            .unwrap();
+        window.accept(108, &[1; 16], now_ms);
+        window.accept(110, &[2; 16], now_ms);
+        mac.counter_store()
+            .loaded
+            .borrow_mut()
+            .insert(rx_store_key(&peer_key), stored);
+        let keys = rx_test_peer(&mut mac, local_id, &remote);
+
+        assert_eq!(
+            receive_rx_test_unicast(&mut mac, local_id, &remote, &keys, probe).is_some(),
+            delivered,
+            "stored {stored}"
+        );
+        assert_eq!(
+            mac.rx_windows()
+                .get(&peer_key)
+                .unwrap()
+                .replay_window
+                .last_accepted,
+            baseline,
+            "stored {stored}"
+        );
+        assert_eq!(
+            receive_rx_test_unicast(&mut mac, local_id, &remote, &keys, baseline + 1),
+            Some(RxAcceptance::Advanced),
+            "stored {stored}"
+        );
+    }
+}
+
+/// Two local identities hearing one peer share its window, so the store
+/// holds one baseline for it: the highest.
+#[test]
+fn two_local_identities_share_one_rx_baseline() {
+    let mut mac = make_mac();
+    let first = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let second = mac.add_identity(DummyIdentity::new([0x20; 32])).unwrap();
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let first_keys = rx_test_peer(&mut mac, first, &remote);
+    let second_keys = rx_test_keys(&mac, second, &remote);
+
+    for counter in 1..=8 {
+        receive_rx_test_unicast(&mut mac, first, &remote, &first_keys, counter).unwrap();
+    }
+    for counter in 9..=12 {
+        receive_rx_test_unicast(&mut mac, second, &remote, &second_keys, counter).unwrap();
+    }
+    // Spent for both identities, whichever one took it.
+    assert_eq!(
+        receive_rx_test_unicast(&mut mac, first, &remote, &first_keys, 12),
+        None
+    );
+    for counter in 13..=16 {
+        receive_rx_test_unicast(&mut mac, first, &remote, &first_keys, counter).unwrap();
+    }
+    assert_eq!(block_on(mac.service_rx_counter_persistence()).unwrap(), 1);
+    assert_eq!(block_on(mac.persist_all_rx_counters()).unwrap(), 0);
+    assert_eq!(
+        *mac.counter_store().stored.borrow(),
+        [(rx_store_key(remote.public_key()), 16)]
+    );
 }
 
 /// A counter further ahead than the forward window is not accepted at
@@ -3120,11 +3482,13 @@ fn an_identitys_power_carries_its_sends_and_its_acks() {
             .unwrap();
     }
 
-    for id in [quiet, loud] {
+    // One sender, one counter sequence, whichever identity it addresses.
+    for (counter, id) in [(1, quiet), (2, loud)] {
         block_on(mac.send_unicast(id, &peer_key, b"payload", &SendOptions::default())).unwrap();
         let dst_hint = mac.identity(id).unwrap().identity().public_key().hint();
-        mac.radio_mut()
-            .queue_received_unicast(&remote, &keys, &dst_hint, b"hello", true);
+        mac.radio_mut().queue_received_unicast_with_counter(
+            &remote, &keys, &dst_hint, b"hello", true, counter,
+        );
         assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
         while !mac.tx_queue().is_empty() {
             block_on(mac.transmit_next(&mut |_, _| {})).unwrap();
@@ -3770,10 +4134,9 @@ fn receive_one_resynchronizes_peer_counter_after_out_of_window_restart() {
         .public_key()
         .hint();
 
-    mac.identity_mut(local_id)
-        .unwrap()
-        .peer_crypto_mut()
-        .get_mut(&peer_id)
+    let key = mac.peer_registry().get(peer_id).unwrap().public_key;
+    mac.rx_windows_mut()
+        .get_mut(&key)
         .unwrap()
         .replay_window
         .reset(10_000, 1);
@@ -3876,10 +4239,9 @@ fn desynchronized_peer() -> (
         .identity()
         .public_key()
         .hint();
-    mac.identity_mut(local_id)
-        .unwrap()
-        .peer_crypto_mut()
-        .get_mut(&peer_id)
+    let key = mac.peer_registry().get(peer_id).unwrap().public_key;
+    mac.rx_windows_mut()
+        .get_mut(&key)
         .unwrap()
         .replay_window
         .reset(10_000, 1);
@@ -4229,7 +4591,7 @@ fn resync_commands_never_prompt_a_probe() {
 
 #[test]
 fn near_gap_frame_is_dropped_without_a_probe() {
-    let (mut mac, local_id, remote, peer_id, keys, dst_hint) = desynchronized_peer();
+    let (mut mac, _local_id, remote, peer_id, keys, dst_hint) = desynchronized_peer();
     mac.radio_mut().queue_received_unicast_with_counter(
         &remote,
         &keys,
@@ -4245,10 +4607,9 @@ fn near_gap_frame_is_dropped_without_a_probe() {
     let channel_key = ChannelKey([0x5A; 32]);
     let channel_keys = mac.crypto().derive_channel_keys(&channel_key);
     mac.add_channel(channel_key).unwrap();
-    mac.identity_mut(local_id)
-        .unwrap()
-        .peer_crypto_mut()
-        .get_mut(&peer_id)
+    let key = mac.peer_registry().get(peer_id).unwrap().public_key;
+    mac.rx_windows_mut()
+        .get_mut(&key)
         .unwrap()
         .replay_window
         .reset(13 + 100, 1);
@@ -4634,10 +4995,9 @@ fn verify_frame_outside_the_window_adopts_its_counter_on_ack() {
         .lookup_by_key(remote.public_key())
         .unwrap()
         .0;
-    mac.identity_mut(local_id)
-        .unwrap()
-        .peer_crypto_mut()
-        .get_mut(&peer_id)
+    let key = mac.peer_registry().get(peer_id).unwrap().public_key;
+    mac.rx_windows_mut()
+        .get_mut(&key)
         .unwrap()
         .replay_window
         .reset(10_000, 1);
@@ -14082,14 +14442,32 @@ struct DummyCounterStore {
     loaded: RefCell<BTreeMap<std::vec::Vec<u8>, u32>>,
     stored: RefCell<std::vec::Vec<(std::vec::Vec<u8>, u32)>>,
     flushes: Cell<u32>,
+    /// How many of the next loads fail.
+    failing_loads: Cell<u32>,
+    /// How many of the next stores fail.
+    failing_stores: Cell<u32>,
+}
+
+impl DummyCounterStore {
+    fn take_failure(budget: &Cell<u32>) -> bool {
+        let remaining = budget.get();
+        budget.set(remaining.saturating_sub(1));
+        remaining > 0
+    }
 }
 
 impl CounterStore for DummyCounterStore {
     type Error = ();
     async fn load(&self, context: &[u8]) -> Result<u32, Self::Error> {
+        if Self::take_failure(&self.failing_loads) {
+            return Err(());
+        }
         Ok(*self.loaded.borrow().get(context).unwrap_or(&0))
     }
     async fn store(&self, context: &[u8], value: u32) -> Result<(), Self::Error> {
+        if Self::take_failure(&self.failing_stores) {
+            return Err(());
+        }
         self.loaded.borrow_mut().insert(context.to_vec(), value);
         self.stored.borrow_mut().push((context.to_vec(), value));
         Ok(())

@@ -8,7 +8,7 @@ use umsh_hal::Snr;
 
 use crate::{
     CapacityError, LocalIdentityId, MAX_FORWARD_RETRIES, MAX_RESEND_FRAME_LEN,
-    MAX_SOURCE_ROUTE_HINTS, cache::DupCacheKey,
+    MAX_SOURCE_ROUTE_HINTS, RxAcceptance, cache::DupCacheKey,
 };
 
 /// Opaque tracking token for delivery or local transmission completion.
@@ -1090,6 +1090,7 @@ pub struct ReceivedPacketRef<'a> {
     source_authenticated: bool,
     /// Its sender spoke under a session with forward secrecy.
     forward_secret: bool,
+    acceptance: Option<RxAcceptance>,
     channel: Option<ChannelInfoRef<'a>>,
     rx: RxMetadata,
 }
@@ -1124,6 +1125,7 @@ impl<'a> ReceivedPacketRef<'a> {
             from_hint,
             source_authenticated,
             forward_secret: false,
+            acceptance: None,
             channel,
             rx,
         }
@@ -1216,6 +1218,25 @@ impl<'a> ReceivedPacketRef<'a> {
     /// [`attributed_to`](Self::attributed_to) says.
     pub fn forward_secret(&self) -> bool {
         self.forward_secret
+    }
+
+    /// The packet with the acceptance its sender's receive window gave it.
+    pub(crate) fn with_acceptance(self, acceptance: Option<RxAcceptance>) -> Self {
+        Self { acceptance, ..self }
+    }
+
+    /// How the frame's counter stood against its sender's receive window
+    /// when it was accepted. `None` for a frame no sender's window judged:
+    /// anything but unicast and blind unicast, and a held frame its sender
+    /// vouched for.
+    pub fn acceptance(&self) -> Option<RxAcceptance> {
+        self.acceptance
+    }
+
+    /// Whether the frame advanced its sender's established baseline: not a
+    /// first contact, and not a late frame filling a slot behind it.
+    pub fn in_order(&self) -> bool {
+        self.acceptance == Some(RxAcceptance::Advanced)
     }
 
     /// Local radio observations captured when this frame was received.

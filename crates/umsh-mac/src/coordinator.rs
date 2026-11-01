@@ -18,9 +18,9 @@ use umsh_hal::{Clock, CounterStore, Radio, RxInfo, RxOrigin, Snr, TxError, TxOpt
 use crate::{
     AddPeerError, CapacityError, DEFAULT_ACKS, DEFAULT_CHANNEL_HINT_REPLAY, DEFAULT_CHANNEL_REPLAY,
     DEFAULT_CHANNELS, DEFAULT_DUP, DEFAULT_IDENTITIES, DEFAULT_PEERS, DEFAULT_ROUTE_HOLDS,
-    DEFAULT_TX, MAX_ACK_FORWARD_RETRIES, MAX_CAD_ATTEMPTS, MAX_FLOOD_HOPS, MAX_FORWARD_RETRIES,
-    MAX_RESEND_FRAME_LEN, MAX_SOURCE_ROUTE_HINTS, Platform, ReplayVerdict, ReplayWindow,
-    TRACE_ROUTE_REFRESH_MS, VERIFY_HELD_FRAMES,
+    DEFAULT_RX_STRANGERS, DEFAULT_TX, MAX_ACK_FORWARD_RETRIES, MAX_CAD_ATTEMPTS, MAX_FLOOD_HOPS,
+    MAX_FORWARD_RETRIES, MAX_RESEND_FRAME_LEN, MAX_SOURCE_ROUTE_HINTS, Platform, ReplayVerdict,
+    ReplayWindow, RxAcceptance, TRACE_ROUTE_REFRESH_MS, VERIFY_HELD_FRAMES,
     cache::{DupCacheKey, DuplicateCache},
     peers::CachedRoute,
     peers::{
@@ -28,6 +28,7 @@ use crate::{
         RouteOffer,
     },
     route_score::{Hop, path_score},
+    rx_windows::{NeedsRestore, RxWindow, RxWindows},
     send::{
         CompletionSignal, PendingAck, PendingAckError, QueuedTx, ResendRecord, RxBaselineAdoption,
         SendOptions, SendReceipt, TxPriority, TxQueue,
@@ -72,8 +73,9 @@ pub enum WakeReason {
     TimerExpired,
 }
 
-pub(crate) const COUNTER_PERSIST_BLOCK_SIZE: u32 = 128;
-const COUNTER_PERSIST_BLOCK_MASK: u32 = COUNTER_PERSIST_BLOCK_SIZE - 1;
+/// Transmit counter values reserved by each write of the boundary.
+pub(crate) const TX_COUNTER_PERSIST_BLOCK_SIZE: u32 = 128;
+const TX_COUNTER_PERSIST_BLOCK_MASK: u32 = TX_COUNTER_PERSIST_BLOCK_SIZE - 1;
 const COUNTER_PERSIST_SCHEDULE_OFFSET: u32 = 100;
 const MAC_COMMAND_ECHO_REQUEST_ID: u8 = 4;
 const MAC_COMMAND_ECHO_RESPONSE_ID: u8 = 5;
@@ -334,7 +336,7 @@ impl<I: NodeIdentity> From<I> for LocalIdentity<I> {
 /// - `pending_persist_target`—a scheduled future boundary written on the next call to
 ///   [`Mac::service_counter_persistence`].
 ///
-/// If the live counter reaches `persisted_counter + COUNTER_PERSIST_BLOCK_SIZE` without a
+/// If the live counter reaches `persisted_counter + TX_COUNTER_PERSIST_BLOCK_SIZE` without a
 /// successful flush, secure sends on that identity are blocked
 /// ([`SendError::CounterPersistenceLag`]) until the store catches up. Ephemeral identities
 /// opt out of this mechanism entirely.
@@ -444,7 +446,8 @@ impl<I: NodeIdentity, const PEERS: usize, const ACKS: usize, const FRAME: usize>
         }
 
         let should_schedule = !self.save_scheduled_since_boot
-            || (self.frame_counter & COUNTER_PERSIST_BLOCK_MASK) >= COUNTER_PERSIST_SCHEDULE_OFFSET;
+            || (self.frame_counter & TX_COUNTER_PERSIST_BLOCK_MASK)
+                >= COUNTER_PERSIST_SCHEDULE_OFFSET;
         if !should_schedule {
             return;
         }
@@ -459,12 +462,12 @@ impl<I: NodeIdentity, const PEERS: usize, const ACKS: usize, const FRAME: usize>
         // it stayed refusing secure sends until reboot.
         let target = next_counter_persist_target(
             self.frame_counter
-                .wrapping_add(COUNTER_PERSIST_BLOCK_SIZE - COUNTER_PERSIST_SCHEDULE_OFFSET),
+                .wrapping_add(TX_COUNTER_PERSIST_BLOCK_SIZE - COUNTER_PERSIST_SCHEDULE_OFFSET),
         );
         // A late-block trigger after its renewal already committed re-derives
         // a boundary at or behind `persisted_counter`; writing that back
         // would regress the reservation.
-        if self.persisted_counter.wrapping_sub(target) <= 2 * COUNTER_PERSIST_BLOCK_SIZE {
+        if self.persisted_counter.wrapping_sub(target) <= 2 * TX_COUNTER_PERSIST_BLOCK_SIZE {
             return;
         }
         if self.pending_persist_target == Some(target) {
@@ -492,11 +495,11 @@ impl<I: NodeIdentity, const PEERS: usize, const ACKS: usize, const FRAME: usize>
         }
 
         // Two blocks, not one: a renewal committed from late in the current
-        // block puts the boundary up to `2 * COUNTER_PERSIST_BLOCK_SIZE`
+        // block puts the boundary up to `2 * TX_COUNTER_PERSIST_BLOCK_SIZE`
         // ahead of the live counter, and any counter below the committed
         // boundary is safe to use regardless of distance.
         let ahead = self.persisted_counter.wrapping_sub(self.frame_counter);
-        if ahead > 0 && ahead <= 2 * COUNTER_PERSIST_BLOCK_SIZE {
+        if ahead > 0 && ahead <= 2 * TX_COUNTER_PERSIST_BLOCK_SIZE {
             return false;
         }
 
@@ -504,7 +507,7 @@ impl<I: NodeIdentity, const PEERS: usize, const ACKS: usize, const FRAME: usize>
             return self.save_scheduled_since_boot;
         }
 
-        self.frame_counter.wrapping_sub(self.persisted_counter) >= COUNTER_PERSIST_BLOCK_SIZE
+        self.frame_counter.wrapping_sub(self.persisted_counter) >= TX_COUNTER_PERSIST_BLOCK_SIZE
     }
 
     /// Allocate the next send receipt.
@@ -1081,6 +1084,14 @@ pub struct MacCounters {
     /// MIC, that it refused to accept, deliver, or acknowledge because
     /// they carry a delivery-critical option it cannot interpret.
     pub rx_delivery_refused: u32,
+    /// Receive baselines that failed to reach the counter store. The entry
+    /// stays due and is written again on the next pass, so each failure
+    /// widens what an unexpected restart would let replay.
+    pub rx_counter_persist_failures: u32,
+    /// Frames dropped because their sender's stored receive baseline could
+    /// not be read. The window stays unrestored and the next frame tries
+    /// again.
+    pub rx_counter_restore_failures: u32,
 }
 
 impl MacCounters {
@@ -1101,6 +1112,7 @@ pub struct Mac<
     const RN: usize = DEFAULT_CHANNEL_REPLAY,
     const HN: usize = DEFAULT_CHANNEL_HINT_REPLAY,
     const HOLDS: usize = DEFAULT_ROUTE_HOLDS,
+    const RX_STRANGERS: usize = DEFAULT_RX_STRANGERS,
 > {
     radio: P::Radio,
     crypto: CryptoEngine<P::Aes, P::Sha>,
@@ -1109,6 +1121,8 @@ pub struct Mac<
     counter_store: P::CounterStore,
     identities: Vec<Option<IdentitySlot<P::Identity, PEERS, ACKS, FRAME>>, IDENTITIES>,
     peer_registry: PeerRegistry<PEERS, HOLDS>,
+    /// Replay state per remote key, shared by every local identity.
+    rx_windows: RxWindows<PEERS, RX_STRANGERS>,
     transmitter_observations: crate::TransmitterObservations,
     uplinks: crate::uplinks::UplinkObservations,
     echo_watches: crate::echo_watch::EchoWatches,
@@ -1140,7 +1154,8 @@ impl<
     const RN: usize,
     const HN: usize,
     const HOLDS: usize,
-> Mac<P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP, RN, HN, HOLDS>
+    const RX_STRANGERS: usize,
+> Mac<P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP, RN, HN, HOLDS, RX_STRANGERS>
 {
     /// Creates a MAC coordinator with the supplied radio, crypto, timing, and policy state.
     ///
@@ -1165,6 +1180,7 @@ impl<
             counter_store,
             identities: Vec::new(),
             peer_registry: PeerRegistry::new(),
+            rx_windows: RxWindows::new(),
             transmitter_observations: crate::TransmitterObservations::new(),
             uplinks: crate::uplinks::UplinkObservations::new(),
             echo_watches: crate::echo_watch::EchoWatches::new(),
@@ -1387,116 +1403,219 @@ impl<
         Ok(wrote)
     }
 
-    /// Persist RX frame-counter boundaries for all peers that have received
-    /// enough frames since the last flush.
+    /// Write the receive baseline of every registered peer that is due:
+    /// one with [`RX_COUNTER_PERSIST_INTERVAL`](crate::RX_COUNTER_PERSIST_INTERVAL)
+    /// accepted frames since its last write, or whose baseline was set
+    /// outright. One write per remote key, whichever identities its frames
+    /// reached.
+    ///
+    /// A write that fails leaves its entry due, to be tried again on the
+    /// next pass, and is counted in
+    /// [`MacCounters::rx_counter_persist_failures`]. Returns how many
+    /// baselines reached the store, or the first error when any did not.
     ///
     /// Called automatically from [`Self::next_event`] so applications need not
     /// invoke this directly.
     pub(crate) async fn service_rx_counter_persistence(
         &mut self,
     ) -> Result<usize, <P::CounterStore as CounterStore>::Error> {
-        // Collect all (identity_index, peer_id, peer_pk, last_accepted) tuples
-        // that need persisting. We collect before awaiting to avoid holding
-        // live references across the async CounterStore calls.
-        let mut pending: heapless::Vec<(u8, crate::peers::PeerId, [u8; 32], u32), PEERS> =
-            heapless::Vec::new();
+        // Collected before awaiting, so no reference into the table is held
+        // across the store calls.
+        let due: Vec<(PublicKey, bool), PEERS> = self
+            .rx_windows
+            .registered()
+            .filter(|entry| entry.needs_persist())
+            .map(|entry| (*entry.key(), entry.is_restored()))
+            .collect();
 
-        for (identity_index, slot) in self.identities.iter().enumerate() {
-            let Some(slot) = slot.as_ref() else {
+        let mut failure = None;
+        let mut written = Vec::<(PublicKey, u32), PEERS>::new();
+        for (key, restored) in due {
+            // An unrestored entry may sit behind what the store already
+            // holds; writing it as it is would lower the stored baseline.
+            if !restored && let Err(error) = self.restore_rx_window(key).await {
+                failure.get_or_insert(error);
+                continue;
+            }
+            let Some(entry) = self.rx_windows.get_mut(&key) else {
                 continue;
             };
-            for (peer_id, state) in slot.peer_crypto().iter() {
-                if !state.needs_rx_persist {
-                    continue;
+            let value = entry.replay_window.last_accepted;
+            if value == entry.persisted_rx_counter() {
+                entry.mark_persisted(value);
+                continue;
+            }
+            match self
+                .counter_store
+                .store(&rx_counter_key_bytes(&key.0), value)
+                .await
+            {
+                Ok(()) => {
+                    let _ = written.push((key, value));
                 }
-                let Some(info) = self.peer_registry.get(*peer_id) else {
-                    continue;
-                };
-                let _ = pending.push((
-                    identity_index as u8,
-                    *peer_id,
-                    info.public_key.0,
-                    state.replay_window.last_accepted,
-                ));
+                Err(error) => {
+                    MacCounters::bump(&mut self.counters.rx_counter_persist_failures);
+                    failure.get_or_insert(error);
+                }
             }
         }
 
-        let mut wrote = 0usize;
-        for (_, _, pk, last) in pending.iter() {
-            let key = rx_counter_key_bytes(pk);
-            self.counter_store.store(&key, *last).await?;
-            wrote += 1;
-        }
-        if wrote > 0 {
-            self.counter_store.flush().await?;
-            // Clear flags and update persisted_rx_counter only after a
-            // successful flush.
-            for (identity_index, peer_id, _, last) in pending.iter() {
-                if let Some(slot) = self.identities[*identity_index as usize].as_mut() {
-                    if let Some(state) = slot.peer_crypto_mut().get_mut(peer_id) {
-                        state.persisted_rx_counter = *last;
-                        state.needs_rx_persist = false;
-                    }
+        if !written.is_empty() {
+            if let Err(error) = self.counter_store.flush().await {
+                for _ in written.iter() {
+                    MacCounters::bump(&mut self.counters.rx_counter_persist_failures);
+                }
+                return Err(error);
+            }
+            for (key, value) in written.iter() {
+                if let Some(entry) = self.rx_windows.get_mut(key) {
+                    entry.mark_persisted(*value);
                 }
             }
         }
-        Ok(wrote)
+        match failure {
+            Some(error) => Err(error),
+            None => Ok(written.len()),
+        }
     }
 
-    /// Persist every RX frame-counter boundary that has advanced past what
-    /// the store holds, regardless of how little it advanced.
+    /// Persist every receive baseline that has moved past what the store
+    /// holds, however little.
     ///
-    /// The block-cadence persistence above trades a bounded replay window
-    /// for flash wear: up to [`COUNTER_PERSIST_BLOCK_SIZE`] frames per peer
-    /// ride in RAM only, and an abrupt power loss re-opens that window. A
-    /// *deliberate* restart must not: a command the device executed and
-    /// then rebooted on would be executed again when the sender's retry
-    /// lands inside the stale window. Call this before any intentional
-    /// reset so the boundary on flash is the boundary that was live.
+    /// The regular cadence leaves up to
+    /// [`RX_COUNTER_PERSIST_INTERVAL`](crate::RX_COUNTER_PERSIST_INTERVAL)
+    /// accepted frames per peer in RAM only, and an abrupt power loss
+    /// re-opens them. A *deliberate* restart must not: a command the device
+    /// executed and then rebooted on would be executed again when the
+    /// sender's retry lands. Call this before any intentional reset so the
+    /// baseline in the store is the one that was live.
     pub async fn persist_all_rx_counters(
         &mut self,
     ) -> Result<usize, <P::CounterStore as CounterStore>::Error> {
-        for slot in self.identities.iter_mut() {
-            let Some(slot) = slot.as_mut() else {
-                continue;
-            };
-            for (_, state) in slot.peer_crypto_mut().iter_mut() {
-                if state.replay_window.last_accepted != state.persisted_rx_counter {
-                    state.needs_rx_persist = true;
-                }
-            }
+        for entry in self.rx_windows.registered_mut() {
+            entry.force_persist();
         }
         self.service_rx_counter_persistence().await
     }
 
-    /// Load persisted RX frame-counter boundaries for all registered peers and
-    /// store them in [`PeerInfo::initial_rx_counter`].
+    /// Restore every registered peer's receive baseline from the store now,
+    /// rather than when its first frame arrives. Returns how many peers had
+    /// a stored baseline.
     ///
-    /// Call this once at boot after registering all known peers. When pairwise
-    /// keys are first derived for each peer, the replay window is initialized
-    /// to the loaded boundary so frames replayed from before the reboot are
-    /// rejected.
+    /// Optional: a registered peer's window is restored before its first
+    /// frame is judged in any case. Calling this once at boot, after the
+    /// known peers are registered, only moves those reads out of the
+    /// receive path.
     pub async fn load_all_persisted_rx_counters(
         &mut self,
     ) -> Result<usize, <P::CounterStore as CounterStore>::Error> {
+        let keys: Vec<PublicKey, PEERS> = self
+            .peer_registry
+            .iter()
+            .map(|(_, info)| info.public_key)
+            .collect();
         let mut loaded = 0usize;
-        // PeerRegistry is a dense Vec; PeerId(i) == index i. Break on first None.
-        for peer_index in 0..PEERS {
-            let peer_id = crate::peers::PeerId(peer_index as u8);
-            let Some(info) = self.peer_registry.get(peer_id) else {
-                break;
-            };
-            let pk = info.public_key;
-            let key = rx_counter_key_bytes(&pk.0);
-            let stored = self.counter_store.load(&key).await?;
-            if stored > 0 {
-                if let Some(info) = self.peer_registry.get_mut(peer_id) {
-                    info.initial_rx_counter = stored;
-                    loaded += 1;
-                }
+        for key in keys {
+            self.register_rx_window(key);
+            if self
+                .rx_windows
+                .get(&key)
+                .is_none_or(|entry| entry.is_restored())
+            {
+                continue;
+            }
+            self.restore_rx_window(key).await?;
+            if self
+                .rx_windows
+                .get(&key)
+                .is_some_and(|entry| entry.persisted_rx_counter() != 0)
+            {
+                loaded += 1;
             }
         }
         Ok(loaded)
+    }
+
+    /// Read `key`'s stored receive baseline and merge it into its window
+    /// ([`RxWindow::merge_stored`]). This is how a [`NeedsRestore`] is
+    /// resolved. A failed read leaves the window unrestored, and is counted
+    /// in [`MacCounters::rx_counter_restore_failures`].
+    pub async fn restore_rx_window(
+        &mut self,
+        key: PublicKey,
+    ) -> Result<(), <P::CounterStore as CounterStore>::Error> {
+        let stored = match self.counter_store.load(&rx_counter_key_bytes(&key.0)).await {
+            Ok(stored) => stored,
+            Err(error) => {
+                MacCounters::bump(&mut self.counters.rx_counter_restore_failures);
+                return Err(error);
+            }
+        };
+        let now_ms = self.clock.now_ms();
+        if let Some(entry) = self.rx_windows.get_mut(&key) {
+            entry.merge_stored(stored, now_ms);
+        }
+        Ok(())
+    }
+
+    /// Receive windows, one per remote key.
+    pub fn rx_windows(&self) -> &RxWindows<PEERS, RX_STRANGERS> {
+        &self.rx_windows
+    }
+
+    /// Mutably borrow the receive windows.
+    pub fn rx_windows_mut(&mut self) -> &mut RxWindows<PEERS, RX_STRANGERS> {
+        &mut self.rx_windows
+    }
+
+    /// Give `key`, a registered peer, a registered receive window: its
+    /// stranger window moved over intact, or a new one. Either way it is
+    /// restored before it judges a frame.
+    fn register_rx_window(&mut self, key: PublicKey) {
+        let now_ms = self.clock.now_ms();
+        if self.rx_windows.register(key, now_ms).is_ok() {
+            return;
+        }
+        // Every registered slot taken: some belong to keys the registry no
+        // longer holds, removed through a path that never told us.
+        let registry = &self.peer_registry;
+        self.rx_windows
+            .unregister_unless(|key| registry.lookup_by_key(key).is_some(), now_ms);
+        let _ = self.rx_windows.register(key, now_ms);
+    }
+
+    /// Make `peer_id`'s window ready to judge a frame: registered, with its
+    /// stored baseline merged in. `false` when it cannot be, and the frame
+    /// must be dropped.
+    async fn prepare_rx_window(&mut self, peer_id: PeerId) -> bool {
+        let Some(key) = self.peer_registry.get(peer_id).map(|info| info.public_key) else {
+            return false;
+        };
+        self.register_rx_window(key);
+        match self.rx_windows.get(&key).map(RxWindow::is_restored) {
+            Some(true) => true,
+            Some(false) => self.restore_rx_window(key).await.is_ok(),
+            None => false,
+        }
+    }
+
+    /// `peer_id`'s receive window, if it has one.
+    fn rx_window(&self, peer_id: PeerId) -> Option<&RxWindow> {
+        let key = self.peer_registry.get(peer_id)?.public_key;
+        self.rx_windows.get(&key)
+    }
+
+    /// `peer_id`'s receive window, ready to judge a frame at `now_ms`.
+    ///
+    /// `None` when it has none, or has not been restored: a frame cannot be
+    /// judged then, and is dropped. The receive paths restore it first
+    /// ([`Self::prepare_rx_window`]), so that is the exception.
+    fn judging_rx_window(&mut self, peer_id: PeerId, now_ms: u64) -> Option<&mut RxWindow> {
+        let key = self.peer_registry.get(peer_id)?.public_key;
+        match self.rx_windows.window_for_judging(&key, now_ms) {
+            Ok(entry) => entry,
+            Err(NeedsRestore(_)) => None,
+        }
     }
 
     #[cfg(feature = "software-crypto")]
@@ -1559,6 +1678,10 @@ impl<
     /// is validated as a well-formed Ed25519 compressed point on the curve.
     /// Malformed keys are rejected with [`AddPeerError::InvalidPublicKey`]
     /// before they can pollute the peer registry.
+    ///
+    /// The peer's receive window becomes a registered one, keeping whatever
+    /// it knew as a stranger, and its stored baseline is merged in before
+    /// its first frame is judged.
     pub fn add_peer(&mut self, key: PublicKey) -> Result<PeerId, AddPeerError> {
         #[cfg(feature = "software-crypto")]
         {
@@ -1566,24 +1689,28 @@ impl<
                 return Err(AddPeerError::InvalidPublicKey);
             }
         }
-        Ok(self.peer_registry.try_insert_or_update(key)?)
+        let peer_id = self.peer_registry.try_insert_or_update(key)?;
+        self.register_rx_window(key);
+        Ok(peer_id)
     }
 
     /// Removes a registered peer and every piece of per-peer transport state:
-    /// pairwise crypto, replay windows, pending counter resyncs, and frames
-    /// held for verification. Returns
-    /// whether the peer was registered.
+    /// pairwise crypto, per-channel replay windows, pending counter resyncs,
+    /// and frames held for verification. Returns whether the peer was
+    /// registered.
     ///
     /// The peer registry is dense, so removal moves the last entry into the
     /// freed slot; state keyed by the moved peer's old identifier is re-keyed
-    /// here. Persisted RX counter boundaries are deliberately retained: if
-    /// the peer is re-added later, replay protection resumes from the stored
-    /// boundary instead of accepting replays from before the removal.
+    /// here. The peer's receive window goes back to the stranger class, and
+    /// its stored baseline is deliberately retained: if the peer is re-added
+    /// later, replay protection resumes from it instead of accepting replays
+    /// from before the removal.
     pub fn remove_peer(&mut self, key: &PublicKey) -> bool {
         let Some((peer_id, _)) = self.peer_registry.lookup_by_key(key) else {
             return false;
         };
         self.clear_peer_slot_state(peer_id);
+        self.rx_windows.unregister(key, self.clock.now_ms());
         let Some(removal) = self.peer_registry.remove(peer_id) else {
             return false;
         };
@@ -1637,30 +1764,11 @@ impl<
         peer_id: PeerId,
         pairwise_keys: PairwiseKeys,
     ) -> Result<Option<crate::peers::PeerCryptoState>, SendError> {
-        // Read initial_rx_counter and clock before the mutable identity borrow.
-        let initial = self
-            .peer_registry
-            .get(peer_id)
-            .map(|info| info.initial_rx_counter)
-            .unwrap_or(0);
-        let now_ms = self.clock.now_ms();
-        let mut replay_window = ReplayWindow::new();
-        if initial > 0 {
-            replay_window.reset(initial, now_ms);
-        }
         let slot = self
             .identity_mut(identity_id)
             .ok_or(SendError::IdentityMissing)?;
         slot.peer_crypto_mut()
-            .insert(
-                peer_id,
-                crate::peers::PeerCryptoState {
-                    pairwise_keys,
-                    replay_window,
-                    persisted_rx_counter: initial,
-                    needs_rx_persist: false,
-                },
-            )
+            .insert(peer_id, crate::peers::PeerCryptoState { pairwise_keys })
             .map_err(|_| SendError::QueueFull)
     }
 
@@ -3236,19 +3344,17 @@ impl<
                     handled = true;
                     break;
                 }
+                // Before anything is judged against the sender's window.
+                if !self.prepare_rx_window(peer_id).await {
+                    continue;
+                }
                 if header.ack_requested()
                     && self.should_emit_destination_ack(&buf[..frame_len], header, rx)
-                    && self.can_acknowledge_unicast_duplicate(
-                        local_id,
-                        peer_id,
-                        header,
-                        &buf[..frame_len],
-                    )
+                    && self.can_acknowledge_unicast_duplicate(peer_id, header, &buf[..frame_len])
                 {
                     // Settled first: a lost reply retires the route the
                     // earlier ack took, before this copy can offer it again.
-                    let occasion =
-                        self.duplicate_ack_occasion(local_id, peer_id, header, &buf[..frame_len]);
+                    let occasion = self.duplicate_ack_occasion(peer_id, header, &buf[..frame_len]);
                     // Before the ack is composed, because a routed ack is
                     // built from whatever route this teaches. A
                     // retransmission is the one frame carrying route
@@ -3275,6 +3381,7 @@ impl<
                 }
                 let verified =
                     verified.is_some_and(|v| v.local_id == local_id && v.peer_id == peer_id);
+                let mut acceptance = None;
                 if !verified {
                     match Self::resync_command(payload) {
                         Some((MAC_COMMAND_VERIFY_FRAME_ID, nonce)) => {
@@ -3329,15 +3436,10 @@ impl<
                         }
                         None => {}
                     }
-                    match self.unicast_replay_verdict(local_id, peer_id, header, &buf[..frame_len])
-                    {
+                    match self.unicast_replay_verdict(peer_id, header, &buf[..frame_len]) {
                         Some(ReplayVerdict::Accept) => {
-                            let _ = self.accept_unicast_replay(
-                                local_id,
-                                peer_id,
-                                header,
-                                &buf[..frame_len],
-                            );
+                            acceptance =
+                                self.accept_unicast_replay(peer_id, header, &buf[..frame_len]);
                             self.settle_counter_resync_response(
                                 local_id,
                                 peer_id,
@@ -3363,7 +3465,7 @@ impl<
                                 // is held while its sender vouches for it.
                                 // Any other is dropped behind the probe: it
                                 // falls behind the baseline the resync sets.
-                                if self.is_counter_discontinuity(local_id, peer_id, header) {
+                                if self.is_counter_discontinuity(peer_id, header) {
                                     if header.ack_requested() {
                                         let ack_v = self.received_ack_v(
                                             &buf[..frame_len],
@@ -3405,8 +3507,7 @@ impl<
                             // the path it came by, which may be better than the
                             // first copy's—and the first may have been
                             // overheard before its source route ran out.
-                            if self.is_fresh_duplicate(local_id, peer_id, header, &buf[..frame_len])
-                            {
+                            if self.is_fresh_duplicate(peer_id, header, &buf[..frame_len]) {
                                 self.learn_route_for_peer(peer_id, &buf[..frame_len], header, rx);
                             }
                             continue;
@@ -3461,21 +3562,24 @@ impl<
 
                 on_event(
                     local_id,
-                    crate::MacEventRef::Received(crate::ReceivedPacketRef::new(
-                        &original[..frame_len],
-                        &buf[body_range],
-                        header.clone(),
-                        ParsedOptions::extract(
+                    crate::MacEventRef::Received(
+                        crate::ReceivedPacketRef::new(
                             &original[..frame_len],
-                            header.options_range.clone(),
+                            &buf[body_range],
+                            header.clone(),
+                            ParsedOptions::extract(
+                                &original[..frame_len],
+                                header.options_range.clone(),
+                            )
+                            .unwrap_or_default(),
+                            Some(peer_key),
+                            Some(peer_key.hint()),
+                            true,
+                            None,
+                            rx_metadata(rx, received_at_ms),
                         )
-                        .unwrap_or_default(),
-                        Some(peer_key),
-                        Some(peer_key.hint()),
-                        true,
-                        None,
-                        rx_metadata(rx, received_at_ms),
-                    )),
+                        .with_acceptance(acceptance),
+                    ),
                 );
                 handled = true;
                 break;
@@ -3651,22 +3755,21 @@ impl<
                             handled = true;
                             break;
                         }
+                        // As on the unicast path.
+                        if !self.prepare_rx_window(peer_id).await {
+                            continue;
+                        }
                         if header.ack_requested()
                             && self.should_emit_destination_ack(&buf[..frame_len], header, rx)
                             && self.can_acknowledge_unicast_duplicate(
-                                local_id,
                                 peer_id,
                                 header,
                                 &buf[..frame_len],
                             )
                         {
                             // Same order and reasons as the unicast path.
-                            let occasion = self.duplicate_ack_occasion(
-                                local_id,
-                                peer_id,
-                                header,
-                                &buf[..frame_len],
-                            );
+                            let occasion =
+                                self.duplicate_ack_occasion(peer_id, header, &buf[..frame_len]);
                             self.learn_route_for_peer(peer_id, &buf[..frame_len], header, rx);
                             let ack_v = self.received_ack_v(
                                 &buf[..frame_len],
@@ -3690,6 +3793,7 @@ impl<
                         }
                         let verified = verified
                             .is_some_and(|v| v.local_id == local_id && v.peer_id == peer_id);
+                        let mut acceptance = None;
                         if !verified {
                             match Self::resync_command(payload) {
                                 Some((MAC_COMMAND_VERIFY_FRAME_ID, nonce)) => {
@@ -3757,15 +3861,9 @@ impl<
                                 }
                                 None => {}
                             }
-                            match self.unicast_replay_verdict(
-                                local_id,
-                                peer_id,
-                                header,
-                                &buf[..frame_len],
-                            ) {
+                            match self.unicast_replay_verdict(peer_id, header, &buf[..frame_len]) {
                                 Some(ReplayVerdict::Accept) => {
-                                    let _ = self.accept_unicast_replay(
-                                        local_id,
+                                    acceptance = self.accept_unicast_replay(
                                         peer_id,
                                         header,
                                         &buf[..frame_len],
@@ -3791,8 +3889,7 @@ impl<
                                         // As on the unicast path, and the
                                         // probe rides the channel the frame
                                         // came on.
-                                        if self.is_counter_discontinuity(local_id, peer_id, header)
-                                        {
+                                        if self.is_counter_discontinuity(peer_id, header) {
                                             if header.ack_requested() {
                                                 let ack_v = self.received_ack_v(
                                                     &buf[..frame_len],
@@ -3832,12 +3929,7 @@ impl<
                                 Some(ReplayVerdict::Replay) => {
                                     // As on the unicast path: a later copy
                                     // still carries the path it came by.
-                                    if self.is_fresh_duplicate(
-                                        local_id,
-                                        peer_id,
-                                        header,
-                                        &buf[..frame_len],
-                                    ) {
+                                    if self.is_fresh_duplicate(peer_id, header, &buf[..frame_len]) {
                                         self.learn_route_for_peer(
                                             peer_id,
                                             &buf[..frame_len],
@@ -3899,24 +3991,27 @@ impl<
 
                         on_event(
                             local_id,
-                            crate::MacEventRef::Received(crate::ReceivedPacketRef::new(
-                                &original[..frame_len],
-                                &buf[body_range],
-                                header.clone(),
-                                ParsedOptions::extract(
+                            crate::MacEventRef::Received(
+                                crate::ReceivedPacketRef::new(
                                     &original[..frame_len],
-                                    header.options_range.clone(),
+                                    &buf[body_range],
+                                    header.clone(),
+                                    ParsedOptions::extract(
+                                        &original[..frame_len],
+                                        header.options_range.clone(),
+                                    )
+                                    .unwrap_or_default(),
+                                    Some(peer_key),
+                                    Some(peer_key.hint()),
+                                    true,
+                                    Some(crate::ChannelInfoRef {
+                                        id: channel_id,
+                                        key: &resolved_channel_key,
+                                    }),
+                                    rx_metadata(rx, received_at_ms),
                                 )
-                                .unwrap_or_default(),
-                                Some(peer_key),
-                                Some(peer_key.hint()),
-                                true,
-                                Some(crate::ChannelInfoRef {
-                                    id: channel_id,
-                                    key: &resolved_channel_key,
-                                }),
-                                rx_metadata(rx, received_at_ms),
-                            )),
+                                .with_acceptance(acceptance),
+                            ),
                         );
                         handled = true;
                         break;
@@ -4103,11 +4198,10 @@ impl<
         // carried is its baseline—unless something accepted from
         // it since has already put the window in step.
         if let Some(adoption) = pending.adopt_on_ack
-            && let Some((peer_id, _)) = self.peer_registry.lookup_by_key(peer)
-            && let Some(state) = slot.peer_crypto_mut().get_mut(&peer_id)
-            && state.replay_window.last_accepted == adoption.seen_last_accepted
+            && let Some(entry) = self.rx_windows.get_mut(peer)
+            && entry.replay_window.last_accepted == adoption.seen_last_accepted
         {
-            Self::adopt_rx_baseline_in(state, adoption.counter, None, now_ms);
+            entry.adopt_baseline(adoption.counter, None, now_ms);
         }
         self.peer_registry
             .confirm_route(peer, pending.cached_route_revision, now_ms);
@@ -4944,29 +5038,8 @@ impl<
         if slot.peer_crypto().get(&peer_id).is_some() {
             return Ok(());
         }
-        let initial = self
-            .peer_registry
-            .get(peer_id)
-            .map(|info| info.initial_rx_counter)
-            .unwrap_or(0);
-        let now_ms = self.clock.now_ms();
-        let mut replay_window = ReplayWindow::new();
-        if initial > 0 {
-            replay_window.reset(initial, now_ms);
-        }
-        let slot = self
-            .identity_mut(local_id)
-            .ok_or(SendError::IdentityMissing)?;
         slot.peer_crypto_mut()
-            .insert(
-                peer_id,
-                crate::peers::PeerCryptoState {
-                    pairwise_keys,
-                    replay_window,
-                    persisted_rx_counter: initial,
-                    needs_rx_persist: false,
-                },
-            )
+            .insert(peer_id, crate::peers::PeerCryptoState { pairwise_keys })
             .map_err(|_| SendError::QueueFull)?;
         Ok(())
     }
@@ -5048,51 +5121,34 @@ impl<
             })
     }
 
+    /// Accept a unicast or blind-unicast frame into its sender's window,
+    /// returning how it stood against the window, or `None` when the window
+    /// refuses it.
     fn accept_unicast_replay(
         &mut self,
-        local_id: LocalIdentityId,
         peer_id: PeerId,
         header: &PacketHeader,
         frame: &[u8],
-    ) -> bool {
-        let Some((counter, mic)) = Self::replay_metadata(header, frame) else {
-            return false;
-        };
+    ) -> Option<RxAcceptance> {
+        let (counter, mic) = Self::replay_metadata(header, frame)?;
         let now_ms = self.clock.now_ms();
-        let Some(state) = self
-            .identity_mut(local_id)
-            .and_then(|slot| slot.peer_crypto_mut().get_mut(&peer_id))
-        else {
-            return false;
-        };
-
-        if state.replay_window.check(counter, mic, now_ms) != ReplayVerdict::Accept {
-            return false;
+        let entry = self.judging_rx_window(peer_id, now_ms)?;
+        if entry.replay_window.check(counter, mic, now_ms) != ReplayVerdict::Accept {
+            return None;
         }
-
-        state.replay_window.accept(counter, mic, now_ms);
-        // Schedule an RX counter flush when we've advanced one full persist block.
-        let last = state.replay_window.last_accepted;
-        if last.wrapping_sub(state.persisted_rx_counter) >= COUNTER_PERSIST_BLOCK_SIZE {
-            state.needs_rx_persist = true;
-        }
-        true
+        Some(entry.accept(counter, mic, now_ms))
     }
 
     fn unicast_replay_verdict(
         &mut self,
-        local_id: LocalIdentityId,
         peer_id: PeerId,
         header: &PacketHeader,
         frame: &[u8],
     ) -> Option<ReplayVerdict> {
-        let Some((counter, mic)) = Self::replay_metadata(header, frame) else {
-            return None;
-        };
+        let (counter, mic) = Self::replay_metadata(header, frame)?;
         let now_ms = self.clock.now_ms();
-        self.identity_mut(local_id)
-            .and_then(|slot| slot.peer_crypto_mut().get_mut(&peer_id))
-            .map(|state| state.replay_window.check(counter, mic, now_ms))
+        self.judging_rx_window(peer_id, now_ms)
+            .map(|entry| entry.replay_window.check(counter, mic, now_ms))
     }
 
     /// Whether an exact duplicate is eligible for its first ACK or a paced re-ACK.
@@ -5102,7 +5158,6 @@ impl<
     /// ack cannot have retransmitted before it lapsed.
     fn can_acknowledge_unicast_duplicate(
         &self,
-        local_id: LocalIdentityId,
         peer_id: PeerId,
         header: &PacketHeader,
         frame: &[u8],
@@ -5112,13 +5167,11 @@ impl<
         };
         let now_ms = self.clock.now_ms();
         let holdoff_ms = self.forward_confirm_timeout_ms();
-        self.identity(local_id)
-            .and_then(|slot| slot.peer_crypto().get(&peer_id))
-            .is_some_and(|state| {
-                state
-                    .replay_window
-                    .can_acknowledge_duplicate(counter, mic, now_ms, holdoff_ms)
-            })
+        self.rx_window(peer_id).is_some_and(|entry| {
+            entry
+                .replay_window
+                .can_acknowledge_duplicate(counter, mic, now_ms, holdoff_ms)
+        })
     }
 
     /// Which copy an eligible duplicate is ([`AckOccasion`]), and what it
@@ -5132,7 +5185,6 @@ impl<
     /// an ack still on its way, and proves nothing about the route.
     fn duplicate_ack_occasion(
         &mut self,
-        local_id: LocalIdentityId,
         peer_id: PeerId,
         header: &PacketHeader,
         frame: &[u8],
@@ -5141,14 +5193,11 @@ impl<
             return AckOccasion::First;
         };
         let now_ms = self.clock.now_ms();
-        let acknowledged = self
-            .identity(local_id)
-            .and_then(|slot| slot.peer_crypto().get(&peer_id))
-            .is_some_and(|state| {
-                state
-                    .replay_window
-                    .duplicate_was_acknowledged(counter, mic, now_ms)
-            });
+        let acknowledged = self.rx_window(peer_id).is_some_and(|entry| {
+            entry
+                .replay_window
+                .duplicate_was_acknowledged(counter, mic, now_ms)
+        });
         if !acknowledged {
             return AckOccasion::First;
         }
@@ -5204,11 +5253,10 @@ impl<
             && let Some((counter, mic)) = Self::replay_metadata(header, frame)
         {
             let now_ms = self.clock.now_ms();
-            if let Some(state) = self
-                .identity_mut(local_id)
-                .and_then(|slot| slot.peer_crypto_mut().get_mut(&peer_id))
+            if let Some(key) = self.peer_registry.get(peer_id).map(|info| info.public_key)
+                && let Some(entry) = self.rx_windows.get_mut(&key)
             {
-                state.replay_window.mark_ack_queued(counter, mic, now_ms);
+                entry.replay_window.mark_ack_queued(counter, mic, now_ms);
             }
         }
     }
@@ -5287,43 +5335,20 @@ impl<
             return false;
         }
         let _ = slot.pending_counter_resync_mut().remove(&peer_id);
-        !adopt || self.adopt_rx_baseline(local_id, peer_id, counter, Some(mic))
+        !adopt || self.adopt_rx_baseline(peer_id, counter, Some(mic))
     }
 
     /// Make `counter` the peer's new baseline, whatever it is relative to
-    /// the old one. With `mic`, the frame that carried it is accepted too,
-    /// so its later copies are recognized as duplicates.
-    fn adopt_rx_baseline(
-        &mut self,
-        local_id: LocalIdentityId,
-        peer_id: PeerId,
-        counter: u32,
-        mic: Option<&[u8]>,
-    ) -> bool {
+    /// the old one, and write it at the next pass so it survives a reboot.
+    /// With `mic`, the frame that carried it is accepted too, so its later
+    /// copies are recognized as duplicates.
+    fn adopt_rx_baseline(&mut self, peer_id: PeerId, counter: u32, mic: Option<&[u8]>) -> bool {
         let now_ms = self.clock.now_ms();
-        let Some(state) = self
-            .identity_mut(local_id)
-            .and_then(|slot| slot.peer_crypto_mut().get_mut(&peer_id))
-        else {
+        let Some(entry) = self.judging_rx_window(peer_id, now_ms) else {
             return false;
         };
-        Self::adopt_rx_baseline_in(state, counter, mic, now_ms);
+        entry.adopt_baseline(counter, mic, now_ms);
         true
-    }
-
-    fn adopt_rx_baseline_in(
-        state: &mut crate::peers::PeerCryptoState,
-        counter: u32,
-        mic: Option<&[u8]>,
-        now_ms: u64,
-    ) {
-        state.replay_window.reset(counter, now_ms);
-        if let Some(mic) = mic {
-            state.replay_window.accept(counter, mic, now_ms);
-        }
-        // A fresh baseline, persisted at once so it survives a reboot.
-        state.persisted_rx_counter = 0;
-        state.needs_rx_persist = true;
     }
 
     /// Whether a counter the window refused is so far out that the two
@@ -5331,21 +5356,13 @@ impl<
     /// [`COUNTER_RESYNC_GAP_THRESHOLD`] or more behind the baseline.
     /// Anything nearer is ordinary mesh reordering and is dropped without
     /// a probe.
-    fn is_counter_discontinuity(
-        &self,
-        local_id: LocalIdentityId,
-        peer_id: PeerId,
-        header: &PacketHeader,
-    ) -> bool {
+    fn is_counter_discontinuity(&self, peer_id: PeerId, header: &PacketHeader) -> bool {
         let Some(counter) = header.sec_info.map(|sec_info| sec_info.frame_counter) else {
             return false;
         };
-        self.identity(local_id)
-            .and_then(|slot| slot.peer_crypto().get(&peer_id))
-            .is_some_and(|state| {
-                state.replay_window.last_accepted.wrapping_sub(counter)
-                    >= COUNTER_RESYNC_GAP_THRESHOLD
-            })
+        self.rx_window(peer_id).is_some_and(|entry| {
+            entry.replay_window.last_accepted.wrapping_sub(counter) >= COUNTER_RESYNC_GAP_THRESHOLD
+        })
     }
 
     /// The nonce a Verify Frame for a held frame carries, and that its
@@ -5357,22 +5374,13 @@ impl<
     /// failed against ties it to this exchange: a Frame Verified moves that
     /// window, so one recorded from an earlier exchange cannot release the
     /// same frame replayed later.
-    fn verify_nonce(
-        &mut self,
-        local_id: LocalIdentityId,
-        peer_id: PeerId,
-        ack_v: &[u8; 16],
-    ) -> Option<u32> {
+    fn verify_nonce(&mut self, peer_id: PeerId, ack_v: &[u8; 16]) -> Option<u32> {
         let verify_key = *self.verify_key.get_or_insert_with(|| {
             let mut key = [0u8; 32];
             self.rng.fill_bytes(&mut key);
             key
         });
-        let window = &self
-            .identity(local_id)?
-            .peer_crypto()
-            .get(&peer_id)?
-            .replay_window;
+        let window = &self.rx_window(peer_id)?.replay_window;
         Some(derive_verify_nonce(
             &self.crypto,
             &verify_key,
@@ -5424,7 +5432,7 @@ impl<
         {
             return held.ack_v == ack_v;
         }
-        let Some(nonce) = self.verify_nonce(local_id, peer_id, &ack_v) else {
+        let Some(nonce) = self.verify_nonce(peer_id, &ack_v) else {
             return false;
         };
         let payload = Self::resync_command_payload(MAC_COMMAND_VERIFY_FRAME_ID, nonce);
@@ -5500,17 +5508,17 @@ impl<
             return false;
         };
         let ack_v = self.held_frames[index].ack_v;
-        if self.verify_nonce(local_id, peer_id, &ack_v) != Some(nonce) {
+        if self.verify_nonce(peer_id, &ack_v) != Some(nonce) {
             return false;
         }
         let Some((counter, mic)) = Self::replay_metadata(header, frame) else {
             return false;
         };
-        let accepted = match self.unicast_replay_verdict(local_id, peer_id, header, frame) {
+        let accepted = match self.unicast_replay_verdict(peer_id, header, frame) {
             Some(ReplayVerdict::Accept) => {
-                self.accept_unicast_replay(local_id, peer_id, header, frame)
+                self.accept_unicast_replay(peer_id, header, frame).is_some()
             }
-            Some(_) => self.adopt_rx_baseline(local_id, peer_id, counter, Some(mic)),
+            Some(_) => self.adopt_rx_baseline(peer_id, counter, Some(mic)),
             None => false,
         };
         if accepted {
@@ -5559,18 +5567,17 @@ impl<
         let Some((counter, _)) = Self::replay_metadata(header, frame) else {
             return false;
         };
-        let adopt_on_ack = match self.unicast_replay_verdict(local_id, peer_id, header, frame) {
+        let adopt_on_ack = match self.unicast_replay_verdict(peer_id, header, frame) {
             Some(ReplayVerdict::Accept) => {
-                let _ = self.accept_unicast_replay(local_id, peer_id, header, frame);
+                let _ = self.accept_unicast_replay(peer_id, header, frame);
                 None
             }
-            Some(ReplayVerdict::OutOfWindow | ReplayVerdict::Stale) => self
-                .identity(local_id)
-                .and_then(|slot| slot.peer_crypto().get(&peer_id))
-                .map(|state| RxBaselineAdoption {
+            Some(ReplayVerdict::OutOfWindow | ReplayVerdict::Stale) => {
+                self.rx_window(peer_id).map(|entry| RxBaselineAdoption {
                     counter,
-                    seen_last_accepted: state.replay_window.last_accepted,
-                }),
+                    seen_last_accepted: entry.replay_window.last_accepted,
+                })
+            }
             Some(ReplayVerdict::Replay) | None => return false,
         };
         let Some(named) = Self::ack_mic_option(original, header) else {
@@ -5778,9 +5785,14 @@ impl<
         }
         let now_ms = self.clock.now_ms();
         let outcome = self.peer_registry.try_insert_or_update_auto(key, now_ms)?;
-        if outcome.evicted_key.is_some() {
+        if let Some(evicted) = outcome.evicted_key {
             self.clear_peer_slot_state(outcome.peer_id);
+            self.rx_windows.unregister(&evicted, now_ms);
         }
+        // Registered before any MIC is checked, so a forged frame naming a
+        // stranger can promote it. Its window comes along intact, so that
+        // reopens nothing the stranger window had spent.
+        self.register_rx_window(key);
         Ok(outcome.peer_id)
     }
 
@@ -6343,20 +6355,13 @@ impl<
     /// Whether a frame the replay window turned away is a copy of one it
     /// accepted moments ago—same counter, same MIC—and so still worth
     /// learning a route from.
-    fn is_fresh_duplicate(
-        &self,
-        local_id: LocalIdentityId,
-        peer_id: PeerId,
-        header: &PacketHeader,
-        frame: &[u8],
-    ) -> bool {
+    fn is_fresh_duplicate(&self, peer_id: PeerId, header: &PacketHeader, frame: &[u8]) -> bool {
         let Some((counter, mic)) = Self::replay_metadata(header, frame) else {
             return false;
         };
         let now_ms = self.clock.now_ms();
-        self.identity(local_id)
-            .and_then(|slot| slot.peer_crypto().get(&peer_id))
-            .and_then(|state| state.replay_window.duplicate_age_ms(counter, mic, now_ms))
+        self.rx_window(peer_id)
+            .and_then(|entry| entry.replay_window.duplicate_age_ms(counter, mic, now_ms))
             .is_some_and(|age_ms| age_ms <= self.duplicate_route_window_ms())
     }
 
@@ -7886,7 +7891,7 @@ impl<
 }
 
 fn align_counter_boundary(value: u32) -> u32 {
-    value & !COUNTER_PERSIST_BLOCK_MASK
+    value & !TX_COUNTER_PERSIST_BLOCK_MASK
 }
 
 pub(crate) const fn nonzero_initial_frame_counter(random: u32) -> u32 {
@@ -7894,7 +7899,7 @@ pub(crate) const fn nonzero_initial_frame_counter(random: u32) -> u32 {
 }
 
 fn next_counter_persist_target(next_counter: u32) -> u32 {
-    next_counter.wrapping_add(COUNTER_PERSIST_BLOCK_SIZE) & !COUNTER_PERSIST_BLOCK_MASK
+    next_counter.wrapping_add(TX_COUNTER_PERSIST_BLOCK_SIZE) & !TX_COUNTER_PERSIST_BLOCK_MASK
 }
 
 /// Build the CounterStore context key for a peer's RX boundary.

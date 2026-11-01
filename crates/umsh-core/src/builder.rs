@@ -108,7 +108,6 @@ pub struct Builder<'a, K, S> {
     buf: &'a mut [u8],
     packet_type: PacketType,
     options_len: usize,
-    options_scratch: Option<Range<usize>>,
     last_option_number: Option<u16>,
     option_error: Option<BuildError>,
     source: Option<SourceValue>,
@@ -131,7 +130,6 @@ impl<'a, K, S> Builder<'a, K, S> {
             buf,
             packet_type,
             options_len: 0,
-            options_scratch: None,
             last_option_number: None,
             option_error: None,
             source: None,
@@ -157,7 +155,6 @@ impl<'a, K, S> Builder<'a, K, S> {
             buf: self.buf,
             packet_type: self.packet_type,
             options_len: self.options_len,
-            options_scratch: self.options_scratch,
             last_option_number: self.last_option_number,
             option_error: self.option_error,
             source: self.source,
@@ -200,46 +197,51 @@ impl<'a, K, S> Builder<'a, K, S> {
         }
     }
 
-    /// Move the options block staged at `buf[1..1 + options_len]` into a tail
-    /// scratch region so the prefix fields can overwrite its original slot.
-    fn stash_options(&mut self) -> Result<(), BuildError> {
-        if self.options_len == 0 {
-            return Ok(());
-        }
-        let payload_len = self.payload.as_ref().map(|p| p.end - p.start).unwrap_or(0);
-        let scratch_end = self
-            .buf
-            .len()
-            .checked_sub(payload_len)
-            .ok_or(BuildError::BufferTooSmall)?;
-        let scratch_start = scratch_end
-            .checked_sub(self.options_len)
-            .ok_or(BuildError::BufferTooSmall)?;
-        if scratch_start < 1 + self.options_len {
-            return Err(BuildError::BufferTooSmall);
-        }
-        self.buf.copy_within(1..1 + self.options_len, scratch_start);
-        self.options_scratch = Some(scratch_start..scratch_end);
-        Ok(())
+    fn sec_info(&self) -> Result<SecInfo, BuildError> {
+        Ok(SecInfo {
+            scf: Scf::new(self.encrypted, self.mic_size, self.salt.is_some()),
+            frame_counter: self.frame_counter.ok_or(BuildError::MissingFrameCounter)?,
+            salt: self.salt,
+        })
     }
 
-    /// Copy the options block from tail scratch to the current cursor. If a
-    /// payload follows, append the `0xFF` end-of-options marker.
+    fn source_len(&self) -> Result<usize, BuildError> {
+        match self.source {
+            Some(SourceValue::Hint(_)) => Ok(3),
+            Some(SourceValue::Full(_)) => Ok(32),
+            None => Err(BuildError::MissingSource),
+        }
+    }
+
+    /// Length of everything in front of the options block: FCF, FHOPS, and
+    /// whichever of DST or CHANNEL, SRC, and SECINFO this packet type puts
+    /// there.
+    fn prefix_len(&self) -> Result<usize, BuildError> {
+        let fields = match self.packet_type {
+            PacketType::Broadcast => self.source_len()?,
+            PacketType::MacAck => 0,
+            PacketType::Unicast | PacketType::UnicastAckReq => {
+                3 + self.source_len()? + self.sec_info()?.wire_len()
+            }
+            PacketType::Multicast | PacketType::BlindUnicast | PacketType::BlindUnicastAckReq => {
+                2 + self.sec_info()?.wire_len()
+            }
+            PacketType::Reserved5 => return Err(BuildError::InvalidPacket),
+        };
+        Ok(1 + usize::from(self.flood_hops.is_some()) + fields)
+    }
+
+    /// Step the cursor over the options block, which `write_common_prefix`
+    /// already moved into place. If a payload follows, append the `0xFF`
+    /// end-of-options marker.
     fn emit_options(
         &mut self,
         cursor: &mut usize,
         has_payload: bool,
     ) -> Result<Range<usize>, BuildError> {
+        debug_assert_eq!(Ok(*cursor), self.prefix_len());
         let start = *cursor;
-        if let Some(scratch) = self.options_scratch.clone() {
-            let len = scratch.end - scratch.start;
-            let end = start.checked_add(len).ok_or(BuildError::BufferTooSmall)?;
-            if end > self.buf.len() {
-                return Err(BuildError::BufferTooSmall);
-            }
-            self.buf.copy_within(scratch, start);
-            *cursor = end;
-        }
+        *cursor = start + self.options_len;
         if has_payload {
             let marker_slot = *cursor;
             if marker_slot >= self.buf.len() {
@@ -251,16 +253,27 @@ impl<'a, K, S> Builder<'a, K, S> {
         Ok(start..*cursor)
     }
 
+    /// Move the options block staged at `buf[1..1 + options_len]` to its
+    /// final offset, then write FCF and FHOPS in front of it. Returns the
+    /// cursor after FHOPS; the caller writes the rest of the prefix up to
+    /// the options block, the fields that follow it, and finally moves the
+    /// staged payload left into place.
+    ///
+    /// The options' final end is at or before the payload's final start,
+    /// which is at or before its staged start at the tail of `buf`. So when
+    /// the frame fits, no write lands on bytes that have yet to be moved.
     fn write_common_prefix(&mut self) -> Result<usize, BuildError> {
         if let Some(err) = self.option_error {
             return Err(err);
         }
-        self.stash_options()?;
-        let full_source = matches!(self.source, Some(SourceValue::Full(_)));
-        let fcf = Fcf::new(self.packet_type, full_source, self.flood_hops.is_some());
-        if self.buf.is_empty() {
+        let options_start = self.prefix_len()?;
+        let staged_payload_start = self.payload.as_ref().map_or(self.buf.len(), |p| p.start);
+        if options_start + self.options_len > staged_payload_start {
             return Err(BuildError::BufferTooSmall);
         }
+        self.buf.copy_within(1..1 + self.options_len, options_start);
+        let full_source = matches!(self.source, Some(SourceValue::Full(_)));
+        let fcf = Fcf::new(self.packet_type, full_source, self.flood_hops.is_some());
         self.buf[0] = fcf.0;
         let mut cursor = 1;
         if let Some(fhops) = self.flood_hops {
@@ -651,12 +664,7 @@ impl<'a> UnicastBuilder<'a, state::Configuring> {
             .copy_from_slice(&dst.0);
         cursor += 3;
         self.write_source(&mut cursor)?;
-        let scf = Scf::new(self.encrypted, self.mic_size, self.salt.is_some());
-        let sec_info = SecInfo {
-            scf,
-            frame_counter: self.frame_counter.ok_or(BuildError::MissingFrameCounter)?,
-            salt: self.salt,
-        };
+        let sec_info = self.sec_info()?;
         let sec_start = cursor;
         cursor += sec_info.encode(
             self.buf
@@ -706,12 +714,7 @@ impl<'a> MulticastBuilder<'a, state::Configuring> {
             .ok_or(BuildError::BufferTooSmall)?
             .copy_from_slice(&channel.0);
         cursor += 2;
-        let scf = Scf::new(self.encrypted, self.mic_size, self.salt.is_some());
-        let sec_info = SecInfo {
-            scf,
-            frame_counter: self.frame_counter.ok_or(BuildError::MissingFrameCounter)?,
-            salt: self.salt,
-        };
+        let sec_info = self.sec_info()?;
         let sec_start = cursor;
         cursor += sec_info.encode(
             self.buf
@@ -764,12 +767,7 @@ impl<'a> BlindUnicastBuilder<'a, state::Configuring> {
             .ok_or(BuildError::BufferTooSmall)?
             .copy_from_slice(&channel.0);
         cursor += 2;
-        let scf = Scf::new(self.encrypted, self.mic_size, self.salt.is_some());
-        let sec_info = SecInfo {
-            scf,
-            frame_counter: self.frame_counter.ok_or(BuildError::MissingFrameCounter)?,
-            salt: self.salt,
-        };
+        let sec_info = self.sec_info()?;
         let sec_start = cursor;
         cursor += sec_info.encode(
             self.buf
@@ -796,5 +794,183 @@ impl<'a> BlindUnicastBuilder<'a, state::Configuring> {
             sec_start..sec_start + sec_info.wire_len(),
             opts_range,
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    extern crate std;
+    use std::vec::Vec;
+
+    /// The largest LoRa frame.
+    const MAX_FRAME: usize = 255;
+
+    /// A 68-byte value under a static, non-critical option number: large
+    /// enough that staging the options twice no longer fits.
+    const LARGE_OPTION: OptionNumber = OptionNumber::Unknown(300);
+    const LARGE_VALUE: [u8; 68] = [0xA5; 68];
+
+    const SRC_HINT: NodeHint = NodeHint([0xA1, 0xB2, 0x03]);
+    const SRC_FULL: PublicKey = PublicKey([0xA1; 32]);
+    const DST: NodeHint = NodeHint([0xC3, 0xD4, 0x25]);
+    const CHANNEL: ChannelId = ChannelId([0x7E, 0x5F]);
+
+    type Build = fn(&mut [u8], &[u8]) -> Result<Vec<u8>, BuildError>;
+
+    /// Probe the overhead with a one-byte payload, then check that a payload
+    /// of exactly `MAX_FRAME - overhead` builds into a `MAX_FRAME` buffer,
+    /// producing the same bytes as in a roomy buffer, and that one byte more
+    /// does not.
+    fn assert_exact_fit(build: Build) {
+        let mut probe = [0u8; 2 * MAX_FRAME];
+        let overhead = build(&mut probe, &[0x5A]).unwrap().len() - 1;
+        let payload: Vec<u8> = (0..=MAX_FRAME - overhead).map(|i| i as u8).collect();
+        let (fits, over) = (&payload[..MAX_FRAME - overhead], &payload[..]);
+
+        let mut roomy = [0u8; 2 * MAX_FRAME];
+        let expected = build(&mut roomy, fits).unwrap();
+        assert_eq!(expected.len(), MAX_FRAME);
+
+        let mut exact = [0u8; MAX_FRAME];
+        assert_eq!(build(&mut exact, fits).unwrap(), expected);
+
+        let mut exact = [0u8; MAX_FRAME];
+        assert_eq!(build(&mut exact, over), Err(BuildError::BufferTooSmall));
+    }
+
+    #[test]
+    fn broadcast_fills_max_frame() {
+        assert_exact_fit(|buf, payload| {
+            PacketBuilder::new(buf)
+                .broadcast()
+                .source_hint(SRC_HINT)
+                .payload(payload)
+                .build()
+                .map(<[u8]>::to_vec)
+        });
+        assert_exact_fit(|buf, payload| {
+            PacketBuilder::new(buf)
+                .broadcast()
+                .source_full(&SRC_FULL)
+                .flood_hops(5)
+                .region_code([0x78, 0x53])
+                .option(LARGE_OPTION, &LARGE_VALUE)
+                .payload(payload)
+                .build()
+                .map(<[u8]>::to_vec)
+        });
+    }
+
+    #[test]
+    fn unicast_fills_max_frame() {
+        assert_exact_fit(|buf, payload| {
+            PacketBuilder::new(buf)
+                .unicast(DST)
+                .source_hint(SRC_HINT)
+                .frame_counter(42)
+                .encrypted()
+                .payload(payload)
+                .build()
+                .map(|packet| packet.as_bytes().to_vec())
+        });
+        assert_exact_fit(|buf, payload| {
+            PacketBuilder::new(buf)
+                .unicast(DST)
+                .source_full(&SRC_FULL)
+                .frame_counter(42)
+                .ack_requested()
+                .encrypted()
+                .salt(0x1234)
+                .flood_hops(3)
+                .trace()
+                .option(LARGE_OPTION, &LARGE_VALUE)
+                .payload(payload)
+                .build()
+                .map(|packet| packet.as_bytes().to_vec())
+        });
+    }
+
+    #[test]
+    fn multicast_fills_max_frame() {
+        assert_exact_fit(|buf, payload| {
+            PacketBuilder::new(buf)
+                .multicast(CHANNEL)
+                .source_hint(SRC_HINT)
+                .frame_counter(42)
+                .encrypted()
+                .payload(payload)
+                .build()
+                .map(|packet| packet.as_bytes().to_vec())
+        });
+        assert_exact_fit(|buf, payload| {
+            PacketBuilder::new(buf)
+                .multicast(CHANNEL)
+                .source_full(&SRC_FULL)
+                .frame_counter(42)
+                .encrypted()
+                .salt(0x1234)
+                .flood_hops(5)
+                .option(LARGE_OPTION, &LARGE_VALUE)
+                .payload(payload)
+                .build()
+                .map(|packet| packet.as_bytes().to_vec())
+        });
+    }
+
+    #[test]
+    fn blind_unicast_fills_max_frame() {
+        assert_exact_fit(|buf, payload| {
+            PacketBuilder::new(buf)
+                .blind_unicast(CHANNEL, DST)
+                .source_hint(SRC_HINT)
+                .frame_counter(42)
+                .payload(payload)
+                .build()
+                .map(|packet| packet.as_bytes().to_vec())
+        });
+        assert_exact_fit(|buf, payload| {
+            PacketBuilder::new(buf)
+                .blind_unicast(CHANNEL, DST)
+                .source_full(&SRC_FULL)
+                .frame_counter(42)
+                .ack_requested()
+                .salt(0x1234)
+                .flood_hops(5)
+                .option(LARGE_OPTION, &LARGE_VALUE)
+                .payload(payload)
+                .build()
+                .map(|packet| packet.as_bytes().to_vec())
+        });
+    }
+
+    /// A MAC ACK has no payload, so its options fill the frame instead.
+    #[test]
+    fn mac_ack_fills_max_frame() {
+        fn build(buf: &mut [u8], value: &[u8]) -> Result<Vec<u8>, BuildError> {
+            PacketBuilder::new(buf)
+                .mac_ack([0x11; 8])
+                .flood_hops(5)
+                .region_code([0x78, 0x53])
+                .option(LARGE_OPTION, value)
+                .build()
+                .map(<[u8]>::to_vec)
+        }
+        let filler = [0xA5u8; MAX_FRAME];
+        let mut roomy = [0u8; 2 * MAX_FRAME];
+        let fill_len = (0..MAX_FRAME)
+            .find(|&len| build(&mut roomy, &filler[..len]).unwrap().len() == MAX_FRAME)
+            .unwrap();
+        let expected = build(&mut roomy, &filler[..fill_len]).unwrap();
+
+        let mut exact = [0u8; MAX_FRAME];
+        assert_eq!(build(&mut exact, &filler[..fill_len]).unwrap(), expected);
+
+        let mut short = [0u8; MAX_FRAME - 1];
+        assert_eq!(
+            build(&mut short, &filler[..fill_len]),
+            Err(BuildError::BufferTooSmall)
+        );
     }
 }

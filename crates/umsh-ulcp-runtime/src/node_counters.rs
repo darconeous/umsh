@@ -7,8 +7,8 @@
 //! This is what stops a power cycle from reusing MAC frame-counter
 //! space: the device identity's TX reservation boundary and each peer's
 //! RX replay boundary both survive here. The MAC batches its calls (one
-//! flush per persist block of secured frames), so each flush costs one
-//! journal record write.
+//! flush per persistence pass that has anything due), so each flush
+//! costs one journal record write.
 
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::mutex::Mutex;

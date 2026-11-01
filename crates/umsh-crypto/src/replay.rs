@@ -89,6 +89,17 @@ pub enum ReplayVerdict {
     Stale,
 }
 
+/// How an accepted counter stood against the window before it was accepted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RxAcceptance {
+    /// The window had no baseline: the first counter heard from this sender.
+    FirstContact,
+    /// The counter is ahead of an established baseline.
+    Advanced,
+    /// The counter filled a backward-window slot, behind the baseline.
+    Backfilled,
+}
+
 impl Default for ReplayWindow {
     fn default() -> Self {
         Self::new()
@@ -208,11 +219,21 @@ impl ReplayWindow {
     /// Record an accepted `counter` and `mic` at `now_ms`. The first
     /// counter a window accepts becomes its baseline, as with
     /// [`reset`](Self::reset).
-    pub fn accept(&mut self, counter: u32, mic: &[u8], now_ms: u64) {
+    ///
+    /// Returns how the counter stood against the window beforehand, which
+    /// cannot be recovered once the window has moved.
+    pub fn accept(&mut self, counter: u32, mic: &[u8], now_ms: u64) -> RxAcceptance {
         self.prune_recent_mics(now_ms);
 
         let ahead = counter.wrapping_sub(self.last_accepted);
         let delta = self.last_accepted.wrapping_sub(counter);
+        let acceptance = if !self.established {
+            RxAcceptance::FirstContact
+        } else if (1..=REPLAY_FORWARD_WINDOW).contains(&ahead) {
+            RxAcceptance::Advanced
+        } else {
+            RxAcceptance::Backfilled
+        };
         if !self.established {
             self.establish(counter, now_ms);
         } else if ahead == 0 {
@@ -246,6 +267,26 @@ impl ReplayWindow {
                 accepted_secs: (now_ms / 1000) as u32,
                 ack_queued_offset: 0,
             });
+        }
+        acceptance
+    }
+
+    /// Refuse every counter at or before `floor`, keeping whatever the
+    /// window knows above it.
+    ///
+    /// A `floor` ahead of the baseline becomes the baseline. Otherwise the
+    /// baseline stays, and only the backward-window slots at or before
+    /// `floor` are spent; the slots above it stay open for reordering. A
+    /// window with no baseline takes `floor` as its baseline, and so counts
+    /// as established.
+    pub fn raise_floor(&mut self, floor: u32, now_ms: u64) {
+        let behind = self.last_accepted.wrapping_sub(floor);
+        if !self.established || behind > u32::MAX / 2 {
+            self.establish(floor, now_ms);
+        } else if behind == 0 {
+            self.backward_bitmap = u8::MAX;
+        } else if behind <= REPLAY_BACKTRACK_SLOTS {
+            self.backward_bitmap |= u8::MAX << (behind - 1);
         }
     }
 
@@ -375,6 +416,70 @@ mod tests {
             );
             assert_eq!(window.check(101, &[2; 8], now_ms), ReplayVerdict::Accept);
         }
+    }
+
+    #[test]
+    fn acceptance_is_judged_against_the_window_before_it_moves() {
+        let mut window = ReplayWindow::new();
+        assert_eq!(window.accept(10, &[1; 8], 1), RxAcceptance::FirstContact);
+        assert_eq!(window.accept(13, &[2; 8], 1), RxAcceptance::Advanced);
+        assert_eq!(window.accept(11, &[3; 8], 1), RxAcceptance::Backfilled);
+        assert_eq!(window.accept(1_000, &[4; 8], 1), RxAcceptance::Advanced);
+
+        // A restored baseline is an established one.
+        let mut window = ReplayWindow::new();
+        window.raise_floor(100, 1);
+        assert_eq!(window.accept(101, &[1; 8], 1), RxAcceptance::Advanced);
+    }
+
+    #[test]
+    fn raised_floor_spends_slots_at_or_before_it_and_keeps_the_rest() {
+        // A live window that went from 108 to 110, leaving 109 unspent.
+        let live = || {
+            let mut window = ReplayWindow::new();
+            window.accept(108, &[1; 8], 1);
+            window.accept(110, &[2; 8], 1);
+            window
+        };
+
+        let mut window = live();
+        window.raise_floor(109, 1);
+        assert_eq!(window.last_accepted, 110);
+        assert_eq!(window.check(109, &[3; 8], 1), ReplayVerdict::Replay);
+        assert_eq!(window.check(111, &[3; 8], 1), ReplayVerdict::Accept);
+
+        let mut window = live();
+        window.raise_floor(105, 1);
+        assert_eq!(window.last_accepted, 110);
+        assert_eq!(window.check(109, &[3; 8], 1), ReplayVerdict::Accept);
+        assert_eq!(window.check(105, &[3; 8], 1), ReplayVerdict::Replay);
+
+        let mut window = live();
+        window.raise_floor(120, 1);
+        assert_eq!(window.last_accepted, 120);
+        assert_eq!(window.check(119, &[3; 8], 1), ReplayVerdict::Replay);
+        assert_eq!(window.check(121, &[3; 8], 1), ReplayVerdict::Accept);
+
+        // The baseline itself, and a floor too far back to matter.
+        let mut window = live();
+        window.raise_floor(110, 1);
+        assert_eq!(window.check(109, &[3; 8], 1), ReplayVerdict::Replay);
+        let mut window = live();
+        window.raise_floor(10, 1);
+        assert_eq!(window.check(109, &[3; 8], 1), ReplayVerdict::Accept);
+
+        // Across the wrap.
+        let mut window = ReplayWindow::new();
+        window.accept(u32::MAX - 5, &[1; 8], 1);
+        window.accept(2, &[2; 8], 1);
+        window.raise_floor(u32::MAX - 2, 1);
+        assert_eq!(window.last_accepted, 2);
+        assert_eq!(window.check(1, &[3; 8], 1), ReplayVerdict::Accept);
+        assert_eq!(window.check(u32::MAX, &[3; 8], 1), ReplayVerdict::Accept);
+        assert_eq!(
+            window.check(u32::MAX - 2, &[3; 8], 1),
+            ReplayVerdict::Replay
+        );
     }
 
     #[test]
