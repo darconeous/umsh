@@ -2809,8 +2809,9 @@ mod frame_signature_tests {
         let frame = signed_broadcast(
             |mut builder| {
                 // FCF and full SRC (33), option 0 (70), then empty option
-                // 16s: two bytes for the first, one for each repeat.
-                for _ in 0..MAX_FRAME_LEN - 33 - 70 - 1 {
+                // 16s: two bytes for the first, one for each repeat, and
+                // the fence (2).
+                for _ in 0..MAX_FRAME_LEN - 33 - 70 - 1 - 2 {
                     builder = builder.option(OptionNumber::Unknown(16), &[]);
                 }
                 builder

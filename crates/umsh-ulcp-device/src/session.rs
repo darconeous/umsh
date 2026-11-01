@@ -16046,8 +16046,8 @@ mod tests {
     }
 
     /// The expected 8-byte ack trailer (`ack_mic || ack_tag`) for an
-    /// unencrypted sealed frame, acknowledged by an ack with no static
-    /// options.
+    /// unencrypted sealed frame, acknowledged by an ack whose one static
+    /// option is the fence.
     fn expected_ack_trailer(frame: &[u8], keys: &PairwiseKeys) -> [u8; 8] {
         let engine = test_engine();
         let header = PacketHeader::parse(frame).unwrap();
@@ -16066,7 +16066,8 @@ mod tests {
     }
 
     /// Assert the staged transmit is a MAC ack (which carries no
-    /// destination hint) with no static option, and complete it.
+    /// destination hint) whose one static option is the fence, and complete
+    /// it.
     fn expect_ack_transmit(
         session: &mut TestSession,
         effect: Option<Effect>,
@@ -16075,9 +16076,12 @@ mod tests {
         assert_eq!(effect, Some(Effect::StartTransmit));
         let header = PacketHeader::parse(session.tx_data()).unwrap();
         assert_eq!(header.fcf.packet_type(), PacketType::MacAck);
-        let options =
-            ParsedOptions::extract(session.tx_data(), header.options_range.clone()).unwrap();
-        assert!(!options.has_static);
+        let statics: Vec<u16> =
+            umsh_core::iter_options(session.tx_data(), header.options_range.clone())
+                .map(|entry| entry.unwrap().0)
+                .filter(|&number| !OptionNumber::from(number).is_dynamic())
+                .collect();
+        assert_eq!(statics, [OptionNumber::Fence.as_u16()]);
         if let Some(trailer) = trailer {
             assert_eq!(session.tx_data()[header.mic_range.clone()], trailer);
         }

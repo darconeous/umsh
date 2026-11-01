@@ -1339,7 +1339,8 @@ fn originated_frame_carries_both_a_region_code_and_an_operator_callsign() {
         numbers.as_slice(),
         &[
             OptionNumber::OperatorCallsign.as_u16(),
-            OptionNumber::RegionCode.as_u16()
+            OptionNumber::RegionCode.as_u16(),
+            OptionNumber::Fence.as_u16(),
         ]
     );
 }

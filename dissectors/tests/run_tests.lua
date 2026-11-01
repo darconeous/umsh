@@ -248,6 +248,10 @@ check("frame signature is option 0",   options.OPT_FRAME_SIGNATURE, 0)
 check("frame signature is 68 bytes",   options.FRAME_SIGNATURE_LEN, 68)
 check("trace is option 7",             options.OPT_TRACE, 7)
 check("station callsign is option 15", options.OPT_STATION_CALLSIGN, 15)
+check("fence is option 257",           options.OPT_FENCE, 257)
+check("option 257 is named Fence",     options.KNOWN_OPTION_NAMES[257], "Fence")
+check("the fence is forwarding-critical only",
+      options.is_forwarding_critical(257) and not options.is_delivery_critical(257), true)
 check("option 254 is not named", options.KNOWN_OPTION_NAMES[254], nil)
 
 -- Options a sender MUST NOT include more than one of.
@@ -1996,6 +2000,11 @@ else
   local plain16 = beacon("D0 03")
   check("option 16 is non-critical", has(plain16, "Option 16 (0 bytes)"), true)
   check("option 16 raises nothing", has(plain16, "EXPERT: Unknown"), false)
+
+  -- The fence, option 257 (delta 13 + extended byte F4), is known.
+  local fence = beacon("D0 F4")
+  check("the fence is named", has(fence, "Fence"), true)
+  check("the fence raises nothing", has(fence, "EXPERT: Unknown"), false)
 
   -- An option number past 0xFFFF is malformed, not truncated.
   local over = beacon("E0 FEF2 10")

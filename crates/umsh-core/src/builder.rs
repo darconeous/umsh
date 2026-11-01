@@ -120,6 +120,8 @@ pub struct Builder<'a, K, S> {
     mic_size: MicSize,
     salt: Option<u16>,
     signed: bool,
+    /// Whether the frame carries the [fence](OptionNumber::Fence).
+    fence: bool,
     flood_hops: Option<FloodHops>,
     payload: Option<Range<usize>>,
     blind_addr: Option<Range<usize>>,
@@ -146,6 +148,7 @@ impl<'a, K, S> Builder<'a, K, S> {
             mic_size: MicSize::Mic16,
             salt: None,
             signed: false,
+            fence: true,
             flood_hops: None,
             payload: None,
             blind_addr: None,
@@ -169,6 +172,7 @@ impl<'a, K, S> Builder<'a, K, S> {
             mic_size: self.mic_size,
             salt: self.salt,
             signed: self.signed,
+            fence: self.fence,
             flood_hops: self.flood_hops,
             payload: self.payload,
             blind_addr: self.blind_addr,
@@ -176,7 +180,25 @@ impl<'a, K, S> Builder<'a, K, S> {
         }
     }
 
+    /// Stage option `number`, after the [fence](OptionNumber::Fence) when it
+    /// comes past it.
     fn push_option(&mut self, number: u16, value: &[u8]) {
+        if number > OptionNumber::Fence.as_u16() {
+            self.push_fence();
+        }
+        self.put_option(number, value);
+    }
+
+    /// Stage the [fence](OptionNumber::Fence), which every frame carries,
+    /// unless the options staged so far already reach it.
+    fn push_fence(&mut self) {
+        let fence = OptionNumber::Fence.as_u16();
+        if self.fence && self.last_option_number.is_none_or(|last| last < fence) {
+            self.put_option(fence, &[]);
+        }
+    }
+
+    fn put_option(&mut self, number: u16, value: &[u8]) {
         if self.option_error.is_some() {
             return;
         }
@@ -268,6 +290,7 @@ impl<'a, K, S> Builder<'a, K, S> {
     /// which is at or before its staged start at the tail of `buf`. So when
     /// the frame fits, no write lands on bytes that have yet to be moved.
     fn write_common_prefix(&mut self) -> Result<usize, BuildError> {
+        self.push_fence();
         if let Some(err) = self.option_error {
             return Err(err);
         }
@@ -508,6 +531,15 @@ macro_rules! impl_configuring_common {
             /// Add an arbitrary option number/value pair.
             pub fn option(mut self, number: OptionNumber, value: &[u8]) -> Self {
                 self.push_option(number.as_u16(), value);
+                self
+            }
+
+            /// Leave the [fence](OptionNumber::Fence) off this frame. Call it
+            /// before any option numbered past the fence. Only frames that
+            /// illustrate the encoding, such as the specification's test
+            /// vectors, are built without it; none is sent.
+            pub fn without_fence(mut self) -> Self {
+                self.fence = false;
                 self
             }
         }
@@ -1030,7 +1062,7 @@ mod tests {
                 .map(|packet| packet.as_bytes().to_vec())
         });
 
-        // The full-source signed broadcast leaves 151 payload bytes.
+        // The full-source signed broadcast leaves 149 payload bytes.
         let mut probe = [0u8; 2 * MAX_FRAME];
         let overhead = PacketBuilder::new(&mut probe)
             .broadcast()
@@ -1041,7 +1073,7 @@ mod tests {
             .unwrap()
             .len()
             - 1;
-        assert_eq!(MAX_FRAME - overhead, 151);
+        assert_eq!(MAX_FRAME - overhead, 149);
     }
 
     /// A MAC ACK has no payload, so its options fill the frame instead.
@@ -1071,5 +1103,135 @@ mod tests {
             build(&mut short, &filler[..fill_len]),
             Err(BuildError::BufferTooSmall)
         );
+    }
+
+    /// The fence options a frame carries, in order, with their positions
+    /// among all its options.
+    fn fences(frame: &[u8]) -> Vec<(usize, u16)> {
+        let header = crate::PacketHeader::parse(frame).unwrap();
+        crate::iter_options(frame, header.options_range)
+            .map(|entry| entry.unwrap().0)
+            .enumerate()
+            .filter(|&(_, number)| number == OptionNumber::Fence.as_u16())
+            .collect()
+    }
+
+    /// Every packet type carries the fence once, whatever else it carries.
+    #[test]
+    fn every_frame_carries_the_fence() {
+        let mut buf = [0u8; 2 * MAX_FRAME];
+        let frame = PacketBuilder::new(&mut buf)
+            .broadcast()
+            .source_hint(SRC_HINT)
+            .payload(&[])
+            .build()
+            .unwrap()
+            .to_vec();
+        assert_eq!(fences(&frame), [(0, 257)]);
+
+        let frame = PacketBuilder::new(&mut buf)
+            .mac_ack([0x11; 8])
+            .build()
+            .unwrap()
+            .to_vec();
+        assert_eq!(fences(&frame), [(0, 257)]);
+
+        let frame = PacketBuilder::new(&mut buf)
+            .unicast(DST)
+            .source_hint(SRC_HINT)
+            .frame_counter(1)
+            .trace()
+            .region_code([0x78, 0x53])
+            .payload(b"hi")
+            .build()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        assert_eq!(fences(&frame), [(2, 257)]);
+
+        let frame = PacketBuilder::new(&mut buf)
+            .multicast(CHANNEL)
+            .source_hint(SRC_HINT)
+            .frame_counter(1)
+            .payload(b"hi")
+            .build()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        assert_eq!(fences(&frame), [(0, 257)]);
+
+        let frame = PacketBuilder::new(&mut buf)
+            .blind_unicast(CHANNEL, DST)
+            .source_hint(SRC_HINT)
+            .frame_counter(1)
+            .payload(b"hi")
+            .build()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        assert_eq!(fences(&frame), [(0, 257)]);
+    }
+
+    /// An option numbered past the fence follows it, and a fence staged by
+    /// hand is not doubled.
+    #[test]
+    fn the_fence_keeps_its_place_among_options() {
+        let mut buf = [0u8; 2 * MAX_FRAME];
+        let frame = PacketBuilder::new(&mut buf)
+            .broadcast()
+            .source_hint(SRC_HINT)
+            .option(OptionNumber::Unknown(4), &[])
+            .option(LARGE_OPTION, &[0x01])
+            .payload(&[])
+            .build()
+            .unwrap()
+            .to_vec();
+        assert_eq!(fences(&frame), [(1, 257)]);
+
+        let frame = PacketBuilder::new(&mut buf)
+            .broadcast()
+            .source_hint(SRC_HINT)
+            .option(OptionNumber::Fence, &[])
+            .payload(&[])
+            .build()
+            .unwrap()
+            .to_vec();
+        assert_eq!(fences(&frame), [(0, 257)]);
+
+        let frame = PacketBuilder::new(&mut buf)
+            .broadcast()
+            .source_hint(SRC_HINT)
+            .without_fence()
+            .option(LARGE_OPTION, &[0x01])
+            .payload(&[])
+            .build()
+            .unwrap()
+            .to_vec();
+        assert_eq!(fences(&frame), []);
+    }
+
+    /// The fence is recognized: it stops no forwarding and no delivery.
+    #[test]
+    fn the_fence_is_recognized_and_ignored() {
+        let mut buf = [0u8; 2 * MAX_FRAME];
+        let frame = PacketBuilder::new(&mut buf)
+            .broadcast()
+            .source_hint(SRC_HINT)
+            .payload(b"hi")
+            .build()
+            .unwrap()
+            .to_vec();
+        let header = crate::PacketHeader::parse(&frame).unwrap();
+        let options = crate::ParsedOptions::extract(&frame, header.options_range).unwrap();
+        assert!(!options.refuses_forwarding());
+        assert!(!options.refuses_delivery());
+        assert!(options.has_static);
+
+        // To a node that knows nothing of it, the fence is an unrecognized
+        // forwarding-critical option, and only that.
+        let unknown = OptionNumber::Unknown(OptionNumber::Fence.as_u16());
+        assert!(unknown.is_forwarding_critical());
+        assert!(!unknown.is_delivery_critical());
+        assert!(!unknown.is_dynamic());
     }
 }

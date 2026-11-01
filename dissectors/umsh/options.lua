@@ -253,6 +253,7 @@ M.OPT_ACK_MIC          = 8   -- Non-Critical,        Static,  4 bytes
 M.OPT_MIN_SNR          = 9   -- Forwarding-Critical, Static,  0-1 bytes
 M.OPT_REGION_CODE      = 11  -- Forwarding-Critical, Dynamic, 2 bytes
 M.OPT_STATION_CALLSIGN = 15  -- Forwarding-Critical, Dynamic, ARNCE
+M.OPT_FENCE            = 257 -- Forwarding-Critical, Static,  0 bytes (flag)
 
 -- A broadcast's Frame Signature: FRAME COUNTER(4, BE) ‖ SIG(64).
 M.FRAME_SIGNATURE_LEN  = 68
@@ -271,6 +272,7 @@ M.KNOWN_OPTION_NAMES = {
   [10] = "Unassigned",
   [11] = "Region Code",
   [15] = "Station Callsign",
+  [257] = "Fence",
 }
 
 -- Options a sender MUST NOT include more than one of. Region Code is

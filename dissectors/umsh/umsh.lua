@@ -75,6 +75,7 @@ f.opt_sta_callsign = ProtoField.string ("umsh.opt.sta_callsign",  "Station Calls
 f.opt_min_rssi     = ProtoField.int8   ("umsh.opt.min_rssi",      "Min RSSI",         base.DEC)
 f.opt_min_snr      = ProtoField.int8   ("umsh.opt.min_snr",       "Min SNR",          base.DEC)
 f.opt_route_retry  = ProtoField.none   ("umsh.opt.route_retry",   "Route Retry")
+f.opt_fence        = ProtoField.none   ("umsh.opt.fence",         "Fence")
 f.opt_ack_mic      = ProtoField.bytes  ("umsh.opt.ack_mic",       "Ack MIC")
 f.opt_frame_sig    = ProtoField.bytes  ("umsh.opt.frame_signature", "Frame Signature")
 f.opt_frame_sig_ctr = ProtoField.uint32("umsh.opt.frame_signature.counter", "Frame Counter", base.DEC)
@@ -153,7 +154,7 @@ umsh.fields = {
   f.fhops, f.fhops_rem, f.fhops_acc,
   f.options, f.opt_region_code, f.opt_trace, f.opt_srcroute, f.opt_router_hint,
   f.opt_op_callsign, f.opt_sta_callsign, f.opt_min_rssi, f.opt_min_snr,
-  f.opt_route_retry, f.opt_ack_mic, f.opt_ack_frame,
+  f.opt_route_retry, f.opt_fence, f.opt_ack_mic, f.opt_ack_frame,
   f.opt_frame_sig, f.opt_frame_sig_ctr,
   f.opt_signal_entry, f.opt_unknown,
   f.dst_hint, f.src_hint, f.src_key, f.channel_id, f.ack_mic, f.ack_tag,
@@ -775,6 +776,14 @@ local function parse_options(buf, start_off, bound, tree, static_opts_out, pinfo
         local item = opts_tree:add(f.opt_route_retry, buf(opt_off, consumed))
         if val_len ~= 0 then
           item:set_text(string.format("Route Retry (%d unexpected bytes)", val_len))
+        end
+
+      elseif num == options.OPT_FENCE then
+        -- A zero-length flag that means nothing: forwarding-critical, so a
+        -- repeater that does not know it does not forward the frame.
+        local item = opts_tree:add(f.opt_fence, buf(opt_off, consumed))
+        if val_len ~= 0 then
+          item:set_text(string.format("Fence (%d unexpected bytes)", val_len))
         end
 
       elseif num == options.OPT_ACK_MIC then

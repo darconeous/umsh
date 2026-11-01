@@ -136,7 +136,7 @@ fn only_the_async_broadcast_and_multicast_sends_sign() {
 }
 
 /// A signed send at exactly `payload_capacity` fills the frame, and one byte
-/// more is refused. The full-source signed broadcast has 151 bytes.
+/// more is refused. The full-source signed broadcast has 149 bytes.
 #[test]
 fn a_signed_send_at_capacity_fills_the_frame() {
     let max_frame = 255;
@@ -152,7 +152,7 @@ fn a_signed_send_at_capacity_fills_the_frame() {
         let (mut mac, id, key) = sender();
         let capacity = mac.payload_capacity(id, destination, options).unwrap();
         if destination == SendDestination::Broadcast {
-            assert_eq!(capacity, 151);
+            assert_eq!(capacity, 149);
         }
         let payload = std::vec![0x42u8; capacity + 1];
         let send = |mac: &mut CryptoMac, payload: &[u8]| match destination {

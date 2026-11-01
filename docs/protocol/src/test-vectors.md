@@ -1,6 +1,6 @@
 # Test Vectors
 
-This appendix contains byte-level packet examples. All values are hexadecimal, and multi-byte numeric fields are big-endian.
+This appendix contains byte-level packet examples. All values are hexadecimal, and multi-byte numeric fields are big-endian. The examples omit the [Fence option](packet-options.md#fence-option-257), which every packet a sender originates carries.
 
 ## Conventions
 

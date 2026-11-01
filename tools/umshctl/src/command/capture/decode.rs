@@ -497,6 +497,7 @@ fn option_chip(number: u16, value: &[u8]) -> String {
         OptionNumber::RouteRetry => format!("retry={}", hex_text(value)),
         OptionNumber::OperatorCallsign => format!("op={}", callsign_text(value)),
         OptionNumber::StationCallsign => format!("via={}", callsign_text(value)),
+        OptionNumber::Fence => "fence".to_owned(),
         // Either an unknown option or a known one carrying a malformed value.
         // A critical option is marked with the class it is critical in:
         // `f` for a repeater that must not forward the frame, `d` for an
@@ -901,7 +902,7 @@ mod tests {
         let header = PacketHeader::parse(&frame).unwrap();
         assert_eq!(
             options_line(&frame, &header, false).unwrap(),
-            "opts  opt1[f]=02  opt12[d]=01",
+            "opts  opt1[f]=02  opt12[d]=01  fence",
         );
         assert!(summary_line(&frame, &header, false).contains("signed"));
     }

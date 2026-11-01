@@ -129,7 +129,8 @@ mod tests {
             .payload(&[])
             .build()
             .unwrap();
-        assert_eq!(beacon, &[0xC1, 0x50, 0x8B, 0x60, 0xF5]);
+        // The fence (option 257, empty) is the only option.
+        assert_eq!(beacon, &[0xC1, 0x50, 0x8B, 0x60, 0xF5, 0xD0, 0xF4]);
         let header = PacketHeader::parse(beacon).unwrap();
         assert!(header.is_beacon());
 
@@ -141,7 +142,10 @@ mod tests {
             .payload(b"hi")
             .build()
             .unwrap();
-        assert_eq!(with_payload, &[0xC0, 0x8B, 0x60, 0xF5, 0xFF, b'h', b'i']);
+        assert_eq!(
+            with_payload,
+            &[0xC0, 0x8B, 0x60, 0xF5, 0xD0, 0xF4, 0xFF, b'h', b'i']
+        );
 
         // The same holds for a secured type whose body is empty.
         let mut buf = [0u8; 128];
@@ -154,17 +158,17 @@ mod tests {
             .payload(&[])
             .build()
             .unwrap();
-        // FCF | DST(3) | SRC(3) | SECINFO(5) | no options, no marker | MIC(8)
+        // FCF | DST(3) | SRC(3) | SECINFO(5) | fence, no marker | MIC(8)
         let bytes = unicast.as_bytes();
         assert_eq!(
             bytes,
             &[
-                0xD0, 0xC3, 0xD4, 0x25, 0xA1, 0xB2, 0x03, 0xA0, 0x00, 0x00, 0x00, 0x07, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0xD0, 0xC3, 0xD4, 0x25, 0xA1, 0xB2, 0x03, 0xA0, 0x00, 0x00, 0x00, 0x07, 0xD0, 0xF4,
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             ],
         );
         let header = PacketHeader::parse(bytes).unwrap();
-        assert!(header.options_range.is_empty());
+        assert_eq!(header.options_range.len(), 2);
         assert!(header.body_range.is_empty());
         assert_eq!(header.mic_range.len(), 8);
     }
@@ -257,8 +261,12 @@ mod tests {
             .unwrap();
 
         // New layout: FCF DST(3) SRC(3) SECINFO(5) OPTIONS...
-        // Options start at byte 12: trace(0x70) + region_code(0x42,0x78,0x53) + 0xFF
-        assert_eq!(&packet.as_bytes()[12..17], &[0x70, 0x42, 0x78, 0x53, 0xFF]);
+        // Options start at byte 12: trace(0x70) + region_code(0x42,0x78,0x53)
+        // + the fence, 246 past the region code (0xD0,0xE9) + 0xFF
+        assert_eq!(
+            &packet.as_bytes()[12..19],
+            &[0x70, 0x42, 0x78, 0x53, 0xD0, 0xE9, 0xFF]
+        );
     }
 
     #[test]
@@ -335,10 +343,12 @@ mod tests {
         .unwrap();
 
         // FCF ‖ DST ‖ SRC ‖ SECINFO occupy the first 12 bytes; the static
-        // option record and the terminator follow.
+        // option records, the fence's first, and the terminator follow.
         assert_eq!(
             &aad[12..aad_len],
-            &[0x01, 0x2C, 0x00, 0x01, 0xAA, 0xFF, 0xFF]
+            &[
+                0x01, 0x01, 0x00, 0x00, 0x01, 0x2C, 0x00, 0x01, 0xAA, 0xFF, 0xFF
+            ]
         );
     }
 
@@ -543,7 +553,9 @@ mod tests {
             .to_vec();
         assert_eq!(
             aad_of(&frame, None),
-            [frame[0], 0x8B, 0x60, 0xF5, 0xFF, 0xFF]
+            [
+                frame[0], 0x8B, 0x60, 0xF5, 0x01, 0x01, 0x00, 0x00, 0xFF, 0xFF
+            ]
         );
     }
 
