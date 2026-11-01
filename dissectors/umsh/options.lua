@@ -76,6 +76,10 @@ end
 -- On malformed input the iterator raises an error string.
 -- ---------------------------------------------------------------------------
 
+-- Errors raised for a well-framed option block that breaks a numeric rule
+-- start with this prefix, so a caller can tell "malformed" from "truncated".
+M.MALFORMED_PREFIX = "malformed option: "
+
 -- Decode one nibble field (delta or length).
 -- Returns (value, extra_bytes_needed, error_string).
 local function decode_nibble(nib, data, pos)
@@ -88,7 +92,13 @@ local function decode_nibble(nib, data, pos)
     if pos + 1 > #data then return nil, 0, "truncated extended uint16" end
     local hi = data:byte(pos)
     local lo = data:byte(pos + 1)
-    return hi * 256 + lo + 269, 2, nil
+    local value = hi * 256 + lo + 269
+    -- The field is a 16-bit quantity; an extension that carries it past
+    -- 0xFFFF encodes nothing.
+    if value > 0xFFFF then
+      return nil, 0, M.MALFORMED_PREFIX .. "extended field exceeds 0xFFFF"
+    end
+    return value, 2, nil
   else -- 15
     return nil, 0, "reserved nibble 15 (expected 0xFF marker?)"
   end
@@ -121,32 +131,38 @@ function M.decode(data, offset)
 
     -- Delta nibble 15 without 0xFF is malformed (caught above for 0xFF)
     if delta_nib == 15 then
-      error("malformed option: delta nibble=15 but byte is not 0xFF")
+      error(M.MALFORMED_PREFIX .. "delta nibble=15 but byte is not 0xFF", 0)
     end
 
     -- Decode delta
     local delta, delta_ext, err = decode_nibble(delta_nib, data, pos)
-    if err then error("option delta: " .. err) end
+    if err then error(err, 0) end
     pos = pos + delta_ext
 
     -- Decode length
     local len, len_ext
     if len_nib == 15 then
-      error("malformed option: length nibble=15")
+      error(M.MALFORMED_PREFIX .. "length nibble=15", 0)
     end
     len, len_ext, err = decode_nibble(len_nib, data, pos)
-    if err then error("option length: " .. err) end
+    if err then error(err, 0) end
     pos = pos + len_ext
 
     -- Read value
     if pos + len - 1 > #data then
       error("option value truncated: need " .. len .. " bytes, only " ..
-            (#data - pos + 1) .. " remain")
+            (#data - pos + 1) .. " remain", 0)
     end
     local value = data:sub(pos, pos + len - 1)
     pos = pos + len
 
+    -- Option numbers are 16 bits; a running total past 0xFFFF names no
+    -- option at all.
     local number = last_number + delta
+    if number > 0xFFFF then
+      error(string.format("%soption number %d exceeds 0xFFFF",
+                          M.MALFORMED_PREFIX, number), 0)
+    end
     last_number = number
 
     return number, value, (pos - start_pos)
@@ -188,60 +204,129 @@ end
 
 -- ---------------------------------------------------------------------------
 -- Option attribute helpers (based on option number bit patterns)
--- Bit 1 set = Dynamic; Bit 0 set = Critical
+-- Bit 0 set = Forwarding-Critical; bit 1 set = Dynamic; a static option with
+-- bits 2 and 3 set (low nibble 12 or 13) = Delivery-Critical. The two
+-- critical classes are independent, and a dynamic option is never
+-- delivery-critical.
 -- ---------------------------------------------------------------------------
 
 function M.is_static(number)
   return (number & 2) == 0
 end
 
-function M.is_critical(number)
+function M.is_dynamic(number)
+  return (number & 2) ~= 0
+end
+
+-- A repeater that does not recognize the option does not forward the frame.
+function M.is_forwarding_critical(number)
   return (number & 1) ~= 0
+end
+
+-- An endpoint that does not recognize the option does not accept, deliver,
+-- or acknowledge the frame.
+function M.is_delivery_critical(number)
+  return (number & 0xE) == 0xC
+end
+
+-- The classes an option number carries, as a label: "[Forwarding-Critical]",
+-- "[Delivery-Critical]", both, or "" for a non-critical option.
+function M.criticality_label(number)
+  local classes = {}
+  if M.is_forwarding_critical(number) then classes[#classes + 1] = "Forwarding-Critical" end
+  if M.is_delivery_critical(number)   then classes[#classes + 1] = "Delivery-Critical" end
+  if #classes == 0 then return "" end
+  return "[" .. table.concat(classes, ", ") .. "]"
 end
 
 -- ---------------------------------------------------------------------------
 -- Known MAC-layer option numbers
 -- ---------------------------------------------------------------------------
 
-M.OPT_TRACE_ROUTE      = 2   -- Non-Critical, Dynamic, 0+ bytes
-M.OPT_SOURCE_ROUTE     = 3   -- Critical,     Dynamic, 0+ bytes
-M.OPT_OP_CALLSIGN      = 4   -- Non-Critical, Static,  ARNCE
-M.OPT_MIN_RSSI         = 5   -- Critical,     Static,  0-1 bytes
-M.OPT_ROUTE_RETRY      = 6   -- Non-Critical, Dynamic, 0 bytes (flag)
-M.OPT_STATION_CALLSIGN = 7   -- Critical,     Dynamic, ARNCE
-M.OPT_ACK_MIC          = 8   -- Non-Critical, Static,  4 bytes
-M.OPT_MIN_SNR          = 9   -- Critical,     Static,  0-1 bytes
-M.OPT_TRACE_SIGNAL     = 10  -- Non-Critical, Dynamic, 2 bytes per repeater
-M.OPT_REGION_CODE      = 11  -- Critical,     Dynamic, 2 bytes
-M.OPT_LEGACY_ACK_TAG   = 254 -- Non-Critical, Dynamic, 0 bytes (flag, MAC ack only)
+M.OPT_SOURCE_ROUTE     = 3   -- Forwarding-Critical, Dynamic, 0+ bytes
+M.OPT_OP_CALLSIGN      = 4   -- Non-Critical,        Static,  ARNCE
+M.OPT_MIN_RSSI         = 5   -- Forwarding-Critical, Static,  0-1 bytes
+M.OPT_ROUTE_RETRY      = 6   -- Non-Critical,        Dynamic, 0 bytes (flag)
+M.OPT_TRACE            = 7   -- Forwarding-Critical, Dynamic, 0+ bytes
+M.OPT_ACK_MIC          = 8   -- Non-Critical,        Static,  4 bytes
+M.OPT_MIN_SNR          = 9   -- Forwarding-Critical, Static,  0-1 bytes
+M.OPT_REGION_CODE      = 11  -- Forwarding-Critical, Dynamic, 2 bytes
+M.OPT_STATION_CALLSIGN = 15  -- Forwarding-Critical, Dynamic, ARNCE
 
 M.KNOWN_OPTION_NAMES = {
   [0] = "Reserved",
   [1] = "Unassigned",
-  [2] = "Trace Route",
+  [2] = "Unassigned",
   [3] = "Source Route",
   [4] = "Operator Callsign",
   [5] = "Min RSSI",
   [6] = "Route Retry",
-  [7] = "Station Callsign",
+  [7] = "Trace",
   [8] = "Ack MIC",
   [9] = "Min SNR",
-  [10] = "Trace Signal",
+  [10] = "Unassigned",
   [11] = "Region Code",
-  [254] = "Legacy Ack Tag",
+  [15] = "Station Callsign",
 }
 
--- Options the spec says a packet must be dropped for carrying twice.
--- Region Code is deliberately absent: several may legitimately appear on
--- one packet, and the rule that a repeater must not *add* a second is
--- about an action no single frame records.
+-- Options a sender MUST NOT include more than one of. Region Code is
+-- deliberately absent: several may legitimately appear on one packet, and
+-- the rule that a repeater must not *add* a second is about an action no
+-- single frame records.
 M.SINGLETON_OPTIONS = {
-  [M.OPT_TRACE_ROUTE]  = true,
   [M.OPT_SOURCE_ROUTE] = true,
   [M.OPT_MIN_RSSI]     = true,
   [M.OPT_ROUTE_RETRY]  = true,
+  [M.OPT_TRACE]        = true,
   [M.OPT_MIN_SNR]      = true,
-  [M.OPT_LEGACY_ACK_TAG] = true,
 }
+
+-- ---------------------------------------------------------------------------
+-- Trace option value (packet-options.md § Trace Option Value)
+--
+--   Complete, with signal:  length a multiple of 4, records of
+--                           RH(2) ‖ RSSI(1) ‖ SNR(1)
+--   Complete, hints only:   0xFE, then 2-byte router hints (odd length)
+--   Truncated, hints only:  0xFF, then 2-byte router hints (odd length),
+--                           oldest dropped
+--
+-- Every other value is malformed: a length of 2 modulo 4, or an odd length
+-- that begins with any other byte. Entries are most recent first.
+-- ---------------------------------------------------------------------------
+
+M.TRACE_SIGNAL     = "signal"
+M.TRACE_HINTS_ONLY = "hints"
+M.TRACE_TRUNCATED  = "truncated"
+
+-- Parse a Trace value. Returns nil for a malformed one, otherwise
+-- {form = ..., entries = {{hint = 2B, rssi = n|nil, snr = n|nil,
+-- offset = 0-based offset of the entry within the value}, ...}}.
+-- rssi is the raw byte (negative dBm), snr the signed byte (centibels).
+function M.parse_trace(value)
+  local len = #value
+  local form, start, step
+  if len % 4 == 0 then
+    form, start, step = M.TRACE_SIGNAL, 1, 4
+  elseif len % 2 == 0 then
+    return nil
+  elseif value:byte(1) == 0xFE then
+    form, start, step = M.TRACE_HINTS_ONLY, 2, 2
+  elseif value:byte(1) == 0xFF then
+    form, start, step = M.TRACE_TRUNCATED, 2, 2
+  else
+    return nil
+  end
+  local entries = {}
+  for pos = start, len, step do
+    local entry = {hint = value:sub(pos, pos + 1), offset = pos - 1}
+    if form == M.TRACE_SIGNAL then
+      entry.rssi = value:byte(pos + 2)
+      local snr = value:byte(pos + 3)
+      entry.snr = snr >= 128 and snr - 256 or snr
+    end
+    entries[#entries + 1] = entry
+  end
+  return {form = form, entries = entries}
+end
 
 return M

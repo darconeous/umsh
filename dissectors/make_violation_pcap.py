@@ -124,14 +124,41 @@ VECTORS = [
 
     # ─── Options the spec defines but the test vectors never carry ───────
     (
-        # Trace Route, Route Retry and Trace Signal together. Options are
-        # delta-encoded in ascending order: 2, then +4 = 6, then +4 = 10.
-        "Beacon carrying trace route, route retry and trace signal",
+        # Route Retry and a Trace with signal together. Options are
+        # delta-encoded in ascending order: 6, then +1 = 7.
+        "Beacon carrying route retry and a trace with signal",
         h("C0", SRC_A,
-          "24" "ED 54 6C 28"    # option 2, two 2-byte router hints
-          "40"                  # option 6, zero-length flag
-          "44" "5A 32 78 E2"),  # option 10, two hops: -90 dBm/+5.0 dB,
-                                #                     -120 dBm/-3.0 dB
+          "60"                  # option 6, zero-length flag
+          "18"                  # option 7, two 4-byte records:
+          "ED 54 5A 32"         #   ED54 heard -90 dBm / +5.0 dB
+          "6C 28 78 E2"),       #   6C28 heard -120 dBm / -3.0 dB
+    ),
+    (
+        # A trace that shed its signal to fit: 0xFE, then router hints.
+        "Beacon carrying a hints-only trace",
+        h("C0", SRC_A, "75" "FE" "ED 54 6C 28"),
+    ),
+    (
+        # A trace that also dropped its oldest hops: 0xFF, then hints.
+        "Beacon carrying a truncated trace",
+        h("C0", SRC_A, "73" "FF" "ED 54"),
+    ),
+    (
+        # Two bytes is neither a record list nor a sentinel form.
+        "Beacon carrying a malformed trace",
+        h("C0", SRC_A, "72" "ED 54"),
+    ),
+    (
+        # Station Callsign is option 15: delta nibble 13 and one extended
+        # byte, 15 - 13 = 2. N0CALL.
+        "Beacon carrying a station callsign",
+        h("C0", SRC_A, "D4" "02" "5B BB 08 2C"),
+    ),
+    (
+        # Unknown options named by their classes: 12 is delivery-critical,
+        # 13 (+1) is forwarding- and delivery-critical.
+        "Beacon carrying unknown critical options",
+        h("C0", SRC_A, "C0" "10"),
     ),
     (
         # Two region codes are explicitly allowed to appear together

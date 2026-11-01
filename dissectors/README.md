@@ -248,8 +248,8 @@ display filter for pulling every offending frame out of a capture.
 
 ## Test Vectors
 
-The `test_vectors.pcap` file contains all 8 protocol test-vector packets
-wrapped as UDP payloads on port 15056. Open it in Wireshark with the dissector
+The `test_vectors.pcap` file contains every protocol test-vector packet
+(Examples 1–8, 10, and 11) wrapped as UDP payloads on port 15056. Open it in Wireshark with the dissector
 installed to verify the plugin is working. Every frame in it is valid, and the
 bytes are the ones in `docs/protocol/src/test-vectors.md`. To regenerate it:
 
@@ -303,7 +303,13 @@ If `luagcrypt` is installed, the tests also cover HKDF, AES-CMAC, AES-CTR,
 key derivation, and full encrypt/decrypt round-trips against the protocol
 test vectors. Without `luagcrypt`, crypto tests are skipped locally; CI
 builds `luagcrypt` and fails if any assertion reports SKIP, so the crypto
-vectors are always exercised there.
+vectors are always exercised there. To run them locally, build
+[luagcrypt](https://github.com/Lekensteyn/luagcrypt) the way CI does (see
+`.github/workflows/ci.yml`) and point `LUA_CPATH` at it:
+
+```sh
+LUA_CPATH="/path/to/luagcrypt/?.so;;" lua5.4 dissectors/tests/run_tests.lua
+```
 
 ## Supported Packet Types
 
@@ -345,10 +351,17 @@ flagged.
 
 ## MAC Options
 
-All twelve options in the spec's Defined Options table are decoded. Trace
-Route and Source Route break out their router hints per hop; Trace Signal
-breaks out the RSSI and SNR each repeater recorded, and labels a zero entry
-as a bridged hop; Region Code and the two callsign options are ARNCE-decoded.
+The options in the spec's Defined Options table are decoded. Source Route
+and Trace break out their router hints per hop. A Trace with signal also
+shows the RSSI and SNR each hop heard, and labels a zero entry as a bridged
+hop; its hints-only and truncated forms show the hops alone, and a malformed
+Trace value is flagged. Region Code and the two callsign options are
+ARNCE-decoded.
+
+An unknown option is labeled with the classes its number carries,
+forwarding-critical, delivery-critical, or both, and each class raises its
+own expert info. An options block whose option numbers run past `0xFFFF` is
+flagged as malformed.
 
 An Ack MIC option (8) is a MAC ack piggy-backed onto a reply instead of sent
 as its own packet, so it is resolved to the frame it acknowledges the same
@@ -356,18 +369,12 @@ way a standalone ack is—by the public four-byte MIC prefix, which needs no
 keys. The acknowledged frame is linked in the tree and named on the summary
 line.
 
-The Legacy Ack Tag option (254) is named too. On a MAC ack it says the tag
-uses the legacy construction rather than the MIC over the ack's static
-options; see the spec's Ack Authentication Transition appendix.
-
 ## MAC Ack Verification
 
 A MAC ack is matched to the packet it acknowledges by its public `ACK MIC`.
 When a configured key decrypted that packet, the ack's `ACK TAG` is verified
-too, and `umsh.ack.verified` says whether it held. `umsh.ack.construction`
-names the construction that verified, `MIC` or `Legacy`. A tag that fails
-leaves the ack linked as a correlation only, with the expected tag shown for
-each construction the ack's options allow.
+too, and `umsh.ack.verified` says whether it held. A tag that fails leaves
+the ack linked as a correlation only, with the expected tag shown.
 
 ## Address Presentation
 

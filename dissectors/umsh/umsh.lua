@@ -67,7 +67,7 @@ f.opt_region_code  = ProtoField.string ("umsh.opt.region_code",   "Region Code")
 -- Route options carry their rendered path, not their bytes: the byte range
 -- an option item covers starts at the delta-length header, so the hex form
 -- is off by a byte from the hints a reader is looking for.
-f.opt_traceroute   = ProtoField.string ("umsh.opt.trace_route",   "Trace Route")
+f.opt_trace        = ProtoField.string ("umsh.opt.trace",         "Trace")
 f.opt_srcroute     = ProtoField.string ("umsh.opt.source_route",  "Source Route")
 f.opt_router_hint  = ProtoField.string ("umsh.opt.route_repeater","Router Hint")
 f.opt_op_callsign  = ProtoField.string ("umsh.opt.op_callsign",   "Operator Callsign")
@@ -76,8 +76,6 @@ f.opt_min_rssi     = ProtoField.int8   ("umsh.opt.min_rssi",      "Min RSSI",   
 f.opt_min_snr      = ProtoField.int8   ("umsh.opt.min_snr",       "Min SNR",          base.DEC)
 f.opt_route_retry  = ProtoField.none   ("umsh.opt.route_retry",   "Route Retry")
 f.opt_ack_mic      = ProtoField.bytes  ("umsh.opt.ack_mic",       "Ack MIC")
-f.opt_trace_signal = ProtoField.bytes  ("umsh.opt.trace_signal",  "Trace Signal")
-f.opt_legacy_tag   = ProtoField.none   ("umsh.opt.legacy_ack_tag","Legacy Ack Tag")
 f.opt_signal_entry = ProtoField.string ("umsh.opt.signal_entry",  "Signal Quality")
 f.opt_unknown      = ProtoField.bytes  ("umsh.opt.unknown",       "Unknown Option")
 -- The piggy-backed ack names the frame it acknowledges, the same way a
@@ -143,22 +141,21 @@ f.ack_rsp_frame = ProtoField.framenum("umsh.ack.response_frame","Acknowledged in
 f.ack_rsp_time  = ProtoField.string  ("umsh.ack.response_time", "ACK Response Time")
 f.ack_expected  = ProtoField.bytes   ("umsh.ack.expected_tag",  "Expected ACK Tag")
 f.ack_verified  = ProtoField.bool    ("umsh.ack.verified",      "Keyed ACK Tag Verified")
-f.ack_construction = ProtoField.string("umsh.ack.construction", "ACK Tag Construction")
 
 umsh.fields = {
   f.fcf, f.fcf_version, f.fcf_type, f.fcf_full_src, f.fcf_reserved, f.fcf_fhops,
   f.fhops, f.fhops_rem, f.fhops_acc,
-  f.options, f.opt_region_code, f.opt_traceroute, f.opt_srcroute, f.opt_router_hint,
+  f.options, f.opt_region_code, f.opt_trace, f.opt_srcroute, f.opt_router_hint,
   f.opt_op_callsign, f.opt_sta_callsign, f.opt_min_rssi, f.opt_min_snr,
   f.opt_route_retry, f.opt_ack_mic, f.opt_ack_frame,
-  f.opt_trace_signal, f.opt_signal_entry, f.opt_legacy_tag, f.opt_unknown,
+  f.opt_signal_entry, f.opt_unknown,
   f.dst_hint, f.src_hint, f.src_key, f.channel_id, f.ack_mic, f.ack_tag,
   f.src_name, f.dst_name, f.channel_name, f.src_addr, f.dst_addr, f.violation,
   f.secinfo, f.scf, f.scf_enc, f.scf_mic_size, f.scf_salt_bit,
   f.frame_ctr, f.salt, f.mic,
   f.payload_raw, f.payload_dec, f.enc_body, f.enc_addr, f.dec_dst, f.dec_src,
   f.ack_req_frame, f.ack_correlate_frame, f.ack_rsp_frame, f.ack_rsp_time,
-  f.ack_expected, f.ack_verified, f.ack_construction,
+  f.ack_expected, f.ack_verified,
 }
 
 -- ──────────────────────────────────────────────────────────────────────────
@@ -171,7 +168,10 @@ ef.mic_bad      = ProtoExpert.new("umsh.mic_bad",      "MIC verification failed"
 ef.mic_ok       = ProtoExpert.new("umsh.mic_ok",       "MIC verified OK",          expert.group.CHECKSUM,   expert.severity.NOTE)
 ef.no_key       = ProtoExpert.new("umsh.no_key",       "No key for decryption",    expert.group.UNDECODED,  expert.severity.NOTE)
 ef.no_peer_key  = ProtoExpert.new("umsh.no_peer_key",  "Unknown peer key",         expert.group.UNDECODED,  expert.severity.NOTE)
-ef.unk_crit_opt = ProtoExpert.new("umsh.unknown_crit", "Unknown critical option",  expert.group.PROTOCOL,   expert.severity.WARN)
+ef.unk_fwd_crit = ProtoExpert.new("umsh.unknown_fwd_crit", "Unknown forwarding-critical option", expert.group.PROTOCOL, expert.severity.WARN)
+ef.unk_dlv_crit = ProtoExpert.new("umsh.unknown_dlv_crit", "Unknown delivery-critical option",   expert.group.PROTOCOL, expert.severity.WARN)
+ef.bad_options  = ProtoExpert.new("umsh.malformed_options", "Malformed options block",          expert.group.MALFORMED, expert.severity.ERROR)
+ef.bad_opt_value = ProtoExpert.new("umsh.malformed_option", "Malformed option value",           expert.group.MALFORMED, expert.severity.WARN)
 ef.rsvd_type    = ProtoExpert.new("umsh.reserved_type","Reserved packet type",     expert.group.PROTOCOL,   expert.severity.WARN)
 -- Named apart from the `umsh.violation` field on purpose: an expert and a
 -- field share one namespace, and giving both the same abbreviation makes
@@ -180,7 +180,8 @@ ef.violation    = ProtoExpert.new("umsh.prohibited",   "Protocol violation",    
 
 umsh.experts = {
   ef.bad_version, ef.truncated, ef.mic_bad, ef.mic_ok,
-  ef.no_key, ef.no_peer_key, ef.unk_crit_opt, ef.rsvd_type, ef.violation,
+  ef.no_key, ef.no_peer_key, ef.unk_fwd_crit, ef.unk_dlv_crit,
+  ef.bad_options, ef.bad_opt_value, ef.rsvd_type, ef.violation,
 }
 
 -- ──────────────────────────────────────────────────────────────────────────
@@ -311,22 +312,36 @@ end
 -- option header and read as noise.
 --
 -- The two route options are written in opposite directions. A repeater
--- prepends itself to a trace route, so hint 0 is the repeater nearest the
+-- prepends itself to a trace, so hint 0 is the repeater nearest the
 -- receiver and the packet moved right to left. A source route names the
 -- next repeater first, so it moves left to right.
-local function route_path(val, arrow)
-  local count = #val // 2
+--
+-- `hints` is a list of 2-byte router hints.
+local function route_path(hints, arrow)
   -- An empty route is a normal state, not a finding: a trace that no
   -- repeater has touched yet, or a source route the last named repeater
   -- emptied. A dash says so without competing with the rows that name
   -- repeaters.
-  if count == 0 then return "—" end
+  if #hints == 0 then return "—" end
   local out = {}
-  for i = 1, count do
-    local hint = val:sub(i * 2 - 1, i * 2)
+  for i, hint in ipairs(hints) do
     out[i] = base58.router_hint(hint) or bytes_to_hex(hint)
   end
   return table.concat(out, arrow)
+end
+
+-- A run of 2-byte router hints as a list, and whether a byte is left over.
+local function split_hints(val)
+  local hints = {}
+  for i = 1, #val // 2 do hints[i] = val:sub(i * 2 - 1, i * 2) end
+  return hints, #val % 2 == 1
+end
+
+-- A trace record's signal, or nil for a bridged hop: an RSSI and SNR of zero
+-- is what a hop that took the packet off a point-to-point link writes.
+local function signal_text(rssi, snr)
+  if rssi == 0 and snr == 0 then return nil end
+  return string.format("-%d dBm, %.1f dB SNR", rssi, snr / 10)
 end
 
 -- A region code is two bytes of ARNCE/HAM-16. Anything that decodes to one to
@@ -539,9 +554,17 @@ local function parse_options(buf, start_off, bound, tree, static_opts_out, pinfo
   local raw   = tvb_bytes(buf, start_off, avail)
 
   local total_len
-  if not pcall(function() total_len = options.scan_length(raw, 1) end)
-     or not total_len then
-    tree:add_proto_expert_info(ef.truncated)
+  local scan_ok, scan_err = pcall(function() total_len = options.scan_length(raw, 1) end)
+  if not scan_ok or not total_len then
+    -- A block that frames correctly but breaks a numeric rule (an option
+    -- number past 0xFFFF, say) is malformed rather than cut short.
+    local msg = tostring(scan_err or "")
+    if msg:sub(1, #options.MALFORMED_PREFIX) == options.MALFORMED_PREFIX then
+      tree:add_proto_expert_info(ef.bad_options,
+        "Malformed options block: " .. msg:sub(#options.MALFORMED_PREFIX + 1))
+    else
+      tree:add_proto_expert_info(ef.truncated)
+    end
     return start_off, {}
   end
 
@@ -572,32 +595,82 @@ local function parse_options(buf, start_off, bound, tree, static_opts_out, pinfo
         local tvbr = (val_len > 0) and buf(val_off, val_len) or buf(opt_off, consumed)
         opts_tree:add(f.opt_region_code, tvbr, cs):set_text("Region Code: " .. cs)
 
-      elseif num == options.OPT_TRACE_ROUTE or num == options.OPT_SOURCE_ROUTE then
-        local is_trace = (num == options.OPT_TRACE_ROUTE)
-        local label    = is_trace and "Trace Route" or "Source Route"
+      elseif num == options.OPT_SOURCE_ROUTE then
         -- The value is a run of 2-byte router hints, one per repeater. The
         -- repeater count is not the hop count: a route naming N repeaters
         -- describes N+1 transmissions, since the legs into the first
         -- repeater and out of the last one belong to no hint.
-        local routers = val_len // 2
-        local extra   = val_len % 2
-        local path    = route_path(val, is_trace and " ← " or " → ")
-        local item = opts_tree:add(is_trace and f.opt_traceroute or f.opt_srcroute,
-                                   buf(opt_off, consumed), path)
+        local hints, extra = split_hints(val)
+        local routers = #hints
+        local path    = route_path(hints, " → ")
+        local item = opts_tree:add(f.opt_srcroute, buf(opt_off, consumed), path)
         local note = ""
         if routers > 0 then
           note = string.format(" (%d repeater%s%s)", routers,
                                routers == 1 and "" or "s",
-                               extra == 1 and ", 1 trailing byte" or "")
-        elseif extra == 1 then
+                               extra and ", 1 trailing byte" or "")
+        elseif extra then
           note = " (1 trailing byte)"
         end
-        item:set_text(label .. ": " .. path .. note)
-        for i = 1, routers do
-          local hint = val:sub(i * 2 - 1, i * 2)
+        item:set_text("Source Route: " .. path .. note)
+        for i, hint in ipairs(hints) do
           item:add(f.opt_router_hint, buf(val_off + (i - 1) * 2, 2),
                    base58.router_hint(hint) or ""):set_text(
             string.format("Repeater %d: %s", i, base58.router_hint_full(hint)))
+        end
+
+      elseif num == options.OPT_TRACE then
+        -- Each forwarding hop prepends an entry, so entry 1 is the repeater
+        -- nearest the receiver. With signal, an entry also carries what that
+        -- hop heard: one byte of negative RSSI in dBm, one signed byte of
+        -- SNR in centibels. The hints-only forms keep the path and drop the
+        -- signal; a truncated one has also dropped its oldest hops.
+        local trace = options.parse_trace(val)
+        if not trace then
+          -- Handled as unrecognized within its own class: a repeater does
+          -- not forward the frame, a receiver ignores the trace.
+          local item = opts_tree:add(f.opt_trace, buf(opt_off, consumed), "malformed")
+          item:set_text(string.format("Trace: malformed (%d byte%s) %s", val_len,
+                                      val_len == 1 and "" or "s",
+                                      options.criticality_label(num)))
+          item:add_proto_expert_info(ef.bad_opt_value,
+            string.format("Malformed Trace value (%d bytes)", val_len))
+        else
+          local hints = {}
+          for i, entry in ipairs(trace.entries) do hints[i] = entry.hint end
+          local path = route_path(hints, " ← ")
+          local count = #hints
+          local label, noun = "Trace", "repeater"
+          if trace.form == options.TRACE_HINTS_ONLY then
+            label = "Trace (hints only)"
+          elseif trace.form == options.TRACE_TRUNCATED then
+            label, noun = "Trace (truncated)", "most recent repeater"
+          end
+          local note = ""
+          if count > 0 then
+            note = string.format(" (%d %s%s)", count, noun, count == 1 and "" or "s")
+          end
+          local item = opts_tree:add(f.opt_trace, buf(opt_off, consumed), path)
+          item:set_text(label .. ": " .. path .. note)
+          for i, entry in ipairs(trace.entries) do
+            local hint_range = buf(val_off + entry.offset, 2)
+            local text = string.format("Repeater %d: %s", i, base58.router_hint_full(entry.hint))
+            local hint_item = item:add(f.opt_router_hint, hint_range,
+                                       base58.router_hint(entry.hint) or "")
+            if entry.rssi then
+              local signal = signal_text(entry.rssi, entry.snr)
+              local sig_range = buf(val_off + entry.offset + 2, 2)
+              if signal then
+                hint_item:set_text(text .. ", heard " .. signal)
+                hint_item:add(f.opt_signal_entry, sig_range, signal)
+              else
+                hint_item:set_text(text .. ", bridged hop")
+                hint_item:add(f.opt_signal_entry, sig_range, "bridged")
+              end
+            else
+              hint_item:set_text(text)
+            end
+          end
         end
 
       elseif num == options.OPT_OP_CALLSIGN then
@@ -649,55 +722,20 @@ local function parse_options(buf, start_off, bound, tree, static_opts_out, pinfo
           item:set_text(string.format("Ack MIC: %d bytes (expected 4)", val_len))
         end
 
-      elseif num == options.OPT_TRACE_SIGNAL then
-        -- Like a trace route, but each repeater prepends what it heard:
-        -- one byte of negative RSSI in dBm, one signed byte of SNR in
-        -- centibels.
-        local item = opts_tree:add(f.opt_trace_signal, buf(opt_off, consumed))
-        if val_len == 0 then
-          item:set_text("Trace Signal: (empty)")
-        else
-          -- One entry per repeater, paired index-for-index with the trace
-          -- route. An entry measures the hop into that repeater; the hop
-          -- out of the last one is measured by nobody, so the entries
-          -- always number one short of the path's hops.
-          local routers = val_len // 2
-          local extra   = val_len % 2
-          item:set_text(string.format("Trace Signal: %d repeater%s%s", routers,
-                                      routers == 1 and "" or "s",
-                                      extra == 1 and " + 1 trailing byte" or ""))
-          for i = 1, routers do
-            local rssi = val:byte(i * 2 - 1)
-            local snr  = val:byte(i * 2)
-            local entry = buf(val_off + (i - 1) * 2, 2)
-            if rssi == 0 and snr == 0 then
-              -- No air hop writes this: the repeater took the packet off
-              -- a point-to-point link, a bridge for one.
-              item:add(f.opt_signal_entry, entry, "bridged")
-                :set_text(string.format("Repeater %d: bridged hop", i))
-            else
-              if snr >= 128 then snr = snr - 256 end
-              local text = string.format("-%d dBm, %.1f dB SNR", rssi, snr / 10)
-              item:add(f.opt_signal_entry, entry, text)
-                :set_text(string.format("Repeater %d heard: %s", i, text))
-            end
-          end
-        end
-
-      elseif num == options.OPT_LEGACY_ACK_TAG then
-        -- A zero-length flag, meaningful only on a MAC ack: its tag uses
-        -- the legacy construction.
-        local item = opts_tree:add(f.opt_legacy_tag, buf(opt_off, consumed))
-        if val_len ~= 0 then
-          item:set_text(string.format("Legacy Ack Tag (%d unexpected bytes)", val_len))
-        end
-
       else
-        local crit = options.is_critical(num)
+        -- The number alone says what an unknown option demands: a repeater
+        -- does not forward past a forwarding-critical one, and an endpoint
+        -- does not accept a frame carrying a delivery-critical one.
+        local classes = options.criticality_label(num)
         local item = opts_tree:add(f.opt_unknown, buf(opt_off, consumed))
-        item:set_text(string.format("Option %d (%d bytes)%s",
-                                    num, val_len, crit and " [Critical]" or ""))
-        if crit then item:add_proto_expert_info(ef.unk_crit_opt) end
+        item:set_text(string.format("Option %d (%d bytes)%s", num, val_len,
+                                    classes ~= "" and " " .. classes or ""))
+        if options.is_forwarding_critical(num) then
+          item:add_proto_expert_info(ef.unk_fwd_crit)
+        end
+        if options.is_delivery_critical(num) then
+          item:add_proto_expert_info(ef.unk_dlv_crit)
+        end
       end
 
       -- Collect static options for AAD (in ascending option-number order)
@@ -709,9 +747,9 @@ local function parse_options(buf, start_off, bound, tree, static_opts_out, pinfo
     end
   end)
 
-  -- Several options are defined as appearing at most once, and the spec
-  -- says outright that a packet carrying two of them must be dropped.
-  -- Region Code is not among them: several may legitimately be present.
+  -- Several options are defined as appearing at most once: a sender MUST
+  -- NOT include a second. Region Code is not among them: several may
+  -- legitimately be present.
   for num, count in pairs(seen) do
     if count > 1 and options.SINGLETON_OPTIONS[num] then
       flag_violation(opts_tree, buf(start_off, total_len), string.format(
@@ -762,11 +800,8 @@ local function dissect_uack(buf, pinfo, tree, off, fcf_byte, static_opts)
   -- A MAC ack carries no destination hint: OPTIONS follow the header
   -- directly, then a fixed 8-byte trailer (ack_mic(4) || ack_tag(4)). No
   -- 0xFF terminator, since the trailer is at a fixed offset from the end.
-  -- The static options enter the MIC construction's AAD; option 254 says
-  -- the tag uses the legacy construction instead.
-  local seen
-  off, seen = parse_options(buf, off, buf_len - 8, tree, static_opts, pinfo)
-  local has_marker = (seen[options.OPT_LEGACY_ACK_TAG] or 0) > 0
+  -- The static options enter the ack tag's AAD.
+  off = parse_options(buf, off, buf_len - 8, tree, static_opts, pinfo)
 
   -- Anything between an end-of-options marker and the trailer is not part
   -- of a MAC ack: there is no payload field for it to be.
@@ -808,28 +843,13 @@ local function dissect_uack(buf, pinfo, tree, off, fcf_byte, static_opts)
     local verified = nil
     if origin.ack_v and crypto then
       local tag_range = buf(off + 4, 4)
-      local construction = crypto.verify_mac_ack(origin.ack_keys, origin.ack_v,
-                                                 fcf_byte, static_opts,
-                                                 has_marker, tag_bytes)
-      verified = construction ~= nil
-      local item = tree:add(f.ack_verified, tag_range, verified)
-      if construction then
-        local label = construction == "mic" and "MIC" or "Legacy"
-        item:append_text(" (" .. label .. ")")
-        tree:add(f.ack_construction, tag_range, label):set_generated()
-      else
-        -- What each construction the ack's options admit would have given.
-        if not has_marker then
-          local exp = crypto.ack_tag_mic(origin.ack_keys.k_mic, fcf_byte,
-                                         static_opts, origin.ack_v)
-          tree:add(f.ack_expected, tag_range, exp):set_text(
-            "Expected ACK Tag (MIC): " .. bytes_to_hex(exp)):set_generated()
-        end
-        if has_marker or #static_opts == 0 then
-          local exp = crypto.legacy_ack_tag(origin.ack_keys.k_enc, origin.ack_v)
-          tree:add(f.ack_expected, tag_range, exp):set_text(
-            "Expected ACK Tag (Legacy): " .. bytes_to_hex(exp)):set_generated()
-        end
+      local exp = crypto.ack_tag_mic(origin.ack_keys.k_mic, fcf_byte,
+                                     static_opts, origin.ack_v)
+      verified = exp == tag_bytes
+      tree:add(f.ack_verified, tag_range, verified)
+      if not verified then
+        tree:add(f.ack_expected, tag_range, exp):set_text(
+          "Expected ACK Tag: " .. bytes_to_hex(exp)):set_generated()
       end
     end
     local rsp_time = pinfo.abs_ts - origin.timestamp
@@ -1070,8 +1090,7 @@ local function dissect_multicast(buf, pinfo, tree, off, full_src, fcf_byte, stat
       fcf_byte         = fcf_byte,
       static_opts      = static_opts,
       channel_id       = chan_bytes,
-      dst_or_chan      = chan_bytes,
-      src_bytes_or_nil = nil,   -- src is inside ciphertext
+      aad_fields       = {channel = chan_bytes},
       secinfo_raw      = secinfo_raw,
       body_bytes       = body_bytes,
       mic_bytes        = mic_bytes,
@@ -1107,14 +1126,14 @@ local function dissect_multicast(buf, pinfo, tree, off, full_src, fcf_byte, stat
     end
 
   else
-    -- E=0: SRC in cleartext; verify MIC directly with channel keys
+    -- E=0: SRC in cleartext, but still the start of the protected region
+    -- rather than part of the AAD, exactly as when it is encrypted.
     local pkt_info = {
       fcf_byte         = fcf_byte,
       static_opts      = static_opts,
-      dst_or_chan      = chan_bytes,
-      src_bytes_or_nil = src_bytes,   -- included in AAD
+      aad_fields       = {channel = chan_bytes},
       secinfo_raw      = secinfo_raw,
-      body_bytes       = body_bytes,
+      body_bytes       = src_bytes .. body_bytes,
       mic_bytes        = mic_bytes,
       is_encrypted     = false,
     }
@@ -1123,7 +1142,8 @@ local function dissect_multicast(buf, pinfo, tree, off, full_src, fcf_byte, stat
     if ok2 and plain then
       tree:add_proto_expert_info(ef.mic_ok)
       _ctx.mic_verified = true
-      if app then pcall(app.dissect, plain, tree, pinfo, keystore, crypto, _ctx) end
+      local payload = plain:sub(#src_bytes + 1)
+      if app then pcall(app.dissect, payload, tree, pinfo, keystore, crypto, _ctx) end
     elseif ok2 and status == "mic_mismatch" then
       tree:add_proto_expert_info(ef.mic_bad)
     else
@@ -1213,7 +1233,6 @@ local function dissect_blind_unicast(buf, pinfo, tree, off, full_src, fcf_byte, 
       fcf_byte       = fcf_byte,
       static_opts    = static_opts,
       channel_id     = chan_bytes,
-      dst_or_chan    = chan_bytes,
       enc_addr_bytes = enc_addr_bytes,
       secinfo_raw    = secinfo_raw,
       body_bytes     = body_bytes,
@@ -1334,12 +1353,12 @@ local function dissect_blind_unicast(buf, pinfo, tree, off, full_src, fcf_byte, 
     end
 
     local privkeys = keystore.get_all_privkeys()
-    -- The cleartext DST precedes the channel in the AAD.
+    -- The address block follows the AAD's terminator, as it does when it
+    -- is encrypted.
     local pkt_info = {
       fcf_byte         = fcf_byte,
       static_opts      = static_opts,
-      dst_or_chan      = dst_bytes .. chan_bytes,
-      src_bytes_or_nil = src_bytes,
+      aad_fields       = {channel = chan_bytes, dst = dst_bytes, src = src_bytes},
       secinfo_raw      = secinfo_raw,
       body_bytes       = body_bytes,
       mic_bytes        = mic_bytes,
