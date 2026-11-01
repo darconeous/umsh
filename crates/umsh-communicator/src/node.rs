@@ -225,7 +225,7 @@ impl<P: LocalPort, S: ChatStore> CommunicatorNode<P, S> {
     /// Takes what the device node measured one frame to `conversation` to
     /// carry, `None` when it could not.
     pub fn learn_budget(&self, conversation: ConversationKey, budget: Option<usize>) {
-        self.chats.borrow_mut().learn_budget(conversation, budget);
+        self.with_chats(|chats, _, _, events| chats.learn_budget(conversation, budget, events));
     }
 
     /// The longest message `chat` takes, in octets.

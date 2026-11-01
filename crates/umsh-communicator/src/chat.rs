@@ -392,11 +392,40 @@ impl<S: ChatStore> Chats<S> {
 
     /// Takes what the device node measured one frame to `conversation` to
     /// carry; `None` when it could not, which forgets what it measured
-    /// before.
-    pub fn learn_budget(&mut self, conversation: ConversationKey, budget: Option<usize>) {
+    /// before. Each chat whose longest message changes with it is listed
+    /// anew, so that its composer takes the new limit.
+    pub fn learn_budget(
+        &mut self,
+        conversation: ConversationKey,
+        budget: Option<usize>,
+        events: &mut dyn FnMut(NodeEvent),
+    ) {
+        let held = self
+            .budgets
+            .iter()
+            .find_map(|(held, budget)| (*held == conversation).then_some(*budget));
+        if held == budget {
+            return;
+        }
+        // An unmeasured conversation takes the least measured, so one
+        // measurement can change any chat's limit.
+        let before: Vec<(model::ChatId, ConversationKey, Option<usize>)> = self
+            .store
+            .chats()
+            .flatten()
+            .map(|record| {
+                let limit = self.body_limit(&record.conversation);
+                (record.id.0, record.conversation, limit)
+            })
+            .collect();
         self.budgets.retain(|(held, _)| *held != conversation);
         if let Some(budget) = budget {
             self.budgets.push((conversation, budget));
+        }
+        for (chat, conversation, limit) in before {
+            if self.body_limit(&conversation) != limit {
+                events(NodeEvent::ChatChanged(chat));
+            }
         }
     }
 
@@ -414,9 +443,14 @@ impl<S: ChatStore> Chats<S> {
 
     /// The longest message `chat` takes.
     pub fn max_body_len(&self, chat: model::ChatId) -> Option<usize> {
-        let conversation = self.conversation(chat)?;
+        self.body_limit(&self.conversation(chat)?)
+    }
+
+    /// The longest message `conversation` takes; `None` before anything has
+    /// been measured.
+    fn body_limit(&self, conversation: &ConversationKey) -> Option<usize> {
         let facade = self.facade.as_ref()?;
-        Some(facade.max_body_len(&conversation, self.budget(&conversation)?))
+        Some(facade.max_body_len(conversation, self.budget(conversation)?))
     }
 
     /// Holds the channel `key` names in the facade, and keeps a chat for
@@ -1565,6 +1599,9 @@ impl<S: ChatStore> Chats<S> {
                 _ = draft.splice(0..0, text);
                 summary.draft = EditBuffer::with_text(draft);
             }
+        }
+        if let Some(limit) = self.body_limit(&record.conversation) {
+            summary.limit_draft(limit);
         }
         Some(summary)
     }

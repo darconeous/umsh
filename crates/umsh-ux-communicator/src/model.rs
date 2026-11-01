@@ -32,7 +32,8 @@ pub type ChatId = u32;
 /// Identifies a message for as long as the node keeps it: given by the
 /// node, and never given to another.
 pub type MessageId = u32;
-/// An unsent message and the cursor in it, up to a message long.
+/// An unsent message and the cursor in it, up to the longest message its
+/// chat takes.
 pub type Draft = EditBuffer<DraftText>;
 /// The chats the list holds, newest first.
 pub type Chats = Vec<ChatSummary, MAX_CHATS>;
@@ -416,6 +417,17 @@ impl ChatSummary {
         };
         push_cut(&mut summary.name, name);
         summary
+    }
+
+    /// Lets the draft grow to at most `limit` bytes, the longest message
+    /// the chat takes. Text already longer is kept, to be shortened.
+    pub fn limit_draft(&mut self, limit: usize) {
+        if self.draft.storage().limit() == limit {
+            return;
+        }
+        let cursor = self.draft.cursor();
+        self.draft = EditBuffer::with_text(self.draft.storage().clone().with_limit(limit));
+        self.draft.set_cursor(cursor);
     }
 
     /// What is shown to the right of the chat's avatar: a channel as
@@ -2358,7 +2370,9 @@ impl State {
         if let Some((chat, draft)) = open.zip(writing)
             && let Some(summary) = self.chat_mut(chat)
         {
+            let limit = summary.draft.storage().limit();
             summary.draft = draft;
+            summary.limit_draft(limit);
         }
         self.peers.clear();
         self.node.peers(&mut self.peers);
@@ -2438,8 +2452,10 @@ impl State {
         match self.chats.iter_mut().position(|c| c.id == fresh.id) {
             Some(index) => {
                 let old = &mut self.chats[index];
+                let limit = fresh.draft.storage().limit();
                 core::mem::swap(&mut fresh.draft, &mut old.draft);
                 *old = fresh;
+                old.limit_draft(limit);
                 index
             }
             None => {

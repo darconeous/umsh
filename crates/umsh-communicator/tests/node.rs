@@ -39,9 +39,9 @@ use umsh_ulcp::ids::prop;
 use umsh_ulcp::profiles::VETTED;
 use umsh_ulcp_simdev::{SessionConfig, SimulatedDevice, TimeConfig};
 use umsh_ux_communicator::model::{
-    ChannelAccess, ChannelEntry, ChatKind, Chats, Delivery, Direction, KeyboardSettings, Leg, Node,
-    NodeEvent, PeerEntry, Peers, PingView, Presence, Profile, Reaction, RouteKind, Rule, Setting,
-    Shareable, Signal,
+    ChannelAccess, ChannelEntry, ChatKind, Chats, Delivery, Direction, KeyboardSettings, Leg,
+    MESSAGE_LEN, Node, NodeEvent, PeerEntry, Peers, PingView, Presence, Profile, Reaction,
+    RouteKind, Rule, Setting, Shareable, Signal,
 };
 
 /// 14:32 UTC, when the test clock starts.
@@ -1220,6 +1220,40 @@ fn an_unmeasured_conversation_takes_the_smallest_budget() {
         }
     }
     assert!(frames > 1);
+}
+
+/// A chat's draft grows only to the longest message the chat takes, and a
+/// measurement that changes that lists the chat anew.
+#[test]
+fn a_draft_grows_only_to_what_its_chat_takes() {
+    let sim = device();
+    let (node, _) = started(&sim);
+    let robin = PublicKey([0x37; 32]);
+    let chat = node
+        .direct_chat(&address_of(&robin), "Robin", &node.avatar())
+        .unwrap();
+    let whole = node.max_body_len(chat.id).unwrap();
+    let limit = |node: &CommunicatorNode<Port>| node.chat(chat.id).unwrap().draft.storage().limit();
+    assert_eq!(limit(&node), whole.min(MESSAGE_LEN));
+    events(&node);
+
+    for query in node.budget_queries() {
+        node.learn_budget(query.conversation(), Some(120));
+    }
+    let smaller = node.max_body_len(chat.id).unwrap();
+    assert!(smaller < whole.min(MESSAGE_LEN));
+    assert!(events(&node).contains(&NodeEvent::ChatChanged(chat.id)));
+    assert_eq!(limit(&node), smaller);
+    let mut draft = node.chat(chat.id).unwrap().draft;
+    let long: String = core::iter::repeat_n('x', smaller + 1).collect();
+    assert!(!draft.insert_str(&long));
+    assert!(draft.insert_str(&long[1..]));
+
+    // The same measurement again changes no chat.
+    for query in node.budget_queries() {
+        node.learn_budget(query.conversation(), Some(120));
+    }
+    assert!(!events(&node).contains(&NodeEvent::ChatChanged(chat.id)));
 }
 
 /// A direct message is kept as Sending and handed to the device node; a
