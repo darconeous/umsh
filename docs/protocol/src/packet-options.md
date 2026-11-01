@@ -61,6 +61,7 @@ This distinction allows forwarding-related metadata (source routes, traces, stat
 | 10 | *UNASSIGNED* | Non-Critical, Dynamic | |
 | 11 | Region Code | Forwarding-Critical, Dynamic | 2 bytes |
 | 15 | Station Callsign | Forwarding-Critical, Dynamic | ARNCE/HAM-64 |
+| 257 | Fence | Forwarding-Critical, Static | 0 bytes |
 
 ### Frame Signature (option 0)
 - Type: `FRAME COUNTER (4 B, big-endian) ‖ SIG (64 B)`, exactly 68 bytes.
@@ -249,6 +250,11 @@ A region name MUST NOT exceed 24 bytes of UTF-8. Names travel on the wire in [id
   - in `Licensed-Only` mode, repeaters replace or insert it on every forwarded packet
   - in `Hybrid` mode, repeaters also replace or insert it on every forwarded packet
   - in `Unlicensed` mode, repeaters remove it if present and do not add their own
+
+### Fence (option 257)
+- Type: flag. A sender includes it with no value; a receiver ignores it whatever its value, and a forwarder carries it unchanged.
+- Semantics: none. A sender includes it on every packet it originates, and a node that recognizes it ignores it.
+- Its only effect is the one its classification gives it: a repeater that does not recognize it does not forward the packet, and an endpoint that does not recognize it still accepts the packet.
 
 ## Routing Option Layouts
 
