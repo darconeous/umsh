@@ -2714,6 +2714,49 @@ fn transmit_next_drops_frame_after_sixteen_busy_cad_attempts() {
     );
 }
 
+/// A radio fault drops the frame at once, with the same accounting as an
+/// exhausted busy channel, and leaves the coordinator running: the next
+/// frame goes out as if nothing had happened.
+#[test]
+fn transmit_next_drops_frame_on_radio_fault_and_keeps_going() {
+    let mut mac = make_mac();
+    mac.radio_mut().tx_faults = 1;
+    mac.tx_queue_mut()
+        .enqueue(
+            TxPriority::Application,
+            b"app",
+            Some(SendReceipt(3)),
+            Some(LocalIdentityId(0)),
+        )
+        .unwrap();
+
+    let mut abandoned = std::vec::Vec::new();
+    let sent = block_on(mac.transmit_next(&mut |id, event| {
+        if let crate::MacEventRef::TxAbandoned {
+            identity_id,
+            receipt,
+        } = event
+        {
+            abandoned.push((id, identity_id, receipt));
+        }
+    }));
+
+    assert_eq!(sent, Ok(None));
+    assert!(mac.tx_queue().is_empty());
+    assert_eq!(mac.counters().tx_abandoned, 1);
+    assert_eq!(
+        abandoned.as_slice(),
+        &[(LocalIdentityId(0), LocalIdentityId(0), Some(SendReceipt(3)))]
+    );
+
+    mac.tx_queue_mut()
+        .enqueue(TxPriority::Application, b"next", None, None)
+        .unwrap();
+    block_on(mac.drain_tx_queue(&mut |_, _| {})).unwrap();
+    assert_eq!(mac.radio().transmitted.len(), 1);
+    assert_eq!(mac.counters().tx_frames, 1);
+}
+
 #[test]
 fn transmit_next_drops_identityless_frame_without_event_after_cad_exhaustion() {
     let mut mac = make_mac();
@@ -13903,6 +13946,8 @@ struct DummyRadio {
     transmitted_power: heapless::Vec<Option<i8>, 16>,
     cad_responses: heapless::Deque<bool, 16>,
     cad_calls: u32,
+    /// Transmits still to fail with a radio fault before they succeed.
+    tx_faults: u8,
     received: heapless::Deque<heapless::Vec<u8, 256>, 16>,
     /// Signal quality reported for every received frame. Defaults to the
     /// zeroes `RxInfo::default` would give, so tests that do not care read
@@ -14503,6 +14548,10 @@ impl Radio for DummyRadio {
             if self.cad_responses.pop_front().unwrap_or(false) {
                 return Err(TxError::CadTimeout);
             }
+        }
+        if self.tx_faults != 0 {
+            self.tx_faults -= 1;
+            return Err(TxError::Io(()));
         }
         let mut stored = heapless::Vec::new();
         for byte in data {

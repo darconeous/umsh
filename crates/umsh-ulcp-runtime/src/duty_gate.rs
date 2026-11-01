@@ -11,9 +11,8 @@
 //! A refused transmit is reported as [`TxError::CadTimeout`]—the one
 //! transmit error the MAC treats as "channel unavailable right now":
 //! it backs off with jitter, retries a bounded number of times, and
-//! then drops the frame. Any other error would surface as a fatal
-//! `MacError::Transmit` and kill the node pump, which must never be a
-//! consequence of duty limiting. A budget exhausted this hour rarely
+//! then drops the frame. Any other error is a radio fault, which the MAC
+//! drops at once and does not retry. A budget exhausted this hour rarely
 //! recovers within the MAC's short backoff horizon, so a refused frame
 //! is effectively shed—exactly the spec's posture (transmits never
 //! wait for duty-cycle allowance).

@@ -960,12 +960,6 @@ pub enum MacError<RadioError> {
     /// channel-sense operation. The inner type is platform-specific (e.g., SPI fault on
     /// embedded hardware, socket error on a UDP transport).
     Radio(RadioError),
-    /// A transmit-phase error from the radio. The frame was not sent.
-    ///
-    /// Channel-busy (CAD) verdicts are not surfaced here: they are retried
-    /// with backoff, and exhausting the retry budget emits
-    /// [`MacEventRef::TxAbandoned`](crate::MacEventRef::TxAbandoned) instead.
-    Transmit(TxError<RadioError>),
     /// An internal capacity invariant was violated: the coordinator needed to enqueue a
     /// control frame (MAC ACK, forwarded packet) but the transmit queue was full.
     /// Increase the `TX` const generic on [`Mac`] to give the queue more headroom.
@@ -990,12 +984,6 @@ pub enum CounterPersistenceError<StoreError> {
 impl<RadioError> From<RadioError> for MacError<RadioError> {
     fn from(value: RadioError) -> Self {
         Self::Radio(value)
-    }
-}
-
-impl<RadioError> From<TxError<RadioError>> for MacError<RadioError> {
-    fn from(value: TxError<RadioError>) -> Self {
-        Self::Transmit(value)
     }
 }
 
@@ -2748,39 +2736,7 @@ impl<
             Err(TxError::CadTimeout) => {
                 let next_attempt = queued.cad_attempts.saturating_add(1);
                 if next_attempt >= MAX_CAD_ATTEMPTS {
-                    // Counted whether or not anyone is told: a forwarded
-                    // frame is dropped without an event, and a node
-                    // abandoning every forward is exactly the condition
-                    // this tally exists to make visible.
-                    MacCounters::bump(&mut self.counters.tx_abandoned);
-                    // Drop with accounting: locally-originated frames report
-                    // the abandonment to the owning identity (a send that
-                    // never aired will see no AckReceived/AckTimeout, so this
-                    // is its terminal state). Forwarded frames (no identity)
-                    // are best-effort and dropped without an event. A
-                    // *retransmission* that lost CAD is neither: its send has
-                    // aired before and its deadlines still stand, so the
-                    // attempt is dropped quietly and the timers judge the
-                    // send.
-                    if let Some(identity_id) = identity_id
-                        && queued.priority != TxPriority::Retry
-                    {
-                        // Terminal means the tracking entry goes too; left
-                        // behind in `Queued` it would outlive every timer,
-                        // holding its slot until the identity is removed.
-                        if let Some(receipt) = receipt
-                            && let Some(slot) = self.identity_mut(identity_id)
-                        {
-                            let _ = slot.pending_acks.remove(&receipt);
-                        }
-                        on_event(
-                            identity_id,
-                            crate::MacEventRef::TxAbandoned {
-                                identity_id,
-                                receipt,
-                            },
-                        );
-                    }
+                    self.abandon_transmit(identity_id, receipt, queued.priority, on_event);
                     return Ok(None);
                 }
                 // Uniform over [T_frame/40, T_frame/4] (channel-access.md
@@ -2804,7 +2760,14 @@ impl<
                     .map_err(|_| MacError::QueueFull)?;
                 return Ok(None);
             }
-            Err(error) => return Err(MacError::Transmit(error)),
+            // The radio failed to send the frame. Retrying a fault is not
+            // the busy channel's backoff, and stopping the coordinator
+            // over one frame would end every other send with it, so the
+            // frame is dropped the way an exhausted busy channel drops it.
+            Err(TxError::Io(_)) => {
+                self.abandon_transmit(identity_id, receipt, queued.priority, on_event);
+                return Ok(None);
+            }
         }
         // Counted before the event, which only locally-originated frames
         // get: a repeater's whole output would otherwise be invisible.
@@ -2830,6 +2793,46 @@ impl<
             }
         }
         Ok(receipt)
+    }
+
+    /// Give up on a frame that will never air.
+    ///
+    /// Counted whether or not anyone is told: a forwarded frame is dropped
+    /// without an event, and a node abandoning every forward is exactly the
+    /// condition this tally exists to make visible. Locally-originated
+    /// frames report the abandonment to the owning identity (a send that
+    /// never aired will see no AckReceived/AckTimeout, so this is its
+    /// terminal state). Forwarded frames (no identity) are best-effort and
+    /// dropped without an event. A *retransmission* is neither: its send
+    /// has aired before and its deadlines still stand, so the attempt is
+    /// dropped quietly and the timers judge the send.
+    fn abandon_transmit(
+        &mut self,
+        identity_id: Option<LocalIdentityId>,
+        receipt: Option<SendReceipt>,
+        priority: TxPriority,
+        on_event: &mut impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
+    ) {
+        MacCounters::bump(&mut self.counters.tx_abandoned);
+        if let Some(identity_id) = identity_id
+            && priority != TxPriority::Retry
+        {
+            // Terminal means the tracking entry goes too; left behind in
+            // `Queued` it would outlive every timer, holding its slot until
+            // the identity is removed.
+            if let Some(receipt) = receipt
+                && let Some(slot) = self.identity_mut(identity_id)
+            {
+                let _ = slot.pending_acks.remove(&receipt);
+            }
+            on_event(
+                identity_id,
+                crate::MacEventRef::TxAbandoned {
+                    identity_id,
+                    receipt,
+                },
+            );
+        }
     }
 
     /// Keep transmitting until the queue is empty.
