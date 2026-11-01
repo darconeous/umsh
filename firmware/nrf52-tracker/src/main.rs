@@ -5874,9 +5874,18 @@ mod firmware {
         // Crystal-less boards (XIAO-based SenseCAP Solar) run the LFCLK from
         // the internal RC oscillator; boards with a 32.768 kHz crystal use it.
         #[cfg(not(feature = "lfclk-rc"))]
-        let mut p = embassy_nrf::init(umsh_bsp_nrf52840::clocks::ble_config());
+        #[allow(unused_mut)]
+        let mut nrf_config = umsh_bsp_nrf52840::clocks::ble_config();
         #[cfg(feature = "lfclk-rc")]
-        let mut p = embassy_nrf::init(umsh_bsp_nrf52840::clocks::ble_config_lfrc());
+        #[allow(unused_mut)]
+        let mut nrf_config = umsh_bsp_nrf52840::clocks::ble_config_lfrc();
+        // REG1 feeds the core; its DC/DC roughly halves the current drawn
+        // while the CPU, BLE radio, or USB is busy.
+        #[cfg(feature = "dcdc-reg1")]
+        {
+            nrf_config.dcdc.reg1 = true;
+        }
+        let mut p = embassy_nrf::init(nrf_config);
         // GPIO state survives the soft reset/DFU handoff. Silence the T-1000E
         // piezo before any potentially lengthy radio, flash, or BLE work so a
         // retained PWM/enable state cannot sound until the buzzer task starts.

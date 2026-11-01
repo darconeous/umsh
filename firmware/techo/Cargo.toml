@@ -14,7 +14,7 @@ board-techo = ["ulcp-i2c", "umsh-bsp-nrf52840/i2c", "display-epd", "button-nav",
 board-t1000e = ["ulcp-i2c", "t1000e", "cap-battery-saadc", "cap-gnss", "gnss-holds-the-clock", "cap-illuminance"]
 board-sensecap-solar = ["ulcp-i2c", "cap-battery-saadc", "power-button", "cap-gnss", "meshcore-forwarder"]
 board-wio-tracker-l1 = ["ulcp-i2c", "display-oled", "dpad-nav", "system-off-wio", "cap-battery-saadc", "cap-buzzer", "cap-gnss", "gnss-holds-the-clock", "meshcore-forwarder"]
-board-xiao-nrf52 = ["ulcp-i2c", "cap-battery-saadc", "led-active-low", "led-rgb", "meshcore-forwarder"]
+board-xiao-nrf52 = ["ulcp-i2c", "cap-battery-saadc", "led-active-low", "led-rgb", "meshcore-forwarder", "dcdc-reg1"]
 
 # ─── Capability features (shared code shape, board-portable) ───
 # The historical `t1000e` flag still bundles the T-1000E-only capabilities
@@ -72,6 +72,9 @@ led-active-low = []
 led-rgb = []
 # LFCLK from the internal RC oscillator (crystal-less XIAO-based boards).
 lfclk-rc = []
+# The nRF52840's REG1 DC/DC converter, for boards whose DCC inductor is
+# fitted: the converter has nothing to switch without it.
+dcdc-reg1 = []
 # Dedicated hardware power button + System OFF teardown / GPIO-DETECT wake
 # (Solar P1 PWR button on P1.01). A board with a button reserved for
 # power, distinct from the single-button gesture FSM.
