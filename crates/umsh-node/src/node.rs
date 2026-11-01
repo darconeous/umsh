@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 use core::cell::RefCell;
 use core::num::NonZeroU32;
 
-use umsh_core::options::TraceSignalEntry;
+use umsh_core::options::HopSignal;
 use umsh_core::{ChannelId, NodeHint, PublicKey, RouterHint};
 use umsh_mac::{CachedRoute, LocalIdentityId, SendOptions};
 
@@ -158,16 +158,20 @@ pub struct PongMetadata {
     pub round_trip_ms: u64,
     /// Radio links the response crossed, counting the final one into this
     /// node: a direct reply is one hop. `None` when the reply was
-    /// source-routed without a trace route, which crosses hops nobody
+    /// source-routed without a complete trace, which crosses hops nobody
     /// recorded. See
     /// [`ReceivedPacketRef::hop_count`](umsh_mac::ReceivedPacketRef::hop_count).
     pub hop_count: Option<u8>,
+    /// The repeaters the response's trace names, nearest this node first.
+    /// When the trace was truncated in transit, only the nearest ones.
     pub route_hints: Vec<RouterHint>,
     /// How each repeater in `route_hints` heard the node beyond it, entry
     /// for entry: the first is how the repeater nearest this node heard the
-    /// one before it. Empty unless the response carried a trace signal that
-    /// pairs one-to-one with its trace route.
-    pub trace_signal: Vec<TraceSignalEntry>,
+    /// one before it. Empty when the trace lost its signal in transit.
+    pub trace_signal: Vec<HopSignal>,
+    /// Whether the trace lost its oldest hops in transit, so `route_hints`
+    /// is not the whole path.
+    pub trace_truncated: bool,
     pub rssi_dbm: Option<i16>,
     pub snr_centibels: Option<i16>,
     pub lqi: Option<u8>,
@@ -780,8 +784,7 @@ impl<M: MacBackend> LocalNode<M> {
             filters,
             rssi: packet.rssi(),
             snr: packet.snr(),
-            trace_route: packet.trace_route(),
-            trace_signal: packet.trace_signal(),
+            trace: packet.trace(),
         };
         self.state
             .borrow_mut()
@@ -888,11 +891,8 @@ impl<M: MacBackend> LocalNode<M> {
         // path. Asking costs nothing on a reply no repeater may carry—the
         // MAC drops the request rather than airing an option that could only
         // arrive empty.
-        if plan.trace_route {
-            options = options.with_trace_route();
-        }
-        if plan.trace_signal {
-            options = options.with_trace_signal();
+        if plan.trace {
+            options = options.with_trace();
         }
         if plan.no_flood {
             // The solicitation named no single node, so it was allowed one hop
@@ -1043,7 +1043,7 @@ impl<M: MacBackend> LocalNode<M> {
                 // The trace the request accumulates is the answering
                 // strangers' only path home: a broadcast teaches the MAC no
                 // route, and the reply carries no flood budget.
-                .with_trace_route();
+                .with_trace();
         }
         // Last, always: a source route back-fills a flood budget from its
         // length, and any FHOPS field at all makes the far end drop an
@@ -1354,24 +1354,22 @@ impl<M: MacBackend> LocalNode<M> {
         if let Some(idx) = idx {
             let ping = state.pending_pings.swap_remove(idx);
             let rtt_ms = now_ms.saturating_sub(ping.sent_at_ms);
-            let route_hints = packet.trace_route_hints().collect::<Vec<_>>();
-            // Only a signal that pairs with the trace entry for entry says
-            // which hop each reading belongs to.
-            let trace_signal = packet
-                .trace_signal()
-                .filter(|signal| signal.len() == 2 * route_hints.len())
-                .map(|signal| {
-                    signal
-                        .chunks_exact(2)
-                        .map(|entry| TraceSignalEntry::from_bytes([entry[0], entry[1]]))
-                        .collect()
-                })
-                .unwrap_or_default();
+            let trace = packet.trace();
+            let route_hints = trace
+                .iter()
+                .flat_map(|trace| trace.entries().map(|entry| entry.hint))
+                .collect::<Vec<_>>();
+            let trace_signal = trace
+                .filter(|trace| trace.has_signal())
+                .iter()
+                .flat_map(|trace| trace.entries().filter_map(|entry| entry.signal))
+                .collect();
             let metadata = PongMetadata {
                 round_trip_ms: rtt_ms,
                 hop_count: packet.hop_count(),
                 route_hints,
                 trace_signal,
+                trace_truncated: trace.is_some_and(|trace| !trace.is_complete()),
                 rssi_dbm: packet.rssi(),
                 snr_centibels: packet.snr().map(|snr| snr.as_centibels()),
                 lqi: packet.lqi().map(core::num::NonZeroU8::get),

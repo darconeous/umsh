@@ -1,6 +1,9 @@
 use core::ops::Range;
 
-use crate::{EncodeError, ParseError, options::OptionDecoder};
+use crate::{
+    EncodeError, ParseError,
+    options::{OptionDecoder, TraceRef},
+};
 
 /// Current UMSH packet version encoded in the FCF high bits.
 pub const UMSH_VERSION: u8 = 0b11;
@@ -600,16 +603,14 @@ impl SecInfo {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OptionNumber {
     RegionCode,
-    TraceRoute,
     SourceRoute,
     OperatorCallsign,
     MinRssi,
     RouteRetry,
-    StationCallsign,
+    Trace,
     AckMic,
     MinSnr,
-    TraceSignal,
-    LegacyAckTag,
+    StationCallsign,
     Unknown(u16),
 }
 
@@ -618,23 +619,30 @@ impl OptionNumber {
     pub fn as_u16(self) -> u16 {
         match self {
             Self::RegionCode => 11,
-            Self::TraceRoute => 2,
             Self::SourceRoute => 3,
             Self::OperatorCallsign => 4,
             Self::MinRssi => 5,
             Self::RouteRetry => 6,
-            Self::StationCallsign => 7,
+            Self::Trace => 7,
             Self::AckMic => 8,
             Self::MinSnr => 9,
-            Self::TraceSignal => 10,
-            Self::LegacyAckTag => 254,
+            Self::StationCallsign => 15,
             Self::Unknown(value) => value,
         }
     }
 
-    /// Return whether the option is critical when unknown.
-    pub fn is_critical(self) -> bool {
+    /// Return whether a repeater that does not recognize the option, or
+    /// cannot interpret its value, must not forward the frame (bit 0).
+    pub fn is_forwarding_critical(self) -> bool {
         self.as_u16() & 1 != 0
+    }
+
+    /// Return whether an endpoint that does not recognize the option, or
+    /// cannot interpret its value, must not accept, deliver, or acknowledge
+    /// the frame: bits 2 and 3 set on a static option. A dynamic option is
+    /// never delivery-critical.
+    pub fn is_delivery_critical(self) -> bool {
+        self.as_u16() & 0xE == 0xC
     }
 
     /// Return whether the option is considered dynamic for AAD purposes.
@@ -646,12 +654,7 @@ impl OptionNumber {
     pub fn is_singleton(self) -> bool {
         matches!(
             self,
-            Self::TraceRoute
-                | Self::SourceRoute
-                | Self::MinRssi
-                | Self::RouteRetry
-                | Self::MinSnr
-                | Self::TraceSignal
+            Self::Trace | Self::SourceRoute | Self::MinRssi | Self::RouteRetry | Self::MinSnr
         )
     }
 }
@@ -659,17 +662,15 @@ impl OptionNumber {
 impl From<u16> for OptionNumber {
     fn from(value: u16) -> Self {
         match value {
-            2 => Self::TraceRoute,
             3 => Self::SourceRoute,
             4 => Self::OperatorCallsign,
             5 => Self::MinRssi,
             6 => Self::RouteRetry,
-            7 => Self::StationCallsign,
+            7 => Self::Trace,
             8 => Self::AckMic,
             9 => Self::MinSnr,
-            10 => Self::TraceSignal,
+            15 => Self::StationCallsign,
             11 => Self::RegionCode,
-            254 => Self::LegacyAckTag,
             other => Self::Unknown(other),
         }
     }
@@ -987,6 +988,72 @@ impl PacketHeader {
     pub fn is_beacon(&self) -> bool {
         self.packet_type() == PacketType::Broadcast && self.body_range.is_empty()
     }
+
+    /// The bytes the MIC's S2 component covers, which encryption also covers
+    /// when `E` is set.
+    ///
+    /// For multicast that is `SRC ‖ PAYLOAD` whether or not it is encrypted:
+    /// the source address sits in the same place on the wire either way and
+    /// never enters the AAD. For every other type it is the payload.
+    pub fn protected_range(&self) -> Range<usize> {
+        match (self.packet_type(), self.source) {
+            (PacketType::Multicast, SourceAddrRef::Hint(_) | SourceAddrRef::FullKeyAt { .. }) => {
+                let src_len = crate::packet::source_len(self.fcf.full_source());
+                (self.body_range.start - src_len)..self.body_range.end
+            }
+            _ => self.body_range.clone(),
+        }
+    }
+
+    /// Where a blind unicast's `DST ‖ SRC` address block sits in the frame,
+    /// encrypted or not. `None` for every other packet type.
+    pub fn blind_addr_range(&self) -> Option<Range<usize>> {
+        match self.packet_type() {
+            PacketType::BlindUnicast | PacketType::BlindUnicastAckReq => {
+                let len = 3 + source_len(self.fcf.full_source());
+                let end = self.body_range.start;
+                Some(end.checked_sub(len)?..end)
+            }
+            _ => None,
+        }
+    }
+}
+
+/// A blind unicast's address block in plaintext: `DST (3) ‖ SRC (3 or 32)`.
+///
+/// The AAD of a blind unicast covers these bytes in plaintext whether or not
+/// they are encrypted on the wire, so [`feed_aad`] takes them as a value
+/// rather than reading the frame, where they may still be ciphertext.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BlindAddr {
+    bytes: [u8; 35],
+    len: u8,
+}
+
+impl BlindAddr {
+    /// Copy a plaintext address block. Returns `None` unless `bytes` is 6 or
+    /// 35 bytes long.
+    pub fn from_plaintext(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() != 6 && bytes.len() != 35 {
+            return None;
+        }
+        let mut out = [0u8; 35];
+        out[..bytes.len()].copy_from_slice(bytes);
+        Some(Self {
+            bytes: out,
+            len: bytes.len() as u8,
+        })
+    }
+
+    /// The plaintext `DST ‖ SRC` bytes.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes[..usize::from(self.len)]
+    }
+
+    /// The destination hint.
+    pub fn dst(&self) -> NodeHint {
+        NodeHint([self.bytes[0], self.bytes[1], self.bytes[2]])
+    }
 }
 
 /// Default Minimum RSSI threshold (dBm) when the option is present with a
@@ -1001,24 +1068,52 @@ pub const DEFAULT_MIN_SNR_DB: i8 = -3;
 pub struct ParsedOptions {
     pub region_code: Option<[u8; 2]>,
     pub source_route: Option<Range<usize>>,
-    pub trace_route: Option<Range<usize>>,
-    pub trace_signal: Option<Range<usize>>,
+    /// A well-formed Trace option's value; read it through
+    /// [`Self::trace`].
+    pub trace: Option<Range<usize>>,
     pub min_rssi: Option<i16>,
     pub min_snr: Option<i8>,
     pub route_retry: bool,
-    /// A MAC ack's tag uses the legacy construction (option 254). A flag:
-    /// meaningful only on a MAC ack, ignored elsewhere.
-    pub legacy_ack_tag: bool,
     /// Some option, known or not, enters the AAD.
     pub has_static: bool,
-    pub has_unknown_critical: bool,
-    /// A recognized critical option whose value is malformed, or a
-    /// critical singleton that appears more than once. Forwarding treats
-    /// it like an unrecognized critical option.
-    pub has_malformed_critical: bool,
+    /// An unrecognized forwarding-critical option.
+    pub has_unknown_forwarding_critical: bool,
+    /// A recognized forwarding-critical option whose value is malformed,
+    /// or a forwarding-critical singleton that appears more than once.
+    /// Forwarding treats it like an unrecognized one.
+    pub has_malformed_forwarding_critical: bool,
+    /// An unrecognized delivery-critical option.
+    pub has_unknown_delivery_critical: bool,
+    /// A recognized delivery-critical option whose value is malformed, or
+    /// a delivery-critical singleton that appears more than once.
+    pub has_malformed_delivery_critical: bool,
 }
 
 impl ParsedOptions {
+    /// Whether a repeater must refuse to forward the frame.
+    pub fn refuses_forwarding(&self) -> bool {
+        self.has_unknown_forwarding_critical || self.has_malformed_forwarding_critical
+    }
+
+    /// Whether an endpoint must refuse to accept, deliver, or acknowledge
+    /// the frame. MAC acks are exempt.
+    pub fn refuses_delivery(&self) -> bool {
+        self.has_unknown_delivery_critical || self.has_malformed_delivery_critical
+    }
+
+    /// The frame's trace, parsed from `frame`, the buffer these options
+    /// were extracted from.
+    pub fn trace<'a>(&self, frame: &'a [u8]) -> Option<TraceRef<'a>> {
+        TraceRef::parse(frame.get(self.trace.clone()?)?)
+    }
+
+    /// Record a recognized option whose value or repetition is malformed,
+    /// in each of the option's own classes.
+    fn mark_malformed(&mut self, option: OptionNumber) {
+        self.has_malformed_forwarding_critical |= option.is_forwarding_critical();
+        self.has_malformed_delivery_critical |= option.is_delivery_critical();
+    }
+
     pub fn extract(buf: &[u8], range: Range<usize>) -> Result<Self, ParseError> {
         let mut parsed = Self::default();
         if range.is_empty() {
@@ -1026,9 +1121,10 @@ impl ParsedOptions {
         }
         let options = &buf[range.clone()];
         let mut decoder = OptionDecoder::new(options);
-        // Singletons already seen, by option number. A repeated critical
-        // singleton is ambiguous and refuses forwarding; a repeated
-        // non-critical one is read from its first occurrence.
+        // Singletons already seen, by option number. Trace and Route Retry
+        // are read from their first occurrence (and a forwarder carries only
+        // that one); any other repeated singleton is ambiguous and is
+        // malformed in its classes.
         let mut seen = 0u16;
         // Driven by hand rather than `for`: the value's offset comes from
         // the decoder's own position, which a `for` loop would move.
@@ -1044,8 +1140,8 @@ impl ParsedOptions {
             if option.is_singleton() {
                 let bit = 1u16 << number;
                 if seen & bit != 0 {
-                    if option.is_critical() {
-                        parsed.has_malformed_critical = true;
+                    if !matches!(option, OptionNumber::Trace | OptionNumber::RouteRetry) {
+                        parsed.mark_malformed(option);
                     }
                     continue;
                 }
@@ -1055,17 +1151,15 @@ impl ParsedOptions {
                 OptionNumber::RegionCode if value.len() == 2 => {
                     parsed.region_code = Some([value[0], value[1]]);
                 }
-                OptionNumber::RegionCode => parsed.has_malformed_critical = true,
-                OptionNumber::TraceRoute => parsed.trace_route = Some(value_range),
-                OptionNumber::TraceSignal => parsed.trace_signal = Some(value_range),
+                OptionNumber::RegionCode => parsed.mark_malformed(option),
+                OptionNumber::Trace if TraceRef::parse(value).is_some() => {
+                    parsed.trace = Some(value_range)
+                }
+                OptionNumber::Trace => parsed.mark_malformed(option),
                 OptionNumber::SourceRoute => parsed.source_route = Some(value_range),
                 // A flag: its presence is the meaning. Senders send it
                 // empty; a value is reserved and does not hide the flag.
                 OptionNumber::RouteRetry => parsed.route_retry = true,
-                // Also a flag. Not a singleton: its number is past the
-                // range the singleton bitmap tracks, and a repeat changes
-                // nothing.
-                OptionNumber::LegacyAckTag => parsed.legacy_ack_tag = true,
                 // Minimum RSSI (option 5): unsigned 1-byte value read as a
                 // negative dBm threshold (e.g. 130 → -130 dBm). A zero-length
                 // value selects the default threshold. Longer values are
@@ -1084,10 +1178,11 @@ impl ParsedOptions {
                         None => DEFAULT_MIN_SNR_DB,
                     });
                 }
-                OptionNumber::MinRssi | OptionNumber::MinSnr => {
-                    parsed.has_malformed_critical = true
+                OptionNumber::MinRssi | OptionNumber::MinSnr => parsed.mark_malformed(option),
+                OptionNumber::Unknown(_) => {
+                    parsed.has_unknown_forwarding_critical |= option.is_forwarding_critical();
+                    parsed.has_unknown_delivery_critical |= option.is_delivery_critical();
                 }
-                OptionNumber::Unknown(raw) if raw & 1 != 0 => parsed.has_unknown_critical = true,
                 _ => {}
             }
         }
@@ -1106,34 +1201,27 @@ mod parsed_options_tests {
         let buf = [0x61u8, 0x2A];
         let parsed = ParsedOptions::extract(&buf, 0..buf.len()).unwrap();
         assert!(parsed.route_retry);
-        assert!(!parsed.has_malformed_critical);
+        assert!(!parsed.has_malformed_forwarding_critical);
     }
 
     #[test]
-    fn the_legacy_ack_tag_marker_is_a_dynamic_flag() {
-        // Trace Route (2), then option 254: delta 252 is nibble 13 plus one
-        // extended byte (252 - 13), length 0.
-        let buf = [0x20u8, 0xD0, 239];
-        let parsed = ParsedOptions::extract(&buf, 0..buf.len()).unwrap();
-        assert!(parsed.legacy_ack_tag);
-        assert!(!parsed.has_static, "neither option enters the AAD");
-        assert!(OptionNumber::LegacyAckTag.is_dynamic());
-        assert!(!OptionNumber::LegacyAckTag.is_critical());
-
+    fn only_static_options_count_as_static() {
+        // Trace (7) is dynamic.
+        let parsed = ParsedOptions::extract(&[0x70], 0..1).unwrap();
+        assert!(!parsed.has_static);
         // Operator Callsign (4) is static.
         let buf = [0x41u8, 0x99];
         let parsed = ParsedOptions::extract(&buf, 0..buf.len()).unwrap();
         assert!(parsed.has_static);
-        assert!(!parsed.legacy_ack_tag);
     }
 
     #[test]
     fn a_repeated_non_critical_singleton_is_read_from_its_first_occurrence() {
-        // Trace Route (2) twice: delta 2 then delta 0, two bytes each.
-        let buf = [0x22u8, 0xA1, 0xA2, 0x02, 0xB1, 0xB2];
+        // Trace (7) twice: delta 7 then delta 0, one record each.
+        let buf = [0x74u8, 0xA1, 0xA2, 0x00, 0x00, 0x04, 0xB1, 0xB2, 0x00, 0x00];
         let parsed = ParsedOptions::extract(&buf, 0..buf.len()).unwrap();
-        assert_eq!(parsed.trace_route, Some(1..3));
-        assert!(!parsed.has_malformed_critical);
+        assert_eq!(parsed.trace, Some(1..5));
+        assert!(!parsed.has_malformed_forwarding_critical);
     }
 
     #[test]
@@ -1142,11 +1230,11 @@ mod parsed_options_tests {
         let buf = [0x32u8, 0xA1, 0xA2, 0x02, 0xB1, 0xB2];
         let parsed = ParsedOptions::extract(&buf, 0..buf.len()).unwrap();
         assert_eq!(parsed.source_route, Some(1..3));
-        assert!(parsed.has_malformed_critical);
+        assert!(parsed.has_malformed_forwarding_critical);
         // Region Code (11) is not a singleton: two are a list.
         let buf = [0xB2u8, 0x78, 0x53, 0x02, 0x52, 0x42];
         let parsed = ParsedOptions::extract(&buf, 0..buf.len()).unwrap();
-        assert!(!parsed.has_malformed_critical);
+        assert!(!parsed.has_malformed_forwarding_critical);
     }
 
     #[test]
@@ -1187,8 +1275,8 @@ mod parsed_options_tests {
         let buf = [0x52u8, 0x00, 0x82];
         let parsed = ParsedOptions::extract(&buf, 0..buf.len()).unwrap();
         assert_eq!(parsed.min_rssi, None);
-        assert!(parsed.has_malformed_critical);
-        assert!(!parsed.has_unknown_critical);
+        assert!(parsed.has_malformed_forwarding_critical);
+        assert!(!parsed.has_unknown_forwarding_critical);
     }
 
     #[test]
@@ -1196,7 +1284,7 @@ mod parsed_options_tests {
         let buf = [0x92u8, 0x00, 0xFD];
         let parsed = ParsedOptions::extract(&buf, 0..buf.len()).unwrap();
         assert_eq!(parsed.min_snr, None);
-        assert!(parsed.has_malformed_critical);
+        assert!(parsed.has_malformed_forwarding_critical);
     }
 
     #[test]
@@ -1210,15 +1298,61 @@ mod parsed_options_tests {
             let used = encoder.finish();
             let parsed = ParsedOptions::extract(&buf, 0..used).unwrap();
             assert_eq!(parsed.region_code, None, "len {len}");
-            assert!(parsed.has_malformed_critical, "len {len}");
+            assert!(parsed.has_malformed_forwarding_critical, "len {len}");
         }
+    }
+
+    #[test]
+    fn criticality_classes_follow_the_low_four_bits() {
+        let classes = |n: u16| {
+            let option = OptionNumber::Unknown(n);
+            (
+                option.is_forwarding_critical(),
+                option.is_delivery_critical(),
+            )
+        };
+        assert_eq!(classes(1), (true, false));
+        assert_eq!(classes(12), (false, true));
+        assert_eq!(classes(13), (true, true));
+        assert_eq!(
+            classes(15),
+            (true, false),
+            "dynamic, so never delivery-critical"
+        );
+        for n in [6, 14, 16, 22] {
+            assert_eq!(classes(n), (false, false), "option {n}");
+        }
+        assert_eq!(classes(28), (false, true));
+    }
+
+    #[test]
+    fn unknown_options_set_each_of_their_classes() {
+        // Option 12, empty: delivery-critical only.
+        let parsed = ParsedOptions::extract(&[0xC0], 0..1).unwrap();
+        assert!(parsed.refuses_delivery() && !parsed.refuses_forwarding());
+        // Option 13, empty: both.
+        let parsed = ParsedOptions::extract(&[0xD0, 0x00], 0..2).unwrap();
+        assert!(parsed.refuses_delivery() && parsed.refuses_forwarding());
+        // Option 1, empty: forwarding-critical only.
+        let parsed = ParsedOptions::extract(&[0x10], 0..1).unwrap();
+        assert!(!parsed.refuses_delivery() && parsed.refuses_forwarding());
+    }
+
+    #[test]
+    fn a_malformed_trace_refuses_forwarding_but_not_delivery() {
+        // Trace (7) with a 2-byte value: neither records nor a sentinel form.
+        let buf = [0x72u8, 0xA1, 0xA2];
+        let parsed = ParsedOptions::extract(&buf, 0..buf.len()).unwrap();
+        assert_eq!(parsed.trace, None);
+        assert!(parsed.refuses_forwarding());
+        assert!(!parsed.refuses_delivery());
     }
 
     #[test]
     fn well_formed_options_are_not_malformed() {
         let buf = [0x51u8, 130, 0x41, 0xFD];
         let parsed = ParsedOptions::extract(&buf, 0..buf.len()).unwrap();
-        assert!(!parsed.has_malformed_critical);
+        assert!(!parsed.has_malformed_forwarding_critical);
     }
 }
 
@@ -1226,14 +1360,83 @@ pub fn iter_options<'a>(buf: &'a [u8], range: Range<usize>) -> OptionDecoder<'a>
     OptionDecoder::new(&buf[range])
 }
 
-pub fn feed_aad(header: &PacketHeader, packet_buf: &[u8], mut sink: impl FnMut(&[u8])) {
+/// Stream a packet's canonical associated data into `sink`.
+///
+/// The AAD is the packet's header fields in wire order, without `FHOPS` (and
+/// with `H` cleared), then the static options as `number (2) ‖ length (2) ‖
+/// value` records, then the two-byte terminator `0xFFFF`:
+///
+/// | Family | AAD |
+/// |---|---|
+/// | Broadcast | `FCF ‖ SRC ‖ options ‖ FFFF` |
+/// | MAC ack | `FCF ‖ options ‖ FFFF` |
+/// | Unicast | `FCF ‖ DST ‖ SRC ‖ SECINFO ‖ options ‖ FFFF` |
+/// | Multicast | `FCF ‖ CHANNEL ‖ SECINFO ‖ options ‖ FFFF` |
+/// | Blind unicast | `FCF ‖ CHANNEL ‖ SECINFO ‖ options ‖ FFFF ‖ DST ‖ SRC` |
+///
+/// The packet format is self-describing from left to right, and the
+/// terminator restores the delimiter the record re-encoding drops, so the AAD
+/// fixes its own end. No static record can begin with `0xFFFF`: that number is
+/// dynamic, and dynamic options never enter the AAD. Multicast's `SRC` is
+/// never here; it is the start of S2 (see [`PacketHeader::protected_range`]).
+///
+/// A blind unicast's address block enters in plaintext whether or not it is
+/// encrypted on the wire, so it is passed in as `blind_addr` and is required
+/// for that family. An option block that fails to decode is an error rather
+/// than a silently shortened AAD.
+pub fn feed_aad(
+    header: &PacketHeader,
+    packet_buf: &[u8],
+    blind_addr: Option<&BlindAddr>,
+    mut sink: impl FnMut(&[u8]),
+) -> Result<(), ParseError> {
     sink(&[header.fcf.aad_byte()]);
+    let feed_source = |sink: &mut dyn FnMut(&[u8])| -> Result<(), ParseError> {
+        match header.source {
+            SourceAddrRef::Hint(hint) => sink(&hint.0),
+            SourceAddrRef::FullKeyAt { offset } => sink(
+                packet_buf
+                    .get(offset..offset + 32)
+                    .ok_or(ParseError::Truncated)?,
+            ),
+            SourceAddrRef::Encrypted { .. } | SourceAddrRef::None => {
+                return Err(ParseError::Truncated);
+            }
+        }
+        Ok(())
+    };
+    let feed_sec_info = |sink: &mut dyn FnMut(&[u8])| -> Result<(), ParseError> {
+        let sec_info = header.sec_info.ok_or(ParseError::Truncated)?;
+        let mut buf = [0u8; 7];
+        let len = sec_info
+            .encode(&mut buf)
+            .map_err(|_| ParseError::Truncated)?;
+        sink(&buf[..len]);
+        Ok(())
+    };
+
+    let blind = matches!(
+        header.packet_type(),
+        PacketType::BlindUnicast | PacketType::BlindUnicastAckReq
+    );
+    match header.packet_type() {
+        PacketType::Broadcast => feed_source(&mut sink)?,
+        PacketType::MacAck => {}
+        PacketType::Unicast | PacketType::UnicastAckReq => {
+            sink(&header.dst.ok_or(ParseError::Truncated)?.0);
+            feed_source(&mut sink)?;
+            feed_sec_info(&mut sink)?;
+        }
+        PacketType::Multicast | PacketType::BlindUnicast | PacketType::BlindUnicastAckReq => {
+            sink(&header.channel.ok_or(ParseError::Truncated)?.0);
+            feed_sec_info(&mut sink)?;
+        }
+        PacketType::Reserved5 => return Err(ParseError::MalformedOption),
+    }
+
     for option in iter_options(packet_buf, header.options_range.clone()) {
-        let Ok((number, value)) = option else {
-            return;
-        };
-        let option_number = OptionNumber::from(number);
-        if option_number.is_dynamic() {
+        let (number, value) = option?;
+        if OptionNumber::from(number).is_dynamic() {
             continue;
         }
         let mut tl = [0u8; 4];
@@ -1242,25 +1445,16 @@ pub fn feed_aad(header: &PacketHeader, packet_buf: &[u8], mut sink: impl FnMut(&
         sink(&tl);
         sink(value);
     }
+    sink(&[0xFF, 0xFF]);
 
-    if let Some(dst) = header.dst {
-        sink(&dst.0);
+    if blind {
+        let addr = blind_addr.ok_or(ParseError::MissingAddressBlock)?;
+        if addr.as_bytes().len() != 3 + source_len(header.fcf.full_source()) {
+            return Err(ParseError::MissingAddressBlock);
+        }
+        sink(addr.as_bytes());
     }
-    if let Some(channel) = header.channel {
-        sink(&channel.0);
-    }
-    match header.source {
-        SourceAddrRef::Hint(hint) => sink(&hint.0),
-        SourceAddrRef::FullKeyAt { offset } => sink(&packet_buf[offset..offset + 32]),
-        SourceAddrRef::Encrypted { .. } | SourceAddrRef::None => {}
-    }
-    if let Some(sec_info) = header.sec_info {
-        let mut buf = [0u8; 7];
-        let Ok(len) = sec_info.encode(&mut buf) else {
-            return;
-        };
-        sink(&buf[..len]);
-    }
+    Ok(())
 }
 
 fn ensure_len(buf: &[u8], offset: usize, len: usize) -> Result<(), ParseError> {

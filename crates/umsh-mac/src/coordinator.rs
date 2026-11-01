@@ -4,10 +4,10 @@ use hamaddr::HamAddr;
 use heapless::{Deque, LinearMap, Vec};
 use rand::{Rng, RngExt as _};
 use umsh_core::{
-    BuildError, ChannelId, ChannelKey, FloodHops, NodeHint, OptionNumber, PacketBuilder,
+    BlindAddr, BuildError, ChannelId, ChannelKey, FloodHops, NodeHint, OptionNumber, PacketBuilder,
     PacketHeader, PacketType, ParseError, ParsedOptions, PayloadType, PublicKey, RouteEvidence,
-    RouterHint, SourceAddrRef, UnsealedPacket, established_route_slack, feed_aad,
-    options::{OptionEncoder, TraceSignalEntry},
+    RouterHint, SourceAddrRef, UnsealedPacket, established_route_slack,
+    options::{HopSignal, OptionEncoder, TraceRecord, TraceRef},
 };
 use umsh_crypto::{
     AesProvider, CryptoEngine, CryptoError, DerivedChannelKeys, NodeIdentity, PairwiseKeys,
@@ -36,12 +36,12 @@ use crate::{
 };
 
 /// The nonce [`Mac::verify_nonce`] gives a held frame: the leading four
-/// bytes of a CMAC, under `key`, over the frame's ack trailer and the
+/// bytes of a CMAC, under `key`, over the frame's S2V output and the
 /// window it failed against.
 pub(crate) fn derive_verify_nonce<A: AesProvider, S: Sha256Provider>(
     crypto: &CryptoEngine<A, S>,
     key: &[u8; 32],
-    ack_trailer: &[u8; 8],
+    ack_v: &[u8; 16],
     window: &ReplayWindow,
 ) -> u32 {
     let last_accepted = window.last_accepted.to_be_bytes();
@@ -50,7 +50,7 @@ pub(crate) fn derive_verify_nonce<A: AesProvider, S: Sha256Provider>(
         key,
         &[
             VERIFY_NONCE_LABEL,
-            &ack_trailer[..],
+            &ack_v[..],
             &last_accepted[..],
             &established[..],
         ],
@@ -155,9 +155,10 @@ struct PendingCounterResync {
 struct HeldFrame<const FRAME: usize> {
     local_id: LocalIdentityId,
     peer_id: PeerId,
-    /// The trailer that would have acknowledged the frame. Its `ack_mic`
-    /// half is what the Verify Frame names.
-    ack_trailer: [u8; 8],
+    /// The frame's full S2V output, which its acknowledgment would have
+    /// been bound to. Its first four bytes, the `ack_mic`, are what the
+    /// Verify Frame names.
+    ack_v: [u8; 16],
     /// The frame as it arrived, still sealed.
     frame: Vec<u8, FRAME>,
     rx: RxInfo,
@@ -678,7 +679,7 @@ struct ForwardPlan {
     station_action: ForwardStationAction,
     /// Signal quality this repeater received the frame at, prepended to a
     /// trace-signal option so its entries pair with the trace-route hints.
-    signal: TraceSignalEntry,
+    signal: HopSignal,
 }
 
 /// Package a reception's physical-layer observations for delivery.
@@ -699,13 +700,13 @@ fn rx_metadata(rx: &RxInfo, received_at_ms: u64) -> crate::send::RxMetadata {
     }
 }
 
-fn trace_signal_entry(rx: &RxInfo) -> TraceSignalEntry {
+fn hop_signal(rx: &RxInfo) -> HopSignal {
     if rx.origin.is_measured() {
-        TraceSignalEntry::new(rx.rssi, rx.snr.as_centibels())
+        HopSignal::new(rx.rssi, rx.snr.as_centibels())
     } else {
         // A hop with no radio in it still owes the trace an entry, or every
         // reading after it pairs with the wrong hop.
-        TraceSignalEntry::POINT_TO_POINT
+        HopSignal::POINT_TO_POINT
     }
 }
 
@@ -1076,6 +1077,10 @@ pub struct MacCounters {
     /// one of this node's own repeats put back on the air without a hop
     /// added, or a repeater sharing this node's router hint.
     pub rx_own_hint: u32,
+    /// Frames addressed to this node, authenticated where they carry a
+    /// MIC, that it refused to accept, deliver, or acknowledge because
+    /// they carry a delivery-critical option it cannot interpret.
+    pub rx_delivery_refused: u32,
 }
 
 impl MacCounters {
@@ -1719,9 +1724,6 @@ impl<
         if let Some(hops) = options.flood_hops {
             builder = builder.flood_hops(hops);
         }
-        if options.trace_route && repeatable {
-            builder = builder.trace_route();
-        }
         // A route that constrains no hop is not attached: only a repeater
         // consuming the final hint may leave an empty SourceRoute option.
         if let Some(route) = options
@@ -1734,8 +1736,8 @@ impl<
         if let Some(callsign) = self.operating_policy.operator_callsign {
             builder = builder.option(OptionNumber::OperatorCallsign, callsign.as_trimmed_slice());
         }
-        if options.trace_signal && repeatable {
-            builder = builder.trace_signal();
+        if options.trace && repeatable {
+            builder = builder.trace();
         }
         if let Some(region_code) = options.region_code {
             builder = builder.region_code(region_code);
@@ -1821,9 +1823,6 @@ impl<
         if let Some(hops) = options.flood_hops {
             builder = builder.flood_hops(hops);
         }
-        if options.trace_route && repeatable {
-            builder = builder.trace_route();
-        }
         // A route that constrains no hop is not attached: only a repeater
         // consuming the final hint may leave an empty SourceRoute option.
         if let Some(route) = options
@@ -1836,8 +1835,8 @@ impl<
         if let Some(callsign) = self.operating_policy.operator_callsign {
             builder = builder.option(OptionNumber::OperatorCallsign, callsign.as_trimmed_slice());
         }
-        if options.trace_signal && repeatable {
-            builder = builder.trace_signal();
+        if options.trace && repeatable {
+            builder = builder.trace();
         }
         if let Some(region_code) = options.region_code {
             builder = builder.region_code(region_code);
@@ -1986,15 +1985,13 @@ impl<
         self.enqueue_mac_ack(from, peer_id, frame, true)
     }
 
-    /// A MAC ack frame. Zero `flood_hops` is no `FHOPS` field at all; a
-    /// trace route goes out with its trace signal.
+    /// A MAC ack frame. Zero `flood_hops` is no `FHOPS` field at all.
     ///
     /// A sealed ack is this node's own, so it carries the operator
-    /// callsign when one is configured. That is its only static option,
-    /// and the [tag construction] follows it: an ack with a static option
-    /// is sealed with the MIC; any other keeps the legacy tag and says so.
+    /// callsign when one is configured. That is its only static option, and
+    /// the [ack tag] covers it.
     ///
-    /// [tag construction]: https://darconeous.github.io/umsh/docs/protocol/ack-transition.html
+    /// [ack tag]: https://darconeous.github.io/umsh/docs/protocol/security.html#ack-tag-construction
     fn build_mac_ack<'a>(
         &self,
         buf: &'a mut [u8; FRAME],
@@ -2020,9 +2017,6 @@ impl<
         if flood_hops > 0 {
             builder = builder.flood_hops(flood_hops);
         }
-        if trace_route {
-            builder = builder.trace_route();
-        }
         if let Some(route) = source_route {
             builder = builder.source_route(route);
         }
@@ -2030,13 +2024,10 @@ impl<
             builder = builder.option(OptionNumber::OperatorCallsign, callsign.as_trimmed_slice());
         }
         if trace_route {
-            builder = builder.trace_signal();
+            builder = builder.trace();
         }
         for region in regions {
             builder = builder.region_code(*region);
-        }
-        if seal.is_some() && callsign.is_none() {
-            builder = builder.legacy_ack_tag();
         }
         let len = builder.build()?.len();
         if let Some((v, keys)) = seal {
@@ -2183,27 +2174,20 @@ impl<
             builder = builder.flood_hops(hops);
         }
         let traced = repeatable
-            && (options.trace_route
+            && (options.trace
                 || self.needs_route_discovery(peer_id, effective_source_route.as_ref()));
-        if traced {
-            builder = builder.trace_route();
-        }
         if let Some(route) = effective_source_route.as_ref() {
             builder = builder.source_route(route.as_slice());
         }
         if let Some(callsign) = self.operating_policy.operator_callsign {
             builder = builder.option(OptionNumber::OperatorCallsign, callsign.as_trimmed_slice());
         }
-        // Options go in ascending number order: Ack MIC (8) sits between
-        // the operator callsign (4) and the trace signal (10).
+        // Options go in ascending number order: Trace (7), then Ack MIC (8).
+        if traced {
+            builder = builder.trace();
+        }
         if let Some(ack_mic) = options.ack_mic {
             builder = builder.option(OptionNumber::AckMic, &ack_mic);
-        }
-        // A trace route goes out with its trace signal: a returned route is
-        // weighed by what each hop measured, and the hints alone say only
-        // which hops there were.
-        if repeatable && (options.trace_signal || traced) {
-            builder = builder.trace_signal();
         }
         if let Some(region_code) = options.region_code {
             builder = builder.region_code(region_code);
@@ -2376,27 +2360,20 @@ impl<
             builder = builder.flood_hops(hops);
         }
         let traced = repeatable
-            && (options.trace_route
+            && (options.trace
                 || self.needs_route_discovery(peer_id, effective_source_route.as_ref()));
-        if traced {
-            builder = builder.trace_route();
-        }
         if let Some(route) = effective_source_route.as_ref() {
             builder = builder.source_route(route.as_slice());
         }
         if let Some(callsign) = self.operating_policy.operator_callsign {
             builder = builder.option(OptionNumber::OperatorCallsign, callsign.as_trimmed_slice());
         }
-        // Options go in ascending number order: Ack MIC (8) sits between
-        // the operator callsign (4) and the trace signal (10).
+        // Options go in ascending number order: Trace (7), then Ack MIC (8).
+        if traced {
+            builder = builder.trace();
+        }
         if let Some(ack_mic) = options.ack_mic {
             builder = builder.option(OptionNumber::AckMic, &ack_mic);
-        }
-        // A trace route goes out with its trace signal: a returned route is
-        // weighed by what each hop measured, and the hints alone say only
-        // which hops there were.
-        if repeatable && (options.trace_signal || traced) {
-            builder = builder.trace_signal();
         }
         if let Some(region_code) = options.region_code {
             builder = builder.region_code(region_code);
@@ -3124,8 +3101,12 @@ impl<
         if !Self::payload_is_allowed(header.packet_type(), &buf[header.body_range.clone()]) {
             return false;
         }
+        let refused = self.refuse_delivery(&buf[..frame_len], header);
         let mut delivered = false;
         for (index, slot) in self.identities.iter().enumerate() {
+            if refused {
+                break;
+            }
             // An ephemeral identity takes only unicast addressed to it: a
             // broadcast reaches the long-term identity it answers for once,
             // not again through each of its sessions.
@@ -3185,7 +3166,7 @@ impl<
         // match against.
         self.cancel_forwards_for_ack_mic(&ack_trailer[..4], false);
         if let Some((index, receipt, target_peer)) = self.pending_answered_by(&buf[..frame_len])
-            && let Some((identity_id, receipt, via_route_retry, _)) =
+            && let Some((identity_id, receipt, via_route_retry)) =
                 self.complete_pending_ack(index, receipt)
         {
             // Every copy of one ack carries the same trailer: its tag covers
@@ -3241,15 +3222,19 @@ impl<
                 let Ok(keys) = self.ensure_peer_crypto(local_id, peer_id).await else {
                     continue;
                 };
-                let Ok(body_range) = self
-                    .crypto
-                    .open_packet(&mut buf[..frame_len], header, &keys)
+                let Ok(body_range) =
+                    self.crypto
+                        .open_packet(&mut buf[..frame_len], header, &keys, None)
                 else {
                     continue;
                 };
                 let payload = &buf[body_range.clone()];
                 if !Self::payload_is_allowed(header.packet_type(), payload) {
                     continue;
+                }
+                if self.refuse_delivery(&original[..frame_len], header) {
+                    handled = true;
+                    break;
                 }
                 if header.ack_requested()
                     && self.should_emit_destination_ack(&buf[..frame_len], header, rx)
@@ -3273,8 +3258,7 @@ impl<
                     // stale cache instead throws that away. A lost reply's
                     // re-ack floods whatever this installs.
                     self.learn_route_for_peer(peer_id, &buf[..frame_len], header, rx);
-                    let ack_v =
-                        self.received_ack_v(&buf[..frame_len], header, body_range.clone(), &keys);
+                    let ack_v = self.received_ack_v(&buf[..frame_len], header, None, &keys);
                     self.queue_received_mac_ack(
                         local_id,
                         peer_id,
@@ -3326,12 +3310,8 @@ impl<
                             if header.ack_requested()
                                 && self.should_emit_destination_ack(&buf[..frame_len], header, rx)
                             {
-                                let ack_v = self.received_ack_v(
-                                    &buf[..frame_len],
-                                    header,
-                                    body_range.clone(),
-                                    &keys,
-                                );
+                                let ack_v =
+                                    self.received_ack_v(&buf[..frame_len], header, None, &keys);
                                 self.queue_received_mac_ack(
                                     local_id,
                                     peer_id,
@@ -3385,14 +3365,11 @@ impl<
                                 // falls behind the baseline the resync sets.
                                 if self.is_counter_discontinuity(local_id, peer_id, header) {
                                     if header.ack_requested() {
-                                        let ack_trailer = self.crypto.compute_ack_trailer(
-                                            &self.received_ack_v(
-                                                &buf[..frame_len],
-                                                header,
-                                                body_range.clone(),
-                                                &keys,
-                                            ),
-                                            &keys.k_enc,
+                                        let ack_v = self.received_ack_v(
+                                            &buf[..frame_len],
+                                            header,
+                                            None,
+                                            &keys,
                                         );
                                         if self
                                             .hold_and_verify(
@@ -3401,7 +3378,7 @@ impl<
                                                 peer_key,
                                                 ReplyCarriage::Unicast,
                                                 &original[..frame_len],
-                                                ack_trailer,
+                                                ack_v,
                                                 rx,
                                                 received_at_ms,
                                             )
@@ -3453,8 +3430,7 @@ impl<
                     && header.ack_requested()
                     && self.should_emit_destination_ack(&buf[..frame_len], header, rx)
                 {
-                    let ack_v =
-                        self.received_ack_v(&buf[..frame_len], header, body_range.clone(), &keys);
+                    let ack_v = self.received_ack_v(&buf[..frame_len], header, None, &keys);
                     self.queue_received_mac_ack(
                         local_id,
                         peer_id,
@@ -3538,9 +3514,11 @@ impl<
                 };
                 if let Ok(body_range) =
                     self.crypto
-                        .open_packet(&mut buf[..frame_len], header, &keys)
+                        .open_packet(&mut buf[..frame_len], header, &keys, None)
                 {
-                    if !Self::payload_is_allowed(header.packet_type(), &buf[body_range.clone()]) {
+                    if !Self::payload_is_allowed(header.packet_type(), &buf[body_range.clone()])
+                        || self.refuse_delivery(&original[..frame_len], header)
+                    {
                         false
                     } else if let Some(source) =
                         self.resolve_multicast_source(&buf[..frame_len], header)
@@ -3636,13 +3614,14 @@ impl<
                 let mut handled = false;
                 for (resolved_channel_key, channel_keys) in channel_candidates {
                     buf[..frame_len].copy_from_slice(&original[..frame_len]);
-                    let Ok((dst, source_addr)) = self.crypto.decrypt_blind_addr(
+                    let Ok(blind_addr) = self.crypto.decrypt_blind_addr(
                         &mut buf[..frame_len],
                         header,
                         &channel_keys,
                     ) else {
                         continue;
                     };
+                    let (dst, source_addr) = (blind_addr.dst, blind_addr.source);
                     let Some(local_id) = self.find_local_identity_for_dst(Some(dst)) else {
                         continue;
                     };
@@ -3659,6 +3638,7 @@ impl<
                             &mut buf[..frame_len],
                             header,
                             &blind_keys,
+                            Some(&blind_addr.addr),
                         ) {
                             Ok(range) => range,
                             Err(_) => continue,
@@ -3666,6 +3646,10 @@ impl<
                         let payload = &buf[body_range.clone()];
                         if !Self::payload_is_allowed(header.packet_type(), payload) {
                             continue;
+                        }
+                        if self.refuse_delivery(&original[..frame_len], header) {
+                            handled = true;
+                            break;
                         }
                         if header.ack_requested()
                             && self.should_emit_destination_ack(&buf[..frame_len], header, rx)
@@ -3687,7 +3671,7 @@ impl<
                             let ack_v = self.received_ack_v(
                                 &buf[..frame_len],
                                 header,
-                                body_range.clone(),
+                                Some(&blind_addr.addr),
                                 &blind_keys,
                             );
                             self.queue_received_mac_ack(
@@ -3753,7 +3737,7 @@ impl<
                                         let ack_v = self.received_ack_v(
                                             &buf[..frame_len],
                                             header,
-                                            body_range.clone(),
+                                            Some(&blind_addr.addr),
                                             &blind_keys,
                                         );
                                         self.queue_received_mac_ack(
@@ -3810,14 +3794,11 @@ impl<
                                         if self.is_counter_discontinuity(local_id, peer_id, header)
                                         {
                                             if header.ack_requested() {
-                                                let ack_trailer = self.crypto.compute_ack_trailer(
-                                                    &self.received_ack_v(
-                                                        &buf[..frame_len],
-                                                        header,
-                                                        body_range.clone(),
-                                                        &blind_keys,
-                                                    ),
-                                                    &blind_keys.k_enc,
+                                                let ack_v = self.received_ack_v(
+                                                    &buf[..frame_len],
+                                                    header,
+                                                    Some(&blind_addr.addr),
+                                                    &blind_keys,
                                                 );
                                                 if self
                                                     .hold_and_verify(
@@ -3826,7 +3807,7 @@ impl<
                                                         peer_key,
                                                         ReplyCarriage::Blind(&channel_keys),
                                                         &original[..frame_len],
-                                                        ack_trailer,
+                                                        ack_v,
                                                         rx,
                                                         received_at_ms,
                                                     )
@@ -3884,7 +3865,7 @@ impl<
                             let ack_v = self.received_ack_v(
                                 &buf[..frame_len],
                                 header,
-                                body_range.clone(),
+                                Some(&blind_addr.addr),
                                 &blind_keys,
                             );
                             self.queue_received_mac_ack(
@@ -3980,20 +3961,19 @@ impl<
             .await)
     }
 
-    /// Mark the pending send to `peer` whose legacy trailer
-    /// ([`PendingAck::ack_trailer`]) is `ack_trailer` as acknowledged.
+    /// Mark the pending send to `peer` whose S2V output
+    /// ([`PendingAck::ack_v`]) is `ack_v` as acknowledged.
     pub fn complete_ack(
         &mut self,
         peer: &PublicKey,
-        ack_trailer: &[u8; 8],
+        ack_v: &[u8; 16],
     ) -> Option<(LocalIdentityId, SendReceipt)> {
-        self.complete_ack_reporting_retry(peer, |pending| pending.ack_trailer == *ack_trailer)
-            .map(|(identity_id, receipt, _, _)| (identity_id, receipt))
+        self.complete_ack_reporting_retry(peer, |pending| pending.ack_v == *ack_v)
+            .map(|(identity_id, receipt, _)| (identity_id, receipt))
     }
 
     /// [`Self::complete_ack`], also reporting whether the attempt the ack
-    /// answered was the route-retry flood rather than the original send,
-    /// and the legacy trailer of the send it completed.
+    /// answered was the route-retry flood rather than the original send.
     ///
     /// `matches` is shown each outstanding send to `peer`. A piggy-backed
     /// ack, authenticated by its own packet, matches the `ack_mic` half.
@@ -4001,7 +3981,7 @@ impl<
         &mut self,
         peer: &PublicKey,
         matches: impl Fn(&PendingAck<FRAME>) -> bool,
-    ) -> Option<(LocalIdentityId, SendReceipt, bool, [u8; 8])> {
+    ) -> Option<(LocalIdentityId, SendReceipt, bool)> {
         let (index, receipt) = self
             .identities
             .iter()
@@ -4018,6 +3998,42 @@ impl<
         self.complete_pending_ack(index, receipt)
     }
 
+    /// The trailer of a bare MAC ack answering `receipt`, sealed under the
+    /// keys the send went out with: what its destination would return.
+    #[cfg(test)]
+    pub(crate) fn ack_trailer_for_test(
+        &self,
+        local_id: LocalIdentityId,
+        receipt: &SendReceipt,
+    ) -> [u8; 8] {
+        let slot = self.identity(local_id).expect("a local identity");
+        let pending = slot.pending_ack(receipt).expect("an outstanding send");
+        let pairwise = self
+            .peer_registry
+            .lookup_by_key(&pending.peer)
+            .and_then(|(peer_id, _)| slot.peer_crypto().get(&peer_id))
+            .map(|state| state.pairwise_keys.clone())
+            .expect("pairwise keys for the peer");
+        let request = PacketHeader::parse(pending.resend.frame.as_slice()).unwrap();
+        let keys = match request.channel {
+            Some(channel_id) if request.fcf.packet_type() == PacketType::BlindUnicastAckReq => {
+                let channel = self.channels.lookup_by_id(&channel_id).next().unwrap();
+                self.crypto.derive_blind_keys(&pairwise, &channel.derived)
+            }
+            _ => pairwise,
+        };
+        let mut buf = [0u8; 16];
+        let len = PacketBuilder::new(&mut buf)
+            .mac_ack([0; 8])
+            .build()
+            .unwrap()
+            .len();
+        self.crypto
+            .seal_mac_ack(&keys, &pending.ack_v, &mut buf[..len])
+            .unwrap();
+        buf[len - 8..len].try_into().unwrap()
+    }
+
     /// The outstanding send a standalone MAC ack answers, found by its
     /// `ack_mic` and verified under the keys the send was sealed with.
     fn pending_answered_by(&self, ack: &[u8]) -> Option<(usize, SendReceipt, PublicKey)> {
@@ -4030,7 +4046,7 @@ impl<
                 let slot = slot.as_ref()?;
                 slot.pending_acks.iter().find_map(|(receipt, pending)| {
                     (pending.expects_ack()
-                        && pending.ack_trailer[..4] == *ack_mic
+                        && pending.ack_v[..4] == *ack_mic
                         && self.ack_verifies(slot, pending, ack))
                     .then_some((index, *receipt, pending.peer))
                 })
@@ -4062,15 +4078,10 @@ impl<
                 };
                 self.channels.lookup_by_id(&channel_id).any(|channel| {
                     let keys = self.crypto.derive_blind_keys(pairwise, &channel.derived);
-                    self.crypto
-                        .verify_mac_ack(&keys, &pending.ack_v, ack)
-                        .is_some()
+                    self.crypto.verify_mac_ack(&keys, &pending.ack_v, ack)
                 })
             }
-            _ => self
-                .crypto
-                .verify_mac_ack(pairwise, &pending.ack_v, ack)
-                .is_some(),
+            _ => self.crypto.verify_mac_ack(pairwise, &pending.ack_v, ack),
         }
     }
 
@@ -4081,12 +4092,11 @@ impl<
         &mut self,
         index: usize,
         receipt: SendReceipt,
-    ) -> Option<(LocalIdentityId, SendReceipt, bool, [u8; 8])> {
+    ) -> Option<(LocalIdentityId, SendReceipt, bool)> {
         let now_ms = self.clock.now_ms();
         let slot = self.identities.get_mut(index)?.as_mut()?;
         let pending = slot.pending_acks.remove(&receipt)?;
         let peer = &pending.peer;
-        let trailer = pending.ack_trailer;
         let via_route_retry = Self::frame_is_route_retry(pending.resend.frame.as_slice());
         // The acknowledgment of a Frame Verified: the requester
         // now holds our answer, so the counter its Verify Frame
@@ -4125,7 +4135,7 @@ impl<
         {
             self.post_tx_listen = None;
         }
-        Some((identity_id, receipt, via_route_retry, trailer))
+        Some((identity_id, receipt, via_route_retry))
     }
 
     /// Whether `frame` is a route-retry rebuild of an earlier send.
@@ -4676,12 +4686,14 @@ impl<
         options: &SendOptions,
     ) -> Result<SendReceipt, SendError> {
         let header = PacketHeader::parse(packet.as_bytes())?;
-        let full_mac = self.crypto.s2v_tag(
-            &keys.k_mic,
-            |cmac| feed_aad(&header, packet.as_bytes(), |chunk| cmac.update(chunk)),
-            packet.body(),
-        );
-        let ack_trailer = self.crypto.compute_ack_trailer(&full_mac, &keys.k_enc);
+        // Computed before sealing, while a blind unicast's address block is
+        // still plaintext.
+        let blind_addr = header
+            .blind_addr_range()
+            .and_then(|range| BlindAddr::from_plaintext(&packet.as_bytes()[range]));
+        let full_mac =
+            self.crypto
+                .packet_tag(&keys.k_mic, &header, packet.as_bytes(), blind_addr.as_ref())?;
         // Judged from the frame, not the requested options: whether the wait
         // for the ack includes a forwarding-confirmation phase depends on
         // whether the frame as built actually asks anyone to forward it.
@@ -4708,11 +4720,10 @@ impl<
         let slot = self.identity_mut(from).ok_or(SendError::IdentityMissing)?;
         let receipt = slot.next_receipt();
         let mut pending = if is_forwarded {
-            PendingAck::forwarded(ack_trailer, peer, resend)
+            PendingAck::forwarded(full_mac, peer, resend)
         } else {
-            PendingAck::direct(ack_trailer, peer, resend)
+            PendingAck::direct(full_mac, peer, resend)
         };
-        pending.ack_v = full_mac;
         pending.cached_route_revision = cached_route_revision;
         slot.try_insert_pending_ack(receipt, pending)
             .map_err(|_| SendError::PendingAckFull)?;
@@ -4724,9 +4735,9 @@ impl<
         local_id: LocalIdentityId,
         peer_key: &PublicKey,
     ) -> Result<PairwiseKeys, SendError> {
-        let shared_secret = {
+        let (shared_secret, local_key) = {
             let slot = self.identity(local_id).ok_or(SendError::IdentityMissing)?;
-            match slot.identity() {
+            let shared_secret = match slot.identity() {
                 LocalIdentity::LongTerm(identity) => identity
                     .agree(peer_key)
                     .await
@@ -4736,10 +4747,13 @@ impl<
                     .agree(peer_key)
                     .await
                     .map_err(|_| SendError::IdentityAgreementFailed)?,
-            }
+            };
+            (shared_secret, *slot.identity().public_key())
         };
 
-        Ok(self.crypto.derive_pairwise_keys(&shared_secret))
+        Ok(self
+            .crypto
+            .derive_pairwise_keys(&shared_secret, &local_key, peer_key))
     }
 
     fn effective_source_route(
@@ -5016,18 +5030,22 @@ impl<
 
     /// A received frame's full S2V output, V, which its acknowledgment's
     /// tag is bound to.
+    /// The full S2V output `V` of a frame that has just opened, which its
+    /// MAC ack binds to.
     fn received_ack_v(
         &self,
         buf: &[u8],
         header: &PacketHeader,
-        body_range: core::ops::Range<usize>,
+        blind_addr: Option<&BlindAddr>,
         keys: &PairwiseKeys,
     ) -> [u8; 16] {
-        self.crypto.s2v_tag(
-            &keys.k_mic,
-            |cmac| feed_aad(header, buf, |chunk| cmac.update(chunk)),
-            &buf[body_range],
-        )
+        // The frame opened with these same inputs, so this cannot fail.
+        self.crypto
+            .packet_tag(&keys.k_mic, header, buf, blind_addr)
+            .unwrap_or_else(|_| {
+                debug_assert!(false, "an opened frame's tag must recompute");
+                [0; 16]
+            })
     }
 
     fn accept_unicast_replay(
@@ -5214,10 +5232,8 @@ impl<
         // packet carried.
         let flooded = header.flood_hops.is_some_and(|hops| hops.accumulated() > 0);
         let usable_trace = options
-            .trace_route
-            .as_ref()
-            .and_then(|range| frame.get(range.clone()))
-            .and_then(|trace| self.source_route_from_trace(trace))
+            .trace(frame)
+            .and_then(|trace| self.source_route_from_trace(&trace))
             .is_some();
         // Nothing measured the way back, so it earns the slack an unmeasured
         // route does.
@@ -5232,7 +5248,7 @@ impl<
             local_id,
             peer_id,
             ack_trailer,
-            options.trace_route.is_some() || flooded,
+            options.trace.is_some() || flooded,
             regions,
             unknown_budget,
             retransmission,
@@ -5336,7 +5352,7 @@ impl<
     /// Frame Verified has to echo.
     ///
     /// Derived rather than stored. The boot key makes it unpredictable.
-    /// The held frame's trailer ties it to that frame, so a different frame
+    /// The held frame's S2V output ties it to that frame, so a different frame
     /// held in its place gets a nonce of its own. The window the frame
     /// failed against ties it to this exchange: a Frame Verified moves that
     /// window, so one recorded from an earlier exchange cannot release the
@@ -5345,7 +5361,7 @@ impl<
         &mut self,
         local_id: LocalIdentityId,
         peer_id: PeerId,
-        ack_trailer: &[u8; 8],
+        ack_v: &[u8; 16],
     ) -> Option<u32> {
         let verify_key = *self.verify_key.get_or_insert_with(|| {
             let mut key = [0u8; 32];
@@ -5360,7 +5376,7 @@ impl<
         Some(derive_verify_nonce(
             &self.crypto,
             &verify_key,
-            ack_trailer,
+            ack_v,
             window,
         ))
     }
@@ -5394,7 +5410,7 @@ impl<
         peer_key: PublicKey,
         carriage: ReplyCarriage<'_>,
         frame: &[u8],
-        ack_trailer: [u8; 8],
+        ack_v: [u8; 16],
         rx: &RxInfo,
         received_at_ms: u64,
     ) -> bool {
@@ -5406,14 +5422,14 @@ impl<
             .find(|held| held.local_id == local_id && held.peer_id == peer_id)
             && now_ms.saturating_sub(held.verify_sent_ms) < COUNTER_RESYNC_REQUEST_RETRY_MS
         {
-            return held.ack_trailer == ack_trailer;
+            return held.ack_v == ack_v;
         }
-        let Some(nonce) = self.verify_nonce(local_id, peer_id, &ack_trailer) else {
+        let Some(nonce) = self.verify_nonce(local_id, peer_id, &ack_v) else {
             return false;
         };
         let payload = Self::resync_command_payload(MAC_COMMAND_VERIFY_FRAME_ID, nonce);
         let mut ack_mic = [0u8; 4];
-        ack_mic.copy_from_slice(&ack_trailer[..4]);
+        ack_mic.copy_from_slice(&ack_v[..4]);
         let options = SendOptions::default().with_ack_mic(ack_mic);
         if self
             .send_response(local_id, &peer_key, carriage, &payload, &options)
@@ -5430,7 +5446,7 @@ impl<
         let held = HeldFrame {
             local_id,
             peer_id,
-            ack_trailer,
+            ack_v,
             frame: stored,
             rx: *rx,
             received_at_ms,
@@ -5483,8 +5499,8 @@ impl<
         }) else {
             return false;
         };
-        let ack_trailer = self.held_frames[index].ack_trailer;
-        if self.verify_nonce(local_id, peer_id, &ack_trailer) != Some(nonce) {
+        let ack_v = self.held_frames[index].ack_v;
+        if self.verify_nonce(local_id, peer_id, &ack_v) != Some(nonce) {
             return false;
         }
         let Some((counter, mic)) = Self::replay_metadata(header, frame) else {
@@ -5562,9 +5578,7 @@ impl<
         };
         let Some(vouched) = self.identity(local_id).and_then(|slot| {
             slot.pending_acks.iter().find_map(|(receipt, pending)| {
-                (pending.expects_ack()
-                    && pending.peer == peer_key
-                    && pending.ack_trailer[..4] == named)
+                (pending.expects_ack() && pending.peer == peer_key && pending.ack_v[..4] == named)
                     .then_some(*receipt)
             })
         }) else {
@@ -5812,11 +5826,8 @@ impl<
         let Ok(parsed) = ParsedOptions::extract(frame, header.options_range.clone()) else {
             return options;
         };
-        if parsed.trace_route.is_some() {
-            options = options.with_trace_route();
-        }
-        if parsed.trace_signal.is_some() {
-            options = options.with_trace_signal();
+        if parsed.trace.is_some() {
+            options = options.with_trace();
         }
         options
     }
@@ -6092,10 +6103,8 @@ impl<
         };
         let Some(hint) = ParsedOptions::extract(frame, header.options_range.clone())
             .ok()
-            .and_then(|options| options.trace_route)
-            .and_then(|range| frame.get(range))
-            .and_then(|trace| trace.get(..2))
-            .map(|hint| RouterHint([hint[0], hint[1]]))
+            .and_then(|options| options.trace(frame)?.entries().next())
+            .map(|entry| entry.hint)
         else {
             return;
         };
@@ -6162,7 +6171,7 @@ impl<
             None => &[],
         };
 
-        let Some(trace_range) = options.trace_route.clone() else {
+        let Some(trace) = options.trace(frame) else {
             // A source-routed packet—including one whose hints are all
             // consumed, since the emptied option is preserved for
             // provenance—spends flood budget only after the route runs out.
@@ -6188,7 +6197,7 @@ impl<
                     )])),
                     supersedes,
                     acknowledgment,
-                    last_hop: Some(trace_signal_entry(rx)),
+                    last_hop: Some(hop_signal(rx)),
                 },
                 Some(flood_hops) => RouteOffer {
                     route: CachedRoute::Flood {
@@ -6204,13 +6213,14 @@ impl<
                     // A flood nobody forwarded came off the peer's own
                     // transmitter, so this reception is its last hop. Past
                     // that, which repeater heard the peer is unknown.
-                    last_hop: (flood_hops.accumulated() == 0).then(|| trace_signal_entry(rx)),
+                    last_hop: (flood_hops.accumulated() == 0).then(|| hop_signal(rx)),
                 },
             });
         };
 
-        let trace = frame.get(trace_range)?;
-        if trace.len() % 2 != 0 || remaining.len() % 2 != 0 {
+        // A truncated trace names only the latest hops: no path to offer.
+        let traced_hints = trace.complete_hints()?;
+        if remaining.len() % 2 != 0 {
             return None;
         }
         // The way back is the stretch the frame has yet to cross, nearest
@@ -6224,8 +6234,11 @@ impl<
         // everything sent back. Only a repeater consuming the final hint
         // may leave an empty option behind, for provenance.
         let mut hints: Vec<RouterHint, MAX_SOURCE_ROUTE_HINTS> = Vec::new();
-        for pair in remaining.chunks_exact(2).rev().chain(trace.chunks_exact(2)) {
+        for pair in remaining.chunks_exact(2).rev() {
             hints.push(RouterHint([pair[0], pair[1]])).ok()?;
+        }
+        for hint in traced_hints {
+            hints.push(hint).ok()?;
         }
 
         // The hop into the nearest hint was measured here only if that hint
@@ -6239,21 +6252,12 @@ impl<
             Some(hint) => self.first_hop(*hint, first_inbound, now_ms),
             None => self.first_hop_to_peer(peer_id, first_inbound, now_ms),
         };
-        // Entry N of the trace signal is how hint N heard the transmitter
-        // before it, which is the hop after hint N on the way back. A list
-        // that does not pair entry for entry with the trace cannot be
-        // attributed, so its hops count as unmeasured.
-        let signal = options
-            .trace_signal
-            .as_ref()
-            .and_then(|range| frame.get(range.clone()))
-            .filter(|signal| signal.len() == trace.len());
-        let traveled = (0..trace.len()).step_by(2).map(|at| match signal {
-            Some(signal) => {
-                Hop::from_trace_entry(TraceSignalEntry::from_bytes([signal[at], signal[at + 1]]))
-            }
-            None => Hop::Unmeasured,
-        });
+        // Entry N's signal is how hint N heard the transmitter before it,
+        // which is the hop after hint N on the way back. A hints-only trace
+        // measured nothing, so its hops count as unmeasured.
+        let traveled = trace
+            .entries()
+            .map(|entry| entry.signal.map_or(Hop::Unmeasured, Hop::from_trace_entry));
         let untraveled = core::iter::repeat_n(Hop::Unmeasured, remaining.len() / 2);
         let score = path_score(core::iter::once(first).chain(untraveled).chain(traveled));
 
@@ -6263,14 +6267,9 @@ impl<
         // measured it against. Otherwise the earliest trace entry, at the
         // end of the list, is how the first repeater heard the peer.
         let last_hop = if hints.is_empty() {
-            Some(trace_signal_entry(rx))
-        } else if trace.is_empty() {
-            None
+            Some(hop_signal(rx))
         } else {
-            signal.map(|signal| {
-                let at = signal.len() - 2;
-                TraceSignalEntry::from_bytes([signal[at], signal[at + 1]])
-            })
+            trace.entries().last().and_then(|entry| entry.signal)
         };
 
         Some(RouteOffer {
@@ -6421,6 +6420,19 @@ impl<
         }
     }
 
+    /// Whether an endpoint refuses a frame that reached it: one carrying a
+    /// delivery-critical option this node cannot interpret is not
+    /// accepted, delivered, or acknowledged. Counted. MAC acks never come
+    /// here, and forwarding is decided on its own.
+    fn refuse_delivery(&mut self, frame: &[u8], header: &PacketHeader) -> bool {
+        let refused = ParsedOptions::extract(frame, header.options_range.clone())
+            .is_ok_and(|options| options.refuses_delivery());
+        if refused {
+            MacCounters::bump(&mut self.counters.rx_delivery_refused);
+        }
+        refused
+    }
+
     fn payload_is_allowed(packet_type: PacketType, payload: &[u8]) -> bool {
         if payload.is_empty() {
             return true;
@@ -6431,17 +6443,14 @@ impl<
             .allowed_for(packet_type)
     }
 
+    /// The way back along a complete trace; `None` for a truncated one.
     fn source_route_from_trace(
         &self,
-        trace_bytes: &[u8],
+        trace: &TraceRef<'_>,
     ) -> Option<heapless::Vec<RouterHint, { crate::MAX_SOURCE_ROUTE_HINTS }>> {
-        if trace_bytes.len() % 2 != 0 {
-            return None;
-        }
-
         let mut route = heapless::Vec::new();
-        for chunk in trace_bytes.chunks_exact(2) {
-            route.push(RouterHint([chunk[0], chunk[1]])).ok()?;
+        for hint in trace.complete_hints()? {
+            route.push(hint).ok()?;
         }
         Some(route)
     }
@@ -6583,9 +6592,9 @@ impl<
         options: &ParsedOptions,
         rx: &RxInfo,
     ) -> Option<ForwardPlan> {
-        // A critical option this node cannot interpret, whether unrecognized
-        // or malformed, may carry a restriction it cannot honor.
-        if options.has_unknown_critical || options.has_malformed_critical {
+        // A forwarding-critical option this node cannot interpret, whether
+        // unrecognized or malformed, may carry a restriction it cannot honor.
+        if options.refuses_forwarding() {
             return None;
         }
 
@@ -6716,7 +6725,7 @@ impl<
             insert_region_code,
             delay_ms,
             station_action,
-            signal: trace_signal_entry(rx),
+            signal: hop_signal(rx),
         })
     }
 
@@ -6885,33 +6894,20 @@ impl<
                         inserted_region = true;
                         encoder.put(number, value).map_err(|_| CapacityError)?;
                     }
-                    // Both trace arms bound the incoming value before the
-                    // copy: the accumulated trace arrives from the air, and
-                    // one grown past what the local buffer can extend is
-                    // over-limit input to drop, not to index by.
-                    OptionNumber::TraceRoute => {
-                        let mut trace = [0u8; crate::MAX_SOURCE_ROUTE_HINTS * 2 + 2];
-                        if value.len() > crate::MAX_SOURCE_ROUTE_HINTS * 2 {
-                            return Err(CapacityError);
-                        }
-                        trace[..2].copy_from_slice(&plan.router_hint.0);
-                        trace[2..2 + value.len()].copy_from_slice(value);
+                    // `plan_forwarding` refused a malformed trace, so this
+                    // one parses.
+                    OptionNumber::Trace => {
+                        let trace = TraceRef::parse(value).ok_or(CapacityError)?;
+                        let own = TraceRecord {
+                            hint: plan.router_hint,
+                            signal: plan.signal,
+                        };
+                        let mut forwarded = [0u8; u8::MAX as usize];
+                        let len = trace
+                            .forwarded(own, usize::MAX, &mut forwarded)
+                            .ok_or(CapacityError)?;
                         encoder
-                            .put(number, &trace[..2 + value.len()])
-                            .map_err(|_| CapacityError)?;
-                    }
-                    // Prepended in lockstep with the router hint above: entry
-                    // N of this option is the signal quality at which the
-                    // repeater named by hint N received the frame.
-                    OptionNumber::TraceSignal => {
-                        let mut trace = [0u8; crate::MAX_SOURCE_ROUTE_HINTS * 2 + 2];
-                        if value.len() > crate::MAX_SOURCE_ROUTE_HINTS * 2 {
-                            return Err(CapacityError);
-                        }
-                        trace[..2].copy_from_slice(&plan.signal.as_bytes());
-                        trace[2..2 + value.len()].copy_from_slice(value);
-                        encoder
-                            .put(number, &trace[..2 + value.len()])
+                            .put(number, &forwarded[..len])
                             .map_err(|_| CapacityError)?;
                     }
                     OptionNumber::SourceRoute if plan.consume_source_route => {
@@ -7061,14 +7057,10 @@ impl<
         _options: &ParsedOptions,
         dst: &mut [u8],
     ) -> Result<usize, CapacityError> {
-        // The retry floods to rediscover a route, so it carries a trace route
-        // and, paired with it, a trace signal. Each is inserted in number
-        // order unless the original already carried it.
-        const ADDED: [OptionNumber; 3] = [
-            OptionNumber::TraceRoute,
-            OptionNumber::RouteRetry,
-            OptionNumber::TraceSignal,
-        ];
+        // The retry floods to rediscover a route, so it carries a trace.
+        // Each is inserted in number order unless the original already
+        // carried it.
+        const ADDED: [OptionNumber; 2] = [OptionNumber::RouteRetry, OptionNumber::Trace];
         let mut encoder = OptionEncoder::new(dst);
         let mut present = [false; ADDED.len()];
 
@@ -7087,7 +7079,7 @@ impl<
                     OptionNumber::SourceRoute => {}
                     OptionNumber::RouteRetry => {
                         encoder.put(number, &[]).map_err(|_| CapacityError)?;
-                        present[1] = true;
+                        present[0] = true;
                     }
                     other => {
                         if let Some(at) = ADDED.iter().position(|added| *added == other) {
@@ -7455,12 +7447,13 @@ impl<
         let Some(ack_mic) = Self::ack_mic_option(frame, header) else {
             return;
         };
-        let Some((identity_id, receipt, via_route_retry, trailer)) =
-            self.complete_ack_reporting_retry(peer, |pending| pending.ack_trailer[..4] == ack_mic)
+        // No standalone ack's trailer is known here, so nothing is
+        // remembered for later copies: a piggy-backed ack has none.
+        let Some((identity_id, receipt, via_route_retry)) =
+            self.complete_ack_reporting_retry(peer, |pending| pending.ack_v[..4] == ack_mic)
         else {
             return;
         };
-        self.remember_completed_ack(trailer, *peer);
         on_event(
             identity_id,
             crate::MacEventRef::AckReceived {
@@ -7784,40 +7777,26 @@ impl<
         let Ok(options) = ParsedOptions::extract(frame, header.options_range.clone()) else {
             return;
         };
-        let Some(trace) = options
-            .trace_route
-            .as_ref()
-            .and_then(|range| frame.get(range.clone()))
-        else {
+        // Only a complete trace says which repeater took the frame first.
+        let Some(trace) = options.trace(frame).filter(|trace| trace.is_complete()) else {
             return;
         };
-        if trace.len() < 2 || trace.len() % 2 != 0 {
-            return;
-        }
-        let signal = options
-            .trace_signal
-            .as_ref()
-            .and_then(|range| frame.get(range.clone()))
-            .filter(|signal| signal.len() == trace.len());
         let now_ms = self.clock.now_ms();
         // The trace is prepended to, so the repeater that took the frame
-        // off our transmission is the last hint, and its entry is how well
+        // off our transmission is the last entry, and its signal is how well
         // it heard us.
-        let first = trace.len() - 2;
-        self.uplinks.note_heard(
-            RouterHint([trace[first], trace[first + 1]]),
-            signal.map(|signal| TraceSignalEntry::from_bytes([signal[first], signal[first + 1]])),
-            now_ms,
-        );
+        let Some(first) = trace.entries().last() else {
+            return;
+        };
+        self.uplinks.note_heard(first.hint, first.signal, now_ms);
         // Only a flood says anything about the rest. A flood repeater
         // forwards the first copy it accepts, and ours went out first, so a
         // repeater that forwarded someone else's copy did not take ours. A
         // hop named in a source route forwards when its turn comes whether
         // or not it heard us.
         if options.source_route.is_none() {
-            for pair in trace[..first].chunks_exact(2) {
-                self.uplinks
-                    .note_unheard(RouterHint([pair[0], pair[1]]), now_ms);
+            for entry in trace.entries().take(trace.len() - 1) {
+                self.uplinks.note_unheard(entry.hint, now_ms);
             }
         }
     }

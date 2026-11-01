@@ -5,7 +5,7 @@ use std::fmt::Write as _;
 use std::ops::Range;
 
 use hamaddr::HamAddr;
-use umsh::core::options::OptionDecoder;
+use umsh::core::options::{HopSignal, OptionDecoder, TraceRef};
 use umsh::core::{
     OptionNumber, PacketHeader, PacketType, ParsedOptions, PayloadType, PublicKey, RegionCode,
     RouterHint, SourceAddrRef,
@@ -356,9 +356,6 @@ fn summary_line(packet: &[u8], header: &PacketHeader, color: bool) -> String {
     // A MAC ack's whole content is its two fixed fields, so show them rather
     // than a length: the ack MIC correlates the ack with the packet it
     // acknowledges, and the ack tag is what actually authenticates it.
-    // Which construction the tag uses shows when the options settle it:
-    // the legacy marker names the legacy tag, and a static option rules
-    // it out. With neither, either construction is possible.
     if packet_type == PacketType::MacAck {
         let ack = header.body_range.start;
         match packet.get(ack..ack + 8) {
@@ -373,15 +370,6 @@ fn summary_line(packet: &[u8], header: &PacketHeader, color: bool) -> String {
                     Field::AckTag,
                     color,
                 ));
-                let options = ParsedOptions::extract(packet, header.options_range.clone()).ok();
-                let construction = match options {
-                    Some(options) if options.legacy_ack_tag => Some("legacy"),
-                    Some(options) if options.has_static => Some("mic"),
-                    _ => None,
-                };
-                if let Some(construction) = construction {
-                    chips.push(tint(construction, Field::AckTag, color));
-                }
             }
             None => chips.push("<truncated ack>".to_owned()),
         }
@@ -473,7 +461,7 @@ fn options_line(packet: &[u8], header: &PacketHeader, color: bool) -> Option<Str
 
 fn option_chip(number: u16, value: &[u8]) -> String {
     match OptionNumber::from(number) {
-        OptionNumber::TraceRoute => format!("trace=[{}]", route_text(value)),
+        OptionNumber::Trace => format!("trace=[{}]", trace_text(value)),
         OptionNumber::SourceRoute => format!("route=[{}]", route_text(value)),
         OptionNumber::RegionCode if value.len() == 2 => {
             format!("region={}", RegionCode::from_bytes([value[0], value[1]]))
@@ -488,13 +476,16 @@ fn option_chip(number: u16, value: &[u8]) -> String {
         OptionNumber::RouteRetry => format!("retry={}", hex_text(value)),
         OptionNumber::OperatorCallsign => format!("op={}", callsign_text(value)),
         OptionNumber::StationCallsign => format!("via={}", callsign_text(value)),
-        OptionNumber::LegacyAckTag if value.is_empty() => "legacy-tag".to_owned(),
         // Either an unknown option or a known one carrying a malformed value.
         // Critical options carry an odd number and are marked, since a
         // receiver that does not understand one has to drop the frame.
         other => format!(
             "{}opt{number}={}",
-            if other.is_critical() { "!" } else { "" },
+            if other.is_forwarding_critical() {
+                "!"
+            } else {
+                ""
+            },
             hex_text(value),
         ),
     }
@@ -512,6 +503,27 @@ fn route_text(value: &[u8]) -> String {
         .join(",")
 }
 
+/// A trace's hops, most recent first, each with the signal it was heard at
+/// when the trace still carries it. A leading `…` marks a truncated trace.
+fn trace_text(value: &[u8]) -> String {
+    let Some(trace) = TraceRef::parse(value) else {
+        return hex_text(value);
+    };
+    let hops = trace
+        .entries()
+        .map(|entry| match entry.signal.and_then(HopSignal::rssi_dbm) {
+            Some(rssi) => format!("{}@{rssi}", entry.hint),
+            None => entry.hint.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    if trace.is_complete() {
+        hops
+    } else {
+        format!("…{hops}")
+    }
+}
+
 fn callsign_text(value: &[u8]) -> String {
     HamAddr::try_from_slice(value).map_or_else(|_| hex_text(value), |addr| addr.to_string())
 }
@@ -527,21 +539,23 @@ fn hex_text(value: &[u8]) -> String {
 mod tests {
     use super::*;
 
-    /// Packet #559 from a live capture: a source-routed encrypted unicast
-    /// with an empty trace-route option, one source-route hop, and flood
-    /// hops still to spend.
+    /// Packet #559 from a live capture, with its options re-encoded for
+    /// today's numbering: a source-routed encrypted unicast with one
+    /// source-route hop, an empty Trace option, and flood hops still to
+    /// spend.
     const SOURCE_ROUTED_UNICAST: [u8; 44] = [
-        0xd1, 0x50, 0xb7, 0xa6, 0x26, 0x45, 0xfe, 0xb2, 0xe0, 0xdf, 0x45, 0xb6, 0xa0, 0x20, 0x12,
-        0xef, 0x24, 0xff, 0xa2, 0x41, 0x4a, 0x15, 0xf0, 0x7c, 0x55, 0x21, 0x51, 0xd6, 0x7d, 0xe6,
+        0xd1, 0x50, 0xb7, 0xa6, 0x26, 0x45, 0xfe, 0xb2, 0xe0, 0xdf, 0x45, 0xb6, 0xa0, 0x32, 0xef,
+        0x24, 0x40, 0xff, 0xa2, 0x41, 0x4a, 0x15, 0xf0, 0x7c, 0x55, 0x21, 0x51, 0xd6, 0x7d, 0xe6,
         0x29, 0xbb, 0xf3, 0xa0, 0xee, 0x37, 0x93, 0xa4, 0x22, 0x20, 0x9a, 0x49, 0x8f, 0x72,
     ];
 
     /// Packet #560: the same frame after a repeater consumed the source
-    /// route and appended itself to the trace.
-    const FORWARDED_UNICAST: [u8; 44] = [
-        0xd1, 0x41, 0xb7, 0xa6, 0x26, 0x45, 0xfe, 0xb2, 0xe0, 0xdf, 0x45, 0xb6, 0xa0, 0x22, 0xef,
-        0x24, 0x10, 0xff, 0xa2, 0x41, 0x4a, 0x15, 0xf0, 0x7c, 0x55, 0x21, 0x51, 0xd6, 0x7d, 0xe6,
-        0x29, 0xbb, 0xf3, 0xa0, 0xee, 0x37, 0x93, 0xa4, 0x22, 0x20, 0x9a, 0x49, 0x8f, 0x72,
+    /// route and added itself to the trace (shown here in the hints-only
+    /// form).
+    const FORWARDED_UNICAST: [u8; 45] = [
+        0xd1, 0x41, 0xb7, 0xa6, 0x26, 0x45, 0xfe, 0xb2, 0xe0, 0xdf, 0x45, 0xb6, 0xa0, 0x30, 0x43,
+        0xfe, 0xef, 0x24, 0xff, 0xa2, 0x41, 0x4a, 0x15, 0xf0, 0x7c, 0x55, 0x21, 0x51, 0xd6, 0x7d,
+        0xe6, 0x29, 0xbb, 0xf3, 0xa0, 0xee, 0x37, 0x93, 0xa4, 0x22, 0x20, 0x9a, 0x49, 0x8f, 0x72,
     ];
 
     /// Packet #110 from a live capture: a MAC ack with a flood-hop field and
@@ -636,15 +650,13 @@ mod tests {
         );
     }
 
-    /// The spec's MAC ack vectors (test-vectors.md Examples 10 and 11, and
-    /// the transition appendix's): the options name the tag construction
-    /// when they settle it, and otherwise nothing is claimed.
+    /// MAC acks with and without a static option show their two fields.
     #[test]
-    fn mac_ack_names_the_tag_construction_its_options_settle() {
-        let unsettled = [0xc8, 0xaa, 0x17, 0x13, 0x06, 0xd2, 0xfb, 0x63, 0xbd];
-        let header = PacketHeader::parse(&unsettled).unwrap();
+    fn mac_ack_shows_its_mic_and_tag() {
+        let bare = [0xc8, 0xaa, 0x17, 0x13, 0x06, 0xd2, 0xfb, 0x63, 0xbd];
+        let header = PacketHeader::parse(&bare).unwrap();
         assert_eq!(
-            summary_line(&unsettled, &header, false),
+            summary_line(&bare, &header, false),
             "MacAck  ack_mic=aa171306  ack_tag=d2fb63bd",
         );
 
@@ -654,24 +666,11 @@ mod tests {
         let header = PacketHeader::parse(&callsign).unwrap();
         assert_eq!(
             summary_line(&callsign, &header, false),
-            "MacAck  ack_mic=aa171306  ack_tag=a878be6e  mic",
+            "MacAck  ack_mic=aa171306  ack_tag=a878be6e",
         );
         assert_eq!(
             options_line(&callsign, &header, false).unwrap(),
             "opts  op=N0CALL",
-        );
-
-        let legacy = [
-            0xc8, 0xd0, 0xf1, 0xaa, 0x17, 0x13, 0x06, 0x99, 0xfc, 0x2d, 0x9f,
-        ];
-        let header = PacketHeader::parse(&legacy).unwrap();
-        assert_eq!(
-            summary_line(&legacy, &header, false),
-            "MacAck  ack_mic=aa171306  ack_tag=99fc2d9f  legacy",
-        );
-        assert_eq!(
-            options_line(&legacy, &header, false).unwrap(),
-            "opts  legacy-tag",
         );
     }
 
@@ -700,16 +699,16 @@ mod tests {
     fn options_line_lists_only_present_options_with_decoded_routes() {
         let header = PacketHeader::parse(&SOURCE_ROUTED_UNICAST).unwrap();
         let line = options_line(&SOURCE_ROUTED_UNICAST, &header, false).unwrap();
-        // Trace route is present but still empty; the source route names the
+        // The trace is present but still empty; the source route names the
         // next hop rather than a byte range.
-        assert_eq!(line, "opts  trace=[]  route=[H6*]");
+        assert_eq!(line, "opts  route=[H6*]  trace=[]");
         for absent in ["region", "min-rssi", "min-snr", "retry"] {
             assert!(!line.contains(absent), "{absent} should not be listed");
         }
 
         let forwarded = PacketHeader::parse(&FORWARDED_UNICAST).unwrap();
         let line = options_line(&FORWARDED_UNICAST, &forwarded, false).unwrap();
-        assert_eq!(line, "opts  trace=[H6*]  route=[]");
+        assert_eq!(line, "opts  route=[]  trace=[H6*]");
     }
 
     #[test]
@@ -730,13 +729,14 @@ mod tests {
         );
         assert_eq!(
             option_chip(
-                7,
+                15,
                 HamAddr::try_from_callsign("KZ2X")
                     .unwrap()
                     .as_trimmed_slice()
             ),
             "via=KZ2X",
         );
+        assert_eq!(option_chip(7, &[0xff, 0xef, 0x24]), "trace=[…H6*]");
         // Unknown options survive, and the critical ones are marked.
         assert_eq!(option_chip(20, &[0xaa, 0xbb]), "opt20=aabb");
         assert_eq!(option_chip(21, &[0xaa]), "!opt21=aa");
@@ -774,7 +774,7 @@ mod tests {
         assert_eq!(
             plain,
             vec![
-                "d1 50 b7a626 45feb2 e0df45b6a0 2012ef24ff \
+                "d1 50 b7a626 45feb2 e0df45b6a0 32ef2440ff \
                  a2414a15f07c552151d6 7de629bbf3a0ee3793a422209a498f72",
             ],
         );

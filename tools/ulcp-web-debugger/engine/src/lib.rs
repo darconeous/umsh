@@ -2103,11 +2103,11 @@ fn summarize_packet(bytes: &[u8], header: &PacketHeader) -> PacketSummary {
                     .region_code
                     .map(|region| String::from_utf8_lossy(&region).into_owned()),
                 source_route_len: options.source_route.map(|route| route.len()),
-                trace_route_len: options.trace_route.map(|route| route.len()),
+                trace_route_len: options.trace.map(|route| route.len()),
                 min_rssi_dbm: options.min_rssi,
                 min_snr_db: options.min_snr,
                 route_retry: options.route_retry,
-                unknown_critical: options.has_unknown_critical,
+                unknown_critical: options.has_unknown_forwarding_critical,
             }),
             None,
         ),

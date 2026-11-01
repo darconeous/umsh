@@ -3,7 +3,7 @@
 use core::str::FromStr;
 
 use heapless::{Deque, Vec as HeaplessVec};
-use umsh_core::options::{OptionDecoder, OptionEncoder, TraceSignalEntry};
+use umsh_core::options::{HopSignal, OptionDecoder, OptionEncoder, TraceRef};
 use umsh_core::{
     ChannelKey, EncodeError, NodeHint, OptionNumber, PacketBuilder, PacketHeader, PacketType,
     ParsedOptions, PayloadType, RegionCode, RouteEvidence, SourceAddrRef, established_route_slack,
@@ -802,12 +802,10 @@ impl AckPlan {
         rx: &RadioRxInfo,
     ) -> Self {
         // This reception, as the last hop of a way back nothing relayed.
-        let heard_directly = rx
-            .rssi_dbm
-            .map_or(TraceSignalEntry::POINT_TO_POINT, |rssi| {
-                TraceSignalEntry::new(rssi, rx.snr_cb.unwrap_or(0))
-            });
-        let evidence = |direct: bool, last_hop: Option<TraceSignalEntry>| RouteEvidence {
+        let heard_directly = rx.rssi_dbm.map_or(HopSignal::POINT_TO_POINT, |rssi| {
+            HopSignal::new(rssi, rx.snr_cb.unwrap_or(0))
+        });
+        let evidence = |direct: bool, last_hop: Option<HopSignal>| RouteEvidence {
             direct,
             last_hop,
             ..RouteEvidence::default()
@@ -847,27 +845,19 @@ impl AckPlan {
                 replay: None,
             };
         };
-        let trace = flooded || options.trace_route.is_some();
-        let trace_bytes = options
-            .trace_route
-            .clone()
-            .and_then(|range| frame.get(range));
-        let traced = trace_bytes.and_then(Self::route_from_trace);
+        let trace = flooded || options.trace.is_some();
+        let trace_ref = options.trace(frame);
+        // A truncated trace is no path back: the ack floods instead.
+        let traced = trace_ref.as_ref().and_then(Self::route_from_trace);
         let (route, distance, floor, evidence) =
             match (traced, options.source_route.is_some(), accumulated) {
                 (Some(route), _, _) if route.is_empty() => direct,
                 (Some(route), _, _) => {
                     // The earliest entry, at the end of the list, is how the
                     // first repeater heard the sender: the way back's last hop.
-                    let last_hop = options
-                        .trace_signal
-                        .clone()
-                        .and_then(|range| frame.get(range))
-                        .filter(|signal| Some(signal.len()) == trace_bytes.map(<[u8]>::len))
-                        .map(|signal| {
-                            let at = signal.len() - 2;
-                            TraceSignalEntry::from_bytes([signal[at], signal[at + 1]])
-                        });
+                    let last_hop = trace_ref
+                        .and_then(|trace| trace.entries().last())
+                        .and_then(|entry| entry.signal);
                     (AckReturn::Source(route), 0, 0, evidence(false, last_hop))
                 }
                 (None, true, tail) => (
@@ -933,16 +923,11 @@ impl AckPlan {
     /// packet could have carried: an odd length, or more repeaters than
     /// a route can name.
     fn route_from_trace(
-        trace: &[u8],
+        trace: &TraceRef<'_>,
     ) -> Option<HeaplessVec<umsh_core::RouterHint, MAX_ACK_ROUTE_HINTS>> {
-        if trace.len() % 2 != 0 {
-            return None;
-        }
         let mut route = HeaplessVec::new();
-        for chunk in trace.chunks_exact(2) {
-            route
-                .push(umsh_core::RouterHint([chunk[0], chunk[1]]))
-                .ok()?;
+        for hint in trace.complete_hints()? {
+            route.push(hint).ok()?;
         }
         Some(route)
     }
@@ -4746,15 +4731,23 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         };
         let host_hint = NodeHint([host_key[0], host_key[1], host_key[2]]);
         let packet_type = header.fcf.packet_type();
+        let Ok(options) = ParsedOptions::extract(data, header.options_range.clone()) else {
+            return SecureRx::Plain;
+        };
+        // A delivery-critical option this device cannot interpret: no cue,
+        // no delegated ack, no replay state. Still queued; the host MAC
+        // refuses it and counts the refusal.
+        if options.refuses_delivery() {
+            return SecureRx::Plain;
+        }
         let wants_ack = packet_type.ack_requested()
-            && ParsedOptions::extract(data, header.options_range.clone())
-                .is_ok_and(|options| options.source_route.is_none_or(|range| range.is_empty()));
+            && options.source_route.is_none_or(|range| range.is_empty());
 
         let scratch = &mut self.scratch[..data.len()];
         scratch.copy_from_slice(data);
 
         // Establish the frame's keys, destination, and source peer.
-        let (keys, peer_index) = match packet_type {
+        let (keys, peer_index, blind_addr) = match packet_type {
             PacketType::Unicast | PacketType::UnicastAckReq => {
                 if header.dst != Some(host_hint) {
                     return SecureRx::Plain;
@@ -4772,6 +4765,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                         k_mic: entry.k_mic,
                     },
                     index,
+                    None,
                 )
             }
             PacketType::BlindUnicast | PacketType::BlindUnicastAckReq => {
@@ -4791,12 +4785,13 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     return SecureRx::Plain;
                 };
                 let channel_keys = self.engine.derive_channel_keys(&ChannelKey(channel_key));
-                let Ok((dst, source)) =
-                    self.engine
-                        .decrypt_blind_addr(scratch, &header, &channel_keys)
+                let Ok(opened) = self
+                    .engine
+                    .decrypt_blind_addr(scratch, &header, &channel_keys)
                 else {
                     return SecureRx::Plain;
                 };
+                let (dst, source) = (opened.dst, opened.source);
                 if dst != host_hint {
                     return SecureRx::Plain;
                 }
@@ -4815,6 +4810,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 (
                     self.engine.derive_blind_keys(&pairwise, &channel_keys),
                     index,
+                    Some(opened.addr),
                 )
             }
             // Multicast the device holds the channel key for is
@@ -4840,7 +4836,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     k_enc: derived.k_enc,
                     k_mic: derived.k_mic,
                 };
-                let Ok(body_range) = self.engine.open_packet(scratch, &header, &channel_pairwise)
+                let Ok(body_range) =
+                    self.engine
+                        .open_packet(scratch, &header, &channel_pairwise, None)
                 else {
                     return SecureRx::Plain;
                 };
@@ -4885,7 +4883,10 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         };
 
         // Authenticate (and decrypt, in the scratch copy).
-        let Ok(body_range) = self.engine.open_packet(scratch, &header, &keys) else {
+        let Ok(body_range) = self
+            .engine
+            .open_packet(scratch, &header, &keys, blind_addr.as_ref())
+        else {
             return SecureRx::Plain;
         };
         let Some(sec_info) = header.sec_info else {
@@ -4898,11 +4899,11 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         // S2V tag over the decrypted scratch copy (spec §Ack Tag
         // Construction).
         let mut plan = wants_ack.then(|| {
-            let full_mac = self.engine.s2v_tag(
-                &keys.k_mic,
-                |cmac| umsh_core::feed_aad(&header, scratch, |chunk| cmac.update(chunk)),
-                &scratch[body_range.clone()],
-            );
+            // The frame just opened with these inputs, so this cannot fail.
+            let full_mac = self
+                .engine
+                .packet_tag(&keys.k_mic, &header, scratch, blind_addr.as_ref())
+                .unwrap_or_default();
             // Routed from what this frame teaches, exactly as the MAC
             // routes an ack from the route the frame just taught it. A
             // duplicate's plan uses the retransmission's own routing
@@ -4983,25 +4984,18 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         if flood_hops > 0 {
             builder = builder.flood_hops(flood_hops);
         }
-        let traced = plan.traced();
-        if traced {
-            builder = builder.trace_route();
-        }
         if let AckReturn::Source(hints) = &plan.route {
             builder = builder.source_route(hints);
         }
-        // Option order puts the signal after the source route; it rides
-        // with the trace so the origin can weigh the path it learns.
-        if traced {
-            builder = builder.trace_signal();
+        if plan.traced() {
+            builder = builder.trace();
         }
         for region in &plan.regions {
             builder = builder.region_code(*region);
         }
         // The device has no operator callsign, so its ack carries no static
-        // option: it keeps the legacy tag and says so
-        // (ack-transition.md § Sending).
-        let frame_len = builder.legacy_ack_tag().build().ok()?.len();
+        // option and its tag's AAD is the ack's FCF and the terminator.
+        let frame_len = builder.build().ok()?.len();
         self.engine
             .seal_mac_ack(&plan.keys, &plan.v, &mut buf[..frame_len])
             .ok()?;
@@ -15739,7 +15733,8 @@ mod tests {
 
     // ─── CAP_HOST_AUTO_ACK gate ──────────────────────────────────────
 
-    use umsh_core::{MicSize, PublicKey};
+    use umsh_core::options::TraceRecord;
+    use umsh_core::{MicSize, PublicKey, RouterHint};
 
     const HOST_PUB: [u8; 32] = [0xC4; 32];
     const PEER_PUB: [u8; 32] = [0x0A; 32];
@@ -15867,21 +15862,27 @@ mod tests {
     }
 
     /// The expected 8-byte ack trailer (`ack_mic || ack_tag`) for an
-    /// unencrypted sealed frame.
+    /// unencrypted sealed frame, acknowledged by an ack with no static
+    /// options.
     fn expected_ack_trailer(frame: &[u8], keys: &PairwiseKeys) -> [u8; 8] {
         let engine = test_engine();
         let header = PacketHeader::parse(frame).unwrap();
-        let full_mac = engine.s2v_tag(
-            &keys.k_mic,
-            |cmac| umsh_core::feed_aad(&header, frame, |chunk| cmac.update(chunk)),
-            &frame[header.body_range.clone()],
-        );
-        engine.compute_ack_trailer(&full_mac, &keys.k_enc)
+        let v = engine
+            .packet_tag(&keys.k_mic, &header, frame, None)
+            .unwrap();
+        let mut buf = [0u8; 16];
+        let len = PacketBuilder::new(&mut buf)
+            .mac_ack([0; 8])
+            .build()
+            .unwrap()
+            .len();
+        engine.seal_mac_ack(keys, &v, &mut buf[..len]).unwrap();
+        let ack = PacketHeader::parse(&buf[..len]).unwrap();
+        buf[ack.mic_range].try_into().unwrap()
     }
 
     /// Assert the staged transmit is a MAC ack (which carries no
-    /// destination hint) that marks its tag as the legacy construction,
-    /// and complete it.
+    /// destination hint) with no static option, and complete it.
     fn expect_ack_transmit(
         session: &mut TestSession,
         effect: Option<Effect>,
@@ -15892,7 +15893,6 @@ mod tests {
         assert_eq!(header.fcf.packet_type(), PacketType::MacAck);
         let options =
             ParsedOptions::extract(session.tx_data(), header.options_range.clone()).unwrap();
-        assert!(options.legacy_ack_tag);
         assert!(!options.has_static);
         if let Some(trailer) = trailer {
             assert_eq!(session.tx_data()[header.mic_range.clone()], trailer);
@@ -15902,10 +15902,9 @@ mod tests {
         });
     }
 
-    /// The sender's verifier accepts a delegated ack, and as the
-    /// construction its marker names.
+    /// The sender's verifier accepts a delegated ack.
     #[test]
-    fn a_delegated_ack_verifies_as_the_legacy_construction() {
+    fn a_delegated_ack_verifies() {
         let mut session = auto_ack_session();
         let keys = test_pairwise();
         let frame = sealed_unar(100, &keys, false);
@@ -15914,15 +15913,10 @@ mod tests {
 
         let engine = test_engine();
         let header = PacketHeader::parse(&frame).unwrap();
-        let v = engine.s2v_tag(
-            &keys.k_mic,
-            |cmac| umsh_core::feed_aad(&header, &frame, |chunk| cmac.update(chunk)),
-            &frame[header.body_range.clone()],
-        );
-        assert_eq!(
-            engine.verify_mac_ack(&keys, &v, session.tx_data()),
-            Some(umsh_crypto::AckTagConstruction::Legacy)
-        );
+        let v = engine
+            .packet_tag(&keys.k_mic, &header, &frame, None)
+            .unwrap();
+        assert!(engine.verify_mac_ack(&keys, &v, session.tx_data()));
     }
 
     #[test]
@@ -16008,6 +16002,39 @@ mod tests {
         assert_eq!(drained[0].1.flags, RX_FLAG_BUFFERED);
         assert_eq!(drained[1].1.flags, RX_FLAG_BUFFERED);
         assert_eq!(drained[2].1.flags, RX_FLAG_BUFFERED | RX_FLAG_ACKED);
+    }
+
+    /// A frame carrying a delivery-critical option the device does not
+    /// recognize gets no delegated ack and leaves the peer's replay state
+    /// alone, but is still queued for the host.
+    #[test]
+    fn unknown_delivery_critical_option_is_queued_unacked() {
+        let mut session = auto_ack_session();
+        let mut buf = [0u8; 96];
+        let mut packet = PacketBuilder::new(&mut buf)
+            .unicast(NodeHint([0xC4, 0xC4, 0xC4]))
+            .source_hint(NodeHint([0x0A, 0x0A, 0x0A]))
+            .frame_counter(5)
+            .ack_requested()
+            .mic_size(MicSize::Mic8)
+            .option(OptionNumber::Unknown(12), &[])
+            .payload(TEXT_PAYLOAD)
+            .build()
+            .unwrap();
+        test_engine()
+            .seal_packet(&mut packet, &test_pairwise())
+            .unwrap();
+        assert!(rx_effect(&mut session, packet.as_bytes(), 0).is_none());
+
+        // The same counter without the option is still new to the device.
+        let effect = rx_effect(&mut session, &sealed_unar(5, &test_pairwise(), false), 0);
+        expect_ack_transmit(&mut session, effect, None);
+
+        session.attach(true);
+        assert_eq!(queue_count(&mut session), 2);
+        let drained = drain(&mut session, 0);
+        assert_eq!(drained[0].1.flags, RX_FLAG_BUFFERED);
+        assert_eq!(drained[1].1.flags, RX_FLAG_BUFFERED | RX_FLAG_ACKED);
     }
 
     #[test]
@@ -16997,8 +17024,9 @@ mod tests {
 
     /// A sealed UNAR as it arrives at the end of a source route: the route
     /// option emptied by the last repeater and kept for provenance, the
-    /// trace the routed hops recorded when the sender asked for one, and
-    /// the flood tail (if any) the frame spent past the route's end.
+    /// trace the routed hops recorded when the sender asked for one (router
+    /// hints, carried as a hints-only trace), and the flood tail (if any)
+    /// the frame spent past the route's end.
     fn sealed_routed_unar(
         counter: u32,
         keys: &PairwiseKeys,
@@ -17015,14 +17043,13 @@ mod tests {
         if tail.is_some() {
             builder = builder.flood_hops(15);
         }
-        if let Some(trace) = trace {
-            builder = builder.option(OptionNumber::TraceRoute, trace);
+        builder = builder.option(OptionNumber::SourceRoute, &[]);
+        if let Some(hints) = trace {
+            let mut value = vec![0xFE];
+            value.extend_from_slice(hints);
+            builder = builder.option(OptionNumber::Trace, &value);
         }
-        let mut packet = builder
-            .option(OptionNumber::SourceRoute, &[])
-            .payload(&[3, 1, 2])
-            .build()
-            .unwrap();
+        let mut packet = builder.payload(&[3, 1, 2]).build().unwrap();
         test_engine().seal_packet(&mut packet, keys).unwrap();
         let mut frame = packet.as_bytes().to_vec();
         if let Some(tail) = tail {
@@ -17042,7 +17069,7 @@ mod tests {
                 .source_route
                 .and_then(|range| ack.get(range))
                 .map(<[u8]>::to_vec),
-            options.trace_route.is_some(),
+            options.trace.is_some(),
         )
     }
 
@@ -17149,8 +17176,8 @@ mod tests {
         }
     }
 
-    /// A traced frame whose trace signal pairs with its trace: the earliest
-    /// entry, how the first repeater heard the sender, decides the slack.
+    /// A traced frame with signal: the earliest entry, how the first
+    /// repeater heard the sender, decides the slack.
     #[test]
     fn a_traced_ack_keeps_slack_only_past_a_weak_last_hop() {
         let mut session = auto_ack_session();
@@ -17159,12 +17186,12 @@ mod tests {
         for (counter, first_hop_rssi, expected) in
             [(1, -90, None), (2, -100, umsh_core::FloodHops::new(1, 0))]
         {
-            let signal: Vec<u8> = [
-                TraceSignalEntry::new(-50, 0),
-                TraceSignalEntry::new(first_hop_rssi, 0),
+            let records: Vec<u8> = [
+                (RouterHint([0xA1, 0xB2]), HopSignal::new(-50, 0)),
+                (RouterHint([0xC3, 0xD4]), HopSignal::new(first_hop_rssi, 0)),
             ]
-            .iter()
-            .flat_map(|entry| entry.as_bytes())
+            .into_iter()
+            .flat_map(|(hint, signal)| TraceRecord { hint, signal }.to_bytes())
             .collect();
             let mut buf = [0u8; 96];
             let mut packet = PacketBuilder::new(&mut buf)
@@ -17173,9 +17200,8 @@ mod tests {
                 .frame_counter(counter)
                 .ack_requested()
                 .mic_size(MicSize::Mic8)
-                .option(OptionNumber::TraceRoute, &trace)
                 .option(OptionNumber::SourceRoute, &[])
-                .option(OptionNumber::TraceSignal, &signal)
+                .option(OptionNumber::Trace, &records)
                 .payload(&[3, 1, 2])
                 .build()
                 .unwrap();
@@ -17194,6 +17220,41 @@ mod tests {
         }
     }
 
+    /// A truncated trace names only the latest hops, so it is no way back:
+    /// the ack floods instead of following it. A hints-only trace is
+    /// complete and is followed.
+    #[test]
+    fn a_truncated_trace_gives_a_flooded_ack() {
+        for (counter, sentinel, routed) in [(1, 0xFF, false), (2, 0xFE, true)] {
+            let mut session = auto_ack_session();
+            let mut buf = [0u8; 96];
+            let mut packet = PacketBuilder::new(&mut buf)
+                .unicast(NodeHint([0xC4, 0xC4, 0xC4]))
+                .source_hint(NodeHint([0x0A, 0x0A, 0x0A]))
+                .frame_counter(counter)
+                .ack_requested()
+                .mic_size(MicSize::Mic8)
+                .option(OptionNumber::SourceRoute, &[])
+                .option(OptionNumber::Trace, &[sentinel, 0xA1, 0xB2])
+                .payload(&[3, 1, 2])
+                .build()
+                .unwrap();
+            test_engine()
+                .seal_packet(&mut packet, &test_pairwise())
+                .unwrap();
+            assert_eq!(
+                rx_effect(&mut session, packet.as_bytes(), 0),
+                Some(Effect::StartTransmit)
+            );
+            let (route, traced) = ack_route_options(session.tx_data());
+            assert!(traced);
+            assert_eq!(route.is_some(), routed, "sentinel {sentinel:#x}");
+            if routed {
+                assert_eq!(route, Some(vec![0xA1, 0xB2]));
+            }
+        }
+    }
+
     #[test]
     fn detached_first_consumed_copy_gets_ack_without_duplicate_delivery() {
         let mut session = auto_ack_session();
@@ -17205,8 +17266,8 @@ mod tests {
             .frame_counter(1)
             .ack_requested()
             .mic_size(MicSize::Mic8)
-            .trace_route()
             .source_route(&[umsh_core::RouterHint([1, 2])])
+            .trace()
             .payload(&[3, 1, 2])
             .build()
             .unwrap();
@@ -17253,8 +17314,8 @@ mod tests {
             .frame_counter(1)
             .ack_requested()
             .mic_size(MicSize::Mic8)
-            .option(OptionNumber::TraceRoute, &[1, 2])
             .option(OptionNumber::SourceRoute, &[])
+            .option(OptionNumber::Trace, &[0xFE, 1, 2])
             .region_code([3, 4])
             .region_code([5, 6])
             .payload(&[3, 1, 2])

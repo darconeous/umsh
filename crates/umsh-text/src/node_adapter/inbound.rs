@@ -61,11 +61,12 @@ pub struct RxSummary {
     pub snr_centibels: Option<i16>,
     pub lqi: Option<u8>,
     /// Radio links the frame crossed to get here, counting the final one
-    /// into this device. Absent for a frame source-routed without a trace
-    /// route, whose hops nobody recorded.
+    /// into this device. Absent for a frame source-routed without a
+    /// complete trace, whose hops nobody recorded.
     pub hop_count: Option<u8>,
-    /// Intermediate-router hints in trace-route order: nearest us first,
-    /// which is usable directly as a source route back.
+    /// Intermediate-router hints in trace order: nearest us first, which is
+    /// usable directly as a source route back. Empty when the trace was
+    /// truncated in transit.
     pub route_hints: Vec<RouterHint>,
     pub source_authenticated: bool,
     /// It came under a session with forward secrecy.
@@ -82,7 +83,12 @@ impl RxSummary {
             snr_centibels: packet.snr().map(|snr| snr.as_centibels()),
             lqi: packet.lqi().map(|lqi| lqi.get()),
             hop_count: packet.hop_count(),
-            route_hints: packet.trace_route_hints().collect(),
+            route_hints: packet
+                .trace()
+                .and_then(|trace| trace.complete_hints())
+                .into_iter()
+                .flatten()
+                .collect(),
             source_authenticated: packet.source_authenticated(),
             forward_secret: packet.forward_secret(),
             buffered_age_s: packet.rx().buffered_age_s(),

@@ -342,6 +342,7 @@ static MAC_FORWARDED: AtomicU32 = AtomicU32::new(0);
 static MAC_FORWARD_CANCELLED: AtomicU32 = AtomicU32::new(0);
 static MAC_FORWARD_DROPPED_POLICY: AtomicU32 = AtomicU32::new(0);
 static MAC_RX_OWN_HINT: AtomicU32 = AtomicU32::new(0);
+static MAC_RX_DELIVERY_REFUSED: AtomicU32 = AtomicU32::new(0);
 
 /// The most recently published MAC tallies.
 ///
@@ -358,6 +359,7 @@ pub fn mac_counters() -> MacCounters {
         forward_cancelled: MAC_FORWARD_CANCELLED.load(Ordering::Relaxed),
         forward_dropped_policy: MAC_FORWARD_DROPPED_POLICY.load(Ordering::Relaxed),
         rx_own_hint: MAC_RX_OWN_HINT.load(Ordering::Relaxed),
+        rx_delivery_refused: MAC_RX_DELIVERY_REFUSED.load(Ordering::Relaxed),
     }
 }
 
@@ -370,6 +372,7 @@ fn publish_mac_counters(counters: MacCounters) {
     MAC_FORWARD_CANCELLED.store(counters.forward_cancelled, Ordering::Relaxed);
     MAC_FORWARD_DROPPED_POLICY.store(counters.forward_dropped_policy, Ordering::Relaxed);
     MAC_RX_OWN_HINT.store(counters.rx_own_hint, Ordering::Relaxed);
+    MAC_RX_DELIVERY_REFUSED.store(counters.rx_delivery_refused, Ordering::Relaxed);
 }
 
 /// The transmit power the radio was last configured with, in dBm, offset
@@ -1005,7 +1008,7 @@ impl AnnounceShape {
             options
         };
         if self.trace {
-            options.with_trace_route().with_trace_signal()
+            options.with_trace()
         } else {
             options
         }

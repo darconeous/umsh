@@ -321,16 +321,16 @@ pub fn render_phase1_test_vectors_markdown() -> String {
     )
     .unwrap();
     writeln!(&mut out).unwrap();
-    writeln!(&mut out, "An encrypted unicast with a region code option, an empty trace-route option, and flood hop limit 4.").unwrap();
+    writeln!(&mut out, "An encrypted unicast with a region code option, an empty trace option, and flood hop limit 4.").unwrap();
     writeln!(&mut out).unwrap();
     writeln!(&mut out, "**Options encoding:**").unwrap();
     writeln!(&mut out).unwrap();
     writeln!(&mut out, "| Option | Number | Delta | Length | Encoding |").unwrap();
     writeln!(&mut out, "|---|---:|---:|---:|---|").unwrap();
-    writeln!(&mut out, "| Trace Route | 2 | 2 | 0 | `20` |").unwrap();
+    writeln!(&mut out, "| Trace | 7 | 7 | 0 | `70` |").unwrap();
     writeln!(
         &mut out,
-        "| Region Code | 11 | 9 | 2 | `92` then value `78 53` |"
+        "| Region Code | 11 | 4 | 2 | `42` then value `78 53` |"
     )
     .unwrap();
     writeln!(&mut out, "| End marker | — | — | — | `FF` |").unwrap();
@@ -359,7 +359,7 @@ pub fn render_phase1_test_vectors_markdown() -> String {
     writeln!(&mut out, "| Frame Counter | 10 | `00 00 00 0A` |").unwrap();
     writeln!(
         &mut out,
-        "| Options | Trace route + region code + end marker | `20 92 78 53 FF` |"
+        "| Options | Trace + region code + end marker | `70 42 78 53 FF` |"
     )
     .unwrap();
     writeln!(
@@ -437,7 +437,7 @@ pub fn render_phase1_test_vectors_markdown() -> String {
     render_example(
         &mut out,
         "Example 10: MAC Ack",
-        "Node B's acknowledgement of Example 4. `ACK MIC` is the first four bytes of Example 4's MIC. `ACK TAG` is `truncate_to_4(S2V(K_mic, S1 = C8, S2 = V, S3 = ACK MIC))`, where `C8` is the ack's AAD (its FCF, with no static options) and `V` is Example 4's full S2V output, which its 16-byte MIC carries whole.",
+        "Node B's acknowledgement of Example 4. `ACK MIC` is the first four bytes of Example 4's MIC. `ACK TAG` is `truncate_to_4(S2V(K_mic, S1 = C8 FF FF, S2 = V, S3 = ACK MIC))`, where `C8 FF FF` is the ack's AAD (its FCF and the terminator, with no static options) and `V` is Example 4's full S2V output, which its 16-byte MIC carries whole.",
         &[
             ("FCF", "VER=3, TYPE=1 (MAC ack), S=0, R=0, H=0", "C8".into()),
             (
@@ -455,7 +455,7 @@ pub fn render_phase1_test_vectors_markdown() -> String {
     render_example(
         &mut out,
         "Example 11: MAC Ack with Operator Callsign",
-        "The acknowledgement of Example 10 as a Licensed-Only node sends it, carrying the operator callsign `N0CALL`. The callsign is a static option, so the ack's AAD is `C8` followed by the option's type-length-value encoding, and the tag differs from Example 10's.",
+        "The acknowledgement of Example 10 as a Licensed-Only node sends it, carrying the operator callsign `N0CALL`. The callsign is a static option, so the ack's AAD is `C8`, the option's type-length-value encoding, then `FF FF`, and the tag differs from Example 10's.",
         &[
             ("FCF", "VER=3, TYPE=1 (MAC ack), S=0, R=0, H=0", "C8".into()),
             (
@@ -473,53 +473,6 @@ pub fn render_phase1_test_vectors_markdown() -> String {
         &vectors.mac_ack_callsign,
     );
 
-    out
-}
-
-/// Render the legacy-tag vector that closes the ack transition appendix.
-///
-/// `docs/protocol/src/ack-transition.md` is expected to end with this text.
-pub fn render_ack_transition_vector_markdown() -> String {
-    let vectors = generate_phase1_vectors();
-    let header = parse_header(&vectors.mac_ack_legacy);
-    let trailer = &vectors.mac_ack_legacy[header.mic_range.clone()];
-    let mut out = String::new();
-    writeln!(&mut out, "## Test Vector").unwrap();
-    writeln!(&mut out).unwrap();
-    writeln!(
-        &mut out,
-        "Node B's acknowledgement of [Example 4](test-vectors.md#example-4-encrypted-unicast-with-ack-requested-s1), sealed with the legacy construction. `V` is Example 4's 16-byte MIC, and the keys are those of the [test-vector conventions](test-vectors.md#conventions)."
-    )
-    .unwrap();
-    writeln!(&mut out).unwrap();
-    writeln!(&mut out, "| Field | Value | Hex |").unwrap();
-    writeln!(&mut out, "|---|---|---|").unwrap();
-    for (field, value, hex) in [
-        (
-            "FCF",
-            "VER=3, TYPE=1 (MAC ack), S=0, R=0, H=0",
-            "C8".to_string(),
-        ),
-        (
-            "Options",
-            "Legacy Ack Tag (option 254)",
-            hex_spaced(&vectors.mac_ack_legacy[header.options_range.clone()]),
-        ),
-        ("ACK MIC", "First 4 bytes of V", hex_spaced(&trailer[..4])),
-        (
-            "ACK TAG",
-            "`truncate_to_4(AES-256-ECB(K_enc, V))`",
-            hex_spaced(&trailer[4..]),
-        ),
-    ] {
-        writeln!(&mut out, "| {} | {} | `{}` |", field, value, hex).unwrap();
-    }
-    writeln!(&mut out).unwrap();
-    writeln!(&mut out, "```text").unwrap();
-    writeln!(&mut out, "{}", wrap_hex_lines(&vectors.mac_ack_legacy, 16)).unwrap();
-    writeln!(&mut out, "```").unwrap();
-    writeln!(&mut out).unwrap();
-    writeln!(&mut out, "Total: {} bytes.", vectors.mac_ack_legacy.len()).unwrap();
     out
 }
 
@@ -619,7 +572,6 @@ struct Phase1Vectors {
     blind_unicast: Vec<u8>,
     mac_ack: Vec<u8>,
     mac_ack_callsign: Vec<u8>,
-    mac_ack_legacy: Vec<u8>,
 }
 
 fn generate_phase1_vectors() -> Phase1Vectors {
@@ -640,7 +592,7 @@ fn generate_phase1_vectors() -> Phase1Vectors {
     let node_a_public = *node_a_identity.public_key();
     let node_b_public = *node_b_identity.public_key();
     let shared_secret = node_a_identity.shared_secret_with(&node_b_public).unwrap();
-    let pairwise = engine.derive_pairwise_keys(&shared_secret);
+    let pairwise = engine.derive_pairwise_keys(&shared_secret, &node_a_public, &node_b_public);
     let channel_key = ChannelKey([0x5A; 32]);
     let channel = engine.derive_channel_keys(&channel_key);
     let blind_keys = engine.derive_blind_keys(&pairwise, &channel);
@@ -668,15 +620,13 @@ fn generate_phase1_vectors() -> Phase1Vectors {
             node_b_public.hint(),
         ),
         unicast_ackreq_fullsrc,
-        mac_ack: build_mac_ack(&engine, &pairwise, &ack_v, None, false),
+        mac_ack: build_mac_ack(&engine, &pairwise, &ack_v, None),
         mac_ack_callsign: build_mac_ack(
             &engine,
             &pairwise,
             &ack_v,
             Some(callsign.as_trimmed_slice()),
-            false,
         ),
-        mac_ack_legacy: build_mac_ack(&engine, &pairwise, &ack_v, None, true),
         multicast_encrypted: build_multicast_encrypted(&engine, &channel, &node_a_public),
         multicast_authenticated: build_multicast_authenticated(&engine, &channel, &node_a_public),
         unicast_with_options: build_unicast_with_options(
@@ -763,15 +713,11 @@ fn build_mac_ack(
     pairwise: &PairwiseKeys,
     v: &[u8; 16],
     callsign: Option<&[u8]>,
-    legacy: bool,
 ) -> Vec<u8> {
     let mut buf = [0u8; 64];
     let mut builder = PacketBuilder::new(&mut buf).mac_ack([0u8; 8]);
     if let Some(callsign) = callsign {
         builder = builder.option(OptionNumber::OperatorCallsign, callsign);
-    }
-    if legacy {
-        builder = builder.legacy_ack_tag();
     }
     let len = builder.build().unwrap().len();
     engine.seal_mac_ack(pairwise, v, &mut buf[..len]).unwrap();
@@ -836,7 +782,7 @@ fn build_unicast_with_options(
         .frame_counter(10)
         .encrypted()
         .flood_hops(4)
-        .trace_route()
+        .trace()
         .region_code([0x78, 0x53])
         .payload(b"hey")
         .build()
@@ -929,7 +875,7 @@ fn parse_header(bytes: &[u8]) -> PacketHeader {
 mod tests {
     use std::fs;
 
-    use super::{render_ack_transition_vector_markdown, render_phase1_test_vectors_markdown};
+    use super::render_phase1_test_vectors_markdown;
 
     #[test]
     fn phase1_vectors_match_protocol_appendix() {
@@ -940,19 +886,5 @@ mod tests {
         ))
         .expect("read protocol test vectors");
         assert_eq!(actual, expected);
-    }
-
-    #[test]
-    fn legacy_ack_vector_matches_transition_appendix() {
-        let expected = render_ack_transition_vector_markdown();
-        let actual = fs::read_to_string(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../docs/protocol/src/ack-transition.md"
-        ))
-        .expect("read ack transition appendix");
-        assert!(
-            actual.ends_with(&expected),
-            "ack-transition.md must end with:\n{expected}"
-        );
     }
 }

@@ -203,8 +203,8 @@ pub struct MobileTraceSignalRecord {
     pub snr_centibels: Option<i16>,
 }
 
-impl From<umsh_core::options::TraceSignalEntry> for MobileTraceSignalRecord {
-    fn from(entry: umsh_core::options::TraceSignalEntry) -> Self {
+impl From<umsh_core::options::HopSignal> for MobileTraceSignalRecord {
+    fn from(entry: umsh_core::options::HopSignal) -> Self {
         Self {
             rssi_dbm: entry.rssi_dbm(),
             snr_centibels: entry.snr_centibels(),
@@ -448,7 +448,7 @@ fn explicit_route_options(
     };
     // Last: try_with_source_route back-fills a flood budget, and a path that
     // does not work should say so rather than flood further than asked.
-    Ok(options.with_trace_route().with_route_slack(flood_hops))
+    Ok(options.with_trace().with_route_slack(flood_hops))
 }
 
 /// A path chosen by hand: repeaters in send order, then a flood allowance
@@ -3264,7 +3264,7 @@ async fn start_management<M: MacBackend>(
     // one every other asked-for send gets.
     *manager.send_options_mut() = with_flood_reach(SendOptions::default(), flood_hops)
         .with_ack_requested(true)
-        .with_trace_route();
+        .with_trace();
     let (plan, request) = match request {
         ManagementRequest::One { frame, shape } => (ManagementPlan::One(shape), frame),
         ManagementRequest::Fetch {
@@ -3727,20 +3727,19 @@ async fn run_worker(
                             if let Some(replaced) = pending.borrow_mut().remove(&peer.0) {
                                 emit_ping_outcome(&events, replaced, MobileMeshPingOutcome::Canceled);
                             }
-                            // Trace route for the path, trace signal for
-                            // what each hop of it cost. A ping that reports
-                            // only a round-trip time says a link is bad
-                            // without saying where.
+                            // A trace records the path and what each hop of
+                            // it cost. A ping that reports only a round-trip
+                            // time says a link is bad without saying where.
                             let options = match &path {
                                 None => Ok(with_flood_reach(SendOptions::default(), flood_hops.default_hops)
-                                    .with_trace_route()),
+                                    .with_trace()),
                                 Some((route, slack)) => {
                                     explicit_route_options(SendOptions::default(), route, *slack)
                                 }
                             }
                             .map(|options| {
                                 options
-                                    .with_trace_signal()
+                                    .with_trace()
                                     .with_mic_size(umsh_node::PING_MIC_SIZE)
                             });
                             let result = match (options, node.peer(peer).await) {
@@ -3826,8 +3825,7 @@ async fn run_worker(
                                         // learns what that path costs—the
                                         // two pair entry for entry.
                                         with_flood_reach(options, flood_hops.default_hops)
-                                            .with_trace_route()
-                                            .with_trace_signal()
+                                            .with_trace()
                                     };
                                     node.send_all(&frame, &options)
                                         .await
@@ -3854,8 +3852,7 @@ async fn run_worker(
                                         SendOptions::default(),
                                         flood_hops.beacon_hops,
                                     )
-                                    .with_trace_route()
-                                    .with_trace_signal(),
+                                    .with_trace(),
                                 )
                                 .await
                                 .map(|_| ())
@@ -4847,14 +4844,12 @@ mod tests {
 
     #[test]
     fn trace_signal_records_carry_readings_and_mark_bridged_hops() {
-        let heard =
-            MobileTraceSignalRecord::from(umsh_core::options::TraceSignalEntry::new(-97, 65));
+        let heard = MobileTraceSignalRecord::from(umsh_core::options::HopSignal::new(-97, 65));
         assert_eq!(heard.rssi_dbm, Some(-97));
         assert_eq!(heard.snr_centibels, Some(65));
         // A bridge measured nothing; both readings are absent rather than a
         // plausible-looking 0 dBm.
-        let bridged =
-            MobileTraceSignalRecord::from(umsh_core::options::TraceSignalEntry::POINT_TO_POINT);
+        let bridged = MobileTraceSignalRecord::from(umsh_core::options::HopSignal::POINT_TO_POINT);
         assert_eq!(bridged.rssi_dbm, None);
         assert_eq!(bridged.snr_centibels, None);
     }
@@ -5969,10 +5964,10 @@ mod tests {
         // And an empty trace for the repeaters to fill, which is what gives
         // the answering strangers a path home.
         let trace = options
-            .trace_route
+            .trace
             .clone()
             .map(|range| frame.data[range].to_vec())
-            .expect("a steered request carries a trace route");
+            .expect("a steered request carries a trace");
         assert!(trace.is_empty());
 
         // The hint filter rides as the two bytes given, and the vacuous caps
@@ -6591,11 +6586,7 @@ mod tests {
                 let options =
                     umsh_core::ParsedOptions::extract(&frame.data, header.options_range.clone())
                         .unwrap();
-                assert!(options.trace_route.is_some());
-                assert!(
-                    options.trace_signal.is_some(),
-                    "the pair is what makes the trace worth collecting"
-                );
+                assert!(options.trace.is_some());
                 alice.complete_outbound_frame(frame.id, true).unwrap();
                 bob.receive(MobileMeshRxRecord {
                     data: frame.data,
@@ -6655,7 +6646,7 @@ mod tests {
                 let options =
                     umsh_core::ParsedOptions::extract(&frame.data, header.options_range.clone())
                         .unwrap();
-                assert!(options.trace_route.is_none());
+                assert!(options.trace.is_none());
                 assert!(
                     header.fcf.full_source(),
                     "the detached signature is only checkable against the key"
@@ -7530,6 +7521,7 @@ mod tests {
                         k_enc: channel_keys.k_enc,
                         k_mic: channel_keys.k_mic,
                     },
+                    None,
                 )
                 .unwrap();
             opened[range].to_vec()
@@ -7706,7 +7698,7 @@ mod tests {
                 let Ok(header) = PacketHeader::parse(&data) else {
                     continue;
                 };
-                let Ok(range) = engine.open_packet(&mut data, &header, &pairwise) else {
+                let Ok(range) = engine.open_packet(&mut data, &header, &pairwise, None) else {
                     continue;
                 };
                 let body = &data[range];
@@ -7832,7 +7824,9 @@ mod tests {
         let sec_info = header.sec_info.expect("a multicast frame carries SECINFO");
         let payload = {
             let mut opened = frame.clone();
-            let range = engine.open_packet(&mut opened, &header, &pairwise).unwrap();
+            let range = engine
+                .open_packet(&mut opened, &header, &pairwise, None)
+                .unwrap();
             opened[range].to_vec()
         };
 

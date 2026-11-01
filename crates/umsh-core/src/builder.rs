@@ -448,16 +448,9 @@ macro_rules! impl_configuring_common {
                 self
             }
 
-            /// Add an empty trace-route option.
-            pub fn trace_route(mut self) -> Self {
-                self.push_option(OptionNumber::TraceRoute.as_u16(), &[]);
-                self
-            }
-
-            /// Add an empty trace-signal option. Pairs entry-for-entry with
-            /// trace route, so it is only meaningful alongside it.
-            pub fn trace_signal(mut self) -> Self {
-                self.push_option(OptionNumber::TraceSignal.as_u16(), &[]);
+            /// Add an empty Trace option, which each hop extends.
+            pub fn trace(mut self) -> Self {
+                self.push_option(OptionNumber::Trace.as_u16(), &[]);
                 self
             }
 
@@ -484,15 +477,6 @@ macro_rules! impl_configuring_common {
             }
         }
     };
-}
-
-impl<'a> MacAckBuilder<'a, state::Configuring> {
-    /// Mark the ack's tag as the legacy construction (option 254). Options
-    /// go in ascending number order, so this is added last.
-    pub fn legacy_ack_tag(mut self) -> Self {
-        self.push_option(OptionNumber::LegacyAckTag.as_u16(), &[]);
-        self
-    }
 }
 
 impl_configuring_common!(BroadcastBuilder<state::Configuring>);

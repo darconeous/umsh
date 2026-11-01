@@ -19,7 +19,7 @@
 //!   it accepts, and this node's own transmission comes first, so those
 //!   repeaters either did not hear it or heard it too weakly to use.
 
-use umsh_core::{RouterHint, options::TraceSignalEntry};
+use umsh_core::{RouterHint, options::HopSignal};
 
 /// How many repeaters the table remembers.
 pub(crate) const MAX_UPLINK_OBSERVATIONS: usize = 16;
@@ -34,7 +34,7 @@ const EVIDENCE_TTL_MS: u64 = 30 * 60 * 1000;
 pub(crate) enum Uplink {
     /// The repeater recently took a frame off this node's transmission,
     /// measured as the entry says when the frame carried a trace signal.
-    Heard(Option<TraceSignalEntry>),
+    Heard(Option<HopSignal>),
     /// The repeater recently forwarded a frame of ours it had taken from
     /// another repeater instead, and has not been seen to hear us since.
     Unheard,
@@ -47,7 +47,7 @@ struct UplinkObservation {
     hint: RouterHint,
     /// When the repeater last heard us, in whole seconds of the monotonic
     /// clock, and how well when the frame said.
-    heard: Option<(u32, Option<TraceSignalEntry>)>,
+    heard: Option<(u32, Option<HopSignal>)>,
     /// When it last forwarded a frame of ours it had not heard from us.
     unheard_s: Option<u32>,
 }
@@ -78,12 +78,7 @@ impl UplinkObservations {
     }
 
     /// Record that `hint` took a frame off this node's transmission.
-    pub(crate) fn note_heard(
-        &mut self,
-        hint: RouterHint,
-        signal: Option<TraceSignalEntry>,
-        now_ms: u64,
-    ) {
+    pub(crate) fn note_heard(&mut self, hint: RouterHint, signal: Option<HopSignal>, now_ms: u64) {
         self.entry(hint, now_ms).heard = Some((seconds(now_ms), signal));
     }
 
@@ -150,7 +145,7 @@ mod tests {
     #[test]
     fn the_more_recent_evidence_wins() {
         let mut table = UplinkObservations::new();
-        let signal = Some(TraceSignalEntry::new(-64, 80));
+        let signal = Some(HopSignal::new(-64, 80));
         table.note_heard(hint(1), signal, 10_000);
         assert_eq!(table.uplink(&hint(1), 10_000), Uplink::Heard(signal));
 

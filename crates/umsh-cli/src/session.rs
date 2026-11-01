@@ -937,14 +937,13 @@ where
         };
         let total = bytes.unwrap_or(8).min(60) as usize;
         let extra_bytes = total.saturating_sub(2);
-        // Trace route for the path, trace signal for what each hop of it cost.
-        // A ping that reports only a round-trip time says a link is bad
-        // without saying where.
+        // A trace records the path and what each hop of it cost. A ping that
+        // reports only a round-trip time says a link is bad without saying
+        // where.
         let opts = self
             .send_opts()
             .with_mic_size(umsh_node::PING_MIC_SIZE)
-            .with_trace_route()
-            .with_trace_signal();
+            .with_trace();
         match pc.ping(extra_bytes, &opts, 30_000).await {
             Ok(_) => {
                 self.stats.borrow_mut().packets_tx += 1;

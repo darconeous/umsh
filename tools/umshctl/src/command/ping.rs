@@ -117,7 +117,7 @@ impl PingArgs {
     fn send_options(&self) -> Result<SendOptions> {
         let mut options = SendOptions::default().with_mic_size(self.mic.0);
         if !self.untraced {
-            options = options.with_trace_route().with_trace_signal();
+            options = options.with_trace();
         }
         if let Some(route) = &self.route {
             options = options
@@ -395,7 +395,7 @@ fn describe_shape(args: &PingArgs, options: &SendOptions) -> String {
     if options.full_source {
         parts.push(String::from("full source"));
     }
-    if !options.trace_route {
+    if !options.trace {
         parts.push(String::from("untraced"));
     }
     parts.join(", ")

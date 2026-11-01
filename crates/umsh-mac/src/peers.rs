@@ -1,9 +1,7 @@
 use core::num::NonZeroU32;
 
 use heapless::{LinearMap, Vec};
-use umsh_core::{
-    ChannelId, ChannelKey, NodeHint, PublicKey, RouterHint, options::TraceSignalEntry,
-};
+use umsh_core::{ChannelId, ChannelKey, NodeHint, PublicKey, RouterHint, options::HopSignal};
 use umsh_crypto::{DerivedChannelKeys, PairwiseKeys};
 
 use crate::{CapacityError, cache::ReplayWindow};
@@ -129,7 +127,7 @@ pub struct PeerInfo {
     /// How the selected route's last hop was most recently measured: the
     /// link between the peer and whoever hears it first (see
     /// [`CachedRoute::far_hop`]). `None` when nothing has measured it.
-    pub(crate) route_last_hop: Option<TraceSignalEntry>,
+    pub(crate) route_last_hop: Option<HopSignal>,
     /// The selected route was chosen by the application
     /// ([`PeerRegistry::hold_route`]) rather than learned. It stays so after
     /// the hold ends, until a learned route replaces it.
@@ -182,7 +180,7 @@ impl PeerInfo {
 
     /// How the selected route's last hop was most recently measured, if it
     /// was. A point-to-point entry marks a hop with no radio in it.
-    pub fn route_last_hop(&self) -> Option<TraceSignalEntry> {
+    pub fn route_last_hop(&self) -> Option<HopSignal> {
         self.route_last_hop
     }
 
@@ -226,7 +224,7 @@ impl PeerInfo {
 struct RouteSelection {
     route: Option<CachedRoute>,
     score: Option<i16>,
-    last_hop: Option<TraceSignalEntry>,
+    last_hop: Option<HopSignal>,
     hand_set: bool,
 }
 
@@ -264,7 +262,7 @@ pub struct RouteCandidate {
     /// How it scored on what the frame that taught it measured.
     pub score: Option<i16>,
     /// How its last hop was measured, if it was.
-    pub last_hop: Option<TraceSignalEntry>,
+    pub last_hop: Option<HopSignal>,
 }
 
 impl From<RouteOffer> for RouteCandidate {
@@ -352,7 +350,7 @@ pub(crate) struct RouteOffer {
     pub acknowledgment: bool,
     /// How the frame measured the route's last hop (see
     /// [`CachedRoute::far_hop`]), if it did.
-    pub last_hop: Option<TraceSignalEntry>,
+    pub last_hop: Option<HopSignal>,
 }
 
 /// Outcome of inserting or updating an auto-learned peer.

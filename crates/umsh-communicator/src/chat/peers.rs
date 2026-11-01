@@ -565,8 +565,7 @@ impl<S: ChatStore> Chats<S> {
         // By full key, in case the peer has not registered us.
         let options = with_flood_reach(SendOptions::default(), FLOOD_HOPS)
             .with_full_source()
-            .with_trace_route()
-            .with_trace_signal()
+            .with_trace()
             .with_mic_size(PING_MIC_SIZE);
         self.commands.push_back(Command::Ping {
             peer: kept.key,

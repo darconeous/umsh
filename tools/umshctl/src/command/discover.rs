@@ -258,7 +258,7 @@ async fn ask(
             // The trace the question accumulates is the answering
             // strangers' only path home: a broadcast teaches the MAC no
             // route, and the answer carries no flood budget.
-            .with_trace_route();
+            .with_trace();
     }
     // Last, always: a source route back-fills a flood budget from its
     // own length, and any flood budget at all makes the far end drop an

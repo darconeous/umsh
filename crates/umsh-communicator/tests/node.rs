@@ -16,7 +16,7 @@ use umsh_communicator::task::{Arrival, Secrecy};
 use umsh_communicator::{
     ChannelCrypto, Clock, CommunicatorNode, FlashMap, FlashMapStore, MemoryStore, Quota, Seeds,
 };
-use umsh_core::options::TraceSignalEntry;
+use umsh_core::options::HopSignal;
 use umsh_core::{
     ChannelId, ChannelKey, ChannelTag, Fcf, PacketHeader, PacketType, ParsedOptions, PayloadType,
     PublicKey, RouterHint, SourceAddrRef,
@@ -2272,10 +2272,7 @@ fn a_ping_answer_keeps_its_path_and_how_each_hop_was_heard() {
         peer: robin,
         round_trip_ms: 1_380,
         rx: heard,
-        signal: vec![
-            TraceSignalEntry::new(-104, 38),
-            TraceSignalEntry::POINT_TO_POINT,
-        ],
+        signal: vec![HopSignal::new(-104, 38), HopSignal::POINT_TO_POINT],
     });
     assert!(events(&node).contains(&NodeEvent::PingSettled(peer)));
     let Some(PingView::Reply(reply)) = node.ping_view(peer) else {

@@ -7,7 +7,7 @@
 
 use alloc::collections::BTreeMap;
 
-use umsh_core::options::TraceSignalEntry;
+use umsh_core::options::HopSignal;
 use umsh_core::{PublicKey, RouterHint};
 use umsh_mac::CachedRoute;
 use umsh_text::node_adapter::RxSummary;
@@ -200,7 +200,7 @@ impl<S: ChatStore> Chats<S> {
         peer: PublicKey,
         round_trip_ms: u64,
         rx: &RxSummary,
-        signal: &[TraceSignalEntry],
+        signal: &[HopSignal],
         now_ms: u64,
         events: &mut dyn FnMut(NodeEvent),
     ) {
@@ -296,7 +296,7 @@ impl<S: ChatStore> Chats<S> {
 }
 
 /// How a repeater says it heard a hop.
-fn leg(entry: TraceSignalEntry) -> Leg {
+fn leg(entry: HopSignal) -> Leg {
     if entry.is_point_to_point() {
         return Leg::Bridge;
     }

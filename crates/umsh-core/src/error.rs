@@ -21,6 +21,9 @@ pub enum ParseError {
     OptionOutOfOrder,
     /// The option stream was structurally malformed.
     MalformedOption,
+    /// A blind unicast's plaintext address block was not supplied, or does not
+    /// match the frame's source length.
+    MissingAddressBlock,
 }
 
 /// Errors returned while parsing a textual UMSH address.

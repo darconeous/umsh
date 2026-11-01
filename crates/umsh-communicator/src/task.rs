@@ -17,7 +17,7 @@ use embassy_futures::select::select3;
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::signal::Signal;
-use umsh_core::options::TraceSignalEntry;
+use umsh_core::options::HopSignal;
 use umsh_core::{ChannelKey, NodeHint, PayloadType, PublicKey, RouterHint};
 use umsh_mac::{CachedRoute, SendOptions};
 use umsh_node::{
@@ -65,7 +65,7 @@ pub enum Arrival {
         peer: PublicKey,
         round_trip_ms: u64,
         rx: RxSummary,
-        signal: Vec<TraceSignalEntry>,
+        signal: Vec<HopSignal>,
     },
     /// A ping went unanswered, or could not be sent.
     PingTimeout { peer: PublicKey },

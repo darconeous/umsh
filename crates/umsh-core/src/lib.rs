@@ -56,7 +56,7 @@ pub use builder::{
 };
 pub use error::{AddressParseError, BuildError, EncodeError, HintInputError, ParseError};
 pub use packet::{
-    ChannelId, ChannelKey, ChannelTag, Fcf, FloodHops, MicSize, NodeHint, OptionNumber,
+    BlindAddr, ChannelId, ChannelKey, ChannelTag, Fcf, FloodHops, MicSize, NodeHint, OptionNumber,
     PacketHeader, PacketType, ParsedOptions, PayloadType, PublicKey, RouterHint,
     RouterHintCandidates, Scf, SecInfo, SourceAddr, SourceAddrRef, UMSH_VERSION, UnsealedPacket,
     feed_aad, iter_options,
@@ -246,15 +246,15 @@ mod tests {
             .source_hint(src)
             .frame_counter(10)
             .encrypted()
-            .trace_route()
+            .trace()
             .region_code([0x78, 0x53])
             .payload(b"hey")
             .build()
             .unwrap();
 
         // New layout: FCF DST(3) SRC(3) SECINFO(5) OPTIONS...
-        // Options start at byte 12: trace_route(0x20) + region_code(0x92,0x78,0x53) + 0xFF
-        assert_eq!(&packet.as_bytes()[12..17], &[0x20, 0x92, 0x78, 0x53, 0xFF]);
+        // Options start at byte 12: trace(0x70) + region_code(0x42,0x78,0x53) + 0xFF
+        assert_eq!(&packet.as_bytes()[12..17], &[0x70, 0x42, 0x78, 0x53, 0xFF]);
     }
 
     #[test]
@@ -262,28 +262,29 @@ mod tests {
         // New layout for unicast with hint source, encrypted, MIC8, no fhops:
         // FCF | DST(3) | SRC(3) | SECINFO(5) | OPTIONS(5) | 0xFF | payload(3) | MIC(8)
         // Total = 1 + 3 + 3 + 5 + 4 + 1 + 3 + 8 = 28 bytes
-        // Options: trace route (2, len 0) + region code (11, len 2)—both dynamic, excluded from AAD
+        // Options: trace (7, len 0) + region code (11, len 2)—both dynamic, excluded from AAD
         let mut bytes = [0u8; 64];
         bytes[0] = Fcf::new(PacketType::Unicast, false, false).0;
         bytes[1..4].copy_from_slice(&[0xC3, 0xD4, 0x25]); // DST
         bytes[4..7].copy_from_slice(&[0xA1, 0xB2, 0x03]); // SRC hint
         bytes[7] = Scf::new(true, MicSize::Mic8, false).0; // SCF
         bytes[8..12].copy_from_slice(&42u32.to_be_bytes()); // frame counter
-        bytes[12] = 0x20; // trace route: delta=2, len=0
-        bytes[13] = 0x92; // region code: delta=9, len=2
+        bytes[12] = 0x70; // trace: delta=7, len=0
+        bytes[13] = 0x42; // region code: delta=4, len=2
         bytes[14] = 0x78;
         bytes[15] = 0x53;
         bytes[16] = 0xFF; // end marker
         bytes[17..20].copy_from_slice(b"hey"); // payload
         bytes[20..28].fill(0x11); // MIC
         let header = PacketHeader::parse(&bytes[..28]).unwrap();
-        let mut aad = [0u8; 18];
+        let mut aad = [0u8; 20];
         let mut aad_len = 0usize;
-        feed_aad(&header, &bytes[..28], |chunk| {
+        feed_aad(&header, &bytes[..28], None, |chunk| {
             let next_len = aad_len + chunk.len();
             aad[aad_len..next_len].copy_from_slice(chunk);
             aad_len = next_len;
-        });
+        })
+        .unwrap();
         assert_eq!(
             &aad[..aad_len],
             &[
@@ -299,6 +300,8 @@ mod tests {
                 0x00,
                 0x00,
                 0x2A,
+                0xFF,
+                0xFF,
             ]
         );
     }
@@ -320,13 +323,19 @@ mod tests {
         let mut aad = [0u8; 32];
         let mut aad_len = 0usize;
 
-        feed_aad(&header, &bytes, |chunk| {
+        feed_aad(&header, &bytes, None, |chunk| {
             let next_len = aad_len + chunk.len();
             aad[aad_len..next_len].copy_from_slice(chunk);
             aad_len = next_len;
-        });
+        })
+        .unwrap();
 
-        assert_eq!(&aad[1..6], &[0x01, 0x2C, 0x00, 0x01, 0xAA]);
+        // FCF ‖ DST ‖ SRC ‖ SECINFO occupy the first 12 bytes; the static
+        // option record and the terminator follow.
+        assert_eq!(
+            &aad[12..aad_len],
+            &[0x01, 0x2C, 0x00, 0x01, 0xAA, 0xFF, 0xFF]
+        );
     }
 
     #[test]
@@ -509,5 +518,144 @@ mod tests {
                 Err(crate::ParseError::MalformedOption)
             );
         }
+    }
+
+    fn aad_of(frame: &[u8], blind: Option<&crate::BlindAddr>) -> Vec<u8> {
+        let header = PacketHeader::parse(frame).unwrap();
+        let mut aad = Vec::new();
+        feed_aad(&header, frame, blind, |chunk| aad.extend_from_slice(chunk)).unwrap();
+        aad
+    }
+
+    #[test]
+    fn aad_always_ends_with_the_terminator() {
+        let mut buf = [0u8; 64];
+        let frame = PacketBuilder::new(&mut buf)
+            .broadcast()
+            .source_hint(NodeHint([0x8B, 0x60, 0xF5]))
+            .payload(b"hi")
+            .build()
+            .unwrap()
+            .to_vec();
+        assert_eq!(
+            aad_of(&frame, None),
+            [frame[0], 0x8B, 0x60, 0xF5, 0xFF, 0xFF]
+        );
+    }
+
+    /// Two headers that the earlier layout mapped to identical AAD bytes: an
+    /// unencrypted, salted multicast with no static options whose SRC hint
+    /// stood in the AAD, and an encrypted, unsalted multicast carrying one
+    /// static option. Fields in wire order with a terminator keep them apart.
+    #[test]
+    fn colliding_headers_from_the_old_layout_have_distinct_aads() {
+        let fcf_free_scf = Scf::new(false, MicSize::Mic4, true).0;
+        let enc_scf = Scf::new(true, MicSize::Mic4, false).0;
+        let mut buf = [0u8; 64];
+        let a = PacketBuilder::new(&mut buf)
+            .multicast(crate::ChannelId([0x00, 0x14]))
+            .source_hint(NodeHint([0x00, 0x01, 0x5A]))
+            .frame_counter(u32::from_be_bytes([0x33, enc_scf, 0x00, 0x00]))
+            .salt(0x0007)
+            .mic_size(MicSize::Mic4)
+            .payload(b"x")
+            .build()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        let mut buf = [0u8; 64];
+        let b = PacketBuilder::new(&mut buf)
+            .multicast(crate::ChannelId([fcf_free_scf, 0x33]))
+            .source_hint(NodeHint([0x00, 0x01, 0x5A]))
+            .frame_counter(0x0000_0007)
+            .option(OptionNumber::Unknown(20), &[0x5A])
+            .encrypted()
+            .mic_size(MicSize::Mic4)
+            .payload(b"x")
+            .build()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        assert_ne!(aad_of(&a, None), aad_of(&b, None));
+    }
+
+    #[test]
+    fn multicast_aad_depends_on_e_only_through_the_scf() {
+        let src = PublicKey([0xA1; 32]);
+        let build = |encrypted: bool| {
+            let mut buf = [0u8; 128];
+            let builder = PacketBuilder::new(&mut buf)
+                .multicast(crate::ChannelId([0x7E, 0x5F]))
+                .source_full(&src)
+                .frame_counter(9)
+                .region_code([0x12, 0x34])
+                .mic_size(MicSize::Mic8);
+            let builder = if encrypted {
+                builder.encrypted()
+            } else {
+                builder
+            };
+            builder
+                .payload(b"hello")
+                .build()
+                .unwrap()
+                .as_bytes()
+                .to_vec()
+        };
+        let (plain, sealed) = (build(false), build(true));
+        let (aad_plain, aad_sealed) = (aad_of(&plain, None), aad_of(&sealed, None));
+        assert_eq!(aad_plain.len(), aad_sealed.len());
+        let differing: Vec<_> = (0..aad_plain.len())
+            .filter(|&i| aad_plain[i] != aad_sealed[i])
+            .collect();
+        assert_eq!(differing, [3], "only the SCF byte may differ");
+        for frame in [&plain, &sealed] {
+            let header = PacketHeader::parse(frame).unwrap();
+            let protected = header.protected_range();
+            assert_eq!(&frame[protected.start..protected.start + 32], &src.0);
+            assert_eq!(protected.end, header.mic_range.start);
+        }
+    }
+
+    #[test]
+    fn blind_unicast_aad_covers_plaintext_addresses_for_either_e() {
+        let src = PublicKey([0xA1; 32]);
+        let dst = NodeHint([0xC3, 0xD4, 0x25]);
+        let mut addr = [0u8; 35];
+        addr[..3].copy_from_slice(&dst.0);
+        addr[3..].copy_from_slice(&src.0);
+        let addr = crate::BlindAddr::from_plaintext(&addr).unwrap();
+        let build = |encrypted: bool| {
+            let mut buf = [0u8; 128];
+            let builder = PacketBuilder::new(&mut buf)
+                .blind_unicast(crate::ChannelId([0x7E, 0x5F]), dst)
+                .source_full(&src)
+                .frame_counter(5);
+            let builder = if encrypted {
+                builder
+            } else {
+                builder.unencrypted()
+            };
+            builder
+                .payload(b"hello")
+                .build()
+                .unwrap()
+                .as_bytes()
+                .to_vec()
+        };
+        let (plain, sealed) = (build(false), build(true));
+        let (aad_plain, aad_sealed) = (aad_of(&plain, Some(&addr)), aad_of(&sealed, Some(&addr)));
+        assert!(aad_plain.ends_with(addr.as_bytes()));
+        let differing: Vec<_> = (0..aad_plain.len())
+            .filter(|&i| aad_plain[i] != aad_sealed[i])
+            .collect();
+        assert_eq!(differing, [3], "only the SCF byte may differ");
+
+        let header = PacketHeader::parse(&plain).unwrap();
+        assert_eq!(
+            feed_aad(&header, &plain, None, |_| {}),
+            Err(crate::ParseError::MissingAddressBlock)
+        );
+        assert_eq!(&plain[header.blind_addr_range().unwrap()], addr.as_bytes());
     }
 }
