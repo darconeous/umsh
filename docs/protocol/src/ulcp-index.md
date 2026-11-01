@@ -124,6 +124,7 @@ Id   | Mnemonic                                                                 
 4848 | [`PROP_STAT_LAN_EXPORTED`](ulcp-ip-multicast.md#counters)                               | Get, Set                   | `CAP_STATS`, `CAP_LAN_BEARER`, `CAP_REPEATER`
 4849 | [`PROP_STAT_LAN_EXPORT_DROPPED`](ulcp-ip-multicast.md#counters)                         | Get, Set                   | `CAP_STATS`, `CAP_LAN_BEARER`, `CAP_REPEATER`
 4850 | [`PROP_STAT_RX_OWN_HINT`](ulcp-radio.md#prop-stat-rx-own-hint)                        | Get, Set                   | `CAP_STATS`, `CAP_REPEATER`
+4851 | [`PROP_STAT_RADIO_RESETS`](ulcp-radio.md#prop-stat-radio-resets)                      | Get, Set                   | `CAP_STATS`
 4864 | [`PROP_BLE_PAIRING_PIN`](ulcp-ble.md#prop-ble-pairing-pin)                            | Set                        | BLE transport
 4865 | [`PROP_DEV_ADMINS`](app-node-management.md#prop-dev-admins)                           | Get, Set, Insert, Remove   | `CAP_ADMIN`
 4866 | [`PROP_TIME`](ulcp-device.md#prop-time)                                               | Get, Set, Is               | `CAP_TIME`

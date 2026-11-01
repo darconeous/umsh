@@ -53,6 +53,7 @@ Id   | Mnemonic              | Commands | Description
 4843 | `PROP_STAT_MESHCORE_FORWARDED_FLOOD` | Get, Set | MeshCore packets flooded
 4844 | `PROP_STAT_MESHCORE_DECLINED` | Get, Set | MeshCore packets neither forwarded nor duplicates
 4850 | `PROP_STAT_RX_OWN_HINT` | Get, Set | Received packets whose trace names this device as the last hop
+4851 | `PROP_STAT_RADIO_RESETS` | Get, Set | Times the radio chip was reset after it stopped responding
 
 ### PROP 32: `PROP_PHY_ENABLED` {#prop-phy-enabled}
 
@@ -357,3 +358,11 @@ IP bearer are not counted. None of these names a neighbor, and a device does
 not list itself in a [Peer Repeaters
 Response](mac-commands.md#peer-repeaters-response-11). Requires `CAP_STATS` and
 `CAP_REPEATER`.
+
+### PROP 4851: `PROP_STAT_RADIO_RESETS` {#prop-stat-radio-resets}
+
+Times the device reset its radio chip because the chip stopped doing what it
+was told: a transmission that did not complete within its time limit, or any
+other radio operation that did not finish. A transmission abandoned this way
+increments neither `PROP_STAT_TX_PACKETS` nor `PROP_STAT_TX_CHANNEL_BUSY`.
+Requires `CAP_STATS`.

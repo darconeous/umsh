@@ -368,6 +368,10 @@ pub mod prop {
     /// repeats put back on the air without a hop added, or a repeater
     /// sharing its router hint. Requires `CAP_STATS` and `CAP_REPEATER`.
     pub const STAT_RX_OWN_HINT: u32 = 4850;
+    /// Times the radio driver reset the radio chip because it stopped
+    /// doing what it was told (`PROP_STAT_RADIO_RESETS`)—`UINT32_LE`.
+    /// Requires `CAP_STATS`.
+    pub const STAT_RADIO_RESETS: u32 = 4851;
     /// Persisted, write-only BLE pairing passkey (`PROP_BLE_PAIRING_PIN`).
     pub const BLE_PAIRING_PIN: u32 = 4864;
     /// Nodes authorized to manage this device over the mesh

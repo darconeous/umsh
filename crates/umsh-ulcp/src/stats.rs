@@ -80,10 +80,13 @@ pub enum Counter {
     /// Receptions off the air naming the device's node as the hop just
     /// heard.
     RxOwnHint,
+    /// Times the radio driver reset a radio chip that stopped doing what
+    /// it was told.
+    RadioResets,
 }
 
 /// How many counters a ledger holds.
-pub const COUNTERS: usize = 19;
+pub const COUNTERS: usize = 20;
 
 impl Counter {
     /// Every counter, in identifier order.
@@ -107,6 +110,7 @@ impl Counter {
         Counter::LanExported,
         Counter::LanExportDropped,
         Counter::RxOwnHint,
+        Counter::RadioResets,
     ];
 
     /// The property identifier this counter is read and cleared through.
@@ -131,6 +135,7 @@ impl Counter {
             Counter::LanExported => prop::STAT_LAN_EXPORTED,
             Counter::LanExportDropped => prop::STAT_LAN_EXPORT_DROPPED,
             Counter::RxOwnHint => prop::STAT_RX_OWN_HINT,
+            Counter::RadioResets => prop::STAT_RADIO_RESETS,
         }
     }
 
@@ -156,6 +161,7 @@ impl Counter {
             prop::STAT_LAN_EXPORTED => Counter::LanExported,
             prop::STAT_LAN_EXPORT_DROPPED => Counter::LanExportDropped,
             prop::STAT_RX_OWN_HINT => Counter::RxOwnHint,
+            prop::STAT_RADIO_RESETS => Counter::RadioResets,
             _ => return None,
         })
     }

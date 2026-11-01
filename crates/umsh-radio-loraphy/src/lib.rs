@@ -73,6 +73,66 @@ fn note_bad_crc(stats: Option<&'static StatsLedger>) {
     }
 }
 
+/// Time allowed beyond a maximum-length frame's airtime before a chip
+/// operation outside a transmit is presumed wedged. The SX1262 can hold
+/// BUSY high until the frame it is receiving has ended, so reading the
+/// status of an IRQ raised mid-frame legitimately waits that long.
+const CHIP_OP_SLACK_MS: u64 = 250;
+
+/// The limit for a chip operation with no modulation to size it by:
+/// putting a disabled radio to sleep, and the reset itself.
+const IDLE_CHIP_OP_LIMIT_MS: u64 = 1_000;
+
+/// Reset and cold-start a chip that stopped doing what it was told, and
+/// count it. The reset is bounded too: a chip it does not revive is left
+/// for the next operation's limit to find, a limit's length later, not
+/// retried in a loop.
+async fn reset_radio<RK, DLY, C>(
+    lora: &mut LoRa<RK, DLY>,
+    clock: &C,
+    stats: Option<&'static StatsLedger>,
+) where
+    RK: RadioKind,
+    DLY: embedded_hal_async::delay::DelayNs,
+    C: Clock,
+{
+    if let Some(stats) = stats {
+        stats.bump(Counter::RadioResets);
+    }
+    let deadline_ms = clock.now_ms().saturating_add(IDLE_CHIP_OP_LIMIT_MS);
+    let _ = select(
+        lora.init(),
+        core::future::poll_fn(|cx| clock.poll_delay_until(cx, deadline_ms)),
+    )
+    .await;
+}
+
+/// Run one chip operation, or reset the chip if it has not finished
+/// within `$limit_ms`. Evaluates to `Some` of the operation's result, or
+/// `None` after a reset.
+///
+/// Every lora-phy command waits on BUSY with no limit of its own, so a
+/// chip that holds BUSY high parks whatever awaited it, and the runner
+/// along with it. Cancelling an operation part-way is only safe because
+/// the reset that follows discards the state it left behind.
+macro_rules! chip_op {
+    ($lora:ident, $clock:expr, $stats:expr, $limit_ms:expr, $op:expr) => {{
+        let deadline_ms = $clock.now_ms().saturating_add($limit_ms);
+        let outcome = select(
+            $op,
+            core::future::poll_fn(|cx| $clock.poll_delay_until(cx, deadline_ms)),
+        )
+        .await;
+        match outcome {
+            Either::First(result) => Some(result),
+            Either::Second(()) => {
+                reset_radio(&mut $lora, &$clock, $stats).await;
+                None
+            }
+        }
+    }};
+}
+
 /// Maximum SX1262 LoRa payload: 255 bytes.
 pub const MAX_PAYLOAD: usize = 255;
 
@@ -333,6 +393,7 @@ const TX_DEADLINE_SLACK_MS: u64 = 250;
 async fn perform_tx<RK, DLY, C>(
     lora: &mut LoRa<RK, DLY>,
     clock: &C,
+    stats: Option<&'static StatsLedger>,
     mdltn: &ModulationParams,
     tx_pkt: &mut PacketParams,
     default_power_dbm: i32,
@@ -378,9 +439,7 @@ where
     match select(attempt, expired).await {
         Either::First(result) => result,
         Either::Second(()) => {
-            // A failed reset is left for the next prepare to retry: init
-            // marks the chip for a cold start before it touches the bus.
-            let _ = lora.init().await;
+            reset_radio(lora, clock, stats).await;
             Err(TxError::Io(RadioError::TransmitTimeout))
         }
     }
@@ -397,16 +456,17 @@ where
 ///
 /// # Cancellation safety
 ///
-/// `wait_for_irq` is the only `await` point that may be cancelled (it just
-/// awaits a DIO edge and is safe to drop). `process_irq_event`,
-/// `prepare_for_tx`, and `tx` all run to completion outside any `select`
-/// branch, the transmit deadline aside, which resets the chip after it
-/// cancels one—cancelling those otherwise leaves the radio in a wedged
-/// state from which `prepare_for_tx` will hang forever (lora-phy explicitly warns against
-/// dropping `process_irq_event` futures). The convenience `lora.rx()`
-/// helper internally calls `complete_rx`/`process_irq_event`, so it is
-/// **not** safe inside a `select` either; we hand-roll the IRQ loop here
-/// to keep cancellation pinned to `wait_for_irq`.
+/// `wait_for_irq` is the only `await` point that may be cancelled freely
+/// (it just awaits a DIO edge and is safe to drop). Every other chip
+/// operation—`process_irq_event`, `get_rx_result`, `prepare_for_tx`, `tx`,
+/// and the rest—runs outside any `select` branch except its own limit,
+/// and the chip is reset after the limit cancels one: a cancelled SPI
+/// exchange otherwise leaves the radio in a state from which the next
+/// command hangs forever (lora-phy explicitly warns against dropping
+/// `process_irq_event` futures). The convenience `lora.rx()` helper
+/// internally calls `complete_rx`/`process_irq_event`, so it is **not**
+/// safe inside a `select` either; we hand-roll the IRQ loop here to keep
+/// cancellation pinned to `wait_for_irq` and the limits.
 #[allow(clippy::too_many_arguments)]
 pub async fn runner<RK, DLY, M, C, const RX: usize, const TX: usize>(
     mut lora: LoRa<RK, DLY>,
@@ -426,16 +486,15 @@ where
 {
     let mut rx_buf = [0u8; MAX_PAYLOAD];
     let rx_busy_window = rx_busy_window_ms(&mdltn, tx_pkt.preamble_length);
+    let op_limit_ms = u64::from(rx_busy_window) + CHIP_OP_SLACK_MS;
 
     'outer: loop {
-        if lora
-            .prepare_for_rx(RxMode::Continuous, &mdltn, &rx_pkt)
-            .await
-            .is_err()
-        {
-            continue;
-        }
-        if lora.start_rx().await.is_err() {
+        let armed = chip_op!(lora, clock, stats, op_limit_ms, async {
+            lora.prepare_for_rx(RxMode::Continuous, &mdltn, &rx_pkt)
+                .await?;
+            lora.start_rx().await
+        });
+        if !matches!(armed, Some(Ok(()))) {
             continue;
         }
 
@@ -446,18 +505,28 @@ where
         loop {
             match select(lora.wait_for_irq(), ch.tx.receive()).await {
                 Either::First(Ok(())) => {
-                    // process_irq_event is NOT cancel-safe—it MUST run to
-                    // completion. The public method passes clear_interrupts=false
+                    // process_irq_event is NOT cancel-safe—it runs to
+                    // completion or to its limit, after which the chip is
+                    // reset. The public method passes clear_interrupts=false
                     // (unlike complete_rx's internal call), so we explicitly
                     // clear afterwards or DIO1 stays latched high on LR1110.
-                    let irq_result = lora.process_irq_event().await;
-                    let _ = lora.clear_irq_status().await;
+                    let Some(irq_result) = chip_op!(lora, clock, stats, op_limit_ms, async {
+                        let irq_result = lora.process_irq_event().await;
+                        let _ = lora.clear_irq_status().await;
+                        irq_result
+                    }) else {
+                        continue 'outer;
+                    };
 
                     match irq_result {
                         Ok(Some(IrqState::Done)) => {
-                            if let Ok((len, status)) =
-                                lora.get_rx_result(&rx_pkt, &mut rx_buf).await
-                            {
+                            if let Some(Ok((len, status))) = chip_op!(
+                                lora,
+                                clock,
+                                stats,
+                                op_limit_ms,
+                                lora.get_rx_result(&rx_pkt, &mut rx_buf)
+                            ) {
                                 let frame = air_rx_frame(&rx_buf[..len as usize], status);
                                 if ch.rx.try_send(frame).is_ok() {
                                     ch.rx_waker.wake();
@@ -502,10 +571,18 @@ where
                         continue;
                     }
                     // TX is also NOT cancel-safe—run the CAD gate and
-                    // prepare_for_tx + tx to completion outside any select.
-                    let result =
-                        perform_tx(&mut lora, &clock, &mdltn, &mut tx_pkt, power_dbm, &tx_req)
-                            .await;
+                    // prepare_for_tx + tx outside any select, bounded by
+                    // its own deadline.
+                    let result = perform_tx(
+                        &mut lora,
+                        &clock,
+                        stats,
+                        &mdltn,
+                        &mut tx_pkt,
+                        power_dbm,
+                        &tx_req,
+                    )
+                    .await;
                     ch.tx_done.signal(result);
                     continue 'outer; // chip is left in standby—re-prepare RX
                 }
@@ -826,7 +903,8 @@ pub fn coding_rate_from_denom(cr: u8) -> Option<CodingRate> {
 ///
 /// Cancellation-safety analysis is identical to [`runner`]: only
 /// `wait_for_irq` and the two channel/signal waits are cancelled by the
-/// select; IRQ processing and TX always run to completion.
+/// select; every chip operation runs to completion or to its limit, and a
+/// reset follows the limit.
 #[allow(clippy::too_many_arguments)]
 pub async fn device_runner<RK, DLY, M, C, const RX: usize, const TX: usize>(
     lora: LoRa<RK, DLY>,
@@ -924,7 +1002,29 @@ where
             // and an already-idle one leaves `wait_settings_while_idle`
             // for the same reason.
             if ctl.shutdown.load(Ordering::Acquire) {
-                if sleeping || sleep_radio(&mut lora).await.is_ok() {
+                // A chip reset on the way down is awake again, so it gets a
+                // second try at sleep.
+                let asleep = sleeping
+                    || match chip_op!(
+                        lora,
+                        clock,
+                        stats,
+                        IDLE_CHIP_OP_LIMIT_MS,
+                        sleep_radio(&mut lora)
+                    ) {
+                        Some(result) => result.is_ok(),
+                        None => matches!(
+                            chip_op!(
+                                lora,
+                                clock,
+                                stats,
+                                IDLE_CHIP_OP_LIMIT_MS,
+                                sleep_radio(&mut lora)
+                            ),
+                            Some(Ok(()))
+                        ),
+                    };
+                if asleep {
                     ctl.shutdown_done.signal(());
                 }
                 // A failed shutdown remains unacknowledged; the board's
@@ -937,7 +1037,16 @@ where
                 Some(current) if current.enabled => break current,
                 _ => {
                     if !sleeping {
-                        sleeping = sleep_radio(&mut lora).await.is_ok();
+                        sleeping = matches!(
+                            chip_op!(
+                                lora,
+                                clock,
+                                stats,
+                                IDLE_CHIP_OP_LIMIT_MS,
+                                sleep_radio(&mut lora)
+                            ),
+                            Some(Ok(()))
+                        );
                     }
                     // No periodic work while disabled. A failed sleep is
                     // retried on the next configuration request.
@@ -971,6 +1080,7 @@ where
         ch.spreading_factor
             .store(sf_value(active.sf) as u8, Ordering::Relaxed);
         let rx_busy_window = rx_busy_window_ms(&mdltn, tx_preamble);
+        let op_limit_ms = u64::from(rx_busy_window) + CHIP_OP_SLACK_MS;
 
         let rx_mode = match rx_strategy {
             RxStrategy::Continuous => RxMode::Continuous,
@@ -983,10 +1093,11 @@ where
             // prepare_for_rx wakes a sleeping modem and restores its complete
             // configuration after the cold sleep, including TCXO/RF switches.
             sleeping = false;
-            if lora.prepare_for_rx(rx_mode, &mdltn, &rx_pkt).await.is_err() {
-                continue;
-            }
-            if lora.start_rx().await.is_err() {
+            let armed = chip_op!(lora, clock, stats, op_limit_ms, async {
+                lora.prepare_for_rx(rx_mode, &mdltn, &rx_pkt).await?;
+                lora.start_rx().await
+            });
+            if !matches!(armed, Some(Ok(()))) {
                 continue;
             }
 
@@ -1002,15 +1113,25 @@ where
                 {
                     Either4::First(Ok(())) => {
                         // Same discipline as `runner`: process_irq_event
-                        // must run to completion, then clear interrupts.
-                        let irq_result = lora.process_irq_event().await;
-                        let _ = lora.clear_irq_status().await;
+                        // runs to completion or to its limit, then clear
+                        // interrupts.
+                        let Some(irq_result) = chip_op!(lora, clock, stats, op_limit_ms, async {
+                            let irq_result = lora.process_irq_event().await;
+                            let _ = lora.clear_irq_status().await;
+                            irq_result
+                        }) else {
+                            continue 'rx;
+                        };
 
                         match irq_result {
                             Ok(Some(IrqState::Done)) => {
-                                if let Ok((len, status)) =
-                                    lora.get_rx_result(&rx_pkt, &mut rx_buf).await
-                                {
+                                if let Some(Ok((len, status))) = chip_op!(
+                                    lora,
+                                    clock,
+                                    stats,
+                                    op_limit_ms,
+                                    lora.get_rx_result(&rx_pkt, &mut rx_buf)
+                                ) {
                                     let frame = air_rx_frame(&rx_buf[..len as usize], status);
                                     if ch.rx.try_send(frame).is_ok() {
                                         ch.rx_waker.wake();
@@ -1044,6 +1165,7 @@ where
                         let result = perform_tx(
                             &mut lora,
                             &clock,
+                            stats,
                             &mdltn,
                             &mut tx_pkt,
                             active.power_dbm,
@@ -1059,17 +1181,18 @@ where
                     }
                     Either4::Fourth(Either::First(())) => {
                         // Sample the instantaneous channel RSSI. Like TX,
-                        // `get_rssi` runs to completion outside the select
-                        // (only `wait_for_irq` and the channel/signal waits are
-                        // cancel-safe). In continuous RX the read does not
-                        // disturb reception, so we stay in the inner loop. In
-                        // duty-cycled RX the SPI traffic wakes the chip out of
-                        // its sniff sequence (and the sample is only
-                        // meaningful if it caught an RX window), so re-arm RX
-                        // afterwards.
-                        let sample = lora.get_rssi().await.map_err(|_| ());
-                        ctl.rssi_resp.signal(sample);
-                        if rx_mode != RxMode::Continuous {
+                        // `get_rssi` runs to completion or to its limit
+                        // outside the select (only `wait_for_irq` and the
+                        // channel/signal waits are cancel-safe). In
+                        // continuous RX the read does not disturb reception,
+                        // so we stay in the inner loop. In duty-cycled RX the
+                        // SPI traffic wakes the chip out of its sniff
+                        // sequence (and the sample is only meaningful if it
+                        // caught an RX window), so re-arm RX afterwards.
+                        let sample = chip_op!(lora, clock, stats, op_limit_ms, lora.get_rssi());
+                        let reset = sample.is_none();
+                        ctl.rssi_resp.signal(sample.and_then(Result::ok).ok_or(()));
+                        if reset || rx_mode != RxMode::Continuous {
                             continue 'rx;
                         }
                     }
@@ -1080,12 +1203,14 @@ where
                             ctl.temperature_resp.signal((id, None));
                             continue;
                         }
-                        let value = if lora.enter_standby().await.is_ok() {
-                            temperature.sample(lora.radio_kind_mut()).await
-                        } else {
-                            None
-                        };
-                        ctl.temperature_resp.signal((id, value));
+                        let value = chip_op!(lora, clock, stats, op_limit_ms, async {
+                            if lora.enter_standby().await.is_ok() {
+                                temperature.sample(lora.radio_kind_mut()).await
+                            } else {
+                                None
+                            }
+                        });
+                        ctl.temperature_resp.signal((id, value.flatten()));
                         continue 'rx;
                     }
                 }
@@ -1095,8 +1220,7 @@ where
 }
 
 /// Stop reception before sleeping: SX126x SetSleep requires standby.
-/// Run to completion outside selects; do not cancel an SPI operation. The
-/// caller tracks successful sleep so later disabled requests never touch a
+/// Run outside selects, bounded only by `chip_op!`. The caller tracks successful sleep so later disabled requests never touch a
 /// sleeping chip's BUSY line. Bound transient-error recovery without polling.
 async fn sleep_radio<RK: RadioKind, DLY: embedded_hal_async::delay::DelayNs>(
     lora: &mut LoRa<RK, DLY>,

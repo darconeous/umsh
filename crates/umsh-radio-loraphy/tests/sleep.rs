@@ -24,6 +24,7 @@ use umsh_hal::{CadPolicy, Clock};
 use umsh_radio_loraphy::{
     Channels, DeviceControl, DeviceSettings, RxStrategy, TxError, TxRequest, device_runner,
 };
+use umsh_ulcp::stats::{Counter, StatsLedger};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum Mode {
@@ -42,6 +43,8 @@ struct Chip {
     /// IRQ flags latched for the next `GetIrqStatus`; DIO1 is high while
     /// any are set.
     irq_flags: u16,
+    /// BUSY is stuck high until the next reset.
+    busy_stuck: bool,
 }
 
 struct Bus(Rc<RefCell<Chip>>);
@@ -99,7 +102,9 @@ impl SpiDevice for Bus {
 struct Pins(Rc<RefCell<Chip>>);
 impl InterfaceVariant for Pins {
     async fn reset(&mut self, _: &mut impl DelayNs) -> Result<(), RadioError> {
-        self.0.borrow_mut().mode = Mode::Standby;
+        let mut chip = self.0.borrow_mut();
+        chip.mode = Mode::Standby;
+        chip.busy_stuck = false;
         Ok(())
     }
     async fn wait_on_busy(&mut self) -> Result<(), RadioError> {
@@ -108,7 +113,14 @@ impl InterfaceVariant for Pins {
             Mode::Sleeping,
             "BUSY stays high asleep"
         );
-        Ok(())
+        core::future::poll_fn(|_| {
+            if self.0.borrow().busy_stuck {
+                Poll::Pending
+            } else {
+                Poll::Ready(Ok(()))
+            }
+        })
+        .await
     }
     async fn await_irq(&mut self) -> Result<(), RadioError> {
         core::future::poll_fn(|_| {
@@ -402,6 +414,7 @@ fn transmit_without_completion_times_out_and_cold_starts_the_chip() {
     let chip = Rc::new(RefCell::new(Chip::default()));
     let (lora, channel, control) = fixture(chip.clone());
     let clock = TestClock::default();
+    let stats: &'static StatsLedger = Box::leak(Box::new(StatsLedger::new()));
     let mut runner = core::pin::pin!(device_runner(
         lora,
         channel,
@@ -409,7 +422,7 @@ fn transmit_without_completion_times_out_and_cold_starts_the_chip() {
         8,
         32,
         RxStrategy::Continuous,
-        None,
+        Some(stats),
         clock.clone(),
     ));
     control.apply(settings(true));
@@ -438,6 +451,55 @@ fn transmit_without_completion_times_out_and_cold_starts_the_chip() {
             .any(|cmd| cmd[0] == 0x97)
     );
     assert_eq!(chip.borrow().mode, Mode::Receiving);
+    assert_eq!(stats.get(Counter::RadioResets), 1);
+
+    assert!(channel.tx.try_send(tx_request()).is_ok());
+    assert!(poll(runner.as_mut()).is_pending());
+    assert_eq!(chip.borrow().mode, Mode::Transmitting);
+}
+
+/// A chip that holds BUSY high after a receive IRQ is reset once the IRQ
+/// read outlasts a whole frame, the reset is counted, and the runner goes
+/// back to receiving and transmitting.
+#[test]
+fn busy_stuck_after_a_receive_irq_resets_the_chip() {
+    const RX_DONE: u16 = 0x0002;
+
+    let chip = Rc::new(RefCell::new(Chip::default()));
+    let (lora, channel, control) = fixture(chip.clone());
+    let clock = TestClock::default();
+    let stats: &'static StatsLedger = Box::leak(Box::new(StatsLedger::new()));
+    let mut runner = core::pin::pin!(device_runner(
+        lora,
+        channel,
+        control,
+        8,
+        32,
+        RxStrategy::Continuous,
+        Some(stats),
+        clock.clone(),
+    ));
+    control.apply(settings(true));
+    assert!(poll(runner.as_mut()).is_pending());
+    assert_eq!(chip.borrow().mode, Mode::Receiving);
+
+    {
+        let mut chip = chip.borrow_mut();
+        chip.irq_flags = RX_DONE;
+        chip.busy_stuck = true;
+    }
+    assert!(poll(runner.as_mut()).is_pending());
+    // A frame can legitimately keep BUSY high this long.
+    clock.0.set(800);
+    assert!(poll(runner.as_mut()).is_pending());
+    assert!(chip.borrow().busy_stuck, "not reset inside a frame time");
+    assert_eq!(stats.get(Counter::RadioResets), 0);
+
+    clock.0.set(2_000);
+    assert!(poll(runner.as_mut()).is_pending());
+    assert!(!chip.borrow().busy_stuck);
+    assert_eq!(chip.borrow().mode, Mode::Receiving);
+    assert_eq!(stats.get(Counter::RadioResets), 1);
 
     assert!(channel.tx.try_send(tx_request()).is_ok());
     assert!(poll(runner.as_mut()).is_pending());

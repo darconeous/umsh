@@ -113,6 +113,7 @@ pub const TOPICS: &[Topic] = &[
                 prop::STAT_RX_PACKETS,
                 prop::STAT_RX_BAD_CRC,
                 prop::STAT_RX_NON_UMSH,
+                prop::STAT_RADIO_RESETS,
                 prop::STAT_RX_ACCEPTED,
                 prop::STAT_FORWARDED,
                 prop::STAT_FORWARD_DROPPED,
@@ -541,6 +542,7 @@ const STAT_FIELDS: &[(u32, &str, &str)] = &[
     (prop::STAT_RX_PACKETS, "rx UMSH", "RX_PACKETS"),
     (prop::STAT_RX_BAD_CRC, "rx bad CRC", "RX_BAD_CRC"),
     (prop::STAT_RX_NON_UMSH, "rx non-UMSH", "RX_NON_UMSH"),
+    (prop::STAT_RADIO_RESETS, "radio resets", "RADIO_RESETS"),
     (prop::STAT_RX_ACCEPTED, "rx accepted", "RX_ACCEPTED"),
     (prop::STAT_FORWARDED, "forwarded", "FORWARDED"),
     (
