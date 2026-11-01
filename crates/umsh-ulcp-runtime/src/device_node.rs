@@ -349,6 +349,8 @@ static MAC_FORWARD_CANCELLED: AtomicU32 = AtomicU32::new(0);
 static MAC_FORWARD_DROPPED_POLICY: AtomicU32 = AtomicU32::new(0);
 static MAC_RX_OWN_HINT: AtomicU32 = AtomicU32::new(0);
 static MAC_RX_DELIVERY_REFUSED: AtomicU32 = AtomicU32::new(0);
+static MAC_FORWARD_DROPPED_OVERSIZE: AtomicU32 = AtomicU32::new(0);
+static MAC_ROUTE_RETRY_OVERSIZE: AtomicU32 = AtomicU32::new(0);
 static MAC_RX_COUNTER_PERSIST_FAILURES: AtomicU32 = AtomicU32::new(0);
 static MAC_RX_COUNTER_RESTORE_FAILURES: AtomicU32 = AtomicU32::new(0);
 
@@ -368,6 +370,8 @@ pub fn mac_counters() -> MacCounters {
         forward_dropped_policy: MAC_FORWARD_DROPPED_POLICY.load(Ordering::Relaxed),
         rx_own_hint: MAC_RX_OWN_HINT.load(Ordering::Relaxed),
         rx_delivery_refused: MAC_RX_DELIVERY_REFUSED.load(Ordering::Relaxed),
+        forward_dropped_oversize: MAC_FORWARD_DROPPED_OVERSIZE.load(Ordering::Relaxed),
+        route_retry_oversize: MAC_ROUTE_RETRY_OVERSIZE.load(Ordering::Relaxed),
         rx_counter_persist_failures: MAC_RX_COUNTER_PERSIST_FAILURES.load(Ordering::Relaxed),
         rx_counter_restore_failures: MAC_RX_COUNTER_RESTORE_FAILURES.load(Ordering::Relaxed),
     }
@@ -383,6 +387,8 @@ fn publish_mac_counters(counters: MacCounters) {
     MAC_FORWARD_DROPPED_POLICY.store(counters.forward_dropped_policy, Ordering::Relaxed);
     MAC_RX_OWN_HINT.store(counters.rx_own_hint, Ordering::Relaxed);
     MAC_RX_DELIVERY_REFUSED.store(counters.rx_delivery_refused, Ordering::Relaxed);
+    MAC_FORWARD_DROPPED_OVERSIZE.store(counters.forward_dropped_oversize, Ordering::Relaxed);
+    MAC_ROUTE_RETRY_OVERSIZE.store(counters.route_retry_oversize, Ordering::Relaxed);
     MAC_RX_COUNTER_PERSIST_FAILURES.store(counters.rx_counter_persist_failures, Ordering::Relaxed);
     MAC_RX_COUNTER_RESTORE_FAILURES.store(counters.rx_counter_restore_failures, Ordering::Relaxed);
 }

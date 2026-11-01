@@ -436,6 +436,9 @@ pub struct PendingAck<const FRAME: usize = MAX_RESEND_FRAME_LEN> {
     /// The attempt rode a held route and missed, so whatever acknowledges
     /// this send now came back through the flood fallback.
     pub(crate) held_route_missed: bool,
+    /// This send has had its one Route Retry, even if the retry had to go
+    /// out as the original frame rather than its rewrite.
+    pub(crate) route_retry_spent: bool,
     /// Set when this entry carries a Frame Verified on behalf of the send
     /// it vouches for, and the Verify Frame's counter fell outside our
     /// window for the requester: the acknowledgment that completes the
@@ -475,6 +478,7 @@ impl<const FRAME: usize> PendingAck<FRAME> {
             confirm_key: None,
             cached_route_revision: 0,
             held_route_missed: false,
+            route_retry_spent: false,
             adopt_on_ack: None,
         }
     }
@@ -496,6 +500,7 @@ impl<const FRAME: usize> PendingAck<FRAME> {
             confirm_key: None,
             cached_route_revision: 0,
             held_route_missed: false,
+            route_retry_spent: false,
             adopt_on_ack: None,
         }
     }
@@ -518,6 +523,7 @@ impl<const FRAME: usize> PendingAck<FRAME> {
             confirm_key: None,
             cached_route_revision: 0,
             held_route_missed: false,
+            route_retry_spent: false,
             adopt_on_ack: None,
         }
     }

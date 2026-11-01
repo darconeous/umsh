@@ -1,6 +1,7 @@
 mod ack_authentication;
 mod bearer;
 mod routing_reliability;
+mod send_shapes;
 
 use super::*;
 use core::convert::Infallible;
@@ -8476,54 +8477,142 @@ fn repeater_declines_to_forward_a_malformed_trace_rather_than_panicking() {
     }
 }
 
-/// A well-formed trace grown until the frame has no room for another
-/// record is over-limit input too. Whatever the repeater does with it, it
-/// must not panic, and anything it sends fits the radio and still names
-/// this hop first.
-#[test]
-fn repeater_handles_a_trace_that_fills_the_frame_without_panicking() {
-    let mut mac = make_mac();
-    mac.repeater_config_mut().enabled = true;
-    let repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
-    let repeater_hint = mac
-        .identity(repeater_id)
-        .unwrap()
-        .identity()
-        .public_key()
-        .router_hint();
+/// A flooded broadcast carrying `trace`, padded with payload so that it
+/// leaves `room` bytes below the 255-byte frame limit, as the repeater
+/// forwards it. `None` when the repeater does not forward it.
+fn forward_traced_beacon(
+    mac: &mut TestMac,
+    trace: &[u8],
+    room: usize,
+) -> Option<heapless::Vec<u8, 256>> {
     let max_frame = mac.radio_mut().max_frame_size();
-
     let source = DummyIdentity::new([0xAB; 32]);
-    // The builder stages options in the buffer's tail, so it needs room
-    // beyond the frame.
-    let mut buf = [0u8; 512];
-    // FCF, FHOPS, the full source key, a two-byte option header, then
-    // records up to the last whole one that fits.
-    let records = (max_frame - 2 - 32 - 2) / 4;
-    let overgrown = std::vec![0x22u8; 4 * records];
-    let beacon = PacketBuilder::new(&mut buf)
-        .broadcast()
-        .source_full(source.public_key())
-        .flood_hops(3)
-        .option(OptionNumber::Trace, &overgrown)
-        .build()
-        .unwrap();
-    let beacon: heapless::Vec<u8, 256> = beacon.iter().copied().collect();
-    assert!(beacon.len() + 4 > max_frame, "no room for another record");
+    let build = |buf: &mut [u8], payload: &[u8]| -> heapless::Vec<u8, 256> {
+        PacketBuilder::new(buf)
+            .broadcast()
+            .source_full(source.public_key())
+            .flood_hops(3)
+            .option(OptionNumber::Trace, trace)
+            .payload(payload)
+            .build()
+            .unwrap()
+            .iter()
+            .copied()
+            .collect()
+    };
+    let overhead = build(&mut [0u8; 256], &[0]).len() - 1;
+    let payload = std::vec![0x5A; max_frame - room - overhead];
+    let beacon = build(&mut [0u8; 256], &payload);
+    assert_eq!(beacon.len(), max_frame - room);
 
     mac.radio_mut().queue_received_frame(beacon.as_slice());
     assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
-    if let Some(forwarded) = mac.tx_queue_mut().pop_next() {
-        let frame = forwarded.frame.as_slice();
-        assert!(frame.len() <= max_frame);
-        let header = PacketHeader::parse(frame).unwrap();
-        let options = ParsedOptions::extract(frame, header.options_range.clone()).unwrap();
-        let first = options
-            .trace(frame)
-            .and_then(|trace| trace.entries().next())
-            .expect("a forwarded trace stays well-formed");
-        assert_eq!(first.hint, repeater_hint);
-    }
+    mac.tx_queue_mut().pop_next().map(|forwarded| {
+        assert!(forwarded.frame.len() <= max_frame);
+        forwarded.frame.as_slice().iter().copied().collect()
+    })
+}
+
+/// The Trace option value a forwarded frame carries.
+fn forwarded_trace(frame: &[u8]) -> std::vec::Vec<u8> {
+    let header = PacketHeader::parse(frame).unwrap();
+    let options = ParsedOptions::extract(frame, header.options_range.clone()).unwrap();
+    frame[options.trace.unwrap()].to_vec()
+}
+
+fn repeater_hint(mac: &TestMac) -> RouterHint {
+    mac.identity(LocalIdentityId(0))
+        .unwrap()
+        .identity()
+        .public_key()
+        .router_hint()
+}
+
+/// A repeater adds its entry in the trace's own form while there is room,
+/// then sheds signal, then the oldest hops, and finally declines the link.
+#[test]
+fn a_full_trace_degrades_to_fit_the_frame() {
+    let records: std::vec::Vec<u8> = [[0x11, 0x12, 0x9C, 0x10], [0x21, 0x22, 0x9C, 0x10]].concat();
+
+    // Room for a record: one is added.
+    let mut mac = make_repeater_mac();
+    let own = repeater_hint(&mac);
+    let frame = forward_traced_beacon(&mut mac, &records, 4).unwrap();
+    let trace = forwarded_trace(&frame);
+    assert_eq!(trace.len(), 12);
+    assert_eq!(trace[..2], own.0);
+    assert_eq!(trace[4..], records[..]);
+
+    // Room for a hint but not a record: hints only, every hop kept. The
+    // hints-only value (7 bytes) is one byte shorter than the old one, so
+    // the record has room to spare.
+    let mut mac = make_repeater_mac();
+    let frame = forward_traced_beacon(&mut mac, &records, 0).unwrap();
+    assert_eq!(
+        forwarded_trace(&frame),
+        [&[0xFE][..], &own.0, &[0x11, 0x12], &[0x21, 0x22]].concat()
+    );
+
+    // A hints-only trace can only take a hint.
+    let hints_only = [0xFE, 0x11, 0x12, 0x21, 0x22];
+    let mut mac = make_repeater_mac();
+    let frame = forward_traced_beacon(&mut mac, &hints_only, 2).unwrap();
+    assert_eq!(
+        forwarded_trace(&frame),
+        [&[0xFE][..], &own.0, &[0x11, 0x12], &[0x21, 0x22]].concat()
+    );
+
+    // No room to add anything: truncated, the oldest hop dropped.
+    let mut mac = make_repeater_mac();
+    let frame = forward_traced_beacon(&mut mac, &hints_only, 0).unwrap();
+    assert_eq!(
+        forwarded_trace(&frame),
+        [&[0xFF][..], &own.0, &[0x11, 0x12]].concat()
+    );
+
+    // An empty trace in a full frame: not even a lone 0xFF fits.
+    let mut mac = make_repeater_mac();
+    assert!(forward_traced_beacon(&mut mac, &[], 0).is_none());
+    assert_eq!(mac.counters().forward_dropped_oversize, 1);
+}
+
+/// Past 12 bytes the option's length takes a byte of its own, which the
+/// repeater counts when it judges what fits.
+#[test]
+fn a_trace_whose_length_field_would_grow_degrades_instead() {
+    let records = [0x31u8; 12];
+    // Room for the record's 4 bytes, but not for the length byte as well.
+    let mut mac = make_repeater_mac();
+    let own = repeater_hint(&mac);
+    let frame = forward_traced_beacon(&mut mac, &records, 4).unwrap();
+    assert_eq!(
+        forwarded_trace(&frame),
+        [&[0xFE][..], &own.0, &[0x31; 6]].concat()
+    );
+    // With that byte too, the record goes in.
+    let mut mac = make_repeater_mac();
+    let frame = forward_traced_beacon(&mut mac, &records, 5).unwrap();
+    assert_eq!(forwarded_trace(&frame).len(), 16);
+}
+
+/// What the repeater inserts itself counts against the room too: a traced
+/// frame one byte short of the limit, sent on to a link with the same
+/// limit, still fits once the repeater adds a Region Code.
+#[test]
+fn a_repeater_inserting_a_region_code_still_fits_the_frame() {
+    let records = [0x41u8; 8];
+    let mut mac = make_repeater_mac();
+    mac.repeater_config_mut().default_region = Some([0x78, 0x53]);
+    let own = repeater_hint(&mac);
+    let frame = forward_traced_beacon(&mut mac, &records, 1).unwrap();
+    let header = PacketHeader::parse(&frame).unwrap();
+    let options = ParsedOptions::extract(&frame, header.options_range.clone()).unwrap();
+    assert_eq!(options.region_code, Some([0x78, 0x53]));
+    // The Region Code's 3 bytes cost the trace its signal and a hop.
+    assert_eq!(
+        forwarded_trace(&frame),
+        [&[0xFF][..], &own.0, &[0x41; 2]].concat()
+    );
 }
 
 /// A frame that asked for no trace must not grow one: the

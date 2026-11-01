@@ -1236,6 +1236,15 @@ mod tests {
             Ok(SendReceipt(99))
         }
 
+        async fn payload_capacity(
+            &self,
+            _from: LocalIdentityId,
+            _destination: umsh_mac::SendDestination<'_>,
+            _options: &SendOptions,
+        ) -> Result<usize, MacBackendError<Self::SendError, Self::CapacityError>> {
+            Ok(255)
+        }
+
         async fn send_unicast(
             &self,
             from: LocalIdentityId,

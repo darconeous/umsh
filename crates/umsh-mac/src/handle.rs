@@ -361,6 +361,21 @@ impl<
             .await
     }
 
+    /// The most payload a send can carry; see [`Mac::payload_capacity`].
+    ///
+    /// [`Mac::payload_capacity`]: crate::Mac::payload_capacity
+    pub async fn payload_capacity(
+        &self,
+        from: LocalIdentityId,
+        destination: crate::SendDestination<'_>,
+        options: &SendOptions,
+    ) -> Result<usize, SendError> {
+        self.mac
+            .borrow()
+            .await
+            .payload_capacity(from, destination, options)
+    }
+
     /// Enqueues a broadcast frame for transmission.
     pub async fn send_broadcast(
         &self,

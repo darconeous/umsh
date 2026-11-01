@@ -349,8 +349,8 @@ pub use cache::{
 };
 pub use coordinator::{
     AmateurRadioMode, ChannelPolicy, CounterPersistenceError, IdentitySlot, LocalIdentity,
-    LocalIdentityId, Mac, MacCounters, MacError, OperatingPolicy, RepeaterConfig, SendError,
-    WakeReason,
+    LocalIdentityId, Mac, MacCounters, MacError, OperatingPolicy, RepeaterConfig, SendDestination,
+    SendError, WakeReason,
 };
 pub use echo_watch::ECHO_WATCH_MS;
 pub use handle::MacHandle;

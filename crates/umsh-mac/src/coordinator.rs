@@ -15,6 +15,10 @@ use umsh_crypto::{
 };
 use umsh_hal::{Clock, CounterStore, Radio, RxInfo, RxOrigin, Snr, TxError, TxOptions};
 
+mod shape;
+pub use shape::SendDestination;
+use shape::{SendTarget, ShapedFrame, build_shaped, route_retry_eligible};
+
 use crate::{
     AddPeerError, CapacityError, DEFAULT_ACKS, DEFAULT_CHANNEL_HINT_REPLAY, DEFAULT_CHANNEL_REPLAY,
     DEFAULT_CHANNELS, DEFAULT_DUP, DEFAULT_IDENTITIES, DEFAULT_PEERS, DEFAULT_ROUTE_HOLDS,
@@ -680,9 +684,20 @@ struct ForwardPlan {
     insert_region_code: Option<[u8; 2]>,
     delay_ms: u64,
     station_action: ForwardStationAction,
-    /// Signal quality this repeater received the frame at, prepended to a
-    /// trace-signal option so its entries pair with the trace-route hints.
+    /// Signal quality this repeater received the frame at, for its Trace
+    /// record.
     signal: HopSignal,
+}
+
+/// How [`Mac::encode_forwarded_options`] writes a Trace option.
+#[derive(Clone, Copy)]
+enum TraceRewrite {
+    /// An empty value, to measure everything else the forwarded frame
+    /// carries.
+    Measure,
+    /// This repeater's entry, with this many bytes for the whole option
+    /// record.
+    Budget(usize),
 }
 
 /// Package a reception's physical-layer observations for delivery.
@@ -1084,6 +1099,13 @@ pub struct MacCounters {
     /// MIC, that it refused to accept, deliver, or acknowledge because
     /// they carry a delivery-critical option it cannot interpret.
     pub rx_delivery_refused: u32,
+    /// Frames this repeater would have forwarded, dropped because the
+    /// rewritten frame does not fit the outgoing link, even with its trace
+    /// truncated to a lone marker.
+    pub forward_dropped_oversize: u32,
+    /// Route Retries whose rewrite would not have fit a traced frame, sent
+    /// as the original frame instead. Send-time planning keeps this at zero.
+    pub route_retry_oversize: u32,
     /// Receive baselines that failed to reach the counter store. The entry
     /// stays due and is written again on the next pass, so each failure
     /// widens what an unexpected restart would let replay.
@@ -1810,50 +1832,40 @@ impl<
         // `SendOptions` (whose default `encrypted = true`) doesn't get rejected
         // as a `PolicyViolation` in `LicensedOnly` mode for a send that will
         // in fact go out unencrypted.
-        let mut options = options.clone();
-        options.encrypted = false;
-        options.ack_requested = false;
-        options.salt = false;
-        let options = &options;
+        let destination = SendDestination::Broadcast;
+        let options = &Self::sanitized_send_options(destination, options);
         self.enforce_send_policy(None, options, false)?;
 
-        let slot = self.identity_mut(from).ok_or(SendError::IdentityMissing)?;
-        let source_key = *slot.identity().public_key();
-        let receipt = slot.next_receipt();
+        let source_key = *self
+            .identity(from)
+            .ok_or(SendError::IdentityMissing)?
+            .identity()
+            .public_key();
+        let chain = self.resolve_send_shapes(destination, options)?;
+        let shape = self.choose_send_shape(
+            destination,
+            &source_key,
+            &chain,
+            payload,
+            options.flood_hops,
+        )?;
+        let receipt = self
+            .identity_mut(from)
+            .ok_or(SendError::IdentityMissing)?
+            .next_receipt();
         let mut buf = [0u8; FRAME];
-        let builder = PacketBuilder::new(&mut buf).broadcast();
-        let mut builder = if options.full_source {
-            builder.source_full(&source_key)
-        } else {
-            builder.source_hint(source_key.hint())
+        let ShapedFrame::Plain(frame) = build_shaped(
+            SendTarget::Broadcast,
+            &source_key,
+            &shape,
+            0,
+            None,
+            payload,
+            &mut buf,
+        )?
+        else {
+            unreachable!("a broadcast is built unsealed");
         };
-        let repeatable =
-            Self::frame_is_repeatable(options.flood_hops, options.source_route.as_deref());
-        if let Some(hops) = options.flood_hops {
-            builder = builder.flood_hops(hops);
-        }
-        // A route that constrains no hop is not attached: only a repeater
-        // consuming the final hint may leave an empty SourceRoute option.
-        if let Some(route) = options
-            .source_route
-            .as_ref()
-            .filter(|route| !route.is_empty())
-        {
-            builder = builder.source_route(route.as_slice());
-        }
-        if let Some(callsign) = self.operating_policy.operator_callsign {
-            builder = builder.option(OptionNumber::OperatorCallsign, callsign.as_trimmed_slice());
-        }
-        if options.trace && repeatable {
-            builder = builder.trace();
-        }
-        if let Some(region_code) = options.region_code {
-            builder = builder.region_code(region_code);
-        }
-        let frame = builder.payload(payload).build()?;
-        if frame.len() > self.radio.max_frame_size() {
-            return Err(SendError::Build(BuildError::BufferTooSmall));
-        }
         let not_before_ms = self.tx_not_before_ms(options);
         self.tx_queue
             .enqueue_with_state(
@@ -1887,12 +1899,14 @@ impl<
         payload: &[u8],
         options: &SendOptions,
     ) -> Result<SendReceipt, SendError> {
-        self.enforce_send_policy(Some(*channel_id), options, false)?;
         // Multicast has no unicast receiver to ack, so an `ack_requested`
         // flag carried over from shared `SendOptions` is silently ignored.
         // TODO: surface this drop as a debug-level event (see the matching
         // TODO on `queue_broadcast`) so callers can detect when their
         // requested flags were not applied.
+        let destination = SendDestination::Multicast(channel_id);
+        let options = &Self::sanitized_send_options(destination, options);
+        self.enforce_send_policy(Some(*channel_id), options, false)?;
 
         let derived = self
             .channels
@@ -1905,6 +1919,19 @@ impl<
             k_enc: derived.k_enc,
             k_mic: derived.k_mic,
         };
+        let source_key = *self
+            .identity(from)
+            .ok_or(SendError::IdentityMissing)?
+            .identity()
+            .public_key();
+        let chain = self.resolve_send_shapes(destination, options)?;
+        let shape = self.choose_send_shape(
+            destination,
+            &source_key,
+            &chain,
+            payload,
+            options.flood_hops,
+        )?;
         let receipt = self
             .identity_mut(from)
             .ok_or(SendError::IdentityMissing)?
@@ -1912,44 +1939,18 @@ impl<
         let (source_key, frame_counter) = self.identity_and_advance(from)?;
         let salt = self.take_salt(options);
         let mut buf = [0u8; FRAME];
-        let builder = PacketBuilder::new(&mut buf).multicast(*channel_id);
-        let builder = if options.full_source {
-            builder.source_full(&source_key)
-        } else {
-            builder.source_hint(source_key.hint())
+        let ShapedFrame::Secured(mut packet) = build_shaped(
+            SendTarget::Multicast(*channel_id),
+            &source_key,
+            &shape,
+            frame_counter,
+            salt,
+            payload,
+            &mut buf,
+        )?
+        else {
+            unreachable!("a multicast is built for sealing");
         };
-        let mut builder = builder.frame_counter(frame_counter);
-        if options.encrypted {
-            builder = builder.encrypted();
-        }
-        builder = builder.mic_size(options.mic_size);
-        if let Some(salt) = salt {
-            builder = builder.salt(salt);
-        }
-        let repeatable =
-            Self::frame_is_repeatable(options.flood_hops, options.source_route.as_deref());
-        if let Some(hops) = options.flood_hops {
-            builder = builder.flood_hops(hops);
-        }
-        // A route that constrains no hop is not attached: only a repeater
-        // consuming the final hint may leave an empty SourceRoute option.
-        if let Some(route) = options
-            .source_route
-            .as_ref()
-            .filter(|route| !route.is_empty())
-        {
-            builder = builder.source_route(route.as_slice());
-        }
-        if let Some(callsign) = self.operating_policy.operator_callsign {
-            builder = builder.option(OptionNumber::OperatorCallsign, callsign.as_trimmed_slice());
-        }
-        if options.trace && repeatable {
-            builder = builder.trace();
-        }
-        if let Some(region_code) = options.region_code {
-            builder = builder.region_code(region_code);
-        }
-        let mut packet = builder.payload(payload).build()?;
         self.crypto.seal_packet(&mut packet, &keys)?;
         let not_before_ms = self.tx_not_before_ms(options);
         self.enqueue_packet(packet, Some(receipt), Some(from), not_before_ms)?;
@@ -2249,66 +2250,36 @@ impl<
             .ok_or(SendError::PairwiseKeysMissing)?
             .pairwise_keys
             .clone();
-        let effective_source_route = self.effective_source_route(peer_id, options);
-        let effective_flood_hops =
-            self.effective_flood_hops(peer_id, options, effective_source_route.as_ref());
+        let destination = SendDestination::Unicast(peer);
+        let source_key = *self
+            .identity(from)
+            .ok_or(SendError::IdentityMissing)?
+            .identity()
+            .public_key();
+        let chain = self.resolve_send_shapes(destination, options)?;
+        let shape = self.choose_send_shape(
+            destination,
+            &source_key,
+            &chain,
+            payload,
+            options.flood_hops,
+        )?;
 
         let (source_key, frame_counter) = self.identity_and_advance(from)?;
         let salt = self.take_salt(options);
         let mut buf = [0u8; FRAME];
-        let builder = PacketBuilder::new(&mut buf).unicast(peer.hint());
-        let builder = if options.full_source {
-            builder.source_full(&source_key)
-        } else {
-            builder.source_hint(source_key.hint())
+        let ShapedFrame::Secured(mut packet) = build_shaped(
+            SendTarget::Unicast(peer.hint()),
+            &source_key,
+            &shape,
+            frame_counter,
+            salt,
+            payload,
+            &mut buf,
+        )?
+        else {
+            unreachable!("a unicast is built for sealing");
         };
-        let mut builder = builder.frame_counter(frame_counter);
-        if options.ack_requested {
-            builder = builder.ack_requested();
-        }
-        if options.encrypted {
-            builder = builder.encrypted();
-        }
-        builder = builder.mic_size(options.mic_size);
-        if let Some(salt) = salt {
-            builder = builder.salt(salt);
-        }
-        // A caller asking for a trace is asking for a path to be recorded,
-        // not for an empty option: a frame no repeater may carry has no path
-        // to record, and the request is dropped rather than honored blind.
-        let repeatable =
-            Self::frame_is_repeatable(effective_flood_hops, effective_source_route.as_deref());
-        if let Some(hops) = effective_flood_hops {
-            builder = builder.flood_hops(hops);
-        }
-        let traced = repeatable
-            && (options.trace
-                || self.needs_route_discovery(peer_id, effective_source_route.as_ref()));
-        if let Some(route) = effective_source_route.as_ref() {
-            builder = builder.source_route(route.as_slice());
-        }
-        if let Some(callsign) = self.operating_policy.operator_callsign {
-            builder = builder.option(OptionNumber::OperatorCallsign, callsign.as_trimmed_slice());
-        }
-        // Options go in ascending number order: Trace (7), then Ack MIC (8).
-        if traced {
-            builder = builder.trace();
-        }
-        if let Some(ack_mic) = options.ack_mic {
-            builder = builder.option(OptionNumber::AckMic, &ack_mic);
-        }
-        if let Some(region_code) = options.region_code {
-            builder = builder.region_code(region_code);
-        }
-        let built = builder.payload(payload).build();
-        if options.ack_mic.is_some() && self.is_oversize(&built) {
-            let without = SendOptions {
-                ack_mic: None,
-                ..options.clone()
-            };
-            return self.queue_unicast(from, peer, payload, &without);
-        }
-        let mut packet = built?;
 
         let receipt = if options.ack_requested {
             Some(self.prepare_pending_ack(from, *peer, &packet, &pairwise_keys, options)?)
@@ -2322,9 +2293,7 @@ impl<
                 from,
                 receipt,
                 packet.as_bytes(),
-                effective_source_route
-                    .as_ref()
-                    .map(|route| route.as_slice()),
+                shape.source_route.as_ref().map(|route| route.as_slice()),
                 options.flood_hops,
             )?;
         }
@@ -2338,7 +2307,7 @@ impl<
                     from,
                     *peer,
                     packet.as_bytes(),
-                    effective_source_route.as_ref(),
+                    shape.source_route.as_ref(),
                     options.flood_hops,
                 )?)
             }
@@ -2358,10 +2327,10 @@ impl<
             }
             return Err(err);
         }
-        if traced {
+        if shape.trace {
             self.peer_registry.note_trace_sent(peer_id);
         }
-        if let Some(ack_mic) = options.ack_mic {
+        if let Some(ack_mic) = shape.ack_mic {
             self.retire_ack_carried_onward(from, peer, &ack_mic);
         }
         Ok(if options.track_transmission {
@@ -2436,65 +2405,42 @@ impl<
             .pairwise_keys
             .clone();
         let blind_keys = self.crypto.derive_blind_keys(&pairwise_keys, channel_keys);
-        let effective_source_route = self.effective_source_route(peer_id, options);
-        let effective_flood_hops =
-            self.effective_flood_hops(peer_id, options, effective_source_route.as_ref());
+        let destination = SendDestination::BlindUnicast {
+            peer,
+            channel: &channel_id,
+        };
+        let source_key = *self
+            .identity(from)
+            .ok_or(SendError::IdentityMissing)?
+            .identity()
+            .public_key();
+        let chain = self.resolve_send_shapes(destination, options)?;
+        let shape = self.choose_send_shape(
+            destination,
+            &source_key,
+            &chain,
+            payload,
+            options.flood_hops,
+        )?;
 
         let (source_key, frame_counter) = self.identity_and_advance(from)?;
         let salt = self.take_salt(options);
         let mut buf = [0u8; FRAME];
-        let builder = PacketBuilder::new(&mut buf).blind_unicast(channel_id, peer.hint());
-        let builder = if options.full_source {
-            builder.source_full(&source_key)
-        } else {
-            builder.source_hint(source_key.hint())
+        let ShapedFrame::Secured(mut packet) = build_shaped(
+            SendTarget::BlindUnicast {
+                channel: channel_id,
+                dst: peer.hint(),
+            },
+            &source_key,
+            &shape,
+            frame_counter,
+            salt,
+            payload,
+            &mut buf,
+        )?
+        else {
+            unreachable!("a unicast is built for sealing");
         };
-        let mut builder = builder.frame_counter(frame_counter);
-        if options.ack_requested {
-            builder = builder.ack_requested();
-        }
-        if !options.encrypted {
-            builder = builder.unencrypted();
-        }
-        builder = builder.mic_size(options.mic_size);
-        if let Some(salt) = salt {
-            builder = builder.salt(salt);
-        }
-        // Same rule as the plain unicast above: no repeater may carry an
-        // unrepeatable frame, so neither trace option has anything to collect.
-        let repeatable =
-            Self::frame_is_repeatable(effective_flood_hops, effective_source_route.as_deref());
-        if let Some(hops) = effective_flood_hops {
-            builder = builder.flood_hops(hops);
-        }
-        let traced = repeatable
-            && (options.trace
-                || self.needs_route_discovery(peer_id, effective_source_route.as_ref()));
-        if let Some(route) = effective_source_route.as_ref() {
-            builder = builder.source_route(route.as_slice());
-        }
-        if let Some(callsign) = self.operating_policy.operator_callsign {
-            builder = builder.option(OptionNumber::OperatorCallsign, callsign.as_trimmed_slice());
-        }
-        // Options go in ascending number order: Trace (7), then Ack MIC (8).
-        if traced {
-            builder = builder.trace();
-        }
-        if let Some(ack_mic) = options.ack_mic {
-            builder = builder.option(OptionNumber::AckMic, &ack_mic);
-        }
-        if let Some(region_code) = options.region_code {
-            builder = builder.region_code(region_code);
-        }
-        let built = builder.payload(payload).build();
-        if options.ack_mic.is_some() && self.is_oversize(&built) {
-            let without = SendOptions {
-                ack_mic: None,
-                ..options.clone()
-            };
-            return self.queue_blind_unicast_with_keys(from, peer, channel_keys, payload, &without);
-        }
-        let mut packet = built?;
 
         let receipt = if options.ack_requested {
             Some(self.prepare_pending_ack(from, *peer, &packet, &blind_keys, options)?)
@@ -2510,9 +2456,7 @@ impl<
                 from,
                 receipt,
                 packet.as_bytes(),
-                effective_source_route
-                    .as_ref()
-                    .map(|route| route.as_slice()),
+                shape.source_route.as_ref().map(|route| route.as_slice()),
                 options.flood_hops,
             )?;
         }
@@ -2526,7 +2470,7 @@ impl<
                     from,
                     *peer,
                     packet.as_bytes(),
-                    effective_source_route.as_ref(),
+                    shape.source_route.as_ref(),
                     options.flood_hops,
                 )?)
             }
@@ -2546,10 +2490,10 @@ impl<
             }
             return Err(err);
         }
-        if traced {
+        if shape.trace {
             self.peer_registry.note_trace_sent(peer_id);
         }
-        if let Some(ack_mic) = options.ack_mic {
+        if let Some(ack_mic) = shape.ack_mic {
             self.retire_ack_carried_onward(from, peer, &ack_mic);
         }
         Ok(if options.track_transmission {
@@ -4382,8 +4326,22 @@ impl<
                         self.tx_queue.remove_all_matching(|entry| {
                             entry.receipt == Some(receipt) && entry.identity_id == Some(identity_id)
                         });
-                        if let Some(rewritten) = self.synthesize_route_retry_resend(&peer, &resend)
-                        {
+                        // Send-time planning keeps the rewrite within the
+                        // traced limit. Should it somehow not be, the
+                        // original goes out again: repeaters would have to
+                        // drop the rewrite.
+                        let max_frame = self.max_frame();
+                        let rewritten =
+                            self.synthesize_route_retry_resend(&peer, &resend)
+                                .map(|rewritten| {
+                                    if rewritten.frame.len() < max_frame {
+                                        rewritten
+                                    } else {
+                                        MacCounters::bump(&mut self.counters.route_retry_oversize);
+                                        resend.clone()
+                                    }
+                                });
+                        if let Some(rewritten) = rewritten {
                             let rewritten_key = Self::confirmation_key(rewritten.frame.as_slice());
                             // The rewritten attempt always floods, so it earns
                             // the forwarded window. It is armed here, from the
@@ -4403,6 +4361,7 @@ impl<
                                 .and_then(|slot| slot.pending_ack_mut(&receipt))
                             {
                                 pending.resend = rewritten.clone();
+                                pending.route_retry_spent = true;
                                 pending.retries = 0;
                                 pending.sent_ms = 0;
                                 pending.ack_deadline_ms = retry_deadline_ms;
@@ -4621,17 +4580,6 @@ impl<
                 .get(header.mic_range.clone())
                 .and_then(|trailer| trailer.get(..4))
                 .is_some_and(|prefix| prefix == ack_mic)
-    }
-
-    /// Whether a frame came out too large for the radio, so the
-    /// piggy-backed Ack MIC it carries should be left off and the frame
-    /// built again. The frame counter it consumed is simply skipped.
-    fn is_oversize(&self, built: &Result<UnsealedPacket<'_>, BuildError>) -> bool {
-        match built {
-            Ok(packet) => packet.total_len() > self.radio.max_frame_size(),
-            Err(BuildError::BufferTooSmall) => true,
-            Err(_) => false,
-        }
     }
 
     fn enqueue_packet(
@@ -6555,14 +6503,23 @@ impl<
         };
 
         let mut rewritten = [0u8; FRAME];
-        let Ok(total_len) =
-            self.rewrite_forwarded_frame(frame, header, &options, plan, &mut rewritten)
-        else {
-            return false;
+        let max_frame = self.radio.max_frame_size().min(FRAME);
+        let total_len = match self.rewrite_forwarded_frame(
+            frame,
+            header,
+            &options,
+            plan,
+            max_frame,
+            &mut rewritten,
+        ) {
+            Ok(total_len) if total_len <= max_frame => total_len,
+            // `plan_forwarding` already refused anything malformed, so what
+            // fails here is a rewrite that outgrew the link.
+            _ => {
+                MacCounters::bump(&mut self.counters.forward_dropped_oversize);
+                return false;
+            }
         };
-        if total_len > self.radio.max_frame_size() {
-            return false;
-        }
 
         let now_ms = self.clock.now_ms();
         if self
@@ -6773,12 +6730,60 @@ impl<
         }
     }
 
+    /// Rewrite `src` for forwarding into `dst`, fitting its trace to
+    /// `max_frame`.
+    ///
+    /// A Trace option's value is the only part of the rewrite that depends
+    /// on the room left: the frame is first rewritten with an empty Trace,
+    /// which measures everything else it carries (inserted Region Code and
+    /// Station Callsign included), and then again with the trace given
+    /// whatever that leaves.
     fn rewrite_forwarded_frame(
         &self,
         src: &[u8],
         header: &PacketHeader,
         options: &ParsedOptions,
         plan: ForwardPlan,
+        max_frame: usize,
+        dst: &mut [u8],
+    ) -> Result<usize, CapacityError> {
+        if options.trace.is_none() {
+            return self.rewrite_forwarded_frame_with(
+                src,
+                header,
+                options,
+                plan,
+                TraceRewrite::Measure,
+                dst,
+            );
+        }
+        let measured = self.rewrite_forwarded_frame_with(
+            src,
+            header,
+            options,
+            plan,
+            TraceRewrite::Measure,
+            dst,
+        )?;
+        // The empty Trace record is its one header byte.
+        let budget = max_frame.checked_sub(measured - 1).ok_or(CapacityError)?;
+        self.rewrite_forwarded_frame_with(
+            src,
+            header,
+            options,
+            plan,
+            TraceRewrite::Budget(budget),
+            dst,
+        )
+    }
+
+    fn rewrite_forwarded_frame_with(
+        &self,
+        src: &[u8],
+        header: &PacketHeader,
+        options: &ParsedOptions,
+        plan: ForwardPlan,
+        trace: TraceRewrite,
         dst: &mut [u8],
     ) -> Result<usize, CapacityError> {
         if dst.is_empty() {
@@ -6818,7 +6823,7 @@ impl<
 
         // Re-encoded options (without 0xFF—caller emits marker)
         let options_len =
-            self.encode_forwarded_options(src, header, options, plan, &mut dst[cursor..])?;
+            self.encode_forwarded_options(src, header, options, plan, trace, &mut dst[cursor..])?;
         cursor += options_len;
 
         // 0xFF marker when a body follows (not needed for MAC ack whose trailer is at fixed offset)
@@ -6846,6 +6851,7 @@ impl<
         header: &PacketHeader,
         _options: &ParsedOptions,
         plan: ForwardPlan,
+        trace: TraceRewrite,
         dst: &mut [u8],
     ) -> Result<usize, CapacityError> {
         let mut encoder = OptionEncoder::new(dst);
@@ -6901,20 +6907,25 @@ impl<
                     }
                     // `plan_forwarding` refused a malformed trace, so this
                     // one parses.
-                    OptionNumber::Trace => {
-                        let trace = TraceRef::parse(value).ok_or(CapacityError)?;
-                        let own = TraceRecord {
-                            hint: plan.router_hint,
-                            signal: plan.signal,
-                        };
-                        let mut forwarded = [0u8; u8::MAX as usize];
-                        let len = trace
-                            .forwarded(own, usize::MAX, &mut forwarded)
-                            .ok_or(CapacityError)?;
-                        encoder
-                            .put(number, &forwarded[..len])
-                            .map_err(|_| CapacityError)?;
-                    }
+                    OptionNumber::Trace => match trace {
+                        TraceRewrite::Measure => {
+                            encoder.put(number, &[]).map_err(|_| CapacityError)?;
+                        }
+                        TraceRewrite::Budget(budget) => {
+                            let parsed = TraceRef::parse(value).ok_or(CapacityError)?;
+                            let own = TraceRecord {
+                                hint: plan.router_hint,
+                                signal: plan.signal,
+                            };
+                            let mut forwarded = [0u8; FRAME];
+                            let len = parsed
+                                .forwarded(own, budget, &mut forwarded)
+                                .ok_or(CapacityError)?;
+                            encoder
+                                .put(number, &forwarded[..len])
+                                .map_err(|_| CapacityError)?;
+                        }
+                    },
                     OptionNumber::SourceRoute if plan.consume_source_route => {
                         if value.len() < 2 || value.len() % 2 != 0 {
                             return Err(CapacityError);
@@ -7632,17 +7643,6 @@ impl<
     /// the first, can tell the peer so. The retry floods at the same budget;
     /// it never widens what the application was willing to spend.
     fn can_attempt_route_retry(pending: &PendingAck<FRAME>, peer_heard_recently: bool) -> bool {
-        // Route recovery re-attempts delivery of a packet whose fate is
-        // knowable. A send with no ack to wait for never learns whether the
-        // route failed, so it has nothing to recover from.
-        if !pending.expects_ack()
-            || !pending
-                .resend
-                .requested_flood_hops
-                .is_some_and(|hops| hops > 0)
-        {
-            return false;
-        }
         let Ok(header) = PacketHeader::parse(pending.resend.frame.as_slice()) else {
             return false;
         };
@@ -7652,18 +7652,11 @@ impl<
         ) else {
             return false;
         };
-        if options.route_retry {
-            return false;
-        }
         let has_source_route = pending
             .resend
             .source_route
             .as_ref()
-            .map(|route| !route.is_empty())
-            .unwrap_or(false);
-        if has_source_route {
-            return true;
-        }
+            .is_some_and(|route| !route.is_empty());
         // An absent `FHOPS` byte is a budget of zero: the send went out direct.
         let sent = header
             .flood_hops
@@ -7673,7 +7666,13 @@ impl<
             .resend
             .requested_flood_hops
             .is_some_and(|requested| requested > sent);
-        narrowed || peer_heard_recently
+        route_retry_eligible(
+            pending.expects_ack(),
+            pending.resend.requested_flood_hops,
+            options.route_retry || pending.route_retry_spent,
+            has_source_route || narrowed,
+            peer_heard_recently,
+        )
     }
 
     fn direct_ack_timeout_ms(&self) -> u64 {

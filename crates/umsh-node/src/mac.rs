@@ -1,7 +1,7 @@
 use umsh_core::{ChannelId, ChannelKey, PublicKey};
 use umsh_mac::{
     AddPeerError, CachedRoute, CapacityError, LocalIdentityId, MacError, MacEventRef, MacHandle,
-    PeerId, Platform, SendError, SendOptions, SendReceipt,
+    PeerId, Platform, SendDestination, SendError, SendOptions, SendReceipt,
 };
 
 /// Pluggable backend that the node layer delegates to for MAC operations.
@@ -67,6 +67,14 @@ pub trait MacBackend: Clone {
         let _ = key;
         false
     }
+    /// The most payload a send from `from` to `destination` with
+    /// `options` can carry, accounting for everything the MAC adds.
+    async fn payload_capacity(
+        &self,
+        from: LocalIdentityId,
+        destination: SendDestination<'_>,
+        options: &SendOptions,
+    ) -> Result<usize, MacBackendError<Self::SendError, Self::CapacityError>>;
     /// Queue a broadcast frame.
     async fn send_broadcast(
         &self,
@@ -344,6 +352,17 @@ impl<
 
     async fn remove_channel(&self, key: &ChannelKey) -> bool {
         self.remove_channel(key).await
+    }
+
+    async fn payload_capacity(
+        &self,
+        from: LocalIdentityId,
+        destination: SendDestination<'_>,
+        options: &SendOptions,
+    ) -> Result<usize, MacBackendError<Self::SendError, Self::CapacityError>> {
+        self.payload_capacity(from, destination, options)
+            .await
+            .map_err(MacBackendError::Send)
     }
 
     async fn send_broadcast(
