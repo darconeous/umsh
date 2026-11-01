@@ -14,7 +14,8 @@ use alloc::vec::Vec;
 mod inbound;
 mod transmit;
 
-pub use inbound::{Inbound, InboundText, Refusal, RxSummary, WellKnownChannels, inbound_text};
+pub use crate::WellKnownChannels;
+pub use inbound::{Inbound, InboundText, Refusal, RxSummary, inbound_text};
 #[cfg(feature = "software-crypto")]
 pub use transmit::bound_channel;
 pub use transmit::{

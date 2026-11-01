@@ -5,54 +5,8 @@ use alloc::vec::Vec;
 use umsh_core::{ChannelKey, NodeHint, PayloadType, PublicKey, RouterHint};
 use umsh_node::{PacketFamily, ReceivedPacketRef};
 
+use crate::WellKnownChannels;
 use crate::chat::{ChannelRegistry, TextSource};
-
-/// The protocol's two well-known channels, which carry rules of their own
-/// (`multicast-channels.md` §Default Channels).
-///
-/// Held by key, so a received frame is recognized by the key that
-/// authenticated it, with no derivation per frame.
-#[derive(Clone, Copy)]
-pub struct WellKnownChannels {
-    pub public: ChannelKey,
-    pub emergency: ChannelKey,
-}
-
-impl WellKnownChannels {
-    /// The canonical name of the `public` channel.
-    pub const PUBLIC_NAME: &str = "public";
-    /// The canonical name of the `EMERGENCY` channel, after case folding.
-    pub const EMERGENCY_NAME: &str = crate::emergency::CHANNEL_NAME;
-
-    /// Derive both keys from their canonical names, rather than writing them
-    /// down as literals that could drift from the derivation every other
-    /// named channel goes through.
-    #[cfg(feature = "software-crypto")]
-    pub fn derive() -> Self {
-        let key = |name| {
-            *umsh_node::Channel::named(name)
-                .expect("well-known channel names are short ASCII")
-                .key()
-        };
-        Self {
-            public: key(Self::PUBLIC_NAME),
-            emergency: key(Self::EMERGENCY_NAME),
-        }
-    }
-
-    pub fn is_public(&self, key: &ChannelKey) -> bool {
-        key.0 == self.public.0
-    }
-
-    pub fn is_emergency(&self, key: &ChannelKey) -> bool {
-        key.0 == self.emergency.0
-    }
-
-    /// Whether `key` is one of the two.
-    pub fn contains(&self, key: &ChannelKey) -> bool {
-        self.is_public(key) || self.is_emergency(key)
-    }
-}
 
 /// Radio observations for a received frame.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
