@@ -11,6 +11,9 @@ the web flasher. scripts/flash.py only ever moves an image this produced
 Needs nothing but Python: no objcopy, no cross-toolchain. Rust already
 cross-compiles and links for the target on its own.
 
+Refuses an image whose startup would overrun its stack (see
+scripts/stack_check.py) rather than produce one that cannot boot.
+
   # UF2, for the mass-storage bootloader (what every `make flash-*` uses):
   scripts/mkimage.py --board t1000e \\
       target/thumbv7em-none-eabihf/release/firmware-t1000e
@@ -38,6 +41,7 @@ from firmware_image import (
     elf_to_ihex,
     pack_uf2,
 )
+from stack_check import check as check_stack
 
 
 def main(argv: list[str]) -> int:
@@ -82,6 +86,15 @@ def main(argv: list[str]) -> int:
               file=sys.stderr)
         return 1
 
+    # An image whose startup overruns its stack corrupts the statics below
+    # it and boots into whatever that breaks, so it is not worth flashing.
+    fits, report = check_stack(args.elf)
+    if not fits:
+        print(f"mkimage.py: {report}", file=sys.stderr)
+        print("mkimage.py: startup would overrun the stack; shrink the largest "
+              "task future or the main task's frame", file=sys.stderr)
+        return 1
+
     uf2 = pack_uf2(image, base, family)
     out_path = args.out or args.elf + ".uf2"
     with open(out_path, "wb") as fh:
@@ -91,6 +104,7 @@ def main(argv: list[str]) -> int:
     print(f"mkimage.py: {len(image)} bytes ({len(image) / 1024:.1f} KiB) → "
           f"{len(uf2) // UF2_BLOCK_BYTES} UF2 blocks at 0x{base:08X}, "
           f"family 0x{family:08X}{label}")
+    print(f"mkimage.py: {report}")
     print(f"mkimage.py: wrote {out_path}")
 
     if args.hex:

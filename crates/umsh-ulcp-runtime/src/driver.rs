@@ -1988,32 +1988,11 @@ async fn finish_dfu(
 /// The caller constructs the [`Session`] with its board profile
 /// (`SessionConfig`) and boot status, mounts its journals, and hands the
 /// stored payloads in; the driver owns everything after that.
-pub async fn run<A, S, const TXQ: usize, M, const RX: usize, const TX: usize, E>(
-    mut session: Session<A, S, TXQ>,
-    boot_snapshot: Option<&[u8]>,
-    boot_identity: Option<[u8; 32]>,
-    rt: DeviceRuntime<M, RX, TX>,
-    env: E,
-) -> !
-where
-    A: AesProvider,
-    S: Sha256Provider,
-    M: RawMutex,
-    E: DeviceEnv,
-{
-    let mut snapshot_buf = [0u8; SNAPSHOT_MAX];
-    run_with_storage(
-        &mut session,
-        &mut snapshot_buf,
-        boot_snapshot,
-        boot_identity,
-        rt,
-        env,
-    )
-    .await
-}
-
-/// Run with explicitly placed session and snapshot storage. No allocation occurs here.
+///
+/// The session and snapshot buffer are borrowed so the caller can place
+/// them in statics. Held by value, they would live in the future of the
+/// task that runs this, and spawning a task builds its whole future on
+/// the stack before moving it into place. No allocation occurs here.
 pub async fn run_with_storage<A, S, const TXQ: usize, M, const RX: usize, const TX: usize, E>(
     session: &mut Session<A, S, TXQ>,
     snapshot_buf: &mut [u8; SNAPSHOT_MAX],

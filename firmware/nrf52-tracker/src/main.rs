@@ -3789,7 +3789,7 @@ mod firmware {
     }
 
     /// Owns the framing-free protocol session: hosts the shared ULCP
-    /// driver (`umsh_ulcp_runtime::driver::run`)—host frames,
+    /// driver (`umsh_ulcp_runtime::driver::run_with_storage`)—host frames,
     /// radio receptions, transmit completions, and every session effect
     ///—over this board's channel wiring and [`BoardDeviceEnv`] couplings.
     #[embassy_executor::task]
@@ -3804,15 +3804,24 @@ mod firmware {
         node_counters: &'static NodeCountersMutex,
         #[cfg(feature = "ulcp-i2c")] i2c: board_i2c::Buses,
     ) {
+        // Both are built in place in statics. As locals they would sit in
+        // this task's future, which the spawn builds on main's stack
+        // before moving it into the task pool.
+        static SESSION: StaticCell<Session> = StaticCell::new();
+        static SNAPSHOT: StaticCell<[u8; umsh_ulcp_device::SNAPSHOT_MAX]> = StaticCell::new();
         // The retained hardware reset cause answers the first
         // PROP_LAST_STATUS query; attach itself never modifies it.
-        let session = Session::new(
-            session_config(),
-            boot_reason,
-            CryptoEngine::new(SoftwareAes, SoftwareSha256),
-        );
-        driver::run(
+        let session = SESSION.init_with(|| {
+            Session::new(
+                session_config(),
+                boot_reason,
+                CryptoEngine::new(SoftwareAes, SoftwareSha256),
+            )
+        });
+        let snapshot = SNAPSHOT.init_with(|| [0; umsh_ulcp_device::SNAPSHOT_MAX]);
+        driver::run_with_storage(
             session,
+            snapshot,
             boot_snapshot.as_deref(),
             boot_identity,
             DeviceRuntime {

@@ -2742,7 +2742,7 @@ fn internal_session(config: SessionConfig, boot_reason: Status) -> &'static mut 
 }
 
 /// Owns the framing-free protocol session: hosts the shared ULCP driver
-/// (`umsh_ulcp_runtime::driver::run`)—host frames, radio
+/// (`umsh_ulcp_runtime::driver::run_with_storage`)—host frames, radio
 /// receptions, transmit completions, and every session effect—over
 /// this board's channel wiring and [`BoardDeviceEnv`] couplings.
 /// The Pager and T-Deck need a separate constructor to bound main's frame. On T-Beam, keep
