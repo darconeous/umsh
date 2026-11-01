@@ -243,6 +243,7 @@ end
 -- Known MAC-layer option numbers
 -- ---------------------------------------------------------------------------
 
+M.OPT_FRAME_SIGNATURE  = 0   -- Non-Critical,        Static,  68 bytes
 M.OPT_SOURCE_ROUTE     = 3   -- Forwarding-Critical, Dynamic, 0+ bytes
 M.OPT_OP_CALLSIGN      = 4   -- Non-Critical,        Static,  ARNCE
 M.OPT_MIN_RSSI         = 5   -- Forwarding-Critical, Static,  0-1 bytes
@@ -253,8 +254,11 @@ M.OPT_MIN_SNR          = 9   -- Forwarding-Critical, Static,  0-1 bytes
 M.OPT_REGION_CODE      = 11  -- Forwarding-Critical, Dynamic, 2 bytes
 M.OPT_STATION_CALLSIGN = 15  -- Forwarding-Critical, Dynamic, ARNCE
 
+-- A broadcast's Frame Signature: FRAME COUNTER(4, BE) ‖ SIG(64).
+M.FRAME_SIGNATURE_LEN  = 68
+
 M.KNOWN_OPTION_NAMES = {
-  [0] = "Reserved",
+  [0] = "Frame Signature",
   [1] = "Unassigned",
   [2] = "Unassigned",
   [3] = "Source Route",
@@ -274,6 +278,7 @@ M.KNOWN_OPTION_NAMES = {
 -- the rule that a repeater must not *add* a second is about an action no
 -- single frame records.
 M.SINGLETON_OPTIONS = {
+  [M.OPT_FRAME_SIGNATURE] = true,
   [M.OPT_SOURCE_ROUTE] = true,
   [M.OPT_MIN_RSSI]     = true,
   [M.OPT_ROUTE_RETRY]  = true,

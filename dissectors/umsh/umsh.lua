@@ -76,6 +76,8 @@ f.opt_min_rssi     = ProtoField.int8   ("umsh.opt.min_rssi",      "Min RSSI",   
 f.opt_min_snr      = ProtoField.int8   ("umsh.opt.min_snr",       "Min SNR",          base.DEC)
 f.opt_route_retry  = ProtoField.none   ("umsh.opt.route_retry",   "Route Retry")
 f.opt_ack_mic      = ProtoField.bytes  ("umsh.opt.ack_mic",       "Ack MIC")
+f.opt_frame_sig    = ProtoField.bytes  ("umsh.opt.frame_signature", "Frame Signature")
+f.opt_frame_sig_ctr = ProtoField.uint32("umsh.opt.frame_signature.counter", "Frame Counter", base.DEC)
 f.opt_signal_entry = ProtoField.string ("umsh.opt.signal_entry",  "Signal Quality")
 f.opt_unknown      = ProtoField.bytes  ("umsh.opt.unknown",       "Unknown Option")
 -- The piggy-backed ack names the frame it acknowledges, the same way a
@@ -116,9 +118,13 @@ f.scf          = ProtoField.uint8  ("umsh.scf",            "Security Control",  
 f.scf_enc      = ProtoField.bool   ("umsh.scf.e",          "Encrypted (E)",      8, nil, 0x80)
 f.scf_mic_size = ProtoField.uint8  ("umsh.scf.mic_size",   "MIC Size",           base.DEC, VS_MIC, 0x60)
 f.scf_salt_bit = ProtoField.bool   ("umsh.scf.s",          "Salt Present (S)",   8, nil, 0x10)
+f.scf_signed   = ProtoField.bool   ("umsh.scf.d",          "Signed (D)",         8, nil, 0x08)
 f.frame_ctr    = ProtoField.uint32 ("umsh.frame_counter",  "Frame Counter",      base.DEC)
 f.salt         = ProtoField.uint16 ("umsh.salt",           "Salt",               base.HEX)
 f.mic          = ProtoField.bytes  ("umsh.mic",            "MIC")
+-- The frame signature, from the trailer (D set) or from a broadcast's
+-- Frame Signature option. Shown, never checked: there is no Ed25519 here.
+f.signature    = ProtoField.bytes  ("umsh.signature",      "Signature")
 
 -- Payload / crypto results
 f.payload_raw  = ProtoField.bytes  ("umsh.payload",           "Payload")
@@ -148,11 +154,12 @@ umsh.fields = {
   f.options, f.opt_region_code, f.opt_trace, f.opt_srcroute, f.opt_router_hint,
   f.opt_op_callsign, f.opt_sta_callsign, f.opt_min_rssi, f.opt_min_snr,
   f.opt_route_retry, f.opt_ack_mic, f.opt_ack_frame,
+  f.opt_frame_sig, f.opt_frame_sig_ctr,
   f.opt_signal_entry, f.opt_unknown,
   f.dst_hint, f.src_hint, f.src_key, f.channel_id, f.ack_mic, f.ack_tag,
   f.src_name, f.dst_name, f.channel_name, f.src_addr, f.dst_addr, f.violation,
-  f.secinfo, f.scf, f.scf_enc, f.scf_mic_size, f.scf_salt_bit,
-  f.frame_ctr, f.salt, f.mic,
+  f.secinfo, f.scf, f.scf_enc, f.scf_mic_size, f.scf_salt_bit, f.scf_signed,
+  f.frame_ctr, f.salt, f.mic, f.signature,
   f.payload_raw, f.payload_dec, f.enc_body, f.enc_addr, f.dec_dst, f.dec_src,
   f.ack_req_frame, f.ack_correlate_frame, f.ack_rsp_frame, f.ack_rsp_time,
   f.ack_expected, f.ack_verified,
@@ -492,9 +499,48 @@ local function add_pairwise_failure(tree, status)
 end
 
 -- ──────────────────────────────────────────────────────────────────────────
+-- Frame signatures
+--
+-- With the SCF's D bit set, a 64-byte Ed25519 signature ends the protected
+-- region, just ahead of the MIC: the MIC's S2 covers it, and with E set it
+-- is encrypted along with the payload. A broadcast signs through option 0
+-- instead. The dissector has no Ed25519, so a signature is shown but never
+-- checked.
+-- ──────────────────────────────────────────────────────────────────────────
+local SIG_LEN = 64
+
+local function add_signature(tree, tvbr, sig_bytes)
+  tree:add(f.signature, tvbr, sig_bytes):set_text(
+    "Signature (not verified): " .. bytes_to_hex(sig_bytes))
+end
+
+-- Split a recovered protected region into what precedes the signature and
+-- the signature itself. With no signature, the region is all payload.
+local function split_signature(region, sig_len)
+  if sig_len == 0 then return region, nil end
+  return region:sub(1, #region - sig_len), region:sub(-sig_len)
+end
+
+-- A cleartext body: the payload, then the signature when there is one.
+-- A ciphertext body stays one item, since the boundary means nothing until
+-- it is decrypted.
+local function add_body(tree, buf, off, body_len, sig_len, is_enc)
+  if is_enc then
+    tree:add(f.enc_body, buf(off, body_len))
+    return
+  end
+  local payload_len = body_len - sig_len
+  tree:add(f.payload_raw, buf(off, payload_len))
+  if sig_len > 0 then
+    add_signature(tree, buf(off + payload_len, sig_len),
+                  tvb_bytes(buf, off + payload_len, sig_len))
+  end
+end
+
+-- ──────────────────────────────────────────────────────────────────────────
 -- parse_secinfo
 -- Parses the SECINFO field starting at `off` in `buf` and adds to `tree`.
--- Returns: new_off, scf_byte, mic_len, secinfo_raw, is_enc
+-- Returns: new_off, scf_byte, mic_len, secinfo_raw, is_enc, sig_len
 -- Returns nil (only) on truncation after adding ef.truncated.
 -- ──────────────────────────────────────────────────────────────────────────
 local function parse_secinfo(buf, off, tree)
@@ -523,12 +569,15 @@ local function parse_secinfo(buf, off, tree)
   scf_tree:add(f.scf_enc,      buf(off, 1))
   scf_tree:add(f.scf_mic_size, buf(off, 1))
   scf_tree:add(f.scf_salt_bit, buf(off, 1))
-  -- The low four SCF bits are reserved and must be zero; an unknown bit
+  scf_tree:add(f.scf_signed,   buf(off, 1))
+  -- The low three SCF bits are reserved and must be zero; an unknown bit
   -- there could change how everything after SECINFO is read.
-  if (scf & 0x0F) ~= 0 then
+  if (scf & 0x07) ~= 0 then
     flag_violation(scf_tree, buf(off, 1),
-      string.format("SCF reserved bits must be zero (low nibble is 0x%X)", scf & 0x0F))
+      string.format("SCF reserved bits must be zero (low three bits are 0x%X)", scf & 0x07))
   end
+  local signed = (scf & 0x08) ~= 0
+  _ctx.signed = signed
   off = off + 1
   si_tree:add(f.frame_ctr, buf(off, 4))
   off = off + 4
@@ -537,16 +586,19 @@ local function parse_secinfo(buf, off, tree)
     off = off + 2
   end
 
-  return off, scf, mic_len, secinfo_raw, is_enc
+  return off, scf, mic_len, secinfo_raw, is_enc, signed and SIG_LEN or 0
 end
 
 -- ──────────────────────────────────────────────────────────────────────────
 -- parse_options
 -- Decodes the CoAP-style options block starting at `start_off` up to `bound`.
 -- Populates `static_opts_out` with {number, value} pairs for AAD construction.
--- Returns the new offset (after the 0xFF terminator, or at `bound` if absent)
--- and a table counting each option number seen.
+-- Returns the new offset (after the 0xFF terminator, or at `bound` if absent),
+-- a table counting each option number seen, and the frame's one well-formed
+-- Frame Signature as {counter, signature}, if it has one that counts.
 -- ──────────────────────────────────────────────────────────────────────────
+local SECINFO_TYPES = {[2] = true, [3] = true, [4] = true, [6] = true, [7] = true}
+
 local function parse_options(buf, start_off, bound, tree, static_opts_out, pinfo)
   if start_off >= bound then return start_off, {} end
 
@@ -581,6 +633,7 @@ local function parse_options(buf, start_off, bound, tree, static_opts_out, pinfo
                                    total_len, total_len == 1 and "" or "s"))
 
   local seen = {}
+  local frame_sigs, frame_sig = {}, nil
   local raw_pos = 1  -- 1-indexed position in buf
   pcall(function()
     for num, val, consumed in options.decode(raw, 1) do
@@ -590,7 +643,26 @@ local function parse_options(buf, start_off, bound, tree, static_opts_out, pinfo
 
       seen[num] = (seen[num] or 0) + 1
 
-      if num == options.OPT_REGION_CODE then
+      if num == options.OPT_FRAME_SIGNATURE then
+        -- COUNTER(4) ‖ SIG(64). Any other length is handled as an
+        -- unrecognized option, which a non-critical one makes harmless.
+        local item = opts_tree:add(f.opt_frame_sig, buf(opt_off, consumed))
+        frame_sigs[#frame_sigs + 1] = item
+        if val_len == options.FRAME_SIGNATURE_LEN then
+          local counter = buf(val_off, 4):uint()
+          item:set_text(string.format("Frame Signature (not verified): counter %d", counter))
+          item:add(f.opt_frame_sig_ctr, buf(val_off, 4))
+          add_signature(item, buf(val_off + 4, SIG_LEN), val:sub(5))
+          frame_sig = {counter = counter, signature = val:sub(5)}
+        else
+          item:set_text(string.format("Frame Signature: malformed (%d byte%s), ignored",
+                                      val_len, val_len == 1 and "" or "s"))
+          item:add_proto_expert_info(ef.bad_opt_value, string.format(
+            "Frame Signature value must be %d bytes (has %d)",
+            options.FRAME_SIGNATURE_LEN, val_len))
+        end
+
+      elseif num == options.OPT_REGION_CODE then
         local cs   = region_label(val)
         local tvbr = (val_len > 0) and buf(val_off, val_len) or buf(opt_off, consumed)
         opts_tree:add(f.opt_region_code, tvbr, cs):set_text("Region Code: " .. cs)
@@ -758,7 +830,22 @@ local function parse_options(buf, start_off, bound, tree, static_opts_out, pinfo
     end
   end
 
-  return start_off + total_len, seen
+  -- A frame carrying more than one Frame Signature is unsigned, and one
+  -- with SECINFO signs through the SCF's D bit and ignores option 0.
+  if #frame_sigs > 1 then
+    for _, item in ipairs(frame_sigs) do
+      item:append_text(string.format(" [ignored: the frame carries %d]", #frame_sigs))
+    end
+    frame_sig = nil
+  end
+  if #frame_sigs > 0 and SECINFO_TYPES[_ctx.pkt_type] then
+    for _, item in ipairs(frame_sigs) do item:append_text(" [ignored: the frame has SECINFO]") end
+    flag_violation(opts_tree, buf(start_off, total_len),
+      "Frame Signature option on a packet type that carries SECINFO, which signs with the SCF's D bit")
+    frame_sig = nil
+  end
+
+  return start_off + total_len, seen, frame_sig
 end
 
 -- ──────────────────────────────────────────────────────────────────────────
@@ -775,7 +862,9 @@ local function dissect_broadcast(buf, pinfo, tree, off, full_src, fcf_byte, stat
   off = off + src_len
 
   -- OPTIONS block (always present; 0xFF marker omitted for beacons with no payload)
-  off = parse_options(buf, off, buf_len, tree, static_opts, pinfo)
+  local _, frame_sig
+  off, _, frame_sig = parse_options(buf, off, buf_len, tree, static_opts, pinfo)
+  _ctx.signed = frame_sig ~= nil
 
   local payload_len = buf_len - off
   set_endpoints(pinfo, src_name or addr_short(src_bytes), BROADCAST_LABEL)
@@ -917,19 +1006,20 @@ local function dissect_unicast(buf, pinfo, tree, off, full_src, fcf_byte, static
   off = off + src_len
 
   -- SECINFO
-  local new_off, scf, mic_len, secinfo_raw, is_enc = parse_secinfo(buf, off, tree)
+  local new_off, scf, mic_len, secinfo_raw, is_enc, sig_len = parse_secinfo(buf, off, tree)
   if not new_off then return end
   off = new_off
 
-  -- OPTIONS block (always present; 0xFF emitted iff payload follows)
-  off = parse_options(buf, off, buf_len - mic_len, tree, static_opts, pinfo)
+  -- OPTIONS block (always present; 0xFF emitted iff payload follows). The
+  -- trailer, SIG and MIC, is known before the options are walked.
+  off = parse_options(buf, off, buf_len - mic_len - sig_len, tree, static_opts, pinfo)
 
-  -- Body (payload or ciphertext)
+  -- Body (payload or ciphertext), the signature included
   local body_start = off
   local body_len   = buf_len - off - mic_len
-  if body_len < 0 then tree:add_proto_expert_info(ef.truncated); return end
+  if body_len < sig_len then tree:add_proto_expert_info(ef.truncated); return end
   local body_bytes = tvb_bytes(buf, off, body_len)
-  tree:add(is_enc and f.enc_body or f.payload_raw, buf(off, body_len))
+  add_body(tree, buf, off, body_len, sig_len, is_enc)
   off = off + body_len
 
   -- MIC
@@ -980,9 +1070,12 @@ local function dissect_unicast(buf, pinfo, tree, off, full_src, fcf_byte, static
     pcall(crypto.try_decrypt_unicast, pkt_info, privkeys, keystore.peer_keys)
   if ok and plain then
     tree:add_proto_expert_info(ef.mic_ok)
+    local sig
+    plain, sig = split_signature(plain, sig_len)
     if is_enc then
-      tree:add(f.payload_dec, buf(body_start, body_len)):set_text(
+      tree:add(f.payload_dec, buf(body_start, #plain)):set_text(
         "Decrypted Payload (" .. #plain .. " B): " .. bytes_to_hex(plain))
+      if sig then add_signature(tree, buf(body_start + #plain, sig_len), sig) end
     end
     _ctx.mic_verified = true
     if app then pcall(app.dissect, plain, tree, pinfo, keystore, crypto, _ctx) end
@@ -1042,13 +1135,13 @@ local function dissect_multicast(buf, pinfo, tree, off, full_src, fcf_byte, stat
   off = off + 2
 
   -- SECINFO
-  local new_off, scf, mic_len, secinfo_raw, is_enc = parse_secinfo(buf, off, tree)
+  local new_off, scf, mic_len, secinfo_raw, is_enc, sig_len = parse_secinfo(buf, off, tree)
   if not new_off then return end
   off = new_off
   _ctx.is_enc = is_enc
 
   -- OPTIONS block (always present; 0xFF always present since body follows)
-  off = parse_options(buf, off, buf_len - mic_len, tree, static_opts, pinfo)
+  off = parse_options(buf, off, buf_len - mic_len - sig_len, tree, static_opts, pinfo)
 
   -- For E=0: SRC is in cleartext before the body
   local src_bytes, src_name
@@ -1060,12 +1153,14 @@ local function dissect_multicast(buf, pinfo, tree, off, full_src, fcf_byte, stat
     off = off + src_len
   end
 
-  -- Body + MIC
+  -- Body + MIC; the signature, if any, ends the body, and an encrypted SRC
+  -- opens it
   local body_start = off
   local body_len   = buf_len - off - mic_len
-  if body_len < 0 then tree:add_proto_expert_info(ef.truncated); return end
+  local enc_src    = is_enc and (full_src and 32 or 3) or 0
+  if body_len < enc_src + sig_len then tree:add_proto_expert_info(ef.truncated); return end
   local body_bytes = tvb_bytes(buf, off, body_len)
-  tree:add(is_enc and f.enc_body or f.payload_raw, buf(off, body_len))
+  add_body(tree, buf, off, body_len, sig_len, is_enc)
   off = off + body_len
 
   local mic_bytes = tvb_bytes(buf, off, mic_len)
@@ -1085,7 +1180,7 @@ local function dissect_multicast(buf, pinfo, tree, off, full_src, fcf_byte, stat
     if crypto then tree:add_proto_expert_info(ef.no_key) end
 
   elseif is_enc then
-    -- E=1: body = ENCRYPT(SRC || PAYLOAD); use try_decrypt_multicast
+    -- E=1: body = ENCRYPT(SRC || PAYLOAD || SIG); use try_decrypt_multicast
     local pkt_info = {
       fcf_byte         = fcf_byte,
       static_opts      = static_opts,
@@ -1114,10 +1209,17 @@ local function dissect_multicast(buf, pinfo, tree, off, full_src, fcf_byte, stat
         -- belongs in the address column like any other.
         set_endpoints(pinfo, dec_label, nil)
       end
+      local sig
+      payload, sig = split_signature(payload, sig_len)
       if #payload > 0 then
-        tree:add(f.payload_dec, buf(body_start + src_len, body_len - src_len)):set_text(
+        tree:add(f.payload_dec, buf(body_start + src_len, #payload)):set_text(
           "Decrypted Payload (" .. #payload .. " B): " .. bytes_to_hex(payload))
-        if app then pcall(app.dissect, payload, tree, pinfo, keystore, crypto, _ctx) end
+      end
+      if sig then
+        add_signature(tree, buf(body_start + src_len + #payload, sig_len), sig)
+      end
+      if #payload > 0 and app then
+        pcall(app.dissect, payload, tree, pinfo, keystore, crypto, _ctx)
       end
     elseif ok2 and status == "mic_mismatch" then
       tree:add_proto_expert_info(ef.mic_bad)
@@ -1142,7 +1244,7 @@ local function dissect_multicast(buf, pinfo, tree, off, full_src, fcf_byte, stat
     if ok2 and plain then
       tree:add_proto_expert_info(ef.mic_ok)
       _ctx.mic_verified = true
-      local payload = plain:sub(#src_bytes + 1)
+      local payload = split_signature(plain:sub(#src_bytes + 1), sig_len)
       if app then pcall(app.dissect, payload, tree, pinfo, keystore, crypto, _ctx) end
     elseif ok2 and status == "mic_mismatch" then
       tree:add_proto_expert_info(ef.mic_bad)
@@ -1171,13 +1273,13 @@ local function dissect_blind_unicast(buf, pinfo, tree, off, full_src, fcf_byte, 
   off = off + 2
 
   -- SECINFO
-  local new_off, scf, mic_len, secinfo_raw, is_enc = parse_secinfo(buf, off, tree)
+  local new_off, scf, mic_len, secinfo_raw, is_enc, sig_len = parse_secinfo(buf, off, tree)
   if not new_off then return end
   off = new_off
   _ctx.is_enc = is_enc
 
   -- OPTIONS block (always present; 0xFF always present since body follows)
-  off = parse_options(buf, off, buf_len - mic_len, tree, static_opts, pinfo)
+  off = parse_options(buf, off, buf_len - mic_len - sig_len, tree, static_opts, pinfo)
 
   -- Info column base
   local chan_hex = bytes_to_hex(chan_bytes)
@@ -1190,7 +1292,8 @@ local function dissect_blind_unicast(buf, pinfo, tree, off, full_src, fcf_byte, 
   _ctx.chan_tvbr = buf(chan_off, 2)
 
   if is_enc then
-    -- E=1: ENC_DST_SRC (6 or 35 bytes) | ENC_PAYLOAD | MIC
+    -- E=1: ENC_DST_SRC (6 or 35 bytes) | ENC_PAYLOAD | MIC, where
+    -- ENC_PAYLOAD covers the signature too
     local addr_len   = 3 + (full_src and 32 or 3)   -- DST_hint(3) + SRC(3/32)
     local addr_start = off
     if off + addr_len > buf_len then tree:add_proto_expert_info(ef.truncated); return end
@@ -1200,9 +1303,9 @@ local function dissect_blind_unicast(buf, pinfo, tree, off, full_src, fcf_byte, 
 
     local body_start = off
     local body_len   = buf_len - off - mic_len
-    if body_len < 0 then tree:add_proto_expert_info(ef.truncated); return end
+    if body_len < sig_len then tree:add_proto_expert_info(ef.truncated); return end
     local body_bytes = tvb_bytes(buf, off, body_len)
-    tree:add(f.enc_body, buf(off, body_len))
+    add_body(tree, buf, off, body_len, sig_len, true)
     off = off + body_len
 
     local mic_bytes = tvb_bytes(buf, off, mic_len)
@@ -1263,10 +1366,15 @@ local function dissect_blind_unicast(buf, pinfo, tree, off, full_src, fcf_byte, 
                  addr_short(dec_src)):set_hidden()
         set_endpoints(pinfo, s_name or addr_short(dec_src), nil)
       end
+      local sig
+      payload, sig = split_signature(payload, sig_len)
       if #payload > 0 then
-        tree:add(f.payload_dec, buf(body_start, body_len)):set_text(
+        tree:add(f.payload_dec, buf(body_start, #payload)):set_text(
           "Decrypted Payload (" .. #payload .. " B): " .. bytes_to_hex(payload))
-        if app then pcall(app.dissect, payload, tree, pinfo, keystore, crypto, _ctx) end
+      end
+      if sig then add_signature(tree, buf(body_start + #payload, sig_len), sig) end
+      if #payload > 0 and app then
+        pcall(app.dissect, payload, tree, pinfo, keystore, crypto, _ctx)
       end
       -- ACK tracking for BUAR
       if ack_req and dec_keys and full_cmac then
@@ -1299,7 +1407,7 @@ local function dissect_blind_unicast(buf, pinfo, tree, off, full_src, fcf_byte, 
     end
 
   else
-    -- E=0: DST(3) | SRC(3/32) | PAYLOAD | MIC—all in cleartext
+    -- E=0: DST(3) | SRC(3/32) | PAYLOAD | SIG | MIC—all in cleartext
     if off + 3 > buf_len then tree:add_proto_expert_info(ef.truncated); return end
     local dst_bytes = tvb_bytes(buf, off, 3)
     local dst_name  = add_dst_hint(tree, buf, off, dst_bytes)
@@ -1312,9 +1420,9 @@ local function dissect_blind_unicast(buf, pinfo, tree, off, full_src, fcf_byte, 
     off = off + src_len
 
     local body_len = buf_len - off - mic_len
-    if body_len < 0 then tree:add_proto_expert_info(ef.truncated); return end
+    if body_len < sig_len then tree:add_proto_expert_info(ef.truncated); return end
     local body_bytes = tvb_bytes(buf, off, body_len)
-    tree:add(f.payload_raw, buf(off, body_len))
+    add_body(tree, buf, off, body_len, sig_len, false)
     local body_start = off
     off = off + body_len
 
@@ -1370,7 +1478,8 @@ local function dissect_blind_unicast(buf, pinfo, tree, off, full_src, fcf_byte, 
     if ok2 and plain then
       tree:add_proto_expert_info(ef.mic_ok)
       _ctx.mic_verified = true
-      if app then pcall(app.dissect, plain, tree, pinfo, keystore, crypto, _ctx) end
+      local payload = split_signature(plain, sig_len)
+      if app then pcall(app.dissect, payload, tree, pinfo, keystore, crypto, _ctx) end
       -- ACK tracking for E=0 BUAR
       if ack_req and blind_keys and full_cmac then
         if not pinfo.visited and mic_len >= 4 then
@@ -1438,6 +1547,7 @@ function umsh.dissector(buf, pinfo, tree)
     fhops        = nil,
     channel      = nil,
     is_enc       = false,
+    signed       = false,
     mic_verified = false,
     flag         = flag_violation,
   }
@@ -1513,6 +1623,7 @@ function umsh.dissector(buf, pinfo, tree)
 
   -- The per-type dissectors own the Info column and rewrite it after most
   -- of the checks have run, so these go on last.
+  if _ctx.signed then table.insert(_info_notes, 1, "signed") end
   if #_info_notes > 0 then
     pinfo.cols.info:append(" (" .. table.concat(_info_notes, ", ") .. ")")
   end
