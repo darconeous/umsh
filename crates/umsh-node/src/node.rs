@@ -512,6 +512,19 @@ impl<M: MacBackend> LocalNode<M> {
         removed
     }
 
+    /// The most payload a send from this node to `destination` with
+    /// `options` can carry, accounting for everything the MAC adds.
+    pub async fn payload_capacity(
+        &self,
+        destination: umsh_mac::SendDestination<'_>,
+        options: &SendOptions,
+    ) -> Result<usize, NodeError<M>> {
+        Ok(self
+            .mac
+            .payload_capacity(self.identity_id, destination, options)
+            .await?)
+    }
+
     /// Return the live TX frame counter for this node's identity, if available.
     pub async fn frame_counter(&self) -> Option<u32> {
         self.mac.frame_counter(self.identity_id).await
@@ -953,13 +966,14 @@ impl<M: MacBackend> LocalNode<M> {
         &self,
         from: PublicKey,
         identity: &crate::NodeIdentityPayload,
+        update: crate::IdentityUpdate,
         rssi_snr: Option<(i16, umsh_hal::Snr)>,
         now_ms: u64,
     ) {
         self.state
             .borrow_mut()
             .peer_repeaters
-            .observe_identity(&from, identity, rssi_snr, now_ms);
+            .observe_identity(&from, identity, update, rssi_snr, now_ms);
     }
 
     /// The repeaters this node has heard directly: those introduced by their

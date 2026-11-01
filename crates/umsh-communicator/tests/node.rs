@@ -25,7 +25,7 @@ use umsh_crypto::CryptoEngine;
 use umsh_crypto::NodeIdentity;
 use umsh_crypto::software::{SoftwareAes, SoftwareIdentity, SoftwareSha256};
 use umsh_mac::{CachedRoute, ChannelInfoRef, ReceivedPacketRef, RxMetadata, Snr};
-use umsh_node::{NodeCapabilities, NodeIdentityPayload, NodeRole};
+use umsh_node::{IdentityUpdate, NodeCapabilities, NodeIdentityPayload, NodeRole};
 use umsh_text::ConversationKey;
 use umsh_text::chat::ChatFacade;
 use umsh_text::engine::{ComposeIntent, EngineConfig, RegardingRef};
@@ -1554,6 +1554,7 @@ fn a_heard_node_is_found_by_name() {
         key: robin,
         identity: chatter("Robin Ridge"),
         payload: Vec::new(),
+        update: IdentityUpdate::Replace,
         rx: rx(1),
     });
     clock.set(65_000);
@@ -1699,6 +1700,7 @@ fn a_saved_peer_is_asked_for_their_identity() {
         key: robin,
         identity: chatter("Robin"),
         payload: Vec::new(),
+        update: IdentityUpdate::Replace,
         rx: rx(1),
     });
     assert!(events(&node).contains(&NodeEvent::PeerChanged(peer)));
@@ -1735,6 +1737,7 @@ fn a_saved_peer_follows_their_identity_until_given_an_alias() {
             key: robin,
             identity: chatter(name),
             payload: Vec::new(),
+            update: IdentityUpdate::Replace,
             rx: rx(1),
         })
     };
@@ -1919,6 +1922,7 @@ fn a_member_known_by_hint_is_asked_for() {
         key: robin,
         identity: chatter("Robin"),
         payload: Vec::new(),
+        update: IdentityUpdate::Replace,
         rx: rx(2),
     });
     assert!(events(&node).contains(&NodeEvent::IdentitiesLearned));
@@ -2058,6 +2062,34 @@ fn a_contact_in_a_message_shows_as_a_card() {
     assert_eq!(node.known_member(&forged).unwrap().sender.name, lettering);
 }
 
+/// An identity on a frame that may be older than what is kept introduces
+/// a node not known yet and never renames one that is; the node's current
+/// word does.
+#[test]
+fn an_identity_out_of_order_only_fills() {
+    let sim = device();
+    let (node, _) = started(&sim);
+    let kit = PublicKey([0x37; 32]);
+    let address = address_of(&kit);
+    let identify = |name, update| {
+        node.arrive(Arrival::Identity {
+            key: kit,
+            identity: chatter(name),
+            payload: Vec::new(),
+            update,
+            rx: rx(1),
+        })
+    };
+    let name = || node.known_member(&address).unwrap().sender.name;
+
+    identify("Kit", IdentityUpdate::Fill);
+    assert_eq!(name(), "Kit");
+    identify("Old Kit", IdentityUpdate::Fill);
+    assert_eq!(name(), "Kit");
+    identify("Kit Carson", IdentityUpdate::Replace);
+    assert_eq!(name(), "Kit Carson");
+}
+
 /// What a node says of itself is never replaced by what a link says of it.
 #[test]
 fn a_nodes_own_name_outranks_a_link() {
@@ -2078,6 +2110,7 @@ fn a_nodes_own_name_outranks_a_link() {
         key: kit,
         identity: chatter("Kit"),
         payload: Vec::new(),
+        update: IdentityUpdate::Replace,
         rx: rx(1),
     });
     assert_eq!(node.known_member(&address).unwrap().sender.name, "Kit");
@@ -2103,6 +2136,7 @@ fn a_saved_peer_is_shared_with_their_own_signed_identity() {
         key,
         identity: NodeIdentityPayload::from_bytes(&payload).unwrap(),
         payload: payload.clone(),
+        update: IdentityUpdate::Replace,
         rx: rx(1),
     });
     let member = node.known_member(&address_of(&key)).unwrap();
@@ -2121,6 +2155,7 @@ fn a_saved_peer_is_shared_with_their_own_signed_identity() {
         key: ash,
         identity: chatter("Ash"),
         payload: Vec::new(),
+        update: IdentityUpdate::Replace,
         rx: rx(1),
     });
     let saved = node

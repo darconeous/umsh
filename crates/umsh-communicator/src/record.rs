@@ -299,12 +299,14 @@ pub enum PeerChange<'a> {
     /// not yet known is kept as heard.
     /// A name and identity replace the last ones whole, a name that is
     /// absent included, except that an unlinked pair never replaces a
-    /// `linked` one.
+    /// `linked` one. When `fill`, they may be older than what is kept, so
+    /// they only fill in a name or identity not kept yet.
     Heard {
         at: Option<u32>,
         name: Option<&'a str>,
         identity: Option<&'a [u8]>,
         linked: bool,
+        fill: bool,
     },
     /// A route back was learned, or the old one is no good.
     Route(Option<&'a [RouterHint]>),

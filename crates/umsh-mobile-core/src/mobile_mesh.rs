@@ -33,7 +33,7 @@ use umsh_hal::{
     Clock, CounterStore, KeyValueStore, Radio, RxBuffered, RxInfo, RxOrigin, Snr, TxError,
     TxOptions,
 };
-use umsh_mac::{Mac, MacHandle, OperatingPolicy, RepeaterConfig, SendOptions};
+use umsh_mac::{Mac, MacHandle, OperatingPolicy, RepeaterConfig, SendDestination, SendOptions};
 use umsh_node::meet::MeetCommand;
 use umsh_node::{
     Host, LocalNode, MacBackend, NodeCapabilities, NodeIdentityPayload, NodeIdentityProfile,
@@ -498,11 +498,13 @@ impl From<Option<umsh_mac::CachedRoute>> for MobileMeshRouteRecord {
     }
 }
 
-/// A node-identity bundle received over the mesh, either as a broadcast
+/// A node-identity bundle received over the mesh, either as an
 /// advertisement or as the reply to an Identity Request.
 ///
-/// Only frames whose sender the MAC could name are surfaced. How the claims
-/// may be trusted depends on how they arrived, which is what
+/// Only frames whose sender the MAC could name are surfaced, and never one
+/// that arrived late, behind a newer frame from the same sender: its claims
+/// may be older than what the platform already keeps. How the claims may be
+/// trusted depends on how they arrived, which is what
 /// `source_authenticated` reports.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct MobileMeshAdvertisementRecord {
@@ -512,13 +514,14 @@ pub struct MobileMeshAdvertisementRecord {
     /// decodable with `decode_node_identity`.
     pub payload: Vec<u8>,
     /// Whether the MAC authenticated the sender of the frame that carried
-    /// this bundle.
+    /// this bundle: the frame's signature verified, or a unicast's MIC
+    /// authenticated it.
     ///
-    /// A unicast Identity Request reply is authenticated by its MIC, so it
-    /// carries no detached signature and decodes as `Unsigned`—it is
-    /// nonetheless trustworthy, and the platform must accept it. A broadcast
-    /// advertisement has no MIC, so it is `false` and the platform must
-    /// require a `Valid` embedded signature before trusting any claim.
+    /// When `true` the claims are the sender's own, and an `Unsigned`
+    /// bundle is trustworthy. When `false` the frame proves nothing about
+    /// who wrote the bundle, a channel's MIC included, since any member of
+    /// the channel holds its key; the platform must then require a `Valid`
+    /// embedded signature before trusting any claim.
     pub source_authenticated: bool,
 }
 
@@ -2886,21 +2889,19 @@ fn phone_identity_profile(
     profile
 }
 
-/// Build the signed standalone node-identity bundle for this phone: role
-/// Chat, capabilities Mobile + Text messages, optional display name
-/// (truncated to the 24-byte wire limit between grapheme clusters), and the
-/// disclosed location when one is being shared. The result is ROLE
-/// through the trailing 64-byte signature, without the payload-type byte.
-async fn build_signed_identity_bundle(
-    signer: &SoftwareIdentity,
+/// This phone's node identity: role Chat, capabilities Mobile + Text
+/// messages, optional display name (truncated to the 24-byte wire limit
+/// between grapheme clusters), and the disclosed location when one is being
+/// shared.
+fn phone_identity_payload(
     name: Option<&str>,
     timestamp: Option<u32>,
     location: Option<NodeLocation>,
-) -> Result<Vec<u8>, MobileMeshError> {
+) -> NodeIdentityPayload {
     let name = name
         .map(|name| umsh_grapheme::cut(name, 24).to_owned())
         .filter(|name| !name.is_empty());
-    let payload = NodeIdentityPayload {
+    NodeIdentityPayload {
         role: NodeRole::Chat,
         capabilities: NodeCapabilities::MOBILE | NodeCapabilities::TEXT_MESSAGES,
         name,
@@ -2910,7 +2911,38 @@ async fn build_signed_identity_bundle(
         supported_regions: None,
         nonce: None,
         signature: None,
-    };
+    }
+}
+
+/// The advertisement frame's payload: [`phone_identity_payload`] behind
+/// its payload-type byte, with no signature of its own. The frame that
+/// carries it is signed, which is what authenticates it.
+fn advertisement_payload(
+    name: Option<&str>,
+    timestamp: Option<u32>,
+    location: Option<NodeLocation>,
+    capacity: usize,
+) -> Result<Vec<u8>, MobileMeshError> {
+    let mut frame = vec![0u8; capacity.max(1)];
+    frame[0] = PayloadType::NodeIdentity as u8;
+    let len = phone_identity_payload(name, timestamp, location)
+        .encode(&mut frame[1..])
+        .map_err(|_| MobileMeshError::SendFailed)?;
+    frame.truncate(1 + len);
+    Ok(frame)
+}
+
+/// Build the signed standalone node-identity bundle for this phone, what a
+/// QR code or an exported contact carries: [`phone_identity_payload`] with
+/// its detached signature. The result is ROLE through the trailing 64-byte
+/// signature, without the payload-type byte.
+async fn build_signed_identity_bundle(
+    signer: &SoftwareIdentity,
+    name: Option<&str>,
+    timestamp: Option<u32>,
+    location: Option<NodeLocation>,
+) -> Result<Vec<u8>, MobileMeshError> {
+    let payload = phone_identity_payload(name, timestamp, location);
     let mut buf = [0u8; 192];
     let len = payload
         .encode_for_signing(&mut buf)
@@ -3477,10 +3509,18 @@ async fn run_worker(
         let Some(peer) = packet.from_key() else {
             return false;
         };
+        // A frame that filled a gap behind its sender's newest may carry
+        // details older than those the platform keeps, and the record has no
+        // way to say "only fill in what is missing", so it is not surfaced.
+        // A first contact is: with no baseline to judge it by, it is as
+        // likely the newest as not.
+        if packet.acceptance() == Some(umsh_mac::RxAcceptance::Backfilled) {
+            return true;
+        }
         let _ = advertisement_events.send(MobileMeshAdvertisementRecord {
             peer_address: encode_peer_address(&peer),
             payload: packet.payload().to_vec(),
-            source_authenticated: packet.source_authenticated(),
+            source_authenticated: packet.sender_authenticated(),
         });
         true
     });
@@ -3796,43 +3836,42 @@ async fn run_worker(
                             }
                         }
                         Some(WorkerCommand::Advertise { name, timestamp, scheduled, response }) => {
-                            let result = match build_signed_identity_bundle(
-                                &signer,
-                                name.as_deref(),
-                                timestamp,
-                                advertised_location,
-                            )
-                            .await
+                            // Signed, so a listener can trust what it says
+                            // of this phone; full source, so it can check
+                            // the signature without already holding the key.
+                            let options = SendOptions::default().with_full_source().with_signature();
+                            let options = if scheduled {
+                                // No flood budget and no trace: a
+                                // restatement on a timer belongs to the
+                                // neighbors who can hear it.
+                                options.no_flood()
+                            } else {
+                                // Somebody asked, so it travels as far as
+                                // anything else they send. Trace route so a
+                                // listener learns a path back to this phone
+                                // from the same frame, and trace signal so
+                                // it learns what that path costs—the two
+                                // pair entry for entry.
+                                with_flood_reach(options, flood_hops.default_hops).with_trace()
+                            };
+                            let result = match node
+                                .payload_capacity(SendDestination::Broadcast, &options)
+                                .await
                             {
-                                Ok(bundle) => {
-                                    let mut frame = Vec::with_capacity(bundle.len() + 1);
-                                    frame.push(PayloadType::NodeIdentity as u8);
-                                    frame.extend_from_slice(&bundle);
-                                    // Full source either way, so the detached
-                                    // signature is checkable.
-                                    let options = SendOptions::default().with_full_source();
-                                    let options = if scheduled {
-                                        // No flood budget and no trace: a
-                                        // restatement on a timer belongs to
-                                        // the neighbours who can hear it.
-                                        options.no_flood()
-                                    } else {
-                                        // Somebody asked, so it travels as
-                                        // far as anything else they send.
-                                        // Trace route so a listener learns a
-                                        // path back to this phone from the
-                                        // same frame, and trace signal so it
-                                        // learns what that path costs—the
-                                        // two pair entry for entry.
-                                        with_flood_reach(options, flood_hops.default_hops)
-                                            .with_trace()
-                                    };
-                                    node.send_all(&frame, &options)
+                                Ok(capacity) => match advertisement_payload(
+                                    name.as_deref(),
+                                    timestamp,
+                                    advertised_location,
+                                    capacity,
+                                ) {
+                                    Ok(frame) => node
+                                        .send_all(&frame, &options)
                                         .await
                                         .map(|_| ())
-                                        .map_err(|_| MobileMeshError::SendFailed)
-                                }
-                                Err(error) => Err(error),
+                                        .map_err(|_| MobileMeshError::SendFailed),
+                                    Err(error) => Err(error),
+                                },
+                                Err(_) => Err(MobileMeshError::SendFailed),
                             };
                             if result.is_ok()
                                 && handle.service_counter_persistence().await.is_err()
@@ -6355,7 +6394,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn broadcast_advertisement_reaches_peer_with_valid_signature() {
+    async fn a_broadcast_advertisement_is_authenticated_by_its_frame() {
         let directory = tempfile::tempdir().unwrap();
         let alice_identity = identity(21);
         let bob_identity = identity(23);
@@ -6395,6 +6434,8 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             for frame in alice.poll_update().outbound_frames {
+                let header = umsh_core::PacketHeader::parse(&frame.data).unwrap();
+                assert!(header.signature().is_some(), "the frame is signed");
                 alice.complete_outbound_frame(frame.id, true).unwrap();
                 bob.receive(MobileMeshRxRecord {
                     data: frame.data,
@@ -6419,19 +6460,86 @@ mod tests {
                     "the frame that carried the advertisement also reported presence"
                 );
                 assert_eq!(event.peer_address, address(&alice_identity));
-                // A broadcast has no MIC, so the platform is told the sender
-                // was not authenticated and must fall back to the bundle's
-                // own signature—which is why one is attached.
-                assert!(!event.source_authenticated);
+                // The frame's signature authenticates the sender, so the
+                // bundle needs none of its own.
+                assert!(event.source_authenticated);
                 let received =
                     crate::decode_node_identity(event.peer_address, event.payload).unwrap();
-                assert_eq!(received.signature, crate::IdentitySignatureState::Valid);
+                assert_eq!(received.signature, crate::IdentitySignatureState::Unsigned);
                 assert_eq!(received.name.as_deref(), Some("Alice's Phone"));
                 break;
             }
             assert!(Instant::now() < deadline, "advertisement not received");
             std::thread::sleep(Duration::from_millis(5));
         }
+    }
+
+    /// An advertisement delivered behind a newer one from the same phone
+    /// may carry older details than the platform keeps, and the record
+    /// cannot say "fill only", so it is never surfaced.
+    #[tokio::test]
+    async fn a_late_advertisement_is_not_surfaced() {
+        let directory = tempfile::tempdir().unwrap();
+        let alice_identity = identity(25);
+        let bob_identity = identity(27);
+        let alice_store =
+            MobileCounterStore::new(directory.path().join("alice").display().to_string()).unwrap();
+        let bob_store =
+            MobileCounterStore::new(directory.path().join("bob").display().to_string()).unwrap();
+        let alice = MobileMeshSession::new(alice_identity.clone(), alice_store)
+            .await
+            .unwrap();
+        let bob = MobileMeshSession::new(bob_identity, bob_store)
+            .await
+            .unwrap();
+
+        let mut sent = Vec::new();
+        for name in ["First", "Second", "Third"] {
+            alice
+                .advertise_identity(Some(name.to_owned()), None)
+                .await
+                .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                if let Some(frame) = alice.poll_update().outbound_frames.into_iter().next() {
+                    alice.complete_outbound_frame(frame.id, true).unwrap();
+                    sent.push(frame.data);
+                    break;
+                }
+                assert!(Instant::now() < deadline, "advertisement never queued");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+
+        let mut surfaced = Vec::new();
+        for index in [0, 2, 1] {
+            bob.receive(MobileMeshRxRecord {
+                data: sent[index].clone(),
+                rssi_dbm: Some(-50),
+                lqi: None,
+                snr_cb: None,
+                was_buffered: false,
+                was_acknowledged: false,
+                age_seconds: 0,
+            })
+            .unwrap();
+            // Each frame is taken in before the next arrives.
+            let deadline = Instant::now() + Duration::from_millis(500);
+            while Instant::now() < deadline {
+                for event in bob.poll_update().advertisement_events {
+                    surfaced.push(
+                        crate::decode_node_identity(event.peer_address, event.payload)
+                            .unwrap()
+                            .name,
+                    );
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+        assert_eq!(
+            surfaced,
+            [Some("First".to_owned()), Some("Third".to_owned())]
+        );
     }
 
     /// The location policy in one pass: a shared cell rides every live
@@ -6622,7 +6730,7 @@ mod tests {
     /// floods and traces so a stranger can find its way back, a scheduled
     /// one restates to whoever can already hear this phone.
     #[tokio::test]
-    async fn a_scheduled_advertisement_stays_with_the_neighbours() {
+    async fn a_scheduled_advertisement_stays_with_the_neighbors() {
         let directory = tempfile::tempdir().unwrap();
         let local_identity = identity(41);
         let store =
@@ -6647,9 +6755,10 @@ mod tests {
                     umsh_core::ParsedOptions::extract(&frame.data, header.options_range.clone())
                         .unwrap();
                 assert!(options.trace.is_none());
+                assert!(header.signature().is_some(), "the frame is signed");
                 assert!(
                     header.fcf.full_source(),
-                    "the detached signature is only checkable against the key"
+                    "the signature is only checkable against the key"
                 );
                 session.complete_outbound_frame(frame.id, true).unwrap();
                 break;

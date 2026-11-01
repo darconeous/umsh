@@ -165,7 +165,7 @@ pub use app_payload::{
 };
 #[cfg(feature = "software-crypto")]
 pub use channel::Channel;
-pub use host::{Host, HostError, identity_is_trustworthy};
+pub use host::{Host, HostError, IdentityUpdate, identity_is_trustworthy};
 pub use identity::{IdentitySignature, NodeCapabilities, NodeIdentityPayload, NodeRole, forwards};
 pub use identity_responder::{
     IdentityRequestContext, NodeIdentityProfile, RespondDecision, default_respond_policy,
@@ -184,7 +184,8 @@ pub use peer_repeaters::{
     MAX_PEER_REPEATERS, MergedPeerRepeater, PeerRepeaterRecord, PeerRepeaterTable,
 };
 pub use receive::{
-    ChannelInfoRef, PacketFamily, ReceivedPacketRef, RepeaterHints, RxMetadata, Snr,
+    ChannelInfoRef, PacketFamily, ReceivedPacketRef, RepeaterHints, RxAcceptance, RxMetadata,
+    SignatureStatus, Snr,
 };
 pub use ticket::{MAX_TALLIED_REPEATERS, RepeatTally, SendProgressTicket, SendToken};
 pub use transport::Transport;

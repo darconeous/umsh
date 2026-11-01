@@ -5,5 +5,6 @@
 //! packet instead of inventing a second node-specific event envelope.
 
 pub use umsh_mac::{
-    ChannelInfoRef, PacketFamily, ReceivedPacketRef, RepeaterHints, RxMetadata, Snr,
+    ChannelInfoRef, PacketFamily, ReceivedPacketRef, RepeaterHints, RxAcceptance, RxMetadata,
+    SignatureStatus, Snr,
 };

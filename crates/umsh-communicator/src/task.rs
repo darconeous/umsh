@@ -21,7 +21,8 @@ use umsh_core::options::HopSignal;
 use umsh_core::{ChannelKey, NodeHint, PayloadType, PublicKey, RouterHint};
 use umsh_mac::{CachedRoute, SendOptions};
 use umsh_node::{
-    LocalNode, MacBackend, NodeIdentityPayload, Subscription, identity_is_trustworthy,
+    IdentityUpdate, LocalNode, MacBackend, NodeIdentityPayload, Subscription,
+    identity_is_trustworthy,
 };
 use umsh_text::node_adapter::{
     Inbound, InboundText, RxSummary, WellKnownChannels, inbound_text, transmit,
@@ -57,6 +58,8 @@ pub enum Arrival {
         /// The payload `identity` was parsed from, which a signed one is
         /// kept as.
         payload: Vec<u8>,
+        /// Whether the frame that carried it may replace what is kept.
+        update: IdentityUpdate,
         rx: RxSummary,
     },
     /// A peer answered a ping. `signal` is what each repeater the answer
@@ -250,6 +253,7 @@ where
                     key,
                     identity,
                     payload: packet.payload().to_vec(),
+                    update: IdentityUpdate::of(packet),
                     rx: RxSummary::from_packet(packet),
                 });
             }
