@@ -551,6 +551,7 @@ function captureFields(event) {
     ["Destination", packet.destination],
     ["Channel", packet.channel_hex],
     ["Frame counter", packet.frame_counter],
+    ["Signature", packet.signature_counter != null ? `Counter ${packet.signature_counter}${packet.signature_hex ? ` · ${packet.signature_hex}` : " · encrypted"}` : null],
     ["Security", packet.encrypted ? "Encrypted" : "Plaintext"],
     ["Payload type", packet.payload_type],
     ["ACK requested", packet.ack_requested ? "Yes" : "No"],
@@ -562,7 +563,8 @@ function captureFields(event) {
     ["Minimum RSSI", options?.min_rssi_dbm != null ? `${options.min_rssi_dbm} dBm` : null],
     ["Minimum SNR", options?.min_snr_db != null ? `${options.min_snr_db} dB` : null],
     ["Route retry", options?.route_retry ? "Requested" : null],
-    ["Unknown critical option", options?.unknown_critical ? "Present" : null],
+    ["Unknown forwarding-critical option", options?.unknown_forwarding_critical ? "Present" : null],
+    ["Unknown delivery-critical option", options?.unknown_delivery_critical ? "Present" : null],
   ];
 }
 

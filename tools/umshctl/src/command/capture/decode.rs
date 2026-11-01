@@ -5,10 +5,10 @@ use std::fmt::Write as _;
 use std::ops::Range;
 
 use hamaddr::HamAddr;
-use umsh::core::options::{HopSignal, OptionDecoder, TraceRef};
+use umsh::core::options::{OptionDecoder, TraceForm, TraceRef};
 use umsh::core::{
-    OptionNumber, PacketHeader, PacketType, ParsedOptions, PayloadType, PublicKey, RegionCode,
-    RouterHint, SourceAddrRef,
+    FRAME_SIGNATURE_OPTION_LEN, OptionNumber, PacketHeader, PacketType, PayloadType, PublicKey,
+    RegionCode, RouterHint, SourceAddrRef,
 };
 
 use crate::output::styled;
@@ -34,6 +34,10 @@ pub enum Field {
     /// A MAC ack's keyed authenticator, which only the original sender can
     /// verify.
     AckTag,
+    /// The frame's Ed25519 signature: before the MIC on a secured frame, or
+    /// inside the Frame Signature option on a broadcast. With `E` set it is
+    /// ciphertext, but it is the same bytes either way.
+    Signature,
     Mic,
 }
 
@@ -53,6 +57,7 @@ impl Field {
             Self::Body => "37",
             Self::AckMic => "36",
             Self::AckTag => "35",
+            Self::Signature => "32",
             Self::Mic => "90",
         }
     }
@@ -70,12 +75,13 @@ impl Field {
             Self::Body => "body",
             Self::AckMic => "ack-mic",
             Self::AckTag => "ack-tag",
+            Self::Signature => "sig",
             Self::Mic => "mic",
         }
     }
 }
 
-const LEGEND: [Field; 12] = [
+const LEGEND: [Field; 13] = [
     Field::Fcf,
     Field::FloodHops,
     Field::Dst,
@@ -87,6 +93,7 @@ const LEGEND: [Field; 12] = [
     Field::Body,
     Field::AckMic,
     Field::AckTag,
+    Field::Signature,
     Field::Mic,
 ];
 
@@ -138,6 +145,12 @@ fn field_map(header: &PacketHeader, len: usize) -> Vec<Option<Field>> {
     paint(&mut map, header.body_range.clone(), Field::Body);
     paint(&mut map, options.clone(), Field::Options);
     paint(&mut map, header.mic_range.clone(), Field::Mic);
+    // Over the option block too: a broadcast's signature is the tail of its
+    // Frame Signature option, and the signature is what a reader wants to
+    // see tinted.
+    if let Some(signature) = header.signature() {
+        paint(&mut map, signature.range.clone(), Field::Signature);
+    }
 
     let sec_len = header.sec_info.map_or(0, |sec| sec.wire_len());
     let sec_start = options.start.saturating_sub(sec_len);
@@ -344,6 +357,9 @@ fn summary_line(packet: &[u8], header: &PacketHeader, color: bool) -> String {
         if let Some(salt) = security.salt {
             chips.push(tint(&format!("salt={salt:#06x}"), Field::SecInfo, color));
         }
+        if security.scf.signed() {
+            chips.push(tint("signed", Field::SecInfo, color));
+        }
         // Encrypted is the expected case and says nothing; a secured packet
         // type carrying cleartext is the anomaly worth shouting about.
         if !encrypted {
@@ -461,6 +477,11 @@ fn options_line(packet: &[u8], header: &PacketHeader, color: bool) -> Option<Str
 
 fn option_chip(number: u16, value: &[u8]) -> String {
     match OptionNumber::from(number) {
+        OptionNumber::FrameSignature if value.len() == FRAME_SIGNATURE_OPTION_LEN => format!(
+            "fsig=ctr:{},sig:{}",
+            u32::from_be_bytes([value[0], value[1], value[2], value[3]]),
+            signature_text(&value[4..]),
+        ),
         OptionNumber::Trace => format!("trace=[{}]", trace_text(value)),
         OptionNumber::SourceRoute => format!("route=[{}]", route_text(value)),
         OptionNumber::RegionCode if value.len() == 2 => {
@@ -477,17 +498,42 @@ fn option_chip(number: u16, value: &[u8]) -> String {
         OptionNumber::OperatorCallsign => format!("op={}", callsign_text(value)),
         OptionNumber::StationCallsign => format!("via={}", callsign_text(value)),
         // Either an unknown option or a known one carrying a malformed value.
-        // Critical options carry an odd number and are marked, since a
-        // receiver that does not understand one has to drop the frame.
-        other => format!(
-            "{}opt{number}={}",
-            if other.is_forwarding_critical() {
-                "!"
-            } else {
-                ""
-            },
-            hex_text(value),
+        // A critical option is marked with the class it is critical in:
+        // `f` for a repeater that must not forward the frame, `d` for an
+        // endpoint that must not deliver it. The classes are independent.
+        other => format!("opt{number}{}={}", criticality_text(other), hex_text(value)),
+    }
+}
+
+/// `[f]`, `[d]`, or `[fd]`; empty for an option that is not critical.
+fn criticality_text(option: OptionNumber) -> String {
+    let forwarding = if option.is_forwarding_critical() {
+        "f"
+    } else {
+        ""
+    };
+    let delivery = if option.is_delivery_critical() {
+        "d"
+    } else {
+        ""
+    };
+    if forwarding.is_empty() && delivery.is_empty() {
+        String::new()
+    } else {
+        format!("[{forwarding}{delivery}]")
+    }
+}
+
+/// A signature's leading and trailing bytes, which is enough to tell two
+/// apart; the whole value is in the hex dump.
+fn signature_text(signature: &[u8]) -> String {
+    match (signature.get(..4), signature.len().checked_sub(2)) {
+        (Some(head), Some(tail)) => format!(
+            "{}…{}",
+            crate::output::hex(head),
+            crate::output::hex(&signature[tail..])
         ),
+        _ => hex_text(signature),
     }
 }
 
@@ -503,24 +549,28 @@ fn route_text(value: &[u8]) -> String {
         .join(",")
 }
 
-/// A trace's hops, most recent first, each with the signal it was heard at
-/// when the trace still carries it. A leading `…` marks a truncated trace.
+/// A trace's hops, most recent first. The form shows in the entries: the
+/// signal form tags every hop with `@` and its RSSI (`@p2p` for a
+/// point-to-point link), the `0xFE` hints-only form lists bare hints, and a
+/// leading `…` marks the `0xFF` truncated form, whose older hops are gone.
 fn trace_text(value: &[u8]) -> String {
     let Some(trace) = TraceRef::parse(value) else {
         return hex_text(value);
     };
     let hops = trace
         .entries()
-        .map(|entry| match entry.signal.and_then(HopSignal::rssi_dbm) {
-            Some(rssi) => format!("{}@{rssi}", entry.hint),
+        .map(|entry| match entry.signal {
+            Some(signal) => match signal.rssi_dbm() {
+                Some(rssi) => format!("{}@{rssi}", entry.hint),
+                None => format!("{}@p2p", entry.hint),
+            },
             None => entry.hint.to_string(),
         })
         .collect::<Vec<_>>()
         .join(",");
-    if trace.is_complete() {
-        hops
-    } else {
-        format!("…{hops}")
+    match trace.form() {
+        TraceForm::Signal | TraceForm::HintsOnly => hops,
+        TraceForm::Truncated => format!("…{hops}"),
     }
 }
 
@@ -739,7 +789,121 @@ mod tests {
         assert_eq!(option_chip(7, &[0xff, 0xef, 0x24]), "trace=[…H6*]");
         // Unknown options survive, and the critical ones are marked.
         assert_eq!(option_chip(20, &[0xaa, 0xbb]), "opt20=aabb");
-        assert_eq!(option_chip(21, &[0xaa]), "!opt21=aa");
+        assert_eq!(option_chip(21, &[0xaa]), "opt21[f]=aa");
+    }
+
+    /// The two criticality classes are separate: bit 0 for forwarding, and
+    /// bits 2 and 3 set on a static option for delivery.
+    #[test]
+    fn unknown_options_show_each_criticality_class() {
+        assert_eq!(option_chip(12, &[0xaa]), "opt12[d]=aa");
+        assert_eq!(option_chip(1, &[0xaa]), "opt1[f]=aa");
+        assert_eq!(option_chip(13, &[0xaa]), "opt13[fd]=aa");
+        // Dynamic options (bit 1) are never delivery-critical.
+        assert_eq!(option_chip(14, &[0xaa]), "opt14=aa");
+        assert_eq!(option_chip(20, &[0xaa]), "opt20=aa");
+    }
+
+    #[test]
+    fn trace_shows_each_of_its_three_forms() {
+        // Signal form: a 4-byte record per hop; RSSI byte 0x5a is -90 dBm.
+        assert_eq!(option_chip(7, &[0xef, 0x24, 0x5a, 0x10]), "trace=[H6*@-90]");
+        // A point-to-point hop measured nothing.
+        assert_eq!(option_chip(7, &[0xef, 0x24, 0x00, 0x00]), "trace=[H6*@p2p]");
+        // Hints-only form (0xFE), then truncated (0xFF).
+        assert_eq!(option_chip(7, &[0xfe, 0xef, 0x24]), "trace=[H6*]");
+        assert_eq!(option_chip(7, &[0xff, 0xef, 0x24]), "trace=[…H6*]");
+    }
+
+    /// Example 12 of the test vectors: a signed, unencrypted multicast.
+    const SIGNED_MULTICAST: [u8; 126] = [
+        0xe4, 0xb0, 0x8d, 0x68, 0x00, 0x00, 0x00, 0x0c, 0xff, 0xed, 0x54, 0xa5, 0x9f, 0xb1, 0xac,
+        0x3a, 0x51, 0x23, 0x93, 0x51, 0x36, 0x29, 0x41, 0xb8, 0x68, 0xe8, 0x5a, 0x60, 0xe3, 0xd7,
+        0xb2, 0x48, 0x5d, 0x82, 0x88, 0x21, 0xdc, 0x7a, 0x69, 0xc2, 0x79, 0x03, 0x48, 0x65, 0x6c,
+        0x70, 0x64, 0x60, 0xe7, 0x36, 0xcf, 0x31, 0x6b, 0xb3, 0x2f, 0x43, 0x8c, 0xa2, 0x81, 0xde,
+        0x0d, 0xe0, 0x2c, 0x3b, 0xbe, 0xb7, 0xa6, 0xcb, 0x19, 0x5a, 0x5c, 0x60, 0x55, 0xbd, 0x46,
+        0xa9, 0xf5, 0xe7, 0x53, 0x2c, 0x96, 0xae, 0xf7, 0xcc, 0xe8, 0x06, 0xc7, 0xf4, 0xfc, 0x46,
+        0x2c, 0xd9, 0xb8, 0x61, 0xcc, 0x60, 0xd4, 0x47, 0x65, 0xf6, 0x6e, 0x4e, 0x3a, 0x5d, 0xdb,
+        0x10, 0x91, 0x3d, 0x6d, 0x05, 0x59, 0x96, 0x7a, 0x9d, 0x75, 0xd9, 0xfc, 0xdc, 0xaa, 0x9f,
+        0xad, 0x4c, 0x50, 0x3b, 0x2e, 0x47,
+    ];
+
+    /// Example 14: a signed broadcast, whose signature is the tail of its
+    /// Frame Signature option.
+    const SIGNED_BROADCAST: [u8; 106] = [
+        0xc4, 0xed, 0x54, 0xa5, 0x9f, 0xb1, 0xac, 0x3a, 0x51, 0x23, 0x93, 0x51, 0x36, 0x29, 0x41,
+        0xb8, 0x68, 0xe8, 0x5a, 0x60, 0xe3, 0xd7, 0xb2, 0x48, 0x5d, 0x82, 0x88, 0x21, 0xdc, 0x7a,
+        0x69, 0xc2, 0x79, 0x0d, 0x37, 0x00, 0x00, 0x00, 0x0e, 0x03, 0x79, 0xa8, 0xfa, 0x3a, 0xb8,
+        0x6e, 0x4f, 0x59, 0xc7, 0x6f, 0x0e, 0xe6, 0x5c, 0x76, 0x6b, 0xd2, 0xf1, 0x03, 0x38, 0x0e,
+        0x62, 0xd9, 0xad, 0x4e, 0xe8, 0x66, 0xe5, 0x89, 0xb3, 0x56, 0xc0, 0x54, 0xac, 0xf8, 0x50,
+        0xaf, 0xd6, 0x9a, 0xdd, 0xb7, 0xa3, 0x8b, 0x7c, 0x18, 0xe8, 0x77, 0xa6, 0xaa, 0x55, 0x84,
+        0x68, 0xf7, 0x01, 0x2f, 0xe0, 0x91, 0x24, 0x4e, 0x6b, 0x89, 0x52, 0xbe, 0x0c, 0xff, 0x48,
+        0x69,
+    ];
+
+    #[test]
+    fn a_signed_secured_frame_shows_a_chip_and_paints_its_signature() {
+        let header = PacketHeader::parse(&SIGNED_MULTICAST).unwrap();
+        let summary = summary_line(&SIGNED_MULTICAST, &header, false);
+        assert!(summary.contains("fcnt=12  signed"), "{summary}");
+
+        let map = field_map(&header, SIGNED_MULTICAST.len());
+        let signature = header.signature().unwrap().range.clone();
+        assert_eq!(signature.len(), 64);
+        for index in signature.clone() {
+            assert_eq!(map[index], Some(Field::Signature), "byte {index}");
+        }
+        // The payload before it and the MIC after it keep their own fields.
+        assert_eq!(map[signature.start - 1], Some(Field::Body));
+        assert_eq!(map[signature.end], Some(Field::Mic));
+        assert!(map.iter().all(Option::is_some), "every byte is attributed");
+    }
+
+    #[test]
+    fn a_signed_broadcast_shows_option_0_and_paints_the_signature_in_it() {
+        let header = PacketHeader::parse(&SIGNED_BROADCAST).unwrap();
+        assert_eq!(
+            options_line(&SIGNED_BROADCAST, &header, false).unwrap(),
+            "opts  fsig=ctr:14,sig:0379a8fa…be0c",
+        );
+        // A broadcast has no SECINFO, so no `signed` chip: the option says it.
+        assert!(!summary_line(&SIGNED_BROADCAST, &header, false).contains("signed"));
+
+        let map = field_map(&header, SIGNED_BROADCAST.len());
+        let signature = header.signature().unwrap();
+        assert_eq!(signature.counter, 14);
+        for index in signature.range.clone() {
+            assert_eq!(map[index], Some(Field::Signature), "byte {index}");
+        }
+        // The counter ahead of the signature is still part of the option.
+        assert_eq!(map[signature.range.start - 1], Some(Field::Options));
+        assert_eq!(map[signature.range.end], Some(Field::Options));
+    }
+
+    #[test]
+    fn a_built_signed_unicast_with_unknown_options_is_marked_by_class() {
+        use umsh::core::NodeHint;
+        use umsh::core::PacketBuilder;
+
+        let mut buf = [0u8; 256];
+        let frame = PacketBuilder::new(&mut buf)
+            .unicast(NodeHint([0xc3, 0xd4, 0x25]))
+            .source_hint(NodeHint([0xa1, 0xb2, 0x03]))
+            .frame_counter(42)
+            .signed()
+            .option(OptionNumber::Unknown(1), &[0x02])
+            .option(OptionNumber::Unknown(12), &[0x01])
+            .payload(b"hi")
+            .build()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        let header = PacketHeader::parse(&frame).unwrap();
+        assert_eq!(
+            options_line(&frame, &header, false).unwrap(),
+            "opts  opt1[f]=02  opt12[d]=01",
+        );
+        assert!(summary_line(&frame, &header, false).contains("signed"));
     }
 
     #[test]
