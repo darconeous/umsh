@@ -994,6 +994,11 @@ pub struct PacketSummary {
     pub destination: Option<String>,
     pub channel_hex: Option<String>,
     pub frame_counter: Option<u32>,
+    /// The counter the frame's signature signs; `None` for an unsigned frame.
+    pub signature_counter: Option<u32>,
+    /// The 64 signature bytes. `None` when the frame is unsigned, and when
+    /// `E` is set, where they are ciphertext until the frame is opened.
+    pub signature_hex: Option<String>,
     pub encrypted: bool,
     pub ack_requested: bool,
     pub flood_remaining: Option<u8>,
@@ -1015,7 +1020,10 @@ pub struct PacketOptionsSummary {
     pub min_rssi_dbm: Option<i16>,
     pub min_snr_db: Option<i8>,
     pub route_retry: bool,
-    pub unknown_critical: bool,
+    /// An unrecognized option a repeater must not forward the frame over.
+    pub unknown_forwarding_critical: bool,
+    /// An unrecognized option an endpoint must not deliver the frame over.
+    pub unknown_delivery_critical: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2107,7 +2115,8 @@ fn summarize_packet(bytes: &[u8], header: &PacketHeader) -> PacketSummary {
                 min_rssi_dbm: options.min_rssi,
                 min_snr_db: options.min_snr,
                 route_retry: options.route_retry,
-                unknown_critical: options.has_unknown_forwarding_critical,
+                unknown_forwarding_critical: options.has_unknown_forwarding_critical,
+                unknown_delivery_critical: options.has_unknown_delivery_critical,
             }),
             None,
         ),
@@ -2119,6 +2128,12 @@ fn summarize_packet(bytes: &[u8], header: &PacketHeader) -> PacketSummary {
         destination: header.dst.map(|hint| hint.to_string()),
         channel_hex: header.channel.map(|channel| hex(&channel.0)),
         frame_counter: header.sec_info.map(|info| info.frame_counter),
+        signature_counter: header.signature().map(|signature| signature.counter),
+        signature_hex: header
+            .signature()
+            .filter(|_| !encrypted)
+            .and_then(|signature| bytes.get(signature.range.clone()))
+            .map(hex),
         encrypted,
         ack_requested: header.ack_requested(),
         flood_remaining: header.flood_hops.map(|hops| hops.remaining()),
@@ -2676,6 +2691,84 @@ mod tests {
         assert_eq!(spreading.choices.len(), 8);
         assert_eq!(spreading.choices.first().unwrap().value, "5");
         assert_eq!(spreading.choices.last().unwrap().value, "12");
+    }
+
+    fn summarize(bytes: &[u8]) -> PacketSummary {
+        summarize_packet(bytes, &PacketHeader::parse(bytes).unwrap())
+    }
+
+    #[test]
+    fn a_signed_broadcast_reports_its_signature_and_counter() {
+        // Test-vectors Example 14.
+        let frame = [
+            0xC4, 0xED, 0x54, 0xA5, 0x9F, 0xB1, 0xAC, 0x3A, 0x51, 0x23, 0x93, 0x51, 0x36, 0x29,
+            0x41, 0xB8, 0x68, 0xE8, 0x5A, 0x60, 0xE3, 0xD7, 0xB2, 0x48, 0x5D, 0x82, 0x88, 0x21,
+            0xDC, 0x7A, 0x69, 0xC2, 0x79, 0x0D, 0x37, 0x00, 0x00, 0x00, 0x0E, 0x03, 0x79, 0xA8,
+            0xFA, 0x3A, 0xB8, 0x6E, 0x4F, 0x59, 0xC7, 0x6F, 0x0E, 0xE6, 0x5C, 0x76, 0x6B, 0xD2,
+            0xF1, 0x03, 0x38, 0x0E, 0x62, 0xD9, 0xAD, 0x4E, 0xE8, 0x66, 0xE5, 0x89, 0xB3, 0x56,
+            0xC0, 0x54, 0xAC, 0xF8, 0x50, 0xAF, 0xD6, 0x9A, 0xDD, 0xB7, 0xA3, 0x8B, 0x7C, 0x18,
+            0xE8, 0x77, 0xA6, 0xAA, 0x55, 0x84, 0x68, 0xF7, 0x01, 0x2F, 0xE0, 0x91, 0x24, 0x4E,
+            0x6B, 0x89, 0x52, 0xBE, 0x0C, 0xFF, 0x48, 0x69,
+        ];
+        let summary = summarize(&frame);
+        assert_eq!(summary.signature_counter, Some(14));
+        let signature = summary.signature_hex.unwrap();
+        assert_eq!(signature.len(), 128);
+        assert!(signature.starts_with("0379a8fa3ab86e4f"), "{signature}");
+        assert!(signature.ends_with("6b8952be0c"), "{signature}");
+        // The signature's counter is the option's own; broadcasts have no SECINFO.
+        assert_eq!(summary.frame_counter, None);
+    }
+
+    #[test]
+    fn an_encrypted_signature_is_reported_without_its_ciphertext() {
+        use umsh_core::{NodeHint, PacketBuilder};
+
+        let mut buf = [0u8; 256];
+        let mut packet = PacketBuilder::new(&mut buf)
+            .multicast(umsh_core::ChannelId([0x7E, 0x5F]))
+            .source_hint(NodeHint([0xA1, 0xB2, 0x03]))
+            .frame_counter(7)
+            .signed()
+            .encrypted()
+            .payload(b"help")
+            .build()
+            .unwrap();
+        packet.signature_slot_mut().unwrap().fill(0xAB);
+        let summary = summarize(packet.as_bytes());
+        assert_eq!(summary.signature_counter, Some(7));
+        assert_eq!(summary.signature_hex, None);
+
+        let unsigned = summarize(&[0xC0, 0xA1, 0xB2, 0x03]);
+        assert_eq!(unsigned.signature_counter, None);
+        assert_eq!(unsigned.signature_hex, None);
+    }
+
+    #[test]
+    fn unknown_critical_options_split_into_forwarding_and_delivery() {
+        use umsh_core::{NodeHint, OptionNumber, PacketBuilder};
+
+        let build = |number: u16| {
+            let mut buf = [0u8; 256];
+            let packet = PacketBuilder::new(&mut buf)
+                .broadcast()
+                .source_hint(NodeHint([0xA1, 0xB2, 0x03]))
+                .option(OptionNumber::Unknown(number), &[0x01])
+                .payload(b"hi")
+                .build()
+                .unwrap();
+            summarize(packet).options.unwrap()
+        };
+        let delivery = build(12);
+        assert!(delivery.unknown_delivery_critical);
+        assert!(!delivery.unknown_forwarding_critical);
+        let forwarding = build(1);
+        assert!(forwarding.unknown_forwarding_critical);
+        assert!(!forwarding.unknown_delivery_critical);
+        let both = build(13);
+        assert!(both.unknown_forwarding_critical && both.unknown_delivery_critical);
+        let neither = build(10);
+        assert!(!neither.unknown_forwarding_critical && !neither.unknown_delivery_critical);
     }
 
     #[test]
