@@ -29,6 +29,8 @@ enum PathRailLeg: Equatable {
     case reading(MeshLegSignal)
     /// Repeaters counted without being named, as a dashed stretch.
     case unnamed(count: Int)
+    /// A stretch nobody traced or counted, as a dashed stretch.
+    case unknown
     /// Nothing known yet: a dashed stretch.
     case pending
     /// Nothing came back: a dashed stretch broken by an X.
@@ -168,7 +170,7 @@ private struct PathRailLegView: View {
 
     private var isDashed: Bool {
         switch leg {
-        case .unnamed, .pending, .broken: true
+        case .unnamed, .unknown, .pending, .broken: true
         case .plain, .numbered, .reading: isTentative
         }
     }
@@ -177,7 +179,7 @@ private struct PathRailLegView: View {
         switch leg {
         case .plain: 10
         case .numbered: 24
-        case .reading, .unnamed: 26
+        case .reading, .unnamed, .unknown: 26
         case .pending, .broken: 40
         }
     }
@@ -231,6 +233,8 @@ private struct PathRailLegView: View {
             }
         case let .unnamed(count):
             Text(verbatim: RoutePresentation.unnamedRepeatersText(count))
+        case .unknown:
+            Text("Unknown path", comment: "A stretch of a reply's path that nobody traced or counted.")
         default:
             EmptyView()
         }
