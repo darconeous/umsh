@@ -33,6 +33,7 @@ pub mod emergency;
 mod error;
 pub mod model;
 pub mod validate;
+mod well_known;
 
 pub mod engine;
 
@@ -50,6 +51,8 @@ pub use model::{
     MessageSequence, MessageType, REASSEMBLED_BODY_MAX, Regarding, SenderScope, TextMessage,
     WireRef,
 };
+
+pub use well_known::WellKnownChannels;
 
 pub use codec::{ParseInfo, encode as encode_text_message, parse as parse_text_message};
 

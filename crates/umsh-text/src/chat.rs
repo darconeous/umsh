@@ -645,9 +645,9 @@ impl<P: TextProfile + Clone, const SLOTS: usize, const PAGES: usize> ChatFacade<
         self.stage();
     }
 
-    /// Compose a message into `conversation`. `stored` is the checkpoint
-    /// storage holds for it, if any, which the engine continues from when it
-    /// no longer remembers the conversation itself (see [`Engine::recall`]).
+    /// Compose a message into `conversation`, within the
+    /// [`MAX_FRAME`](crate::engine::MAX_FRAME) default budget (see
+    /// [`ChatFacade::compose_within`]).
     pub fn compose(
         &mut self,
         conversation: ConversationKey,
@@ -656,15 +656,39 @@ impl<P: TextProfile + Clone, const SLOTS: usize, const PAGES: usize> ChatFacade<
         stored: Option<&StreamCheckpoint>,
         now_ms: u64,
     ) -> Result<PendingBatch, ChatComposeError> {
+        self.compose_within(
+            conversation,
+            client_token,
+            intent,
+            stored,
+            crate::engine::MAX_FRAME,
+            now_ms,
+        )
+    }
+
+    /// Compose a message into `conversation`. `stored` is the checkpoint
+    /// storage holds for it, if any, which the engine continues from when it
+    /// no longer remembers the conversation itself (see [`Engine::recall`]).
+    /// `budget` is what one frame to the conversation carries (see
+    /// [`Engine::compose_within`]).
+    pub fn compose_within(
+        &mut self,
+        conversation: ConversationKey,
+        client_token: u32,
+        intent: ComposeIntent<'_>,
+        stored: Option<&StreamCheckpoint>,
+        budget: usize,
+        now_ms: u64,
+    ) -> Result<PendingBatch, ChatComposeError> {
         if self.pending_batch.is_some() {
             return Err(ChatComposeError::BatchPending);
         }
         if let Some(stored) = stored.filter(|stored| stored.conversation == conversation) {
             self.engine.recall(stored);
         }
-        if let Err(error) = self
-            .engine
-            .compose(conversation, client_token, intent, now_ms)
+        if let Err(error) =
+            self.engine
+                .compose_within(conversation, client_token, intent, budget, now_ms)
         {
             // Encoding can fail after some fragments were queued.
             self.discard_outputs(now_ms);
@@ -788,6 +812,33 @@ impl<P: TextProfile + Clone, const SLOTS: usize, const PAGES: usize> ChatFacade<
     pub fn archive_result(&mut self, request_id: u32, result: ArchiveResult<'_>, now_ms: u64) {
         self.engine.archive_result(request_id, result, now_ms);
         self.stage();
+    }
+
+    /// The conversation an unanswered [`ArchiveLookup`] asked for material
+    /// of (see [`Engine::lookup_conversation`]).
+    pub fn lookup_conversation(&self, request_id: u32) -> Option<ConversationKey> {
+        self.engine.lookup_conversation(request_id)
+    }
+
+    /// Answer an [`ArchiveLookup`] within `budget`, what one frame to the
+    /// material's destination carries now (see
+    /// [`Engine::archive_result_within`]).
+    pub fn archive_result_within(
+        &mut self,
+        request_id: u32,
+        result: ArchiveResult<'_>,
+        budget: usize,
+        now_ms: u64,
+    ) {
+        self.engine
+            .archive_result_within(request_id, result, budget, now_ms);
+        self.stage();
+    }
+
+    /// The longest body a message composed into `conversation` within
+    /// `budget` may have (see [`Engine::max_body_len`]).
+    pub fn max_body_len(&self, conversation: &ConversationKey, budget: usize) -> usize {
+        self.engine.max_body_len(conversation, budget)
     }
 
     /// Send one of the message `handle`'s frames again, as the archive

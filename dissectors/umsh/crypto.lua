@@ -265,28 +265,78 @@ function M.build_ctr_iv(mic_bytes, secinfo_bytes)
 end
 
 -- ---------------------------------------------------------------------------
--- AAD construction
--- fcf_byte:             1-byte string (raw FCF)
--- static_opts:          ordered list of {number=N, value=bytes_str}
--- dst_or_chan_bytes:     2-byte channel OR 3-byte dst hint, or nil (MAC ack)
--- src_bytes_or_nil:     3-byte hint, 32-byte key, or nil (when encrypted)
--- secinfo_bytes:        5-or-7 byte string, or nil (MAC ack)
+-- AAD construction (security.md § Associated Data; feed_aad in
+-- crates/umsh-core/src/packet.rs)
+--
+-- The header fields in wire order, without FHOPS and with the FCF's H bit
+-- cleared, then each static option as number(2) ‖ length(2) ‖ value, then
+-- the terminator FF FF. A blind unicast appends its plaintext DST ‖ SRC
+-- after the terminator, whether or not the address block is encrypted on
+-- the wire:
+--
+--   Broadcast      FCF ‖ SRC ‖ options ‖ FFFF
+--   MAC ack        FCF ‖ options ‖ FFFF
+--   Unicast        FCF ‖ DST ‖ SRC ‖ SECINFO ‖ options ‖ FFFF
+--   Multicast      FCF ‖ CHANNEL ‖ SECINFO ‖ options ‖ FFFF
+--   Blind unicast  FCF ‖ CHANNEL ‖ SECINFO ‖ options ‖ FFFF ‖ DST ‖ SRC
+--
+-- A multicast's SRC is never in the AAD: it opens the protected region
+-- (S2) whether or not the frame is encrypted.
+--
+-- fcf_byte:     1-byte string (raw FCF); the packet type comes from it
+-- static_opts:  ordered list of {number=N, value=bytes_str}
+-- fields:       the header fields the type carries, by name:
+--               {dst=3B, src=3B|32B, channel=2B, secinfo=5B|7B}
 -- ---------------------------------------------------------------------------
 
-function M.build_aad(fcf_byte, static_opts, dst_or_chan_bytes,
-                     src_bytes_or_nil, secinfo_bytes)
+M.PKT_BROADCAST = 0
+M.PKT_MAC_ACK   = 1
+M.PKT_UNICAST   = 2
+M.PKT_UNICAST_ACK_REQ = 3
+M.PKT_MULTICAST = 4
+M.PKT_BLIND_UNICAST = 6
+M.PKT_BLIND_UNICAST_ACK_REQ = 7
+
+local AAD_TERMINATOR = "\xFF\xFF"
+
+function M.build_aad(fcf_byte, static_opts, fields)
+  fields = fields or {}
+  local fcf = fcf_byte:byte(1)
+  local pkt_type = (fcf >> 3) & 0x07
   -- The flood-hops-present bit is masked off: FHOPS is a mutable forwarding
   -- budget, and its presence bit travels with it.
-  local parts = {string.char(fcf_byte:byte(1) & 0xFE)}
+  local parts = {string.char(fcf & 0xFE)}
+  local function put(field, name)
+    if not field then error("build_aad: missing " .. name, 2) end
+    parts[#parts + 1] = field
+  end
+
+  local blind = pkt_type == M.PKT_BLIND_UNICAST or pkt_type == M.PKT_BLIND_UNICAST_ACK_REQ
+  if pkt_type == M.PKT_BROADCAST then
+    put(fields.src, "src")
+  elseif pkt_type == M.PKT_MAC_ACK then
+    -- An ack has no DST, SRC, or SECINFO: options alone follow the FCF.
+  elseif pkt_type == M.PKT_UNICAST or pkt_type == M.PKT_UNICAST_ACK_REQ then
+    put(fields.dst, "dst")
+    put(fields.src, "src")
+    put(fields.secinfo, "secinfo")
+  elseif pkt_type == M.PKT_MULTICAST or blind then
+    put(fields.channel, "channel")
+    put(fields.secinfo, "secinfo")
+  else
+    error("build_aad: reserved packet type " .. pkt_type, 2)
+  end
+
   for _, opt in ipairs(static_opts or {}) do
     parts[#parts+1] = uint16_be(opt.number)
     parts[#parts+1] = uint16_be(#opt.value)
     parts[#parts+1] = opt.value
   end
-  -- A MAC ack has no DST, SRC, or SECINFO; its AAD ends at the options.
-  local tail = {dst_or_chan_bytes, src_bytes_or_nil, secinfo_bytes}
-  for i = 1, 3 do
-    if tail[i] then parts[#parts+1] = tail[i] end
+  parts[#parts+1] = AAD_TERMINATOR
+
+  if blind then
+    put(fields.dst, "dst")
+    put(fields.src, "src")
   end
   return table.concat(parts)
 end
@@ -318,8 +368,28 @@ function M.derive_channel_keys(channel_key)
   }
 end
 
-function M.derive_pairwise_keys(shared_secret)
-  local okm, err = M.hkdf(shared_secret, "UMSH-PAIRWISE-SALT", "UMSH-UNICAST-V2", 64)
+-- The pairwise HKDF info binds both Ed25519 public keys, lower first
+-- (byte-wise), so the two ends derive the same keys and a key and its
+-- negation, which share an X25519 key, derive different ones:
+--   info = "UMSH-UNICAST-V3" ‖ min(PK_a, PK_b) ‖ max(PK_a, PK_b)
+--
+-- The comparison is byte-wise by hand: Lua's string `<` goes through
+-- strcoll, which follows whatever locale the host (Wireshark) set.
+local function bytes_less(a, b)
+  for i = 1, math.min(#a, #b) do
+    local x, y = a:byte(i), b:byte(i)
+    if x ~= y then return x < y end
+  end
+  return #a < #b
+end
+
+function M.derive_pairwise_keys(shared_secret, pubkey_a, pubkey_b)
+  assert(pubkey_a and #pubkey_a == 32 and pubkey_b and #pubkey_b == 32,
+         "derive_pairwise_keys: both 32-byte Ed25519 public keys are required")
+  local low, high = pubkey_a, pubkey_b
+  if bytes_less(high, low) then low, high = high, low end
+  local okm, err = M.hkdf(shared_secret, "UMSH-PAIRWISE-SALT",
+                          "UMSH-UNICAST-V3" .. low .. high, 64)
   if not okm then return nil, err end
   return {k_mic = okm:sub(1, 32), k_enc = okm:sub(33, 64)}
 end
@@ -343,17 +413,26 @@ end
 -- ---------------------------------------------------------------------------
 -- Packet verify + decrypt (shared core logic)
 -- keys:       {k_enc, k_mic}
--- pkt:        {fcf_byte, static_opts, dst_or_chan, src_bytes_or_nil,
---              secinfo_raw, scf, body_bytes, mic_bytes, is_encrypted}
+-- pkt:        {fcf_byte, static_opts, aad_fields, secinfo_raw, body_bytes,
+--              mic_bytes, is_encrypted}
+--   aad_fields: the header fields build_aad takes ({dst, src, channel});
+--               SECINFO is taken from secinfo_raw
+--   body_bytes: the protected region S2 as it sits on the wire—for a
+--               multicast, SRC ‖ PAYLOAD
 -- Returns: plaintext, "ok", full_cmac  on success
 --          nil, reason               on failure
 -- ---------------------------------------------------------------------------
 
+local function packet_aad(pkt)
+  local fields = {}
+  for k, v in pairs(pkt.aad_fields or {}) do fields[k] = v end
+  fields.secinfo = fields.secinfo or pkt.secinfo_raw
+  return M.build_aad(pkt.fcf_byte, pkt.static_opts, fields)
+end
+
 function M.verify_and_decrypt(keys, pkt)
   local mic_len  = #pkt.mic_bytes
-  local aad      = M.build_aad(pkt.fcf_byte, pkt.static_opts,
-                                pkt.dst_or_chan, pkt.src_bytes_or_nil,
-                                pkt.secinfo_raw)
+  local aad      = packet_aad(pkt)
 
   -- AES-SIV: the tag covers the plaintext, not the ciphertext.
   -- When encrypted, decrypt first, then verify MIC on the plaintext.
@@ -379,19 +458,11 @@ end
 -- MAC ack tag: the authenticating half of the ack trailer. The other half,
 -- ack_mic = first_4(V), is public and needs no key (the caller reads it
 -- straight off the wire). V is the acknowledged packet's full S2V output.
--- The tag has two constructions:
---   MIC:    ack_tag = truncate_4( S2V(k_mic, S1 = ack AAD, S2 = V, S3 = ack_mic) )
---   legacy: ack_tag = truncate_4( AES-ECB(k_enc, V) )
--- The ack AAD is the canonical AAD with no DST, SRC, or SECINFO: the FCF
--- with H cleared, then the ack's static options. An ack carrying option 254
--- uses the legacy tag. The keys are those that sealed the acknowledged
--- packet: pairwise, or the combined blind keys.
+--   ack_tag = truncate_4( S2V(k_mic, S1 = ack AAD, S2 = V, S3 = ack_mic) )
+-- The ack AAD is the MAC-ack row of build_aad: the FCF with H cleared, the
+-- ack's static options, then FF FF. The keys are those that sealed the
+-- acknowledged packet: pairwise, or the combined blind keys.
 -- ---------------------------------------------------------------------------
-
-function M.legacy_ack_tag(k_enc, v)
-  if not _has_aes then return nil end
-  return aes_ecb_fn(k_enc, v):sub(1, 4)
-end
 
 function M.ack_tag_mic(k_mic, fcf_byte, static_opts, v)
   if not _has_aes then return nil end
@@ -399,31 +470,18 @@ function M.ack_tag_mic(k_mic, fcf_byte, static_opts, v)
   return full and full:sub(1, 4)
 end
 
--- Verify a received ack's tag against the packet it answers.
--- keys:        {k_enc, k_mic} that sealed the acknowledged packet
--- has_marker:  the ack carries option 254 (Legacy Ack Tag)
--- Returns "mic" or "legacy" for the construction that verified, or nil.
--- The marker admits only the legacy tag, and a static option only the MIC;
--- an ack with neither is tried both ways, which accepts legacy acks from
--- nodes that predate the marker and marker-free MIC acks alike.
-function M.verify_mac_ack(keys, v, fcf_byte, static_opts, has_marker, tag)
+-- Whether a received ack's tag verifies against the packet it answers.
+-- keys: {k_enc, k_mic} that sealed the acknowledged packet
+function M.verify_mac_ack(keys, v, fcf_byte, static_opts, tag)
   if not _has_aes then return nil end
-  if not has_marker
-     and M.ack_tag_mic(keys.k_mic, fcf_byte, static_opts, v) == tag then
-    return "mic"
-  end
-  if (has_marker or #(static_opts or {}) == 0)
-     and M.legacy_ack_tag(keys.k_enc, v) == tag then
-    return "legacy"
-  end
-  return nil
+  return M.ack_tag_mic(keys.k_mic, fcf_byte, static_opts, v) == tag
 end
 
 -- ---------------------------------------------------------------------------
 -- Phase A: Multicast try-decrypt
 -- Tries each channel in `channel_list` whose channel_id matches.
--- Returns plaintext, src_bytes_or_nil, channel_entry, or nil + status.
--- For E=1, the first (3 or 32) bytes of the decrypted body are the source.
+-- Returns payload, src_bytes, channel_entry, "ok", or nil + status.
+-- The first (3 or 32) bytes of the decrypted body are the source.
 -- full_src_flag: true if S flag set (32-byte source), false for 3-byte hint
 -- ---------------------------------------------------------------------------
 
@@ -917,7 +975,11 @@ local function pairwise_for(pk, peer_ed_pubkey)
   if keys == nil then
     local x25519_peer = M.ed25519_pub_to_x25519_pub(peer_ed_pubkey)
     local scalar = M.ed25519_seed_to_x25519_scalar(pk.seed_bytes)
-    keys = x25519_peer and M.derive_pairwise_keys(M.x25519(scalar, x25519_peer)) or false
+    -- The KDF binds both Ed25519 keys: the local one is the seed's own.
+    keys = x25519_peer and pk.ed25519_pubkey
+           and M.derive_pairwise_keys(M.x25519(scalar, x25519_peer),
+                                      pk.ed25519_pubkey, peer_ed_pubkey)
+           or false
     by_peer[peer_ed_pubkey] = keys
   end
   return keys or nil
@@ -959,8 +1021,7 @@ function M.try_decrypt_unicast(pkt_info, privkey_list, peer_lookup)
   local vpkt = {
     fcf_byte         = pkt_info.fcf_byte,
     static_opts      = pkt_info.static_opts,
-    dst_or_chan      = pkt_info.dst_hint,
-    src_bytes_or_nil = pkt_info.src_bytes,
+    aad_fields       = {dst = pkt_info.dst_hint, src = pkt_info.src_bytes},
     secinfo_raw      = pkt_info.secinfo_raw,
     body_bytes       = pkt_info.body_bytes,
     mic_bytes        = pkt_info.mic_bytes,
@@ -1005,12 +1066,12 @@ function M.try_decrypt_blind_unicast(pkt_info, privkey_list, channel_list, full_
     return nil, nil, nil, "addr decrypt failed: " .. (addr_err or "?")
   end
 
-  -- Phase 2: the decrypted DST and SRC pick the pairing
+  -- Phase 2: the decrypted DST and SRC pick the pairing, and enter the AAD
+  -- in plaintext form after its terminator.
   local vpkt = {
     fcf_byte         = pkt_info.fcf_byte,
     static_opts      = pkt_info.static_opts,
-    dst_or_chan      = pkt_info.channel_id,
-    src_bytes_or_nil = nil,  -- src was encrypted; not in AAD
+    aad_fields       = {channel = pkt_info.channel_id, dst = dst_hint, src = src_bytes},
     secinfo_raw      = pkt_info.secinfo_raw,
     body_bytes       = pkt_info.body_bytes,
     mic_bytes        = pkt_info.mic_bytes,

@@ -149,14 +149,11 @@ pub(crate) fn forwarding_repeater(
     frame: &[u8],
     route: &[RouterHint],
 ) -> Option<RouterHint> {
-    if let Some(trace) = options
-        .trace_route
-        .as_ref()
-        .and_then(|range| frame.get(range.clone()))
-        && trace.len() >= 2
-        && trace.len() % 2 == 0
+    if let Some(entry) = options
+        .trace(frame)
+        .and_then(|trace| trace.entries().next())
     {
-        return Some(RouterHint([trace[0], trace[1]]));
+        return Some(entry.hint);
     }
     // Once a flood hop is spent the route is used up, and every forward
     // after that leaves it the same length.

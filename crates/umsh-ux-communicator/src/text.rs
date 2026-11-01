@@ -174,13 +174,36 @@ impl core::fmt::Display for SharedText {
 pub struct DraftText {
     heap: TextHeap,
     text: Option<SharedText>,
+    /// The most its chat's messages take, in bytes.
+    limit: usize,
 }
 
 impl DraftText {
-    /// An empty draft, whose text will be kept on `heap`.
+    /// An empty draft, whose text will be kept on `heap`, up to a message
+    /// long.
     #[must_use]
     pub const fn new(heap: TextHeap) -> Self {
-        Self { heap, text: None }
+        Self {
+            heap,
+            text: None,
+            limit: MESSAGE_LEN,
+        }
+    }
+
+    /// The same draft, growing to at most `limit` bytes, and never past a
+    /// message. Text already longer is kept, to be shortened.
+    #[must_use]
+    pub fn with_limit(self, limit: usize) -> Self {
+        Self {
+            limit: limit.min(MESSAGE_LEN),
+            ..self
+        }
+    }
+
+    /// The most the draft grows to, in bytes.
+    #[must_use]
+    pub fn limit(&self) -> usize {
+        self.limit
     }
 }
 
@@ -192,11 +215,12 @@ impl AsRef<str> for DraftText {
 
 impl EditText for DraftText {
     /// The edited text is a new copy, so whatever still shows the old one is
-    /// left as it was. A draft longer than a message, or one there is no
-    /// room for, is refused.
+    /// left as it was. An edit that grows the draft past its limit, or one
+    /// there is no room for, is refused.
     fn splice(&mut self, range: Range<usize>, with: &str) -> bool {
         let old = self.as_ref();
-        if old.len() - range.len() + with.len() > MESSAGE_LEN {
+        let len = old.len() - range.len() + with.len();
+        if len > self.limit && len > old.len() {
             return false;
         }
         let parts = [&old[..range.start], with, &old[range.end..]];
@@ -310,6 +334,33 @@ mod tests {
         assert!(draft.splice(0..0, &message));
         assert!(!draft.splice(0..0, "y"));
         assert!(draft.splice(0..1, "y"));
+    }
+
+    #[test]
+    fn a_draft_grows_only_to_its_limit() {
+        let mut draft = DraftText::new(&System).with_limit(4);
+        assert!(draft.splice(0..0, "hut!"));
+        assert!(!draft.splice(4..4, "!"));
+        assert!(draft.splice(3..4, "s"));
+        assert_eq!(draft.as_ref(), "huts");
+        assert_eq!(
+            DraftText::new(&System).with_limit(MESSAGE_LEN + 1).limit(),
+            MESSAGE_LEN
+        );
+    }
+
+    #[test]
+    fn a_draft_over_a_lowered_limit_is_kept_to_be_shortened() {
+        let mut draft = DraftText::new(&System);
+        assert!(draft.splice(0..0, "the hut"));
+        let mut draft = draft.with_limit(3);
+        assert_eq!(draft.as_ref(), "the hut");
+        assert!(!draft.splice(7..7, "!"));
+        assert!(!draft.splice(0..1, "TT"), "a replacement may not grow it");
+        assert!(draft.splice(0..1, "T"));
+        assert!(draft.splice(0..4, ""));
+        assert_eq!(draft.as_ref(), "hut");
+        assert!(!draft.splice(3..3, "s"));
     }
 
     #[test]

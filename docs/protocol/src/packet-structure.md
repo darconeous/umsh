@@ -5,10 +5,10 @@ All UMSH packets begin with a one-byte Frame Control Field (`FCF`). Optional com
 ## Top-Level Packet Layout
 
 ```text
-+-----+-------+----------+---------+-----------+---------+---------+-----+
-| FCF | FHOPS | DST/CHAN |   SRC   |  SECINFO  | OPTIONS | PAYLOAD | MIC |
-+-----+-------+----------+---------+-----------+---------+---------+-----+
-  1 B   0/1 B    0/2/3 B   0/3/32 B   0/5/7 B   variable  variable  0-16 B
++-----+-------+----------+---------+-----------+---------+---------+-------+-----+
+| FCF | FHOPS | DST/CHAN |   SRC   |  SECINFO  | OPTIONS | PAYLOAD | [SIG] | MIC |
++-----+-------+----------+---------+-----------+---------+---------+-------+-----+
+  1 B   0/1 B    0/2/3 B   0/3/32 B   0/5/7 B   variable  variable  0/64 B  0-16 B
 ```
 
 Where:
@@ -16,9 +16,12 @@ Where:
 - `FHOPS` is present if the FCF flood hop count flag is set
 - `DST` is a 3-byte destination hint (MAC Ack packets carry no `DST`)
 - `CHAN` is a 2-byte channel identifier
-- `SRC` is a compact 3-byte source hint (when `S` flag is clear) or 32-byte source public key (when `S` flag is set); in multicast and blind unicast packets with encryption enabled, `SRC` is encrypted inside the ciphertext rather than appearing as a separate field
+- `SRC` is a compact 3-byte source hint (when `S` flag is clear) or 32-byte source public key (when `S` flag is set); in multicast and blind unicast packets, `SRC` follows the options rather than preceding them, and with encryption enabled it is encrypted inside the ciphertext
 - `SECINFO` is present on authenticated/encrypted packet types
+- `SIG` is a 64-byte [frame signature](security.md#frame-signatures), present when the SCF's `D` bit is set; with encryption enabled it is encrypted with the payload
 - `MIC` is present on authenticated/encrypted packet types; MAC acks carry a fixed [ack trailer (ack MIC + ack tag)](security.md#ack-tag-construction) instead
+
+A broadcast carries its frame signature, if any, in the [Frame Signature option](packet-options.md#frame-signature-option-0) instead of `SIG`.
 
 Not all fields are supported for all packet types.
 
@@ -84,7 +87,7 @@ Where:
 
 The sum `FHOPS_REM + FHOPS_ACC` is constant across forwarding hops and usually equals the original flood hop limit set by the sender. An exception to this rule is [bridging](routing-overview.md#bridging), which can decrease `FHOPS_REM` unilaterally. The maximum flood radius is 15 flood hops, which is a path of sixteen hops when no source route is involved; longer paths can be achieved by combining source routing with flooding (see [Routing Implications](repeater-operation.md#routing-implications)).
 
-`FHOPS_ACC` enables the destination to determine how many flood hops the packet traversed—one less than the hops it took, unless a source route carried it part of the way—which is used for [MAC ack routing](packet-types.md#mac-ack-packet) when no trace route is available.
+`FHOPS_ACC` enables the destination to determine how many flood hops the packet traversed—one less than the hops it took, unless a source route carried it part of the way—which is used for [MAC ack routing](packet-types.md#mac-ack-packet) when no complete [trace](packet-options.md#trace-option-7) is available.
 
 ### Options Field
 
@@ -129,13 +132,15 @@ The value 15 is legal only as part of the `0xFF` end-of-options marker, where *b
 
 The option delta is the difference between this option's number and the previous option's number (or zero for the first option). Options must appear in order of increasing option number. Multiple options with the same number are permitted (delta = 0).
 
+Option numbers range from 0 to `0xFFFF`. Deltas accumulate, so a sequence of records can name a larger number; such a record is malformed, and the packet MUST be dropped.
+
 #### End-of-Options Marker
 
 The byte `0xFF` (delta nibble = 15, length nibble = 15) separates the options block from a following variable-length payload.
 
 Parsing proceeds as follows:
 
-1. Determine the **options+payload region**: `buf[options_start .. packet_end − trailer_len]`, where `trailer_len` is the length of the fixed-size trailer at the end of the packet (MIC length from SECINFO, or 8 for the MAC ack trailer, or 0 for broadcast). The trailer length is known before options are parsed.
+1. Determine the **options+payload region**: `buf[options_start .. packet_end − trailer_len]`, where `trailer_len` is the length of the fixed-size trailer at the end of the packet (the MIC length from SECINFO, plus 64 when the SCF's `D` bit is set; 8 for the MAC ack trailer; or 0 for broadcast). The trailer length is known before options are parsed. With encryption enabled, the 64 bytes before the MIC are the encrypted `SIG`.
 2. Scan options in order through that region, consuming each delta-length-value record. Because option records are variable-length, this scan is the only way to locate the end of the options block.
 3. If a `0xFF` byte is encountered during the scan, the bytes remaining in the region (between the `0xFF` and the trailer) are the payload. A `0xFF` with zero bytes remaining is a valid empty payload.
 4. If the region is exhausted without encountering a `0xFF`, there is no payload.

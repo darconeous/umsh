@@ -33,20 +33,20 @@ use umsh_hal::{
     Clock, CounterStore, KeyValueStore, Radio, RxBuffered, RxInfo, RxOrigin, Snr, TxError,
     TxOptions,
 };
-use umsh_mac::{Mac, MacHandle, OperatingPolicy, RepeaterConfig, SendOptions};
+use umsh_mac::{Mac, MacHandle, OperatingPolicy, RepeaterConfig, SendDestination, SendOptions};
 use umsh_node::meet::MeetCommand;
 use umsh_node::{
     Host, LocalNode, MacBackend, NodeCapabilities, NodeIdentityPayload, NodeIdentityProfile,
-    NodeRole, Transport,
+    NodeRole, PongMetadata, Transport,
     location::{MAX_PRECISION, NodeLocation},
 };
 use umsh_sync::AsyncRefCell;
 use umsh_text::chat::{ChannelRegistry, Seeds, TextSource};
-use umsh_text::engine::ArchiveResult;
+use umsh_text::engine::{ArchiveResult, MAX_FRAME};
 use umsh_text::model::ConversationKey;
 use umsh_text::node_adapter::{
-    self, Inbound, InboundText, Refusal, RxSummary, TransmitPolicy, TransmitQueue,
-    WellKnownChannels,
+    self, BudgetQuery, Inbound, InboundText, Refusal, RxSummary, TransmitPolicy, TransmitQueue,
+    WellKnownChannels, payload_budget,
 };
 use umsh_ulcp::{frame, ids::prop, items};
 
@@ -178,11 +178,13 @@ pub struct MobileMeshPingEventRecord {
     pub round_trip_milliseconds: Option<u64>,
     /// Radio links the response crossed, counting the final one into this
     /// device: a direct response is one hop. Absent on a reply that was
-    /// source-routed without a trace route—it crossed hops nobody recorded,
-    /// so no count is claimed.
+    /// source-routed without a complete trace—it crossed hops nobody
+    /// recorded, so no count is claimed.
     pub hop_count: Option<u8>,
     /// Authenticated intermediate-router hints, the repeater nearest this
-    /// device first. The two endpoints are not included.
+    /// device first. The two endpoints are not included. Empty when the
+    /// response's trace lost hops in transit, since it would name only part
+    /// of the path.
     pub route_hints: Vec<Vec<u8>>,
     /// How each repeater in `route_hints` heard the node one step farther
     /// from this device, entry for entry. Empty unless the response carried
@@ -194,6 +196,35 @@ pub struct MobileMeshPingEventRecord {
     pub lqi: Option<u8>,
 }
 
+/// The record of a ping answered as `metadata` says. The record has no way
+/// to say its path is partial, so a trace that lost hops in transit is
+/// withheld rather than shown whole.
+fn ping_reply_record(operation_id: u64, metadata: &PongMetadata) -> MobileMeshPingEventRecord {
+    let traced = !metadata.trace_truncated;
+    MobileMeshPingEventRecord {
+        operation_id,
+        outcome: MobileMeshPingOutcome::Reply,
+        round_trip_milliseconds: Some(metadata.round_trip_ms),
+        hop_count: metadata.hop_count,
+        route_hints: metadata
+            .route_hints
+            .iter()
+            .filter(|_| traced)
+            .map(|hint| hint.0.to_vec())
+            .collect(),
+        trace_signal: metadata
+            .trace_signal
+            .iter()
+            .filter(|_| traced)
+            .copied()
+            .map(MobileTraceSignalRecord::from)
+            .collect(),
+        rssi_dbm: metadata.rssi_dbm,
+        snr_centibels: metadata.snr_centibels,
+        lqi: metadata.lqi,
+    }
+}
+
 /// One repeater's reading of the hop it received a response over. Both
 /// fields are absent when the repeater received it over a point-to-point
 /// link—a bridge—and measured nothing.
@@ -203,8 +234,8 @@ pub struct MobileTraceSignalRecord {
     pub snr_centibels: Option<i16>,
 }
 
-impl From<umsh_core::options::TraceSignalEntry> for MobileTraceSignalRecord {
-    fn from(entry: umsh_core::options::TraceSignalEntry) -> Self {
+impl From<umsh_core::options::HopSignal> for MobileTraceSignalRecord {
+    fn from(entry: umsh_core::options::HopSignal) -> Self {
         Self {
             rssi_dbm: entry.rssi_dbm(),
             snr_centibels: entry.snr_centibels(),
@@ -448,7 +479,7 @@ fn explicit_route_options(
     };
     // Last: try_with_source_route back-fills a flood budget, and a path that
     // does not work should say so rather than flood further than asked.
-    Ok(options.with_trace_route().with_route_slack(flood_hops))
+    Ok(options.with_trace().with_route_slack(flood_hops))
 }
 
 /// A path chosen by hand: repeaters in send order, then a flood allowance
@@ -498,11 +529,13 @@ impl From<Option<umsh_mac::CachedRoute>> for MobileMeshRouteRecord {
     }
 }
 
-/// A node-identity bundle received over the mesh, either as a broadcast
+/// A node-identity bundle received over the mesh, either as an
 /// advertisement or as the reply to an Identity Request.
 ///
-/// Only frames whose sender the MAC could name are surfaced. How the claims
-/// may be trusted depends on how they arrived, which is what
+/// Only frames whose sender the MAC could name are surfaced, and never one
+/// that arrived late, behind a newer frame from the same sender: its claims
+/// may be older than what the platform already keeps. How the claims may be
+/// trusted depends on how they arrived, which is what
 /// `source_authenticated` reports.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct MobileMeshAdvertisementRecord {
@@ -512,13 +545,14 @@ pub struct MobileMeshAdvertisementRecord {
     /// decodable with `decode_node_identity`.
     pub payload: Vec<u8>,
     /// Whether the MAC authenticated the sender of the frame that carried
-    /// this bundle.
+    /// this bundle: the frame's signature verified, or a unicast's MIC
+    /// authenticated it.
     ///
-    /// A unicast Identity Request reply is authenticated by its MIC, so it
-    /// carries no detached signature and decodes as `Unsigned`—it is
-    /// nonetheless trustworthy, and the platform must accept it. A broadcast
-    /// advertisement has no MIC, so it is `false` and the platform must
-    /// require a `Valid` embedded signature before trusting any claim.
+    /// When `true` the claims are the sender's own, and an `Unsigned`
+    /// bundle is trustworthy. When `false` the frame proves nothing about
+    /// who wrote the bundle, a channel's MIC included, since any member of
+    /// the channel holds its key; the platform must then require a `Valid`
+    /// embedded signature before trusting any claim.
     pub source_authenticated: bool,
 }
 
@@ -2886,21 +2920,19 @@ fn phone_identity_profile(
     profile
 }
 
-/// Build the signed standalone node-identity bundle for this phone: role
-/// Chat, capabilities Mobile + Text messages, optional display name
-/// (truncated to the 24-byte wire limit between grapheme clusters), and the
-/// disclosed location when one is being shared. The result is ROLE
-/// through the trailing 64-byte signature, without the payload-type byte.
-async fn build_signed_identity_bundle(
-    signer: &SoftwareIdentity,
+/// This phone's node identity: role Chat, capabilities Mobile + Text
+/// messages, optional display name (truncated to the 24-byte wire limit
+/// between grapheme clusters), and the disclosed location when one is being
+/// shared.
+fn phone_identity_payload(
     name: Option<&str>,
     timestamp: Option<u32>,
     location: Option<NodeLocation>,
-) -> Result<Vec<u8>, MobileMeshError> {
+) -> NodeIdentityPayload {
     let name = name
         .map(|name| umsh_grapheme::cut(name, 24).to_owned())
         .filter(|name| !name.is_empty());
-    let payload = NodeIdentityPayload {
+    NodeIdentityPayload {
         role: NodeRole::Chat,
         capabilities: NodeCapabilities::MOBILE | NodeCapabilities::TEXT_MESSAGES,
         name,
@@ -2910,7 +2942,38 @@ async fn build_signed_identity_bundle(
         supported_regions: None,
         nonce: None,
         signature: None,
-    };
+    }
+}
+
+/// The advertisement frame's payload: [`phone_identity_payload`] behind
+/// its payload-type byte, with no signature of its own. The frame that
+/// carries it is signed, which is what authenticates it.
+fn advertisement_payload(
+    name: Option<&str>,
+    timestamp: Option<u32>,
+    location: Option<NodeLocation>,
+    capacity: usize,
+) -> Result<Vec<u8>, MobileMeshError> {
+    let mut frame = vec![0u8; capacity.max(1)];
+    frame[0] = PayloadType::NodeIdentity as u8;
+    let len = phone_identity_payload(name, timestamp, location)
+        .encode(&mut frame[1..])
+        .map_err(|_| MobileMeshError::SendFailed)?;
+    frame.truncate(1 + len);
+    Ok(frame)
+}
+
+/// Build the signed standalone node-identity bundle for this phone, what a
+/// QR code or an exported contact carries: [`phone_identity_payload`] with
+/// its detached signature. The result is ROLE through the trailing 64-byte
+/// signature, without the payload-type byte.
+async fn build_signed_identity_bundle(
+    signer: &SoftwareIdentity,
+    name: Option<&str>,
+    timestamp: Option<u32>,
+    location: Option<NodeLocation>,
+) -> Result<Vec<u8>, MobileMeshError> {
+    let payload = phone_identity_payload(name, timestamp, location);
     let mut buf = [0u8; 192];
     let len = payload
         .encode_for_signing(&mut buf)
@@ -3264,7 +3327,7 @@ async fn start_management<M: MacBackend>(
     // one every other asked-for send gets.
     *manager.send_options_mut() = with_flood_reach(SendOptions::default(), flood_hops)
         .with_ack_requested(true)
-        .with_trace_route();
+        .with_trace();
     let (plan, request) = match request {
         ManagementRequest::One { frame, shape } => (ManagementPlan::One(shape), frame),
         ManagementRequest::Fetch {
@@ -3452,6 +3515,9 @@ async fn run_worker(
                     Refusal::AnonymousEmergency => {
                         "an emergency-channel text frame: missing its full source key"
                     }
+                    Refusal::UnsignedEmergency => {
+                        "an emergency-channel text frame: not signed by its sender"
+                    }
                     Refusal::AnonymousPublic => {
                         "a public-channel text frame: missing its full source key"
                     }
@@ -3477,10 +3543,18 @@ async fn run_worker(
         let Some(peer) = packet.from_key() else {
             return false;
         };
+        // A frame that filled a gap behind its sender's newest may carry
+        // details older than those the platform keeps, and the record has no
+        // way to say "only fill in what is missing", so it is not surfaced.
+        // A first contact is: with no baseline to judge it by, it is as
+        // likely the newest as not.
+        if packet.acceptance() == Some(umsh_mac::RxAcceptance::Backfilled) {
+            return true;
+        }
         let _ = advertisement_events.send(MobileMeshAdvertisementRecord {
             peer_address: encode_peer_address(&peer),
             payload: packet.payload().to_vec(),
-            source_authenticated: packet.source_authenticated(),
+            source_authenticated: packet.sender_authenticated(),
         });
         true
     });
@@ -3523,26 +3597,7 @@ async fn run_worker(
     let pong_events = events.clone();
     let pong_subscription = node.on_pong_with_metadata(move |peer, metadata| {
         if let Some(operation_id) = pong_pending.borrow_mut().remove(&peer.0) {
-            let _ = pong_events.send(MobileMeshPingEventRecord {
-                operation_id,
-                outcome: MobileMeshPingOutcome::Reply,
-                round_trip_milliseconds: Some(metadata.round_trip_ms),
-                hop_count: metadata.hop_count,
-                route_hints: metadata
-                    .route_hints
-                    .iter()
-                    .map(|hint| hint.0.to_vec())
-                    .collect(),
-                trace_signal: metadata
-                    .trace_signal
-                    .iter()
-                    .copied()
-                    .map(MobileTraceSignalRecord::from)
-                    .collect(),
-                rssi_dbm: metadata.rssi_dbm,
-                snr_centibels: metadata.snr_centibels,
-                lqi: metadata.lqi,
-            });
+            let _ = pong_events.send(ping_reply_record(operation_id, metadata));
         }
     });
     let timeout_pending = pending.clone();
@@ -3727,20 +3782,19 @@ async fn run_worker(
                             if let Some(replaced) = pending.borrow_mut().remove(&peer.0) {
                                 emit_ping_outcome(&events, replaced, MobileMeshPingOutcome::Canceled);
                             }
-                            // Trace route for the path, trace signal for
-                            // what each hop of it cost. A ping that reports
-                            // only a round-trip time says a link is bad
-                            // without saying where.
+                            // A trace records the path and what each hop of
+                            // it cost. A ping that reports only a round-trip
+                            // time says a link is bad without saying where.
                             let options = match &path {
                                 None => Ok(with_flood_reach(SendOptions::default(), flood_hops.default_hops)
-                                    .with_trace_route()),
+                                    .with_trace()),
                                 Some((route, slack)) => {
                                     explicit_route_options(SendOptions::default(), route, *slack)
                                 }
                             }
                             .map(|options| {
                                 options
-                                    .with_trace_signal()
+                                    .with_trace()
                                     .with_mic_size(umsh_node::PING_MIC_SIZE)
                             });
                             let result = match (options, node.peer(peer).await) {
@@ -3797,44 +3851,42 @@ async fn run_worker(
                             }
                         }
                         Some(WorkerCommand::Advertise { name, timestamp, scheduled, response }) => {
-                            let result = match build_signed_identity_bundle(
-                                &signer,
-                                name.as_deref(),
-                                timestamp,
-                                advertised_location,
-                            )
-                            .await
+                            // Signed, so a listener can trust what it says
+                            // of this phone; full source, so it can check
+                            // the signature without already holding the key.
+                            let options = SendOptions::default().with_full_source().with_signature();
+                            let options = if scheduled {
+                                // No flood budget and no trace: a
+                                // restatement on a timer belongs to the
+                                // neighbors who can hear it.
+                                options.no_flood()
+                            } else {
+                                // Somebody asked, so it travels as far as
+                                // anything else they send. Trace route so a
+                                // listener learns a path back to this phone
+                                // from the same frame, and trace signal so
+                                // it learns what that path costs—the two
+                                // pair entry for entry.
+                                with_flood_reach(options, flood_hops.default_hops).with_trace()
+                            };
+                            let result = match node
+                                .payload_capacity(SendDestination::Broadcast, &options)
+                                .await
                             {
-                                Ok(bundle) => {
-                                    let mut frame = Vec::with_capacity(bundle.len() + 1);
-                                    frame.push(PayloadType::NodeIdentity as u8);
-                                    frame.extend_from_slice(&bundle);
-                                    // Full source either way, so the detached
-                                    // signature is checkable.
-                                    let options = SendOptions::default().with_full_source();
-                                    let options = if scheduled {
-                                        // No flood budget and no trace: a
-                                        // restatement on a timer belongs to
-                                        // the neighbours who can hear it.
-                                        options.no_flood()
-                                    } else {
-                                        // Somebody asked, so it travels as
-                                        // far as anything else they send.
-                                        // Trace route so a listener learns a
-                                        // path back to this phone from the
-                                        // same frame, and trace signal so it
-                                        // learns what that path costs—the
-                                        // two pair entry for entry.
-                                        with_flood_reach(options, flood_hops.default_hops)
-                                            .with_trace_route()
-                                            .with_trace_signal()
-                                    };
-                                    node.send_all(&frame, &options)
+                                Ok(capacity) => match advertisement_payload(
+                                    name.as_deref(),
+                                    timestamp,
+                                    advertised_location,
+                                    capacity,
+                                ) {
+                                    Ok(frame) => node
+                                        .send_all(&frame, &options)
                                         .await
                                         .map(|_| ())
-                                        .map_err(|_| MobileMeshError::SendFailed)
-                                }
-                                Err(error) => Err(error),
+                                        .map_err(|_| MobileMeshError::SendFailed),
+                                    Err(error) => Err(error),
+                                },
+                                Err(_) => Err(MobileMeshError::SendFailed),
                             };
                             if result.is_ok()
                                 && handle.service_counter_persistence().await.is_err()
@@ -3854,8 +3906,7 @@ async fn run_worker(
                                         SendOptions::default(),
                                         flood_hops.beacon_hops,
                                     )
-                                    .with_trace_route()
-                                    .with_trace_signal(),
+                                    .with_trace(),
                                 )
                                 .await
                                 .map(|_| ())
@@ -4112,22 +4163,35 @@ async fn run_worker(
                             let result = if chat.has_pending_batch() {
                                 Err(MobileMeshError::OperationInProgress)
                             } else if let Some(conversation) = conversation {
+                                let budget = chat_budget(
+                                    &node,
+                                    chat.facade.channels(),
+                                    &chat_policy(flood_hops, well_known),
+                                    Some(conversation),
+                                )
+                                .await;
                                 let now_ms = handle.now_ms().await;
                                 let composed = match &request {
-                                    ChatComposeRequest::Text { body } => {
-                                        chat.compose_text(conversation, client_token, body, now_ms)
-                                    }
+                                    ChatComposeRequest::Text { body } => chat.compose_text(
+                                        conversation,
+                                        client_token,
+                                        body,
+                                        budget,
+                                        now_ms,
+                                    ),
                                     ChatComposeRequest::Edit { original, body } => chat.compose_edit(
                                         conversation,
                                         client_token,
                                         original,
                                         body,
+                                        budget,
                                         now_ms,
                                     ),
                                     ChatComposeRequest::Delete { original } => chat.compose_delete(
                                         conversation,
                                         client_token,
                                         original,
+                                        budget,
                                         now_ms,
                                     ),
                                     ChatComposeRequest::Reaction { target, body } => chat
@@ -4136,6 +4200,7 @@ async fn run_worker(
                                             client_token,
                                             target,
                                             body,
+                                            budget,
                                             now_ms,
                                         ),
                                     ChatComposeRequest::Reply { target, body } => chat
@@ -4144,6 +4209,7 @@ async fn run_worker(
                                             client_token,
                                             target,
                                             body,
+                                            budget,
                                             now_ms,
                                         ),
                                 };
@@ -4232,6 +4298,13 @@ async fn run_worker(
                             kind,
                             payload,
                         }) => {
+                            let budget = chat_budget(
+                                &node,
+                                chat.facade.channels(),
+                                &chat_policy(flood_hops, well_known),
+                                chat.facade.lookup_conversation(request_id),
+                            )
+                            .await;
                             let now_ms = handle.now_ms().await;
                             let result = match kind {
                                 MobileChatArchiveResultKind::Found => {
@@ -4241,7 +4314,8 @@ async fn run_worker(
                                 MobileChatArchiveResultKind::Evicted => ArchiveResult::Evicted,
                                 MobileChatArchiveResultKind::Unknown => ArchiveResult::Unknown,
                             };
-                            chat.facade.archive_result(request_id, result, now_ms);
+                            chat.facade
+                                .archive_result_within(request_id, result, budget, now_ms);
                             publish_chat_drain(chat.drain(), &mut chat_queue, &chat_events);
                             let sent = pump_chat(
                                 &node,
@@ -4631,6 +4705,28 @@ fn chat_policy(flood_hops: FloodHopSettings, well_known: WellKnownChannels) -> T
     }
 }
 
+/// What one frame to `conversation` carries for the text engine, as the
+/// node measures it now. A peer is registered first, as sending to it
+/// would; what cannot be measured keeps the engine's default.
+async fn chat_budget<M: MacBackend>(
+    node: &LocalNode<M>,
+    channels: &ChannelRegistry,
+    policy: &TransmitPolicy,
+    conversation: Option<ConversationKey>,
+) -> usize {
+    let Some(query) =
+        conversation.and_then(|conversation| BudgetQuery::new(channels, policy, conversation))
+    else {
+        return MAX_FRAME;
+    };
+    if let Some(peer) = query.peer()
+        && node.peer(peer).await.is_err()
+    {
+        return MAX_FRAME;
+    }
+    payload_budget(node, &query).await.unwrap_or(MAX_FRAME)
+}
+
 /// Send what the chat queue holds while its window has room, and publish
 /// what the engine made of any frame that could not be sent. Returns how
 /// many frames were sent.
@@ -4847,16 +4943,41 @@ mod tests {
 
     #[test]
     fn trace_signal_records_carry_readings_and_mark_bridged_hops() {
-        let heard =
-            MobileTraceSignalRecord::from(umsh_core::options::TraceSignalEntry::new(-97, 65));
+        let heard = MobileTraceSignalRecord::from(umsh_core::options::HopSignal::new(-97, 65));
         assert_eq!(heard.rssi_dbm, Some(-97));
         assert_eq!(heard.snr_centibels, Some(65));
         // A bridge measured nothing; both readings are absent rather than a
         // plausible-looking 0 dBm.
-        let bridged =
-            MobileTraceSignalRecord::from(umsh_core::options::TraceSignalEntry::POINT_TO_POINT);
+        let bridged = MobileTraceSignalRecord::from(umsh_core::options::HopSignal::POINT_TO_POINT);
         assert_eq!(bridged.rssi_dbm, None);
         assert_eq!(bridged.snr_centibels, None);
+    }
+
+    /// A complete trace is reported hop for hop; one that lost hops in
+    /// transit is withheld, keeping the hop count, so it is never drawn as
+    /// the whole path.
+    #[test]
+    fn a_truncated_ping_trace_is_withheld() {
+        let metadata = |trace_truncated, hop_count| PongMetadata {
+            round_trip_ms: 900,
+            hop_count,
+            route_hints: vec![umsh_core::RouterHint([0xA1, 0x01])],
+            trace_signal: vec![umsh_core::options::HopSignal::new(-97, 65)],
+            trace_truncated,
+            rssi_dbm: Some(-90),
+            snr_centibels: Some(40),
+            lqi: None,
+        };
+        let whole = ping_reply_record(7, &metadata(false, Some(2)));
+        assert_eq!(whole.route_hints, [vec![0xA1, 0x01]]);
+        assert_eq!(whole.trace_signal.len(), 1);
+        for hop_count in [Some(5), None] {
+            let partial = ping_reply_record(7, &metadata(true, hop_count));
+            assert!(partial.route_hints.is_empty());
+            assert!(partial.trace_signal.is_empty());
+            assert_eq!(partial.hop_count, hop_count);
+            assert_eq!(partial.rssi_dbm, Some(-90));
+        }
     }
 
     fn identity(seed: u8) -> Arc<MobileIdentity> {
@@ -5969,10 +6090,10 @@ mod tests {
         // And an empty trace for the repeaters to fill, which is what gives
         // the answering strangers a path home.
         let trace = options
-            .trace_route
+            .trace
             .clone()
             .map(|range| frame.data[range].to_vec())
-            .expect("a steered request carries a trace route");
+            .expect("a steered request carries a trace");
         assert!(trace.is_empty());
 
         // The hint filter rides as the two bytes given, and the vacuous caps
@@ -6360,7 +6481,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn broadcast_advertisement_reaches_peer_with_valid_signature() {
+    async fn a_broadcast_advertisement_is_authenticated_by_its_frame() {
         let directory = tempfile::tempdir().unwrap();
         let alice_identity = identity(21);
         let bob_identity = identity(23);
@@ -6400,6 +6521,8 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             for frame in alice.poll_update().outbound_frames {
+                let header = umsh_core::PacketHeader::parse(&frame.data).unwrap();
+                assert!(header.signature().is_some(), "the frame is signed");
                 alice.complete_outbound_frame(frame.id, true).unwrap();
                 bob.receive(MobileMeshRxRecord {
                     data: frame.data,
@@ -6424,19 +6547,86 @@ mod tests {
                     "the frame that carried the advertisement also reported presence"
                 );
                 assert_eq!(event.peer_address, address(&alice_identity));
-                // A broadcast has no MIC, so the platform is told the sender
-                // was not authenticated and must fall back to the bundle's
-                // own signature—which is why one is attached.
-                assert!(!event.source_authenticated);
+                // The frame's signature authenticates the sender, so the
+                // bundle needs none of its own.
+                assert!(event.source_authenticated);
                 let received =
                     crate::decode_node_identity(event.peer_address, event.payload).unwrap();
-                assert_eq!(received.signature, crate::IdentitySignatureState::Valid);
+                assert_eq!(received.signature, crate::IdentitySignatureState::Unsigned);
                 assert_eq!(received.name.as_deref(), Some("Alice's Phone"));
                 break;
             }
             assert!(Instant::now() < deadline, "advertisement not received");
             std::thread::sleep(Duration::from_millis(5));
         }
+    }
+
+    /// An advertisement delivered behind a newer one from the same phone
+    /// may carry older details than the platform keeps, and the record
+    /// cannot say "fill only", so it is never surfaced.
+    #[tokio::test]
+    async fn a_late_advertisement_is_not_surfaced() {
+        let directory = tempfile::tempdir().unwrap();
+        let alice_identity = identity(25);
+        let bob_identity = identity(27);
+        let alice_store =
+            MobileCounterStore::new(directory.path().join("alice").display().to_string()).unwrap();
+        let bob_store =
+            MobileCounterStore::new(directory.path().join("bob").display().to_string()).unwrap();
+        let alice = MobileMeshSession::new(alice_identity.clone(), alice_store)
+            .await
+            .unwrap();
+        let bob = MobileMeshSession::new(bob_identity, bob_store)
+            .await
+            .unwrap();
+
+        let mut sent = Vec::new();
+        for name in ["First", "Second", "Third"] {
+            alice
+                .advertise_identity(Some(name.to_owned()), None)
+                .await
+                .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                if let Some(frame) = alice.poll_update().outbound_frames.into_iter().next() {
+                    alice.complete_outbound_frame(frame.id, true).unwrap();
+                    sent.push(frame.data);
+                    break;
+                }
+                assert!(Instant::now() < deadline, "advertisement never queued");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+
+        let mut surfaced = Vec::new();
+        for index in [0, 2, 1] {
+            bob.receive(MobileMeshRxRecord {
+                data: sent[index].clone(),
+                rssi_dbm: Some(-50),
+                lqi: None,
+                snr_cb: None,
+                was_buffered: false,
+                was_acknowledged: false,
+                age_seconds: 0,
+            })
+            .unwrap();
+            // Each frame is taken in before the next arrives.
+            let deadline = Instant::now() + Duration::from_millis(500);
+            while Instant::now() < deadline {
+                for event in bob.poll_update().advertisement_events {
+                    surfaced.push(
+                        crate::decode_node_identity(event.peer_address, event.payload)
+                            .unwrap()
+                            .name,
+                    );
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+        assert_eq!(
+            surfaced,
+            [Some("First".to_owned()), Some("Third".to_owned())]
+        );
     }
 
     /// The location policy in one pass: a shared cell rides every live
@@ -6591,11 +6781,7 @@ mod tests {
                 let options =
                     umsh_core::ParsedOptions::extract(&frame.data, header.options_range.clone())
                         .unwrap();
-                assert!(options.trace_route.is_some());
-                assert!(
-                    options.trace_signal.is_some(),
-                    "the pair is what makes the trace worth collecting"
-                );
+                assert!(options.trace.is_some());
                 alice.complete_outbound_frame(frame.id, true).unwrap();
                 bob.receive(MobileMeshRxRecord {
                     data: frame.data,
@@ -6631,7 +6817,7 @@ mod tests {
     /// floods and traces so a stranger can find its way back, a scheduled
     /// one restates to whoever can already hear this phone.
     #[tokio::test]
-    async fn a_scheduled_advertisement_stays_with_the_neighbours() {
+    async fn a_scheduled_advertisement_stays_with_the_neighbors() {
         let directory = tempfile::tempdir().unwrap();
         let local_identity = identity(41);
         let store =
@@ -6655,10 +6841,11 @@ mod tests {
                 let options =
                     umsh_core::ParsedOptions::extract(&frame.data, header.options_range.clone())
                         .unwrap();
-                assert!(options.trace_route.is_none());
+                assert!(options.trace.is_none());
+                assert!(header.signature().is_some(), "the frame is signed");
                 assert!(
                     header.fcf.full_source(),
-                    "the detached signature is only checkable against the key"
+                    "the signature is only checkable against the key"
                 );
                 session.complete_outbound_frame(frame.id, true).unwrap();
                 break;
@@ -7530,6 +7717,7 @@ mod tests {
                         k_enc: channel_keys.k_enc,
                         k_mic: channel_keys.k_mic,
                     },
+                    None,
                 )
                 .unwrap();
             opened[range].to_vec()
@@ -7706,7 +7894,7 @@ mod tests {
                 let Ok(header) = PacketHeader::parse(&data) else {
                     continue;
                 };
-                let Ok(range) = engine.open_packet(&mut data, &header, &pairwise) else {
+                let Ok(range) = engine.open_packet(&mut data, &header, &pairwise, None) else {
                     continue;
                 };
                 let body = &data[range];
@@ -7832,7 +8020,9 @@ mod tests {
         let sec_info = header.sec_info.expect("a multicast frame carries SECINFO");
         let payload = {
             let mut opened = frame.clone();
-            let range = engine.open_packet(&mut opened, &header, &pairwise).unwrap();
+            let range = engine
+                .open_packet(&mut opened, &header, &pairwise, None)
+                .unwrap();
             opened[range].to_vec()
         };
 

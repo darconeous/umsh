@@ -75,12 +75,8 @@ async fn node_identity_blob_task(node_handle: DeviceNode, identity: SoftwareIden
 }
 
 #[embassy_executor::task]
-async fn node_beacon_task(
-    node_handle: DeviceNode,
-    identity: SoftwareIdentity,
-    hooks: node::NodeHooks,
-) {
-    node::beacon_loop(node_handle, identity, hooks).await
+async fn node_beacon_task(node_handle: DeviceNode, hooks: node::NodeHooks) {
+    node::beacon_loop(node_handle, hooks).await
 }
 
 #[embassy_executor::task]
@@ -229,14 +225,7 @@ pub async fn bring_up(
     spawner.spawn(node_dev_sync_task(parts.node.clone(), parts.mac, parts.node_key).unwrap());
     spawner.spawn(node_identity_profile_task(parts.node.clone()).unwrap());
     spawner.spawn(node_admin_task(parts.node.clone(), input, admin_nonce).unwrap());
-    spawner.spawn(
-        node_beacon_task(
-            parts.node,
-            SoftwareIdentity::from_secret_bytes(identity_secret),
-            hooks,
-        )
-        .unwrap(),
-    );
+    spawner.spawn(node_beacon_task(parts.node, hooks).unwrap());
     spawner.spawn(node_advert_task(parts.mac).unwrap());
     #[cfg(feature = "lan-bearer")]
     spawner.spawn(lan_bearer_task(stack).unwrap());

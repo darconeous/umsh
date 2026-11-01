@@ -39,11 +39,11 @@ See [Packet Options § Minimum RSSI](packet-options.md#minimum-rssi-option-5) an
 
 When the sender knows a path to the destination, it can include a **source-route option** listing the sequence of repeater hints the packet should traverse. Each repeater checks whether it matches the next hint, removes its own hint, and forwards. Only the designated repeaters handle the packet, so source routing avoids the airtime cost of flooding.
 
-Source routes are learned from the **trace-route option**: when a packet carries a trace-route option, each forwarding repeater prepends its own hint, on routed hops as well as flooded ones. The recipient can reverse the accumulated trace and cache it as a source route for future replies. This means path discovery is not a separate operation—it falls out of normal packet exchange.
+Source routes are learned from the **Trace option**: when a packet carries one, each forwarding repeater prepends a record of itself, on routed hops as well as flooded ones. The recipient can cache the router hints of a complete trace as a source route for future replies. This means path discovery is not a separate operation—it falls out of normal packet exchange.
 
-Knowing the path forward is not the same as the destination knowing the path back. A source-routed packet arrives with its hints consumed, so nothing on it describes the return direction, and a destination with no cached route composes a reply that no repeater may carry. A sender therefore includes a trace-route option whenever the destination may not hold a working path back; the routed hops record themselves, and the reply or acknowledgement has a path home. See [When to Include a Trace Route](beacons.md#when-to-include-a-trace-route).
+Knowing the path forward is not the same as the destination knowing the path back. A source-routed packet arrives with its hints consumed, so nothing on it describes the return direction, and a destination with no cached route composes a reply that no repeater may carry. A sender therefore includes a Trace option whenever the destination may not hold a working path back; the routed hops record themselves, and the reply or acknowledgement has a path home. See [When to Include a Trace](beacons.md#when-to-include-a-trace).
 
-See [Packet Options § Source Route](packet-options.md#source-route-option-3), [Packet Options § Trace Route](packet-options.md#trace-route-option-2), and [Beacons & Path Discovery § Route Learning](beacons.md#route-learning).
+See [Packet Options § Source Route](packet-options.md#source-route-option-3), [Packet Options § Trace](packet-options.md#trace-option-7), and [Beacons & Path Discovery § Route Learning](beacons.md#route-learning).
 
 ## Hybrid Routing
 
@@ -57,7 +57,7 @@ A **bridge** is a node that relays UMSH packets between two different media or R
 
 Bridges are not prohibited per-se, as that is not a protocol-level decision. Instead, this document provides some guidance on how bridges can be deployed while lowering the risk of hurting local mesh performance.
 
-Bridges are largely protocol-transparent. A bridge carries a packet between the repeaters at either end of it, and those repeaters do the forwarding: each consumes source-route hints, accounts for a hop, and records itself in a trace exactly as it would for a packet it heard off the air. A trace route that crosses a bridge therefore contains both of their router hints, and source-routed packets traverse the bridge transparently.
+Bridges are largely protocol-transparent. A bridge carries a packet between the repeaters at either end of it, and those repeaters do the forwarding: each consumes source-route hints, accounts for a hop, and records itself in a trace exactly as it would for a packet it heard off the air. A trace that crosses a bridge therefore contains records for both of them, and source-routed packets traverse the bridge transparently.
 
 Because a repeater at each end forwards the packet, a crossing spends two flood hops rather than one. The repeater on the inbound side transmits on the medium the packet arrived from, which is the ordinary forwarding confirmation the previous hop listens for; a bridge needs no retransmission of its own to provide it.
 
@@ -80,7 +80,7 @@ If a cached route fails entirely (noticed because of a timeout), the sender can 
 
 A cached source route is the visible case, but not the only one. A sender that believes the destination is directly reachable, or reachable within a known flood distance, narrows `FHOPS` accordingly and carries no option recording that it did so. When such a packet goes unacknowledged, the cached distance is as stale as a dead source-route hint, and the recovery transmission restores the flood budget the sending application originally allowed. A radius the application itself chose is not a stale assumption and is not widened.
 
-A packet that flooded at its whole budget may have failed on the way back instead: the destination's route to the sender may be dead, and a MAC ack is never itself acknowledged. A sender that has heard from the destination recently therefore sends one Route Retry even then, at the same budget. When that retry reaches a destination that already acknowledged the packet, the destination retires the route its acknowledgment took and re-acknowledges by a scoped flood with a trace route. Each logical packet gets at most one Route Retry.
+A packet that flooded at its whole budget may have failed on the way back instead: the destination's route to the sender may be dead, and a MAC ack is never itself acknowledged. A sender that has heard from the destination recently therefore sends one Route Retry even then, at the same budget. When that retry reaches a destination that already acknowledged the packet, the destination retires the route its acknowledgment took and re-acknowledges by a scoped flood with a trace. Each logical packet gets at most one Route Retry.
 
 See [Repeater Operation § Forwarding Confirmation](repeater-operation.md#forwarding-confirmation) and [Repeater Operation § Route Failure Recovery](repeater-operation.md#route-failure-recovery).
 

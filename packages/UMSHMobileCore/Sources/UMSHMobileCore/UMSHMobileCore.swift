@@ -7426,11 +7426,13 @@ public func FfiConverterTypeMobileMeetStateRecord_lower(_ value: MobileMeetState
 
 
 /**
- * A node-identity bundle received over the mesh, either as a broadcast
+ * A node-identity bundle received over the mesh, either as an
  * advertisement or as the reply to an Identity Request.
  *
- * Only frames whose sender the MAC could name are surfaced. How the claims
- * may be trusted depends on how they arrived, which is what
+ * Only frames whose sender the MAC could name are surfaced, and never one
+ * that arrived late, behind a newer frame from the same sender: its claims
+ * may be older than what the platform already keeps. How the claims may be
+ * trusted depends on how they arrived, which is what
  * `source_authenticated` reports.
  */
 public struct MobileMeshAdvertisementRecord: Equatable, Hashable {
@@ -7445,13 +7447,14 @@ public struct MobileMeshAdvertisementRecord: Equatable, Hashable {
     public var payload: Data
     /**
      * Whether the MAC authenticated the sender of the frame that carried
-     * this bundle.
+     * this bundle: the frame's signature verified, or a unicast's MIC
+     * authenticated it.
      *
-     * A unicast Identity Request reply is authenticated by its MIC, so it
-     * carries no detached signature and decodes as `Unsigned`—it is
-     * nonetheless trustworthy, and the platform must accept it. A broadcast
-     * advertisement has no MIC, so it is `false` and the platform must
-     * require a `Valid` embedded signature before trusting any claim.
+     * When `true` the claims are the sender's own, and an `Unsigned`
+     * bundle is trustworthy. When `false` the frame proves nothing about
+     * who wrote the bundle, a channel's MIC included, since any member of
+     * the channel holds its key; the platform must then require a `Valid`
+     * embedded signature before trusting any claim.
      */
     public var sourceAuthenticated: Bool
 
@@ -7467,13 +7470,14 @@ public struct MobileMeshAdvertisementRecord: Equatable, Hashable {
          */payload: Data,
         /**
          * Whether the MAC authenticated the sender of the frame that carried
-         * this bundle.
+         * this bundle: the frame's signature verified, or a unicast's MIC
+         * authenticated it.
          *
-         * A unicast Identity Request reply is authenticated by its MIC, so it
-         * carries no detached signature and decodes as `Unsigned`—it is
-         * nonetheless trustworthy, and the platform must accept it. A broadcast
-         * advertisement has no MIC, so it is `false` and the platform must
-         * require a `Valid` embedded signature before trusting any claim.
+         * When `true` the claims are the sender's own, and an `Unsigned`
+         * bundle is trustworthy. When `false` the frame proves nothing about
+         * who wrote the bundle, a channel's MIC included, since any member of
+         * the channel holds its key; the platform must then require a `Valid`
+         * embedded signature before trusting any claim.
          */sourceAuthenticated: Bool) {
         self.peerAddress = peerAddress
         self.payload = payload
@@ -8186,13 +8190,15 @@ public struct MobileMeshPingEventRecord: Equatable, Hashable {
     /**
      * Radio links the response crossed, counting the final one into this
      * device: a direct response is one hop. Absent on a reply that was
-     * source-routed without a trace route—it crossed hops nobody recorded,
-     * so no count is claimed.
+     * source-routed without a complete trace—it crossed hops nobody
+     * recorded, so no count is claimed.
      */
     public var hopCount: UInt8?
     /**
      * Authenticated intermediate-router hints, the repeater nearest this
-     * device first. The two endpoints are not included.
+     * device first. The two endpoints are not included. Empty when the
+     * response's trace lost hops in transit, since it would name only part
+     * of the path.
      */
     public var routeHints: [Data]
     /**
@@ -8214,12 +8220,14 @@ public struct MobileMeshPingEventRecord: Equatable, Hashable {
         /**
          * Radio links the response crossed, counting the final one into this
          * device: a direct response is one hop. Absent on a reply that was
-         * source-routed without a trace route—it crossed hops nobody recorded,
-         * so no count is claimed.
+         * source-routed without a complete trace—it crossed hops nobody
+         * recorded, so no count is claimed.
          */hopCount: UInt8?,
         /**
          * Authenticated intermediate-router hints, the repeater nearest this
-         * device first. The two endpoints are not included.
+         * device first. The two endpoints are not included. Empty when the
+         * response's trace lost hops in transit, since it would name only part
+         * of the path.
          */routeHints: [Data],
         /**
          * How each repeater in `route_hints` heard the node one step farther

@@ -15,7 +15,7 @@
 //!
 //! Everything is in centibels, the unit the MAC measures SNR in.
 
-use umsh_core::options::TraceSignalEntry;
+use umsh_core::options::HopSignal;
 
 /// SNR at or above which a hop is charged nothing.
 const COMFORT_SNR_CB: i32 = -50;
@@ -68,7 +68,7 @@ impl Hop {
     /// What a trace-signal entry says about the hop that wrote it: how well
     /// that repeater heard the transmitter before it, which is the
     /// direction toward this node.
-    pub(crate) fn from_trace_entry(entry: TraceSignalEntry) -> Self {
+    pub(crate) fn from_trace_entry(entry: HopSignal) -> Self {
         match entry.snr_centibels() {
             Some(snr) => Self::Inbound(snr),
             None => Self::PointToPoint,
@@ -189,11 +189,11 @@ mod tests {
             path_score([Hop::Outbound(db(20))])
         );
         assert_eq!(
-            Hop::from_trace_entry(TraceSignalEntry::POINT_TO_POINT),
+            Hop::from_trace_entry(HopSignal::POINT_TO_POINT),
             Hop::PointToPoint
         );
         assert_eq!(
-            Hop::from_trace_entry(TraceSignalEntry::new(-98, 40)),
+            Hop::from_trace_entry(HopSignal::new(-98, 40)),
             Hop::Inbound(40)
         );
     }

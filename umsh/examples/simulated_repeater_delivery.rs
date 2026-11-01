@@ -142,7 +142,7 @@ async fn async_main() {
     });
 
     println!("== step 1: alice floods a trace-routed hello toward bob ==");
-    let hello_options = default_chat_options().with_trace_route();
+    let hello_options = default_chat_options().with_trace();
     alice_chat
         .send_text("hello through the repeater", &hello_options)
         .await
@@ -168,7 +168,7 @@ async fn async_main() {
     );
 
     println!("== step 2: bob replies and should now use a cached source route ==");
-    let reply_options = default_chat_options().with_trace_route();
+    let reply_options = default_chat_options().with_trace();
     bob_chat
         .send_text("reply from bob over learned route", &reply_options)
         .await
@@ -198,7 +198,7 @@ async fn async_main() {
     println!(
         "== step 3: alice sends a follow-up and should now use the learned source route too =="
     );
-    let follow_up_options = default_chat_options().with_trace_route();
+    let follow_up_options = default_chat_options().with_trace();
     alice_chat
         .send_text("alice follow-up over learned route", &follow_up_options)
         .await
@@ -338,6 +338,12 @@ fn format_mac_command(command: &umsh::node::OwnedMacCommand) -> String {
         umsh::node::OwnedMacCommand::PeerRepeatersResponse { body } => {
             format!("PeerRepeatersResponse {} bytes", body.len())
         }
+        umsh::node::OwnedMacCommand::VerifyFrame { nonce } => {
+            format!("VerifyFrame nonce=0x{nonce:08x}")
+        }
+        umsh::node::OwnedMacCommand::FrameVerified { nonce } => {
+            format!("FrameVerified nonce=0x{nonce:08x}")
+        }
     }
 }
 
@@ -476,11 +482,7 @@ fn summarize_queued_frame(frame: &[u8]) -> Result<QueuedFrameSummary, umsh::core
             .as_ref()
             .map(|range| frame[range.clone()].len() / 2)
             .unwrap_or(0),
-        trace_route_hints: options
-            .trace_route
-            .as_ref()
-            .map(|range| frame[range.clone()].len() / 2)
-            .unwrap_or(0),
+        trace_route_hints: options.trace(frame).map_or(0, |trace| trace.len()),
     })
 }
 
@@ -506,7 +508,7 @@ fn summarize_received_packet(packet: &umsh::node::ReceivedPacketRef<'_>) -> Stri
         packet.has_full_source(),
         packet.flood_hops(),
         packet.source_route_hint_count(),
-        packet.trace_route_hint_count(),
+        packet.trace().map_or(0, |trace| trace.len()),
         packet.rssi(),
         packet.snr(),
     )
@@ -623,7 +625,7 @@ fn summarize_mac_event(event: &MacEventRef<'_>) -> String {
             packet.has_full_source(),
             packet.flood_hops(),
             packet.source_route_hint_count(),
-            packet.trace_route_hint_count(),
+            packet.trace().map_or(0, |trace| trace.len()),
             packet.rssi(),
             packet.snr(),
         ),

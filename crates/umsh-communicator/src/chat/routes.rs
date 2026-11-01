@@ -7,7 +7,7 @@
 
 use alloc::collections::BTreeMap;
 
-use umsh_core::options::TraceSignalEntry;
+use umsh_core::options::HopSignal;
 use umsh_core::{PublicKey, RouterHint};
 use umsh_mac::CachedRoute;
 use umsh_text::node_adapter::RxSummary;
@@ -50,12 +50,13 @@ pub(crate) struct Ping {
 /// How a ping went.
 enum Outcome {
     /// An answer came, by way of `hints`, the repeater nearest this device
-    /// first. `legs` are how each hop of it was heard, the hop into this
-    /// device first.
+    /// first, and past them more when `truncated`. `legs` are how each hop
+    /// of it was heard, the hop into this device first.
     Reply {
         round_trip_ms: u64,
         hops: Option<u8>,
         hints: Vec<RouterHint, MAX_PATH>,
+        truncated: bool,
         legs: Vec<Leg, { MAX_PATH + 1 }>,
     },
     NoReply,
@@ -194,13 +195,16 @@ impl<S: ChatStore> Chats<S> {
     }
 
     /// Takes a peer's answer to a ping, heard as `rx` says, and what each
-    /// repeater it came by measured, `signal`, the nearest first.
+    /// repeater it came by measured, `signal`, the nearest first. A
+    /// `truncated` answer names only the repeaters nearest this device.
+    #[allow(clippy::too_many_arguments)]
     pub fn pong(
         &mut self,
         peer: PublicKey,
         round_trip_ms: u64,
         rx: &RxSummary,
-        signal: &[TraceSignalEntry],
+        signal: &[HopSignal],
+        truncated: bool,
         now_ms: u64,
         events: &mut dyn FnMut(NodeEvent),
     ) {
@@ -219,6 +223,7 @@ impl<S: ChatStore> Chats<S> {
         let outcome = Outcome::Reply {
             round_trip_ms,
             hops: rx.hop_count,
+            truncated: truncated || rx.route_hints.len() > MAX_PATH,
             hints,
             legs,
         };
@@ -273,16 +278,21 @@ impl<S: ChatStore> Chats<S> {
                 round_trip_ms,
                 hops,
                 hints,
+                truncated,
                 legs,
             } => PingView::Reply(PingReply {
                 round_trip_ms: u32::try_from(*round_trip_ms).unwrap_or(u32::MAX),
                 hops: *hops,
                 repeaters: self.path(hints),
                 // Hops past the traced ones: the answer flooded through
-                // repeaters that named none.
-                unnamed: hops.map_or(0, |hops| {
+                // repeaters that named none, or its trace lost them. A
+                // truncated trace with no count leaves how many unknown.
+                unnamed: match hops.map(|hops| {
                     hops.saturating_sub(u8::try_from(hints.len()).unwrap_or(u8::MAX) + 1)
-                }),
+                }) {
+                    Some(0) | None if *truncated => None,
+                    count => Some(count.unwrap_or(0)),
+                },
                 legs: legs.clone(),
             }),
         })
@@ -296,7 +306,7 @@ impl<S: ChatStore> Chats<S> {
 }
 
 /// How a repeater says it heard a hop.
-fn leg(entry: TraceSignalEntry) -> Leg {
+fn leg(entry: HopSignal) -> Leg {
     if entry.is_point_to_point() {
         return Leg::Bridge;
     }

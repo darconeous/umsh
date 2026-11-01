@@ -22,7 +22,7 @@ use umsh_text::engine::{
     RegardingRef,
 };
 use umsh_text::node_adapter::{
-    Departed, Departure, InboundText, Sent, TransmitPolicy, TransmitQueue,
+    BudgetQuery, Departed, Departure, InboundText, Sent, TransmitPolicy, TransmitQueue,
     WELL_KNOWN_CHANNEL_MAX_FLOOD_HOPS, WellKnownChannels,
 };
 use umsh_text::validate::DirectChannelProfile;
@@ -202,6 +202,9 @@ pub(crate) struct Chats<S> {
     /// The frames the facade released, on their way to the device node.
     outbox: TransmitQueue,
     policy: TransmitPolicy,
+    /// What one frame to each conversation carries, as the device node
+    /// last measured it.
+    budgets: Vec<(ConversationKey, usize)>,
     /// What each composed message is told apart by.
     token: u32,
     /// Messages sent again that have had no word since.
@@ -253,6 +256,7 @@ impl<S: ChatStore> Chats<S> {
                 default_flood_hops: FLOOD_HOPS,
                 well_known: crypto.well_known,
             },
+            budgets: Vec::new(),
             token: 0,
             retrying: BTreeSet::new(),
             heard: BTreeMap::new(),
@@ -360,6 +364,93 @@ impl<S: ChatStore> Chats<S> {
         if self.held.contains(&tag) {
             self.register(tag, key, events);
         }
+    }
+
+    /// The frames the device node is to measure: those to each channel the
+    /// chats hold, and to each chat's peer.
+    pub fn budget_queries(&self) -> Vec<BudgetQuery> {
+        let Some(facade) = &self.facade else {
+            return Vec::new();
+        };
+        let mut conversations: Vec<ConversationKey> = facade
+            .channels()
+            .tags()
+            .map(|channel| ConversationKey::ChannelGroup { channel })
+            .collect();
+        for record in self.store.chats().flatten() {
+            if !conversations.contains(&record.conversation) {
+                conversations.push(record.conversation);
+            }
+        }
+        conversations
+            .into_iter()
+            .filter_map(|conversation| {
+                BudgetQuery::new(facade.channels(), &self.policy, conversation)
+            })
+            .collect()
+    }
+
+    /// Takes what the device node measured one frame to `conversation` to
+    /// carry; `None` when it could not, which forgets what it measured
+    /// before. Each chat whose longest message changes with it is listed
+    /// anew, so that its composer takes the new limit.
+    pub fn learn_budget(
+        &mut self,
+        conversation: ConversationKey,
+        budget: Option<usize>,
+        events: &mut dyn FnMut(NodeEvent),
+    ) {
+        let held = self
+            .budgets
+            .iter()
+            .find_map(|(held, budget)| (*held == conversation).then_some(*budget));
+        if held == budget {
+            return;
+        }
+        // An unmeasured conversation takes the least measured, so one
+        // measurement can change any chat's limit.
+        let before: Vec<(model::ChatId, ConversationKey, Option<usize>)> = self
+            .store
+            .chats()
+            .flatten()
+            .map(|record| {
+                let limit = self.body_limit(&record.conversation);
+                (record.id.0, record.conversation, limit)
+            })
+            .collect();
+        self.budgets.retain(|(held, _)| *held != conversation);
+        if let Some(budget) = budget {
+            self.budgets.push((conversation, budget));
+        }
+        for (chat, conversation, limit) in before {
+            if self.body_limit(&conversation) != limit {
+                events(NodeEvent::ChatChanged(chat));
+            }
+        }
+    }
+
+    /// What one frame to `conversation` carries: as last measured, or for
+    /// one not measured, the least that any measured conversation carries.
+    /// `None` before anything has been measured.
+    fn budget(&self, conversation: &ConversationKey) -> Option<usize> {
+        let measured =
+            |(held, budget): &(ConversationKey, usize)| (held == conversation).then_some(*budget);
+        self.budgets
+            .iter()
+            .find_map(measured)
+            .or_else(|| self.budgets.iter().map(|(_, budget)| *budget).min())
+    }
+
+    /// The longest message `chat` takes.
+    pub fn max_body_len(&self, chat: model::ChatId) -> Option<usize> {
+        self.body_limit(&self.conversation(chat)?)
+    }
+
+    /// The longest message `conversation` takes; `None` before anything has
+    /// been measured.
+    fn body_limit(&self, conversation: &ConversationKey) -> Option<usize> {
+        let facade = self.facade.as_ref()?;
+        Some(facade.max_body_len(conversation, self.budget(conversation)?))
     }
 
     /// Holds the channel `key` names in the facade, and keeps a chat for
@@ -489,8 +580,11 @@ impl<S: ChatStore> Chats<S> {
                             Ok(Some(payload)) => ArchiveResult::Found { payload },
                             _ => ArchiveResult::Unknown,
                         };
+                        // Nothing fits before anything has been measured:
+                        // the material is answered as unavailable.
+                        let budget = self.budget(&lookup.key.conversation).unwrap_or(0);
                         if let Some(facade) = &mut self.facade {
-                            facade.archive_result(lookup.request_id, result, now_ms);
+                            facade.archive_result_within(lookup.request_id, result, budget, now_ms);
                         }
                     }
                     ChatOutput::SenderResolved(_) => events(NodeEvent::IdentitiesLearned),
@@ -917,13 +1011,23 @@ impl<S: ChatStore> Chats<S> {
         time: Option<u32>,
         events: &mut dyn FnMut(NodeEvent),
     ) -> Option<Committed> {
+        // Nothing is composed before the device node has measured what a
+        // frame carries; the draft stays a draft.
+        let budget = self.budget(&conversation)?;
         let facade = self.facade.as_mut()?;
         self.token = self.token.wrapping_add(1);
         // The stored checkpoint carries the conversation's sequence on when
         // the engine no longer remembers it.
         let stored = self.store.checkpoint(&conversation);
         let composed = facade
-            .compose(conversation, self.token, intent, stored.as_ref(), now_ms)
+            .compose_within(
+                conversation,
+                self.token,
+                intent,
+                stored.as_ref(),
+                budget,
+                now_ms,
+            )
             .ok()?;
         let kept = {
             let handles = &self.handles;
@@ -1495,6 +1599,9 @@ impl<S: ChatStore> Chats<S> {
                 _ = draft.splice(0..0, text);
                 summary.draft = EditBuffer::with_text(draft);
             }
+        }
+        if let Some(limit) = self.body_limit(&record.conversation) {
+            summary.limit_draft(limit);
         }
         Some(summary)
     }

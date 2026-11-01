@@ -465,7 +465,7 @@ fn old_timeout_preserves_replacement_and_newer_success_of_same_route() {
                 .unwrap()
                 .pending_ack(&newer)
                 .unwrap()
-                .ack_trailer;
+                .ack_v;
             mac.complete_ack(&key, &ack).unwrap();
             CachedRoute::Direct
         };
@@ -535,12 +535,7 @@ fn matching_ack_preserves_current_outbound_route_despite_different_return_trace(
         )
         .unwrap()
         .unwrap();
-    let ack = mac
-        .identity(local_id)
-        .unwrap()
-        .pending_ack(&receipt)
-        .unwrap()
-        .ack_trailer;
+    let ack = mac.ack_trailer_for_test(local_id, &receipt);
     mac.radio_mut()
         .queue_received_mac_ack_with_trace(ack, &[RouterHint([3, 4])]);
     block_on(mac.receive_one(|_, _| {})).unwrap();
@@ -566,12 +561,7 @@ fn ack_trace_upgrades_direct_observations_and_next_send_names_the_repeater() {
                 .unwrap()
                 .unwrap();
             mac.tx_queue_mut().pop_next().unwrap();
-            let ack = mac
-                .identity(local_id)
-                .unwrap()
-                .pending_ack(&receipt)
-                .unwrap()
-                .ack_trailer;
+            let ack = mac.ack_trailer_for_test(local_id, &receipt);
             let route = [RouterHint([3, 4]), RouterHint([5, 6])];
             mac.radio_mut()
                 .queue_received_mac_ack_with_trace(ack, &route);
@@ -605,12 +595,7 @@ fn older_ack_cannot_replace_a_newer_routed_path() {
         )
         .unwrap()
         .unwrap();
-    let ack = mac
-        .identity(local_id)
-        .unwrap()
-        .pending_ack(&receipt)
-        .unwrap()
-        .ack_trailer;
+    let ack = mac.ack_trailer_for_test(local_id, &receipt);
     let replacement = CachedRoute::source(&[RouterHint([1, 2])]).unwrap();
     mac.peer_registry_mut()
         .update_route(peer_id, replacement.clone());
@@ -638,8 +623,8 @@ fn host_source_route_ack_tail_preserves_received_regions() {
         .source_full(&test_pubkey(0xAB))
         .frame_counter(7)
         .ack_requested()
-        .option(OptionNumber::TraceRoute, &[1, 2])
         .option(OptionNumber::SourceRoute, &[])
+        .option(OptionNumber::Trace, &[0xFE, 1, 2])
         .region_code([3, 4])
         .region_code([5, 6])
         .payload(b"payload")
@@ -738,7 +723,14 @@ fn consumed_source_route_without_usable_trace_uses_broader_ack_fallback() {
         CachedRoute::source(&[RouterHint([3, 4])]),
     ] {
         for accumulated in [0, 6, 15] {
-            for trace in [None, Some(&[0x01][..]), Some(&[][..])] {
+            // No trace; a malformed one; a truncated one, which names no
+            // complete path; and an empty one.
+            for trace in [
+                None,
+                Some(&[0x01][..]),
+                Some(&[0xFF, 0x01, 0x02][..]),
+                Some(&[][..]),
+            ] {
                 let (mut mac, local_id, _, peer_id) = mac_with_keyed_peer();
                 if let Some(route) = cached.clone() {
                     mac.peer_registry_mut().update_route(peer_id, route);
@@ -754,16 +746,13 @@ fn consumed_source_route_without_usable_trace_uses_broader_ack_fallback() {
                     .unicast(dst)
                     .source_full(&test_pubkey(0xAB))
                     .frame_counter(7)
-                    .ack_requested();
-                if let Some(trace) = trace {
-                    builder = builder.option(OptionNumber::TraceRoute, trace);
-                }
-                let mut packet = builder
+                    .ack_requested()
                     .flood_hops(1)
-                    .option(OptionNumber::SourceRoute, &[])
-                    .payload(b"payload")
-                    .build()
-                    .unwrap();
+                    .option(OptionNumber::SourceRoute, &[]);
+                if let Some(trace) = trace {
+                    builder = builder.option(OptionNumber::Trace, trace);
+                }
+                let mut packet = builder.payload(b"payload").build().unwrap();
                 CryptoEngine::new(DummyAes, DummySha)
                     .seal_packet(
                         &mut packet,
@@ -947,12 +936,7 @@ fn a_later_copy_of_a_completed_ack_still_teaches_its_route() {
         .unwrap()
         .unwrap();
     mac.tx_queue_mut().pop_next().unwrap();
-    let ack = mac
-        .identity(local_id)
-        .unwrap()
-        .pending_ack(&receipt)
-        .unwrap()
-        .ack_trailer;
+    let ack = mac.ack_trailer_for_test(local_id, &receipt);
     let (a, b) = (RouterHint([0xA1, 0xA2]), RouterHint([0xB1, 0xB2]));
     let mut acknowledged = 0;
 
@@ -982,7 +966,7 @@ fn a_later_copy_of_a_completed_ack_still_teaches_its_route() {
 }
 
 #[test]
-fn discovery_sends_and_their_acks_carry_a_trace_signal() {
+fn discovery_sends_and_their_acks_carry_a_trace_with_signal() {
     let (mut mac, local_id, key, peer_id) = mac_with_keyed_peer();
     mac.queue_unicast(
         local_id,
@@ -998,9 +982,11 @@ fn discovery_sends_and_their_acks_carry_a_trace_signal() {
     while let Some(queued) = mac.tx_queue_mut().pop_next() {
         let header = PacketHeader::parse(&queued.frame).unwrap();
         let options = ParsedOptions::extract(&queued.frame, header.options_range.clone()).unwrap();
-        assert!(options.trace_route.is_some());
+        let trace = options
+            .trace(&queued.frame)
+            .unwrap_or_else(|| panic!("{:?} carries no trace", header.packet_type()));
         assert!(
-            options.trace_signal.is_some(),
+            trace.has_signal(),
             "{:?} traces its route but not what each hop measured",
             header.packet_type()
         );
@@ -1122,12 +1108,7 @@ fn send_awaiting_ack(
         .unwrap()
         .unwrap();
     mac.tx_queue_mut().pop_next().unwrap();
-    let ack = mac
-        .identity(local_id)
-        .unwrap()
-        .pending_ack(&receipt)
-        .unwrap()
-        .ack_trailer;
+    let ack = mac.ack_trailer_for_test(local_id, &receipt);
     (receipt, ack)
 }
 
@@ -1368,7 +1349,7 @@ fn a_held_route_floods_its_own_allowance_past_its_end() {
 /// whoever first heard the peer heard it.
 fn measured(route: CachedRoute, score: i16, last_hop_dbm: i16) -> RouteOffer {
     RouteOffer {
-        last_hop: Some(TraceSignalEntry::new(last_hop_dbm, 0)),
+        last_hop: Some(HopSignal::new(last_hop_dbm, 0)),
         ..scored(route, score)
     }
 }
@@ -1378,7 +1359,7 @@ fn last_hop_dbm(mac: &TestMac, peer_id: PeerId) -> Option<i16> {
         .get(peer_id)
         .unwrap()
         .route_last_hop()
-        .and_then(TraceSignalEntry::rssi_dbm)
+        .and_then(HopSignal::rssi_dbm)
 }
 
 #[test]
@@ -1585,8 +1566,7 @@ fn a_full_budget_flood_retries_once_when_the_peer_was_heard_recently() {
     assert_eq!(header.flood_hops.unwrap().remaining(), 6);
     let options = ParsedOptions::extract(&retry.frame, header.options_range).unwrap();
     assert!(options.route_retry);
-    assert!(options.trace_route.is_some());
-    assert!(options.trace_signal.is_some());
+    assert!(options.trace(&retry.frame).unwrap().has_signal());
     assert!(options.source_route.is_none());
     // The retry's deadline is armed from when it may air, not left expired.
     let pending = mac
@@ -1663,15 +1643,15 @@ fn queue_request_copy(
         .encrypted()
         .ack_requested()
         .flood_hops(6);
-    if let Some(trace) = trace {
-        let (hints, len) = encode_trace(trace);
-        builder = builder.option(OptionNumber::TraceRoute, &hints[..len]);
-    }
     if let Some(route) = source_route {
         builder = builder.source_route(route);
     }
     if route_retry {
         builder = builder.option(OptionNumber::RouteRetry, &[]);
+    }
+    if let Some(trace) = trace {
+        let (hints, len) = encode_trace(trace);
+        builder = builder.option(OptionNumber::Trace, &hints[..len]);
     }
     let mut packet = builder
         .region_code(LOST_REPLY_REGION)
@@ -1718,10 +1698,8 @@ fn queued_ack_shape(mac: &mut TestMac) -> AckShape {
     let header = PacketHeader::parse(&frame).unwrap();
     assert_eq!(header.packet_type(), PacketType::MacAck);
     let options = ParsedOptions::extract(&frame, header.options_range.clone()).unwrap();
-    assert_eq!(
-        options.trace_route.is_some(),
-        options.trace_signal.is_some()
-    );
+    let trace = options.trace(&frame);
+    assert!(trace.is_none_or(|trace| trace.has_signal()));
     let regions = umsh_core::iter_options(&frame, header.options_range.clone())
         .map(Result::unwrap)
         .filter(|(number, _)| *number == OptionNumber::RegionCode.as_u16())
@@ -1735,7 +1713,7 @@ fn queued_ack_shape(mac: &mut TestMac) -> AckShape {
                 .map(|hint| RouterHint([hint[0], hint[1]]))
                 .collect()
         }),
-        traced: options.trace_route.is_some(),
+        traced: trace.is_some(),
         regions,
     }
 }

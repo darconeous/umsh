@@ -99,11 +99,11 @@ check("ARNCE 0x9510 = W7",   options.decode_arnce(from_hex("9510")), "W7")
 -- ─────────────────────────────────────────────────────────────────────────────
 section("Options codec")
 
--- Example 7 options block: 20 92 78 53 FF
--- Option 2 (Trace Route), delta=2, len=0
--- Option 11 (Region Code), delta=9, len=2, value=78 53
+-- Example 7 options block: 70 42 78 53 FF
+-- Option 7 (Trace), delta=7, len=0
+-- Option 11 (Region Code), delta=4, len=2, value=78 53
 -- End marker FF
-local opts7 = from_hex("20 927853 FF")
+local opts7 = from_hex("70 427853 FF")
 
 local nums, vals = {}, {}
 for num, val, consumed in options.decode(opts7, 1) do
@@ -111,7 +111,7 @@ for num, val, consumed in options.decode(opts7, 1) do
   vals[#vals+1] = val
 end
 check("options Example7: count",    #nums, 2)
-check("options Example7: opt[1] num", nums[1], 2)
+check("options Example7: opt[1] num", nums[1], 7)
 check("options Example7: opt[1] val", vals[1], "")
 check("options Example7: opt[2] num", nums[2], 11)
 check("options Example7: opt[2] val", vals[2], from_hex("7853"))
@@ -121,9 +121,77 @@ check("options Example7: scan_length", options.scan_length(opts7, 1), 5)
 
 -- Static-option flag (bit 1 of option number)
 check("is_static(11)", options.is_static(11), false)  -- Region Code = 11 = 0b1011 → bit1=1 → dynamic
-check("is_static(2)",  options.is_static(2),  false)  -- Trace Route = 2 = 0b010 → bit1=1 → dynamic
-check("is_critical(11)", options.is_critical(11), true)  -- bit0=1 → critical
-check("is_critical(2)", options.is_critical(2), false) -- bit0=0 → non-critical
+check("is_static(7)",  options.is_static(7),  false)  -- Trace = 7 = 0b0111 → bit1=1 → dynamic
+check("is_dynamic(8)", options.is_dynamic(8), false)  -- Ack MIC = 8 = 0b1000 → static
+
+-- The two critical classes, by the low four bits: forwarding-critical is
+-- bit 0; delivery-critical is a static option with bits 2 and 3 set.
+local function classes(n)
+  return tostring(options.is_forwarding_critical(n)) .. "/"
+      .. tostring(options.is_delivery_critical(n))
+end
+check("option 1 is forwarding-critical only", classes(1), "true/false")
+check("option 12 is delivery-critical only", classes(12), "false/true")
+check("option 13 is both", classes(13), "true/true")
+check("option 15 is forwarding-critical only (dynamic)", classes(15), "true/false")
+for _, n in ipairs({6, 14, 16, 22}) do
+  check(string.format("option %d is neither", n), classes(n), "false/false")
+end
+check("option 28 is delivery-critical only", classes(28), "false/true")
+check("label for 13 names both classes",
+      options.criticality_label(13), "[Forwarding-Critical, Delivery-Critical]")
+check("label for 12", options.criticality_label(12), "[Delivery-Critical]")
+check("label for 1",  options.criticality_label(1),  "[Forwarding-Critical]")
+check("label for 6 is empty", options.criticality_label(6), "")
+
+-- An option number is 16 bits: a running total past 0xFFFF is malformed.
+-- E FF FF 0 0: delta = 0xFEF2 + 269 = 0xFFFF, then 1 0: delta 1 → 0x10000.
+local function decode_all(block)
+  local out = {}
+  local ok, err = pcall(function()
+    for num in options.decode(block, 1) do out[#out + 1] = num end
+  end)
+  return ok, err, out
+end
+local ok_max, _, max_nums = decode_all(from_hex("E0 FEF2 FF"))
+check("option 0xFFFF decodes", ok_max and max_nums[1], 0xFFFF)
+local ok_over, err_over = decode_all(from_hex("E0 FEF2 10 FF"))
+check("option number past 0xFFFF is an error", ok_over, false)
+check("option number past 0xFFFF is reported malformed",
+      tostring(err_over):sub(1, #options.MALFORMED_PREFIX), options.MALFORMED_PREFIX)
+-- An extended delta that does not fit 16 bits is malformed in itself.
+local ok_ext, err_ext = decode_all(from_hex("E0 FFFF FF"))
+check("extended delta past 0xFFFF is reported malformed",
+      not ok_ext and tostring(err_ext):sub(1, #options.MALFORMED_PREFIX),
+      options.MALFORMED_PREFIX)
+check("scan_length refuses an option number past 0xFFFF",
+      pcall(options.scan_length, from_hex("E0 FEF2 10 FF"), 1), false)
+
+-- ── Trace value forms ──
+local function trace_summary(value_hex)
+  local t = options.parse_trace(from_hex(value_hex))
+  if not t then return "malformed" end
+  local parts = {t.form}
+  for _, e in ipairs(t.entries) do
+    parts[#parts + 1] = hex(e.hint) .. (e.rssi and string.format("@%d/%d", e.rssi, e.snr) or "")
+  end
+  return table.concat(parts, " ")
+end
+check("trace: empty is a complete trace with signal", trace_summary(""), "signal")
+check("trace: records with signal, most recent first",
+      trace_summary("ED54 5A32 6C28 78E2"), "signal ED54@90/50 6C28@120/-30")
+check("trace: a record whose hint begins FE is still a record",
+      trace_summary("FE01 0000"), "signal FE01@0/0")
+check("trace: FE is complete, hints only", trace_summary("FE ED54 6C28"), "hints ED54 6C28")
+check("trace: a lone FE is valid", trace_summary("FE"), "hints")
+check("trace: FF is truncated, hints only", trace_summary("FF ED54"), "truncated ED54")
+check("trace: a lone FF is valid", trace_summary("FF"), "truncated")
+check("trace: length 2 mod 4 is malformed", trace_summary("ED54"), "malformed")
+check("trace: length 6 is malformed", trace_summary("ED54 5A32 6C28"), "malformed")
+check("trace: odd length without a sentinel is malformed", trace_summary("ED 546C"), "malformed")
+check("trace: sentinel then half a hint is malformed", trace_summary("FE 01"), "malformed")
+check("trace: FF then two and a half hints is malformed",
+      trace_summary("FF 0102 0304 05"), "malformed")
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Keystore rebuild / lookup tests
@@ -163,22 +231,30 @@ check("lookup NodeA by full key",
 section("Option registry")
 
 local SPEC_OPTIONS = {
-  [0]  = "Reserved",          [1]  = "Unassigned",
-  [2]  = "Trace Route",       [3]  = "Source Route",
+  [0]  = "Frame Signature",   [1]  = "Unassigned",
+  [2]  = "Unassigned",        [3]  = "Source Route",
   [4]  = "Operator Callsign", [5]  = "Min RSSI",
-  [6]  = "Route Retry",       [7]  = "Station Callsign",
+  [6]  = "Route Retry",       [7]  = "Trace",
   [8]  = "Ack MIC",           [9]  = "Min SNR",
-  [10] = "Trace Signal",      [11] = "Region Code",
+  [10] = "Unassigned",        [11] = "Region Code",
+  [15] = "Station Callsign",
 }
 
-for num = 0, 11 do
-  check(string.format("option %d (%s) is named", num, SPEC_OPTIONS[num]),
+for num = 0, 15 do
+  check(string.format("option %d (%s) is named", num, tostring(SPEC_OPTIONS[num])),
         options.KNOWN_OPTION_NAMES[num], SPEC_OPTIONS[num])
 end
+check("frame signature is option 0",   options.OPT_FRAME_SIGNATURE, 0)
+check("frame signature is 68 bytes",   options.FRAME_SIGNATURE_LEN, 68)
+check("trace is option 7",             options.OPT_TRACE, 7)
+check("station callsign is option 15", options.OPT_STATION_CALLSIGN, 15)
+check("option 254 is not named", options.KNOWN_OPTION_NAMES[254], nil)
 
--- Options the spec says a packet must be dropped for carrying twice.
-check("trace route is single-occurrence",
-      options.SINGLETON_OPTIONS[options.OPT_TRACE_ROUTE], true)
+-- Options a sender MUST NOT include more than one of.
+check("frame signature is single-occurrence",
+      options.SINGLETON_OPTIONS[options.OPT_FRAME_SIGNATURE], true)
+check("trace is single-occurrence",
+      options.SINGLETON_OPTIONS[options.OPT_TRACE], true)
 check("route retry is single-occurrence",
       options.SINGLETON_OPTIONS[options.OPT_ROUTE_RETRY], true)
 -- Several region codes may legitimately ride one packet; the rule that a
@@ -186,20 +262,17 @@ check("route retry is single-occurrence",
 check("region code is NOT single-occurrence",
       options.SINGLETON_OPTIONS[options.OPT_REGION_CODE], nil)
 
--- Classification comes from the option number's low two bits.
-check("trace route is non-critical", options.is_critical(2), false)
-check("source route is critical",    options.is_critical(3), true)
-check("route retry is dynamic",      options.is_static(6),   false)
-check("ack mic is static",           options.is_static(8),   true)
-
--- Option 254 marks a MAC ack whose tag uses the legacy construction.
-check("option 254 (Legacy Ack Tag) is named",
-      options.KNOWN_OPTION_NAMES[options.OPT_LEGACY_ACK_TAG], "Legacy Ack Tag")
-check("legacy ack tag is 254",                 options.OPT_LEGACY_ACK_TAG, 254)
-check("legacy ack tag is non-critical",        options.is_critical(254), false)
-check("legacy ack tag is dynamic",             options.is_static(254),   false)
-check("legacy ack tag is single-occurrence",
-      options.SINGLETON_OPTIONS[options.OPT_LEGACY_ACK_TAG], true)
+-- Classification comes from the option number's low bits.
+check("frame signature is static",               options.is_static(0), true)
+check("frame signature is not forwarding-critical", options.is_forwarding_critical(0), false)
+check("frame signature is not delivery-critical",   options.is_delivery_critical(0), false)
+check("trace is forwarding-critical",            options.is_forwarding_critical(7), true)
+check("trace is dynamic",                        options.is_static(7),   false)
+check("station callsign is forwarding-critical", options.is_forwarding_critical(15), true)
+check("station callsign is dynamic",             options.is_static(15),  false)
+check("source route is forwarding-critical",     options.is_forwarding_critical(3), true)
+check("route retry is dynamic",                  options.is_static(6),   false)
+check("ack mic is static",                       options.is_static(8),   true)
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Canonical address presentation
@@ -590,31 +663,86 @@ else
   check("build_ctr_iv(4B mic) padding", iv4:sub(10,16), string.rep("\0", 7))
 
   -- ── Pairwise key derivation ──
+  -- info = "UMSH-UNICAST-V3" ‖ min(PK_A, PK_B) ‖ max(PK_A, PK_B); the
+  -- expected keys come from the Rust derive_pairwise_keys.
   local SHARED_SECRET = from_hex(
     "5ADD834FC109FAD52F041C5AF84A7966526D364D1895AFFCD794E044F3A9DB14")
-  local pw = crypto.derive_pairwise_keys(SHARED_SECRET)
-  check("pairwise keys: k_enc len=32", pw and #pw.k_enc, 32)
-  check("pairwise keys: k_mic len=32", pw and #pw.k_mic, 32)
+  local PUB_A, PUB_B = from_hex(NODE_A_PUB), from_hex(NODE_B_PUB)
+  local pw = crypto.derive_pairwise_keys(SHARED_SECRET, PUB_A, PUB_B)
+  check("pairwise keys: k_mic",
+        pw and pw.k_mic,
+        from_hex("B9E54612293DBD060C0E4286096CA878ACC05E27409CDE2533359946EC674B86"))
+  check("pairwise keys: k_enc",
+        pw and pw.k_enc,
+        from_hex("20C510CFFDFAE74960E662D15FFA32D4A13EA13DCCD98CC49BF4F762EB1388BB"))
+  local pw_ba = crypto.derive_pairwise_keys(SHARED_SECRET, PUB_B, PUB_A)
+  check("pairwise keys do not depend on argument order",
+        pw_ba and pw_ba.k_mic .. pw_ba.k_enc, pw.k_mic .. pw.k_enc)
+  -- Binding the keys is what tells a key from its negation, which share an
+  -- X25519 key: flip A's sign bit and the same secret yields other keys.
+  local neg_a = PUB_A:sub(1, 31) .. string.char(PUB_A:byte(32) ~ 0x80)
+  check("pairwise keys bind the Ed25519 keys, not just the secret",
+        crypto.derive_pairwise_keys(SHARED_SECRET, neg_a, PUB_B).k_mic ~= pw.k_mic, true)
+  check("pairwise keys require both public keys",
+        pcall(crypto.derive_pairwise_keys, SHARED_SECRET), false)
+
+  -- ── AAD, one row per family (feed_aad in crates/umsh-core/src/packet.rs) ──
+  -- The expected bytes are what the Rust feed_aad streams for the same
+  -- packets. Operator Callsign (4) is static; the dissector hands build_aad
+  -- only static options.
+  local CALLSIGN_OPT = {{number = 4, value = from_hex("5BBB082C")}}
+  check("AAD broadcast: FCF ‖ SRC ‖ options ‖ FFFF",
+        crypto.build_aad(from_hex("C0"), CALLSIGN_OPT, {src = from_hex("ED54A5")}),
+        from_hex("C0 ED54A5 0004 0004 5BBB082C FFFF"))
+  check("AAD MAC ack: FCF ‖ FFFF",
+        crypto.build_aad(from_hex("C8"), {}), from_hex("C8 FFFF"))
+  check("AAD unicast (Example 3): FCF ‖ DST ‖ SRC ‖ SECINFO ‖ FFFF",
+        crypto.build_aad(from_hex("D0"), {}, {dst = from_hex("6C28FD"),
+          src = from_hex("ED54A5"), secinfo = from_hex("E00000002A")}),
+        from_hex("D0 6C28FD ED54A5 E00000002A FFFF"))
+  check("AAD unicast with a static option",
+        crypto.build_aad(from_hex("D0"), CALLSIGN_OPT, {dst = from_hex("6C28FD"),
+          src = from_hex("ED54A5"), secinfo = from_hex("E00000000B")}),
+        from_hex("D0 6C28FD ED54A5 E00000000B 0004 0004 5BBB082C FFFF"))
+  check("AAD unicast masks H (Example 7's D1)",
+        crypto.build_aad(from_hex("D1"), {}, {dst = from_hex("6C28FD"),
+          src = from_hex("ED54A5"), secinfo = from_hex("E00000000A")}),
+        from_hex("D0 6C28FD ED54A5 E00000000A FFFF"))
+  check("AAD multicast (Example 6): no SRC, E=0 or not",
+        crypto.build_aad(from_hex("E0"), {}, {channel = from_hex("B08D"),
+          src = from_hex("ED54A5"), secinfo = from_hex("6000000003")}),
+        from_hex("E0 B08D 6000000003 FFFF"))
+  check("AAD multicast, full SRC and a static option",
+        crypto.build_aad(from_hex("E4"), CALLSIGN_OPT, {channel = from_hex("B08D"),
+          secinfo = from_hex("600000000C")}),
+        from_hex("E4 B08D 600000000C 0004 0004 5BBB082C FFFF"))
+  check("AAD blind unicast (Example 8): plaintext DST ‖ SRC after FFFF",
+        crypto.build_aad(from_hex("F0"), {}, {channel = from_hex("B08D"),
+          secinfo = from_hex("E000000007"), dst = from_hex("6C28FD"),
+          src = from_hex("ED54A5")}),
+        from_hex("F0 B08D E000000007 FFFF 6C28FD ED54A5"))
+  check("AAD blind unicast, full SRC",
+        crypto.build_aad(from_hex("F4"), {}, {channel = from_hex("B08D"),
+          secinfo = from_hex("E000000009"), dst = from_hex("6C28FD"), src = PUB_A}),
+        from_hex("F4 B08D E000000009 FFFF 6C28FD") .. PUB_A)
+  check("AAD blind unicast refuses a missing address block",
+        pcall(crypto.build_aad, from_hex("F0"), {}, {channel = from_hex("B08D"),
+          secinfo = from_hex("E000000007")}), false)
 
   -- ── Example 3: encrypted unicast verify+decrypt ──
-  -- Packet: D0 6C28FD ED54A5 E0 0000002A FF AE71DC3872 618E9638FE4D9AE834331DE8E0DD063E
   -- FCF=D0, DST=6C28FD, SRC=ED54A5, SCF=E0 (enc, 16B MIC, no salt), FC=42
   -- Plaintext should be "Hello" = 48 65 6C 6C 6F
   local fcf_byte  = from_hex("D0")
   local dst_bytes = from_hex("6C28FD")
   local src_bytes = from_hex("ED54A5")
   local secinfo_e3 = from_hex(("E000000 02A"):gsub("%s",""))
-  local body_e3   = from_hex("AE71DC3872")
-  local mic_e3    = from_hex("618E9638FE4D9AE834331DE8E0DD063E")
-
-  local aad_e3 = crypto.build_aad(fcf_byte, {}, dst_bytes, src_bytes, secinfo_e3)
-  check("Example3 AAD len=12", #aad_e3, 12)  -- 1+3+3+5=12
+  local body_e3   = from_hex("8B6067EB6C")
+  local mic_e3    = from_hex("F6D239C9051241ED8CA4C2D8891A3458")
 
   local pkt_e3 = {
     fcf_byte         = fcf_byte,
     static_opts      = {},
-    dst_or_chan      = dst_bytes,
-    src_bytes_or_nil = src_bytes,
+    aad_fields       = {dst = dst_bytes, src = src_bytes},
     secinfo_raw      = secinfo_e3,
     body_bytes       = body_e3,
     mic_bytes        = mic_e3,
@@ -626,19 +754,19 @@ else
 
   -- ── Example 6: authenticated multicast (E=0) verify ──
   -- FCF=E0, CHANNEL=B08D, SCF=60 (E=0, 16B MIC), FC=3, SRC=ED54A5
-  -- Payload=03 48656C6C6F, MIC=9A4BFCDE3942FEB225B8D3D4BCE79FDB
+  -- Payload=03 48656C6C6F, MIC=140E9E5253A73FA6583C0C94C15EEA9F
+  -- S2 is SRC ‖ PAYLOAD: the cleartext SRC is protected, not associated.
   local fcf_e6    = from_hex("E0")
   local chan_e6   = from_hex("B08D")
   local src_e6    = from_hex("ED54A5")
   local secinfo_e6 = from_hex(("60 00000003"):gsub("%s",""))
-  local body_e6   = from_hex("0348656C6C6F")
-  local mic_e6    = from_hex("9A4BFCDE3942FEB225B8D3D4BCE79FDB")
+  local body_e6   = src_e6 .. from_hex("0348656C6C6F")
+  local mic_e6    = from_hex("140E9E5253A73FA6583C0C94C15EEA9F")
 
   local pkt_e6 = {
     fcf_byte         = fcf_e6,
     static_opts      = {},
-    dst_or_chan      = chan_e6,
-    src_bytes_or_nil = src_e6,  -- E=0: src in cleartext, included in AAD
+    aad_fields       = {channel = chan_e6},
     secinfo_raw      = secinfo_e6,
     body_bytes       = body_e6,
     mic_bytes        = mic_e6,
@@ -647,20 +775,38 @@ else
   local plain_e6, status_e6 = crypto.verify_and_decrypt(dk, pkt_e6)
   check("Example6 MIC OK",    status_e6, "ok")
   check("Example6 body returned", plain_e6, body_e6)  -- unencrypted, body returned as-is
+  local pkt_e6_old = {}
+  for k, v in pairs(pkt_e6) do pkt_e6_old[k] = v end
+  pkt_e6_old.body_bytes = from_hex("0348656C6C6F")
+  check("Example6 fails with SRC left out of S2",
+        select(2, crypto.verify_and_decrypt(dk, pkt_e6_old)), "mic_mismatch")
+
+  -- An authenticated multicast with a full SRC and a static option, sealed
+  -- by the Rust implementation: FC 12, Operator Callsign N0CALL.
+  local pkt_mfull = {
+    fcf_byte     = from_hex("E4"),
+    static_opts  = CALLSIGN_OPT,
+    aad_fields   = {channel = chan_e6},
+    secinfo_raw  = from_hex("600000000C"),
+    body_bytes   = PUB_A .. from_hex("0348656C6C6F"),
+    mic_bytes    = from_hex("3B8AE10181552D7A11934D0953513121"),
+    is_encrypted = false,
+  }
+  check("multicast with full SRC and callsign MIC OK",
+        select(2, crypto.verify_and_decrypt(dk, pkt_mfull)), "ok")
 
   -- ── Example 5: encrypted multicast (E=1) ──
   -- FCF=E0, CHANNEL=B08D, SCF=E0, FC=5
-  -- body=7C16CCCF27324878 (encrypted SRC+payload), MIC=ACBF20014205B104175EA68F66477883
+  -- body=D44BB60E346DE5F4 (encrypted SRC+payload), MIC=F3C48B8F96EAA1EFF61947E849771670
   local fcf_e5    = from_hex("E0")
   local secinfo_e5 = from_hex("E000000005")
-  local body_e5   = from_hex("7C16CCCF27324878")
-  local mic_e5    = from_hex("ACBF20014205B104175EA68F66477883")
+  local body_e5   = from_hex("D44BB60E346DE5F4")
+  local mic_e5    = from_hex("F3C48B8F96EAA1EFF61947E849771670")
 
   local pkt_e5 = {
     fcf_byte         = fcf_e5,
     static_opts      = {},
-    dst_or_chan      = chan_e6,   -- same channel B08D
-    src_bytes_or_nil = nil,      -- E=1: src in ciphertext
+    aad_fields       = {channel = chan_e6},   -- same channel B08D
     secinfo_raw      = secinfo_e5,
     body_bytes       = body_e5,
     mic_bytes        = mic_e5,
@@ -674,6 +820,92 @@ else
         plain_e5 and plain_e5:sub(1,3), from_hex("ED54A5"))
   check("Example5 decrypted payload=Hello",
         plain_e5 and plain_e5:sub(4), "Hello")
+
+  -- ── Examples 12–14: signed frames ──
+  -- With D set, the MIC's S2 ends with the 64-byte signature, and with E set
+  -- the signature is encrypted along with the rest. The signature input is
+  -- "UMSH-SIG" ‖ AAD ‖ [channel commitment] ‖ S2 without the signature;
+  -- the dissector does not verify it, but its pieces are the dissector's own
+  -- AAD and HKDF, so they are pinned here against the spec's bytes.
+  local SIG_E12 = from_hex(
+    "6460E736CF316BB32F438CA281DE0DE02C3BBEB7A6CB195A5C6055BD46A9F5E7"
+    .. "532C96AEF7CCE806C7F4FC462CD9B861CC60D44765F66E4E3A5DDB10913D6D05")
+  local pkt_e12 = {
+    fcf_byte     = from_hex("E4"),
+    static_opts  = {},
+    aad_fields   = {channel = chan_e6},
+    secinfo_raw  = from_hex("680000000C"),
+    body_bytes   = PUB_A .. from_hex("034865 6C70") .. SIG_E12,
+    mic_bytes    = from_hex("59967A9D75D9FCDCAA9FAD4C503B2E47"),
+    is_encrypted = false,
+  }
+  local plain_e12, status_e12 = crypto.verify_and_decrypt(dk, pkt_e12)
+  check("Example12 MIC OK, the signature in S2", status_e12, "ok")
+  check("Example12 S2 returned as-is", plain_e12, pkt_e12.body_bytes)
+  local pkt_e12_bare = {}
+  for k, v in pairs(pkt_e12) do pkt_e12_bare[k] = v end
+  pkt_e12_bare.body_bytes = PUB_A .. from_hex("0348656C70")
+  check("Example12 fails with the signature left out of S2",
+        select(2, crypto.verify_and_decrypt(dk, pkt_e12_bare)), "mic_mismatch")
+
+  local COMMITMENT = from_hex(
+    "B08DB3C1400A1C11F1D1464DD6BA945FD0372DDD38CA63A184D36FD111FEBA40")
+  check("channel commitment: the channel ID's derivation at 32 bytes",
+        crypto.hkdf(chan_key_bytes, "UMSH-CHAN-ID", "", 32), COMMITMENT)
+  check("Example12 signature input",
+        "UMSH-SIG" .. crypto.build_aad(pkt_e12.fcf_byte, {},
+          {channel = chan_e6, secinfo = pkt_e12.secinfo_raw})
+        .. COMMITMENT .. PUB_A .. from_hex("0348656C70"),
+        from_hex([[
+          55 4D 53 48 2D 53 49 47 E4 B0 8D 68 00 00 00 0C
+          FF FF B0 8D B3 C1 40 0A 1C 11 F1 D1 46 4D D6 BA
+          94 5F D0 37 2D DD 38 CA 63 A1 84 D3 6F D1 11 FE
+          BA 40 ED 54 A5 9F B1 AC 3A 51 23 93 51 36 29 41
+          B8 68 E8 5A 60 E3 D7 B2 48 5D 82 88 21 DC 7A 69
+          C2 79 03 48 65 6C 70]]))
+
+  local pkt_e13 = {
+    fcf_byte     = from_hex("E0"),
+    static_opts  = {},
+    aad_fields   = {channel = chan_e6},
+    secinfo_raw  = from_hex("E80000000D"),
+    body_bytes   = from_hex(
+      "692E617921A20842BF2E1CD86F88A14AE7EF44BCDF1134EC856F930639960C99"
+      .. "D670798708EAA80E61BADA28E2B2A85897D59CC28A1233DB1B211853855ECE11"
+      .. "0079F36C991C2410"),
+    mic_bytes    = from_hex("02BB9A22FEF41A6E919D347241AA42B9"),
+    is_encrypted = true,
+  }
+  local plain_e13, status_e13 = crypto.verify_and_decrypt(dk, pkt_e13)
+  check("Example13 MIC OK", status_e13, "ok")
+  check("Example13 decrypts SRC ‖ Hello ‖ SIG",
+        plain_e13 and #plain_e13, 3 + 5 + 64)
+  check("Example13 decrypted SRC and payload",
+        plain_e13 and plain_e13:sub(1, 8), from_hex("ED54A5") .. "Hello")
+  check("Example13 signature input",
+        "UMSH-SIG" .. crypto.build_aad(pkt_e13.fcf_byte, {},
+          {channel = chan_e6, secinfo = pkt_e13.secinfo_raw})
+        .. COMMITMENT .. (plain_e13 and plain_e13:sub(1, 8) or ""),
+        from_hex([[
+          55 4D 53 48 2D 53 49 47 E0 B0 8D E8 00 00 00 0D
+          FF FF B0 8D B3 C1 40 0A 1C 11 F1 D1 46 4D D6 BA
+          94 5F D0 37 2D DD 38 CA 63 A1 84 D3 6F D1 11 FE
+          BA 40 ED 54 A5 48 65 6C 6C 6F]]))
+
+  -- A broadcast has no MIC; its AAD, the signature input's middle, carries
+  -- option 0 with the signature zeroed.
+  local sig_opt = {{number = 0, value = from_hex("0000000E") .. string.rep("\0", 64)}}
+  check("Example14 signature input",
+        "UMSH-SIG" .. crypto.build_aad(from_hex("C4"), sig_opt, {src = PUB_A}) .. "Hi",
+        from_hex([[
+          55 4D 53 48 2D 53 49 47 C4 ED 54 A5 9F B1 AC 3A
+          51 23 93 51 36 29 41 B8 68 E8 5A 60 E3 D7 B2 48
+          5D 82 88 21 DC 7A 69 C2 79 00 00 00 44 00 00 00
+          0E 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+          00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+          00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+          00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+          00 FF FF 48 69]]))
 
   -- ── NIST SP 800-38A AES-256-CTR test vectors (Section F.5.5/F.5.6) ──
   -- Non-zero IV—this is what broke under GcryptCipher:setctr().
@@ -746,16 +978,14 @@ else
   -- ── MAC ack tag, answering Example 4's request ──
   -- The request's 16-byte MIC is its whole S2V output V, so the acks below
   -- need nothing beyond the published packet and the pairwise keys. The
-  -- tags are the spec's: Examples 10 and 11 in test-vectors.md, and the
-  -- legacy vector in ack-transition.md.
+  -- tags are the spec's: Examples 10 and 11 in test-vectors.md.
   local pkt_e4 = {
     fcf_byte         = from_hex("DC"),
     static_opts      = {},
-    dst_or_chan      = from_hex("6C28FD"),
-    src_bytes_or_nil = from_hex(NODE_A_PUB),
+    aad_fields       = {dst = from_hex("6C28FD"), src = PUB_A},
     secinfo_raw      = from_hex("E000000001"),
-    body_bytes       = from_hex("F882EE"),
-    mic_bytes        = from_hex("AA171306261CE7FFF2FF017F9010A7D9"),
+    body_bytes       = from_hex("4CA9EB"),
+    mic_bytes        = from_hex("FEA5FD447A2FE0FFD557B54EE6E89181"),
     is_encrypted     = true,
   }
   local plain_e4, status_e4, v_e4 = crypto.verify_and_decrypt(pw, pkt_e4)
@@ -763,46 +993,37 @@ else
   check("Example4 plaintext=hey",   plain_e4, "hey")
   check("Example4 V is its 16-byte MIC", v_e4, pkt_e4.mic_bytes)
 
-  -- The ack AAD is the FCF with H cleared, then the static options; there
-  -- is no DST, SRC, or SECINFO.
+  -- The ack AAD is the FCF with H cleared, then the static options, then
+  -- FF FF; there is no DST, SRC, or SECINFO.
   local UACK_FCF = from_hex("C8")
   local CALLSIGN = {{number = options.OPT_OP_CALLSIGN, value = from_hex("5BBB082C")}}
   check("operator callsign value reads N0CALL",
         options.decode_arnce(CALLSIGN[1].value), "N0CALL")
-  check("ack AAD with no static option is the bare FCF",
-        crypto.build_aad(UACK_FCF, {}), from_hex("C8"))
+  check("ack AAD with no static option is the FCF and terminator",
+        crypto.build_aad(UACK_FCF, {}), from_hex("C8 FFFF"))
   check("ack AAD masks H",
-        crypto.build_aad(from_hex("C9"), {}), from_hex("C8"))
+        crypto.build_aad(from_hex("C9"), {}), from_hex("C8 FFFF"))
   check("ack AAD carries static options as TLVs",
-        crypto.build_aad(UACK_FCF, CALLSIGN), from_hex("C8 0004 0004 5BBB082C"))
+        crypto.build_aad(UACK_FCF, CALLSIGN), from_hex("C8 0004 0004 5BBB082C FFFF"))
 
-  local LEGACY_TAG       = from_hex("99FC2D9F")
-  local MIC_TAG          = from_hex("D2FB63BD")
-  local MIC_TAG_CALLSIGN = from_hex("A878BE6E")
-  check("legacy ack tag = truncate4(AES-ECB(k_enc, V))",
-        crypto.legacy_ack_tag(pw.k_enc, v_e4), LEGACY_TAG)
-  check("MIC ack tag, no static option",
+  local MIC_TAG          = from_hex("16616CD1")  -- Example 10
+  local MIC_TAG_CALLSIGN = from_hex("15B256E4")  -- Example 11
+  check("ack tag, no static option (Example 10)",
         crypto.ack_tag_mic(pw.k_mic, UACK_FCF, {}, v_e4), MIC_TAG)
-  check("MIC ack tag, operator callsign",
+  check("ack tag, operator callsign (Example 11)",
         crypto.ack_tag_mic(pw.k_mic, UACK_FCF, CALLSIGN, v_e4), MIC_TAG_CALLSIGN)
+  check("the AES-ECB legacy tag is gone", crypto.legacy_ack_tag, nil)
 
-  -- The receiver table: the marker admits only the legacy tag, a static
-  -- option only the MIC, and an ack with neither is tried both ways.
-  local function verify(opts, marker, tag)
-    return crypto.verify_mac_ack(pw, v_e4, UACK_FCF, opts, marker, tag)
+  local function verify(opts, tag)
+    return crypto.verify_mac_ack(pw, v_e4, UACK_FCF, opts, tag)
   end
-  check("marker + legacy tag verifies as legacy",   verify({}, true, LEGACY_TAG), "legacy")
-  check("marker + MIC tag is rejected",             verify({}, true, MIC_TAG), nil)
-  check("callsign + MIC tag verifies as MIC",       verify(CALLSIGN, false, MIC_TAG_CALLSIGN), "mic")
-  check("callsign + legacy tag is rejected",        verify(CALLSIGN, false, LEGACY_TAG), nil)
-  check("bare MIC ack verifies as MIC",             verify({}, false, MIC_TAG), "mic")
-  check("bare legacy ack (no marker) verifies as legacy",
-        verify({}, false, LEGACY_TAG), "legacy")
+  check("callsign + its tag verifies",          verify(CALLSIGN, MIC_TAG_CALLSIGN), true)
+  check("bare ack verifies",                    verify({}, MIC_TAG), true)
+  check("callsign + the bare tag is rejected",  verify(CALLSIGN, MIC_TAG), false)
   check("tampered callsign is rejected",
-        verify({{number = 4, value = from_hex("5BBB082D")}}, false, MIC_TAG_CALLSIGN), nil)
+        verify({{number = 4, value = from_hex("5BBB082D")}}, MIC_TAG_CALLSIGN), false)
   check("H set on the ack still verifies",
-        crypto.verify_mac_ack(pw, v_e4, from_hex("C9"), CALLSIGN, false, MIC_TAG_CALLSIGN),
-        "mic")
+        crypto.verify_mac_ack(pw, v_e4, from_hex("C9"), CALLSIGN, MIC_TAG_CALLSIGN), true)
 
   -- ── Ed25519 → X25519 conversion and ECDH (intermediate test vectors) ──
   local NODE_A_SEED = from_hex(
@@ -1034,8 +1255,9 @@ section("Node Management")
 local app = require("app")
 
 -- Dissect a whole payload, type byte included, and return what the tree,
--- the columns, and the violation sink ended up holding.
-local function dissect_payload(payload_hex, pkt_type, ack_mic)
+-- the columns, and the violation sink ended up holding. `extra` sets any
+-- further context the packet would hand the app layer.
+local function dissect_payload(payload_hex, pkt_type, ack_mic, extra)
   tree_log = {}
   local violations = {}
   local pinfo = new_pinfo()
@@ -1046,6 +1268,7 @@ local function dissect_payload(payload_hex, pkt_type, ack_mic)
     ack_mic  = ack_mic,        -- the header's Ack MIC option, when it has one
     flag     = function(_tree, _range, text) violations[#violations + 1] = text end,
   }
+  for k, v in pairs(extra or {}) do ctx[k] = v end
   app.dissect(from_hex(payload_hex), root, pinfo, nil, nil, ctx)
   return {
     items      = tree_log,
@@ -1461,11 +1684,51 @@ local vf_multicast = dissect_payload("02 0C 0A0B0C0D", 4, "11223344")
 check("a multicast verify frame is flagged", #vf_multicast.violations > 0, true)
 
 -- ─────────────────────────────────────────────────────────────────────────────
+-- Signing rules in the app layer (docs/protocol/src/multicast-channels.md,
+-- node-identity.md)
+--
+-- Every multicast carrying text on the emergency channel is signed. An
+-- advertisement is authenticated by its frame signature, so a hint-only one
+-- with an embedded signature is no longer a finding.
+-- ─────────────────────────────────────────────────────────────────────────────
+section("Signing rules")
+
+local EMERGENCY = {channel = {builtin = "emergency"}, mic_verified = true}
+local function emergency(signed, pkt_type)
+  local extra = {signed = signed}
+  for k, v in pairs(EMERGENCY) do extra[k] = v end
+  return dissect_payload("03 FF 48656C70", pkt_type or 4, nil, extra)
+end
+local unsigned_emergency = emergency(false)
+check("unsigned emergency chat is flagged", #unsigned_emergency.violations, 1)
+check("the flag names the missing signature",
+      unsigned_emergency.violations[1] and
+        unsigned_emergency.violations[1]:find("without a frame signature (D)", 1, true) ~= nil,
+      true)
+check("signed emergency chat is not flagged", #emergency(true).violations, 0)
+-- Repairs ride blind unicast, which authenticates the sender pairwise.
+check("unsigned emergency blind unicast is not flagged", #emergency(false, 6).violations, 0)
+check("unsigned chat on another channel is not flagged",
+      #dissect_payload("03 FF 48656C70", 4, nil,
+                       {channel = {}, mic_verified = true}).violations, 0)
+local unsure = dissect_payload("03 FF 48656C70", 4, nil,
+                               {channel = {builtin = "emergency"}, mic_verified = false})
+check("an unverified channel carries its caveat",
+      unsure.violations[1] and
+        unsure.violations[1]:find("channel identified by ID only", 1, true) ~= nil,
+      true)
+
+-- Role Repeater, no caps, a 64-byte embedded signature, from a hint.
+local hint_advert = dissect_payload("01 01 00 FF" .. string.rep("22", 64), 0, nil,
+                                    {full_src = false})
+check("a hint-only signed advertisement is not flagged", #hint_advert.violations, 0)
+check("its embedded signature is still shown", has(hint_advert, "EdDSA Signature"), true)
+
+-- ─────────────────────────────────────────────────────────────────────────────
 -- MAC ack verification, end to end through umsh.lua
 --
 -- Node B's key decrypts Example 4's request, which records V for its ack_mic;
--- each ack below then answers it. Option 254 encodes as D0 F1 (delta nibble
--- 13 plus one extended byte), and 44 5BBB082C is Operator Callsign N0CALL.
+-- each ack below then answers it. 44 5BBB082C is Operator Callsign N0CALL.
 -- ─────────────────────────────────────────────────────────────────────────────
 section("MAC ack verification")
 
@@ -1495,8 +1758,11 @@ else
   function TreeItem:set_hidden()    return self end
 
   dofile(_dir .. "../umsh/umsh.lua")
+  -- Node B's seed, and Node A by its full key so a hint SRC finds a peer.
   umsh_proto.prefs.privkeys =
     "3132333435363738393A3B3C3D3E3F404142434445464748494A4B4C4D4E4F50:NodeB"
+  umsh_proto.prefs.node_names = NODE_A_PUB .. ":NodeA"
+  umsh_proto.prefs.channel_keys = CHAN_KEY .. ":TestChannel"
   umsh_proto.prefs_changed()
   umsh_proto.init()
 
@@ -1520,47 +1786,234 @@ else
   end
 
   local EXAMPLE_4 = "DC 6C28FD ED54A59FB1AC3A51239351362941B868E85A60E3D7B2485D828821DC7A69C279"
-                 .. " E0 00000001 FF F882EE AA171306261CE7FFF2FF017F9010A7D9"
+                 .. " E0 00000001 FF 4CA9EB FEA5FD447A2FE0FFD557B54EE6E89181"
   local request = dissect_frame(EXAMPLE_4)
   check("the request decrypts", has(request, "Decrypted Payload (3 B): 686579"), true)
 
-  local function ack_case(name, frame_hex, construction)
+  local function ack_case(name, frame_hex, verifies, request_frame)
     local ack = dissect_frame(frame_hex)
-    if construction then
-      check(name .. ": acks the request", ack.info, "UMSH UACK (ack for #1)")
-      check(name .. ": verified as " .. construction,
-            has(ack, "Keyed ACK Tag Verified: true (" .. construction .. ")"), true)
+    request_frame = request_frame or 1
+    if verifies then
+      check(name .. ": acks the request", ack.info,
+            "UMSH UACK (ack for #" .. request_frame .. ")")
+      check(name .. ": verified", has(ack, "Keyed ACK Tag Verified: true"), true)
     else
       check(name .. ": correlates only", ack.info,
-            "UMSH UACK (correlates with #1, TAG MISMATCH)")
+            "UMSH UACK (correlates with #" .. request_frame .. ", TAG MISMATCH)")
       check(name .. ": not verified", has(ack, "Keyed ACK Tag Verified: false"), true)
     end
     return ack
   end
 
-  local marked = ack_case("legacy + marker", "C8 D0F1 AA171306 99FC2D9F", "Legacy")
-  check("the marker is named", has(marked, "Legacy Ack Tag"), true)
-  ack_case("MIC, no static option",  "C8 AA171306 D2FB63BD",             "MIC")
-  ack_case("MIC + operator callsign", "C8 445BBB082C AA171306 A878BE6E", "MIC")
-  ack_case("legacy without the marker", "C8 AA171306 99FC2D9F",          "Legacy")
-  ack_case("re-ack with flood hops", "C9 21 445BBB082C AA171306 A878BE6E", "MIC")
-  ack_case("MIC tag under the marker", "C8 D0F1 AA171306 D2FB63BD", nil)
-  local wrong = ack_case("legacy tag beside a callsign",
-                         "C8 445BBB082C AA171306 99FC2D9F", nil)
-  check("a mismatch shows the MIC it expected",
-        has(wrong, "Expected ACK Tag (MIC): A878BE6E"), true)
-  check("a mismatch offers no legacy tag a callsign rules out",
-        has(wrong, "Expected ACK Tag (Legacy)"), false)
-  ack_case("tampered callsign", "C8 445BBB082D AA171306 A878BE6E", nil)
+  ack_case("Example 10, no static option",       "C8 FEA5FD44 16616CD1",             true)
+  ack_case("Example 11, operator callsign",      "C8 445BBB082C FEA5FD44 15B256E4", true)
+  ack_case("re-ack with flood hops", "C9 21 445BBB082C FEA5FD44 15B256E4",           true)
+  local wrong = ack_case("the bare tag beside a callsign",
+                         "C8 445BBB082C FEA5FD44 16616CD1", false)
+  check("a mismatch shows the tag it expected",
+        has(wrong, "Expected ACK Tag: 15B256E4"), true)
+  ack_case("tampered callsign", "C8 445BBB082D FEA5FD44 15B256E4", false)
+  -- Option 254 is unassigned now: it is an unknown option like any other,
+  -- and a dynamic one, so the tag over the bare AAD still verifies.
+  local old_marker = ack_case("an ack carrying option 254", "C8 D0F1 FEA5FD44 16616CD1", true)
+  check("option 254 is an unknown option", has(old_marker, "Option 254 (0 bytes)"), true)
+
+  -- A blind unicast with ack requested (Rust-sealed, FC 13, "Hello") and its
+  -- ack: the tag is keyed by the combined blind keys.
+  local buar = dissect_frame("F8 B08D E0 0000000D FF 22322B438078 7E945782E6"
+                             .. " 09D05525ADD93155D618A79A1EDB09C4")
+  local buar_frame = frame_number
+  check("the blind request decrypts",
+        has(buar, "Decrypted Payload (5 B): 48656C6C6F"), true)
+  ack_case("ack of a blind unicast", "C8 09D05525 26922558", true, buar_frame)
+  ack_case("blind ack with a wrong tag", "C8 09D05525 26922559", false, buar_frame)
+
+  -- ───────────────────────────────────────────────────────────────────────────
+  -- Multicast through the dissector: SRC opens S2 whether or not it is
+  -- encrypted, so a cleartext SRC is protected rather than associated.
+  -- ───────────────────────────────────────────────────────────────────────────
+  section("Multicast verification")
+
+  local MCAST = {
+    {"Example 5, encrypted",
+     "E0 B08D E0 00000005 FF D44BB60E346DE5F4 F3C48B8F96EAA1EFF61947E849771670"},
+    {"Example 6, authenticated",
+     "E0 B08D 60 00000003 FF ED54A5 0348656C6C6F 140E9E5253A73FA6583C0C94C15EEA9F"},
+    {"authenticated, full SRC and operator callsign",
+     "E4 B08D 60 0000000C 445BBB082C FF"
+     .. " ED54A59FB1AC3A51239351362941B868E85A60E3D7B2485D828821DC7A69C279"
+     .. " 0348656C6C6F 3B8AE10181552D7A11934D0953513121"},
+  }
+  for _, case in ipairs(MCAST) do
+    local r = dissect_frame(case[2])
+    check(case[1] .. " verifies", has(r, "EXPERT: MIC verified OK"), true)
+  end
+  -- The same frame with SRC changed no longer verifies: SRC is covered.
+  local forged = dissect_frame(
+    "E0 B08D 60 00000003 FF ED54A6 0348656C6C6F 140E9E5253A73FA6583C0C94C15EEA9F")
+  check("a forged multicast SRC fails the MIC",
+        has(forged, "EXPERT: MIC verification failed"), true)
+
+  -- ───────────────────────────────────────────────────────────────────────────
+  -- Signed frames: test-vectors.md Examples 12 to 14. The signature is shown
+  -- and labeled unverified; the MIC, which covers it, is checked.
+  -- ───────────────────────────────────────────────────────────────────────────
+  section("Signed frames")
+
+  local VERIFIED = "EXPERT: MIC verified OK"
+  local SIG_12 = "6460E736CF316BB32F438CA281DE0DE02C3BBEB7A6CB195A5C6055BD46A9F5E7"
+              .. "532C96AEF7CCE806C7F4FC462CD9B861CC60D44765F66E4E3A5DDB10913D6D05"
+  local EXAMPLE_12 = "E4 B08D 68 0000000C FF"
+                  .. " ED54A59FB1AC3A51239351362941B868E85A60E3D7B2485D828821DC7A69C279"
+                  .. " 0348656C70 " .. SIG_12 .. " 59967A9D75D9FCDCAA9FAD4C503B2E47"
+  local e12 = dissect_frame(EXAMPLE_12)
+  check("Example 12: D is shown", has(e12, "Signed (D): 1"), true)
+  check("Example 12: no reserved-bit violation", has(e12, "reserved bits"), false)
+  check("Example 12: MIC verifies over the signature", has(e12, VERIFIED), true)
+  check("Example 12: payload stops before the signature",
+        has(e12, "Payload: 0348656C70"), true)
+  check("Example 12: signature shown, not verified",
+        has(e12, "Signature (not verified): " .. SIG_12), true)
+  check("Example 12: the text reaches the app layer without the signature",
+        has(e12, "Message Body: Help"), true)
+  check("Example 12: info says signed", e12.info:find("(signed)", 1, true) ~= nil, true)
+
+  -- Flip one signature byte: the MIC covers it.
+  local tampered = dissect_frame((EXAMPLE_12:gsub(" 6460E7", " 6560E7")))
+  check("a changed signature fails the MIC",
+        has(tampered, "EXPERT: MIC verification failed"), true)
+
+  local e13 = dissect_frame("E0 B08D E8 0000000D FF"
+    .. " 692E617921A20842BF2E1CD86F88A14AE7EF44BCDF1134EC856F930639960C99"
+    .. " D670798708EAA80E61BADA28E2B2A85897D59CC28A1233DB1B211853855ECE11"
+    .. " 0079F36C991C2410 02BB9A22FEF41A6E919D347241AA42B9")
+  check("Example 13: MIC verifies", has(e13, VERIFIED), true)
+  check("Example 13: payload decrypts without the signature", has(e13, "Decrypted Payload (5 B): 48656C6C6F"), true)
+  check("Example 13: decrypted signature shown, not verified",
+        has(e13, "Signature (not verified): "), true)
+  check("Example 13: info says signed", e13.info:find("(signed)", 1, true) ~= nil, true)
+
+  local SIG_14 = "0379A8FA3AB86E4F59C76F0EE65C766BD2F103380E62D9AD4EE866E589B356C0"
+              .. "54ACF850AFD69ADDB7A38B7C18E877A6AA558468F7012FE091244E6B8952BE0C"
+  local SRC_A_FULL = "ED54A59FB1AC3A51239351362941B868E85A60E3D7B2485D828821DC7A69C279"
+  local e14 = dissect_frame("C4 " .. SRC_A_FULL .. " 0D37 0000000E " .. SIG_14 .. " FF 4869")
+  check("Example 14: option 0 is a frame signature",
+        has(e14, "Frame Signature (not verified): counter 14"), true)
+  check("Example 14: counter subfield", has(e14, "Frame Counter: 14"), true)
+  check("Example 14: signature subfield",
+        has(e14, "Signature (not verified): " .. SIG_14), true)
+  check("Example 14: payload follows the options", has(e14, "Payload: 4869"), true)
+  check("Example 14: info says signed", e14.info:find("(signed)", 1, true) ~= nil, true)
+  check("Example 14: no violation", has(e14, "Protocol Violation"), false)
+
+  -- Two Frame Signatures: the broadcast is unsigned, and a sender MUST NOT.
+  local OPT0 = "0D37 0000000E " .. SIG_14
+  local twice = dissect_frame("C4 " .. SRC_A_FULL .. " " .. OPT0 .. " 0D37 0000000F "
+                              .. SIG_14 .. " FF 4869")
+  check("two frame signatures: both ignored",
+        has(twice, "[ignored: the frame carries 2]"), true)
+  check("two frame signatures: unsigned", twice.info:find("signed", 1, true), nil)
+  check("two frame signatures: a violation",
+        has(twice, "Frame Signature option appears 2 times"), true)
+
+  -- A value of the wrong length is handled as unrecognized.
+  local short = dissect_frame("C4 " .. SRC_A_FULL .. " 0D36 0000000E "
+                              .. SIG_14:sub(1, 126) .. " FF 4869")
+  check("short frame signature: malformed and ignored",
+        has(short, "Frame Signature: malformed (67 bytes), ignored"), true)
+  check("short frame signature: unsigned", short.info:find("signed", 1, true), nil)
+
+  -- Option 0 is defined for broadcast only. Example 6 with a zero-length
+  -- option 0 ahead of its end marker: still a static option, so the MIC is
+  -- no longer Example 6's, but the finding does not depend on it.
+  local on_mcst = dissect_frame(
+    "E0 B08D 60 00000003 00 FF ED54A5 0348656C6C6F 140E9E5253A73FA6583C0C94C15EEA9F")
+  check("frame signature on a multicast is a violation",
+        has(on_mcst, "Frame Signature option on a packet type that carries SECINFO"), true)
+
+  -- Emergency chat from Node A, "Help", sealed by the dissector's own crypto
+  -- under the built-in emergency key: unsigned, then with D set and a
+  -- stand-in signature, which the dissector cannot tell from a real one.
+  local em_unsigned = dissect_frame("E4 26C7 60 00000001 FF " .. SRC_A_FULL
+                                    .. " 03FF48656C70 E66A13C3E6E07518FB1B030C667456F2")
+  check("unsigned emergency chat verifies", has(em_unsigned, VERIFIED), true)
+  check("unsigned emergency chat is flagged",
+        has(em_unsigned, "Emergency channel chat without a frame signature (D)"), true)
+  local em_signed = dissect_frame("E4 26C7 68 00000002 FF " .. SRC_A_FULL .. " 03FF48656C70 "
+                                  .. string.rep("22", 64) .. " B56946A829AEB0EAD1B5CE521602B593")
+  check("signed emergency chat verifies", has(em_signed, VERIFIED), true)
+  check("signed emergency chat is not flagged", has(em_signed, "Protocol Violation"), false)
+
+  -- ───────────────────────────────────────────────────────────────────────────
+  -- Options through the dissector
+  -- ───────────────────────────────────────────────────────────────────────────
+  section("Options through the dissector")
+
+  -- Beacons carry no MIC, so the options walk is all there is to see.
+  local function beacon(options_hex)
+    return dissect_frame("C0 ED54A5 " .. options_hex)
+  end
+  local sig = beacon("78 ED545A32 6C2878E2")
+  check("trace with signal: path, most recent first",
+        has(sig, "Trace: Gy* ← "), true)
+  check("trace with signal: two repeaters", has(sig, "(2 repeaters)"), true)
+  check("trace with signal: first hop's signal",
+        has(sig, "Repeater 1: Gy* (ED:54), heard -90 dBm, 5.0 dB SNR"), true)
+  check("trace with signal: negative SNR",
+        has(sig, "heard -120 dBm, -3.0 dB SNR"), true)
+  local bridged = beacon("74 ED540000")
+  check("trace: a zero signal is a bridged hop", has(bridged, ", bridged hop"), true)
+  local fe = beacon("75 FEED546C28")
+  check("trace FE: hints only", has(fe, "Trace (hints only): "), true)
+  check("trace FE: no signal shown", has(fe, "heard"), false)
+  local ff = beacon("73 FFED54")
+  check("trace FF: shown as truncated",
+        has(ff, "Trace (truncated): Gy* (1 most recent repeater)"), true)
+  local empty = beacon("70")
+  check("trace: empty is a dash", has(empty, "Trace: —"), true)
+  local bad = beacon("72 ED54")
+  check("trace: length 2 is malformed", has(bad, "Trace: malformed (2 bytes)"), true)
+  check("trace: malformed is reported", has(bad, "EXPERT: Malformed Trace value"), true)
+  local bad_odd = beacon("73 ED546C")
+  check("trace: odd length without a sentinel is malformed",
+        has(bad_odd, "Trace: malformed (3 bytes)"), true)
+
+  -- Station Callsign at 15 (delta 15 = 13 + extended byte 2), N0CALL.
+  local station = beacon("D4 02 5BBB082C")
+  check("station callsign is option 15", has(station, "Station Callsign: N0CALL"), true)
+
+  -- Unknown options, labeled with their classes.
+  check("option 12 is delivery-critical",
+        has(beacon("C0"), "Option 12 (0 bytes) [Delivery-Critical]"), true)
+  local both = beacon("D0 00")
+  check("option 13 is both",
+        has(both, "Option 13 (0 bytes) [Forwarding-Critical, Delivery-Critical]"), true)
+  check("option 13 raises both experts",
+        has(both, "EXPERT: Unknown forwarding-critical option")
+        and has(both, "EXPERT: Unknown delivery-critical option"), true)
+  check("option 1 is forwarding-critical",
+        has(beacon("10"), "Option 1 (0 bytes) [Forwarding-Critical]"), true)
+  local plain16 = beacon("D0 03")
+  check("option 16 is non-critical", has(plain16, "Option 16 (0 bytes)"), true)
+  check("option 16 raises nothing", has(plain16, "EXPERT: Unknown"), false)
+
+  -- An option number past 0xFFFF is malformed, not truncated.
+  local over = beacon("E0 FEF2 10")
+  check("option number past 0xFFFF is flagged malformed",
+        has(over, "EXPERT: Malformed options block: option number 65536 exceeds 0xFFFF"),
+        true)
+  check("option number past 0xFFFF is not called truncated",
+        has(over, "EXPERT: Packet truncated"), false)
 
   -- ───────────────────────────────────────────────────────────────────────────
   -- Seed-only decryption
   --
   -- With node A's and node B's seeds and no node entries, every pairwise
   -- frame from A to B verifies: the destination hint picks B's seed, and the
-  -- peer is the full SRC or, for a hint, A's seed's derived key. Examples 3, 4
-  -- and 8 are the spec's; the other blind unicasts are the same keys and
-  -- channel sealed by the Rust implementation, frame counter 9, "Hello".
+  -- peer is the full SRC or, for a hint, A's seed's derived key. The KDF
+  -- binds both: the seed's own key and the peer's. Examples 3, 4, 7 and 8
+  -- are the spec's; the rest are the same keys and channel sealed by the
+  -- Rust implementation, "Hello".
   -- ───────────────────────────────────────────────────────────────────────────
   section("Seed-only decryption")
 
@@ -1568,6 +2021,7 @@ else
   local SEED_B = "3132333435363738393A3B3C3D3E3F404142434445464748494A4B4C4D4E4F50:SeedB"
   local function load_seeds(...)
     umsh_proto.prefs.privkeys     = table.concat({...}, "\n")
+    umsh_proto.prefs.node_names   = ""
     umsh_proto.prefs.channel_keys = CHAN_KEY .. ":TestChannel"
     umsh_proto.prefs_changed()
     umsh_proto.init()
@@ -1577,25 +2031,32 @@ else
   local MIC_OK = "EXPERT: MIC verified OK"
   local SEED_ONLY = {
     {"unicast, hint SRC (Example 3)",
-     "D0 6C28FD ED54A5 E0 0000002A FF AE71DC3872 618E9638FE4D9AE834331DE8E0DD063E",
+     "D0 6C28FD ED54A5 E0 0000002A FF 8B6067EB6C F6D239C9051241ED8CA4C2D8891A3458",
      HELLO, true},
     {"unicast, full SRC (Example 4)", EXAMPLE_4,
      "Decrypted Payload (3 B): 686579", false},
+    {"unicast with trace, region code and flood hops (Example 7)",
+     "D1 40 6C28FD ED54A5 E0 0000000A 70 427853 FF B7C459 EC72BDEAE959DB86BAAD149C925FB40B",
+     "Decrypted Payload (3 B): 686579", true},
+    {"unicast with a static callsign and a trace",
+     "D0 6C28FD ED54A5 E0 0000000B 445BBB082C 30 FF 960443C3F6"
+     .. " CD9422D4161E2C76BE52D92D9CFE33B5",
+     HELLO, true},
     {"blind unicast, hint SRC (Example 8)",
-     "F0 B08D E0 00000007 FF D5EC8B3D6996 889403C307 C746F35E82283E3C14B05D97567B4E86",
+     "F0 B08D E0 00000007 FF 1D7D4CCE9C9E B7B1EE014B AF4C3E68BD618247539847CFF90C2870",
      HELLO, true},
     {"blind unicast, full SRC",
      "F4 B08D E0 00000009 FF"
-     .. " F91C2CE99538811936E2B562E0AC9315945F35A57BE75E0052B32C5FCEEEF3760F7BFD"
-     .. " 89FE7E7B48 01E6977D89C61AAA8D13508C083CE9C9",
+     .. " EDF36A6792B11414B64C66D42ED983A7E3C7B274D89BAA76EB5E1A111F87CD2E0BC0FE"
+     .. " BC0C17F914 3259E4103D78007323A04B9EE642CDCE",
      HELLO, false},
     {"unencrypted blind unicast, hint SRC",
-     "F0 B08D 60 00000009 FF 6C28FD ED54A5 48656C6C6F 4DDED9E5A4BE28561E45F967FB3511C7",
+     "F0 B08D 60 00000009 FF 6C28FD ED54A5 48656C6C6F CBD3F2E53FDDB132EE03A1ACE505ABDA",
      MIC_OK, true},
     {"unencrypted blind unicast, full SRC",
      "F4 B08D 60 00000009 FF 6C28FD"
      .. " ED54A59FB1AC3A51239351362941B868E85A60E3D7B2485D828821DC7A69C279"
-     .. " 48656C6C6F D2BDB982515AB4D4721F4840C4B5F69C",
+     .. " 48656C6C6F 245E3A3456AA1C6BCD7C34AF158BF558",
      MIC_OK, false},
   }
 

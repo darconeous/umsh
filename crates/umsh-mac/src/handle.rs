@@ -1,7 +1,7 @@
 use core::future::poll_fn;
 
 use rand::Rng;
-use umsh_core::{ChannelId, ChannelKey, PublicKey};
+use umsh_core::{ChannelKey, PublicKey};
 use umsh_hal::{Clock, CounterStore};
 use umsh_sync::AsyncRefCell;
 
@@ -361,6 +361,21 @@ impl<
             .await
     }
 
+    /// The most payload a send can carry; see [`Mac::payload_capacity`].
+    ///
+    /// [`Mac::payload_capacity`]: crate::Mac::payload_capacity
+    pub async fn payload_capacity(
+        &self,
+        from: LocalIdentityId,
+        destination: crate::SendDestination<'_>,
+        options: &SendOptions,
+    ) -> Result<usize, SendError> {
+        self.mac
+            .borrow()
+            .await
+            .payload_capacity(from, destination, options)
+    }
+
     /// Enqueues a broadcast frame for transmission.
     pub async fn send_broadcast(
         &self,
@@ -379,7 +394,7 @@ impl<
     pub async fn send_multicast(
         &self,
         from: LocalIdentityId,
-        channel: &ChannelId,
+        channel: &ChannelKey,
         payload: &[u8],
         options: &SendOptions,
     ) -> Result<SendReceipt, SendError> {
@@ -410,7 +425,7 @@ impl<
         &self,
         from: LocalIdentityId,
         dst: &PublicKey,
-        channel: &ChannelId,
+        channel: &ChannelKey,
         payload: &[u8],
         options: &SendOptions,
     ) -> Result<Option<SendReceipt>, SendError> {

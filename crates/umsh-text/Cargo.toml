@@ -18,3 +18,10 @@ umsh-core = { path = "../umsh-core", default-features = false }
 umsh-mac = { path = "../umsh-mac", default-features = false, optional = true }
 umsh-node = { path = "../umsh-node", default-features = false, optional = true }
 heapless = { workspace = true }
+
+[dev-dependencies]
+# The node adapter over a real MAC, with real signatures (tests/signing.rs).
+umsh-crypto = { path = "../umsh-crypto", features = ["software-crypto"] }
+umsh-hal = { path = "../umsh-hal" }
+umsh-mac = { path = "../umsh-mac", features = ["std", "software-crypto"] }
+umsh-sync = { path = "../umsh-sync" }

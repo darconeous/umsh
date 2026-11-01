@@ -12,7 +12,9 @@ use umsh::crypto::software::{SoftwareAes, SoftwareIdentity, SoftwareSha256};
 use umsh::crypto::{CryptoEngine, NodeIdentity};
 use umsh::mac::test_support::{SimulatedNetwork, SimulatedRadio};
 use umsh::mac::{Mac, MacHandle, OperatingPolicy, RepeaterConfig};
-use umsh::node::{Host, LocalNode, PfsStatus};
+use umsh::node::{
+    Host, IdentityUpdate, LocalNode, NodeCapabilities, NodeIdentityPayload, NodeRole, PfsStatus,
+};
 use umsh::tokio_support::{MemoryCounterStore, MemoryKeyValueStore, StdClock, TokioPlatform};
 use umsh_communicator::task::{self, Inbox};
 use umsh_communicator::{
@@ -20,6 +22,7 @@ use umsh_communicator::{
 };
 use umsh_core::PublicKey;
 use umsh_sync::AsyncRefCell;
+use umsh_text::node_adapter::RxSummary;
 use umsh_ulcp::ids::prop;
 use umsh_ulcp_simdev::SimulatedDevice;
 use umsh_ux_communicator::model::{
@@ -101,6 +104,14 @@ async fn board(radio: SimulatedRadio, secret: [u8; 32]) -> Board {
     let id = handle.add_identity(identity).await.unwrap();
     let mut host = Host::new(handle);
     let mesh = host.add_node(id);
+    // The device node's MAC holds the channels its device does, the
+    // well-known two among them.
+    let well_known = WellKnownChannels::derive();
+    for key in [well_known.public, well_known.emergency] {
+        mesh.join(&umsh::node::Channel::private(key, ""))
+            .await
+            .unwrap();
+    }
 
     let inbox: &'static Inbox<NoopRawMutex> = Box::leak(Box::new(Inbox::new()));
     std::mem::forget(task::listen(&mesh, inbox, key, WellKnownChannels::derive()));
@@ -130,6 +141,16 @@ async fn board(radio: SimulatedRadio, secret: [u8; 32]) -> Board {
         )
         .await;
     });
+    // Nothing is composed until the device node has measured what a frame
+    // carries.
+    until("what a frame carries was never measured", || {
+        let mut chats = Chats::new();
+        node.chats(&mut chats);
+        chats
+            .iter()
+            .any(|chat| node.max_body_len(chat.id).is_some())
+    })
+    .await;
     board
 }
 
@@ -709,6 +730,40 @@ async fn contacts_are_exchanged_after_both_confirm() {
         .await;
 }
 
+/// A confirmed exchange replaces what a board kept of the other node,
+/// whatever the session frame that carried it: the contact is the user's
+/// own act, not an advertisement whose age matters.
+#[tokio::test(flavor = "current_thread")]
+async fn an_exchanged_contact_replaces_what_was_kept() {
+    LocalSet::new()
+        .run_until(async {
+            let (alice, bob, _tap, bob_listed, _) = on_nearby().await;
+            alice.node.arrive(task::Arrival::Identity {
+                key: bob.key,
+                identity: NodeIdentityPayload::from_bytes(&[
+                    NodeRole::Chat.as_byte(),
+                    NodeCapabilities::TEXT_MESSAGES.bits(),
+                    5,
+                    b'B',
+                    b'o',
+                    b'b',
+                    b'b',
+                    b'y',
+                ])
+                .unwrap(),
+                payload: Vec::new(),
+                update: IdentityUpdate::Replace,
+                rx: RxSummary::default(),
+            });
+            comparing(&alice, &bob, bob_listed).await;
+            alice.node.confirm_code(true);
+            bob.node.confirm_code(true);
+            let at_alice = until_exchanged(&alice).await;
+            assert_eq!(at_alice.sender.name.as_str(), "Bob");
+        })
+        .await;
+}
+
 /// No frame carries a board's long-term key until its holder presses Same.
 #[tokio::test(flavor = "current_thread")]
 async fn nothing_long_term_is_sent_before_its_own_same() {
@@ -965,7 +1020,7 @@ async fn a_ping_through_a_repeater_names_it_and_reads_each_hop() {
             assert_eq!(reply.hops, Some(2));
             let named: Vec<[u8; 2]> = reply.repeaters.iter().map(|r| r.hint).collect();
             assert_eq!(named, [[ridge.0[0], ridge.0[1]]]);
-            assert_eq!(reply.unnamed, 0);
+            assert_eq!(reply.unnamed, Some(0));
             assert_eq!(reply.legs.len(), 2);
             assert!(
                 reply.legs.iter().all(|leg| matches!(leg, Leg::Heard(_))),

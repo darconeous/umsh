@@ -6,7 +6,7 @@ The following terms are used throughout this specification. Definitions are give
 : A node's 32-byte Ed25519 public key, used as its stable network identifier. UMSH addresses are not numeric values used for routing. Short *address hints* derived from the address are used on the wire to save space.
 
 **Address Hint**
-: A short prefix of a node's public key used as a cheap prefilter before full cryptographic processing. Source and destination hints are 3 bytes; router and trace-route hints are 2 bytes. See [Addressing](addressing.md).
+: A short prefix of a node's public key used as a cheap prefilter before full cryptographic processing. Source and destination hints are 3 bytes; router hints, as used in source routes and traces, are 2 bytes. See [Addressing](addressing.md).
 
 **AES (Advanced Encryption Standard)**
 : A symmetric block cipher standardized by NIST. UMSH uses AES-256: AES-CMAC-based S2V for message authentication and AES-CTR for payload encryption.
@@ -51,7 +51,7 @@ The following terms are used throughout this specification. Definitions are give
 : An elliptic curve digital signature algorithm using the Edwards25519 curve. UMSH uses Ed25519 keypairs as node identities. The same keypair is converted to X25519 form for key agreement.
 
 **EdDSA (Edwards-curve Digital Signature Algorithm)**
-: The family of signature algorithms that includes Ed25519. Used in UMSH for payload signatures, most notably for node identity broadcasts.
+: The family of signature algorithms that includes Ed25519. Used in UMSH for [frame signatures](security.md#frame-signatures), which attribute a frame to its sender's key, and for the optional signature that lets a [node identity](node-identity.md#signature-usage) stand on its own outside a frame.
 
 **Ephemeral Key**
 : A temporary Ed25519 keypair generated for a single PFS session. Unlike a long-term identity keypair, ephemeral keys are never written to persistent storage and are explicitly erased when the session ends, ensuring that compromise of long-term keys cannot retroactively decrypt traffic protected by them. See [Security & Cryptography](security.md#perfect-forward-secrecy-sessions).
@@ -138,8 +138,8 @@ A hop taken by a repeater matching a source-route hint is a source-routed hop an
 **Source Routing**
 : A routing strategy where the sender specifies the explicit sequence of repeaters a packet must traverse. Requires the sender to have prior knowledge of a valid path. See [Packet Options](packet-options.md#source-route-option-3).
 
-**Trace Route**
-: A packet option that instructs each forwarding repeater to prepend its router hint to the option value, building an ordered record of the path a packet has taken (most-recent repeater first). Used for route learning: a destination that receives a packet with a trace route has enough information to construct a source route for the reply. See [Packet Options](packet-options.md#trace-route-option-2).
+**Trace**
+: A packet option that instructs each forwarding repeater to prepend a record of itself—its router hint and the signal it received the packet with—to the option value, building an ordered record of the path a packet has taken (most-recent repeater first). Used for route learning: a destination that receives a packet with a complete trace has enough information to construct a source route for the reply. See [Packet Options](packet-options.md#trace-option-7).
 
 **Unicast**
 : A packet addressed to a single destination node, identified by a 3-byte destination hint. Unicast packets are always authenticated end-to-end; encryption is optional and controlled by the `E` flag. See [Frame Types](packet-types.md).

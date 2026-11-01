@@ -515,7 +515,7 @@ pub enum ComposeError {
     UnknownOriginal,
     /// The referenced message could not be resolved to a wire reference.
     UnknownRegarding,
-    /// The body exceeds the wire maximum (10 fragments × 160 bytes).
+    /// The body needs more than 10 fragments of the frames it goes in.
     TooLarge,
     Encode(crate::EncodeError),
 }
@@ -691,8 +691,40 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
         self.stash_checkpoint(conversation, checkpoint.next_id, checkpoint.epoch);
     }
 
-    /// Compose and queue an outbound message. Returns the stable handle of
-    /// the affected transcript record.
+    /// The longest body a message composed into `conversation` within
+    /// `budget` (see [`Engine::compose_within`]) may have, for a composer to
+    /// bound its input by. It holds whatever the message replies to or
+    /// edits, so a plain message may have a few bytes more.
+    pub fn max_body_len(&self, conversation: &ConversationKey, budget: usize) -> usize {
+        let (sender_handle, regarding) = match conversation {
+            ConversationKey::ChannelGroup { .. } => (
+                (!self.local_handle.is_empty()).then_some(self.local_handle.as_str()),
+                Regarding::Multicast {
+                    message_id: u8::MAX,
+                    source_prefix: umsh_core::NodeHint([u8::MAX; 3]),
+                },
+            ),
+            _ => (
+                None,
+                Regarding::Unicast {
+                    message_id: u8::MAX,
+                },
+            ),
+        };
+        let widest = TextMessage {
+            message_type: MessageType::Status,
+            sender_handle,
+            sequence: Some(MessageSequence::unfragmented(u8::MAX)),
+            sequence_reset: true,
+            regarding: Some(regarding),
+            editing: Some(u8::MAX),
+            ..TextMessage::basic("")
+        };
+        FrameRoom::of(&widest, budget).map_or(0, |room| room.max_body_len())
+    }
+
+    /// Compose and queue an outbound message, within the [`MAX_FRAME`]
+    /// default budget (see [`Engine::compose_within`]).
     pub fn compose(
         &mut self,
         conversation: ConversationKey,
@@ -700,6 +732,26 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
         intent: ComposeIntent<'_>,
         now_ms: u64,
     ) -> Result<MessageHandle, ComposeError> {
+        self.compose_within(conversation, client_token, intent, MAX_FRAME, now_ms)
+    }
+
+    /// Compose and queue an outbound message. Returns the stable handle of
+    /// the affected transcript record.
+    ///
+    /// `budget` is the most encoded text payload one frame to the
+    /// conversation carries, without its payload-type byte: what the
+    /// transport's capacity for the destination leaves. Fragments are sized
+    /// to it, and so is the archived replacement an edit leaves. It is held
+    /// to [`MAX_FRAME`].
+    pub fn compose_within(
+        &mut self,
+        conversation: ConversationKey,
+        client_token: u32,
+        intent: ComposeIntent<'_>,
+        budget: usize,
+        now_ms: u64,
+    ) -> Result<MessageHandle, ComposeError> {
+        let budget = budget.min(MAX_FRAME);
         let (body, status_type, regarding_target, edit_original) = match intent {
             ComposeIntent::Text { body, status } => (body, status, None, None),
             ComposeIntent::Reply {
@@ -800,7 +852,14 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
         };
 
         let handle = self.alloc_handle();
-        self.encode_and_queue(conversation, handle, &template, body.as_bytes(), message_id)?;
+        self.encode_and_queue(
+            conversation,
+            handle,
+            &template,
+            body.as_bytes(),
+            message_id,
+            budget,
+        )?;
 
         // Record the mapping only for original messages; edit IDs must not
         // become reference targets. They do get remembered as aliases, so a
@@ -823,7 +882,7 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                 message_id: original_id,
             });
             if !body.is_empty() {
-                self.archive_replacement(conversation, original_id, body.as_bytes());
+                self.archive_replacement(conversation, original_id, body.as_bytes(), budget);
             }
         }
 
@@ -978,8 +1037,32 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
         let _ = now_ms;
     }
 
-    /// Answer a previously emitted `LookupOutbound` effect.
+    /// The conversation an unanswered [`Output::LookupOutbound`] asked for
+    /// material of: where the answer goes, and so what it is sized to.
+    pub fn lookup_conversation(&self, request_id: u32) -> Option<ConversationKey> {
+        self.lookups
+            .iter()
+            .find(|lookup| lookup.request_id == request_id)
+            .map(|lookup| lookup.conversation)
+    }
+
+    /// Answer a previously emitted `LookupOutbound` effect, within the
+    /// [`MAX_FRAME`] default budget (see [`Engine::archive_result_within`]).
     pub fn archive_result(&mut self, request_id: u32, result: ArchiveResult<'_>, now_ms: u64) {
+        self.archive_result_within(request_id, result, MAX_FRAME, now_ms);
+    }
+
+    /// Answer a previously emitted `LookupOutbound` effect. `budget` is the
+    /// most encoded text payload one frame to the requested material's
+    /// destination carries now (see [`Engine::compose_within`]): stored
+    /// material that no longer fits it is answered as unavailable.
+    pub fn archive_result_within(
+        &mut self,
+        request_id: u32,
+        result: ArchiveResult<'_>,
+        budget: usize,
+        now_ms: u64,
+    ) {
         let Some(position) = self
             .lookups
             .iter()
@@ -992,7 +1075,7 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
         let destination = destination_for(&lookup.conversation);
 
         match result {
-            ArchiveResult::Found { payload } if payload.len() <= MAX_FRAME => {
+            ArchiveResult::Found { payload } if payload.len() <= budget.min(MAX_FRAME) => {
                 let mut frame = heapless::Vec::new();
                 let _ = frame.extend_from_slice(payload);
                 let track = self.outbound_track(
@@ -2403,22 +2486,23 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
         template: &TextMessage<'_>,
         body: &[u8],
         message_id: u8,
+        budget: usize,
     ) -> Result<(), ComposeError> {
         let destination = destination_for(&conversation);
-
-        // Trial-encode with an empty body to learn the option overhead.
-        let mut trial = *template;
-        trial.body = &[];
         let mut buffer = [0u8; MAX_FRAME];
-        let overhead = codec::encode(&trial, &mut buffer).map_err(ComposeError::Encode)?;
-        let single_budget = MAX_FRAME.saturating_sub(overhead + 1);
-
-        let Some(plan) =
-            FragmentPlan::plan(body.len(), single_budget).map_err(|_| ComposeError::TooLarge)?
+        let Some(plan) = FrameRoom::of(template, budget)
+            .map_err(ComposeError::Encode)?
+            .plan(body.len())
+            .map_err(|_| ComposeError::TooLarge)?
         else {
             let mut message = *template;
             message.body = body;
             let len = codec::encode(&message, &mut buffer).map_err(ComposeError::Encode)?;
+            // The plan sizes bodies only: a message with none, such as a
+            // delete, can still have options that outgrow the budget.
+            if len > budget {
+                return Err(ComposeError::TooLarge);
+            }
             let mut frame = heapless::Vec::new();
             let _ = frame.extend_from_slice(&buffer[..len]);
             self.queue_transmit(
@@ -2453,7 +2537,7 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
             });
             message.body = &body[range];
             let len = codec::encode(&message, &mut buffer).map_err(ComposeError::Encode)?;
-            if len > MAX_FRAME {
+            if len > budget {
                 return Err(ComposeError::TooLarge);
             }
             let mut frame = heapless::Vec::new();
@@ -2481,16 +2565,24 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
     /// encode failure leaves the ID's archive empty (the preceding
     /// [`Output::DeleteArchive`] already retired the original), which the
     /// resend service answers as Message Unavailable—never stale content.
-    fn archive_replacement(&mut self, conversation: ConversationKey, message_id: u8, body: &[u8]) {
+    ///
+    /// Its fragments are planned afresh against `budget`, the destination's
+    /// as it stands now, rather than following the original's boundaries.
+    fn archive_replacement(
+        &mut self,
+        conversation: ConversationKey,
+        message_id: u8,
+        body: &[u8],
+        budget: usize,
+    ) {
         let mut template = TextMessage::basic("");
         template.sequence = Some(MessageSequence::unfragmented(message_id));
 
         let mut buffer = [0u8; MAX_FRAME];
-        let Ok(overhead) = codec::encode(&template, &mut buffer) else {
+        let Ok(room) = FrameRoom::of(&template, budget) else {
             return;
         };
-        let single_budget = MAX_FRAME.saturating_sub(overhead + 1);
-        let Ok(plan) = FragmentPlan::plan(body.len(), single_budget) else {
+        let Ok(plan) = room.plan(body.len()) else {
             return;
         };
 
@@ -3064,6 +3156,66 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
         let text = core::str::from_utf8(&scratch[..result.len]).unwrap_or("");
         self.arena_store(text)
             .unwrap_or(BodyRef { offset: 0, len: 0 })
+    }
+}
+
+/// The body one frame of a message carries within a budget, after the
+/// options it is encoded with.
+struct FrameRoom {
+    /// Unfragmented.
+    single: usize,
+    /// As the first fragment, which carries the message's metadata.
+    first: usize,
+    /// As a continuation, which carries only its sequence.
+    continuation: usize,
+}
+
+impl FrameRoom {
+    /// The room `template`'s frames leave within `budget`, its body aside.
+    /// Fragment metadata is measured at its widest, so a plan made from it
+    /// holds for any fragment.
+    fn of(template: &TextMessage<'_>, budget: usize) -> Result<Self, crate::EncodeError> {
+        let budget = budget.min(MAX_FRAME);
+        let room = |message: &TextMessage<'_>| {
+            let mut options = *message;
+            options.body = &[];
+            let mut buffer = [0u8; MAX_FRAME];
+            // A body follows the options' end marker.
+            codec::encode(&options, &mut buffer).map(|len| budget.saturating_sub(len + 1))
+        };
+        let widest = Some(MessageSequence {
+            message_id: template.sequence.map_or(0, |sequence| sequence.message_id),
+            fragment: Some(Fragment {
+                index: FRAGMENT_COUNT_MAX - 1,
+                count: FRAGMENT_COUNT_MAX,
+            }),
+        });
+        let first = TextMessage {
+            sequence: widest,
+            ..*template
+        };
+        let continuation = TextMessage {
+            sequence: widest,
+            ..TextMessage::basic("")
+        };
+        Ok(Self {
+            single: room(template)?,
+            first: room(&first)?,
+            continuation: room(&continuation)?,
+        })
+    }
+
+    fn plan(&self, body_len: usize) -> Result<Option<FragmentPlan>, fragment::BodyTooLarge> {
+        FragmentPlan::plan(body_len, self.single, self.first, self.continuation)
+    }
+
+    /// The longest body that fits at [`FRAGMENT_COUNT_MAX`] fragments.
+    fn max_body_len(&self) -> usize {
+        let fragmented = self.first.min(FRAGMENT_BODY_MAX)
+            + (FRAGMENT_COUNT_MAX as usize - 1) * self.continuation.min(FRAGMENT_BODY_MAX);
+        fragmented
+            .max(self.single.min(FRAGMENT_BODY_MAX))
+            .min(REASSEMBLED_BODY_MAX)
     }
 }
 

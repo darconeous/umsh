@@ -117,7 +117,7 @@ impl PingArgs {
     fn send_options(&self) -> Result<SendOptions> {
         let mut options = SendOptions::default().with_mic_size(self.mic.0);
         if !self.untraced {
-            options = options.with_trace_route().with_trace_signal();
+            options = options.with_trace();
         }
         if let Some(route) = &self.route {
             options = options
@@ -395,7 +395,7 @@ fn describe_shape(args: &PingArgs, options: &SendOptions) -> String {
     if options.full_source {
         parts.push(String::from("full source"));
     }
-    if !options.trace_route {
+    if !options.trace {
         parts.push(String::from("untraced"));
     }
     parts.join(", ")
@@ -409,16 +409,18 @@ fn report(seq: u32, args: &PingArgs, reply: &Reply) {
             if let Some(hops) = metadata.hop_count {
                 line.push_str(&format!(", {hops} hop{}", if hops == 1 { "" } else { "s" }));
             }
-            if !metadata.route_hints.is_empty() {
-                line.push_str(&format!(
-                    " via {}",
-                    metadata
-                        .route_hints
-                        .iter()
-                        .map(|hint| hint.to_string())
-                        .collect::<Vec<_>>()
-                        .join(" → ")
-                ));
+            // A trace that lost hops in transit names only the nearest; an
+            // ellipsis stands for the rest.
+            let mut path: Vec<String> = metadata
+                .route_hints
+                .iter()
+                .map(|hint| hint.to_string())
+                .collect();
+            if metadata.trace_truncated {
+                path.push("…".into());
+            }
+            if !path.is_empty() {
+                line.push_str(&format!(" via {}", path.join(" → ")));
             }
             if let Some(rssi) = metadata.rssi_dbm {
                 line.push_str(&format!(", {rssi} dBm"));

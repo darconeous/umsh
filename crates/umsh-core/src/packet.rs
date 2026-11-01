@@ -1,9 +1,32 @@
 use core::ops::Range;
 
-use crate::{EncodeError, ParseError, options::OptionDecoder};
+use crate::{
+    EncodeError, ParseError, SignatureInputError,
+    options::{OptionDecoder, TraceRef},
+};
 
 /// Current UMSH packet version encoded in the FCF high bits.
 pub const UMSH_VERSION: u8 = 0b11;
+
+/// The largest frame any UMSH link carries.
+pub const MAX_FRAME_LEN: usize = 255;
+
+/// Length of an Ed25519 frame signature.
+pub const SIGNATURE_LEN: usize = 64;
+
+/// Prefix of every frame signature's input. It is never transmitted.
+pub const SIGNATURE_LABEL: &[u8] = b"UMSH-SIG";
+
+/// Length of a Frame Signature option's value: `COUNTER (4) ‖ SIG (64)`.
+pub const FRAME_SIGNATURE_OPTION_LEN: usize = 4 + SIGNATURE_LEN;
+
+/// The largest signature input any frame the parser accepts can produce.
+///
+/// The canonical TLV form turns an option record of `h + L` wire bytes
+/// (`h ≥ 1`) into `4 + L ≤ 4(h + L)` bytes, and every other field enters at
+/// most at its own length. The 2 is the AAD terminator and the 32 the channel
+/// commitment.
+pub const SIGNATURE_INPUT_MAX: usize = SIGNATURE_LABEL.len() + 2 + 32 + 4 * MAX_FRAME_LEN;
 
 /// Packet class encoded in the frame-control field.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -210,6 +233,9 @@ impl Fcf {
 pub struct Scf(pub u8);
 
 impl Scf {
+    /// The `D` bit: the frame carries a signature between payload and MIC.
+    pub const SIGNED: u8 = 0x08;
+
     /// Build an SCF from structured flags.
     pub const fn new(encrypted: bool, mic_size: MicSize, salt_present: bool) -> Self {
         Self(((encrypted as u8) << 7) | ((mic_size as u8) << 5) | ((salt_present as u8) << 4))
@@ -230,9 +256,23 @@ impl Scf {
         self.0 & 0x10 != 0
     }
 
-    /// Return whether the reserved low nibble is valid for the current spec.
+    /// Return whether a 64-byte Ed25519 signature precedes the MIC (`D`).
+    pub const fn signed(self) -> bool {
+        self.0 & Self::SIGNED != 0
+    }
+
+    /// The same SCF with `D` set or cleared.
+    pub const fn with_signed(self, signed: bool) -> Self {
+        if signed {
+            Self(self.0 | Self::SIGNED)
+        } else {
+            Self(self.0 & !Self::SIGNED)
+        }
+    }
+
+    /// Return whether the reserved low bits are valid for the current spec.
     pub const fn reserved_valid(self) -> bool {
-        self.0 & 0x0F == 0
+        self.0 & 0x07 == 0
     }
 }
 
@@ -436,6 +476,24 @@ impl ChannelTag {
     }
 }
 
+/// Thirty-two-byte channel commitment: the first 32 bytes of the same
+/// derivation [`ChannelTag`] and [`ChannelId`] begin.
+///
+/// A signature over a channel frame covers it, so the signature holds only on
+/// the channel whose key it was made under, never on another key that shares
+/// the two-byte identifier. Nothing on the wire carries it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ChannelCommitment(pub [u8; 32]);
+
+impl ChannelCommitment {
+    /// The channel tag this commitment begins with.
+    pub fn channel_tag(&self) -> ChannelTag {
+        let mut tag = [0u8; 16];
+        tag.copy_from_slice(&self.0[..16]);
+        ChannelTag(tag)
+    }
+}
+
 /// Node public key, which also acts as the full network address.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct PublicKey(pub [u8; 32]);
@@ -599,17 +657,16 @@ impl SecInfo {
 /// Known packet-option numbers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OptionNumber {
+    FrameSignature,
     RegionCode,
-    TraceRoute,
     SourceRoute,
     OperatorCallsign,
     MinRssi,
     RouteRetry,
-    StationCallsign,
+    Trace,
     AckMic,
     MinSnr,
-    TraceSignal,
-    LegacyAckTag,
+    StationCallsign,
     Unknown(u16),
 }
 
@@ -617,24 +674,32 @@ impl OptionNumber {
     /// Return the numeric option number used on the wire.
     pub fn as_u16(self) -> u16 {
         match self {
+            Self::FrameSignature => 0,
             Self::RegionCode => 11,
-            Self::TraceRoute => 2,
             Self::SourceRoute => 3,
             Self::OperatorCallsign => 4,
             Self::MinRssi => 5,
             Self::RouteRetry => 6,
-            Self::StationCallsign => 7,
+            Self::Trace => 7,
             Self::AckMic => 8,
             Self::MinSnr => 9,
-            Self::TraceSignal => 10,
-            Self::LegacyAckTag => 254,
+            Self::StationCallsign => 15,
             Self::Unknown(value) => value,
         }
     }
 
-    /// Return whether the option is critical when unknown.
-    pub fn is_critical(self) -> bool {
+    /// Return whether a repeater that does not recognize the option, or
+    /// cannot interpret its value, must not forward the frame (bit 0).
+    pub fn is_forwarding_critical(self) -> bool {
         self.as_u16() & 1 != 0
+    }
+
+    /// Return whether an endpoint that does not recognize the option, or
+    /// cannot interpret its value, must not accept, deliver, or acknowledge
+    /// the frame: bits 2 and 3 set on a static option. A dynamic option is
+    /// never delivery-critical.
+    pub fn is_delivery_critical(self) -> bool {
+        self.as_u16() & 0xE == 0xC
     }
 
     /// Return whether the option is considered dynamic for AAD purposes.
@@ -646,12 +711,7 @@ impl OptionNumber {
     pub fn is_singleton(self) -> bool {
         matches!(
             self,
-            Self::TraceRoute
-                | Self::SourceRoute
-                | Self::MinRssi
-                | Self::RouteRetry
-                | Self::MinSnr
-                | Self::TraceSignal
+            Self::Trace | Self::SourceRoute | Self::MinRssi | Self::RouteRetry | Self::MinSnr
         )
     }
 }
@@ -659,17 +719,16 @@ impl OptionNumber {
 impl From<u16> for OptionNumber {
     fn from(value: u16) -> Self {
         match value {
-            2 => Self::TraceRoute,
+            0 => Self::FrameSignature,
             3 => Self::SourceRoute,
             4 => Self::OperatorCallsign,
             5 => Self::MinRssi,
             6 => Self::RouteRetry,
-            7 => Self::StationCallsign,
+            7 => Self::Trace,
             8 => Self::AckMic,
             9 => Self::MinSnr,
-            10 => Self::TraceSignal,
+            15 => Self::StationCallsign,
             11 => Self::RegionCode,
-            254 => Self::LegacyAckTag,
             other => Self::Unknown(other),
         }
     }
@@ -684,6 +743,19 @@ pub enum SourceAddrRef {
     None,
 }
 
+/// Where a frame's signature sits, and the counter it signs.
+///
+/// A secured frame's signature precedes its MIC and signs SECINFO's counter;
+/// a broadcast's is the Frame Signature option's value, which carries its own
+/// counter.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FrameSignatureRef {
+    pub counter: u32,
+    /// The 64 signature bytes. With `E` set they are ciphertext until the
+    /// frame is opened.
+    pub range: Range<usize>,
+}
+
 /// Parsed packet header with borrowed ranges into the original frame.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PacketHeader {
@@ -694,6 +766,8 @@ pub struct PacketHeader {
     pub channel: Option<ChannelId>,
     pub source: SourceAddrRef,
     pub sec_info: Option<SecInfo>,
+    /// Located only, not verified.
+    pub signature: Option<FrameSignatureRef>,
     pub body_range: Range<usize>,
     pub mic_range: Range<usize>,
     pub total_len: usize,
@@ -748,6 +822,7 @@ impl PacketHeader {
                 let (consumed, has_marker) =
                     scan_options_bounded(&buf[options_start..options_end])?;
                 let options_range = options_start..options_start + consumed;
+                let signature = broadcast_signature(buf, options_range.clone())?;
                 let body_start = options_start + consumed;
                 let body_end = if has_marker { buf.len() } else { body_start };
                 Ok(Self {
@@ -758,6 +833,7 @@ impl PacketHeader {
                     channel,
                     source,
                     sec_info,
+                    signature,
                     body_range: body_start..body_end,
                     mic_range: buf.len()..buf.len(),
                     total_len: buf.len(),
@@ -786,6 +862,7 @@ impl PacketHeader {
                 }
                 let options_range = options_start..options_start + consumed;
                 let trailer_start = options_end;
+                let signature = None;
                 Ok(Self {
                     fcf,
                     options_range,
@@ -794,6 +871,7 @@ impl PacketHeader {
                     channel,
                     source,
                     sec_info,
+                    signature,
                     body_range: trailer_start..trailer_start + 8,
                     mic_range: trailer_start..trailer_start + 8,
                     total_len: trailer_start + 8,
@@ -816,19 +894,18 @@ impl PacketHeader {
                 let sec_len = parsed_sec.wire_len();
                 sec_info = Some(parsed_sec);
                 cursor += sec_len;
-                let mic_len = parsed_sec.scf.mic_size()?.byte_len();
-                let mic_start = buf
-                    .len()
-                    .checked_sub(mic_len)
-                    .ok_or(ParseError::Truncated)?;
-                if mic_start < cursor {
-                    return Err(ParseError::Truncated);
-                }
+                let (trailer_start, mic_start, signature) =
+                    trailer_bounds(buf.len(), cursor, &parsed_sec)?;
                 let options_start = cursor;
-                let (consumed, has_marker) = scan_options_bounded(&buf[options_start..mic_start])?;
+                let (consumed, has_marker) =
+                    scan_options_bounded(&buf[options_start..trailer_start])?;
                 let options_range = options_start..options_start + consumed;
                 let body_start = options_start + consumed;
-                let body_end = if has_marker { mic_start } else { body_start };
+                let body_end = if has_marker {
+                    trailer_start
+                } else {
+                    body_start
+                };
                 Ok(Self {
                     fcf,
                     options_range,
@@ -837,6 +914,7 @@ impl PacketHeader {
                     channel,
                     source,
                     sec_info,
+                    signature,
                     body_range: body_start..body_end,
                     mic_range: mic_start..buf.len(),
                     total_len: buf.len(),
@@ -850,16 +928,11 @@ impl PacketHeader {
                 let sec_len = parsed_sec.wire_len();
                 sec_info = Some(parsed_sec);
                 cursor += sec_len;
-                let mic_len = parsed_sec.scf.mic_size()?.byte_len();
-                let mic_start = buf
-                    .len()
-                    .checked_sub(mic_len)
-                    .ok_or(ParseError::Truncated)?;
-                if mic_start < cursor {
-                    return Err(ParseError::Truncated);
-                }
+                let (trailer_start, mic_start, signature) =
+                    trailer_bounds(buf.len(), cursor, &parsed_sec)?;
                 let options_start = cursor;
-                let (consumed, has_marker) = scan_options_bounded(&buf[options_start..mic_start])?;
+                let (consumed, has_marker) =
+                    scan_options_bounded(&buf[options_start..trailer_start])?;
                 // SRC follows the options, so the end-of-options marker is
                 // always present (the builder emits it even with no payload).
                 if !has_marker {
@@ -868,7 +941,7 @@ impl PacketHeader {
                 let options_range = options_start..options_start + consumed;
                 cursor = options_start + consumed;
                 let src_len = source_len(fcf.full_source());
-                ensure_within(cursor, src_len, mic_start)?;
+                ensure_within(cursor, src_len, trailer_start)?;
                 if parsed_sec.scf.encrypted() {
                     source = SourceAddrRef::Encrypted {
                         offset: cursor,
@@ -882,7 +955,8 @@ impl PacketHeader {
                         channel,
                         source,
                         sec_info,
-                        body_range: cursor..mic_start,
+                        signature,
+                        body_range: cursor..trailer_start,
                         mic_range: mic_start..buf.len(),
                         total_len: buf.len(),
                     })
@@ -905,7 +979,8 @@ impl PacketHeader {
                         channel,
                         source,
                         sec_info,
-                        body_range: cursor..mic_start,
+                        signature,
+                        body_range: cursor..trailer_start,
                         mic_range: mic_start..buf.len(),
                         total_len: buf.len(),
                     })
@@ -919,16 +994,11 @@ impl PacketHeader {
                 let sec_len = parsed_sec.wire_len();
                 sec_info = Some(parsed_sec);
                 cursor += sec_len;
-                let mic_len = parsed_sec.scf.mic_size()?.byte_len();
-                let mic_start = buf
-                    .len()
-                    .checked_sub(mic_len)
-                    .ok_or(ParseError::Truncated)?;
-                if mic_start < cursor {
-                    return Err(ParseError::Truncated);
-                }
+                let (trailer_start, mic_start, signature) =
+                    trailer_bounds(buf.len(), cursor, &parsed_sec)?;
                 let options_start = cursor;
-                let (consumed, has_marker) = scan_options_bounded(&buf[options_start..mic_start])?;
+                let (consumed, has_marker) =
+                    scan_options_bounded(&buf[options_start..trailer_start])?;
                 // The address block follows the options, so the end-of-options
                 // marker is always present.
                 if !has_marker {
@@ -937,7 +1007,7 @@ impl PacketHeader {
                 let options_range = options_start..options_start + consumed;
                 cursor = options_start + consumed;
                 let src_len = source_len(fcf.full_source());
-                ensure_within(cursor, 3 + src_len, mic_start)?;
+                ensure_within(cursor, 3 + src_len, trailer_start)?;
                 if parsed_sec.scf.encrypted() {
                     source = SourceAddrRef::Encrypted {
                         offset: cursor + 3,
@@ -964,7 +1034,8 @@ impl PacketHeader {
                     channel,
                     source,
                     sec_info,
-                    body_range: cursor..mic_start,
+                    signature,
+                    body_range: cursor..trailer_start,
                     mic_range: mic_start..buf.len(),
                     total_len: buf.len(),
                 })
@@ -987,6 +1058,88 @@ impl PacketHeader {
     pub fn is_beacon(&self) -> bool {
         self.packet_type() == PacketType::Broadcast && self.body_range.is_empty()
     }
+
+    /// The bytes the MIC's S2 component covers, which encryption also covers
+    /// when `E` is set.
+    ///
+    /// For multicast that is `SRC ‖ PAYLOAD` whether or not it is encrypted:
+    /// the source address sits in the same place on the wire either way and
+    /// never enters the AAD. For every other type it is the payload. With `D`
+    /// set, the signature follows.
+    pub fn protected_range(&self) -> Range<usize> {
+        let start = match (self.packet_type(), self.source) {
+            (PacketType::Multicast, SourceAddrRef::Hint(_) | SourceAddrRef::FullKeyAt { .. }) => {
+                self.body_range.start - source_len(self.fcf.full_source())
+            }
+            _ => self.body_range.start,
+        };
+        start
+            ..self
+                .trailing_signature()
+                .map_or(self.body_range.end, |sig| sig.range.end)
+    }
+
+    /// The frame's signature, located but not verified: the one before the
+    /// MIC when SECINFO sets `D`, or a broadcast's Frame Signature option.
+    pub fn signature(&self) -> Option<&FrameSignatureRef> {
+        self.signature.as_ref()
+    }
+
+    /// The signature between payload and MIC, which S2 and encryption cover.
+    /// A broadcast's sits in its options instead.
+    fn trailing_signature(&self) -> Option<&FrameSignatureRef> {
+        self.signature.as_ref().filter(|_| self.sec_info.is_some())
+    }
+
+    /// Where a blind unicast's `DST ‖ SRC` address block sits in the frame,
+    /// encrypted or not. `None` for every other packet type.
+    pub fn blind_addr_range(&self) -> Option<Range<usize>> {
+        match self.packet_type() {
+            PacketType::BlindUnicast | PacketType::BlindUnicastAckReq => {
+                let len = 3 + source_len(self.fcf.full_source());
+                let end = self.body_range.start;
+                Some(end.checked_sub(len)?..end)
+            }
+            _ => None,
+        }
+    }
+}
+
+/// A blind unicast's address block in plaintext: `DST (3) ‖ SRC (3 or 32)`.
+///
+/// The AAD of a blind unicast covers these bytes in plaintext whether or not
+/// they are encrypted on the wire, so [`feed_aad`] takes them as a value
+/// rather than reading the frame, where they may still be ciphertext.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BlindAddr {
+    bytes: [u8; 35],
+    len: u8,
+}
+
+impl BlindAddr {
+    /// Copy a plaintext address block. Returns `None` unless `bytes` is 6 or
+    /// 35 bytes long.
+    pub fn from_plaintext(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() != 6 && bytes.len() != 35 {
+            return None;
+        }
+        let mut out = [0u8; 35];
+        out[..bytes.len()].copy_from_slice(bytes);
+        Some(Self {
+            bytes: out,
+            len: bytes.len() as u8,
+        })
+    }
+
+    /// The plaintext `DST ‖ SRC` bytes.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes[..usize::from(self.len)]
+    }
+
+    /// The destination hint.
+    pub fn dst(&self) -> NodeHint {
+        NodeHint([self.bytes[0], self.bytes[1], self.bytes[2]])
+    }
 }
 
 /// Default Minimum RSSI threshold (dBm) when the option is present with a
@@ -1001,24 +1154,52 @@ pub const DEFAULT_MIN_SNR_DB: i8 = -3;
 pub struct ParsedOptions {
     pub region_code: Option<[u8; 2]>,
     pub source_route: Option<Range<usize>>,
-    pub trace_route: Option<Range<usize>>,
-    pub trace_signal: Option<Range<usize>>,
+    /// A well-formed Trace option's value; read it through
+    /// [`Self::trace`].
+    pub trace: Option<Range<usize>>,
     pub min_rssi: Option<i16>,
     pub min_snr: Option<i8>,
     pub route_retry: bool,
-    /// A MAC ack's tag uses the legacy construction (option 254). A flag:
-    /// meaningful only on a MAC ack, ignored elsewhere.
-    pub legacy_ack_tag: bool,
     /// Some option, known or not, enters the AAD.
     pub has_static: bool,
-    pub has_unknown_critical: bool,
-    /// A recognized critical option whose value is malformed, or a
-    /// critical singleton that appears more than once. Forwarding treats
-    /// it like an unrecognized critical option.
-    pub has_malformed_critical: bool,
+    /// An unrecognized forwarding-critical option.
+    pub has_unknown_forwarding_critical: bool,
+    /// A recognized forwarding-critical option whose value is malformed,
+    /// or a forwarding-critical singleton that appears more than once.
+    /// Forwarding treats it like an unrecognized one.
+    pub has_malformed_forwarding_critical: bool,
+    /// An unrecognized delivery-critical option.
+    pub has_unknown_delivery_critical: bool,
+    /// A recognized delivery-critical option whose value is malformed, or
+    /// a delivery-critical singleton that appears more than once.
+    pub has_malformed_delivery_critical: bool,
 }
 
 impl ParsedOptions {
+    /// Whether a repeater must refuse to forward the frame.
+    pub fn refuses_forwarding(&self) -> bool {
+        self.has_unknown_forwarding_critical || self.has_malformed_forwarding_critical
+    }
+
+    /// Whether an endpoint must refuse to accept, deliver, or acknowledge
+    /// the frame. MAC acks are exempt.
+    pub fn refuses_delivery(&self) -> bool {
+        self.has_unknown_delivery_critical || self.has_malformed_delivery_critical
+    }
+
+    /// The frame's trace, parsed from `frame`, the buffer these options
+    /// were extracted from.
+    pub fn trace<'a>(&self, frame: &'a [u8]) -> Option<TraceRef<'a>> {
+        TraceRef::parse(frame.get(self.trace.clone()?)?)
+    }
+
+    /// Record a recognized option whose value or repetition is malformed,
+    /// in each of the option's own classes.
+    fn mark_malformed(&mut self, option: OptionNumber) {
+        self.has_malformed_forwarding_critical |= option.is_forwarding_critical();
+        self.has_malformed_delivery_critical |= option.is_delivery_critical();
+    }
+
     pub fn extract(buf: &[u8], range: Range<usize>) -> Result<Self, ParseError> {
         let mut parsed = Self::default();
         if range.is_empty() {
@@ -1026,9 +1207,10 @@ impl ParsedOptions {
         }
         let options = &buf[range.clone()];
         let mut decoder = OptionDecoder::new(options);
-        // Singletons already seen, by option number. A repeated critical
-        // singleton is ambiguous and refuses forwarding; a repeated
-        // non-critical one is read from its first occurrence.
+        // Singletons already seen, by option number. Trace and Route Retry
+        // are read from their first occurrence (and a forwarder carries only
+        // that one); any other repeated singleton is ambiguous and is
+        // malformed in its classes.
         let mut seen = 0u16;
         // Driven by hand rather than `for`: the value's offset comes from
         // the decoder's own position, which a `for` loop would move.
@@ -1044,8 +1226,8 @@ impl ParsedOptions {
             if option.is_singleton() {
                 let bit = 1u16 << number;
                 if seen & bit != 0 {
-                    if option.is_critical() {
-                        parsed.has_malformed_critical = true;
+                    if !matches!(option, OptionNumber::Trace | OptionNumber::RouteRetry) {
+                        parsed.mark_malformed(option);
                     }
                     continue;
                 }
@@ -1055,17 +1237,15 @@ impl ParsedOptions {
                 OptionNumber::RegionCode if value.len() == 2 => {
                     parsed.region_code = Some([value[0], value[1]]);
                 }
-                OptionNumber::RegionCode => parsed.has_malformed_critical = true,
-                OptionNumber::TraceRoute => parsed.trace_route = Some(value_range),
-                OptionNumber::TraceSignal => parsed.trace_signal = Some(value_range),
+                OptionNumber::RegionCode => parsed.mark_malformed(option),
+                OptionNumber::Trace if TraceRef::parse(value).is_some() => {
+                    parsed.trace = Some(value_range)
+                }
+                OptionNumber::Trace => parsed.mark_malformed(option),
                 OptionNumber::SourceRoute => parsed.source_route = Some(value_range),
                 // A flag: its presence is the meaning. Senders send it
                 // empty; a value is reserved and does not hide the flag.
                 OptionNumber::RouteRetry => parsed.route_retry = true,
-                // Also a flag. Not a singleton: its number is past the
-                // range the singleton bitmap tracks, and a repeat changes
-                // nothing.
-                OptionNumber::LegacyAckTag => parsed.legacy_ack_tag = true,
                 // Minimum RSSI (option 5): unsigned 1-byte value read as a
                 // negative dBm threshold (e.g. 130 → -130 dBm). A zero-length
                 // value selects the default threshold. Longer values are
@@ -1084,10 +1264,11 @@ impl ParsedOptions {
                         None => DEFAULT_MIN_SNR_DB,
                     });
                 }
-                OptionNumber::MinRssi | OptionNumber::MinSnr => {
-                    parsed.has_malformed_critical = true
+                OptionNumber::MinRssi | OptionNumber::MinSnr => parsed.mark_malformed(option),
+                OptionNumber::Unknown(_) => {
+                    parsed.has_unknown_forwarding_critical |= option.is_forwarding_critical();
+                    parsed.has_unknown_delivery_critical |= option.is_delivery_critical();
                 }
-                OptionNumber::Unknown(raw) if raw & 1 != 0 => parsed.has_unknown_critical = true,
                 _ => {}
             }
         }
@@ -1106,34 +1287,27 @@ mod parsed_options_tests {
         let buf = [0x61u8, 0x2A];
         let parsed = ParsedOptions::extract(&buf, 0..buf.len()).unwrap();
         assert!(parsed.route_retry);
-        assert!(!parsed.has_malformed_critical);
+        assert!(!parsed.has_malformed_forwarding_critical);
     }
 
     #[test]
-    fn the_legacy_ack_tag_marker_is_a_dynamic_flag() {
-        // Trace Route (2), then option 254: delta 252 is nibble 13 plus one
-        // extended byte (252 - 13), length 0.
-        let buf = [0x20u8, 0xD0, 239];
-        let parsed = ParsedOptions::extract(&buf, 0..buf.len()).unwrap();
-        assert!(parsed.legacy_ack_tag);
-        assert!(!parsed.has_static, "neither option enters the AAD");
-        assert!(OptionNumber::LegacyAckTag.is_dynamic());
-        assert!(!OptionNumber::LegacyAckTag.is_critical());
-
+    fn only_static_options_count_as_static() {
+        // Trace (7) is dynamic.
+        let parsed = ParsedOptions::extract(&[0x70], 0..1).unwrap();
+        assert!(!parsed.has_static);
         // Operator Callsign (4) is static.
         let buf = [0x41u8, 0x99];
         let parsed = ParsedOptions::extract(&buf, 0..buf.len()).unwrap();
         assert!(parsed.has_static);
-        assert!(!parsed.legacy_ack_tag);
     }
 
     #[test]
     fn a_repeated_non_critical_singleton_is_read_from_its_first_occurrence() {
-        // Trace Route (2) twice: delta 2 then delta 0, two bytes each.
-        let buf = [0x22u8, 0xA1, 0xA2, 0x02, 0xB1, 0xB2];
+        // Trace (7) twice: delta 7 then delta 0, one record each.
+        let buf = [0x74u8, 0xA1, 0xA2, 0x00, 0x00, 0x04, 0xB1, 0xB2, 0x00, 0x00];
         let parsed = ParsedOptions::extract(&buf, 0..buf.len()).unwrap();
-        assert_eq!(parsed.trace_route, Some(1..3));
-        assert!(!parsed.has_malformed_critical);
+        assert_eq!(parsed.trace, Some(1..5));
+        assert!(!parsed.has_malformed_forwarding_critical);
     }
 
     #[test]
@@ -1142,11 +1316,11 @@ mod parsed_options_tests {
         let buf = [0x32u8, 0xA1, 0xA2, 0x02, 0xB1, 0xB2];
         let parsed = ParsedOptions::extract(&buf, 0..buf.len()).unwrap();
         assert_eq!(parsed.source_route, Some(1..3));
-        assert!(parsed.has_malformed_critical);
+        assert!(parsed.has_malformed_forwarding_critical);
         // Region Code (11) is not a singleton: two are a list.
         let buf = [0xB2u8, 0x78, 0x53, 0x02, 0x52, 0x42];
         let parsed = ParsedOptions::extract(&buf, 0..buf.len()).unwrap();
-        assert!(!parsed.has_malformed_critical);
+        assert!(!parsed.has_malformed_forwarding_critical);
     }
 
     #[test]
@@ -1187,8 +1361,8 @@ mod parsed_options_tests {
         let buf = [0x52u8, 0x00, 0x82];
         let parsed = ParsedOptions::extract(&buf, 0..buf.len()).unwrap();
         assert_eq!(parsed.min_rssi, None);
-        assert!(parsed.has_malformed_critical);
-        assert!(!parsed.has_unknown_critical);
+        assert!(parsed.has_malformed_forwarding_critical);
+        assert!(!parsed.has_unknown_forwarding_critical);
     }
 
     #[test]
@@ -1196,7 +1370,7 @@ mod parsed_options_tests {
         let buf = [0x92u8, 0x00, 0xFD];
         let parsed = ParsedOptions::extract(&buf, 0..buf.len()).unwrap();
         assert_eq!(parsed.min_snr, None);
-        assert!(parsed.has_malformed_critical);
+        assert!(parsed.has_malformed_forwarding_critical);
     }
 
     #[test]
@@ -1210,15 +1384,61 @@ mod parsed_options_tests {
             let used = encoder.finish();
             let parsed = ParsedOptions::extract(&buf, 0..used).unwrap();
             assert_eq!(parsed.region_code, None, "len {len}");
-            assert!(parsed.has_malformed_critical, "len {len}");
+            assert!(parsed.has_malformed_forwarding_critical, "len {len}");
         }
+    }
+
+    #[test]
+    fn criticality_classes_follow_the_low_four_bits() {
+        let classes = |n: u16| {
+            let option = OptionNumber::Unknown(n);
+            (
+                option.is_forwarding_critical(),
+                option.is_delivery_critical(),
+            )
+        };
+        assert_eq!(classes(1), (true, false));
+        assert_eq!(classes(12), (false, true));
+        assert_eq!(classes(13), (true, true));
+        assert_eq!(
+            classes(15),
+            (true, false),
+            "dynamic, so never delivery-critical"
+        );
+        for n in [6, 14, 16, 22] {
+            assert_eq!(classes(n), (false, false), "option {n}");
+        }
+        assert_eq!(classes(28), (false, true));
+    }
+
+    #[test]
+    fn unknown_options_set_each_of_their_classes() {
+        // Option 12, empty: delivery-critical only.
+        let parsed = ParsedOptions::extract(&[0xC0], 0..1).unwrap();
+        assert!(parsed.refuses_delivery() && !parsed.refuses_forwarding());
+        // Option 13, empty: both.
+        let parsed = ParsedOptions::extract(&[0xD0, 0x00], 0..2).unwrap();
+        assert!(parsed.refuses_delivery() && parsed.refuses_forwarding());
+        // Option 1, empty: forwarding-critical only.
+        let parsed = ParsedOptions::extract(&[0x10], 0..1).unwrap();
+        assert!(!parsed.refuses_delivery() && parsed.refuses_forwarding());
+    }
+
+    #[test]
+    fn a_malformed_trace_refuses_forwarding_but_not_delivery() {
+        // Trace (7) with a 2-byte value: neither records nor a sentinel form.
+        let buf = [0x72u8, 0xA1, 0xA2];
+        let parsed = ParsedOptions::extract(&buf, 0..buf.len()).unwrap();
+        assert_eq!(parsed.trace, None);
+        assert!(parsed.refuses_forwarding());
+        assert!(!parsed.refuses_delivery());
     }
 
     #[test]
     fn well_formed_options_are_not_malformed() {
         let buf = [0x51u8, 130, 0x41, 0xFD];
         let parsed = ParsedOptions::extract(&buf, 0..buf.len()).unwrap();
-        assert!(!parsed.has_malformed_critical);
+        assert!(!parsed.has_malformed_forwarding_critical);
     }
 }
 
@@ -1226,41 +1446,180 @@ pub fn iter_options<'a>(buf: &'a [u8], range: Range<usize>) -> OptionDecoder<'a>
     OptionDecoder::new(&buf[range])
 }
 
-pub fn feed_aad(header: &PacketHeader, packet_buf: &[u8], mut sink: impl FnMut(&[u8])) {
+/// Stream a packet's canonical associated data into `sink`.
+///
+/// The AAD is the packet's header fields in wire order, without `FHOPS` (and
+/// with `H` cleared), then the static options as `number (2) ‖ length (2) ‖
+/// value` records, then the two-byte terminator `0xFFFF`:
+///
+/// | Family | AAD |
+/// |---|---|
+/// | Broadcast | `FCF ‖ SRC ‖ options ‖ FFFF` |
+/// | MAC ack | `FCF ‖ options ‖ FFFF` |
+/// | Unicast | `FCF ‖ DST ‖ SRC ‖ SECINFO ‖ options ‖ FFFF` |
+/// | Multicast | `FCF ‖ CHANNEL ‖ SECINFO ‖ options ‖ FFFF` |
+/// | Blind unicast | `FCF ‖ CHANNEL ‖ SECINFO ‖ options ‖ FFFF ‖ DST ‖ SRC` |
+///
+/// The packet format is self-describing from left to right, and the
+/// terminator restores the delimiter the record re-encoding drops, so the AAD
+/// fixes its own end. No static record can begin with `0xFFFF`: that number is
+/// dynamic, and dynamic options never enter the AAD. Multicast's `SRC` is
+/// never here; it is the start of S2 (see [`PacketHeader::protected_range`]).
+///
+/// A blind unicast's address block enters in plaintext whether or not it is
+/// encrypted on the wire, so it is passed in as `blind_addr` and is required
+/// for that family. An option block that fails to decode is an error rather
+/// than a silently shortened AAD.
+pub fn feed_aad(
+    header: &PacketHeader,
+    packet_buf: &[u8],
+    blind_addr: Option<&BlindAddr>,
+    sink: impl FnMut(&[u8]),
+) -> Result<(), ParseError> {
+    feed_aad_inner(header, packet_buf, blind_addr, false, sink)
+}
+
+/// [`feed_aad`], optionally with a broadcast's Frame Signature value fed as
+/// its counter followed by zeros, which is how the signature input sees it.
+fn feed_aad_inner(
+    header: &PacketHeader,
+    packet_buf: &[u8],
+    blind_addr: Option<&BlindAddr>,
+    zero_signature: bool,
+    mut sink: impl FnMut(&[u8]),
+) -> Result<(), ParseError> {
     sink(&[header.fcf.aad_byte()]);
+    let feed_source = |sink: &mut dyn FnMut(&[u8])| -> Result<(), ParseError> {
+        match header.source {
+            SourceAddrRef::Hint(hint) => sink(&hint.0),
+            SourceAddrRef::FullKeyAt { offset } => sink(
+                packet_buf
+                    .get(offset..offset + 32)
+                    .ok_or(ParseError::Truncated)?,
+            ),
+            SourceAddrRef::Encrypted { .. } | SourceAddrRef::None => {
+                return Err(ParseError::Truncated);
+            }
+        }
+        Ok(())
+    };
+    let feed_sec_info = |sink: &mut dyn FnMut(&[u8])| -> Result<(), ParseError> {
+        let sec_info = header.sec_info.ok_or(ParseError::Truncated)?;
+        let mut buf = [0u8; 7];
+        let len = sec_info
+            .encode(&mut buf)
+            .map_err(|_| ParseError::Truncated)?;
+        sink(&buf[..len]);
+        Ok(())
+    };
+
+    let blind = matches!(
+        header.packet_type(),
+        PacketType::BlindUnicast | PacketType::BlindUnicastAckReq
+    );
+    match header.packet_type() {
+        PacketType::Broadcast => feed_source(&mut sink)?,
+        PacketType::MacAck => {}
+        PacketType::Unicast | PacketType::UnicastAckReq => {
+            sink(&header.dst.ok_or(ParseError::Truncated)?.0);
+            feed_source(&mut sink)?;
+            feed_sec_info(&mut sink)?;
+        }
+        PacketType::Multicast | PacketType::BlindUnicast | PacketType::BlindUnicastAckReq => {
+            sink(&header.channel.ok_or(ParseError::Truncated)?.0);
+            feed_sec_info(&mut sink)?;
+        }
+        PacketType::Reserved5 => return Err(ParseError::MalformedOption),
+    }
+
     for option in iter_options(packet_buf, header.options_range.clone()) {
-        let Ok((number, value)) = option else {
-            return;
-        };
-        let option_number = OptionNumber::from(number);
-        if option_number.is_dynamic() {
+        let (number, value) = option?;
+        if OptionNumber::from(number).is_dynamic() {
             continue;
         }
         let mut tl = [0u8; 4];
         tl[..2].copy_from_slice(&number.to_be_bytes());
         tl[2..].copy_from_slice(&(value.len() as u16).to_be_bytes());
         sink(&tl);
-        sink(value);
+        // A broadcast's located signature is its only option 0, and only a
+        // broadcast's signature lives in its options.
+        if zero_signature
+            && header.sec_info.is_none()
+            && OptionNumber::from(number) == OptionNumber::FrameSignature
+        {
+            sink(&value[..4]);
+            sink(&[0u8; SIGNATURE_LEN]);
+        } else {
+            sink(value);
+        }
     }
+    sink(&[0xFF, 0xFF]);
 
-    if let Some(dst) = header.dst {
-        sink(&dst.0);
+    if blind {
+        let addr = blind_addr.ok_or(ParseError::MissingAddressBlock)?;
+        if addr.as_bytes().len() != 3 + source_len(header.fcf.full_source()) {
+            return Err(ParseError::MissingAddressBlock);
+        }
+        sink(addr.as_bytes());
     }
-    if let Some(channel) = header.channel {
-        sink(&channel.0);
+    Ok(())
+}
+
+/// Write the bytes a frame's signature signs into `out`, returning their
+/// length:
+///
+/// `SIGNATURE_LABEL ‖ AAD ‖ [CHANNEL COMMITMENT] ‖ plaintext`
+///
+/// - The AAD is [`feed_aad`]'s, except that a broadcast's Frame Signature
+///   enters as its counter followed by 64 zeros.
+/// - The commitment follows for a frame that names a channel, and only then:
+///   `channel` must be present exactly when the header has a channel, since
+///   the frame's bytes alone cannot name its channel key.
+/// - The plaintext is what S2 covers, without the signature: `SRC ‖ PAYLOAD`
+///   for multicast and the payload for every other type. With `E` set the
+///   frame must already be open.
+///
+/// Signing and verifying both use this. The AAD fixes its own end and its
+/// FCF says whether a commitment follows, so no two frames share an input.
+/// [`SIGNATURE_INPUT_MAX`] bytes always suffice for a frame the parser
+/// accepts.
+pub fn signature_input(
+    header: &PacketHeader,
+    packet_buf: &[u8],
+    blind_addr: Option<&BlindAddr>,
+    channel: Option<&ChannelCommitment>,
+    out: &mut [u8],
+) -> Result<usize, SignatureInputError> {
+    if header.signature.is_none() {
+        return Err(SignatureInputError::Unsigned);
     }
-    match header.source {
-        SourceAddrRef::Hint(hint) => sink(&hint.0),
-        SourceAddrRef::FullKeyAt { offset } => sink(&packet_buf[offset..offset + 32]),
-        SourceAddrRef::Encrypted { .. } | SourceAddrRef::None => {}
+    if header.channel.is_some() != channel.is_some() {
+        return Err(SignatureInputError::ChannelMismatch);
     }
-    if let Some(sec_info) = header.sec_info {
-        let mut buf = [0u8; 7];
-        let Ok(len) = sec_info.encode(&mut buf) else {
-            return;
-        };
-        sink(&buf[..len]);
+    let mut len = 0;
+    let mut overflow = false;
+    let mut sink = |bytes: &[u8]| {
+        match out.get_mut(len..len + bytes.len()) {
+            Some(dst) if !overflow => dst.copy_from_slice(bytes),
+            _ => overflow = true,
+        }
+        len += bytes.len();
+    };
+    sink(SIGNATURE_LABEL);
+    feed_aad_inner(header, packet_buf, blind_addr, true, &mut sink)?;
+    if let Some(commitment) = channel {
+        sink(&commitment.0);
     }
+    let plaintext = header.protected_range().start..header.body_range.end;
+    sink(
+        packet_buf
+            .get(plaintext)
+            .ok_or(SignatureInputError::Parse(ParseError::Truncated))?,
+    );
+    if overflow {
+        return Err(SignatureInputError::BufferTooSmall);
+    }
+    Ok(len)
 }
 
 fn ensure_len(buf: &[u8], offset: usize, len: usize) -> Result<(), ParseError> {
@@ -1304,6 +1663,69 @@ fn ensure_within(offset: usize, len: usize, limit: usize) -> Result<(), ParseErr
     }
 }
 
+/// Where a secured frame's trailer begins and its MIC begins, and where its
+/// signature sits when `D` is set.
+///
+/// The trailer is `[SIG] ‖ MIC`, and its length is known from SECINFO alone,
+/// so nothing after the options is ever read out of it.
+fn trailer_bounds(
+    len: usize,
+    header_end: usize,
+    sec_info: &SecInfo,
+) -> Result<(usize, usize, Option<FrameSignatureRef>), ParseError> {
+    let mic_start = len
+        .checked_sub(sec_info.scf.mic_size()?.byte_len())
+        .ok_or(ParseError::Truncated)?;
+    let (trailer_start, signature) = if sec_info.scf.signed() {
+        let sig_start = mic_start
+            .checked_sub(SIGNATURE_LEN)
+            .ok_or(ParseError::Truncated)?;
+        let signature = FrameSignatureRef {
+            counter: sec_info.frame_counter,
+            range: sig_start..mic_start,
+        };
+        (sig_start, Some(signature))
+    } else {
+        (mic_start, None)
+    };
+    if trailer_start < header_end {
+        return Err(ParseError::Truncated);
+    }
+    Ok((trailer_start, mic_start, signature))
+}
+
+/// A broadcast's Frame Signature: its one well-formed option 0.
+///
+/// A frame carrying more than one option 0 is unsigned, and a value of the
+/// wrong length is an unrecognized option, which a non-critical option makes
+/// harmless to ignore.
+fn broadcast_signature(
+    buf: &[u8],
+    options: Range<usize>,
+) -> Result<Option<FrameSignatureRef>, ParseError> {
+    let mut found = None;
+    let mut count = 0;
+    let mut decoder = OptionDecoder::new(&buf[options.clone()]);
+    // Driven by hand: the value's offset comes from the decoder's position.
+    #[allow(clippy::while_let_on_iterator)]
+    while let Some(entry) = decoder.next() {
+        let (number, value) = entry?;
+        // Options are in ascending order, so option 0 can only lead.
+        if number != OptionNumber::FrameSignature.as_u16() {
+            break;
+        }
+        count += 1;
+        if value.len() == FRAME_SIGNATURE_OPTION_LEN {
+            let value_start = options.start + decoder.position() - value.len();
+            found = Some(FrameSignatureRef {
+                counter: u32::from_be_bytes([value[0], value[1], value[2], value[3]]),
+                range: value_start + 4..value_start + FRAME_SIGNATURE_OPTION_LEN,
+            });
+        }
+    }
+    Ok(if count == 1 { found } else { None })
+}
+
 pub(crate) fn source_len(full_source: bool) -> usize {
     if full_source { 32 } else { 3 }
 }
@@ -1314,17 +1736,20 @@ pub struct UnsealedPacket<'a> {
     total_len: usize,
     body_range: Range<usize>,
     blind_addr_range: Option<Range<usize>>,
+    signature_range: Option<Range<usize>>,
     mic_range: Range<usize>,
     sec_info_range: Range<usize>,
     aad_static_options: Range<usize>,
 }
 
 impl<'a> UnsealedPacket<'a> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         buf: &'a mut [u8],
         total_len: usize,
         body_range: Range<usize>,
         blind_addr_range: Option<Range<usize>>,
+        signature_range: Option<Range<usize>>,
         mic_range: Range<usize>,
         sec_info_range: Range<usize>,
         aad_static_options: Range<usize>,
@@ -1334,6 +1759,7 @@ impl<'a> UnsealedPacket<'a> {
             total_len,
             body_range,
             blind_addr_range,
+            signature_range,
             mic_range,
             sec_info_range,
             aad_static_options,
@@ -1359,6 +1785,12 @@ impl<'a> UnsealedPacket<'a> {
     pub fn blind_addr(&self) -> Option<&[u8]> {
         let range = self.blind_addr_range.clone()?;
         Some(&self.buf[range])
+    }
+
+    /// The zeroed signature slot of a frame built with `D` set.
+    pub fn signature_slot_mut(&mut self) -> Option<&mut [u8]> {
+        let range = self.signature_range.clone()?;
+        Some(&mut self.buf[range])
     }
 
     pub fn mic_slot(&mut self) -> &mut [u8] {
@@ -1601,5 +2033,331 @@ mod tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod signature_tests {
+    use super::*;
+    use crate::PacketBuilder;
+
+    extern crate std;
+    use std::vec::Vec;
+
+    const SRC_HINT: NodeHint = NodeHint([0xA1, 0xB2, 0x03]);
+    const SRC_FULL: PublicKey = PublicKey([0xA1; 32]);
+    const DST: NodeHint = NodeHint([0xC3, 0xD4, 0x25]);
+    const CHANNEL: ChannelId = ChannelId([0x7E, 0x5F]);
+    const COMMITMENT: ChannelCommitment = ChannelCommitment([0xC0; 32]);
+
+    fn signed_unicast(payload: &[u8], trace: bool) -> Vec<u8> {
+        let mut buf = [0u8; 256];
+        let builder = PacketBuilder::new(&mut buf)
+            .unicast(DST)
+            .source_hint(SRC_HINT)
+            .frame_counter(42)
+            .signed();
+        let builder = if trace { builder.trace() } else { builder };
+        let mut packet = builder.payload(payload).build().unwrap();
+        packet.signature_slot_mut().unwrap().fill(0xF0);
+        packet.as_bytes().to_vec()
+    }
+
+    fn signed_multicast(encrypted: bool) -> Vec<u8> {
+        let mut buf = [0u8; 256];
+        let builder = PacketBuilder::new(&mut buf)
+            .multicast(CHANNEL)
+            .source_hint(SRC_HINT)
+            .frame_counter(7)
+            .signed();
+        let builder = if encrypted {
+            builder.encrypted()
+        } else {
+            builder
+        };
+        let mut packet = builder.payload(b"help").build().unwrap();
+        packet.signature_slot_mut().unwrap().fill(0xAB);
+        packet.as_bytes().to_vec()
+    }
+
+    fn signed_broadcast(payload: &[u8]) -> Vec<u8> {
+        let mut buf = [0u8; 256];
+        let frame = PacketBuilder::new(&mut buf)
+            .broadcast()
+            .source_hint(SRC_HINT)
+            .signed(0x0102_0304)
+            .region_code([0x78, 0x53])
+            .payload(payload)
+            .build()
+            .unwrap()
+            .to_vec();
+        let mut frame = frame;
+        let range = PacketHeader::parse(&frame)
+            .unwrap()
+            .signature()
+            .unwrap()
+            .range
+            .clone();
+        frame[range].fill(0xAB);
+        frame
+    }
+
+    #[test]
+    fn a_signed_unicast_carries_its_signature_before_the_mic() {
+        let frame = signed_unicast(b"hi", false);
+        let header = PacketHeader::parse(&frame).unwrap();
+        let len = frame.len();
+        assert!(header.sec_info.unwrap().scf.signed());
+        let signature = header.signature().unwrap();
+        assert_eq!(signature.counter, 42);
+        assert_eq!(signature.range, len - 16 - 64..len - 16);
+        assert_eq!(&frame[header.body_range.clone()], b"hi");
+        assert_eq!(header.mic_range, len - 16..len);
+        assert_eq!(header.protected_range(), header.body_range.start..len - 16);
+    }
+
+    /// With no payload there is no end-of-options marker, and the scan stops
+    /// at the signature rather than reading it as options.
+    #[test]
+    fn the_signature_is_never_read_as_options() {
+        let frame = signed_unicast(&[], true);
+        let header = PacketHeader::parse(&frame).unwrap();
+        let sig_start = header.signature().unwrap().range.start;
+        assert_eq!(header.options_range.end, sig_start);
+        assert!(header.body_range.is_empty());
+        assert_eq!(
+            header.protected_range(),
+            sig_start..sig_start + SIGNATURE_LEN
+        );
+    }
+
+    /// Setting `D` on a frame too short to hold a signature truncates it.
+    #[test]
+    fn a_signed_frame_too_short_for_its_signature_is_truncated() {
+        let mut buf = [0u8; 256];
+        let mut frame = PacketBuilder::new(&mut buf)
+            .unicast(DST)
+            .source_hint(SRC_HINT)
+            .frame_counter(42)
+            .payload(&[0x55; 10])
+            .build()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        let scf = 1 + 3 + 3;
+        frame[scf] |= Scf::SIGNED;
+        assert_eq!(PacketHeader::parse(&frame), Err(ParseError::Truncated));
+    }
+
+    #[test]
+    fn reserved_scf_bits_are_the_low_three() {
+        assert!(Scf(Scf::SIGNED).reserved_valid());
+        for bit in 0..3 {
+            assert!(!Scf(1 << bit).reserved_valid());
+        }
+        assert_eq!(Scf(0).with_signed(true), Scf(Scf::SIGNED));
+        assert_eq!(Scf(0xFF).with_signed(false).0, 0xF7);
+    }
+
+    /// Multicast's S2 is `SRC ‖ PAYLOAD ‖ SIG` with either `E`.
+    #[test]
+    fn a_signed_multicast_protects_source_payload_and_signature() {
+        for encrypted in [false, true] {
+            let frame = signed_multicast(encrypted);
+            let header = PacketHeader::parse(&frame).unwrap();
+            let len = frame.len();
+            let signature = header.signature().unwrap();
+            assert_eq!(signature.range, len - 16 - 64..len - 16);
+            let protected = header.protected_range();
+            assert_eq!(&frame[protected.start..protected.start + 3], &SRC_HINT.0);
+            assert_eq!(protected.end, signature.range.end);
+            assert_eq!(
+                &frame[signature.range.start - 4..signature.range.start],
+                b"help"
+            );
+        }
+    }
+
+    #[test]
+    fn a_signed_blind_unicast_carries_its_signature_after_the_payload() {
+        let mut buf = [0u8; 256];
+        let packet = PacketBuilder::new(&mut buf)
+            .blind_unicast(CHANNEL, DST)
+            .source_full(&SRC_FULL)
+            .frame_counter(9)
+            .signed()
+            .payload(b"hello")
+            .build()
+            .unwrap();
+        let frame = packet.as_bytes().to_vec();
+        let header = PacketHeader::parse(&frame).unwrap();
+        let signature = header.signature().unwrap();
+        assert_eq!(signature.counter, 9);
+        assert_eq!(header.body_range.end, signature.range.start);
+        assert_eq!(&frame[header.body_range.clone()], b"hello");
+        assert_eq!(header.blind_addr_range().unwrap().len(), 35);
+        assert_eq!(
+            header.protected_range(),
+            header.body_range.start..signature.range.end
+        );
+    }
+
+    #[test]
+    fn a_broadcast_signature_is_its_frame_signature_option() {
+        let frame = signed_broadcast(b"advert");
+        let header = PacketHeader::parse(&frame).unwrap();
+        let signature = header.signature().unwrap();
+        assert_eq!(signature.counter, 0x0102_0304);
+        assert_eq!(&frame[signature.range.clone()], &[0xAB; 64]);
+        assert!(header.options_range.contains(&signature.range.start));
+        // The signature lives in the options, outside the payload.
+        assert_eq!(header.protected_range(), header.body_range);
+        assert_eq!(&frame[header.body_range.clone()], b"advert");
+    }
+
+    fn broadcast_with_options(options: &[(u16, &[u8])]) -> Vec<u8> {
+        let mut buf = [0u8; 256];
+        let mut builder = PacketBuilder::new(&mut buf)
+            .broadcast()
+            .source_hint(SRC_HINT);
+        for &(number, value) in options {
+            builder = builder.option(OptionNumber::from(number), value);
+        }
+        builder.payload(b"x").build().unwrap().to_vec()
+    }
+
+    #[test]
+    fn a_broadcast_with_more_than_one_frame_signature_is_unsigned() {
+        let value = [0u8; FRAME_SIGNATURE_OPTION_LEN];
+        let frame = broadcast_with_options(&[(0, &value), (0, &value)]);
+        assert_eq!(PacketHeader::parse(&frame).unwrap().signature(), None);
+        // One well-formed and one malformed: still more than one.
+        let frame = broadcast_with_options(&[(0, &value[..10]), (0, &value)]);
+        assert_eq!(PacketHeader::parse(&frame).unwrap().signature(), None);
+    }
+
+    #[test]
+    fn a_frame_signature_of_the_wrong_length_is_ignored() {
+        for len in [0, 4, 67, 69] {
+            let value = [0u8; 69];
+            let frame = broadcast_with_options(&[(0, &value[..len])]);
+            let header = PacketHeader::parse(&frame).unwrap();
+            assert_eq!(header.signature(), None, "{len}");
+            let options = ParsedOptions::extract(&frame, header.options_range.clone()).unwrap();
+            assert!(!options.refuses_forwarding());
+            assert!(!options.refuses_delivery());
+        }
+    }
+
+    /// Option 0 on a frame with SECINFO is not its signature.
+    #[test]
+    fn a_frame_signature_option_on_a_secured_frame_is_ignored() {
+        let mut buf = [0u8; 256];
+        let packet = PacketBuilder::new(&mut buf)
+            .unicast(DST)
+            .source_hint(SRC_HINT)
+            .frame_counter(42)
+            .option(
+                OptionNumber::FrameSignature,
+                &[0u8; FRAME_SIGNATURE_OPTION_LEN],
+            )
+            .payload(b"hi")
+            .build()
+            .unwrap();
+        let header = PacketHeader::parse(packet.as_bytes()).unwrap();
+        assert_eq!(header.signature(), None);
+    }
+
+    fn input(header: &PacketHeader, frame: &[u8], channel: Option<&ChannelCommitment>) -> Vec<u8> {
+        let mut out = [0u8; SIGNATURE_INPUT_MAX];
+        let len = signature_input(header, frame, None, channel, &mut out).unwrap();
+        out[..len].to_vec()
+    }
+
+    #[test]
+    fn a_broadcast_signature_input_zeroes_the_signature_and_keeps_the_counter() {
+        let frame = signed_broadcast(b"advert");
+        let header = PacketHeader::parse(&frame).unwrap();
+        let mut expected = Vec::new();
+        expected.extend_from_slice(b"UMSH-SIG");
+        expected.push(frame[0]);
+        expected.extend_from_slice(&SRC_HINT.0);
+        expected.extend_from_slice(&[0x00, 0x00, 0x00, 68]);
+        expected.extend_from_slice(&[0x01, 0x02, 0x03, 0x04]);
+        expected.extend_from_slice(&[0u8; 64]);
+        // Region Code is dynamic, so it stays out.
+        expected.extend_from_slice(&[0xFF, 0xFF]);
+        expected.extend_from_slice(b"advert");
+        assert_eq!(input(&header, &frame, None), expected);
+    }
+
+    /// Multicast's input is `label ‖ AAD ‖ commitment ‖ SRC ‖ PAYLOAD`, the
+    /// signature itself left out.
+    #[test]
+    fn a_multicast_signature_input_covers_the_commitment_and_source() {
+        let frame = signed_multicast(false);
+        let header = PacketHeader::parse(&frame).unwrap();
+        let mut expected = Vec::new();
+        expected.extend_from_slice(SIGNATURE_LABEL);
+        feed_aad(&header, &frame, None, |bytes| {
+            expected.extend_from_slice(bytes)
+        })
+        .unwrap();
+        expected.extend_from_slice(&COMMITMENT.0);
+        expected.extend_from_slice(&SRC_HINT.0);
+        expected.extend_from_slice(b"help");
+        assert_eq!(input(&header, &frame, Some(&COMMITMENT)), expected);
+    }
+
+    #[test]
+    fn the_signature_input_requires_a_commitment_exactly_for_channel_frames() {
+        let mut out = [0u8; SIGNATURE_INPUT_MAX];
+        let frame = signed_multicast(false);
+        let header = PacketHeader::parse(&frame).unwrap();
+        assert_eq!(
+            signature_input(&header, &frame, None, None, &mut out),
+            Err(SignatureInputError::ChannelMismatch)
+        );
+        let frame = signed_unicast(b"hi", false);
+        let header = PacketHeader::parse(&frame).unwrap();
+        assert_eq!(
+            signature_input(&header, &frame, None, Some(&COMMITMENT), &mut out),
+            Err(SignatureInputError::ChannelMismatch)
+        );
+        let frame = broadcast_with_options(&[]);
+        let header = PacketHeader::parse(&frame).unwrap();
+        assert_eq!(
+            signature_input(&header, &frame, None, None, &mut out),
+            Err(SignatureInputError::Unsigned)
+        );
+        let frame = signed_unicast(b"hi", false);
+        let header = PacketHeader::parse(&frame).unwrap();
+        assert_eq!(
+            signature_input(&header, &frame, None, None, &mut out[..20]),
+            Err(SignatureInputError::BufferTooSmall)
+        );
+    }
+
+    /// A full-length broadcast of one-byte empty static options expands
+    /// fourfold in the AAD and still fits [`SIGNATURE_INPUT_MAX`].
+    #[test]
+    fn the_largest_signature_input_fits_its_bound() {
+        let mut buf = [0u8; 512];
+        let mut builder = PacketBuilder::new(&mut buf)
+            .broadcast()
+            .source_hint(SRC_HINT)
+            .signed(1);
+        // FCF, SRC, option 0 (70 bytes), the first empty option 16 (2 bytes)
+        // and then repeats of it at one byte each.
+        let repeats = MAX_FRAME_LEN - 4 - 70 - 2;
+        for _ in 0..=repeats {
+            builder = builder.option(OptionNumber::Unknown(16), &[]);
+        }
+        let frame = builder.build().unwrap().to_vec();
+        assert_eq!(frame.len(), MAX_FRAME_LEN);
+        let header = PacketHeader::parse(&frame).unwrap();
+        let len = input(&header, &frame, None).len();
+        assert_eq!(len, 8 + 4 + 72 + 4 * (repeats + 1) + 2);
+        assert!(len <= SIGNATURE_INPUT_MAX);
     }
 }

@@ -337,6 +337,22 @@ fn a_draft_longer_than_a_fragment_is_sent_whole() {
 }
 
 #[test]
+fn a_draft_being_written_keeps_its_text_under_a_lowered_limit() {
+    let store = store();
+    let mut app = app!(store);
+    open_chat(&mut app, PAT);
+    run(&mut app, &typed("Washed out"));
+    store.limit_chat(PAT, 6);
+    input::events(&mut app, 0);
+    assert_eq!(draft(app.state(), PAT), "Washed out");
+    run(&mut app, &typed("!"));
+    assert_eq!(draft(app.state(), PAT), "Washed out", "it may not grow");
+    run(&mut app, &[Input::Backspace; 5]);
+    run(&mut app, &typed("!"));
+    assert_eq!(draft(app.state(), PAT), "Washe!");
+}
+
+#[test]
 fn a_sent_message_is_there_when_the_chat_opens_again() {
     let mut app = app!();
     run(&mut app, &[Input::Press, Input::Enter, Input::Enter]);

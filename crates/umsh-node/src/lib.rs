@@ -165,7 +165,7 @@ pub use app_payload::{
 };
 #[cfg(feature = "software-crypto")]
 pub use channel::Channel;
-pub use host::{Host, HostError, identity_is_trustworthy};
+pub use host::{Host, HostError, IdentityUpdate, identity_is_trustworthy};
 pub use identity::{IdentitySignature, NodeCapabilities, NodeIdentityPayload, NodeRole, forwards};
 pub use identity_responder::{
     IdentityRequestContext, NodeIdentityProfile, RespondDecision, default_respond_policy,
@@ -184,7 +184,8 @@ pub use peer_repeaters::{
     MAX_PEER_REPEATERS, MergedPeerRepeater, PeerRepeaterRecord, PeerRepeaterTable,
 };
 pub use receive::{
-    ChannelInfoRef, PacketFamily, ReceivedPacketRef, RepeaterHints, RxMetadata, Snr,
+    ChannelInfoRef, PacketFamily, ReceivedPacketRef, RepeaterHints, RxAcceptance, RxMetadata,
+    SignatureStatus, Snr,
 };
 pub use ticket::{MAX_TALLIED_REPEATERS, RepeatTally, SendProgressTicket, SendToken};
 pub use transport::Transport;
@@ -475,14 +476,14 @@ mod tests {
         let options = SendOptions::default()
             .with_mic_size(MicSize::Mic4)
             .with_ack_requested(true)
-            .with_trace_route()
+            .with_trace()
             .with_flood_hops(3)
             .with_region_code([0x78, 0x53]);
         block_on_ready(peer_connection.ping(6, &options, 1_000)).unwrap();
 
         let sent = mac.take_unicasts().pop().expect("ping send");
         assert_eq!(sent.options.mic_size, MicSize::Mic4);
-        assert!(sent.options.trace_route);
+        assert!(sent.options.trace);
         assert_eq!(sent.options.flood_hops, Some(3));
         assert_eq!(sent.options.region_code, Some([0x78, 0x53]));
         assert!(!sent.options.ack_requested, "the echo response is the ack");
@@ -602,7 +603,7 @@ mod tests {
         let old = nonce_of(&mac);
         block_on_ready(peer_connection.ping(4, &SendOptions::default(), 1_000)).unwrap();
         let new = nonce_of(&mac);
-        let packet = test_broadcast_packet_with_traces(peer, None, None, None, None);
+        let packet = test_broadcast_packet_with_traces(peer, None, None, None);
 
         node.match_pong(peer, &old, &packet, 250);
         assert!(
@@ -615,23 +616,19 @@ mod tests {
         assert_eq!(*timeouts.borrow(), 0, "neither ping is left to time out");
     }
 
-    /// A traced reply reports how each repeater heard the hop beyond it, but
-    /// only when the signal pairs with the trace entry for entry: a signal
-    /// that does not cannot say which hop a reading belongs to.
+    /// A traced reply reports how each repeater heard the hop beyond it,
+    /// unless its trace lost the signal in transit.
     #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
     #[test]
-    fn a_pong_reports_the_trace_signal_that_pairs_with_its_trace() {
-        use umsh_core::options::TraceSignalEntry;
+    fn a_pong_reports_the_trace_signal_the_trace_kept() {
+        use umsh_core::options::HopSignal;
 
-        for (signal, expected) in [
+        for (trace, expected) in [
             (
-                &[97u8, 65, 0, 0][..],
-                vec![
-                    TraceSignalEntry::new(-97, 65),
-                    TraceSignalEntry::POINT_TO_POINT,
-                ],
+                &[0xAAu8, 0x01, 97, 65, 0xBB, 0x02, 0, 0][..],
+                vec![HopSignal::new(-97, 65), HopSignal::POINT_TO_POINT],
             ),
-            (&[97u8, 65][..], Vec::new()),
+            (&[0xFEu8, 0xAA, 0x01, 0xBB, 0x02][..], Vec::new()),
         ] {
             let mac = FakeMac::new(vec![[7u8; 32]]);
             let node = test_node(mac.clone());
@@ -650,15 +647,14 @@ mod tests {
                 other => panic!("unexpected ping payload: {other:?}"),
             };
 
-            let trace: &'static [u8] = &[0xAA, 0x01, 0xBB, 0x02];
-            let signal: &'static [u8] = Box::leak(signal.to_vec().into_boxed_slice());
-            let packet =
-                test_broadcast_packet_with_traces(peer, None, None, Some(trace), Some(signal));
+            let trace: &'static [u8] = Box::leak(trace.to_vec().into_boxed_slice());
+            let packet = test_broadcast_packet_with_traces(peer, None, None, Some(trace));
             node.match_pong(peer, &nonce, &packet, 1_250);
 
             let pong = seen.borrow_mut().take().expect("pong");
             assert_eq!(pong.route_hints.len(), 2);
             assert_eq!(pong.trace_signal, expected);
+            assert!(!pong.trace_truncated);
         }
     }
 
@@ -954,6 +950,7 @@ mod tests {
             channel: None,
             source: umsh_core::SourceAddrRef::Hint(from.hint()),
             sec_info: None,
+            signature: None,
             body_range: 0..wire.len(),
             mic_range: wire.len()..wire.len(),
             total_len: wire.len(),
@@ -990,6 +987,7 @@ mod tests {
             channel: Some(channel_id),
             source: umsh_core::SourceAddrRef::Hint(from.hint()),
             sec_info: None,
+            signature: None,
             body_range: 0..wire.len(),
             mic_range: wire.len()..wire.len(),
             total_len: wire.len(),
@@ -1022,45 +1020,44 @@ mod tests {
         test_broadcast_packet_with_trace(from, flood_hops, route, None)
     }
 
-    /// As above, plus an accumulated trace route—what a steered
-    /// solicitation looks like once repeaters have prepended themselves to it.
+    /// As above, plus an accumulated trace of router hints (carried as a
+    /// hints-only trace)—what a steered solicitation looks like once
+    /// repeaters have prepended themselves to it.
     #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
     fn test_broadcast_packet_with_trace(
         from: PublicKey,
         flood_hops: Option<u8>,
         route: Option<&'static [u8]>,
-        trace: Option<&'static [u8]>,
+        hints: Option<&'static [u8]>,
     ) -> ReceivedPacketRef<'static> {
-        test_broadcast_packet_with_traces(from, flood_hops, route, trace, None)
+        let trace = hints.map(|hints| {
+            let mut value = vec![0xFE];
+            value.extend_from_slice(hints);
+            &*Box::leak(value.into_boxed_slice())
+        });
+        test_broadcast_packet_with_traces(from, flood_hops, route, trace)
     }
 
-    /// As above, plus the trace signal a requester pairs with the trace route
-    /// when it wants each hop's quality as well as its identity.
+    /// As above, with `trace` the whole Trace option value, in any form.
     #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
     fn test_broadcast_packet_with_traces(
         from: PublicKey,
         flood_hops: Option<u8>,
         route: Option<&'static [u8]>,
         trace: Option<&'static [u8]>,
-        signal: Option<&'static [u8]>,
     ) -> ReceivedPacketRef<'static> {
         let route_len = route.map_or(0, <[u8]>::len);
         let trace_len = trace.map_or(0, <[u8]>::len);
-        let signal_len = signal.map_or(0, <[u8]>::len);
-        let options_len = route_len + trace_len + signal_len;
+        let options_len = route_len + trace_len;
         let mut bytes = route.map_or_else(Vec::new, <[u8]>::to_vec);
         bytes.extend_from_slice(trace.unwrap_or(&[]));
-        bytes.extend_from_slice(signal.unwrap_or(&[]));
         let wire: &'static [u8] = Box::leak(bytes.into_boxed_slice());
         let mut options = umsh_core::ParsedOptions::default();
         if route.is_some() {
             options.source_route = Some(0..route_len);
         }
         if trace.is_some() {
-            options.trace_route = Some(route_len..route_len + trace_len);
-        }
-        if signal.is_some() {
-            options.trace_signal = Some(route_len + trace_len..options_len);
+            options.trace = Some(route_len..route_len + trace_len);
         }
         let header = umsh_core::PacketHeader {
             fcf: umsh_core::Fcf::new(umsh_core::PacketType::Broadcast, false, false),
@@ -1070,6 +1067,7 @@ mod tests {
             channel: None,
             source: umsh_core::SourceAddrRef::Hint(from.hint()),
             sec_info: None,
+            signature: None,
             body_range: options_len..wire.len(),
             mic_range: wire.len()..wire.len(),
             total_len: wire.len(),
@@ -1117,7 +1115,7 @@ mod tests {
         payload: Vec<u8>,
         options: SendOptions,
         /// The channel a blind unicast went out on; `None` for plain unicast.
-        channel: Option<ChannelId>,
+        channel: Option<ChannelKey>,
     }
 
     #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
@@ -1240,6 +1238,15 @@ mod tests {
             _options: &SendOptions,
         ) -> Result<SendReceipt, MacBackendError<Self::SendError, Self::CapacityError>> {
             Ok(SendReceipt(99))
+        }
+
+        async fn payload_capacity(
+            &self,
+            _from: LocalIdentityId,
+            _destination: umsh_mac::SendDestination<'_>,
+            _options: &SendOptions,
+        ) -> Result<usize, MacBackendError<Self::SendError, Self::CapacityError>> {
+            Ok(255)
         }
 
         async fn send_unicast(
@@ -1646,7 +1653,7 @@ mod tests {
             "two bytes name one node, so there is no crowd of replies to spread"
         );
         assert!(
-            unicasts[0].options.trace_route,
+            unicasts[0].options.trace,
             "the reply records its own path, or the requester ends the \
              exchange holding no route back to us"
         );
@@ -1693,7 +1700,7 @@ mod tests {
         assert!(options.full_source);
         assert_eq!(options.flood_hops, None);
         assert_eq!(options.source_route, None);
-        assert!(!options.trace_route);
+        assert!(!options.trace);
 
         let route = [umsh_core::RouterHint([1, 2])];
         block_on_ready(node.request_identities(&filter, &route)).unwrap();
@@ -1702,7 +1709,7 @@ mod tests {
             panic!("one request");
         };
         assert_eq!(options.source_route.as_deref(), Some(&route[..]));
-        assert!(options.trace_route);
+        assert!(options.trace);
         assert_eq!(options.flood_hops, None, "a route lends no flood budget");
     }
 
@@ -1901,8 +1908,6 @@ mod tests {
     /// the requester learns nothing, because a routed reply arrives with its
     /// Route option consumed and its `FHOPS_ACC` counting only the tail.
     ///
-    /// The trace signal rides on the same terms, so a requester asking what
-    /// each hop was worth is answered in kind.
     #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
     #[test]
     fn identity_response_mirrors_the_trace_options_its_request_carried() {
@@ -1920,8 +1925,7 @@ mod tests {
             requester,
             Some(0x00),
             Some(&[]),
-            Some(&[0x12, 0x34]),
-            Some(&[0x5A, 0x00]),
+            Some(&[0x12, 0x34, 0x5A, 0x00]),
         );
         let plan = node
             .evaluate_identity_request(&steered, requester, &options, 0)
@@ -1931,8 +1935,7 @@ mod tests {
         let unicasts = mac.take_unicasts();
         assert_eq!(unicasts.len(), 1);
         let reply = &unicasts[0];
-        assert!(reply.options.trace_route, "the trace route is mirrored");
-        assert!(reply.options.trace_signal, "the trace signal is mirrored");
+        assert!(reply.options.trace, "the trace is mirrored");
         // The mirror rides alongside the steering rather than replacing it:
         // the route is how the answer gets home, the trace is what the
         // requester keeps from it.
@@ -1967,8 +1970,7 @@ mod tests {
 
         let unicasts = mac.take_unicasts();
         assert_eq!(unicasts.len(), 1);
-        assert!(!unicasts[0].options.trace_route);
-        assert!(!unicasts[0].options.trace_signal);
+        assert!(!unicasts[0].options.trace);
     }
 
     /// The ordinary in-range case is unchanged: no trace in, no route out,
@@ -2095,8 +2097,7 @@ mod tests {
             filters: IdentityRequestFilters::new(&[]),
             rssi: None,
             snr: None,
-            trace_route: None,
-            trace_signal: None,
+            trace: None,
         };
 
         // Authenticated request → sender already holds our key → hint reply.

@@ -33,6 +33,8 @@ Channel-addressed packets are delivered via flood forwarding, bounded by the opt
 
 Multicast authentication is based on the shared channel key, not on individual sender identity. The MIC proves that the sender possesses the channel key, but any channel member can construct a valid packet with any claimed source address. This is a fundamental property of symmetric-key multicast—see [Multicast Sender Authentication](limitations.md#multicast-sender-authentication) for further discussion.
 
+A signed multicast (the SCF's `D` bit set) is the exception. Its [frame signature](security.md#frame-signatures) attributes the packet to the key that signed it, and is bound to the channel through the [channel commitment](security.md#channel-commitment), so it cannot be moved to another channel that shares its identifier. A multicast whose signature does not verify is no more attributable than an unsigned one.
+
 Blind unicast payloads are additionally authenticated using pairwise keys derived from the sender and recipient's key agreement, so only the true sender can produce a valid payload and only the intended recipient can verify it.
 
 ## Joining a Channel
@@ -107,8 +109,8 @@ The emergency channel (written `EMERGENCY` here for emphasis, but derived from `
 - Maximum flood hops: **10**.
 - Chat messages **must not** be encrypted—all emergency traffic must be readable by any node in range, including nodes that have not explicitly joined the channel.
 - Chat messages **must** include the full source key (`S=1`).
-- Chat messages **must** include an EdDSA signature in the payload.
-- Messages that do not meet all three requirements (unencrypted, full source key, signed) **must not** be accepted or displayed by the user interface.
+- Every multicast carrying [text-message](app-text-messages.md) traffic on this channel **must** be signed (the SCF's `D` bit, see [Frame Signatures](security.md#frame-signatures)). This includes resend responses to the channel and Message Unavailable responses. Resend requests and one-to-one repairs travel by blind unicast, which already authenticates the sender pairwise, and are not signed.
+- Messages that do not meet all three requirements (unencrypted, full source key, signed) **must not** be accepted or displayed by the user interface. A multicast whose signature does not verify does not meet them.
 
 These requirements ensure that emergency traffic is universally readable, attributable to a specific node, and cryptographically authenticated against impersonation.
 

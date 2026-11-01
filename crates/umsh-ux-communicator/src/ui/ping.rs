@@ -92,7 +92,7 @@ pub fn view(
                     m,
                     (&peer.avatar, peer.name.as_str()),
                     reply.map_or(&[][..], |r| r.repeaters.as_slice()),
-                    reply.map_or(0, |r| r.unnamed),
+                    reply.map_or(Some(0), |r| r.unnamed),
                     &hops,
                     &identifying,
                     phase,

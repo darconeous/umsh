@@ -8,13 +8,13 @@ UMSH intentionally does not define a fragmentation mechanism at the MAC layer. T
 
 ### Multicast Sender Authentication
 
-Multicast channels use a shared symmetric key. Any node possessing the channel key can send packets with any claimed source address, and other channel members cannot cryptographically verify that the claimed sender actually produced the packet. When the `S` flag is set, the source public key is carried in the packet and can be used for application-level trust decisions, but the protocol-level MIC authenticates only channel membership, not individual sender identity.
+Multicast channels use a shared symmetric key. Any node possessing the channel key can send packets with any claimed source address, and other channel members cannot cryptographically verify from the MIC that the claimed sender actually produced the packet. The MIC authenticates only channel membership, not individual sender identity. This is a fundamental property of symmetric-key multicast and is shared by other protocols with similar designs, including MeshCore.
 
-This is a fundamental property of symmetric-key multicast and is shared by other protocols with similar designs, including MeshCore.
+A sender can make a multicast attributable by signing it (the SCF's `D` bit): a verified [frame signature](security.md#frame-signatures) proves which key sent the packet. The signature costs 64 bytes, and a receiver can check it only against a key it holds or that the packet carries in full (`S` set), so most multicast traffic is unsigned and stays attributable only to the channel.
 
 ## Known Hint Collision Properties
 
-MeshCore originally used 1-byte hints for source, destination, and source-routing addresses, placing the birthday bound at just 16 nodes—far too low for practical networks. UMSH uses 3-byte hints for node addresses and 2-byte hints for router and trace-route addresses.
+MeshCore originally used 1-byte hints for source, destination, and source-routing addresses, placing the birthday bound at just 16 nodes—far too low for practical networks. UMSH uses 3-byte hints for node addresses and 2-byte hints for router addresses in source routes and traces.
 
 As a concrete example, consider a regional network of approximately 600 active nodes (roughly the scale of the Oregon MeshCore network, concentrated in the Portland area). The probability of at least one collision among all nodes for a given hint size:
 
@@ -32,14 +32,14 @@ With 3-byte hints the collision probability drops to ~1% even in a 600-node regi
 
 ### Router hints (2 bytes)
 
-Router hints are used in source-route and trace-route options. A router hint collision causes an unintended repeater to forward the packet; MIC-based duplicate suppression ensures each repeater forwards a given packet at most once, so collisions add traffic but not loops or incorrect delivery.
+Router hints are used in source-route and trace options. A router hint collision causes an unintended repeater to forward the packet; MIC-based duplicate suppression ensures each repeater forwards a given packet at most once, so collisions add traffic but not loops or incorrect delivery.
 
 Source routing is an inherently local operation—only repeaters within radio range of the transmitting node can act on the hint. For a local population of ~50 repeaters:
 
 - 1-byte hints: ~46% collision probability
 - 2-byte hints: ~1.9% collision probability
 
-2-byte router hints reduce the collision probability by roughly 24× relative to 1-byte hints for typical deployments, at a cost of 1 extra byte per hop in source-route and trace-route options.
+2-byte router hints reduce the collision probability by roughly 24× relative to 1-byte hints for typical deployments, at a cost of 1 extra byte per hop in source-route and trace options.
 
 ## Open Issues
 
@@ -53,17 +53,17 @@ This timeout-based detection is slow and provides no diagnostic information: the
 
 Two independent gaps make this hard to address:
 
-- **Routing**: an intermediate node needs a return path to send anything back. The sender's 3-byte SRC hint provides a destination address, but that alone is not enough—the error packet needs to know how to get there. Flood routing is not an option: flooding an error response across the mesh in response to a delivery failure would be prohibitively expensive. A return path is only available if the original packet carried a trace route option, whose accumulated hops already describe the return path from the receiver back toward the original sender.
+- **Routing**: an intermediate node needs a return path to send anything back. The sender's 3-byte SRC hint provides a destination address, but that alone is not enough—the error packet needs to know how to get there. Flood routing is not an option: flooding an error response across the mesh in response to a delivery failure would be prohibitively expensive. A return path is only available if the original packet carried a complete [trace](packet-options.md#trace-option-7), whose accumulated hops already describe the return path from the receiver back toward the original sender.
 
 - **Authentication**: an intermediate node cannot send an authenticated reply without the sender's full public key. Any error reply sent without it is unencrypted and unauthenticated. Only the final destination—which has the full source key and performs ECDH—can send a fully authenticated reply.
 
-Without a trace route, there is no viable return path and no error feedback is possible.
+Without a complete trace, there is no viable return path and no error feedback is possible.
 
-#### Possible Approach: Trace-Route Return Path
+#### Possible Approach: Trace Return Path
 
-If the original packet carries a trace route option, an intermediate node can use the accumulated hops directly as a source route back toward the original sender and emit an error packet along that path, addressed to the sender's 3-byte SRC hint.
+If the original packet carries a complete trace, an intermediate node can use the accumulated hops directly as a source route back toward the original sender and emit an error packet along that path, addressed to the sender's 3-byte SRC hint.
 
-This is opt-in by the sender: include a trace route to signal willingness to receive error feedback; omit it to suppress errors. No special flag or option is needed. If no trace route is present, the intermediate node has no viable return path and should remain silent.
+This is opt-in by the sender: include a trace to signal willingness to receive error feedback; omit it to suppress errors. No special flag or option is needed. If no complete trace is present, the intermediate node has no viable return path and should remain silent.
 
 The on-wire format for such an error packet would likely be similar or identical to the Hop Signal mechanism described above—a compact notification carrying a signal type and a MIC reference—differing only in that it carries a source route and travels end-to-end rather than remaining local. Defining a single format that covers both cases would reduce protocol surface area.
 

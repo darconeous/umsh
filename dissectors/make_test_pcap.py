@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Generate a pcap file containing all 8 UMSH test-vector packets as UDP payloads.
+Generate a pcap file containing the UMSH test-vector packets as UDP payloads:
+Examples 1-8 and 10-14 (Example 9 is a set of derivations, not a frame).
 
 Each packet is sent from 127.0.0.1:1234 to 127.0.0.1:15056 so that Wireshark
 (through the UMSH dissector's default UDP port, or its heuristic)
@@ -36,9 +37,9 @@ VECTORS = [
     (
         "Example 3: Encrypted Unicast (S=0)",
         bytes.fromhex(
-            "D0 6C 28 FD ED 54 A5 E0 00 00 00 2A FF AE 71 DC"
-            " 38 72 61 8E 96 38 FE 4D 9A E8 34 33 1D E8 E0 DD"
-            " 06 3E"
+            "D0 6C 28 FD ED 54 A5 E0 00 00 00 2A FF 8B 60 67"
+            " EB 6C F6 D2 39 C9 05 12 41 ED 8C A4 C2 D8 89 1A"
+            " 34 58"
             .replace(" ", "")
         ),
     ),
@@ -47,17 +48,17 @@ VECTORS = [
         bytes.fromhex(
             "DC 6C 28 FD ED 54 A5 9F B1 AC 3A 51 23 93 51 36"
             " 29 41 B8 68 E8 5A 60 E3 D7 B2 48 5D 82 88 21 DC"
-            " 7A 69 C2 79 E0 00 00 00 01 FF F8 82 EE AA 17 13"
-            " 06 26 1C E7 FF F2 FF 01 7F 90 10 A7 D9"
+            " 7A 69 C2 79 E0 00 00 00 01 FF 4C A9 EB FE A5 FD"
+            " 44 7A 2F E0 FF D5 57 B5 4E E6 E8 91 81"
             .replace(" ", "")
         ),
     ),
     (
         "Example 5: Encrypted Multicast (E=1)",
         bytes.fromhex(
-            "E0 B0 8D E0 00 00 00 05 FF 7C 16 CC CF 27 32 48"
-            " 78 AC BF 20 01 42 05 B1 04 17 5E A6 8F 66 47 78"
-            " 83"
+            "E0 B0 8D E0 00 00 00 05 FF D4 4B B6 0E 34 6D E5"
+            " F4 F3 C4 8B 8F 96 EA A1 EF F6 19 47 E8 49 77 16"
+            " 70"
             .replace(" ", "")
         ),
     ),
@@ -65,26 +66,76 @@ VECTORS = [
         "Example 6: Authenticated Multicast (E=0)",
         bytes.fromhex(
             "E0 B0 8D 60 00 00 00 03 FF ED 54 A5 03 48 65 6C"
-            " 6C 6F 9A 4B FC DE 39 42 FE B2 25 B8 D3 D4 BC E7"
-            " 9F DB"
+            " 6C 6F 14 0E 9E 52 53 A7 3F A6 58 3C 0C 94 C1 5E"
+            " EA 9F"
             .replace(" ", "")
         ),
     ),
     (
         "Example 7: Encrypted Unicast with Options and Flood Hops",
         bytes.fromhex(
-            "D1 40 6C 28 FD ED 54 A5 E0 00 00 00 0A 20 92 78"
-            " 53 FF 81 2D 2F BA 19 2E EA B5 7D 71 E3 52 BD 7D"
-            " DF 33 1B 07 27"
+            "D1 40 6C 28 FD ED 54 A5 E0 00 00 00 0A 70 42 78"
+            " 53 FF B7 C4 59 EC 72 BD EA E9 59 DB 86 BA AD 14"
+            " 9C 92 5F B4 0B"
             .replace(" ", "")
         ),
     ),
     (
         "Example 8: Blind Unicast (S=0)",
         bytes.fromhex(
-            "F0 B0 8D E0 00 00 00 07 FF D5 EC 8B 3D 69 96 88"
-            " 94 03 C3 07 C7 46 F3 5E 82 28 3E 3C 14 B0 5D 97"
-            " 56 7B 4E 86"
+            "F0 B0 8D E0 00 00 00 07 FF 1D 7D 4C CE 9C 9E B7"
+            " B1 EE 01 4B AF 4C 3E 68 BD 61 82 47 53 98 47 CF"
+            " F9 0C 28 70"
+            .replace(" ", "")
+        ),
+    ),
+    (
+        "Example 10: MAC Ack",
+        bytes.fromhex("C8 FE A5 FD 44 16 61 6C D1".replace(" ", "")),
+    ),
+    (
+        "Example 11: MAC Ack with Operator Callsign",
+        bytes.fromhex(
+            "C8 44 5B BB 08 2C FE A5 FD 44 15 B2 56 E4".replace(" ", "")
+        ),
+    ),
+    (
+        "Example 12: Signed Authenticated Multicast (E=0, D=1)",
+        bytes.fromhex(
+            "E4 B0 8D 68 00 00 00 0C FF ED 54 A5 9F B1 AC 3A"
+            " 51 23 93 51 36 29 41 B8 68 E8 5A 60 E3 D7 B2 48"
+            " 5D 82 88 21 DC 7A 69 C2 79 03 48 65 6C 70 64 60"
+            " E7 36 CF 31 6B B3 2F 43 8C A2 81 DE 0D E0 2C 3B"
+            " BE B7 A6 CB 19 5A 5C 60 55 BD 46 A9 F5 E7 53 2C"
+            " 96 AE F7 CC E8 06 C7 F4 FC 46 2C D9 B8 61 CC 60"
+            " D4 47 65 F6 6E 4E 3A 5D DB 10 91 3D 6D 05 59 96"
+            " 7A 9D 75 D9 FC DC AA 9F AD 4C 50 3B 2E 47"
+            .replace(" ", "")
+        ),
+    ),
+    (
+        "Example 13: Signed Encrypted Multicast (E=1, D=1)",
+        bytes.fromhex(
+            "E0 B0 8D E8 00 00 00 0D FF 69 2E 61 79 21 A2 08"
+            " 42 BF 2E 1C D8 6F 88 A1 4A E7 EF 44 BC DF 11 34"
+            " EC 85 6F 93 06 39 96 0C 99 D6 70 79 87 08 EA A8"
+            " 0E 61 BA DA 28 E2 B2 A8 58 97 D5 9C C2 8A 12 33"
+            " DB 1B 21 18 53 85 5E CE 11 00 79 F3 6C 99 1C 24"
+            " 10 02 BB 9A 22 FE F4 1A 6E 91 9D 34 72 41 AA 42"
+            " B9"
+            .replace(" ", "")
+        ),
+    ),
+    (
+        "Example 14: Signed Broadcast",
+        bytes.fromhex(
+            "C4 ED 54 A5 9F B1 AC 3A 51 23 93 51 36 29 41 B8"
+            " 68 E8 5A 60 E3 D7 B2 48 5D 82 88 21 DC 7A 69 C2"
+            " 79 0D 37 00 00 00 0E 03 79 A8 FA 3A B8 6E 4F 59"
+            " C7 6F 0E E6 5C 76 6B D2 F1 03 38 0E 62 D9 AD 4E"
+            " E8 66 E5 89 B3 56 C0 54 AC F8 50 AF D6 9A DD B7"
+            " A3 8B 7C 18 E8 77 A6 AA 55 84 68 F7 01 2F E0 91"
+            " 24 4E 6B 89 52 BE 0C FF 48 69"
             .replace(" ", "")
         ),
     ),

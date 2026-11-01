@@ -5,54 +5,8 @@ use alloc::vec::Vec;
 use umsh_core::{ChannelKey, NodeHint, PayloadType, PublicKey, RouterHint};
 use umsh_node::{PacketFamily, ReceivedPacketRef};
 
+use crate::WellKnownChannels;
 use crate::chat::{ChannelRegistry, TextSource};
-
-/// The protocol's two well-known channels, which carry rules of their own
-/// (`multicast-channels.md` §Default Channels).
-///
-/// Held by key, so a received frame is recognized by the key that
-/// authenticated it, with no derivation per frame.
-#[derive(Clone, Copy)]
-pub struct WellKnownChannels {
-    pub public: ChannelKey,
-    pub emergency: ChannelKey,
-}
-
-impl WellKnownChannels {
-    /// The canonical name of the `public` channel.
-    pub const PUBLIC_NAME: &str = "public";
-    /// The canonical name of the `EMERGENCY` channel, after case folding.
-    pub const EMERGENCY_NAME: &str = crate::emergency::CHANNEL_NAME;
-
-    /// Derive both keys from their canonical names, rather than writing them
-    /// down as literals that could drift from the derivation every other
-    /// named channel goes through.
-    #[cfg(feature = "software-crypto")]
-    pub fn derive() -> Self {
-        let key = |name| {
-            *umsh_node::Channel::named(name)
-                .expect("well-known channel names are short ASCII")
-                .key()
-        };
-        Self {
-            public: key(Self::PUBLIC_NAME),
-            emergency: key(Self::EMERGENCY_NAME),
-        }
-    }
-
-    pub fn is_public(&self, key: &ChannelKey) -> bool {
-        key.0 == self.public.0
-    }
-
-    pub fn is_emergency(&self, key: &ChannelKey) -> bool {
-        key.0 == self.emergency.0
-    }
-
-    /// Whether `key` is one of the two.
-    pub fn contains(&self, key: &ChannelKey) -> bool {
-        self.is_public(key) || self.is_emergency(key)
-    }
-}
 
 /// Radio observations for a received frame.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -61,11 +15,12 @@ pub struct RxSummary {
     pub snr_centibels: Option<i16>,
     pub lqi: Option<u8>,
     /// Radio links the frame crossed to get here, counting the final one
-    /// into this device. Absent for a frame source-routed without a trace
-    /// route, whose hops nobody recorded.
+    /// into this device. Absent for a frame source-routed without a
+    /// complete trace, whose hops nobody recorded.
     pub hop_count: Option<u8>,
-    /// Intermediate-router hints in trace-route order: nearest us first,
-    /// which is usable directly as a source route back.
+    /// Intermediate-router hints in trace order: nearest us first, which is
+    /// usable directly as a source route back. Empty when the trace was
+    /// truncated in transit.
     pub route_hints: Vec<RouterHint>,
     pub source_authenticated: bool,
     /// It came under a session with forward secrecy.
@@ -82,7 +37,12 @@ impl RxSummary {
             snr_centibels: packet.snr().map(|snr| snr.as_centibels()),
             lqi: packet.lqi().map(|lqi| lqi.get()),
             hop_count: packet.hop_count(),
-            route_hints: packet.trace_route_hints().collect(),
+            route_hints: packet
+                .trace()
+                .and_then(|trace| trace.complete_hints())
+                .into_iter()
+                .flatten()
+                .collect(),
             source_authenticated: packet.source_authenticated(),
             forward_secret: packet.forward_secret(),
             buffered_age_s: packet.rx().buffered_age_s(),
@@ -175,6 +135,8 @@ pub enum Refusal {
     EncryptedEmergency,
     /// `EMERGENCY` chat must name its sender by full key.
     AnonymousEmergency,
+    /// `EMERGENCY` chat must be signed by the key it names.
+    UnsignedEmergency,
     /// `public` chat is shown only with its sender's full key.
     AnonymousPublic,
 }
@@ -191,8 +153,9 @@ pub enum Refusal {
 /// is deliberately incurious about what it carries. A frame that fails one is
 /// refused rather than shown unmarked—a message the reader would act on in an
 /// emergency must not arrive with its origin or its reach in question.
-/// `EMERGENCY` chat must also be signed, but the text-message format has no
-/// signature yet, so that requirement is neither sent nor checked.
+/// [`WellKnownChannels::frame_signature_required`] decides which frames must
+/// also have been signed by their sender, so the detached device's receipt
+/// cue holds them to the same rule.
 pub fn inbound_text(
     packet: &ReceivedPacketRef<'_>,
     local_key: &PublicKey,
@@ -220,6 +183,14 @@ pub fn inbound_text(
             }
             if !packet.has_full_source() || packet.from_key().is_none() {
                 return Some(Inbound::Refused(Refusal::AnonymousEmergency));
+            }
+            if well_known.frame_signature_required(
+                packet.packet_type(),
+                Some(key),
+                packet.payload_bytes(),
+            ) && !packet.sender_authenticated()
+            {
+                return Some(Inbound::Refused(Refusal::UnsignedEmergency));
             }
         } else if well_known.is_public(key)
             && family == PacketFamily::Multicast

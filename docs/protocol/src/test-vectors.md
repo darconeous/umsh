@@ -30,9 +30,9 @@ The generated examples use fixed Ed25519 private keys so the appendix covers the
 
 ```text
   7   6   5   4   3   2   1   0
-+---+-------+---+---------------+
-| E |  MIC  | S |   RESERVED    |
-+---+-------+---+---------------+
++---+-------+---+---+-----------+
+| E |  MIC  | S | D | RESERVED  |
++---+-------+---+---+-----------+
 ```
 
 ## Example 1: Broadcast Beacon (S=0)
@@ -78,13 +78,13 @@ An encrypted unicast from Node A to Node B using source hints and frame counter 
 | SRC | Node A hint | `ED 54 A5` |
 | SCF | E=1, MIC=3 (16-byte), S=0 | `E0` |
 | Frame Counter | 42 | `00 00 00 2A` |
-| Payload | Encrypted `48 65 6C 6C 6F` (`"Hello"`) | `AE 71 DC 38 72` |
-| MIC | 16 bytes | `61 8E 96 38 FE 4D 9A E8 34 33 1D E8 E0 DD 06 3E` |
+| Payload | Encrypted `48 65 6C 6C 6F` (`"Hello"`) | `8B 60 67 EB 6C` |
+| MIC | 16 bytes | `F6 D2 39 C9 05 12 41 ED 8C A4 C2 D8 89 1A 34 58` |
 
 ```text
-D0 6C 28 FD ED 54 A5 E0 00 00 00 2A FF AE 71 DC
-38 72 61 8E 96 38 FE 4D 9A E8 34 33 1D E8 E0 DD
-06 3E
+D0 6C 28 FD ED 54 A5 E0 00 00 00 2A FF 8B 60 67
+EB 6C F6 D2 39 C9 05 12 41 ED 8C A4 C2 D8 89 1A
+34 58
 ```
 
 Total: 34 bytes.
@@ -100,14 +100,14 @@ A first-contact encrypted unicast from Node A to Node B requesting a MAC acknowl
 | SRC | Node A full key | `ED 54 A5 9F B1 AC 3A 51 23 93 51 36 29 41 B8 68 E8 5A 60 E3 D7 B2 48 5D 82 88 21 DC 7A 69 C2 79` |
 | SCF | E=1, MIC=3 (16-byte), S=0 | `E0` |
 | Frame Counter | 1 | `00 00 00 01` |
-| Payload | Encrypted `68 65 79` (`"hey"`) | `F8 82 EE` |
-| MIC | 16 bytes | `AA 17 13 06 26 1C E7 FF F2 FF 01 7F 90 10 A7 D9` |
+| Payload | Encrypted `68 65 79` (`"hey"`) | `4C A9 EB` |
+| MIC | 16 bytes | `FE A5 FD 44 7A 2F E0 FF D5 57 B5 4E E6 E8 91 81` |
 
 ```text
 DC 6C 28 FD ED 54 A5 9F B1 AC 3A 51 23 93 51 36
 29 41 B8 68 E8 5A 60 E3 D7 B2 48 5D 82 88 21 DC
-7A 69 C2 79 E0 00 00 00 01 FF F8 82 EE AA 17 13
-06 26 1C E7 FF F2 FF 01 7F 90 10 A7 D9
+7A 69 C2 79 E0 00 00 00 01 FF 4C A9 EB FE A5 FD
+44 7A 2F E0 FF D5 57 B5 4E E6 E8 91 81
 ```
 
 Total: 61 bytes.
@@ -122,13 +122,13 @@ An encrypted multicast from Node A on channel `B08D`. The encrypted body contain
 | CHANNEL | Derived channel identifier | `B0 8D` |
 | SCF | E=1, MIC=3 (16-byte), S=0 | `E0` |
 | Frame Counter | 5 | `00 00 00 05` |
-| Encrypted data | ENCRYPT(`SRC || "Hello"`) | `7C 16 CC CF 27 32 48 78` |
-| MIC | 16 bytes | `AC BF 20 01 42 05 B1 04 17 5E A6 8F 66 47 78 83` |
+| Encrypted data | ENCRYPT(`SRC || "Hello"`) | `D4 4B B6 0E 34 6D E5 F4` |
+| MIC | 16 bytes | `F3 C4 8B 8F 96 EA A1 EF F6 19 47 E8 49 77 16 70` |
 
 ```text
-E0 B0 8D E0 00 00 00 05 FF 7C 16 CC CF 27 32 48
-78 AC BF 20 01 42 05 B1 04 17 5E A6 8F 66 47 78
-83
+E0 B0 8D E0 00 00 00 05 FF D4 4B B6 0E 34 6D E5
+F4 F3 C4 8B 8F 96 EA A1 EF F6 19 47 E8 49 77 16
+70
 ```
 
 Total: 33 bytes.
@@ -145,26 +145,26 @@ An authenticated but unencrypted multicast from Node A carrying payload type `03
 | Frame Counter | 3 | `00 00 00 03` |
 | SRC | Node A hint | `ED 54 A5` |
 | Payload | `03 || "Hello"` | `03 48 65 6C 6C 6F` |
-| MIC | 16 bytes | `9A 4B FC DE 39 42 FE B2 25 B8 D3 D4 BC E7 9F DB` |
+| MIC | 16 bytes | `14 0E 9E 52 53 A7 3F A6 58 3C 0C 94 C1 5E EA 9F` |
 
 ```text
 E0 B0 8D 60 00 00 00 03 FF ED 54 A5 03 48 65 6C
-6C 6F 9A 4B FC DE 39 42 FE B2 25 B8 D3 D4 BC E7
-9F DB
+6C 6F 14 0E 9E 52 53 A7 3F A6 58 3C 0C 94 C1 5E
+EA 9F
 ```
 
 Total: 34 bytes.
 
 ## Example 7: Encrypted Unicast with Options and Flood Hops
 
-An encrypted unicast with a region code option, an empty trace-route option, and flood hop limit 4.
+An encrypted unicast with a region code option, an empty trace option, and flood hop limit 4.
 
 **Options encoding:**
 
 | Option | Number | Delta | Length | Encoding |
 |---|---:|---:|---:|---|
-| Trace Route | 2 | 2 | 0 | `20` |
-| Region Code | 11 | 9 | 2 | `92` then value `78 53` |
+| Trace | 7 | 7 | 0 | `70` |
+| Region Code | 11 | 4 | 2 | `42` then value `78 53` |
 | End marker | — | — | — | `FF` |
 
 | Field | Value | Hex |
@@ -175,14 +175,14 @@ An encrypted unicast with a region code option, an empty trace-route option, and
 | SRC | Node A hint | `ED 54 A5` |
 | SCF | E=1, MIC=3 (16-byte), S=0 | `E0` |
 | Frame Counter | 10 | `00 00 00 0A` |
-| Options | Trace route + region code + end marker | `20 92 78 53 FF` |
-| Payload | Encrypted `68 65 79` (`"hey"`) | `81 2D 2F` |
-| MIC | 16 bytes | `BA 19 2E EA B5 7D 71 E3 52 BD 7D DF 33 1B 07 27` |
+| Options | Trace + region code + end marker | `70 42 78 53 FF` |
+| Payload | Encrypted `68 65 79` (`"hey"`) | `B7 C4 59` |
+| MIC | 16 bytes | `EC 72 BD EA E9 59 DB 86 BA AD 14 9C 92 5F B4 0B` |
 
 ```text
-D1 40 6C 28 FD ED 54 A5 E0 00 00 00 0A 20 92 78
-53 FF 81 2D 2F BA 19 2E EA B5 7D 71 E3 52 BD 7D
-DF 33 1B 07 27
+D1 40 6C 28 FD ED 54 A5 E0 00 00 00 0A 70 42 78
+53 FF B7 C4 59 EC 72 BD EA E9 59 DB 86 BA AD 14
+9C 92 5F B4 0B
 ```
 
 Total: 37 bytes.
@@ -197,14 +197,14 @@ A blind unicast on channel `B08D`. The destination hint and source hint are encr
 | CHANNEL | Derived channel identifier | `B0 8D` |
 | SCF | E=1, MIC=3 (16-byte), S=0 | `E0` |
 | Frame Counter | 7 | `00 00 00 07` |
-| ENC_DST_SRC | ENCRYPT(`DST || SRC`) | `D5 EC 8B 3D 69 96` |
-| ENC_PAYLOAD | ENCRYPT(`"Hello"`) | `88 94 03 C3 07` |
-| MIC | 16 bytes | `C7 46 F3 5E 82 28 3E 3C 14 B0 5D 97 56 7B 4E 86` |
+| ENC_DST_SRC | ENCRYPT(`DST || SRC`) | `1D 7D 4C CE 9C 9E` |
+| ENC_PAYLOAD | ENCRYPT(`"Hello"`) | `B7 B1 EE 01 4B` |
+| MIC | 16 bytes | `AF 4C 3E 68 BD 61 82 47 53 98 47 CF F9 0C 28 70` |
 
 ```text
-F0 B0 8D E0 00 00 00 07 FF D5 EC 8B 3D 69 96 88
-94 03 C3 07 C7 46 F3 5E 82 28 3E 3C 14 B0 5D 97
-56 7B 4E 86
+F0 B0 8D E0 00 00 00 07 FF 1D 7D 4C CE 9C 9E B7
+B1 EE 01 4B AF 4C 3E 68 BD 61 82 47 53 98 47 CF
+F9 0C 28 70
 ```
 
 Total: 36 bytes.
@@ -240,33 +240,153 @@ DC 81 D6 3D DE 8B DD 70 E0 1A 0F 8B 50 BF 5F FA
 
 ## Example 10: MAC Ack
 
-Node B's acknowledgement of Example 4. `ACK MIC` is the first four bytes of Example 4's MIC. `ACK TAG` is `truncate_to_4(S2V(K_mic, S1 = C8, S2 = V, S3 = ACK MIC))`, where `C8` is the ack's AAD (its FCF, with no static options) and `V` is Example 4's full S2V output, which its 16-byte MIC carries whole.
+Node B's acknowledgement of Example 4. `ACK MIC` is the first four bytes of Example 4's MIC. `ACK TAG` is `truncate_to_4(S2V(K_mic, S1 = C8 FF FF, S2 = V, S3 = ACK MIC))`, where `C8 FF FF` is the ack's AAD (its FCF and the terminator, with no static options) and `V` is Example 4's full S2V output, which its 16-byte MIC carries whole.
 
 | Field | Value | Hex |
 |---|---|---|
 | FCF | VER=3, TYPE=1 (MAC ack), S=0, R=0, H=0 | `C8` |
-| ACK MIC | First 4 bytes of V | `AA 17 13 06` |
-| ACK TAG | 4-byte MIC | `D2 FB 63 BD` |
+| ACK MIC | First 4 bytes of V | `FE A5 FD 44` |
+| ACK TAG | 4-byte MIC | `16 61 6C D1` |
 
 ```text
-C8 AA 17 13 06 D2 FB 63 BD
+C8 FE A5 FD 44 16 61 6C D1
 ```
 
 Total: 9 bytes.
 
 ## Example 11: MAC Ack with Operator Callsign
 
-The acknowledgement of Example 10 as a Licensed-Only node sends it, carrying the operator callsign `N0CALL`. The callsign is a static option, so the ack's AAD is `C8` followed by the option's type-length-value encoding, and the tag differs from Example 10's.
+The acknowledgement of Example 10 as a Licensed-Only node sends it, carrying the operator callsign `N0CALL`. The callsign is a static option, so the ack's AAD is `C8`, the option's type-length-value encoding, then `FF FF`, and the tag differs from Example 10's.
 
 | Field | Value | Hex |
 |---|---|---|
 | FCF | VER=3, TYPE=1 (MAC ack), S=0, R=0, H=0 | `C8` |
 | Options | Operator Callsign (option 4), `N0CALL` | `44 5B BB 08 2C` |
-| ACK MIC | First 4 bytes of V | `AA 17 13 06` |
-| ACK TAG | 4-byte MIC | `A8 78 BE 6E` |
+| ACK MIC | First 4 bytes of V | `FE A5 FD 44` |
+| ACK TAG | 4-byte MIC | `15 B2 56 E4` |
 
 ```text
-C8 44 5B BB 08 2C AA 17 13 06 A8 78 BE 6E
+C8 44 5B BB 08 2C FE A5 FD 44 15 B2 56 E4
 ```
 
 Total: 14 bytes.
+
+## Signed Frames
+
+Examples 12 to 14 are signed with Node A's Ed25519 key. Each shows its signature input: `"UMSH-SIG"`, the frame's AAD with a broadcast's Frame Signature zeroed, the channel commitment for a multicast, and the plaintext the MIC's S2 covers without the signature.
+
+- Channel commitment of the channel key above: `B08D B3C1 400A 1C11 F1D1 464D D6BA 945F D037 2DDD 38CA 63A1 84D3 6FD1 11FE BA40`
+
+## Example 12: Signed Authenticated Multicast (E=0, D=1)
+
+An unencrypted multicast from Node A carrying its full key, signed. `SRC || PAYLOAD || SIG` is the MIC's S2.
+
+| Field | Value | Hex |
+|---|---|---|
+| FCF | VER=3, TYPE=4 (multicast), S=1, R=0, H=0 | `E4` |
+| CHANNEL | Derived channel identifier | `B0 8D` |
+| SCF | E=0, MIC=3 (16-byte), S=0, D=1 | `68` |
+| Frame Counter | 12 | `00 00 00 0C` |
+| End of options | No options | `FF` |
+| SRC | Node A public key | `ED 54 A5 9F B1 AC 3A 51 23 93 51 36 29 41 B8 68 E8 5A 60 E3 D7 B2 48 5D 82 88 21 DC 7A 69 C2 79` |
+| Payload | `03 || "Help"` | `03 48 65 6C 70` |
+| SIG | Ed25519 signature | `64 60 E7 36 CF 31 6B B3 2F 43 8C A2 81 DE 0D E0 2C 3B BE B7 A6 CB 19 5A 5C 60 55 BD 46 A9 F5 E7 53 2C 96 AE F7 CC E8 06 C7 F4 FC 46 2C D9 B8 61 CC 60 D4 47 65 F6 6E 4E 3A 5D DB 10 91 3D 6D 05` |
+| MIC | 16 bytes | `59 96 7A 9D 75 D9 FC DC AA 9F AD 4C 50 3B 2E 47` |
+
+```text
+E4 B0 8D 68 00 00 00 0C FF ED 54 A5 9F B1 AC 3A
+51 23 93 51 36 29 41 B8 68 E8 5A 60 E3 D7 B2 48
+5D 82 88 21 DC 7A 69 C2 79 03 48 65 6C 70 64 60
+E7 36 CF 31 6B B3 2F 43 8C A2 81 DE 0D E0 2C 3B
+BE B7 A6 CB 19 5A 5C 60 55 BD 46 A9 F5 E7 53 2C
+96 AE F7 CC E8 06 C7 F4 FC 46 2C D9 B8 61 CC 60
+D4 47 65 F6 6E 4E 3A 5D DB 10 91 3D 6D 05 59 96
+7A 9D 75 D9 FC DC AA 9F AD 4C 50 3B 2E 47
+```
+
+Total: 126 bytes.
+
+Signature input (87 bytes):
+
+```text
+55 4D 53 48 2D 53 49 47 E4 B0 8D 68 00 00 00 0C
+FF FF B0 8D B3 C1 40 0A 1C 11 F1 D1 46 4D D6 BA
+94 5F D0 37 2D DD 38 CA 63 A1 84 D3 6F D1 11 FE
+BA 40 ED 54 A5 9F B1 AC 3A 51 23 93 51 36 29 41
+B8 68 E8 5A 60 E3 D7 B2 48 5D 82 88 21 DC 7A 69
+C2 79 03 48 65 6C 70
+```
+
+## Example 13: Signed Encrypted Multicast (E=1, D=1)
+
+An encrypted multicast from Node A, signed. The signature is encrypted with the source hint and the payload.
+
+| Field | Value | Hex |
+|---|---|---|
+| FCF | VER=3, TYPE=4 (multicast), S=0, R=0, H=0 | `E0` |
+| CHANNEL | Derived channel identifier | `B0 8D` |
+| SCF | E=1, MIC=3 (16-byte), S=0, D=1 | `E8` |
+| Frame Counter | 13 | `00 00 00 0D` |
+| End of options | No options | `FF` |
+| Encrypted data | ENCRYPT(`SRC || "Hello" || SIG`) | `69 2E 61 79 21 A2 08 42 BF 2E 1C D8 6F 88 A1 4A E7 EF 44 BC DF 11 34 EC 85 6F 93 06 39 96 0C 99 D6 70 79 87 08 EA A8 0E 61 BA DA 28 E2 B2 A8 58 97 D5 9C C2 8A 12 33 DB 1B 21 18 53 85 5E CE 11 00 79 F3 6C 99 1C 24 10` |
+| MIC | 16 bytes | `02 BB 9A 22 FE F4 1A 6E 91 9D 34 72 41 AA 42 B9` |
+
+```text
+E0 B0 8D E8 00 00 00 0D FF 69 2E 61 79 21 A2 08
+42 BF 2E 1C D8 6F 88 A1 4A E7 EF 44 BC DF 11 34
+EC 85 6F 93 06 39 96 0C 99 D6 70 79 87 08 EA A8
+0E 61 BA DA 28 E2 B2 A8 58 97 D5 9C C2 8A 12 33
+DB 1B 21 18 53 85 5E CE 11 00 79 F3 6C 99 1C 24
+10 02 BB 9A 22 FE F4 1A 6E 91 9D 34 72 41 AA 42
+B9
+```
+
+Total: 97 bytes.
+
+Signature input (58 bytes):
+
+```text
+55 4D 53 48 2D 53 49 47 E0 B0 8D E8 00 00 00 0D
+FF FF B0 8D B3 C1 40 0A 1C 11 F1 D1 46 4D D6 BA
+94 5F D0 37 2D DD 38 CA 63 A1 84 D3 6F D1 11 FE
+BA 40 ED 54 A5 48 65 6C 6C 6F
+```
+
+## Example 14: Signed Broadcast
+
+A broadcast from Node A carrying its full key and a Frame Signature option (0) with counter 14. In the signature input the option's 64 signature bytes are zeros.
+
+| Field | Value | Hex |
+|---|---|---|
+| FCF | VER=3, TYPE=0 (broadcast), S=1, R=0, H=0 | `C4` |
+| SRC | Node A public key | `ED 54 A5 9F B1 AC 3A 51 23 93 51 36 29 41 B8 68 E8 5A 60 E3 D7 B2 48 5D 82 88 21 DC 7A 69 C2 79` |
+| Option header | Delta 0, length 68 (13 + `37`) | `0D 37` |
+| Counter | 14 | `00 00 00 0E` |
+| SIG | Ed25519 signature | `03 79 A8 FA 3A B8 6E 4F 59 C7 6F 0E E6 5C 76 6B D2 F1 03 38 0E 62 D9 AD 4E E8 66 E5 89 B3 56 C0 54 AC F8 50 AF D6 9A DD B7 A3 8B 7C 18 E8 77 A6 AA 55 84 68 F7 01 2F E0 91 24 4E 6B 89 52 BE 0C` |
+| End of options | Payload follows | `FF` |
+| Payload | `"Hi"` | `48 69` |
+
+```text
+C4 ED 54 A5 9F B1 AC 3A 51 23 93 51 36 29 41 B8
+68 E8 5A 60 E3 D7 B2 48 5D 82 88 21 DC 7A 69 C2
+79 0D 37 00 00 00 0E 03 79 A8 FA 3A B8 6E 4F 59
+C7 6F 0E E6 5C 76 6B D2 F1 03 38 0E 62 D9 AD 4E
+E8 66 E5 89 B3 56 C0 54 AC F8 50 AF D6 9A DD B7
+A3 8B 7C 18 E8 77 A6 AA 55 84 68 F7 01 2F E0 91
+24 4E 6B 89 52 BE 0C FF 48 69
+```
+
+Total: 106 bytes.
+
+Signature input (117 bytes):
+
+```text
+55 4D 53 48 2D 53 49 47 C4 ED 54 A5 9F B1 AC 3A
+51 23 93 51 36 29 41 B8 68 E8 5A 60 E3 D7 B2 48
+5D 82 88 21 DC 7A 69 C2 79 00 00 00 44 00 00 00
+0E 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 FF FF 48 69
+```

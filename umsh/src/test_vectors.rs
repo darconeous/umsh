@@ -8,7 +8,10 @@ use std::fmt::Write;
 use hamaddr::HamAddr;
 
 use crate::{
-    core::{ChannelKey, MicSize, NodeHint, OptionNumber, PacketBuilder, PacketHeader, PublicKey},
+    core::{
+        ChannelKey, MicSize, NodeHint, OptionNumber, PacketBuilder, PacketHeader, PublicKey,
+        SIGNATURE_INPUT_MAX, signature_input,
+    },
     crypto::{
         CryptoEngine, DerivedChannelKeys, NodeIdentity, PairwiseKeys, SharedSecret,
         software::{SoftwareAes, SoftwareIdentity, SoftwareSha256},
@@ -122,9 +125,9 @@ pub fn render_phase1_test_vectors_markdown() -> String {
     writeln!(&mut out).unwrap();
     writeln!(&mut out, "```text").unwrap();
     writeln!(&mut out, "  7   6   5   4   3   2   1   0").unwrap();
-    writeln!(&mut out, "+---+-------+---+---------------+").unwrap();
-    writeln!(&mut out, "| E |  MIC  | S |   RESERVED    |").unwrap();
-    writeln!(&mut out, "+---+-------+---+---------------+").unwrap();
+    writeln!(&mut out, "+---+-------+---+---+-----------+").unwrap();
+    writeln!(&mut out, "| E |  MIC  | S | D | RESERVED  |").unwrap();
+    writeln!(&mut out, "+---+-------+---+---+-----------+").unwrap();
     writeln!(&mut out, "```").unwrap();
 
     render_example(
@@ -321,16 +324,16 @@ pub fn render_phase1_test_vectors_markdown() -> String {
     )
     .unwrap();
     writeln!(&mut out).unwrap();
-    writeln!(&mut out, "An encrypted unicast with a region code option, an empty trace-route option, and flood hop limit 4.").unwrap();
+    writeln!(&mut out, "An encrypted unicast with a region code option, an empty trace option, and flood hop limit 4.").unwrap();
     writeln!(&mut out).unwrap();
     writeln!(&mut out, "**Options encoding:**").unwrap();
     writeln!(&mut out).unwrap();
     writeln!(&mut out, "| Option | Number | Delta | Length | Encoding |").unwrap();
     writeln!(&mut out, "|---|---:|---:|---:|---|").unwrap();
-    writeln!(&mut out, "| Trace Route | 2 | 2 | 0 | `20` |").unwrap();
+    writeln!(&mut out, "| Trace | 7 | 7 | 0 | `70` |").unwrap();
     writeln!(
         &mut out,
-        "| Region Code | 11 | 9 | 2 | `92` then value `78 53` |"
+        "| Region Code | 11 | 4 | 2 | `42` then value `78 53` |"
     )
     .unwrap();
     writeln!(&mut out, "| End marker | — | — | — | `FF` |").unwrap();
@@ -359,7 +362,7 @@ pub fn render_phase1_test_vectors_markdown() -> String {
     writeln!(&mut out, "| Frame Counter | 10 | `00 00 00 0A` |").unwrap();
     writeln!(
         &mut out,
-        "| Options | Trace route + region code + end marker | `20 92 78 53 FF` |"
+        "| Options | Trace + region code + end marker | `70 42 78 53 FF` |"
     )
     .unwrap();
     writeln!(
@@ -437,7 +440,7 @@ pub fn render_phase1_test_vectors_markdown() -> String {
     render_example(
         &mut out,
         "Example 10: MAC Ack",
-        "Node B's acknowledgement of Example 4. `ACK MIC` is the first four bytes of Example 4's MIC. `ACK TAG` is `truncate_to_4(S2V(K_mic, S1 = C8, S2 = V, S3 = ACK MIC))`, where `C8` is the ack's AAD (its FCF, with no static options) and `V` is Example 4's full S2V output, which its 16-byte MIC carries whole.",
+        "Node B's acknowledgement of Example 4. `ACK MIC` is the first four bytes of Example 4's MIC. `ACK TAG` is `truncate_to_4(S2V(K_mic, S1 = C8 FF FF, S2 = V, S3 = ACK MIC))`, where `C8 FF FF` is the ack's AAD (its FCF and the terminator, with no static options) and `V` is Example 4's full S2V output, which its 16-byte MIC carries whole.",
         &[
             ("FCF", "VER=3, TYPE=1 (MAC ack), S=0, R=0, H=0", "C8".into()),
             (
@@ -455,7 +458,7 @@ pub fn render_phase1_test_vectors_markdown() -> String {
     render_example(
         &mut out,
         "Example 11: MAC Ack with Operator Callsign",
-        "The acknowledgement of Example 10 as a Licensed-Only node sends it, carrying the operator callsign `N0CALL`. The callsign is a static option, so the ack's AAD is `C8` followed by the option's type-length-value encoding, and the tag differs from Example 10's.",
+        "The acknowledgement of Example 10 as a Licensed-Only node sends it, carrying the operator callsign `N0CALL`. The callsign is a static option, so the ack's AAD is `C8`, the option's type-length-value encoding, then `FF FF`, and the tag differs from Example 10's.",
         &[
             ("FCF", "VER=3, TYPE=1 (MAC ack), S=0, R=0, H=0", "C8".into()),
             (
@@ -473,54 +476,172 @@ pub fn render_phase1_test_vectors_markdown() -> String {
         &vectors.mac_ack_callsign,
     );
 
+    render_signed_examples(&mut out, &vectors);
+
     out
 }
 
-/// Render the legacy-tag vector that closes the ack transition appendix.
-///
-/// `docs/protocol/src/ack-transition.md` is expected to end with this text.
-pub fn render_ack_transition_vector_markdown() -> String {
-    let vectors = generate_phase1_vectors();
-    let header = parse_header(&vectors.mac_ack_legacy);
-    let trailer = &vectors.mac_ack_legacy[header.mic_range.clone()];
-    let mut out = String::new();
-    writeln!(&mut out, "## Test Vector").unwrap();
-    writeln!(&mut out).unwrap();
+/// Examples 12 to 14: frames signed by Node A.
+fn render_signed_examples(out: &mut String, vectors: &Phase1Vectors) {
+    let signed = &vectors.signed;
+    writeln!(out).unwrap();
+    writeln!(out, "## Signed Frames").unwrap();
+    writeln!(out).unwrap();
     writeln!(
-        &mut out,
-        "Node B's acknowledgement of [Example 4](test-vectors.md#example-4-encrypted-unicast-with-ack-requested-s1), sealed with the legacy construction. `V` is Example 4's 16-byte MIC, and the keys are those of the [test-vector conventions](test-vectors.md#conventions)."
+        out,
+        "Examples 12 to 14 are signed with Node A's Ed25519 key. Each shows its signature input: `\"UMSH-SIG\"`, the frame's AAD with a broadcast's Frame Signature zeroed, the channel commitment for a multicast, and the plaintext the MIC's S2 covers without the signature."
     )
     .unwrap();
-    writeln!(&mut out).unwrap();
-    writeln!(&mut out, "| Field | Value | Hex |").unwrap();
-    writeln!(&mut out, "|---|---|---|").unwrap();
-    for (field, value, hex) in [
-        (
-            "FCF",
-            "VER=3, TYPE=1 (MAC ack), S=0, R=0, H=0",
-            "C8".to_string(),
-        ),
-        (
-            "Options",
-            "Legacy Ack Tag (option 254)",
-            hex_spaced(&vectors.mac_ack_legacy[header.options_range.clone()]),
-        ),
-        ("ACK MIC", "First 4 bytes of V", hex_spaced(&trailer[..4])),
-        (
-            "ACK TAG",
-            "`truncate_to_4(AES-256-ECB(K_enc, V))`",
-            hex_spaced(&trailer[4..]),
-        ),
-    ] {
-        writeln!(&mut out, "| {} | {} | `{}` |", field, value, hex).unwrap();
-    }
-    writeln!(&mut out).unwrap();
-    writeln!(&mut out, "```text").unwrap();
-    writeln!(&mut out, "{}", wrap_hex_lines(&vectors.mac_ack_legacy, 16)).unwrap();
-    writeln!(&mut out, "```").unwrap();
-    writeln!(&mut out).unwrap();
-    writeln!(&mut out, "Total: {} bytes.", vectors.mac_ack_legacy.len()).unwrap();
-    out
+    writeln!(out).unwrap();
+    writeln!(
+        out,
+        "- Channel commitment of the channel key above: `{}`",
+        hex_words(&vectors.channel.commitment.0)
+    )
+    .unwrap();
+
+    let header = parse_header(&signed.multicast_authenticated.frame);
+    let frame = &signed.multicast_authenticated.frame;
+    let protected = header.protected_range();
+    render_example(
+        out,
+        "Example 12: Signed Authenticated Multicast (E=0, D=1)",
+        "An unencrypted multicast from Node A carrying its full key, signed. `SRC || PAYLOAD || SIG` is the MIC's S2.",
+        &[
+            (
+                "FCF",
+                "VER=3, TYPE=4 (multicast), S=1, R=0, H=0",
+                hex_spaced(&frame[..1]),
+            ),
+            (
+                "CHANNEL",
+                "Derived channel identifier",
+                hex_spaced(&vectors.channel.channel_id.0),
+            ),
+            (
+                "SCF",
+                "E=0, MIC=3 (16-byte), S=0, D=1",
+                hex_spaced(&frame[3..4]),
+            ),
+            ("Frame Counter", "12", hex_spaced(&12u32.to_be_bytes())),
+            ("End of options", "No options", "FF".into()),
+            (
+                "SRC",
+                "Node A public key",
+                hex_spaced(&frame[protected.start..header.body_range.start]),
+            ),
+            (
+                "Payload",
+                "`03 || \"Help\"`",
+                hex_spaced(&frame[header.body_range.clone()]),
+            ),
+            (
+                "SIG",
+                "Ed25519 signature",
+                hex_spaced(&frame[header.signature().unwrap().range.clone()]),
+            ),
+            (
+                "MIC",
+                "16 bytes",
+                hex_spaced(&frame[header.mic_range.clone()]),
+            ),
+        ],
+        frame,
+    );
+    render_signature_input(out, &signed.multicast_authenticated.input);
+
+    let header = parse_header(&signed.multicast_encrypted.frame);
+    let frame = &signed.multicast_encrypted.frame;
+    render_example(
+        out,
+        "Example 13: Signed Encrypted Multicast (E=1, D=1)",
+        "An encrypted multicast from Node A, signed. The signature is encrypted with the source hint and the payload.",
+        &[
+            (
+                "FCF",
+                "VER=3, TYPE=4 (multicast), S=0, R=0, H=0",
+                hex_spaced(&frame[..1]),
+            ),
+            (
+                "CHANNEL",
+                "Derived channel identifier",
+                hex_spaced(&vectors.channel.channel_id.0),
+            ),
+            (
+                "SCF",
+                "E=1, MIC=3 (16-byte), S=0, D=1",
+                hex_spaced(&frame[3..4]),
+            ),
+            ("Frame Counter", "13", hex_spaced(&13u32.to_be_bytes())),
+            ("End of options", "No options", "FF".into()),
+            (
+                "Encrypted data",
+                "ENCRYPT(`SRC || \"Hello\" || SIG`)",
+                hex_spaced(&frame[header.protected_range()]),
+            ),
+            (
+                "MIC",
+                "16 bytes",
+                hex_spaced(&frame[header.mic_range.clone()]),
+            ),
+        ],
+        frame,
+    );
+    render_signature_input(out, &signed.multicast_encrypted.input);
+
+    let header = parse_header(&signed.broadcast.frame);
+    let frame = &signed.broadcast.frame;
+    let signature = header.signature().unwrap().range.clone();
+    let option_start = header.options_range.start;
+    render_example(
+        out,
+        "Example 14: Signed Broadcast",
+        "A broadcast from Node A carrying its full key and a Frame Signature option (0) with counter 14. In the signature input the option's 64 signature bytes are zeros.",
+        &[
+            (
+                "FCF",
+                "VER=3, TYPE=0 (broadcast), S=1, R=0, H=0",
+                hex_spaced(&frame[..1]),
+            ),
+            (
+                "SRC",
+                "Node A public key",
+                hex_spaced(&frame[1..option_start]),
+            ),
+            (
+                "Option header",
+                "Delta 0, length 68 (13 + `37`)",
+                hex_spaced(&frame[option_start..signature.start - 4]),
+            ),
+            (
+                "Counter",
+                "14",
+                hex_spaced(&frame[signature.start - 4..signature.start]),
+            ),
+            (
+                "SIG",
+                "Ed25519 signature",
+                hex_spaced(&frame[signature.clone()]),
+            ),
+            ("End of options", "Payload follows", "FF".into()),
+            (
+                "Payload",
+                "`\"Hi\"`",
+                hex_spaced(&frame[header.body_range.clone()]),
+            ),
+        ],
+        frame,
+    );
+    render_signature_input(out, &signed.broadcast.input);
+}
+
+fn render_signature_input(out: &mut String, input: &[u8]) {
+    writeln!(out).unwrap();
+    writeln!(out, "Signature input ({} bytes):", input.len()).unwrap();
+    writeln!(out).unwrap();
+    writeln!(out, "```text").unwrap();
+    writeln!(out, "{}", wrap_hex_lines(input, 16)).unwrap();
+    writeln!(out, "```").unwrap();
 }
 
 /// Example 9: contact exchange derivations, with Node A asking Node B.
@@ -619,7 +740,19 @@ struct Phase1Vectors {
     blind_unicast: Vec<u8>,
     mac_ack: Vec<u8>,
     mac_ack_callsign: Vec<u8>,
-    mac_ack_legacy: Vec<u8>,
+    signed: SignedVectors,
+}
+
+/// A signed frame and the bytes its signature covers.
+struct SignedVector {
+    frame: Vec<u8>,
+    input: Vec<u8>,
+}
+
+struct SignedVectors {
+    multicast_authenticated: SignedVector,
+    multicast_encrypted: SignedVector,
+    broadcast: SignedVector,
 }
 
 fn generate_phase1_vectors() -> Phase1Vectors {
@@ -640,7 +773,7 @@ fn generate_phase1_vectors() -> Phase1Vectors {
     let node_a_public = *node_a_identity.public_key();
     let node_b_public = *node_b_identity.public_key();
     let shared_secret = node_a_identity.shared_secret_with(&node_b_public).unwrap();
-    let pairwise = engine.derive_pairwise_keys(&shared_secret);
+    let pairwise = engine.derive_pairwise_keys(&shared_secret, &node_a_public, &node_b_public);
     let channel_key = ChannelKey([0x5A; 32]);
     let channel = engine.derive_channel_keys(&channel_key);
     let blind_keys = engine.derive_blind_keys(&pairwise, &channel);
@@ -668,15 +801,13 @@ fn generate_phase1_vectors() -> Phase1Vectors {
             node_b_public.hint(),
         ),
         unicast_ackreq_fullsrc,
-        mac_ack: build_mac_ack(&engine, &pairwise, &ack_v, None, false),
+        mac_ack: build_mac_ack(&engine, &pairwise, &ack_v, None),
         mac_ack_callsign: build_mac_ack(
             &engine,
             &pairwise,
             &ack_v,
             Some(callsign.as_trimmed_slice()),
-            false,
         ),
-        mac_ack_legacy: build_mac_ack(&engine, &pairwise, &ack_v, None, true),
         multicast_encrypted: build_multicast_encrypted(&engine, &channel, &node_a_public),
         multicast_authenticated: build_multicast_authenticated(&engine, &channel, &node_a_public),
         unicast_with_options: build_unicast_with_options(
@@ -692,8 +823,104 @@ fn generate_phase1_vectors() -> Phase1Vectors {
             &node_a_public,
             node_b_public.hint(),
         ),
+        signed: SignedVectors {
+            multicast_authenticated: build_signed_multicast(
+                &engine,
+                &channel,
+                &node_a_identity,
+                false,
+            ),
+            multicast_encrypted: build_signed_multicast(&engine, &channel, &node_a_identity, true),
+            broadcast: build_signed_broadcast(&node_a_identity),
+        },
         channel,
     }
+}
+
+/// Sign `input` with `identity`, whose signing never waits.
+fn sign_now(identity: &SoftwareIdentity, input: &[u8]) -> [u8; 64] {
+    use std::{
+        future::Future,
+        pin::pin,
+        task::{Context, Poll, Waker},
+    };
+    match pin!(identity.sign(input)).poll(&mut Context::from_waker(Waker::noop())) {
+        Poll::Ready(signature) => signature.unwrap(),
+        Poll::Pending => unreachable!("software signing is synchronous"),
+    }
+}
+
+/// Example 12 (`encrypted` false: full source, counter 12) or Example 13
+/// (hint source, counter 13).
+fn build_signed_multicast(
+    engine: &SoftwareCryptoEngine,
+    channel: &DerivedChannelKeys,
+    node_a: &SoftwareIdentity,
+    encrypted: bool,
+) -> SignedVector {
+    let mut buf = [0u8; 256];
+    let builder = PacketBuilder::new(&mut buf).multicast(channel.channel_id);
+    let mut packet = if encrypted {
+        builder
+            .source_hint(node_a.public_key().hint())
+            .frame_counter(13)
+            .encrypted()
+            .signed()
+            .payload(b"Hello")
+            .build()
+    } else {
+        builder
+            .source_full(node_a.public_key())
+            .frame_counter(12)
+            .signed()
+            .payload(b"\x03Help")
+            .build()
+    }
+    .unwrap();
+    let header = packet.header().unwrap();
+    let mut input = vec![0u8; SIGNATURE_INPUT_MAX];
+    let len = signature_input(
+        &header,
+        packet.as_bytes(),
+        None,
+        Some(&channel.commitment),
+        &mut input,
+    )
+    .unwrap();
+    input.truncate(len);
+    packet
+        .signature_slot_mut()
+        .unwrap()
+        .copy_from_slice(&sign_now(node_a, &input));
+    let keys = PairwiseKeys {
+        k_enc: channel.k_enc,
+        k_mic: channel.k_mic,
+    };
+    engine.seal_packet(&mut packet, &keys).unwrap();
+    SignedVector {
+        frame: packet.as_bytes().to_vec(),
+        input,
+    }
+}
+
+/// Example 14.
+fn build_signed_broadcast(node_a: &SoftwareIdentity) -> SignedVector {
+    let mut buf = [0u8; 256];
+    let mut frame = PacketBuilder::new(&mut buf)
+        .broadcast()
+        .source_full(node_a.public_key())
+        .signed(14)
+        .payload(b"Hi")
+        .build()
+        .unwrap()
+        .to_vec();
+    let header = parse_header(&frame);
+    let mut input = vec![0u8; SIGNATURE_INPUT_MAX];
+    let len = signature_input(&header, &frame, None, None, &mut input).unwrap();
+    input.truncate(len);
+    let signature = sign_now(node_a, &input);
+    frame[header.signature().unwrap().range.clone()].copy_from_slice(&signature);
+    SignedVector { frame, input }
 }
 
 fn build_broadcast_hint(node_a: &PublicKey) -> Vec<u8> {
@@ -763,15 +990,11 @@ fn build_mac_ack(
     pairwise: &PairwiseKeys,
     v: &[u8; 16],
     callsign: Option<&[u8]>,
-    legacy: bool,
 ) -> Vec<u8> {
     let mut buf = [0u8; 64];
     let mut builder = PacketBuilder::new(&mut buf).mac_ack([0u8; 8]);
     if let Some(callsign) = callsign {
         builder = builder.option(OptionNumber::OperatorCallsign, callsign);
-    }
-    if legacy {
-        builder = builder.legacy_ack_tag();
     }
     let len = builder.build().unwrap().len();
     engine.seal_mac_ack(pairwise, v, &mut buf[..len]).unwrap();
@@ -836,7 +1059,7 @@ fn build_unicast_with_options(
         .frame_counter(10)
         .encrypted()
         .flood_hops(4)
-        .trace_route()
+        .trace()
         .region_code([0x78, 0x53])
         .payload(b"hey")
         .build()
@@ -929,7 +1152,52 @@ fn parse_header(bytes: &[u8]) -> PacketHeader {
 mod tests {
     use std::fs;
 
-    use super::{render_ack_transition_vector_markdown, render_phase1_test_vectors_markdown};
+    use super::{generate_phase1_vectors, parse_header, render_phase1_test_vectors_markdown};
+    use crate::{
+        core::SIGNATURE_INPUT_MAX,
+        crypto::{
+            PairwiseKeys,
+            software::{SoftwareAes, SoftwareSha256, verify_frame_signature},
+        },
+    };
+
+    /// The signed examples open under the channel and verify against Node
+    /// A's key, and each shows the input its signature covers.
+    #[test]
+    fn signed_vectors_verify() {
+        let vectors = generate_phase1_vectors();
+        let engine = super::SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
+        let keys = PairwiseKeys {
+            k_enc: vectors.channel.k_enc,
+            k_mic: vectors.channel.k_mic,
+        };
+        let commitment = vectors.channel.commitment;
+        let mut scratch = [0u8; SIGNATURE_INPUT_MAX];
+        for (vector, channel) in [
+            (&vectors.signed.multicast_authenticated, Some(&commitment)),
+            (&vectors.signed.multicast_encrypted, Some(&commitment)),
+            (&vectors.signed.broadcast, None),
+        ] {
+            let mut frame = vector.frame.clone();
+            let header = parse_header(&frame);
+            if channel.is_some() {
+                engine
+                    .open_packet(&mut frame, &header, &keys, None)
+                    .unwrap();
+            }
+            assert!(verify_frame_signature(
+                &header,
+                &frame,
+                &vectors.node_a_public,
+                None,
+                channel,
+                &mut scratch,
+            ));
+            let len =
+                crate::core::signature_input(&header, &frame, None, channel, &mut scratch).unwrap();
+            assert_eq!(scratch[..len], vector.input[..]);
+        }
+    }
 
     #[test]
     fn phase1_vectors_match_protocol_appendix() {
@@ -940,19 +1208,5 @@ mod tests {
         ))
         .expect("read protocol test vectors");
         assert_eq!(actual, expected);
-    }
-
-    #[test]
-    fn legacy_ack_vector_matches_transition_appendix() {
-        let expected = render_ack_transition_vector_markdown();
-        let actual = fs::read_to_string(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../docs/protocol/src/ack-transition.md"
-        ))
-        .expect("read ack transition appendix");
-        assert!(
-            actual.ends_with(&expected),
-            "ack-transition.md must end with:\n{expected}"
-        );
     }
 }

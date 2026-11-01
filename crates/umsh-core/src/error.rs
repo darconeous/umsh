@@ -21,6 +21,29 @@ pub enum ParseError {
     OptionOutOfOrder,
     /// The option stream was structurally malformed.
     MalformedOption,
+    /// A blind unicast's plaintext address block was not supplied, or does not
+    /// match the frame's source length.
+    MissingAddressBlock,
+}
+
+/// Errors returned while assembling a frame's signature input.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SignatureInputError {
+    /// The frame carries no located signature.
+    Unsigned,
+    /// A channel commitment was missing for a frame that names a channel, or
+    /// supplied for one that does not.
+    ChannelMismatch,
+    /// The output buffer could not hold the input.
+    BufferTooSmall,
+    /// The frame's AAD could not be built.
+    Parse(ParseError),
+}
+
+impl From<ParseError> for SignatureInputError {
+    fn from(value: ParseError) -> Self {
+        Self::Parse(value)
+    }
 }
 
 /// Errors returned while parsing a textual UMSH address.
@@ -98,6 +121,12 @@ impl fmt::Display for ParseError {
     }
 }
 
+impl fmt::Display for SignatureInputError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+
 impl fmt::Display for AddressParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{self:?}")
@@ -124,6 +153,9 @@ impl fmt::Display for BuildError {
 
 #[cfg(feature = "std")]
 impl std::error::Error for ParseError {}
+
+#[cfg(feature = "std")]
+impl std::error::Error for SignatureInputError {}
 
 #[cfg(feature = "std")]
 impl std::error::Error for AddressParseError {}

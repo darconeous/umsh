@@ -144,23 +144,24 @@ Option | Name                   | Value                                    | Def
 4      | `ANNOUNCE_CHANNEL`     | 16 octets: the full channel identifier   | absent: broadcast
 
 `ANNOUNCE_KIND`
-: An advertisement carries the device's signed
-  [node identity](node-identity.md); a beacon carries no payload at all.
+: An advertisement carries the device's
+  [node identity](node-identity.md) in a
+  [signed frame](security.md#frame-signatures); a beacon carries no
+  payload at all.
 
 `ANNOUNCE_FLOOD_HOPS`
 : The flood budget the frame goes out with (`FHOPS_REM`, see
   [Packet Structure](packet-structure.md)). Zero sends no flood-hop field,
   reaching only the nodes that hear the device directly. A frame carrying
-  a budget also carries the [Trace
-  Route](packet-options.md#trace-route-option-2) and [Trace
-  Signal](packet-options.md#trace-signal-option-10) options, so what
-  arrives at a distant node is a usable path back; a beacon carries both
-  at any budget, a path being what a beacon publishes.
+  a budget also carries the [Trace](packet-options.md#trace-option-7)
+  option, so what arrives at a distant node is a usable path back; a
+  beacon carries it at any budget, a path being what a beacon publishes.
 
 `ANNOUNCE_FULL_SOURCE`
 : Whether `SRC` is the 32-byte public key rather than the 3-byte hint. An
-  advertisement's detached signature is only checkable against the full
-  key, hence its default; a beacon has nothing to check and defaults to
+  advertisement's frame signature is checkable only against the
+  device's key, which a listener that has not met the device holds only
+  from a full `SRC`, hence its default; a beacon has nothing to check and defaults to
   the hint. A host may override either way.
 
 `ANNOUNCE_CHANNEL`
@@ -1412,8 +1413,8 @@ A device returns to `ALERT_NONE` three ways:
 * Post-Reset Value: 14400 (four hours), or restored from saved state
 
 Seconds between unsolicited [advertisements](beacons.md)—broadcasts
-carrying the device's signed [node identity](node-identity.md). Zero
-sends none.
+carrying the device's [node identity](node-identity.md) in a signed
+frame. Zero sends none.
 
 An automatic advertisement is sent with no flood hops and no source
 route, so it reaches the nodes that can hear the device directly and
@@ -1425,8 +1426,9 @@ to be findable further away publishes a path with
 [`PROP_BEACON_INTERVAL`](#prop-beacon-interval) instead, which costs a
 fraction as much.
 
-Because the advertisement is a signed broadcast, it carries its source
-in full-key form (§[Node Identity](node-identity.md)).
+Because the advertisement is a signed broadcast meant for listeners that
+may not hold the device's key, it carries its source in full-key form
+(§[Signature Usage](node-identity.md#signature-usage)).
 
 A device **MUST** reject a non-zero interval outside 1200 seconds
 (twenty minutes) to 86400 seconds (twenty-four hours) with
@@ -1461,11 +1463,10 @@ other's timing.
 Seconds between unsolicited [beacons](beacons.md)—broadcasts with no
 payload at all. Zero sends none.
 
-A beacon is sent with a flood budget and both the [Trace
-Route](packet-options.md#trace-route-option-2) and [Trace
-Signal](packet-options.md#trace-signal-option-10) options, so what
-arrives at a distant node is a usable path back to the device and the
-signal quality of every hop along it. What it does not carry is any
+A beacon is sent with a flood budget and the
+[Trace](packet-options.md#trace-option-7) option, so what arrives at a
+distant node is a usable path back to the device and the signal quality
+of every hop along it. What it does not carry is any
 statement of who the device is: that is what an advertisement is for,
 and a listener that has never met this device learns only that something
 with a given source hint is reachable.

@@ -71,3 +71,12 @@ fn receive_windows_per_remote_key() {
     println!("RxWindows<32,8>       = {rx_windows_32_8}");
     assert!(rx_window <= 448, "RxWindow grew: {rx_window}");
 }
+
+/// Every `Mac` carries one signature-input scratch buffer, so a frame's
+/// signature input is never assembled on the stack or in a send's future.
+#[test]
+fn signature_input_scratch() {
+    let scratch = umsh_core::SIGNATURE_INPUT_MAX;
+    println!("SIGNATURE_INPUT_MAX   = {scratch}");
+    assert!(scratch <= 1088, "signature input scratch grew: {scratch}");
+}

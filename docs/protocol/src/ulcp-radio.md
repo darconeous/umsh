@@ -348,7 +348,7 @@ space. Requires `CAP_STATS` and `CAP_MESHCORE_FORWARDER`.
 
 ### PROP 4850: `PROP_STAT_RX_OWN_HINT` {#prop-stat-rx-own-hint}
 
-Packets received over the air whose [trace route](packet-options.md#trace-route-option-2)
+Packets received over the air whose [trace](packet-options.md#trace-option-7)
 begins with this device's own router hint. A radio cannot receive its own
 transmission, so each is a copy of one of this device's repeats retransmitted
 without a hop being added, or a packet repeated by another node sharing this

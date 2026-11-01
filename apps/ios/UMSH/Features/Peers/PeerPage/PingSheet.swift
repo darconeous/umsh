@@ -28,8 +28,10 @@ struct PingPath: Equatable {
     /// crossed a link that is not radio and is drawn as bridged.
     ///
     /// A flooded reply counts the repeaters it crossed without naming them;
-    /// the uncounted ones are drawn as one dashed stretch before the peer,
-    /// rather than letting them read as a direct link.
+    /// the unnamed ones are drawn as one dashed stretch before the peer,
+    /// rather than letting them read as a direct link. A reply with no hop
+    /// count crossed a stretch nobody traced or counted, drawn the same way
+    /// but unknown.
     init(reply: PeerPingReply) {
         let hints = reply.routeHints
         var stops: [Stop] = [.phone]
@@ -43,9 +45,13 @@ struct PingPath: Equatable {
         for index in hints.indices {
             legs.append(index < reply.traceSignal.count ? .reading(reply.traceSignal[index]) : .plain)
         }
-        let unnamed = reply.hopCount.map { Int($0) - 1 - hints.count } ?? 0
-        if unnamed > 0 {
+        switch reply.hopCount.map({ Int($0) - 1 - hints.count }) {
+        case nil:
+            legs[legs.count - 1] = .unknown
+        case let unnamed? where unnamed > 0:
             legs[legs.count - 1] = .unnamed(count: unnamed)
+        default:
+            break
         }
         self.stops = stops
         self.legs = legs

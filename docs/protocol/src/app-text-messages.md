@@ -160,7 +160,7 @@ In chat rooms, the room assigns canonical Message IDs across all senders (see [C
 
 ### Editing
 
-Indicates that this message replaces a previously sent message in the same conversation and sender scope. The option value is 1 byte: the Message ID of the message being edited. No source prefix is needed because the source scope comes from the enclosing packet. For unicast and blind-unicast, pairwise authentication binds that source to a peer key. For multicast, authentication proves only possession of the channel key; the source hint is a claimed identity, and the protocol cannot prevent one channel member from impersonating another member.
+Indicates that this message replaces a previously sent message in the same conversation and sender scope. The option value is 1 byte: the Message ID of the message being edited. No source prefix is needed because the source scope comes from the enclosing packet. For unicast and blind-unicast, pairwise authentication binds that source to a peer key. For multicast, the MIC proves only possession of the channel key; the source is a claimed identity, and one channel member can impersonate another. A multicast whose [frame signature](security.md#frame-signatures) verifies is the exception: the signature binds it to the signer's key.
 
 An edit with a zero-length body signals deletion of the original message.
 

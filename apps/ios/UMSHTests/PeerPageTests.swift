@@ -141,6 +141,21 @@ struct PingPathTests {
         #expect(path.legs == [.unnamed(count: 2)])
     }
 
+    @Test func aReplyWithNoHopCountEndsInAnUnknownStretch() {
+        let path = PingPath(reply: reply(hopCount: nil))
+        #expect(path.stops == [.phone, .peer])
+        #expect(path.legs == [.unknown])
+
+        let near = hint("BtC", 0x01, 0x02)
+        let first = MeshLegSignal(rssiDBm: -108, signalToNoiseCentibels: -25)
+        let partial = PingPath(reply: reply(hopCount: nil, hints: [near], trace: [first]))
+        #expect(partial.stops == [.phone, .repeater(near, preceding: []), .peer])
+        #expect(partial.legs == [
+            .reading(MeshLegSignal(rssiDBm: -97, signalToNoiseCentibels: 65)),
+            .unknown,
+        ])
+    }
+
     @Test func noAnswerBreaksTheLine() {
         #expect(PingPath(unanswered: true).legs == [.broken])
         #expect(PingPath(unanswered: false).legs == [.pending])

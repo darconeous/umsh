@@ -144,6 +144,8 @@ struct ChatRow {
     /// When it was last active, in Unix seconds.
     activity: u32,
     draft: Option<SharedText>,
+    /// The longest message it takes, when less than a message.
+    limit: Option<usize>,
 }
 
 /// How long before the fixture starts the mockup's chats were last
@@ -175,6 +177,7 @@ fn mockup_chats(heap: TextHeap) -> [ChatRow; 7] {
         draft: (!draft.is_empty())
             .then(|| SharedText::new(heap, draft))
             .flatten(),
+        limit: None,
     };
     let peer = |hops| ChatKind::Peer { hops: Some(hops) };
     let channel = |access| ChatKind::Channel { access };
@@ -1319,6 +1322,15 @@ impl Store {
         }
     }
 
+    /// Lets `chat` take messages at most `limit` bytes long, as a node does
+    /// when what its frames carry shrinks.
+    pub fn limit_chat(&self, chat: ChatId, limit: usize) {
+        if let Some(row) = self.chat_rows().iter_mut().find(|row| row.id == chat) {
+            row.limit = Some(limit);
+        }
+        self.queue(NodeEvent::ChatChanged(chat));
+    }
+
     /// Says that my `message` in `chat` came out as it is kept, as the
     /// node does when an acknowledgment arrives or the wait for one ends.
     pub fn settle(&self, chat: ChatId, message: MessageId) {
@@ -1485,7 +1497,7 @@ impl Store {
             round_trip_ms,
             hops: u8::try_from(repeaters.len() + 1).ok().map(|h| h + unnamed),
             repeaters,
-            unnamed,
+            unnamed: Some(unnamed),
             legs: legs.iter().copied().collect(),
         })
     }
@@ -1746,6 +1758,7 @@ impl Store {
             muted: false,
             activity: self.time(),
             draft: None,
+            limit: None,
         };
         let mut rows = self.chat_rows();
         if rows.is_full() {
@@ -1787,6 +1800,9 @@ impl Store {
             let mut text = DraftText::new(self.heap);
             _ = text.splice(0..0, draft);
             summary.draft = EditBuffer::with_text(text);
+        }
+        if let Some(limit) = row.limit {
+            summary.limit_draft(limit);
         }
         summary
     }

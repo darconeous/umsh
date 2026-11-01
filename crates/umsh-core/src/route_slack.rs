@@ -14,7 +14,7 @@
 //! named by the route's last hint heard the destination, as reported in the
 //! trace-signal entry that repeater wrote.
 
-use crate::options::TraceSignalEntry;
+use crate::options::HopSignal;
 
 /// The slack the policy grants, in flood hops, when it grants any.
 ///
@@ -40,7 +40,7 @@ pub struct RouteEvidence {
     pub direct: bool,
     /// How the route's last hop was measured, if it was. A point-to-point
     /// entry marks a hop with no radio in it.
-    pub last_hop: Option<TraceSignalEntry>,
+    pub last_hop: Option<HopSignal>,
     /// The destination advertises itself as mobile.
     pub peer_mobile: bool,
     /// The frame being acknowledged is a retransmission of one this node
@@ -66,7 +66,7 @@ pub fn established_route_slack(evidence: RouteEvidence) -> u8 {
         return ESTABLISHED_ROUTE_EXTRA_FLOOD_HOPS;
     }
     // `None`: never measured. `Some(None)`: a point-to-point hop.
-    let last_hop_rssi = evidence.last_hop.map(TraceSignalEntry::rssi_dbm);
+    let last_hop_rssi = evidence.last_hop.map(HopSignal::rssi_dbm);
     let strong_direct = evidence.direct
         && match last_hop_rssi {
             Some(None) => true,
@@ -92,11 +92,11 @@ mod tests {
 
     const SLACK: u8 = ESTABLISHED_ROUTE_EXTRA_FLOOD_HOPS;
 
-    fn air(rssi_dbm: i16) -> Option<TraceSignalEntry> {
-        Some(TraceSignalEntry::new(rssi_dbm, 0))
+    fn air(rssi_dbm: i16) -> Option<HopSignal> {
+        Some(HopSignal::new(rssi_dbm, 0))
     }
 
-    fn direct(last_hop: Option<TraceSignalEntry>) -> RouteEvidence {
+    fn direct(last_hop: Option<HopSignal>) -> RouteEvidence {
         RouteEvidence {
             direct: true,
             last_hop,
@@ -104,7 +104,7 @@ mod tests {
         }
     }
 
-    fn routed(last_hop: Option<TraceSignalEntry>) -> RouteEvidence {
+    fn routed(last_hop: Option<HopSignal>) -> RouteEvidence {
         RouteEvidence {
             last_hop,
             ..RouteEvidence::default()
@@ -127,7 +127,7 @@ mod tests {
     fn an_ack_for_a_retransmission_gets_slack_however_strong_the_link() {
         for evidence in [
             direct(air(-30)),
-            direct(Some(TraceSignalEntry::POINT_TO_POINT)),
+            direct(Some(HopSignal::POINT_TO_POINT)),
             routed(air(-40)),
         ] {
             let evidence = RouteEvidence {
@@ -146,7 +146,7 @@ mod tests {
 
     #[test]
     fn a_strong_or_bridged_direct_peer_gets_none_even_when_mobile() {
-        for last_hop in [air(-74), air(-30), Some(TraceSignalEntry::POINT_TO_POINT)] {
+        for last_hop in [air(-74), air(-30), Some(HopSignal::POINT_TO_POINT)] {
             let evidence = RouteEvidence {
                 peer_mobile: true,
                 ..direct(last_hop)
@@ -175,7 +175,7 @@ mod tests {
 
     #[test]
     fn a_mobile_destination_gets_slack_past_any_routed_last_hop() {
-        for last_hop in [air(-40), Some(TraceSignalEntry::POINT_TO_POINT)] {
+        for last_hop in [air(-40), Some(HopSignal::POINT_TO_POINT)] {
             let evidence = RouteEvidence {
                 peer_mobile: true,
                 ..routed(last_hop)
@@ -190,7 +190,7 @@ mod tests {
         assert_eq!(established_route_slack(routed(air(-96))), SLACK);
         assert_eq!(established_route_slack(routed(air(-120))), SLACK);
         assert_eq!(
-            established_route_slack(routed(Some(TraceSignalEntry::POINT_TO_POINT))),
+            established_route_slack(routed(Some(HopSignal::POINT_TO_POINT))),
             0
         );
     }

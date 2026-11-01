@@ -61,7 +61,7 @@ UMSH uses compact fields that are present only when needed for the packet type. 
 
 Reticulum's 500-byte network MTU exceeds what most LoRa configurations can carry in a single frame. Reticulum introduced link MTU discovery in v0.9.3, which allows adjacent nodes to negotiate a higher effective MTU than 500 bytes when the underlying interface can support it—but this only applies to high-bandwidth interfaces. The `Interface.optimise_mtu()` method ([`Interface.py:115–138`](https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Interfaces/Interface.py#L115-L138)) maps link speed to hardware MTU, and sets `HW_MTU = None` for any interface running at or below 62,500 bps—which encompasses every LoRa configuration. When `HW_MTU` is `None`, the link request falls back to signalling the base 500-byte MTU ([`Link.py:273–278`](https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Link.py#L273-L278)), and link MTU discovery is never entered. For LoRa interfaces, Reticulum relies on the RNode firmware to reassemble sub-255-byte air frames into 500-byte packets before presenting them to the stack via KISS. UMSH is designed to fit within a single LoRa frame, avoiding fragmentation entirely.
 
-UMSH uses composable CoAP-style options for routing metadata (source routes, trace routes, signal-quality thresholds, region codes), allowing packets to carry exactly the routing information they need. Reticulum uses a fixed two-header-type system: HEADER_1 for direct packets and HEADER_2 for transport-routed packets, with no equivalent to UMSH's composable options.
+UMSH uses composable CoAP-style options for routing metadata (source routes, traces, signal-quality thresholds, region codes), allowing packets to carry exactly the routing information they need. Reticulum uses a fixed two-header-type system: HEADER_1 for direct packets and HEADER_2 for transport-routed packets, with no equivalent to UMSH's composable options.
 
 ## Cryptography
 
@@ -122,7 +122,7 @@ UMSH supports MIC sizes of 4, 8, 12, and 16 bytes (see [Security & Cryptography]
 | Source routing | Yes, via source-route option | No |
 | Hybrid routing | Source route + flood hop count in same packet | No |
 | Transport/directed routing | N/A | Transport nodes with next-hop forwarding |
-| Path discovery | Trace-route option on any flooded packet | Announce flooding + path request/response |
+| Path discovery | Trace option on any flooded packet | Announce flooding + path request/response |
 | Max hops | 15 flood + unlimited source-routed | 128 (hard-coded announce propagation cap, [`Transport.py:41`](https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Transport.py#L41), `PATHFINDER_M`) |
 | Forwarding confirmation | Yes (retries with backoff) | No—forwarding is fire-and-forget; reliability is end-to-end via cryptographic proofs |
 | Channel access | CAD with random backoff; SNR-based contention windows | Not defined at protocol level; RNode firmware implements CSMA with persistence probability for LoRa interfaces |
@@ -133,7 +133,7 @@ UMSH supports MIC sizes of 4, 8, 12, and 16 bytes (see [Security & Cryptography]
 
 UMSH and Reticulum take fundamentally different approaches to routing.
 
-UMSH provides **source routing**—the sender can specify the exact sequence of repeaters a packet should traverse, using 2-byte router hints. This can be combined with flood routing: a packet can be source-routed to a specific area and then flood locally. Path discovery is built into the MAC layer via the trace-route option, which accumulates router hints as a packet floods—the recipient reverses the accumulated trace and caches it as a source route for all subsequent communication with the sender (see [Route Learning](beacons.md#route-learning)).
+UMSH provides **source routing**—the sender can specify the exact sequence of repeaters a packet should traverse, using 2-byte router hints. This can be combined with flood routing: a packet can be source-routed to a specific area and then flood locally. Path discovery is built into the MAC layer via the Trace option, which accumulates router hints as a packet floods—the recipient caches the accumulated trace as a source route for all subsequent communication with the sender (see [Route Learning](beacons.md#route-learning)).
 
 UMSH defines channel access mechanisms (CAD with random backoff, SNR-based contention windows) and forwarding confirmation with retries, providing reliable hop-by-hop delivery and collision avoidance. Reticulum does not define equivalent mechanisms at the protocol level, though RNode firmware provides CSMA with persistence probability for LoRa interfaces independently of Reticulum.
 
@@ -200,7 +200,7 @@ For LoRa mesh networks that rely on multi-hop coverage, this is a notable differ
 |---|---|---|
 | Payload typing | 1-byte payload type prefix | 1-byte context field (21 defined values; [`Packet.py:72–92`](https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Packet.py#L72-L92)) |
 | Structured data | CoAP-over-UMSH (block-wise transfer) | [Resources API](https://reticulum.network/manual/understanding.html#resources) (multi-packet reliable transfer) |
-| Node identity | Identity payload with role, capabilities, name, options | [Announce packets](https://reticulum.network/manual/understanding.html#public-key-announcements) with public key, name hash, app data, Ed25519 signature ([`Identity.py:355`](https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Identity.py#L355), `validate_announce()`) |
+| Node identity | Identity payload with role, capabilities, name, options; advertisements authenticated by an Ed25519 frame signature | [Announce packets](https://reticulum.network/manual/understanding.html#public-key-announcements) with public key, name hash, app data, Ed25519 signature ([`Identity.py:355`](https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Identity.py#L355), `validate_announce()`) |
 | Service discovery | Beacon broadcasts | Aspect-based naming + announce propagation |
 | Interface discovery | Not defined | On-network auto-discovery with trust verification (since v1.1.0) |
 | Network identity | Not defined | Signing authority keypair for administrative domains (since v1.1.0) |
@@ -229,7 +229,7 @@ Reticulum's ratchet mechanism uses local time for 30-day key expiry and minimum 
 
 ## Packet Overhead Comparison
 
-Minimum overhead for a typical encrypted unicast message with no routing options (no source route, no flood hops, no trace route). In practice, multi-hop packets will carry additional routing metadata—UMSH adds 1 byte for flood hops and 2 bytes per source-route hop; Reticulum adds 16 bytes for the Transport ID when routed through a transport node:
+Minimum overhead for a typical encrypted unicast message with no routing options (no source route, no flood hops, no trace). In practice, multi-hop packets will carry additional routing metadata—UMSH adds 1 byte for flood hops and 2 bytes per source-route hop; Reticulum adds 16 bytes for the Transport ID when routed through a transport node:
 
 | Field | UMSH (S=0, 16B MIC) | UMSH (S=0, 4B MIC) | Reticulum (SINGLE) | Reticulum (LINK) |
 |---|---|---|---|---|
@@ -279,7 +279,7 @@ Reticulum's 500-byte network MTU exceeds the ~255-byte LoRa frame limit, requiri
 
 ### Announce Traffic and Repeater Power
 
-Reticulum relies on periodic announce flooding to build and maintain path tables. Transport Nodes re-broadcast announces on all interfaces (subject to a default 2% bandwidth cap); regular nodes receive announces but do not re-broadcast them. This creates a continuous background of traffic that all nodes must receive and that Transport Nodes must retransmit. UMSH does not define an equivalent mechanism—path discovery is on-demand via the trace-route option and imposes no standing overhead.
+Reticulum relies on periodic announce flooding to build and maintain path tables. Transport Nodes re-broadcast announces on all interfaces (subject to a default 2% bandwidth cap); regular nodes receive announces but do not re-broadcast them. This creates a continuous background of traffic that all nodes must receive and that Transport Nodes must retransmit. UMSH does not define an equivalent mechanism—path discovery is on-demand via the Trace option and imposes no standing overhead.
 
 For data packet forwarding, Reticulum divides nodes into two classes at the protocol level: regular nodes, which do not forward unicast packets, and Transport Nodes, which maintain path tables and forward on behalf of others. This means most nodes in a Reticulum network incur zero transmit cost for forwarding unicast traffic. UMSH makes the same distinction at the configuration level—repeating is enabled only on dedicated infrastructure nodes, and end-user devices are typically configured as non-repeating. The practical power implication for non-repeating nodes is the same in both protocols; the difference is that Reticulum enforces the separation in the protocol itself rather than leaving it to deployment configuration.
 

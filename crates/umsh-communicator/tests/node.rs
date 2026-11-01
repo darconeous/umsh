@@ -16,7 +16,7 @@ use umsh_communicator::task::{Arrival, Secrecy};
 use umsh_communicator::{
     ChannelCrypto, Clock, CommunicatorNode, FlashMap, FlashMapStore, MemoryStore, Quota, Seeds,
 };
-use umsh_core::options::TraceSignalEntry;
+use umsh_core::options::HopSignal;
 use umsh_core::{
     ChannelId, ChannelKey, ChannelTag, Fcf, PacketHeader, PacketType, ParsedOptions, PayloadType,
     PublicKey, RouterHint, SourceAddrRef,
@@ -24,8 +24,8 @@ use umsh_core::{
 use umsh_crypto::CryptoEngine;
 use umsh_crypto::NodeIdentity;
 use umsh_crypto::software::{SoftwareAes, SoftwareIdentity, SoftwareSha256};
-use umsh_mac::{CachedRoute, ChannelInfoRef, ReceivedPacketRef, RxMetadata, Snr};
-use umsh_node::{NodeCapabilities, NodeIdentityPayload, NodeRole};
+use umsh_mac::{CachedRoute, ChannelInfoRef, ReceivedPacketRef, RxMetadata, SignatureStatus, Snr};
+use umsh_node::{IdentityUpdate, NodeCapabilities, NodeIdentityPayload, NodeRole};
 use umsh_text::ConversationKey;
 use umsh_text::chat::ChatFacade;
 use umsh_text::engine::{ComposeIntent, EngineConfig, RegardingRef};
@@ -39,9 +39,9 @@ use umsh_ulcp::ids::prop;
 use umsh_ulcp::profiles::VETTED;
 use umsh_ulcp_simdev::{SessionConfig, SimulatedDevice, TimeConfig};
 use umsh_ux_communicator::model::{
-    ChannelAccess, ChannelEntry, ChatKind, Chats, Delivery, Direction, KeyboardSettings, Leg, Node,
-    NodeEvent, PeerEntry, Peers, PingView, Presence, Profile, Reaction, RouteKind, Rule, Setting,
-    Shareable, Signal,
+    ChannelAccess, ChannelEntry, ChatKind, Chats, Delivery, Direction, KeyboardSettings, Leg,
+    MESSAGE_LEN, Node, NodeEvent, PeerEntry, Peers, PingView, Presence, Profile, Reaction,
+    RouteKind, Rule, Setting, Shareable, Signal,
 };
 
 /// 14:32 UTC, when the test clock starts.
@@ -89,7 +89,16 @@ fn node(sim: &Rc<RefCell<SimulatedDevice>>) -> (CommunicatorNode<Port>, &'static
     );
     node.pump();
     assert!(node.primed());
+    measure(&node);
     (node, clock)
+}
+
+/// Answers what the chats ask the device node to measure, as the run loop
+/// would: room for a whole text frame.
+fn measure<S: umsh_communicator::ChatStore>(node: &CommunicatorNode<Port, S>) {
+    for query in node.budget_queries() {
+        node.learn_budget(query.conversation(), Some(umsh_text::engine::MAX_FRAME));
+    }
 }
 
 /// Gives `sim` an identity, as whoever holds the device may.
@@ -170,6 +179,7 @@ fn channel_frame(key: &ChannelKey, from: PublicKey, full_key: bool, payload: &[u
             SourceAddrRef::Hint(from.hint())
         },
         sec_info: None,
+        signature: None,
         body_range: 0..0,
         mic_range: 0..0,
         total_len: 0,
@@ -188,7 +198,15 @@ fn channel_frame(key: &ChannelKey, from: PublicKey, full_key: bool, payload: &[u
         }),
         RxMetadata::new(Some(-97), Some(Snr::from_centibels(65)), None, None),
     );
-    match inbound_text(&packet, &LOCAL, &WellKnownChannels::derive()) {
+    // Signed where a member's chat signs it, and verified, as the MAC
+    // would have.
+    let well_known = WellKnownChannels::derive();
+    let packet = if well_known.is_emergency(key) {
+        packet.with_signature(SignatureStatus::Verified)
+    } else {
+        packet
+    };
+    match inbound_text(&packet, &LOCAL, &well_known) {
         Some(Inbound::Text(text)) => text,
         _ => panic!("not a text frame"),
     }
@@ -1163,6 +1181,81 @@ fn address_of(key: &PublicKey) -> String {
         .collect()
 }
 
+/// Nothing is composed before the device node has measured what a frame
+/// carries, and a conversation it has not measured takes the least any
+/// measured one carries.
+#[test]
+fn an_unmeasured_conversation_takes_the_smallest_budget() {
+    let sim = device();
+    let (node, _) = started(&sim);
+    let robin = PublicKey([0x37; 32]);
+    let chat = node
+        .direct_chat(&address_of(&robin), "Robin", &node.avatar())
+        .unwrap();
+    for query in node.budget_queries() {
+        node.learn_budget(query.conversation(), None);
+    }
+    assert_eq!(node.max_body_len(chat.id), None);
+    assert!(node.send(chat.id, "On my way", None, false).is_none());
+
+    // Robin is not registered with the device node, so its chat goes
+    // unmeasured.
+    let mut smallest = usize::MAX;
+    for (budget, query) in (90..).zip(node.budget_queries()) {
+        let measured = query.peer().is_none().then_some(budget);
+        if let Some(budget) = measured {
+            smallest = smallest.min(budget);
+        }
+        node.learn_budget(query.conversation(), measured);
+    }
+    assert_eq!(smallest, 90);
+    let body: String = core::iter::repeat_n('x', 400).collect();
+    node.send(chat.id, &body, None, false).unwrap();
+    let mut frames = 0;
+    while let Some(departure) = node.depart() {
+        assert!(departure.payload().len() <= smallest);
+        frames += 1;
+        if !node.departed(departure, Sent::Unsendable) {
+            break;
+        }
+    }
+    assert!(frames > 1);
+}
+
+/// A chat's draft grows only to the longest message the chat takes, and a
+/// measurement that changes that lists the chat anew.
+#[test]
+fn a_draft_grows_only_to_what_its_chat_takes() {
+    let sim = device();
+    let (node, _) = started(&sim);
+    let robin = PublicKey([0x37; 32]);
+    let chat = node
+        .direct_chat(&address_of(&robin), "Robin", &node.avatar())
+        .unwrap();
+    let whole = node.max_body_len(chat.id).unwrap();
+    let limit = |node: &CommunicatorNode<Port>| node.chat(chat.id).unwrap().draft.storage().limit();
+    assert_eq!(limit(&node), whole.min(MESSAGE_LEN));
+    events(&node);
+
+    for query in node.budget_queries() {
+        node.learn_budget(query.conversation(), Some(120));
+    }
+    let smaller = node.max_body_len(chat.id).unwrap();
+    assert!(smaller < whole.min(MESSAGE_LEN));
+    assert!(events(&node).contains(&NodeEvent::ChatChanged(chat.id)));
+    assert_eq!(limit(&node), smaller);
+    let mut draft = node.chat(chat.id).unwrap().draft;
+    let long: String = core::iter::repeat_n('x', smaller + 1).collect();
+    assert!(!draft.insert_str(&long));
+    assert!(draft.insert_str(&long[1..]));
+
+    // The same measurement again changes no chat.
+    for query in node.budget_queries() {
+        node.learn_budget(query.conversation(), Some(120));
+    }
+    assert!(!events(&node).contains(&NodeEvent::ChatChanged(chat.id)));
+}
+
 /// A direct message is kept as Sending and handed to the device node; a
 /// frame that cannot go makes it Unconfirmed, and a retry sends it again.
 #[test]
@@ -1243,6 +1336,7 @@ fn node_on(
     node.pump();
     assert!(node.started());
     while node.next_event().is_some() {}
+    measure(&node);
     node
 }
 
@@ -1553,6 +1647,7 @@ fn a_heard_node_is_found_by_name() {
         key: robin,
         identity: chatter("Robin Ridge"),
         payload: Vec::new(),
+        update: IdentityUpdate::Replace,
         rx: rx(1),
     });
     clock.set(65_000);
@@ -1698,6 +1793,7 @@ fn a_saved_peer_is_asked_for_their_identity() {
         key: robin,
         identity: chatter("Robin"),
         payload: Vec::new(),
+        update: IdentityUpdate::Replace,
         rx: rx(1),
     });
     assert!(events(&node).contains(&NodeEvent::PeerChanged(peer)));
@@ -1734,6 +1830,7 @@ fn a_saved_peer_follows_their_identity_until_given_an_alias() {
             key: robin,
             identity: chatter(name),
             payload: Vec::new(),
+            update: IdentityUpdate::Replace,
             rx: rx(1),
         })
     };
@@ -1918,6 +2015,7 @@ fn a_member_known_by_hint_is_asked_for() {
         key: robin,
         identity: chatter("Robin"),
         payload: Vec::new(),
+        update: IdentityUpdate::Replace,
         rx: rx(2),
     });
     assert!(events(&node).contains(&NodeEvent::IdentitiesLearned));
@@ -2057,6 +2155,34 @@ fn a_contact_in_a_message_shows_as_a_card() {
     assert_eq!(node.known_member(&forged).unwrap().sender.name, lettering);
 }
 
+/// An identity on a frame that may be older than what is kept introduces
+/// a node not known yet and never renames one that is; the node's current
+/// word does.
+#[test]
+fn an_identity_out_of_order_only_fills() {
+    let sim = device();
+    let (node, _) = started(&sim);
+    let kit = PublicKey([0x37; 32]);
+    let address = address_of(&kit);
+    let identify = |name, update| {
+        node.arrive(Arrival::Identity {
+            key: kit,
+            identity: chatter(name),
+            payload: Vec::new(),
+            update,
+            rx: rx(1),
+        })
+    };
+    let name = || node.known_member(&address).unwrap().sender.name;
+
+    identify("Kit", IdentityUpdate::Fill);
+    assert_eq!(name(), "Kit");
+    identify("Old Kit", IdentityUpdate::Fill);
+    assert_eq!(name(), "Kit");
+    identify("Kit Carson", IdentityUpdate::Replace);
+    assert_eq!(name(), "Kit Carson");
+}
+
 /// What a node says of itself is never replaced by what a link says of it.
 #[test]
 fn a_nodes_own_name_outranks_a_link() {
@@ -2077,6 +2203,7 @@ fn a_nodes_own_name_outranks_a_link() {
         key: kit,
         identity: chatter("Kit"),
         payload: Vec::new(),
+        update: IdentityUpdate::Replace,
         rx: rx(1),
     });
     assert_eq!(node.known_member(&address).unwrap().sender.name, "Kit");
@@ -2102,6 +2229,7 @@ fn a_saved_peer_is_shared_with_their_own_signed_identity() {
         key,
         identity: NodeIdentityPayload::from_bytes(&payload).unwrap(),
         payload: payload.clone(),
+        update: IdentityUpdate::Replace,
         rx: rx(1),
     });
     let member = node.known_member(&address_of(&key)).unwrap();
@@ -2120,6 +2248,7 @@ fn a_saved_peer_is_shared_with_their_own_signed_identity() {
         key: ash,
         identity: chatter("Ash"),
         payload: Vec::new(),
+        update: IdentityUpdate::Replace,
         rx: rx(1),
     });
     let saved = node
@@ -2272,10 +2401,8 @@ fn a_ping_answer_keeps_its_path_and_how_each_hop_was_heard() {
         peer: robin,
         round_trip_ms: 1_380,
         rx: heard,
-        signal: vec![
-            TraceSignalEntry::new(-104, 38),
-            TraceSignalEntry::POINT_TO_POINT,
-        ],
+        signal: vec![HopSignal::new(-104, 38), HopSignal::POINT_TO_POINT],
+        truncated: false,
     });
     assert!(events(&node).contains(&NodeEvent::PingSettled(peer)));
     let Some(PingView::Reply(reply)) = node.ping_view(peer) else {
@@ -2286,7 +2413,7 @@ fn a_ping_answer_keeps_its_path_and_how_each_hop_was_heard() {
     let named: Vec<[u8; 2]> = reply.repeaters.iter().map(|r| r.hint).collect();
     assert_eq!(named, [[0xA1, 0x01], [0xB2, 0x02]]);
     // One hop more than were traced: a repeater that named none.
-    assert_eq!(reply.unnamed, 1);
+    assert_eq!(reply.unnamed, Some(1));
     assert_eq!(
         reply.legs.as_slice(),
         [
@@ -2300,6 +2427,41 @@ fn a_ping_answer_keeps_its_path_and_how_each_hop_was_heard() {
     );
     // The answer can have taught the device node a route.
     assert!(matches!(node.command(), Some(Command::ReadRoute { peer }) if peer == robin));
+}
+
+/// An answer whose trace lost its farthest hops shows the repeaters it
+/// names and that more went unnamed: how many when the answer flooded and
+/// counted its hops, and an unknown number when it was source-routed and
+/// did not. A trace that kept no hop at all is not a direct answer.
+#[test]
+fn a_truncated_ping_answer_never_shows_a_whole_path() {
+    let sim = device();
+    let (node, clock) = started(&sim);
+    let (robin, peer) = saved_robin(&sim, &node, clock);
+    let nearest = vec![RouterHint([0xA1, 0x01])];
+    for (hop_count, route_hints, unnamed) in [
+        (Some(5), nearest.clone(), Some(3)),
+        (None, nearest.clone(), None),
+        (None, Vec::new(), None),
+    ] {
+        node.ping(peer);
+        let mut heard = rx(1);
+        heard.hop_count = hop_count;
+        heard.route_hints = route_hints.clone();
+        node.arrive(Arrival::Pong {
+            peer: robin,
+            round_trip_ms: 2_000,
+            rx: heard,
+            signal: Vec::new(),
+            truncated: true,
+        });
+        let Some(PingView::Reply(reply)) = node.ping_view(peer) else {
+            panic!("no reply");
+        };
+        assert_eq!(reply.hops, hop_count);
+        assert_eq!(reply.repeaters.len(), route_hints.len());
+        assert_eq!(reply.unnamed, unnamed, "{hop_count:?} {route_hints:?}");
+    }
 }
 
 /// A ping nobody answers ends as no reply; word of a timeout with no ping

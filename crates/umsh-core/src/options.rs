@@ -1,6 +1,6 @@
 use core::ops::Range;
 
-use crate::{EncodeError, ParseError};
+use crate::{EncodeError, ParseError, RouterHint};
 
 /// Incremental encoder for CoAP-style delta/length option blocks.
 ///
@@ -94,31 +94,26 @@ impl<'a> OptionEncoder<'a> {
     }
 }
 
-/// One trace-signal entry: negative RSSI in dBm, then SNR in centibels
-/// (packet-options.md § Trace Signal).
+/// The signal half of a trace record: negative RSSI in dBm, then SNR in
+/// centibels (packet-options.md § Trace).
 ///
-/// Every hop that prepends a router hint to a trace route prepends one of
-/// these to the trace signal, so entry `N` is the quality at which the hop
-/// named by hint `N` heard the packet. That pairing is the option's whole
-/// value, which is why the encoding lives here rather than in whichever
-/// forwarder happens to need it: a repeater and a bridge that disagree
-/// about a byte produce a list nothing downstream can read.
+/// The encoding lives here rather than in whichever forwarder happens to
+/// need it: a repeater and a bridge that disagree about a byte produce a
+/// trace nothing downstream can read.
 ///
 /// Both fields saturate rather than wrap, so a reading past the end of the
 /// range reports the nearest representable value instead of a
 /// plausible-looking wrong one.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct TraceSignalEntry([u8; 2]);
+pub struct HopSignal([u8; 2]);
 
-impl TraceSignalEntry {
+impl HopSignal {
     /// What a hop writes when it received the packet over a point-to-point
     /// link—a bridge—rather than the air.
     ///
     /// An RSSI byte of zero is 0 dBm at the receiver, which no link this
     /// protocol runs over produces, and [`new`](Self::new) never writes it,
-    /// so it cannot be mistaken for a reading. Writing it keeps the
-    /// entry-for-entry pairing with the trace route intact, which a hop with
-    /// no radio in it is still obliged to maintain.
+    /// so it cannot be mistaken for a reading.
     pub const POINT_TO_POINT: Self = Self([0, 0]);
 
     /// The entry for a hop that measured the packet off the air.
@@ -157,10 +152,197 @@ impl TraceSignalEntry {
         }
     }
 
-    /// The two bytes, ready to prepend to a trace-signal option value.
+    /// The two bytes, as a trace record carries them.
     pub const fn as_bytes(self) -> [u8; 2] {
         self.0
     }
+}
+
+/// One hop of a Trace option with signal: the hop's router hint, then the
+/// signal it heard the frame at.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TraceRecord {
+    pub hint: RouterHint,
+    pub signal: HopSignal,
+}
+
+impl TraceRecord {
+    /// The record's four wire bytes: `RH (2) ‖ RSSI (1) ‖ SNR (1)`.
+    pub const fn to_bytes(self) -> [u8; 4] {
+        let signal = self.signal.as_bytes();
+        [self.hint.0[0], self.hint.0[1], signal[0], signal[1]]
+    }
+}
+
+/// The form of a Trace option's value (packet-options.md § Trace).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TraceForm {
+    /// Complete, one 4-byte record per hop.
+    Signal,
+    /// Complete, `0xFE` then one router hint per hop.
+    HintsOnly,
+    /// `0xFF` then the most recent hops' router hints; older hops dropped.
+    Truncated,
+}
+
+const TRACE_HINTS_ONLY: u8 = 0xFE;
+const TRACE_TRUNCATED: u8 = 0xFF;
+
+/// One hop of a trace, whatever its form.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TraceEntry {
+    pub hint: RouterHint,
+    /// The signal the hop heard the frame at, when the trace still has it.
+    pub signal: Option<HopSignal>,
+}
+
+/// A well-formed Trace option value, most recent hop first.
+///
+/// The only way to read a trace: parsing rejects malformed values, and a
+/// truncated trace yields no route through [`Self::complete_hints`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TraceRef<'a> {
+    form: TraceForm,
+    /// The entries, without any sentinel.
+    entries: &'a [u8],
+}
+
+impl<'a> TraceRef<'a> {
+    /// Parse a Trace option value. `None` when it is malformed: a length
+    /// of 2 mod 4, or an odd length that does not begin with a sentinel.
+    pub fn parse(value: &'a [u8]) -> Option<Self> {
+        if value.len() % 4 == 0 {
+            return Some(Self {
+                form: TraceForm::Signal,
+                entries: value,
+            });
+        }
+        if value.len() % 2 == 0 {
+            return None;
+        }
+        let form = match value[0] {
+            TRACE_HINTS_ONLY => TraceForm::HintsOnly,
+            TRACE_TRUNCATED => TraceForm::Truncated,
+            _ => return None,
+        };
+        Some(Self {
+            form,
+            entries: &value[1..],
+        })
+    }
+
+    pub fn form(&self) -> TraceForm {
+        self.form
+    }
+
+    /// Whether the trace carries per-hop signal.
+    pub fn has_signal(&self) -> bool {
+        self.form == TraceForm::Signal
+    }
+
+    /// Whether the trace names every hop the frame took.
+    pub fn is_complete(&self) -> bool {
+        self.form != TraceForm::Truncated
+    }
+
+    fn entry_len(&self) -> usize {
+        if self.has_signal() { 4 } else { 2 }
+    }
+
+    /// The number of hops the trace names.
+    pub fn len(&self) -> usize {
+        self.entries.len() / self.entry_len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// The hops, most recent first.
+    pub fn entries(self) -> impl Iterator<Item = TraceEntry> + 'a {
+        let signal = self.has_signal();
+        self.entries
+            .chunks_exact(self.entry_len())
+            .map(move |entry| TraceEntry {
+                hint: RouterHint([entry[0], entry[1]]),
+                signal: signal.then(|| HopSignal::from_bytes([entry[2], entry[3]])),
+            })
+    }
+
+    /// The router hints of a complete trace, most recent first; `None` for
+    /// a truncated one, from which no route may be built.
+    pub fn complete_hints(self) -> Option<impl Iterator<Item = RouterHint> + 'a> {
+        self.is_complete()
+            .then(|| self.entries().map(|entry| entry.hint))
+    }
+
+    /// The value a repeater forwards after adding its own hop, given
+    /// `budget` bytes for the whole option record (header included), written
+    /// to `out`. Returns the value's length, or `None` when even a lone
+    /// `0xFF` does not fit and the frame cannot go out on that link.
+    ///
+    /// The first that fits: its entry in the current form; for a trace with
+    /// signal, the hints-only form; then the truncated form, dropping the
+    /// oldest hints. Forms only degrade.
+    pub fn forwarded(&self, own: TraceRecord, budget: usize, out: &mut [u8]) -> Option<usize> {
+        let fits = |len: usize| option_record_len(len) <= budget && len <= out.len();
+        let hints = self.len();
+        match self.form {
+            TraceForm::Signal => {
+                let len = 4 + self.entries.len();
+                if fits(len) {
+                    out[..4].copy_from_slice(&own.to_bytes());
+                    out[4..len].copy_from_slice(self.entries);
+                    return Some(len);
+                }
+                if fits(1 + 2 * (hints + 1)) {
+                    return Some(self.write_hints(TRACE_HINTS_ONLY, own.hint, hints, out));
+                }
+            }
+            TraceForm::HintsOnly => {
+                if fits(1 + 2 * (hints + 1)) {
+                    return Some(self.write_hints(TRACE_HINTS_ONLY, own.hint, hints, out));
+                }
+            }
+            TraceForm::Truncated => {}
+        }
+        // Keep this hop and as many of the newest earlier hops as fit.
+        let mut kept = hints;
+        loop {
+            if fits(1 + 2 * (kept + 1)) {
+                return Some(self.write_hints(TRACE_TRUNCATED, own.hint, kept, out));
+            }
+            if kept == 0 {
+                break;
+            }
+            kept -= 1;
+        }
+        fits(1).then(|| {
+            out[0] = TRACE_TRUNCATED;
+            1
+        })
+    }
+
+    /// Write `sentinel ‖ own ‖` the newest `kept` earlier hints.
+    fn write_hints(&self, sentinel: u8, own: RouterHint, kept: usize, out: &mut [u8]) -> usize {
+        out[0] = sentinel;
+        out[1..3].copy_from_slice(&own.0);
+        for (index, entry) in self.entries().take(kept).enumerate() {
+            out[3 + 2 * index..5 + 2 * index].copy_from_slice(&entry.hint.0);
+        }
+        3 + 2 * kept
+    }
+}
+
+/// The wire size of an option record whose value is `len` bytes, when its
+/// delta fits the nibble: the header byte, any extended length, the value.
+pub fn option_record_len(len: usize) -> usize {
+    let extended = match len {
+        0..13 => 0,
+        13..269 => 1,
+        _ => 2,
+    };
+    1 + extended + len
 }
 
 /// Saturates at -1 dBm rather than 0, so no reading ever writes the
@@ -427,48 +609,163 @@ fn read_extended(data: &[u8], nibble: u8) -> Result<(u16, usize), ParseError> {
 mod tests {
     use super::*;
 
-    // ── TraceSignalEntry ──────────────────────────────────────────────────────
+    // ── Trace ────────────────────────────────────────────────────────────
+
+    use super::{TraceEntry, TraceForm, TraceRecord, TraceRef};
+    use crate::RouterHint;
+
+    fn record(hint: u8) -> TraceRecord {
+        TraceRecord {
+            hint: RouterHint([hint, hint]),
+            signal: HopSignal::new(-90, 20),
+        }
+    }
 
     #[test]
-    fn a_trace_signal_entry_is_negated_rssi_then_signed_centibels() {
-        assert_eq!(TraceSignalEntry::new(-91, 42).as_bytes(), [91, 42]);
-        assert_eq!(TraceSignalEntry::new(-120, -75).as_bytes(), [120, 0xB5]);
+    fn trace_forms_are_told_apart_by_length_parity() {
+        for len in [0usize, 4, 8] {
+            let mut value = [0u8; 8];
+            value[0] = 0xFE;
+            let trace = TraceRef::parse(&value[..len]).unwrap();
+            assert_eq!(trace.form(), TraceForm::Signal, "len {len}");
+            assert_eq!(trace.len(), len / 4);
+        }
+        for hops in 0..3 {
+            let value = [0xFE, 1, 2, 3, 4];
+            let trace = TraceRef::parse(&value[..1 + 2 * hops]).unwrap();
+            assert_eq!(trace.form(), TraceForm::HintsOnly);
+            assert!(trace.is_complete());
+            assert_eq!(trace.len(), hops);
+            let value = [0xFF, 1, 2, 3, 4];
+            let trace = TraceRef::parse(&value[..1 + 2 * hops]).unwrap();
+            assert_eq!(trace.form(), TraceForm::Truncated);
+            assert!(trace.complete_hints().is_none());
+        }
+        for value in [
+            &[1u8, 2][..],
+            &[1, 2, 3, 4, 5, 6],
+            &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+            &[0x01],
+            &[0x10, 1, 2],
+            &[0xFE, 1],
+            &[0xFF, 1, 2, 3, 4, 5],
+        ] {
+            assert!(TraceRef::parse(value).is_none(), "{value:?}");
+        }
+    }
+
+    #[test]
+    fn trace_entries_are_most_recent_first() {
+        let mut value = [0u8; 8];
+        value[..4].copy_from_slice(&record(0xB0).to_bytes());
+        value[4..].copy_from_slice(
+            &TraceRecord {
+                hint: RouterHint([0xA0, 0xA0]),
+                signal: HopSignal::POINT_TO_POINT,
+            }
+            .to_bytes(),
+        );
+        let trace = TraceRef::parse(&value).unwrap();
+        let entries: std::vec::Vec<TraceEntry> = trace.entries().collect();
+        assert_eq!(entries[0].hint, RouterHint([0xB0, 0xB0]));
+        assert_eq!(entries[0].signal, Some(HopSignal::new(-90, 20)));
+        assert_eq!(entries[1].signal, Some(HopSignal::POINT_TO_POINT));
+        let hints: std::vec::Vec<_> = TraceRef::parse(&[0xFE, 0xB0, 0xB0])
+            .unwrap()
+            .entries()
+            .collect();
+        assert_eq!(hints[0].signal, None);
+    }
+
+    /// The repeater rule, one step at a time, with the budget counting the
+    /// option's header byte and its extended length past 12 bytes.
+    #[test]
+    fn a_forwarded_trace_degrades_one_step_at_a_time() {
+        let mut two = [0u8; 8];
+        two[..4].copy_from_slice(&record(0xB0).to_bytes());
+        two[4..].copy_from_slice(&record(0xA0).to_bytes());
+        let trace = TraceRef::parse(&two).unwrap();
+        let mut out = [0u8; 64];
+
+        // Room for a record: 12 bytes of value, one header byte.
+        assert_eq!(trace.forwarded(record(0xC0), 13, &mut out), Some(12));
+        assert_eq!(&out[..4], &record(0xC0).to_bytes());
+        assert_eq!(&out[4..12], &two);
+
+        // One byte short: hints only, every earlier hop kept.
+        assert_eq!(trace.forwarded(record(0xC0), 12, &mut out), Some(7));
+        assert_eq!(&out[..7], &[0xFE, 0xC0, 0xC0, 0xB0, 0xB0, 0xA0, 0xA0]);
+
+        // Room for the truncated form only: the oldest hop goes first.
+        assert_eq!(trace.forwarded(record(0xC0), 6, &mut out), Some(5));
+        assert_eq!(&out[..5], &[0xFF, 0xC0, 0xC0, 0xB0, 0xB0]);
+        assert_eq!(trace.forwarded(record(0xC0), 2, &mut out), Some(1));
+        assert_eq!(out[0], 0xFF);
+        assert_eq!(trace.forwarded(record(0xC0), 1, &mut out), None);
+
+        // A hints-only trace gets a hint, never a record.
+        let hints_only = TraceRef::parse(&[0xFE, 0xB0, 0xB0]).unwrap();
+        assert_eq!(hints_only.forwarded(record(0xC0), 64, &mut out), Some(5));
+        assert_eq!(&out[..5], &[0xFE, 0xC0, 0xC0, 0xB0, 0xB0]);
+        // A truncated one stays truncated.
+        let truncated = TraceRef::parse(&[0xFF, 0xB0, 0xB0]).unwrap();
+        assert_eq!(truncated.forwarded(record(0xC0), 64, &mut out), Some(5));
+        assert_eq!(out[0], 0xFF);
+
+        // The length field gains a byte once the value passes 12 bytes:
+        // three records (12) plus this hop's (16) needs 18.
+        let mut three = [0u8; 12];
+        for (index, hint) in [0xB0, 0xA0, 0x90].into_iter().enumerate() {
+            three[4 * index..4 * index + 4].copy_from_slice(&record(hint).to_bytes());
+        }
+        let trace = TraceRef::parse(&three).unwrap();
+        assert_eq!(trace.forwarded(record(0xC0), 18, &mut out), Some(16));
+        assert_eq!(trace.forwarded(record(0xC0), 17, &mut out), Some(9));
+        assert_eq!(out[0], 0xFE);
+    }
+
+    // ── HopSignal ──────────────────────────────────────────────────────
+
+    #[test]
+    fn a_hop_signal_is_negated_rssi_then_signed_centibels() {
+        assert_eq!(HopSignal::new(-91, 42).as_bytes(), [91, 42]);
+        assert_eq!(HopSignal::new(-120, -75).as_bytes(), [120, 0xB5]);
     }
 
     #[test]
     fn a_reading_past_the_end_of_the_range_saturates() {
         // Better the nearest representable value than a wrapped one that
         // reads as a plausible measurement.
-        assert_eq!(TraceSignalEntry::new(-400, 0).as_bytes()[0], 255);
-        assert_eq!(TraceSignalEntry::new(-90, 500).as_bytes()[1], 127);
-        assert_eq!(TraceSignalEntry::new(-90, -500).as_bytes()[1], 0x80);
+        assert_eq!(HopSignal::new(-400, 0).as_bytes()[0], 255);
+        assert_eq!(HopSignal::new(-90, 500).as_bytes()[1], 127);
+        assert_eq!(HopSignal::new(-90, -500).as_bytes()[1], 0x80);
     }
 
     /// The point-to-point marker is reserved: even a reading at the top of
     /// the scale must not be read back as a hop with no radio in it.
     #[test]
     fn no_reading_writes_the_point_to_point_marker() {
-        let loudest = TraceSignalEntry::new(0, 0);
-        assert_ne!(loudest, TraceSignalEntry::POINT_TO_POINT);
+        let loudest = HopSignal::new(0, 0);
+        assert_ne!(loudest, HopSignal::POINT_TO_POINT);
         assert_eq!(loudest.snr_centibels(), Some(0));
-        assert!(TraceSignalEntry::POINT_TO_POINT.is_point_to_point());
-        assert_eq!(TraceSignalEntry::POINT_TO_POINT.snr_centibels(), None);
+        assert!(HopSignal::POINT_TO_POINT.is_point_to_point());
+        assert_eq!(HopSignal::POINT_TO_POINT.snr_centibels(), None);
     }
 
     #[test]
     fn an_entry_reads_back_the_snr_it_was_written_with() {
-        let entry = TraceSignalEntry::from_bytes(TraceSignalEntry::new(-120, -75).as_bytes());
+        let entry = HopSignal::from_bytes(HopSignal::new(-120, -75).as_bytes());
         assert_eq!(entry.snr_centibels(), Some(-75));
         assert!(!entry.is_point_to_point());
     }
 
     #[test]
     fn an_entry_reads_back_the_rssi_it_was_written_with() {
-        assert_eq!(TraceSignalEntry::new(-91, 42).rssi_dbm(), Some(-91));
+        assert_eq!(HopSignal::new(-91, 42).rssi_dbm(), Some(-91));
         // Saturated readings read back as the nearest representable value.
-        assert_eq!(TraceSignalEntry::new(0, 0).rssi_dbm(), Some(-1));
-        assert_eq!(TraceSignalEntry::new(-400, 0).rssi_dbm(), Some(-255));
-        assert_eq!(TraceSignalEntry::POINT_TO_POINT.rssi_dbm(), None);
+        assert_eq!(HopSignal::new(0, 0).rssi_dbm(), Some(-1));
+        assert_eq!(HopSignal::new(-400, 0).rssi_dbm(), Some(-255));
+        assert_eq!(HopSignal::POINT_TO_POINT.rssi_dbm(), None);
     }
 
     // ── parse_be_u32 ──────────────────────────────────────────────────────────

@@ -19,8 +19,8 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use heapless::Deque;
-use umsh_core::{ChannelId, NodeHint, PayloadType, PublicKey, RouterHint};
-use umsh_mac::{PacketFamily, RepeaterHints, Snr};
+use umsh_core::{ChannelKey, NodeHint, PayloadType, PublicKey, RouterHint, options::TraceRef};
+use umsh_mac::{PacketFamily, Snr};
 
 use crate::identity::{NodeCapabilities, NodeIdentityPayload, NodeRole};
 use crate::location::NodeLocation;
@@ -204,7 +204,7 @@ pub struct IdentityRequestContext<'a> {
     pub has_full_source: bool,
     /// The channel the request arrived on, if any (`None` for plain
     /// broadcast/unicast).
-    pub channel: Option<ChannelId>,
+    pub channel: Option<ChannelKey>,
     /// Coarse packet family (Unicast / Broadcast / Multicast / BlindUnicast).
     pub family: PacketFamily,
     /// The request's filter/option block, for policies that inspect it further.
@@ -213,26 +213,21 @@ pub struct IdentityRequestContext<'a> {
     pub rssi: Option<i16>,
     /// Signal-to-noise ratio of the request, if measured.
     pub snr: Option<Snr>,
-    /// The request's accumulated trace route, as packed option bytes, or
-    /// `None` when the request carried no trace-route option at all.
+    /// The request's accumulated trace, or `None` when the request carried
+    /// no Trace option at all.
     ///
-    /// Repeaters prepend their hint when forwarding, so this reads
-    /// front-to-back as the path *back* to the requester and needs no
+    /// Repeaters prepend their entry when forwarding, so a complete trace
+    /// reads front-to-back as the path *back* to the requester and needs no
     /// reversal. It is the only route home a broadcast solicitation offers:
-    /// broadcast reception registers no route with the MAC.
+    /// broadcast reception registers no route with the MAC. A truncated
+    /// trace offers none.
     ///
     /// Presence is kept distinct from emptiness because the two say different
     /// things: an empty option is a request that reached us without passing a
     /// repeater, while no option is a requester that asked for no path to be
     /// recorded. The reply mirrors the option the request carried, so it is
     /// the presence—not the hop count—that decides.
-    pub trace_route: Option<&'a [u8]>,
-    /// The request's accumulated trace signal, as packed option bytes, or
-    /// `None` when the request carried no trace-signal option.
-    ///
-    /// Paired with the trace route entry for entry, and mirrored onto the
-    /// reply on the same terms.
-    pub trace_signal: Option<&'a [u8]>,
+    pub trace: Option<TraceRef<'a>>,
 }
 
 /// A respond policy's verdict for one Identity Request.
@@ -323,7 +318,7 @@ pub(crate) struct IdentityResponsePlan {
     /// request accumulated on the way in is the path home.
     pub(crate) route: Vec<RouterHint>,
     /// Whether the reply asks the repeaters that carry it to record
-    /// themselves, mirroring the trace-route option the request arrived with.
+    /// themselves, mirroring the Trace option the request arrived with.
     ///
     /// The request's trace taught this node a path home and taught the
     /// requester nothing (beacons.md § Path Discovery, bidirectional
@@ -337,10 +332,7 @@ pub(crate) struct IdentityResponsePlan {
     /// A reply no repeater may carry records nothing either way—the MAC
     /// drops the request on an unrepeatable frame rather than spending an
     /// option header on it—so a genuinely direct answer stays bare.
-    pub(crate) trace_route: bool,
-    /// Whether the reply also asks for per-hop signal quality, mirroring the
-    /// request's trace-signal option on the same terms.
-    pub(crate) trace_signal: bool,
+    pub(crate) trace: bool,
     /// The channel to answer on, set when the request arrived as a blind
     /// unicast; `None` sends a plain unicast.
     ///
@@ -348,7 +340,7 @@ pub(crate) struct IdentityResponsePlan {
     /// in the clear would name them. A multicast or broadcast solicitation
     /// carries a channel too but is answered by targeted unicast, which is what
     /// keeps one solicitation from drawing a crowd of channel-wide replies.
-    pub(crate) channel: Option<ChannelId>,
+    pub(crate) channel: Option<ChannelKey>,
     /// The framed reply payload: `PayloadType::NodeIdentity` + encoded identity.
     pub(crate) framed: Vec<u8>,
 }
@@ -406,9 +398,12 @@ impl IdentityResponder {
         // policy declined or the encoder could not frame was never answered,
         // and must not suppress a later attempt that would succeed.
         self.record_answered(requester, nonce, now_ms);
-        // Repeaters prepend as they forward, so the accumulated trace already
+        // Repeaters prepend as they forward, so a complete trace already
         // reads as the path back and is copied verbatim rather than reversed.
-        let route = RepeaterHints::new(ctx.trace_route.unwrap_or(&[])).collect::<Vec<_>>();
+        let route = ctx
+            .trace
+            .and_then(|trace| trace.complete_hints().map(Iterator::collect::<Vec<_>>))
+            .unwrap_or_default();
         Some(IdentityResponsePlan {
             to: ctx.from_key,
             full_source,
@@ -418,8 +413,7 @@ impl IdentityResponder {
             // A response mirrors the trace options its request carried,
             // whatever form the response takes; the MAC does the same for a
             // MAC ack and an Echo Response.
-            trace_route: ctx.trace_route.is_some(),
-            trace_signal: ctx.trace_signal.is_some(),
+            trace: ctx.trace.is_some(),
             channel: match ctx.family {
                 PacketFamily::BlindUnicast => ctx.channel,
                 _ => None,

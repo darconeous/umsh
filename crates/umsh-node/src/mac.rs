@@ -1,7 +1,7 @@
-use umsh_core::{ChannelId, ChannelKey, PublicKey};
+use umsh_core::{ChannelKey, PublicKey};
 use umsh_mac::{
     AddPeerError, CachedRoute, CapacityError, LocalIdentityId, MacError, MacEventRef, MacHandle,
-    PeerId, Platform, SendError, SendOptions, SendReceipt,
+    PeerId, Platform, SendDestination, SendError, SendOptions, SendReceipt,
 };
 
 /// Pluggable backend that the node layer delegates to for MAC operations.
@@ -67,6 +67,14 @@ pub trait MacBackend: Clone {
         let _ = key;
         false
     }
+    /// The most payload a send from `from` to `destination` with
+    /// `options` can carry, accounting for everything the MAC adds.
+    async fn payload_capacity(
+        &self,
+        from: LocalIdentityId,
+        destination: SendDestination<'_>,
+        options: &SendOptions,
+    ) -> Result<usize, MacBackendError<Self::SendError, Self::CapacityError>>;
     /// Queue a broadcast frame.
     async fn send_broadcast(
         &self,
@@ -78,7 +86,7 @@ pub trait MacBackend: Clone {
     async fn send_multicast(
         &self,
         from: LocalIdentityId,
-        channel: &ChannelId,
+        channel: &ChannelKey,
         payload: &[u8],
         options: &SendOptions,
     ) -> Result<SendReceipt, MacBackendError<Self::SendError, Self::CapacityError>>;
@@ -95,7 +103,7 @@ pub trait MacBackend: Clone {
         &self,
         from: LocalIdentityId,
         dst: &PublicKey,
-        channel: &ChannelId,
+        channel: &ChannelKey,
         payload: &[u8],
         options: &SendOptions,
     ) -> Result<Option<SendReceipt>, MacBackendError<Self::SendError, Self::CapacityError>>;
@@ -346,6 +354,17 @@ impl<
         self.remove_channel(key).await
     }
 
+    async fn payload_capacity(
+        &self,
+        from: LocalIdentityId,
+        destination: SendDestination<'_>,
+        options: &SendOptions,
+    ) -> Result<usize, MacBackendError<Self::SendError, Self::CapacityError>> {
+        self.payload_capacity(from, destination, options)
+            .await
+            .map_err(MacBackendError::Send)
+    }
+
     async fn send_broadcast(
         &self,
         from: LocalIdentityId,
@@ -360,7 +379,7 @@ impl<
     async fn send_multicast(
         &self,
         from: LocalIdentityId,
-        channel: &ChannelId,
+        channel: &ChannelKey,
         payload: &[u8],
         options: &SendOptions,
     ) -> Result<SendReceipt, MacBackendError<Self::SendError, Self::CapacityError>> {
@@ -385,7 +404,7 @@ impl<
         &self,
         from: LocalIdentityId,
         dst: &PublicKey,
-        channel: &ChannelId,
+        channel: &ChannelKey,
         payload: &[u8],
         options: &SendOptions,
     ) -> Result<Option<SendReceipt>, MacBackendError<Self::SendError, Self::CapacityError>> {

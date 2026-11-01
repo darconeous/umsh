@@ -1,6 +1,6 @@
 # Security & Cryptography
 
-UMSH authenticates and optionally encrypts packets using AES-SIV (RFC 5297) with AES-256. Unicast packets are secured with pairwise keys derived from X25519 ECDH between sender and recipient Ed25519 keys. Multicast packets are secured with keys derived from the shared channel key. In both cases, a monotonic frame counter provides replay protection without requiring synchronized clocks.
+UMSH authenticates and optionally encrypts packets using AES-SIV (RFC 5297) with AES-256. Unicast packets are secured with pairwise keys derived from X25519 ECDH between sender and recipient Ed25519 keys. Multicast packets are secured with keys derived from the shared channel key. In both cases, a monotonic frame counter provides replay protection without requiring synchronized clocks. Any frame other than a MAC ack may also carry an Ed25519 [frame signature](#frame-signatures) that attributes it to its sender's key.
 
 Each secured packet carries a Security Information (SECINFO) field containing a Security Control Field, a frame counter, and an optional salt. The sections below describe these fields, the key derivation process, and the cryptographic operations applied to each packet.
 
@@ -19,10 +19,10 @@ Each secured packet carries a Security Information (SECINFO) field containing a 
 
 ```text
   7   6   5   4   3   2   1   0
-+---+-------+---+---------------+
-| E |  MIC  | S |   RESERVED    |
-+---+-------+---+---------------+
- 1b   2 bits 1b      4 bits
++---+-------+---+---+-----------+
+| E |  MIC  | S | D | RESERVED  |
++---+-------+---+---+-----------+
+ 1b   2 bits 1b  1b    3 bits
 ```
 
 Where:
@@ -30,6 +30,7 @@ Where:
 - `E` = encrypted payload flag
 - `MIC` = MIC size code
 - `S` = salt included
+- `D` = signed: a 64-byte [frame signature](#frame-signatures) follows the payload
 - `RESERVED` = must all be set to zero
 
 If the `RESERVED` bits read as anything other than zero, the packet MUST be dropped by the recipient.
@@ -61,16 +62,9 @@ As a general principle: the longer the keys will be in use and the higher the va
 
 ### Frame Counter
 
-The 4-byte frame counter must increase monotonically for a given shared secret and
-traffic direction. UMSH uses this monotonic counter—rather than timestamps—for replay protection, keeping the protocol free of any dependency on synchronized clocks or absolute time.
+The 4-byte frame counter must increase monotonically. UMSH uses this monotonic counter—rather than timestamps—for replay protection, keeping the protocol free of any dependency on synchronized clocks or absolute time.
 
-The exact mechanism for how the frame counter is handled is implementation specific,
-assuming that it always increases. For example, the frame counter may be unique for
-each source+destination node pair, or it may be a single frame counter for the entire
-device. On constrained devices, it may make sense to use a combination of the two:
-have a fixed set of counters (say, 32) that are initialized with random starting values,
-and derive a pseudo-random number from 0-31 from the shared secret to pick which of
-those counters is being used. 
+A node address draws the counters of all its secured and signed frames—unicast, blind unicast, multicast, and [signed broadcast](packet-options.md#frame-signature-option-0)—from one monotonic sequence, and MUST NOT let that sequence go backward (see [Counter Persistence](#counter-persistence)). A receiver judges every frame authenticated as a peer's, whether pairwise or by a frame signature, against one baseline for that peer, so the sequence belongs to the sending address, not to a destination or channel.
 
 #### Replay Detection
 
@@ -82,7 +76,7 @@ delta = (received_counter - last_accepted_counter) mod 2^32
 
 If `delta` is zero or exceeds the forward window, the packet is rejected. This modular comparison allows the counter to wrap around `2^32` without requiring special overflow handling. The suggested default forward window is **172800**. Implementations MAY use a different value, but it should be large enough to accommodate gaps from packets sent to other destinations and small enough to limit the scope of replay attacks.
 
-Implementations that need to tolerate out-of-order delivery may also define a **backward window**—a small range of counter values *behind* the highest accepted counter within which late-arriving packets are still considered. The suggested default backward window is **8**. When a packet's counter falls within the backward window, the receiver checks a small cache of recently accepted packet MICs (similar to the approach used for [duplicate suppression](repeater-operation.md#duplicate-suppression) in repeaters): if the MIC is already present, the packet is a replay and is rejected; if not, the packet is accepted and its MIC is added to the cache.
+Implementations that need to tolerate out-of-order delivery may also define a **backward window**—a small range of counter values *behind* the highest accepted counter within which late-arriving packets are still considered. The suggested default backward window is **8**. When a packet's counter falls within the backward window, the receiver checks a small cache of recently accepted packets, keyed by frame counter and MIC (similar to the approach used for [duplicate suppression](repeater-operation.md#duplicate-suppression) in repeaters): if the packet is already present, it is a replay and is rejected; if not, the packet is accepted and added to the cache.
 
 Regardless of window sizes, a packet must not be accepted if it is more than **5 minutes** out of order—that is, if the highest accepted counter was last advanced more than 5 minutes ago and the received counter is behind it. MIC cache entries only need to be retained for the duration of this time bound. Additionally, the first packet accepted from a given node (or after a [counter resynchronization](#counter-resynchronization)) establishes that node's counter baseline—packets with earlier counter values must be rejected, even if they arrive within the backward window.
 
@@ -122,14 +116,31 @@ A duplicate that carries the [Route Retry option](packet-options.md#route-retry-
 
 Payload acceptance does not begin the acknowledgement pacing window. A destination may accept an overheard source-routed copy while hints remain, withholding its ACK until the route is consumed. The first eligible copy may then be acknowledged immediately. A duplicate remains the same accepted packet: acknowledging it does not renew its replay-retention interval or deliver the payload again.
 
+##### Signed-Frame Counters {#signed-frame-counters}
+
+A frame whose [frame signature](#frame-signatures) verifies is judged by the rules above against its signer's counter, and is either accepted or dropped. The cache of recently accepted packets keys a signed broadcast, which has no MIC, by its frame counter and the first 16 bytes of its signature.
+
+- **Known peer.** A frame signed by a known peer is checked against that peer's receive baseline, the one its unicast traffic is checked against. Because the peer draws every counter from [one sequence](#frame-counter), its signed multicast and broadcast frames continue the sequence its unicast frames follow.
+  - An accepted frame advances the baseline, which is [persisted](#counter-persistence) as for unicast.
+  - A replay is dropped.
+  - A frame behind the baseline or outside the forward window is dropped. When the gap is too large for reordering to explain, the receiver MAY start [counter resynchronization](#counter-resynchronization) with an Echo Request, at the usual rate limit.
+- **Stranger.** A frame that verifies against a key that is not a known peer's is first contact: it is accepted at face value, as [Counter Resynchronization](#counter-resynchronization) describes for any new peer. Later frames from that key are judged by the same rules, in a window the receiver keeps for that signing key. A frame behind that window's baseline or outside it is dropped, with no resynchronization, since there is no pairwise relationship to run one over.
+  - A receiver MAY discard a stranger's window when it is idle or under memory pressure.
+  - After a discard, or after the receiver restarts, the stranger's next frame is first contact again, so a replay of one of its earlier frames is accepted once. With no prior knowledge of the sender, a receiver cannot tell that replay from a new frame.
+
 #### Counter Persistence
 
-How a node persists and recovers its frame counter across reboots is implementation-specific. Possible strategies include writing the counter to non-volatile storage periodically or advancing the counter by a large margin on startup to avoid replaying previously used values.
+How a node persists and recovers its own frame counter across reboots is implementation-specific. Possible strategies include writing the counter to non-volatile storage periodically or advancing the counter by a large margin on startup to avoid replaying previously used values.
+
+A node MUST also persist each known peer's receive baseline and restore it at startup. A node that lost a peer's baseline would treat that peer's next frame as first contact and accept a replay of any earlier one.
+
+- The persisted baseline MAY lag the live one, so that writes can be batched. A node SHOULD write a peer's baseline once it has accepted 16 frames from that peer since the last write, however far those frames moved the counter. The frames accepted since the last successful write are what an unexpected restart leaves replayable.
+- Before a deliberate restart, a node SHOULD write every baseline that has changed since its last write.
 
 > [!CAUTION]
-> If the counter is written to non-volatile storage, care should be taken
-> to avoid wearing out the underlying storage medium if it has a limited
-> number of writes.
+> If counters or baselines are written to non-volatile storage, care should
+> be taken to avoid wearing out the underlying storage medium if it has a
+> limited number of writes.
 
 #### Counter Resynchronization
 
@@ -163,7 +174,7 @@ For unicast and blind unicast:
 1. Start with sender Ed25519 keypair and recipient Ed25519 keypair.
 2. Convert both Ed25519 keys to X25519 form.
 3. Perform X25519 ECDH.
-4. Feed the resulting shared secret into HKDF-SHA256.
+4. Feed the resulting shared secret into HKDF-SHA256, bound to both parties' Ed25519 public keys.
 5. Derive separate stable pairwise keys for encryption and MIC/authentication.
 
 ### Ed25519 to X25519 Conversion
@@ -181,7 +192,7 @@ UMSH assumes standard Edwards-to-Montgomery conversion:
 - recipient Ed25519 private key → recipient X25519 private key
 - recipient Ed25519 public key → recipient X25519 public key
 
-Implementations should reject malformed public keys before conversion.
+Implementations MUST reject malformed public keys before conversion. A public key is accepted only if re-encoding its decoded point yields the same 32 bytes, which rejects non-canonical encodings of a point.
 
 ### ECDH Shared Secret
 
@@ -195,7 +206,7 @@ This shared secret is used as the input keying material for deriving the cryptog
 
 ### HKDF Inputs for Unicast
 
-For unicast packets, the encryption and MIC keys are derived from the X25519 ECDH shared secret and are stable for a given pair of nodes. These keys are not derived from packet-specific fields.
+For unicast packets, the encryption and MIC keys are derived from the X25519 ECDH shared secret and both nodes' Ed25519 public keys, and are stable for a given pair of nodes. These keys are not derived from packet-specific fields.
 
 Let:
 
@@ -208,9 +219,11 @@ The pairwise key material is then derived as:
 ```text
 ikm  = ss
 salt = "UMSH-PAIRWISE-SALT"
-info = "UMSH-UNICAST-V2"
+info = "UMSH-UNICAST-V3" || min(PK_a, PK_b) || max(PK_a, PK_b)
 okm  = HKDF-SHA256(ikm, salt, info, 64)
 ```
+
+`PK_a` and `PK_b` are the two nodes' 32-byte Ed25519 public keys, ordered by comparing their encodings lexicographically, so both ends derive the same keys. Binding the full keys gives each key its own pairwise keys: an Ed25519 key and its negation convert to the same X25519 key and so produce the same shared secret, but not the same `info`.
 
 The output keying material is split as follows:
 
@@ -228,7 +241,7 @@ This layout makes `okm` exactly the AES-SIV key `K` from RFC 5297: `K_mic` is th
 
 These keys are stable for the sender/recipient pair and may be cached by the implementation. They do not change from packet to packet.
 
-Because the key derivation depends only on the ECDH shared secret and fixed UMSH-specific HKDF parameters, it does not need to be recomputed for each transmitted packet.
+Because the key derivation depends only on the ECDH shared secret, the two public keys, and fixed UMSH-specific HKDF parameters, it does not need to be recomputed for each transmitted packet.
 
 ### Blind Unicast Payload Keys
 
@@ -305,6 +318,16 @@ The processing is:
 3. Construct the CTR IV from the MIC (see [CTR IV Construction](#ctr-iv-construction)).
 4. Encrypt the plaintext using **AES-256-CTR** with `K_enc` and the constructed IV. The counter is the full 16-byte IV, incremented as a 128-bit big-endian integer (RFC 5297 §2.5).
 
+The plaintext `S2` is the region of the packet after its options and before its MIC:
+
+| Family | `S2` |
+|---|---|
+| Unicast | `PAYLOAD [‖ SIG]` |
+| Multicast | `SRC ‖ PAYLOAD [‖ SIG]` |
+| Blind unicast | `PAYLOAD [‖ SIG]` |
+
+`SIG` is the [frame signature](#frame-signatures), present when the SCF's `D` bit is set. Blind unicast's address block is not part of `S2`: it is covered through the [associated data](#associated-data) and encrypted separately (see [Blind Unicast Address Encryption](#blind-unicast-address-encryption)).
+
 The MIC is transmitted at the end of the packet rather than prepended as in RFC 5297, allowing its length to be controlled independently via the SCF MIC size field.
 
 With a 16-byte MIC, the result is byte-for-byte **AEAD_AES_SIV_CMAC_512** (RFC 5297 §6.3): the key is `K = K_mic || K_enc`, the canonical AAD is the single associated-data component, and the CTR IV construction reduces to the RFC's initial counter `Q`. Shorter MIC lengths use the same computation and differ only in how the CTR IV is filled.
@@ -334,25 +357,37 @@ For the 16-byte MIC, SECINFO is entirely truncated away and the IV is the masked
 
 ### Unencrypted Packets
 
-When encryption is disabled, the MIC is computed exactly as for encrypted packets—the truncated `S2V(K_mic, S1 = AAD, S2 = payload)`—and the encryption step is simply omitted.
+When encryption is disabled, the MIC is computed exactly as for encrypted packets—the truncated `S2V(K_mic, S1 = AAD, S2)`, with the same `S2`—and the encryption step is simply omitted. An unencrypted multicast's `SRC` is therefore covered as part of `S2`, just as when it is encrypted.
 
 ### Associated Data
 
-The associated data (AAD) binds the immutable header fields to the MIC so that any modification is detected. The canonical AAD enters S2V as the single associated-data component `S1`; the plaintext (or, for unencrypted packets, the payload) is the final component `S2`.
+The associated data (AAD) binds the immutable header fields to the MIC so that any modification is detected. The canonical AAD enters S2V as the single associated-data component `S1`; the plaintext `S2` (see [Encrypted Packets](#encrypted-packets)) is the final component.
 
-The AAD is constructed by concatenating the following fields in order:
+The AAD is the packet's header fields in wire order, with these differences:
 
-1. **FCF** (1 byte, with the flood-hops-present (`H`) bit cleared)
-2. **Static options**—re-encoded as type-length-value (see below)
-3. **DST** (3-byte destination hint, unicast) or **CHANNEL** (2 bytes, multicast)
-4. **SRC** (3-byte hint or 32-byte full key)—included only when the source field is outside the ciphertext
-5. **SECINFO** (5 or 7 bytes)
+- `FHOPS` is omitted, and the FCF enters with its flood-hops-present (`H`) bit cleared.
+- The static options are re-encoded as type-length-value triples (see below) and dynamic options are omitted.
+- The options are followed by the 2-byte terminator `FF FF`, which is present even when there are no static options.
+- Blind unicast's address block, `DST ‖ SRC`, follows the terminator in plaintext form, whether or not it is encrypted on the wire.
+- Multicast's `SRC` is not part of the AAD. It is part of `S2`, with either value of `E`.
 
-Dynamic options and the flood hop count are excluded from the AAD because they may be modified by repeaters during forwarding. The FCF's flood-hops-present (`H`) bit is part of that budget rather than of the packet's identity, and is cleared before the byte enters the AAD: a sender abandoning a source route re-floods a packet that is already sealed, which adds `FHOPS` where the original had none. Masking the bit does not weaken the binding. Flipping it on the wire shifts every field the parser reads after it, so DST/CHANNEL, SRC, and SECINFO enter the AAD as different values and the MIC check still fails.
+Addresses enter as they appear on the wire: a hint as a 3-byte hint, and a full key only where the packet carries one.
 
-A [MAC Ack](packet-types.md#mac-ack-packet) has no DST, CHANNEL, SRC, or SECINFO field, so its AAD is the FCF and static options alone (see [Ack Tag Construction](#ack-tag-construction)). For an ack, masking `H` is what lets a re-sent acknowledgement, which may differ from the first only in its flood budget, carry the same tag.
+| Family | AAD |
+|---|---|
+| Broadcast | `FCF ‖ SRC ‖ options ‖ FF FF` |
+| MAC ack (`AAD_ack`) | `FCF ‖ options ‖ FF FF` |
+| Unicast | `FCF ‖ DST ‖ SRC ‖ SECINFO ‖ options ‖ FF FF` |
+| Multicast | `FCF ‖ CHANNEL ‖ SECINFO ‖ options ‖ FF FF` |
+| Blind unicast | `FCF ‖ CHANNEL ‖ SECINFO ‖ options ‖ FF FF ‖ DST ‖ SRC` |
 
-Note that the AAD ordering above is **canonical** and differs from wire ordering. On the wire, static options appear after SECINFO (immediately before the payload); in the AAD they appear at position 2, before DST/CHANNEL. Wire ordering and AAD ordering are intentionally decoupled so that the canonical AAD structure remains stable regardless of where options sit on the wire.
+No AAD depends on `E`: two packets that differ only in `E` have AADs that differ only in the SCF byte. A broadcast has no MIC; its AAD is used only by a [frame signature](#frame-signatures).
+
+The AAD is unambiguous because the packet format is self-describing from left to right. The FCF decides which fields are present, and its `S` bit gives `SRC`'s length; SECINFO's own SCF gives its length. On the wire the options block is delimited by its `0xFF` end-of-options marker, which the type-length-value re-encoding drops; the `FF FF` terminator restores that delimiter. No static option can begin with it: option number `0xFFFF` has both low bits set, so it is dynamic and never enters the AAD, and no larger option number exists (see [Option Encoding](packet-structure.md#option-encoding)). The AAD therefore fixes its own end.
+
+Dynamic options and the flood hop count are excluded from the AAD because they may be modified by repeaters during forwarding. The FCF's flood-hops-present (`H`) bit is part of that budget rather than of the packet's identity, and is cleared before the byte enters the AAD: a sender abandoning a source route re-floods a packet that is already sealed, which adds `FHOPS` where the original had none. Masking the bit does not weaken the binding. Flipping it on the wire shifts every field the parser reads after it, so the fields that follow enter the AAD as different values and the MIC check still fails.
+
+A [MAC Ack](packet-types.md#mac-ack-packet) has no DST, CHANNEL, SRC, or SECINFO field, so its AAD is the FCF, static options, and terminator alone (see [Ack Tag Construction](#ack-tag-construction)). For an ack, masking `H` is what lets a re-sent acknowledgement, which may differ from the first only in its flood budget, carry the same tag.
 
 #### Static Option Encoding in AAD
 
@@ -367,7 +402,7 @@ Static options are not included in their wire delta-length form. Instead, each s
 
 Where `number` is the option's absolute option number (not a delta), encoded as a 2-byte big-endian unsigned integer, and `length` is the value length in bytes, also encoded as a 2-byte big-endian unsigned integer. Static options appear in the AAD in order of increasing option number. This avoids recomputing deltas after dynamic options have been removed.
 
-Using 2-byte fields for both `number` and `length` ensures that option numbers above 255 (which are valid in the CoAP-style encoding used on the wire) and long option values are represented without truncation or ambiguity.
+Using 2-byte fields for both `number` and `length` ensures that option numbers above 255 (which are valid in the CoAP-style encoding used on the wire) and long option values are represented without truncation or ambiguity. A packet that names an option number above `0xFFFF` is malformed (see [Option Encoding](packet-structure.md#option-encoding)).
 
 ### Ack Tag Construction
 
@@ -391,7 +426,7 @@ Where:
 
 - `K_mic` is the MIC key that sealed the original packet—the pairwise key for unicast (see [HKDF Inputs for Unicast](#hkdf-inputs-for-unicast)), or the combined blind unicast key for blind unicast (see [Blind Unicast Payload Keys](#blind-unicast-payload-keys))
 - `V` is the original packet's full 16-byte S2V output, before truncation to its on-wire MIC length
-- `AAD_ack` is the acknowledgement's [associated data](#associated-data): its FCF with the `H` bit cleared, followed by its static options
+- `AAD_ack` is the acknowledgement's [associated data](#associated-data): its FCF with the `H` bit cleared, followed by its static options and the `FF FF` terminator
 
 The three components take the shape of any other packet's MIC: associated data first, `V` where a nonce would sit, and `ack_mic` as the payload. The component count and the acknowledgement's own FCF keep the result distinct from every packet MIC computed under the same key. Dynamic options and the flood hop count stay outside `AAD_ack`, so forwarding does not disturb the tag.
 
@@ -402,9 +437,6 @@ The standalone [MAC Ack](packet-types.md#mac-ack-packet) carries both fields (`a
 The `ack_mic` is a prefix of the original packet's on-wire MIC, so it was already visible to anyone who received that packet. Producing the `ack_tag` requires `K_mic`, so an observer who intercepts the original packet can neither forge a standalone ack nor alter the static options of a genuine one. With a 4-byte tag, a blind forgery succeeds with probability `2^-32` per attempt, and only while the original packet still awaits acknowledgement: no offline check exists, each guess costs a transmission, and a failed guess draws no response. A successful forgery would cause the sender to treat an undelivered packet as delivered and suppress retransmission, or to act on options the destination never sent—a reliability denial-of-service confined to one exchange, not a confidentiality break. A weaker variant needs no forged tag at all: repeaters [cancel queued forwards](repeater-operation.md#ack-cancellation) on the public `ack_mic` alone, so an observer who saw the original packet can suppress its pending forwards at repeaters within earshot. The exposure is the same reliability class, costs the attacker a transmission per suppression, and is bounded by the sender's [Route Retry](packet-options.md#route-retry-option-6) recovery.
 
 The correlation exposed by `ack_mic` is deliberate. To an observer who already received the original packet, it confirms that the packet was delivered and links the ack to that packet. Because the MAC ack carries no destination hint, it adds no explicit endpoint identifier of its own—which removes the direct sender-identity leak a destination hint would introduce. This is not a guarantee of unlinkability: a determined adversary may still correlate an ack with its endpoints through timing, RF fingerprinting, return-path analysis, or by tying the `ack_mic` back to an original packet that itself exposed endpoint hints. For blind unicast, whose forward frame reveals no endpoint identity to a non-channel observer, omitting the destination hint keeps that concealment from being undone by the ack.
-
-> [!NOTE]
-> Until every node implements this construction, an acknowledgement may instead carry the legacy tag described in [Ack Authentication Transition](ack-transition.md), which also defines how a receiver tells the two apart.
 
 ### Blind Unicast Address Encryption
 
@@ -426,6 +458,64 @@ ENC_DST_SRC = AES-256-CTR( key=K_enc_channel, iv=IV, plaintext=DST || SRC )
 ```
 
 This allows a receiver possessing the channel key to recover both the destination (to confirm the packet is addressed to them) and the source address (to derive the pairwise keys needed to authenticate and decrypt the payload).
+
+The address block is covered by the MIC. `DST ‖ SRC` enters the [associated data](#associated-data) in plaintext form, so the sender computes the MIC over the plaintext addresses and only then encrypts the block with the IV that MIC yields. The receiver decrypts the block from the on-wire MIC and the channel key, which it can do before it knows the payload keys, then derives the payload keys from the recovered `SRC` and verifies the MIC. Any change to the encrypted block changes the recovered addresses, and the MIC fails. Because the MIC covers the addresses it was derived from, the address block's IV is a true synthetic IV.
+
+### Frame Signatures
+
+A frame signature is an Ed25519 signature by the sender's node key over the bytes the MIC covers. It attributes a frame to a key: a verified signature shows that the holder of that key sent this frame, with this header and frame counter, on this channel. A channel MIC alone shows only that the sender holds the channel key.
+
+The signature is carried in one of two ways:
+
+- **Frames with SECINFO** (unicast, multicast, blind unicast): the SCF's `D` bit is set, and a 64-byte `SIG` follows the payload and precedes the MIC. `SIG` is the last part of [`S2`](#encrypted-packets), so the MIC covers it, and with `E` set it is encrypted with the payload.
+- **Broadcast**: the [Frame Signature option](packet-options.md#frame-signature-option-0) carries a frame counter and the signature.
+
+#### Signature Input
+
+The signed bytes are:
+
+```text
+signature_input = "UMSH-SIG" || AAD || [CHANNEL_COMMITMENT] || plaintext
+```
+
+Where:
+
+- `"UMSH-SIG"` is the 8 ASCII bytes `55 4D 53 48 2D 53 49 47`. It is never transmitted.
+- `AAD` is the frame's [associated data](#associated-data), with the SCF's `D` bit set. For a broadcast, the Frame Signature option enters the AAD with its 64 signature bytes replaced by zeros; its frame counter enters as sent.
+- `CHANNEL_COMMITMENT` is present only on multicast and blind unicast (see [Channel Commitment](#channel-commitment)).
+- `plaintext` is `S2` without `SIG`, in plaintext form whether or not it is encrypted on the wire:
+
+| Family | `plaintext` |
+|---|---|
+| Broadcast | `PAYLOAD` |
+| Unicast | `PAYLOAD` |
+| Multicast | `SRC ‖ PAYLOAD` |
+| Blind unicast | `PAYLOAD` |
+
+A multicast's `SRC` is not in its AAD, so it enters the signature input at the front of the plaintext. The `SRC` that names the signing key is therefore always covered by the signature.
+
+The input is unambiguous without length prefixes: the label has a fixed length, the AAD fixes its own end, the FCF inside the AAD decides whether a 32-byte commitment follows, and the plaintext is everything after that.
+
+#### Channel Commitment
+
+The `CHANNEL` field carries only a 2-byte channel identifier, which distinct channel keys can share. Without a commitment, someone holding two channel keys with the same identifier could move a signed frame from one channel to the other and recompute its MIC, and the signature would still verify on a channel its sender never signed for. The channel commitment binds the signature to the channel key:
+
+```text
+CHANNEL_COMMITMENT = first_32_bytes( HKDF-SHA256(ikm = channel_key, salt = "UMSH-CHAN-ID", info = "") )
+```
+
+This is the same derivation as the [channel identifier](packet-types.md#channel-identifier-derivation), extended to 32 bytes; the 2-byte `channel_id` and the 16-byte channel identifier are prefixes of it. The commitment is never transmitted. A receiver computes it from the channel key that verified the frame's MIC, so when channel identifiers collide the signature is checked against the channel whose key authenticated the frame, never one matched by identifier alone.
+
+HKDF is one-way, so a receiver can disclose a channel's commitment to let a third party verify an unencrypted signed multicast without disclosing the channel key.
+
+#### Verification
+
+A receiver verifies a frame signature against the signer's public key: the full `SRC` when the frame carries one, or the key of the one known peer whose hint matches `SRC`. A hint-only signed frame can be verified only by a receiver that already holds the sender's key.
+
+- A frame whose signature verifies is attributed to that key, and its counter is judged by [Signed-Frame Counters](#signed-frame-counters).
+- A frame whose signature does not verify, or whose key cannot be resolved, is not attributed to any key. It is processed as an unsigned frame from the same source would be. A failed verification is not by itself grounds to drop the frame: a hint can match a different known peer than the one that signed.
+
+The signature does not change how a frame is authenticated. A secured frame's MIC is verified as usual, and a frame whose MIC fails is dropped before its signature is considered.
 
 ## Perfect Forward Secrecy Sessions
 

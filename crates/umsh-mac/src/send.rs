@@ -2,7 +2,7 @@ use core::num::NonZeroU8;
 use heapless::Vec;
 use umsh_core::{
     ChannelId, ChannelKey, FloodHops, MicSize, NodeHint, PacketHeader, PacketType, ParsedOptions,
-    PayloadType, PublicKey, RouterHint, SecInfo,
+    PayloadType, PublicKey, RouterHint, SecInfo, options::TraceRef,
 };
 use umsh_hal::Snr;
 
@@ -52,7 +52,7 @@ pub struct SendReceipt(pub u32);
 ///     .with_ack_requested(true)
 ///     .with_mic_size(MicSize::Mic8)
 ///     .with_flood_hops(3)
-///     .with_trace_route();
+///     .with_trace();
 /// ```
 ///
 /// ## Field notes
@@ -67,14 +67,12 @@ pub struct SendReceipt(pub u32);
 ///   [`established_route_slack`](crate::established_route_slack)), so an
 ///   established path does not re-flood the whole mesh. Clear the cached
 ///   route to restore the full requested discovery budget.
-/// - **`trace_route`**—unicast and blind unicast trace automatically when the peer
+/// - **`trace`**—unicast and blind unicast trace automatically when the peer
 ///   may hold no working path back: no route is known to it, its latest packet
 ///   had to flood to reach us, or nothing from it has reached us without
 ///   flooding for [`TRACE_ROUTE_REFRESH_MS`](crate::TRACE_ROUTE_REFRESH_MS).
 ///   Otherwise only on request. A frame with neither flood permission nor
-///   source-route hints omits trace options.
-/// - **`trace_signal`**—held to the same condition as `trace_route`, which it pairs with
-///   entry for entry.
+///   source-route hints omits the option.
 /// - **`full_source`**—include the full 32-byte public key instead of the 3-byte hint,
 ///   allowing the receiver to authenticate without a prior key exchange. Useful for first
 ///   contact or identity announcements; costs 29 extra bytes per frame.
@@ -102,10 +100,8 @@ pub struct SendOptions {
     pub full_source: bool,
     /// Optional flood-hop budget.
     pub flood_hops: Option<u8>,
-    /// Whether to include a trace-route option.
-    pub trace_route: bool,
-    /// Whether to include a trace-signal option.
-    pub trace_signal: bool,
+    /// Whether to include a Trace option.
+    pub trace: bool,
     /// Optional explicit source route.
     pub source_route: Option<Vec<RouterHint, MAX_SOURCE_ROUTE_HINTS>>,
     /// Flood budget past the end of the route, overriding the MAC's own.
@@ -126,6 +122,10 @@ pub struct SendOptions {
     /// piggy-backed acknowledgment (the Ack MIC option). Unicast and blind
     /// unicast only; left off when it would not fit the frame.
     pub ack_mic: Option<[u8; 4]>,
+    /// Whether to sign the frame with the sending identity: a Frame
+    /// Signature option on a broadcast, `D` on a frame with SECINFO. Only
+    /// the async broadcast and multicast sends sign.
+    pub signed: bool,
 }
 
 impl Default for SendOptions {
@@ -137,14 +137,14 @@ impl Default for SendOptions {
             track_transmission: false,
             full_source: false,
             flood_hops: Some(5),
-            trace_route: false,
-            trace_signal: false,
+            trace: false,
             source_route: None,
             route_slack: None,
             region_code: None,
             salt: false,
             tx_delay_ms: None,
             ack_mic: None,
+            signed: false,
         }
     }
 }
@@ -196,18 +196,8 @@ impl SendOptions {
     /// that ends up with no flood budget and no source route carries none:
     /// nothing may forward it, and the option would arrive as empty as it
     /// left.
-    pub fn with_trace_route(mut self) -> Self {
-        self.trace_route = true;
-        self
-    }
-
-    /// Request that a trace-signal option be added. Each repeater prepends
-    /// the signal quality it received the frame at, one entry per trace-route
-    /// hint, so this is only useful together with
-    /// [`with_trace_route`](Self::with_trace_route), and it is dropped under
-    /// the same condition: a frame no repeater may carry collects no entries.
-    pub fn with_trace_signal(mut self) -> Self {
-        self.trace_signal = true;
+    pub fn with_trace(mut self) -> Self {
+        self.trace = true;
         self
     }
 
@@ -221,6 +211,12 @@ impl SendOptions {
         self.flood_hops
             .get_or_insert(route.len().min(u8::MAX as usize) as u8);
         Ok(self)
+    }
+
+    /// Sign the frame with the sending identity.
+    pub fn with_signature(mut self) -> Self {
+        self.signed = true;
+        self
     }
 
     /// Request a random salt in SECINFO.
@@ -375,7 +371,7 @@ impl<const FRAME: usize> ResendRecord<FRAME> {
 /// repeat itself is the completion.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CompletionSignal {
-    /// A transport ACK is expected; `PendingAck::ack_trailer` is meaningful.
+    /// A transport ACK is expected; `PendingAck::ack_v` is meaningful.
     Ack,
     /// No ACK will ever arrive; overhearing a repeat completes the send.
     RepeatOnly,
@@ -389,9 +385,9 @@ pub enum CompletionSignal {
 /// repeaters and therefore retries until a repeat is heard ([`CompletionSignal`]). The
 /// record holds everything needed to detect completion, detect timeout, and retransmit:
 ///
-/// - **`ack_trailer`** and **`ack_v`**—the request's `ack_mic`, which correlates the
-///   destination's MAC ACK to this request, and the S2V output its keyed `ack_tag` is
-///   bound to. Only a node that received and authenticated the original frame can produce
+/// - **`ack_v`**—the request's S2V output. Its first four bytes are the `ack_mic`,
+///   which correlates the destination's MAC ACK to this request, and the ack's keyed
+///   `ack_tag` is bound to all of it. Only a node that received and authenticated the original frame can produce
 ///   that tag, so an ack that verifies is cryptographic proof of delivery.
 /// - **`peer`**—the destination's full public key, used to look up the correct pending
 ///   entry when matching an inbound MAC ACK against the pending table.
@@ -415,21 +411,14 @@ pub enum CompletionSignal {
 /// overheard repeat.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PendingAck<const FRAME: usize = MAX_RESEND_FRAME_LEN> {
-    /// The request's ack trailer (`ack_mic || ack_tag`) under the
-    /// [legacy construction][legacy]: the local name of this send, which an
-    /// [Ack MIC option] and a held frame's nonce derive from. An inbound
-    /// ack is verified against `ack_v` instead. Never matched for
-    /// [`CompletionSignal::RepeatOnly`] entries.
-    ///
-    /// [legacy]: https://darconeous.github.io/umsh/docs/protocol/ack-transition.html
-    /// [Ack MIC option]: https://darconeous.github.io/umsh/docs/protocol/packet-options.html#ack-mic-option-8
-    pub ack_trailer: [u8; 8],
     /// The request's full 16-byte S2V output, V, that its acknowledgment's
-    /// [ack tag] is bound to. Zero until the send is sealed, and for a
-    /// [`CompletionSignal::RepeatOnly`] entry.
+    /// [ack tag] is bound to and the local name of this send. Its first four
+    /// bytes are the `ack_mic` an [Ack MIC option] names. Zero for a
+    /// [`CompletionSignal::RepeatOnly`] entry, and never matched there.
     ///
     /// [ack tag]: https://darconeous.github.io/umsh/docs/protocol/security.html#ack-tag-construction
-    pub(crate) ack_v: [u8; 16],
+    /// [Ack MIC option]: https://darconeous.github.io/umsh/docs/protocol/packet-options.html#ack-mic-option-8
+    pub ack_v: [u8; 16],
     /// Final destination peer.
     pub peer: PublicKey,
     /// Retransmission data.
@@ -458,6 +447,9 @@ pub struct PendingAck<const FRAME: usize = MAX_RESEND_FRAME_LEN> {
     /// The attempt rode a held route and missed, so whatever acknowledges
     /// this send now came back through the flood fallback.
     pub(crate) held_route_missed: bool,
+    /// This send has had its one Route Retry, even if the retry had to go
+    /// out as the original frame rather than its rewrite.
+    pub(crate) route_retry_spent: bool,
     /// Set when this entry carries a Frame Verified on behalf of the send
     /// it vouches for, and the Verify Frame's counter fell outside our
     /// window for the requester: the acknowledgment that completes the
@@ -481,10 +473,9 @@ pub(crate) struct RxBaselineAdoption {
 
 impl<const FRAME: usize> PendingAck<FRAME> {
     /// Create pending-ACK state for a direct send.
-    pub fn direct(ack_trailer: [u8; 8], peer: PublicKey, resend: ResendRecord<FRAME>) -> Self {
+    pub fn direct(ack_v: [u8; 16], peer: PublicKey, resend: ResendRecord<FRAME>) -> Self {
         Self {
-            ack_trailer,
-            ack_v: [0u8; 16],
+            ack_v,
             peer,
             resend,
             sent_ms: 0,
@@ -498,15 +489,15 @@ impl<const FRAME: usize> PendingAck<FRAME> {
             confirm_key: None,
             cached_route_revision: 0,
             held_route_missed: false,
+            route_retry_spent: false,
             adopt_on_ack: None,
         }
     }
 
     /// Create pending-ACK state for a forwarded send.
-    pub fn forwarded(ack_trailer: [u8; 8], peer: PublicKey, resend: ResendRecord<FRAME>) -> Self {
+    pub fn forwarded(ack_v: [u8; 16], peer: PublicKey, resend: ResendRecord<FRAME>) -> Self {
         Self {
-            ack_trailer,
-            ack_v: [0u8; 16],
+            ack_v,
             peer,
             resend,
             sent_ms: 0,
@@ -520,6 +511,7 @@ impl<const FRAME: usize> PendingAck<FRAME> {
             confirm_key: None,
             cached_route_revision: 0,
             held_route_missed: false,
+            route_retry_spent: false,
             adopt_on_ack: None,
         }
     }
@@ -528,7 +520,6 @@ impl<const FRAME: usize> PendingAck<FRAME> {
     /// of the frame is overheard.
     pub fn repeat_only(peer: PublicKey, resend: ResendRecord<FRAME>) -> Self {
         Self {
-            ack_trailer: [0u8; 8],
             ack_v: [0u8; 16],
             peer,
             resend,
@@ -543,6 +534,7 @@ impl<const FRAME: usize> PendingAck<FRAME> {
             confirm_key: None,
             cached_route_revision: 0,
             held_route_missed: false,
+            route_retry_spent: false,
             adopt_on_ack: None,
         }
     }
@@ -1095,6 +1087,22 @@ impl Iterator for RepeaterHints<'_> {
     }
 }
 
+/// What a received frame's signature showed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SignatureStatus {
+    /// The frame carries no signature.
+    #[default]
+    Unsigned,
+    /// The frame carries a signature that was not verified: no key to check
+    /// it against, a signature that failed, or a build that cannot check
+    /// one. The frame counts as unsigned.
+    NotVerified,
+    /// The signature verified against the sender's key. A broadcast or
+    /// multicast so signed has also passed replay detection against the
+    /// signer's receive window.
+    Verified,
+}
+
 /// Borrowed view of one accepted inbound packet together with parsed on-wire metadata.
 ///
 /// `ReceivedPacketRef` is meant to stay close to the original packet rather than eagerly
@@ -1116,6 +1124,7 @@ pub struct ReceivedPacketRef<'a> {
     /// Its sender spoke under a session with forward secrecy.
     forward_secret: bool,
     acceptance: Option<RxAcceptance>,
+    signature: SignatureStatus,
     channel: Option<ChannelInfoRef<'a>>,
     rx: RxMetadata,
 }
@@ -1151,6 +1160,7 @@ impl<'a> ReceivedPacketRef<'a> {
             source_authenticated,
             forward_secret: false,
             acceptance: None,
+            signature: SignatureStatus::Unsigned,
             channel,
             rx,
         }
@@ -1246,14 +1256,39 @@ impl<'a> ReceivedPacketRef<'a> {
     }
 
     /// The packet with the acceptance its sender's receive window gave it.
-    pub(crate) fn with_acceptance(self, acceptance: Option<RxAcceptance>) -> Self {
+    pub fn with_acceptance(self, acceptance: Option<RxAcceptance>) -> Self {
         Self { acceptance, ..self }
+    }
+
+    /// The packet with what its signature showed. Like the rest of what
+    /// [`ReceivedPacketRef::new`] is told, it is taken on trust: the MAC
+    /// sets it from its own check.
+    pub fn with_signature(self, signature: SignatureStatus) -> Self {
+        Self { signature, ..self }
+    }
+
+    /// What the frame's signature showed.
+    pub fn signature(&self) -> SignatureStatus {
+        self.signature
+    }
+
+    /// Whether the sender is authenticated as the key the frame names: its
+    /// signature verified, or a unicast or blind-unicast MIC authenticated
+    /// it pairwise. A multicast MIC alone never counts; it proves only that
+    /// the sender holds the channel key.
+    pub fn sender_authenticated(&self) -> bool {
+        self.signature == SignatureStatus::Verified
+            || (self.source_authenticated
+                && matches!(
+                    self.packet_family(),
+                    PacketFamily::Unicast | PacketFamily::BlindUnicast
+                ))
     }
 
     /// How the frame's counter stood against its sender's receive window
     /// when it was accepted. `None` for a frame no sender's window judged:
-    /// anything but unicast and blind unicast, and a held frame its sender
-    /// vouched for.
+    /// unsigned broadcast and multicast, and a held frame its sender vouched
+    /// for.
     pub fn acceptance(&self) -> Option<RxAcceptance> {
         self.acceptance
     }
@@ -1364,8 +1399,12 @@ impl<'a> ReceivedPacketRef<'a> {
         self.options.min_snr
     }
 
-    pub fn has_unknown_critical_options(&self) -> bool {
-        self.options.has_unknown_critical
+    pub fn has_unknown_forwarding_critical_options(&self) -> bool {
+        self.options.has_unknown_forwarding_critical
+    }
+
+    pub fn has_unknown_delivery_critical_options(&self) -> bool {
+        self.options.has_unknown_delivery_critical
     }
 
     pub fn source_route(&self) -> Option<&'a [u8]> {
@@ -1381,53 +1420,36 @@ impl<'a> ReceivedPacketRef<'a> {
         RepeaterHints::new(self.source_route().unwrap_or(&[]))
     }
 
-    pub fn trace_route(&self) -> Option<&'a [u8]> {
-        self.options
-            .trace_route
-            .as_ref()
-            .and_then(|range| self.wire.get(range.clone()))
-    }
-
-    /// Iterate the repeater hints of the trace-route option, one per repeater
-    /// the frame passed through, most recent first.
-    pub fn trace_route_hints(&self) -> RepeaterHints<'a> {
-        RepeaterHints::new(self.trace_route().unwrap_or(&[]))
-    }
-
-    /// The packed trace-signal option, when the frame carried one. Entry `N`
-    /// is the signal quality at which the repeater named by trace-route hint
-    /// `N` received the frame, so the two options are read together.
-    pub fn trace_signal(&self) -> Option<&'a [u8]> {
-        self.options
-            .trace_signal
-            .as_ref()
-            .and_then(|range| self.wire.get(range.clone()))
+    /// The frame's trace, one entry per repeater it passed through, most
+    /// recent first. Only a complete trace names a path.
+    pub fn trace(&self) -> Option<TraceRef<'a>> {
+        self.options.trace(self.wire)
     }
 
     /// Hops this frame took to reach us, a hop being one transmission between
     /// adjacent nodes: a frame heard directly from its sender is one hop.
-    /// `None` when the frame was source-routed without a trace route—the
+    /// `None` when the frame was source-routed without a complete trace—the
     /// hops it took are then real but unrecorded, and a count nobody measured
     /// is not reported.
     ///
     /// A path's hop count is its source-routed hops plus its flood hops plus
     /// one, and the two wire records count those pieces differently. A
-    /// repeater prepends its hint to the trace route however it forwarded, so
-    /// the trace names every repeater and its hint count covers both kinds of
-    /// hop; `FHOPS_ACC` counts flood hops only, because a source-routed hop
-    /// spends no flood budget (packet-structure.md § Flood Hop Count). The
+    /// repeater adds its entry to the trace however it forwarded, so a
+    /// complete trace names every repeater and covers both kinds of hop;
+    /// `FHOPS_ACC` counts flood hops only, because a source-routed hop spends
+    /// no flood budget (packet-structure.md § Flood Hop Count). A complete
     /// trace is therefore the larger of the two whenever it is present, and
     /// the maximum is what reads correctly from a frame carrying only one of
     /// them. The added one is the transmission neither count covers.
     ///
-    /// Without a trace, the source-route option is what disambiguates: each
-    /// repeater consumes its own hint but keeps the option, so a routed frame
-    /// arrives carrying it—usually emptied—and its presence is the tell
-    /// that `FHOPS_ACC` did not see every hop.
+    /// Without a complete trace, the source-route option is what
+    /// disambiguates: each repeater consumes its own hint but keeps the
+    /// option, so a routed frame arrives carrying it—usually emptied—and its
+    /// presence is the tell that `FHOPS_ACC` did not see every hop.
     pub fn hop_count(&self) -> Option<u8> {
         let flooded = self.flood_hops().map(FloodHops::accumulated).unwrap_or(0);
-        if self.trace_route().is_some() {
-            let traced = u8::try_from(self.trace_route_hint_count()).unwrap_or(u8::MAX);
+        if let Some(trace) = self.trace().filter(TraceRef::is_complete) {
+            let traced = u8::try_from(trace.len()).unwrap_or(u8::MAX);
             Some(traced.max(flooded).saturating_add(1))
         } else if self.source_route().is_some() {
             None
@@ -1442,12 +1464,6 @@ impl<'a> ReceivedPacketRef<'a> {
         self.source_route()
             .map(|route| route.len() / 2)
             .unwrap_or(0)
-    }
-
-    /// Repeater hints in the trace-route option: repeaters the frame passed
-    /// through, one less than the hops it took.
-    pub fn trace_route_hint_count(&self) -> usize {
-        self.trace_route().map(|route| route.len() / 2).unwrap_or(0)
     }
 }
 

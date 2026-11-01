@@ -11,8 +11,9 @@ use core::task::Poll;
 use embassy_sync::waitqueue::WakerRegistration;
 
 use umsh_core::{ChannelKey, PublicKey, RouterHint};
+use umsh_text::ConversationKey;
 use umsh_text::chat::Seeds;
-use umsh_text::node_adapter::{Departure, Sent};
+use umsh_text::node_adapter::{BudgetQuery, Departure, Sent};
 use umsh_ulcp::profiles::VETTED;
 use umsh_ulcp_admin::LocalPort;
 use umsh_ux_communicator::avatar::AvatarStyle;
@@ -177,16 +178,18 @@ impl<P: LocalPort, S: ChatStore> CommunicatorNode<P, S> {
                 key,
                 identity,
                 payload,
+                update,
                 rx,
             } => {
-                chats.identify(key, &identity, &payload, &rx, now_ms, time, events);
+                chats.identify(key, &identity, &payload, update, &rx, now_ms, time, events);
             }
             Arrival::Pong {
                 peer,
                 round_trip_ms,
                 rx,
                 signal,
-            } => chats.pong(peer, round_trip_ms, &rx, &signal, now_ms, events),
+                truncated,
+            } => chats.pong(peer, round_trip_ms, &rx, &signal, truncated, now_ms, events),
             Arrival::PingTimeout { peer } => chats.ping_timed_out(peer, now_ms, events),
             Arrival::Route {
                 peer,
@@ -212,6 +215,23 @@ impl<P: LocalPort, S: ChatStore> CommunicatorNode<P, S> {
                 chats.learn_key(*key, events);
             }
         });
+    }
+
+    /// The frames the device node is to measure for the chats; answer each
+    /// with [`CommunicatorNode::learn_budget`].
+    pub fn budget_queries(&self) -> alloc::vec::Vec<BudgetQuery> {
+        self.chats.borrow().budget_queries()
+    }
+
+    /// Takes what the device node measured one frame to `conversation` to
+    /// carry, `None` when it could not.
+    pub fn learn_budget(&self, conversation: ConversationKey, budget: Option<usize>) {
+        self.with_chats(|chats, _, _, events| chats.learn_budget(conversation, budget, events));
+    }
+
+    /// The longest message `chat` takes, in octets.
+    pub fn max_body_len(&self, chat: ChatId) -> Option<usize> {
+        self.chats.borrow().max_body_len(chat)
     }
 
     /// What the chats ask of the device node next, besides sending frames.

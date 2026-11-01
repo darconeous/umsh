@@ -1,10 +1,8 @@
-//! MAC ack authentication (security.md § Ack Tag Construction,
-//! ack-transition.md). The destination seals its ack under the keys of the
-//! request it answers; the sender completes a send only on an ack that
-//! verifies under a construction the ack's options allow.
+//! MAC ack authentication (security.md § Ack Tag Construction). The
+//! destination seals its ack under the keys of the request it answers; the
+//! sender completes a send only on an ack whose MIC verifies.
 
 use super::*;
-use umsh_crypto::AckTagConstruction;
 
 /// The test platform, with real AES where it is available. The stub cipher
 /// is a plain XOR, under which CMAC is linear: a tag under other keys or
@@ -184,29 +182,22 @@ fn bob_acks(request: &[u8], configure: impl FnOnce(&mut AckMac)) -> Vec<u8> {
     ack
 }
 
-/// With nothing static to cover, an ack keeps the tag a node that
-/// predates the MIC can check, and marks it.
+/// With nothing static to cover, an ack's tag still covers its header:
+/// `AAD_ack` is the FCF and the terminator.
 #[test]
-fn an_ack_with_no_static_option_keeps_the_legacy_tag_and_says_so() {
+fn an_ack_with_no_static_option_is_sealed_with_the_mic() {
     let mut alice = Sender::new(SendOptions::default().no_flood());
     let ack = bob_acks(&alice.request, |_| {});
 
-    let parsed = options(&ack);
-    assert!(parsed.legacy_ack_tag);
-    assert!(!parsed.has_static);
-    assert_eq!(trailer(&ack), alice.pending().ack_trailer);
-    assert_eq!(
-        alice
-            .mac
-            .crypto()
-            .verify_mac_ack(&keys(), &alice.pending().ack_v, &ack),
-        Some(AckTagConstruction::Legacy)
-    );
+    assert!(!options(&ack).has_static);
+    let v = alice.pending().ack_v;
+    assert_eq!(trailer(&ack)[..4], v[..4]);
+    assert!(alice.mac.crypto().verify_mac_ack(&keys(), &v, &ack));
     assert!(alice.completes(&ack));
 }
 
 /// An ack is a locally originated packet, so it carries the operator
-/// callsign; that static option is sealed with the MIC.
+/// callsign; the MIC covers that static option.
 #[test]
 fn an_ack_carrying_the_operator_callsign_is_sealed_with_the_mic() {
     let mut alice = Sender::new(SendOptions::default().no_flood());
@@ -214,89 +205,68 @@ fn an_ack_carrying_the_operator_callsign_is_sealed_with_the_mic() {
         bob.operating_policy_mut().operator_callsign = Some(callsign("KZ2X"));
     });
 
-    let parsed = options(&ack);
     assert!(has_option(&ack, OptionNumber::OperatorCallsign));
-    assert!(parsed.has_static);
-    assert!(!parsed.legacy_ack_tag);
-    let legacy = alice.pending().ack_trailer;
-    assert_eq!(trailer(&ack)[..4], legacy[..4]);
-    assert_ne!(trailer(&ack)[4..], legacy[4..]);
-    assert_eq!(
-        alice
-            .mac
-            .crypto()
-            .verify_mac_ack(&keys(), &alice.pending().ack_v, &ack),
-        Some(AckTagConstruction::Mic)
-    );
+    assert!(options(&ack).has_static);
+    let v = alice.pending().ack_v;
+    assert_eq!(trailer(&ack)[..4], v[..4]);
+    assert!(alice.mac.crypto().verify_mac_ack(&keys(), &v, &ack));
     assert!(alice.completes(&ack));
 }
 
-#[derive(Clone, Copy, Debug)]
-enum Tag {
-    Legacy,
-    Mic,
-}
-
-/// An ack answering `v`, with the options and tag construction given,
-/// whatever the selection rule would have chosen.
-fn forged_shape(alice: &Sender, with_callsign: bool, marker: bool, tag: Tag) -> Vec<u8> {
-    let build = |marker: bool| {
-        let mut buf = [0u8; 256];
-        let mut placeholder = [0u8; 8];
-        placeholder[..4].copy_from_slice(&alice.pending().ack_v[..4]);
-        let mut builder = PacketBuilder::new(&mut buf).mac_ack(placeholder);
-        if with_callsign {
-            builder = builder.option(
-                OptionNumber::OperatorCallsign,
-                callsign("KZ2X").as_trimmed_slice(),
-            );
-        }
-        if marker {
-            builder = builder.legacy_ack_tag();
-        }
-        builder.build().unwrap().to_vec()
-    };
-    let crypto = alice.mac.crypto();
+/// An ack answering the outstanding send, carrying `options`, sealed under
+/// [`keys`].
+fn sealed_ack(alice: &Sender, options: &[(OptionNumber, &[u8])]) -> Vec<u8> {
     let v = alice.pending().ack_v;
-    let tag_bytes = match tag {
-        Tag::Legacy => crypto.legacy_ack_tag(&keys().k_enc, &v),
-        // The marker is dynamic, so the MIC of a frame without it is the
-        // MIC of the same frame with it.
-        Tag::Mic => {
-            let mut unmarked = build(false);
-            crypto.seal_mac_ack(&keys(), &v, &mut unmarked).unwrap();
-            trailer(&unmarked)[4..].try_into().unwrap()
-        }
-    };
-    let mut ack = build(marker);
-    let len = ack.len();
-    ack[len - 4..].copy_from_slice(&tag_bytes);
+    let mut buf = [0u8; 256];
+    let mut placeholder = [0u8; 8];
+    placeholder[..4].copy_from_slice(&v[..4]);
+    let mut builder = PacketBuilder::new(&mut buf).mac_ack(placeholder);
+    for &(number, value) in options {
+        builder = builder.option(number, value);
+    }
+    let mut ack = builder.build().unwrap().to_vec();
+    alice
+        .mac
+        .crypto()
+        .seal_mac_ack(&keys(), &v, &mut ack)
+        .unwrap();
     ack
 }
 
-/// The receiver table of the transition appendix: the marker admits the
-/// legacy tag only, a static option the MIC only, and neither both.
+/// An ack delivers nothing, so a delivery-critical option it does not
+/// recognize does not refuse it; the MIC still covers that option.
 #[test]
-fn the_sender_admits_only_the_construction_the_ack_options_allow() {
-    let cases = [
-        (false, false, Tag::Legacy, true),
-        (false, false, Tag::Mic, true),
-        (false, true, Tag::Legacy, true),
-        (false, true, Tag::Mic, false),
-        (true, false, Tag::Mic, true),
-        (true, false, Tag::Legacy, false),
-        (true, true, Tag::Legacy, true),
-        (true, true, Tag::Mic, false),
-    ];
-    for (with_callsign, marker, tag, accepted) in cases {
-        let mut alice = Sender::new(SendOptions::default().no_flood());
-        let ack = forged_shape(&alice, with_callsign, marker, tag);
-        assert_eq!(
-            alice.completes(&ack),
-            accepted,
-            "callsign {with_callsign}, marker {marker}, {tag:?} tag"
-        );
-    }
+fn an_ack_with_an_unknown_delivery_critical_option_is_accepted() {
+    let mut alice = Sender::new(SendOptions::default().no_flood());
+    let ack = sealed_ack(&alice, &[(OptionNumber::Unknown(12), &[0xA5, 0x5A])]);
+    assert!(options(&ack).has_unknown_delivery_critical);
+    assert!(alice.completes(&ack));
+}
+
+/// A wrong tag completes nothing, and the send stays outstanding.
+#[test]
+fn an_ack_with_a_wrong_tag_completes_nothing() {
+    let mut alice = Sender::new(SendOptions::default().no_flood());
+    let ack = sealed_ack(&alice, &[]);
+    let mut forged = ack.clone();
+    let len = forged.len();
+    forged[len - 1] ^= 0x01;
+
+    assert!(!alice.completes(&forged));
+    assert!(alice.completes(&ack));
+}
+
+#[cfg(feature = "software-crypto")]
+#[test]
+fn an_altered_unknown_delivery_critical_option_fails_the_mic() {
+    let mut alice = Sender::new(SendOptions::default().no_flood());
+    let ack = sealed_ack(&alice, &[(OptionNumber::Unknown(12), &[0xA5, 0x5A])]);
+    let mut altered = ack.clone();
+    let header = PacketHeader::parse(&altered).unwrap();
+    altered[header.options_range.start + 1] ^= 0x01;
+
+    assert!(!alice.completes(&altered));
+    assert!(alice.completes(&ack));
 }
 
 /// The MIC covers the ack's static options: an altered callsign fails it,
@@ -341,17 +311,16 @@ fn an_ack_under_other_keys_completes_nothing() {
     assert!(alice.completes(&ack));
 }
 
-/// The marker is an ordinary non-critical option to a repeater, and what
-/// a repeater adds is dynamic: a forwarded legacy ack still verifies.
+/// What a repeater adds is dynamic, so a forwarded ack keeps its tag and
+/// still verifies.
 #[test]
-fn a_marked_ack_crosses_a_repeater_unchanged() {
+fn an_ack_crosses_a_repeater_and_still_verifies() {
     let mut alice = Sender::new(SendOptions::default().with_flood_hops(2));
     let mut relay = repeater(0x30);
     let request = forward(&mut relay, &alice.request).expect("the request is repeated");
     let ack = bob_acks(&request, |_| {});
     let forwarded = forward(&mut relay, &ack).expect("the ack is repeated");
 
-    assert!(options(&forwarded).legacy_ack_tag);
     assert_eq!(trailer(&forwarded), trailer(&ack));
     assert!(alice.completes(&forwarded));
 }
@@ -392,7 +361,7 @@ fn a_blind_unicast_ack_verifies_under_the_combined_keys() {
     let receipt = block_on(alice.send_blind_unicast(
         local_id,
         bob.public_key(),
-        &channel_keys.channel_id,
+        &channel,
         b"hello",
         &SendOptions::default().with_ack_requested(true).no_flood(),
     ))
@@ -412,10 +381,7 @@ fn a_blind_unicast_ack_verifies_under_the_combined_keys() {
     });
     let blind = alice.mac.crypto().derive_blind_keys(&keys(), &channel_keys);
     let v = alice.pending().ack_v;
-    assert_eq!(
-        alice.mac.crypto().verify_mac_ack(&blind, &v, &ack),
-        Some(AckTagConstruction::Mic)
-    );
-    assert_eq!(alice.mac.crypto().verify_mac_ack(&keys(), &v, &ack), None);
+    assert!(alice.mac.crypto().verify_mac_ack(&blind, &v, &ack));
+    assert!(!alice.mac.crypto().verify_mac_ack(&keys(), &v, &ack));
     assert!(alice.completes(&ack));
 }

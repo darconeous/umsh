@@ -18,7 +18,7 @@ Both protocols use Ed25519 public keys as node identities and perform X25519 ECD
 | Destination address | 3-byte hint | 1-byte hash |
 | Channel identifier | 2-byte derived hint | 1-byte hash of SHA-256 of channel key |
 
-UMSH uses 3-byte hints for node addresses and 2-byte hints for router and trace-route addresses, giving 1-in-16,777,216 collision resistance on node identifiers. An explicit `S` flag includes the full 32-byte source key when needed (first contact, ephemeral keys). MeshCore uses 1-byte source and destination hashes in regular encrypted unicast payloads, while routing paths support configurable 1-, 2-, or 3-byte node hashes. A dedicated `ANON_REQ` packet type carries the full 32-byte sender public key for first-contact or anonymous exchanges. The tradeoff is that MeshCore saves bytes per address field in the common case, but requires a special packet type for any situation where the full key must be transmitted.
+UMSH uses 3-byte hints for node addresses and 2-byte hints for router addresses in source routes and traces, giving 1-in-16,777,216 collision resistance on node identifiers. An explicit `S` flag includes the full 32-byte source key when needed (first contact, ephemeral keys). MeshCore uses 1-byte source and destination hashes in regular encrypted unicast payloads, while routing paths support configurable 1-, 2-, or 3-byte node hashes. A dedicated `ANON_REQ` packet type carries the full 32-byte sender public key for first-contact or anonymous exchanges. The tradeoff is that MeshCore saves bytes per address field in the common case, but requires a special packet type for any situation where the full key must be transmitted.
 
 ## Packet Structure
 
@@ -26,11 +26,11 @@ UMSH uses 3-byte hints for node addresses and 2-byte hints for router and trace-
 |---|---|---|
 | Header | 1-byte FCF with version, type, flags | 1-byte header with version, type, route mode |
 | Packet types | 8 (via 3-bit field in FCF) | 16 payload-type code points (13 assigned; via 4-bit field) |
-| Routing info | CoAP-style options (source route, trace route, region, RSSI/SNR thresholds) | Path field (up to 64 bytes; 1–3-byte hashes), transport codes |
+| Routing info | CoAP-style options (source route, trace, region, RSSI/SNR thresholds) | Path field (up to 64 bytes; 1–3-byte hashes), transport codes |
 | Flood hop count | Split 4-bit FHOPS field (max 15) | Implicit via path length |
 | Region support | Optional region code option | Transport codes (2 × 16-bit) |
 
-UMSH separates routing metadata into composable options, allowing packets to carry source routes, trace routes, signal-quality thresholds, and region codes independently. MeshCore uses a simpler flat structure with a path field and route-type bits.
+UMSH separates routing metadata into composable options, allowing packets to carry source routes, traces, signal-quality thresholds, and region codes independently. MeshCore uses a simpler flat structure with a path field and route-type bits.
 
 ## Cryptography
 
@@ -60,8 +60,8 @@ The cryptographic gap is substantial:
 | Flood routing | Yes, bounded by flood hop count | Yes (ROUTE_TYPE_FLOOD) |
 | Direct/source routing | Yes, via source-route option | Yes (ROUTE_TYPE_DIRECT) |
 | Hybrid routing | Source route + flood hop count in same packet | Not supported |
-| Path discovery | Trace-route option on any flooded packet | Dedicated PATH payload type |
-| Route learning | Trace-route option accumulates hints during flooding; reversed into source route by recipient | Explicit returned-path messages |
+| Path discovery | Trace option on any flooded packet | Dedicated PATH payload type |
+| Route learning | Trace option accumulates router hints and per-hop signal during flooding; used as a source route by the recipient | Explicit returned-path messages |
 | Forwarding confirmation | Yes (retries with backoff) | Not defined |
 | Channel access | CAD with random backoff; SNR-based contention windows | Listen-before-talk with random backoff; SNR-based flood retransmit delay |
 | Signal-quality filtering | Min RSSI and min SNR options | SNR-based retransmit prioritization (implicit, no explicit thresholds) |
@@ -87,7 +87,7 @@ When a MeshCore repeater receives a transport-scoped packet, it iterates through
 
 This payload-dependent transport-code mechanism was introduced in MeshCore commit `03fc9490`.
 
-Both protocols support automatic route learning, but through different mechanisms. UMSH uses a trace-route option that accumulates router hints as a packet floods; the recipient reverses the accumulated trace and caches it as a source route for all subsequent communication with the sender—replies, acknowledgments, and new messages alike (see [Route Learning](beacons.md#route-learning)). MeshCore uses a dedicated returned-path message type.
+Both protocols support automatic route learning, but through different mechanisms. UMSH uses a Trace option that accumulates a record of each hop as a packet floods—its router hint and the signal it was received with; the recipient caches the accumulated trace as a source route for all subsequent communication with the sender—replies, acknowledgments, and new messages alike (see [Route Learning](beacons.md#route-learning)). MeshCore uses a dedicated returned-path message type.
 
 Both protocols define channel access mechanisms. MeshCore checks for preamble or signal detection before transmitting and defers with a randomized backoff (120–360 ms) if the channel is busy, with a forced-transmit safety valve after 4 seconds. Flood retransmissions use a random delay proportional to airtime and a score-based priority derived from received SNR. UMSH uses CAD with random backoff and SNR-based contention windows for collision avoidance. UMSH additionally defines hop-by-hop forwarding confirmation with retries, providing reliability across the forwarding chain that MeshCore does not offer.
 
@@ -111,10 +111,10 @@ Both protocols support anonymous first-contact requests, but through different m
 | Channel key size | 32 bytes | Variable (shared secret) |
 | Channel identifier | 2-byte derived hint | 1-byte hash of SHA-256 of key |
 | Group message auth | Channel-key-based S2V MIC | Channel-key-based HMAC (2-byte MAC) |
-| Sender authentication | Not cryptographically verified (symmetric key limitation) | Not cryptographically verified (same limitation) |
+| Sender authentication | Channel MIC alone does not verify the sender; a signed multicast is attributable to its sender's key | Not cryptographically verified (symmetric key limitation) |
 | Source privacy | Source encrypted when encryption enabled | No cleartext source; claimed sender name encrypted |
 
-Both protocols share the fundamental limitation that symmetric-key multicast cannot authenticate individual senders—any channel member can forge a packet with any claimed UMSH source address or MeshCore sender name.
+Both protocols share the fundamental limitation that symmetric-key multicast cannot authenticate individual senders—any channel member can forge a packet with any claimed UMSH source address or MeshCore sender name. UMSH lets a sender opt out of that limitation per packet: a multicast carrying a [frame signature](security.md#frame-signatures) (the SCF's `D` bit) is attributable to its sender's key, at a cost of 64 bytes.
 
 ## Application Layer
 
@@ -122,7 +122,7 @@ Both protocols share the fundamental limitation that symmetric-key multicast can
 |---|---|---|
 | Payload typing | 1-byte payload type prefix | 4-bit payload type in header |
 | Structured data | CoAP-over-UMSH (block-wise transfer) | Multipart packets |
-| Node identity | Identity payload with role, capabilities, name, options, optional EdDSA signature | Advertisement payload with public key, timestamp, EdDSA signature, appdata |
+| Node identity | Identity payload with role, capabilities, name, options; advertisements authenticated by a frame signature, standalone identities by an embedded EdDSA signature | Advertisement payload with public key, timestamp, EdDSA signature, appdata |
 | URI scheme | `umsh:n:`, `umsh:ck:`, `umsh:cs:`, `coap-umsh://` | `meshcore://` (contacts and channels) |
 | Amateur radio | Operator/station callsign options, explicit unencrypted mode | Not defined |
 

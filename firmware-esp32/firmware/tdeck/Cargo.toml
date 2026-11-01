@@ -264,7 +264,7 @@ embassy-net = { version = "0.8", default-features = false, optional = true, feat
 umsh-bsp-esp32 = { path = "../../crates/umsh-bsp-esp32", features = ["esp32s3", "panic-handler"] }
 umsh-bsp-tdeck = { path = "../../crates/umsh-bsp-tdeck" }
 umsh-ulcp = { path = "../../../crates/umsh-ulcp", default-features = false }
-umsh-ulcp-device = { path = "../../../crates/umsh-ulcp-device", default-features = false }
+umsh-ulcp-device = { path = "../../../crates/umsh-ulcp-device", default-features = false, features = ["software-crypto"] }
 # Board-agnostic device runtime shared with the T-Echo/T-1000E images:
 # session driver, radio mux, transport policy, pairing policy, counter
 # map, and the GNSS positioning runtime. Raw bus access is feature-gated above.

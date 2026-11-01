@@ -2,7 +2,7 @@
 use alloc::vec::Vec;
 
 #[cfg(feature = "software-crypto")]
-use umsh_core::ChannelId;
+use umsh_core::ChannelKey;
 #[cfg(feature = "software-crypto")]
 use umsh_core::PayloadType;
 #[cfg(feature = "software-crypto")]
@@ -196,7 +196,7 @@ impl PfsSessionManager {
         peer_long_term: PublicKey,
         peer_ephemeral: PublicKey,
         duration_minutes: u16,
-        channel: Option<ChannelId>,
+        channel: Option<ChannelKey>,
         options: &SendOptions,
     ) -> Result<(), NodeError<M>> {
         self.remove_existing(mac, &peer_long_term).await?;
@@ -407,7 +407,7 @@ async fn send_pfs_command<M: MacBackend>(
     mac: &M,
     from: LocalIdentityId,
     peer: &PublicKey,
-    channel: Option<ChannelId>,
+    channel: Option<ChannelKey>,
     command: &MacCommand<'_>,
     options: &SendOptions,
 ) -> Result<Option<SendReceipt>, NodeError<M>> {

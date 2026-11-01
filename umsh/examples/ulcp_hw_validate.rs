@@ -655,7 +655,7 @@ async fn rf_dev_unicast(
         .shared_secret_with(&PublicKey(dev_key))
         .map_err(|error| format!("pairwise derivation failed: {error:?}"))?;
     let crypto = CryptoEngine::new(SoftwareAes, SoftwareSha256);
-    let keys = crypto.derive_pairwise_keys(&shared);
+    let keys = crypto.derive_pairwise_keys(&shared, &peer_pub, &PublicKey(dev_key));
 
     for offset in 0..count {
         let counter = base + offset;
@@ -713,7 +713,7 @@ async fn rf_advert_request(
         .shared_secret_with(&PublicKey(dev_key))
         .map_err(|error| format!("pairwise derivation failed: {error:?}"))?;
     let crypto = CryptoEngine::new(SoftwareAes, SoftwareSha256);
-    let keys = crypto.derive_pairwise_keys(&shared);
+    let keys = crypto.derive_pairwise_keys(&shared, &peer_pub, &PublicKey(dev_key));
 
     // Typed MAC-command payload: Identity Request (id 1) carrying the nonce as
     // a correlation option. NOTE: the receive side below still expects the old

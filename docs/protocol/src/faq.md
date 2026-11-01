@@ -20,14 +20,14 @@ If an ack-requested packet sent on a cached source route exhausts its retry budg
 - re-attempt the **same logical packet**
 - remove the stale source route
 - add or refresh flood hops
-- include a trace-route option so a fresh path can be learned
+- include a Trace option so a fresh path can be learned
 - set the [Route Retry option](packet-options.md#route-retry-option-6)
 
 The key point is that this is still the same logical packet, not a new application message. The destination therefore accepts it at most once according to the normal replay rules, while repeaters treat the Route Retry form as a distinct forwarding opportunity for duplicate-suppression purposes.
 
 ### Why doesn't UMSH define a dedicated path-discovery packet type?
 
-The existing primitives are sufficient. A node can discover a path by sending a flooded packet (broadcast, unicast, or beacon) with the trace-route option present. Repeaters prepend their router hints as they forward. The recipient can use the accumulated trace directly as a candidate source route. This avoids adding protocol complexity for a function that composes naturally from existing features. See [Path Discovery](beacons.md#path-discovery) for the full procedure.
+The existing primitives are sufficient. A node can discover a path by sending a flooded packet (broadcast, unicast, or beacon) with the [Trace option](packet-options.md#trace-option-7) present. Repeaters prepend their records as they forward. The recipient can use the router hints of a complete trace directly as a candidate source route. This avoids adding protocol complexity for a function that composes naturally from existing features. See [Path Discovery](beacons.md#path-discovery) for the full procedure.
 
 ### How does UMSH handle frame counter overflow?
 
@@ -35,7 +35,7 @@ The 4-byte frame counter wraps naturally at `2^32`. Replay detection uses modula
 
 ### Can a multicast channel member impersonate another member?
 
-Yes. Multicast authentication is based on the shared channel key, not on individual sender identity. Any node with the channel key can construct a valid packet with any claimed source address. This is an inherent property of symmetric-key multicast and is shared by other protocols with similar designs. See [Multicast Sender Authentication](limitations.md#multicast-sender-authentication).
+Yes, unless the packet is signed. Multicast authentication is based on the shared channel key, not on individual sender identity. Any node with the channel key can construct a valid packet with any claimed source address. This is an inherent property of symmetric-key multicast and is shared by other protocols with similar designs. A multicast with a verified [frame signature](security.md#frame-signatures) is the exception: only the holder of the signing key could have sent it. The `EMERGENCY` channel requires one. See [Multicast Sender Authentication](limitations.md#multicast-sender-authentication).
 
 This does not apply to blind unicast. Blind unicast payloads are authenticated using [combined keys](security.md#blind-unicast-payload-keys) that require both the pairwise shared secret and the channel key, so only the true sender can produce a valid payload and only the intended recipient can read it.
 
@@ -53,7 +53,7 @@ Receivers that see an unknown source hint on an authenticated packet should trea
 
 ### How does a MAC Ack get routed back to the original sender?
 
-MAC acks are end-to-end: the **final destination** generates the ack, not any intermediate repeater. The ack is routed back to the original sender using whatever routing state the destination has learned—typically a source route derived from the inbound packet's trace route, or a flood scoped by the inbound packet's `FHOPS_ACC` together with any learned region-code options. This is the same [route learning](beacons.md#route-learning) mechanism used for all communication, not an ack-specific feature.
+MAC acks are end-to-end: the **final destination** generates the ack, not any intermediate repeater. The ack is routed back to the original sender using whatever routing state the destination has learned—typically a source route derived from the inbound packet's trace, or a flood scoped by the inbound packet's `FHOPS_ACC` together with any learned region-code options. This is the same [route learning](beacons.md#route-learning) mechanism used for all communication, not an ack-specific feature.
 
 Repeaters do not generate acks themselves. Instead, a repeater can confirm successful forwarding by overhearing the next hop's retransmission of the same packet (see [Forwarding Confirmation](repeater-operation.md#forwarding-confirmation)).
 
@@ -81,4 +81,4 @@ Yes. A node can generate an ephemeral Ed25519 keypair, set the `S` flag, and use
 
 ### Does UMSH support automatic route learning?
 
-Yes. A node that wants to learn a source route to a peer sends any flooded packet (unicast, broadcast, or beacon) with the trace-route option present. Repeaters prepend their router hint as they forward. When the peer receives the packet, the trace-route option contains the accumulated path, ordered nearest-repeater-first, and can be used directly as a source-route option on reply packets. Both sides can learn routes simultaneously by including the trace-route option on their outbound packets and caching the results. See [Path Discovery](beacons.md#path-discovery) for the full path-discovery procedure.
+Yes. A node that wants to learn a source route to a peer sends any flooded packet (unicast, broadcast, or beacon) with the Trace option present. Repeaters prepend their records as they forward. When the peer receives the packet, a complete trace contains the accumulated path, ordered nearest-repeater-first, and can be used directly as a source-route option on reply packets. Both sides can learn routes simultaneously by including the trace-route option on their outbound packets and caching the results. See [Path Discovery](beacons.md#path-discovery) for the full path-discovery procedure.

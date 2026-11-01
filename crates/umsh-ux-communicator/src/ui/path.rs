@@ -55,7 +55,7 @@ pub(super) enum Hop {
 
 /// The path from this device to the peer `peer`, an avatar and a name:
 /// through `repeaters`, the nearest first, then `unnamed` more nobody
-/// named. `hops` are the hops between the rows, in the same order. The
+/// named, `None` when how many is not known. `hops` are the hops between the rows, in the same order. The
 /// repeaters `identifying` were asked who they are, and spin at `phase`.
 /// A `dim` path is one not known yet.
 #[allow(clippy::too_many_arguments)]
@@ -63,7 +63,7 @@ pub(super) fn view(
     m: &'static Metrics,
     peer: (&AvatarStyle, &str),
     repeaters: &[Repeater],
-    unnamed: u8,
+    unnamed: Option<u8>,
     hops: &[Hop],
     identifying: &[[u8; 2]],
     phase: u8,
@@ -95,7 +95,8 @@ pub(super) fn view(
         })
         .keyed(|&i| keys::path(i))
         .with_spacing(0),
-        (unnamed > 0).then(|| VStack::new((nobody(m, unnamed), hop_row(m, past))).with_spacing(0)),
+        (unnamed != Some(0))
+            .then(|| VStack::new((nobody(m, unnamed), hop_row(m, past))).with_spacing(0)),
         end(m, avatar, name, dim),
     ))
     .with_spacing(0)
@@ -133,10 +134,13 @@ fn end(
     )
 }
 
-/// Repeaters nobody named, `count` of them, in one row.
-fn nobody(m: &'static Metrics, count: u8) -> impl View<Rgb565, State> + use<> {
+/// Repeaters nobody named, `count` of them when known, in one row.
+fn nobody(m: &'static Metrics, count: Option<u8>) -> impl View<Rgb565, State> + use<> {
     let mut text: String<16> = String::new();
-    _ = core::fmt::write(&mut text, format_args!("{count} unnamed"));
+    _ = match count {
+        Some(count) => core::fmt::write(&mut text, format_args!("{count} unnamed")),
+        None => core::fmt::write(&mut text, format_args!("? unnamed")),
+    };
     let dot = || {
         Circle
             .stroked(1)

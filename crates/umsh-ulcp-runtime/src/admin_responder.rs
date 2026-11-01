@@ -23,7 +23,7 @@ use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, RawMutex};
 use embassy_sync::channel::Channel;
 use embassy_time::{Duration, Instant, Timer};
 
-use umsh_core::{ChannelId, PayloadType, PublicKey};
+use umsh_core::{ChannelKey, PayloadType, PublicKey};
 use umsh_hal::CounterStore;
 use umsh_mac::SendOptions;
 use umsh_node::{PacketFamily, ReceivedPacketRef};
@@ -100,7 +100,7 @@ struct Request {
     /// The channel the request arrived on, when it came as a blind unicast.
     /// The response follows it back rather than naming both parties in the
     /// clear.
-    channel: Option<ChannelId>,
+    channel: Option<ChannelKey>,
     /// The request's `ack_mic`, which the response carries back so the
     /// administrator's MAC can take the response as the acknowledgment
     /// should the standalone one be lost.
@@ -229,7 +229,7 @@ pub fn admit(packet: &ReceivedPacketRef<'_>) {
     if REQUESTS
         .try_send(Request {
             from: from.0,
-            channel: packet.channel().map(|c| c.id()),
+            channel: packet.channel().map(|c| *c.key),
             ack_mic: packet.ack_mic(),
             payload,
         })
@@ -344,7 +344,7 @@ async fn serve<M: RawMutex + 'static>(
 async fn respond<CS: CounterStore + 'static>(
     node: &DeviceNode<CS>,
     to: &[u8; 32],
-    channel: Option<ChannelId>,
+    channel: Option<ChannelKey>,
     ack_mic: Option<[u8; 4]>,
     payload: &[u8],
     completion: Option<ReplyCompletion>,

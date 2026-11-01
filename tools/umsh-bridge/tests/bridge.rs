@@ -205,14 +205,7 @@ fn a_frame_crosses_the_bridge_exactly_as_it_was_heard() {
         start(&deployment).await;
 
         // A node on the client's segment floods a traced broadcast.
-        let sent = broadcast(
-            3,
-            0x11,
-            &[
-                (OptionNumber::TraceRoute, Vec::new()),
-                (OptionNumber::TraceSignal, Vec::new()),
-            ],
-        );
+        let sent = broadcast(3, 0x11, &[(OptionNumber::Trace, Vec::new())]);
         segment_b
             .transmit(
                 &sent,
@@ -240,12 +233,8 @@ fn a_frame_crosses_the_bridge_exactly_as_it_was_heard() {
         assert_eq!(hops.accumulated(), 0);
         let options = ParsedOptions::extract(&arrived, header.options_range.clone()).unwrap();
         assert!(
-            arrived[options.trace_route.clone().expect("the trace survives")].is_empty(),
+            arrived[options.trace.clone().expect("the trace survives")].is_empty(),
             "the bridge is nobody's hop, so it writes no trace entry"
-        );
-        assert!(
-            arrived[options.trace_signal.clone().expect("the signal survives")].is_empty(),
-            "and no signal entry to pair with one"
         );
     });
 }
