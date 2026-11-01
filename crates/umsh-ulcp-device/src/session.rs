@@ -5,12 +5,14 @@ use core::str::FromStr;
 use heapless::{Deque, Vec as HeaplessVec};
 use umsh_core::options::{HopSignal, OptionDecoder, OptionEncoder, TraceRef};
 use umsh_core::{
-    ChannelKey, EncodeError, NodeHint, OptionNumber, PacketBuilder, PacketHeader, PacketType,
-    ParsedOptions, PayloadType, RegionCode, RouteEvidence, SourceAddrRef, established_route_slack,
+    ChannelCommitment, ChannelKey, EncodeError, NodeHint, OptionNumber, PacketBuilder,
+    PacketHeader, PacketType, ParsedOptions, PayloadType, PublicKey, RegionCode, RouteEvidence,
+    SourceAddrRef, established_route_slack,
 };
 use umsh_crypto::replay::{ReplayVerdict, ReplayWindow};
 use umsh_crypto::{AesProvider, CryptoEngine, PairwiseKeys, Sha256Provider};
 use umsh_hal::tz::Rule;
+use umsh_text::WellKnownChannels;
 use umsh_ulcp::Status;
 use umsh_ulcp::airtime::lora_airtime_ms_with_preamble;
 use umsh_ulcp::alert::AlertState;
@@ -964,6 +966,55 @@ enum SecureRx {
     },
 }
 
+/// Room for one frame's signature input while its signature is checked.
+/// Empty without the software back end, which is what checks one.
+struct SignatureScratch {
+    #[cfg(feature = "software-crypto")]
+    input: [u8; umsh_core::SIGNATURE_INPUT_MAX],
+}
+
+impl SignatureScratch {
+    const fn new() -> Self {
+        Self {
+            #[cfg(feature = "software-crypto")]
+            input: [0; umsh_core::SIGNATURE_INPUT_MAX],
+        }
+    }
+
+    /// Whether the opened multicast `frame` carries a signature by `key`
+    /// over `channel`, the commitment of the key that opened it.
+    #[cfg(feature = "software-crypto")]
+    fn verifies(
+        &mut self,
+        header: &PacketHeader,
+        frame: &[u8],
+        key: &PublicKey,
+        channel: &ChannelCommitment,
+    ) -> bool {
+        umsh_crypto::software::verify_frame_signature(
+            header,
+            frame,
+            key,
+            None,
+            Some(channel),
+            &mut self.input,
+        )
+    }
+
+    /// A build without the software back end cannot check a signature,
+    /// and reports every one as not verified.
+    #[cfg(not(feature = "software-crypto"))]
+    fn verifies(
+        &mut self,
+        _header: &PacketHeader,
+        _frame: &[u8],
+        _key: &PublicKey,
+        _channel: &ChannelCommitment,
+    ) -> bool {
+        false
+    }
+}
+
 /// What a queued frame is, as far as a receipt cue is concerned: a
 /// conversation with this device's host, or one with a group.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1733,6 +1784,45 @@ impl PeerKeyTable {
                 let (index, _) = matches.next()?;
                 matches.next().is_none().then_some(index)
             }
+            _ => None,
+        }
+    }
+
+    /// Resolve the signer of a multicast from its opened copy `frame`: the
+    /// provisioned peer it names, if any, and the key its signature must
+    /// verify against. A full key names a signer whether or not it is
+    /// provisioned; a hint names one only through a unique provisioned
+    /// match.
+    fn resolve_signer(
+        &self,
+        source: &SourceAddrRef,
+        frame: &[u8],
+    ) -> Option<(Option<usize>, [u8; items::PUBLIC_KEY_LEN])> {
+        // Once opened, an encrypted source reads as its plaintext form.
+        let source = match *source {
+            SourceAddrRef::Encrypted {
+                offset,
+                len: items::PUBLIC_KEY_LEN,
+            } => SourceAddrRef::FullKeyAt { offset },
+            SourceAddrRef::Encrypted { offset, len: 3 } => {
+                SourceAddrRef::Hint(NodeHint(frame.get(offset..offset + 3)?.try_into().ok()?))
+            }
+            other => other,
+        };
+        if let Some(index) = self.resolve_source(&source, frame) {
+            let slot = self.entries[index]
+                .as_ref()
+                .expect("resolved index is populated");
+            return Some((Some(index), slot.entry.public_key));
+        }
+        match source {
+            SourceAddrRef::FullKeyAt { offset } => Some((
+                None,
+                frame
+                    .get(offset..offset + items::PUBLIC_KEY_LEN)?
+                    .try_into()
+                    .ok()?,
+            )),
             _ => None,
         }
     }
@@ -3364,9 +3454,10 @@ pub struct Session<A: AesProvider, S: Sha256Provider, const TX: usize = 1> {
     /// authentication and delegated acknowledgement with
     /// `CAP_HOST_AUTO_ACK`).
     engine: CryptoEngine<A, S>,
-    /// The `EMERGENCY` channel's key, whose test messages
-    /// `PROP_TEST_MESSAGE_ALERTS` governs.
-    emergency_key: [u8; 32],
+    /// The well-known channels' keys: `EMERGENCY`'s test messages are
+    /// governed by `PROP_TEST_MESSAGE_ALERTS`, and its messages cue only
+    /// when signed.
+    well_known: WellKnownChannels,
     device: DeviceDomain,
     host: HostDomain,
     session: SessionState<TX>,
@@ -3507,6 +3598,9 @@ pub struct Session<A: AesProvider, S: Sha256Provider, const TX: usize = 1> {
     /// nobody attached from firing into the next session.
     session_reset_pending: Option<SessionResetReason>,
     scratch: [u8; SCRATCH],
+    /// Kept beside `scratch` rather than on the stack: a signature input
+    /// holds about four frames.
+    signatures: SignatureScratch,
 }
 
 /// Which binding a frame arrived over.
@@ -3654,14 +3748,19 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     pub fn new(config: SessionConfig, boot_status: Status, engine: CryptoEngine<A, S>) -> Self {
         debug_assert!(usize::from(config.mtu) <= MAX_MTU);
         debug_assert!(valid_device_name(config.default_device_name.as_bytes()));
-        let emergency_key = engine
-            .derive_named_channel_key(umsh_text::emergency::CHANNEL_NAME)
-            .expect("the EMERGENCY name is short ASCII")
-            .0;
+        let named = |name| {
+            engine
+                .derive_named_channel_key(name)
+                .expect("well-known channel names are short ASCII")
+        };
+        let well_known = WellKnownChannels {
+            public: named(WellKnownChannels::PUBLIC_NAME),
+            emergency: named(WellKnownChannels::EMERGENCY_NAME),
+        };
         Self {
             config,
             engine,
-            emergency_key,
+            well_known,
             device: DeviceDomain::post_reset(&config),
             host: HostDomain::default(),
             session: SessionState::default(),
@@ -3698,6 +3797,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             binding: Binding::Local,
             session_reset_pending: None,
             scratch: [0; SCRATCH],
+            signatures: SignatureScratch::new(),
         }
     }
 
@@ -4823,10 +4923,11 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 opened
             }
             // Multicast the device holds the channel key for is
-            // authenticated for queue-local duplicate coalescing only:
-            // no per-sender counter state is retained and no ack is
-            // ever delegated (multicast never requests one). Broadcast
-            // and MAC acks carry no counter at all.
+            // authenticated for queue-local duplicate coalescing, and no
+            // ack is ever delegated (multicast never requests one). The
+            // exception is a message that must be signed to be shown,
+            // whose cue a provisioned signer's replay window decides.
+            // Broadcast and MAC acks carry no counter at all.
             PacketType::Multicast => {
                 let Some(channel) = header.channel else {
                     return SecureRx::Plain;
@@ -4834,7 +4935,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 // Each key sharing the identifier is tried; a failed open
                 // leaves the scratch copy as it was.
                 let engine = &self.engine;
-                let Some((channel_key, body_range)) = self
+                let Some((channel_key, commitment, body_range)) = self
                     .host
                     .channel_keys
                     .iter()
@@ -4848,46 +4949,59 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                         engine
                             .open_packet(scratch, &header, &channel_pairwise, None)
                             .ok()
-                            .map(|body_range| (candidate.key, body_range))
+                            .map(|body_range| (candidate.key, derived.commitment, body_range))
                     })
                 else {
                     return SecureRx::Plain;
                 };
-                let readable = readable_message(&scratch[body_range]);
-                // A test message on `EMERGENCY` calls for no one's
-                // attention unless the operator asked to hear them.
-                let silent = readable.is_some_and(|message| message.test_body)
-                    && channel_key == self.emergency_key
-                    && !self.device.test_message_alerts;
                 let Some(sec_info) = header.sec_info else {
                     return SecureRx::Plain;
                 };
-                let identity =
-                    RxIdentity::new(sec_info.frame_counter, &data[header.mic_range.clone()]);
-                let Some(identity) = identity else {
+                let mic = &data[header.mic_range.clone()];
+                let Some(identity) = RxIdentity::new(sec_info.frame_counter, mic) else {
                     return SecureRx::Plain;
                 };
                 // A Route Retry form preserves the MIC and counter, so
                 // it matches the original entry while that entry is
-                // still queued; once drained or evicted, no replay
-                // state is retained for multicast.
-                return if self.host.queue.seq_for_identity(&identity).is_some() {
-                    SecureRx::Duplicate {
+                // still queued. The MIC covers the signature, so a copy
+                // needs no second check.
+                if self.host.queue.seq_for_identity(&identity).is_some() {
+                    return SecureRx::Duplicate {
                         ack: None,
                         identity: Some(identity),
-                    }
-                } else {
-                    SecureRx::New {
-                        ack: None,
-                        identity: Some(identity),
-                        // Matched against the key that actually
-                        // authenticated the frame, never against the
-                        // two-octet on-wire identifier: identifiers
-                        // collide, and a collision must not mute the
-                        // wrong channel.
-                        cue: readable.is_some() && !silent && !self.channel_muted(&channel_key),
-                        silent,
-                    }
+                    };
+                }
+                let payload = &scratch[body_range];
+                let readable = readable_message(payload);
+                // Matched against the key that actually authenticated the
+                // frame, never against the two-octet on-wire identifier:
+                // identifiers collide, and a collision must neither mute
+                // the wrong channel nor pass for `EMERGENCY`.
+                let channel_key = ChannelKey(channel_key);
+                // A test message on `EMERGENCY` calls for no one's
+                // attention unless the operator asked to hear them.
+                let silent = readable.is_some_and(|message| message.test_body)
+                    && self.well_known.is_emergency(&channel_key)
+                    && !self.device.test_message_alerts;
+                let signed_as_required = !self.well_known.frame_signature_required(
+                    packet_type,
+                    Some(&channel_key),
+                    payload,
+                ) || self.signed_multicast_cues(
+                    &header,
+                    &commitment,
+                    sec_info.frame_counter,
+                    mic,
+                    now_ms,
+                );
+                return SecureRx::New {
+                    ack: None,
+                    identity: Some(identity),
+                    cue: readable.is_some()
+                        && !silent
+                        && signed_as_required
+                        && !self.channel_muted(&channel_key.0),
+                    silent,
                 };
             }
             _ => return SecureRx::Plain,
@@ -4976,6 +5090,51 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             // as a previously accepted frame; it is queued unacked and
             // never acknowledged (spec: MUST NOT ack farther behind).
             ReplayVerdict::OutOfWindow | ReplayVerdict::Stale => SecureRx::Plain,
+        }
+    }
+
+    /// Whether a multicast that must be signed to be shown, opened in
+    /// `scratch` under the channel whose commitment is `channel`, may cue.
+    ///
+    /// Its signature must verify against a key the device holds: a
+    /// provisioned peer's, or a full source key on the wire. A
+    /// provisioned signer's frame must also be new to that peer's replay
+    /// window, which the frame then advances, so a replay cues no more
+    /// after its original has left the queue. A signer that is not
+    /// provisioned has only the queue's coalescing; the device keeps no
+    /// table of strangers. Nothing here decides whether the frame is
+    /// queued, and the host MAC judges it again.
+    fn signed_multicast_cues(
+        &mut self,
+        header: &PacketHeader,
+        channel: &ChannelCommitment,
+        counter: u32,
+        mic: &[u8],
+        now_ms: u64,
+    ) -> bool {
+        let frame = &self.scratch[..header.total_len];
+        let Some((peer, key)) = self.host.peer_keys.resolve_signer(&header.source, frame) else {
+            return false;
+        };
+        if !self
+            .signatures
+            .verifies(header, frame, &PublicKey(key), channel)
+        {
+            return false;
+        }
+        let Some(index) = peer else {
+            return true;
+        };
+        let window = &mut self.host.peer_keys.entries[index]
+            .as_mut()
+            .expect("resolved index is populated")
+            .window;
+        match window.check(counter, mic, now_ms) {
+            ReplayVerdict::Accept => {
+                window.accept(counter, mic, now_ms);
+                true
+            }
+            ReplayVerdict::Replay | ReplayVerdict::OutOfWindow | ReplayVerdict::Stale => false,
         }
     }
 
@@ -15831,6 +15990,16 @@ mod tests {
     }
 
     fn sealed_blind(counter: u32, channel_key: &[u8; 32], ack_requested: bool) -> Vec<u8> {
+        sealed_blind_carrying(counter, channel_key, ack_requested, &[3, 9, 9])
+    }
+
+    /// The same frame carrying `payload` (payload-type byte included).
+    fn sealed_blind_carrying(
+        counter: u32,
+        channel_key: &[u8; 32],
+        ack_requested: bool,
+        payload: &[u8],
+    ) -> Vec<u8> {
         let engine = test_engine();
         let channel_keys = engine.derive_channel_keys(&ChannelKey(*channel_key));
         let mut buf = [0u8; 96];
@@ -15846,7 +16015,7 @@ mod tests {
         let mut packet = builder
             .encrypted()
             .mic_size(MicSize::Mic8)
-            .payload(&[3, 9, 9])
+            .payload(payload)
             .build()
             .unwrap();
         let blind = engine.derive_blind_keys(&test_pairwise(), &channel_keys);
@@ -16040,6 +16209,7 @@ mod tests {
             .seal_packet(&mut packet, &test_pairwise())
             .unwrap();
         assert!(rx_effect(&mut session, packet.as_bytes(), 0).is_none());
+        assert!(!session.take_queued_notice().expect("queued").cue);
 
         // The same counter without the option is still new to the device.
         let effect = rx_effect(&mut session, &sealed_unar(5, &test_pairwise(), false), 0);
@@ -17591,37 +17761,161 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_test_message_on_emergency_is_silent_unless_asked_for() {
-        let emergency = test_engine()
+    /// The seed of a real Ed25519 signer, whose key [`signer_session`]
+    /// provisions as a peer.
+    const SIGNER_SEED: [u8; 32] = [0x11; 32];
+
+    /// The seed of a signer the device was never told of.
+    const STRANGER_SEED: [u8; 32] = [0x22; 32];
+
+    const FIRE: &[u8] = b"\x03\xFFFire on the ridge";
+
+    fn public_key_of(seed: &[u8; 32]) -> [u8; 32] {
+        ed25519_dalek::SigningKey::from_bytes(seed)
+            .verifying_key()
+            .to_bytes()
+    }
+
+    fn emergency_key() -> [u8; 32] {
+        test_engine()
             .derive_named_channel_key(umsh_text::emergency::CHANNEL_NAME)
             .unwrap()
-            .0;
-        let other_key = [0x43u8; 32];
+            .0
+    }
+
+    /// A key other than `EMERGENCY`'s with the same two-octet identifier:
+    /// the first `n ‖ 77…77`, counting `n` up from zero, that has it. The
+    /// search takes a while in a debug build, so its result is written
+    /// down and checked.
+    fn colliding_with_emergency() -> [u8; 32] {
+        let mut key = [0x77; 32];
+        key[..4].copy_from_slice(&0xB283u32.to_be_bytes());
+        let engine = test_engine();
+        assert_eq!(
+            engine.derive_channel_id(&ChannelKey(key)),
+            engine.derive_channel_id(&ChannelKey(emergency_key()))
+        );
+        key
+    }
+
+    /// A detached session holding `channels`, with the signer provisioned
+    /// as a peer beside the test peer.
+    fn signer_session(channels: &[[u8; 32]]) -> TestSession {
         let mut session = auto_ack_session();
         session.attach(true);
-        install_channel_key(&mut session, &emergency);
-        install_channel_key(&mut session, &other_key);
+        for key in channels {
+            install_channel_key(&mut session, key);
+        }
+        insert_item(
+            &mut session,
+            prop::HOST_PEER_KEYS,
+            &peer_item(&public_key_of(&SIGNER_SEED), &test_pairwise()),
+        );
         session.detach();
+        session
+    }
+
+    /// A signed multicast, as a sender would build it.
+    struct SignedMulticast<'a> {
+        counter: u32,
+        payload: &'a [u8],
+        seed: [u8; 32],
+        /// Name the signer by its full key rather than its hint.
+        full_source: bool,
+        /// The channel whose commitment the signature covers, when not
+        /// the one the frame is sealed under.
+        signed_on: Option<[u8; 32]>,
+        /// Flip a signature bit before sealing, so the MIC still passes.
+        corrupt: bool,
+    }
+
+    impl<'a> SignedMulticast<'a> {
+        fn new(counter: u32, payload: &'a [u8]) -> Self {
+            Self {
+                counter,
+                payload,
+                seed: SIGNER_SEED,
+                full_source: false,
+                signed_on: None,
+                corrupt: false,
+            }
+        }
+
+        fn sealed_on(&self, channel_key: &[u8; 32]) -> Vec<u8> {
+            use ed25519_dalek::Signer;
+            let engine = test_engine();
+            let signing = ed25519_dalek::SigningKey::from_bytes(&self.seed);
+            let public = PublicKey(signing.verifying_key().to_bytes());
+            let derived = engine.derive_channel_keys(&ChannelKey(*channel_key));
+            let commitment = engine
+                .derive_channel_commitment(&ChannelKey(self.signed_on.unwrap_or(*channel_key)));
+            let mut buf = [0u8; 256];
+            let builder = PacketBuilder::new(&mut buf).multicast(derived.channel_id);
+            let builder = if self.full_source {
+                builder.source_full(&public)
+            } else {
+                builder.source_hint(public.hint())
+            };
+            let mut packet = builder
+                .frame_counter(self.counter)
+                .signed()
+                .payload(self.payload)
+                .build()
+                .unwrap();
+            let header = PacketHeader::parse(packet.as_bytes()).unwrap();
+            let mut input = [0u8; umsh_core::SIGNATURE_INPUT_MAX];
+            let len = umsh_core::signature_input(
+                &header,
+                packet.as_bytes(),
+                None,
+                Some(&commitment),
+                &mut input,
+            )
+            .unwrap();
+            let mut signature = signing.sign(&input[..len]).to_bytes();
+            if self.corrupt {
+                signature[0] ^= 1;
+            }
+            packet
+                .signature_slot_mut()
+                .unwrap()
+                .copy_from_slice(&signature);
+            let keys = PairwiseKeys {
+                k_enc: derived.k_enc,
+                k_mic: derived.k_mic,
+            };
+            engine.seal_packet(&mut packet, &keys).unwrap();
+            packet.as_bytes().to_vec()
+        }
+    }
+
+    /// Feed a detached frame that must reach the queue, and return its
+    /// notice.
+    fn queued_notice(session: &mut TestSession, frame: &[u8], now_ms: u64) -> QueuedNotice {
+        assert!(rx_effect(session, frame, now_ms).is_none());
+        session.take_queued_notice().expect("queued for the host")
+    }
+
+    #[test]
+    fn a_test_message_on_emergency_is_silent_unless_asked_for() {
+        let emergency = emergency_key();
+        let other_key = [0x43u8; 32];
+        let mut session = signer_session(&[emergency, other_key]);
         let test = b"\x03\xFF  test: radio check";
         let mut counter = 0;
         let mut notice_for = |session: &mut TestSession, key: &[u8; 32], payload: &[u8]| {
             counter += 1;
-            rx_effect(
-                session,
-                &sealed_multicast_carrying(counter, key, payload),
-                0,
-            );
-            session.take_queued_notice().expect("queued")
+            let frame = SignedMulticast::new(counter, payload).sealed_on(key);
+            queued_notice(session, &frame, 0)
         };
 
         let notice = notice_for(&mut session, &emergency, test);
         assert!(notice.silent);
         assert!(!notice.cue);
         assert_eq!(notice.depth, 1, "it is still queued for the host");
-        let notice = notice_for(&mut session, &emergency, b"\x03\xFFFire on the ridge");
+        let notice = notice_for(&mut session, &emergency, FIRE);
         assert!(!notice.silent);
-        assert!(notice.cue);
+        assert_eq!(notice.cue, cfg!(feature = "software-crypto"));
         let notice = notice_for(&mut session, &other_key, test);
         assert!(!notice.silent, "only EMERGENCY has test messages");
         assert!(notice.cue);
@@ -17632,7 +17926,154 @@ mod tests {
         session.detach();
         let notice = notice_for(&mut session, &emergency, test);
         assert!(!notice.silent);
-        assert!(notice.cue);
+        assert_eq!(notice.cue, cfg!(feature = "software-crypto"));
+    }
+
+    /// An `EMERGENCY` message cues only when its signature verifies
+    /// against a key the device holds: a provisioned peer's, or a full
+    /// source key. Every one is queued for the host.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn an_emergency_message_cues_only_when_signed_by_a_key_the_device_holds() {
+        let emergency = emergency_key();
+        let mut session = signer_session(&[emergency]);
+        let mut depth = 0;
+        let mut cue_for = |session: &mut TestSession, frame: Vec<u8>| {
+            let notice = queued_notice(session, &frame, 0);
+            depth += 1;
+            assert_eq!(notice.depth, depth);
+            notice.cue
+        };
+
+        assert!(
+            !cue_for(&mut session, sealed_multicast_carrying(1, &emergency, FIRE)),
+            "unsigned"
+        );
+        let corrupt = SignedMulticast {
+            corrupt: true,
+            ..SignedMulticast::new(2, FIRE)
+        };
+        assert!(
+            !cue_for(&mut session, corrupt.sealed_on(&emergency)),
+            "bad signature"
+        );
+        let stranger_by_hint = SignedMulticast {
+            seed: STRANGER_SEED,
+            ..SignedMulticast::new(1, FIRE)
+        };
+        assert!(
+            !cue_for(&mut session, stranger_by_hint.sealed_on(&emergency)),
+            "a hint names no key the device holds"
+        );
+        let stranger_by_key = SignedMulticast {
+            seed: STRANGER_SEED,
+            full_source: true,
+            ..SignedMulticast::new(2, FIRE)
+        };
+        assert!(
+            cue_for(&mut session, stranger_by_key.sealed_on(&emergency)),
+            "a full source key is one the device holds"
+        );
+        let peer_by_key = SignedMulticast {
+            full_source: true,
+            ..SignedMulticast::new(3, FIRE)
+        };
+        assert!(cue_for(&mut session, peer_by_key.sealed_on(&emergency)));
+        assert!(cue_for(
+            &mut session,
+            SignedMulticast::new(4, FIRE).sealed_on(&emergency)
+        ));
+    }
+
+    /// The device's replay window for the signer decides the cue, so a
+    /// replay cues no more once its original has left the queue, whether
+    /// drained by the host or evicted.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn a_signed_emergency_message_cues_once() {
+        let emergency = emergency_key();
+        let other_key = [0x43u8; 32];
+
+        // Drained by the host.
+        let mut session = signer_session(&[emergency, other_key]);
+        let frame = SignedMulticast::new(1, FIRE).sealed_on(&emergency);
+        assert!(queued_notice(&mut session, &frame, 0).cue);
+        // A copy while the original is queued coalesces with it.
+        assert!(rx_effect(&mut session, &frame, 1_000).is_none());
+        assert!(session.take_queued_notice().is_none());
+        session.attach(true);
+        assert_eq!(drain(&mut session, 2_000).len(), 1);
+        session.detach();
+        let notice = queued_notice(&mut session, &frame, 3_000);
+        assert!(!notice.cue, "replayed after the drain");
+        assert_eq!(notice.depth, 1);
+        let newer = SignedMulticast::new(2, FIRE).sealed_on(&emergency);
+        assert!(queued_notice(&mut session, &newer, 4_000).cue);
+
+        // Evicted by queue pressure.
+        let mut session = signer_session(&[emergency, other_key]);
+        assert!(queued_notice(&mut session, &frame, 0).cue);
+        for counter in 0..RX_QUEUE_CAPACITY as u32 {
+            let filler = sealed_multicast(counter + 1, &other_key, 0x11);
+            queued_notice(&mut session, &filler, 0);
+        }
+        let notice = queued_notice(&mut session, &frame, 1_000);
+        assert!(!notice.cue, "replayed after its eviction");
+        assert!(queued_notice(&mut session, &newer, 2_000).cue);
+    }
+
+    /// A signature names the channel it was made for. One made for a
+    /// channel sharing `EMERGENCY`'s identifier and resealed under
+    /// `EMERGENCY` does not verify there; resealed the other way, it is a
+    /// message on the colliding channel, which asks for no signature.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn a_signature_transplanted_across_colliding_channels_does_not_cue_on_emergency() {
+        let emergency = emergency_key();
+        let colliding = colliding_with_emergency();
+        for order in [[emergency, colliding], [colliding, emergency]] {
+            let mut session = signer_session(&order);
+            let onto_emergency = SignedMulticast {
+                signed_on: Some(colliding),
+                ..SignedMulticast::new(1, FIRE)
+            };
+            let notice = queued_notice(&mut session, &onto_emergency.sealed_on(&emergency), 0);
+            assert!(!notice.cue);
+
+            let onto_colliding = SignedMulticast {
+                signed_on: Some(emergency),
+                ..SignedMulticast::new(2, FIRE)
+            };
+            let notice = queued_notice(&mut session, &onto_colliding.sealed_on(&colliding), 0);
+            assert!(notice.cue, "opened under the colliding key");
+
+            let notice = queued_notice(
+                &mut session,
+                &SignedMulticast::new(3, FIRE).sealed_on(&emergency),
+                0,
+            );
+            assert!(notice.cue, "signed for EMERGENCY itself");
+        }
+    }
+
+    /// Only multicast on `EMERGENCY` itself needs a signature to cue.
+    #[test]
+    fn public_and_blind_unicast_under_emergency_need_no_signature() {
+        let emergency = emergency_key();
+        let public = test_engine().derive_named_channel_key("public").unwrap().0;
+        let mut session = signer_session(&[emergency, public]);
+        let notice = queued_notice(
+            &mut session,
+            &sealed_multicast_carrying(1, &public, FIRE),
+            0,
+        );
+        assert!(notice.cue, "unsigned on PUBLIC");
+        let blind = sealed_blind_carrying(1, &emergency, true, FIRE);
+        let effect = rx_effect(&mut session, &blind, 0);
+        expect_ack_transmit(&mut session, effect, None);
+        let notice = session.take_queued_notice().expect("queued for the host");
+        assert_eq!(notice.class, QueuedClass::Direct);
+        assert!(notice.cue, "blind unicast under the EMERGENCY key");
     }
 
     #[test]
