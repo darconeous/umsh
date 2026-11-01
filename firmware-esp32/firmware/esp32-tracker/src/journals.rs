@@ -106,9 +106,9 @@ pub fn identity_page0(partition: &core::ops::Range<u32>) -> u32 {
 }
 
 /// Device-node counter journal: the pair below the identity journal.
-/// Separate journal because its write cadence (every
-/// `COUNTER_PERSIST_BLOCK_SIZE` secured frames) must never rotate a
-/// snapshot or the identity record away.
+/// Separate journal because its write cadence (TX reservation blocks and
+/// per-peer RX baselines) must never rotate a snapshot or the identity
+/// record away.
 pub fn counter_page0(partition: &core::ops::Range<u32>) -> u32 {
     partition.end - 8 * PAGE_SIZE
 }

@@ -8,7 +8,10 @@
 //! accidental structural growth; capacity choices stay visible at the
 //! instantiation site.
 
-use umsh_mac::{ChannelState, ChannelTable, DuplicateCache, PeerRegistry, ReplayWindow, TxQueue};
+use umsh_mac::{
+    ChannelState, ChannelTable, DuplicateCache, PeerCryptoMap, PeerRegistry, ReplayWindow,
+    RxWindow, RxWindows, TxQueue,
+};
 
 #[test]
 fn component_sizes() {
@@ -50,4 +53,21 @@ fn device_node_channel_table_within_budget() {
         channel_table <= 20 * 1024,
         "device node channel table grew past 20 KiB: {channel_table}"
     );
+}
+
+/// Receive windows: one per remote key, shared by every identity, beside
+/// a per-identity map that now holds only pairwise keys. The device node
+/// (`umsh-ulcp-runtime/src/device_node.rs`) keeps 16 peers and 8
+/// strangers, 32 peers on a communicator.
+#[test]
+fn receive_windows_per_remote_key() {
+    let rx_window = core::mem::size_of::<RxWindow>();
+    let peer_crypto_16 = core::mem::size_of::<PeerCryptoMap<16>>();
+    let rx_windows_16_8 = core::mem::size_of::<RxWindows<16, 8>>();
+    let rx_windows_32_8 = core::mem::size_of::<RxWindows<32, 8>>();
+    println!("RxWindow              = {rx_window}");
+    println!("PeerCryptoMap<16>     = {peer_crypto_16}");
+    println!("RxWindows<16,8>       = {rx_windows_16_8}");
+    println!("RxWindows<32,8>       = {rx_windows_32_8}");
+    assert!(rx_window <= 448, "RxWindow grew: {rx_window}");
 }

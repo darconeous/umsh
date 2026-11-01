@@ -29,7 +29,7 @@ pub const UX_PAGE0: u32 = IDENTITY_PAGE0 + 2 * PAGE_SIZE;
 /// the persisted TX reservation boundary for the device identity and
 /// RX replay boundaries for its peers, batch-written as one
 /// `counter_map` payload per flush. Separate journal because its write
-/// cadence (every `COUNTER_PERSIST_BLOCK_SIZE` secured frames) must
+/// cadence (TX reservation blocks and per-peer RX baselines) must
 /// never rotate a snapshot or the identity record away.
 pub const COUNTER_PAGE0: u32 = UX_PAGE0 + 2 * PAGE_SIZE;
 

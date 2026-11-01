@@ -22,8 +22,9 @@
 //! use—the nRF52840 NVMC halts the CPU for ~85 ms, and the ESP32
 //! suspends the flash cache for the duration of the write. No amount of
 //! async scheduling can preempt either. Callers MUST batch writes; the
-//! MAC's TX-side `COUNTER_PERSIST_BLOCK_SIZE = 128` and the RX-side
-//! mirror keep this manageable for counters.
+//! MAC's 128-frame TX reservation blocks and its RX cadence (one write
+//! per peer every `RX_COUNTER_PERSIST_INTERVAL` accepted frames) keep
+//! this manageable for counters.
 //!
 //! ## Sharing model
 //!

@@ -103,7 +103,7 @@
 //!   a hashed key repeats for the life of the sender, so age is what releases it.
 //! - [`DupCacheKey`]—keyed on the truncated MIC for authenticated packets (unforgeable
 //!   and compact) or a 32-bit hash of the frame body for unauthenticated ones (broadcast).
-//! - [`ReplayWindow`]—per-peer, per-identity sliding window over frame counters. Rejects
+//! - [`ReplayWindow`]—sliding window over one sender's frame counters. Rejects
 //!   exact counter replays and frames older than the backtrack window, while tolerating
 //!   a small amount of out-of-order delivery. Backed by a [`RecentMic`] ring for
 //!   backward-window disambiguation.
@@ -119,7 +119,13 @@
 //!   estimate, learned from successfully received packets and used to route future sends
 //!   without unnecessary flooding.
 //! - [`PeerCryptoMap`]—per-identity map from [`PeerId`] to [`PeerCryptoState`]
-//!   (established pairwise keys + replay window). One map per [`IdentitySlot`].
+//!   (established pairwise keys). One map per [`IdentitySlot`].
+//!
+//! ## [`rx_windows`]—receive windows per remote key
+//!
+//! - [`RxWindows`]—one [`RxWindow`] per remote public key, shared by every local
+//!   identity: the sender's replay window and its persistence state. Registered peers'
+//!   entries are persisted and never evicted; strangers' are RAM-only and LRU-evicted.
 //! - [`ChannelTable`]—flat list of registered multicast channels. Each entry stores the
 //!   raw channel key, the derived `k_enc`/`k_mic` keys (precomputed at registration time),
 //!   and the 2-byte channel ID (also precomputed). Looked up by channel ID when
@@ -168,11 +174,15 @@
 //!    the last-committed boundary from the [`umsh_hal::CounterStore`] and set the live
 //!    counter to the next safe starting point.
 //! 2. At runtime, the coordinator schedules a persist whenever the live counter crosses a
-//!    block boundary (every [`COUNTER_PERSIST_BLOCK_SIZE`] frames, default 128). While a
+//!    block boundary (every 128 frames). While a
 //!    persist is pending, sends will eventually block with [`SendError::CounterPersistenceLag`]
 //!    if the store is not flushed in time.
 //! 3. The application calls [`Mac::service_counter_persistence`] (typically from the
 //!    `next_event` callback or a background task) to drain the pending write queue.
+//!
+//! Receive baselines are persisted per registered peer, every
+//! [`RX_COUNTER_PERSIST_INTERVAL`] accepted frames, and restored from the store before a
+//! registered peer's first frame is judged.
 //!
 //! # `no_std` usage
 //!
@@ -243,6 +253,9 @@ pub const DEFAULT_CHANNEL_HINT_REPLAY: usize = 8;
 /// [`PeerRegistry::hold_route`]). None: holding a route is something an
 /// application with a person choosing paths opts into.
 pub const DEFAULT_ROUTE_HOLDS: usize = 0;
+/// Default number of strangers—remote keys not registered as peers—whose
+/// receive windows are kept, beside one per registered peer.
+pub const DEFAULT_RX_STRANGERS: usize = 16;
 
 /// Largest value the `FHOPS_REM` nibble can carry.
 ///
@@ -326,11 +339,13 @@ mod handle;
 mod observations;
 mod peers;
 mod route_score;
+pub mod rx_windows;
 mod send;
 mod uplinks;
 
 pub use cache::{
     DUP_CACHE_TTL_MS, DupCacheKey, DuplicateCache, RecentMic, ReplayVerdict, ReplayWindow,
+    RxAcceptance,
 };
 pub use coordinator::{
     AmateurRadioMode, ChannelPolicy, CounterPersistenceError, IdentitySlot, LocalIdentity,
@@ -346,6 +361,7 @@ pub use peers::{
     CachedRoute, ChannelState, ChannelTable, HintReplayState, PeerCryptoMap, PeerCryptoState,
     PeerId, PeerInfo, PeerRegistry, PeerRemoval, PeerRouteStatus, RouteCandidate, RouteHold,
 };
+pub use rx_windows::{NeedsRestore, RX_COUNTER_PERSIST_INTERVAL, RxWindow, RxWindows};
 pub use send::{
     AckState, ChannelInfoRef, CompletionSignal, MacEventRef, PacketFamily, PendingAck,
     PendingAckError, QueuedTx, ReceivedPacketRef, RepeaterHints, ResendRecord, RxMetadata,
