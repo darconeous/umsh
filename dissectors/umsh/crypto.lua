@@ -828,18 +828,65 @@ function M.x25519(scalar_bytes, u_bytes)
 end
 
 -- ---------------------------------------------------------------------------
--- Ed25519 public key from seed (requires gcrypt SHA-512)
--- Used by keystore to precompute pubkeys for display.
--- NOTE: This computes only the scalar, not the full Ed25519 scalar mult.
--- For the dissector, we only need the X25519 public key for ECDH;
--- the Ed25519 public key displayed in the packet is taken directly from
--- the packet bytes when S=1 is set.
+-- Ed25519 public key from seed: A = a·B, encoded per RFC 8032 §5.1.2
+-- The scalar a is the same clamped SHA-512 half that serves as the X25519
+-- private scalar. Points are in extended coordinates (X:Y:Z:T), x = X/Z,
+-- y = Y/Z, xy = T/Z, and add-2008-hwcd-3, which is complete on this curve,
+-- does the doubling too. Not constant-time: it runs once per key the user
+-- supplied, when the keystore loads.
 -- ---------------------------------------------------------------------------
 
--- Placeholder: computes X25519 public key from seed for node identification.
--- The "Ed25519 public key" stored in nodes is the actual Ed25519 pubkey;
--- this derives the X25519 pubkey for ECDH. For display annotations we use
--- the full key directly.
+local function fe_small(n)
+  local h = {[0] = n}
+  for i = 1, 9 do h[i] = 0 end
+  return h
+end
+
+local function fe_carried(h) fe_carry(h); return h end
+
+-- d = -121665/121666, and 2d for the addition formula
+local ED_D  = fe_mul(fe_sub(FE_ZERO, fe_small(121665)), fe_invert(fe_small(121666)))
+local ED_2D = fe_carried(fe_add(ED_D, ED_D))
+
+-- The base point B: y = 4/5, x the even root
+local ED_BX = fe_from_bytes(string.char(
+  0x1A, 0xD5, 0x25, 0x8F, 0x60, 0x2D, 0x56, 0xC9, 0xB2, 0xA7, 0x25, 0x95,
+  0x60, 0xC7, 0x2C, 0x69, 0x5C, 0xDC, 0xD6, 0xFD, 0x31, 0xE2, 0xA4, 0xC0,
+  0xFE, 0x53, 0x6E, 0xCD, 0xD3, 0x36, 0x69, 0x21))
+local ED_BY = fe_mul(fe_small(4), fe_invert(fe_small(5)))
+
+local function ed_add(p, q)
+  local a = fe_mul(fe_sub(p.y, p.x), fe_sub(q.y, q.x))
+  local b = fe_mul(fe_add(p.y, p.x), fe_add(q.y, q.x))
+  local c = fe_mul(fe_mul(p.t, ED_2D), q.t)
+  local d = fe_carried(fe_add(fe_mul(p.z, q.z), fe_mul(p.z, q.z)))
+  local e = fe_carried(fe_sub(b, a))
+  local f = fe_carried(fe_sub(d, c))
+  local g = fe_carried(fe_add(d, c))
+  local h = fe_carried(fe_add(b, a))
+  return {x = fe_mul(e, f), y = fe_mul(g, h), z = fe_mul(f, g), t = fe_mul(e, h)}
+end
+
+function M.ed25519_pubkey_from_seed(seed_32bytes)
+  local scalar = M.ed25519_seed_to_x25519_scalar(seed_32bytes)
+  local k = {scalar:byte(1, 32)}
+  local acc  = {x = FE_ZERO, y = FE_ONE, z = FE_ONE, t = FE_ZERO}
+  local base = {x = ED_BX, y = ED_BY, z = FE_ONE, t = fe_mul(ED_BX, ED_BY)}
+  -- Bit 255 is clear after clamping.
+  for bit_pos = 254, 0, -1 do
+    acc = ed_add(acc, acc)
+    if (k[(bit_pos >> 3) + 1] >> (bit_pos & 7)) & 1 == 1 then
+      acc = ed_add(acc, base)
+    end
+  end
+  local zinv = fe_invert(acc.z)
+  local x = fe_to_bytes(fe_mul(acc.x, zinv))
+  local y = {fe_to_bytes(fe_mul(acc.y, zinv)):byte(1, 32)}
+  y[32] = y[32] | ((x:byte(1) & 1) << 7)
+  return string.char(table.unpack(y))
+end
+
+-- The X25519 public key for a seed, scalar · u=9.
 function M.x25519_pubkey_from_seed(seed_32bytes)
   local scalar, err = M.ed25519_seed_to_x25519_scalar(seed_32bytes)
   if not scalar then return nil, err end
@@ -849,14 +896,63 @@ function M.x25519_pubkey_from_seed(seed_32bytes)
 end
 
 -- ---------------------------------------------------------------------------
--- Phase B: Unicast try-decrypt
--- pkt_info: {fcf_byte, static_opts, dst_hint (3B), src_hint_or_key,
---            secinfo_raw, is_encrypted, body_bytes, mic_bytes}
--- full_src: whether src is 32-byte key (true) or 3-byte hint (false)
--- Returns plaintext, or nil + status.
+-- Phase B: Pairwise key search
+-- The local key is a private-key entry {seed_bytes, ed25519_pubkey,
+-- hint3_bytes} whose hint is the frame's destination; the peer is each
+-- Ed25519 key `peer_keys` offers for the source, best first. Pairwise keys
+-- are cached per pair, so a conversation pays for ECDH once.
+-- attempt(pairwise_keys) returns plain, keys, full_cmac on success.
+-- Returns plain, "ok", keys, full_cmac, or nil and the reason:
+--   "no matching private key"  no seed's hint is the destination
+--   "unknown peer key"         one is, but no key for the source is known
+--   "mic_mismatch"             every pairing was tried and none verified
 -- ---------------------------------------------------------------------------
 
-function M.try_decrypt_unicast(pkt_info, privkey_list, full_src_flag)
+local pairwise_cache = setmetatable({}, {__mode = "k"})
+
+local function pairwise_for(pk, peer_ed_pubkey)
+  local by_peer = pairwise_cache[pk]
+  if not by_peer then by_peer = {}; pairwise_cache[pk] = by_peer end
+  local keys = by_peer[peer_ed_pubkey]
+  if keys == nil then
+    local x25519_peer = M.ed25519_pub_to_x25519_pub(peer_ed_pubkey)
+    local scalar = M.ed25519_seed_to_x25519_scalar(pk.seed_bytes)
+    keys = x25519_peer and M.derive_pairwise_keys(M.x25519(scalar, x25519_peer)) or false
+    by_peer[peer_ed_pubkey] = keys
+  end
+  return keys or nil
+end
+
+function M.try_pairwise(privkey_list, dst_hint, peer_keys, attempt)
+  if not _has_aes then return nil, "no crypto" end
+  local status = "no matching private key"
+  for _, pk in ipairs(privkey_list) do
+    if pk.hint3_bytes ~= dst_hint then goto continue end
+    if status == "no matching private key" then status = "unknown peer key" end
+    for _, peer in ipairs(peer_keys) do
+      if peer ~= pk.ed25519_pubkey then
+        local pw = pairwise_for(pk, peer)
+        if pw then
+          local plain, keys, full_cmac = attempt(pw)
+          if plain then return plain, "ok", keys, full_cmac end
+          status = "mic_mismatch"
+        end
+      end
+    end
+    ::continue::
+  end
+  return nil, status
+end
+
+-- ---------------------------------------------------------------------------
+-- Phase B: Unicast try-decrypt
+-- pkt_info: {fcf_byte, static_opts, dst_hint (3B), src_bytes (3B or 32B),
+--            secinfo_raw, is_encrypted, body_bytes, mic_bytes}
+-- peer_lookup(src_bytes): the Ed25519 keys the source may hold, best first
+-- Returns plaintext, "ok", keys, full_cmac, or nil + status.
+-- ---------------------------------------------------------------------------
+
+function M.try_decrypt_unicast(pkt_info, privkey_list, peer_lookup)
   if not _has_aes then return nil, "no crypto" end
 
   -- Build the verify_and_decrypt packet table once
@@ -871,58 +967,23 @@ function M.try_decrypt_unicast(pkt_info, privkey_list, full_src_flag)
     is_encrypted     = pkt_info.is_encrypted,
   }
 
-  -- Helper: try ECDH with a given X25519 scalar and peer X25519 pubkey
-  local function try_with_x25519(x25519_priv, x25519_peer_pub)
-    local shared_secret = M.x25519(x25519_priv, x25519_peer_pub)
-    local keys, kerr = M.derive_pairwise_keys(shared_secret)
-    if not keys then return nil end
-    local plain, status, full_cmac = M.verify_and_decrypt(keys, vpkt)
-    if plain then return plain, keys, full_cmac end
-    return nil
-  end
-
-  for idx, pk in ipairs(privkey_list) do
-    local x25519_priv = M.ed25519_seed_to_x25519_scalar(pk.seed_bytes)
-    if not x25519_priv then goto continue end
-
-    -- Path 1: peer's Ed25519 pubkey is known (S=1 or keystore lookup)
-    local peer_ed_pubkey
-    if full_src_flag and #pkt_info.src_bytes == 32 then
-      peer_ed_pubkey = pkt_info.src_bytes
-    elseif pkt_info.src_pubkey_from_keystore then
-      peer_ed_pubkey = pkt_info.src_pubkey_from_keystore
-    end
-
-    if peer_ed_pubkey then
-      local x25519_peer = M.ed25519_pub_to_x25519_pub(peer_ed_pubkey)
-      if x25519_peer then
-        local plain, keys, full_cmac = try_with_x25519(x25519_priv, x25519_peer)
-        if plain then return plain, "ok", keys, full_cmac end
-      end
-    else
-      -- Path 2: peer's Ed25519 pubkey unknown—try all other privkeys as
-      -- potential peer using their precomputed X25519 pubkeys.
-      for idx2, pk2 in ipairs(privkey_list) do
-        if pk2 ~= pk and pk2.x25519_pubkey then
-          local ok_try, plain, keys, full_cmac = pcall(try_with_x25519, x25519_priv, pk2.x25519_pubkey)
-          if ok_try and plain then
-            return plain, "ok", keys, full_cmac
-          end
-        end
-      end
-    end
-
-    ::continue::
-  end
-  return nil, "no matching private key"
+  return M.try_pairwise(privkey_list, pkt_info.dst_hint, peer_lookup(pkt_info.src_bytes),
+    function(keys)
+      local plain, _, full_cmac = M.verify_and_decrypt(keys, vpkt)
+      if plain then return plain, keys, full_cmac end
+    end)
 end
 
 -- ---------------------------------------------------------------------------
 -- Phase B: Blind unicast try-decrypt
--- Returns payload_plaintext, dst_hint, src, or nil + status.
+-- peer_lookup as for try_decrypt_unicast, applied to the decrypted SRC
+-- Returns payload_plaintext, dst_hint, src, status, keys, full_cmac; the
+-- plaintext is nil on failure, with dst_hint and src when the address block
+-- decrypted.
 -- ---------------------------------------------------------------------------
 
-function M.try_decrypt_blind_unicast(pkt_info, privkey_list, channel_list, full_src_flag)
+function M.try_decrypt_blind_unicast(pkt_info, privkey_list, channel_list, full_src_flag,
+                                     peer_lookup)
   if not _has_aes then return nil, nil, nil, "no crypto" end
 
   -- First find the channel
@@ -944,8 +1005,7 @@ function M.try_decrypt_blind_unicast(pkt_info, privkey_list, channel_list, full_
     return nil, nil, nil, "addr decrypt failed: " .. (addr_err or "?")
   end
 
-  -- Phase 2: try each privkey as potential destination, with peer derived from
-  -- decrypted src (full key if S=1) or from other privkeys' X25519 pubkeys.
+  -- Phase 2: the decrypted DST and SRC pick the pairing
   local vpkt = {
     fcf_byte         = pkt_info.fcf_byte,
     static_opts      = pkt_info.static_opts,
@@ -956,41 +1016,19 @@ function M.try_decrypt_blind_unicast(pkt_info, privkey_list, channel_list, full_
     mic_bytes        = pkt_info.mic_bytes,
     is_encrypted     = pkt_info.is_encrypted,
   }
+  local plain, status, keys, full_cmac = M.try_pairwise(privkey_list, dst_hint,
+    peer_lookup(src_bytes), M.blind_attempt(channel_entry.derived_keys, vpkt))
+  return plain, dst_hint, src_bytes, status, keys, full_cmac
+end
 
-  local function try_blind_ecdh(x25519_priv, x25519_peer_pub)
-    local shared_secret = M.x25519(x25519_priv, x25519_peer_pub)
-    local pairwise_keys = M.derive_pairwise_keys(shared_secret)
-    if not pairwise_keys then return nil end
-    local blind_keys = M.derive_blind_keys(pairwise_keys, channel_entry.derived_keys)
-    local plain, status, full_cmac = M.verify_and_decrypt(blind_keys, vpkt)
+-- The try_pairwise attempt for a blind unicast: pairwise keys combine with
+-- the channel's before verifying. Returns the combined keys on success.
+function M.blind_attempt(channel_keys, vpkt)
+  return function(pairwise_keys)
+    local blind_keys = M.derive_blind_keys(pairwise_keys, channel_keys)
+    local plain, _, full_cmac = M.verify_and_decrypt(blind_keys, vpkt)
     if plain then return plain, blind_keys, full_cmac end
-    return nil
   end
-
-  for _, pk in ipairs(privkey_list) do
-    local x25519_priv = M.ed25519_seed_to_x25519_scalar(pk.seed_bytes)
-    if not x25519_priv then goto continue end
-
-    -- If decrypted src is a full Ed25519 pubkey, convert and try
-    if full_src_flag and #src_bytes == 32 then
-      local x25519_peer = M.ed25519_pub_to_x25519_pub(src_bytes)
-      if x25519_peer then
-        local plain, keys, full_cmac = try_blind_ecdh(x25519_priv, x25519_peer)
-        if plain then return plain, dst_hint, src_bytes, "ok", keys, full_cmac end
-      end
-    else
-      -- Try all other privkeys as potential peer
-      for _, pk2 in ipairs(privkey_list) do
-        if pk2 ~= pk and pk2.x25519_pubkey then
-          local plain, keys, full_cmac = try_blind_ecdh(x25519_priv, pk2.x25519_pubkey)
-          if plain then return plain, dst_hint, src_bytes, "ok", keys, full_cmac end
-        end
-      end
-    end
-
-    ::continue::
-  end
-  return nil, dst_hint, src_bytes, "no matching private key for dst"
 end
 
 return M

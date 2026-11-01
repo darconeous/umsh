@@ -489,6 +489,41 @@ else
     end
   end
 
+  -- Seed → Ed25519 public key (a·B on the Edwards curve): the fixed node
+  -- seeds from umsh/src/test_vectors.rs and RFC 8032 §7.1 tests 1 and 2.
+  local NODE_B_SEED = from_hex(
+    "3132333435363738393A3B3C3D3E3F404142434445464748494A4B4C4D4E4F50")
+  for _, case in ipairs({
+    {"node A", NODE_A_SEED, NODE_A_PUB_BYTES},
+    {"node B", NODE_B_SEED, NODE_B_PUB_BYTES},
+    {"RFC 8032 test 1",
+     from_hex("9D61B19DEFFD5A60BA844AF492EC2CC44449C5697B326919703BAC031CAE7F60"),
+     from_hex("D75A980182B10AB7D54BFED3C964073A0EE172F3DAA62325AF021A68F707511A")},
+    {"RFC 8032 test 2",
+     from_hex("4CCD089B28FF96DA9DB6C346EC114E0F5B8A319F35ABA624DA8CF6ED4FB8A6FB"),
+     from_hex("3D4017C3E843895A92B70AA74D1B7EBC9C982CCF2EC4968CC0CD55F12AF4660C")},
+  }) do
+    local ok_ed, pub = pcall(crypto.ed25519_pubkey_from_seed, case[2])
+    check("Seed→Ed25519 pubkey, " .. case[1], ok_ed and pub, case[3])
+  end
+
+  -- A private-key entry carries the seed's public key and hint.
+  keystore.rebuild("", hex(NODE_B_SEED) .. ":NodeB", "")
+  local pk_b = keystore.get_all_privkeys()[1]
+  check("private-key entry has its Ed25519 pubkey", pk_b and pk_b.ed25519_pubkey,
+        NODE_B_PUB_BYTES)
+  check("private-key entry has its hint", pk_b and pk_b.hint3_bytes, from_hex("6C28FD"))
+  check("a seed's hint offers its key as a peer",
+        keystore.peer_keys(from_hex("6C28FD"))[1], NODE_B_PUB_BYTES)
+  check("a full SRC is its own peer key",
+        keystore.peer_keys(NODE_A_PUB_BYTES)[1], NODE_A_PUB_BYTES)
+  check("an unknown hint offers no peer key", #keystore.peer_keys(from_hex("ED54A5")), 0)
+  keystore.rebuild(
+    NODE_A_PUB .. ":NodeA\n" .. NODE_B_PUB .. ":NodeB",
+    "",
+    CHAN_KEY .. ":TestChannel"
+  )
+
   -- HMAC-SHA256 test (RFC 4231 test case 2)
   local hmac_key  = from_hex("4a656665")  -- "Jefe"
   local hmac_data = "what do ya want for nothing?"
@@ -1517,6 +1552,84 @@ else
   check("a mismatch offers no legacy tag a callsign rules out",
         has(wrong, "Expected ACK Tag (Legacy)"), false)
   ack_case("tampered callsign", "C8 445BBB082D AA171306 A878BE6E", nil)
+
+  -- ───────────────────────────────────────────────────────────────────────────
+  -- Seed-only decryption
+  --
+  -- With node A's and node B's seeds and no node entries, every pairwise
+  -- frame from A to B verifies: the destination hint picks B's seed, and the
+  -- peer is the full SRC or, for a hint, A's seed's derived key. Examples 3, 4
+  -- and 8 are the spec's; the other blind unicasts are the same keys and
+  -- channel sealed by the Rust implementation, frame counter 9, "Hello".
+  -- ───────────────────────────────────────────────────────────────────────────
+  section("Seed-only decryption")
+
+  local SEED_A = "1112131415161718191A1B1C1D1E1F202122232425262728292A2B2C2D2E2F30:SeedA"
+  local SEED_B = "3132333435363738393A3B3C3D3E3F404142434445464748494A4B4C4D4E4F50:SeedB"
+  local function load_seeds(...)
+    umsh_proto.prefs.privkeys     = table.concat({...}, "\n")
+    umsh_proto.prefs.channel_keys = CHAN_KEY .. ":TestChannel"
+    umsh_proto.prefs_changed()
+    umsh_proto.init()
+  end
+
+  local HELLO = "Decrypted Payload (5 B): 48656C6C6F"
+  local MIC_OK = "EXPERT: MIC verified OK"
+  local SEED_ONLY = {
+    {"unicast, hint SRC (Example 3)",
+     "D0 6C28FD ED54A5 E0 0000002A FF AE71DC3872 618E9638FE4D9AE834331DE8E0DD063E",
+     HELLO, true},
+    {"unicast, full SRC (Example 4)", EXAMPLE_4,
+     "Decrypted Payload (3 B): 686579", false},
+    {"blind unicast, hint SRC (Example 8)",
+     "F0 B08D E0 00000007 FF D5EC8B3D6996 889403C307 C746F35E82283E3C14B05D97567B4E86",
+     HELLO, true},
+    {"blind unicast, full SRC",
+     "F4 B08D E0 00000009 FF"
+     .. " F91C2CE99538811936E2B562E0AC9315945F35A57BE75E0052B32C5FCEEEF3760F7BFD"
+     .. " 89FE7E7B48 01E6977D89C61AAA8D13508C083CE9C9",
+     HELLO, false},
+    {"unencrypted blind unicast, hint SRC",
+     "F0 B08D 60 00000009 FF 6C28FD ED54A5 48656C6C6F 4DDED9E5A4BE28561E45F967FB3511C7",
+     MIC_OK, true},
+    {"unencrypted blind unicast, full SRC",
+     "F4 B08D 60 00000009 FF 6C28FD"
+     .. " ED54A59FB1AC3A51239351362941B868E85A60E3D7B2485D828821DC7A69C279"
+     .. " 48656C6C6F D2BDB982515AB4D4721F4840C4B5F69C",
+     MIC_OK, false},
+  }
+
+  for _, order in ipairs({{"A, B", SEED_A, SEED_B}, {"B, A", SEED_B, SEED_A}}) do
+    load_seeds(order[2], order[3])
+    for _, case in ipairs(SEED_ONLY) do
+      local r = dissect_frame(case[2])
+      check(case[1] .. " verifies with seeds " .. order[1], has(r, case[3]), true)
+      check(case[1] .. " with seeds " .. order[1] .. " reports no failure",
+            has(r, "EXPERT: MIC verification failed") or has(r, "EXPERT: Unknown peer key"),
+            false)
+    end
+  end
+
+  -- B's seed alone is the destination, but a hint SRC names a key nothing
+  -- holds; a full SRC still verifies.
+  load_seeds(SEED_B)
+  for _, case in ipairs(SEED_ONLY) do
+    local r = dissect_frame(case[2])
+    if case[4] then
+      check(case[1] .. " with one seed reports an unknown peer key",
+            has(r, "EXPERT: Unknown peer key"), true)
+      check(case[1] .. " with one seed is not a MIC failure",
+            has(r, "EXPERT: MIC verification failed"), false)
+    else
+      check(case[1] .. " with one seed verifies", has(r, case[3]), true)
+    end
+  end
+
+  -- A's seed alone is not the destination, so no pairing is tried.
+  load_seeds(SEED_A)
+  local not_ours = dissect_frame(SEED_ONLY[1][2])
+  check("a seed that is not the destination finds no key",
+        has(not_ours, "EXPERT: No key for decryption"), true)
 end
 
 -- ─────────────────────────────────────────────────────────────────────────────

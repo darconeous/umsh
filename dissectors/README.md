@@ -145,9 +145,14 @@ Three preferences hold the keys, one per line:
 
 | Preference | Format | Holds |
 |---|---|---|
-| **Node names** | `<key>:<name>` | A 32-byte Ed25519 public key and a display name; annotates source and destination hints, no decryption |
+| **Node names** | `<key>:<name>` | A 32-byte Ed25519 public key and a display name; annotates source and destination hints |
 | **Private keys** | `<key>:<name>` | A 32-byte Ed25519 seed, for unicast and blind unicast decryption |
 | **Channel keys** | `<key>:<name>` or `umsh:cs:<name>:<label>` | A 32-byte symmetric channel key, for multicast and blind unicast decryption |
+
+A unicast or blind unicast decrypts with the destination's seed and the
+source's public key. The source key is the frame's own full SRC when it
+carries one; for a source hint it comes from **Node names**, or from another
+seed in **Private keys**. Without one, the frame is marked "Unknown peer key".
 
 The name is optional. For example, **Channel keys** might hold:
 
