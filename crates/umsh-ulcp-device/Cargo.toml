@@ -7,6 +7,10 @@ repository.workspace = true
 description = "Device-side session engine for the UMSH Local Control Protocol (ULCP)"
 
 [features]
+default = ["software-crypto"]
+# Checks the frame signatures that decide an `EMERGENCY` message's receipt
+# cue. Without it no signature verifies, so such a message never cues.
+software-crypto = ["umsh-crypto/software-crypto"]
 bridge-client = ["dep:ed25519-dalek"]
 wifi = []
 
@@ -21,6 +25,7 @@ embassy-sync = { version = "0.8", default-features = false }
 heapless.workspace = true
 
 [dev-dependencies]
+ed25519-dalek.workspace = true
 umsh-crypto = { path = "../umsh-crypto", default-features = false, features = [
 	"software-crypto",
 ] }
