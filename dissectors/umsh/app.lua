@@ -378,16 +378,12 @@ local function dissect_node_identity(payload, subtree, tvb, ctx, pinfo)
     pinfo.cols.info:append(" Identity: " .. table.concat(parts, " "))
   end
 
-  if not (ctx and ctx.flag) then return end
-
-  -- A signature is checkable only against the sending node's key, so a
-  -- signed broadcast advertisement has to carry that key in full.
-  if signed and ctx.pkt_type == 0 and ctx.full_src == false then
-    ctx.flag(subtree, tvb(off - 1, 64),
-      "Signed broadcast advertisement must carry its source address in full-key form (S=1)")
-  end
-
-  -- Not checked here: "the response MUST NOT carry a FHOPS field". That
+  -- Not checked here: an advertisement meant for receivers that may not
+  -- yet hold the sender's key carries its full key. The frame signature
+  -- authenticates an advertisement, and whom it is meant for is not in
+  -- the frame.
+  --
+  -- Not checked here either: "the response MUST NOT carry a FHOPS field". That
   -- rule holds for a response to a request confined to its requester's
   -- neighborhood, and a response frame does not record which kind of
   -- request drew it—the echoed nonce marks it as a response but says
@@ -781,12 +777,20 @@ local function dissect_text_message(payload, subtree, tvb, pinfo, ctx)
   -- What the well-known channels require of a chat message. Both rules are
   -- about what a conformant interface will show, so a frame flagged here is
   -- one that no receiver is going to display.
+  local caveat = ctx and ctx.mic_verified and "" or " (channel identified by ID only)"
   if ctx and ctx.flag and ctx.channel and ctx.channel.builtin and
      ctx.full_src == false then
-    local caveat = ctx.mic_verified and "" or " (channel identified by ID only)"
     ctx.flag(subtree, tvb(0, math.min(1, len)), string.format(
       "%s channel chat without the full source key (S=1) must not be displayed%s",
       ctx.channel.builtin == "emergency" and "Emergency" or "Public", caveat))
+  end
+  -- Every multicast carrying text on the emergency channel is signed (D).
+  -- Whether the signature verifies is beyond the dissector, which has no
+  -- Ed25519, so only its absence is flagged.
+  if ctx and ctx.flag and ctx.channel and ctx.channel.builtin == "emergency" and
+     ctx.pkt_type == 4 and not ctx.signed then
+    ctx.flag(subtree, tvb(0, math.min(1, len)),
+      "Emergency channel chat without a frame signature (D) must not be displayed" .. caveat)
   end
 
   -- Parse CoAP-style options (same codec, separate namespace)

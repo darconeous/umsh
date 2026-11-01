@@ -249,7 +249,7 @@ display filter for pulling every offending frame out of a capture.
 ## Test Vectors
 
 The `test_vectors.pcap` file contains every protocol test-vector packet
-(Examples 1–8, 10, and 11) wrapped as UDP payloads on port 15056. Open it in Wireshark with the dissector
+(Examples 1–8 and 10–14) wrapped as UDP payloads on port 15056. Open it in Wireshark with the dissector
 installed to verify the plugin is working. Every frame in it is valid, and the
 bytes are the ones in `docs/protocol/src/test-vectors.md`. To regenerate it:
 
@@ -368,6 +368,15 @@ as its own packet, so it is resolved to the frame it acknowledges the same
 way a standalone ack is—by the public four-byte MIC prefix, which needs no
 keys. The acknowledged frame is linked in the tree and named on the summary
 line.
+
+## Frame Signatures
+
+A signed frame is marked "signed" on the summary line. With the SCF's `D`
+bit set, the 64-byte signature that ends the protected region is shown
+separately from the payload, decrypted first when the frame is encrypted. A
+broadcast's Frame Signature option (0) breaks out its counter and signature.
+The dissector has no Ed25519, so signatures are shown as not verified; the
+MIC, which covers the signature, is still checked.
 
 ## MAC Ack Verification
 

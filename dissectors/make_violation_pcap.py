@@ -25,6 +25,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from make_test_pcap import make_pcap  # noqa: E402
 
 SRC_A = "ED 54 A5"  # Node A hint
+SRC_A_FULL = (
+    "ED 54 A5 9F B1 AC 3A 51 23 93 51 36 29 41 B8 68"
+    " E8 5A 60 E3 D7 B2 48 5D 82 88 21 DC 7A 69 C2 79"
+)
+
+# Example 14's Frame Signature option value, COUNTER(4) || SIG(64).
+FRAME_SIG = (
+    "00 00 00 0E"
+    " 03 79 A8 FA 3A B8 6E 4F 59 C7 6F 0E E6 5C 76 6B"
+    " D2 F1 03 38 0E 62 D9 AD 4E E8 66 E5 89 B3 56 C0"
+    " 54 AC F8 50 AF D6 9A DD B7 A3 8B 7C 18 E8 77 A6"
+    " AA 55 84 68 F7 01 2F E0 91 24 4E 6B 89 52 BE 0C"
+)
 
 # Channel IDs of the two well-known channels, derived from their names.
 # See docs/protocol/src/multicast-channels.md.
@@ -115,6 +128,15 @@ VECTORS = [
           "00" * 16),
     ),
     (
+        # Every multicast carrying text on the emergency channel is signed.
+        # The MIC is genuine (the channel key is public), so the finding
+        # stands without a caveat.
+        "Unsigned text message on the emergency channel",
+        h("E4", CHAN_EMERGENCY, "60" "00 00 00 01", "FF", SRC_A_FULL,
+          "03 FF 48 65 6C 70",      # Text Message, no options, "Help"
+          "E6 6A 13 C3 E6 E0 75 18 FB 1B 03 0C 66 74 56 F2"),
+    ),
+    (
         "Blind unicast on the public channel",
         h("F0", CHAN_PUBLIC, "E0" "00 00 00 02", "FF",
           "11 22 33 44 55 66",      # ENC_DST_SRC
@@ -153,6 +175,25 @@ VECTORS = [
         # byte, 15 - 13 = 2. N0CALL.
         "Beacon carrying a station callsign",
         h("C0", SRC_A, "D4" "02" "5B BB 08 2C"),
+    ),
+    (
+        # Example 14's Frame Signature twice: a sender MUST NOT, and the
+        # broadcast is unsigned.
+        "Broadcast carrying two frame signatures",
+        h("C4", SRC_A_FULL, "0D 37", FRAME_SIG, "0D 37", FRAME_SIG, "FF", "48 69"),
+    ),
+    (
+        # A Frame Signature one byte short is handled as unrecognized.
+        "Broadcast carrying a malformed frame signature",
+        h("C4", SRC_A_FULL, "0D 36", FRAME_SIG[:-3], "FF", "48 69"),
+    ),
+    (
+        # A frame with SECINFO signs with the SCF's D bit; option 0 is
+        # defined for broadcast only.
+        "Multicast carrying a frame signature option",
+        h("E0", "B0 8D", "60" "00 00 00 03", "0D 37", FRAME_SIG, "FF", SRC_A,
+          "03 48 65 6C 6C 6F",
+          "00" * 16),
     ),
     (
         # Unknown options named by their classes: 12 is delivery-critical,
