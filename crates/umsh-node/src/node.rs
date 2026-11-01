@@ -966,13 +966,14 @@ impl<M: MacBackend> LocalNode<M> {
         &self,
         from: PublicKey,
         identity: &crate::NodeIdentityPayload,
+        update: crate::IdentityUpdate,
         rssi_snr: Option<(i16, umsh_hal::Snr)>,
         now_ms: u64,
     ) {
         self.state
             .borrow_mut()
             .peer_repeaters
-            .observe_identity(&from, identity, rssi_snr, now_ms);
+            .observe_identity(&from, identity, update, rssi_snr, now_ms);
     }
 
     /// The repeaters this node has heard directly: those introduced by their

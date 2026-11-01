@@ -178,9 +178,10 @@ impl<P: LocalPort, S: ChatStore> CommunicatorNode<P, S> {
                 key,
                 identity,
                 payload,
+                update,
                 rx,
             } => {
-                chats.identify(key, &identity, &payload, &rx, now_ms, time, events);
+                chats.identify(key, &identity, &payload, update, &rx, now_ms, time, events);
             }
             Arrival::Pong {
                 peer,

@@ -1292,19 +1292,35 @@ impl<D: Durable> ChatStore for MemoryStore<D> {
                 name,
                 identity,
                 linked,
+                fill,
             } => {
                 peer.heard = self.disk.tick();
                 peer.record.last_heard = at.or(peer.record.last_heard);
+                let identity = identity.filter(|identity| identity.len() <= IDENTITY_MAX);
                 // Someone else's word never overrides the node's own.
                 if (name.is_some() || identity.is_some()) && (linked || !peer.record.linked) {
-                    peer.record.name = name.map(record::name);
-                    if let Some(identity) = identity
-                        && identity.len() <= IDENTITY_MAX
-                    {
-                        peer.record.identity =
-                            heapless::Vec::from_slice(identity).unwrap_or_default();
+                    if fill {
+                        let blank = peer.record.name.is_none() && peer.record.identity.is_empty();
+                        if peer.record.name.is_none() {
+                            peer.record.name = name.map(record::name);
+                        }
+                        if let Some(identity) = identity
+                            && peer.record.identity.is_empty()
+                        {
+                            peer.record.identity =
+                                heapless::Vec::from_slice(identity).unwrap_or_default();
+                        }
+                        if blank {
+                            peer.record.linked = linked;
+                        }
+                    } else {
+                        peer.record.name = name.map(record::name);
+                        if let Some(identity) = identity {
+                            peer.record.identity =
+                                heapless::Vec::from_slice(identity).unwrap_or_default();
+                        }
+                        peer.record.linked = linked;
                     }
-                    peer.record.linked = linked;
                 }
             }
             PeerChange::Route(route) => {
@@ -1576,6 +1592,7 @@ mod tests {
                     name: Some("Juniper"),
                     identity: Some(&[2, 4]),
                     linked: true,
+                    fill: false,
                 },
             )
             .unwrap();

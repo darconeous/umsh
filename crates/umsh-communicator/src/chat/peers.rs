@@ -9,7 +9,7 @@ use core::fmt::Write as _;
 
 use umsh_core::{NodeHint, PublicKey, RouterHint, base58};
 use umsh_mac::SendOptions;
-use umsh_node::{NodeCapabilities, NodeIdentityPayload, NodeRole, PING_MIC_SIZE};
+use umsh_node::{IdentityUpdate, NodeCapabilities, NodeIdentityPayload, NodeRole, PING_MIC_SIZE};
 use umsh_text::node_adapter::{RxSummary, channel_reach, with_flood_reach};
 use umsh_text::{ConversationKey, SenderScope};
 use umsh_uri::UmshUri;
@@ -169,31 +169,35 @@ impl<S: ChatStore> Chats<S> {
     }
 
     /// Takes a node's identity, as it claims it, from `payload`, a frame
-    /// only its key could have sent or that its key signed.
+    /// only its key could have sent or that its key signed. `update` is
+    /// whether that frame may replace what is kept of the node.
     #[allow(clippy::too_many_arguments)]
     pub fn identify(
         &mut self,
         key: PublicKey,
         identity: &NodeIdentityPayload,
         payload: &[u8],
+        update: IdentityUpdate,
         rx: &RxSummary,
         now_ms: u64,
         time: Option<u32>,
         events: &mut dyn FnMut(NodeEvent),
     ) {
         self.hear(&key, rx, now_ms, events);
-        self.learn(key, identity, payload, true, time, events);
+        self.learn(key, identity, payload, true, update, time, events);
     }
 
     /// Keeps what `identity`, parsed from `payload`, says of the node
     /// `key`: its own word when `linked`, else someone else's, which never
     /// replaces its own. A signed payload is kept whole, to pass on.
+    #[allow(clippy::too_many_arguments)]
     pub fn learn(
         &mut self,
         key: PublicKey,
         identity: &NodeIdentityPayload,
         payload: &[u8],
         linked: bool,
+        update: IdentityUpdate,
         time: Option<u32>,
         events: &mut dyn FnMut(NodeEvent),
     ) {
@@ -209,6 +213,7 @@ impl<S: ChatStore> Chats<S> {
             name: identity.name.as_deref(),
             identity: Some(kept),
             linked,
+            fill: update == IdentityUpdate::Fill,
         };
         let Ok(id) = self.store.update_peer(&key, heard) else {
             return;
@@ -763,6 +768,7 @@ impl<S: ChatStore> Chats<S> {
                         &bundle.identity,
                         &bundle.payload,
                         bundle.signed,
+                        IdentityUpdate::Replace,
                         None,
                         events,
                     );
@@ -788,7 +794,15 @@ impl<S: ChatStore> Chats<S> {
         wall: Option<u32>,
         events: &mut dyn FnMut(NodeEvent),
     ) -> Member {
-        self.learn(key, identity, payload, signed, wall, events);
+        self.learn(
+            key,
+            identity,
+            payload,
+            signed,
+            IdentityUpdate::Replace,
+            wall,
+            events,
+        );
         self.member_of(&key, now_ms, wall)
     }
 

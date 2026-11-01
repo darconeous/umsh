@@ -276,11 +276,7 @@ impl Board {
             &INPUT_CH,
             u16::from_be_bytes([nonce[0], nonce[1]]),
         ));
-        local.spawn_local(device_node::beacon_loop(
-            parts.node,
-            SoftwareIdentity::from_secret_bytes(&secret),
-            NodeHooks::default(),
-        ));
+        local.spawn_local(device_node::beacon_loop(parts.node, NodeHooks::default()));
         local.spawn_local(device_node::advert_loop(parts.mac));
         local.spawn_local(device_node::reboot_quiesce_loop(parts.mac));
 

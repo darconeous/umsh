@@ -908,11 +908,7 @@ impl MacMirrors {
 /// Turns beacon triggers into node sends on the device identity: a signed
 /// advertisement either way—unsolicited for the button slot, echoing a
 /// nonce for an Advertisement Request.
-pub async fn beacon_loop<CS: CounterStore + 'static>(
-    node: DeviceNode<CS>,
-    identity: SoftwareIdentity,
-    hooks: NodeHooks,
-) {
+pub async fn beacon_loop<CS: CounterStore + 'static>(node: DeviceNode<CS>, hooks: NodeHooks) {
     loop {
         let trigger = BEACON_TRIGGER.receive().await;
         // A factory-cleared identity leaves the slot inert, exactly like
@@ -927,21 +923,19 @@ pub async fn beacon_loop<CS: CounterStore + 'static>(
                 // node learns nothing from a bare packet, and until the
                 // node is reachable by discovery the button is the only
                 // way to introduce it. Costs airtime a beacon does not.
-                if send_advertisement(&node, &identity, None, AnnounceShape::INTRODUCTION).await {
+                if send_advertisement(&node, None, AnnounceShape::INTRODUCTION).await {
                     (hooks.beacon_confirm)();
                 }
             }
             BeaconTrigger::Advertise { nonce } => {
-                let accepted =
-                    send_advertisement(&node, &identity, nonce, AnnounceShape::INTRODUCTION).await;
+                let accepted = send_advertisement(&node, nonce, AnnounceShape::INTRODUCTION).await;
                 debug_log(format_args!(
                     "node advert: nonce={nonce:?} accepted={accepted}"
                 ));
             }
             BeaconTrigger::AutoAdvertise => {
                 let accepted =
-                    send_advertisement(&node, &identity, None, AnnounceShape::SCHEDULED_ADVERT)
-                        .await;
+                    send_advertisement(&node, None, AnnounceShape::SCHEDULED_ADVERT).await;
                 debug_log(format_args!("node advert: scheduled accepted={accepted}"));
             }
             BeaconTrigger::Beacon => {
@@ -951,9 +945,7 @@ pub async fn beacon_loop<CS: CounterStore + 'static>(
             BeaconTrigger::Host(request) => {
                 let shape = AnnounceShape::from(request);
                 let accepted = match request.kind {
-                    AnnouncementKind::Advertisement => {
-                        send_advertisement(&node, &identity, None, shape).await
-                    }
+                    AnnouncementKind::Advertisement => send_advertisement(&node, None, shape).await,
                     AnnouncementKind::Beacon => send_beacon(&node, shape).await,
                 };
                 debug_log(format_args!(
@@ -1058,18 +1050,18 @@ impl From<AnnounceRequest> for AnnounceShape {
 async fn transmit_announcement<CS: CounterStore + 'static>(
     node: &DeviceNode<CS>,
     payload: &[u8],
-    shape: AnnounceShape,
+    options: &SendOptions,
+    channel_key: Option<ChannelKey>,
 ) -> bool {
     use umsh_node::Transport as _;
-    let options = shape.options();
-    let Some(key) = shape.channel_key else {
-        return node.send_all(payload, &options).await.is_ok();
+    let Some(key) = channel_key else {
+        return node.send_all(payload, options).await.is_ok();
     };
     let Some(bound) = node.bound_channel(&NodeChannel::private(key, "")) else {
         debug_log(format_args!("node announce: channel no longer joined"));
         return false;
     };
-    bound.send_all(payload, &options).await.is_ok()
+    bound.send_all(payload, options).await.is_ok()
 }
 
 /// Send an empty beacon: no payload, so nothing identifies the sender
@@ -1079,20 +1071,22 @@ async fn send_beacon<CS: CounterStore + 'static>(
     node: &DeviceNode<CS>,
     shape: AnnounceShape,
 ) -> bool {
-    transmit_announcement(node, &[], shape).await
+    transmit_announcement(node, &[], &shape.options(), shape.channel_key).await
 }
 
-/// Build, sign, and broadcast a solicited advertisement: the node
-/// identity payload (role, live device name, echoed nonce) with the
-/// standalone EdDSA signature the spec prefers for broadcasts, typed as a
-/// NodeIdentity payload.
+/// Build and send an advertisement: the node identity payload (role, live
+/// device name, echoed nonce), typed as a NodeIdentity payload, in a frame
+/// the MAC signs with the node's key.
+///
+/// The frame signature is what authenticates the claims, so the payload
+/// carries no signature of its own. A signed broadcast carries option 0; a
+/// signed multicast sets the `D` bit.
 async fn send_advertisement<CS: CounterStore + 'static>(
     node: &DeviceNode<CS>,
-    identity: &SoftwareIdentity,
     nonce: Option<u32>,
     shape: AnnounceShape,
 ) -> bool {
-    use umsh_crypto::NodeIdentity as _;
+    use umsh_mac::SendDestination;
     // The node's own profile is the canonical statement of what this node
     // is—kept current by `dev_sync_loop` and `identity_profile_loop`—
     // so build the payload from it rather than assembling a second,
@@ -1100,34 +1094,34 @@ async fn send_advertisement<CS: CounterStore + 'static>(
     let Some(payload) = node.with_identity_profile(|profile| profile.to_payload(nonce)) else {
         return false;
     };
-    // Payload-type byte + role/caps + name (≤26) + nonce (6) + 0xFF +
-    // 64-byte signature, plus whatever the region list fits in what is
-    // left. The signature's room is reserved up front rather than
-    // discovered afterwards, so the encoder can drop trailing regions to
-    // fit instead of framing a payload that then has nowhere to be signed.
-    const SIGNATURE_LEN: usize = 64;
-    let mut buf = [0u8; 192];
-    buf[0] = umsh_core::PayloadType::NodeIdentity as u8;
-    let signable = buf.len() - 1 - SIGNATURE_LEN;
-    let Ok(body_len) = payload.encode_for_signing(&mut buf[1..1 + signable]) else {
+    let options = shape.options().with_signature();
+    let destination = match &shape.channel_key {
+        Some(key) => SendDestination::Multicast(key),
+        None => SendDestination::Broadcast,
+    };
+    let Ok(capacity) = node.payload_capacity(destination, &options).await else {
         return false;
     };
-    let mut len = 1 + body_len;
-    // The signature covers ROLE through the 0xFF terminator—the
-    // payload-type byte stays outside the signed range.
-    let Ok(signature) = identity.sign(&buf[1..len]).await else {
+    // Sized to what this frame can carry, so the encoder drops trailing
+    // regions to fit rather than framing a payload the MAC would refuse.
+    let mut buf = [0u8; umsh_core::MAX_FRAME_LEN];
+    let Some(buf) = buf.get_mut(..capacity) else {
         return false;
     };
-    buf[len..len + SIGNATURE_LEN].copy_from_slice(&signature);
-    len += SIGNATURE_LEN;
+    let Some((kind, body)) = buf.split_first_mut() else {
+        return false;
+    };
+    *kind = umsh_core::PayloadType::NodeIdentity as u8;
+    let Ok(body_len) = payload.encode_fitting(body) else {
+        return false;
+    };
     // Every shape this node originates carries the full source rather
-    // than a hint: the bundle's detached signature is only checkable
-    // against the sender's public key, and a broadcast carries no MIC to
-    // authenticate it otherwise. A hint-only advertisement is
-    // unverifiable by anyone who does not already hold the key, which is
-    // exactly the audience an advertisement is for—so a host that asks
-    // for one gets what it asked for and nothing here second-guesses it.
-    transmit_announcement(node, &buf[..len], shape).await
+    // than a hint: the frame signature is only checkable against the
+    // sender's public key. A hint-only advertisement is unverifiable by
+    // anyone who does not already hold the key, which is exactly the
+    // audience an advertisement is for—so a host that asks for one gets
+    // what it asked for and nothing here second-guesses it.
+    transmit_announcement(node, &buf[..1 + body_len], &options, shape.channel_key).await
 }
 
 /// Emits the device's unsolicited announcements: one beacon at bring-up

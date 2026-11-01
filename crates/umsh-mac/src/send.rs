@@ -1256,7 +1256,7 @@ impl<'a> ReceivedPacketRef<'a> {
     }
 
     /// The packet with the acceptance its sender's receive window gave it.
-    pub(crate) fn with_acceptance(self, acceptance: Option<RxAcceptance>) -> Self {
+    pub fn with_acceptance(self, acceptance: Option<RxAcceptance>) -> Self {
         Self { acceptance, ..self }
     }
 

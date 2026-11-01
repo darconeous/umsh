@@ -12,7 +12,9 @@ use umsh::crypto::software::{SoftwareAes, SoftwareIdentity, SoftwareSha256};
 use umsh::crypto::{CryptoEngine, NodeIdentity};
 use umsh::mac::test_support::{SimulatedNetwork, SimulatedRadio};
 use umsh::mac::{Mac, MacHandle, OperatingPolicy, RepeaterConfig};
-use umsh::node::{Host, LocalNode, PfsStatus};
+use umsh::node::{
+    Host, IdentityUpdate, LocalNode, NodeCapabilities, NodeIdentityPayload, NodeRole, PfsStatus,
+};
 use umsh::tokio_support::{MemoryCounterStore, MemoryKeyValueStore, StdClock, TokioPlatform};
 use umsh_communicator::task::{self, Inbox};
 use umsh_communicator::{
@@ -20,6 +22,7 @@ use umsh_communicator::{
 };
 use umsh_core::PublicKey;
 use umsh_sync::AsyncRefCell;
+use umsh_text::node_adapter::RxSummary;
 use umsh_ulcp::ids::prop;
 use umsh_ulcp_simdev::SimulatedDevice;
 use umsh_ux_communicator::model::{
@@ -723,6 +726,40 @@ async fn contacts_are_exchanged_after_both_confirm() {
                 board.node.peers(&mut peers);
                 assert!(peers.is_empty());
             }
+        })
+        .await;
+}
+
+/// A confirmed exchange replaces what a board kept of the other node,
+/// whatever the session frame that carried it: the contact is the user's
+/// own act, not an advertisement whose age matters.
+#[tokio::test(flavor = "current_thread")]
+async fn an_exchanged_contact_replaces_what_was_kept() {
+    LocalSet::new()
+        .run_until(async {
+            let (alice, bob, _tap, bob_listed, _) = on_nearby().await;
+            alice.node.arrive(task::Arrival::Identity {
+                key: bob.key,
+                identity: NodeIdentityPayload::from_bytes(&[
+                    NodeRole::Chat.as_byte(),
+                    NodeCapabilities::TEXT_MESSAGES.bits(),
+                    5,
+                    b'B',
+                    b'o',
+                    b'b',
+                    b'b',
+                    b'y',
+                ])
+                .unwrap(),
+                payload: Vec::new(),
+                update: IdentityUpdate::Replace,
+                rx: RxSummary::default(),
+            });
+            comparing(&alice, &bob, bob_listed).await;
+            alice.node.confirm_code(true);
+            bob.node.confirm_code(true);
+            let at_alice = until_exchanged(&alice).await;
+            assert_eq!(at_alice.sender.name.as_str(), "Bob");
         })
         .await;
 }

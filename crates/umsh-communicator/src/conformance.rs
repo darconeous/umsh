@@ -864,6 +864,7 @@ pub fn peers<H: Harness>(harness: &mut H) {
         name: Some("trail node"),
         identity: Some(&[1, 2, 3]),
         linked: true,
+        fill: false,
     };
 
     let saved = store
@@ -897,6 +898,7 @@ pub fn peers<H: Harness>(harness: &mut H) {
         name,
         identity: Some(&[1, 2, 3]),
         linked: true,
+        fill: false,
     };
     store
         .update_peer(&key(1), renamed(Some("ridge node")))
@@ -973,6 +975,7 @@ pub fn peers<H: Harness>(harness: &mut H) {
         name: Some(name),
         identity: Some(&[2, 4]),
         linked: false,
+        fill: false,
     };
     store.update_peer(&key(2), said("impostor")).unwrap();
     let record = store.peer(&key(2)).unwrap().unwrap();
@@ -988,6 +991,34 @@ pub fn peers<H: Harness>(harness: &mut H) {
     assert_eq!(record.name.as_deref(), Some("trail node"));
     assert!(record.linked);
     store.update_peer(&key(3), PeerChange::Forget).unwrap();
+
+    // A word that may be older than what is kept fills in what is missing
+    // and replaces nothing; the node's current word replaces it.
+    let filled = |name: Option<&'static str>, identity: Option<&'static [u8]>| PeerChange::Heard {
+        at: None,
+        name,
+        identity,
+        linked: true,
+        fill: true,
+    };
+    store
+        .update_peer(&key(4), filled(Some("Ash"), None))
+        .unwrap();
+    let record = store.peer(&key(4)).unwrap().unwrap();
+    assert_eq!(record.name.as_deref(), Some("Ash"));
+    assert!(record.identity.is_empty());
+    assert!(record.linked);
+    store
+        .update_peer(&key(4), filled(Some("old Ash"), Some(&[5, 6])))
+        .unwrap();
+    let record = store.peer(&key(4)).unwrap().unwrap();
+    assert_eq!(record.name.as_deref(), Some("Ash"));
+    assert_eq!(record.identity.as_slice(), [5, 6]);
+    store.update_peer(&key(4), heard(14)).unwrap();
+    let record = store.peer(&key(4)).unwrap().unwrap();
+    assert_eq!(record.name.as_deref(), Some("trail node"));
+    assert_eq!(record.identity.as_slice(), [1, 2, 3]);
+    store.update_peer(&key(4), PeerChange::Forget).unwrap();
 
     // Forgotten, then heard again: a new peer.
     store.update_peer(&key(2), PeerChange::Forget).unwrap();
@@ -1107,6 +1138,7 @@ pub fn remount<H: Harness>(harness: &mut H) {
                 name: Some("Juniper"),
                 identity: Some(&[2, 4]),
                 linked: true,
+                fill: false,
             },
         )
         .unwrap();

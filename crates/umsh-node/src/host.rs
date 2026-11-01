@@ -407,7 +407,9 @@ fn meet_admits<M: MacBackend>(
 }
 
 /// Whether an identity payload's claims are its sender's own: a signature
-/// that verifies, or none on a frame whose source authenticated.
+/// that verifies, or none on a frame whose sender authenticated. A channel
+/// MIC alone never vouches for them: any member of the channel could have
+/// written the payload.
 #[cfg(feature = "software-crypto")]
 pub fn identity_is_trustworthy(
     packet: &ReceivedPacketRef<'_>,
@@ -416,20 +418,51 @@ pub fn identity_is_trustworthy(
 ) -> bool {
     match identity.signature_state(from, packet.payload()) {
         crate::IdentitySignature::Valid => true,
-        crate::IdentitySignature::Unsigned => packet.source_authenticated(),
+        crate::IdentitySignature::Unsigned => packet.sender_authenticated(),
         crate::IdentitySignature::Invalid => false,
     }
 }
 
 /// Without the crypto to check a signature, only an unsigned payload on a
-/// frame whose source authenticated can be trusted.
+/// frame whose sender authenticated can be trusted.
 #[cfg(not(feature = "software-crypto"))]
 pub fn identity_is_trustworthy(
     packet: &ReceivedPacketRef<'_>,
     _from: &umsh_core::PublicKey,
     identity: &NodeIdentityPayload,
 ) -> bool {
-    identity.signature.is_none() && packet.source_authenticated()
+    identity.signature.is_none() && packet.sender_authenticated()
+}
+
+/// What a trusted identity that a frame carried may do to the details
+/// already kept of its node.
+///
+/// Replay detection accepts a frame a little behind its sender's newest, so
+/// an older advertisement delivered late must not roll newer details back.
+/// Only a frame that authenticated its sender and advanced that sender's
+/// established baseline speaks for the node as it is now.
+///
+/// This covers identities authenticated by their frame: advertisements and
+/// identity responses. An identity imported by the user, from a QR code or
+/// a contact exchange, applies as it always has.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IdentityUpdate {
+    /// Replace what is kept.
+    Replace,
+    /// Keep a node not yet known, and fill in what is missing of one that
+    /// is, but replace nothing.
+    Fill,
+}
+
+impl IdentityUpdate {
+    /// What the identity `packet` carried may do.
+    pub fn of(packet: &ReceivedPacketRef<'_>) -> Self {
+        if packet.sender_authenticated() && packet.in_order() {
+            Self::Replace
+        } else {
+            Self::Fill
+        }
+    }
 }
 
 fn dispatch_payload_callbacks<M: MacBackend>(
@@ -462,16 +495,18 @@ fn dispatch_payload_callbacks<M: MacBackend>(
 ) {
     if packet.payload_type() == PayloadType::NodeIdentity {
         if let Ok(identity) = NodeIdentityPayload::from_bytes(packet.payload()) {
+            let trusted = identity_is_trustworthy(packet, &from, &identity);
+            let update = IdentityUpdate::of(packet);
             // Whether the node moves decides whether a route to it keeps a
             // flood hop of slack. That holds however the advertisement got
-            // here, so long as the claim is the node's own.
-            if identity_is_trustworthy(packet, &from, &identity) {
-                pending_mobility.borrow_mut().push((
-                    from,
-                    identity
-                        .capabilities
-                        .contains(crate::NodeCapabilities::MOBILE),
-                ));
+            // here, so long as the claim is the node's own. The MAC keeps
+            // no "unknown", only "not mobile", so an identity that may only
+            // fill can raise the flag but never lower it.
+            let mobile = identity
+                .capabilities
+                .contains(crate::NodeCapabilities::MOBILE);
+            if trusted && (mobile || update == IdentityUpdate::Replace) {
+                pending_mobility.borrow_mut().push((from, mobile));
             }
             // Only an advertisement heard from its owner directly places
             // the owner in this node's repeater neighborhood: one that
@@ -487,10 +522,11 @@ fn dispatch_payload_callbacks<M: MacBackend>(
             let heard_directly = packet.hop_count() == Some(1)
                 && packet.rx().buffered_age_s() == 0
                 && packet.rx().origin() != umsh_hal::RxOrigin::LocalTx;
-            if heard_directly {
+            if trusted && heard_directly {
                 node.observe_peer_identity(
                     from,
                     &identity,
+                    update,
                     packet.rssi().zip(packet.snr()),
                     now_ms,
                 );
@@ -577,31 +613,42 @@ fn dispatch_payload_callbacks<M: MacBackend>(
 
 #[cfg(all(test, feature = "software-crypto"))]
 mod tests {
+    use alloc::string::String;
     use alloc::vec::Vec;
 
-    use umsh_core::{Fcf, PacketHeader, PacketType, ParsedOptions, PayloadType, PublicKey};
+    use umsh_core::{
+        ChannelId, ChannelKey, Fcf, PacketHeader, PacketType, ParsedOptions, PayloadType, PublicKey,
+    };
 
-    use super::identity_is_trustworthy;
+    use super::{IdentityUpdate, identity_is_trustworthy};
     use crate::identity::tests::signed_payload;
-    use crate::receive::ReceivedPacketRef;
-    use crate::{NodeCapabilities, NodeIdentityPayload, NodeRole};
+    use crate::location::NodeLocation;
+    use crate::receive::{ChannelInfoRef, ReceivedPacketRef, RxAcceptance, SignatureStatus};
+    use crate::{NodeCapabilities, NodeIdentityPayload, NodeRole, PeerRepeaterTable};
 
-    /// An advertisement from `from` carrying `payload`, its source
-    /// authenticated or not.
-    fn advertisement(
+    const CHANNEL: ChannelKey = ChannelKey([0x5A; 32]);
+
+    /// A frame of `packet_type` from `from` carrying the identity
+    /// `payload`, as the MAC would deliver it: a unicast or multicast MIC
+    /// authenticates its source, a broadcast has none.
+    fn identity_frame(
+        packet_type: PacketType,
         from: PublicKey,
         payload: &[u8],
-        source_authenticated: bool,
+        signature: SignatureStatus,
+        acceptance: Option<RxAcceptance>,
     ) -> ReceivedPacketRef<'static> {
         let mut bytes = Vec::from([PayloadType::NodeIdentity as u8]);
         bytes.extend_from_slice(payload);
         let wire: &'static [u8] = alloc::boxed::Box::leak(bytes.into_boxed_slice());
+        let multicast = packet_type == PacketType::Multicast;
+        let channel_id = ChannelId([0x12, 0x34]);
         let header = PacketHeader {
-            fcf: Fcf::new(PacketType::Broadcast, true, false),
+            fcf: Fcf::new(packet_type, true, false),
             options_range: 0..0,
             flood_hops: None,
             dst: None,
-            channel: None,
+            channel: multicast.then_some(channel_id),
             source: umsh_core::SourceAddrRef::Hint(from.hint()),
             sec_info: None,
             signature: None,
@@ -616,9 +663,29 @@ mod tests {
             ParsedOptions::default(),
             Some(from),
             Some(from.hint()),
-            source_authenticated,
-            None,
+            packet_type != PacketType::Broadcast,
+            multicast.then_some(ChannelInfoRef {
+                id: channel_id,
+                key: &CHANNEL,
+            }),
             umsh_mac::RxMetadata::default(),
+        )
+        .with_signature(signature)
+        .with_acceptance(acceptance)
+    }
+
+    /// A signed broadcast advertisement, as the MAC judged it.
+    fn signed_advert(
+        from: PublicKey,
+        payload: &[u8],
+        acceptance: RxAcceptance,
+    ) -> ReceivedPacketRef<'static> {
+        identity_frame(
+            PacketType::Broadcast,
+            from,
+            payload,
+            SignatureStatus::Verified,
+            Some(acceptance),
         )
     }
 
@@ -627,27 +694,294 @@ mod tests {
         identity_is_trustworthy(packet, from, &identity)
     }
 
+    /// What the receive path does with an identity heard directly: drop it
+    /// unless trusted, then keep it as its frame allows.
+    fn hear(table: &mut PeerRepeaterTable, packet: &ReceivedPacketRef<'_>, now_ms: u64) {
+        let from = packet.from_key().unwrap();
+        let identity = NodeIdentityPayload::from_bytes(packet.payload()).unwrap();
+        if identity_is_trustworthy(packet, &from, &identity) {
+            table.observe_identity(&from, &identity, IdentityUpdate::of(packet), None, now_ms);
+        }
+    }
+
+    fn repeater(name: Option<&str>, location: Option<NodeLocation>) -> Vec<u8> {
+        let identity = NodeIdentityPayload {
+            role: NodeRole::Repeater,
+            capabilities: NodeCapabilities::REPEATER,
+            name: name.map(String::from),
+            location,
+            altitude_m: None,
+            timestamp: None,
+            supported_regions: None,
+            nonce: None,
+            signature: None,
+        };
+        let mut buf = [0u8; 128];
+        let len = identity.encode(&mut buf).unwrap();
+        buf[..len].to_vec()
+    }
+
+    fn kept(table: &PeerRepeaterTable) -> (Option<String>, Option<NodeLocation>) {
+        let record = table.iter().next().expect("the repeater is listed");
+        (record.name.clone(), record.location)
+    }
+
+    fn here() -> NodeLocation {
+        NodeLocation::from_lat_lon(37.0, -122.0, 4)
+    }
+
+    const PEER: PublicKey = PublicKey([0x31; 32]);
+
     #[test]
     fn a_signed_advertisement_is_trusted_however_it_arrived() {
         let (key, payload) = signed_payload(0x31, NodeCapabilities::MOBILE);
-        assert!(trusted(&advertisement(key, &payload, false), &key));
+        let unsigned_frame = identity_frame(
+            PacketType::Broadcast,
+            key,
+            &payload,
+            SignatureStatus::Unsigned,
+            None,
+        );
+        assert!(trusted(&unsigned_frame, &key));
     }
 
     #[test]
     fn a_signature_that_fails_is_never_trusted() {
         let (_, payload) = signed_payload(0x31, NodeCapabilities::MOBILE);
         let impostor = PublicKey([0x55; 32]);
-        assert!(!trusted(
-            &advertisement(impostor, &payload, true),
-            &impostor
-        ));
+        let frame = identity_frame(
+            PacketType::Broadcast,
+            impostor,
+            &payload,
+            SignatureStatus::Verified,
+            Some(RxAcceptance::Advanced),
+        );
+        assert!(!trusted(&frame, &impostor));
     }
 
+    /// An unsigned bundle is trusted on its frame's signature.
     #[test]
-    fn an_unsigned_advertisement_needs_an_authenticated_source() {
-        let key = PublicKey([0x31; 32]);
-        let payload = [NodeRole::Chat.as_byte(), NodeCapabilities::MOBILE.bits()];
-        assert!(trusted(&advertisement(key, &payload, true), &key));
-        assert!(!trusted(&advertisement(key, &payload, false), &key));
+    fn an_advertisement_is_trusted_on_its_frame_signature() {
+        let payload = repeater(Some("Ridge"), None);
+        let advert = signed_advert(PEER, &payload, RxAcceptance::Advanced);
+        assert!(trusted(&advert, &PEER));
+        let on_channel = identity_frame(
+            PacketType::Multicast,
+            PEER,
+            &payload,
+            SignatureStatus::Verified,
+            Some(RxAcceptance::FirstContact),
+        );
+        assert!(trusted(&on_channel, &PEER));
+    }
+
+    /// A channel MIC proves only that the sender holds the channel key, so
+    /// a channel-borne identity whose frame signature is missing or failed
+    /// could have been written by any member.
+    #[test]
+    fn a_channel_borne_identity_needs_its_frame_signature() {
+        let payload = repeater(Some("Ridge"), None);
+        for signature in [SignatureStatus::Unsigned, SignatureStatus::NotVerified] {
+            let frame = identity_frame(PacketType::Multicast, PEER, &payload, signature, None);
+            assert!(frame.source_authenticated());
+            assert!(!trusted(&frame, &PEER), "{signature:?}");
+        }
+        let broadcast = identity_frame(
+            PacketType::Broadcast,
+            PEER,
+            &payload,
+            SignatureStatus::Unsigned,
+            None,
+        );
+        assert!(!trusted(&broadcast, &PEER));
+    }
+
+    /// A pairwise MIC authenticates its sender, so an identity response
+    /// needs no signature of its own.
+    #[test]
+    fn an_identity_response_is_trusted_on_its_pairwise_mic() {
+        let payload = repeater(Some("Ridge"), None);
+        for packet_type in [PacketType::Unicast, PacketType::BlindUnicast] {
+            let frame = identity_frame(
+                packet_type,
+                PEER,
+                &payload,
+                SignatureStatus::Unsigned,
+                Some(RxAcceptance::Advanced),
+            );
+            assert!(trusted(&frame, &PEER));
+        }
+    }
+
+    /// Only an authenticated frame that advanced its sender's baseline may
+    /// replace what is kept.
+    #[test]
+    fn only_an_authenticated_frame_in_order_replaces() {
+        let payload = repeater(Some("Ridge"), None);
+        let update = |packet_type, signature, acceptance| {
+            IdentityUpdate::of(&identity_frame(
+                packet_type,
+                PEER,
+                &payload,
+                signature,
+                acceptance,
+            ))
+        };
+        use IdentityUpdate::{Fill, Replace};
+        use PacketType::{Broadcast, Multicast, Unicast};
+        use RxAcceptance::{Advanced, Backfilled, FirstContact};
+        use SignatureStatus::{NotVerified, Unsigned, Verified};
+        assert_eq!(update(Broadcast, Verified, Some(Advanced)), Replace);
+        assert_eq!(update(Multicast, Verified, Some(Advanced)), Replace);
+        assert_eq!(update(Unicast, Unsigned, Some(Advanced)), Replace);
+        assert_eq!(update(Broadcast, Verified, Some(FirstContact)), Fill);
+        assert_eq!(update(Broadcast, Verified, Some(Backfilled)), Fill);
+        assert_eq!(update(Unicast, Unsigned, Some(Backfilled)), Fill);
+        assert_eq!(update(Multicast, NotVerified, None), Fill);
+        assert_eq!(update(Broadcast, Unsigned, None), Fill);
+    }
+
+    /// Advertisement 102 is applied, then the never-seen 101 arrives in the
+    /// backward window: it fills what 102 lacked and replaces nothing.
+    #[test]
+    fn a_reordered_advertisement_only_fills() {
+        let mut table = PeerRepeaterTable::new();
+        hear(
+            &mut table,
+            &signed_advert(PEER, &repeater(Some("Old"), None), RxAcceptance::Advanced),
+            100,
+        );
+        hear(
+            &mut table,
+            &signed_advert(PEER, &repeater(Some("Ridge"), None), RxAcceptance::Advanced),
+            102,
+        );
+        hear(
+            &mut table,
+            &signed_advert(
+                PEER,
+                &repeater(Some("Old"), Some(here())),
+                RxAcceptance::Backfilled,
+            ),
+            101,
+        );
+        assert_eq!(kept(&table), (Some(String::from("Ridge")), Some(here())));
+    }
+
+    /// The same sequence over identity responses, whose pairwise traffic
+    /// can arrive through the backward window too.
+    #[test]
+    fn a_reordered_identity_response_only_fills() {
+        let response = |payload: &[u8], acceptance| {
+            identity_frame(
+                PacketType::Unicast,
+                PEER,
+                payload,
+                SignatureStatus::Unsigned,
+                Some(acceptance),
+            )
+        };
+        let mut table = PeerRepeaterTable::new();
+        hear(
+            &mut table,
+            &response(&repeater(Some("Old"), None), RxAcceptance::Advanced),
+            100,
+        );
+        hear(
+            &mut table,
+            &response(&repeater(Some("Ridge"), None), RxAcceptance::Advanced),
+            102,
+        );
+        hear(
+            &mut table,
+            &response(
+                &repeater(Some("Old"), Some(here())),
+                RxAcceptance::Backfilled,
+            ),
+            101,
+        );
+        assert_eq!(kept(&table), (Some(String::from("Ridge")), Some(here())));
+    }
+
+    /// A new signer's first advertisement lists it, but cannot say it is
+    /// the newest; the next one, ahead of the baseline the first set, can.
+    #[test]
+    fn a_first_contact_fills_and_the_next_advertisement_replaces() {
+        let mut table = PeerRepeaterTable::new();
+        hear(
+            &mut table,
+            &signed_advert(
+                PEER,
+                &repeater(Some("Ridge"), None),
+                RxAcceptance::FirstContact,
+            ),
+            1,
+        );
+        assert_eq!(kept(&table), (Some(String::from("Ridge")), None));
+        hear(
+            &mut table,
+            &signed_advert(
+                PEER,
+                &repeater(None, Some(here())),
+                RxAcceptance::FirstContact,
+            ),
+            2,
+        );
+        assert_eq!(
+            kept(&table),
+            (Some(String::from("Ridge")), Some(here())),
+            "a second first contact, as after the receiver restarts, still only fills"
+        );
+        hear(
+            &mut table,
+            &signed_advert(
+                PEER,
+                &repeater(Some("Summit"), None),
+                RxAcceptance::Advanced,
+            ),
+            3,
+        );
+        assert_eq!(kept(&table), (Some(String::from("Summit")), None));
+    }
+
+    /// A baseline restored from storage counts as established, so after a
+    /// restart a peer's first advertisement ahead of it replaces.
+    #[test]
+    fn after_a_restart_an_advertisement_ahead_of_the_restored_baseline_replaces() {
+        let mut table = PeerRepeaterTable::new();
+        hear(
+            &mut table,
+            &signed_advert(
+                PEER,
+                &repeater(Some("Ridge"), Some(here())),
+                RxAcceptance::Advanced,
+            ),
+            1,
+        );
+        hear(
+            &mut table,
+            &signed_advert(
+                PEER,
+                &repeater(Some("Summit"), None),
+                RxAcceptance::Advanced,
+            ),
+            2,
+        );
+        assert_eq!(kept(&table), (Some(String::from("Summit")), None));
+    }
+
+    /// An untrusted identity changes nothing, not even what is missing.
+    #[test]
+    fn an_untrusted_identity_is_not_kept() {
+        let mut table = PeerRepeaterTable::new();
+        let forged = identity_frame(
+            PacketType::Multicast,
+            PEER,
+            &repeater(Some("Forged"), None),
+            SignatureStatus::NotVerified,
+            None,
+        );
+        hear(&mut table, &forged, 1);
+        assert!(table.is_empty());
     }
 }

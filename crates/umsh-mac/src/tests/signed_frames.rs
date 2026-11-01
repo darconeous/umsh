@@ -357,6 +357,34 @@ fn a_known_peers_signed_frames_share_one_window() {
     assert!(mac.rx_windows().is_registered(&from));
 }
 
+/// A peer's advertisements delivered out of order: the late one is
+/// delivered as a backfill, which the application keeps only to fill gaps,
+/// and a replay of either is dropped.
+#[test]
+fn a_reordered_signed_advertisement_is_a_backfill() {
+    let mut mac = receiver();
+    let from = key_of(SEED);
+    mac.add_peer(from).unwrap();
+    let baseline = broadcast_from(SEED, 100, false);
+    assert_eq!(
+        receive(&mut mac, &baseline),
+        verified(RxAcceptance::FirstContact, from)
+    );
+    let newer = broadcast_from(SEED, 102, false);
+    assert_eq!(
+        receive(&mut mac, &newer),
+        verified(RxAcceptance::Advanced, from)
+    );
+    let late = broadcast_from(SEED, 101, false);
+    assert_eq!(
+        receive(&mut mac, &late),
+        verified(RxAcceptance::Backfilled, from)
+    );
+    for stale in [&baseline, &late, &newer] {
+        assert_eq!(receive(&mut mac, stale), None);
+    }
+}
+
 /// A hint-only signed broadcast from a key the receiver does not hold is
 /// delivered, unverified, as an unsigned broadcast would be.
 #[test]

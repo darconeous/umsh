@@ -26,6 +26,7 @@ use alloc::vec::Vec;
 use umsh_core::{NodeHint, PublicKey, RouterHint};
 use umsh_hal::Snr;
 
+use crate::IdentityUpdate;
 use crate::identity::NodeIdentityPayload;
 use crate::location::NodeLocation;
 
@@ -90,30 +91,39 @@ impl PeerRepeaterTable {
     ///
     /// The caller vouches that the identity came off its owner's own
     /// transmitter; `rssi_snr` is that reception's measurement, when the
-    /// radio made one. Returns whether the table changed. A repeat identity
-    /// replaces the record rather than merging with it: the newest
-    /// advertisement is the node's own account of itself. The same holds
-    /// when that account no longer claims repeating—the record an earlier
-    /// identity left is withdrawn, name and position with it.
+    /// radio made one. Returns whether the table changed.
+    ///
+    /// Under [`IdentityUpdate::Replace`] a repeat identity replaces the
+    /// record rather than merging with it: the newest advertisement is the
+    /// node's own account of itself. The same holds when that account no
+    /// longer claims repeating—the record an earlier identity left is
+    /// withdrawn, name and position with it.
+    ///
+    /// Under [`IdentityUpdate::Fill`] the identity may be older than what
+    /// the table holds, so it adds a repeater not yet listed and fills in
+    /// what a listed one lacks, and changes nothing it already has. The
+    /// reception itself is current either way, so its measurement and time
+    /// are kept.
     pub fn observe_identity(
         &mut self,
         from: &PublicKey,
         identity: &NodeIdentityPayload,
+        update: IdentityUpdate,
         rssi_snr: Option<(i16, Snr)>,
         now_ms: u64,
     ) -> bool {
+        let hint = from.hint();
+        let existing = self.records.iter().position(|entry| entry.hint == hint);
         if !Self::is_repeater(identity) {
-            let hint = from.hint();
-            let before = self.records.len();
-            self.records.retain(|entry| entry.hint != hint);
-            if self.records.len() == before {
+            let Some(index) = existing.filter(|_| update == IdentityUpdate::Replace) else {
                 return false;
-            }
+            };
+            self.records.remove(index);
             self.generation = self.generation.wrapping_add(1);
             return true;
         }
         let record = PeerRepeaterRecord {
-            hint: from.hint(),
+            hint,
             name: identity.name.clone(),
             location: identity.location,
             regions: region_codes(identity),
@@ -121,12 +131,24 @@ impl PeerRepeaterTable {
             last_identity_ms: now_ms,
         };
         self.generation = self.generation.wrapping_add(1);
-        if let Some(existing) = self
-            .records
-            .iter_mut()
-            .find(|entry| entry.hint == record.hint)
-        {
-            *existing = record;
+        if let Some(index) = existing {
+            let existing = &mut self.records[index];
+            match update {
+                IdentityUpdate::Replace => *existing = record,
+                IdentityUpdate::Fill => {
+                    if existing.name.is_none() {
+                        existing.name = record.name;
+                    }
+                    if existing.location.is_none() {
+                        existing.location = record.location;
+                    }
+                    if existing.regions.is_empty() {
+                        existing.regions = record.regions;
+                    }
+                    existing.rssi_snr = record.rssi_snr;
+                    existing.last_identity_ms = record.last_identity_ms;
+                }
+            }
             return true;
         }
         if self.records.len() < MAX_PEER_REPEATERS {
@@ -343,21 +365,27 @@ mod tests {
         let mut chat = repeater_identity("Handset", &[]);
         chat.role = NodeRole::Chat;
         chat.capabilities = NodeCapabilities::TEXT_MESSAGES;
-        assert!(!table.observe_identity(&key(1), &chat, None, 0));
+        assert!(!table.observe_identity(&key(1), &chat, IdentityUpdate::Replace, None, 0));
         assert!(table.is_empty());
 
         // The capability alone is enough—a node may forward while
         // presenting itself as something else.
         let mut forwarding_handset = chat.clone();
         forwarding_handset.capabilities |= NodeCapabilities::REPEATER;
-        assert!(table.observe_identity(&key(1), &forwarding_handset, None, 0));
+        assert!(table.observe_identity(
+            &key(1),
+            &forwarding_handset,
+            IdentityUpdate::Replace,
+            None,
+            0
+        ));
         assert_eq!(table.len(), 1);
 
         // A bridge is a node with its repeater enabled, whatever bitmap it
         // advertises.
         let mut bridge = chat.clone();
         bridge.role = NodeRole::Bridge;
-        assert!(table.observe_identity(&key(2), &bridge, None, 0));
+        assert!(table.observe_identity(&key(2), &bridge, IdentityUpdate::Replace, None, 0));
         assert_eq!(table.len(), 2);
     }
 
@@ -368,14 +396,26 @@ mod tests {
     #[test]
     fn an_identity_that_stops_claiming_repeating_withdraws_the_record() {
         let mut table = PeerRepeaterTable::new();
-        table.observe_identity(&key(1), &repeater_identity("Ridge", &[]), None, 0);
-        table.observe_identity(&key(2), &repeater_identity("Saddle", &[]), None, 0);
+        table.observe_identity(
+            &key(1),
+            &repeater_identity("Ridge", &[]),
+            IdentityUpdate::Replace,
+            None,
+            0,
+        );
+        table.observe_identity(
+            &key(2),
+            &repeater_identity("Saddle", &[]),
+            IdentityUpdate::Replace,
+            None,
+            0,
+        );
         let generation = table.generation();
 
         let mut retired = repeater_identity("Ridge", &[]);
         retired.role = NodeRole::Chat;
         retired.capabilities = NodeCapabilities::TEXT_MESSAGES;
-        assert!(table.observe_identity(&key(1), &retired, None, 1_000));
+        assert!(table.observe_identity(&key(1), &retired, IdentityUpdate::Replace, None, 1_000));
         assert_eq!(table.len(), 1);
         assert_eq!(table.iter().next().unwrap().hint, key(2).hint());
         // A cursor into the old listing must not resume into this one.
@@ -383,7 +423,7 @@ mod tests {
 
         // Nothing left to withdraw is not a change.
         let generation = table.generation();
-        assert!(!table.observe_identity(&key(1), &retired, None, 2_000));
+        assert!(!table.observe_identity(&key(1), &retired, IdentityUpdate::Replace, None, 2_000));
         assert_eq!(table.generation(), generation);
     }
 
@@ -393,6 +433,7 @@ mod tests {
         table.observe_identity(
             &key(0xAA),
             &repeater_identity("Ridge", &["SJC"]),
+            IdentityUpdate::Replace,
             None,
             1_000,
         );
@@ -411,6 +452,7 @@ mod tests {
         table.observe_identity(
             &key(0xAA),
             &repeater_identity("Ridge", &["SJC"]),
+            IdentityUpdate::Replace,
             Some((-60, Snr::from_decibels(8))),
             60_000,
         );
@@ -452,6 +494,7 @@ mod tests {
         table.observe_identity(
             &key(0xAA),
             &repeater_identity("Ridge", &[]),
+            IdentityUpdate::Replace,
             Some((-60, Snr::from_decibels(8))),
             120_000,
         );
@@ -482,11 +525,24 @@ mod tests {
         table.observe_identity(
             &key(0xAA),
             &repeater_identity("Refreshed", &[]),
+            IdentityUpdate::Replace,
             None,
             10_000,
         );
-        table.observe_identity(&key(0xBB), &repeater_identity("Recent", &[]), None, 200_000);
-        table.observe_identity(&key(0xCC), &repeater_identity("Stale", &[]), None, 20_000);
+        table.observe_identity(
+            &key(0xBB),
+            &repeater_identity("Recent", &[]),
+            IdentityUpdate::Replace,
+            None,
+            200_000,
+        );
+        table.observe_identity(
+            &key(0xCC),
+            &repeater_identity("Stale", &[]),
+            IdentityUpdate::Replace,
+            None,
+            20_000,
+        );
         let refreshed = key(0xAA).hint();
         let observations = [
             observation(RouterHint([refreshed.0[0], refreshed.0[1]]), 300_000),
@@ -514,7 +570,13 @@ mod tests {
     #[test]
     fn an_unmeasured_identity_falls_back_to_the_observation_it_claimed() {
         let mut table = PeerRepeaterTable::new();
-        table.observe_identity(&key(0xAA), &repeater_identity("Ridge", &[]), None, 120_000);
+        table.observe_identity(
+            &key(0xAA),
+            &repeater_identity("Ridge", &[]),
+            IdentityUpdate::Replace,
+            None,
+            120_000,
+        );
         let hint = key(0xAA).hint();
 
         let merged = merge(&table, [].iter(), 180_000);
@@ -529,11 +591,18 @@ mod tests {
     #[test]
     fn a_repeat_identity_replaces_the_record_and_moves_the_generation() {
         let mut table = PeerRepeaterTable::new();
-        table.observe_identity(&key(0xAA), &repeater_identity("Ridge", &["SJC"]), None, 0);
+        table.observe_identity(
+            &key(0xAA),
+            &repeater_identity("Ridge", &["SJC"]),
+            IdentityUpdate::Replace,
+            None,
+            0,
+        );
         let first = table.generation();
         table.observe_identity(
             &key(0xAA),
             &repeater_identity("Ridge Two", &[]),
+            IdentityUpdate::Replace,
             None,
             1_000,
         );
@@ -554,11 +623,18 @@ mod tests {
             table.observe_identity(
                 &key(seed),
                 &repeater_identity("Peer", &[]),
+                IdentityUpdate::Replace,
                 None,
                 1_000 + u64::from(seed),
             );
         }
-        table.observe_identity(&key(200), &repeater_identity("Newcomer", &[]), None, 9_000);
+        table.observe_identity(
+            &key(200),
+            &repeater_identity("Newcomer", &[]),
+            IdentityUpdate::Replace,
+            None,
+            9_000,
+        );
         assert_eq!(table.len(), MAX_PEER_REPEATERS);
         assert!(table.iter().any(|entry| entry.hint == key(200).hint()));
         assert!(
@@ -574,5 +650,56 @@ mod tests {
         assert_eq!(minutes_since(None, 1_000), None);
         // A clock that ran backwards reads as "just now", not as 45 days.
         assert_eq!(minutes_since(Some(5_000), 1_000), Some(0));
+    }
+
+    /// An identity that may only fill lists a repeater not yet known, and
+    /// fills in what a listed one lacks without replacing what it has.
+    #[test]
+    fn a_filling_identity_adds_but_never_replaces() {
+        let mut table = PeerRepeaterTable::new();
+        assert!(table.observe_identity(
+            &key(0xAA),
+            &repeater_identity("Ridge", &[]),
+            IdentityUpdate::Fill,
+            None,
+            1_000,
+        ));
+        let mut older = repeater_identity("Old Ridge", &["SJC"]);
+        older.location = Some(NodeLocation::from_lat_lon(37.0, -122.0, 4));
+        table.observe_identity(
+            &key(0xAA),
+            &older,
+            IdentityUpdate::Fill,
+            Some((-70, Snr::from_decibels(3))),
+            2_000,
+        );
+
+        let record = table.iter().next().unwrap();
+        assert_eq!(record.name.as_deref(), Some("Ridge"));
+        assert_eq!(record.location, older.location);
+        assert_eq!(record.regions, [[0x78, 0x53]]);
+        // The reception is current whatever the identity's age.
+        assert_eq!(record.rssi_snr, Some((-70, Snr::from_decibels(3))));
+        assert_eq!(record.last_identity_ms, 2_000);
+    }
+
+    /// Only the node's current account can withdraw it.
+    #[test]
+    fn a_filling_identity_never_withdraws_a_repeater() {
+        let mut table = PeerRepeaterTable::new();
+        table.observe_identity(
+            &key(1),
+            &repeater_identity("Ridge", &[]),
+            IdentityUpdate::Replace,
+            None,
+            0,
+        );
+        let mut retired = repeater_identity("Ridge", &[]);
+        retired.role = NodeRole::Chat;
+        retired.capabilities = NodeCapabilities::empty();
+        assert!(!table.observe_identity(&key(1), &retired, IdentityUpdate::Fill, None, 1_000));
+        assert_eq!(table.len(), 1);
+        assert!(table.observe_identity(&key(1), &retired, IdentityUpdate::Replace, None, 2_000));
+        assert!(table.is_empty());
     }
 }
