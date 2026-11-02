@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c13fe809.js";
+            window.path_to_searchindex_js = "searchindex-770b44e1.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-7fd6cf8e.js"></script>
+        <script src="toc-517aa7d9.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -175,7 +175,7 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="test-vectors"><a class="header" href="#test-vectors">Test Vectors</a></h1>
-<p>This appendix contains byte-level packet examples. All values are hexadecimal, and multi-byte numeric fields are big-endian.</p>
+<p>This appendix contains byte-level packet examples. All values are hexadecimal, and multi-byte numeric fields are big-endian. The examples omit the <a href="packet-options.html#fence-option-257">Fence option</a>, which every packet a sender originates carries.</p>
 <h2 id="conventions"><a class="header" href="#conventions">Conventions</a></h2>
 <p>The generated examples use fixed Ed25519 private keys so the appendix covers the full path from private key to public key to X25519 ECDH to packet bytes.</p>
 <ul>
@@ -207,9 +207,9 @@
 </code></pre>
 <h3 id="scf-bit-layout-reference"><a class="header" href="#scf-bit-layout-reference">SCF Bit Layout Reference</a></h3>
 <pre><code class="language-text">  7   6   5   4   3   2   1   0
-+---+-------+---+---------------+
-| E |  MIC  | S |   RESERVED    |
-+---+-------+---+---------------+
++---+-------+---+---+-----------+
+| E |  MIC  | S | D | RESERVED  |
++---+-------+---+---+-----------+
 </code></pre>
 <h2 id="example-1-broadcast-beacon-s0"><a class="header" href="#example-1-broadcast-beacon-s0">Example 1: Broadcast Beacon (S=0)</a></h2>
 <p>A minimal beacon with a 3-byte source hint and no payload.</p>
@@ -258,14 +258,14 @@
 <tr><td>SRC</td><td>Node A hint</td><td><code>ED 54 A5</code></td></tr>
 <tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0</td><td><code>E0</code></td></tr>
 <tr><td>Frame Counter</td><td>42</td><td><code>00 00 00 2A</code></td></tr>
-<tr><td>Payload</td><td>Encrypted <code>48 65 6C 6C 6F</code> (<code>"Hello"</code>)</td><td><code>AE 71 DC 38 72</code></td></tr>
-<tr><td>MIC</td><td>16 bytes</td><td><code>61 8E 96 38 FE 4D 9A E8 34 33 1D E8 E0 DD 06 3E</code></td></tr>
+<tr><td>Payload</td><td>Encrypted <code>48 65 6C 6C 6F</code> (<code>"Hello"</code>)</td><td><code>8B 60 67 EB 6C</code></td></tr>
+<tr><td>MIC</td><td>16 bytes</td><td><code>F6 D2 39 C9 05 12 41 ED 8C A4 C2 D8 89 1A 34 58</code></td></tr>
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">D0 6C 28 FD ED 54 A5 E0 00 00 00 2A FF AE 71 DC
-38 72 61 8E 96 38 FE 4D 9A E8 34 33 1D E8 E0 DD
-06 3E
+<pre><code class="language-text">D0 6C 28 FD ED 54 A5 E0 00 00 00 2A FF 8B 60 67
+EB 6C F6 D2 39 C9 05 12 41 ED 8C A4 C2 D8 89 1A
+34 58
 </code></pre>
 <p>Total: 34 bytes.</p>
 <h2 id="example-4-encrypted-unicast-with-ack-requested-s1"><a class="header" href="#example-4-encrypted-unicast-with-ack-requested-s1">Example 4: Encrypted Unicast with Ack Requested (S=1)</a></h2>
@@ -281,15 +281,15 @@
 <tr><td>SRC</td><td>Node A full key</td><td><code>ED 54 A5 9F B1 AC 3A 51 23 93 51 36 29 41 B8 68 E8 5A 60 E3 D7 B2 48 5D 82 88 21 DC 7A 69 C2 79</code></td></tr>
 <tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0</td><td><code>E0</code></td></tr>
 <tr><td>Frame Counter</td><td>1</td><td><code>00 00 00 01</code></td></tr>
-<tr><td>Payload</td><td>Encrypted <code>68 65 79</code> (<code>"hey"</code>)</td><td><code>F8 82 EE</code></td></tr>
-<tr><td>MIC</td><td>16 bytes</td><td><code>AA 17 13 06 26 1C E7 FF F2 FF 01 7F 90 10 A7 D9</code></td></tr>
+<tr><td>Payload</td><td>Encrypted <code>68 65 79</code> (<code>"hey"</code>)</td><td><code>4C A9 EB</code></td></tr>
+<tr><td>MIC</td><td>16 bytes</td><td><code>FE A5 FD 44 7A 2F E0 FF D5 57 B5 4E E6 E8 91 81</code></td></tr>
 </tbody>
 </table>
 </div>
 <pre><code class="language-text">DC 6C 28 FD ED 54 A5 9F B1 AC 3A 51 23 93 51 36
 29 41 B8 68 E8 5A 60 E3 D7 B2 48 5D 82 88 21 DC
-7A 69 C2 79 E0 00 00 00 01 FF F8 82 EE AA 17 13
-06 26 1C E7 FF F2 FF 01 7F 90 10 A7 D9
+7A 69 C2 79 E0 00 00 00 01 FF 4C A9 EB FE A5 FD
+44 7A 2F E0 FF D5 57 B5 4E E6 E8 91 81
 </code></pre>
 <p>Total: 61 bytes.</p>
 <h2 id="example-5-encrypted-multicast-e1"><a class="header" href="#example-5-encrypted-multicast-e1">Example 5: Encrypted Multicast (E=1)</a></h2>
@@ -305,13 +305,13 @@
 <tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0</td><td><code>E0</code></td></tr>
 <tr><td>Frame Counter</td><td>5</td><td><code>00 00 00 05</code></td></tr>
 <tr><td>Encrypted data</td><td>ENCRYPT(`SRC</td><td></td></tr>
-<tr><td>MIC</td><td>16 bytes</td><td><code>AC BF 20 01 42 05 B1 04 17 5E A6 8F 66 47 78 83</code></td></tr>
+<tr><td>MIC</td><td>16 bytes</td><td><code>F3 C4 8B 8F 96 EA A1 EF F6 19 47 E8 49 77 16 70</code></td></tr>
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">E0 B0 8D E0 00 00 00 05 FF 7C 16 CC CF 27 32 48
-78 AC BF 20 01 42 05 B1 04 17 5E A6 8F 66 47 78
-83
+<pre><code class="language-text">E0 B0 8D E0 00 00 00 05 FF D4 4B B6 0E 34 6D E5
+F4 F3 C4 8B 8F 96 EA A1 EF F6 19 47 E8 49 77 16
+70
 </code></pre>
 <p>Total: 33 bytes.</p>
 <h2 id="example-6-authenticated-multicast-e0"><a class="header" href="#example-6-authenticated-multicast-e0">Example 6: Authenticated Multicast (E=0)</a></h2>
@@ -328,17 +328,17 @@
 <tr><td>Frame Counter</td><td>3</td><td><code>00 00 00 03</code></td></tr>
 <tr><td>SRC</td><td>Node A hint</td><td><code>ED 54 A5</code></td></tr>
 <tr><td>Payload</td><td>`03</td><td></td></tr>
-<tr><td>MIC</td><td>16 bytes</td><td><code>9A 4B FC DE 39 42 FE B2 25 B8 D3 D4 BC E7 9F DB</code></td></tr>
+<tr><td>MIC</td><td>16 bytes</td><td><code>14 0E 9E 52 53 A7 3F A6 58 3C 0C 94 C1 5E EA 9F</code></td></tr>
 </tbody>
 </table>
 </div>
 <pre><code class="language-text">E0 B0 8D 60 00 00 00 03 FF ED 54 A5 03 48 65 6C
-6C 6F 9A 4B FC DE 39 42 FE B2 25 B8 D3 D4 BC E7
-9F DB
+6C 6F 14 0E 9E 52 53 A7 3F A6 58 3C 0C 94 C1 5E
+EA 9F
 </code></pre>
 <p>Total: 34 bytes.</p>
 <h2 id="example-7-encrypted-unicast-with-options-and-flood-hops"><a class="header" href="#example-7-encrypted-unicast-with-options-and-flood-hops">Example 7: Encrypted Unicast with Options and Flood Hops</a></h2>
-<p>An encrypted unicast with a region code option, an empty trace-route option, and flood hop limit 4.</p>
+<p>An encrypted unicast with a region code option, an empty trace option, and flood hop limit 4.</p>
 <p><strong>Options encoding:</strong></p>
 <div class="table-wrapper">
 <table>
@@ -346,8 +346,8 @@
 <tr><th>Option</th><th style="text-align: right">Number</th><th style="text-align: right">Delta</th><th style="text-align: right">Length</th><th>Encoding</th></tr>
 </thead>
 <tbody>
-<tr><td>Trace Route</td><td style="text-align: right">2</td><td style="text-align: right">2</td><td style="text-align: right">0</td><td><code>20</code></td></tr>
-<tr><td>Region Code</td><td style="text-align: right">11</td><td style="text-align: right">9</td><td style="text-align: right">2</td><td><code>92</code> then value <code>78 53</code></td></tr>
+<tr><td>Trace</td><td style="text-align: right">7</td><td style="text-align: right">7</td><td style="text-align: right">0</td><td><code>70</code></td></tr>
+<tr><td>Region Code</td><td style="text-align: right">11</td><td style="text-align: right">4</td><td style="text-align: right">2</td><td><code>42</code> then value <code>78 53</code></td></tr>
 <tr><td>End marker</td><td style="text-align: right">—</td><td style="text-align: right">—</td><td style="text-align: right">—</td><td><code>FF</code></td></tr>
 </tbody>
 </table>
@@ -364,15 +364,15 @@
 <tr><td>SRC</td><td>Node A hint</td><td><code>ED 54 A5</code></td></tr>
 <tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0</td><td><code>E0</code></td></tr>
 <tr><td>Frame Counter</td><td>10</td><td><code>00 00 00 0A</code></td></tr>
-<tr><td>Options</td><td>Trace route + region code + end marker</td><td><code>20 92 78 53 FF</code></td></tr>
-<tr><td>Payload</td><td>Encrypted <code>68 65 79</code> (<code>"hey"</code>)</td><td><code>81 2D 2F</code></td></tr>
-<tr><td>MIC</td><td>16 bytes</td><td><code>BA 19 2E EA B5 7D 71 E3 52 BD 7D DF 33 1B 07 27</code></td></tr>
+<tr><td>Options</td><td>Trace + region code + end marker</td><td><code>70 42 78 53 FF</code></td></tr>
+<tr><td>Payload</td><td>Encrypted <code>68 65 79</code> (<code>"hey"</code>)</td><td><code>B7 C4 59</code></td></tr>
+<tr><td>MIC</td><td>16 bytes</td><td><code>EC 72 BD EA E9 59 DB 86 BA AD 14 9C 92 5F B4 0B</code></td></tr>
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">D1 40 6C 28 FD ED 54 A5 E0 00 00 00 0A 20 92 78
-53 FF 81 2D 2F BA 19 2E EA B5 7D 71 E3 52 BD 7D
-DF 33 1B 07 27
+<pre><code class="language-text">D1 40 6C 28 FD ED 54 A5 E0 00 00 00 0A 70 42 78
+53 FF B7 C4 59 EC 72 BD EA E9 59 DB 86 BA AD 14
+9C 92 5F B4 0B
 </code></pre>
 <p>Total: 37 bytes.</p>
 <h2 id="example-8-blind-unicast-s0"><a class="header" href="#example-8-blind-unicast-s0">Example 8: Blind Unicast (S=0)</a></h2>
@@ -388,16 +388,192 @@ DF 33 1B 07 27
 <tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0</td><td><code>E0</code></td></tr>
 <tr><td>Frame Counter</td><td>7</td><td><code>00 00 00 07</code></td></tr>
 <tr><td>ENC_DST_SRC</td><td>ENCRYPT(`DST</td><td></td></tr>
-<tr><td>ENC_PAYLOAD</td><td>ENCRYPT(<code>"Hello"</code>)</td><td><code>88 94 03 C3 07</code></td></tr>
-<tr><td>MIC</td><td>16 bytes</td><td><code>C7 46 F3 5E 82 28 3E 3C 14 B0 5D 97 56 7B 4E 86</code></td></tr>
+<tr><td>ENC_PAYLOAD</td><td>ENCRYPT(<code>"Hello"</code>)</td><td><code>B7 B1 EE 01 4B</code></td></tr>
+<tr><td>MIC</td><td>16 bytes</td><td><code>AF 4C 3E 68 BD 61 82 47 53 98 47 CF F9 0C 28 70</code></td></tr>
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">F0 B0 8D E0 00 00 00 07 FF D5 EC 8B 3D 69 96 88
-94 03 C3 07 C7 46 F3 5E 82 28 3E 3C 14 B0 5D 97
-56 7B 4E 86
+<pre><code class="language-text">F0 B0 8D E0 00 00 00 07 FF 1D 7D 4C CE 9C 9E B7
+B1 EE 01 4B AF 4C 3E 68 BD 61 82 47 53 98 47 CF
+F9 0C 28 70
 </code></pre>
 <p>Total: 36 bytes.</p>
+<h2 id="example-9-contact-exchange-derivations"><a class="header" href="#example-9-contact-exchange-derivations">Example 9: Contact Exchange Derivations</a></h2>
+<p><a href="app-meet.html">Contact exchange</a> values, taking Node A’s public key as the asking device’s session key <code>S_A</code> and Node B’s as the asked device’s <code>S_B</code>.</p>
+<ul>
+<li><code>N_A</code>: <code>0001 0203 0405 0607 0809 0A0B 0C0D 0E0F</code></li>
+<li><code>N_B</code>: <code>1011 1213 1415 1617 1819 1A1B 1C1D 1E1F</code></li>
+</ul>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Value</th><th>Result</th></tr>
+</thead>
+<tbody>
+<tr><td><code>COMMITMENT</code></td><td><code>B0B0 5CA5 750B 0DC9 02D5 E7B8 66DC 81D6 3DDE 8BDD 70E0 1A0F 8B50 BF5F FA66 9E7D</code></td></tr>
+<tr><td>Code digest, first four bytes</td><td><code>D0 43 62 18</code></td></tr>
+<tr><td><code>CODE</code></td><td><code>076952</code></td></tr>
+<tr><td><code>HUE</code> of <code>S_A</code></td><td>61, color <code>D0A84B</code></td></tr>
+<tr><td><code>HUE</code> of <code>S_B</code></td><td>119, color <code>53C69E</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>Colors at hue steps 0, 64, 128, and 192 are <code>EC8DAB</code>, <code>CBAA4B</code>, <code>3DC6B1</code>, and <code>90AAFA</code>.</p>
+<p>A Hello from a T-LoRa Pager (model identifier 9), and A’s Request:</p>
+<pre><code class="language-text">0A 01 00 00 09
+</code></pre>
+<pre><code class="language-text">0A 01 01 B0 B0 5C A5 75 0B 0D C9 02 D5 E7 B8 66
+DC 81 D6 3D DE 8B DD 70 E0 1A 0F 8B 50 BF 5F FA
+66 9E 7D
+</code></pre>
+<h2 id="example-10-mac-ack"><a class="header" href="#example-10-mac-ack">Example 10: MAC Ack</a></h2>
+<p>Node B’s acknowledgement of Example 4. <code>ACK MIC</code> is the first four bytes of Example 4’s MIC. <code>ACK TAG</code> is <code>truncate_to_4(S2V(K_mic, S1 = C8 FF FF, S2 = V, S3 = ACK MIC))</code>, where <code>C8 FF FF</code> is the ack’s AAD (its FCF and the terminator, with no static options) and <code>V</code> is Example 4’s full S2V output, which its 16-byte MIC carries whole.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Value</th><th>Hex</th></tr>
+</thead>
+<tbody>
+<tr><td>FCF</td><td>VER=3, TYPE=1 (MAC ack), S=0, R=0, H=0</td><td><code>C8</code></td></tr>
+<tr><td>ACK MIC</td><td>First 4 bytes of V</td><td><code>FE A5 FD 44</code></td></tr>
+<tr><td>ACK TAG</td><td>4-byte MIC</td><td><code>16 61 6C D1</code></td></tr>
+</tbody>
+</table>
+</div>
+<pre><code class="language-text">C8 FE A5 FD 44 16 61 6C D1
+</code></pre>
+<p>Total: 9 bytes.</p>
+<h2 id="example-11-mac-ack-with-operator-callsign"><a class="header" href="#example-11-mac-ack-with-operator-callsign">Example 11: MAC Ack with Operator Callsign</a></h2>
+<p>The acknowledgement of Example 10 as a Licensed-Only node sends it, carrying the operator callsign <code>N0CALL</code>. The callsign is a static option, so the ack’s AAD is <code>C8</code>, the option’s type-length-value encoding, then <code>FF FF</code>, and the tag differs from Example 10’s.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Value</th><th>Hex</th></tr>
+</thead>
+<tbody>
+<tr><td>FCF</td><td>VER=3, TYPE=1 (MAC ack), S=0, R=0, H=0</td><td><code>C8</code></td></tr>
+<tr><td>Options</td><td>Operator Callsign (option 4), <code>N0CALL</code></td><td><code>44 5B BB 08 2C</code></td></tr>
+<tr><td>ACK MIC</td><td>First 4 bytes of V</td><td><code>FE A5 FD 44</code></td></tr>
+<tr><td>ACK TAG</td><td>4-byte MIC</td><td><code>15 B2 56 E4</code></td></tr>
+</tbody>
+</table>
+</div>
+<pre><code class="language-text">C8 44 5B BB 08 2C FE A5 FD 44 15 B2 56 E4
+</code></pre>
+<p>Total: 14 bytes.</p>
+<h2 id="signed-frames"><a class="header" href="#signed-frames">Signed Frames</a></h2>
+<p>Examples 12 to 14 are signed with Node A’s Ed25519 key. Each shows its signature input: <code>"UMSH-SIG"</code>, the frame’s AAD with a broadcast’s Frame Signature zeroed, the channel commitment for a multicast, and the plaintext the MIC’s S2 covers without the signature.</p>
+<ul>
+<li>Channel commitment of the channel key above: <code>B08D B3C1 400A 1C11 F1D1 464D D6BA 945F D037 2DDD 38CA 63A1 84D3 6FD1 11FE BA40</code></li>
+</ul>
+<h2 id="example-12-signed-authenticated-multicast-e0-d1"><a class="header" href="#example-12-signed-authenticated-multicast-e0-d1">Example 12: Signed Authenticated Multicast (E=0, D=1)</a></h2>
+<p>An unencrypted multicast from Node A carrying its full key, signed. <code>SRC || PAYLOAD || SIG</code> is the MIC’s S2.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Value</th><th>Hex</th></tr>
+</thead>
+<tbody>
+<tr><td>FCF</td><td>VER=3, TYPE=4 (multicast), S=1, R=0, H=0</td><td><code>E4</code></td></tr>
+<tr><td>CHANNEL</td><td>Derived channel identifier</td><td><code>B0 8D</code></td></tr>
+<tr><td>SCF</td><td>E=0, MIC=3 (16-byte), S=0, D=1</td><td><code>68</code></td></tr>
+<tr><td>Frame Counter</td><td>12</td><td><code>00 00 00 0C</code></td></tr>
+<tr><td>End of options</td><td>No options</td><td><code>FF</code></td></tr>
+<tr><td>SRC</td><td>Node A public key</td><td><code>ED 54 A5 9F B1 AC 3A 51 23 93 51 36 29 41 B8 68 E8 5A 60 E3 D7 B2 48 5D 82 88 21 DC 7A 69 C2 79</code></td></tr>
+<tr><td>Payload</td><td>`03</td><td></td></tr>
+<tr><td>SIG</td><td>Ed25519 signature</td><td><code>64 60 E7 36 CF 31 6B B3 2F 43 8C A2 81 DE 0D E0 2C 3B BE B7 A6 CB 19 5A 5C 60 55 BD 46 A9 F5 E7 53 2C 96 AE F7 CC E8 06 C7 F4 FC 46 2C D9 B8 61 CC 60 D4 47 65 F6 6E 4E 3A 5D DB 10 91 3D 6D 05</code></td></tr>
+<tr><td>MIC</td><td>16 bytes</td><td><code>59 96 7A 9D 75 D9 FC DC AA 9F AD 4C 50 3B 2E 47</code></td></tr>
+</tbody>
+</table>
+</div>
+<pre><code class="language-text">E4 B0 8D 68 00 00 00 0C FF ED 54 A5 9F B1 AC 3A
+51 23 93 51 36 29 41 B8 68 E8 5A 60 E3 D7 B2 48
+5D 82 88 21 DC 7A 69 C2 79 03 48 65 6C 70 64 60
+E7 36 CF 31 6B B3 2F 43 8C A2 81 DE 0D E0 2C 3B
+BE B7 A6 CB 19 5A 5C 60 55 BD 46 A9 F5 E7 53 2C
+96 AE F7 CC E8 06 C7 F4 FC 46 2C D9 B8 61 CC 60
+D4 47 65 F6 6E 4E 3A 5D DB 10 91 3D 6D 05 59 96
+7A 9D 75 D9 FC DC AA 9F AD 4C 50 3B 2E 47
+</code></pre>
+<p>Total: 126 bytes.</p>
+<p>Signature input (87 bytes):</p>
+<pre><code class="language-text">55 4D 53 48 2D 53 49 47 E4 B0 8D 68 00 00 00 0C
+FF FF B0 8D B3 C1 40 0A 1C 11 F1 D1 46 4D D6 BA
+94 5F D0 37 2D DD 38 CA 63 A1 84 D3 6F D1 11 FE
+BA 40 ED 54 A5 9F B1 AC 3A 51 23 93 51 36 29 41
+B8 68 E8 5A 60 E3 D7 B2 48 5D 82 88 21 DC 7A 69
+C2 79 03 48 65 6C 70
+</code></pre>
+<h2 id="example-13-signed-encrypted-multicast-e1-d1"><a class="header" href="#example-13-signed-encrypted-multicast-e1-d1">Example 13: Signed Encrypted Multicast (E=1, D=1)</a></h2>
+<p>An encrypted multicast from Node A, signed. The signature is encrypted with the source hint and the payload.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Value</th><th>Hex</th></tr>
+</thead>
+<tbody>
+<tr><td>FCF</td><td>VER=3, TYPE=4 (multicast), S=0, R=0, H=0</td><td><code>E0</code></td></tr>
+<tr><td>CHANNEL</td><td>Derived channel identifier</td><td><code>B0 8D</code></td></tr>
+<tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0, D=1</td><td><code>E8</code></td></tr>
+<tr><td>Frame Counter</td><td>13</td><td><code>00 00 00 0D</code></td></tr>
+<tr><td>End of options</td><td>No options</td><td><code>FF</code></td></tr>
+<tr><td>Encrypted data</td><td>ENCRYPT(`SRC</td><td></td></tr>
+<tr><td>MIC</td><td>16 bytes</td><td><code>02 BB 9A 22 FE F4 1A 6E 91 9D 34 72 41 AA 42 B9</code></td></tr>
+</tbody>
+</table>
+</div>
+<pre><code class="language-text">E0 B0 8D E8 00 00 00 0D FF 69 2E 61 79 21 A2 08
+42 BF 2E 1C D8 6F 88 A1 4A E7 EF 44 BC DF 11 34
+EC 85 6F 93 06 39 96 0C 99 D6 70 79 87 08 EA A8
+0E 61 BA DA 28 E2 B2 A8 58 97 D5 9C C2 8A 12 33
+DB 1B 21 18 53 85 5E CE 11 00 79 F3 6C 99 1C 24
+10 02 BB 9A 22 FE F4 1A 6E 91 9D 34 72 41 AA 42
+B9
+</code></pre>
+<p>Total: 97 bytes.</p>
+<p>Signature input (58 bytes):</p>
+<pre><code class="language-text">55 4D 53 48 2D 53 49 47 E0 B0 8D E8 00 00 00 0D
+FF FF B0 8D B3 C1 40 0A 1C 11 F1 D1 46 4D D6 BA
+94 5F D0 37 2D DD 38 CA 63 A1 84 D3 6F D1 11 FE
+BA 40 ED 54 A5 48 65 6C 6C 6F
+</code></pre>
+<h2 id="example-14-signed-broadcast"><a class="header" href="#example-14-signed-broadcast">Example 14: Signed Broadcast</a></h2>
+<p>A broadcast from Node A carrying its full key and a Frame Signature option (0) with counter 14. In the signature input the option’s 64 signature bytes are zeros.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Value</th><th>Hex</th></tr>
+</thead>
+<tbody>
+<tr><td>FCF</td><td>VER=3, TYPE=0 (broadcast), S=1, R=0, H=0</td><td><code>C4</code></td></tr>
+<tr><td>SRC</td><td>Node A public key</td><td><code>ED 54 A5 9F B1 AC 3A 51 23 93 51 36 29 41 B8 68 E8 5A 60 E3 D7 B2 48 5D 82 88 21 DC 7A 69 C2 79</code></td></tr>
+<tr><td>Option header</td><td>Delta 0, length 68 (13 + <code>37</code>)</td><td><code>0D 37</code></td></tr>
+<tr><td>Counter</td><td>14</td><td><code>00 00 00 0E</code></td></tr>
+<tr><td>SIG</td><td>Ed25519 signature</td><td><code>03 79 A8 FA 3A B8 6E 4F 59 C7 6F 0E E6 5C 76 6B D2 F1 03 38 0E 62 D9 AD 4E E8 66 E5 89 B3 56 C0 54 AC F8 50 AF D6 9A DD B7 A3 8B 7C 18 E8 77 A6 AA 55 84 68 F7 01 2F E0 91 24 4E 6B 89 52 BE 0C</code></td></tr>
+<tr><td>End of options</td><td>Payload follows</td><td><code>FF</code></td></tr>
+<tr><td>Payload</td><td><code>"Hi"</code></td><td><code>48 69</code></td></tr>
+</tbody>
+</table>
+</div>
+<pre><code class="language-text">C4 ED 54 A5 9F B1 AC 3A 51 23 93 51 36 29 41 B8
+68 E8 5A 60 E3 D7 B2 48 5D 82 88 21 DC 7A 69 C2
+79 0D 37 00 00 00 0E 03 79 A8 FA 3A B8 6E 4F 59
+C7 6F 0E E6 5C 76 6B D2 F1 03 38 0E 62 D9 AD 4E
+E8 66 E5 89 B3 56 C0 54 AC F8 50 AF D6 9A DD B7
+A3 8B 7C 18 E8 77 A6 AA 55 84 68 F7 01 2F E0 91
+24 4E 6B 89 52 BE 0C FF 48 69
+</code></pre>
+<p>Total: 106 bytes.</p>
+<p>Signature input (117 bytes):</p>
+<pre><code class="language-text">55 4D 53 48 2D 53 49 47 C4 ED 54 A5 9F B1 AC 3A
+51 23 93 51 36 29 41 B8 68 E8 5A 60 E3 D7 B2 48
+5D 82 88 21 DC 7A 69 C2 79 00 00 00 44 00 00 00
+0E 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 FF FF 48 69
+</code></pre>
 
                     </main>
 

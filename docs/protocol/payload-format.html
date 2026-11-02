@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c13fe809.js";
+            window.path_to_searchindex_js = "searchindex-770b44e1.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-7fd6cf8e.js"></script>
+        <script src="toc-517aa7d9.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -195,6 +195,7 @@
 <tr><td style="text-align: right">7</td><td>CoAP-over-UMSH</td></tr>
 <tr><td style="text-align: right">8</td><td><a href="app-node-management.html">Node Management Request</a></td></tr>
 <tr><td style="text-align: right">9</td><td><a href="app-node-management.html">Node Management Response</a></td></tr>
+<tr><td style="text-align: right">10</td><td><a href="app-meet.html">Meet</a></td></tr>
 </tbody>
 </table>
 </div>
@@ -214,12 +215,14 @@
 <tr><td>CoAP-over-UMSH</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td></tr>
 <tr><td>Node Management Req</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
 <tr><td>Node Management Resp</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td>Meet</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">Note 3</td></tr>
 </tbody>
 </table>
 </div>
-<p>Unless explicitly configured otherwise, the only payload types allowed for broadcast are empty payloads, node identities, and the broadcast-permitted MAC commands (Note 2).</p>
+<p>Unless explicitly configured otherwise, the only payload types allowed for broadcast are empty payloads, node identities, the broadcast-permitted MAC commands (Note 2), and Meet Hellos (Note 3).</p>
 <p><strong>Note 1:</strong> Some MAC commands may be permitted on specific channels. For example, a private channel might allow echo requests to all members and receive echo responses from everyone. Whether a given MAC command is accepted over multicast is deployment-defined and not yet specified by the protocol.</p>
 <p><strong>Note 2:</strong> MAC commands are admitted to broadcast individually: a command may be carried in a broadcast only when its definition says so, and any such definition must weigh the solicitation load a broadcast can create. Currently only the <a href="mac-commands.html#identity-request-1">Identity Request</a> permits broadcast carriage, under the flood-management restrictions defined there. Receivers drop any other MAC command arriving by broadcast.</p>
+<p><strong>Note 3:</strong> Only a <a href="app-meet.html#hello">Hello</a> rides a broadcast. Every other Meet kind is unicast between <a href="app-meet.html#session-keys">session keys</a>.</p>
 <h2 id="response-carriage"><a class="header" href="#response-carriage">Response Carriage</a></h2>
 <p>A response to a unicast request is carried the same way the request was: a request that arrived as <a href="packet-types.html#blind-unicast-packet">blind unicast</a> on a channel is answered as blind unicast on that same channel, and a request that arrived as plain <a href="packet-types.html#unicast-packet">unicast</a> is answered as plain unicast. This holds for every request and response the protocol defines—MAC commands, node identity, node management—and applies whether the response comes from the MAC layer or from an application above it.</p>
 <p>Blind unicast conceals both endpoints from observers who lack the channel key. A response sent off the channel names the parties the request took care to hide, so it would undo that concealment for the exchange as a whole. A <a href="packet-types.html#mac-ack-packet">MAC acknowledgement</a> is not a response and remains channel-less; it carries no destination hint and so names neither party.</p>

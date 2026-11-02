@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c13fe809.js";
+            window.path_to_searchindex_js = "searchindex-770b44e1.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-7fd6cf8e.js"></script>
+        <script src="toc-517aa7d9.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -226,8 +226,8 @@ This section is an early work in progress and this protocol may change significa
 </div>
 <p>If absent or empty, the message type defaults to 0 (basic text).</p>
 <p>The presence of the <code>Regarding</code> option changes the semantics a bit: A <strong>reply</strong> is a type 0 message with a <code>Regarding</code> option specifying which message is being replied to. A <strong>reaction</strong> is a type 1 message with a <code>Regarding</code> option specifying which message is being reacted to; the body is a single Unicode emoji or a short text token such as <code>+1</code>, <code>-1</code>, <code>!</code>, or <code>?</code>. Implementations may differentiate reactions from plain status text by the presence of the Regarding option.</p>
-<p>Reaction bodies SHOULD be short text tokens rather than emoji: <code>&lt;3</code>, <code>+1</code>, <code>-1</code>, <code>ha</code>, <code>!</code>, and <code>?</code> cover the common reactions in one or two bytes. Receivers SHOULD accept the equivalent spellings—<code>♥</code> for <code>&lt;3</code>, <code>haha</code> or <code>lol</code> for <code>ha</code>, <code>!!</code> for <code>!</code>, letter case being insignificant—as well as the emoji themselves, and SHOULD render a reaction as a single glyph, taking the first one when a body carries more.</p>
-<p>There are five canonical reactions:</p>
+<p>Reaction bodies SHOULD be short text tokens rather than emoji: <code>&lt;3</code>, <code>+1</code>, <code>-1</code>, <code>ha</code>, <code>!</code>, and <code>?</code> cover the common reactions in one or two bytes. Receivers SHOULD accept the equivalent spellings—<code>♥</code> for <code>&lt;3</code>, <code>haha</code> or <code>lol</code> for <code>ha</code>, <code>!!</code> for <code>!</code>, letter case being insignificant—as well as the emoji themselves, and SHOULD render a reaction as a single glyph, taking the first extended grapheme cluster (<a href="https://www.unicode.org/reports/tr29/">UAX #29</a>) when a body carries more, so that a sequence such as 👍🏽 or 🇫🇷 stays whole.</p>
+<p>There are six canonical reactions:</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -323,7 +323,7 @@ This section is an early work in progress and this protocol may change significa
 <p>The source prefix is necessary in multicast channels to disambiguate messages from different senders that may share the same Message ID. This means a message cannot be referenced if it is more than 255 messages old in that sender’s sequence, or if the user has since reset their sequence ID.</p>
 <p>In chat rooms, the room assigns canonical Message IDs across all senders (see <a href="app-chat-rooms.html#room-update">Chat Rooms</a>), so the 1-byte form is used and no source prefix is needed.</p>
 <h3 id="editing"><a class="header" href="#editing">Editing</a></h3>
-<p>Indicates that this message replaces a previously sent message in the same conversation and sender scope. The option value is 1 byte: the Message ID of the message being edited. No source prefix is needed because the source scope comes from the enclosing packet. For unicast and blind-unicast, pairwise authentication binds that source to a peer key. For multicast, authentication proves only possession of the channel key; the source hint is a claimed identity, and the protocol cannot prevent one channel member from impersonating another member.</p>
+<p>Indicates that this message replaces a previously sent message in the same conversation and sender scope. The option value is 1 byte: the Message ID of the message being edited. No source prefix is needed because the source scope comes from the enclosing packet. For unicast and blind-unicast, pairwise authentication binds that source to a peer key. For multicast, the MIC proves only possession of the channel key; the source is a claimed identity, and one channel member can impersonate another. A multicast whose <a href="security.html#frame-signatures">frame signature</a> verifies is the exception: the signature binds it to the signer’s key.</p>
 <p>An edit with a zero-length body signals deletion of the original message.</p>
 <p>For as long as a client retains sequence history for an edited or deleted message, it SHOULD retain the stable original-message identity or a tombstone so that references can still be resolved. A client MAY retain prior revision content, including deleted content, for edit-history display; this is a local storage and privacy policy rather than a protocol requirement.</p>
 <p>Edit messages carry their own Message IDs. References in subsequent Editing or Regarding options MUST use the original message’s ID, not the edit’s ID.</p>
@@ -342,6 +342,9 @@ ignored by the receiver.</p>
 <p>The message body is a UTF-8 string.</p>
 <h3 id="channel-invitations"><a class="header" href="#channel-invitations">Channel Invitations</a></h3>
 <p>A basic text message whose entire body, ignoring leading and trailing whitespace, is a <a href="uri-formats.html#channel-uris">channel URI</a> invites its recipients to that channel. A receiver that recognizes the URI MAY present the message as an invitation to join; one that does not displays the body as text.</p>
+<h3 id="test-messages"><a class="header" href="#test-messages">Test Messages</a></h3>
+<p>A basic or status text message on the <a href="multicast-channels.html#emergency"><code>EMERGENCY</code></a> channel is a <em>test message</em> when its body, ignoring leading whitespace, begins with <code>TEST:</code> in any ASCII letter case. For a fragmented message, the body of fragment zero decides.</p>
+<p>Unless the user has opted in to test messages, a receiver SHOULD NOT raise any alert for a test message: no sound, vibration, notification, screen wake, or unread indication. The message is still stored and displayed.</p>
 
                     </main>
 

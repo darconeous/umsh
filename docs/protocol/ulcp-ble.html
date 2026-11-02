@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c13fe809.js";
+            window.path_to_searchindex_js = "searchindex-770b44e1.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-7fd6cf8e.js"></script>
+        <script src="toc-517aa7d9.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -368,7 +368,7 @@ name advertised during pairing.</p>
 <strong>MUST</strong> include the ULCP GATT Service UUID in its advertising data, and
 <strong>SHOULD</strong> advertise its <a href="#ble-model-identifier">model identifier</a> and the
 current <code>PROP_DEV_NAME</code>, shortening the name without
-splitting a UTF-8 code point where needed. A rename
+splitting a grapheme cluster where needed. A rename
 during the window updates these payloads. Names, including existing
 hardware-derived default suffixes, are a deliberate disclosure during
 pairing. Ordinary renaming does not disconnect a connected host.</p>
@@ -404,7 +404,8 @@ with it for room.</p>
 </thead>
 <tbody>
 <tr><td><code>0x0000</code></td><td>Unspecified</td></tr>
-<tr><td><code>0x0001</code>–<code>0xFEFF</code></td><td>Assigned, as <code>model_id</code> in the board list below</td></tr>
+<tr><td><code>0x0001</code>–<code>0xFDFF</code></td><td>Assigned, as <code>model_id</code> in the board list below</td></tr>
+<tr><td><code>0xFE00</code>–<code>0xFEFF</code></td><td>Assigned, as <code>model_id</code> in the platform list below</td></tr>
 <tr><td><code>0xFF00</code>–<code>0xFFFF</code></td><td>Private use: hardware with no assignment</td></tr>
 </tbody>
 </table>
@@ -422,6 +423,21 @@ with it for room.</p>
     { "id": "tlora-pager", "model_id": 9, "name": "T-LoRa Pager", "vendor": "LilyGO", "photo": "board-tlora-pager" },
     { "id": "xiao-esp32s3", "model_id": 10, "name": "XIAO ESP32S3 + Wio-SX1262 Kit", "vendor": "Seeed Studio", "photo": "board-xiao-esp32s3" },
     { "id": "tdeck", "model_id": 11, "name": "T-Deck", "vendor": "LilyGO", "photo": "board-tdeck" }
+  ]
+}
+</code></pre>
+<p>A platform identifier names a host with no fixed radio hardware, such as
+a phone running a UMSH application. It appears where a node names its
+model, such as a <a href="app-meet.html#hello">Meet Hello</a>, and never in
+advertising data.</p>
+<pre><code class="language-json">{
+  "platforms": [
+    { "id": "iphone", "model_id": 65024, "name": "iPhone", "symbol": "iphone" },
+    { "id": "ipad", "model_id": 65025, "name": "iPad", "symbol": "ipad" },
+    { "id": "android-phone", "model_id": 65026, "name": "Android phone", "symbol": "smartphone" },
+    { "id": "android-tablet", "model_id": 65027, "name": "Android tablet", "symbol": "ipad.landscape" },
+    { "id": "mac", "model_id": 65028, "name": "Mac", "symbol": "laptopcomputer" },
+    { "id": "computer", "model_id": 65029, "name": "Computer", "symbol": "desktopcomputer" }
   ]
 }
 </code></pre>

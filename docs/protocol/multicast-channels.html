@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c13fe809.js";
+            window.path_to_searchindex_js = "searchindex-770b44e1.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-7fd6cf8e.js"></script>
+        <script src="toc-517aa7d9.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -200,6 +200,7 @@
 <p>Channel-addressed packets are delivered via flood forwarding, bounded by the optional flood hop count field. Repeaters forward these packets according to the standard <a href="repeater-operation.html#forwarding-procedure">forwarding procedure</a>, including duplicate suppression, signal-quality filtering, and region-scoped flooding.</p>
 <h2 id="sender-authentication"><a class="header" href="#sender-authentication">Sender Authentication</a></h2>
 <p>Multicast authentication is based on the shared channel key, not on individual sender identity. The MIC proves that the sender possesses the channel key, but any channel member can construct a valid packet with any claimed source address. This is a fundamental property of symmetric-key multicast—see <a href="limitations.html#multicast-sender-authentication">Multicast Sender Authentication</a> for further discussion.</p>
+<p>A signed multicast (the SCF’s <code>D</code> bit set) is the exception. Its <a href="security.html#frame-signatures">frame signature</a> attributes the packet to the key that signed it, and is bound to the channel through the <a href="security.html#channel-commitment">channel commitment</a>, so it cannot be moved to another channel that shares its identifier. A multicast whose signature does not verify is no more attributable than an unsigned one.</p>
 <p>Blind unicast payloads are additionally authenticated using pairwise keys derived from the sender and recipient’s key agreement, so only the true sender can produce a valid payload and only the intended recipient can verify it.</p>
 <h2 id="joining-a-channel"><a class="header" href="#joining-a-channel">Joining a Channel</a></h2>
 <p>UMSH supports three models for channel membership, from simplest to most capable.</p>
@@ -251,10 +252,11 @@
 <li>Maximum flood hops: <strong>10</strong>.</li>
 <li>Chat messages <strong>must not</strong> be encrypted—all emergency traffic must be readable by any node in range, including nodes that have not explicitly joined the channel.</li>
 <li>Chat messages <strong>must</strong> include the full source key (<code>S=1</code>).</li>
-<li>Chat messages <strong>must</strong> include an EdDSA signature in the payload.</li>
-<li>Messages that do not meet all three requirements (unencrypted, full source key, signed) <strong>must not</strong> be accepted or displayed by the user interface.</li>
+<li>Every multicast carrying <a href="app-text-messages.html">text-message</a> traffic on this channel <strong>must</strong> be signed (the SCF’s <code>D</code> bit, see <a href="security.html#frame-signatures">Frame Signatures</a>). This includes resend responses to the channel and Message Unavailable responses. Resend requests and one-to-one repairs travel by blind unicast, which already authenticates the sender pairwise, and are not signed.</li>
+<li>Messages that do not meet all three requirements (unencrypted, full source key, signed) <strong>must not</strong> be accepted or displayed by the user interface. A multicast whose signature does not verify does not meet them.</li>
 </ul>
 <p>These requirements ensure that emergency traffic is universally readable, attributable to a specific node, and cryptographically authenticated against impersonation.</p>
+<p>Text messages beginning with <code>TEST:</code> are <a href="app-text-messages.html#test-messages">test messages</a>, which raise no alert by default.</p>
 <h2 id="payload-reuse"><a class="header" href="#payload-reuse">Payload Reuse</a></h2>
 <p>Application-layer channel communication reuses the same payload types as unicast. For example, group chat uses the same <a href="app-text-messages.html">text message</a> and <a href="app-chat-rooms.html">chat room</a> payload formats as direct messaging. However, not all application types are valid over multicast—see <a href="payload-format.html">Payload Types</a> for compatibility.</p>
 

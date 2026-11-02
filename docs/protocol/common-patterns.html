@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c13fe809.js";
+            window.path_to_searchindex_js = "searchindex-770b44e1.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-7fd6cf8e.js"></script>
+        <script src="toc-517aa7d9.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -195,7 +195,7 @@
 <p>UMSH uses ARNCE/HAM-64 for:</p>
 <ul>
 <li><strong>Operator callsign</strong> (packet option 4)—identifies the originating operator under amateur radio rules</li>
-<li><strong>Station callsign</strong> (packet option 7)—identifies the transmitting station, updated by repeaters during forwarding</li>
+<li><strong>Station callsign</strong> (packet option 15)—identifies the transmitting station, updated by repeaters during forwarding</li>
 <li><strong>Region codes</strong> (packet option 11)—short codes of one to three letters or digits encoded as 2-byte ARNCE values (e.g. SJC → <code>0x7853</code>)</li>
 </ul>
 <h2 id="utf-8-strings"><a class="header" href="#utf-8-strings">UTF-8 Strings</a></h2>
@@ -204,6 +204,7 @@
 <li>Inside a CoAP-style option, the option’s length field defines the string boundary.</li>
 <li>As trailing data after a <code>0xFF</code> marker, the string extends to the end of the payload (or to the start of a trailing signature).</li>
 </ul>
+<p>A sender that shortens a string to fit a byte limit (a node name, a sender handle, a region name) cuts it at an extended grapheme cluster boundary (<a href="https://www.unicode.org/reports/tr29/">UAX #29</a>), so that an emoji sequence or a letter with combining marks is kept whole or dropped whole. A receiver given a string that ends mid-cluster renders what it can; it does not reject the string. Message fragmentation splits bodies at byte boundaries and is unaffected (see <a href="app-text-messages.html">Text Messages</a>).</p>
 <h2 id="base58-encoding"><a class="header" href="#base58-encoding">Base58 Encoding</a></h2>
 <p>Public keys and channel keys in human-facing contexts (URIs, QR codes) are encoded using Base58. This avoids visually ambiguous characters (0/O, l/1) and produces compact, copy-paste-friendly strings.</p>
 <p>See <a href="uri-formats.html">URI Formats</a> for the defined URI schemes.</p>

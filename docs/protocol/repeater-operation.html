@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c13fe809.js";
+            window.path_to_searchindex_js = "searchindex-770b44e1.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-7fd6cf8e.js"></script>
+        <script src="toc-517aa7d9.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -187,7 +187,7 @@
 </li>
 <li>A repeater forwards other nodes’ traffic, never its own and never traffic that has arrived.
 <ul>
-<li>A repeater MUST NOT forward a packet whose source address identifies one of its own identities, by hint or in full-key form. Re-flooding its own transmission wastes airtime, and prepending its hint to the trace route would fabricate a hop that never happened.</li>
+<li>A repeater MUST NOT forward a packet whose source address identifies one of its own identities, by hint or in full-key form. Re-flooding its own transmission wastes airtime, and prepending its record to the trace would fabricate a hop that never happened.</li>
 <li>A repeater MUST NOT forward a packet whose destination address identifies one of its own identities. Such a packet has reached its destination; whether the repeater could actually process it is a separate question.</li>
 </ul>
 </li>
@@ -198,9 +198,9 @@
 <li>Rules written for flood forwarding—<a href="packet-structure.html#flood-hop-count">flood hop accounting</a>, signal-quality thresholds, <a href="#forwarding-procedure">region policy</a>, and forwarding contention—apply to flood hops only.</li>
 </ul>
 </li>
-<li>Repeaters MUST mutate specific dynamic routing metadata while forwarding (<a href="packet-options.html#source-route-option-3">source route</a>, <a href="packet-options.html#trace-route-option-2">trace route</a>, <a href="packet-structure.html#flood-hop-count">hop count</a>, etc)
+<li>Repeaters MUST mutate specific dynamic routing metadata while forwarding (<a href="packet-options.html#source-route-option-3">source route</a>, <a href="packet-options.html#trace-option-7">trace</a>, <a href="packet-structure.html#flood-hop-count">hop count</a>, etc)
 <ul>
-<li>Typical examples are flood hop counts, trace routes, source routes.</li>
+<li>Typical examples are flood hop counts, traces, source routes.</li>
 <li>A repeater SHALL NOT simply repeat a packet verbatim under any circumstances.</li>
 <li>The Route Retry flag MUST NOT be added to a packet by anyone other than the original sender.</li>
 <li>These mutations do <strong>not</strong> create a new logical packet.</li>
@@ -274,9 +274,9 @@
 </ul>
 </li>
 <li>
-<p><strong>Unknown critical options</strong></p>
+<p><strong>Unknown forwarding-critical options</strong></p>
 <ul>
-<li>If the packet contains any critical option the repeater does not understand, do not forward.</li>
+<li>If the packet contains any <a href="packet-options.html#forwarding-and-delivery-criticality">forwarding-critical</a> option the repeater does not understand, or whose value it cannot interpret, do not forward. Delivery-critical options do not affect forwarding.</li>
 </ul>
 </li>
 <li>
@@ -300,7 +300,7 @@
 <li>This preserves provenance: downstream nodes can still determine that the packet arrived via explicit source routing rather than by pure flooding.</li>
 </ul>
 </li>
-<li>If this repeater matched a source-route hint, it is forwarding a source-routed hop. Skip directly to step 10 (trace route processing), <strong>including when the hint just removed was the last one</strong>. Steps 7 through 9 describe flood forwarding and MUST NOT be applied to a source-routed hop.</li>
+<li>If this repeater matched a source-route hint, it is forwarding a source-routed hop. Skip directly to step 10 (trace processing), <strong>including when the hint just removed was the last one</strong>. Steps 7 through 9 describe flood forwarding and MUST NOT be applied to a source-routed hop.</li>
 </ul>
 </li>
 <li>
@@ -332,11 +332,11 @@
 </ul>
 </li>
 <li>
-<p><strong>Trace route processing</strong></p>
+<p><strong>Trace processing</strong></p>
 </li>
 </ol>
 <ul>
-<li>If the packet contains a trace-route option, prepend this repeater’s hint. If prepending the hint would cause the packet to exceed the maximum frame size, drop the packet.</li>
+<li>If the packet contains a <a href="packet-options.html#trace-option-7">Trace option</a>, add this repeater’s own entry, degrading the trace’s form as needed to fit the outgoing link (<a href="packet-options.html#trace-option-value">Trace Option Value</a>). If even a lone <code>0xFF</code> does not fit, do not forward the packet on that link, and count the drop.</li>
 </ul>
 <ol start="11">
 <li><strong>Retransmit</strong></li>
@@ -377,7 +377,7 @@
 <p>An overheard Ack MIC option also SHOULD cancel a queued, not-yet-transmitted forward of a MAC ack carrying the same <code>ack_mic</code>. The packet carrying the option delivers that acknowledgement to the same node, so the standalone ack has nothing left to deliver. An overheard MAC ack never cancels another ack’s forward: an ack’s trailer opens with the four bytes it echoes, so a second copy would cancel the first.</p>
 <p>Cancellation acts on the queue, not on the future. It removes whatever matching forward is queued at that moment—a <a href="packet-options.html#route-retry-option-6">Route Retry</a> copy included—and records nothing. A Route Retry copy received <em>after</em> a cancellation is a separate forwarding identity under <a href="#duplicate-suppression">duplicate suppression</a> and is forwarded normally: the origin resorts to it precisely because the ack never reached it, and carrying the copy prompts the destination to acknowledge again. That copy is in turn cancelable by another overheard ack.</p>
 <p>The duplicate-cache entry for a cancelled forward remains. The packet was handled; a later copy of the same attempt is still a duplicate.</p>
-<p>A repeater cannot verify the keyed <code>ack_tag</code> half of the trailer, so cancellation rests on the public <code>ack_mic</code> alone. The <a href="security.html#ack-tag-construction">forgery this exposes</a> suppresses at most one queued forward per overheard ack and is bounded by the Route Retry path.</p>
+<p>A repeater holds no key to verify the <code>ack_tag</code> half of the trailer, so cancellation rests on the public <code>ack_mic</code> alone. The <a href="security.html#ack-tag-construction">forgery this exposes</a> suppresses at most one queued forward per overheard ack and is bounded by the Route Retry path.</p>
 <h3 id="route-failure-recovery"><a class="header" href="#route-failure-recovery">Route Failure Recovery</a></h3>
 <p>When a node sends an ack-requested unicast or blind-unicast packet against a cached route and that attempt fails, it needs a way to re-attempt delivery without causing duplicate application delivery at the final destination.</p>
 <p>Two kinds of cached route can fail this way, and they fail identically from the sender’s point of view:</p>
@@ -394,13 +394,23 @@
 <li>preserve the same frame counter, payload, and MIC</li>
 <li>remove the stale source-route option, if one was present</li>
 <li>add or refresh flood hops</li>
-<li>include a trace-route option if route rediscovery is desired</li>
+<li>include a Trace option if route rediscovery is desired</li>
 <li>set the <a href="packet-options.html#route-retry-option-6">Route Retry option</a></li>
 </ul>
 </li>
 </ol>
 <p>These edits touch only fields the <a href="security.html#associated-data">associated data</a> excludes, which is what lets the MIC carry over. Adding <code>FHOPS</code> where the original had none also sets the FCF’s <code>H</code> bit, and the AAD clears that bit for this reason.</p>
 <p>The restored flood radius SHOULD be the one the sending application asked for. A radius the application chose for itself is not a failed cache entry, and recovery MUST NOT widen it: a sender that was told to reach no further than one hop has not made a stale assumption, it has been given an instruction.</p>
+<p>A sender that assumed nothing—it held no route and flooded at the whole budget it was allowed—has no cached route to discard, but its timeout is no more specific about which leg failed. The destination may hold a route back that no longer works, and its acknowledgment may have died on it. A MAC ack is never itself acknowledged, so the destination cannot discover this on its own. Such a sender SHOULD send one Route Retry of the packet when it has heard from the destination recently—within 10 minutes is a reasonable window—at the same flood budget and with a trace. A sender that has not heard from the destination recently SHOULD NOT: a destination that is unreachable answers a second full flood no more than the first.</p>
+<p>Either way, a sender MUST NOT send a Route Retry of a packet that already carries the Route Retry option. A logical packet gets at most one.</p>
+<h4 id="lost-acknowledgments"><a class="header" href="#lost-acknowledgments">Lost Acknowledgments</a></h4>
+<p>A Route Retry that arrives at the destination as a duplicate of a packet it has already acknowledged, after the <a href="security.html#duplicate-acknowledgement-window">duplicate acknowledgment holdoff</a>, shows that the acknowledgment did not reach the sender: the sender sends a Route Retry only once its whole acknowledgment timeout has run out. The destination SHOULD then:</p>
+<ul>
+<li>retire or demote the route its acknowledgment followed, and not relearn that same path from the retry for a while</li>
+<li>re-acknowledge by a scoped flood rather than along any cached route: <code>FHOPS_REM</code> set to the retry’s <code>FHOPS_ACC</code> plus a one-hop margin, the retry’s region codes, and a <a href="packet-options.html#trace-option-7">trace</a>, so that the sender learns a path back</li>
+</ul>
+<p>A path the retry itself traced MAY still be adopted as an ordinary route candidate, but the re-acknowledgment does not follow it. A route the application has fixed in place MAY stay; the re-acknowledgment floods regardless.</p>
+<p>Only an acknowledged original makes the retry evidence of a lost acknowledgment. A destination may have accepted the original without acknowledging it—overheard before its source route was consumed, for instance—and then the retry is the first copy it acknowledges, along its route as usual. A late duplicate without the Route Retry option may have crossed an acknowledgment still in transit, so it is re-acknowledged along the route without retiring it.</p>
 <p>This recovery transmission is intentionally the same logical packet, not a new application message. The destination therefore still accepts it at most once according to the normal replay rules. The Route Retry option exists only to let repeaters forward the re-attempted packet even if they already suppressed the original as a duplicate.</p>
 <p>This preserves a useful separation of responsibilities:</p>
 <ul>

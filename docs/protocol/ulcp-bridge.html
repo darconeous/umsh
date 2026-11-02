@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c13fe809.js";
+            window.path_to_searchindex_js = "searchindex-770b44e1.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-7fd6cf8e.js"></script>
+        <script src="toc-517aa7d9.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -178,7 +178,9 @@
 <p>An integrated <a href="internet-bridging.html">internet bridge</a> client connects the device’s
 node to a bridge server over IP. Configuration belongs to the device domain and
 is independent of the attached host. Enabling the client does not enable Wi-Fi,
-change IP configuration, or change <code>PROP_MAC_REPEATER_ENABLED</code>.</p>
+change IP configuration, or change <code>PROP_MAC_REPEATER_ENABLED</code>. While
+forwarding, a node with an enabled and configured client derives the role
+<code>Bridge</code> (see <a href="ulcp-device.html#prop-ident-role"><code>PROP_IDENT_ROLE</code></a>).</p>
 <h2 id="capabilities"><a class="header" href="#capabilities">Capabilities</a></h2>
 <p><code>CAP_BRIDGE_CLIENT</code> (58) requires <code>CAP_DEV_IDENTITY</code> and at least one implemented IP
 family. It requires all five properties below. The IP-family requirement is an

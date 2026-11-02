@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c13fe809.js";
+            window.path_to_searchindex_js = "searchindex-770b44e1.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-7fd6cf8e.js"></script>
+        <script src="toc-517aa7d9.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -235,7 +235,8 @@ rewritten—not the frame as it was first heard.</li>
 <li>Each receiving participant hands the frame to its own device’s node,
 which receives it as a packet carrying no measurements and forwards
 it by the same procedure: a second duplicate check, a second hop
-accounting, a trace signal entry recording that nothing was measured,
+accounting, a <a href="packet-options.html#trace-option-7">trace</a> record whose
+zero signal bytes say that nothing was measured,
 and no <a href="channel-access.html#flood-forwarding-contention-window">contention window</a>,
 since nobody else heard it.</li>
 </ol>
@@ -445,8 +446,8 @@ signal policy, duty enforcement—to them as to anything else it hears.</p>
 measurement that accompanied such a frame across the tunnel describes a
 reception on another segment by another radio, and reporting it here
 would attribute it to a reception that did not happen. This is the same
-fact the crossing model already records as a trace signal entry saying
-nothing was measured.</p>
+fact the crossing model already records as a trace record whose zero
+signal bytes say nothing was measured.</p>
 <p>The server <strong>MUST</strong> rate-limit each host interface. A host spends no
 airtime of its own, which removes the natural bound a radio imposes,
 while every frame it injects is transmitted by every participant’s node.</p>
@@ -546,9 +547,9 @@ cannot repair that: the restored flood is clamped the same way.</p>
 <p>Source-routed hops spend nothing from <code>FHOPS</code>, so explicit routes cross
 bridges at any depth. Ack-requesting traffic that crosses a bridge
 <strong>SHOULD</strong> either carry a
-<a href="packet-options.html#trace-route-option-2">trace-route option</a>—the
+<a href="packet-options.html#trace-option-7">Trace option</a>—the
 participants’ nodes record themselves in it, which is what makes the
-reversed trace routable—or be sent along a known source route.</p>
+trace routable—or be sent along a known source route.</p>
 <h2 id="operational-guidance"><a class="header" href="#operational-guidance">Operational Guidance</a></h2>
 <ul>
 <li><strong>Budget for two hops.</strong> Traffic expected to cross a bridge needs a

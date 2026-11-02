@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c13fe809.js";
+            window.path_to_searchindex_js = "searchindex-770b44e1.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-7fd6cf8e.js"></script>
+        <script src="toc-517aa7d9.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -536,7 +536,7 @@ is incomplete. The counter wraps modulo 2^32.</p>
 <li>Remove Selector: the item</li>
 <li>Post-Reset Value: Empty</li>
 </ul>
-<p>The channels whose queued frames raise no
+<p>The channels whose queued messages raise no
 <a href="ulcp-host.html#receipt-cues">receipt cue</a>. A frame matches when the
 provisioned channel key that authenticated it derives a listed identifier;
 the match is made after verification, against the full identifier, never
@@ -552,9 +552,10 @@ channel the host did not name.</p>
 <li>Remove Selector: the item</li>
 <li>Post-Reset Value: Empty</li>
 </ul>
-<p>The peers whose queued frames raise no
+<p>The peers whose direct messages, once queued, raise no
 <a href="ulcp-host.html#receipt-cues">receipt cue</a>. A frame matches when its resolved
-source is a listed key. Items are full public keys rather than 3-byte
+sender is a listed key; a peer’s posts to a channel are governed by
+<code>PROP_HOST_MUTED_CHANNELS</code> alone. Items are full public keys rather than 3-byte
 hints: hints collide, and the detached receive path resolves the full key
 already.</p>
 <h2 id="receipt-cues"><a class="header" href="#receipt-cues">Receipt Cues</a></h2>
@@ -562,19 +563,37 @@ already.</p>
 not attached—a sound, a light, a count on a panel. What form the
 indication takes, and whether a device makes one at all, is a property of
 the board rather than of the protocol.</p>
-<p><code>PROP_HOST_MUTED_CHANNELS</code> and <code>PROP_HOST_MUTED_PEERS</code> name sources whose
-frames are taken in without one. They govern the indication and nothing
-else: a frame from a muted source is filtered, queued, acknowledged, and
-drained exactly as any other, and counts toward
-<code>PROP_HOST_RX_QUEUE_COUNT</code> and <code>PROP_HOST_RX_QUEUE_DROPPED</code> the same way.
-Indications that describe the queue as a whole rather than one arrival—a
-queued count, a “something is waiting” light—still follow every frame,
-because they describe what a drain will deliver.</p>
+<p>An indication of one arrival is reserved for a message the operator
+reads: a frame the device authenticated with a provisioned key whose
+payload is a <a href="app-text-messages.html">text message</a> of type basic or
+status, counted once, at its first fragment. Resend requests, Message
+Unavailable responses, continuation fragments, a message whose Message
+Type, Regarding, or Editing option does not decode, and every other
+payload type are queued without one, as is any frame the device could
+not authenticate, since its content is unreadable, and any frame carrying
+a <a href="packet-options.html#forwarding-and-delivery-criticality">delivery-critical</a>
+option the device does not recognize. A message on the
+<a href="multicast-channels.html#emergency"><code>EMERGENCY</code></a> channel by multicast gets
+one only when its <a href="security.html#frame-signatures">frame signature</a>
+verifies against a key the device holds.</p>
+<p><code>PROP_HOST_MUTED_CHANNELS</code> and <code>PROP_HOST_MUTED_PEERS</code> name conversations
+whose messages are taken in without one: a channel, matched by the key
+that authenticated the frame, or a direct conversation, matched by its
+sender. They govern the indication and nothing else: a frame in a muted
+conversation is filtered, queued, acknowledged, and drained exactly as
+any other, and counts toward <code>PROP_HOST_RX_QUEUE_COUNT</code> and
+<code>PROP_HOST_RX_QUEUE_DROPPED</code> the same way.</p>
+<p>A <a href="app-text-messages.html#test-messages">test message</a> on <code>EMERGENCY</code> raises
+no indication of its arrival, and lights nothing that asks for attention,
+unless <a href="ulcp-device.html#prop-test-message-alerts"><code>PROP_TEST_MESSAGE_ALERTS</code></a>
+is set. Like a muted one, it is otherwise queued and drained as any other
+frame.</p>
+<p>Indications that describe the queue as a whole rather than one arrival—a
+queued count, a “something is waiting” light—follow every other queued
+frame, because they describe what a drain will deliver.</p>
 <p>The tables are not validated against the key tables. An entry naming a
-source the device holds no key for is simply inert, as an entry in
-<code>PROP_HOST_RX_FILTERS</code> is independent of the key tables. A frame accepted
-by an explicit filter alone has no resolved source and therefore matches
-no entry.</p>
+conversation the device holds no key for is simply inert, as an entry in
+<code>PROP_HOST_RX_FILTERS</code> is independent of the key tables.</p>
 <h2 id="receive-filtering"><a class="header" href="#receive-filtering">Receive Filtering</a></h2>
 <p>Receive filtering determines which successfully received frames are
 <strong>accepted</strong> for the host—delivered live when the host is attached, or
@@ -711,6 +730,9 @@ flag is set, or by unique 3-byte prefix match otherwise.</li>
 for <code>UNAR</code>, or under the combined
 <a href="security.html#blind-unicast-payload-keys">blind unicast payload keys</a>
 for <code>BUAR</code>.</li>
+<li>The frame carries no
+<a href="packet-options.html#forwarding-and-delivery-criticality">delivery-critical</a>
+option the device does not recognize or cannot interpret.</li>
 <li>The frame is accepted as new by the
 <a href="security.html#replay-detection">replay-detection rules</a>, applied per
 provisioned peer. The device advances a peer’s replay baseline only when
@@ -724,7 +746,7 @@ the oldest entry when full; a frame that nevertheless cannot be stored
 the sender keeps retrying until the host returns.</li>
 </ol>
 <p>A delegated ACK also requires that no unconsumed source-route hints remain. An early overheard copy may be queued without an ACK; the first eligible duplicate can then supply the ACK without another queue entry. <code>RX_FLAG_ACKED</code> requires successful radio transmission.</p>
-<p>Delegated ACKs follow the <a href="beacons.html#scoping-flood-hops-to-a-known-route">return-path guidance</a>, carry a trace route <a href="beacons.html#when-to-include-a-trace-route">when one is due</a>, and preserve the request’s region codes on both flooded and source-routed returns.</p>
+<p>Delegated ACKs follow the <a href="beacons.html#scoping-flood-hops-to-a-known-route">return-path guidance</a>, carry a trace <a href="beacons.html#when-to-include-a-trace">when one is due</a>, and preserve the request’s region codes on both flooded and source-routed returns.</p>
 <p><strong>Duplicates.</strong> An authenticated frame that replay detection identifies as
 a previously accepted frame—typically a retransmission whose original
 ack was lost—is not queued again, but the device <strong>MAY</strong> retransmit its
@@ -741,12 +763,13 @@ provisioned peer re-establishes that peer’s baseline at face value,
 exactly as on first contact (see
 <a href="security.html#counter-resynchronization">Counter Resynchronization</a>). The
 consequence is that after a reboot, previously captured authenticated
-frames may be accepted, queued, and acknowledged if replayed in a counter
-sequence acceptable from the newly established baseline. The host MAC
-remains authoritative for duplicate suppression when the frames are
-eventually delivered, so this creates a limited availability and
-resource-consumption window (queue slots and delegated acks), but it does
-not permit forgery or duplicate application delivery. Implementations
+frames may be accepted, queued, acknowledged, and given a
+<a href="#receipt-cues">receipt cue</a> if replayed in a counter sequence acceptable
+from the newly established baseline. The host MAC remains authoritative
+for duplicate suppression when the frames are eventually delivered, so
+this creates a limited availability and resource-consumption window
+(queue slots, delegated acks, and receipt cues), but it does not permit
+forgery or duplicate application delivery. Implementations
 concerned about this threat <strong>MAY</strong> persist a compact per-peer counter
 watermark (batched or range-reserved to limit flash wear), but hosts
 <strong>MUST NOT</strong> assume they do.</p>
@@ -766,14 +789,14 @@ frame itself teaches, the way a host MAC routes an ack from the route that
 frame just taught it (see <a href="beacons.html#route-learning">Route Learning</a>); the
 device holds no other routing state for the host’s peers:</p>
 <ul>
-<li>A frame carrying a trace-route option is acknowledged down that trace as
-the ack’s source route; the trace is accumulated most-recent first, so it
+<li>A frame carrying a complete <a href="packet-options.html#trace-option-7">trace</a> is
+acknowledged down its router hints as the ack’s source route; the trace is accumulated most-recent first, so it
 already reads in return order. An empty trace is a direct neighbor and
 gets a direct ack.</li>
-<li>A frame carrying no trace but a flood hop count gets <code>FHOPS_REM</code>
+<li>A frame carrying no complete trace but a flood hop count gets <code>FHOPS_REM</code>
 initialized from its <code>FHOPS_ACC</code>, with any region-code options replayed.
 An <code>FHOPS_ACC</code> of zero is a direct neighbor.</li>
-<li>A frame carrying a source-route option and no trace—including an
+<li>A frame carrying a source-route option and no complete trace—including an
 emptied option, which the last repeater keeps for provenance—spent flood
 hops only past the route’s end, so its <code>FHOPS_ACC</code> is not a distance. The
 ack floods at a default budget of 5 flood hops, or at one more than
@@ -784,20 +807,21 @@ sender’s own transmitter and is acknowledged directly.</li>
 <p>Each way back carries the <a href="beacons.html#scoping-flood-hops-to-a-known-route">margin</a>
 its last hop earns, judged from the acknowledged frame alone, since the
 device knows nothing else about the sender: the reception itself for a
-direct neighbor, the earliest trace-signal entry for a traced path, and no
+direct neighbor, the earliest trace record’s signal for a traced path, and no
 measurement for a flood distance. A re-ack of a duplicate (see
 <strong>Duplicates</strong> above) always carries the margin. An ack with no margin and
-no route is sent with no flood hop count and no trace route, which could
+no route is sent with no flood hop count and no trace, which could
 only arrive empty.</p>
-<p>An ack a repeater may carry includes a trace route when the frame arrived with
-<code>FHOPS_ACC</code> greater than zero or carried a trace route of its own, so the sender
+<p>An ack a repeater may carry includes a trace when the frame arrived with
+<code>FHOPS_ACC</code> greater than zero or carried a trace of its own, so the sender
 learns the return path from the only frame an ack-only exchange gives it.</p>
 <p>Delegated ack transmissions use the device’s normal transmit path and are
 subject to the configured duty-cycle limit; the device <strong>MUST NOT</strong> exceed the
 limit to send an ack. An ack that cannot be sent leaves the queued frame
 marked unacknowledged.</p>
-<p>Frames that are accepted but fail any of conditions 2–5—no peer key, no
-channel key, authentication impossible to evaluate—are still queued
+<p>Frames that are accepted but fail any of conditions 2–6—no peer key, no
+channel key, authentication impossible to evaluate, an unrecognized
+delivery-critical option—are still queued
 (subject to filtering); they are simply not acknowledged. The host
 performs its own verification after draining and may ack late if the
 application finds that useful.</p>

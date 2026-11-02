@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c13fe809.js";
+            window.path_to_searchindex_js = "searchindex-770b44e1.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-7fd6cf8e.js"></script>
+        <script src="toc-517aa7d9.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -198,8 +198,9 @@ Interface</a>), the device identity is also
 the messaging identity of whoever carries the device: its conversations
 are held under it, and its peers address it. Such a device advertises
 the <code>TXT</code> capability bit (see <a href="node-identity.html#capability-bitmap">Capability
-Bitmap</a>) and derives its role as
-<code>Chat</code> (see <a href="#prop-ident-role"><code>PROP_IDENT_ROLE</code></a>).</p>
+Bitmap</a>), derives its role as
+<code>Chat</code> (see <a href="#prop-ident-role"><code>PROP_IDENT_ROLE</code></a>), and advertises itself
+as mobile by default (see <a href="#prop-ident-mobile"><code>PROP_IDENT_MOBILE</code></a>).</p>
 <p><strong>A device identity always exists.</strong> A device advertising
 <code>CAP_DEV_IDENTITY</code> that finds no stored keypair at power-on <strong>MUST</strong>
 generate one from a cryptographic random source and persist it before
@@ -252,7 +253,7 @@ holds the channels the messaging interface starts out on: the
 <tr><td>38</td><td><code>CAP_DEV_NAME</code></td><td>—</td><td><code>PROP_DEV_NAME</code></td></tr>
 <tr><td>39</td><td><code>CAP_BATTERY</code></td><td>—</td><td>Battery-powered operation and <code>PROP_BATTERY</code></td></tr>
 <tr><td>40</td><td><code>CAP_REPEATER</code></td><td><code>CAP_DEV_IDENTITY</code></td><td>Autonomous repeater forwarding by the device identity: <code>PROP_MAC_REPEATER_ENABLED</code>, <code>PROP_MAC_REPEATER_REGIONS</code>, <code>PROP_MAC_REPEATER_DEFAULT_REGION</code>, <code>PROP_MAC_REPEATER_MIN_RSSI</code>, <code>PROP_MAC_REPEATER_MIN_SNR</code></td></tr>
-<tr><td>41</td><td><code>CAP_IDENT</code></td><td><code>CAP_DEV_IDENTITY</code></td><td><code>PROP_IDENT</code>, <code>PROP_IDENT_ROLE</code>, <code>PROP_IDENT_MOBILE</code>, <code>PROP_IDENT_LOCATION</code>, <code>PROP_IDENT_ALTITUDE</code>—serving and configuring the device identity’s advertised node identity</td></tr>
+<tr><td>41</td><td><code>CAP_IDENT</code></td><td><code>CAP_DEV_IDENTITY</code></td><td><code>PROP_IDENT</code>, <code>PROP_IDENT_ROLE</code>, <code>PROP_IDENT_MOBILE</code>, <code>PROP_IDENT_LOCATION</code>, <code>PROP_IDENT_ALTITUDE</code>, <code>PROP_IDENT_CONTACT</code>—serving and configuring the device identity’s advertised node identity</td></tr>
 <tr><td>42</td><td><code>CAP_ALERT</code></td><td>—</td><td>Some means of making the device physically conspicuous on demand, and <code>PROP_ALERT</code></td></tr>
 <tr><td>44</td><td><code>CAP_TIME</code></td><td>—</td><td>A wall clock: <code>PROP_TIME</code>, <code>PROP_TZ_RULE</code>, <code>PROP_TIME_24H</code></td></tr>
 <tr><td>45</td><td><code>CAP_GNSS</code></td><td><code>CAP_TIME</code></td><td>A GNSS receiver: <code>PROP_GNSS_ENABLED</code>, <code>PROP_GNSS_LOCATION</code>, <code>PROP_GNSS_ALTITUDE</code>, <code>PROP_GNSS_FIX</code>, <code>PROP_GNSS_PRECISION</code>, <code>PROP_GNSS_SATELLITES</code>, <code>PROP_GNSS_IDENT_UPDATE</code>, <code>PROP_GNSS_IDENT_PRECISION</code>, <code>PROP_GNSS_TIME_TRUST</code></td></tr>
@@ -261,8 +262,9 @@ holds the channels the messaging interface starts out on: the
 <tr><td>59</td><td><code>CAP_DISPLAY_MOTION_WAKE</code></td><td>—</td><td>Orientation-qualified display wake and <code>PROP_DISPLAY_MOTION_WAKE_ENABLED</code></td></tr>
 <tr><td>61</td><td><code>CAP_TEMPERATURE</code></td><td>—</td><td><code>PROP_TEMPERATURES</code> and <code>PROP_TEMPERATURE_NAMES</code>; the inventory may initially be empty</td></tr>
 <tr><td>62</td><td><code>CAP_MESHCORE_FORWARDER</code></td><td><code>CAP_REPEATER</code></td><td><a href="#meshcore-forwarding">MeshCore forwarding</a>: <code>PROP_MESHCORE_FORWARDING_ENABLED</code>, <code>PROP_MESHCORE_REGION_POLICY</code>, <code>PROP_MESHCORE_REGIONS</code>; with <code>CAP_STATS</code>, the <a href="ulcp-radio.html#prop-stat-meshcore-seen">MeshCore counters</a></td></tr>
-<tr><td>64</td><td><code>CAP_DISPLAY_BRIGHTNESS</code></td><td>—</td><td>A screen whose brightness can be set, and <a href="#prop-display-brightness"><code>PROP_DISPLAY_BRIGHTNESS</code></a></td></tr>
-<tr><td>65</td><td><code>CAP_KEYBOARD</code></td><td>—</td><td>A keyboard of the device’s own: <a href="#prop-keyboard-light"><code>PROP_KEYBOARD_LIGHT</code></a>, <a href="#prop-keyboard-aids"><code>PROP_KEYBOARD_AIDS</code></a></td></tr>
+<tr><td>64</td><td><code>CAP_DISPLAY</code></td><td>—</td><td>A screen of the device’s own: <a href="#prop-display-brightness"><code>PROP_DISPLAY_BRIGHTNESS</code></a>, <a href="#prop-display-timeout"><code>PROP_DISPLAY_TIMEOUT</code></a></td></tr>
+<tr><td>65</td><td><code>CAP_KEYBOARD</code></td><td>—</td><td>A keyboard of the device’s own: <a href="#prop-keyboard-light"><code>PROP_KEYBOARD_LIGHT</code></a>, <a href="#prop-keyboard-aids"><code>PROP_KEYBOARD_AIDS</code></a>, <a href="#prop-setup-complete"><code>PROP_SETUP_COMPLETE</code></a></td></tr>
+<tr><td>66</td><td><code>CAP_SOUND</code></td><td>—</td><td>A sounder the device plays optional sounds on: <a href="#prop-sound-enabled"><code>PROP_SOUND_ENABLED</code></a>, <a href="#prop-sound-volume"><code>PROP_SOUND_VOLUME</code></a></td></tr>
 </tbody>
 </table>
 </div>
@@ -309,21 +311,22 @@ well-formed request carrying every default.</p>
 </div>
 <dl>
 <dt id="announce_kind"><a class="header" href="#announce_kind"><code>ANNOUNCE_KIND</code></a></dt>
-<dd>An advertisement carries the device’s signed
-<a href="node-identity.html">node identity</a>; a beacon carries no payload at all.</dd>
+<dd>An advertisement carries the device’s
+<a href="node-identity.html">node identity</a> in a
+<a href="security.html#frame-signatures">signed frame</a>; a beacon carries no
+payload at all.</dd>
 <dt id="announce_flood_hops"><a class="header" href="#announce_flood_hops"><code>ANNOUNCE_FLOOD_HOPS</code></a></dt>
 <dd>The flood budget the frame goes out with (<code>FHOPS_REM</code>, see
 <a href="packet-structure.html">Packet Structure</a>). Zero sends no flood-hop field,
 reaching only the nodes that hear the device directly. A frame carrying
-a budget also carries the <a href="packet-options.html#trace-route-option-2">Trace
-Route</a> and <a href="packet-options.html#trace-signal-option-10">Trace
-Signal</a> options, so what
-arrives at a distant node is a usable path back; a beacon carries both
-at any budget, a path being what a beacon publishes.</dd>
+a budget also carries the <a href="packet-options.html#trace-option-7">Trace</a>
+option, so what arrives at a distant node is a usable path back; a
+beacon carries it at any budget, a path being what a beacon publishes.</dd>
 <dt id="announce_full_source"><a class="header" href="#announce_full_source"><code>ANNOUNCE_FULL_SOURCE</code></a></dt>
 <dd>Whether <code>SRC</code> is the 32-byte public key rather than the 3-byte hint. An
-advertisement’s detached signature is only checkable against the full
-key, hence its default; a beacon has nothing to check and defaults to
+advertisement’s frame signature is checkable only against the
+device’s key, which a listener that has not met the device holds only
+from a full <code>SRC</code>, hence its default; a beacon has nothing to check and defaults to
 the hint. A host may override either way.</dd>
 <dt id="announce_channel"><a class="header" href="#announce_channel"><code>ANNOUNCE_CHANNEL</code></a></dt>
 <dd>Send as multicast on the device channel whose full
@@ -416,6 +419,7 @@ device range, alongside the wall clock at 4866 and 4888–4889.</p>
 <tr><td>82</td><td><code>PROP_STARTUP_BEACON</code></td><td>Get, Set</td><td>Whether a beacon goes out at bring-up</td></tr>
 <tr><td>83</td><td><code>PROP_IDENT_LOCATION</code></td><td>Get, Set</td><td>Position the advertised node identity carries</td></tr>
 <tr><td>84</td><td><code>PROP_IDENT_ALTITUDE</code></td><td>Get, Set</td><td>Altitude the advertised node identity carries</td></tr>
+<tr><td>85</td><td><code>PROP_IDENT_CONTACT</code></td><td>Get</td><td>Signed node identity for keeping as a contact</td></tr>
 <tr><td>88</td><td><code>PROP_GNSS_ENABLED</code></td><td>Get, Set</td><td>Whether the GNSS receiver is powered</td></tr>
 <tr><td>89</td><td><code>PROP_GNSS_LOCATION</code></td><td>Get, Is</td><td>Position of the last fix</td></tr>
 <tr><td>90</td><td><code>PROP_GNSS_ALTITUDE</code></td><td>Get</td><td>Altitude of the last fix</td></tr>
@@ -427,8 +431,13 @@ device range, alongside the wall clock at 4866 and 4888–4889.</p>
 <tr><td>4876</td><td><code>PROP_TEMPERATURE_NAMES</code></td><td>Get</td><td>Ordered temperature sensor names</td></tr>
 <tr><td>4875</td><td><code>PROP_DISPLAY_MOTION_WAKE_ENABLED</code></td><td>Get, Set, Is</td><td>Whether movement wakes the display</td></tr>
 <tr><td>4877</td><td><code>PROP_DISPLAY_BRIGHTNESS</code></td><td>Get, Set, Is</td><td>Screen brightness</td></tr>
+<tr><td>4890</td><td><code>PROP_DISPLAY_TIMEOUT</code></td><td>Get, Set, Is</td><td>How long the screen stays lit without input</td></tr>
 <tr><td>4878</td><td><code>PROP_KEYBOARD_LIGHT</code></td><td>Get, Set, Is</td><td>Whether the keyboard is lit while the screen is</td></tr>
 <tr><td>4879</td><td><code>PROP_KEYBOARD_AIDS</code></td><td>Get, Set, Is</td><td>Typing aids in effect</td></tr>
+<tr><td>4891</td><td><code>PROP_SOUND_ENABLED</code></td><td>Get, Set, Is</td><td>Whether optional sounds are played</td></tr>
+<tr><td>4892</td><td><code>PROP_SOUND_VOLUME</code></td><td>Get, Set, Is</td><td>How loud optional sounds are played</td></tr>
+<tr><td>4893</td><td><code>PROP_SETUP_COMPLETE</code></td><td>Get, Set, Is</td><td>Whether the device has been set up through its own interface</td></tr>
+<tr><td>4894</td><td><code>PROP_TEST_MESSAGE_ALERTS</code></td><td>Get, Set, Is</td><td>Whether test messages on <code>EMERGENCY</code> call for attention</td></tr>
 <tr><td>4866</td><td><code>PROP_TIME</code></td><td>Get, Set, Is</td><td>Wall clock, or empty when unknown</td></tr>
 <tr><td>4888</td><td><code>PROP_TZ_RULE</code></td><td>Get, Set, Is</td><td>Local time zone, as a POSIX TZ rule</td></tr>
 <tr><td>4889</td><td><code>PROP_TIME_24H</code></td><td>Get, Set, Is</td><td>Whether shown clocks use 24-hour time</td></tr>
@@ -1160,10 +1169,14 @@ locally and a peer hearing it on the mesh cannot disagree about what the
 device is. It differs from that response in exactly two ways, both
 structural: it carries no request nonce, and it is authenticated by the
 signature rather than by an enclosing authenticated unicast.</p>
-<p>The contents are nonce-free and timestamp-free, so the value is a
-function of the device’s configuration alone. A device <strong>MAY</strong> cache it,
-but is not required to: reading this property is an operator-scale
-event.</p>
+<p>The contents are nonce-free. They carry the <a href="node-identity.html#unix-timestamp-option-3">Unix
+Timestamp</a> when the device
+knows the time, so each read is signed afresh; reading this property is
+an operator-scale event.</p>
+<p>What the device advertises can include where it is, which is right for a
+statement heard now and wrong for one kept. An identity meant to be kept—
+in a QR code, a contact link, a contact exchange—is
+<a href="#prop-ident-contact"><code>PROP_IDENT_CONTACT</code></a>.</p>
 <h3 id="prop-ident-role"><a class="header" href="#prop-ident-role">PROP 72: <code>PROP_IDENT_ROLE</code></a></h3>
 <ul>
 <li>Type: Single-Value, Read-Write</li>
@@ -1175,8 +1188,12 @@ event.</p>
 <p>The <code>ROLE</code> byte the device identity advertises (see <a href="node-identity.html#node-primary-role">Node
 Primary Role</a>).</p>
 <p>An <strong>empty</strong> value—the factory default—means the device derives the
-role from what it is actually doing: <code>Repeater</code> while
-<code>PROP_MAC_REPEATER_ENABLED</code> is set, <code>Tracker</code> otherwise. On a device
+role from what it is actually doing. While <code>PROP_MAC_REPEATER_ENABLED</code>
+is set, it derives <code>Bridge</code> if the device node also has a link beyond
+its radio—<a href="ulcp-host.html#prop-mac-backhaul"><code>PROP_MAC_BACKHAUL</code></a> is set,
+or the <a href="ulcp-bridge.html">bridge client</a> is enabled with a host and server
+key—and <code>Repeater</code> if it does not. Otherwise it derives <code>Tracker</code>,
+whatever links it has. On a device
 whose device identity is a messaging identity (see <a href="#device-identity">The Device
 Identity</a>), it derives <code>Chat</code> whether or not the device
 forwards. Any other value is advertised verbatim.</p>
@@ -1196,10 +1213,14 @@ and the mesh has no business knowing it.</p>
 <li>Asynchronous Updates: No</li>
 <li>Required: <code>CAP_IDENT</code></li>
 <li>Value Type: BOOL</li>
-<li>Post-Reset Value: 0 (false), or restored from saved state</li>
+<li>Post-Reset Value: 1 (true) on a device whose device identity is a
+messaging identity, 0 (false) on any other; or restored from saved
+state</li>
 </ul>
 <p>Whether the device identity advertises the mobile capability bit: true
-for a device that moves, false for one installed in a fixed location.</p>
+for a device that moves, false for one installed in a fixed location. A
+device with a messaging identity is carried by its person, so it starts
+out mobile.</p>
 <p>Orthogonal to <code>PROP_IDENT_ROLE</code> and to <code>PROP_MAC_REPEATER_ENABLED</code>, and
 orthogonal to whether a host is tethered. A hand-carried repeater and a
 pole-mounted sensor are both ordinary configurations.</p>
@@ -1450,7 +1471,8 @@ runs unattended on a device that may already be low, it is expected to be
 intermittent rather than continuous, and it does not defer or inhibit a
 protective shutdown.</p>
 <p><strong>The alert overrides local quiet settings.</strong> A device whose buzzer has
-been silenced through a local control still sounds <code>ALERT_LOCATE</code>:
+been silenced, through a local control or
+<a href="#prop-sound-enabled"><code>PROP_SOUND_ENABLED</code></a>, still sounds <code>ALERT_LOCATE</code>:
 locating a misplaced radio is precisely the case that silencing must not
 defeat. The alert <em>suspends</em> the local setting rather than changing it,
 so clearing the alert leaves the device as quiet as it was before.</p>
@@ -1478,8 +1500,8 @@ deadline, which is how a host holds an alert open for a longer search.</li>
 <li>Post-Reset Value: 14400 (four hours), or restored from saved state</li>
 </ul>
 <p>Seconds between unsolicited <a href="beacons.html">advertisements</a>—broadcasts
-carrying the device’s signed <a href="node-identity.html">node identity</a>. Zero
-sends none.</p>
+carrying the device’s <a href="node-identity.html">node identity</a> in a signed
+frame. Zero sends none.</p>
 <p>An automatic advertisement is sent with no flood hops and no source
 route, so it reaches the nodes that can hear the device directly and
 stops there. It is the largest frame the device originates, and what it
@@ -1489,8 +1511,9 @@ of all proportion to what a distant listener learns. A device that wants
 to be findable further away publishes a path with
 <a href="#prop-beacon-interval"><code>PROP_BEACON_INTERVAL</code></a> instead, which costs a
 fraction as much.</p>
-<p>Because the advertisement is a signed broadcast, it carries its source
-in full-key form (§<a href="node-identity.html">Node Identity</a>).</p>
+<p>Because the advertisement is a signed broadcast meant for listeners that
+may not hold the device’s key, it carries its source in full-key form
+(§<a href="node-identity.html#signature-usage">Signature Usage</a>).</p>
 <p>A device <strong>MUST</strong> reject a non-zero interval outside 1200 seconds
 (twenty minutes) to 86400 seconds (twenty-four hours) with
 <code>STATUS_INVALID_ARGUMENT</code>. Neither bound is an airtime control—the
@@ -1519,11 +1542,10 @@ other’s timing.</p>
 </ul>
 <p>Seconds between unsolicited <a href="beacons.html">beacons</a>—broadcasts with no
 payload at all. Zero sends none.</p>
-<p>A beacon is sent with a flood budget and both the <a href="packet-options.html#trace-route-option-2">Trace
-Route</a> and <a href="packet-options.html#trace-signal-option-10">Trace
-Signal</a> options, so what
-arrives at a distant node is a usable path back to the device and the
-signal quality of every hop along it. What it does not carry is any
+<p>A beacon is sent with a flood budget and the
+<a href="packet-options.html#trace-option-7">Trace</a> option, so what arrives at a
+distant node is a usable path back to the device and the signal quality
+of every hop along it. What it does not carry is any
 statement of who the device is: that is what an advertisement is for,
 and a listener that has never met this device learns only that something
 with a given source hint is reachable.</p>
@@ -1611,6 +1633,29 @@ it, so a host that pads to a fixed width is understood. A device
 <p>An <strong>empty</strong> value means no altitude is advertised. A device that
 advertises no <a href="ulcp-device.html#prop-ident-location">location</a> advertises
 no altitude either: an altitude alone places nothing.</p>
+<h3 id="prop-ident-contact"><a class="header" href="#prop-ident-contact">PROP 85: <code>PROP_IDENT_CONTACT</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Only</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_IDENT</code></li>
+<li>Value Type: Signed node-identity payload</li>
+</ul>
+<p>The device identity’s signed <a href="node-identity.html">node identity</a> as a
+statement to be kept: in a QR code, a contact link, or a contact
+exchange. It is built from the same role, capabilities, and options as
+<a href="#prop-ident"><code>PROP_IDENT</code></a>, with these left out:</p>
+<ul>
+<li><strong>Node Location</strong> (option 1) and <strong>Altitude in Meters</strong> (option 2),
+when the identity carries the mobile capability bit. A kept position
+goes stale and travels wherever the contact does; a node that does
+not move keeps its position, which is worth handing out.</li>
+<li><strong>Supported Flood Regions</strong> (option 4). They are forwarding policy,
+which changes, not part of who the node is.</li>
+<li><strong>Nonce</strong> (option 5), which no standalone identity carries.</li>
+</ul>
+<p>It carries the <a href="node-identity.html#unix-timestamp-option-3">Unix Timestamp</a>
+when the device knows the time, which is what lets whoever holds it judge
+how old it is. Like <code>PROP_IDENT</code>, it is signed afresh on each read.</p>
 <h3 id="prop-gnss-enabled"><a class="header" href="#prop-gnss-enabled">PROP 88: <code>PROP_GNSS_ENABLED</code></a></h3>
 <ul>
 <li>Type: Single-Value, Read-Write</li>
@@ -2080,7 +2125,7 @@ samples; small oscillations do not accumulate. This check belongs to the display
 policy and does not suppress native movement observations for other consumers.
 Exceptionally slow pickups, or pickups completed before verification begins,
 may not qualify. This does not identify every kind of bed or pocket movement.</p>
-<h2 id="display-brightness-and-keyboard"><a class="header" href="#display-brightness-and-keyboard">Display Brightness and Keyboard</a></h2>
+<h2 id="display-and-keyboard"><a class="header" href="#display-and-keyboard">Display and Keyboard</a></h2>
 <p>A device with a screen and keyboard of its own exposes their settings in
 the device domain, so they are saved with the rest of its configuration
 and reachable from wherever it is administered.</p>
@@ -2088,7 +2133,7 @@ and reachable from wherever it is administered.</p>
 <ul>
 <li>Type: Single-Value, Read-Write</li>
 <li>Asynchronous Updates: Yes</li>
-<li>Required: <code>CAP_DISPLAY_BRIGHTNESS</code></li>
+<li>Required: <code>CAP_DISPLAY</code></li>
 <li>Value Type: UINT8</li>
 <li>Post-Reset Value: device-defined, or restored from saved state</li>
 </ul>
@@ -2098,6 +2143,29 @@ screen that is readable unlit, such as e-paper under a front light, 0
 turns the light off.</p>
 <p>The levels in between are the device’s to map onto its screen, and it
 reports the value written.</p>
+<h3 id="prop-display-timeout"><a class="header" href="#prop-display-timeout">PROP 4890: <code>PROP_DISPLAY_TIMEOUT</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: Yes</li>
+<li>Required: <code>CAP_DISPLAY</code></li>
+<li>Value Type: UINT16</li>
+<li>Post-Reset Value: device-defined, or restored from saved state</li>
+</ul>
+<p>How long, in seconds, the screen stays lit after the last input while it
+is in use, before it goes dark. A device that dims its screen as a warning
+does so within this time, not after it. On a screen that is readable
+unlit, such as e-paper under a front light, it is how long until the light
+goes out and the screen returns to where it rests.</p>
+<p>0 is never: no amount of time without input darkens the screen. The
+device still darkens it when asked to, such as by a control that locks
+it.</p>
+<p>The value governs the screen in use, not a locked one: how long a locked
+screen stays lit is the device’s to decide, and is never longer than this
+value when this value is not 0.</p>
+<p>A device keeps 0, or a value of 10 or more. A write of 1 to 9 is applied
+as 10, and answered with the value applied. A device that cannot keep its
+screen lit as long as a value asks applies the longest it can, and answers
+with that.</p>
 <h3 id="prop-keyboard-light"><a class="header" href="#prop-keyboard-light">PROP 4878: <code>PROP_KEYBOARD_LIGHT</code></a></h3>
 <ul>
 <li>Type: Single-Value, Read-Write</li>
@@ -2133,6 +2201,75 @@ answered <code>STATUS_INVALID_ARGUMENT</code>.</p>
 <p>All three properties are included in <code>CMD_SAVE</code>, and are asynchronous
 because the device’s own controls change them (see <a href="ulcp-saved-state.html#changes-made-at-the-device">Changes Made at the
 Device</a>).</p>
+<h2 id="sound"><a class="header" href="#sound">Sound</a></h2>
+<p>A device with a sounder of its own exposes whether it plays optional
+sounds, and how loud, in the device domain, so the choice is saved with
+the rest of its configuration and reachable from wherever it is
+administered.</p>
+<h3 id="prop-sound-enabled"><a class="header" href="#prop-sound-enabled">PROP 4891: <code>PROP_SOUND_ENABLED</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: Yes</li>
+<li>Required: <code>CAP_SOUND</code></li>
+<li>Value Type: BOOL</li>
+<li>Post-Reset Value: 1 (true), or restored from saved state</li>
+</ul>
+<p>Whether the device plays its optional sounds: the notifications and
+feedback cues it makes of its own accord. Cleared, the device makes none
+of them.</p>
+<p>It governs sound alone. Haptics and visual indication are unaffected, and
+a <a href="#prop-alert">locate alert</a> sounds whatever this property says.</p>
+<h3 id="prop-sound-volume"><a class="header" href="#prop-sound-volume">PROP 4892: <code>PROP_SOUND_VOLUME</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: Yes</li>
+<li>Required: <code>CAP_SOUND</code></li>
+<li>Value Type: UINT8</li>
+<li>Post-Reset Value: device-defined, or restored from saved state</li>
+</ul>
+<p>How loud the device plays its optional sounds. 255 is the loudest it plays
+them, and 0 the quietest level that is not silent: volume never silences
+the device, which is <a href="#prop-sound-enabled"><code>PROP_SOUND_ENABLED</code></a>’s to do.</p>
+<p>The levels in between are the device’s to map onto its sounder, and it
+reports the value written. A locate alert is not governed by this
+property: it sounds as loud as the device makes it.</p>
+<p>Both properties are included in <code>CMD_SAVE</code>, and are asynchronous because
+the device’s own controls change them (see <a href="ulcp-saved-state.html#changes-made-at-the-device">Changes Made at the
+Device</a>).</p>
+<h2 id="setup"><a class="header" href="#setup">Setup</a></h2>
+<p>A device with a messaging interface of its own says whether it has been
+set up through that interface, so a host can tell a device new from the
+box, or from a factory reset, from one already in use.</p>
+<h3 id="prop-setup-complete"><a class="header" href="#prop-setup-complete">PROP 4893: <code>PROP_SETUP_COMPLETE</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: Yes</li>
+<li>Required: <code>CAP_KEYBOARD</code></li>
+<li>Value Type: BOOL</li>
+<li>Post-Reset Value: 0 (false), or restored from saved state</li>
+</ul>
+<p>Whether the device has been set up through its own interface. The device
+sets it when its first-run setup finishes. While it is clear, unlocking
+the device’s interface opens that setup, so a host that clears it sends
+whoever holds the device through setup again, and one that sets it skips
+setup.</p>
+<p>The property is included in <code>CMD_SAVE</code>, so <code>CMD_FACTORY_RESET</code> clears it
+with the rest of the saved state. It is asynchronous because the device
+sets it itself (see <a href="ulcp-saved-state.html#changes-made-at-the-device">Changes Made at the
+Device</a>).</p>
+<h3 id="prop-test-message-alerts"><a class="header" href="#prop-test-message-alerts">PROP 4894: <code>PROP_TEST_MESSAGE_ALERTS</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: Yes</li>
+<li>Value Type: BOOL</li>
+<li>Post-Reset Value: 0 (false), or restored from saved state</li>
+</ul>
+<p>Whether <a href="app-text-messages.html#test-messages">test messages</a> on <code>EMERGENCY</code>
+call for attention like any other message. Cleared, a test message earns
+no <a href="ulcp-host.html#receipt-cues">receipt cue</a>, and a device with an
+interface of its own neither alerts for it nor counts it unread. The
+message is still queued, stored, and shown.</p>
+<p>The property is included in <code>CMD_SAVE</code>.</p>
 
                     </main>
 

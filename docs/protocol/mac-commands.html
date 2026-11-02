@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c13fe809.js";
+            window.path_to_searchindex_js = "searchindex-770b44e1.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-7fd6cf8e.js"></script>
+        <script src="toc-517aa7d9.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -266,12 +266,11 @@ path it was steered down.</li>
 that option emptied, since each repeater consumes its own hint. The nodes there
 are strangers to the requester: they hold no route to it, and their replies carry
 no flood budget for a repeater to spend. Such a request therefore carries a
-<a href="packet-options.html#trace-route-option-2">Trace Route option</a>, and a node answering
+<a href="packet-options.html#trace-option-7">Trace option</a>, and a node answering
 it sends the response as a source route built from the trace the request arrived
-with. Repeaters prepend when forwarding, so the accumulated trace already reads
+with, when that trace is complete. Repeaters prepend when forwarding, so the accumulated trace already reads
 as the path back and is used as-is, without reversal.</p>
-<p>The response carries a Trace Route option of its own, and a <a href="packet-options.html#trace-signal-option-10">Trace
-Signal</a> where the request carried one.
+<p>The response carries a Trace option of its own.
 The trace on the request is what taught the responder a path home, and it taught
 the requester nothing: a broadcast solicitation leaves no route behind at the
 requester, and the response reaches it with its own Route option consumed and its
@@ -279,7 +278,7 @@ requester, and the response reaches it with its own Route option consumed and it
 the requester ends the exchange holding no route to the node it just identified.
 A broadcast solicitation names no responder, so even one that arrived without
 flooding gives the requester no path to whoever answers it; the response traces
-regardless of the <a href="beacons.html#when-to-include-a-trace-route">general rule</a>.</p>
+regardless of the <a href="beacons.html#when-to-include-a-trace">general rule</a>.</p>
 <p>A repeater consumes its own hint while forwarding, not while receiving, so a
 request whose Route option still names a repeater is one that repeater drops.
 Asking a named router to identify itself therefore means steering the request to
@@ -309,7 +308,7 @@ Non-filter options (such as NONCE) do not participate in this matching.</p>
 </thead>
 <tbody>
 <tr><td style="text-align: right">1</td><td>Yes</td><td>NONCE</td><td>4 bytes</td><td>Correlation identifier the responder MUST echo in its response’s <a href="node-identity.html#nonce-option-5">Nonce option</a>. Not a filter.</td></tr>
-<tr><td style="text-align: right">3</td><td>Yes</td><td>FILTER_NODE_HINT</td><td>1–3 bytes</td><td>Respond only if this is a leading part of the responder’s own <a href="addressing.html#node-hint">node hint</a>. A 3-byte value is the whole hint; a 2-byte value is the <a href="addressing.html#router-hint">router hint</a>, which is all a <a href="packet-options.html#source-route-option-3">Source Route</a> or <a href="packet-options.html#trace-route-option-2">Trace Route</a> reveals about the hops it names. A zero-length value matches nothing.</td></tr>
+<tr><td style="text-align: right">3</td><td>Yes</td><td>FILTER_NODE_HINT</td><td>1–3 bytes</td><td>Respond only if this is a leading part of the responder’s own <a href="addressing.html#node-hint">node hint</a>. A 3-byte value is the whole hint; a 2-byte value is the <a href="addressing.html#router-hint">router hint</a>, which is all a <a href="packet-options.html#source-route-option-3">Source Route</a> or <a href="packet-options.html#trace-option-7">Trace</a> reveals about the hops it names. A zero-length value matches nothing.</td></tr>
 <tr><td style="text-align: right">5</td><td>Yes</td><td>FILTER_NODE_ROLE</td><td>1 byte</td><td>Respond only if the responder’s <a href="node-identity.html#node-primary-role">primary role</a> equals this value.</td></tr>
 <tr><td style="text-align: right">7</td><td>Yes</td><td>FILTER_NODE_CAPS</td><td>1 byte</td><td>Respond only if the responder’s <a href="node-identity.html#capability-bitmap">capability bitmap</a> has every bit set that is set in this value.</td></tr>
 </tbody>
@@ -361,7 +360,7 @@ Non-filter options (such as NONCE) do not participate in this matching.</p>
 </tbody>
 </table>
 </div>
-<p>The response SHOULD carry the same <a href="packet-options.html#trace-route-option-2">trace route</a> and <a href="packet-options.html#trace-signal-option-10">trace signal</a> options the request carried. An echo measures a path, and a response traced differently from the request measures a different one; pairing the two options is what makes the measurement per-hop rather than end to end.</p>
+<p>The response SHOULD carry a <a href="packet-options.html#trace-option-7">Trace option</a> when the request carried one. An echo measures a path, and a response traced differently from the request measures a different one; the per-hop signal in the two traces is what makes the measurement per-hop rather than end to end.</p>
 <h2 id="pfs-session-request-6"><a class="header" href="#pfs-session-request-6">PFS Session Request (6)</a></h2>
 <p>Initiates a PFS session. The sender generates a fresh ephemeral node address and transmits it along with a requested session duration. See <a href="security.html#perfect-forward-secrecy-sessions">Perfect Forward Secrecy Sessions</a> for the session establishment mechanism, key derivation, and wire-level privacy properties.</p>
 <div class="table-wrapper">
@@ -397,7 +396,7 @@ Non-filter options (such as NONCE) do not participate in this matching.</p>
 type that requests an ACK.</p>
 <h2 id="peer-repeaters-request-10"><a class="header" href="#peer-repeaters-request-10">Peer Repeaters Request (10)</a></h2>
 <p>Asks the destination—typically a repeater—for its list of known peer repeaters.</p>
-<p>The list is the responder’s repeater neighborhood: the repeaters it has heard from their own transmitters. A repeater enters it in one of two ways. Forwarding a frame the responder receives is one—a repeater prepends its router hint to the frame’s <a href="packet-options.html#trace-route-option-2">Trace Route</a>, so the first hint names the repeater whose transmission was just heard. Advertising is the other—a <a href="node-identity.html">node identity</a> claiming the repeater role or capability, heard directly rather than forwarded. Frames heard from nodes that are not repeaters, and identities that arrived through a repeater, put nothing in the list. Nor does anything naming the responder itself: a trace that begins with its own router hint, or its own identity. A neighbor need not be on the air: a repeater reached over a point-to-point link, such as an attached host, is listed the same way and simply carries no signal measurements.</p>
+<p>The list is the responder’s repeater neighborhood: the repeaters it has heard from their own transmitters. A repeater enters it in one of two ways. Forwarding a frame the responder receives is one—a repeater prepends its record to the frame’s <a href="packet-options.html#trace-option-7">Trace</a>, so the first hint names the repeater whose transmission was just heard. Advertising is the other—a <a href="node-identity.html">node identity</a> claiming the repeater role or capability, heard directly rather than forwarded. Frames heard from nodes that are not repeaters, and identities that arrived through a repeater, put nothing in the list. Nor does anything naming the responder itself: a trace that begins with its own router hint, or its own identity. A neighbor need not be on the air: a repeater reached over a point-to-point link, such as an attached host, is listed the same way and simply carries no signal measurements.</p>
 <p>The command-specific payload is a CoAP-style option list, using the delta-length encoding defined in <a href="packet-options.html#attribute-encoding">Packet Options</a>:</p>
 <div class="table-wrapper">
 <table>
@@ -480,7 +479,7 @@ type that requests an ACK.</p>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="node-identity.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="app-meet.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
@@ -494,7 +493,7 @@ type that requests an ACK.</p>
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="node-identity.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="app-meet.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 

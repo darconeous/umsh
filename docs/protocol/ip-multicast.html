@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c13fe809.js";
+            window.path_to_searchindex_js = "searchindex-770b44e1.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-7fd6cf8e.js"></script>
+        <script src="toc-517aa7d9.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -336,8 +336,8 @@ receives it from the group and repeats it. A repeat returns to the group,
 where every node has already seen the frame and suppresses it as a
 duplicate.</p>
 <p>A bridge that repeats a group reception prepends a
-<a href="packet-options.html#trace-signal-option-10">Trace Signal</a> entry of two zero
-bytes, the entry for a hop that measured nothing.</p>
+<a href="packet-options.html#trace-option-7">Trace</a> record with zero signal bytes,
+the record for a hop that measured nothing.</p>
 <p>The <a href="channel-access.html">duty cycle</a> a radio spends repeating group receptions
 counts against its limit like any other forward. Copies sent to the group
 spend no radio airtime.</p>

@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c13fe809.js";
+            window.path_to_searchindex_js = "searchindex-770b44e1.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-7fd6cf8e.js"></script>
+        <script src="toc-517aa7d9.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -229,16 +229,18 @@
 <p>5.3. If the source address is blacklisted, drop.</p>
 </li>
 <li>
-<p><strong>Payload type validation</strong></p>
+<p><strong>Payload type and option validation</strong></p>
 <ul>
 <li>If the payload type is not allowed for this packet type (see <a href="payload-format.html#payload-and-packet-type-compatibility">Payload and Packet Type Compatibility</a>), drop.</li>
+<li>If the packet carries a <a href="packet-options.html#forwarding-and-delivery-criticality">delivery-critical</a> option this node does not recognize, or whose value it cannot interpret, drop it and count the drop. The packet is not accepted, delivered, or acknowledged.</li>
 </ul>
 </li>
 <li>
 <p><strong>Replay and Ack Processing</strong></p>
 <ul>
+<li>If the packet carries a <a href="security.html#frame-signatures">frame signature</a>, verify it. A packet whose signature verifies is judged by the <a href="security.html#signed-frame-counters">signed-frame counter rules</a>; one whose signature does not verify continues as an unsigned packet.</li>
 <li>Apply the <a href="security.html#replay-detection">replay-detection rules</a>.</li>
-<li>If the packet is accepted as new and requests an ACK, the receiving node (i.e., the final destination) computes the <a href="security.html#ack-tag-construction">ack MIC and ack tag</a>—the first 4 bytes of the original packet’s MIC and a 4-byte keyed value from the full 16-byte S2V output and pairwise <code>K_enc</code>—prepares a MAC Ack packet, and adds it to the outbound queue. Repeaters do not generate acks—see <a href="packet-types.html#mac-ack-packet">MAC Ack Packet</a>.</li>
+<li>If the packet is accepted as new and requests an ACK, the receiving node (i.e., the final destination) computes the <a href="security.html#ack-tag-construction">ack MIC and ack tag</a>—the first 4 bytes of the original packet’s MIC and a 4-byte MIC under the pairwise <code>K_mic</code> over the ack’s own static options, bound to the original packet’s full 16-byte S2V output—prepares a MAC Ack packet, and adds it to the outbound queue. Repeaters do not generate acks—see <a href="packet-types.html#mac-ack-packet">MAC Ack Packet</a>.</li>
 <li>If the authenticated packet is a previously received packet within the bounded <a href="security.html#duplicate-acknowledgement-window">duplicate-acknowledgement window</a>, the receiver MAY prepare and queue its ACK again. This does not make the packet new or advance its replay state. Unless duplicate suppression is delegated to a host MAC, stop after queueing the ACK and do not process the application payload again.</li>
 <li>A <a href="mac-commands.html#verify-frame-12">Verify Frame</a> or <a href="mac-commands.html#frame-verified-13">Frame Verified</a> whose counter falls outside the window is processed as <a href="security.html#counter-resynchronization">Counter Resynchronization</a> describes rather than dropped.</li>
 <li>Otherwise, if replay detection rejects the packet, drop it without acknowledging it.</li>

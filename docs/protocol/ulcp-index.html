@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c13fe809.js";
+            window.path_to_searchindex_js = "searchindex-770b44e1.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-7fd6cf8e.js"></script>
+        <script src="toc-517aa7d9.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -263,6 +263,7 @@
 <tr><td>82</td><td><a href="ulcp-device.html#prop-startup-beacon"><code>PROP_STARTUP_BEACON</code></a></td><td>Get, Set</td><td><code>CAP_ADVERT</code></td></tr>
 <tr><td>83</td><td><a href="ulcp-device.html#prop-ident-location"><code>PROP_IDENT_LOCATION</code></a></td><td>Get, Set</td><td><code>CAP_IDENT</code></td></tr>
 <tr><td>84</td><td><a href="ulcp-device.html#prop-ident-altitude"><code>PROP_IDENT_ALTITUDE</code></a></td><td>Get, Set</td><td><code>CAP_IDENT</code></td></tr>
+<tr><td>85</td><td><a href="ulcp-device.html#prop-ident-contact"><code>PROP_IDENT_CONTACT</code></a></td><td>Get</td><td><code>CAP_IDENT</code></td></tr>
 <tr><td>88</td><td><a href="ulcp-device.html#prop-gnss-enabled"><code>PROP_GNSS_ENABLED</code></a></td><td>Get, Set</td><td><code>CAP_GNSS</code></td></tr>
 <tr><td>89</td><td><a href="ulcp-device.html#prop-gnss-location"><code>PROP_GNSS_LOCATION</code></a></td><td>Get, Is</td><td><code>CAP_GNSS</code></td></tr>
 <tr><td>90</td><td><a href="ulcp-device.html#prop-gnss-altitude"><code>PROP_GNSS_ALTITUDE</code></a></td><td>Get</td><td><code>CAP_GNSS</code></td></tr>
@@ -303,6 +304,7 @@
 <tr><td>4848</td><td><a href="ulcp-ip-multicast.html#counters"><code>PROP_STAT_LAN_EXPORTED</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_LAN_BEARER</code>, <code>CAP_REPEATER</code></td></tr>
 <tr><td>4849</td><td><a href="ulcp-ip-multicast.html#counters"><code>PROP_STAT_LAN_EXPORT_DROPPED</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_LAN_BEARER</code>, <code>CAP_REPEATER</code></td></tr>
 <tr><td>4850</td><td><a href="ulcp-radio.html#prop-stat-rx-own-hint"><code>PROP_STAT_RX_OWN_HINT</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_REPEATER</code></td></tr>
+<tr><td>4851</td><td><a href="ulcp-radio.html#prop-stat-radio-resets"><code>PROP_STAT_RADIO_RESETS</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code></td></tr>
 <tr><td>4864</td><td><a href="ulcp-ble.html#prop-ble-pairing-pin"><code>PROP_BLE_PAIRING_PIN</code></a></td><td>Set</td><td>BLE transport</td></tr>
 <tr><td>4865</td><td><a href="app-node-management.html#prop-dev-admins"><code>PROP_DEV_ADMINS</code></a></td><td>Get, Set, Insert, Remove</td><td><code>CAP_ADMIN</code></td></tr>
 <tr><td>4866</td><td><a href="ulcp-device.html#prop-time"><code>PROP_TIME</code></a></td><td>Get, Set, Is</td><td><code>CAP_TIME</code></td></tr>
@@ -315,7 +317,7 @@
 <tr><td>4874</td><td><a href="ulcp-ble.html#prop-ble-pairing"><code>PROP_BLE_PAIRING</code></a></td><td>Get, Set, Is</td><td><code>CAP_BLE</code></td></tr>
 <tr><td>4875</td><td><a href="ulcp-device.html#prop-display-motion-wake-enabled"><code>PROP_DISPLAY_MOTION_WAKE_ENABLED</code></a></td><td>Get, Set, Is</td><td><code>CAP_DISPLAY_MOTION_WAKE</code></td></tr>
 <tr><td>4876</td><td><a href="ulcp-device.html#prop-temperature-names"><code>PROP_TEMPERATURE_NAMES</code></a></td><td>Get</td><td><code>CAP_TEMPERATURE</code></td></tr>
-<tr><td>4877</td><td><a href="ulcp-device.html#prop-display-brightness"><code>PROP_DISPLAY_BRIGHTNESS</code></a></td><td>Get, Set, Is</td><td><code>CAP_DISPLAY_BRIGHTNESS</code></td></tr>
+<tr><td>4877</td><td><a href="ulcp-device.html#prop-display-brightness"><code>PROP_DISPLAY_BRIGHTNESS</code></a></td><td>Get, Set, Is</td><td><code>CAP_DISPLAY</code></td></tr>
 <tr><td>4878</td><td><a href="ulcp-device.html#prop-keyboard-light"><code>PROP_KEYBOARD_LIGHT</code></a></td><td>Get, Set, Is</td><td><code>CAP_KEYBOARD</code></td></tr>
 <tr><td>4879</td><td><a href="ulcp-device.html#prop-keyboard-aids"><code>PROP_KEYBOARD_AIDS</code></a></td><td>Get, Set, Is</td><td><code>CAP_KEYBOARD</code></td></tr>
 <tr><td>4880</td><td><a href="ulcp-wifi.html#prop-wifi-enabled"><code>PROP_WIFI_ENABLED</code></a></td><td>Get, Set, Is</td><td><code>CAP_WIFI</code></td></tr>
@@ -328,6 +330,11 @@
 <tr><td>4887</td><td><a href="ulcp-wifi.html#prop-wifi-mac"><code>PROP_WIFI_MAC</code></a></td><td>Get</td><td><code>CAP_WIFI</code></td></tr>
 <tr><td>4888</td><td><a href="ulcp-device.html#prop-tz-rule"><code>PROP_TZ_RULE</code></a></td><td>Get, Set, Is</td><td><code>CAP_TIME</code></td></tr>
 <tr><td>4889</td><td><a href="ulcp-device.html#prop-time-24h"><code>PROP_TIME_24H</code></a></td><td>Get, Set, Is</td><td><code>CAP_TIME</code></td></tr>
+<tr><td>4890</td><td><a href="ulcp-device.html#prop-display-timeout"><code>PROP_DISPLAY_TIMEOUT</code></a></td><td>Get, Set, Is</td><td><code>CAP_DISPLAY</code></td></tr>
+<tr><td>4891</td><td><a href="ulcp-device.html#prop-sound-enabled"><code>PROP_SOUND_ENABLED</code></a></td><td>Get, Set, Is</td><td><code>CAP_SOUND</code></td></tr>
+<tr><td>4892</td><td><a href="ulcp-device.html#prop-sound-volume"><code>PROP_SOUND_VOLUME</code></a></td><td>Get, Set, Is</td><td><code>CAP_SOUND</code></td></tr>
+<tr><td>4893</td><td><a href="ulcp-device.html#prop-setup-complete"><code>PROP_SETUP_COMPLETE</code></a></td><td>Get, Set, Is</td><td><code>CAP_KEYBOARD</code></td></tr>
+<tr><td>4894</td><td><a href="ulcp-device.html#prop-test-message-alerts"><code>PROP_TEST_MESSAGE_ALERTS</code></a></td><td>Get, Set, Is</td><td>—</td></tr>
 <tr><td>4896</td><td><a href="ulcp-ip.html#prop-ipv4-state"><code>PROP_IPV4_STATE</code></a></td><td>Get, Is</td><td><code>CAP_IPV4</code></td></tr>
 <tr><td>4897</td><td><a href="ulcp-ip.html#prop-ipv4-config"><code>PROP_IPV4_CONFIG</code></a></td><td>Get, Set</td><td><code>CAP_IPV4</code></td></tr>
 <tr><td>4898</td><td><a href="ulcp-ip.html#prop-ipv4-address"><code>PROP_IPV4_ADDRESS</code></a></td><td>Get, Is</td><td><code>CAP_IPV4</code></td></tr>
@@ -415,8 +422,9 @@ is in <a href="ulcp-core.html#capabilities">Capabilities</a>.</p>
 <tr><td>61</td><td><code>CAP_TEMPERATURE</code></td><td><a href="ulcp-device.html#capabilities">Device Domain</a></td></tr>
 <tr><td>62</td><td><code>CAP_MESHCORE_FORWARDER</code></td><td><a href="ulcp-device.html#capabilities">Device Domain</a></td></tr>
 <tr><td>63</td><td><code>CAP_LAN_BEARER</code></td><td><a href="ulcp-ip-multicast.html#capabilities">IP Multicast</a></td></tr>
-<tr><td>64</td><td><code>CAP_DISPLAY_BRIGHTNESS</code></td><td><a href="ulcp-device.html#capabilities">Device Domain</a></td></tr>
+<tr><td>64</td><td><code>CAP_DISPLAY</code></td><td><a href="ulcp-device.html#capabilities">Device Domain</a></td></tr>
 <tr><td>65</td><td><code>CAP_KEYBOARD</code></td><td><a href="ulcp-device.html#capabilities">Device Domain</a></td></tr>
+<tr><td>66</td><td><code>CAP_SOUND</code></td><td><a href="ulcp-device.html#capabilities">Device Domain</a></td></tr>
 <tr><td>515</td><td><code>CAP_PHY_LORA</code></td><td><a href="ulcp-radio.html#capabilities">Radio Control</a></td></tr>
 </tbody>
 </table>
