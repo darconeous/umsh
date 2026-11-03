@@ -95,7 +95,7 @@ it into a `workflow_dispatch` job is a reasonable follow-on.
 | `heltec-v3` | ESP32-S3 | `.bin` (merged, written at `0x0`) |
 | `heltec-v3-bridge` | ESP32-S3 | `.bin` (merged, written at `0x0`; Heltec V3, Wi-Fi and bridge client, no BLE) |
 | `tbeam-supreme` | ESP32-S3 | `.bin` (merged, written at `0x0`) |
-| `tlora-pager` | ESP32-S3 | `.bin` (merged, written at `0x0`; SX1262 only) |
+| `tlora-pager` | ESP32-S3 | `.bin` (merged, written at `0x0`; SX1262 and LR1121) |
 | `tdeck` | ESP32-S3 | `.bin` (merged, written at `0x0`; T-Deck and T-Deck Plus, SX1262 only) |
 | `xiao-esp32s3` | ESP32-S3 | `.bin` (merged, written at `0x0`) |
 
@@ -198,10 +198,12 @@ having in the page.
 ## manifest.json
 
 `schema_version` is `1`. `boards` has one entry per image: the id, display
-name, the `model` string its firmware reports as `PROP_DEV_MODEL`, the chip,
+name, the `models` its firmware can report as `PROP_DEV_MODEL`, the chip,
 the flash methods, the UF2 family id and app base or the ESP32 write offset,
-and for each file a size, a SHA-256, a `url`, and a `path`. Two images of one
-board report the same `model`; the id is what tells them apart.
+and for each file a size, a SHA-256, a `url`, and a `path`. An image that
+detects its radio at boot lists one model per radio: the T-LoRa Pager reports
+`LILYGO T-LoRa Pager SX1262` or `LILYGO T-LoRa Pager LR1121`. Two images of
+one board list the same `models`; the id is what tells them apart.
 
 `path` is the same-origin mirror location, and is `null` for anything not
 mirrored. A flasher reads that as "offer this as a download, do not try to

@@ -61,8 +61,60 @@ pub use umsh_ulcp::profiles;
 use umsh_ulcp::profiles::PhyProfile;
 use umsh_ulcp::stats::{Counter, StatsLedger};
 
+pub mod either;
+pub mod probe;
 pub mod temperature;
+pub use either::EitherRadioKind;
 use temperature::{NoTemperature, TemperatureSensor};
+
+/// What a board's firmware needs to know about the radio it found: the
+/// host-visible model and limits, and the receive setting that suits
+/// the chip. A board with one possible chip has one of these as a
+/// constant; a board that probes returns the one for what answered.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RadioProfile {
+    /// `PROP_DEV_MODEL`: the board, and the chip when the board ships
+    /// with more than one.
+    pub model: &'static str,
+    pub min_tx_power_dbm: i8,
+    pub max_tx_power_dbm: i8,
+    /// Chip tunable range. Wider than any one module's matching
+    /// network—the operator is responsible for staying legal and for
+    /// what the antenna path can actually radiate.
+    pub freq_khz_min: u32,
+    pub freq_khz_max: u32,
+    /// RX packet-parameter preamble length; see [`profile_params`].
+    pub rx_preamble_symbols: u16,
+}
+
+impl RadioProfile {
+    /// An SX1262: its PA's −9..22 dBm, and the 8-symbol RX setting
+    /// hardware-proven on every SX1262 board.
+    pub const fn sx1262(model: &'static str) -> Self {
+        Self {
+            model,
+            min_tx_power_dbm: -9,
+            max_tx_power_dbm: 22,
+            freq_khz_min: 150_000,
+            freq_khz_max: 960_000,
+            rx_preamble_symbols: 8,
+        }
+    }
+
+    /// An LR11xx transmitting on its sub-GHz high-power PA (−9..22 dBm
+    /// in the driver). It needs 16 RX preamble symbols: the T1000-E's
+    /// LR1110 missed MeshCore-US traffic with 8.
+    pub const fn lr11xx_hp(model: &'static str) -> Self {
+        Self {
+            model,
+            min_tx_power_dbm: -9,
+            max_tx_power_dbm: 22,
+            freq_khz_min: 150_000,
+            freq_khz_max: 960_000,
+            rx_preamble_symbols: 16,
+        }
+    }
+}
 
 /// Tally a reception the demodulator rejected on CRC.
 ///

@@ -27,6 +27,7 @@ use esp_hal::spi::master::Spi;
 use lora_phy::LoRa;
 use lora_phy::mod_params::RadioError;
 use lora_phy::sx126x::{Config, Sx126x, Sx1262, TcxoCtrlVoltage};
+use umsh_radio_loraphy::RadioProfile;
 
 /// DIO3 TCXO supply voltage—a board constant with an open question
 /// behind it; see the module docs before changing it, and change nothing
@@ -50,24 +51,30 @@ pub type RadioKind = Sx126x<RadioSpi, RadioIv, Sx1262>;
 /// The fully-assembled lora-phy driver.
 pub type Radio = LoRa<RadioKind, Delay>;
 
-/// Assemble the board's `RadioKind` from the SPI device and control
-/// pins. Follow with `LoRa::new(kind, false, Delay)`—private sync
+/// The host-visible model and limits.
+pub const PROFILE: RadioProfile = RadioProfile::sx1262(crate::BOARD_NAME);
+
+/// Assemble the board's `RadioKind` and [`PROFILE`] from the SPI device
+/// and control pins. Follow with `LoRa::new(kind, false, Delay)`—private sync
 /// word—and the parameter builders in `umsh-radio-loraphy`.
-pub fn new_radio_kind(
+pub async fn new_radio_kind(
     spi: RadioSpi,
     reset: Output<'static>,
     dio1: Input<'static>,
     busy: Input<'static>,
-) -> Result<RadioKind, RadioError> {
+) -> Result<(RadioKind, RadioProfile), RadioError> {
     let iv = umsh_bsp_esp32::iv::EspInterfaceVariant::sx126x(reset, dio1, busy);
-    Ok(Sx126x::new(
-        spi,
-        iv,
-        Config {
-            chip: Sx1262,
-            tcxo_ctrl: Some(TCXO_VOLTAGE),
-            use_dcdc: true,
-            rx_boost: true,
-        },
+    Ok((
+        Sx126x::new(
+            spi,
+            iv,
+            Config {
+                chip: Sx1262,
+                tcxo_ctrl: Some(TCXO_VOLTAGE),
+                use_dcdc: true,
+                rx_boost: true,
+            },
+        ),
+        PROFILE,
     ))
 }

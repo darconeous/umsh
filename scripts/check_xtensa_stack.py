@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reject oversized Xtensa frames and the known device-task construction chain.
+"""Reject oversized Xtensa frames and the known task construction chains.
 
 This is a necessary budget check, not a call-graph or RTOS-task stack proof.
 Nested calls, interrupts, and radio task stacks still need hardware measurement.
@@ -88,8 +88,22 @@ def demangle(cxxfilt, names):
     return dict(zip(names, out.splitlines()))
 
 
-def device_task_construction(frames):
-    """Conservative lower bound for main -> device_task -> future initializer.
+# Tasks whose futures main constructs on its own stack at startup: the
+# device task's holds the large boot snapshot, and the radio task's holds
+# the whole radio driver, which grows with each chip a board may carry.
+TASKS = ("device_task", "radio_task")
+
+
+def construction_candidates(frames):
+    """The frames any task's construction chain could use, by mangled name:
+    identifiers appear whole in mangled names, so the candidates are found
+    before anything is demangled."""
+    return [(name, size) for name, size in frames
+            if "embassy_main_task" in name or any(task in name for task in TASKS)]
+
+
+def task_construction(frames, task):
+    """Conservative lower bound for main -> `task` -> future initializer.
 
     Embassy's generated constructor can copy the large boot snapshot while its
     initializer materializes the entire future. If LLVM keeps the constructor
@@ -104,15 +118,19 @@ def device_task_construction(frames):
         if re.fullmatch(r"firmware_\w+::__main::____embassy_main_task::"
                         r"____embassy_main_task_inner_function::\{closure#0\}", name):
             main.append((name, size))
-        elif re.fullmatch(r"firmware_\w+::device_task", name):
+        elif re.fullmatch(rf"firmware_\w+::{task}", name):
             constructor.append((name, size))
-        elif ("UninitCell<" in name and "::__device_task_task::" in name
+        elif ("UninitCell<" in name and f"::__{task}_task::" in name
               and "::write_in_place::<" in name):
             initializer.append((name, size))
     if not main:
         return []
     return [max(stage, key=lambda frame: frame[1])
             for stage in (main, constructor, initializer) if stage]
+
+
+def device_task_construction(frames):
+    return task_construction(frames, "device_task")
 
 
 def main():
@@ -134,22 +152,21 @@ def main():
         raise SystemExit(f"stack check: {args.objdump} failed")
     if not frames:
         raise SystemExit("stack check: no Xtensa function prologues found")
-    # Only the startup path's stages and what fails are named; identifiers
-    # appear whole in mangled names, so the candidates are found unmangled.
+    # Only the startup path's stages and what fails are named.
     failing = [(name, size) for name, size in frames if size + args.reserve > available]
-    candidates = [(name, size) for name, size in frames
-                  if "device_task" in name or "embassy_main_task" in name]
+    candidates = construction_candidates(frames)
     names = demangle(cxxfilt, sorted({name for name, _ in failing + candidates}))
     failures = [(names[name], size) for name, size in failing]
-    construction = device_task_construction(
-        [(names[name], size) for name, size in candidates])
-    construction_size = sum(size for _, size in construction)
-    if construction_size > available:
-        print(f"stack check FAILED: device task construction needs at least "
-              f"{construction_size} bytes > {available} byte main stack")
-        for name, size in construction:
-            print(f"  {size} bytes: {name}")
-        raise SystemExit(1)
+    candidates = [(names[name], size) for name, size in candidates]
+    constructions = [(task, task_construction(candidates, task)) for task in TASKS]
+    for task, construction in constructions:
+        construction_size = sum(size for _, size in construction)
+        if construction_size > available:
+            print(f"stack check FAILED: {task} construction needs at least "
+                  f"{construction_size} bytes > {available} byte main stack")
+            for name, size in construction:
+                print(f"  {size} bytes: {name}")
+            raise SystemExit(1)
     if failures:
         for name, size in failures:
             print(f"stack check FAILED: {size} byte frame + {args.reserve} reserve > "
@@ -158,10 +175,12 @@ def main():
     print(f"stack check: main stack {available} bytes; "
           f"largest individual frame {max(size for _, size in frames)} bytes; "
           f"reserve {args.reserve} bytes")
-    if construction:
-        print(f"stack check: device task construction lower bound "
-              f"{construction_size} bytes; {available - construction_size} bytes "
-              "remain for callers, interrupts, and other nested work")
+    for task, construction in constructions:
+        if construction:
+            construction_size = sum(size for _, size in construction)
+            print(f"stack check: {task} construction lower bound "
+                  f"{construction_size} bytes; {available - construction_size} bytes "
+                  "remain for callers, interrupts, and other nested work")
 
 
 if __name__ == "__main__":

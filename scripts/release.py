@@ -7,8 +7,8 @@ already put every artifact in one directory under its release name; this
 describes what is there, so the web flasher can find and verify it.
 
 The manifest is the flasher's entry point. It carries only what is needed
-to put bytes on a board—board ids, the hardware model string a device
-reports over ULCP, the chip, UF2 family and app base, the ESP32 write
+to put bytes on a board—board ids, the hardware model strings a device
+can report over ULCP, the chip, UF2 family and app base, the ESP32 write
 offset, and per file a size, a SHA-256, and where to get it. Everything
 presentational (photos, specs, prose about entering DFU) lives in
 site/data/hardware.toml, keyed by the same board ids, so the two join
@@ -58,13 +58,16 @@ MIRRORED_ROLES = frozenset({"dfu-zip", "merged-bin"})
 
 # Per-board release facts that BOARDS cannot carry: which ELF the build
 # produces, what the chip is, and—for boards outside the UF2 world—the
-# whole flashing story. `uf2` boards inherit family/base/volume/model from
+# whole flashing story. `uf2` boards inherit family/base/volume/models from
 # the BOARDS preset, keyed by the same id.
 RELEASE_BOARDS = {
     "tlora-pager": {
         "chip": "esp32s3",
         "elf": "firmware-tlora-pager",
-        "name": "LILYGO T-LoRa Pager SX1262",
+        "name": "LILYGO T-LoRa Pager",
+        # One image for both radio populations: it probes the module at
+        # boot and reports which one it found.
+        "models": ["LILYGO T-LoRa Pager SX1262", "LILYGO T-LoRa Pager LR1121"],
         "flash_methods": ["esp-serial"],
         "esp": {
             "chip": "esp32s3",
@@ -238,9 +241,9 @@ def board_entry(board_id: str, spec: dict, version: str, directory: str) -> dict
         "name": spec.get("name") or preset["description"],
         "chip": spec["chip"],
     }
-    # The string this board's firmware reports as PROP_DEV_MODEL, so a host
-    # that has a device attached can find its entry without guessing.
-    entry["model"] = entry["name"]
+    # Every string this image can report as PROP_DEV_MODEL, so a host that
+    # has a device attached can find its entry without guessing.
+    entry["models"] = spec.get("models") or [entry["name"]]
 
     if preset is not None:
         entry["flash_methods"] = ["uf2", "serial-dfu"]

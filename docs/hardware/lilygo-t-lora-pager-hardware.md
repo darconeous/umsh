@@ -90,7 +90,7 @@ Meshtastic display build flags use `LGFX_SCREEN_WIDTH=222`, `LGFX_SCREEN_HEIGHT=
 
 ### Shared SPI bus and LoRa
 
-The display, SX1262, SD card, and NFC frontend share SCK=35, MOSI=34,
+The display, radio, SD card, and NFC frontend share SCK=35, MOSI=34,
 and MISO=33. They need separate chip selects and one serialized bus, not
 independent SPI controllers. UMSH uses SPI2 with 16 MHz radio transactions
 and 40 MHz display transactions. Display transfers are bounded to four
@@ -382,14 +382,38 @@ Meshtastic generic power behavior:
 
 ## UMSH firmware implementation
 
-The `firmware-tlora-pager` image targets the **SX1262** version. It shares
-the ESP32 tracker runtime and enables PSRAM, Wi-Fi, the bridge client, and
+The `firmware-tlora-pager` image runs on both the **SX1262** and **LR1121**
+versions. It shares the ESP32 tracker runtime and enables PSRAM, Wi-Fi, the bridge client, and
 the communicator interface in normal builds. Build with
 `make build-tlora-pager`; upload with
 `make flash-tlora-pager ESPFLASH_PORT=/dev/cu.usbmodem101` (substitute the
 actual port). The flash target uses native-USB bootloader entry and a watchdog
 reset after uploading, then exits. If the board remains
 in the ROM downloader, tap RESET with BOOT released.
+
+### Radio detection
+
+At boot the firmware resets the radio and asks it to identify itself over
+SPI before any driver takes the bus: LR11xx `GetVersion`, then the SX126x
+version string at register `0x0320`. Each family is recognized only by its
+own answer, and one two-second deadline covers the probe and driver
+initialization together. `PROP_DEV_MODEL` reports `LILYGO T-LoRa Pager
+SX1262` or `LILYGO T-LoRa Pager LR1121`. Any other module (SX1280, CC1101,
+SI4432) stops boot with `radio init failed`.
+
+| Setting | SX1262 | LR1121 |
+|---|---|---|
+| TCXO | 3.0 V on DIO3 | 3.0 V on DIO3 |
+| RF switch | DIO2, inside the chip | DIO5 = TX, DIO6 = RX |
+| Regulator | DC-DC | LDO |
+| PA | −9 to +22 dBm | high-power PA, −9 to +22 dBm |
+| RX preamble setting | 8 symbols | 16 symbols |
+
+The LR1121 RF-switch masks are standby `0x00`, RX `0x02`, TX and TX_HP
+`0x01`, and `0x00` for the 2.4 GHz, GNSS, and Wi-Fi modes, from LilyGoLib's
+Pager initialization (Meshtastic's `tlora-pager/rfswitch.h` agrees). They are
+the reverse of lora-phy's legacy default table. Only sub-GHz LoRa is
+supported on the LR1121.
 
 The 480×222 landscape screen runs the communicator interface
 (`umsh-ux-communicator`): chats, peers, and the device's settings, with text
@@ -518,7 +542,7 @@ the CPU awake. LoRa IRQ and enabled motion IRQ already use wake-enabled level
 waits; CPU wake alone does not imply screen wake.
 
 Disabling LoRa through `PROP_PHY_ENABLED` or Settings → Radio → LoRa stops
-reception, clears pending radio IRQs, and puts the SX1262 into cold sleep.
+reception, clears pending radio IRQs, and puts the radio into cold sleep.
 The disabled runner waits for configuration changes without polling the chip;
 re-enabling wakes it and restores its radio configuration before receiving.
 This controls the radio chip's operating mode, not a switched supply rail.
