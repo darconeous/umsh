@@ -81,10 +81,8 @@ category = "companion"
 status = "proven"
 status_note = "The radio, e-paper display, and GNSS have all been exercised."
 blurb = """
-A handheld tracker with a 1.54-inch e-paper display, so it can show messages \
-and status on its own while still working as a phone companion. Low power \
-draw between updates, and readable in direct sun. A built-in backlight makes \
-it readable at night."""
+A handheld tracker with a 1.54-inch e-paper display, so it can show status on its own while still working as a companion radio. Readable in direct sun. A built-in backlight makes \
+it readable at night. Battery life is sub-par, not recommended."""
 mcu = "Nordic nRF52840"
 radio = "Semtech SX1262"
 gnss = "Quectel L76K"
@@ -116,7 +114,7 @@ blurb = """
 A tracker with a small OLED display, a navigation button, and a mechanical \
 power switch—the switch cuts the battery, so it survives a long spell in a \
 drawer. The Pro ships assembled in a case, as pictured; the plain L1 is a \
-bare board. The e-ink variant is not yet supported."""
+bare board. Battery life is excellent, can run for 10+ days on a single charge. The e-ink variant is not yet supported."""
 mcu = "Nordic nRF52840"
 radio = "Semtech SX1262"
 gnss = "Quectel L76K"
@@ -145,7 +143,7 @@ category = "devkit"
 status = "proven"
 status_note = "The radio, display, and GNSS have all been exercised."
 blurb = """
-The best-equipped board UMSH runs on: an OLED display, a GNSS receiver, a \
+Features an OLED display, a GNSS receiver, a \
 real-time clock, an 18650 holder, and a power management chip that owns \
 every rail—so "off" is genuinely off, and the board reports what its battery \
 is doing. Sold with several different radios; UMSH runs on the SX1262 \
@@ -178,7 +176,7 @@ status = "proven"
 status_note = "The radio, Bluetooth, GNSS, and power path have all been exercised."
 blurb = """
 An outdoor, solar-powered node built to be mounted somewhere and left alone. \
-A 5 W panel and four 18650 cells carry it through bad weather and freezing temperatures."""
+A 5 W panel and four 18650 cells carry it through bad weather and freezing temperatures. When fully charged, it can easily last over a month without sunlight."""
 mcu = "Nordic nRF52840"
 radio = "Semtech SX1262"
 gnss = "Quectel L76K"
@@ -249,9 +247,9 @@ category = "devkit"
 status = "proven"
 status_note = "The radio and Bluetooth have both been exercised."
 blurb = """
-A small nRF52 module on a radio carrier board. No buttons are populated, \
+A small nRF52 module on a radio carrier board. Only a reset button is populated, \
 so it is a starting point for a build of your own rather than a finished \
-device—and an inexpensive way to put a node on the air."""
+device—and an inexpensive way to put a node on the air. Great for solar repeater builds."""
 mcu = "Nordic nRF52840"
 radio = "Semtech SX1262"
 gnss = "None"
@@ -278,12 +276,11 @@ name = "XIAO ESP32S3 + Wio-SX1262 Kit"
 vendor = "Seeed Studio"
 category = "devkit"
 status = "proven"
-status_note = "The radio, Bluetooth, button, and LED have all been exercised; Wi-Fi and battery power have not."
+status_note = ""
 blurb = """
 The ESP32-S3 version of the XIAO kit, with 8 MB of PSRAM—enough to run \
-Bluetooth and Wi-Fi at once. One image is a phone companion, a repeater, or \
-an internet bridge, depending only on how it is set up. A user button sends \
-a beacon and turns the node off and on."""
+Bluetooth and Wi-Fi at once. One image is a companion radio, a repeater, or \
+an internet bridge, depending only on how it is set up."""
 mcu = "Espressif ESP32-S3"
 radio = "Semtech SX1262"
 gnss = "None"
@@ -300,7 +297,7 @@ chip = "ESP32-S3"
 dfu_entry = "None needed—the board enters its ROM bootloader on its own when the flashing tool asserts the USB serial control lines. Over the factory firmware it reappears on a different port, so the first attempt fails: flash again on the new port."
 quirks = [
   "Building this board needs Espressif's Xtensa Rust toolchain, installed with <code>espup</code>.",
-  "The XIAO's BOOT and RESET buttons are under the radio board. The factory firmware leaves the chip latched into update mode after the first flash; unplug it, and any battery, once to clear it.",
+  "The XIAO's BOOT and RESET buttons are under the radio board. The factory firmware may leave the chip latched into update mode after the first flash; unplug it, and any battery, once to clear it.",
 ]
 
 [[boards]]
@@ -309,10 +306,14 @@ name = "T-LoRa Pager"
 vendor = "LilyGO"
 category = "communicator"
 status = "proven"
-status_note = "The radio, Bluetooth, screen, keyboard, rotary encoder, GNSS, and fuel gauge have all been exercised."
+status_note = "The radio, Bluetooth, screen, keyboard, rotary encoder, GNSS, and fuel gauge have all been exercised. Battery gauge needs to be programmed to read accurately."
 blurb = """
 A keyboard handheld with a wide landscape screen and a rotary encoder. \
-It sends and receives messages on its own, no phone needed."""
+It sends and receives messages on its own, no phone needed. \
+The power system on this board is second to none, providing excellent battery life: around a week with GNSS and Wi-Fi turned off, even longer if you also turn off Bluetooth. \
+If this becomes your daily carry, you could consider removing the reset button \
+plunger so that you don't accidentally press it while using it (but you can still press it with a pin if you need to). \
+"""
 mcu = "Espressif ESP32-S3"
 radio = "Semtech SX1262 or LR1121"
 gnss = "u-blox MIA-M10Q"
@@ -342,7 +343,10 @@ status_note = "The radio, Bluetooth, touchscreen, keyboard, trackball, and GNSS 
 blurb = """
 A keyboard handheld with a touchscreen and a trackball. It sends and \
 receives messages on its own, no phone needed. The T-Deck Plus runs the \
-same firmware."""
+same firmware. \
+If this becomes your daily carry, you could consider removing the reset button \
+plunger so that you don't accidentally press it while using it (but you can still press it with a pin if you need to). Battery life is around 2 days on standby unless you upgrade the keyboard firmware. If you update the keyboard firmware, you can get over 4 days of standby time. \
+"""
 mcu = "Espressif ESP32-S3"
 radio = "Semtech SX1262"
 gnss = "u-blox MIA-M10Q or Quectel L76K on the Plus; Grove port on the T-Deck"

@@ -463,7 +463,7 @@
 
     },
     "Cancel" : {
-      "comment" : "Button: close the EMERGENCY warning without sending.\nCancels a confirmation.\nLeaves editing without saving."
+      "comment" : "Button: close the EMERGENCY warning without sending.\nCancels a confirmation.\nLeaves editing without saving.\nStops waiting on a request to a managed node."
     },
     "Cancel Reply" : {
 
@@ -666,6 +666,9 @@
     "Could not save it. Try again from the device's identity." : {
 
     },
+    "Couldn't reach the device." : {
+      "comment" : "Managing a node: a request was never acknowledged."
+    },
     "Covers this place" : {
 
     },
@@ -789,6 +792,9 @@
     "Discovery keeps running while this list is open. Radios that power off drop out after a few seconds." : {
 
     },
+    "Dismiss" : {
+      "comment" : "VoiceOver label: hides a management error."
+    },
     "Distance" : {
       "comment" : "Strip label: how far away the node is. Keep short."
     },
@@ -818,6 +824,12 @@
     },
     "Edit Message" : {
 
+    },
+    "Edit Network" : {
+      "comment" : "Title of the sheet that changes a saved Wi-Fi network."
+    },
+    "Edit…" : {
+      "comment" : "Menu item: change a saved Wi-Fi network."
     },
     "Emergencies Only" : {
       "comment" : "Title of the warning shown before the first message sent on the EMERGENCY channel."
@@ -1014,6 +1026,9 @@
     "Hidden network" : {
 
     },
+    "Hidden Network" : {
+      "comment" : "Switch: this Wi-Fi network does not broadcast its name."
+    },
     "Hint" : {
 
     },
@@ -1102,7 +1117,7 @@
 
     },
     "Join Automatically" : {
-
+      "comment" : "Switch: the device may pick this Wi-Fi network by itself."
     },
     "Join Channel" : {
 
@@ -1321,7 +1336,7 @@
 
     },
     "Minimum security" : {
-
+      "comment" : "Picker label: the weakest Wi-Fi security a device accepts."
     },
     "Minimum signal" : {
 
@@ -1378,7 +1393,7 @@
       "comment" : "Tile: list the repeaters this node can hear."
     },
     "Network" : {
-
+      "comment" : "Row label: a Wi-Fi network's name."
     },
     "Network name" : {
 
@@ -1430,6 +1445,9 @@
         }
       }
     },
+    "No answer. This phone may not be one of its administrators." : {
+      "comment" : "Managing a node: it acknowledged a request but never answered."
+    },
     "No available radios. Turn on a paired radio nearby, or add a radio with its pairing window open." : {
 
     },
@@ -1462,6 +1480,9 @@
     },
     "No path" : {
       "comment" : "VoiceOver label for the X on a ping that got no reply."
+    },
+    "No radio to send through." : {
+      "comment" : "Managing a node: no companion radio is attached."
     },
     "No recent locations" : {
 
@@ -1599,7 +1620,7 @@
 
     },
     "Password" : {
-
+      "comment" : "Field label: a Wi-Fi password."
     },
     "Past-hour duty usage" : {
 
@@ -1824,7 +1845,7 @@
 
     },
     "Required" : {
-
+      "comment" : "Placeholder: a Wi-Fi password that must be entered."
     },
     "Resend" : {
 
@@ -2189,6 +2210,9 @@
     "The device can reach these nodes without this phone in the middle." : {
 
     },
+    "The device cannot use %@." : {
+      "comment" : "Editing a saved Wi-Fi network. The placeholder is a security mode, such as WPA3."
+    },
     "The device did not finish reporting its settings. Go back and connect to it again." : {
 
     },
@@ -2204,17 +2228,29 @@
     "The device name is public and may be visible in Bluetooth discovery." : {
 
     },
+    "The device no longer has this network." : {
+      "comment" : "Editing a saved Wi-Fi network that was removed meanwhile."
+    },
     "The device power-cycles and keeps everything it has saved. It is off the air until it comes back, and anything relaying through it is too." : {
 
     },
     "The device read its settings back after saving, so they survive a power cycle." : {
 
     },
+    "The device refused this change: %@." : {
+      "comment" : "Editing a saved Wi-Fi network. The placeholder is a protocol status name."
+    },
     "The device reported %@ back differently" : {
 
     },
     "The device reports a battery but no readings from it." : {
 
+    },
+    "The device would not take that password for this kind of network." : {
+      "comment" : "Editing a saved Wi-Fi network: the device rejected the password."
+    },
+    "The device's answer couldn't be read. Its firmware may be newer than this app." : {
+      "comment" : "Managing a node: its reply did not decode."
     },
     "The message history on this phone is removed. The peer keeps their copy." : {
 
@@ -2448,6 +2484,9 @@
     "Unavailable for this device's identity key." : {
 
     },
+    "Unchanged" : {
+      "comment" : "Placeholder: an empty Wi-Fi password field keeps the stored one."
+    },
     "Undo" : {
 
     },
@@ -2513,6 +2552,9 @@
     },
     "Waiting for confirmation…" : {
 
+    },
+    "Waiting for the device…" : {
+      "comment" : "Managing a node: a request is outstanding."
     },
     "Waiting for the radio to appear" : {
 
