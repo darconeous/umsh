@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-770b44e1.js";
+            window.path_to_searchindex_js = "searchindex-824d6537.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-517aa7d9.js"></script>
@@ -457,9 +457,8 @@ These collisions are rarely of practical concern. If a region code in one part o
 </ul>
 <h3 id="fence-option-257"><a class="header" href="#fence-option-257">Fence (option 257)</a></h3>
 <ul>
-<li>Type: flag. A sender includes it with no value; a receiver ignores it whatever its value, and a forwarder carries it unchanged.</li>
-<li>Semantics: none. A sender includes it on every packet it originates, and a node that recognizes it ignores it.</li>
-<li>Its only effect is the one its classification gives it: a repeater that does not recognize it does not forward the packet, and an endpoint that does not recognize it still accepts the packet.</li>
+<li>Type: flag. A receiver ignores it whatever its value, and a forwarder carries it unchanged.</li>
+<li>Semantics: none. A sender does not include it.</li>
 </ul>
 <h2 id="routing-option-layouts"><a class="header" href="#routing-option-layouts">Routing Option Layouts</a></h2>
 <h3 id="source-route-option-value"><a class="header" href="#source-route-option-value">Source Route Option Value</a></h3>
