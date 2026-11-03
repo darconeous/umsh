@@ -2998,11 +2998,12 @@ fn alt_then_space_opens_the_picker_and_a_press_types_from_it() {
     run(&mut app, &keys_for("a"));
     run(&mut app, &tap(Modifier::Alt));
     run(&mut app, &[Input::Space]);
-    // With nothing picked yet, it opens on the first emoji.
-    assert_eq!(picked(app.state()), Some(Pick::Emoji(0)));
-    run(&mut app, &[Input::Turn(1), Input::Press]);
+    // With nothing picked yet, it opens on the first symbol.
+    assert_eq!(picked(app.state()), Some(Pick::Character(0)));
+    run(&mut app, &[Input::Turn(2), Input::Press]);
     assert!(app.state().picker.is_none());
-    let pick = Pick::Emoji(1).text();
+    let pick = Pick::Character(2).text();
+    assert_eq!(pick, "#");
     assert_eq!(draft(app.state(), TRAIL_CREW), format!("A{pick}"));
     // The field is still being edited.
     run(&mut app, &keys_for("b"));
@@ -3012,10 +3013,13 @@ fn alt_then_space_opens_the_picker_and_a_press_types_from_it() {
     // later.
     run(&mut app, &tap(Modifier::Alt));
     run(&mut app, &[Input::Space]);
-    assert_eq!(picked(app.state()), Some(Pick::Emoji(1)));
+    assert_eq!(picked(app.state()), Some(Pick::Character(2)));
     let now = tick(5000);
     app.state_mut().expire(now);
     assert_eq!(app.state().node.recent_picks().as_str(), format!("{pick}\n"));
+    // Backspace goes up to the tabs, and then closes it.
+    run(&mut app, &[Input::Backspace]);
+    assert!(app.state().picker.as_ref().unwrap().on_tabs());
     run(&mut app, &[Input::Backspace]);
     assert!(app.state().picker.is_none());
 
@@ -3040,7 +3044,7 @@ fn the_picker_key_opens_and_closes_the_picker_and_only_while_typing() {
     open_trail_crew(&mut app);
     run(&mut app, &keys_for("a"));
     run(&mut app, &[Input::Picker]);
-    assert_eq!(picked(app.state()), Some(Pick::Emoji(0)));
+    assert_eq!(picked(app.state()), Some(Pick::Character(0)));
     run(&mut app, &[Input::Picker]);
     assert!(app.state().picker.is_none());
     assert_eq!(app.state().keyboard.latches(), (Latch::Off, Latch::Off));
@@ -3079,7 +3083,7 @@ fn letters_in_the_picker_find_by_name_and_backspace_takes_them_off() {
     assert_eq!(app.state().picker.as_ref().unwrap().filter(), "");
     // Back on the recent picks.
     assert_eq!(picked(app.state()), Some(heart));
-    run(&mut app, &[Input::Backspace]);
+    run(&mut app, &[Input::Backspace, Input::Backspace]);
     assert!(app.state().picker.is_none());
 }
 
@@ -3666,22 +3670,29 @@ fn rolling_up_a_part_of_the_date_adds_and_across_is_done_with_it() {
 
 #[test]
 fn the_picker_rolls_a_row_up_and_down_and_a_character_across() {
-    let columns = ui::picker_columns(&BOARD.metrics) as u16;
+    let columns = ui::picker_geometry(&BOARD.metrics).columns;
     let mut app = app!();
     open_trail_crew(&mut app);
     run(&mut app, &typed("a"));
     run(&mut app, &tap(Modifier::Alt));
     run(&mut app, &[Input::Space]);
-    assert_eq!(picked(app.state()), Some(Pick::Emoji(0)));
+    assert_eq!(picked(app.state()), Some(Pick::Character(0)));
     run(&mut app, &[Input::Move(Arrow::Right)]);
-    assert_eq!(picked(app.state()), Some(Pick::Emoji(1)));
+    assert_eq!(picked(app.state()), Some(Pick::Character(1)));
     run(&mut app, &[Input::Move(Arrow::Down)]);
-    assert_eq!(picked(app.state()), Some(Pick::Emoji(1 + columns)));
+    assert_eq!(picked(app.state()), Some(Pick::Character(1 + columns)));
     run(&mut app, &[Input::Move(Arrow::Left), Input::Move(Arrow::Up)]);
+    assert_eq!(picked(app.state()), Some(Pick::Character(0)));
+    // At the start, across stays.
+    run(&mut app, &[Input::Move(Arrow::Left)]);
+    assert_eq!(picked(app.state()), Some(Pick::Character(0)));
+    // Up from the first row are the tabs, rolled across from one to the
+    // next, onto its first pick.
+    run(&mut app, &[Input::Move(Arrow::Up), Input::Move(Arrow::Right)]);
+    assert!(app.state().picker.as_ref().unwrap().on_tabs());
     assert_eq!(picked(app.state()), Some(Pick::Emoji(0)));
-    // At an edge, it stays.
-    run(&mut app, &[Input::Move(Arrow::Up), Input::Move(Arrow::Left)]);
-    assert_eq!(picked(app.state()), Some(Pick::Emoji(0)));
+    run(&mut app, &[Input::Move(Arrow::Down), Input::Move(Arrow::Right)]);
+    assert_eq!(picked(app.state()), Some(Pick::Emoji(1)));
 }
 
 #[test]

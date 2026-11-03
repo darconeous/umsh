@@ -29,6 +29,7 @@ use embedded_touch::{Phase, Tool, Touch, TouchPoint};
 use crate::keyboard::{Field, Latch, Modifier, Spaced, starts_sentence};
 use crate::model::{HOLD_MS, Press, Reaction, State, TouchHold};
 use crate::nav::keys;
+use crate::picker::{Chosen, Pick, Picker, Spot};
 
 /// One user input.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -315,7 +316,7 @@ where
 }
 
 /// A touch. Locked, the screen takes none; with the character picker open,
-/// one closes it. Held in place, a touch is a long press once
+/// the picker takes them all. Held in place, a touch is a long press once
 /// [`expire`] finds its time up.
 ///
 /// Only a touch whose start was taken goes on to the interface, so one that
@@ -327,18 +328,17 @@ where
     V::Renderables: AnimatedJoin,
     F: Fn(&State) -> V,
 {
+    if app.state().picker.is_some() {
+        picker_touch(app, phase, point, now);
+        return;
+    }
     // What a touch keeps of itself is read as it is taken in, and shows
-    // nowhere: only closing the picker changes the view.
+    // nowhere.
     let mut tracked = app.state_mut();
     let state = tracked.untracked();
     match phase {
         TouchPhase::Started => {
             if state.lock.locked {
-                return;
-            }
-            if state.picker.take().is_some() {
-                state.keyboard.other();
-                tracked.mark_changed();
                 return;
             }
             state.touch = Some(TouchHold {
@@ -370,6 +370,66 @@ where
         Tool::Finger,
     ));
     app.state_mut().untracked().touching = false;
+}
+
+/// A touch while the character picker is open: one off the picker closes
+/// it, a tap on a tab shows that tab's picks, a tap on a pick chooses it,
+/// and a finger drawn over the rows scrolls them. None goes on to what
+/// lies under it.
+fn picker_touch<V, F>(app: &mut App<V, State, F>, phase: TouchPhase, point: Point, now: u64)
+where
+    V: ViewLayout<State>,
+    V::FocusTree: DefaultFocus,
+    V::Renderables: AnimatedJoin,
+    F: Fn(&State) -> V,
+{
+    let mut tracked = app.state_mut();
+    let state = tracked.untracked();
+    // A touch begun before the picker opened is left to end there.
+    state.touch = None;
+    let g = state.picker_geometry();
+    let spot = crate::ui::picker_spot(state, point.x, point.y);
+    if phase == TouchPhase::Started && spot == Spot::Outside {
+        close_picker(state);
+        tracked.mark_changed();
+        return;
+    }
+    let State {
+        picker: Some(picker),
+        recents,
+        ..
+    } = state
+    else {
+        return;
+    };
+    let picks = recents.picks();
+    let y = point.y.clamp(i16::MIN.into(), i16::MAX.into()) as i16;
+    let chosen = match phase {
+        TouchPhase::Started => {
+            picker.touch_down(picks, g, spot, y, now);
+            tracked.mark_changed();
+            None
+        }
+        TouchPhase::Moved => {
+            if picker.touch_move(picks, g, y, now) {
+                tracked.mark_changed();
+            }
+            None
+        }
+        TouchPhase::Ended => {
+            let chosen = picker.touch_up(picks, g, now);
+            tracked.mark_changed();
+            chosen
+        }
+        TouchPhase::Cancelled => {
+            picker.touch_cancel();
+            None
+        }
+    };
+    drop(tracked);
+    if let Some(pick) = chosen {
+        choose(app, pick, now);
+    }
 }
 
 /// Lets go of whatever has had its time by `now`, as [`State::expire`]
@@ -592,9 +652,12 @@ fn accepts(state: &State, c: char) -> bool {
 
 /// An input while the character picker is open: the wheel walks it, a
 /// press or Enter types the focused pick, or reacts with it to the message
-/// the picker was opened for, letters type a name to find
-/// one by, Backspace takes a letter off the name or closes it, and Space
-/// switches the keyboard light.
+/// the picker was opened for, letters type a name to find one by,
+/// Backspace takes a letter off the name, goes up to the tabs, or closes
+/// it, and Space switches the keyboard light.
+///
+/// On the tabs, the wheel moves from tab to tab, and a press goes down
+/// into the tab's picks.
 fn pick<V, F>(app: &mut App<V, State, F>, input: Input, now: u64)
 where
     V: ViewLayout<State>,
@@ -603,7 +666,7 @@ where
     F: Fn(&State) -> V,
 {
     let mut state = app.state_mut();
-    let columns = state.picker_columns();
+    let g = state.picker_geometry();
     let typed = match input {
         Input::Character(c) => Some(state.keyboard.character(c)),
         Input::Key { plain, alt } => Some(state.keyboard.letter(plain, alt)),
@@ -617,41 +680,33 @@ where
     };
     let picks = recents.picks();
     match input {
-        Input::Turn(detents) => picker.turn(picks, columns, detents.into()),
+        Input::Turn(detents) => picker.turn(picks, g, detents.into()),
         Input::Press | Input::Enter => {
-            let picked = picker.focused(picks);
-            let reacting = picker.reacting();
+            let chosen = picker.choose(picks);
             state.press = None;
-            state.picker = None;
-            state.keyboard.other();
-            if let Some(pick) = picked {
-                state.recents.picked(pick, now);
-                match reacting {
-                    Some(message) => state.react(message, Reaction::of(pick.text())),
-                    None => press(app, Key::Text(pick.text())),
-                }
+            match chosen {
+                Chosen::Pick(pick) => choose(app, pick, now),
+                Chosen::Entered => {}
+                Chosen::Nothing => close_picker(&mut state),
             }
         }
         Input::Backspace => {
-            if !picker.erase_letter() {
-                state.picker = None;
-                state.keyboard.other();
+            if !picker.back() {
+                close_picker(&mut state);
             }
         }
-        Input::Picker => {
-            state.picker = None;
-            state.keyboard.other();
-        }
+        Input::Picker => close_picker(&mut state),
+        // A name of more than one word.
+        Input::Space if !picker.filter().is_empty() => picker.type_letter(' '),
         Input::Space => {
-            state.picker = None;
-            state.keyboard.other();
+            close_picker(&mut state);
             state.switch_keyboard_light(now);
         }
         Input::Modifier { modifier, down } => state.keyboard.modifier(modifier, down, now),
-        Input::Move(Arrow::Up) => picker.rows_down(picks, columns, -1),
-        Input::Move(Arrow::Down) => picker.rows_down(picks, columns, 1),
-        Input::Move(Arrow::Left) => picker.turn(picks, columns, -1),
-        Input::Move(Arrow::Right) => picker.turn(picks, columns, 1),
+        Input::Move(Arrow::Up) => picker.rows_down(picks, g, -1),
+        Input::Move(Arrow::Down) => picker.rows_down(picks, g, 1),
+        Input::Move(Arrow::Left) => picker.across(picks, g, -1),
+        Input::Move(Arrow::Right) => picker.across(picks, g, 1),
         Input::Character(_) | Input::Key { .. } => {
             if let Some(c) = typed {
                 picker.type_letter(c);
@@ -659,6 +714,31 @@ where
         }
         Input::Release | Input::Touch { .. } | Input::Latches { .. } | Input::Mute => {}
     }
+}
+
+/// Types `pick` from the open picker, or reacts with it to the message the
+/// picker was opened for, and closes the picker.
+fn choose<V, F>(app: &mut App<V, State, F>, pick: Pick, now: u64)
+where
+    V: ViewLayout<State>,
+    V::FocusTree: DefaultFocus,
+    V::Renderables: AnimatedJoin,
+    F: Fn(&State) -> V,
+{
+    let mut state = app.state_mut();
+    let reacting = state.picker.as_ref().and_then(Picker::reacting);
+    close_picker(&mut state);
+    state.recents.picked(pick, now);
+    match reacting {
+        Some(message) => state.react(message, Reaction::of(pick.text())),
+        None => press(app, Key::Text(pick.text())),
+    }
+}
+
+/// Closes the character picker.
+fn close_picker(state: &mut State) {
+    state.picker = None;
+    state.keyboard.other();
 }
 
 /// A key pressed and released.

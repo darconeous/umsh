@@ -57,7 +57,7 @@ mod status;
 mod typing;
 mod wifi;
 
-pub use typing::picker_columns;
+pub use typing::{picker_geometry, picker_spot};
 
 /// How much of the content past the focused row a list keeps in view, so
 /// that the next row shows cut by the edge where there is one.

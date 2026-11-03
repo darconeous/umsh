@@ -411,6 +411,30 @@ fn headless(
                     })
                     .to_vec()
             }
+            // A finger down at one point, drawn to another in steps of 8
+            // pixels, and lifted.
+            "drag" => {
+                let points: Vec<i16> = rest
+                    .split_whitespace()
+                    .map(str::parse)
+                    .collect::<Result<_, _>>()
+                    .map_err(|_| format!("line {}: drag needs two points", number + 1))?;
+                let [x0, y0, x1, y1] = points[..] else {
+                    return Err(format!("line {}: drag needs two points", number + 1));
+                };
+                let steps = ((x1 - x0).abs().max((y1 - y0).abs()) / 8).max(1);
+                let at = |i: i16| (x0 + (x1 - x0) * i / steps, y0 + (y1 - y0) * i / steps);
+                let touch = |phase, (x, y), i: i16| Input::Touch {
+                    phase,
+                    x,
+                    y,
+                    at: clock + INPUT_MS * (i as u64 + 1),
+                };
+                let mut inputs = vec![touch(TouchPhase::Started, at(0), 0)];
+                inputs.extend((1..=steps).map(|i| touch(TouchPhase::Moved, at(i), i)));
+                inputs.push(touch(TouchPhase::Ended, at(steps), steps + 1));
+                inputs
+            }
             // Down long enough to open a menu, then up.
             "hold" => {
                 input::apply(&mut app, Input::Press, clock);
@@ -423,6 +447,7 @@ fn headless(
             "type" => rest.chars().map(Input::Character).collect(),
             "keys" => rest.chars().map(pager_key).collect(),
             "space" => vec![Input::Space],
+            "picker" => vec![Input::Picker],
             "shift" => tap(Modifier::Shift).to_vec(),
             "alt" => tap(Modifier::Alt).to_vec(),
             "alt-down" | "alt-up" => vec![Input::Modifier {

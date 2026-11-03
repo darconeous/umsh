@@ -509,3 +509,68 @@ fn a_flick_travels_far_back_through_a_long_chat_and_a_tap_selects_a_message() {
     let back = rows.len() - rows.iter().position(|&row| row == tapped).unwrap();
     assert!(back > 15, "{back} back from the newest");
 }
+
+/// The first point on screen the open picker takes as `spot`.
+fn picker_point(state: &State, spot: umsh_ux_communicator::picker::Spot) -> (i16, i16) {
+    let m = &BOARD.metrics;
+    (0..m.height as i32)
+        .flat_map(|y| (0..m.width as i32).map(move |x| (x, y)))
+        .find(|&(x, y)| ui::picker_spot(state, x, y) == spot)
+        .map(|(x, y)| (x as i16, y as i16))
+        .expect("the spot is on screen")
+}
+
+/// A tap on a pick types it, on a tab shows the tab's picks, and off the
+/// picker closes it; a stroke over the rows scrolls them, picking nothing.
+#[test]
+fn the_picker_takes_taps_and_strokes() {
+    use input::TouchPhase::{Ended, Moved, Started};
+    use umsh_ux_communicator::picker::{Spot, Tab};
+    let row = ui::picker_geometry(&BOARD.metrics).row;
+    let tap_at = |app: &mut _, at: (i16, i16), now: u64| {
+        apply_touch(app, Started, at, tick(now));
+        apply_touch(app, Ended, at, tick(now + 50));
+    };
+    let mut app = app!();
+    open_trail_crew(&mut app);
+    run(&mut app, &typed("a"));
+    run(&mut app, &[Input::Picker]);
+    let third = picker_point(
+        app.state(),
+        Spot::Grid {
+            column: 2,
+            y: row / 2,
+        },
+    );
+    tap_at(&mut app, third, 0);
+    assert!(app.state().picker.is_none());
+    assert_eq!(draft(app.state(), TRAIL_CREW), "A#");
+
+    // The recents' tab, the symbols', then the first emoji's.
+    run(&mut app, &[Input::Picker]);
+    let shown = |state: &State| {
+        let picker = state.picker.as_ref().expect("the picker is open");
+        picker.shown(state.recents.picks(), ui::picker_geometry(&BOARD.metrics))
+    };
+    let tab = picker_point(app.state(), Spot::Tab(2));
+    tap_at(&mut app, tab, 1000);
+    assert_eq!(shown(app.state()).tab, Some(Tab::Group(0)));
+    let first = shown(app.state()).rows[0][0];
+    let (x, y) = picker_point(app.state(), Spot::Grid { column: 3, y: row });
+    apply_touch(&mut app, Started, (x, y), tick(2000));
+    for i in 1..=6 {
+        apply_touch(
+            &mut app,
+            Moved,
+            (x, y - 10 * i),
+            tick(2000 + 100 * i as u64),
+        );
+    }
+    apply_touch(&mut app, Ended, (x, y - 60), tick(2700));
+    assert_ne!(shown(app.state()).rows[0][0], first);
+    assert_eq!(draft(app.state(), TRAIL_CREW), "A#");
+
+    tap_at(&mut app, (4, 4), 3000);
+    assert!(app.state().picker.is_none());
+    assert_eq!(draft(app.state(), TRAIL_CREW), "A#");
+}

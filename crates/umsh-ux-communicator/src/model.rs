@@ -2827,10 +2827,10 @@ impl State {
         self.picker = Some(Picker::to_react(message));
     }
 
-    /// The picker's cells to a row, on this board.
+    /// How the picker's grid is laid out on this board.
     #[must_use]
-    pub fn picker_columns(&self) -> u16 {
-        crate::ui::picker_columns(self.metrics()) as u16
+    pub fn picker_geometry(&self) -> crate::picker::Geometry {
+        crate::ui::picker_geometry(self.metrics())
     }
 
     /// When the screen next changes by itself, on the board's clock.
@@ -2842,6 +2842,7 @@ impl State {
             self.lock.deadline(),
             self.press.and_then(|p| p.hold_until),
             self.touch.and_then(|t| t.hold_until),
+            self.picker.as_ref().and_then(Picker::coasting_until),
             self.recents.save_at,
             self.screen_deadline(),
         ]
@@ -2869,6 +2870,10 @@ impl State {
         }
         if self.recents.save_at.is_some_and(|at| at <= now) {
             self.save_recents();
+        }
+        let g = self.picker_geometry();
+        if let Some(picker) = self.picker.as_mut() {
+            picker.coast(self.recents.picks(), g, now);
         }
     }
 

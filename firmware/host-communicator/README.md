@@ -186,7 +186,9 @@ board's clock.
 | `press` | Presses and releases the wheel or the ball |
 | `hold` | Holds it long enough to open a menu |
 | `tap X Y` | Touches the screen at X, Y and lifts, on the T-Deck |
+| `drag X1 Y1 X2 Y2` | Touches the screen at X1, Y1, draws the finger to X2, Y2, and lifts |
 | `enter`, `backspace`, `space` | The keys |
+| `picker` | The T-Deck's Alt+C, which opens and closes the character picker |
 | `type TEXT` | Types TEXT as it is |
 | `keys TEXT` | Presses TEXT as Pager keys, so the modifiers and typing aids act on it |
 | `shift`, `alt` | Taps the modifier |

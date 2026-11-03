@@ -148,23 +148,45 @@ minus sign from Alt+F. Space types a space.
 ## Character picker
 
 **Alt+Space** in an active text field, with Alt held or one-shot, opens the
-character picker. It inserts characters the keyboard does not have: emoji,
-symbols, accented letters, and currency signs.
+character picker. It inserts emoji, every symbol a US keyboard types, further
+symbols and currency signs, and accented letters.
 
 The picker covers the transcript but not the composer, so the insertion point
-stays in view. Its category row starts with recently used characters.
+stays in view. Its categories, in order, are recently used characters,
+symbols, the emoji groups, and letters. The symbols start with the keyboard's,
+so whatever a board's keys lack is a few steps from where the picker opens.
+Each category starts a row.
+
+Focus is on a cell of the grid, or on the category row above it.
 
 - **Turn** walks the grid cell by cell, through every category in order; the
-  category row follows.
-- **Press** or **Enter** inserts the focused character at the cursor and
-  closes the picker.
-- **Letters** filter the picker by name, in place of the category row.
-- **Backspace** removes the last filter letter, or closes the picker when there
-  is none.
-- **Space** toggles the keyboard light and closes the picker.
+  category row follows. Turning back from the first cell moves focus up to the
+  category row.
+- On the category row, **turn** moves from category to category, showing each
+  one's first row, and **press** moves focus down to its first cell.
+- **Press** or **Enter** on a cell inserts it at the cursor and closes the
+  picker.
+- **Letters** filter the picker by name, in place of the category row, which
+  then shows the focused character's name. **Space** separates words.
+- **Backspace** removes the last filter letter; with none, it moves focus from
+  the grid up to the category row, and from there closes the picker.
+- **Space**, with no filter, toggles the keyboard light and closes the picker.
 
 The grid overflows like any list: its last row is clipped by the picker's
 edge.
+
+### Touch and the trackball
+
+On a touchscreen, the picker takes every touch while it is open.
+
+- A tap on a cell inserts it and closes the picker.
+- A tap on a category shows that category's first row.
+- Dragging over the grid scrolls it; a flick coasts on, and a touch stops it.
+- A tap anywhere off the picker closes it.
+
+The trackball moves across a row and between rows. Rolling up from the first
+row moves focus to the category row, where rolling across moves between
+categories and rolling down returns to the grid.
 
 | Picker | Filtered |
 |---|---|

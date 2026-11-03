@@ -18,7 +18,7 @@ use crate::board::{Board, Metrics};
 use crate::keyboard::Field;
 use crate::model::{Glance, KeyboardFirmware, KeyboardSettings, LEVELS, State};
 use crate::nav::{PowerText, keys};
-use crate::picker::{COLUMNS, FILTER, ROWS, Shown, TABS, Tab};
+use crate::picker::{COLUMNS, FILTER, Geometry, Pick, ROWS, Shown, Spot, TABS, Tab};
 use crate::{font, icon, theme};
 
 const ROW: u32 = 36;
@@ -33,24 +33,43 @@ const fn power_width(m: &Metrics) -> u32 {
 /// it.
 const PICKER_INSET: u32 = 6;
 const GRID_INSET: u32 = 12;
+/// Above the tabs, in the picker.
+const CARD_TOP: u32 = 4;
 
-/// A cell of the picker: a character at body size, with room around it.
+/// A row of the picker: a character at body size with room around it, or,
+/// on a touchscreen, room for a finger.
 const fn cell(m: &Metrics) -> u32 {
-    2 * m.body + 1
+    let room = 2 * m.body + 1;
+    match m.touch_target {
+        Some(finger) if finger * 3 / 4 > room => finger * 3 / 4,
+        _ => room,
+    }
 }
 
 /// The row of tabs, or of the name typed, above the cells.
 const fn tabs_height(m: &Metrics) -> u32 {
-    cell(m) * 5 / 8
+    (2 * m.body + 1) * 5 / 8
 }
 
 /// Between the tabs and the cells.
 const TABS_GAP: u32 = 4;
 
-/// The picker's height: its tabs, two rows, and a quarter of the next, cut
-/// by its edge to show there is more.
+/// Where the picker lies over a conversation: under its header, and over
+/// all but the composer's band, one line tall, below.
+const HEADER: u32 = 34;
+const fn composer(m: &Metrics) -> u32 {
+    m.body + 14
+}
+
+/// The picker's height: from under a conversation's header to the
+/// composer, the last row cut by its edge to show there is more.
 const fn picker_height(m: &Metrics) -> u32 {
-    4 + tabs_height(m) + TABS_GAP + 2 * cell(m) + cell(m) / 4
+    m.height - (m.strip + HEADER + 4) - composer(m) - 4
+}
+
+/// The height of the rows in view.
+const fn rows_height(m: &Metrics) -> u32 {
+    picker_height(m) - CARD_TOP - tabs_height(m) - TABS_GAP
 }
 
 /// The width the picker's tabs and cells have.
@@ -58,21 +77,86 @@ const fn grid_width(m: &Metrics) -> u32 {
     m.width - 2 * PICKER_INSET - 2 * GRID_INSET
 }
 
-/// How many cells a row of the picker holds.
+/// How the picker's grid is laid out on a board.
 #[must_use]
-pub const fn picker_columns(m: &Metrics) -> usize {
-    (grid_width(m) / cell(m)) as usize
+pub const fn picker_geometry(m: &Metrics) -> Geometry {
+    Geometry {
+        columns: (grid_width(m) / cell(m)) as u16,
+        row: cell(m) as u16,
+        height: rows_height(m) as u16,
+    }
 }
+
+/// A cell's width: a row's width shared evenly.
+const fn cell_width(m: &Metrics) -> u32 {
+    grid_width(m) / picker_geometry(m).columns as u32
+}
+
 const _: () = {
     let boards = [&Board::PAGER, &Board::TDECK];
     let mut i = 0;
     while i < boards.len() {
-        assert!(picker_columns(&boards[i].metrics) <= COLUMNS);
+        let m = &boards[i].metrics;
+        assert!(picker_geometry(m).columns as usize <= COLUMNS);
+        // Scrolled, a row more: one cut at the top, and one at the bottom.
+        assert!((rows_height(m).div_ceil(cell(m)) as usize) < ROWS);
         i += 1;
     }
 };
-/// Where the picker lies over a conversation: under its header.
-const HEADER: u32 = 34;
+
+/// Where the picker's card starts down the screen: over a conversation,
+/// under its header, so the composer below stays in view; over any other
+/// field, at the bottom of the screen.
+const fn card_top(m: &Metrics, over_conversation: bool) -> u32 {
+    if over_conversation {
+        m.strip + HEADER + 4
+    } else {
+        m.height - PICKER_INSET - picker_height(m)
+    }
+}
+
+/// Whether the picker lies over a conversation.
+fn over_conversation(state: &State) -> bool {
+    let reacting = state
+        .picker
+        .as_ref()
+        .is_some_and(|p| p.reacting().is_some());
+    reacting || state.keyboard.field() == Some(Field::Prose)
+}
+
+/// What is at `x`, `y` on the screen, as the open picker sees it. The
+/// tabs reach from the picker's top to the rows, and the cells at either
+/// end out to its sides, so a finger near them still finds them.
+#[must_use]
+pub fn picker_spot(state: &State, x: i32, y: i32) -> Spot {
+    let m = state.metrics();
+    let Some(picker) = state.picker.as_ref() else {
+        return Spot::Outside;
+    };
+    let top = card_top(m, over_conversation(state)) as i32;
+    let left = PICKER_INSET as i32;
+    if x < left || x >= (m.width - PICKER_INSET) as i32 {
+        return Spot::Outside;
+    }
+    if y < top || y >= top + picker_height(m) as i32 {
+        return Spot::Outside;
+    }
+    let across = (x - left - GRID_INSET as i32).clamp(0, grid_width(m) as i32 - 1) as u32;
+    let rows_top = top + (CARD_TOP + tabs_height(m) + TABS_GAP) as i32;
+    if y >= rows_top {
+        let column = (across / cell_width(m)) as u16;
+        return Spot::Grid {
+            column: column.min(picker_geometry(m).columns - 1),
+            y: (y - rows_top) as u16,
+        };
+    }
+    if !picker.filter().is_empty() {
+        return Spot::Card;
+    }
+    let tabs = picker.tabs(state.recents.picks()).len().max(1) as u32;
+    let width = grid_width(m) / tabs;
+    Spot::Tab((across / width).min(tabs - 1) as u8)
+}
 
 /// A glance's height, and its top on the screen: a little below the
 /// middle.
@@ -178,33 +262,20 @@ fn back(key: Key, s: &mut State) -> KeyResponse {
     }
 }
 
-/// The character picker. Over a conversation it lies under the header,
-/// so the composer below stays in view; over any other field, at the
-/// bottom of the screen.
+/// The character picker, over a conversation or another field.
 pub fn picker(state: &State) -> impl View<Rgb565, State> + use<> {
     let m = state.metrics();
-    let reacting = state
-        .picker
-        .as_ref()
-        .is_some_and(|p| p.reacting().is_some());
-    let over_conversation = reacting || state.keyboard.field() == Some(Field::Prose);
     let look = PickerLook {
         shown: state
             .picker
             .as_ref()
-            .map(|p| p.shown(state.recents.picks(), state.picker_columns()))
+            .map(|p| p.shown(state.recents.picks(), picker_geometry(m)))
             .unwrap_or_default(),
         m,
     };
     Lazy::new(look, picker_card)
         .padding(Edges::Horizontal, PICKER_INSET)
-        .padding(Edges::Top, m.strip + HEADER + 4)
-        .flex_infinite_height(if over_conversation {
-            VerticalAlignment::Top
-        } else {
-            VerticalAlignment::Bottom
-        })
-        .padding(Edges::Bottom, PICKER_INSET)
+        .padding(Edges::Top, card_top(m, over_conversation(state)))
 }
 
 /// What the picker is drawn from.
@@ -218,18 +289,33 @@ struct PickerLook {
 /// cells are more than the screen keeps.
 fn picker_card(look: &PickerLook) -> impl View<Rgb565, ()> + use<> {
     let m = look.m;
-    let head = match_view!(look.shown.filter.is_empty(), {
-        true => tabs(m, look.shown.tabs, look.shown.tab),
-        false => filter(m, &look.shown.filter),
+    let shown = &look.shown;
+    let head = match_view!(shown.filter.is_empty(), {
+        true => tabs(m, shown.tabs, shown.tab, shown.on_tabs),
+        false => filter(m, &shown.filter, shown.name),
     });
+    let nothing = !shown.filter.is_empty() && shown.rows.is_empty();
     VStack::new((
-        head.frame().with_height(tabs_height(m)),
-        grid(m, &look.shown).clipped(),
+        head.frame()
+            .with_height(tabs_height(m))
+            // The rule under the tabs, which the current tab's mark sits on.
+            .background(
+                Alignment::Bottom,
+                Rectangle
+                    .foreground_color(theme::MENU_LINE)
+                    .frame_sized(grid_width(m), 1),
+            ),
+        grid(m, shown)
+            .overlay(
+                Alignment::Center,
+                nothing.then(|| line("No matches", &font::REGULAR, m.small, theme::TEXT_TERTIARY)),
+            )
+            .clipped(),
     ))
     .with_spacing(TABS_GAP)
     .with_alignment(HorizontalAlignment::Leading)
     .padding(Edges::Horizontal, GRID_INSET)
-    .padding(Edges::Top, 4)
+    .padding(Edges::Top, CARD_TOP)
     .frame()
     .with_width(m.width - 2 * PICKER_INSET)
     .with_height(picker_height(m))
@@ -237,30 +323,52 @@ fn picker_card(look: &PickerLook) -> impl View<Rgb565, ()> + use<> {
     .background(Alignment::Center, card(12, theme::MENU, theme::MENU_LINE))
 }
 
-/// The tabs, with `current`'s underlined.
+/// The tabs, `current`'s marked: ringed while focus is on it, and
+/// otherwise underlined.
 fn tabs(
     m: &'static Metrics,
     tabs: &'static [Tab],
     current: Option<Tab>,
+    on_tabs: bool,
 ) -> impl View<Rgb565, ()> + use<> {
     let width = grid_width(m) / tabs.len().max(1) as u32;
+    let height = tabs_height(m);
     ForEach::<{ TABS.len() }>::new_horizontal(tabs, move |&tab| {
+        let this = Some(tab) == current;
+        let color = if this {
+            theme::TEXT
+        } else {
+            theme::TEXT_SECONDARY
+        };
         let face = (tab != Tab::Recent).then(|| {
             Text::new(tab.face(), &font::BOLD)
                 .with_font_size(m.small)
                 .with_line_limit(1)
-                .foreground_color(theme::TEXT_SECONDARY)
+                .foreground_color(color)
         });
         let clock = (tab == Tab::Recent).then(|| {
             Image::new(&icon::CLOCK)
                 .as_template()
-                .foreground_color(theme::TEXT_SECONDARY)
+                .foreground_color(color)
         });
+        let focused = this && on_tabs;
         ZStack::new((face, clock))
-            .frame_sized(width, tabs_height(m))
+            .frame_sized(width, height)
+            .background(
+                Alignment::Center,
+                focused.then(|| {
+                    ZStack::new((
+                        RoundedRectangle::new(6).foreground_color(theme::FOCUS),
+                        RoundedRectangle::new(6)
+                            .stroked(2)
+                            .foreground_color(theme::ACCENT),
+                    ))
+                    .frame_sized(width - 2, height - 2)
+                }),
+            )
             .overlay(
                 Alignment::Bottom,
-                (Some(tab) == current).then(|| {
+                (this && !on_tabs).then(|| {
                     RoundedRectangle::new(1)
                         .foreground_color(theme::ACCENT)
                         .frame_sized(width * 2 / 3, 2)
@@ -269,9 +377,16 @@ fn tabs(
     })
 }
 
-/// The name typed, in place of the tabs.
-fn filter(m: &'static Metrics, filter: &str) -> impl View<Rgb565, ()> + use<> {
+/// The name typed, in place of the tabs, and the focused pick's name.
+fn filter(m: &'static Metrics, filter: &str, name: &str) -> impl View<Rgb565, ()> + use<> {
     let filter: String<FILTER> = String::try_from(filter).unwrap_or_default();
+    // A character's name is kept in lowercase.
+    let mut title = String::<48>::new();
+    let mut chars = umsh_grapheme::cut(name, 44).chars();
+    for c in chars.next().into_iter().flat_map(char::to_uppercase) {
+        _ = title.push(c);
+    }
+    _ = title.push_str(chars.as_str());
     HStack::new((
         Image::new(&icon::SEARCH)
             .as_template()
@@ -280,45 +395,74 @@ fn filter(m: &'static Metrics, filter: &str) -> impl View<Rgb565, ()> + use<> {
         Rectangle
             .foreground_color(theme::ACCENT)
             .frame_sized(2, m.body),
+        line(title, &font::REGULAR, m.small, theme::TEXT_TERTIARY)
+            .flex_infinite_width(HorizontalAlignment::Trailing),
     ))
     .with_spacing(4)
     .flex_infinite_width(HorizontalAlignment::Leading)
 }
 
-/// The rows in view, the focused pick ringed.
+/// The rows in view, the first cut `offset` pixels by the top. Each row
+/// is built only while it is drawn ([`Lazy`]), so no more than one row's
+/// cells are ever on the stack.
 fn grid(m: &'static Metrics, shown: &Shown) -> impl View<Rgb565, ()> + use<> {
-    static ROWS_SHOWN: [usize; ROWS] = [0, 1, 2];
-    static CELLS: [usize; COLUMNS] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+    static ROWS_SHOWN: [usize; ROWS] = [0, 1, 2, 3, 4];
     let rows = shown.rows.clone();
     let focus = shown.focus;
-    let size = cell(m);
     ForEach::<ROWS>::new_vertical(&ROWS_SHOWN[..rows.len()], move |&r| {
-        let picks = rows[r].clone();
-        ForEach::<COLUMNS>::new_horizontal(&CELLS[..picks.len()], move |&i| {
-            let focused = focus == Some((r, i));
-            Text::new(picks[i].text(), &font::REGULAR)
-                .with_font_size(m.body)
-                .with_line_limit(1)
-                .foreground_color(theme::TEXT)
-                .frame_sized(size - 2, size - 2)
-                .background(
-                    Alignment::Center,
-                    focused.then(|| RoundedRectangle::new(8).foreground_color(theme::FOCUS)),
-                )
-                // The ring over the pick, which an emoji may reach.
-                .overlay(
-                    Alignment::Center,
-                    focused.then(|| {
-                        RoundedRectangle::new(8)
-                            .stroked(2)
-                            .foreground_color(theme::ACCENT)
-                    }),
-                )
-                .padding(Edges::All, 1)
-        })
+        let look = RowLook {
+            picks: rows[r].clone(),
+            focus: focus.and_then(|(row, cell)| (row == r).then_some(cell)),
+            m,
+        };
+        Lazy::new(look, picker_row)
     })
     .with_alignment(HorizontalAlignment::Leading)
-    .flex_infinite_width(HorizontalAlignment::Leading)
+    .offset(0, -i32::from(shown.offset))
+    .frame()
+    .with_width(grid_width(m))
+    .with_height(rows_height(m))
+    .with_alignment(Alignment::Top)
+}
+
+/// What a row of the picker is drawn from: its picks, and the focused
+/// one's cell.
+#[derive(Clone, Debug)]
+struct RowLook {
+    picks: heapless::Vec<Pick, COLUMNS>,
+    focus: Option<usize>,
+    m: &'static Metrics,
+}
+
+/// A row of the picker, the focused pick ringed.
+fn picker_row(look: &RowLook) -> impl View<Rgb565, ()> + use<> {
+    static CELLS: [usize; COLUMNS] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+    let m = look.m;
+    let picks = look.picks.clone();
+    let focus = look.focus;
+    let (width, height) = (cell_width(m), cell(m));
+    ForEach::<COLUMNS>::new_horizontal(&CELLS[..picks.len()], move |&i| {
+        let focused = focus == Some(i);
+        Text::new(picks[i].text(), &font::REGULAR)
+            .with_font_size(m.body)
+            .with_line_limit(1)
+            .foreground_color(theme::TEXT)
+            .frame_sized(width - 2, height - 2)
+            .background(
+                Alignment::Center,
+                focused.then(|| RoundedRectangle::new(8).foreground_color(theme::FOCUS)),
+            )
+            // The ring over the pick, which an emoji may reach.
+            .overlay(
+                Alignment::Center,
+                focused.then(|| {
+                    RoundedRectangle::new(8)
+                        .stroked(2)
+                        .foreground_color(theme::ACCENT)
+                }),
+            )
+            .padding(Edges::All, 1)
+    })
 }
 
 /// A setting a key changed, shown briefly with no words.
