@@ -199,7 +199,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     }
 
     struct ManagementWaiter {
-        let continuation: CheckedContinuation<MobileMeshManagementEventRecord, any Error>
+        let waiter: RadioOperationWaiter<MobileMeshManagementEventRecord>
         /// Called for every progress report, and never after the exchange
         /// resolves.
         let progress: (@Sendable (UInt32?) -> Void)?
@@ -1487,45 +1487,74 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     /// Run one node-management exchange to completion.
     ///
     /// Unlike a ULCP operation over the local link, several of these can be
-    /// in flight—the Rust worker refuses a second device outright and
-    /// answers for it, so there is nothing to serialize here.
+    /// in flight: the Rust worker queues each device's operations behind
+    /// one another and runs different devices' side by side, so there is
+    /// nothing to serialize here.
+    ///
+    /// Canceling the calling task cancels the operation in the worker too,
+    /// which stops the MAC retrying it and lets the next one for that
+    /// device go.
     func performManagement(
         progress: (@Sendable (UInt32?) -> Void)? = nil,
         _ start: @escaping @Sendable (MobileMeshSession) throws -> UInt64
     ) async throws -> MobileMeshManagementEventRecord {
-        let event = try await withCheckedThrowingContinuation {
-            (result: CheckedContinuation<MobileMeshManagementEventRecord, any Error>) in
-            sessionQueue.async { [self] in
-                guard let meshSession,
-                      link?.linkIsReady == true,
-                      snapshot.linkState == .attached,
-                      snapshot.hostState == .matchesCurrentIdentity
-                else {
-                    result.resume(throwing: RemoteManagementError.unavailable)
-                    return
-                }
-                do {
-                    let operation = try start(meshSession)
-                    managementWaiters[operation] = ManagementWaiter(
-                        continuation: result,
-                        progress: progress
-                    )
-                } catch {
-                    result.resume(throwing: RemoteManagementError.unavailable)
+        let waiter = RadioOperationWaiter<MobileMeshManagementEventRecord>()
+        let event = try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation {
+                (result: CheckedContinuation<MobileMeshManagementEventRecord, any Error>) in
+                guard waiter.install(result) else { return }
+                sessionQueue.async { [self] in
+                    guard !waiter.isCancelled else { return }
+                    guard let meshSession,
+                          link?.linkIsReady == true,
+                          snapshot.linkState == .attached,
+                          snapshot.hostState == .matchesCurrentIdentity
+                    else {
+                        waiter.resume(throwing: RemoteManagementError.unavailable)
+                        return
+                    }
+                    do {
+                        let operation = try start(meshSession)
+                        managementWaiters[operation] = ManagementWaiter(
+                            waiter: waiter,
+                            progress: progress
+                        )
+                    } catch {
+                        waiter.resume(throwing: RemoteManagementError.unavailable)
+                    }
                 }
             }
+        } onCancel: {
+            waiter.cancel()
+            sessionQueue.async { [weak self] in self?.cancelAbandonedManagement() }
         }
         switch event.outcome {
         case .replied, .acknowledged:
             return event
         case .timedOut:
             throw RemoteManagementError.noAnswer
+        case .unreachable:
+            throw RemoteManagementError.unreachable
+        case .canceled:
+            throw CancellationError()
         case .failed:
             throw RemoteManagementError.unreadable
         case .progress:
             // Progress never resolves a waiter; reaching here would mean the
             // pump resumed one with a report rather than an ending.
             throw RemoteManagementError.unreadable
+        }
+    }
+
+    /// Cancel in the worker every operation whose caller stopped waiting.
+    ///
+    /// The caller has already been released; this is what stops the
+    /// request itself. One whose cancellation landed before it started
+    /// never reaches the worker at all.
+    private func cancelAbandonedManagement() {
+        for (operation, waiter) in managementWaiters where waiter.waiter.isCancelled {
+            managementWaiters[operation] = nil
+            try? meshSession?.cancelManagement(operationId: operation)
         }
     }
 
@@ -2465,7 +2494,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
                     continue
                 }
                 managementWaiters.removeValue(forKey: event.operationId)?
-                    .continuation.resume(returning: event)
+                    .waiter.resume(returning: event)
             }
             for event in update.advertisementEvents {
                 let advertisement = RadioAdvertisementEvent(
@@ -2532,7 +2561,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
             }
             pingWaiters.removeAll()
             for waiter in managementWaiters.values {
-                waiter.continuation.resume(throwing: RemoteManagementError.unavailable)
+                waiter.waiter.resume(throwing: RemoteManagementError.unavailable)
             }
             managementWaiters.removeAll()
             reportOperationFailure(
@@ -2785,11 +2814,13 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
             waiter.resume(throwing: error)
         }
         pingWaiters.removeAll()
-        // A management exchange lives in the Rust worker, which the link
-        // going down takes with it: nothing will ever report its outcome,
-        // so the callers are released here alongside the pings.
-        for waiter in managementWaiters.values {
-            waiter.continuation.resume(throwing: RemoteManagementError.unavailable)
+        // The callers are released here alongside the pings, and their
+        // operations are canceled in the Rust worker, which outlives the
+        // link: left running, each would go on holding its device's queue
+        // and retrying a request whose answer nobody is waiting for.
+        for (operation, waiter) in managementWaiters {
+            waiter.waiter.resume(throwing: RemoteManagementError.unavailable)
+            try? meshSession?.cancelManagement(operationId: operation)
         }
         managementWaiters.removeAll()
         finishLocalManagement(throwing: RemoteManagementError.unavailable)

@@ -184,7 +184,6 @@ struct RemoteRadioEditor: View {
             } header: {
                 Text("Transmit")
             }
-            RemoteProblemSection(model: model)
         }
         .remoteCategoryChrome(
             model: model,
@@ -544,7 +543,6 @@ struct RemoteIdentityEditor: View {
                     )
                 }
             }
-            RemoteProblemSection(model: model)
         }
         .remoteCategoryChrome(
             model: model,
@@ -1121,7 +1119,6 @@ struct RemoteRepeaterEditor: View {
                     NavigationLink("MeshCore") { RemoteMeshCoreScreen(model: model) }
                 }
             }
-            RemoteProblemSection(model: model)
         }
         // A mutation of plain draft state animates nothing on its own (and a
         // withAnimation around it is lost to the same update's text-field
@@ -1415,7 +1412,6 @@ struct RemoteMeshCoreScreen: View {
                     Text(problem).foregroundStyle(.red)
                 }
             }
-            RemoteProblemSection(model: model)
         }
         .animation(UMSHAnimation.list, value: edits.regions.edited)
         .remoteCategoryChrome(

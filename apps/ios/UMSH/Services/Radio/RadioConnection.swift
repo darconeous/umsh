@@ -735,13 +735,16 @@ enum DfuEntryError: Error, LocalizedError, Sendable {
 }
 
 enum RemoteManagementError: Error, Equatable, Sendable {
-    /// Nothing came back inside the exchange's budget.
+    /// The device acknowledged the request, then said nothing.
     ///
-    /// Deliberately one case for two causes: a device out of reach and a
-    /// device that does not list this phone as an administrator are
-    /// indistinguishable from here, because an unauthorized request is
-    /// answered with silence rather than a refusal. The screen says both.
+    /// Deliberately one case for two causes: a device that lost its answer
+    /// on the way back and a device that does not list this phone as an
+    /// administrator are indistinguishable from here, because an
+    /// unauthorized request is answered with silence rather than a refusal.
+    /// The screen says both.
     case noAnswer
+    /// The request never reached the device: nothing acknowledged it.
+    case unreachable
     /// The device answered, and the answer was a refusal. Carries the ULCP
     /// status so the screen can name it.
     case refused(status: UInt32)

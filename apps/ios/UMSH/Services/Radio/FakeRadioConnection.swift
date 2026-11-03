@@ -975,10 +975,11 @@ actor FakeRadioConnection: RadioConnection {
 
     /// Refuse when the canned device is switched out of reach, and
     /// otherwise take long enough that a screen's in-flight state is
-    /// visible rather than a flicker.
+    /// visible rather than a flicker. Canceling the caller ends the wait,
+    /// as it does over the air.
     private func answerAsIfOverTheAir() async throws {
         guard remoteDeviceReachable else { throw RemoteManagementError.noAnswer }
-        try? await Task.sleep(for: .milliseconds(400))
+        try await Task.sleep(for: .milliseconds(400))
     }
 
     /// Mirrors the fake ping: one router on the way to the peer, so the route

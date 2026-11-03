@@ -119,7 +119,8 @@ extension DeviceManagementBackend {
 }
 
 /// One device managed across the mesh: what it is, what it holds, and the
-/// one operation at a time this phone is allowed to run against it.
+/// operations this phone has asked of it, run one at a time in the order
+/// they were asked.
 ///
 /// Deliberately not a session—there is nothing to hold open. An operation
 /// is a handful of frames that either come back or do not, and a failure is
@@ -137,9 +138,8 @@ final class ManageDeviceModel {
     private(set) var readings: [UlcpManageCategory: RemoteCategoryReading] = [:]
     /// What the device is doing to make itself findable, once asked.
     private(set) var alert: RadioAlertState = .none
-    /// The device may run one operation at a time, so the whole screen is
-    /// held while any of them is out.
-    private(set) var isBusy = false
+    /// Whether anything asked of the device has yet to finish.
+    var isBusy: Bool { !operations.isEmpty }
     private(set) var enteredDfu = false
     /// Properties the running fetch has yet to ask for, for progress.
     private(set) var propertiesRemaining: UInt32?
@@ -247,18 +247,19 @@ final class ManageDeviceModel {
     /// its stale cache the moment its settings open.
     func loadCard() async {
         await learnPhoneNodeKey()
-        guard !isBusy else { return }
         if card == nil, let stored = await management.loadCard(address) {
             adopt(stored)
         }
-        if card == nil || (management.refreshesStaleReadings && !cardIsFresh) {
+        if card == nil || (management.refreshesStaleReadings && !cardIsFresh),
+           !isReading(.card)
+        {
             await refreshCard()
         }
     }
 
     /// Ask the device what it is, whether or not this phone already knows.
     func refreshCard() async {
-        await run { [self] in
+        await run(reading: .card) { [self] in
             let answers = try await fetch(ulcpCardProperties(), multiHint: true)
             let fetched = try inspectUlcpDeviceCard(
                 responses: ulcpRecordsFromAnswers(answers: answers)
@@ -371,7 +372,9 @@ final class ManageDeviceModel {
             }
             readings[category] = reading
         }
-        if management.refreshesStaleReadings, readings[category]?.isFresh == false {
+        if management.refreshesStaleReadings, readings[category]?.isFresh == false,
+           !isReading(.category(category))
+        {
             await refreshCategory(category)
         }
     }
@@ -381,7 +384,7 @@ final class ManageDeviceModel {
         let properties = properties(of: category)
         guard !properties.isEmpty, let card else { return }
         writeRefusals[category] = nil
-        await run { [self] in
+        await run(reading: .category(category)) { [self] in
             if category == .sensors {
                 // Read every measurement together, with names until they are
                 // known; reuse names until a measurement reveals more sensors.
@@ -411,6 +414,8 @@ final class ManageDeviceModel {
                         if let names = reported[ulcpProperties.temperatureNames] {
                             reading.absorbTemperatureNames(names, at: now)
                         }
+                    } catch is CancellationError {
+                        throw CancellationError()
                     } catch {
                         for property in requested {
                             reading.failures[property] = error.localizedDescription
@@ -458,15 +463,15 @@ final class ManageDeviceModel {
         save: Bool = true
     ) async -> Bool {
         guard !dirty.isEmpty else { return true }
-        var answered = false
+        let answered = Reported(false)
         writeRefusals[category] = nil
-        await run { [self] in
+        await run(changesDevice: true) { [self] in
             let writes = try ulcpDirtyWrites(
                 desired: desired,
                 dirtyPropertyIds: Array(dirty).sorted()
             )
             let answers = try await management.write(address, writes)
-            answered = true
+            answered.value = true
             let echoed = Self.values(in: answers)
             await cache(echoed)
             readings[category]?.absorb(echoed, at: Date(), fromAir: true)
@@ -490,7 +495,7 @@ final class ManageDeviceModel {
                 try await management.save(address)
             }
         }
-        return answered
+        return answered.value
     }
 
     /// Why the device would not take a value, said for the row that
@@ -531,7 +536,7 @@ final class ManageDeviceModel {
                 : reading?.properties.devPeerKeys) ?? []
         )
         guard current != desired else { return }
-        await run { [self] in
+        await run(changesDevice: true) { [self] in
             let edit = administrators ? management.setAdministrator : management.setPeer
             for key in current.subtracting(desired) {
                 try await edit(address, key, false)
@@ -704,6 +709,7 @@ final class ManageDeviceModel {
     private func followScanOverMesh() async {
         for _ in 0..<20 {
             try? await Task.sleep(for: .seconds(2))
+            guard !relinquished else { return }
             await refreshCategory(.wifi)
             guard problem == nil else { return }
             if readings[.wifi]?.properties.wifiScanning != true {
@@ -723,9 +729,9 @@ final class ManageDeviceModel {
     /// can offer a weaker security mode against `STATUS_UNIMPLEMENTED`
     /// rather than making the operator start again.
     func joinNetwork(item: Data, ssid: Data) async -> UInt32? {
-        var refusal: UInt32?
+        let refusal = Reported<UInt32?>(nil)
         let enabled = readings[.wifi]?.properties.wifiEnabled == true
-        await run { [self] in
+        await run(changesDevice: true) { [self] in
             do {
                 try await management.insertNetwork(address, item)
                 var writes: [MobileMeshPropertyWriteRecord] = []
@@ -745,15 +751,39 @@ final class ManageDeviceModel {
                 }
             } catch let error as RemoteManagementError {
                 guard case let .refused(status) = error else { throw error }
-                refusal = status
+                refusal.value = status
                 return
             }
             try await management.save(address)
         }
-        if refusal == nil, problem == nil {
+        if refusal.value == nil, problem == nil {
             await refreshCategory(.wifi)
         }
-        return refusal
+        return refusal.value
+    }
+
+    /// Replace a network the device already knows with `item`, and save.
+    ///
+    /// An item with the stored security and no credential keeps the
+    /// password the device holds, which this phone may never have had.
+    /// Returns the refusal status where there was one, so the edit sheet
+    /// can say what about the change the device would not take.
+    func updateNetwork(item: Data) async -> UInt32? {
+        let refusal = Reported<UInt32?>(nil)
+        await run(changesDevice: true) { [self] in
+            do {
+                try await management.insertNetwork(address, item)
+            } catch let error as RemoteManagementError {
+                guard case let .refused(status) = error else { throw error }
+                refusal.value = status
+                return
+            }
+            try await management.save(address)
+        }
+        if refusal.value == nil, problem == nil {
+            await refreshCategory(.wifi)
+        }
+        return refusal.value
     }
 
     /// Join a network the device already knows, now.
@@ -776,7 +806,7 @@ final class ManageDeviceModel {
     /// The insert carries an empty password, which keeps the one the
     /// device holds: this phone may never have had it.
     func setAutoJoin(_ network: UlcpWifiNetworkRecord, _ autoJoin: Bool) async {
-        await run { [self] in
+        await run(changesDevice: true) { [self] in
             let item = try ulcpWifiNetworkItem(
                 ssid: network.ssid,
                 security: network.security,
@@ -793,7 +823,7 @@ final class ManageDeviceModel {
 
     /// Forget one network by name, and save.
     func forgetNetwork(ssid: Data) async {
-        await run { [self] in
+        await run(changesDevice: true) { [self] in
             try await management.removeNetwork(address, ssid)
             try await management.save(address)
         }
@@ -805,7 +835,7 @@ final class ManageDeviceModel {
     /// problems rather than per-row: the callers here are buttons, not
     /// fields, and there is no row to put a rejection on.
     private func write(_ writes: [MobileMeshPropertyWriteRecord]) async {
-        await run { [self] in
+        await run(changesDevice: true) { [self] in
             let answers = try await management.write(address, writes)
             let echoed = Self.values(in: answers)
             readings[.wifi]?.absorb(echoed, at: Date(), fromAir: true)
@@ -823,7 +853,7 @@ final class ManageDeviceModel {
     /// configuration, and the one worth the round trip: a node whose last
     /// known position is a week-old fix is found by making it beep.
     func setAlert(_ state: RadioAlertState) async {
-        await run { [self] in
+        await run(changesDevice: true) { [self] in
             alert = try await management.setAlert(address, state)
         }
     }
@@ -832,7 +862,7 @@ final class ManageDeviceModel {
 
     /// Stop management only after the device has confirmed entry.
     func enterDfu(_ mode: UlcpDfuMode) async {
-        await run { [self] in
+        await run(changesDevice: true) { [self] in
             try await management.enterDfu(address, mode)
             enteredDfu = true
         }
@@ -840,7 +870,7 @@ final class ManageDeviceModel {
 
     /// Restart while preserving saved settings; refresh the sensor inventory.
     func restart() async {
-        await run { [self] in
+        await run(changesDevice: true) { [self] in
             try await management.reset(address, .reboot)
             readings[.sensors] = nil
         }
@@ -852,7 +882,7 @@ final class ManageDeviceModel {
     /// what this screen offers is the choice between the two kinds of
     /// announcement and how far each travels.
     func announce(_ kind: MobileAnnouncementKind, floodHops: UInt8) async {
-        await run { [self] in
+        await run(changesDevice: true) { [self] in
             try await management.announce(
                 address,
                 MobileAnnouncementRecord(
@@ -873,7 +903,7 @@ final class ManageDeviceModel {
     /// from what the write means rather than from what the device says
     /// next, so the screen is not left reporting hosts that no longer exist.
     func clearBluetoothPairings() async {
-        await run { [self] in
+        await run(changesDevice: true) { [self] in
             try await management.clearBluetoothBonds(address)
         }
         guard problem == nil else { return }
@@ -902,7 +932,7 @@ final class ManageDeviceModel {
     /// something that no longer exists. Drop it rather than let the next
     /// open present a dead device's settings as current.
     func factoryReset() async {
-        await run { [self] in
+        await run(changesDevice: true) { [self] in
             try await management.reset(address, .factory)
         }
         await forgetCache()
@@ -920,20 +950,91 @@ final class ManageDeviceModel {
 
     // MARK: - Running one operation at a time
 
-    /// Run one operation against the device, holding the screen while it is
-    /// out and turning whatever went wrong into a sentence.
-    private func run(_ operation: () async throws -> Void) async {
-        guard !isBusy, !enteredDfu else { return }
-        isBusy = true
+    /// What a read asks for, so an automatic one is not asked twice.
+    enum Reading: Equatable {
+        case card
+        case category(UlcpManageCategory)
+    }
+
+    /// Something an operation learns for the caller that asked for it,
+    /// read once the operation has run.
+    @MainActor
+    private final class Reported<Value> {
+        var value: Value
+        init(_ value: Value) { self.value = value }
+    }
+
+    private struct Operation {
+        let id = UUID()
+        let task: Task<Void, Never>
+        /// Whether this changes the device, as opposed to only asking it.
+        let changesDevice: Bool
+        let reading: Reading?
+    }
+
+    /// What this phone has asked of the device and is still waiting on,
+    /// oldest first. The first is running; the rest wait their turn, as
+    /// they would in the device's own queue.
+    private var operations: [Operation] = []
+
+    /// Whether the screens managing this device have all gone.
+    private var relinquished = false
+
+    private func isReading(_ reading: Reading) -> Bool {
+        operations.contains { $0.reading == reading }
+    }
+
+    /// Run one operation against the device once everything asked before
+    /// it has finished, turning whatever went wrong into a sentence.
+    ///
+    /// Held as a task rather than awaited in place, so it can be canceled:
+    /// by the operator, or—for a read—by every screen managing the device
+    /// going away.
+    private func run(
+        changesDevice: Bool = false,
+        reading: Reading? = nil,
+        _ body: @escaping @MainActor () async throws -> Void
+    ) async {
+        guard !enteredDfu, changesDevice || !relinquished else { return }
+        // Asking again is what an operator does about the last failure.
         problem = nil
-        defer {
-            isBusy = false
+        let previous = operations.last?.task
+        let task = Task { @MainActor [self] in
+            await previous?.value
+            guard !Task.isCancelled, !enteredDfu else { return }
+            do {
+                try await body()
+            } catch is CancellationError {
+                // Asked for, so there is nothing to report.
+            } catch {
+                problem = Self.text(for: error)
+            }
             propertiesRemaining = nil
         }
-        do {
-            try await operation()
-        } catch {
-            problem = Self.text(for: error)
+        let operation = Operation(task: task, changesDevice: changesDevice, reading: reading)
+        operations.append(operation)
+        await task.value
+        operations.removeAll { $0.id == operation.id }
+    }
+
+    /// Stop everything asked of the device and not yet finished.
+    ///
+    /// A request already on the air may still be acted on: this ends the
+    /// waiting, not what was sent.
+    func cancel() {
+        for operation in operations {
+            operation.task.cancel()
+        }
+    }
+
+    /// Every screen managing the device has gone. Reads stop, since
+    /// nobody is left to show them to; changes run to the end, since
+    /// stopping one between its write and its save would leave the device
+    /// running settings it has not kept.
+    func relinquish() {
+        relinquished = true
+        for operation in operations where !operation.changesDevice {
+            operation.task.cancel()
         }
     }
 
@@ -973,29 +1074,35 @@ final class ManageDeviceModel {
 
     /// What went wrong, in terms an operator can act on.
     ///
-    /// Silence is the case worth explaining: a device answers nothing at all
-    /// to a node it does not list, so "no reply" and "not an administrator"
-    /// arrive identically and the copy has to carry both.
+    /// Silence after an acknowledgment is the case worth explaining: a
+    /// device answers nothing at all to a node it does not list, so "no
+    /// reply" and "not an administrator" arrive identically and the copy
+    /// has to carry both.
     static func text(for error: any Error) -> String {
         if let error = error as? DfuEntryError { return error.localizedDescription }
         return switch error as? RemoteManagementError {
         case .noAnswer:
-            """
-            No response—this phone may not be an administrator of that \
-            device, or the device may be out of reach.
-            """
+            String(
+                localized: "No answer. This phone may not be one of its administrators.",
+                comment: "Managing a node: it acknowledged a request but never answered."
+            )
+        case .unreachable:
+            String(
+                localized: "Couldn't reach the device.",
+                comment: "Managing a node: a request was never acknowledged."
+            )
         case let .refused(status):
             "The device refused the request: \(ulcpStatusName(status: status))."
         case .unreadable:
-            """
-            The device answered with something this app could not read. It \
-            may be running firmware this version does not understand.
-            """
+            String(
+                localized: "The device's answer couldn't be read. Its firmware may be newer than this app.",
+                comment: "Managing a node: its reply did not decode."
+            )
         case .unavailable:
-            """
-            This phone has no radio to send through. Connect its companion \
-            radio and try again.
-            """
+            String(
+                localized: "No radio to send through.",
+                comment: "Managing a node: no companion radio is attached."
+            )
         // Anything else is this app failing to build the request rather
         // than the device failing to answer it. Saying "no radio" here
         // sent one such bug looking for a Bluetooth problem.

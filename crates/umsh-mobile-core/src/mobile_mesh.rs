@@ -256,14 +256,19 @@ pub enum MobileMeshManagementOutcome {
     /// A reset-class command, which a device answers with nothing at all.
     /// The acknowledgment is the completion.
     Acknowledged,
-    /// Nothing came back before the exchange gave up. Over LoRa this is
-    /// the ordinary shape of "out of range", not a malfunction.
+    /// The device acknowledged the request but never answered it. A device
+    /// that does not list this phone as an administrator answers with
+    /// silence rather than a refusal, so this is also how that arrives.
     TimedOut,
-    /// The operation could not be carried: an unroutable target, another
-    /// operation already outstanding, or an answer that could not be read.
-    /// A device that is not listing this phone as an administrator answers
-    /// with silence rather than a refusal, so it arrives as `TimedOut`.
+    /// The request was never acknowledged: the MAC gave up on reaching the
+    /// device. Over LoRa this is the ordinary shape of "out of range", not
+    /// a malfunction.
+    Unreachable,
+    /// The operation could not be carried: a target the node could not
+    /// address, or an answer that could not be read.
     Failed,
+    /// `cancel_management` stopped the operation before it ended.
+    Canceled,
 }
 
 /// What occupied one position of a management answer.
@@ -871,6 +876,9 @@ enum WorkerCommand {
         peer: PublicKey,
         request: ManagementRequest,
     },
+    CancelManagement {
+        operation_id: u64,
+    },
     RestoreChat {
         checkpoints: Vec<MobileChatCheckpointRecord>,
         response: oneshot::Sender<()>,
@@ -1476,8 +1484,9 @@ impl MobileMeshSession {
     /// Every `begin_management_*` call returns immediately with an
     /// operation identifier, and reports through `poll_update`—the same
     /// shape as `ping`, because it is the same kind of thing: a
-    /// round-trip over a network that promises nothing. One operation runs
-    /// at a time; starting another while one is outstanding fails it.
+    /// round-trip over a network that promises nothing. Each device has
+    /// one operation on the air at a time and the rest wait their turn
+    /// behind it; operations on different devices run side by side.
     pub fn begin_management_get(
         &self,
         peer_address: String,
@@ -1794,6 +1803,18 @@ impl MobileMeshSession {
                 multi_hint,
             },
         )
+    }
+
+    /// Stop a management operation, on the air or waiting its turn.
+    ///
+    /// The MAC stops retrying the request, and the operation ends with
+    /// `Canceled`. A device that already has the request may still act on
+    /// it: canceling ends the waiting, not what was sent. Canceling one
+    /// that has already ended does nothing.
+    pub fn cancel_management(&self, operation_id: u64) -> Result<(), MobileMeshError> {
+        self.commands
+            .send(WorkerCommand::CancelManagement { operation_id })
+            .map_err(|_| MobileMeshError::SessionUnavailable)
     }
 
     /// Broadcast a signed node-identity advertisement describing this phone.
@@ -3161,10 +3182,11 @@ impl<M: MacBackend> ManagementJob<M> {
         now_ms: u64,
     ) -> Option<MobileMeshManagementEventRecord> {
         match outcome {
-            umsh_node_mgmt::Outcome::Failed(
-                umsh_node_mgmt::Failure::TimedOut | umsh_node_mgmt::Failure::Unreachable,
-            ) => {
+            umsh_node_mgmt::Outcome::Failed(umsh_node_mgmt::Failure::TimedOut) => {
                 return Some(self.event(MobileMeshManagementOutcome::TimedOut));
+            }
+            umsh_node_mgmt::Outcome::Failed(umsh_node_mgmt::Failure::Unreachable) => {
+                return Some(self.event(MobileMeshManagementOutcome::Unreachable));
             }
             umsh_node_mgmt::Outcome::Failed(_) => {
                 return Some(self.event(MobileMeshManagementOutcome::Failed));
@@ -3290,21 +3312,132 @@ fn answer_record(
     }
 }
 
-/// Report an operation that never started.
-fn emit_management_failure(
+/// Report an operation that ended without ever going on the air.
+fn emit_management_end(
     events: &NotifyingSender<MobileMeshManagementEventRecord>,
     operation_id: u64,
     peer: &PublicKey,
+    outcome: MobileMeshManagementOutcome,
 ) {
     let _ = events.send(MobileMeshManagementEventRecord {
         operation_id,
         peer_address: encode_peer_address(peer),
-        outcome: MobileMeshManagementOutcome::Failed,
+        outcome,
         answers: Vec::new(),
         status_code: None,
         remaining_octets: None,
         properties_remaining: None,
     });
+}
+
+/// One device's management: the operation on the air, the ones waiting
+/// their turn behind it, and the token counter every exchange with it
+/// draws from.
+///
+/// One per device rather than one per phone. An administrator may have
+/// only one exchange outstanding with a device, but nothing ties two
+/// devices together, so an operator asking two of them for something
+/// sends both at once.
+struct ManagementLane<M: MacBackend> {
+    active: Option<ManagementJob<M>>,
+    waiting: VecDeque<(u64, ManagementRequest)>,
+    /// A device holds every answered token against retransmission, and a
+    /// request reusing one is answered with the old exchange's response
+    /// and never runs. An operation consumes as many tokens as it has
+    /// batches and continuations, so the count carries across this
+    /// device's operations—and is seeded randomly, so a fresh session
+    /// cannot land on tokens the device still retains from the last one.
+    token: u16,
+}
+
+impl<M: MacBackend> ManagementLane<M> {
+    fn new() -> Self {
+        Self {
+            active: None,
+            waiting: VecDeque::new(),
+            token: rand::random(),
+        }
+    }
+}
+
+/// Carry one device's operations as far as they go right now: service the
+/// one on the air, and start the next as each one ends.
+async fn drive_management<M: MacBackend>(
+    node: &LocalNode<M>,
+    peer: PublicKey,
+    lane: &mut ManagementLane<M>,
+    now_ms: u64,
+    flood_hops: u8,
+    events: &NotifyingSender<MobileMeshManagementEventRecord>,
+) {
+    loop {
+        if lane.active.is_none() {
+            let Some((operation_id, request)) = lane.waiting.pop_front() else {
+                return;
+            };
+            lane.active = start_management(
+                node,
+                operation_id,
+                peer,
+                request,
+                now_ms,
+                lane.token,
+                flood_hops,
+            )
+            .await;
+            if lane.active.is_none() {
+                emit_management_end(
+                    events,
+                    operation_id,
+                    &peer,
+                    MobileMeshManagementOutcome::Failed,
+                );
+                continue;
+            }
+        }
+        service_management(&mut lane.active, now_ms, events, &mut lane.token).await;
+        if lane.active.is_some() {
+            return;
+        }
+    }
+}
+
+/// Stop one operation wherever it stands, answering with the device whose
+/// queue it was in so the caller can start what waited behind it.
+///
+/// An operation on the air is abandoned rather than dropped: the MAC stops
+/// retrying it, and the token count moves past it so nothing reissues a
+/// token the device may answer late.
+async fn cancel_management<M: MacBackend>(
+    lanes: &mut BTreeMap<[u8; 32], ManagementLane<M>>,
+    operation_id: u64,
+    events: &NotifyingSender<MobileMeshManagementEventRecord>,
+) -> Option<PublicKey> {
+    for (key, lane) in lanes.iter_mut() {
+        if let Some(active) = lane
+            .active
+            .as_mut()
+            .filter(|active| active.operation_id == operation_id)
+        {
+            active.manager.abandon().await;
+            lane.token = active.manager.counter();
+            let _ = events.send(active.event(MobileMeshManagementOutcome::Canceled));
+            lane.active = None;
+            return Some(PublicKey(*key));
+        }
+        if let Some(position) = lane.waiting.iter().position(|(id, _)| *id == operation_id) {
+            lane.waiting.remove(position);
+            let peer = PublicKey(*key);
+            emit_management_end(
+                events,
+                operation_id,
+                &peer,
+                MobileMeshManagementOutcome::Canceled,
+            );
+            return Some(peer);
+        }
+    }
+    None
 }
 
 /// Register the target and put the first request on the air.
@@ -3577,17 +3710,9 @@ async fn run_worker(
         }
         true
     });
-    // One device at a time: an administrator has one exchange outstanding
-    // with a device, and a phone has no reason to be managing two at once.
-    let mut management: Option<ManagementJob<_>> = None;
-    // One advancing token counter for every management exchange this
-    // worker will ever run. An operation consumes as many tokens as it
-    // has batches and continuations, and a device holds every answered
-    // token against retransmission—a request reusing one is answered
-    // with the old exchange's response and never runs. Seeded randomly
-    // so a fresh session cannot land on tokens a device still retains
-    // from the previous one.
-    let mut management_token: u16 = rand::random();
+    // Every device this session has managed, by key. A lane outlives its
+    // operations because its token count has to.
+    let mut management = BTreeMap::<[u8; 32], ManagementLane<_>>::new();
     let mut chat_queue = TransmitQueue::new(MOBILE_CHAT_TRANSMIT_WINDOW);
     // How each channel member was last reached, so an identity request can be
     // routed by evidence rather than flooded at the default budget.
@@ -3820,32 +3945,43 @@ async fn run_worker(
                             }
                         }
                         Some(WorkerCommand::Manage { operation_id, peer, request }) => {
-                            if management.is_some() {
-                                emit_management_failure(&management_events, operation_id, &peer);
-                                continue;
-                            }
+                            let lane = management.entry(peer.0).or_insert_with(ManagementLane::new);
+                            lane.waiting.push_back((operation_id, request));
                             let now_ms = handle.now_ms().await;
-                            management = start_management(
+                            drive_management(
                                 &node,
-                                operation_id,
                                 peer,
-                                request,
+                                lane,
                                 now_ms,
-                                management_token,
                                 flood_hops.default_hops,
-                            )
-                            .await;
-                            if management.is_none() {
-                                emit_management_failure(&management_events, operation_id, &peer);
-                                continue;
-                            }
-                            service_management(
-                                &mut management,
-                                now_ms,
                                 &management_events,
-                                &mut management_token,
                             )
                             .await;
+                            if handle.service_counter_persistence().await.is_err() {
+                                return;
+                            }
+                        }
+                        Some(WorkerCommand::CancelManagement { operation_id }) => {
+                            let Some(peer) =
+                                cancel_management(&mut management, operation_id, &management_events)
+                                    .await
+                            else {
+                                continue;
+                            };
+                            // What waited behind the canceled operation
+                            // goes now rather than at the next tick.
+                            if let Some(lane) = management.get_mut(&peer.0) {
+                                let now_ms = handle.now_ms().await;
+                                drive_management(
+                                    &node,
+                                    peer,
+                                    lane,
+                                    now_ms,
+                                    flood_hops.default_hops,
+                                    &management_events,
+                                )
+                                .await;
+                            }
                             if handle.service_counter_persistence().await.is_err() {
                                 return;
                             }
@@ -4490,18 +4626,25 @@ async fn run_worker(
                         drive_meet(&meeting, &node, now_ms, &meet_states).await;
                     }
                     service_peer_repeater_pages(&peer_repeater_pages, now_ms);
-                    if management.is_some() {
-                        // Retries, cursor continuations, and the batches of
-                        // a crawl all leave on this tick. Persistence is
+                    if management.values().any(|lane| lane.active.is_some()) {
+                        // Retries, cursor continuations, the batches of a
+                        // crawl, and the next operation in each device's
+                        // queue all leave on this tick. Persistence is
                         // serviced alongside because each of those is a
                         // real authenticated send.
-                        service_management(
-                            &mut management,
-                            now_ms,
-                            &management_events,
-                            &mut management_token,
-                        )
-                        .await;
+                        for (key, lane) in management.iter_mut() {
+                            if lane.active.is_some() {
+                                drive_management(
+                                    &node,
+                                    PublicKey(*key),
+                                    lane,
+                                    now_ms,
+                                    flood_hops.default_hops,
+                                    &management_events,
+                                )
+                                .await;
+                            }
+                        }
                         if handle.service_counter_persistence().await.is_err() {
                             return;
                         }
@@ -5244,41 +5387,120 @@ mod tests {
         );
     }
 
+    /// Poll until a request addressed to each of `devices` has left,
+    /// completing every frame as it goes, and hand back the management
+    /// events seen on the way.
+    fn await_requests_to(
+        phone: &MobileMeshSession,
+        devices: &[&MobileIdentity],
+    ) -> Vec<MobileMeshManagementEventRecord> {
+        let mut unseen: Vec<NodeHint> = devices
+            .iter()
+            .map(|device| decode_peer(&address(device)).unwrap().hint())
+            .collect();
+        let mut events = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !unseen.is_empty() {
+            assert!(Instant::now() < deadline, "no request went to {unseen:?}");
+            let update = phone.poll_update();
+            events.extend(update.management_events);
+            for frame in update.outbound_frames {
+                phone.complete_outbound_frame(frame.id, true).unwrap();
+                let header = umsh_core::PacketHeader::parse(&frame.data).unwrap();
+                unseen.retain(|hint| header.dst != Some(*hint));
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        events
+    }
+
+    /// Poll until `operation_id` ends, completing frames as they leave.
+    fn await_end(phone: &MobileMeshSession, operation_id: u64) -> MobileMeshManagementEventRecord {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            assert!(
+                Instant::now() < deadline,
+                "operation {operation_id} never ended"
+            );
+            let update = phone.poll_update();
+            for frame in update.outbound_frames {
+                phone.complete_outbound_frame(frame.id, true).unwrap();
+            }
+            if let Some(event) = update.management_events.into_iter().find(|event| {
+                event.operation_id == operation_id
+                    && event.outcome != MobileMeshManagementOutcome::Progress
+            }) {
+                return event;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
     #[tokio::test]
-    async fn one_device_is_managed_at_a_time() {
+    async fn two_devices_are_managed_at_once() {
         let directory = tempfile::tempdir().unwrap();
-        let phone_identity = identity(22);
-        let device = address(&identity(23));
+        let first_device = identity(23);
+        let second_device = identity(26);
         let store = MobileCounterStore::new(directory.path().display().to_string()).unwrap();
-        let phone = MobileMeshSession::new(phone_identity, store).await.unwrap();
+        let phone = MobileMeshSession::new(identity(22), store).await.unwrap();
 
         let first = phone
-            .begin_management_get(device.clone(), prop::DEV_NAME)
+            .begin_management_get(address(&first_device), prop::DEV_NAME)
             .unwrap();
         let second = phone
-            .begin_management_fetch(device.clone(), vec![prop::CAPS], true)
+            .begin_management_fetch(address(&second_device), vec![prop::CAPS], true)
             .unwrap();
         assert_ne!(first, second);
 
-        // The first operation is on the air and will not be answered here;
-        // the second is refused outright rather than queued behind it.
-        let deadline = Instant::now() + Duration::from_secs(5);
-        let refusal = loop {
-            assert!(
-                Instant::now() < deadline,
-                "no report for the second operation"
-            );
-            if let Some(event) = phone
-                .poll_update()
-                .management_events
-                .into_iter()
-                .find(|event| event.operation_id == second)
-            {
-                break event;
-            }
-        };
-        assert_eq!(refusal.outcome, MobileMeshManagementOutcome::Failed);
-        assert_eq!(refusal.peer_address, device);
+        // Neither device answers here, so both are still waiting when
+        // their requests have gone out—and neither was refused for the
+        // other's sake.
+        let events = await_requests_to(&phone, &[&first_device, &second_device]);
+        assert!(
+            events
+                .iter()
+                .all(|event| event.outcome == MobileMeshManagementOutcome::Progress),
+            "{events:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_device_runs_its_operations_one_at_a_time() {
+        let directory = tempfile::tempdir().unwrap();
+        let device = identity(23);
+        let store = MobileCounterStore::new(directory.path().display().to_string()).unwrap();
+        let phone = MobileMeshSession::new(identity(22), store).await.unwrap();
+
+        let first = phone
+            .begin_management_get(address(&device), prop::DEV_NAME)
+            .unwrap();
+        let second = phone
+            .begin_management_get(address(&device), prop::DEV_MODEL)
+            .unwrap();
+        let events = await_requests_to(&phone, &[&device]);
+        assert!(events.iter().all(|event| event.operation_id != second));
+
+        // The first stopping is what lets the second go.
+        phone.cancel_management(first).unwrap();
+        let canceled = await_end(&phone, first);
+        assert_eq!(canceled.outcome, MobileMeshManagementOutcome::Canceled);
+        assert_eq!(canceled.peer_address, address(&device));
+        await_requests_to(&phone, &[&device]);
+
+        // An operation waiting its turn cancels without ever going out.
+        let third = phone
+            .begin_management_get(address(&device), prop::DEV_NAME)
+            .unwrap();
+        phone.cancel_management(third).unwrap();
+        assert_eq!(
+            await_end(&phone, third).outcome,
+            MobileMeshManagementOutcome::Canceled
+        );
+        phone.cancel_management(second).unwrap();
+        assert_eq!(
+            await_end(&phone, second).outcome,
+            MobileMeshManagementOutcome::Canceled
+        );
     }
 
     #[tokio::test]

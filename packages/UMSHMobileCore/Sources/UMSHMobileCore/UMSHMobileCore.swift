@@ -1413,8 +1413,9 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
      * Every `begin_management_*` call returns immediately with an
      * operation identifier, and reports through `poll_update`—the same
      * shape as `ping`, because it is the same kind of thing: a
-     * round-trip over a network that promises nothing. One operation runs
-     * at a time; starting another while one is outstanding fails it.
+     * round-trip over a network that promises nothing. Each device has
+     * one operation on the air at a time and the rest wait their turn
+     * behind it; operations on different devices run side by side.
      */
     func beginManagementGet(peerAddress: String, propertyId: UInt32) throws  -> UInt64
 
@@ -1527,6 +1528,16 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
      * Back out of the attempt in progress.
      */
     func cancelExchange() async throws
+
+    /**
+     * Stop a management operation, on the air or waiting its turn.
+     *
+     * The MAC stops retrying the request, and the operation ends with
+     * `Canceled`. A device that already has the request may still act on
+     * it: canceling ends the waiting, not what was sent. Canceling one
+     * that has already ended does nothing.
+     */
+    func cancelManagement(operationId: UInt64) throws
 
     /**
      * Forget the route cached for `peer`, returning whether one was held.
@@ -2122,8 +2133,9 @@ open func beginManagementFetch(peerAddress: String, propertyIds: [UInt32], multi
      * Every `begin_management_*` call returns immediately with an
      * operation identifier, and reports through `poll_update`—the same
      * shape as `ping`, because it is the same kind of thing: a
-     * round-trip over a network that promises nothing. One operation runs
-     * at a time; starting another while one is outstanding fails it.
+     * round-trip over a network that promises nothing. Each device has
+     * one operation on the air at a time and the rest wait their turn
+     * behind it; operations on different devices run side by side.
      */
 open func beginManagementGet(peerAddress: String, propertyId: UInt32)throws  -> UInt64  {
     return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeMobileMeshError_lift) {
@@ -2368,6 +2380,23 @@ open func cancelExchange()async throws   {
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeMobileMeshError_lift
         )
+}
+
+    /**
+     * Stop a management operation, on the air or waiting its turn.
+     *
+     * The MAC stops retrying the request, and the operation ends with
+     * `Canceled`. A device that already has the request may still act on
+     * it: canceling ends the waiting, not what was sent. Canceling one
+     * that has already ended does nothing.
+     */
+open func cancelManagement(operationId: UInt64)throws   {try rustCallWithError(FfiConverterTypeMobileMeshError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilemeshsession_cancel_management(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(operationId),uniffiCallStatus
+    )
+}
 }
 
     /**
@@ -16248,17 +16277,26 @@ public enum MobileMeshManagementOutcome: Equatable, Hashable {
      */
     case acknowledged
     /**
-     * Nothing came back before the exchange gave up. Over LoRa this is
-     * the ordinary shape of "out of range", not a malfunction.
+     * The device acknowledged the request but never answered it. A device
+     * that does not list this phone as an administrator answers with
+     * silence rather than a refusal, so this is also how that arrives.
      */
     case timedOut
     /**
-     * The operation could not be carried: an unroutable target, another
-     * operation already outstanding, or an answer that could not be read.
-     * A device that is not listing this phone as an administrator answers
-     * with silence rather than a refusal, so it arrives as `TimedOut`.
+     * The request was never acknowledged: the MAC gave up on reaching the
+     * device. Over LoRa this is the ordinary shape of "out of range", not
+     * a malfunction.
+     */
+    case unreachable
+    /**
+     * The operation could not be carried: a target the node could not
+     * address, or an answer that could not be read.
      */
     case failed
+    /**
+     * `cancel_management` stopped the operation before it ended.
+     */
+    case canceled
 
 
 
@@ -16288,7 +16326,11 @@ public struct FfiConverterTypeMobileMeshManagementOutcome: FfiConverterRustBuffe
 
         case 4: return .timedOut
 
-        case 5: return .failed
+        case 5: return .unreachable
+
+        case 6: return .failed
+
+        case 7: return .canceled
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -16314,8 +16356,16 @@ public struct FfiConverterTypeMobileMeshManagementOutcome: FfiConverterRustBuffe
             writeInt(&buf, Int32(4))
 
 
-        case .failed:
+        case .unreachable:
             writeInt(&buf, Int32(5))
+
+
+        case .failed:
+            writeInt(&buf, Int32(6))
+
+
+        case .canceled:
+            writeInt(&buf, Int32(7))
 
         }
     }
@@ -21938,7 +21988,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_fetch() != 3066) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_get() != 32392) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_get() != 26743) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_get_many() != 53866) {
@@ -21978,6 +22028,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_cancel_exchange() != 54943) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_cancel_management() != 49753) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_clear_peer_route() != 59203) {

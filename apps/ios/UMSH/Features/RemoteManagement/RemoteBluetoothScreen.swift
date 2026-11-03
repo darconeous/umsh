@@ -79,7 +79,6 @@ struct RemoteBluetoothScreen: View {
                 }
             }
 
-            RemoteProblemSection(model: model)
         }
         .confirmationDialog(
             "Clear every pairing?",

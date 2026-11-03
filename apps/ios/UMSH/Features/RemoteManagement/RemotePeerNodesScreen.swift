@@ -25,7 +25,6 @@ struct RemotePeerNodesScreen: View {
             } footer: {
                 RemoteReadingFooter(reading: reading, isBusy: model.isBusy)
             }
-            RemoteProblemSection(model: model)
         }
         // Rows arrive and leave because the device answered a write and the
         // reading republished—a plain model update that animates nothing

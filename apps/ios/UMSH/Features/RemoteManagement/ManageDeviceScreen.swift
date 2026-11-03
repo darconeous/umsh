@@ -18,24 +18,35 @@ import UMSHMobileCore
 struct ManageDeviceScreen: View {
     let browsing: RemotePeerBrowsing
     @State private var model: ManageDeviceModel
+    @State private var lease: ManagementLease
     @State private var confirmsRestart = false
     @State private var confirmsFactoryReset = false
     @State private var confirmsDfu = false
 
     init(peer: PeerSummary, management: DeviceManagementBackend, browsing: RemotePeerBrowsing) {
-        self.browsing = browsing
-        _model = State(initialValue: ManageDeviceModel(peer: peer, management: management))
+        self.init(
+            model: ManageDeviceModel(peer: peer, management: management),
+            browsing: browsing
+        )
     }
 
     /// The attached radio, which may hold no identity to be a peer under.
     init(companionAddress: String?, name: String, management: DeviceManagementBackend,
          browsing: RemotePeerBrowsing) {
+        self.init(
+            model: ManageDeviceModel(
+                address: companionAddress ?? "",
+                fallbackName: name,
+                management: management
+            ),
+            browsing: browsing
+        )
+    }
+
+    private init(model: ManageDeviceModel, browsing: RemotePeerBrowsing) {
         self.browsing = browsing
-        _model = State(initialValue: ManageDeviceModel(
-            address: companionAddress ?? "",
-            fallbackName: name,
-            management: management
-        ))
+        _model = State(initialValue: model)
+        _lease = State(initialValue: ManagementLease(model))
     }
 
     var body: some View {
@@ -55,7 +66,6 @@ struct ManageDeviceScreen: View {
                     confirmsDfu: $confirmsDfu
                 )
             }
-            RemoteProblemSection(model: model)
         }
         .sheet(isPresented: $confirmsDfu) {
             DfuEntrySheet(model: model)
@@ -86,17 +96,16 @@ struct ManageDeviceScreen: View {
         // repeats it spends the one line that could say where you are.
         .navigationTitle("Manage Device")
         .navigationBarTitleDisplayMode(.inline)
-        .disabled(model.isBusy)
+        .managementStatus(model)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                if model.isBusy {
-                    ProgressView()
-                } else if !model.enteredDfu {
+                if !model.enteredDfu {
                     Button {
                         Task { await model.refreshCard() }
                     } label: {
                         Label("Refresh", systemImage: "arrow.clockwise")
                     }
+                    .disabled(model.isBusy)
                 }
             }
         }
@@ -162,6 +171,23 @@ private struct DfuEntrySheet: View {
             }
         }
         .interactiveDismissDisabled(model.isBusy)
+    }
+}
+
+/// Stops a device's reads once the screen managing it is gone for good.
+///
+/// Held in that screen's state, which outlives every category screen pushed
+/// over it and goes when it is popped. The model itself cannot tell: each
+/// operation it is running holds it, so it lives until they end.
+final class ManagementLease {
+    private let model: ManageDeviceModel
+
+    init(_ model: ManageDeviceModel) {
+        self.model = model
+    }
+
+    deinit {
+        Task { @MainActor [model] in model.relinquish() }
     }
 }
 
@@ -302,18 +328,15 @@ struct RemoteCategoryChrome: ViewModifier {
         content
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
-            .disabled(model.isBusy)
+            .managementStatus(model)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    if model.isBusy {
-                        ProgressView()
-                    } else {
-                        Button {
-                            Task { await model.refreshCategory(category) }
-                        } label: {
-                            Label("Refresh", systemImage: "arrow.clockwise")
-                        }
+                    Button {
+                        Task { await model.refreshCategory(category) }
+                    } label: {
+                        Label("Refresh", systemImage: "arrow.clockwise")
                     }
+                    .disabled(model.isBusy)
                 }
                 // Alongside Refresh rather than on a bottom bar: these
                 // screens are pushed inside a tab, and the tab bar owns

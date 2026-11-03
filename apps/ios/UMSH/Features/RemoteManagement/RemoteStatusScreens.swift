@@ -32,7 +32,6 @@ struct RemoteSensorsScreen: View {
                     if let date = temperature.sampledAt { Text(date, style: .relative) }
                 }
             }
-            RemoteProblemSection(model: model)
         }
         .remoteCategoryChrome(model: model, category: .sensors, title: "Sensors")
     }
@@ -122,7 +121,6 @@ struct RemotePowerScreen: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            RemoteProblemSection(model: model)
         }
         .remoteCategoryChrome(model: model, category: .power, title: "Power")
     }
@@ -232,7 +230,6 @@ struct RemoteGnssScreen: View {
             } footer: {
                 RemoteReadingFooter(reading: reading, isBusy: model.isBusy)
             }
-            RemoteProblemSection(model: model)
         }
         .remoteCategoryChrome(
             model: model,
@@ -430,7 +427,6 @@ struct RemoteTimeScreen: View {
                     Text("On, a GNSS fix sets the device's clock by itself.")
                 }
             }
-            RemoteProblemSection(model: model)
         }
         .remoteCategoryChrome(
             model: model,
@@ -748,7 +744,6 @@ struct RemoteStatisticsScreen: View {
             } footer: {
                 RemoteReadingFooter(reading: reading, isBusy: model.isBusy)
             }
-            RemoteProblemSection(model: model)
         }
         .remoteCategoryChrome(model: model, category: .statistics, title: "Statistics")
         .confirmationDialog(

@@ -37,7 +37,6 @@ struct RemoteNetworkScreen: View {
                 dnsSection
                 resolverSection
             }
-            RemoteProblemSection(model: model)
         }
         .remoteCategoryChrome(
             model: model,

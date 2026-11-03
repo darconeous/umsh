@@ -20,7 +20,6 @@ struct RemoteBridgeScreen: View {
             if hasServer { serverSections }
             if hasLocal { localSections }
             if let validation { Text(validation).foregroundStyle(.red) }
-            RemoteProblemSection(model: model)
         }
         .remoteCategoryChrome(model: model, category: .bridge, title: "Bridge",
                               apply: { await apply() }, hasEdits: !edits.dirty.isEmpty)

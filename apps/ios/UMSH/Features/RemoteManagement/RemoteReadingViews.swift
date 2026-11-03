@@ -43,13 +43,58 @@ struct RemoteReadingFooter: View {
     }
 }
 
-/// The last failure, where every category screen puts it.
-struct RemoteProblemSection: View {
+/// What the device is being asked, or what went wrong last, pinned above
+/// every management screen's content.
+///
+/// Above rather than in the form: a form's last section is below the fold
+/// on any screen worth managing, and a failure there goes unseen.
+struct ManagementStatusBar: View {
     let model: ManageDeviceModel
 
     var body: some View {
-        if let problem = model.problem {
-            Section { Text(problem).foregroundStyle(.red) }
+        if model.isBusy {
+            bar {
+                ProgressView()
+                Text("Waiting for the device…", comment: "Managing a node: a request is outstanding.")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button {
+                    model.cancel()
+                } label: {
+                    Text("Cancel", comment: "Stops waiting on a request to a managed node.")
+                }
+                .accessibilityIdentifier("manage.cancel")
+            }
+        } else if let problem = model.problem {
+            bar {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.red)
+                Text(verbatim: problem)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button {
+                    model.problem = nil
+                } label: {
+                    Image(systemName: "xmark")
+                }
+                .accessibilityLabel(Text("Dismiss", comment: "VoiceOver label: hides a management error."))
+                .accessibilityIdentifier("manage.dismissProblem")
+            }
+        }
+    }
+
+    private func bar(@ViewBuilder _ content: () -> some View) -> some View {
+        HStack(spacing: 12) { content() }
+            .font(.callout)
+            .padding(.horizontal)
+            .padding(.vertical, 10)
+            .background(.bar)
+    }
+}
+
+extension View {
+    /// Pin the device's status above this screen.
+    func managementStatus(_ model: ManageDeviceModel) -> some View {
+        safeAreaInset(edge: .top, spacing: 0) {
+            ManagementStatusBar(model: model)
         }
     }
 }

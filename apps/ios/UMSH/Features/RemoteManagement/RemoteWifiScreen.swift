@@ -14,6 +14,7 @@ struct RemoteWifiScreen: View {
     let model: ManageDeviceModel
     @State private var edits = Edits()
     @State private var joining: WifiJoinTarget?
+    @State private var editing: WifiEditTarget?
     @State private var forgetting: Data?
 
     private var reading: RemoteCategoryReading? { model.readings[.wifi] }
@@ -50,10 +51,12 @@ struct RemoteWifiScreen: View {
                 scanOnlySection
             }
             scanSection
-            RemoteProblemSection(model: model)
         }
         .sheet(item: $joining) { target in
             WifiJoinSheet(model: model, target: target)
+        }
+        .sheet(item: $editing) { target in
+            WifiNetworkEditSheet(model: model, network: target.network)
         }
         .confirmationDialog(
             "Forget this network?",
@@ -205,6 +208,16 @@ struct RemoteWifiScreen: View {
             .buttonStyle(.plain)
             .disabled(!stationIsOn || isCurrent || model.isBusy)
             Menu {
+                Button {
+                    editing = WifiEditTarget(network: network)
+                } label: {
+                    Label {
+                        Text("Edit…", comment: "Menu item: change a saved Wi-Fi network.")
+                    } icon: {
+                        Image(systemName: "pencil")
+                    }
+                }
+                .accessibilityIdentifier("wifi-network-edit")
                 Toggle(
                     "Join Automatically",
                     isOn: Binding(
@@ -501,6 +514,7 @@ struct WifiJoinSheet: View {
                     }
                 }
             }
+            .managementStatus(model)
             .navigationTitle(target.ssid.isEmpty ? "Add Network" : "Join Network")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -599,6 +613,194 @@ struct WifiJoinSheet: View {
             return "The device cannot use \(wifiSecurityName(security))."
         }
         return "The device refused this network: \(name)."
+    }
+}
+
+// MARK: - Editing
+
+/// A saved network an edit sheet is about.
+struct WifiEditTarget: Identifiable {
+    let network: UlcpWifiNetworkRecord
+
+    var id: String { network.ssid.map { String(format: "%02x", $0) }.joined() }
+}
+
+/// Change a network the device already knows: its security, its password,
+/// and how it is joined.
+///
+/// The name is not offered. An entry is keyed by its SSID, so a new name
+/// is a different network, which Forget and Add already cover. A password
+/// left empty keeps the one the device holds—the device never sends it
+/// back, so this sheet has nothing to show in its place—and a change of
+/// security needs a new one, since the old password belongs to the old mode.
+struct WifiNetworkEditSheet: View {
+    let model: ManageDeviceModel
+    let network: UlcpWifiNetworkRecord
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var security: UInt8
+    @State private var hidden: Bool
+    @State private var autoJoin: Bool
+    @State private var credential = ""
+    @State private var refusal: String?
+    @State private var isWorking = false
+
+    init(model: ManageDeviceModel, network: UlcpWifiNetworkRecord) {
+        self.model = model
+        self.network = network
+        _security = State(initialValue: network.security)
+        _hidden = State(initialValue: network.hidden)
+        _autoJoin = State(initialValue: network.autoJoin)
+    }
+
+    /// Modes this app can build an entry for, with the stored one kept in
+    /// the list even where it cannot, so the picker always shows the truth.
+    private var choices: [UInt8] {
+        let buildable: [UInt8] = [3, 2, 4, 1, 0]
+        return buildable.contains(network.security) ? buildable : [network.security] + buildable
+    }
+
+    private static func takesCredential(_ mode: UInt8) -> Bool {
+        mode == 2 || mode == 3 || mode == 4
+    }
+
+    /// Whether the password the device holds can stay: same mode, one
+    /// that has a password at all.
+    private var keepsCredential: Bool {
+        security == network.security && Self.takesCredential(security)
+    }
+
+    private var isChanged: Bool {
+        security != network.security || hidden != network.hidden
+            || autoJoin != network.autoJoin || !credential.isEmpty
+    }
+
+    private var isSubmittable: Bool {
+        guard isChanged else { return false }
+        if Self.takesCredential(security), !keepsCredential, credential.isEmpty { return false }
+        return (try? item()) != nil
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    LabeledContent {
+                        WifiNameLabel(ssid: network.ssid)
+                    } label: {
+                        Text("Network", comment: "Row label: a Wi-Fi network's name.")
+                    }
+                    Picker(selection: $security) {
+                        ForEach(choices, id: \.self) { mode in
+                            Text(verbatim: wifiSecurityName(mode)).tag(mode)
+                        }
+                    } label: {
+                        Text("Minimum security", comment: "Picker label: the weakest Wi-Fi security a device accepts.")
+                    }
+                    if Self.takesCredential(security) {
+                        SecureField(
+                            text: $credential,
+                            prompt: keepsCredential
+                                ? Text("Unchanged", comment: "Placeholder: an empty Wi-Fi password field keeps the stored one.")
+                                : Text("Required", comment: "Placeholder: a Wi-Fi password that must be entered.")
+                        ) {
+                            Text("Password", comment: "Field label: a Wi-Fi password.")
+                        }
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .accessibilityIdentifier("wifi-edit-password")
+                    }
+                } footer: {
+                    if let refusal {
+                        Text(verbatim: refusal).foregroundStyle(.red)
+                    }
+                }
+                Section {
+                    Toggle(isOn: $autoJoin) {
+                        Text("Join Automatically", comment: "Switch: the device may pick this Wi-Fi network by itself.")
+                    }
+                    Toggle(isOn: $hidden) {
+                        Text("Hidden Network", comment: "Switch: this Wi-Fi network does not broadcast its name.")
+                    }
+                }
+            }
+            .managementStatus(model)
+            .navigationTitle(Text("Edit Network", comment: "Title of the sheet that changes a saved Wi-Fi network."))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button {
+                        dismiss()
+                    } label: {
+                        Text("Cancel", comment: "Leaves editing without saving.")
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    if isWorking {
+                        ProgressView()
+                    } else {
+                        Button {
+                            Task { await submit() }
+                        } label: {
+                            Text("Save", comment: "Saves an edit.")
+                        }
+                        .disabled(!isSubmittable)
+                        .accessibilityIdentifier("wifi-edit-save")
+                    }
+                }
+            }
+        }
+    }
+
+    /// The entry to send. An empty credential under the stored mode is the
+    /// form the device reads as "keep the password".
+    private func item() throws -> Data {
+        try ulcpWifiNetworkItem(
+            ssid: network.ssid,
+            security: security,
+            hidden: hidden,
+            autoJoin: autoJoin,
+            credential: Data(credential.utf8)
+        )
+    }
+
+    private func submit() async {
+        refusal = nil
+        guard let encoded = try? item() else { return }
+        isWorking = true
+        defer { isWorking = false }
+        if let status = await model.updateNetwork(item: encoded) {
+            refusal = refusalText(status)
+            return
+        }
+        guard model.problem == nil else { return }
+        dismiss()
+    }
+
+    private func refusalText(_ status: UInt32) -> String {
+        let name = ulcpStatusName(status: status)
+        if name.hasSuffix("INVALID_ARGUMENT") {
+            return String(
+                localized: "The device would not take that password for this kind of network.",
+                comment: "Editing a saved Wi-Fi network: the device rejected the password."
+            )
+        }
+        if name.hasSuffix("UNIMPLEMENTED") {
+            return String(
+                localized: "The device cannot use \(wifiSecurityName(security)).",
+                comment: "Editing a saved Wi-Fi network. The placeholder is a security mode, such as WPA3."
+            )
+        }
+        if name.hasSuffix("ITEM_NOT_FOUND") {
+            return String(
+                localized: "The device no longer has this network.",
+                comment: "Editing a saved Wi-Fi network that was removed meanwhile."
+            )
+        }
+        return String(
+            localized: "The device refused this change: \(name).",
+            comment: "Editing a saved Wi-Fi network. The placeholder is a protocol status name."
+        )
     }
 }
 
