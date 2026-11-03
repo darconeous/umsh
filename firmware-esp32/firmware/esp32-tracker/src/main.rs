@@ -349,22 +349,6 @@ const WDT_TIMEOUT: esp_hal::time::Duration = esp_hal::time::Duration::from_secs(
 #[cfg(feature = "pmic-axp2101")]
 const HEARTBEAT_FEED_SECS: u64 = 20;
 
-/// SX1262 PA limits on this module.
-#[cfg(feature = "radio-sx126x")]
-const MIN_TX_POWER_DBM: i8 = -9;
-#[cfg(feature = "radio-sx126x")]
-const MAX_TX_POWER_DBM: i8 = 22;
-
-/// SX1276 PA limits. The antenna is on the PA_BOOST port and the BSP
-/// configures `tx_boost: true`, which is the [2, 20] dBm path in the
-/// driver—the RFO path's [-4, 14] range is unreachable on this board.
-/// Above 17 dBm the driver switches PA_DAC to its 20 dBm mode and raises
-/// OCP to 240 mA, so the top of this range is duty-limited in practice.
-#[cfg(feature = "radio-sx127x")]
-const MIN_TX_POWER_DBM: i8 = 2;
-#[cfg(feature = "radio-sx127x")]
-const MAX_TX_POWER_DBM: i8 = 20;
-
 #[cfg(feature = "board-heltec-v2")]
 const DEFAULT_DEVICE_NAME: &str = "UMSH Heltec V2";
 #[cfg(feature = "board-heltec-v3")]
@@ -383,10 +367,16 @@ const DEFAULT_DEVICE_NAME: &str = "UMSH T-Deck";
 /// recommends. Which board it runs on is `PROP_DEV_MODEL`'s job.
 const DEV_VERSION: &str = concat!("umsh/", env!("GIT_DESCRIBE"));
 
-/// `PROP_DEV_MODEL`: the hardware this image was built for, matching the
-/// board id used by the release manifest and `site/data/hardware.toml`
-/// (`heltec-v2` / `heltec-v3` / `tbeam-supreme`).
-const DEV_MODEL: &str = board::BOARD_NAME;
+/// The radio the board's bring-up found: `PROP_DEV_MODEL`, which one of
+/// the release manifest's `models` strings names, and the PA and tuning
+/// limits. Set once, before the device task—the only reader—is spawned.
+static RADIO_PROFILE: OnceLock<umsh_radio_loraphy::RadioProfile> = OnceLock::new();
+
+fn radio_profile() -> &'static umsh_radio_loraphy::RadioProfile {
+    RADIO_PROFILE
+        .try_get()
+        .expect("radio profile read before radio bring-up")
+}
 
 /// The board default name plus a stable per-die suffix—the low 16
 /// bits of the factory eFuse MAC, the same die-unique value the BLE
@@ -415,9 +405,10 @@ fn base_mac_bytes() -> [u8; 6] {
 const TX_PREAMBLE_SYMBOLS: u16 = 32;
 
 fn session_config() -> SessionConfig {
+    let radio = radio_profile();
     SessionConfig {
         dev_version: DEV_VERSION,
-        dev_model: Some(DEV_MODEL),
+        dev_model: Some(radio.model),
         default_device_name: default_device_name(),
         mtu: MAX_PAYLOAD as u16,
         tx_preamble_symbols: TX_PREAMBLE_SYMBOLS,
@@ -426,19 +417,10 @@ fn session_config() -> SessionConfig {
         // the 16-bit SX126x-style word whatever the silicon, so both
         // radio families report the same 0x1424 here.
         sync_word: umsh_ulcp::profiles::DEFAULT.sync_word,
-        min_tx_power_dbm: MIN_TX_POWER_DBM,
-        max_tx_power_dbm: MAX_TX_POWER_DBM,
-        // Chip tunable range. Wider than any one module's matching
-        // network—the operator is responsible for staying legal and
-        // for what the antenna path can actually radiate.
-        #[cfg(feature = "radio-sx126x")]
-        freq_khz_min: 150_000,
-        #[cfg(feature = "radio-sx126x")]
-        freq_khz_max: 960_000,
-        #[cfg(feature = "radio-sx127x")]
-        freq_khz_min: 137_000,
-        #[cfg(feature = "radio-sx127x")]
-        freq_khz_max: 1_020_000,
+        min_tx_power_dbm: radio.min_tx_power_dbm,
+        max_tx_power_dbm: radio.max_tx_power_dbm,
+        freq_khz_min: radio.freq_khz_min,
+        freq_khz_max: radio.freq_khz_max,
         // Post-reset defaults: the vetted default profile, with the PHY
         // disabled until the host enables it.
         defaults: RadioSettings {
@@ -448,7 +430,7 @@ fn session_config() -> SessionConfig {
             sf: umsh_ulcp::profiles::DEFAULT.sf,
             cr_denom: umsh_ulcp::profiles::DEFAULT.cr_denom,
             tx_power_dbm: umsh_ulcp::profiles::DEFAULT_TX_POWER_DBM
-                .clamp(MIN_TX_POWER_DBM, MAX_TX_POWER_DBM),
+                .clamp(radio.min_tx_power_dbm, radio.max_tx_power_dbm),
         },
         default_duty_limit: umsh_ulcp::profiles::DEFAULT.duty_limit,
         duty: &DUTY_LEDGER,
@@ -1877,8 +1859,8 @@ impl DeviceEnv for BoardDeviceEnv {
 // ─── Radio ───────────────────────────────────────────────────────────────
 
 /// Owns the `lora_phy::LoRa` instance via the reconfigurable device
-/// runner. TX uses MeshCore's 32-symbol SF7 preamble; the hardware-proven
-/// 8-symbol SX1262 RX acquisition setting remains unchanged.
+/// runner. TX uses MeshCore's 32-symbol SF7 preamble; RX acquisition is
+/// the chip's own setting from its [`umsh_radio_loraphy::RadioProfile`].
 ///
 /// Continuous RX on every board. The SX1262 boards ran preamble duty
 /// cycle for a time, but a counted bench campaign found an intrinsic
@@ -1888,13 +1870,13 @@ impl DeviceEnv for BoardDeviceEnv {
 /// traffic lost, unfixable chip-side without breaking real detection.
 /// See `docs/sx1262-rx-duty-cycle-findings.md` before reintroducing it.
 #[embassy_executor::task]
-async fn radio_task(lora: board_radio::Radio) {
+async fn radio_task(lora: board_radio::Radio, rx_preamble_symbols: u16) {
     use umsh_radio_loraphy::RxStrategy;
     umsh_radio_loraphy::device_runner(
         lora,
         &RADIO_CH,
         &DEVICE_CTL,
-        8,
+        rx_preamble_symbols,
         TX_PREAMBLE_SYMBOLS,
         RxStrategy::Continuous,
         Some(&STATS),
@@ -3962,39 +3944,47 @@ async fn main(spawner: Spawner) {
     #[cfg(feature = "board-xiao-esp32s3")]
     let radio_rx_enable = Output::new(peripherals.GPIO38, Level::Low, OutputConfig::default());
     #[cfg(feature = "radio-sx126x")]
-    let kind = {
-        let radio_dio1 = Input::new(radio_dio1, InputConfig::default().with_pull(Pull::None));
-        let radio_busy = Input::new(radio_busy, InputConfig::default().with_pull(Pull::None));
-        board_radio::new_radio_kind(
-            radio_spi,
-            radio_reset,
-            radio_dio1,
-            radio_busy,
-            #[cfg(feature = "radio-rxen")]
-            radio_rx_enable,
-        )
-    }
-    .unwrap_or_else(|e| panic!("radio init failed: {e:?}"));
-
+    let (radio_dio1, radio_busy) = (
+        Input::new(radio_dio1, InputConfig::default().with_pull(Pull::None)),
+        Input::new(radio_busy, InputConfig::default().with_pull(Pull::None)),
+    );
     // SX127x: no BUSY line at all, and DIO0 alone carries every IRQ the
     // driver needs. DIO1/DIO2 are wired to input-only pins and unused.
     #[cfg(feature = "radio-sx127x")]
-    let kind = {
-        let radio_dio0 = Input::new(
-            peripherals.GPIO26,
-            InputConfig::default().with_pull(Pull::None),
-        );
-        board_radio::new_radio_kind(radio_spi, radio_reset, radio_dio0)
-    }
-    .unwrap_or_else(|e| panic!("radio init failed: {e:?}"));
-    // `false` selects the private-network sync word (0x12 → 0x1424),
-    // matching SessionConfig::sync_word above. Bounded: with no module
-    // fitted, as on some original T-Decks, BUSY never falls.
-    let lora = with_timeout(Duration::from_secs(2), LoRa::new(kind, false, Delay))
+    let radio_dio0 = Input::new(
+        peripherals.GPIO26,
+        InputConfig::default().with_pull(Pull::None),
+    );
+    // One deadline over the whole bring-up: a board that probes its
+    // radio talks to it before `LoRa::new` does, and with no module
+    // fitted, as on some original T-Decks, BUSY never falls. `false`
+    // selects the private-network sync word (0x12 → 0x1424), matching
+    // SessionConfig::sync_word above.
+    let (lora, profile) =
+        umsh_radio_loraphy::probe::init_within(Timer::after(Duration::from_secs(2)), async {
+            #[cfg(feature = "radio-sx126x")]
+            let built = board_radio::new_radio_kind(
+                radio_spi,
+                radio_reset,
+                radio_dio1,
+                radio_busy,
+                #[cfg(feature = "radio-rxen")]
+                radio_rx_enable,
+            )
+            .await;
+            #[cfg(feature = "radio-sx127x")]
+            let built = board_radio::new_radio_kind(radio_spi, radio_reset, radio_dio0).await;
+            let (kind, profile) = built.unwrap_or_else(|e| panic!("radio init failed: {e:?}"));
+            let lora = LoRa::new(kind, false, Delay)
+                .await
+                .unwrap_or_else(|e| panic!("radio init failed: {e:?}"));
+            (lora, profile)
+        })
         .await
-        .unwrap_or_else(|_| panic!("radio init failed: no LoRa radio"))
-        .unwrap_or_else(|e| panic!("radio init failed: {e:?}"));
-    spawner.spawn(radio_task(lora).unwrap());
+        .unwrap_or_else(|_| panic!("radio init failed: no LoRa radio"));
+    debug_log(format_args!("radio: {}", profile.model));
+    let _ = RADIO_PROFILE.init(profile);
+    spawner.spawn(radio_task(lora, profile.rx_preamble_symbols).unwrap());
     spawner.spawn(radio_mux_task().unwrap());
 
     // ── The wired transport ───────────────────────────────────────────────

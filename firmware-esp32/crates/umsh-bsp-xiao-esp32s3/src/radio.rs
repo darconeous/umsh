@@ -19,6 +19,7 @@ use esp_hal::spi::master::Spi;
 use lora_phy::LoRa;
 use lora_phy::mod_params::RadioError;
 use lora_phy::sx126x::{Config, Sx126x, Sx1262, TcxoCtrlVoltage};
+use umsh_radio_loraphy::RadioProfile;
 
 /// The radio's SPI device: the bus is the radio's alone, with NSS as the
 /// managed CS pin.
@@ -36,26 +37,32 @@ pub type RadioKind = Sx126x<RadioSpi, RadioIv, Sx1262>;
 /// The fully-assembled lora-phy driver.
 pub type Radio = LoRa<RadioKind, Delay>;
 
-/// Assemble the board's `RadioKind` from the SPI device and control
-/// pins. Follow with `LoRa::new(kind, false, Delay)`—private sync
+/// The host-visible model and limits.
+pub const PROFILE: RadioProfile = RadioProfile::sx1262(crate::BOARD_NAME);
+
+/// Assemble the board's `RadioKind` and [`PROFILE`] from the SPI device
+/// and control pins. Follow with `LoRa::new(kind, false, Delay)`—private sync
 /// word—and the parameter builders in `umsh-radio-loraphy`.
-pub fn new_radio_kind(
+pub async fn new_radio_kind(
     spi: RadioSpi,
     reset: Output<'static>,
     dio1: Input<'static>,
     busy: Input<'static>,
     rx_enable: Output<'static>,
-) -> Result<RadioKind, RadioError> {
+) -> Result<(RadioKind, RadioProfile), RadioError> {
     let iv = umsh_bsp_esp32::iv::EspInterfaceVariant::sx126x(reset, dio1, busy)
         .with_rx_enable(rx_enable);
-    Ok(Sx126x::new(
-        spi,
-        iv,
-        Config {
-            chip: Sx1262,
-            tcxo_ctrl: Some(TcxoCtrlVoltage::Ctrl1V8),
-            use_dcdc: true,
-            rx_boost: true,
-        },
+    Ok((
+        Sx126x::new(
+            spi,
+            iv,
+            Config {
+                chip: Sx1262,
+                tcxo_ctrl: Some(TcxoCtrlVoltage::Ctrl1V8),
+                use_dcdc: true,
+                rx_boost: true,
+            },
+        ),
+        PROFILE,
     ))
 }

@@ -25,6 +25,7 @@ use esp_hal::spi::master::Spi;
 use lora_phy::LoRa;
 use lora_phy::mod_params::RadioError;
 use lora_phy::sx127x::{Config, Sx127x, Sx1276};
+use umsh_radio_loraphy::RadioProfile;
 
 /// The radio's SPI device: the shared bus is exclusively the radio's on
 /// this board, with NSS as the managed CS pin.
@@ -41,6 +42,21 @@ pub type RadioKind = Sx127x<RadioSpi, RadioIv, Sx1276>;
 
 /// The fully-assembled lora-phy driver.
 pub type Radio = LoRa<RadioKind, Delay>;
+
+/// The host-visible model and limits. The antenna is on the PA_BOOST
+/// port and [`new_radio_kind`] configures `tx_boost: true`, which is the
+/// [2, 20] dBm path in the driver—the RFO path's [-4, 14] range is
+/// unreachable on this board. Above 17 dBm the driver switches PA_DAC to
+/// its 20 dBm mode and raises OCP to 240 mA, so the top of this range is
+/// duty-limited in practice.
+pub const PROFILE: RadioProfile = RadioProfile {
+    model: crate::BOARD_NAME,
+    min_tx_power_dbm: 2,
+    max_tx_power_dbm: 20,
+    freq_khz_min: 137_000,
+    freq_khz_max: 1_020_000,
+    rx_preamble_symbols: 8,
+};
 
 /// `RegVersion` value for the SX1276 silicon on this board.
 pub const EXPECTED_VERSION: u8 = 0x12;
@@ -72,23 +88,26 @@ pub async fn probe_version(
     Ok(buf[1])
 }
 
-/// Assemble the board's `RadioKind` from the SPI device and control
-/// pins. Follow with `LoRa::new(kind, false, Delay)`—private sync
+/// Assemble the board's `RadioKind` and [`PROFILE`] from the SPI device
+/// and control pins. Follow with `LoRa::new(kind, false, Delay)`—private sync
 /// word—and the parameter builders in `umsh-radio-loraphy`.
-pub fn new_radio_kind(
+pub async fn new_radio_kind(
     spi: RadioSpi,
     reset: Output<'static>,
     dio0: Input<'static>,
-) -> Result<RadioKind, RadioError> {
+) -> Result<(RadioKind, RadioProfile), RadioError> {
     let iv = umsh_bsp_esp32::iv::EspInterfaceVariant::sx127x(reset, dio0);
-    Ok(Sx127x::new(
-        spi,
-        iv,
-        Config {
-            chip: Sx1276,
-            tcxo_used: false,
-            tx_boost: true,
-            rx_boost: true,
-        },
+    Ok((
+        Sx127x::new(
+            spi,
+            iv,
+            Config {
+                chip: Sx1276,
+                tcxo_used: false,
+                tx_boost: true,
+                rx_boost: true,
+            },
+        ),
+        PROFILE,
     ))
 }

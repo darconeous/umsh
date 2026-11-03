@@ -35,6 +35,9 @@ lora-phy = { workspace = true }
 # Needed for the DelayNs bound on the runner's DLY type parameter.
 embedded-hal-async = { version = "1", default-features = false }
 
+# The chip probe's RESET and BUSY pins.
+embedded-hal = { version = "1", default-features = false }
+
 # embassy-sync: channels, signals, and AtomicWaker for poll_receive.
 # Version pinned to what embassy-nrf 0.11 pulls in transitively.
 embassy-sync = { version = "0.8", default-features = false }

@@ -1,6 +1,6 @@
 [package]
 name = "umsh-bsp-tlora-pager"
-description = "LILYGO T-LoRa Pager SX1262 board support"
+description = "LILYGO T-LoRa Pager board support"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -29,3 +29,4 @@ embedded-hal = "1"
 critical-section = "1"
 embedded-graphics = "0.8"
 lora-phy = { version = "3.0.2-alpha", default-features = false }
+umsh-radio-loraphy = { path = "../../../crates/umsh-radio-loraphy", default-features = false }

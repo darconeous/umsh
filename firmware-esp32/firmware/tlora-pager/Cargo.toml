@@ -1,6 +1,6 @@
 [package]
 name = "firmware-tlora-pager"
-description = "LILYGO T-LoRa Pager SX1262 ULCP device firmware over native USB and BLE GATT, with GNSS and RTC"
+description = "LILYGO T-LoRa Pager (SX1262 or LR1121) ULCP device firmware over native USB and BLE GATT, with GNSS and RTC"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
