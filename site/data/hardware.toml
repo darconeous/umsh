@@ -314,7 +314,7 @@ blurb = """
 A keyboard handheld with a wide landscape screen and a rotary encoder. \
 It sends and receives messages on its own, no phone needed."""
 mcu = "Espressif ESP32-S3"
-radio = "Semtech SX1262"
+radio = "Semtech SX1262 or LR1121"
 gnss = "u-blox MIA-M10Q"
 display = "2.33\" TFT, 480×222"
 battery = "1500 mAh Li-ion, with a fuel gauge"
@@ -329,7 +329,7 @@ chip = "ESP32-S3"
 dfu_entry = "None needed—the board enters its ROM bootloader on its own when the flashing tool asserts the USB serial control lines. If that fails, hold BOOT, tap RESET, then release BOOT. If the board stays in download mode after flashing, tap RESET."
 quirks = [
   "Building this board needs Espressif's Xtensa Rust toolchain, installed with <code>espup</code>.",
-  "Only the SX1262 version is supported.",
+  "The SX1262 and LR1121 versions run the same firmware, and the LR1121 uses only its sub-GHz band. The SX1280, CC1101, and SI4432 versions are not supported.",
 ]
 
 [[boards]]
