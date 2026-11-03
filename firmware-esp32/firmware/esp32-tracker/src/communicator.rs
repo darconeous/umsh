@@ -316,6 +316,13 @@ async fn interface(
         if app.state().keyboard_firmware != keyboard {
             app.state_mut().keyboard_firmware = keyboard;
         }
+        // What a field asks of a keyboard that keeps its own latches.
+        if let Some(asked) = app.state_mut().untracked().keyboard.take_asked() {
+            crate::board_input::ask_latches(asked);
+        }
+        if let Some(lit) = crate::board_input::switched_light() {
+            app.state_mut().set_keyboard_light(lit);
+        }
         let battery = battery_reading();
         if app.state().battery_changes(&battery) {
             app.state_mut().battery(battery, now());

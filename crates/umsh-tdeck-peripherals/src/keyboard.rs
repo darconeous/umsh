@@ -21,6 +21,8 @@ pub enum Key {
     AltC,
     /// Shift+`$`, the key under the speaker legend.
     Mute,
+    /// Shift+Space, from UMSH's C3 firmware.
+    ShiftSpace,
 }
 
 /// The key behind `byte`, if it is one. Shift subtracts 32 from whatever
@@ -34,6 +36,8 @@ pub fn key(byte: u8) -> Option<Key> {
         0x04 => Key::Mute,
         0x0c => Key::AltC,
         0x0d => Key::Enter,
+        // No symbol less 32 is this, so stock firmware never sends it.
+        0x1e => Key::ShiftSpace,
         b' ' => Key::Space,
         0x21..=0x7e => Key::Character(char::from(byte)),
         // Shift held on a symbol, from stock firmware: `1` comes as 0x11.
@@ -98,6 +102,28 @@ pub enum Latch {
     SymLock,
 }
 
+impl Latch {
+    /// Its code, in the [`Status`] byte and in [`set_latch`].
+    #[must_use]
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::None => 0,
+            Self::ShiftNext => 1,
+            Self::SymNext => 2,
+            Self::CapsLock => 4,
+            Self::SymLock => 5,
+        }
+    }
+}
+
+/// Sets the C3's latch, for the keys pressed from then on. Only for UMSH's
+/// C3 firmware, in a write of its own. Firmware without it takes the code
+/// as a command, harmlessly; stock would take a code of 3 as raw mode.
+#[must_use]
+pub const fn set_latch(latch: Latch) -> [u8; 2] {
+    [0x51, latch.code()]
+}
+
 /// A key-mode read's second byte, as it stands at the read.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Status {
@@ -116,13 +142,15 @@ pub struct Status {
 pub fn status(byte: u8) -> Status {
     let bit = |n: u8| byte & 1 << n != 0;
     Status {
-        latch: match byte & 0b111 {
-            1 => Latch::ShiftNext,
-            2 => Latch::SymNext,
-            4 => Latch::CapsLock,
-            5 => Latch::SymLock,
-            _ => Latch::None,
-        },
+        latch: [
+            Latch::ShiftNext,
+            Latch::SymNext,
+            Latch::CapsLock,
+            Latch::SymLock,
+        ]
+        .into_iter()
+        .find(|latch| latch.code() == byte & 0b111)
+        .unwrap_or(Latch::None),
         light: bit(3),
         left_shift: bit(4),
         right_shift: bit(5),

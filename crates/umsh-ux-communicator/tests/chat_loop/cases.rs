@@ -3119,6 +3119,16 @@ fn alt_and_two_quick_spaces_switch_the_keyboard_light_anywhere() {
 }
 
 #[test]
+fn a_light_the_keyboard_switched_is_recorded_without_a_glance() {
+    let mut app = app!();
+    app.state_mut().set_keyboard_light(false);
+    assert!(!app.state().node.keyboard().light);
+    assert!(app.state().glance.is_none());
+    app.state_mut().set_keyboard_light(true);
+    assert!(app.state().node.keyboard().light);
+}
+
+#[test]
 fn turning_with_alt_held_sets_brightness() {
     let mut app = app!();
     let level = || brightness_level(app.state().node.brightness());
@@ -3190,16 +3200,29 @@ fn a_keyboard_with_its_own_symbols_types_transmit_power_as_it_is() {
     let mut app = app!();
     open_radio(&mut app);
     turn_to(&mut app, keys::TRANSMIT_POWER);
+    app.state_mut().untracked().keyboard.take_asked();
     run(&mut app, &[Input::Press]);
     assert_eq!(focus(app.state()), Some(keys::POWER_FIELD));
-    // No symbol lock to show: the keyboard's own Sym layer types digits.
+    // The keyboard is asked for Sym Lock, once; until it reports it, there
+    // is none to show.
+    let mut asked = || app.state_mut().untracked().keyboard.take_asked();
+    assert_eq!(asked(), Some((Latch::Off, Latch::Locked)));
+    assert_eq!(asked(), None);
     assert_eq!(app.state().keyboard.latches(), (Latch::Off, Latch::Off));
     // What is not part of a number types nothing.
     run(&mut app, &typed("1x "));
+    assert_eq!(app.state_mut().untracked().keyboard.take_asked(), None);
     assert!(matches!(
         app.state().screen(),
         Screen::Device { page: DevicePage::TransmitPower { text }, .. } if text.text() == "221"
     ));
+    // Leaving the field lets it go: erased, its edit ended, and back.
+    run(&mut app, &[Input::Backspace; 5]);
+    assert_ne!(focus(app.state()), Some(keys::POWER_FIELD));
+    assert_eq!(
+        app.state_mut().untracked().keyboard.take_asked(),
+        Some((Latch::Off, Latch::Off))
+    );
 }
 
 #[test]

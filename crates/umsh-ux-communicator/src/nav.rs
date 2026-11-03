@@ -1990,6 +1990,13 @@ impl State {
         self.change_keyboard(|s| s.light = !s.light);
     }
 
+    /// Records the keyboard light as the keyboard itself switched it.
+    pub fn set_keyboard_light(&mut self, lit: bool) {
+        if self.node.keyboard().light != lit {
+            self.change_keyboard(|s| s.light = lit);
+        }
+    }
+
     pub fn toggle_share_location(&mut self) {
         if let Some(settings) = self.shown_radio() {
             self.node.set_share_location(!settings.share_location);

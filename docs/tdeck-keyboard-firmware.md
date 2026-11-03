@@ -55,7 +55,12 @@ command missing its operand does nothing.
 | `03` | Raw mode. |
 | `04` | Key mode (the power-on mode). |
 | `50` | Sleep, in a write of its own (after `01 d` it would be taken as Alt+B's duty). |
+| `51 s` | Set the latch to the one with status code `s`, for keys pressed from then on; any other `s` is skipped. A one-shot set this way is let go, not locked, by the next press of its modifier. In a write of its own. |
 | `A0` | Identify: the next read returns the identify reply. |
+
+A keyboard without `51` skips it and takes `s` as a command. That is harmless
+for every latch code, on stock firmware and on earlier UMSH firmware alike, so
+`51` needs no capability.
 
 The light fades to each new duty over 250 ms, evenly in the duty's square
 root, from wherever it is, including partway through another fade. Alt+B fades
@@ -80,9 +85,12 @@ dropped. Reading takes one. Each newly pressed key, in row-major matrix order,
 sends its base legend, or:
 
 - With Sym, its Sym legend, or the base legend where it has none.
-- With Shift, the capital of a letter, and `04` for `$` (the speaker key).
-  Other keys send their base legend.
+- With Shift, the capital of a letter, `04` for `$` (the speaker key), and
+  `1E` for Space. Other keys send their base legend.
 - With Caps Lock, the capital of a letter. Other keys send their base legend.
+
+Stock firmware never sends `1E`: it sends Shift on a symbol as the symbol less
+32, and no symbol makes `1E`.
 
 Sym and Shift never combine: of the two, the one pressed last applies. A key
 with no legend, such as Mic without Sym, sends nothing. Then:
@@ -101,7 +109,8 @@ at a time:
 - A second press within 500 ms of the first locks it on (Caps Lock, Sym Lock)
   until the next press.
 - A second press after that lets it go.
-- A press of the other modifier replaces the state with its own.
+- A press of the other modifier replaces the state with its own, as `51`
+  does.
 
 #### Status byte
 
@@ -160,7 +169,7 @@ will sleep.
 | Bytes | For |
 |---|---|
 | `05`–`3F` | Modes and key events |
-| `40`–`7F` | Power |
+| `40`–`7F` | Power and modes |
 | `A0`–`AF` | Identity and firmware update |
 | `B0`–`BF` | Key custody |
 

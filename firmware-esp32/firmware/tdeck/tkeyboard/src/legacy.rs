@@ -3,14 +3,16 @@
 //!
 //! Stock firmware's bytes are kept where a host can use them: the legends,
 //! Enter `0D`, Backspace `08`, Alt+C `0C`, and Shift+`$` `04` (the speaker
-//! key, a natural mute). Shift otherwise changes letters only, and Sym on a
+//! key, a natural mute). Shift+Space sends [`SHIFT_SPACE`], a byte stock
+//! firmware never sends. Shift otherwise changes letters only, and Sym on a
 //! key with no Sym legend sends the base one. Sym and Shift never combine:
 //! the one pressed last decides.
 //!
 //! Sym and Shift latch as well, one state at a time ([`Latch`]): one press
 //! applies to the next key, a second within [`DOUBLE_TAP_MS`] locks it on,
 //! and the press after that, or a late second, lets it go. Pressing the
-//! other modifier replaces the state with its own.
+//! other modifier replaces the state with its own, and so does a host's
+//! [`set_latch`](LegacyEncoder::set_latch).
 
 use crate::keymap;
 use crate::matrix::{Key, Snapshot};
@@ -19,6 +21,9 @@ use crate::matrix::{Key, Snapshot};
 pub const DOUBLE_TAP_MS: u64 = 500;
 /// Characters held for the host. One typed into a full queue is dropped.
 pub const QUEUE_LEN: usize = 16;
+/// Shift+Space. Stock firmware sends Shift on a symbol as the symbol less
+/// 32, which no symbol makes this.
+pub const SHIFT_SPACE: u8 = 0x1e;
 
 /// Status bits 0–2.
 pub const STATUS_LATCH: u8 = 0b111;
@@ -34,10 +39,12 @@ pub const STATUS_REPEAT: u8 = 1 << 7;
 pub enum Latch {
     #[default]
     None,
-    /// Shift for the next key, since the press at this time.
-    ShiftNext(u64),
-    /// Sym for the next key, since the press at this time.
-    SymNext(u64),
+    /// Shift for the next key, since the press at this time, or since a
+    /// host set it.
+    ShiftNext(Option<u64>),
+    /// Sym for the next key, since the press at this time, or since a host
+    /// set it.
+    SymNext(Option<u64>),
     CapsLock,
     SymLock,
 }
@@ -55,15 +62,31 @@ impl Latch {
         }
     }
 
+    /// The latch with status code `code`, set by a host: a one-shot counts
+    /// as pressed long ago, so the next press lets it go.
+    pub const fn from_code(code: u8) -> Option<Self> {
+        Some(match code {
+            0 => Latch::None,
+            1 => Latch::ShiftNext(None),
+            2 => Latch::SymNext(None),
+            4 => Latch::CapsLock,
+            5 => Latch::SymLock,
+            _ => return None,
+        })
+    }
+
     fn press(&mut self, modifier: Modifier, at_ms: u64) {
-        let quick = |since: u64| at_ms.saturating_sub(since) <= DOUBLE_TAP_MS;
+        // A latch a host set was never pressed quickly before this.
+        let quick = |since: Option<u64>| {
+            since.is_some_and(|since| at_ms.saturating_sub(since) <= DOUBLE_TAP_MS)
+        };
         *self = match (*self, modifier) {
             (Latch::ShiftNext(since), Modifier::Shift) if quick(since) => Latch::CapsLock,
             (Latch::SymNext(since), Modifier::Sym) if quick(since) => Latch::SymLock,
             (Latch::ShiftNext(_) | Latch::CapsLock, Modifier::Shift)
             | (Latch::SymNext(_) | Latch::SymLock, Modifier::Sym) => Latch::None,
-            (_, Modifier::Shift) => Latch::ShiftNext(at_ms),
-            (_, Modifier::Sym) => Latch::SymNext(at_ms),
+            (_, Modifier::Shift) => Latch::ShiftNext(Some(at_ms)),
+            (_, Modifier::Sym) => Latch::SymNext(Some(at_ms)),
         };
     }
 
@@ -105,6 +128,7 @@ fn encode(key: Key, layer: Layer) -> u8 {
     match layer {
         Layer::Sym if symbol != 0 => symbol,
         Layer::Shift if key == keymap::DOLLAR => 0x04,
+        Layer::Shift if key == keymap::SPACE => SHIFT_SPACE,
         Layer::Shift | Layer::Caps => base.to_ascii_uppercase(),
         Layer::Base | Layer::Sym => base,
     }
@@ -217,5 +241,13 @@ impl LegacyEncoder {
 
     pub fn latch(&self) -> Latch {
         self.latch
+    }
+
+    /// A host sets the latch to the one with status code `code`, for the
+    /// keys pressed from now on. A code with no latch changes nothing.
+    pub fn set_latch(&mut self, code: u8) {
+        if let Some(latch) = Latch::from_code(code) {
+            self.latch = latch;
+        }
     }
 }

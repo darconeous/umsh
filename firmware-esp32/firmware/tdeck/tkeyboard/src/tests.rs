@@ -274,6 +274,7 @@ fn expected(mods: &[Key], key: Key) -> Option<u8> {
         Some(&m) if m == keymap::SYM && symbol != 0 => symbol,
         Some(&m) if m == keymap::SYM => base,
         Some(_) if key == keymap::DOLLAR => 0x04,
+        Some(_) if key == keymap::SPACE => legacy::SHIFT_SPACE,
         Some(_) => base.to_ascii_uppercase(),
         None => base,
     };
@@ -607,9 +608,12 @@ fn enter_uses_one_tap_up_but_not_a_lock() {
 }
 
 #[test]
-fn shift_changes_letters_and_the_speaker_key_alone() {
+fn shift_changes_letters_space_and_the_speaker_key_alone() {
     let mut typist = Typist::new();
-    assert_eq!(typist.tap_holding(&[keymap::LEFT_SHIFT], &[SPACE]), b' ');
+    assert_eq!(
+        typist.tap_holding(&[keymap::LEFT_SHIFT], &[SPACE]),
+        legacy::SHIFT_SPACE
+    );
     assert_eq!(
         typist.tap_holding(&[keymap::LEFT_SHIFT], &[keymap::DOLLAR]),
         0x04
@@ -622,6 +626,88 @@ fn shift_changes_letters_and_the_speaker_key_alone() {
     assert_eq!(typist.tap_holding(&[keymap::SYM], &[SPACE]), b' ');
     assert_eq!(typist.tap_holding(&[keymap::SYM], &[keymap::DOLLAR]), b'$');
     assert_eq!(typist.tap_holding(&[keymap::SYM], &[keymap::MIC]), b'0');
+}
+
+#[test]
+fn a_one_shot_shift_and_space_sends_shift_space_but_caps_lock_a_space() {
+    let mut typist = Typist::new();
+    typist.tap(&[keymap::RIGHT_SHIFT]);
+    assert_eq!(typist.tap(&[SPACE]), legacy::SHIFT_SPACE);
+    // Used up by it.
+    assert_eq!(typist.latch(), 0);
+    assert_eq!(typist.tap(&[SPACE]), b' ');
+    typist.wait(1000);
+    typist.tap(&[keymap::LEFT_SHIFT]);
+    typist.tap(&[keymap::LEFT_SHIFT]);
+    assert_eq!(typist.latch(), 4);
+    assert_eq!(typist.tap(&[SPACE]), b' ');
+    assert_eq!(typist.tap(&[keymap::DOLLAR]), b'$');
+}
+
+#[test]
+fn a_host_sets_the_latch_for_the_keys_to_come() {
+    // The code, what Q then sends, and the latch after it.
+    for (code, q, after) in [
+        (0, b'q', 0),
+        (1, b'Q', 0),
+        (2, b'#', 0),
+        (4, b'Q', 4),
+        (5, b'#', 5),
+    ] {
+        let mut typist = Typist::new();
+        let _ = typist.keyboard.on_write(&[protocol::CMD_LATCH, code]);
+        assert_eq!(typist.latch(), code);
+        assert_eq!(typist.tap(&[Q]), q, "{code}");
+        assert_eq!(typist.latch(), after, "{code}");
+    }
+    // It replaces a latch the keys set.
+    let mut typist = Typist::new();
+    typist.tap(&[keymap::LEFT_SHIFT]);
+    typist.tap(&[keymap::LEFT_SHIFT]);
+    let _ = typist.keyboard.on_write(&[protocol::CMD_LATCH, 5]);
+    assert_eq!(typist.tap(&[Q]), b'#');
+}
+
+#[test]
+fn one_tap_lets_a_one_shot_the_host_set_go() {
+    for (code, modifier) in [(1, keymap::LEFT_SHIFT), (2, keymap::SYM)] {
+        let mut typist = Typist::new();
+        let _ = typist.keyboard.on_write(&[protocol::CMD_LATCH, code]);
+        // Quickly, too: the host's was never a tap.
+        typist.tap(&[modifier]);
+        assert_eq!(typist.latch(), 0, "{code}");
+        assert_eq!(typist.tap(&[Q]), b'q', "{code}");
+    }
+}
+
+#[test]
+fn a_latch_code_with_no_latch_changes_nothing() {
+    for write in [
+        &[protocol::CMD_LATCH, 3][..],
+        &[protocol::CMD_LATCH, 6],
+        &[protocol::CMD_LATCH, 7],
+        &[protocol::CMD_LATCH, 0x85],
+        &[protocol::CMD_LATCH],
+    ] {
+        let mut typist = Typist::new();
+        typist.tap(&[keymap::SYM]);
+        let _ = typist.keyboard.on_write(write);
+        assert_eq!(typist.latch(), 2, "{write:?}");
+    }
+}
+
+#[test]
+fn a_latch_set_later_leaves_queued_characters_alone() {
+    let mut keyboard = Controller::new();
+    keyboard.on_scan([Q].into_iter().collect(), 0);
+    keyboard.on_scan(Snapshot::EMPTY, 5);
+    let _ = keyboard.on_write(&[protocol::CMD_LATCH, 5]);
+    keyboard.on_scan([Q].into_iter().collect(), 10);
+    let mut reply = [0; MAX_REPLY];
+    keyboard.on_read(&mut reply);
+    assert_eq!(reply[0], b'q');
+    keyboard.on_read(&mut reply);
+    assert_eq!(reply[0], b'#');
 }
 
 #[test]
@@ -683,6 +769,11 @@ fn the_status_byte_reports_held_keys_and_the_light() {
 /// After a write, the light and the next read agree, and so does what
 /// Alt+B then does twice.
 fn check_write(bytes: &[u8]) {
+    // Stock firmware skips `51` and takes the 03 after it as raw mode.
+    // No host sends it: 3 is no latch yet.
+    if protocol::commands(bytes).any(|c| c == Command::Latch(3)) {
+        return;
+    }
     let mut pair = Pair::new();
     // A key waiting, which the write must not disturb.
     pair.scan(&[Key::new(0, 0)]);

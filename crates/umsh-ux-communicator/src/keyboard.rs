@@ -154,6 +154,8 @@ pub struct Keyboard {
     /// Shift's and the symbol layer's latches, from a keyboard that
     /// applies its own modifiers and reports them.
     reported: (Latch, Latch),
+    /// The latches such a keyboard is to take up, since the field changed.
+    asked: Option<(Latch, Latch)>,
 }
 
 impl Keyboard {
@@ -180,6 +182,13 @@ impl Keyboard {
     /// its symbol layer stand.
     pub fn report(&mut self, shift: Latch, symbol: Latch) {
         self.reported = (shift, symbol);
+    }
+
+    /// Shift's and the symbol layer's latches for a keyboard that applies
+    /// its own modifiers to take up, once each time the field changes: the
+    /// field's opening state.
+    pub fn take_asked(&mut self) -> Option<(Latch, Latch)> {
+        self.asked.take()
     }
 
     /// Whether Alt is held down.
@@ -231,10 +240,18 @@ impl Keyboard {
                 ..Key::default()
             };
         }
-        // A keyboard that applies its own modifiers has its own symbol
-        // layer, which is the user's to choose.
-        if self.kind == KeyboardKind::Legends && self.field.is_some_and(Field::symbols) {
-            self.alt.latch = Latch::Locked;
+        let symbols = self.field.is_some_and(Field::symbols);
+        match self.kind {
+            KeyboardKind::Legends => {
+                if symbols {
+                    self.alt.latch = Latch::Locked;
+                }
+            }
+            // The keyboard keeps its own latches, so it is asked.
+            KeyboardKind::Characters => {
+                let symbol = if symbols { Latch::Locked } else { Latch::Off };
+                self.asked = Some((Latch::Off, symbol));
+            }
         }
         self.automatic = false;
         self.settled = None;

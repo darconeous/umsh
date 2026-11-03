@@ -40,6 +40,12 @@ pub(crate) fn to_input(input: UiItem) -> UiItem {
 }
 
 static KEYBOARD_SHOWN: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+/// The latch the interface last asked the keyboard to take up, until it
+/// has: a newer ask replaces an older one.
+static ASKED_LATCH: Signal<CriticalSectionRawMutex, keys::Latch> = Signal::new();
+/// The key light as the keyboard switched it itself, with Alt+B, until the
+/// interface takes it.
+static SWITCHED_LIGHT: Signal<CriticalSectionRawMutex, bool> = Signal::new();
 static STOP_PRESS: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 static STOP_KEYBOARD: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 static STOP_TOUCH: Signal<CriticalSectionRawMutex, ()> = Signal::new();
@@ -312,6 +318,9 @@ async fn run_keyboard(bus: &'static board::I2cBus) {
     let mut identity: Option<Option<keys::Identity>> = None;
     // The latches last shown, from firmware that reports them.
     let mut shown_latches = (Latch::Off, Latch::Off);
+    // The light as last set or reported, from firmware that reports it:
+    // a report that differs is the keyboard's own switch.
+    let mut known_light = None;
     // Its only receiver: there is one keyboard task, run once.
     let mut touch_quiet = TOUCH_QUIET.receiver().unwrap();
     loop {
@@ -329,6 +338,7 @@ async fn run_keyboard(bus: &'static board::I2cBus) {
                 .await,
             ) {
                 set = Some(light);
+                known_light = Some(light);
             }
         }
         // Dark, the keyboard is left alone until the panel lights again,
@@ -354,6 +364,22 @@ async fn run_keyboard(bus: &'static board::I2cBus) {
             // Waking takes a read, which takes the stale key with it.
             stale = !(asleep && wake_keyboard(&mut keyboard).await);
             continue;
+        }
+        // Only UMSH's firmware takes a latch, so an ask waits until it is
+        // known to be that. One that fails is asked again, unless a newer
+        // one has come.
+        if identity.flatten().is_some()
+            && let Some(latch) = ASKED_LATCH.try_take()
+            && !answered(
+                with_timeout(
+                    KEYBOARD_TRANSFER,
+                    keyboard.write(keys::ADDRESS, &keys::set_latch(latch)),
+                )
+                .await,
+            )
+            && !ASKED_LATCH.signaled()
+        {
+            ASKED_LATCH.signal(latch);
         }
         let answer = match identity {
             Some(found) => {
@@ -386,10 +412,20 @@ async fn run_keyboard(bus: &'static board::I2cBus) {
                 if latches != shown_latches && show_latches(latches) {
                     shown_latches = latches;
                 }
+                // Taken up here at once, so the light wanted is not set
+                // back before the interface has it.
+                if let Some(status) = status
+                    && known_light.replace(status.light) == Some(!status.light)
+                {
+                    wanted = status.light;
+                    set = Some(status.light);
+                    SWITCHED_LIGHT.signal(status.light);
+                }
             }
             Err(()) => {
                 light_from = None;
                 set = None;
+                known_light = None;
                 identity = None;
                 publish_identity(identity);
                 debug_log(format_args!(
@@ -469,6 +505,24 @@ fn latches(status: Option<keys::Status>) -> (Latch, Latch) {
     }
 }
 
+/// Asks the keyboard to take up the interface's `(shift, symbol)`
+/// latches, as a field opens: carried out by UMSH's firmware, the next
+/// time the keyboard is read.
+pub(crate) fn ask_latches(asked: (Latch, Latch)) {
+    ASKED_LATCH.signal(match asked {
+        (Latch::Once, _) => keys::Latch::ShiftNext,
+        (Latch::Locked, _) => keys::Latch::CapsLock,
+        (Latch::Off, Latch::Once) => keys::Latch::SymNext,
+        (Latch::Off, Latch::Locked) => keys::Latch::SymLock,
+        (Latch::Off, Latch::Off) => keys::Latch::None,
+    });
+}
+
+/// The key light, when the keyboard has switched it since last asked.
+pub(crate) fn switched_light() -> Option<bool> {
+    SWITCHED_LIGHT.try_take()
+}
+
 /// Shows `latches` in the status strip, as a tap would: a dimmed panel
 /// wakes instead. Returns whether they reached the interface; if not, the
 /// next read tries again.
@@ -522,6 +576,8 @@ fn deliver(key: Key) {
         Key::Enter => UiItem::Enter,
         Key::Backspace => UiItem::Backspace,
         Key::Mute => UiItem::Mute,
+        // Kept for scrolling to the top; a space until then.
+        Key::ShiftSpace => UiItem::Space,
         Key::AltC => UiItem::Picker,
     };
     finish_gesture(input, start_gesture());

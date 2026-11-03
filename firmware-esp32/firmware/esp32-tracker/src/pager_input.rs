@@ -63,6 +63,22 @@ pub(crate) fn keyboard_firmware() -> Option<umsh_ux_communicator::model::Keyboar
     None
 }
 
+/// The Pager's key light is switched through the interface alone.
+#[cfg(feature = "communicator")]
+pub(crate) fn switched_light() -> Option<bool> {
+    None
+}
+
+/// The interface keeps the Pager's latches itself, and never asks.
+#[cfg(feature = "communicator")]
+pub(crate) fn ask_latches(
+    _: (
+        umsh_ux_communicator::keyboard::Latch,
+        umsh_ux_communicator::keyboard::Latch,
+    ),
+) {
+}
+
 #[cfg(feature = "communicator")]
 pub(crate) fn to_input(input: UiInput) -> umsh_ux_communicator::input::Input {
     use umsh_ux_communicator::input::Input;

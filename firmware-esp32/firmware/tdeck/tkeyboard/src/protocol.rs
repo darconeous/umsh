@@ -16,6 +16,10 @@ pub const CMD_MODE_KEY: u8 = 0x04;
 /// used, and sleeps whenever it has nothing to do. Keys pressed meanwhile
 /// are still taken. Send only after identify reports [`CAP_SLEEP`].
 pub const CMD_SLEEP: u8 = 0x50;
+/// `51 s`: set the latch to the one with status code `s`, for the keys
+/// pressed from now on. Firmware without it skips `51` and takes `s` as a
+/// command, which for every latch code is harmless: none is `03`.
+pub const CMD_LATCH: u8 = 0x51;
 /// The next read returns [`identify_reply`]. Stock firmware ignores it.
 pub const CMD_IDENTIFY: u8 = 0xa0;
 
@@ -40,6 +44,7 @@ pub enum Command {
     ModeRaw,
     ModeKey,
     Sleep,
+    Latch(u8),
     Identify,
 }
 
@@ -78,6 +83,7 @@ impl Iterator for Commands<'_> {
                 CMD_MODE_RAW => Command::ModeRaw,
                 CMD_MODE_KEY => Command::ModeKey,
                 CMD_SLEEP => Command::Sleep,
+                CMD_LATCH => Command::Latch(*self.bytes.next()?),
                 CMD_IDENTIFY => Command::Identify,
                 _ => continue,
             };

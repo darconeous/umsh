@@ -78,11 +78,13 @@ and Backspace included, uses up a one-shot.
 
 The strip shows what the keyboard reports, Sym with Alt's icons. A
 [Capitalize sentences](#capitalize-sentences) Shift shows while the keyboard
-reports nothing.
+reports nothing. A field that opens in symbol lock puts the keyboard in Sym
+Lock, and every other field change releases its latch.
 
 Shift+`$`, the key under the speaker legend, switches sounds on and off,
 locked or not. Alt+C opens the [character picker](#character-picker) and
-closes it again.
+closes it again. Shift+Space types a space. Alt+B switches the keyboard light,
+and the **Keyboard light** switch follows it.
 
 ## Typing aids
 

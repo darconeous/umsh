@@ -89,6 +89,7 @@ impl Controller {
                     self.backlight.sleep();
                     power = Power::Sleep;
                 }
+                Command::Latch(code) => self.legacy.set_latch(code),
                 Command::Identify => self.latched = Some(protocol::identify_reply()),
             }
         }

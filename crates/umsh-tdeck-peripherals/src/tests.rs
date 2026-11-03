@@ -1,7 +1,7 @@
 use crate::battery::Rail;
 use crate::es7210;
 use crate::gt911::{Gt911, Point, Polarity, Report, landscape};
-use crate::keyboard::{Identity, Key, Latch, Status, identity, key, status};
+use crate::keyboard::{Identity, Key, Latch, Status, identity, key, set_latch, status};
 use crate::trackball::{AXIS_LOCK_MS, Direction::*, IDLE_MS, Trackball};
 use embedded_hal::i2c::{ErrorKind, ErrorType};
 use embedded_hal_async::i2c::{I2c, Operation};
@@ -56,6 +56,7 @@ fn key_mode_bytes_map_to_keys() {
     assert_eq!(key(0x08), Some(Key::Backspace));
     assert_eq!(key(0x0c), Some(Key::AltC));
     assert_eq!(key(0x04), Some(Key::Mute));
+    assert_eq!(key(0x1e), Some(Key::ShiftSpace));
     // Shift on a symbol, from stock firmware.
     assert_eq!(key(0x11), Some(Key::Character('1')));
     assert_eq!(key(0x7f), None);
@@ -114,6 +115,18 @@ fn the_status_byte_decodes() {
         (7, Latch::None),
     ];
     for (code, latch) in latches {
+        assert_eq!(status(code).latch, latch);
+    }
+    // Set with the codes it reports.
+    for latch in [
+        Latch::None,
+        Latch::ShiftNext,
+        Latch::SymNext,
+        Latch::CapsLock,
+        Latch::SymLock,
+    ] {
+        let [command, code] = set_latch(latch);
+        assert_eq!(command, 0x51);
         assert_eq!(status(code).latch, latch);
     }
     assert_eq!(
