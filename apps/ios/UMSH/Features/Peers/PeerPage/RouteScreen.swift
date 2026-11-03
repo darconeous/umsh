@@ -14,6 +14,7 @@ struct RouteScreen: View {
 
     @State private var route: PeerRoute?
     @State private var draft: ManualPathDraft?
+    @State private var isAddingHop = false
     @State private var isResetting = false
     @State private var isClearing = false
     @State private var openedPeer: PeerSummary?
@@ -23,7 +24,13 @@ struct RouteScreen: View {
     var body: some View {
         List {
             if let draft {
-                ManualPathEditSections(draft: draft, peer: peer, actions: actions, radioName: radioName)
+                ManualPathEditSections(
+                    draft: draft,
+                    peer: peer,
+                    actions: actions,
+                    radioName: radioName,
+                    isAddingHop: $isAddingHop
+                )
             } else if let route {
                 pathSection(route)
                 detailsSection(route)
@@ -39,6 +46,12 @@ struct RouteScreen: View {
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(draft != nil)
         .toolbar { toolbar }
+        .sheet(isPresented: $isAddingHop) {
+            if let draft {
+                AddHopScreen(destination: peer, actions: actions, hops: Bindable(draft).hops)
+            }
+        }
+        .onChange(of: draft?.path) { _, _ in draft?.pingResult = nil }
         .navigationDestination(item: $openedPeer) { peer in
             browsing.open(peer)
         }

@@ -91,13 +91,16 @@ final class ManualPathDraft {
 }
 
 /// The sections of a manual path being edited, for a list in edit mode.
+///
+/// The list that holds these presents the Add Hop sheet and watches the
+/// path: a presentation anchored inside a list lands on its rows, and goes
+/// away whenever a row is reloaded.
 struct ManualPathEditSections: View {
     @Bindable var draft: ManualPathDraft
     let peer: PeerSummary
     let actions: PeerActions
     let radioName: String?
-
-    @State private var isAddingHop = false
+    @Binding var isAddingHop: Bool
 
     var body: some View {
         pathSection
@@ -158,10 +161,6 @@ struct ManualPathEditSections: View {
                 Text(verbatim: RoutePresentation.hopsText(draft.hops.count + 1))
             }
         }
-        .sheet(isPresented: $isAddingHop) {
-            AddHopScreen(destination: peer, actions: actions, hops: $draft.hops)
-        }
-        .onChange(of: draft.path) { _, _ in draft.pingResult = nil }
     }
 
     @ViewBuilder
