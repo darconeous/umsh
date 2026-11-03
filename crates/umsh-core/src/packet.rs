@@ -667,9 +667,7 @@ pub enum OptionNumber {
     AckMic,
     MinSnr,
     StationCallsign,
-    /// Option 257, which every frame this implementation builds carries. It
-    /// means nothing, and is forwarding-critical so that a repeater that does
-    /// not recognize it does not forward the frame.
+    /// Option 257, which means nothing. Forwarders carry it unchanged.
     Fence,
     Unknown(u16),
 }
@@ -2291,8 +2289,7 @@ mod signature_tests {
         expected.extend_from_slice(&[0x00, 0x00, 0x00, 68]);
         expected.extend_from_slice(&[0x01, 0x02, 0x03, 0x04]);
         expected.extend_from_slice(&[0u8; 64]);
-        // Region Code is dynamic, so it stays out; the fence is static.
-        expected.extend_from_slice(&[0x01, 0x01, 0x00, 0x00]);
+        // Region Code is dynamic, so it stays out.
         expected.extend_from_slice(&[0xFF, 0xFF]);
         expected.extend_from_slice(b"advert");
         assert_eq!(input(&header, &frame, None), expected);
@@ -2355,8 +2352,8 @@ mod signature_tests {
             .source_hint(SRC_HINT)
             .signed(1);
         // FCF, SRC, option 0 (70 bytes), the first empty option 16 (2 bytes)
-        // and then repeats of it at one byte each, then the fence (2 bytes).
-        let repeats = MAX_FRAME_LEN - 4 - 70 - 2 - 2;
+        // and then repeats of it at one byte each.
+        let repeats = MAX_FRAME_LEN - 4 - 70 - 2;
         for _ in 0..=repeats {
             builder = builder.option(OptionNumber::Unknown(16), &[]);
         }
@@ -2364,7 +2361,7 @@ mod signature_tests {
         assert_eq!(frame.len(), MAX_FRAME_LEN);
         let header = PacketHeader::parse(&frame).unwrap();
         let len = input(&header, &frame, None).len();
-        assert_eq!(len, 8 + 4 + 72 + 4 * (repeats + 1) + 4 + 2);
+        assert_eq!(len, 8 + 4 + 72 + 4 * (repeats + 1) + 2);
         assert!(len <= SIGNATURE_INPUT_MAX);
     }
 }

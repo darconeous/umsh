@@ -252,9 +252,8 @@ A region name MUST NOT exceed 24 bytes of UTF-8. Names travel on the wire in [id
   - in `Unlicensed` mode, repeaters remove it if present and do not add their own
 
 ### Fence (option 257)
-- Type: flag. A sender includes it with no value; a receiver ignores it whatever its value, and a forwarder carries it unchanged.
-- Semantics: none. A sender includes it on every packet it originates, and a node that recognizes it ignores it.
-- Its only effect is the one its classification gives it: a repeater that does not recognize it does not forward the packet, and an endpoint that does not recognize it still accepts the packet.
+- Type: flag. A receiver ignores it whatever its value, and a forwarder carries it unchanged.
+- Semantics: none. A sender does not include it.
 
 ## Routing Option Layouts
 

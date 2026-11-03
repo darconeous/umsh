@@ -598,15 +598,15 @@ fn a_signed_emergency_message_is_bounded_by_its_frames() {
     let emergency = group(&well_known.emergency);
     let public = group(&well_known.public);
 
-    // 255 bytes, less 124 for a 16-byte MIC, the full source, flood hops,
-    // the fence and the signature, less the payload-type byte.
+    // 255 bytes, less 122 for a 16-byte MIC, the full source, flood hops
+    // and the signature, less the payload-type byte.
     let budget = sender.budget(emergency);
-    assert_eq!(budget, 130);
+    assert_eq!(budget, 132);
     assert!(sender.budget(public) > budget);
 
     assert_eq!(sender.chat.max_body_len(&emergency, MAX_FRAME), 1_600);
     let longest = sender.chat.max_body_len(&emergency, budget);
-    assert_eq!(longest, 1_240);
+    assert_eq!(longest, 1_260);
 
     // A reply that long still goes, within the frame.
     let original = sender

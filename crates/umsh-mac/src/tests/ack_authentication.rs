@@ -182,18 +182,14 @@ fn bob_acks(request: &[u8], configure: impl FnOnce(&mut AckMac)) -> Vec<u8> {
     ack
 }
 
-/// With nothing static to cover but the fence, an ack's tag still covers
-/// its header: `AAD_ack` is the FCF, the fence, and the terminator.
+/// With nothing static to cover, an ack's tag still covers its header:
+/// `AAD_ack` is the FCF and the terminator.
 #[test]
-fn an_ack_with_only_the_fence_is_sealed_with_the_mic() {
+fn an_ack_with_no_static_option_is_sealed_with_the_mic() {
     let mut alice = Sender::new(SendOptions::default().no_flood());
     let ack = bob_acks(&alice.request, |_| {});
 
-    let header = PacketHeader::parse(&ack).unwrap();
-    let numbers: Vec<u16> = umsh_core::iter_options(&ack, header.options_range)
-        .map(|entry| entry.unwrap().0)
-        .collect();
-    assert_eq!(numbers, [OptionNumber::Fence.as_u16()]);
+    assert!(!options(&ack).has_static);
     let v = alice.pending().ack_v;
     assert_eq!(trailer(&ack)[..4], v[..4]);
     assert!(alice.mac.crypto().verify_mac_ack(&keys(), &v, &ack));
@@ -352,17 +348,29 @@ fn a_licensed_only_repeater_carries_a_callsign_ack_that_still_verifies() {
     assert!(alice.completes(&forwarded));
 }
 
-/// A repeater forwards a request and its ack, each carrying the fence, and
-/// the fence goes on with them.
+/// A repeater forwards an ack carrying the fence, the fence goes on with
+/// it, and the ack still verifies.
 #[test]
 fn a_repeater_forwards_the_fence() {
-    let mut alice = Sender::new(SendOptions::default().with_flood_hops(2).unencrypted());
-    let mut relay = repeater(0x30);
-    assert!(has_option(&alice.request, OptionNumber::Fence));
+    let mut alice = Sender::new(SendOptions::default().no_flood());
+    let v = alice.pending().ack_v;
+    let mut buf = [0u8; 256];
+    let mut placeholder = [0u8; 8];
+    placeholder[..4].copy_from_slice(&v[..4]);
+    let mut ack = PacketBuilder::new(&mut buf)
+        .mac_ack(placeholder)
+        .flood_hops(2)
+        .option(OptionNumber::Fence, &[])
+        .build()
+        .unwrap()
+        .to_vec();
+    alice
+        .mac
+        .crypto()
+        .seal_mac_ack(&keys(), &v, &mut ack)
+        .unwrap();
 
-    let request = forward(&mut relay, &alice.request).expect("the request is repeated");
-    assert!(has_option(&request, OptionNumber::Fence));
-    let ack = bob_acks(&request, |_| {});
+    let mut relay = repeater(0x30);
     let forwarded = forward(&mut relay, &ack).expect("the ack is repeated");
     assert!(has_option(&forwarded, OptionNumber::Fence));
     assert!(alice.completes(&forwarded));

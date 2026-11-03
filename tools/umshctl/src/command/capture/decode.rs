@@ -902,7 +902,7 @@ mod tests {
         let header = PacketHeader::parse(&frame).unwrap();
         assert_eq!(
             options_line(&frame, &header, false).unwrap(),
-            "opts  opt1[f]=02  opt12[d]=01  fence",
+            "opts  opt1[f]=02  opt12[d]=01",
         );
         assert!(summary_line(&frame, &header, false).contains("signed"));
     }

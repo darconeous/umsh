@@ -33,7 +33,7 @@ pub fn render_phase1_test_vectors_markdown() -> String {
     writeln!(&mut out).unwrap();
     writeln!(
         &mut out,
-        "This appendix contains byte-level packet examples. All values are hexadecimal, and multi-byte numeric fields are big-endian. The examples omit the [Fence option](packet-options.md#fence-option-257), which every packet a sender originates carries."
+        "This appendix contains byte-level packet examples. All values are hexadecimal, and multi-byte numeric fields are big-endian."
     )
     .unwrap();
     writeln!(&mut out).unwrap();
@@ -864,7 +864,6 @@ fn build_signed_multicast(
         builder
             .source_hint(node_a.public_key().hint())
             .frame_counter(13)
-            .without_fence()
             .encrypted()
             .signed()
             .payload(b"Hello")
@@ -873,7 +872,6 @@ fn build_signed_multicast(
         builder
             .source_full(node_a.public_key())
             .frame_counter(12)
-            .without_fence()
             .signed()
             .payload(b"\x03Help")
             .build()
@@ -911,7 +909,6 @@ fn build_signed_broadcast(node_a: &SoftwareIdentity) -> SignedVector {
     let mut frame = PacketBuilder::new(&mut buf)
         .broadcast()
         .source_full(node_a.public_key())
-        .without_fence()
         .signed(14)
         .payload(b"Hi")
         .build()
@@ -931,7 +928,6 @@ fn build_broadcast_hint(node_a: &PublicKey) -> Vec<u8> {
     PacketBuilder::new(&mut buf)
         .broadcast()
         .source_hint(node_a.hint())
-        .without_fence()
         .build()
         .unwrap()
         .to_vec()
@@ -942,7 +938,6 @@ fn build_broadcast_full(node_a: &PublicKey) -> Vec<u8> {
     PacketBuilder::new(&mut buf)
         .broadcast()
         .source_full(node_a)
-        .without_fence()
         .build()
         .unwrap()
         .to_vec()
@@ -959,7 +954,6 @@ fn build_unicast_encrypted(
         .unicast(dst)
         .source_hint(node_a.hint())
         .frame_counter(42)
-        .without_fence()
         .encrypted()
         .mic_size(MicSize::Mic16)
         .payload(b"Hello")
@@ -980,7 +974,6 @@ fn build_unicast_ackreq_fullsrc(
         .unicast(dst)
         .source_full(node_a)
         .frame_counter(1)
-        .without_fence()
         .ack_requested()
         .encrypted()
         .mic_size(MicSize::Mic16)
@@ -999,9 +992,7 @@ fn build_mac_ack(
     callsign: Option<&[u8]>,
 ) -> Vec<u8> {
     let mut buf = [0u8; 64];
-    let mut builder = PacketBuilder::new(&mut buf)
-        .mac_ack([0u8; 8])
-        .without_fence();
+    let mut builder = PacketBuilder::new(&mut buf).mac_ack([0u8; 8]);
     if let Some(callsign) = callsign {
         builder = builder.option(OptionNumber::OperatorCallsign, callsign);
     }
@@ -1020,7 +1011,6 @@ fn build_multicast_encrypted(
         .multicast(channel.channel_id)
         .source_hint(node_a.hint())
         .frame_counter(5)
-        .without_fence()
         .encrypted()
         .mic_size(MicSize::Mic16)
         .payload(b"Hello")
@@ -1044,7 +1034,6 @@ fn build_multicast_authenticated(
         .multicast(channel.channel_id)
         .source_hint(node_a.hint())
         .frame_counter(3)
-        .without_fence()
         .mic_size(MicSize::Mic16)
         .payload(b"\x03Hello")
         .build()
@@ -1068,7 +1057,6 @@ fn build_unicast_with_options(
         .unicast(dst)
         .source_hint(node_a.hint())
         .frame_counter(10)
-        .without_fence()
         .encrypted()
         .flood_hops(4)
         .trace()
@@ -1092,7 +1080,6 @@ fn build_blind_unicast(
         .blind_unicast(channel.channel_id, dst)
         .source_hint(node_a.hint())
         .frame_counter(7)
-        .without_fence()
         .mic_size(MicSize::Mic16)
         .payload(b"Hello")
         .build()
