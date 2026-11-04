@@ -700,6 +700,9 @@ static UI_REFRESH: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 /// status page to draw. This board has no sounder, so the count is the
 /// whole indication.
 static QUEUED_FRAMES: AtomicU16 = AtomicU16::new(0);
+/// A phone's identity is hosted here: the header marks the device as its
+/// companion radio.
+static HOSTED: AtomicBool = AtomicBool::new(false);
 /// The user is here, or wants to be: a button press, a BLE link
 /// transition. Restarts the display-attention timeout and relights a
 /// panel that has gone dark.
@@ -1602,6 +1605,11 @@ impl DeviceEnv for BoardDeviceEnv {
 
     fn queue_emptied(&mut self) {
         QUEUED_FRAMES.store(0, Ordering::Release);
+        UI_REFRESH.signal(());
+    }
+
+    fn hosted_changed(&mut self, hosted: bool) {
+        HOSTED.store(hosted, Ordering::Release);
         UI_REFRESH.signal(());
     }
 

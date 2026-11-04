@@ -456,6 +456,9 @@ pub struct StatusModel<'a> {
     pub battery_mv: Option<u16>,
     pub battery_details: Option<BatteryDiagnostics>,
     pub link: LinkState,
+    /// A tethered host identity is configured: the device is someone's
+    /// companion radio, whether or not that host is attached now.
+    pub hosted: bool,
     /// Frames held for a host that is not attached, or `None` on a board
     /// with no host-facing queue. Drawn only when there are any: an
     /// empty queue is the ordinary case and says nothing.
@@ -1408,6 +1411,7 @@ where
                 .map(|wifi| StatusWidget::Wifi(wifi.state)),
         )
         .chain(bluetooth_widget(status))
+        .chain(status.hosted.then_some(StatusWidget::Companion))
         .chain(gnss_widget(status));
     let left = draw_status_widgets(target, layout, widgets);
     let room = (left - layout.left).max(0) as u32;
@@ -1420,8 +1424,15 @@ where
 pub enum StatusWidget {
     Battery(BatteryIndicator),
     Wifi(WifiState),
-    Bluetooth { connected: bool, highlighted: bool },
-    Gnss { fixed: bool },
+    Bluetooth {
+        connected: bool,
+        highlighted: bool,
+    },
+    /// A host identity is configured: the device is a companion radio.
+    Companion,
+    Gnss {
+        fixed: bool,
+    },
 }
 
 fn gnss_widget(status: &StatusModel<'_>) -> Option<StatusWidget> {
@@ -1467,6 +1478,7 @@ where
             StatusWidget::Wifi(WifiState::Off) => continue,
             StatusWidget::Wifi(_) => Size::new(11 * scale, 8 * scale),
             StatusWidget::Bluetooth { .. } => Size::new(9 * scale, 9 * scale),
+            StatusWidget::Companion => Size::new(COMPANION_WIDTH * scale, 9 * scale),
             StatusWidget::Gnss { .. } => Size::new(9 * scale, 9 * scale),
         };
         let left = right - size.width as i32;
@@ -1487,6 +1499,7 @@ where
                 connected,
                 highlighted,
             } => draw_bluetooth_icon(target, at, scale, connected, highlighted),
+            StatusWidget::Companion => draw_glyph(target, at, scale, COMPANION_WIDTH, &COMPANION),
             StatusWidget::Gnss { fixed } => draw_gnss_icon(target, at, scale, fixed),
         }
         right = left - layout.battery.spacing as i32;
@@ -1528,6 +1541,41 @@ where
     }
 }
 
+/// A "C", for a device serving as a companion radio: only as wide as its
+/// ink, since nothing about it changes.
+#[rustfmt::skip]
+const COMPANION: [u16; 9] = [
+    0b0011110,
+    0b0110011,
+    0b1100000,
+    0b1100000,
+    0b1100000,
+    0b1100000,
+    0b1100000,
+    0b0110011,
+    0b0011110,
+];
+const COMPANION_WIDTH: u32 = 7;
+
+/// Draw a bitmap nine rows high and `width` columns wide, set bits on.
+fn draw_glyph<D>(target: &mut D, at: Point, scale: u32, width: u32, rows: &[u16; 9])
+where
+    D: DrawTarget<Color = BinaryColor>,
+{
+    for (y, row) in rows.iter().enumerate() {
+        for x in 0..width as i32 {
+            if row & (1 << (width as i32 - 1 - x)) != 0 {
+                let _ = Rectangle::new(
+                    at + Point::new(x * scale as i32, y as i32 * scale as i32),
+                    Size::new(scale, scale),
+                )
+                .into_styled(PrimitiveStyle::with_fill(BinaryColor::On))
+                .draw(target);
+            }
+        }
+    }
+}
+
 fn draw_gnss_icon<D>(target: &mut D, at: Point, scale: u32, fixed: bool)
 where
     D: DrawTarget<Color = BinaryColor>,
@@ -1558,18 +1606,7 @@ where
             0b000010000,
         ]
     };
-    for (y, row) in rows.iter().enumerate() {
-        for x in 0..9 {
-            if row & (1 << (8 - x)) != 0 {
-                let _ = Rectangle::new(
-                    at + Point::new(x * scale as i32, y as i32 * scale as i32),
-                    Size::new(scale, scale),
-                )
-                .into_styled(PrimitiveStyle::with_fill(BinaryColor::On))
-                .draw(target);
-            }
-        }
-    }
+    draw_glyph(target, at, scale, 9, &rows);
 }
 
 fn draw_wifi_icon<D>(target: &mut D, at: Point, scale: u32, state: WifiState)
@@ -2317,6 +2354,42 @@ mod tests {
     }
 
     #[test]
+    fn companion_glyph_marks_a_hosted_device_left_of_bluetooth() {
+        for layout in layouts() {
+            let mut status = demo_status();
+            status.device_name = "";
+            let mut alone = TestPanel::new(layout.size);
+            draw_header(&mut alone, &layout, &status);
+            status.hosted = true;
+            let mut hosted = TestPanel::new(layout.size);
+            draw_header(&mut hosted, &layout, &status);
+            assert_ne!(alone.pixels, hosted.pixels);
+
+            // Battery and Bluetooth keep their places.
+            let edge = layout.size.width as i32 - layout.battery.margin as i32;
+            let scale = (layout.battery.body.height / 8).max(1);
+            let bluetooth_left = edge
+                - (layout.battery.occupied_width(status.battery)
+                    + layout.battery.spacing
+                    + 9 * scale) as i32;
+            for point in Rectangle::new(
+                Point::new(bluetooth_left, 0),
+                Size::new(
+                    (layout.size.width as i32 - bluetooth_left) as u32,
+                    layout.font.character_size.height + layout.top as u32,
+                ),
+            )
+            .points()
+            {
+                assert_eq!(
+                    hosted.lit(point.x as u32, point.y as u32),
+                    alone.lit(point.x as u32, point.y as u32)
+                );
+            }
+        }
+    }
+
+    #[test]
     fn gnss_glyph_follows_the_receiver_switch_and_its_fix() {
         for layout in layouts() {
             let mut status = demo_status();
@@ -2507,6 +2580,7 @@ mod tests {
             battery_mv: Some(3_950),
             battery_details: None,
             link: LinkState::Advertising,
+            hosted: false,
             queued: Some(2),
             bonds: 1,
             pairing: PairingState::Closed,

@@ -88,6 +88,9 @@ pub struct StatusStrip {
     pub wifi: Option<Wifi>,
     /// GNSS, while it is on.
     pub gnss: Option<Gnss>,
+    /// A phone's identity is hosted here: the device is its companion
+    /// radio, whether or not the phone is connected now.
+    pub companion: bool,
     /// Optional sounds are silenced.
     pub silent: bool,
     /// The charge is low enough to say so.

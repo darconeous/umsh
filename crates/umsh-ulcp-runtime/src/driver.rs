@@ -967,6 +967,12 @@ pub trait DeviceEnv {
     /// The host-facing queue drained to empty (T-1000E: clear the
     /// attention LED).
     fn queue_emptied(&mut self) {}
+    /// A tethered host identity was configured, or stopped being
+    /// ([`Session::hosted`]): boards with a screen mark the device as a
+    /// companion radio. Called once at boot and on every change.
+    fn hosted_changed(&mut self, hosted: bool) {
+        let _ = hosted;
+    }
     /// A transmit is about to start; boards with a battery-level
     /// estimator mark the load spike.
     fn note_transmit_load(&mut self) {}
@@ -1463,6 +1469,24 @@ async fn regenerate_device_identity<A, S, const TXQ: usize, E>(
         Err(()) => env.trace(format_args!(
             "device identity regenerate: persist FAILED—none in effect"
         )),
+    }
+}
+
+/// Tell the board whether a host identity is configured, when that
+/// changed since `synced`, or for the first time.
+fn sync_hosted<A, S, const TXQ: usize, E>(
+    session: &Session<A, S, TXQ>,
+    synced: &mut Option<bool>,
+    env: &mut E,
+) where
+    A: AesProvider,
+    S: Sha256Provider,
+    E: DeviceEnv,
+{
+    let hosted = session.hosted();
+    if *synced != Some(hosted) {
+        *synced = Some(hosted);
+        env.hosted_changed(hosted);
     }
 }
 
@@ -2013,6 +2037,8 @@ where
     // device node. `None` forces the first publication even on a bare
     // device with no identity or snapshot; changes drive the rest.
     let mut dev_domain_synced: Option<(u32, bool)> = None;
+    // Last `Session::hosted` told to the board; `None` forces the first.
+    let mut hosted_synced: Option<bool> = None;
     // Shared staging buffer for the durable-write effect arms
     // (save/wipe). Held across their persist awaits, so as a
     // loop-lifetime local it costs one future slot instead of one
@@ -2100,6 +2126,7 @@ where
     // a bare device it would otherwise wait for a host that may never come.
     env.publish_device_name(session.device_name()).await;
     sync_dev_domain(&session, &mut dev_domain_synced, &mut env);
+    sync_hosted(&session, &mut hosted_synced, &mut env);
     env.boot_settings_ready();
 
     // When the snapshot is written for the device's own changes, while
@@ -2487,6 +2514,9 @@ where
         // the mesh. The store is a relaxed atomic, so doing it every
         // iteration costs nothing.
         crate::radio_mux::MUX_MODE.set_backhaul(session.backhaul());
+        // The host key moves on a host's write, a host replacement, and a
+        // reset off the mesh alike; one compare covers them all.
+        sync_hosted(&session, &mut hosted_synced, &mut env);
         // Session state was discarded under a host that did not ask for
         // it; tell it, so it can re-establish whatever it was holding
         // there. Drained here rather than at the discard because a

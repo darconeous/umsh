@@ -253,6 +253,7 @@ fn ui_status<'a>(name: &'a DeviceName, identity: &'a IdentityText) -> screen::St
         battery_details: None,
         queued: Some(QUEUED_FRAMES.load(Ordering::Acquire)),
         link: bluetooth.link,
+        hosted: HOSTED.load(Ordering::Acquire),
         bonds: bluetooth.bonds,
         pairing: bluetooth.pairing,
         stats: ui_stats(),

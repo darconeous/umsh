@@ -4329,6 +4329,13 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         self.session.backhaul
     }
 
+    /// Whether a tethered host identity is configured: `PROP_HOST_KEY`
+    /// holds a key, attached or not. This is the device acting as a
+    /// companion radio for someone.
+    pub const fn hosted(&self) -> bool {
+        self.host.key.is_some()
+    }
+
     /// Discard session state and record that the attached host has to be
     /// told. The single path every discard takes; see
     /// [`Session::take_session_reset_notice`] for how the debt is paid.

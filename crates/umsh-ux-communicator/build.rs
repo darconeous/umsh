@@ -368,6 +368,13 @@ const ICONS: &[(&str, u32, f32, &[Layer])] = &[
             stroke(WIFI_MIDDLE, 1.1),
         ],
     ),
+    // A "C", while the device is a phone's companion radio.
+    (
+        "COMPANION",
+        18,
+        1.3,
+        &[stroke("M2.97 -2.97 A4.2 4.2 0 1 0 2.97 2.97", 2.0)],
+    ),
     // A network's row: its fan, drawn whole and dim with its lit arcs over
     // it, so a weaker signal lights fewer; and a padlock on those that take
     // a password.
@@ -693,6 +700,8 @@ const BATTERY: &[Layer] = &[
 fn icons() -> String {
     use swash::zeno::{Cap, Join, Mask, Stroke, Transform};
     let mut out = String::new();
+    // Each icon's inked columns, for rows that pack icons by what shows.
+    let mut inks = String::new();
     for &(name, size, k, layers) in ICONS {
         let n = (size * size) as usize;
         let mut acc = vec![0f32; n];
@@ -728,7 +737,21 @@ fn icons() -> String {
             "pub static {name}: ImageRaw<'static, Gray4> = ImageRaw::new(&{packed:?}, {size});"
         )
         .unwrap();
+        // A column counts once something in it shows: antialiasing's faint
+        // fringe would otherwise hold every icon at its square's width.
+        let inked = |x: usize| (0..size as usize).any(|y| acc[y * size as usize + x] >= 0.35);
+        let left = (0..size as usize).find(|&x| inked(x)).unwrap_or(0);
+        let right = (0..size as usize)
+            .rfind(|&x| inked(x))
+            .map_or(left, |x| x + 1);
+        writeln!(
+            inks,
+            "    pub const {name}: super::Ink = super::Ink {{ left: {left}, width: {} }};",
+            right - left
+        )
+        .unwrap();
     }
+    writeln!(out, "pub mod ink {{\n{inks}}}").unwrap();
     out
 }
 

@@ -35,6 +35,7 @@ mod enter_address;
 mod exchange;
 mod find;
 mod identity;
+mod indicators;
 mod join;
 mod links;
 mod lock;

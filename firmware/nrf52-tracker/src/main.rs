@@ -1332,6 +1332,11 @@ mod firmware {
     /// is the mirror a pull-model renderer can read.
     static QUEUED_FRAMES: AtomicU16 = AtomicU16::new(0);
 
+    /// A phone's identity is hosted here, for the header to mark the
+    /// device as its companion radio.
+    #[cfg(feature = "has-display")]
+    static HOSTED: AtomicBool = AtomicBool::new(false);
+
     /// Express a frame having been taken in for a host that is not here.
     ///
     /// The count reports the queue, so it follows every frame. The
@@ -2235,6 +2240,12 @@ mod firmware {
 
         fn queue_emptied(&mut self) {
             clear_queue_indication();
+        }
+
+        #[cfg(feature = "has-display")]
+        fn hosted_changed(&mut self, hosted: bool) {
+            HOSTED.store(hosted, Ordering::Release);
+            UI_REFRESH.signal(());
         }
 
         #[cfg(feature = "cap-battery-saadc")]
@@ -3966,6 +3977,7 @@ mod firmware {
                 _ => screen::LinkState::OffWired,
             },
             stats: ui_stats(),
+            hosted: HOSTED.load(Ordering::Acquire),
             queued: Some(QUEUED_FRAMES.load(Ordering::Acquire)),
             bonds: BLE_BOND_COUNT.load(Ordering::Acquire),
             // Bluetooth off outranks everything—a lockout on a

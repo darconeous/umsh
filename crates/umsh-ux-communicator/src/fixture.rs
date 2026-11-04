@@ -3373,6 +3373,7 @@ pub fn state(store: &'static Store, board: &'static Board) -> State {
         bluetooth: Some(Bluetooth::Connected),
         wifi: None,
         gnss: Some(Gnss::Fixed),
+        companion: false,
         silent: false,
         battery_low: false,
     };

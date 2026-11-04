@@ -308,6 +308,10 @@ async fn interface(
             let mut state = app.state_mut();
             (state.status.bluetooth, state.status.wifi, state.status.gnss) = read;
         }
+        let hosted = HOSTED.load(Ordering::Acquire);
+        if app.state().status.companion != hosted {
+            app.state_mut().status.companion = hosted;
+        }
         let readings = link_readings();
         if app.state().links != readings {
             app.state_mut().links = readings;
@@ -407,6 +411,7 @@ fn state(node: &'static Node) -> State {
     state.firmware = env!("GIT_DESCRIBE");
     state.status.device_name = node.device_name();
     (state.status.bluetooth, state.status.wifi, state.status.gnss) = links();
+    state.status.companion = HOSTED.load(Ordering::Acquire);
     state.set_wall_time(umsh_hal::wall_clock::now());
     state.reload();
     state.focus_list();

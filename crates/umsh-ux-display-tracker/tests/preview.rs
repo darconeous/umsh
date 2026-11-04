@@ -156,6 +156,7 @@ fn status(
         battery_mv: Some(3_950),
         battery_details: None,
         link,
+        hosted: false,
         queued: None,
         bonds: 3,
         pairing,
@@ -279,7 +280,8 @@ fn frames(layout: &Layout) -> Vec<Panel> {
         });
     }
 
-    // Pairing closed, attached to a phone, holding a GNSS fix.
+    // Pairing closed, a phone's companion radio and attached to it,
+    // holding a GNSS fix.
     push(&|p| {
         render_frame(
             p,
@@ -287,6 +289,7 @@ fn frames(layout: &Layout) -> Vec<Panel> {
             &UiModel::new(MenuItems::all()),
             &StatusModel {
                 gnss_fix: true,
+                hosted: true,
                 ..status(
                     Some(60),
                     Some(ChargeClass::Discharging),
