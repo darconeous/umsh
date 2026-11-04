@@ -1003,13 +1003,14 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
         snapshot.linkState = switch update.snapshot.phase {
         case .idle: .attaching
         case .synchronizing: .synchronizing
-        // An administrative session never parks awaiting a host decision—
-        // Rust does not emit that phase for this attach mode—but the
-        // switch has to be total.
+        // An administrative session never parks awaiting a host decision
+        // or releases a host key—Rust does not emit those phases for this
+        // attach mode—but the switch has to be total.
         case .awaitingHost: .awaitingHost
         case .claiming: .provisioning
         case .configuring: .configuring
         case .attached: .attached
+        case .releasing: .disconnecting
         }
         snapshot.hostState = switch update.snapshot.hostOwnership {
         case .unknown: .unknown

@@ -484,6 +484,9 @@ pub enum UlcpSessionPhase {
     Claiming,
     Configuring,
     Attached,
+    /// Clearing this phone's host key before an intentional disconnect.
+    /// Nothing else runs; the session ends with the link.
+    Releasing,
 }
 
 /// Complete desired live radio configuration. Capability-gated fields must be
@@ -829,6 +832,9 @@ enum SessionStage {
     SavingConfiguration,
     AwaitingHost,
     Attached,
+    /// Handing the radio back before an intentional teardown. Final: the
+    /// next session begins anew.
+    Releasing,
 }
 
 /// One insert or removal in a mute reconciliation.
@@ -884,6 +890,9 @@ enum ExpectedResponse {
     /// filed exactly as the `Property` read it stands in for.
     Properties(Vec<u32>),
     Claim,
+    /// The `CMD_PROP_SET` of an empty `PROP_HOST_KEY` that hands the radio
+    /// back.
+    Release,
     Save,
     /// A `CMD_PROP_SET` of this property. The value written is not kept:
     /// the device's `CMD_PROP_IS` is what the property is worth, so there
@@ -1334,6 +1343,38 @@ impl MobileUlcpSession {
         let tid = state.allocate_tid();
         state.expected.insert(tid, ExpectedResponse::Claim);
         let frame = ulcp_prop_set(tid, prop::HOST_KEY, host_key.to_vec())?;
+        Ok(state.update(vec![frame]))
+    }
+
+    /// Hand the radio back before an intentional disconnect: write an
+    /// empty `PROP_HOST_KEY`, which clears the whole host domain—keys,
+    /// filters, mutes, auto-ack, and the inbound queue—and leaves the
+    /// radio's own domain alone. Without it the radio goes on queueing
+    /// and acknowledging for this phone after the user has let it go.
+    ///
+    /// Only a radio that holds this phone's key is released; another
+    /// host's provisioning is not this phone's to clear. What was in
+    /// flight is abandoned, since the link is about to end, and the
+    /// session refuses everything else until the next `begin`. It stops
+    /// waiting once the radio answers, whatever the answer.
+    pub fn release(&self) -> Result<UlcpSessionUpdateRecord, MobileError> {
+        if self.mode == UlcpAttachMode::Administrative {
+            return Err(MobileError::AdministrativeSession);
+        }
+        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        if matches!(state.stage, SessionStage::Idle | SessionStage::Releasing)
+            || state.ownership() != UlcpHostOwnership::Ours
+        {
+            return Err(MobileError::InvalidUlcpFrame);
+        }
+        state.stage = SessionStage::Releasing;
+        state.expected.clear();
+        state.read_queue.clear();
+        state.configuration_queue.clear();
+        state.rereads.clear();
+        let tid = state.allocate_tid();
+        state.expected.insert(tid, ExpectedResponse::Release);
+        let frame = ulcp_prop_set(tid, prop::HOST_KEY, Vec::new())?;
         Ok(state.update(vec![frame]))
     }
 
@@ -2516,6 +2557,19 @@ impl MobileUlcpSession {
                     }
                 }
             }
+            ExpectedResponse::Release => {
+                if response.property_id == prop::LAST_STATUS {
+                    operation_error =
+                        ulcp_operation_error("release host identity".to_owned(), &response.value);
+                } else if response.property_id == prop::HOST_KEY
+                    && response.command == Cmd::PropIs as u8
+                {
+                    state.apply_property(&response);
+                    state.responses.insert(prop::HOST_KEY, response);
+                } else {
+                    state.note_mismatch("release host identity".to_owned(), &response);
+                }
+            }
             ExpectedResponse::Save => {
                 if response.property_id != prop::LAST_STATUS
                     || response.command != Cmd::PropIs as u8
@@ -3439,6 +3493,7 @@ impl UlcpSessionState {
                 UlcpSessionPhase::Configuring
             }
             SessionStage::Attached => UlcpSessionPhase::Attached,
+            SessionStage::Releasing => UlcpSessionPhase::Releasing,
         }
     }
 
@@ -4153,6 +4208,7 @@ impl UlcpSessionState {
             | SessionStage::AwaitingHost
             | SessionStage::Attached
             | SessionStage::SavingConfiguration
+            | SessionStage::Releasing
             | SessionStage::Idle => {}
         }
         Ok(())
@@ -4252,7 +4308,10 @@ impl UlcpSessionState {
                 // operation error; reconnect/refresh may retry synchronization.
                 self.stage = SessionStage::Initial;
             }
-            SessionStage::Attached | SessionStage::AwaitingHost | SessionStage::Idle => {}
+            SessionStage::Attached
+            | SessionStage::AwaitingHost
+            | SessionStage::Releasing
+            | SessionStage::Idle => {}
         }
         Ok(())
     }
@@ -8762,6 +8821,85 @@ mod tests {
         assert_eq!(
             changed_host.snapshot.host_ownership,
             UlcpHostOwnership::OtherHost
+        );
+    }
+
+    #[test]
+    fn release_clears_this_phones_host_key_and_ends_the_session() {
+        let phone = vec![0xAA; 32];
+        let session = MobileUlcpSession::new();
+        attach_commissionable(&session, Some(phone.clone()), phone.clone());
+
+        let release = session.release().unwrap();
+        assert_eq!(release.snapshot.phase, UlcpSessionPhase::Releasing);
+        assert!(release.waiting_for_responses);
+        let [request] = release.outbound_frames.as_slice() else {
+            panic!("one host-key write");
+        };
+        let parsed = Frame::parse(request).unwrap();
+        assert_eq!(parsed.command(), Some(Cmd::PropSet));
+        let payload = PropPayload::parse(parsed.payload).unwrap();
+        assert_eq!(payload.key, prop::HOST_KEY);
+        assert!(payload.value.is_empty());
+
+        // Nothing else starts while the radio is being handed back.
+        assert!(session.refresh().is_err());
+        assert!(session.release().is_err());
+
+        let released = session
+            .consume(property_response(parsed.header.tid(), prop::HOST_KEY, &[]))
+            .unwrap();
+        assert_eq!(released.snapshot.phase, UlcpSessionPhase::Releasing);
+        assert!(!released.waiting_for_responses);
+        assert!(released.outbound_frames.is_empty());
+        assert_eq!(
+            released.snapshot.host_ownership,
+            UlcpHostOwnership::Unclaimed
+        );
+    }
+
+    #[test]
+    fn a_refused_release_still_ends_the_wait() {
+        let phone = vec![0xAA; 32];
+        let session = MobileUlcpSession::new();
+        attach_commissionable(&session, Some(phone.clone()), phone);
+        let release = session.release().unwrap();
+        let tid = Frame::parse(&release.outbound_frames[0])
+            .unwrap()
+            .header
+            .tid();
+        let refused = session
+            .consume(property_response(tid, prop::LAST_STATUS, &[1]))
+            .unwrap();
+        assert_eq!(refused.snapshot.phase, UlcpSessionPhase::Releasing);
+        assert!(!refused.waiting_for_responses);
+        assert!(refused.operation_error.is_some());
+    }
+
+    #[test]
+    fn only_this_phones_radio_is_released() {
+        let phone = vec![0xAA; 32];
+        let other = MobileUlcpSession::new();
+        let begin = other.begin(Some(phone.clone())).unwrap();
+        answer_requests(&other, begin.outbound_frames, |property| {
+            if property == prop::HOST_KEY {
+                (property, vec![0xBB; 32])
+            } else {
+                commissionable_value(property)
+            }
+        });
+        assert_eq!(other.release(), Err(MobileError::InvalidUlcpFrame));
+
+        let administrative = MobileUlcpSession::administrative();
+        attach_commissionable(&administrative, Some(phone.clone()), phone);
+        assert_eq!(
+            administrative.release(),
+            Err(MobileError::AdministrativeSession)
+        );
+
+        assert_eq!(
+            MobileUlcpSession::new().release(),
+            Err(MobileError::InvalidUlcpFrame)
         );
     }
 

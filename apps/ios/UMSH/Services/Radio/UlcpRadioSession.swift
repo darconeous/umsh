@@ -181,6 +181,9 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     /// request behind it for as long as the link stays up. The deadline
     /// bounds that to one frame, loudly.
     static let rawTransmitTimeoutSeconds: TimeInterval = 30
+    /// How long a disconnect waits for the radio to confirm it has let go
+    /// of this phone's host key. The disconnect goes ahead either way.
+    static let hostReleaseTimeoutSeconds: TimeInterval = 2
 
     struct PendingRawFrame {
         var data: Data
@@ -232,6 +235,10 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     var refreshWaiters: [CheckedContinuation<RadioSnapshot, any Error>] = []
     var configurationWaiter: CheckedContinuation<Void, any Error>?
     var devicePeerWaiter: RadioOperationWaiter<Void>?
+    /// Callers of `releaseHost` waiting for the radio to answer, and the
+    /// release whose deadline may still end that wait.
+    private var hostReleaseWaiters: [CheckedContinuation<Void, Never>] = []
+    private var hostReleaseToken: UInt64 = 0
     var meshSession: MobileMeshSession?
     var pingWaiters: [UInt64: CheckedContinuation<RadioPingResult, any Error>] = [:]
     /// Callers awaiting a node-management exchange, by operation id.
@@ -697,6 +704,60 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
         } catch {
             reportOperationFailure("The radio could not replace its configured host", name: link?.linkName)
             throw RadioConnectionError.incompatibleProtocol
+        }
+    }
+
+    /// Hand the radio back before the user disconnects from it, forgets it,
+    /// or moves to another: clear this phone's host key, so the radio stops
+    /// queueing and acknowledging for a phone that has let it go. A link
+    /// that merely drops keeps it—that is what the queue is for.
+    ///
+    /// Returns once the radio answers, the link goes, or the deadline
+    /// passes; the teardown that follows does not depend on which. A radio
+    /// holding another host's key, or none, has nothing to release.
+    func releaseHost() async {
+        await withCheckedContinuation { (result: CheckedContinuation<Void, Never>) in
+            sessionQueue.async { [self] in
+                if !hostReleaseWaiters.isEmpty {
+                    hostReleaseWaiters.append(result)
+                    return
+                }
+                guard link?.linkIsReady == true,
+                      snapshot.hostState == .matchesCurrentIdentity
+                else {
+                    result.resume()
+                    return
+                }
+                hostReleaseWaiters = [result]
+                hostReleaseToken &+= 1
+                let token = hostReleaseToken
+                Self.logger.notice("release: clearing the radio's host key")
+                do {
+                    try applySessionUpdate(ulcpSession.release())
+                } catch {
+                    Self.logger.error(
+                        "release: not sent (\(String(describing: error), privacy: .public))"
+                    )
+                    finishHostRelease()
+                    return
+                }
+                sessionQueue.asyncAfter(deadline: .now() + Self.hostReleaseTimeoutSeconds) {
+                    [weak self] in
+                    guard let self, self.hostReleaseToken == token,
+                          !self.hostReleaseWaiters.isEmpty
+                    else { return }
+                    Self.logger.error("release: the radio did not answer in time")
+                    self.finishHostRelease()
+                }
+            }
+        }
+    }
+
+    private func finishHostRelease() {
+        let waiters = hostReleaseWaiters
+        hostReleaseWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
         }
     }
 
@@ -1884,6 +1945,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
         case .claiming: .provisioning
         case .configuring: .configuring
         case .attached: .attached
+        case .releasing: .disconnecting
         }
         snapshot.hostState = switch update.snapshot.hostOwnership {
         case .unknown: .unknown
@@ -2283,6 +2345,9 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
             }
         }
 
+        if !update.waitingForResponses, update.snapshot.phase == .releasing {
+            finishHostRelease()
+        }
         if !update.waitingForResponses, update.snapshot.phase == .attached {
             let rejection = operationErrorMessage.map(RadioConnectionError.operationRejected)
                 ?? mismatch.map { _ in RadioConnectionError.unrecognizedAnswer }
@@ -2931,6 +2996,9 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
         // credit for how long the previous one held.
         attachedAtUptimeNanoseconds = nil
         finishPendingOperations(throwing: RadioConnectionError.radioNotFound)
+        // With the link gone there is nothing left to wait for, and the
+        // caller's teardown copes with a link that is already down.
+        finishHostRelease()
         _ = ulcpSession.reset()
         abandonOutstandingMeshFrames()
         autoEnableAttemptedGeneration = nil

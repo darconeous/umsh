@@ -112,6 +112,7 @@ final class TcpRadioConnection: UlcpRadioSession, RadioConnection, UlcpFrameLink
     }
 
     func disconnect() async {
+        await releaseHost()
         await withCheckedContinuation { result in
             sessionQueue.async { [self] in
                 Self.logger.notice("action: user pressed Disconnect")

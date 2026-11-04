@@ -288,6 +288,14 @@ final class CoreBluetoothRadioConnection: UlcpRadioSession, RadioConnection, Ulc
     }
 
     func selectRadio(_ id: UUID) async throws {
+        let switching = await withCheckedContinuation { result in
+            bluetoothQueue.async { [self] in
+                result.resume(returning: peripheral.map { $0.identifier != id } ?? false)
+            }
+        }
+        if switching {
+            await releaseHost()
+        }
         if RadioAccessories.usesSystemPicker {
             let inventory = try await RadioAccessories.shared.prepareSelection(id)
             try await waitForBluetooth(inventory)
@@ -620,6 +628,7 @@ final class CoreBluetoothRadioConnection: UlcpRadioSession, RadioConnection, Ulc
     }
 
     func disconnect() async {
+        await releaseHost()
         await withCheckedContinuation { result in
             bluetoothQueue.async { [self] in
                 Self.logger.notice("action: user pressed Disconnect")
@@ -630,6 +639,7 @@ final class CoreBluetoothRadioConnection: UlcpRadioSession, RadioConnection, Ulc
     }
 
     func forget() async {
+        await releaseHost()
         if RadioAccessories.usesSystemPicker {
             let id: UUID? = await withCheckedContinuation { result in
                 bluetoothQueue.async { [self] in result.resume(returning: rememberedPeripheralIdentifier) }

@@ -4063,6 +4063,21 @@ public protocol MobileUlcpSessionProtocol: AnyObject, Sendable {
     func refreshPositioning() throws  -> UlcpSessionUpdateRecord
 
     /**
+     * Hand the radio back before an intentional disconnect: write an
+     * empty `PROP_HOST_KEY`, which clears the whole host domain—keys,
+     * filters, mutes, auto-ack, and the inbound queue—and leaves the
+     * radio's own domain alone. Without it the radio goes on queueing
+     * and acknowledging for this phone after the user has let it go.
+     *
+     * Only a radio that holds this phone's key is released; another
+     * host's provisioning is not this phone's to clear. What was in
+     * flight is abandoned, since the link is about to end, and the
+     * session refuses everything else until the next `begin`. It stops
+     * waiting once the radio answers, whatever the answer.
+     */
+    func release() throws  -> UlcpSessionUpdateRecord
+
+    /**
      * Remove one administrator public key from the radio's device identity
      * (`PROP_DEV_ADMINS`), then persist with a chained `CMD_SAVE` when the
      * device can.
@@ -4821,6 +4836,28 @@ open func refreshPositioning()throws  -> UlcpSessionUpdateRecord  {
     return try  FfiConverterTypeUlcpSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
         uniffiCallStatus in
     uniffi_umsh_mobile_core_fn_method_mobileulcpsession_refresh_positioning(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Hand the radio back before an intentional disconnect: write an
+     * empty `PROP_HOST_KEY`, which clears the whole host domain—keys,
+     * filters, mutes, auto-ack, and the inbound queue—and leaves the
+     * radio's own domain alone. Without it the radio goes on queueing
+     * and acknowledging for this phone after the user has let it go.
+     *
+     * Only a radio that holds this phone's key is released; another
+     * host's provisioning is not this phone's to clear. What was in
+     * flight is abandoned, since the link is about to end, and the
+     * session refuses everything else until the next `begin`. It stops
+     * waiting once the radio answers, whatever the answer.
+     */
+open func release()throws  -> UlcpSessionUpdateRecord  {
+    return try  FfiConverterTypeUlcpSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileulcpsession_release(
             self.uniffiCloneHandle(),uniffiCallStatus
     )
 })
@@ -18529,6 +18566,11 @@ public enum UlcpSessionPhase: Equatable, Hashable {
     case claiming
     case configuring
     case attached
+    /**
+     * Clearing this phone's host key before an intentional disconnect.
+     * Nothing else runs; the session ends with the link.
+     */
+    case releasing
 
 
 
@@ -18562,6 +18604,8 @@ public struct FfiConverterTypeUlcpSessionPhase: FfiConverterRustBuffer {
 
         case 6: return .attached
 
+        case 7: return .releasing
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
@@ -18592,6 +18636,10 @@ public struct FfiConverterTypeUlcpSessionPhase: FfiConverterRustBuffer {
 
         case .attached:
             writeInt(&buf, Int32(6))
+
+
+        case .releasing:
+            writeInt(&buf, Int32(7))
 
         }
     }
@@ -22259,6 +22307,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_refresh_positioning() != 36000) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_release() != 40679) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_remove_device_admin() != 47192) {
