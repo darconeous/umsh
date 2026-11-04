@@ -183,6 +183,17 @@ pub const NODE_IDENTITIES: usize = 1 + 4;
 /// device node's MAC keeps.
 pub const NODE_RX_STRANGERS: usize = 8;
 
+/// Replay windows for unsigned multicast from registered peers, among all
+/// channels, at about 330 octets each. A device with no chats keeps few:
+/// beyond them a new sender's frames reach nothing on it, which a repeater
+/// never notices. A communicator shows what those senders say, in a MAC
+/// that lives in PSRAM, so it keeps one for every peer on every channel
+/// and turns none away.
+#[cfg(not(feature = "communicator"))]
+pub const NODE_CHANNEL_WINDOWS: usize = 32;
+#[cfg(feature = "communicator")]
+pub const NODE_CHANNEL_WINDOWS: usize = NODE_PEERS * MAX_CHANNEL_KEYS;
+
 /// Pending acknowledgments and transmit slots: beacons and answers alone,
 /// or on a communicator its chats' frames as well.
 #[cfg(not(feature = "communicator"))]
@@ -199,13 +210,10 @@ pub const NODE_TX: usize = 8;
 /// [`NODE_PEERS`] peers,
 /// `MAX_CHANNEL_KEYS` channels (a smaller MAC table would refuse channels
 /// the property surface accepted), [`NODE_ACKS`] pending ACKs,
-/// [`NODE_TX`] TX slots, 255-byte frames, 32-entry dup cache. The
-/// per-channel replay maps are the RAM hot spot (~330 bytes per tracked
-/// sender): 4 full-key + 2 hint-only senders per channel keeps the whole
-/// table ~2 KiB/channel; extra concurrent senders on one channel fail
-/// closed (dropped, never accepted unchecked). No route holds (a device
-/// has no person choosing paths). [`NODE_RX_STRANGERS`] stranger receive
-/// windows beside one per peer.
+/// [`NODE_TX`] TX slots, 255-byte frames, 32-entry dup cache,
+/// [`NODE_CHANNEL_WINDOWS`] channel replay windows. No route holds (a
+/// device has no person choosing paths). [`NODE_RX_STRANGERS`] stranger
+/// receive windows beside one per peer.
 pub type DeviceNodeMac<CS> = umsh_mac::Mac<
     DeviceNodePlatform<CS>,
     NODE_IDENTITIES,
@@ -215,8 +223,7 @@ pub type DeviceNodeMac<CS> = umsh_mac::Mac<
     NODE_TX,
     255,
     32,
-    4,
-    2,
+    NODE_CHANNEL_WINDOWS,
     0,
     NODE_RX_STRANGERS,
 >;
@@ -230,8 +237,7 @@ pub type DeviceNodeHandle<CS> = MacHandle<
     NODE_TX,
     255,
     32,
-    4,
-    2,
+    NODE_CHANNEL_WINDOWS,
     0,
     NODE_RX_STRANGERS,
 >;

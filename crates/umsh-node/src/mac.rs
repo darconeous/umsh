@@ -275,8 +275,7 @@ impl<
     const TX: usize,
     const FRAME: usize,
     const DUP: usize,
-    const RN: usize,
-    const HN: usize,
+    const WINDOWS: usize,
     const HOLDS: usize,
     const RX_STRANGERS: usize,
 > MacBackend
@@ -290,8 +289,7 @@ impl<
         TX,
         FRAME,
         DUP,
-        RN,
-        HN,
+        WINDOWS,
         HOLDS,
         RX_STRANGERS,
     >

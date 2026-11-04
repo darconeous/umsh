@@ -25,19 +25,7 @@ impl Platform for AckPlatform {
     type KeyValueStore = DummyKeyValueStore;
 }
 
-type AckMac = Mac<
-    AckPlatform,
-    4,
-    16,
-    8,
-    16,
-    16,
-    256,
-    64,
-    { crate::DEFAULT_CHANNEL_REPLAY },
-    { crate::DEFAULT_CHANNEL_HINT_REPLAY },
-    4,
->;
+type AckMac = Mac<AckPlatform, 4, 16, 8, 16, 16, 256, 64, { crate::DEFAULT_CHANNEL_WINDOWS }, 4>;
 
 fn make_ack_mac() -> AckMac {
     #[cfg(feature = "software-crypto")]

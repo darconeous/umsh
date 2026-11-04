@@ -27,19 +27,8 @@ impl Platform for CryptoPlatform {
 }
 
 #[cfg(feature = "software-crypto")]
-type CryptoMac = Mac<
-    CryptoPlatform,
-    4,
-    16,
-    8,
-    16,
-    16,
-    256,
-    64,
-    { crate::DEFAULT_CHANNEL_REPLAY },
-    { crate::DEFAULT_CHANNEL_HINT_REPLAY },
-    4,
->;
+type CryptoMac =
+    Mac<CryptoPlatform, 4, 16, 8, 16, 16, 256, 64, { crate::DEFAULT_CHANNEL_WINDOWS }, 4>;
 
 #[cfg(feature = "software-crypto")]
 fn make_crypto_mac() -> CryptoMac {
@@ -13316,19 +13305,7 @@ fn duplicate_key_for_secure_frame(frame: &[u8]) -> DupCacheKey {
     }
 }
 
-type TestMac = Mac<
-    DummyPlatform,
-    4,
-    16,
-    8,
-    16,
-    16,
-    256,
-    64,
-    { crate::DEFAULT_CHANNEL_REPLAY },
-    { crate::DEFAULT_CHANNEL_HINT_REPLAY },
-    4,
->;
+type TestMac = Mac<DummyPlatform, 4, 16, 8, 16, 16, 256, 64, { crate::DEFAULT_CHANNEL_WINDOWS }, 4>;
 
 #[test]
 fn dfu_reply_receipts_track_unicast_transmission_without_wire_acknowledgments() {

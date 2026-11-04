@@ -129,7 +129,8 @@
 //! - [`ChannelTable`]—flat list of registered multicast channels. Each entry stores the
 //!   raw channel key, the derived `k_enc`/`k_mic` keys (precomputed at registration time),
 //!   and the 2-byte channel ID (also precomputed). Looked up by channel ID when
-//!   authenticating inbound multicast and blind-unicast frames.
+//!   authenticating inbound multicast and blind-unicast frames. Registered peers' replay
+//!   windows for unsigned multicast come from a pool the channels share.
 //!
 //! ## [`handle`]—shared-ownership coordinator access
 //!
@@ -241,14 +242,13 @@ pub const DEFAULT_TX: usize = 16;
 pub const DEFAULT_FRAME: usize = MAX_RESEND_FRAME_LEN;
 /// Default duplicate-cache capacity for the common `Mac<P>` configuration.
 pub const DEFAULT_DUP: usize = DEFAULT_DUP_CACHE_SIZE;
-/// Default per-channel full-key replay-window capacity (senders tracked
-/// per channel). Each window retains up to nine MICs, so these two
-/// capacities dominate the MAC's channel-table footprint; small targets
-/// shrink them. A full map fail-closes: frames from additional senders
-/// are dropped, never accepted unchecked.
-pub const DEFAULT_CHANNEL_REPLAY: usize = 8;
-/// Default per-channel hint-only replay-window capacity.
-pub const DEFAULT_CHANNEL_HINT_REPLAY: usize = 8;
+/// Default replay-window capacity among all channels: one for each
+/// registered peer on each channel, so that none is ever turned away. Each
+/// window retains up to nine MICs, so this capacity dominates the MAC's
+/// channel-table footprint; small targets shrink it. A full table
+/// fail-closes: frames from additional senders are dropped, never accepted
+/// unchecked.
+pub const DEFAULT_CHANNEL_WINDOWS: usize = DEFAULT_CHANNELS * DEFAULT_PEERS;
 /// Default capacity for routes held against learning (see
 /// [`PeerRegistry::hold_route`]). None: holding a route is something an
 /// application with a person choosing paths opts into.
@@ -358,8 +358,8 @@ pub use observations::{
     MAX_TRANSMITTER_OBSERVATIONS, TransmitterObservation, TransmitterObservations,
 };
 pub use peers::{
-    CachedRoute, ChannelState, ChannelTable, HintReplayState, PeerCryptoMap, PeerCryptoState,
-    PeerId, PeerInfo, PeerRegistry, PeerRemoval, PeerRouteStatus, RouteCandidate, RouteHold,
+    CachedRoute, ChannelState, ChannelTable, PeerCryptoMap, PeerCryptoState, PeerId, PeerInfo,
+    PeerRegistry, PeerRemoval, PeerRouteStatus, RouteCandidate, RouteHold,
 };
 pub use rx_windows::{NeedsRestore, RX_COUNTER_PERSIST_INTERVAL, RxWindow, RxWindows};
 pub use send::{

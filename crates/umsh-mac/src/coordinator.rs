@@ -21,11 +21,11 @@ pub use shape::SendDestination;
 use shape::{PreparedSend, SendTarget, ShapedFrame, build_shaped, route_retry_eligible};
 
 use crate::{
-    AddPeerError, CapacityError, DEFAULT_ACKS, DEFAULT_CHANNEL_HINT_REPLAY, DEFAULT_CHANNEL_REPLAY,
-    DEFAULT_CHANNELS, DEFAULT_DUP, DEFAULT_IDENTITIES, DEFAULT_PEERS, DEFAULT_ROUTE_HOLDS,
-    DEFAULT_RX_STRANGERS, DEFAULT_TX, MAX_ACK_FORWARD_RETRIES, MAX_CAD_ATTEMPTS, MAX_FLOOD_HOPS,
-    MAX_FORWARD_RETRIES, MAX_RESEND_FRAME_LEN, MAX_SOURCE_ROUTE_HINTS, Platform, ReplayVerdict,
-    ReplayWindow, RxAcceptance, TRACE_ROUTE_REFRESH_MS, VERIFY_HELD_FRAMES,
+    AddPeerError, CapacityError, DEFAULT_ACKS, DEFAULT_CHANNEL_WINDOWS, DEFAULT_CHANNELS,
+    DEFAULT_DUP, DEFAULT_IDENTITIES, DEFAULT_PEERS, DEFAULT_ROUTE_HOLDS, DEFAULT_RX_STRANGERS,
+    DEFAULT_TX, MAX_ACK_FORWARD_RETRIES, MAX_CAD_ATTEMPTS, MAX_FLOOD_HOPS, MAX_FORWARD_RETRIES,
+    MAX_RESEND_FRAME_LEN, MAX_SOURCE_ROUTE_HINTS, Platform, ReplayVerdict, ReplayWindow,
+    RxAcceptance, TRACE_ROUTE_REFRESH_MS, VERIFY_HELD_FRAMES,
     cache::{DupCacheKey, DuplicateCache},
     peers::CachedRoute,
     peers::{
@@ -1128,8 +1128,7 @@ pub struct Mac<
     const TX: usize = DEFAULT_TX,
     const FRAME: usize = MAX_RESEND_FRAME_LEN,
     const DUP: usize = DEFAULT_DUP,
-    const RN: usize = DEFAULT_CHANNEL_REPLAY,
-    const HN: usize = DEFAULT_CHANNEL_HINT_REPLAY,
+    const WINDOWS: usize = DEFAULT_CHANNEL_WINDOWS,
     const HOLDS: usize = DEFAULT_ROUTE_HOLDS,
     const RX_STRANGERS: usize = DEFAULT_RX_STRANGERS,
 > {
@@ -1146,7 +1145,7 @@ pub struct Mac<
     uplinks: crate::uplinks::UplinkObservations,
     echo_watches: crate::echo_watch::EchoWatches,
     recent_acks: Deque<CompletedAck, RECENT_ACKS>,
-    channels: ChannelTable<CHANNELS, RN, HN>,
+    channels: ChannelTable<CHANNELS, WINDOWS>,
     dup_cache: DuplicateCache<DUP>,
     multicast_unknown_dup_cache: DuplicateCache<DUP>,
     tx_queue: TxQueue<TX, FRAME>,
@@ -1173,11 +1172,10 @@ impl<
     const TX: usize,
     const FRAME: usize,
     const DUP: usize,
-    const RN: usize,
-    const HN: usize,
+    const WINDOWS: usize,
     const HOLDS: usize,
     const RX_STRANGERS: usize,
-> Mac<P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP, RN, HN, HOLDS, RX_STRANGERS>
+> Mac<P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP, WINDOWS, HOLDS, RX_STRANGERS>
 {
     /// Creates a MAC coordinator with the supplied radio, crypto, timing, and policy state.
     ///
@@ -1297,11 +1295,11 @@ impl<
         &mut self.peer_registry
     }
     /// Borrow the channel table.
-    pub fn channels(&self) -> &ChannelTable<CHANNELS, RN, HN> {
+    pub fn channels(&self) -> &ChannelTable<CHANNELS, WINDOWS> {
         &self.channels
     }
     /// Mutably borrow the channel table.
-    pub fn channels_mut(&mut self) -> &mut ChannelTable<CHANNELS, RN, HN> {
+    pub fn channels_mut(&mut self) -> &mut ChannelTable<CHANNELS, WINDOWS> {
         &mut self.channels
     }
     /// Borrow repeater configuration.
@@ -5869,21 +5867,17 @@ impl<
             return false;
         };
         let now_ms = self.clock.now_ms();
-        let Some(channel) = self.channels.lookup_by_key_mut(channel_key) else {
+        let Some(window) = self
+            .channels
+            .window_or_insert(channel_key, peer_id, ReplayWindow::new)
+        else {
             return false;
         };
-
-        if let Some(window) = channel.replay.get_mut(&peer_id) {
-            if window.check(counter, mic, now_ms) != ReplayVerdict::Accept {
-                return false;
-            }
-            window.accept(counter, mic, now_ms);
-            return true;
+        if window.check(counter, mic, now_ms) != ReplayVerdict::Accept {
+            return false;
         }
-
-        let mut window = ReplayWindow::new();
         window.accept(counter, mic, now_ms);
-        channel.replay.insert(peer_id, window).is_ok()
+        true
     }
 
     fn clear_peer_slot_state(&mut self, peer_id: PeerId) {
@@ -5891,9 +5885,7 @@ impl<
             let _ = slot.peer_crypto_mut().remove(&peer_id);
             let _ = slot.pending_counter_resync_mut().remove(&peer_id);
         }
-        for channel in self.channels.iter_mut() {
-            let _ = channel.replay.remove(&peer_id);
-        }
+        self.channels.forget_peer(peer_id);
         self.held_frames.retain(|held| held.peer_id != peer_id);
     }
 
@@ -5910,11 +5902,7 @@ impl<
                 let _ = slot.pending_counter_resync_mut().insert(new_id, pending);
             }
         }
-        for channel in self.channels.iter_mut() {
-            if let Some(window) = channel.replay.remove(&old_id) {
-                let _ = channel.replay.insert(new_id, window);
-            }
-        }
+        self.channels.rekey_peer(old_id, new_id);
         for held in self.held_frames.iter_mut() {
             if held.peer_id == old_id {
                 held.peer_id = new_id;
