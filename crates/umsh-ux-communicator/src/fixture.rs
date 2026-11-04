@@ -3367,7 +3367,6 @@ pub fn state(store: &'static Store, board: &'static Board) -> State {
     state.firmware = "fw-2026.10.01";
     state.status = StatusStrip {
         device_name: store.device_name(),
-        battery_segments: 3,
         battery_percent: Some(64),
         charging: false,
         bluetooth: Some(Bluetooth::Connected),

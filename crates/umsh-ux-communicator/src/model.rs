@@ -76,8 +76,6 @@ pub fn age(since: Option<u32>, now: Option<u32>) -> Age {
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct StatusStrip {
     pub device_name: String<24>,
-    /// Remaining charge in thirds, 0 to 3.
-    pub battery_segments: u8,
     /// Remaining charge in percent, when it is known.
     pub battery_percent: Option<u8>,
     /// External power is charging the battery, or has charged it.
@@ -1961,19 +1959,6 @@ pub const BATTERY_LOW_PERCENT: u8 = 10;
 /// The charge, in percent, at which a low battery stops being low.
 const BATTERY_RECOVERED_PERCENT: u8 = 15;
 
-/// The strip's lit thirds for a charge of `percent`. Each count is centered
-/// on the level it depicts, and the ends are narrower: a body should look
-/// neither full at 80 % nor empty at 20 %.
-#[must_use]
-pub const fn battery_segments(percent: u8) -> u8 {
-    match percent {
-        0..=16 => 0,
-        17..=49 => 1,
-        50..=82 => 2,
-        _ => 3,
-    }
-}
-
 /// How long a banner stays, in milliseconds.
 pub const BANNER_MS: u64 = 4000;
 
@@ -2757,7 +2742,6 @@ impl State {
     pub fn battery(&mut self, reading: BatteryReading, now: u64) {
         self.battery = reading;
         let (percent, charging) = (reading.percent, reading.charging());
-        self.status.battery_segments = percent.map_or(0, battery_segments);
         self.status.battery_percent = percent;
         self.status.charging = charging;
         let was = self.status.battery_low;

@@ -58,13 +58,25 @@ const LINE: usize = 64;
 
 // ─── Board geometry ──────────────────────────────────────────────────────────
 
-/// How many fill segments the battery body is divided into.
+/// How many fill segments the battery body is divided into, where it is
+/// not filled continuously.
 ///
 /// Four is a deliberate coarseness. The e-paper diffs frames to decide
 /// how small a partial refresh it can get away with, so an indicator that
 /// moved on every sample would keep re-inking the panel; quantizing to
 /// quarters means the icon changes four times across a discharge.
 pub const BATTERY_SEGMENTS: u8 = 4;
+
+/// How many of `width` columns a charge of `level_percent` fills, to the
+/// nearest, in a continuously filled body.
+pub const fn battery_fill(level_percent: u8, width: u32) -> u32 {
+    let level = if level_percent > 100 {
+        100
+    } else {
+        level_percent as u32
+    };
+    (width * level + 50) / 100
+}
 
 /// Number of lit segments for a *known* charge level, from 0 to
 /// [`BATTERY_SEGMENTS`].
@@ -110,6 +122,9 @@ pub struct BatteryIconMetrics {
     pub gap: u32,
     /// Clearance between the indicator and the right edge of the panel.
     pub margin: u32,
+    /// Fill the body to the charge, rather than in
+    /// [`BATTERY_SEGMENTS`] segments: for a panel that redraws cheaply.
+    pub continuous: bool,
 }
 
 impl BatteryIconMetrics {
@@ -124,6 +139,7 @@ impl BatteryIconMetrics {
         pad: 1,
         gap: 1,
         margin: 1,
+        continuous: true,
     };
 
     /// Sized against `FONT_10X20`'s twenty-pixel row on a 200×200 panel.
@@ -137,6 +153,13 @@ impl BatteryIconMetrics {
         pad: 2,
         gap: 2,
         margin: 3,
+        continuous: false,
+    };
+
+    /// The e-paper's geometry, filled continuously, for a TFT.
+    pub const TFT: Self = Self {
+        continuous: true,
+        ..Self::EPD
     };
 
     /// Total width the indicator occupies, bolt slot included.
@@ -232,7 +255,7 @@ impl Layout {
         row_pitch: 24,
         rows: 9,
         size: Size::new(480, 222),
-        battery: BatteryIconMetrics::EPD,
+        battery: BatteryIconMetrics::TFT,
         overflow: Overflow::ScrollBar,
         controls: Controls::Rotary,
     };
@@ -245,7 +268,7 @@ impl Layout {
         row_pitch: 24,
         rows: 9,
         size: Size::new(320, 240),
-        battery: BatteryIconMetrics::EPD,
+        battery: BatteryIconMetrics::TFT,
         overflow: Overflow::ScrollBar,
         controls: Controls::Dpad,
     };
@@ -836,9 +859,8 @@ pub fn draw_battery_icon<D>(
         }
     }
 
-    // No level, no body. An empty body means a pack down to its last
-    // sixth; a level the device has not established is drawn as nothing
-    // at all.
+    // No level, no body. An empty body means a pack all but flat; a
+    // level the device has not established is drawn as nothing at all.
     let Some(level) = indicator.level_percent else {
         return;
     };
@@ -861,6 +883,17 @@ pub fn draw_battery_icon<D>(
         metrics.body.width.saturating_sub(2 * inset),
         metrics.body.height.saturating_sub(2 * inset),
     );
+    let top = top_left.y + inset as i32;
+    let left = body_left + inset as i32;
+    if metrics.continuous {
+        let width = battery_fill(level, inner.width);
+        if width > 0 && inner.height > 0 {
+            let _ = Rectangle::new(Point::new(left, top), Size::new(width, inner.height))
+                .into_styled(solid)
+                .draw(target);
+        }
+        return;
+    }
     let lit = u32::from(battery_segments(level));
     let count = u32::from(BATTERY_SEGMENTS);
     let seg_width = inner
@@ -872,13 +905,10 @@ pub fn draw_battery_icon<D>(
         return;
     }
     for index in 0..lit {
-        let x = body_left + inset as i32 + (index * (seg_width + metrics.gap)) as i32;
-        let _ = Rectangle::new(
-            Point::new(x, top_left.y + inset as i32),
-            Size::new(seg_width, inner.height),
-        )
-        .into_styled(solid)
-        .draw(target);
+        let x = left + (index * (seg_width + metrics.gap)) as i32;
+        let _ = Rectangle::new(Point::new(x, top), Size::new(seg_width, inner.height))
+            .into_styled(solid)
+            .draw(target);
     }
 }
 
@@ -1967,6 +1997,13 @@ fn draw_bolt<D>(target: &mut D, top_left: Point, size: Size, style: PrimitiveSty
 where
     D: DrawTarget<Color = BinaryColor>,
 {
+    // Nine rows are too few for wedges to rasterize cleanly: the OLED's
+    // bolts are drawn by hand.
+    match (size.width, size.height) {
+        (5, 9) => return draw_glyph(target, top_left, 1, 5, &BOLT_5X9),
+        (7, 9) => return draw_glyph(target, top_left, 1, 7, &BOLT_7X9),
+        _ => {}
+    }
     let (x, y) = (top_left.x, top_left.y);
     let (w, h) = (size.width as i32, size.height as i32);
     // Two overlapping wedges: the upper one falls left, the lower one
@@ -1984,6 +2021,34 @@ where
     let _ = upper.into_styled(style).draw(target);
     let _ = lower.into_styled(style).draw(target);
 }
+
+/// The OLED's bolt beside a battery body.
+#[rustfmt::skip]
+const BOLT_5X9: [u16; 9] = [
+    0b00001,
+    0b00010,
+    0b00110,
+    0b01100,
+    0b11111,
+    0b00110,
+    0b01100,
+    0b01000,
+    0b10000,
+];
+
+/// The OLED's bolt standing alone, for a charge with no level.
+#[rustfmt::skip]
+const BOLT_7X9: [u16; 9] = [
+    0b0000011,
+    0b0000110,
+    0b0001100,
+    0b0011000,
+    0b1111111,
+    0b0001100,
+    0b0011000,
+    0b0110000,
+    0b1100000,
+];
 
 // ─── Strings ─────────────────────────────────────────────────────────────────
 
@@ -2889,6 +2954,53 @@ mod tests {
             }
         }
         walk_to(model, item);
+    }
+
+    /// A panel that redraws cheaply fills the body to the charge; the
+    /// e-paper keeps its quarters.
+    #[test]
+    fn a_continuous_body_fills_to_the_charge() {
+        for metrics in [
+            BatteryIconMetrics::OLED,
+            BatteryIconMetrics::TFT,
+            BatteryIconMetrics::EPD,
+        ] {
+            let inset = metrics.border + metrics.pad;
+            let inner = Rectangle::new(
+                Point::new(
+                    (metrics.bolt_width + metrics.spacing + inset) as i32,
+                    inset as i32,
+                ),
+                Size::new(
+                    metrics.body.width - 2 * inset,
+                    metrics.body.height - 2 * inset,
+                ),
+            );
+            for level in [3, 40, 55, 100] {
+                let mut panel = TestPanel::new(Size::new(64, 32));
+                let battery = BatteryIndicator {
+                    level_percent: Some(level),
+                    ..BatteryIndicator::UNKNOWN
+                };
+                draw_battery_icon(&mut panel, Point::zero(), &metrics, &battery);
+                let columns = if metrics.continuous {
+                    battery_fill(level, inner.size.width)
+                } else {
+                    let count = u32::from(BATTERY_SEGMENTS);
+                    let segment = (inner.size.width - metrics.gap * (count - 1)) / count;
+                    u32::from(battery_segments(level)) * segment
+                };
+                assert_eq!(
+                    panel.lit_in(inner),
+                    (columns * inner.size.height) as usize,
+                    "{level} % on {metrics:?}"
+                );
+            }
+        }
+        assert_eq!(battery_fill(0, 12), 0);
+        assert_eq!(battery_fill(50, 12), 6);
+        assert_eq!(battery_fill(100, 12), 12);
+        assert_eq!(battery_fill(200, 12), 12);
     }
 
     #[test]

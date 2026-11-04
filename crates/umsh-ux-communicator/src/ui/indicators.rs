@@ -45,9 +45,9 @@ const CAPACITY: usize = 9;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Indicator {
     Icon(&'static Mask, Ink, Rgb565),
-    /// Up to three charge segments, amber while the charge is `low`.
+    /// Filled to its charge, in percent; amber while the charge is `low`.
     Battery {
-        segments: u8,
+        percent: u8,
         low: bool,
     },
 }
@@ -191,7 +191,7 @@ impl Row {
                     buoyant::render::Image::<_, buoyant::render::image::Template>::new(at, mask)
                         .render(target, &color);
                 }
-                Indicator::Battery { segments, low } => battery(target, at, segments, low),
+                Indicator::Battery { percent, low } => battery(target, at, percent, low),
             }
             x += (size.width + SPACING) as i32;
         }
@@ -230,14 +230,13 @@ impl Render<Rgb565> for Row {
     }
 }
 
-/// A battery outline with up to three charge segments, and its terminal,
-/// amber while the charge is `low`. The segments keep [`CELL_GAP`] from
-/// the outline's inside on every side, and from each other; the terminal
-/// stands level with them.
+/// A battery outline filled to `percent`, and its terminal, amber while
+/// the charge is `low`. The fill keeps [`FILL_GAP`] from the outline's
+/// inside on every side; the terminal stands level with it.
 fn battery(
     target: &mut impl RenderTarget<ColorFormat = Rgb565>,
     at: Point,
-    segments: u8,
+    percent: u8,
     low: bool,
 ) {
     let outline = if low {
@@ -250,27 +249,44 @@ fn battery(
         1,
     )
     .render(target, &outline);
-    let top = at.y + (1 + CELL_GAP) as i32;
-    for i in 0..3u8 {
-        let left = at.x + (1 + CELL_GAP + (CELL_WIDTH + CELL_GAP) * u32::from(i)) as i32;
-        let color = if segments > i {
-            theme::TEXT
-        } else {
-            theme::CHROME
-        };
-        Rect::new(Point::new(left, top), Size::new(CELL_WIDTH, CELL_HEIGHT)).render(target, &color);
+    let inside = Point::new(at.x + (1 + FILL_GAP) as i32, at.y + (1 + FILL_GAP) as i32);
+    let width = fill(percent, FILL_WIDTH);
+    if width > 0 {
+        Rect::new(inside, Size::new(width, FILL_HEIGHT)).render(target, &theme::TEXT);
     }
     Rect::new(
-        Point::new(at.x + BATTERY_WIDTH as i32 + 1, top),
-        Size::new(2, CELL_HEIGHT),
+        Point::new(at.x + BATTERY_WIDTH as i32 + 1, inside.y),
+        Size::new(2, FILL_HEIGHT),
     )
     .render(target, &outline);
 }
 
+/// How many of `width` columns a charge of `percent` fills, to the
+/// nearest.
+const fn fill(percent: u8, width: u32) -> u32 {
+    let percent = if percent > 100 { 100 } else { percent as u32 };
+    (width * percent + 50) / 100
+}
+
 /// The battery's outline, its stroke included.
-const BATTERY_WIDTH: u32 = 1 + 3 * CELL_WIDTH + 4 * CELL_GAP + 1;
-const BATTERY_HEIGHT: u32 = 1 + CELL_GAP + CELL_HEIGHT + CELL_GAP + 1;
-const CELL_WIDTH: u32 = 5;
-const CELL_HEIGHT: u32 = 6;
-/// Around the charge segments, and between them.
-const CELL_GAP: u32 = 2;
+const BATTERY_WIDTH: u32 = 1 + FILL_GAP + FILL_WIDTH + FILL_GAP + 1;
+const BATTERY_HEIGHT: u32 = 1 + FILL_GAP + FILL_HEIGHT + FILL_GAP + 1;
+const FILL_WIDTH: u32 = 19;
+const FILL_HEIGHT: u32 = 6;
+/// Between the fill and the outline's inside.
+const FILL_GAP: u32 = 2;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_fill_follows_the_charge() {
+        assert_eq!(fill(0, FILL_WIDTH), 0);
+        assert_eq!(fill(2, FILL_WIDTH), 0);
+        assert_eq!(fill(3, FILL_WIDTH), 1);
+        assert_eq!(fill(50, FILL_WIDTH), 10);
+        assert_eq!(fill(100, FILL_WIDTH), FILL_WIDTH);
+        assert_eq!(fill(255, FILL_WIDTH), FILL_WIDTH);
+    }
+}

@@ -113,9 +113,9 @@ fn indicators(s: &StatusStrip, shown: bool, (shift, alt): (Latch, Latch)) -> Ind
     }
     // Only a charge that can be told: charging without one shows the bolt
     // alone.
-    if s.battery_percent.is_some() {
+    if let Some(percent) = s.battery_percent {
         row.push(Indicator::Battery {
-            segments: s.battery_segments,
+            percent,
             low: s.battery_low,
         });
     }
@@ -152,7 +152,6 @@ mod tests {
             gnss: Some(Gnss::Searching),
             charging: true,
             battery_percent: Some(20),
-            battery_segments: 1,
             ..StatusStrip::default()
         }
     }
@@ -168,7 +167,6 @@ mod tests {
     fn the_time_stays_beside_a_short_row() {
         let strip = StatusStrip {
             battery_percent: Some(80),
-            battery_segments: 3,
             ..StatusStrip::default()
         };
         let row = indicators(&strip, true, (Latch::Off, Latch::Off));
