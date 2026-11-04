@@ -13,6 +13,9 @@ default = ["software-crypto"]
 software-crypto = ["umsh-crypto/software-crypto"]
 bridge-client = ["dep:ed25519-dalek"]
 wifi = []
+# A device with chats of its own, and a store to keep its peers in, holds
+# more of them.
+communicator = []
 
 [dependencies]
 ed25519-dalek = { workspace = true, optional = true }

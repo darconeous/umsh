@@ -1051,6 +1051,8 @@ enum PropValue {
     Encoded(usize),
     Unimplemented,
     Unknown,
+    /// More items than one value can carry.
+    TooLong,
 }
 
 /// State belonging to the device itself, independent of which
@@ -1831,8 +1833,12 @@ impl PeerKeyTable {
 /// Ed25519 private keys are 32 octets, like public keys.
 pub const PRIVATE_KEY_LEN: usize = 32;
 
-/// Maximum number of `PROP_DEV_PEERS` entries.
-pub const MAX_DEV_PEERS: usize = 8;
+/// Maximum number of `PROP_DEV_PEERS` entries: more than one value can
+/// carry, past which a read is refused and inserts go on working.
+#[cfg(not(feature = "communicator"))]
+pub const MAX_DEV_PEERS: usize = 16;
+#[cfg(feature = "communicator")]
+pub const MAX_DEV_PEERS: usize = 32;
 
 /// Maximum number of `PROP_DEV_ADMINS` entries.
 pub const MAX_DEV_ADMINS: usize = 8;
@@ -2445,7 +2451,7 @@ impl HostDomain {
 /// [`Session::encode_snapshot`]); sized for every table at capacity
 /// with headroom for future properties.
 ///
-/// Every table at capacity currently encodes to 1452 octets, or 2408
+/// Every table at capacity currently encodes to 1724 octets, or 2680
 /// with Wi-Fi and the bridge client, option framing included
 /// (`snapshot_at_capacity_fits_the_buffer` checks the fit); the rest is
 /// headroom for properties not yet allocated. A persisted table of public
@@ -2456,7 +2462,7 @@ impl HostDomain {
 #[cfg(not(feature = "wifi"))]
 pub const SNAPSHOT_MAX: usize = 1792;
 #[cfg(feature = "wifi")]
-pub const SNAPSHOT_MAX: usize = 2560;
+pub const SNAPSHOT_MAX: usize = 2816;
 
 /// Snapshot payload format discriminator.
 ///
@@ -5531,6 +5537,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             PropValue::Encoded(len) => self.send_prop_is(tid, key, &value[..len], emit),
             PropValue::Unimplemented => self.complete(tid, Status::UNIMPLEMENTED, emit),
             PropValue::Unknown => self.complete(tid, Status::PROP_NOT_FOUND, emit),
+            PropValue::TooLong => self.complete(tid, Status::NOMEM, emit),
         }
         None
     }
@@ -7535,8 +7542,11 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         }
         // Echo the authoritative value back from session state.
         let mut encoded = [0u8; PROP_BUF];
-        if let PropValue::Encoded(len) = self.encode_prop(key, now_ms, &mut encoded) {
-            self.send_prop_is(tid, key, &encoded[..len], emit);
+        match self.encode_prop(key, now_ms, &mut encoded) {
+            PropValue::Encoded(len) => self.send_prop_is(tid, key, &encoded[..len], emit),
+            // The write took; it is only the echo that will not fit.
+            PropValue::TooLong => self.complete(tid, Status::OK, emit),
+            PropValue::Unimplemented | PropValue::Unknown => {}
         }
         radio_affecting.then(|| self.apply_radio())
     }
@@ -8995,6 +9005,11 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 len
             }
             prop::DEV_PEERS => {
+                // Refused whole: a host takes the list it reads for all
+                // there is, so a part of it would read as peers removed.
+                if self.device.peers.len * items::PUBLIC_KEY_LEN > out.len() {
+                    return PropValue::TooLong;
+                }
                 let mut len = 0;
                 for public_key in self.device.peers.iter() {
                     len += put(&mut out[len..], public_key);
@@ -18565,6 +18580,46 @@ mod tests {
         assert_eq!(get(&mut session, prop::DEV_KEY), second);
         let _ = session.reset(Status::RESET_SOFTWARE, &mut |_: &[u8]| {});
         assert!(get(&mut session, prop::DEV_KEY).is_empty());
+    }
+
+    /// A list too long for one value is refused whole, on its own and
+    /// in a multi-get, whose other entries go on; inserts and removes
+    /// still work on it.
+    #[test]
+    fn a_peer_list_too_long_to_read_is_refused_whole() {
+        let mut session = test_session();
+        for seed in 1..=MAX_DEV_PEERS as u8 {
+            let (emitted, _) = insert_item(&mut session, prop::DEV_PEERS, &[seed; 32]);
+            let (_, item) = parse_table_notice(&emitted[0], Cmd::PropInserted, 5);
+            assert_eq!(item, [seed; 32]);
+        }
+        let (emitted, _) = insert_item(&mut session, prop::DEV_PEERS, &[0xEE; 32]);
+        expect_status(&emitted[0], 5, Status::NOMEM);
+
+        let mut buf = [0u8; 16];
+        let len = frame::prop_get(&mut buf, 1, prop::DEV_PEERS).unwrap();
+        let (emitted, _) = dispatch(&mut session, &buf[..len], 0);
+        assert_eq!(emitted.len(), 1);
+        expect_status(&emitted[0], 1, Status::NOMEM);
+
+        let keys = [prop::DEV_PEERS, prop::PHY_LORA_SF];
+        let len = frame::prop_multi_get(&mut buf, 3, &keys).unwrap();
+        let (_, entries, _) = multi(&mut session, &buf[..len], 0);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].0, prop::LAST_STATUS);
+        assert_eq!(entry_status(&entries[0].1), Status::NOMEM);
+        assert_eq!(entries[1], (prop::PHY_LORA_SF, vec![7]));
+
+        let (emitted, _) = remove_item(&mut session, prop::DEV_PEERS, &[1; 32]);
+        parse_table_notice(&emitted[0], Cmd::PropRemoved, 6);
+        assert_eq!(session.dev_peers().count(), MAX_DEV_PEERS - 1);
+
+        // As long as a value can carry reads whole.
+        for seed in 2..=(MAX_DEV_PEERS - MAX_PEER_KEYS) as u8 {
+            remove_item(&mut session, prop::DEV_PEERS, &[seed; 32]);
+        }
+        let peers = get(&mut session, prop::DEV_PEERS);
+        assert_eq!(peers.len(), MAX_PEER_KEYS * items::PUBLIC_KEY_LEN);
     }
 
     /// On a device whose own store keeps the device lists, they stay out

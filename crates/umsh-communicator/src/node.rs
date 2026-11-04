@@ -19,11 +19,11 @@ use umsh_ulcp_admin::LocalPort;
 use umsh_ux_communicator::avatar::AvatarStyle;
 use umsh_ux_communicator::heapless::{String, Vec};
 use umsh_ux_communicator::model::{
-    About, ChannelEntry, ChatId, ChatSummary, Chats, ClockSettings, ClockSource, ContactUri,
-    Details, EventQueue, Heard, Invite, KeyboardSettings, LatestSent, MAX_HEARD, MAX_PATH,
-    MeetState, Member, Message, MessageId, NearbyId, Neighbor, Node, NodeEvent, PeerDetail,
-    PeerEntry, PeerId, PeerRoute, PeerSummary, Peers, PingView, RadioSettings, Reaction, Setting,
-    ShareUri, Shareable, Statistics, WifiReading, WifiSecurity,
+    About, ChannelChats, ChannelEntry, ChatId, ChatSummary, Chats, ClockSettings, ClockSource,
+    ContactUri, Details, EventQueue, Heard, Invite, KeyboardSettings, LatestSent, MAX_HEARD,
+    MAX_PATH, MeetState, Member, Message, MessageId, NearbyId, Neighbor, Node, NodeEvent,
+    PeerDetail, PeerEntry, PeerId, PeerRoute, PeerSummary, PingView, RadioSettings, Reaction,
+    Setting, ShareUri, Shareable, Statistics, WifiReading, WifiSecurity,
 };
 use umsh_ux_communicator::picker::RecentText;
 use umsh_ux_communicator::text::TextHeap;
@@ -63,6 +63,9 @@ pub trait Clock {
 pub struct CommunicatorNode<P, S = MemoryStore> {
     settings: RefCell<Settings<P>>,
     chats: RefCell<ChatHalf<S>>,
+    /// The saved peers in the order the list shows them, as of the last
+    /// [`Node::sort_peers`].
+    peer_order: RefCell<alloc::vec::Vec<PeerId>>,
     /// Add peer's contact exchange.
     #[cfg(feature = "software-crypto")]
     meeting: RefCell<Meeting>,
@@ -90,6 +93,7 @@ impl<P: LocalPort, S: ChatStore> CommunicatorNode<P, S> {
         Self {
             settings: RefCell::new(Settings::new(port)),
             chats: RefCell::new(ChatHalf::new(store, crypto, heap)),
+            peer_order: RefCell::new(alloc::vec::Vec::new()),
             #[cfg(feature = "software-crypto")]
             meeting: RefCell::new(Meeting::new()),
             events: RefCell::new(EventQueue::new()),
@@ -393,6 +397,13 @@ impl<P: LocalPort, S: ChatStore> CommunicatorNode<P, S> {
         self.settings.borrow().next_deadline()
     }
 
+    /// The saved peers, most recently heard first.
+    pub fn peers(&self) -> alloc::vec::Vec<PeerSummary> {
+        self.chats
+            .borrow()
+            .peers(self.clock.now_ms(), self.clock.wall())
+    }
+
     /// Whether every setting has been read from the device once.
     pub fn primed(&self) -> bool {
         self.settings.borrow().primed()
@@ -405,14 +416,17 @@ impl<P: LocalPort, S: ChatStore> CommunicatorNode<P, S> {
 
     /// The device's lists as the store keeps them, laid out in `out`
     /// (see [`ChatStore::device_lists`]): what the board's device session
-    /// starts from.
+    /// starts from, and so the settings too.
     pub fn device_lists<'b>(&self, out: &'b mut [u8]) -> Result<Option<&'b [u8]>, StoreError> {
-        self.chats.borrow().store().device_lists(out)
+        let lists = self.chats.borrow().store().device_lists(out)?;
+        self.settings.borrow_mut().know_lists(lists);
+        Ok(lists)
     }
 
     /// The store keeps `record` as the device's lists, or forgets them
     /// with `None`, as the board's device session asks.
     pub fn keep_device_lists(&self, record: Option<&[u8]>) -> Result<(), StoreError> {
+        self.settings.borrow_mut().know_lists(record);
         self.chats
             .borrow_mut()
             .store_mut()
@@ -456,10 +470,39 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
         self.chats.borrow().chat(chat)
     }
 
-    fn peers(&self, peers: &mut Peers) {
+    fn chat_count(&self) -> usize {
+        self.chats.borrow().chat_count()
+    }
+
+    fn chat_at(&self, index: usize) -> Option<ChatId> {
+        self.chats.borrow().chat_at(index)
+    }
+
+    fn unread_chats(&self) -> usize {
+        self.chats.borrow().unread_chats()
+    }
+
+    fn channel_chats(&self, chats: &mut ChannelChats) {
+        self.chats.borrow().channel_chats(chats);
+    }
+
+    fn sort_peers(&self) {
+        let order = self.peers().iter().map(|peer| peer.id).collect();
+        *self.peer_order.borrow_mut() = order;
+    }
+
+    fn peer_count(&self) -> usize {
+        self.peer_order.borrow().len()
+    }
+
+    fn peer_at(&self, index: usize) -> Option<PeerId> {
+        self.peer_order.borrow().get(index).copied()
+    }
+
+    fn peer(&self, peer: PeerId) -> Option<PeerSummary> {
         self.chats
             .borrow()
-            .peers(peers, self.clock.now_ms(), self.clock.wall());
+            .peer(peer, self.clock.now_ms(), self.clock.wall())
     }
 
     fn message(&self, chat: ChatId, message: MessageId) -> Option<Message> {

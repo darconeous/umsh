@@ -27,7 +27,7 @@ use umsh_ulcp::ids::prop;
 use umsh_ulcp_simdev::SimulatedDevice;
 use umsh_ux_communicator::model::{
     ChatKind, Chats, Delivery, Exchange, ExchangeEnd, Leg, MeetState, Member, MessageId,
-    NearbyDevice, Node, NodeEvent, Peers, PingView, Via,
+    NearbyDevice, Node, NodeEvent, PingView, Via,
 };
 use umsh_ux_communicator::models;
 
@@ -369,8 +369,7 @@ async fn forward_secrecy_is_held_with_a_peer_who_prefers_it() {
 
             phone_inserts(&alice.sim, prop::DEV_PEERS, &bob.key.0);
             alice.node.pump();
-            let mut peers = Peers::new();
-            alice.node.peers(&mut peers);
+            let peers = alice.node.peers();
             let peer = peers[0].id;
             let chat = alice
                 .node
@@ -422,8 +421,7 @@ async fn what_is_said_under_forward_secrecy_lands_in_the_same_chat() {
 
             phone_inserts(&alice.sim, prop::DEV_PEERS, &bob.key.0);
             alice.node.pump();
-            let mut peers = Peers::new();
-            alice.node.peers(&mut peers);
+            let peers = alice.node.peers();
             let peer = peers[0].id;
             let chat = alice
                 .node
@@ -722,8 +720,7 @@ async fn contacts_are_exchanged_after_both_confirm() {
             assert_eq!(at_bob.sender.name.as_str(), "Alice");
             assert!(!at_bob.saved);
             for board in [&alice, &bob] {
-                let mut peers = Peers::new();
-                board.node.peers(&mut peers);
+                let peers = board.node.peers();
                 assert!(peers.is_empty());
             }
         })
@@ -1005,8 +1002,7 @@ async fn a_ping_through_a_repeater_names_it_and_reads_each_hop() {
 
             phone_inserts(&alice.sim, prop::DEV_PEERS, &bob.key.0);
             alice.node.pump();
-            let mut listed = Peers::new();
-            alice.node.peers(&mut listed);
+            let listed = alice.node.peers();
             let peer = listed[0].id;
             alice.node.ping(peer);
             assert_eq!(alice.node.ping_view(peer), Some(PingView::Waiting));

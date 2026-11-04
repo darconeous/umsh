@@ -200,16 +200,16 @@ fn peer_or_channel(state: &State) -> impl View<Rgb565, State> + use<> {
             ..
         } => state
             .peer(*peer)
-            .map(|summary| peer::view(m, summary, detail, alias, *confirm, *requested)),
+            .map(|summary| peer::view(m, &summary, detail, alias, *confirm, *requested)),
         Screen::ShareContact { peer, .. } => state
             .peer(*peer)
             .map(|summary| share_contact::view(state, &summary.name)),
         Screen::Route { peer, .. } => state
             .peer(*peer)
-            .map(|summary| route::view(state, *peer, summary)),
+            .map(|summary| route::view(state, *peer, &summary)),
         Screen::Ping { peer, earlier, .. } => state
             .peer(*peer)
-            .map(|summary| ping::view(state, *peer, summary, earlier)),
+            .map(|summary| ping::view(state, *peer, &summary, earlier)),
         // A channel's, the only other screen sent here.
         _ => channel_screen(state),
     })
@@ -334,9 +334,9 @@ fn chats_screen(state: &State) -> impl View<Rgb565, State> + use<> {
     ZStack::new((
         rail::view(m, shown, state.unread_chats()),
         match_view!(list, {
-            List::Chats => chats::view(m, &state.chats, state.wall_time, menu),
+            List::Chats => chats::view(m, state.node, state.wall_time, menu),
             List::Find => find.map(|text| find::view(state, text)),
-            List::Peers => peers::view(m, &state.peers),
+            List::Peers => peers::view(m, state.node),
             List::Device => device::view(state),
         })
         .padding(Edges::Leading, m.rail),

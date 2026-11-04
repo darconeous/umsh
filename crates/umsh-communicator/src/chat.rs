@@ -1212,12 +1212,31 @@ impl<S: ChatStore> Chats<S> {
     }
 
     pub fn chat(&self, chat: model::ChatId) -> Option<ChatSummary> {
-        let record = self
-            .store
-            .chats()
-            .flatten()
-            .find(|record| record.id.0 == chat)?;
-        self.summary(&record)
+        self.summary(&self.store.chat(ChatId(chat))?)
+    }
+
+    pub fn chat_count(&self) -> usize {
+        self.store.chat_count()
+    }
+
+    pub fn chat_at(&self, index: usize) -> Option<model::ChatId> {
+        self.store.chat_at(index).map(|chat| chat.0)
+    }
+
+    pub fn unread_chats(&self) -> usize {
+        self.store.unread_chats()
+    }
+
+    pub fn channel_chats(&self, chats: &mut model::ChannelChats) {
+        let channels =
+            self.store.chats().flatten().filter(|record| {
+                matches!(record.conversation, ConversationKey::ChannelGroup { .. })
+            });
+        for record in channels {
+            if chats.push(record.id.0).is_err() {
+                break;
+            }
+        }
     }
 
     pub fn message(&self, chat: model::ChatId, message: model::MessageId) -> Option<Message> {

@@ -8,17 +8,17 @@ use core::cell::{Cell, RefCell, RefMut};
 use crate::avatar::{AvatarStyle, BuiltinChannel, PeerShape};
 use crate::board::Board;
 use crate::model::{
-    About, BatteryReading, Bluetooth, BluetoothReading, Card, ChannelAccess, ChannelEntry, Charge,
-    ChatId, ChatKind, ChatSummary, Chats, ClockSettings, ClockSource, Contact, ContactUri,
-    DEFAULT_AUTO_LOCK_S, Delivery, Details, Direction, EventQueue, Exchange, ExchangeEnd, Fix,
-    Gnss, GnssReading, Heard, Invite, KeyboardFirmware, KeyboardSettings, LatestSent, Leg, Links,
-    MAX_CHATS, MAX_HEARD, MAX_NEARBY_NETWORKS, MAX_PATH, MAX_PEERS, MAX_SAVED_NETWORKS,
-    MESSAGE_LEN, MeetState, Member, Message, MessageId, NearbyDevice, NearbyId, NearbyNetwork,
-    Neighbor, Node, NodeEvent, Parts, PeerDetail, PeerEntry, PeerId, PeerRoute, PeerSummary, Peers,
-    PingReply, PingView, Presence, Profile, Quote, RadioSettings, Reacted, Reaction, Reactions,
-    Reactor, Repeater, RouteKind, Rule, SavedNetwork, Sender, Setting, ShareUri, Shareable, Signal,
-    Ssid, State, Statistics, StatusStrip, TRANSMIT_POWER, Via, WifiReading, WifiSecurity,
-    WifiStatus, brightness_at, route_text, word_match,
+    About, BatteryReading, Bluetooth, BluetoothReading, Card, ChannelAccess, ChannelChats,
+    ChannelEntry, Charge, ChatId, ChatKind, ChatSummary, Chats, ClockSettings, ClockSource,
+    Contact, ContactUri, DEFAULT_AUTO_LOCK_S, Delivery, Details, Direction, EventQueue, Exchange,
+    ExchangeEnd, Fix, Gnss, GnssReading, Heard, Invite, KeyboardFirmware, KeyboardSettings,
+    LatestSent, Leg, Links, MAX_CHATS, MAX_HEARD, MAX_NEARBY_NETWORKS, MAX_PATH,
+    MAX_SAVED_NETWORKS, MESSAGE_LEN, MeetState, Member, Message, MessageId, NearbyDevice, NearbyId,
+    NearbyNetwork, Neighbor, Node, NodeEvent, Parts, PeerDetail, PeerEntry, PeerId, PeerRoute,
+    PeerSummary, PingReply, PingView, Presence, Profile, Quote, RadioSettings, Reacted, Reaction,
+    Reactions, Reactor, Repeater, RouteKind, Rule, SavedNetwork, Sender, Setting, ShareUri,
+    Shareable, Signal, Ssid, State, Statistics, StatusStrip, TRANSMIT_POWER, Via, WifiReading,
+    WifiSecurity, WifiStatus, brightness_at, route_text, word_match,
 };
 use crate::models;
 use crate::picker::RecentText;
@@ -677,11 +677,15 @@ fn sender_of(from: From) -> Option<Sender> {
 /// How many messages sent or received since it started the fixture keeps,
 /// across all chats, and how many of each thing made since.
 const KEPT: usize = 8;
+/// How many peers the mockup keeps saved, at most.
+const SAVED_PEERS: usize = 32;
 /// How many messages a chat of the fixture's holds at most: the long
 /// history, and those kept since.
 const POSITIONS: usize = LONG_COUNT + KEPT;
 /// How many chats the fixture keeps: its own, and those made since.
 const CHATS: usize = 7 + 2 * KEPT;
+/// The first of [`Store::with_quiet_chats`].
+pub const FIRST_QUIET: ChatId = 500;
 /// How many events wait for the interface before they overflow.
 const EVENTS: usize = 16;
 
@@ -730,6 +734,8 @@ pub struct Store {
     reset: RefCell<Vec<PeerId, KEPT>>,
     aliases: RefCell<Vec<(PeerId, String<32>), KEPT>>,
     forgotten: RefCell<Vec<PeerId, KEPT>>,
+    /// The saved peers in list order, as of the last [`Node::sort_peers`].
+    peer_order: RefCell<Vec<PeerId, SAVED_PEERS>>,
     /// This node's name, once it is given one.
     name: RefCell<Option<String<24>>>,
     /// The radio's settings.
@@ -970,6 +976,7 @@ impl Store {
             reset: RefCell::new(Vec::new()),
             aliases: RefCell::new(Vec::new()),
             forgotten: RefCell::new(Vec::new()),
+            peer_order: RefCell::new(Vec::new()),
             name: RefCell::new(None),
             radio_enabled: Cell::new(true),
             profile: Cell::new(Profile::Vetted(0)),
@@ -1020,6 +1027,30 @@ impl Store {
     #[must_use]
     pub fn with_long_history(self) -> Self {
         self.long.set(true);
+        self
+    }
+
+    /// Adds `count` quiet direct chats below the mockup's, numbered from
+    /// [`FIRST_QUIET`]: more than the interface holds at once.
+    #[must_use]
+    pub fn with_quiet_chats(self, count: u32) -> Self {
+        {
+            let mut rows = self.chat_rows();
+            for index in 0..count {
+                _ = rows.push(ChatRow {
+                    id: FIRST_QUIET + index,
+                    avatar: AvatarStyle::peer([120, 120, 120], "qqqq", PeerShape::Circle),
+                    name: s("Quiet"),
+                    alias: None,
+                    kind: ChatKind::Peer { hops: Some(1) },
+                    unread: false,
+                    muted: false,
+                    activity: index,
+                    draft: None,
+                    limit: None,
+                });
+            }
+        }
         self
     }
 
@@ -1244,6 +1275,35 @@ impl Store {
 
     fn queue(&self, event: NodeEvent) {
         self.events.borrow_mut().push(event);
+    }
+
+    /// The saved peers, members saved since first: they were heard just
+    /// now.
+    fn peer_rows(&self) -> Vec<PeerSummary, SAVED_PEERS> {
+        let forgotten = self.forgotten.borrow();
+        let saved = self.saved.borrow();
+        let members = saved
+            .iter()
+            .rev()
+            .map(|(_, summary)| PeerSummary {
+                name: self
+                    .alias(summary.id)
+                    .unwrap_or_else(|| summary.name.clone()),
+                ..summary.clone()
+            })
+            .filter(|summary| !forgotten.contains(&summary.id));
+        let mockup = (1..).zip(PEERS.iter()).map(|(id, peer)| PeerSummary {
+            id,
+            avatar: AvatarStyle::peer(peer.color, peer.hint, PeerShape::Circle),
+            name: self.alias(id).unwrap_or_else(|| s(peer.name)),
+            hops: peer.hops,
+            signal: peer.signal,
+            heard: s(peer.heard),
+        });
+        members
+            .chain(mockup.filter(|summary| !forgotten.contains(&summary.id)))
+            .take(SAVED_PEERS)
+            .collect()
     }
 
     /// What `peer` is called here, if anything.
@@ -2104,8 +2164,8 @@ impl Node for Store {
     }
 
     fn chats(&self, into: &mut Chats) {
-        for row in self.chat_rows().iter().take(MAX_CHATS) {
-            _ = into.push(self.summary(row));
+        for chat in (0..MAX_CHATS).map_while(|index| self.chat_at(index)) {
+            _ = into.extend(self.chat(chat));
         }
     }
 
@@ -2115,34 +2175,50 @@ impl Node for Store {
         Some(self.summary(row))
     }
 
-    fn peers(&self, into: &mut Peers) {
-        let forgotten = self.forgotten.borrow();
-        let saved = self.saved.borrow();
-        // Members saved since were heard just now, and come first.
-        let members = saved
+    fn chat_count(&self) -> usize {
+        self.chat_rows().len()
+    }
+
+    fn chat_at(&self, index: usize) -> Option<ChatId> {
+        let rows = self.chat_rows();
+        let mut order: Vec<(core::cmp::Reverse<u32>, usize, ChatId), CHATS> = rows
             .iter()
-            .rev()
-            .map(|(_, summary)| PeerSummary {
-                name: self
-                    .alias(summary.id)
-                    .unwrap_or_else(|| summary.name.clone()),
-                ..summary.clone()
-            })
-            .filter(|summary| !forgotten.contains(&summary.id));
-        let mockup = (1..).zip(PEERS.iter()).map(|(id, peer)| PeerSummary {
-            id,
-            avatar: AvatarStyle::peer(peer.color, peer.hint, PeerShape::Circle),
-            name: self.alias(id).unwrap_or_else(|| s(peer.name)),
-            hops: peer.hops,
-            signal: peer.signal,
-            heard: s(peer.heard),
-        });
-        for summary in members
-            .chain(mockup.filter(|summary| !forgotten.contains(&summary.id)))
-            .take(MAX_PEERS)
-        {
-            _ = into.push(summary);
+            .enumerate()
+            .map(|(at, row)| (core::cmp::Reverse(row.activity), at, row.id))
+            .collect();
+        order.sort_unstable();
+        order.get(index).map(|&(.., id)| id)
+    }
+
+    fn unread_chats(&self) -> usize {
+        let rows = self.chat_rows();
+        rows.iter().filter(|row| self.summary(row).unread).count()
+    }
+
+    fn channel_chats(&self, into: &mut ChannelChats) {
+        for row in self.chat_rows().iter() {
+            if matches!(self.summary(row).kind, ChatKind::Channel { .. })
+                && into.push(row.id).is_err()
+            {
+                break;
+            }
         }
+    }
+
+    fn sort_peers(&self) {
+        *self.peer_order.borrow_mut() = self.peer_rows().iter().map(|peer| peer.id).collect();
+    }
+
+    fn peer_count(&self) -> usize {
+        self.peer_order.borrow().len()
+    }
+
+    fn peer_at(&self, index: usize) -> Option<PeerId> {
+        self.peer_order.borrow().get(index).copied()
+    }
+
+    fn peer(&self, peer: PeerId) -> Option<PeerSummary> {
+        self.peer_rows().into_iter().find(|row| row.id == peer)
     }
 
     fn message(&self, chat: ChatId, message: MessageId) -> Option<Message> {

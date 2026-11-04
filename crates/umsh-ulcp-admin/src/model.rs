@@ -931,6 +931,20 @@ impl Model {
         self.entries.get(&key)?.value.as_deref()
     }
 
+    /// Takes `value` for `key` from somewhere the device keeps it, for a
+    /// table that may be too long for the device to report: a notice then
+    /// has a whole table to change, and a read it refuses leaves `value`
+    /// standing. How fresh `key` is stays as it was.
+    pub fn know(&mut self, key: u32, value: &[u8]) {
+        let Some(entry) = self.entries.get_mut(&key) else {
+            return;
+        };
+        if entry.value.as_deref() != Some(value) {
+            entry.value = Some(value.to_vec());
+            self.events.push_back(Event::Changed(key));
+        }
+    }
+
     /// What the device last reported for `key`, through its codec.
     pub fn value(&self, key: u32) -> Option<Value<'_>> {
         descriptor::decode(descriptor::descriptor(key)?.codec, self.raw(key)?)

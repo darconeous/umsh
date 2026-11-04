@@ -4,16 +4,18 @@
 use buoyant::event::{Key, KeyResponse};
 use buoyant::focus::BoundaryBehavior;
 use buoyant::view::Lazy;
+use buoyant::view::LazyForEach;
+use buoyant::view::lazy_foreach::Extent;
 use buoyant::view::popover::Dismissal;
 use buoyant::view::prelude::*;
 use embedded_graphics::pixelcolor::Rgb565;
-use heapless::{String, Vec};
+use heapless::String;
 
 use super::line;
 use super::setting::{card, choice};
 use crate::avatar::{AvatarStyle, Title};
 use crate::board::Metrics;
-use crate::model::{Age, ChatKind, ChatSummary, Chats, MAX_CHATS, State, age};
+use crate::model::{Age, ChatKind, ChatSummary, MAX_CHATS, Node, State, age};
 use crate::nav::{ChatMenu, keys};
 use crate::text::DraftText;
 use crate::{font, icon, theme};
@@ -28,40 +30,31 @@ const TEXT_X: u32 = 51;
 /// A chat's menu, and Delete's confirmation.
 const MENU_WIDTH: u32 = 220;
 
-/// Indices `ForEach` can hold without borrowing the state.
-static INDICES: [usize; MAX_CHATS] = {
-    let mut a = [0; MAX_CHATS];
-    let mut i = 0;
-    while i < MAX_CHATS {
-        a[i] = i;
-        i += 1;
-    }
-    a
-};
-
 /// The list, with each chat's age counted to `now`, and over it `menu`:
 /// a chat's menu or its confirmation. Backspace moves to the rail, Enter opens the
 /// focused chat, as a press does, and a letter starts Find with it.
 pub fn view(
     m: &'static Metrics,
-    chats: &Chats,
+    node: &'static dyn Node,
     now: Option<u32>,
     menu: Option<ChatMenu>,
 ) -> impl View<Rgb565, State> + use<> {
-    let rows = chats.clone();
-    let ids: Vec<u32, MAX_CHATS> = chats.iter().map(|c| c.id).collect();
-    let count = rows.len();
     // The chat a menu is open for stays lit behind it.
     let held = menu.map(ChatMenu::chat);
     let channel = held
-        .and_then(|held| chats.iter().find(|c| c.id == held))
+        .and_then(|held| node.chat(held))
         .is_some_and(|c| matches!(c.kind, ChatKind::Channel { .. }));
     super::list(
-        ForEach::<MAX_CHATS>::new_vertical(&INDICES[..count], move |&i| {
-            let chat = &rows[i];
-            row(m, chat, age(chat.last_activity, now), held == Some(chat.id))
+        LazyForEach::<MAX_CHATS>::new_vertical(node.chat_count(), Extent::Fixed(ROW), move |i| {
+            let chat = node.chat(node.chat_at(i)?)?;
+            Some(row(
+                m,
+                &chat,
+                age(chat.last_activity, now),
+                held == Some(chat.id),
+            ))
         })
-        .keyed(move |&i| keys::chat(ids[i])),
+        .keyed(move |i| keys::chat(node.chat_at(i).unwrap_or_default())),
     )
     .bound_focus(BoundaryBehavior::Stop)
     .on_key(|key, s: &mut State| match key {

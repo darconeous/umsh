@@ -692,6 +692,18 @@ impl<P: LocalPort> Settings<P> {
         self.key().map(address).unwrap_or_default()
     }
 
+    /// Takes in the record the store keeps of the device's lists, as the
+    /// device lays it out: a count, then the items of `PROP_DEV_PEERS`,
+    /// and then its channels. The device may hold more peers than it can
+    /// return from a read; this is how the model knows them all.
+    pub fn know_lists(&mut self, record: Option<&[u8]>) {
+        let peers = record
+            .and_then(<[u8]>::split_first)
+            .and_then(|(&count, items)| items.get(..usize::from(count) * 32))
+            .unwrap_or_default();
+        self.model.know(prop::DEV_PEERS, peers);
+    }
+
     /// The device identity's peers: what `PROP_DEV_PEERS` holds once the
     /// device has answered every save and forget asked of it.
     pub fn peers(&self) -> alloc::vec::Vec<[u8; 32]> {

@@ -16,10 +16,9 @@ use crate::nav::{DevicePage, Screen, Unsent, keys};
 use crate::picker::{Picker, RecentText, Recents};
 use crate::text::{DraftText, SharedText, TextHeap};
 
-/// The most chats the list holds at once.
+/// How many chats the interface holds in full, and rows a list has built
+/// at once; the lists themselves are as long as the node's.
 pub const MAX_CHATS: usize = 12;
-/// How many saved peers the Peers list holds.
-pub const MAX_PEERS: usize = 12;
 /// The most screens open at once, the Chats screen included: deep enough
 /// for a peer's route, a repeater on it, and that repeater's route.
 pub const MAX_SCREENS: usize = 6;
@@ -37,8 +36,8 @@ pub type MessageId = u32;
 pub type Draft = EditBuffer<DraftText>;
 /// The chats the list holds, newest first.
 pub type Chats = Vec<ChatSummary, MAX_CHATS>;
-/// The saved peers the Peers list holds, most recently heard first.
-pub type Peers = Vec<PeerSummary, MAX_PEERS>;
+/// The channels' chats, newest first.
+pub type ChannelChats = Vec<ChatId, MAX_CHATS>;
 /// How long ago something happened, already formatted, such as `2m`.
 pub type Age = String<6>;
 
@@ -1561,9 +1560,32 @@ pub trait Node {
     /// The chat `chat`, as the list shows it. `None` once it is gone.
     fn chat(&self, chat: ChatId) -> Option<ChatSummary>;
 
-    /// Fills `peers`, which is empty, with the saved peers, most recently
-    /// heard first, as many as it holds.
-    fn peers(&self, peers: &mut Peers);
+    /// How many chats there are.
+    fn chat_count(&self) -> usize;
+
+    /// The chat `index` places down the list, newest first.
+    fn chat_at(&self, index: usize) -> Option<ChatId>;
+
+    /// How many chats have unread messages.
+    fn unread_chats(&self) -> usize;
+
+    /// Fills `chats`, which is empty, with the channels' chats, as many as
+    /// it holds.
+    fn channel_chats(&self, chats: &mut ChannelChats);
+
+    /// Orders the saved peers, most recently heard first, for
+    /// [`Node::peer_at`].
+    fn sort_peers(&self);
+
+    /// How many saved peers there are.
+    fn peer_count(&self) -> usize;
+
+    /// The saved peer `index` places down the list.
+    fn peer_at(&self, index: usize) -> Option<PeerId>;
+
+    /// The saved peer `peer`, as the list shows them. `None` once they are
+    /// no longer saved.
+    fn peer(&self, peer: PeerId) -> Option<PeerSummary>;
 
     /// The message `message` of `chat`. `None` once it is gone.
     fn message(&self, chat: ChatId, message: MessageId) -> Option<Message>;
@@ -2013,10 +2035,9 @@ pub struct State {
     /// The keyboard's firmware, once its controller has said.
     pub keyboard_firmware: Option<KeyboardFirmware>,
     pub section: Section,
-    /// Newest first.
+    /// The chats held in full, drafts being written included: the newest,
+    /// and any opened since, most recently touched first.
     pub chats: Chats,
-    /// Saved peers, most recently heard first.
-    pub peers: Peers,
     /// The time, in Unix seconds, as the board last read its clock, when
     /// it is known. Ages are counted to it.
     pub wall_time: Option<u32>,
@@ -2146,7 +2167,6 @@ impl core::fmt::Debug for State {
             .field("status", &self.status)
             .field("section", &self.section)
             .field("chats", &self.chats)
-            .field("peers", &self.peers)
             .field("wall_time", &self.wall_time)
             .field("clock", &self.clock)
             .field("conversation", &self.conversation)
@@ -2182,7 +2202,6 @@ impl State {
             keyboard_firmware: None,
             section: Section::default(),
             chats: Vec::new(),
-            peers: Vec::new(),
             wall_time: None,
             clock: ClockSettings::default(),
             wifi: WifiReading::default(),
@@ -2241,7 +2260,7 @@ impl State {
     /// How many chats have unread messages, for the rail's badge.
     #[must_use]
     pub fn unread_chats(&self) -> usize {
-        self.chats.iter().filter(|c| c.unread).count()
+        self.node.unread_chats()
     }
 
     #[must_use]
@@ -2249,9 +2268,44 @@ impl State {
         self.chats.iter().find(|c| c.id == chat)
     }
 
+    /// Holds `chat` in full, from wherever the list has it. Returns whether
+    /// the node has it.
+    pub(crate) fn keep_chat(&mut self, chat: ChatId) -> bool {
+        self.chat(chat).is_some()
+            || self
+                .node
+                .chat(chat)
+                .map(|fresh| self.place(fresh))
+                .is_some()
+    }
+
+    /// Lets a chat go, when no more can be held: the one held longest,
+    /// unless it is the one open.
+    pub(crate) fn make_room(&mut self) {
+        if !self.chats.is_full() {
+            return;
+        }
+        let open = self.conversation.as_ref().map(|c| c.chat);
+        if let Some(index) = self.chats.iter().rposition(|c| Some(c.id) != open) {
+            self.chats.remove(index);
+        }
+    }
+
     #[must_use]
-    pub fn peer(&self, peer: PeerId) -> Option<&PeerSummary> {
-        self.peers.iter().find(|p| p.id == peer)
+    pub fn peer(&self, peer: PeerId) -> Option<PeerSummary> {
+        self.node.peer(peer)
+    }
+
+    /// How many saved peers there are.
+    #[must_use]
+    pub fn peer_count(&self) -> usize {
+        self.node.peer_count()
+    }
+
+    /// The saved peer `index` places down the list.
+    #[must_use]
+    pub fn peer_at(&self, index: usize) -> Option<PeerSummary> {
+        self.node.peer(self.node.peer_at(index)?)
     }
 
     fn chat_mut(&mut self, chat: ChatId) -> Option<&mut ChatSummary> {
@@ -2365,8 +2419,7 @@ impl State {
             summary.draft = draft;
             summary.limit_draft(limit);
         }
-        self.peers.clear();
-        self.node.peers(&mut self.peers);
+        self.node.sort_peers();
         match open {
             Some(chat) if self.chat(chat).is_some() => self.load_conversation(chat),
             Some(_) => self.leave_chats(),
@@ -2400,8 +2453,7 @@ impl State {
             NodeEvent::ChatRemoved(chat) => self.remove_chat(chat),
             NodeEvent::IdentitiesLearned => self.identities_learned(),
             NodeEvent::PeerChanged(_) => {
-                self.peers.clear();
-                self.node.peers(&mut self.peers);
+                self.node.sort_peers();
                 self.refresh_peer();
                 self.refresh_details(None);
             }
@@ -2450,9 +2502,7 @@ impl State {
                 index
             }
             None => {
-                if self.chats.is_full() {
-                    self.chats.pop();
-                }
+                self.make_room();
                 _ = self.chats.insert(0, fresh);
                 0
             }
@@ -2492,15 +2542,12 @@ impl State {
                 }),
             ) = (channel, self.screens.last_mut())
             {
-                let mut channels = self
-                    .chats
-                    .iter()
-                    .filter(|c| matches!(c.kind, ChatKind::Channel { .. }));
+                let mut channels = ChannelChats::new();
+                self.node.channel_chats(&mut channels);
                 let next = channels
-                    .clone()
-                    .nth(channel)
-                    .or_else(|| channels.next_back())
-                    .map_or(keys::ADD_CHANNEL, |c| keys::chat(c.id));
+                    .get(channel)
+                    .or_else(|| channels.last())
+                    .map_or(keys::ADD_CHANNEL, |&c| keys::chat(c));
                 focus.request(next);
             }
         }

@@ -11,7 +11,7 @@ use super::conversation::header;
 use super::peers::{AVATAR, ROW, TEXT_X, add_row, focused_row};
 use crate::avatar::{AvatarStyle, Title};
 use crate::board::Metrics;
-use crate::model::{ChannelAccess, ChatId, ChatKind, MAX_CHATS, State};
+use crate::model::{ChannelAccess, ChannelChats, ChatId, ChatKind, MAX_CHATS, State};
 use crate::nav::keys;
 use crate::{font, theme};
 
@@ -37,9 +37,11 @@ struct Channel {
 
 pub fn view(state: &State) -> impl View<Rgb565, State> + use<> {
     let m = state.metrics();
-    let rows: Vec<Channel, MAX_CHATS> = state
-        .chats
+    let mut chats = ChannelChats::new();
+    state.node.channel_chats(&mut chats);
+    let rows: Vec<Channel, MAX_CHATS> = chats
         .iter()
+        .filter_map(|&chat| state.node.chat(chat))
         .filter_map(|c| match c.kind {
             ChatKind::Channel { access } => Some(Channel {
                 id: c.id,

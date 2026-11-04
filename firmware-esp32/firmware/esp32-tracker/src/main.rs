@@ -2794,7 +2794,9 @@ async fn device_task(
         static STARTING_KEYS: StaticCell<[[u8; 32]; 2]> = StaticCell::new();
         let defaults =
             STARTING_KEYS.init(umsh_communicator::ChannelCrypto::software().starting_keys());
-        let kept = chats.device_lists(&mut snapshot_storage[..]).ok().flatten();
+        let kept = heap::in_psram(|| chats.device_lists(&mut snapshot_storage[..]))
+            .ok()
+            .flatten();
         session.hold_lists(defaults, kept);
     }
     driver::run_with_storage(

@@ -4,13 +4,14 @@
 use buoyant::event::{Key, KeyResponse};
 use buoyant::focus::BoundaryBehavior;
 use buoyant::view::Lazy;
+use buoyant::view::LazyForEach;
+use buoyant::view::lazy_foreach::Extent;
 use buoyant::view::prelude::*;
 use embedded_graphics::pixelcolor::Rgb565;
-use heapless::Vec;
 
 use super::line;
 use crate::board::Metrics;
-use crate::model::{MAX_PEERS, PeerSummary, State, hops_text};
+use crate::model::{MAX_CHATS, Node, PeerSummary, State, hops_text};
 use crate::nav::keys;
 use crate::{font, icon, theme};
 
@@ -27,24 +28,7 @@ const BAR_GAP: u32 = 2;
 const BAR_BASE: u32 = 4;
 const BAR_STEP: u32 = 3;
 
-/// Indices `ForEach` can hold without borrowing the state.
-static INDICES: [usize; MAX_PEERS] = {
-    let mut a = [0; MAX_PEERS];
-    let mut i = 0;
-    while i < MAX_PEERS {
-        a[i] = i;
-        i += 1;
-    }
-    a
-};
-
-pub fn view(
-    m: &'static Metrics,
-    peers: &Vec<PeerSummary, MAX_PEERS>,
-) -> impl View<Rgb565, State> + use<> {
-    let rows = peers.clone();
-    let ids: Vec<u32, MAX_PEERS> = peers.iter().map(|p| p.id).collect();
-    let count = rows.len();
+pub fn view(m: &'static Metrics, node: &'static dyn Node) -> impl View<Rgb565, State> + use<> {
     super::list(
         VStack::new((
             add_row(
@@ -54,8 +38,12 @@ pub fn view(
                 keys::ADD_PEER,
                 m.beside_rail(),
             ),
-            ForEach::<MAX_PEERS>::new_vertical(&INDICES[..count], move |&i| row(m, &rows[i]))
-                .keyed(move |&i| keys::peer(ids[i])),
+            LazyForEach::<MAX_CHATS>::new_vertical(
+                node.peer_count(),
+                Extent::Fixed(ROW),
+                move |i| Some(row(m, &node.peer(node.peer_at(i)?)?)),
+            )
+            .keyed(move |i| keys::peer(node.peer_at(i).unwrap_or_default())),
         ))
         .with_spacing(0),
     )

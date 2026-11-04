@@ -13,7 +13,7 @@ use heapless::String;
 use super::conversation::header;
 use super::setting::{End, card, choice, readout, row};
 use crate::board::Metrics;
-use crate::model::{BatteryReading, Bluetooth, ChatKind, RadioSettings, State, WifiStatus};
+use crate::model::{BatteryReading, Bluetooth, ChannelChats, RadioSettings, State, WifiStatus};
 use crate::nav::{DeviceConfirm, DevicePage, Screen, keys};
 use crate::theme;
 
@@ -24,11 +24,9 @@ const CONFIRM_WIDTH: u32 = 220;
 /// The categories, beside the rail.
 pub fn view(state: &State) -> impl View<Rgb565, State> + use<> {
     let m = state.metrics();
-    let channels = state
-        .chats
-        .iter()
-        .filter(|c| matches!(c.kind, ChatKind::Channel { .. }))
-        .count();
+    let mut channels = ChannelChats::new();
+    state.node.channel_chats(&mut channels);
+    let channels = channels.len();
     let confirm = match state.screen() {
         Screen::Chats { confirm, .. } => *confirm,
         _ => None,

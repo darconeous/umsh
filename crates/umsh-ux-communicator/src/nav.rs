@@ -868,7 +868,7 @@ impl State {
         remembered
             .filter(|row| self.lists(*row))
             .or_else(|| match self.section {
-                Section::Chats => self.chats.first().map(|c| keys::chat(c.id)),
+                Section::Chats => self.node.chat_at(0).map(keys::chat),
                 Section::Peers => Some(keys::ADD_PEER),
                 Section::Device => Some(keys::IDENTITY),
             })
@@ -877,7 +877,7 @@ impl State {
     /// Whether `row` is a row of the list shown.
     fn lists(&self, row: FocusKey) -> bool {
         match self.section {
-            Section::Chats => keys::chat_of(row).is_some_and(|chat| self.chat(chat).is_some()),
+            Section::Chats => keys::chat_of(row).is_some_and(|chat| self.node.chat(chat).is_some()),
             Section::Peers => {
                 row == keys::ADD_PEER
                     || keys::peer_of(row).is_some_and(|peer| self.peer(peer).is_some())
@@ -952,7 +952,9 @@ impl State {
             count += 1;
             _ = found.push(item);
         };
-        for chat in self.chats.iter() {
+        let chats = (0..self.node.chat_count())
+            .filter_map(|index| self.node.chat(self.node.chat_at(index)?));
+        for chat in chats {
             // By its name, or by what its row calls it: "fire" finds 🔥.
             let title = chat.title();
             if word_match(&chat.name, query).is_some()
@@ -963,11 +965,11 @@ impl State {
                     avatar: chat.avatar.clone(),
                     title,
                     distance: String::new(),
-                    age: self.age(chat),
+                    age: self.age(&chat),
                 });
             }
         }
-        for peer in self.peers.iter() {
+        for peer in (0..self.peer_count()).filter_map(|index| self.peer_at(index)) {
             if word_match(&peer.name, query).is_some() {
                 add(Found {
                     kind: FoundKind::Peer(peer.id),
@@ -1023,7 +1025,7 @@ impl State {
 
     /// Opens the conversation of `chat`, with its composer focused.
     pub fn open_chat(&mut self, chat: ChatId) {
-        if self.chat(chat).is_none() || self.screens.is_full() {
+        if !self.keep_chat(chat) || self.screens.is_full() {
             return;
         }
         self.load_conversation(chat);
@@ -1114,7 +1116,7 @@ impl State {
         let Some(&Screen::Peer { peer, .. }) = self.screens.last() else {
             return;
         };
-        let Some(first) = self.chats.first().map(|c| c.id) else {
+        let Some(first) = self.node.chat_at(0) else {
             return;
         };
         _ = self.screens.push(Screen::ShareContact {
@@ -1145,6 +1147,7 @@ impl State {
 
     /// Sends the contact of `peer` to `chat`. Returns whether it went.
     fn send_contact_to(&mut self, chat: ChatId, peer: PeerId) -> bool {
+        self.keep_chat(chat);
         let Some(index) = self.chats.iter().position(|c| c.id == chat) else {
             return false;
         };
@@ -1368,8 +1371,7 @@ impl State {
         if detail.alias.as_deref().unwrap_or_default() != typed {
             self.node
                 .set_peer_alias(peer, (!typed.is_empty()).then_some(typed.as_str()));
-            self.peers.clear();
-            self.node.peers(&mut self.peers);
+            self.node.sort_peers();
             self.refresh_peer();
         }
         if let Some(Screen::Peer { detail, alias, .. }) = self.screens.last_mut() {
@@ -1538,15 +1540,17 @@ impl State {
     /// Lets go of `peer`, no longer saved: its row, and its screen, which
     /// returns to the Peers list at the row that took its place.
     pub(crate) fn remove_peer(&mut self, peer: PeerId) {
-        let Some(index) = self.peers.iter().position(|p| p.id == peer) else {
+        let Some(index) =
+            (0..self.node.peer_count()).find(|&index| self.node.peer_at(index) == Some(peer))
+        else {
             return;
         };
-        self.peers.remove(index);
+        self.node.sort_peers();
         let next = self
-            .peers
-            .get(index)
-            .or_else(|| self.peers.last())
-            .map_or(keys::ADD_PEER, |p| keys::peer(p.id));
+            .node
+            .peer_at(index)
+            .or_else(|| self.node.peer_at(self.node.peer_count().checked_sub(1)?))
+            .map_or(keys::ADD_PEER, keys::peer);
         // Its screens close, from its route or a ping on down.
         let mut left = false;
         while self.screen().peer() == Some(peer) && self.back() {
@@ -2217,7 +2221,7 @@ impl State {
         let Some(chat) = focus.current().and_then(keys::chat_of) else {
             return false;
         };
-        if self.chat(chat).is_none() {
+        if !self.keep_chat(chat) {
             return false;
         }
         if let Some(Screen::Chats { focus, menu, .. }) = self.screens.last_mut() {
@@ -2340,6 +2344,7 @@ impl State {
 
     /// Shows the joined channel `chat`, Message focused.
     pub fn open_channel(&mut self, chat: ChatId) {
+        self.keep_chat(chat);
         let Some(summary) = self
             .chat(chat)
             .filter(|c| matches!(c.kind, ChatKind::Channel { .. }))
@@ -2715,9 +2720,7 @@ impl State {
     fn add_chat(&mut self, summary: ChatSummary) -> ChatId {
         let chat = summary.id;
         if self.chat(chat).is_none() {
-            if self.chats.is_full() {
-                self.chats.pop();
-            }
+            self.make_room();
             _ = self.chats.insert(0, summary);
         }
         chat
@@ -3062,17 +3065,10 @@ impl State {
         if member.address.is_none() || member.saved {
             return;
         }
-        let saved = node.save_peer(member);
+        _ = node.save_peer(member);
         member.saved = true;
         focus.request(keys::MESSAGE_MEMBER);
-        if let Some(peer) = saved
-            && self.peer(peer.id).is_none()
-        {
-            if self.peers.is_full() {
-                self.peers.pop();
-            }
-            _ = self.peers.insert(0, peer);
-        }
+        node.sort_peers();
     }
 
     /// Opens `chat` in place of whatever is shown. The interface holds one

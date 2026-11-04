@@ -410,6 +410,10 @@ holds the device identity's private key, it performs its own key agreement
 peers—no symmetric keys are provisioned, and the entries contain no
 secret material.
 
+A device **MAY** hold more peers than one value can carry. `CMD_PROP_GET`
+on a list too long to return is answered with `STATUS_NOMEM`, never with
+some of its items; `CMD_PROP_INSERT` and `CMD_PROP_REMOVE` still apply.
+
 How the device node uses this list (management access control, secure
 diagnostics, and so on) is application behavior outside the scope of this
 protocol.

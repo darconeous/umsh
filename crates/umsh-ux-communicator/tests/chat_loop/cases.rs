@@ -1666,7 +1666,7 @@ fn save_peer_goes_once_saved_and_message_opens_a_direct_chat() {
     run(&mut app, &[Input::Press]);
     assert!(shown_member(app.state()).0.saved);
     assert_eq!(
-        app.state().peers.first().map(|p| p.name.as_str()),
+        app.state().peer_at(0).as_ref().map(|p| p.name.as_str()),
         Some("Sam")
     );
     assert_eq!(focus(app.state()), Some(keys::MESSAGE_MEMBER));
@@ -1905,7 +1905,7 @@ fn the_rail_switches_to_peers_which_open_on_add_peer() {
     assert_eq!(app.state().section, Section::Peers);
     assert_eq!(focus(app.state()), Some(keys::ADD_PEER));
     run(&mut app, &[Input::Turn(1)]);
-    let first = app.state().peers.first().map(|p| keys::peer(p.id));
+    let first = app.state().peer_at(0).map(|p| keys::peer(p.id));
     assert_eq!(focus(app.state()), first);
     // Back on the rail, and into Chats, at its first chat.
     run(&mut app, &[Input::Backspace]);
@@ -2051,7 +2051,7 @@ fn not_now_stays_on_nearby_under_a_new_color() {
 fn same_on_both_sides_opens_the_unsaved_peer_on_message() {
     let store = store();
     let mut app = app!(store);
-    let saved = app.state().peers.len();
+    let saved = app.state().peer_count();
     open_nearby(&mut app);
     turn_to(&mut app, keys::nearby(1));
     run(&mut app, &[Input::Press]);
@@ -2078,7 +2078,7 @@ fn same_on_both_sides_opens_the_unsaved_peer_on_message() {
     }
     assert_eq!(focus(app.state()), Some(keys::MESSAGE_MEMBER));
     assert_eq!(app.state().meet.exchange, Exchange::Closed);
-    assert_eq!(app.state().peers.len(), saved);
+    assert_eq!(app.state().peer_count(), saved);
     // Back goes to the Peers list, not to Add peer.
     run(&mut app, &[Input::Backspace]);
     assert_eq!(app.state().screens.len(), 1);
@@ -2152,10 +2152,8 @@ where
     run(app, &[Input::Backspace]);
     turn_to(app, keys::rail(Section::Peers));
     run(app, &[Input::Press]);
-    let pat = app
-        .state()
-        .peers
-        .iter()
+    let pat = (0..app.state().peer_count())
+        .filter_map(|index| app.state().peer_at(index))
         .find(|p| p.name.as_str() == "Pat Okafor")
         .map(|p| p.id)
         .expect("Pat is saved");
@@ -2238,21 +2236,21 @@ fn a_saved_peer_is_asked_for_their_identity() {
 fn forget_asks_first_and_cancel_keeps_the_peer() {
     let mut app = app!();
     open_pat(&mut app);
-    let peers = app.state().peers.len();
+    let peers = app.state().peer_count();
     turn_to(&mut app, keys::PEER_FORGET);
     run(&mut app, &[Input::Press]);
     assert_eq!(focus(app.state()), Some(keys::FORGET_CANCEL));
     run(&mut app, &[Input::Press]);
     assert_eq!(focus(app.state()), Some(keys::PEER_FORGET));
-    assert_eq!(app.state().peers.len(), peers);
+    assert_eq!(app.state().peer_count(), peers);
 
     run(&mut app, &[Input::Press]);
     turn_to(&mut app, keys::FORGET_CONFIRM);
     run(&mut app, &[Input::Press]);
     assert!(matches!(app.state().screen(), Screen::Chats { .. }));
-    assert_eq!(app.state().peers.len(), peers - 1);
+    assert_eq!(app.state().peer_count(), peers - 1);
     // The row that took its place is focused.
-    let next = app.state().peers.first().map(|p| keys::peer(p.id));
+    let next = app.state().peer_at(0).map(|p| keys::peer(p.id));
     assert_eq!(focus(app.state()), next);
 }
 
@@ -2761,7 +2759,7 @@ fn typing_on_the_list_finds_and_enter_opens_the_top_result() {
     // Ridge Medic; Rick Alvarez; Riverbend Camp and Ridge Runner, heard.
     assert_eq!(count, 4);
     assert_eq!(found[0].kind, FoundKind::Chat(RIDGE));
-    assert_eq!(found[1].kind, FoundKind::Peer(app.state().peers[2].id));
+    assert_eq!(found[1].kind, FoundKind::Peer(app.state().peer_at(2).unwrap().id));
     assert_eq!(found[2].title.as_ref(), "Riverbend Camp");
     run(&mut app, &[Input::Enter]);
     assert_in_conversation(app.state(), RIDGE);
@@ -3417,16 +3415,33 @@ fn a_chat_gone_from_the_node_closes_and_its_row_gives_way() {
 }
 
 #[test]
+fn a_chat_past_those_held_in_full_opens() {
+    let store = Box::leak(Box::new(
+        fixture::Store::new(&std::alloc::System).with_quiet_chats(16),
+    ));
+    let mut app = app!(&*store);
+    let last = fixture::FIRST_QUIET;
+    assert_eq!(app.state().node.chat_count(), 23);
+    assert!(app.state().chat(last).is_none());
+
+    open_chat(&mut app, last);
+    assert_eq!(app.state().chats[0].id, last);
+    run(&mut app, &[Input::Backspace]);
+    assert!(matches!(app.state().screen(), Screen::Chats { .. }));
+    assert_eq!(focus(app.state()), Some(keys::chat(last)));
+}
+
+#[test]
 fn a_peer_forgotten_elsewhere_leaves_its_screen() {
     let store = store();
     let mut app = app!(store);
     open_pat(&mut app);
-    let pat = app.state().peers[0].id;
+    let pat = app.state().peer_at(0).unwrap().id;
     store.forget_peer(pat);
     input::events(&mut app, 0);
     assert!(matches!(app.state().screen(), Screen::Chats { .. }));
     assert!(app.state().peer(pat).is_none());
-    let next = app.state().peers.first().map(|p| keys::peer(p.id));
+    let next = app.state().peer_at(0).map(|p| keys::peer(p.id));
     assert_eq!(focus(app.state()), next);
 }
 
@@ -3933,12 +3948,12 @@ fn a_contact_is_shared_as_a_card_that_saves_nothing_by_itself() {
     assert!(peer_detail(app.state()).address.starts_with("YmRG"));
 
     // Forgotten, Pat's card opens what is known of them, unsaved.
-    let peers = app.state().peers.len();
+    let peers = app.state().peer_count();
     turn_to(&mut app, keys::PEER_FORGET);
     run(&mut app, &[Input::Press]);
     turn_to(&mut app, keys::FORGET_CONFIRM);
     run(&mut app, &[Input::Press]);
-    assert_eq!(app.state().peers.len(), peers - 1);
+    assert_eq!(app.state().peer_count(), peers - 1);
     // Forget goes back to where the page was opened from.
     assert!(matches!(app.state().screen(), Screen::Conversation { .. }));
     to_newest(&mut app);
@@ -3949,10 +3964,10 @@ fn a_contact_is_shared_as_a_card_that_saves_nothing_by_itself() {
     assert!(!member.saved);
     assert_eq!(member.sender.name.as_str(), "Pat Okafor");
     assert_eq!(focus(app.state()), Some(keys::MESSAGE_MEMBER));
-    assert_eq!(app.state().peers.len(), peers - 1);
+    assert_eq!(app.state().peer_count(), peers - 1);
     turn_to(&mut app, keys::SAVE_PEER);
     run(&mut app, &[Input::Press]);
-    assert_eq!(app.state().peers.len(), peers);
+    assert_eq!(app.state().peer_count(), peers);
 }
 
 /// A screen that keeps nothing drawn to it.
@@ -4201,10 +4216,8 @@ where
     run(app, &[Input::Backspace]);
     turn_to(app, keys::rail(Section::Peers));
     run(app, &[Input::Press]);
-    let peer = app
-        .state()
-        .peers
-        .iter()
+    let peer = (0..app.state().peer_count())
+        .filter_map(|index| app.state().peer_at(index))
         .find(|p| p.name.as_str() == name)
         .map(|p| p.id)
         .expect("saved");

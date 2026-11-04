@@ -323,6 +323,12 @@ impl SimulatedDevice {
         self.device.platform().temperature_samples()
     }
 
+    /// The record of the device lists kept outside the snapshot, as a
+    /// communicator's store has it.
+    pub fn kept_lists(&self) -> Option<&[u8]> {
+        self.device.platform().lists.as_deref()
+    }
+
     /// Attach over the virtual equivalent of a physically secure serial link.
     pub fn attach(&mut self) {
         self.device.attach();

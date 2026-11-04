@@ -1130,6 +1130,28 @@ impl<D: Durable> ChatStore for MemoryStore<D> {
         })
     }
 
+    fn chat(&self, chat: ChatId) -> Option<ChatRecord> {
+        self.disk.chats.get(&chat.0).map(|chat| chat.record.clone())
+    }
+
+    fn chat_count(&self) -> usize {
+        self.index.by_activity.len()
+    }
+
+    fn chat_at(&self, index: usize) -> Option<ChatId> {
+        self.index
+            .by_activity
+            .values()
+            .rev()
+            .nth(index)
+            .map(|&id| ChatId(id))
+    }
+
+    fn unread_chats(&self) -> usize {
+        let chats = self.disk.chats.values();
+        chats.filter(|chat| chat.record.unread > 0).count()
+    }
+
     fn chat_for(&self, conversation: &ConversationKey) -> Option<ChatId> {
         self.index
             .chat_for

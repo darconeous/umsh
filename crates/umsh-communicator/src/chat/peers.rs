@@ -16,8 +16,8 @@ use umsh_uri::UmshUri;
 use umsh_ux_communicator::avatar::{AvatarStyle, PeerShape};
 use umsh_ux_communicator::heapless::{String, Vec};
 use umsh_ux_communicator::model::{
-    self, Age, Card, ChatSummary, Contact, ContactUri, Heard, MAX_HEARD, MAX_PEERS, Member,
-    NodeEvent, PeerDetail, PeerEntry, PeerSummary, Sender, word_match,
+    self, Age, Card, ChatSummary, Contact, ContactUri, Heard, MAX_HEARD, Member, NodeEvent,
+    PeerDetail, PeerEntry, PeerSummary, Sender, word_match,
 };
 use umsh_ux_communicator::text::SharedText;
 
@@ -345,8 +345,15 @@ impl<S: ChatStore> Chats<S> {
         }
     }
 
-    /// Fills `peers` with the saved peers, most recently heard first.
-    pub fn peers(&self, peers: &mut model::Peers, now_ms: u64, wall: Option<u32>) {
+    /// The saved peer `peer`, as the list shows them.
+    pub fn peer(&self, peer: model::PeerId, now_ms: u64, wall: Option<u32>) -> Option<PeerSummary> {
+        let kept = self.saved_peer(peer)?;
+        let ago = self.heard_ago(&kept.key, Some(&kept), now_ms, wall);
+        Some(self.peer_summary(&kept, ago))
+    }
+
+    /// The saved peers, most recently heard first.
+    pub fn peers(&self, now_ms: u64, wall: Option<u32>) -> alloc::vec::Vec<PeerSummary> {
         let mut saved: alloc::vec::Vec<(Option<u32>, PeerRecord)> = self
             .store
             .peers(PeerFilter::Saved)
@@ -354,9 +361,10 @@ impl<S: ChatStore> Chats<S> {
             .map(|kept| (self.heard_ago(&kept.key, Some(&kept), now_ms, wall), kept))
             .collect();
         saved.sort_by_key(|(ago, _)| ago.unwrap_or(u32::MAX));
-        for (ago, kept) in saved.iter().take(MAX_PEERS) {
-            _ = peers.push(self.peer_summary(kept, *ago));
-        }
+        saved
+            .iter()
+            .map(|(ago, kept)| self.peer_summary(kept, *ago))
+            .collect()
     }
 
     fn peer_summary(&self, kept: &PeerRecord, ago: Option<u32>) -> PeerSummary {

@@ -4,9 +4,11 @@
 
 use buoyant::event::{Key, KeyResponse};
 use buoyant::focus::BoundaryBehavior;
+use buoyant::view::LazyForEach;
+use buoyant::view::lazy_foreach::Extent;
 use buoyant::view::prelude::*;
 use embedded_graphics::pixelcolor::Rgb565;
-use heapless::{String, Vec};
+use heapless::String;
 
 use super::conversation::header;
 use super::label;
@@ -16,17 +18,6 @@ use crate::board::Metrics;
 use crate::model::{ChatId, ChatKind, MAX_CHATS, State};
 use crate::nav::keys;
 use crate::{font, theme};
-
-/// Indices `ForEach` can hold without borrowing the state.
-static INDICES: [usize; MAX_CHATS] = {
-    let mut a = [0; MAX_CHATS];
-    let mut i = 0;
-    while i < MAX_CHATS {
-        a[i] = i;
-        i += 1;
-    }
-    a
-};
 
 /// What a chat's row shows.
 #[derive(Clone)]
@@ -42,21 +33,7 @@ const INSET: u32 = 12;
 
 pub fn view(state: &State, name: &str) -> impl View<Rgb565, State> + use<> {
     let m = state.metrics();
-    let rows: Vec<Chat, MAX_CHATS> = state
-        .chats
-        .iter()
-        .map(|c| Chat {
-            id: c.id,
-            avatar: c.avatar.clone(),
-            title: c.title(),
-            about: match c.kind {
-                ChatKind::Channel { .. } => "Channel",
-                ChatKind::Peer { .. } => "Direct chat",
-            },
-        })
-        .collect();
-    let ids: Vec<ChatId, MAX_CHATS> = rows.iter().map(|c| c.id).collect();
-    let count = rows.len();
+    let node = state.node;
     let mut whom: String<48> = String::new();
     _ = whom.push_str("Send ");
     for c in name.chars() {
@@ -72,8 +49,26 @@ pub fn view(state: &State, name: &str) -> impl View<Rgb565, State> + use<> {
             .padding(Edges::Vertical, 4)
             .flex_infinite_width(HorizontalAlignment::Leading),
         super::list(
-            ForEach::<MAX_CHATS>::new_vertical(&INDICES[..count], move |&i| row(m, &rows[i]))
-                .keyed(move |&i| keys::chat(ids[i])),
+            LazyForEach::<MAX_CHATS>::new_vertical(
+                node.chat_count(),
+                Extent::Fixed(ROW),
+                move |i| {
+                    let c = node.chat(node.chat_at(i)?)?;
+                    Some(row(
+                        m,
+                        &Chat {
+                            id: c.id,
+                            avatar: c.avatar.clone(),
+                            title: c.title(),
+                            about: match c.kind {
+                                ChatKind::Channel { .. } => "Channel",
+                                ChatKind::Peer { .. } => "Direct chat",
+                            },
+                        },
+                    ))
+                },
+            )
+            .keyed(move |i| keys::chat(node.chat_at(i).unwrap_or_default())),
         ),
     ))
     .with_spacing(0)

@@ -781,7 +781,14 @@ pub fn chats<H: Harness>(harness: &mut H) {
     assert_eq!(order(&store), [group_chat, direct_chat]);
     rig.hear_text(&mut store, direct(), "hey");
     assert_eq!(order(&store), [direct_chat, group_chat]);
+    assert_eq!(store.chat_count(), 2);
+    assert_eq!(store.chat_at(0), Some(direct_chat));
+    assert_eq!(store.chat_at(1), Some(group_chat));
+    assert_eq!(store.chat_at(2), None);
+    assert_eq!(store.chat(group_chat).unwrap().id, group_chat);
+    assert_eq!(store.unread_chats(), 1);
     rig.hear_text(&mut store, group(), "hey, you");
+    assert_eq!(store.unread_chats(), 2);
     let heard = store.messages(group_chat, None).next().unwrap().unwrap();
     assert!(matches!(heard.sender, SenderScope::ClaimedMember(_)));
 

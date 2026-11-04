@@ -54,6 +54,12 @@ pub trait ChatStore {
 
     /// Chats, most recently active first.
     fn chats(&self) -> impl Iterator<Item = Result<ChatRecord, StoreError>> + '_;
+    fn chat(&self, chat: ChatId) -> Option<ChatRecord>;
+    fn chat_count(&self) -> usize;
+    /// The chat `index` places down [`ChatStore::chats`].
+    fn chat_at(&self, index: usize) -> Option<ChatId>;
+    /// How many chats have unread messages.
+    fn unread_chats(&self) -> usize;
     fn chat_for(&self, conversation: &ConversationKey) -> Option<ChatId>;
     fn draft<'b>(&self, chat: ChatId, out: &'b mut [u8]) -> Result<Option<&'b str>, StoreError>;
     fn update_chat(&mut self, chat: ChatId, change: ChatChange<'_>) -> Result<ChatId, StoreError>;

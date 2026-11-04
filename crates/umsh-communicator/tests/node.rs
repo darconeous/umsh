@@ -40,7 +40,7 @@ use umsh_ulcp::profiles::VETTED;
 use umsh_ulcp_simdev::{SessionConfig, SimulatedDevice, TimeConfig};
 use umsh_ux_communicator::model::{
     ChannelAccess, ChannelEntry, ChatKind, Chats, Delivery, Direction, KeyboardSettings, Leg,
-    MESSAGE_LEN, Node, NodeEvent, PeerEntry, Peers, PingView, Presence, Profile, Reaction,
+    MESSAGE_LEN, Node, NodeEvent, PeerEntry, PeerSummary, PingView, Presence, Profile, Reaction,
     RouteKind, Rule, Setting, Shareable, Signal,
 };
 
@@ -1736,6 +1736,36 @@ fn a_saved_member_is_kept_by_the_device() {
     assert!(!node.member(chat, message).unwrap().saved);
 }
 
+/// A device can hold more peers than it can return from a read. The ones
+/// the store says it holds stay saved through a refused read, and a node
+/// started again finds them there.
+#[test]
+fn peers_past_what_a_read_returns_stay_saved() {
+    let sim = device();
+    let (node, clock) = started(&sim);
+    for seed in 1..=12 {
+        phone_inserts(&sim, prop::DEV_PEERS, &[seed; 32]);
+        let record = sim.borrow().kept_lists().unwrap().to_vec();
+        node.keep_device_lists(Some(&record)).unwrap();
+        clock.set(u64::from(seed) * 1_000);
+        node.pump();
+    }
+    assert_eq!(peers(&node).len(), 12);
+
+    let record = sim.borrow().kept_lists().unwrap().to_vec();
+    let (again, _) = crate::node(&sim);
+    again.keep_device_lists(Some(&record)).unwrap();
+    let mut out = vec![0; record.len()];
+    assert_eq!(again.device_lists(&mut out).unwrap(), Some(&record[..]));
+    again.pump();
+    assert_eq!(peers(&again).len(), 12);
+
+    node.keep_device_lists(None).unwrap();
+    clock.set(20_000);
+    node.pump();
+    assert!(peers(&node).is_empty());
+}
+
 /// A peer a phone saves on the device shows among the peers.
 #[test]
 fn a_peer_saved_elsewhere_is_listed() {
@@ -2082,10 +2112,8 @@ fn node_over(sim: &Rc<RefCell<SimulatedDevice>>) -> CommunicatorNode<Port> {
     node
 }
 
-fn peers(node: &CommunicatorNode<Port>) -> Peers {
-    let mut peers = Peers::new();
-    node.peers(&mut peers);
-    peers
+fn peers(node: &CommunicatorNode<Port>) -> Vec<PeerSummary> {
+    node.peers()
 }
 
 /// `signer`'s chatting identity named `name`, signed by it, and the link

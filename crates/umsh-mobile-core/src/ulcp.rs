@@ -7430,7 +7430,7 @@ fn ulcp_prop_remove(
 /// when the list is actually full.
 #[uniffi::export]
 pub fn ulcp_max_dev_peers() -> u8 {
-    8
+    umsh_ulcp_device::MAX_DEV_PEERS as u8
 }
 
 /// Capacity of the muted-channel table (`PROP_HOST_MUTED_CHANNELS`),
