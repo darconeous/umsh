@@ -1,10 +1,9 @@
 //! Shared TWIM controllers and host access for nRF52840 boards.
 //!
-//! Error returns wait for the HAL's pending STOP before releasing the bus.
-//! Known limitation: cancellation of an unfinished embassy-nrf 0.11
-//! transaction still does not confirm DMA shutdown. Host access is enabled
-//! while that recovery fix remains pending; deadlines are not a cancellation-safety
-//! guarantee. See docs/ulcp-i2c-proposal.md for the qualification limits.
+//! Error returns wait for the HAL's pending STOP before releasing the bus;
+//! a transaction abandoned mid-transfer stops, disables, and clears the bus
+//! before its buffers are released. See docs/ulcp-i2c-proposal.md for the
+//! qualification limits.
 
 use embassy_sync::{blocking_mutex::raw::ThreadModeRawMutex, mutex::Mutex};
 

@@ -256,25 +256,37 @@ startup failures. Reading the property only encodes the cached slice;
 `read`, `write`, `xfer`, and `scan` still perform no inventory query or
 identification. Other boards retain their existing tables.
 
-## Known nRF recovery limitation
+## nRF error and cancellation recovery
 
 The shared nRF controller waits for STOPPED after embassy-nrf 0.11's early
 error return. Without that wait, a scan can start its next address while
 the preceding NACK's STOP is still pending, causing a spurious bus error.
 The wrapper distinguishes a pending STOP from one the HAL already consumed,
 resumes a suspended operation before stopping it, and keeps the mutex and
-buffers borrowed throughout the bounded wait. An unconfirmed stop resets
-the device rather than returning those buffers. Display and host users
+buffers borrowed throughout the bounded wait. Display and host users
 share this wrapper; no HAL fork or dependency patch is introduced.
 
-Cancellation recovery remains deferred. Dropping an unfinished HAL future
-bypasses its return path and the wrapper's error completion. A host deadline
-can therefore still leave DMA active against released buffers. The follow-up
-is a cancellation guard that resumes a suspended transfer, stops it, confirms
-STOPPED synchronously within a hard bound, and resets without returning if
-shutdown cannot be confirmed. Hardware qualification remains pending.
+embassy-nrf 0.11's async transaction has no drop guard, so a host deadline
+that drops it would otherwise leave the controller running against released
+buffers, and every later transaction would start on top of it until reboot.
+The wrapper arms a guard for the length of each transaction. Dropped armed,
+it resumes and stops the transfer within a bounded wait, then recovers the
+controller: interrupts and shortcuts off, controller disabled, nine-clock
+bus clear and STOP over GPIO, controller re-enabled. An error return whose
+STOP is never confirmed takes the same recovery. Disabling is the backstop
+when the STOP cannot complete, as with SCL held low, and is what Zephyr's
+nrfx TWIM driver does on a transfer timeout. A bus that stays stuck is not
+escalated: the next transaction reports it, and recovery runs again.
 
 ## Validation record
+
+nRF cancellation recovery, 2026-11-04:
+
+- Eight nRF stop/clear tests pass, adding the abandoned-transfer stop and
+  its bounded failure, a bus clear on an idle bus, a target released after
+  one to nine clocks, and a line held low past nine clocks.
+- XIAO nRF52 links in release mode. No hardware was available; the
+  miswired-then-fixed scan from GitHub issue 20 still needs confirming.
 
 Startup inventory and nRF scan recovery, 2026-09-16:
 
