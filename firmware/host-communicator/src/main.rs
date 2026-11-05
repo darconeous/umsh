@@ -35,7 +35,7 @@ use umsh_pager_peripherals::input::alt_legend;
 use umsh_ux_communicator::board::Board;
 use umsh_ux_communicator::input::{self, Arrow, Input, TouchPhase};
 use umsh_ux_communicator::keyboard::Modifier;
-use umsh_ux_communicator::model::{BatteryReading, Charge, HOLD_MS, NodeEvent, State};
+use umsh_ux_communicator::model::{BatteryReading, Charge, HOLD_MS, NodeEvent, Reaction, State};
 use umsh_ux_communicator::{fixture, theme, typeface, ui};
 
 /// A communicator on this computer, on the network as a UMSH node.
@@ -476,6 +476,42 @@ fn headless(
                     store.arrive();
                 } else {
                     store.answer_identity();
+                }
+                vec![]
+            }
+            "say" | "react" => {
+                let Backend::Demo(store) = backend else {
+                    return Err(format!("line {}: {word} needs the demo", number + 1));
+                };
+                let Some(chat) = app.state().conversation.as_ref().map(|open| open.chat) else {
+                    return Err(format!("line {}: {word} needs a chat open", number + 1));
+                };
+                if word == "say" {
+                    store.arrive_in(chat, rest);
+                } else {
+                    store.their_reaction(chat, Reaction::of(rest));
+                }
+                vec![]
+            }
+            "sink" => {
+                if !matches!(backend, Backend::Demo(_)) {
+                    return Err(format!("line {}: sink needs the demo", number + 1));
+                }
+                let Ok(place) = rest.parse::<usize>() else {
+                    return Err(format!("line {}: sink takes a place", number + 1));
+                };
+                let Some(chat) = app.state().conversation.as_ref().map(|open| open.chat) else {
+                    return Err(format!("line {}: sink needs a chat open", number + 1));
+                };
+                let chats = &mut app.state_mut().chats;
+                if let Some(index) = chats.iter().position(|c| c.id == chat) {
+                    let mut summary = chats.remove(index);
+                    let place = place.min(chats.len());
+                    // Listed by age: as old as the chat it now follows.
+                    if let Some(above) = place.checked_sub(1).and_then(|i| chats.get(i)) {
+                        summary.last_activity = above.last_activity;
+                    }
+                    _ = chats.insert(place, summary);
                 }
                 vec![]
             }

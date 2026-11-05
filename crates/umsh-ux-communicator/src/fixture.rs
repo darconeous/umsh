@@ -709,6 +709,8 @@ pub struct Store {
     arrived: Cell<usize>,
     /// My reactions, by message.
     mine: RefCell<Vec<(MessageId, Reaction), KEPT>>,
+    /// Others' reactions that came after the fixture started, by message.
+    theirs: RefCell<Vec<(MessageId, Reaction), KEPT>>,
     /// Unconfirmed messages sent again, and those of them sent again
     /// without forward secrecy.
     retried: RefCell<Vec<MessageId, KEPT>>,
@@ -962,6 +964,7 @@ impl Store {
             row_starts: RefCell::new(None),
             arrived: Cell::new(0),
             mine: RefCell::new(Vec::new()),
+            theirs: RefCell::new(Vec::new()),
             retried: RefCell::new(Vec::new()),
             without_secrecy: RefCell::new(Vec::new()),
             deleted: RefCell::new(Vec::new()),
@@ -1636,6 +1639,21 @@ impl Store {
         self.receive(chat, from, text);
     }
 
+    /// The other end of `chat` reacts to the newest message sent there.
+    pub fn their_reaction(&self, chat: ChatId, reaction: Reaction) -> bool {
+        let Some(message) = self.latest_sent(chat) else {
+            return false;
+        };
+        let mut theirs = self.theirs.borrow_mut();
+        if theirs.is_full() {
+            theirs.remove(0);
+        }
+        _ = theirs.push((message, reaction));
+        drop(theirs);
+        self.queue(NodeEvent::MessageChanged { chat, message });
+        true
+    }
+
     /// Keeps `text`, from `from`, as the newest message of `chat`, which is
     /// unread now, and announces it.
     fn receive(&self, chat: ChatId, from: From, text: &str) {
@@ -2062,6 +2080,18 @@ impl Store {
         if let Some(&(_, reaction)) = self.mine.borrow().iter().find(|(id, _)| *id == message.id) {
             message.set_my_reaction(Some(reaction));
         }
+        for &(_, reaction) in self
+            .theirs
+            .borrow()
+            .iter()
+            .filter(|(id, _)| *id == message.id)
+        {
+            _ = message.reactions.push(Reacted {
+                reaction,
+                count: 1,
+                mine: false,
+            });
+        }
         if self.retried.borrow().contains(&message.id) {
             message.delivery = Delivery::Sending;
         }
@@ -2151,6 +2181,7 @@ impl core::fmt::Debug for Store {
             .field("kept", &self.kept)
             .field("arrived", &self.arrived)
             .field("mine", &self.mine)
+            .field("theirs", &self.theirs)
             .field("retried", &self.retried)
             .field("next", &self.next)
             .field("events", &self.events)
@@ -3530,5 +3561,17 @@ mod tests {
         let store = std::boxed::Box::leak(std::boxed::Box::new(Store::new(&std::alloc::System)));
         assert_eq!(store.rows(LONG), 1);
         assert_eq!(store.row_id(LONG, 0), Some(mockup_id(LONG, 0)));
+    }
+
+    /// A reaction that comes later lands on the newest message sent.
+    #[test]
+    fn a_reaction_comes_to_the_newest_message_sent() {
+        let store = std::boxed::Box::leak(std::boxed::Box::new(Store::new(&std::alloc::System)));
+        let newest = store.latest_sent(3).unwrap();
+        assert!(store.their_reaction(3, Reaction::Heart));
+        let reacted = store.message(3, newest).unwrap().reactions;
+        assert_eq!(reacted.len(), 1);
+        assert_eq!(reacted[0].reaction, Reaction::Heart);
+        assert!(!reacted[0].mine);
     }
 }

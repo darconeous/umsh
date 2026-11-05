@@ -202,6 +202,9 @@ board's clock.
 | `first-run` | Starts first-run setup |
 | `arrive` | The demo's next message arrives (demo only) |
 | `identify` | The identity asked for arrives at once (demo only) |
+| `say TEXT` | The other end of the open chat says TEXT (demo only) |
+| `react EMOJI` | The other end of the open chat reacts to the newest message sent there (demo only) |
+| `sink N` | Moves the open chat to place N of the chat list, counting from 0 (demo only) |
 | `meet asks\|accepts\|declines\|same\|different\|leaves` | The demo's other party in a contact exchange (demo only) |
 | `shot NAME` | Writes `NAME.png` once everything has settled |
 | `peek MS NAME` | Writes `NAME.png` MS milliseconds into what the last steps started |
