@@ -5,7 +5,7 @@
 //! reading goes to the composer.
 
 use buoyant::event::{Key, KeyResponse};
-use buoyant::focus::{BoundaryBehavior, Role};
+use buoyant::focus::{BoundaryBehavior, FocusState, Role};
 use buoyant::primitives::Size;
 use buoyant::view::lazy_foreach::Natural;
 use buoyant::view::popover::Dismissal;
@@ -41,6 +41,8 @@ const ARROW_INSET: u32 = 4;
 /// Between the back arrow and what follows it.
 pub(super) const ARROW_GAP: u32 = 6;
 const AVATAR: u32 = 26;
+/// How long rows take to make way for one that changed height.
+const ROW_MOTION: core::time::Duration = core::time::Duration::from_millis(400);
 /// The composer's band, and its field inside it.
 const COMPOSER_INSET: u32 = 3;
 const FIELD_RADIUS: u16 = 14;
@@ -98,6 +100,10 @@ const fn row_estimate(m: &Metrics) -> u32 {
     GAP_SAME + body_line(m) + 2 * BUBBLE_PAD_Y
 }
 
+// Kept out of line: inlined into a screen, its calls make the esp
+// toolchain's Xtensa back end fail with `Cannot select:
+// XtensaISD::PCREL_WRAPPER TargetConstantPool` (rustc 1.95.0-nightly esp).
+#[inline(never)]
 pub fn view(state: &State, chat: ChatId) -> impl View<Rgb565, State> + use<> {
     let m = state.metrics();
     let summary = state.chat(chat);
@@ -111,13 +117,7 @@ pub fn view(state: &State, chat: ChatId) -> impl View<Rgb565, State> + use<> {
         } => (*actions, *reply, *unsent),
         _ => (None, None, None),
     };
-    // A message's actions are part of reading it.
-    let reading = actions.is_some()
-        || state
-            .screen()
-            .focus()
-            .current()
-            .is_some_and(keys::is_message);
+    let reading = reading(actions, state.screen().focus());
     let find = |id: Option<MessageId>| id.and_then(|id| state.open_message(id));
     // The menu offers my reaction as the one already chosen, and a
     // member's message offers its sender.
@@ -226,6 +226,17 @@ pub fn view(state: &State, chat: ChatId) -> impl View<Rgb565, State> + use<> {
         }
         Dismissal::Dismiss
     })
+}
+
+/// Whether the conversation is being read. A message's actions are part of
+/// reading it, and focus on its way goes by where it is going: closing the
+/// actions must not open the composer for the frame before focus lands.
+fn reading(actions: Option<MessageId>, focus: &FocusState) -> bool {
+    actions.is_some()
+        || focus
+            .pending()
+            .or(focus.current())
+            .is_some_and(keys::is_message)
 }
 
 /// What opens over the conversation.
@@ -541,7 +552,7 @@ fn history(
     ScrollView::new(
         LazyForEach::<HISTORY_ROWS>::new_natural(
             node.rows(chat),
-            Natural::<REMEMBERED>::new(row_estimate(m)),
+            Natural::<REMEMBERED>::new(row_estimate(m)).with_row_motion(ROW_MOTION),
             move |i| {
                 node.row_message(chat, i)
                     .map(|message| item(&row, &message, i))
@@ -668,6 +679,7 @@ fn item(row: &Row, message: &Message, i: usize) -> impl View<Rgb565, State> + us
     // Received messages have no delivery line, so the bottom is the bubble's.
     .overlay(Alignment::BottomLeading, avatar)
     .padding(Edges::Top, gap + reserve)
+    .row_inset(reserve)
 }
 
 /// What goes over a message: when the conversation picked up again, and
@@ -799,7 +811,25 @@ fn bubble(
             // that the look does not hold.
             let (corner, rest) = look.held();
             let (outer, inner) = look.sides();
+            let reactions = look.reactions.clone();
+            let kinds = reactions.len();
+            let (outbound, open) = (look.outbound, look.open);
+            let at = if outbound {
+                Alignment::TopLeading
+            } else {
+                Alignment::TopTrailing
+            };
+            // Beside the look, not in it: a bubble's look keeps no state,
+            // and the chips' fade does.
+            let chips = (kinds != 0).then(|| {
+                Lazy::new(
+                    (reactions, outbound, open, m),
+                    |(reactions, outbound, open, m)| chips(m, reactions, *outbound, *open),
+                )
+            });
             Lazy::new((look, m), |(look, m)| bubble_look(m, look))
+                // Over the ring, so a chip cuts it as it cuts the bubble.
+                .overlay(at, chips.fade_on_change(kinds, ROW_MOTION))
                 .padding(Edges::Top, RING_GAP - corner)
                 .padding(outer, RING_GAP - corner)
                 .padding(Edges::Bottom, RING_GAP - rest)
@@ -880,19 +910,14 @@ enum CardItem {
     Show(MenuText),
 }
 
-/// A bubble, ringed while it is focused, with its reactions as chips over
-/// its outer top corner: both outside it, in the room around it, of which
-/// it holds what [`Look::held`] says.
+/// A bubble, ringed while it is focused: outside it, in the room around
+/// it, of which it holds what [`Look::held`] says, along with the corner
+/// its reactions' chips hang from.
 ///
 /// Built from its data each time it is drawn ([`Lazy`]): kept in the
 /// render trees, every bubble's would outweigh the rest of the screen.
 fn bubble_look(m: &'static Metrics, look: &Look) -> impl View<Rgb565, ()> + use<> {
     let gap = RING_GAP as i32;
-    let (corner, out) = if look.outbound {
-        (Alignment::TopLeading, -gap)
-    } else {
-        (Alignment::TopTrailing, gap)
-    };
     let (held_corner, held_rest) = look.held();
     let (outer, inner) = look.sides();
     body_view(m, look)
@@ -907,12 +932,6 @@ fn bubble_look(m: &'static Metrics, look: &Look) -> impl View<Rgb565, ()> + use<
                         .offset(-gap, -gap)
                 })
             }),
-        )
-        // Over the ring, so a chip cuts it as it cuts the bubble.
-        .overlay(
-            corner,
-            (!look.reactions.is_empty())
-                .then(|| chips(m, &look.reactions, look.outbound, look.open).offset(out, -gap)),
         )
         .padding(Edges::Top, held_corner)
         .padding(outer, held_corner)
@@ -1989,6 +2008,17 @@ mod tests {
         let mut text = heapless::String::new();
         repeat_caption(&mut text, lead, count);
         text
+    }
+
+    /// Focus on its way to a message is reading already, and on its way to
+    /// the composer is not.
+    #[test]
+    fn reading_goes_by_where_focus_is_going() {
+        let to = FocusState::requesting;
+        assert!(reading(None, &to(keys::message(1))));
+        assert!(!reading(None, &to(keys::COMPOSER)));
+        assert!(reading(Some(1), &to(keys::COMPOSER)));
+        assert!(!reading(None, &FocusState::new()));
     }
 
     /// A message sent takes "Delivered" from the one before it at once, so

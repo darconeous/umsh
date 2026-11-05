@@ -4,6 +4,7 @@
 //! to animate from, so nothing in it may borrow the state that changed.
 
 use crate::typeface::Typeface;
+use buoyant::animation::Animation;
 use buoyant::app::App;
 use buoyant::focus::{DefaultFocus, Role};
 use buoyant::match_view;
@@ -93,6 +94,9 @@ where
     app.finalize_view();
 }
 
+/// How the character picker fades in and out.
+const PICKER_MOTION: Animation = Animation::ease_out(core::time::Duration::from_millis(200));
+
 /// The whole screen for `state`.
 ///
 /// The screen's parts have fixed places, so they are laid over one another
@@ -109,7 +113,13 @@ pub fn root_view(state: &State) -> impl View<Rgb565, State> + use<> {
             false => screens(state),
         }),
         // Over everything: one slot, the topmost of what could be here.
-        state.overlay().map(|overlay| overlay_view(state, overlay)),
+        state
+            .overlay()
+            .map(|overlay| overlay_view(state, overlay))
+            .animated(
+                PICKER_MOTION,
+                matches!(state.overlay(), Some(Overlay::Picker)),
+            ),
     ))
     .with_alignment(Alignment::TopLeading)
     .flex_infinite_width(HorizontalAlignment::Leading)

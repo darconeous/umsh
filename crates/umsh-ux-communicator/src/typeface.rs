@@ -250,6 +250,27 @@ impl FontRender<Rgb565> for Typeface {
         attributes: &Self::Attributes,
         surface: &mut impl Surface<Color = Rgb565>,
     ) {
+        self.draw_cluster_faded(
+            cluster,
+            offset,
+            color,
+            background_color,
+            u8::MAX,
+            attributes,
+            surface,
+        );
+    }
+
+    fn draw_cluster_faded(
+        &self,
+        cluster: &str,
+        offset: Point,
+        color: Rgb565,
+        background_color: Option<Rgb565>,
+        fade: u8,
+        attributes: &Self::Attributes,
+        surface: &mut impl Surface<Color = Rgb565>,
+    ) {
         let face = self.text.face(attributes.size);
         let Some(shown) = emoji(face, cluster) else {
             self.text.draw_cluster(
@@ -265,7 +286,7 @@ impl FontRender<Rgb565> for Typeface {
         let cell = Cell::of(face);
         let at = offset + Point::new(cell.lead, cell.top);
         match shown {
-            Shown::Glyph(id) => glyph(cell.store, id, at, background_color, surface),
+            Shown::Glyph(id) => glyph(cell.store, id, at, background_color, fade, surface),
             Shown::Parts(ids, count) => {
                 for (i, &id) in ids[..usize::from(count)].iter().enumerate() {
                     let x = (cell.advance * i as u32) as i32;
@@ -274,6 +295,7 @@ impl FontRender<Rgb565> for Typeface {
                         id,
                         at + Point::new(x, 0),
                         background_color,
+                        fade,
                         surface,
                     );
                 }
@@ -281,7 +303,7 @@ impl FontRender<Rgb565> for Typeface {
             Shown::Flag(region) => {
                 self.badge(&cell, region.as_str(), at, surface);
             }
-            Shown::Placeholder => placeholder(cell.store, at, background_color, surface),
+            Shown::Placeholder => placeholder(cell.store, at, background_color, fade, surface),
             Shown::Text | Shown::Nothing => {}
         }
     }
@@ -334,9 +356,11 @@ impl Typeface {
 
 /// An RGB565 color and its alpha, as it is drawn: blended into the
 /// background where there is one, and where there is not, drawn whole at
-/// half coverage or more, as text is.
-fn blend(rgb565: u16, alpha: u8, background: Option<Rgb565>) -> Option<Rgb565> {
+/// half coverage or more, as text is. `fade` is how far the layer drawing
+/// it has faded in, as its alpha.
+fn blend(rgb565: u16, alpha: u8, background: Option<Rgb565>, fade: u8) -> Option<Rgb565> {
     let color = Rgb565::from(RawU16::new(rgb565));
+    let alpha = (u16::from(alpha) * u16::from(fade) / 255) as u8;
     match (alpha, background) {
         (0, _) => None,
         (255, _) => Some(color),
@@ -351,6 +375,7 @@ fn glyph(
     id: Id,
     at: Point,
     background: Option<Rgb565>,
+    fade: u8,
     surface: &mut impl Surface<Color = Rgb565>,
 ) {
     let drawn = with_cache(|cache| {
@@ -358,7 +383,7 @@ fn glyph(
             // Each palette entry blended once, rather than once a pixel.
             let mut colors = [None; 32];
             for (color, (rgb565, alpha)) in colors.iter_mut().zip(glyph.palette()) {
-                *color = blend(rgb565, alpha, background);
+                *color = blend(rgb565, alpha, background, fade);
             }
             let size = usize::from(glyph.size);
             surface.draw_iter(
@@ -382,7 +407,7 @@ fn glyph(
     .flatten()
     .is_some();
     if !drawn {
-        placeholder(store, at, background, surface);
+        placeholder(store, at, background, fade, surface);
     }
 }
 
@@ -391,6 +416,7 @@ fn placeholder(
     store: &Store,
     at: Point,
     background: Option<Rgb565>,
+    fade: u8,
     surface: &mut impl Surface<Color = Rgb565>,
 ) {
     let Some((size, pixels)) = PLACEHOLDERS
@@ -405,7 +431,7 @@ fn placeholder(
             .iter()
             .enumerate()
             .filter_map(|(i, &(rgb565, alpha))| {
-                blend(rgb565, alpha, background).map(|color| Pixel {
+                blend(rgb565, alpha, background, fade).map(|color| Pixel {
                     point: at + Point::new((i % size) as i32, (i / size) as i32),
                     color,
                 })
