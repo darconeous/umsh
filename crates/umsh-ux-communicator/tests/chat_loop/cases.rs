@@ -3183,6 +3183,26 @@ fn transmit_power_is_typed_in_symbol_lock() {
 }
 
 #[test]
+fn transmit_power_opens_being_edited() {
+    let mut app = app!();
+    open_radio(&mut app);
+    turn_to(&mut app, keys::TRANSMIT_POWER);
+    run(&mut app, &[Input::Press]);
+    assert!(app.state().keyboard.active());
+    // The first Backspace erases, and does not leave.
+    run(&mut app, &[Input::Backspace]);
+    assert_eq!(focus(app.state()), Some(keys::POWER_FIELD));
+    assert!(matches!(
+        app.state().screen(),
+        Screen::Device { page: DevicePage::TransmitPower { text }, .. } if text.text() == "2"
+    ));
+    // Enter sets what is there, without first starting an edit.
+    run(&mut app, &[Input::Enter]);
+    assert_eq!(radio(app.state()).transmit_power, 2);
+    assert_eq!(focus(app.state()), Some(keys::TRANSMIT_POWER));
+}
+
+#[test]
 fn a_keyboard_with_its_own_symbols_types_transmit_power_as_it_is() {
     if BOARD.controls.keyboard != KeyboardKind::Characters {
         return;

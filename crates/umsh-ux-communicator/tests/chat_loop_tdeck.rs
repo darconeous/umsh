@@ -195,6 +195,19 @@ fn a_finger_that_moves_away_is_not_held() {
 }
 
 #[test]
+fn tapping_transmit_power_opens_it_being_edited() {
+    use input::TouchPhase::{Ended, Started};
+    let mut app = app!();
+    open_radio(&mut app);
+    turn_to(&mut app, keys::TRANSMIT_POWER);
+    let row = middle_of(&mut app, keys::TRANSMIT_POWER);
+    apply_touch(&mut app, Started, row, tick(100));
+    apply_touch(&mut app, Ended, row, tick(50));
+    assert_eq!(focus(app.state()), Some(keys::POWER_FIELD));
+    assert!(app.state().keyboard.active());
+}
+
+#[test]
 fn the_lock_screen_takes_no_touch() {
     use input::TouchPhase::{Ended, Started};
     let mut app = app!();

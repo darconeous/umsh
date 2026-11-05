@@ -1922,7 +1922,8 @@ impl State {
         }
     }
 
-    /// Opens Transmit power, its field focused.
+    /// Opens Transmit power, its field being edited: a number already in
+    /// it is there to be changed, so Backspace erases.
     pub fn open_transmit_power(&mut self) {
         let mut text = PowerText::default();
         let mut dbm: String<4> = String::new();
@@ -1937,6 +1938,7 @@ impl State {
             page: DevicePage::TransmitPower { text },
             focus: FocusState::requesting(keys::POWER_FIELD),
         });
+        self.edit_opened = true;
     }
 
     pub fn power_text_mut(&mut self) -> Option<&mut PowerText> {

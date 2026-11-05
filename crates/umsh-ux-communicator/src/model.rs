@@ -2070,6 +2070,9 @@ pub struct State {
     pub keyboard: Keyboard,
     /// The character picker, while it is open.
     pub picker: Option<Picker>,
+    /// The field a screen just opened on starts being edited, once focus
+    /// has reached it.
+    pub(crate) edit_opened: bool,
     /// The characters last picked.
     pub recents: Recents,
     /// A brief card for a setting a key changed.
@@ -2212,6 +2215,7 @@ impl State {
             ending: None,
             keyboard: Keyboard::new(board.controls.keyboard),
             picker: None,
+            edit_opened: false,
             recents: Recents::default(),
             glance: None,
             press: None,

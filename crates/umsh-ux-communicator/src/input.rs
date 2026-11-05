@@ -257,7 +257,8 @@ where
 }
 
 /// Keeps the keyboard with the focused field, rebuilding the view only
-/// when that changed the keyboard.
+/// when that changed the keyboard, and starts the edit of a field a screen
+/// opened on: only now, as the keyboard resets on reaching a field.
 fn sync_keyboard<V, F>(app: &mut App<V, State, F>)
 where
     V: ViewLayout<State>,
@@ -270,6 +271,11 @@ where
     state.untracked().sync_keyboard();
     if state.keyboard != keyboard {
         state.mark_changed();
+    }
+    let opened = core::mem::take(&mut state.untracked().edit_opened);
+    if opened && state.keyboard.field().is_some() {
+        app.select();
+        app.finalize_view();
     }
 }
 
