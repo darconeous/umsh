@@ -789,13 +789,14 @@ fn bubble(
                 kind: "Contact",
             },
         }),
-        reactions: message.reactions.clone(),
+        chips: !message.reactions.is_empty(),
         to_come: message.parts.map(|parts| parts.lost != 0),
         outbound,
         open,
         forward_secret: message.forward_secret,
         ringed: acting_on,
     };
+    let reactions = message.reactions.clone();
     // Pressing a message opens its actions. A tap only selects it: holding
     // it does what a press does.
     Button::new(
@@ -811,7 +812,7 @@ fn bubble(
             // that the look does not hold.
             let (corner, rest) = look.held();
             let (outer, inner) = look.sides();
-            let reactions = look.reactions.clone();
+            let reactions = reactions.clone();
             let kinds = reactions.len();
             let (outbound, open) = (look.outbound, look.open);
             let at = if outbound {
@@ -843,14 +844,16 @@ fn bubble(
     .padding(Edges::Horizontal, SIDE - RING_GAP)
 }
 
-/// What a bubble draws: its contents, its reactions, and whether it is
-/// ringed. Its colors follow from whose it is and who can read it.
+/// What a bubble draws: its contents, and whether it is ringed. Its colors
+/// follow from whose it is and who can read it.
 #[derive(Clone)]
 struct Look {
     text: SharedText,
     reply: Option<Quote>,
     card: Option<Card>,
-    reactions: Reactions,
+    /// Chips hang from its corner. Whose they are stays out of the look:
+    /// this is held once per row and copied with every row's render tree.
+    chips: bool,
     /// Parts are still to come, and whether one will not.
     to_come: Option<bool>,
     outbound: bool,
@@ -874,11 +877,7 @@ impl Look {
         } else {
             0
         };
-        let chips = if self.reactions.is_empty() {
-            0
-        } else {
-            RING_GAP
-        };
+        let chips = if self.chips { RING_GAP } else { 0 };
         (ring.max(chips), ring)
     }
 
