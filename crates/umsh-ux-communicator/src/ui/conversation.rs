@@ -24,9 +24,8 @@ use crate::board::Metrics;
 use crate::clock::{Local, MONTHS, WEEKDAYS, civil};
 use crate::model;
 use crate::model::{
-    ChannelAccess, ChatId, ChatKind, Delivery, Direction, Draft, LatestSent, Message, MessageId,
-    Neighbor, Node, Parts, Presence, Quote, REACTIONS, Reacted, Reaction, Reactions, Rule, State,
-    hops_text,
+    ChannelAccess, ChatId, ChatKind, Delivery, Direction, Draft, Message, MessageId, Neighbor,
+    Node, Parts, Presence, Quote, REACTIONS, Reacted, Reaction, Reactions, Rule, State, hops_text,
 };
 use crate::nav::{Screen, Unsent, keys};
 use crate::text::{DraftText, SharedText};
@@ -566,9 +565,8 @@ struct Row {
     m: &'static Metrics,
     node: &'static dyn Node,
     chat: ChatId,
-    /// Delivery shows under the newest message sent, the newest delivered,
-    /// and every one unconfirmed.
-    latest: LatestSent,
+    /// The newest message sent, the one a settled delivery shows under.
+    latest: Option<MessageId>,
     acting_on: Option<MessageId>,
     channel: bool,
     open: bool,
@@ -595,9 +593,11 @@ fn item(row: &Row, message: &Message, i: usize) -> impl View<Rgb565, State> + us
     };
     // A deleted one has nothing left to deliver.
     let delivery = !message.deleted
-        && (Some(message.id) == row.latest.sent
-            || Some(message.id) == row.latest.delivered
-            || message.delivery == Delivery::Unconfirmed);
+        && delivery_shows(
+            message.delivery,
+            Some(message.id) == row.latest,
+            row.channel,
+        );
     // What stands in the place of a message that is not there. A run of
     // messages on their way again is one row.
     let stand_in = if message.presence == Presence::PendingRepair {
@@ -1248,6 +1248,19 @@ enum Status {
     Said(&'static str),
     /// Sent, by the repeaters overheard carrying it.
     Via(model::Via),
+}
+
+/// Whether a sent message says how its delivery went. One that is settled
+/// says so only as the newest sent, since every row would repeat it: a
+/// delivered one, or a channel's once sent, as nobody acknowledges those.
+/// One still under way, or left unconfirmed, always says.
+fn delivery_shows(delivery: Delivery, newest: bool, channel: bool) -> bool {
+    let settled = match delivery {
+        Delivery::Delivered => true,
+        Delivery::Sent => channel,
+        Delivery::Sending | Delivery::Confirming | Delivery::Unconfirmed => false,
+    };
+    newest || !settled
 }
 
 fn caption(message: &Message, delivery: bool) -> Option<Caption> {
@@ -1976,6 +1989,28 @@ mod tests {
         let mut text = heapless::String::new();
         repeat_caption(&mut text, lead, count);
         text
+    }
+
+    /// A message sent takes "Delivered" from the one before it at once, so
+    /// nothing above it jumps when the newer one is later confirmed, while
+    /// anything not settled stays on every row.
+    #[test]
+    fn only_a_settled_delivery_leaves_older_messages() {
+        assert!(delivery_shows(Delivery::Delivered, true, false));
+        assert!(!delivery_shows(Delivery::Delivered, false, false));
+        for delivery in [
+            Delivery::Sending,
+            Delivery::Sent,
+            Delivery::Confirming,
+            Delivery::Unconfirmed,
+        ] {
+            assert!(delivery_shows(delivery, false, false));
+        }
+        // Nobody acknowledges a channel's message, so sent is as far as it
+        // goes.
+        assert!(delivery_shows(Delivery::Sent, true, true));
+        assert!(!delivery_shows(Delivery::Sent, false, true));
+        assert!(delivery_shows(Delivery::Sending, false, true));
     }
 
     /// A caption names the first repeater heard, as the phone's does, and

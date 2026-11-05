@@ -1063,11 +1063,8 @@ fn a_channel_reads_by_row() {
     );
     assert_eq!(node.time_before(chat, 0), None);
     assert_eq!(node.time_before(chat, 2), Some(STARTED + 2));
-    // Mine went out once, and a channel acknowledges nothing.
     assert!(node.depart().is_some());
-    let latest = node.latest_sent(chat);
-    assert_eq!(latest.sent, Some(mine.id));
-    assert_eq!(latest.delivered, None);
+    assert_eq!(node.latest_sent(chat), Some(mine.id));
 }
 
 /// Messages missed and asked for again are one row while they are on
@@ -1189,7 +1186,7 @@ fn reading_a_row_for_its_neighbors_allocates_nothing() {
             node.time_before(chat, row);
             node.row_id(chat, row);
         }
-        node.latest_sent(chat);
+        _ = node.latest_sent(chat);
     });
     assert_eq!(taken, 0);
     // The whole message, its reactions with it, does.
@@ -1322,7 +1319,7 @@ fn a_direct_message_goes_out_and_can_be_retried() {
         node.row_message(chat.id, 0).unwrap().delivery,
         Delivery::Sending
     );
-    assert_eq!(node.latest_sent(chat.id).sent, Some(message.id));
+    assert_eq!(node.latest_sent(chat.id), Some(message.id));
     let again = node.depart().expect("the message leaves again");
     events(&node);
     assert!(node.departed(again, Sent::Unsendable));

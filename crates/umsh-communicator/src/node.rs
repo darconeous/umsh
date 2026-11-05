@@ -20,10 +20,10 @@ use umsh_ux_communicator::avatar::AvatarStyle;
 use umsh_ux_communicator::heapless::{String, Vec};
 use umsh_ux_communicator::model::{
     About, ChannelChats, ChannelEntry, ChatId, ChatSummary, Chats, ClockSettings, ClockSource,
-    ContactUri, Details, EventQueue, Heard, Invite, KeyboardSettings, LatestSent, MAX_HEARD,
-    MAX_PATH, MeetState, Member, Message, MessageId, NearbyId, Neighbor, Node, NodeEvent,
-    PeerDetail, PeerEntry, PeerId, PeerRoute, PeerSummary, PingView, RadioSettings, Reaction,
-    Setting, ShareUri, Shareable, Statistics, WifiReading, WifiSecurity,
+    ContactUri, Details, EventQueue, Heard, Invite, KeyboardSettings, MAX_HEARD, MAX_PATH,
+    MeetState, Member, Message, MessageId, NearbyId, Neighbor, Node, NodeEvent, PeerDetail,
+    PeerEntry, PeerId, PeerRoute, PeerSummary, PingView, RadioSettings, Reaction, Setting,
+    ShareUri, Shareable, Statistics, WifiReading, WifiSecurity,
 };
 use umsh_ux_communicator::picker::RecentText;
 use umsh_ux_communicator::text::TextHeap;
@@ -521,7 +521,7 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
         self.chats.borrow().neighbor(chat, row)
     }
 
-    fn latest_sent(&self, chat: ChatId) -> LatestSent {
+    fn latest_sent(&self, chat: ChatId) -> Option<MessageId> {
         self.chats.borrow().latest_sent(chat)
     }
 

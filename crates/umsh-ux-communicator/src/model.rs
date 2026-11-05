@@ -1111,14 +1111,6 @@ pub struct Neighbor {
     pub time: Option<u32>,
 }
 
-/// The messages of a chat whose delivery shows below them, besides those
-/// unconfirmed: the newest sent, and the newest delivered.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct LatestSent {
-    pub sent: Option<MessageId>,
-    pub delivered: Option<MessageId>,
-}
-
 /// A reply's quote of the message it answers.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Quote {
@@ -1609,8 +1601,8 @@ pub trait Node {
     /// What the rows beside the row `row` of `chat` need of its message.
     fn neighbor(&self, chat: ChatId, row: usize) -> Option<Neighbor>;
 
-    /// The newest message of `chat` sent, and the newest delivered.
-    fn latest_sent(&self, chat: ChatId) -> LatestSent;
+    /// The newest message of `chat` sent.
+    fn latest_sent(&self, chat: ChatId) -> Option<MessageId>;
 
     /// When the newest message of `chat` before the row `row` that has a
     /// time came.

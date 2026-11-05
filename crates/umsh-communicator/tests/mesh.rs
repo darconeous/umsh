@@ -252,9 +252,7 @@ async fn a_direct_message_is_delivered() {
                 settlings += usize::from(event == settled);
             }
             assert_eq!(settlings, 1);
-            let latest = alice.node.latest_sent(chat.id);
-            assert_eq!(latest.sent, Some(sent.id));
-            assert_eq!(latest.delivered, Some(sent.id));
+            assert_eq!(alice.node.latest_sent(chat.id), Some(sent.id));
             let (chat, message) = arrived.unwrap();
             let message = bob.node.message(chat, message).unwrap();
             assert_eq!(&*message.text, "Meet at the ridge");

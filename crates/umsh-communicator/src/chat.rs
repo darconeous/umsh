@@ -31,8 +31,7 @@ use umsh_ux_communicator::avatar::{self, AvatarStyle, PeerShape};
 use umsh_ux_communicator::buoyant::view::{EditBuffer, EditText as _};
 use umsh_ux_communicator::heapless::String;
 use umsh_ux_communicator::model::{
-    self, ChatKind, ChatSummary, Details, LatestSent, Member, Message, Neighbor, NodeEvent,
-    Presence, Sender,
+    self, ChatKind, ChatSummary, Details, Member, Message, Neighbor, NodeEvent, Presence, Sender,
 };
 use umsh_ux_communicator::picker::RecentText;
 use umsh_ux_communicator::text::{DraftText, SharedText, TextHeap};
@@ -90,10 +89,8 @@ struct Rows {
     /// Where each row's message stands among the chat's, when a run
     /// folds; `None` when every message is a row.
     firsts: Option<Vec<usize>>,
-    /// Where the newest message sent stands, and the newest delivered, as
-    /// the store has them.
+    /// Where the newest message sent stands, as the store has it.
     sent: Option<usize>,
-    delivered: Option<usize>,
 }
 
 impl Rows {
@@ -1273,24 +1270,10 @@ impl<S: ChatStore> Chats<S> {
         })
     }
 
-    pub fn latest_sent(&self, chat: model::ChatId) -> LatestSent {
-        let (sent, delivered) = self.rows_of(chat, |rows| (rows.sent, rows.delivered));
-        let id_at = |at| self.store.message_id_at(ChatId(chat), at);
-        // A message sent again is on its way until word on it comes back,
-        // which leaves the one delivered before it the newest delivered.
-        let delivered = delivered.and_then(|newest| {
-            (0..=newest).rev().find(|&at| {
-                id_at(at).is_some_and(|id| !self.retrying.contains(&id))
-                    && self.meta_at(chat, at).is_some_and(|meta| {
-                        meta.direction == engine::Direction::Outbound
-                            && acknowledged(&meta.delivery)
-                    })
-            })
-        });
-        LatestSent {
-            sent: sent.and_then(id_at).map(|id| id.0),
-            delivered: delivered.and_then(id_at).map(|id| id.0),
-        }
+    pub fn latest_sent(&self, chat: model::ChatId) -> Option<model::MessageId> {
+        let sent = self.rows_of(chat, |rows| rows.sent)?;
+        let id = self.store.message_id_at(ChatId(chat), sent)?;
+        Some(id.0)
     }
 
     pub fn time_before(&self, chat: model::ChatId, row: usize) -> Option<u32> {
@@ -1318,7 +1301,6 @@ impl<S: ChatStore> Chats<S> {
             count,
             firsts: None,
             sent: None,
-            delivered: None,
         };
         let mut pending = false;
         for at in 0..count {
@@ -1336,9 +1318,6 @@ impl<S: ChatStore> Chats<S> {
                 && meta.direction == engine::Direction::Outbound
             {
                 rows.sent = Some(at);
-                if acknowledged(&meta.delivery) {
-                    rows.delivered = Some(at);
-                }
             }
         }
         rows

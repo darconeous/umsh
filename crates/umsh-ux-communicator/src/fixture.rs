@@ -11,14 +11,14 @@ use crate::model::{
     About, BatteryReading, Bluetooth, BluetoothReading, Card, ChannelAccess, ChannelChats,
     ChannelEntry, Charge, ChatId, ChatKind, ChatSummary, Chats, ClockSettings, ClockSource,
     Contact, ContactUri, DEFAULT_AUTO_LOCK_S, Delivery, Details, Direction, EventQueue, Exchange,
-    ExchangeEnd, Fix, Gnss, GnssReading, Heard, Invite, KeyboardFirmware, KeyboardSettings,
-    LatestSent, Leg, Links, MAX_CHATS, MAX_HEARD, MAX_NEARBY_NETWORKS, MAX_PATH,
-    MAX_SAVED_NETWORKS, MESSAGE_LEN, MeetState, Member, Message, MessageId, NearbyDevice, NearbyId,
-    NearbyNetwork, Neighbor, Node, NodeEvent, Parts, PeerDetail, PeerEntry, PeerId, PeerRoute,
-    PeerSummary, PingReply, PingView, Presence, Profile, Quote, RadioSettings, Reacted, Reaction,
-    Reactions, Reactor, Repeater, RouteKind, Rule, SavedNetwork, Sender, Setting, ShareUri,
-    Shareable, Signal, Ssid, State, Statistics, StatusStrip, TRANSMIT_POWER, Via, WifiReading,
-    WifiSecurity, WifiStatus, brightness_at, route_text, word_match,
+    ExchangeEnd, Fix, Gnss, GnssReading, Heard, Invite, KeyboardFirmware, KeyboardSettings, Leg,
+    Links, MAX_CHATS, MAX_HEARD, MAX_NEARBY_NETWORKS, MAX_PATH, MAX_SAVED_NETWORKS, MESSAGE_LEN,
+    MeetState, Member, Message, MessageId, NearbyDevice, NearbyId, NearbyNetwork, Neighbor, Node,
+    NodeEvent, Parts, PeerDetail, PeerEntry, PeerId, PeerRoute, PeerSummary, PingReply, PingView,
+    Presence, Profile, Quote, RadioSettings, Reacted, Reaction, Reactions, Reactor, Repeater,
+    RouteKind, Rule, SavedNetwork, Sender, Setting, ShareUri, Shareable, Signal, Ssid, State,
+    Statistics, StatusStrip, TRANSMIT_POWER, Via, WifiReading, WifiSecurity, WifiStatus,
+    brightness_at, route_text, word_match,
 };
 use crate::models;
 use crate::picker::RecentText;
@@ -2250,19 +2250,13 @@ impl Node for Store {
         self.neighbor_at(chat, self.row_start(chat, row)?)
     }
 
-    fn latest_sent(&self, chat: ChatId) -> LatestSent {
-        let mut latest = LatestSent::default();
-        for at in (0..self.count(chat)).rev() {
-            let Some((Direction::Outbound, delivery)) = self.delivery_at(chat, at) else {
-                continue;
-            };
-            latest.sent = latest.sent.or_else(|| self.id_at(chat, at));
-            if delivery == Delivery::Delivered {
-                latest.delivered = self.id_at(chat, at);
-                break;
-            }
-        }
-        latest
+    fn latest_sent(&self, chat: ChatId) -> Option<MessageId> {
+        (0..self.count(chat)).rev().find_map(|at| {
+            let (direction, _) = self.delivery_at(chat, at)?;
+            (direction == Direction::Outbound)
+                .then(|| self.id_at(chat, at))
+                .flatten()
+        })
     }
 
     fn time_before(&self, chat: ChatId, row: usize) -> Option<u32> {
@@ -3527,9 +3521,7 @@ mod tests {
         // A message kept with no clock looks back past it.
         assert_eq!(long_time(5), None);
         assert_eq!(store.time_before(LONG, 6), long_time(4));
-        let latest = store.latest_sent(LONG);
-        assert!(latest.sent.is_some());
-        assert_eq!(latest.sent, latest.delivered);
+        assert!(store.latest_sent(LONG).is_some());
     }
 
     /// Without it, the public channel holds its own message.
