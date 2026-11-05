@@ -2021,6 +2021,15 @@ const GNSS_BAUDS: &[u32] = &[board::GNSS_BAUD];
 #[cfg(feature = "gnss")]
 const GNSS_LISTEN: Duration = Duration::from_millis(2_000);
 
+/// How many times a power-up wakes the receiver and listens for it.
+///
+/// A wake sent while the receiver is still going into backup can go
+/// unheard, and nothing else would wake it: it sleeps on, with the UART
+/// silent and GNSS reading as on. A try that hears nothing takes long
+/// enough for the receiver to settle before the next.
+#[cfg(feature = "gnss")]
+const GNSS_WAKE_TRIES: usize = 3;
+
 /// How full the GNSS UART's 128-byte FIFO gets before it is drained.
 ///
 /// Low, so that most of the FIFO is left for the time the executor spends
@@ -2245,14 +2254,17 @@ struct GnssPower<'a> {
 impl umsh_gnss::pump::Power for GnssPower<'_> {
     async fn power_on(&mut self) {
         self.slot.borrow_mut().open_port();
+        self.inner.power_on().await;
         #[cfg(feature = "gnss-uart-standby")]
         {
-            gnss_send(self.slot, &[umsh_gnss::ubx::WAKE]).await;
             self.slot.borrow_mut().receiver = GnssReceiver::Awake;
         }
-        self.inner.power_on().await;
-        if GNSS_BAUDS.len() > 1 {
-            find_gnss_baud(self.slot).await;
+        for _ in 0..GNSS_WAKE_TRIES {
+            #[cfg(feature = "gnss-uart-standby")]
+            gnss_send(self.slot, &[umsh_gnss::ubx::WAKE]).await;
+            if GNSS_BAUDS.len() == 1 || find_gnss_baud(self.slot).await {
+                break;
+            }
         }
     }
 

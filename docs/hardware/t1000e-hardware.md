@@ -298,9 +298,9 @@ does exactly that and parks the other five pins in their sleep levels.
 
 Reading it back needs the main domain briefly up, since the backup domain
 cannot drive a UART on its own—`umsh_gnss::pump::rtc_read_once` raises
-the enable, takes the first dated `RMC`, and returns the receiver to off.
-That is a clock operation, so it is gated on `PROP_GNSS_TIME_TRUST` and not
-on `PROP_GNSS_ENABLED`.
+the enable and takes the first dated `RMC`, and the pump returns the
+receiver to off unless positioning is on. That is a clock operation, so it
+is gated on `PROP_GNSS_TIME_TRUST` and not on `PROP_GNSS_ENABLED`.
 
 ### The receiver remembers which sentences to emit
 

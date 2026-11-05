@@ -694,7 +694,9 @@ waking the module briefly if it is parked.
 | L76K | None found: `$PCAS12` timed standby is reported unsupported on this part, and its standby is the STANDBY pin, which no source routes to an S3 GPIO | — |
 
 A module woken by an RX edge makes the MCU's TX line part of its power state:
-while it is parked, TX idles high rather than floating.
+while it is parked, TX idles high rather than floating. An edge sent while it
+is still entering backup can go unheard, so the firmware repeats the wake until
+it hears a sentence.
 
 ## 13. Audio
 

@@ -21,10 +21,11 @@
 //!
 //! The exception is [`rtc_read_once`], for boards whose only surviving
 //! clock is the one inside the receiver. That reads the *time* out of a
-//! receiver that is otherwise off, discards everything positional it sees
-//! on the way, and returns the receiver to its off state. It is a clock
-//! operation, and is gated on whether the receiver's time is trusted
-//! rather than on whether positioning is enabled.
+//! receiver that is otherwise off and discards everything positional it
+//! sees on the way, and [`run`], which follows it, returns the receiver to
+//! its off state if positioning does not want it. It is a clock operation,
+//! and is gated on whether the receiver's time is trusted rather than on
+//! whether positioning is enabled.
 
 use core::cell::Cell;
 
@@ -197,11 +198,15 @@ where
     let mut buf = [0u8; 64];
     let mut idle = delay.clone();
 
-    // Park the receiver before anything else. The pump owns its power
-    // state from here on, and whatever state it was left in belongs to
-    // whoever ran before—a bootloader, a previous image, or a reset
-    // that did not reach the pin.
-    power.power_off().await;
+    // Park an unwanted receiver before anything else. The pump owns its
+    // power state from here on, and whatever state it was left in belongs
+    // to whoever ran before—a bootloader, a previous image, a reset that
+    // did not reach the pin, or `rtc_read_once`. A wanted one is left to
+    // `power_on` below: parking it only to wake it again is at best a lost
+    // start, and at worst a wake it never hears.
+    if !enable.enabled() {
+        power.power_off().await;
+    }
 
     loop {
         while !enable.enabled() {
@@ -264,8 +269,11 @@ where
     }
 }
 
-/// Power the receiver just long enough to read the time out of it, then
-/// return it to its off state.
+/// Power the receiver just long enough to read the time out of it.
+///
+/// The receiver is left running: [`run`] comes next and powers it down
+/// unless positioning wants it, so a receiver that is wanted is never
+/// parked on the way.
 ///
 /// For boards where the receiver's own real-time-clock domain is the only
 /// clock that survives a power cycle. The domain cannot speak a UART on
@@ -293,7 +301,7 @@ where
     let mut buf = [0u8; 64];
 
     power.power_on().await;
-    let found = match select(
+    match select(
         async {
             loop {
                 let Ok(len) = uart.read(&mut buf).await else {
@@ -319,9 +327,7 @@ where
     {
         Either::First(at) => Some(at),
         Either::Second(()) => None,
-    };
-    power.power_off().await;
-    found
+    }
 }
 
 #[cfg(test)]
@@ -623,11 +629,7 @@ mod tests {
             )
             .await;
         });
-        assert_eq!(
-            log.events(),
-            [Event::Off, Event::On],
-            "the receiver was cycled"
-        );
+        assert_eq!(log.events(), [Event::On], "the receiver was cycled");
         assert_eq!(log.fixes().len(), 1);
     }
 
@@ -666,10 +668,7 @@ mod tests {
             )
             .await;
         });
-        assert_eq!(
-            log.events(),
-            [Event::Off, Event::On, Event::Hold, Event::Release]
-        );
+        assert_eq!(log.events(), [Event::On, Event::Hold, Event::Release]);
     }
 
     #[test]
@@ -686,7 +685,7 @@ mod tests {
             )
             .await;
         });
-        assert_eq!(log.events(), [Event::Off, Event::On]);
+        assert_eq!(log.events(), [Event::On]);
     }
 
     #[test]
@@ -711,6 +710,8 @@ mod tests {
         assert!(log.fixes().is_empty(), "a disabled receiver produced a fix");
     }
 
+    /// A wanted receiver is not parked first: the wake that would follow
+    /// comes too soon after the park to be sure of being heard.
     #[test]
     fn an_enabled_receiver_is_powered_and_its_fixes_reach_the_sink() {
         let log = Log::default();
@@ -725,7 +726,7 @@ mod tests {
             )
             .await;
         });
-        assert_eq!(log.events(), [Event::Off, Event::On]);
+        assert_eq!(log.events(), [Event::On]);
         let fixes = log.fixes();
         assert_eq!(fixes.len(), 1);
         assert_eq!(fixes[0].quality, crate::FixQuality::ThreeD);
@@ -748,7 +749,7 @@ mod tests {
             )
             .await;
         });
-        assert_eq!(log.events(), [Event::Off, Event::On, Event::Off]);
+        assert_eq!(log.events(), [Event::On, Event::Off]);
     }
 
     /// Switching back on re-powers the receiver and resumes parsing.
@@ -825,8 +826,10 @@ mod tests {
         assert_eq!(log.fixes().len(), 1);
     }
 
+    /// The read leaves the receiver running, for the pump to keep or to
+    /// park.
     #[test]
-    fn the_receiver_rtc_read_powers_down_again_afterwards() {
+    fn the_receiver_rtc_read_leaves_the_receiver_to_the_pump() {
         let log = Log::default();
         let mut power = MockPower(log.clone());
         let mut found = None;
@@ -842,17 +845,65 @@ mod tests {
             found.map(|at| (at.year, at.month, at.day, at.hour, at.minute)),
             Some((2026, 9, 13, 8, 18))
         );
-        assert_eq!(
-            log.events(),
-            [Event::On, Event::Off],
-            "the read left the receiver powered"
-        );
+        assert_eq!(log.events(), [Event::On], "the read took a power decision");
+    }
+
+    /// What a board runs at boot with positioning on: no park between the
+    /// read and the pump.
+    #[test]
+    fn a_wanted_receiver_is_not_parked_after_the_rtc_read() {
+        let log = Log::default();
+        let mut power = MockPower(log.clone());
+        poll_until_stalled(async {
+            rtc_read_once(
+                MockUart::new(&line("GPRMC,081836.00,V,,,,,,,130926,,")),
+                &mut power,
+                StalledDelay,
+            )
+            .await;
+            let _ = run(
+                MockUart::new(""),
+                power,
+                MockEnable::new(&[true]),
+                MockSink(log.clone()),
+                StalledDelay,
+                (),
+            )
+            .await;
+        });
+        assert_eq!(log.events(), [Event::On, Event::On]);
+    }
+
+    /// And with positioning off: the read must not leave the receiver
+    /// running.
+    #[test]
+    fn an_unwanted_receiver_is_parked_after_the_rtc_read() {
+        let log = Log::default();
+        let mut power = MockPower(log.clone());
+        poll_until_stalled(async {
+            rtc_read_once(
+                MockUart::new(&line("GPRMC,081836.00,V,,,,,,,130926,,")),
+                &mut power,
+                StalledDelay,
+            )
+            .await;
+            let _ = run(
+                MockUart::new(""),
+                power,
+                MockEnable::new(&[false]),
+                MockSink(log.clone()),
+                StalledDelay,
+                (),
+            )
+            .await;
+        });
+        assert_eq!(log.events(), [Event::On, Event::Off]);
     }
 
     /// A receiver whose backup domain lost power emits sentences with no
     /// date in them. The read gives up rather than hanging a boot.
     #[test]
-    fn a_receiver_with_no_clock_yields_nothing_and_still_powers_down() {
+    fn a_receiver_with_no_clock_yields_nothing() {
         let log = Log::default();
         let mut power = MockPower(log.clone());
         let mut found = Some(crate::DateTime::EPOCH);
@@ -865,10 +916,6 @@ mod tests {
             .await;
         });
         assert_eq!(found, None, "the read invented a time");
-        assert_eq!(
-            log.events(),
-            [Event::On, Event::Off],
-            "a timed-out read left the receiver powered"
-        );
+        assert_eq!(log.events(), [Event::On]);
     }
 }

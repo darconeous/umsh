@@ -44,10 +44,11 @@
 //! keeps this rail, one drops it—and this is the first.
 //!
 //! Reading that clock back is [`umsh_gnss::pump::rtc_read_once`]: the
-//! backup domain cannot speak a UART by itself, so the read briefly
-//! raises the main enable, takes the first dated sentence, and lowers it
-//! again. It is a clock operation, gated on whether the receiver's time is
-//! trusted rather than on whether positioning is switched on.
+//! backup domain cannot speak a UART by itself, so the read raises the
+//! main enable and takes the first dated sentence, and the pump lowers the
+//! enable again unless positioning is on. It is a clock operation, gated
+//! on whether the receiver's time is trusted rather than on whether
+//! positioning is switched on.
 
 use embassy_nrf::Peri;
 use embassy_nrf::gpio::{Flex, Level, Output, OutputDrive, Pin, Pull};
