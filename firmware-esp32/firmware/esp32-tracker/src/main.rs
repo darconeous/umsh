@@ -944,8 +944,9 @@ static PMU_BUS: StaticCell<PmuBus> = StaticCell::new();
 #[cfg(feature = "pmic-axp2101")]
 static PMIC_CELL: StaticCell<SharedPmic> = StaticCell::new();
 
-/// The PCF8563. Read once at boot, then handed to the session's
-/// [`BoardDeviceEnv`]—the only thing that ever writes it back.
+/// The PCF8563. Read at boot, then handed to the session's
+/// [`BoardDeviceEnv`]—the only thing that ever writes it back, and on a
+/// communicator the thing that reads it again each time the panel lights.
 ///
 /// Deliberately not a global: esp-hal's `Async` peripherals are `!Send`
 /// by design (they belong to the executor that drives them), so the
@@ -960,8 +961,46 @@ static RTC_CELL: StaticCell<RtcMutex> = StaticCell::new();
 /// write costs the writeback, not the clock.
 #[cfg(feature = "external-rtc")]
 async fn rtc_writeback(rtc: &'static RtcMutex, epoch: u32) {
-    if rtc.lock().await.write(epoch).await.is_err() {
+    let refused = rtc.lock().await.write(epoch).await.is_err();
+    RTC_BEHIND.store(refused, Ordering::Relaxed);
+    if refused {
         debug_log(format_args!("rtc: writeback FAILED"));
+    }
+}
+
+/// The last writeback failed, so the running clock knows something the
+/// RTC does not, and the RTC must not correct it.
+#[cfg(feature = "external-rtc")]
+static RTC_BEHIND: AtomicBool = AtomicBool::new(false);
+
+/// The panel lit: time to compare the running clock with the RTC.
+#[cfg(all(feature = "external-rtc", feature = "communicator"))]
+static RTC_RECHECK: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
+/// Compares the running clock with the RTC each time the panel lights, and
+/// returns the time whenever that moved the clock.
+///
+/// Light sleep times the running clock on the RC slow clock, while the RTC
+/// counts a crystal the whole time. A read that fails is a comparison
+/// skipped until the next wake. So is one the session's select cancels.
+#[cfg(all(feature = "external-rtc", feature = "communicator"))]
+async fn rtc_correction(rtc: Option<&'static RtcMutex>) -> u32 {
+    let Some(rtc) = rtc else {
+        return core::future::pending().await;
+    };
+    loop {
+        RTC_RECHECK.wait().await;
+        if RTC_BEHIND.load(Ordering::Relaxed) {
+            continue;
+        }
+        let began = Instant::now().as_millis();
+        let Ok(Some(epoch)) = rtc.lock().await.read().await else {
+            continue;
+        };
+        if umsh_hal::wall_clock::correct_from_rtc(epoch, began).is_notable() {
+            debug_log(format_args!("rtc: corrected the clock"));
+            return epoch;
+        }
     }
 }
 
@@ -1473,20 +1512,24 @@ impl BoardDeviceEnv {
         let gnss = self.gnss_announce.changed();
         #[cfg(not(feature = "gnss"))]
         let gnss = core::future::pending::<core::convert::Infallible>();
+        #[cfg(all(feature = "external-rtc", feature = "communicator"))]
+        let corrected = rtc_correction(self.rtc);
+        #[cfg(not(all(feature = "external-rtc", feature = "communicator")))]
+        let corrected = core::future::pending::<core::convert::Infallible>();
 
-        match select(battery, gnss).await {
+        match select3(battery, gnss, corrected).await {
             #[cfg(feature = "battery-telemetry")]
-            Either::First(reading) => {
+            Either3::First(reading) => {
                 driver::PublishEvent::Battery(battery_reading_snapshot(reading))
             }
             #[cfg(not(feature = "battery-telemetry"))]
-            Either::First(never) => match never {},
+            Either3::First(never) => match never {},
             #[cfg(feature = "gnss")]
-            Either::Second(umsh_ulcp_runtime::gnss::Announce::Gnss(key, snapshot)) => {
+            Either3::Second(umsh_ulcp_runtime::gnss::Announce::Gnss(key, snapshot)) => {
                 driver::PublishEvent::Gnss(key, snapshot)
             }
             #[cfg(feature = "gnss")]
-            Either::Second(umsh_ulcp_runtime::gnss::Announce::Time(epoch)) => {
+            Either3::Second(umsh_ulcp_runtime::gnss::Announce::Time(epoch)) => {
                 // A trusted receiver stepped the wall clock notably;
                 // carry the step into the RTC so it survives power-off.
                 // Sub-notable re-syncs never reach this arm, which is
@@ -1499,7 +1542,7 @@ impl BoardDeviceEnv {
                 driver::PublishEvent::Time(epoch)
             }
             #[cfg(feature = "gnss")]
-            Either::Second(umsh_ulcp_runtime::gnss::Announce::IdentityFix(
+            Either3::Second(umsh_ulcp_runtime::gnss::Announce::IdentityFix(
                 location,
                 altitude_m,
             )) => driver::PublishEvent::IdentityFix(
@@ -1507,7 +1550,13 @@ impl BoardDeviceEnv {
                 altitude_m,
             ),
             #[cfg(not(feature = "gnss"))]
-            Either::Second(never) => match never {},
+            Either3::Second(never) => match never {},
+            // The clock moved to agree with the RTC, so nothing is
+            // written back.
+            #[cfg(all(feature = "external-rtc", feature = "communicator"))]
+            Either3::Third(epoch) => driver::PublishEvent::Time(Some(epoch)),
+            #[cfg(not(all(feature = "external-rtc", feature = "communicator")))]
+            Either3::Third(never) => match never {},
         }
     }
 }

@@ -359,6 +359,8 @@ async fn interface(
                 if app.state().dark {
                     app.state_mut().screen_on(now());
                 }
+                #[cfg(feature = "external-rtc")]
+                crate::RTC_RECHECK.signal(());
                 // A fresh frame goes in before the panel lights, so a stale
                 // one is never seen.
                 let epoch = input_gate::interactive().await;

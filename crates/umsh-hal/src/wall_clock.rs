@@ -62,6 +62,22 @@ impl TimeSource {
 /// would spend flash-equivalent wear to the same effect.
 pub const NOTABLE_STEP_SECS: u32 = 2;
 
+/// How far a running clock must disagree with the battery-backed
+/// real-time clock before [`WallClockState::correct_from_rtc`] moves it,
+/// in seconds.
+///
+/// Above [`NOTABLE_STEP_SECS`], so that a correction is always a notable
+/// step, and wide enough that two clocks read a second apart never count
+/// as disagreeing.
+pub const RTC_CORRECTION_SECS: u32 = 3;
+
+/// How long a reading from the GNSS receiver outranks the real-time clock
+/// during a correction, in milliseconds.
+///
+/// A receiver's sub-notable re-syncs are not written back, so a real-time
+/// clock can fall behind a running clock that is better than it is.
+pub const GNSS_OUTRANKS_RTC_MS: u64 = 60 * 60 * 1_000;
+
 /// What [`WallClockState::apply`] did.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Update {
@@ -229,7 +245,8 @@ impl WallClockState {
     ///   that is already in hand.
     /// * [`TimeSource::ExternalRtc`] applies only when the clock is
     ///   unset, for the same reason, but is not subject to the receiver
-    ///   trust flag—it is not the receiver.
+    ///   trust flag—it is not the receiver. Correcting a running clock
+    ///   from it is [`Self::correct_from_rtc`].
     pub const fn apply(
         &mut self,
         epoch: u32,
@@ -265,6 +282,55 @@ impl WallClockState {
                 }
             }
         }
+    }
+
+    /// Correct a running clock from the battery-backed real-time clock.
+    ///
+    /// The running clock free-runs on the monotonic timer, which through
+    /// light sleep is only as good as the chip's RC slow clock, while the
+    /// real-time clock counts a crystal the whole time. So a disagreement
+    /// of at least [`RTC_CORRECTION_SECS`] is settled in its favor, with
+    /// three exceptions, each [`Update::Refused`]:
+    ///
+    /// * The clock is unset. A host that cleared it asked the running
+    ///   device not to know the time; the next boot restores it.
+    /// * The clock was set at or after `read_began_ms`, while the reading
+    ///   was in flight, so the reading is older than the clock.
+    /// * The clock came from the GNSS receiver within
+    ///   [`GNSS_OUTRANKS_RTC_MS`].
+    ///
+    /// A closer reading is [`Update::Unchanged`] and leaves the clock and
+    /// its source alone. The clock moves here only to agree with the
+    /// real-time clock, so a caller has nothing to write back.
+    pub const fn correct_from_rtc(
+        &mut self,
+        epoch: u32,
+        monotonic_ms: u64,
+        read_began_ms: u64,
+    ) -> Update {
+        let (Some(previous), Some(source)) = (self.now(monotonic_ms), self.source) else {
+            return Update::Refused;
+        };
+        if self.set_at_ms >= read_began_ms {
+            return Update::Refused;
+        }
+        if source.is_receiver_derived()
+            && monotonic_ms.saturating_sub(self.set_at_ms) < GNSS_OUTRANKS_RTC_MS
+        {
+            return Update::Refused;
+        }
+        let delta = if epoch > previous {
+            epoch - previous
+        } else {
+            previous - epoch
+        };
+        if delta < RTC_CORRECTION_SECS {
+            return Update::Unchanged;
+        }
+        self.offset_ms = Some(epoch as i64 * 1_000 - monotonic_ms as i64);
+        self.source = Some(TimeSource::ExternalRtc);
+        self.set_at_ms = monotonic_ms;
+        Update::Stepped { previous }
     }
 }
 
@@ -391,6 +457,18 @@ mod live {
         update
     }
 
+    /// Correct a running clock from the real-time clock. See
+    /// [`WallClockState::correct_from_rtc`]; `read_began_ms` is the
+    /// monotonic reading taken before the chip was asked.
+    pub fn correct_from_rtc(epoch: u32, read_began_ms: u64) -> Update {
+        let monotonic = Instant::now().as_millis();
+        let update = with(|state| state.correct_from_rtc(epoch, monotonic, read_began_ms));
+        if update.is_notable() {
+            CHANGED.signal(());
+        }
+        update
+    }
+
     /// Set the clock from a host or an operator.
     ///
     /// Separate from [`apply`] because [`TimeSource::Manual`] outranks
@@ -416,8 +494,8 @@ mod live {
 
 #[cfg(feature = "embassy")]
 pub use live::{
-    apply, changed, clear, hour24, is_set, local_hhmm, millis_to_next_minute, now, set_hour24,
-    set_manual, set_tz_rule, snapshot, tz_rule,
+    apply, changed, clear, correct_from_rtc, hour24, is_set, local_hhmm, millis_to_next_minute,
+    now, set_hour24, set_manual, set_tz_rule, snapshot, tz_rule,
 };
 
 #[cfg(test)]
@@ -460,6 +538,75 @@ mod tests {
         assert_eq!(clock.local_now(UP), Some(T0 - 7 * 3_600));
         clock.set_tz_rule(Rule::parse("IST-5:30").unwrap());
         assert_eq!(clock.local_now(UP), Some(T0 + 5 * 3_600 + 1_800));
+    }
+
+    /// Well after [`UP`], with the read beginning just before it.
+    const LATER: u64 = UP + 10 * GNSS_OUTRANKS_RTC_MS;
+    const READ: u64 = LATER - 10;
+
+    #[test]
+    fn the_rtc_corrects_a_running_clock_that_has_drifted() {
+        let mut clock = WallClockState::UNKNOWN;
+        clock.apply(T0, UP, TimeSource::Manual, true);
+        let running = clock.now(LATER).unwrap();
+        assert_eq!(
+            clock.correct_from_rtc(running - 3, LATER, READ),
+            Update::Stepped { previous: running },
+        );
+        assert_eq!(clock.now(LATER), Some(running - 3));
+        assert_eq!(clock.source(), Some(TimeSource::ExternalRtc));
+        assert_eq!(clock.set_at(), Some(LATER));
+    }
+
+    #[test]
+    fn the_rtc_leaves_a_clock_within_tolerance_alone() {
+        let mut clock = WallClockState::UNKNOWN;
+        clock.apply(T0, UP, TimeSource::Manual, true);
+        let running = clock.now(LATER).unwrap();
+        assert_eq!(
+            clock.correct_from_rtc(running - 2, LATER, READ),
+            Update::Unchanged,
+        );
+        assert_eq!(clock.now(LATER), Some(running));
+        assert_eq!(clock.source(), Some(TimeSource::Manual));
+        assert_eq!(clock.set_at(), Some(UP));
+    }
+
+    #[test]
+    fn the_rtc_does_not_set_a_clock_a_host_cleared() {
+        let mut clock = WallClockState::UNKNOWN;
+        clock.apply(T0, UP, TimeSource::Manual, true);
+        clock.clear();
+        assert_eq!(clock.correct_from_rtc(T0, LATER, READ), Update::Refused);
+        assert!(!clock.is_set());
+    }
+
+    #[test]
+    fn a_reading_older_than_the_clock_is_refused() {
+        let mut clock = WallClockState::UNKNOWN;
+        clock.apply(T0, READ + 5, TimeSource::Manual, true);
+        assert_eq!(
+            clock.correct_from_rtc(T0 - 60, LATER, READ),
+            Update::Refused
+        );
+        assert_eq!(clock.source(), Some(TimeSource::Manual));
+    }
+
+    #[test]
+    fn a_recent_gnss_reading_outranks_the_rtc() {
+        let mut clock = WallClockState::UNKNOWN;
+        clock.apply(T0, UP, TimeSource::GnssFix, true);
+        let recent = UP + GNSS_OUTRANKS_RTC_MS - 1;
+        assert_eq!(
+            clock.correct_from_rtc(T0 - 60, recent, recent - 10),
+            Update::Refused,
+        );
+        let stale = UP + GNSS_OUTRANKS_RTC_MS;
+        assert!(matches!(
+            clock.correct_from_rtc(T0 - 60, stale, stale - 10),
+            Update::Stepped { .. },
+        ));
+        assert_eq!(clock.source(), Some(TimeSource::ExternalRtc));
     }
 
     #[test]
