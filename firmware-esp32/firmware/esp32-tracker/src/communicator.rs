@@ -149,14 +149,14 @@ async fn interface(
     let app = external::communicator(|slot| {
         App::new_in(
             slot,
-            state(node),
+            |place| state(place, node),
             BOARD.metrics.size().into(),
             ui::root_view,
         )
     });
     // Binding lays the interface out again: outside the constructor, so
-    // that its frame, which holds the state and a render tree on their
-    // way into place, is not under that layout too.
+    // that its frame, which holds a render tree on its way into place, is
+    // not under that layout too.
     ui::bind(app);
     // The least stack left free so far: bring-up, and building the app.
     #[cfg(feature = "debug-log")]
@@ -407,9 +407,11 @@ async fn prime(node: &Node) {
     while node.next_event().is_some() {}
 }
 
-/// The interface's state over `node`: locked, over the Chats screen.
-fn state(node: &'static Node) -> State {
-    let mut state = State::new(node, BOARD);
+/// The interface's state over `node`, in `place`: locked, over the Chats
+/// screen. Built where it stays, since a copy on the stack would sit under
+/// all of the first layout.
+fn state<'a>(place: &'a mut core::mem::MaybeUninit<State>, node: &'static Node) -> &'a mut State {
+    let state = place.write(State::new(node, BOARD));
     state.firmware = env!("GIT_DESCRIBE");
     state.status.device_name = node.device_name();
     (state.status.bluetooth, state.status.wifi, state.status.gnss) = links();
