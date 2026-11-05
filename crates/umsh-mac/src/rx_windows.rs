@@ -52,6 +52,8 @@ pub struct RxWindow {
     /// The baseline was set outright rather than advanced, and is written
     /// at the next pass whatever the frame count.
     write_now: bool,
+    /// What the store took for this key, and has yet to flush.
+    stored: Option<u32>,
     /// The stored baseline has been merged in. Meaningful only for a
     /// registered entry.
     restored: bool,
@@ -66,6 +68,7 @@ impl RxWindow {
             persisted_rx_counter: 0,
             unpersisted_frames: 0,
             write_now: false,
+            stored: None,
             restored: false,
             last_used_ms: now_ms,
         }
@@ -145,6 +148,24 @@ impl RxWindow {
         self.persisted_rx_counter = value;
         self.unpersisted_frames = 0;
         self.write_now = false;
+    }
+
+    /// Record that the store took `value`, which is not persisted until it
+    /// is flushed.
+    pub(crate) fn mark_stored(&mut self, value: u32) {
+        self.stored = Some(value);
+    }
+
+    /// Whether the store holds a value of this entry's yet to be flushed.
+    pub(crate) fn is_stored(&self) -> bool {
+        self.stored.is_some()
+    }
+
+    /// Record that a flush persisted what the store took.
+    pub(crate) fn settle_stored(&mut self) {
+        if let Some(value) = self.stored.take() {
+            self.mark_persisted(value);
+        }
     }
 
     fn touch(&mut self, now_ms: u64) {
@@ -301,6 +322,11 @@ impl<const PEERS: usize, const STRANGERS: usize> RxWindows<PEERS, STRANGERS> {
     /// Registered entries, mutably.
     pub(crate) fn registered_mut(&mut self) -> impl Iterator<Item = &mut RxWindow> {
         self.registered.iter_mut()
+    }
+
+    /// The registered entry at `index`.
+    pub(crate) fn registered_at(&self, index: usize) -> Option<&RxWindow> {
+        self.registered.get(index)
     }
 
     /// Stranger entries.

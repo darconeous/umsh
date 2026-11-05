@@ -1440,18 +1440,18 @@ impl<
     pub(crate) async fn service_rx_counter_persistence(
         &mut self,
     ) -> Result<usize, <P::CounterStore as CounterStore>::Error> {
-        // Collected before awaiting, so no reference into the table is held
-        // across the store calls.
-        let due: Vec<(PublicKey, bool), PEERS> = self
-            .rx_windows
-            .registered()
-            .filter(|entry| entry.needs_persist())
-            .map(|entry| (*entry.key(), entry.is_restored()))
-            .collect();
-
+        // By place in the table, which holds still while `self` is borrowed,
+        // with nothing kept beside it per peer: this future sits in every
+        // task that services the MAC, and a list of `PEERS` there is paid
+        // for once per task.
         let mut failure = None;
-        let mut written = Vec::<(PublicKey, u32), PEERS>::new();
-        for (key, restored) in due {
+        let mut index = 0;
+        while let Some(entry) = self.rx_windows.registered_at(index) {
+            index += 1;
+            if !entry.needs_persist() {
+                continue;
+            }
+            let (key, restored) = (*entry.key(), entry.is_restored());
             // An unrestored entry may sit behind what the store already
             // holds; writing it as it is would lower the stored baseline.
             if !restored && let Err(error) = self.restore_rx_window(key).await {
@@ -1472,7 +1472,9 @@ impl<
                 .await
             {
                 Ok(()) => {
-                    let _ = written.push((key, value));
+                    if let Some(entry) = self.rx_windows.get_mut(&key) {
+                        entry.mark_stored(value);
+                    }
                 }
                 Err(error) => {
                     MacCounters::bump(&mut self.counters.rx_counter_persist_failures);
@@ -1481,22 +1483,25 @@ impl<
             }
         }
 
-        if !written.is_empty() {
+        let written = self
+            .rx_windows
+            .registered()
+            .filter(|entry| entry.is_stored())
+            .count();
+        if written != 0 {
             if let Err(error) = self.counter_store.flush().await {
-                for _ in written.iter() {
+                for _ in 0..written {
                     MacCounters::bump(&mut self.counters.rx_counter_persist_failures);
                 }
                 return Err(error);
             }
-            for (key, value) in written.iter() {
-                if let Some(entry) = self.rx_windows.get_mut(key) {
-                    entry.mark_persisted(*value);
-                }
+            for entry in self.rx_windows.registered_mut() {
+                entry.settle_stored();
             }
         }
         match failure {
             Some(error) => Err(error),
-            None => Ok(written.len()),
+            None => Ok(written),
         }
     }
 
