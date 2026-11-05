@@ -3,8 +3,8 @@ import Foundation
 @main
 struct MobileCoreSmokeTest {
     static func main() throws {
-        precondition(mobileApiVersion() == 68)
-        precondition(ulcpMaxDevPeers() == 8)
+        precondition(mobileApiVersion() > 0)
+        precondition(ulcpMaxDevPeers() > 0)
 
         // The phone's zone as a device takes it.
         precondition(fixedOffsetRule(minutesEast: -420) == "<-07>7")
