@@ -3,9 +3,14 @@
 import unittest
 
 from check_xtensa_stack import (
+    PATH_FRAMES,
+    communicator_path,
     construction_candidates,
+    deepest_path,
     device_task_construction,
     function_frames,
+    functions,
+    largest_frames,
     stack_size,
     task_construction,
 )
@@ -84,6 +89,150 @@ class StackCheckTests(unittest.TestCase):
 """
         with self.assertRaises(ValueError):
             list(function_frames(text.splitlines(keepends=True)))
+
+
+# As mangled: the poll of the communicator task, and the app's constructor.
+TASK = ("_RNvMs1_NtCs0_16embassy_executor3rawINtB5_11TaskStorageNCNvNvNtCs1_"
+        "8firmware12communicator11___task_task26___task_task_inner_function0E4pollB18_")
+APP = "_RINvNtCs1_8firmware8external12communicatorINtNtCs2_7buoyant3app3AppE"
+
+
+def parsed(text):
+    return list(functions(text.splitlines(keepends=True)))
+
+
+def path_through(text, root):
+    program = parsed(text)
+    graph = {function.address: function for function in program}
+    address = next(function.address for function in program if function.name == root)
+    return deepest_path(graph, address)[0]
+
+
+class CallPathTests(unittest.TestCase):
+    def test_a_literal_is_an_edge_as_a_direct_call_is(self):
+        text = """42000000 <poll>:
+42000000: entry a1, 100
+42000003: l32r a8, 41ffff00 <literal> (42000100 <view>)
+42000006: callx8 a8
+42000009: call8 42000200 <small>
+42000100 <view>:
+42000100: entry a1, 1000
+42000103: call8 42000300 <leaf>
+42000200 <small>:
+42000200: entry a1, 32
+42000300 <leaf>:
+42000300: entry a1, 64
+"""
+        self.assertEqual(path_through(text, "poll"),
+                         [("poll", 100), ("view", 1000), ("leaf", 64)])
+
+    def test_large_frames_count_on_a_path(self):
+        text = """42000000 <poll>:
+42000000: entry a1, 32
+42000003: l32r a8, 420f3358 <literal> (e300 <constant>)
+42000006: sub a8, a1, a8
+42000009: movsp a1, a8
+4200000c: call8 42000100 <leaf>
+42000100 <leaf>:
+42000100: entry a1, 64
+"""
+        self.assertEqual(path_through(text, "poll"), [("poll", 58144), ("leaf", 64)])
+
+    def test_what_starts_no_function_is_no_edge(self):
+        text = """42000000 <poll>:
+42000000: entry a1, 100
+42000003: l32r a8, 41ffff00 <literal> (3c015c9c <VTABLE>)
+42000006: j 42000003 <poll+0x3>
+42000009: call8 42000104 <leaf+0x4>
+42000100 <leaf>:
+42000100: entry a1, 64
+"""
+        self.assertEqual(path_through(text, "poll"), [("poll", 100)])
+
+    def test_a_tail_jump_is_an_edge(self):
+        text = """42000000 <thunk>:
+42000000: entry a1, 32
+42000003: j 42000100 <target>
+42000100 <target>:
+42000100: entry a1, 64
+"""
+        self.assertEqual(path_through(text, "thunk"), [("thunk", 32), ("target", 64)])
+
+    def test_each_member_of_a_cycle_counts_once(self):
+        text = """42000000 <poll>:
+42000000: entry a1, 100
+42000003: call8 42000100 <a>
+42000100 <a>:
+42000100: entry a1, 1000
+42000103: call8 42000200 <b>
+42000200 <b>:
+42000200: entry a1, 2000
+42000203: call8 42000100 <a>
+42000206: call8 42000300 <leaf>
+42000300 <leaf>:
+42000300: entry a1, 64
+"""
+        path = path_through(text, "poll")
+        self.assertEqual(sum(size for _, size in path), 3164)
+        self.assertEqual(len(path), 4)
+
+    def test_the_answer_does_not_depend_on_which_member_is_entered_first(self):
+        # A walk that cuts a cycle where it finds it remembers `b` without `a`.
+        text = """42000000 <poll>:
+42000000: entry a1, 32
+42000003: call8 42000100 <a>
+42000006: call8 42000200 <b>
+42000100 <a>:
+42000100: entry a1, 1000
+42000103: call8 42000200 <b>
+42000200 <b>:
+42000200: entry a1, 32
+42000203: call8 42000100 <a>
+"""
+        self.assertEqual(sum(size for _, size in path_through(text, "poll")), 1064)
+
+    def test_the_communicator_path_starts_under_the_constructor(self):
+        text = f"""42000000 <{TASK}>:
+42000000: entry a1, 2336
+42000003: call8 42000100 <{APP}>
+42000100 <{APP}>:
+42000100: entry a1, 25328
+"""
+        self.assertEqual(communicator_path(parsed(text)), [(TASK, 2336), (APP, 25328)])
+
+    def test_a_shallower_redraw_keeps_the_gate_when_the_constructor_is_not_deepest(self):
+        text = f"""42000000 <{TASK}>:
+42000000: entry a1, 32
+42000003: call8 42000100 <{APP}>
+42000006: call8 42000200 <redraw>
+42000100 <{APP}>:
+42000100: entry a1, 64
+42000200 <redraw>:
+42000200: entry a1, 1000
+"""
+        self.assertEqual(communicator_path(parsed(text)), [(TASK, 32), ("redraw", 1000)])
+
+    def test_a_missing_task_is_not_a_pass(self):
+        with self.assertRaises(SystemExit):
+            communicator_path(parsed("42000000 <other>:\n42000000: entry a1, 32\n"))
+
+    def test_a_task_that_cannot_be_followed_is_not_a_pass(self):
+        text = f"""42000000 <{TASK}>:
+42000000: entry a1, 32
+42000003: callx8 a8
+42000100 <{APP}>:
+42000100: entry a1, 25328
+"""
+        with self.assertRaises(SystemExit):
+            communicator_path(parsed(text))
+
+    def test_a_report_keeps_the_largest_frames_in_call_order(self):
+        path = [(f"f{size}", size) for size in range(1, PATH_FRAMES + 3)]
+        path.reverse()
+        kept = largest_frames(path)
+        self.assertEqual(len(kept), PATH_FRAMES)
+        self.assertEqual(kept[0], ("f12", 12))
+        self.assertEqual(kept[-1], ("f3", 3))
 
 
 if __name__ == "__main__":

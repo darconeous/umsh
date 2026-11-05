@@ -425,7 +425,7 @@ flash-heltec-v2: espflash-check build-heltec-v2
 
 build-tlora-pager: esp-toolchain-check
 	$(ESP_ENV) cd firmware-esp32/firmware/tlora-pager && cargo build --release $(ESP32_CARGO_FLAGS)
-	$(ESP_ENV) python3 scripts/check_xtensa_stack.py $(ESP32S3_TARGET_DIR)/firmware-tlora-pager --reserve 32768
+	$(ESP_ENV) python3 scripts/check_xtensa_stack.py $(ESP32S3_TARGET_DIR)/firmware-tlora-pager --reserve 32768 --communicator
 
 flash-tlora-pager: espflash-check build-tlora-pager
 	espflash flash --before usb-reset --after watchdog-reset $(ESPFLASH_PORT_ARG) $(ESPFLASH_LAYOUT_tlora-pager) \
@@ -457,7 +457,7 @@ flash-xiao-esp32s3: espflash-check build-xiao-esp32s3
 # The Pager's shape: the communicator, BLE, Wi-Fi coex, and PSRAM.
 build-tdeck: esp-toolchain-check
 	$(ESP_ENV) cd firmware-esp32/firmware/tdeck && cargo build --release $(ESP32_CARGO_FLAGS)
-	$(ESP_ENV) python3 scripts/check_xtensa_stack.py $(ESP32S3_TARGET_DIR)/firmware-tdeck --reserve 32768
+	$(ESP_ENV) python3 scripts/check_xtensa_stack.py $(ESP32S3_TARGET_DIR)/firmware-tdeck --reserve 32768 --communicator
 
 # An image that does not answer the reset request needs download mode by
 # hand: hold the trackball down while pressing reset.

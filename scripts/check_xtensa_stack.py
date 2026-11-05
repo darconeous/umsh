@@ -1,22 +1,49 @@
 #!/usr/bin/env python3
-"""Reject oversized Xtensa frames and the known task construction chains.
+"""Reject oversized Xtensa frames, the known task construction chains, and,
+on a communicator, a main stack that cannot hold the interface's deepest path.
 
-This is a necessary budget check, not a call-graph or RTOS-task stack proof.
-Nested calls, interrupts, and radio task stacks still need hardware measurement.
-Uses the objdump shipped with the ESP toolchain; no Python dependencies.
+This is a necessary budget check, not an RTOS-task stack proof. Calls through
+a vtable are invisible to it, and radio task stacks still need hardware
+measurement. Uses the objdump shipped with the ESP toolchain; no Python
+dependencies.
 """
 
 import argparse
+import collections
 import re
 import subprocess
+import sys
 
-HEADER = re.compile(r"[0-9a-f]+ <(.+)>:")
+HEADER = re.compile(r"([0-9a-f]+) <(.+)>:")
 ENTRY = re.compile(r"\bentry\s+a1,\s*(0x[0-9a-f]+|[0-9]+)")
 LOAD = re.compile(r"\bl32r\s+(a\d+),.*\(([0-9a-f]+) <")
 SUB = re.compile(r"\bsub\s+(a\d+),\s*a1,\s*(a\d+)")
 MOVSP = re.compile(r"\bmovsp\s+a1,\s*(a\d+)")
+# A direct call, or a jump that may be a tail call. A jump within a function
+# names an address that starts no function, and so is no edge.
+CALL = re.compile(r"\b(?:call\d+|j)\s+([0-9a-f]+)\b")
 # How far into a function its prologue reaches.
 PROLOGUE_LINES = 8
+
+# The task the interface runs in, and the constructor it must reach. Both are
+# matched as mangled, where a path's identifiers appear whole.
+COMMUNICATOR_TASK = re.compile(r"11TaskStorage.*12communicator11___task_task.*4poll")
+COMMUNICATOR_APP = re.compile(r"8external12communicator")
+# What the main stack needs beyond the task's deepest path. Interrupts run on
+# whatever stack they land on: one, and a higher priority one preempting it,
+# reach about 1.25 KiB each with their trap frames, and startup and the
+# executor sit under the task with a few hundred bytes. That is under 3 KiB
+# that can be counted; radio blobs and vtable calls reach further by an amount
+# that cannot.
+PATH_MARGIN = 4096
+# How many of a path's frames a report names.
+PATH_FRAMES = 10
+# How much of a demangled name a report shows: view types run to thousands of
+# characters, where the start says which view and the end which method.
+NAME_HEAD = 72
+NAME_TAIL = 48
+
+Function = collections.namedtuple("Function", "address name frame targets")
 
 
 def stack_size(symbols):
@@ -54,27 +81,112 @@ def prologue_frame(name, lines):
     return size
 
 
-def function_frames(lines):
-    """Each function's frame, as `(mangled name, size)`, from objdump's
-    disassembly read a line at a time: only a prologue is kept, so memory
-    stays flat however large the program."""
+def functions(lines):
+    """Each function in objdump's disassembly, read a line at a time: only a
+    prologue and the addresses named are kept, so memory stays flat however
+    large the program. A target is whatever is called or loaded from a
+    literal, since most calls here are an L32R and a CALLX8; what starts no
+    function is dropped when the graph is walked."""
+    address = None
     name = None
     prologue = []
+    targets = set()
     for line in lines:
         header = HEADER.fullmatch(line.rstrip("\n"))
         if header:
             if name is not None:
-                size = prologue_frame(name, prologue)
-                if size is not None:
-                    yield name, size
-            name = header[1]
+                yield Function(address, name, prologue_frame(name, prologue), targets)
+            address = int(header[1], 16)
+            name = header[2]
             prologue = []
-        elif name is not None and len(prologue) < PROLOGUE_LINES:
-            prologue.append(line)
+            targets = set()
+        elif name is not None:
+            if len(prologue) < PROLOGUE_LINES:
+                prologue.append(line)
+            target = CALL.search(line)
+            if target:
+                targets.add(int(target[1], 16))
+            load = LOAD.search(line)
+            if load:
+                targets.add(int(load[2], 16))
     if name is not None:
-        size = prologue_frame(name, prologue)
-        if size is not None:
-            yield name, size
+        yield Function(address, name, prologue_frame(name, prologue), targets)
+
+
+def function_frames(lines):
+    """Each function's frame, as `(mangled name, size)`."""
+    return [(function.name, function.frame) for function in functions(lines)
+            if function.frame is not None]
+
+
+def deepest_path(graph, root):
+    """The costliest call path from `root` through `graph`, a dict of
+    `Function` by address, in call order, and every address it can reach.
+
+    Components are completed callees first (Tarjan), so each is summed over
+    what is already known of what it calls. A call cycle has no bound that
+    can be read from the code, so each of its members counts once: one trip
+    around it.
+    """
+    sys.setrecursionlimit(max(sys.getrecursionlimit(), len(graph) + 100))
+    order = {}
+    low = {}
+    pending = []
+    # By address: the component's total, its members, and the costliest
+    # component below it.
+    deepest = {}
+
+    def visit(address):
+        order[address] = low[address] = len(order)
+        pending.append(address)
+        for target in graph[address].targets:
+            if target not in graph:
+                continue
+            if target not in order:
+                visit(target)
+                low[address] = min(low[address], low[target])
+            elif target not in deepest:
+                low[address] = min(low[address], order[target])
+        if low[address] != order[address]:
+            return
+        start = pending.index(address)
+        members = pending[start:]
+        del pending[start:]
+        below = max((deepest[target] for member in members
+                     for target in graph[member].targets if target in deepest),
+                    key=lambda component: component[0], default=None)
+        total = sum(graph[member].frame or 0 for member in members)
+        component = (total + (below[0] if below else 0), members, below)
+        for member in members:
+            deepest[member] = component
+
+    visit(root)
+    path = []
+    component = deepest[root]
+    while component:
+        path += [(graph[member].name, graph[member].frame or 0) for member in component[1]]
+        component = component[2]
+    return path, set(deepest)
+
+
+def communicator_path(program):
+    """The communicator task's deepest path: from its poll, so that the
+    frames under the constructor count and the redraw path, which does not
+    pass through the constructor, is walked too.
+
+    A task the graph cannot follow would pass with a path of one frame, so
+    one that no longer reaches the constructor is an error, not a pass.
+    """
+    graph = {function.address: function for function in program}
+    root = next((function for function in program
+                 if COMMUNICATOR_TASK.search(function.name)), None)
+    if root is None:
+        raise SystemExit("stack check: communicator task not found")
+    path, reached = deepest_path(graph, root.address)
+    if not any(COMMUNICATOR_APP.search(graph[address].name) for address in reached):
+        raise SystemExit("stack check: communicator task does not reach "
+                         "external::communicator; the call graph is incomplete")
+    return path
 
 
 def demangle(cxxfilt, names):
@@ -133,6 +245,18 @@ def device_task_construction(frames):
     return task_construction(frames, "device_task")
 
 
+def largest_frames(path):
+    """The path's largest frames, still in call order."""
+    largest = sorted(path, key=lambda frame: frame[1], reverse=True)[:PATH_FRAMES]
+    return [frame for frame in path if frame in largest]
+
+
+def shortened(name):
+    if len(name) <= NAME_HEAD + NAME_TAIL:
+        return name
+    return f"{name[:NAME_HEAD]} ... {name[-NAME_TAIL:]}"
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("elf")
@@ -141,21 +265,27 @@ def main():
                         help="demangler (default: objdump's sibling c++filt)")
     parser.add_argument("--reserve", type=int, default=8192,
                         help="minimum space left beyond any single frame (default: 8192)")
+    parser.add_argument("--communicator", action="store_true",
+                        help="also require the communicator task's deepest call path, "
+                             f"plus {PATH_MARGIN} bytes, to fit the main stack")
     args = parser.parse_args()
     cxxfilt = args.cxxfilt or re.sub(r"objdump$", "c++filt", args.objdump)
     symbols = subprocess.check_output([args.objdump, "-t", args.elf], text=True)
     available = stack_size(symbols)
     with subprocess.Popen([args.objdump, "-d", "--no-show-raw-insn", args.elf],
                           stdout=subprocess.PIPE, text=True) as objdump:
-        frames = list(function_frames(objdump.stdout))
+        program = list(functions(objdump.stdout))
     if objdump.returncode:
         raise SystemExit(f"stack check: {args.objdump} failed")
+    frames = [(function.name, function.frame) for function in program
+              if function.frame is not None]
     if not frames:
         raise SystemExit("stack check: no Xtensa function prologues found")
     # Only the startup path's stages and what fails are named.
     failing = [(name, size) for name, size in frames if size + args.reserve > available]
     candidates = construction_candidates(frames)
-    names = demangle(cxxfilt, sorted({name for name, _ in failing + candidates}))
+    path = communicator_path(program) if args.communicator else []
+    names = demangle(cxxfilt, sorted({name for name, _ in failing + candidates + path}))
     failures = [(names[name], size) for name, size in failing]
     candidates = [(names[name], size) for name, size in candidates]
     constructions = [(task, task_construction(candidates, task)) for task in TASKS]
@@ -172,6 +302,20 @@ def main():
             print(f"stack check FAILED: {size} byte frame + {args.reserve} reserve > "
                   f"{available} byte main stack: {name}")
         raise SystemExit(1)
+    if path:
+        path_size = sum(size for _, size in path)
+        spare = available - path_size - PATH_MARGIN
+        needed = (f"communicator path of {len(path)} calls: {path_size} bytes + "
+                  f"{PATH_MARGIN} margin")
+        if spare < 0:
+            print(f"stack check FAILED: {needed} > {available} byte main stack, "
+                  f"{-spare} bytes short")
+        else:
+            print(f"stack check: {needed}, {spare} bytes spare")
+        for name, size in largest_frames(path):
+            print(f"  {size} bytes: {shortened(names[name])}")
+        if spare < 0:
+            raise SystemExit(1)
     print(f"stack check: main stack {available} bytes; "
           f"largest individual frame {max(size for _, size in frames)} bytes; "
           f"reserve {args.reserve} bytes")
