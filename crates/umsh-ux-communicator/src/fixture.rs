@@ -3460,6 +3460,7 @@ pub fn state(store: &'static Store, board: &'static Board) -> State {
     state.links = Links {
         bluetooth: BluetoothReading {
             connected: true,
+            usb_host: false,
             paired: Some(1),
             pairing: false,
             pin: None,

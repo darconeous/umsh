@@ -59,6 +59,8 @@ pub(crate) struct Panel {
     /// The operator's switch.
     pub enabled: Option<bool>,
     pub link: screen::LinkState,
+    /// A wired host has the device, which keeps Bluetooth from advertising.
+    pub usb_host: bool,
     pub bonds: u8,
     pub pairing: screen::PairingState,
 }
@@ -77,6 +79,7 @@ pub(crate) fn panel() -> Panel {
             _ if !BLE_ENABLED.load(Ordering::Acquire) => screen::LinkState::Disabled,
             _ => screen::LinkState::OffWired,
         },
+        usb_host: !ADV_ALLOWED.load(Ordering::Acquire),
         bonds: bond_count(),
         // Bluetooth off outranks everything—a lockout on a transport
         // that is off is not a state anyone can act on—then lockout

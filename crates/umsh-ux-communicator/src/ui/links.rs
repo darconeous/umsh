@@ -7,7 +7,7 @@ use heapless::String;
 
 use super::setting::{End, card, choice, page, readout, row};
 use crate::board::Metrics;
-use crate::model::{Fix, GnssReading, State};
+use crate::model::{BluetoothReading, Fix, GnssReading, State};
 use crate::nav::keys;
 use crate::theme;
 
@@ -45,16 +45,7 @@ pub fn bluetooth(state: &State, confirm: bool) -> impl View<Rgb565, State> + use
             ),
             on.then(|| {
                 VStack::new((
-                    readout(
-                        m,
-                        "Phone",
-                        if reading.connected {
-                            "Connected"
-                        } else {
-                            "Not connected"
-                        },
-                        ROW,
-                    ),
+                    readout(m, "Phone", phone(reading), ROW),
                     shows_pairing.then(|| readout(m, "Paired phones", &paired, ROW)),
                     shows_pairing.then(|| {
                         row(
@@ -91,6 +82,17 @@ pub fn bluetooth(state: &State, confirm: bool) -> impl View<Rgb565, State> + use
         s.cancel_clear_pairings();
         Dismissal::Dismiss
     })
+}
+
+/// What the Phone row says.
+fn phone(reading: BluetoothReading) -> &'static str {
+    if reading.connected {
+        "Connected"
+    } else if reading.usb_host {
+        "Off while on USB"
+    } else {
+        "Not connected"
+    }
 }
 
 /// Clear pairings, confirmed, or Cancel, which is focused.
@@ -246,5 +248,22 @@ mod tests {
         assert_eq!(degrees(-121_760_550), "\u{2212}121.76055");
         assert_eq!(degrees(5), "0.00001");
         assert_eq!(degrees(0), "0.00000");
+    }
+
+    /// USB explains why no phone can connect, not one that already has.
+    #[test]
+    fn the_phone_row_says_when_usb_has_the_device() {
+        let idle = BluetoothReading::default();
+        assert_eq!(phone(idle), "Not connected");
+        let wired = BluetoothReading {
+            usb_host: true,
+            ..idle
+        };
+        assert_eq!(phone(wired), "Off while on USB");
+        let connected = BluetoothReading {
+            connected: true,
+            ..wired
+        };
+        assert_eq!(phone(connected), "Connected");
     }
 }

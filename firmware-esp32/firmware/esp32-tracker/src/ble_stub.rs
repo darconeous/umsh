@@ -21,6 +21,7 @@ pub(crate) fn bond_count() -> u8 {
 pub(crate) struct Panel {
     pub enabled: Option<bool>,
     pub link: screen::LinkState,
+    pub usb_host: bool,
     pub bonds: u8,
     pub pairing: screen::PairingState,
 }
@@ -30,6 +31,7 @@ pub(crate) fn panel() -> Panel {
     Panel {
         enabled: None,
         link: screen::LinkState::Disabled,
+        usb_host: false,
         bonds: 0,
         pairing: screen::PairingState::Closed,
     }

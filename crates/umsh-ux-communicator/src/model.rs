@@ -136,6 +136,8 @@ pub struct Links {
 pub struct BluetoothReading {
     /// A phone is connected.
     pub connected: bool,
+    /// A host has the device over USB, so no phone can find it.
+    pub usb_host: bool,
     /// How many phones are paired, where the board keeps its own pairings.
     pub paired: Option<u8>,
     /// A pairing window is open.

@@ -467,6 +467,7 @@ fn link_readings() -> Links {
     let ble = ble::panel();
     let bluetooth = BluetoothReading {
         connected: matches!(ble.link, LinkState::Connected | LinkState::Attached),
+        usb_host: ble.usb_host,
         paired: Some(ble.bonds),
         pairing: matches!(ble.pairing, PairingState::Open { .. }),
         pin: match ble.pairing {
