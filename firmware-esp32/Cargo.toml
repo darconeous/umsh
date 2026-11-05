@@ -56,14 +56,14 @@ trouble-host    = { git = "https://github.com/darconeous/trouble.git", rev = "67
 # Return to upstream once it includes these fixes, then crates.io
 # once compatible releases include these changes.
 # Family members must stay on the SAME rev (they share in-repo path deps).
-esp-hal                = { git = "https://github.com/darconeous/esp-hal.git", rev = "886d3eae4e019543392aa836e6bcfc29a68b26a8" }
-esp-rtos               = { git = "https://github.com/darconeous/esp-hal.git", rev = "886d3eae4e019543392aa836e6bcfc29a68b26a8" }
-esp-radio              = { git = "https://github.com/darconeous/esp-hal.git", rev = "886d3eae4e019543392aa836e6bcfc29a68b26a8" }
-esp-alloc              = { git = "https://github.com/darconeous/esp-hal.git", rev = "886d3eae4e019543392aa836e6bcfc29a68b26a8" }
-esp-println            = { git = "https://github.com/darconeous/esp-hal.git", rev = "886d3eae4e019543392aa836e6bcfc29a68b26a8" }
-esp-bootloader-esp-idf = { git = "https://github.com/darconeous/esp-hal.git", rev = "886d3eae4e019543392aa836e6bcfc29a68b26a8" }
-esp-storage            = { git = "https://github.com/darconeous/esp-hal.git", rev = "886d3eae4e019543392aa836e6bcfc29a68b26a8" }
-esp-phy                = { git = "https://github.com/darconeous/esp-hal.git", rev = "886d3eae4e019543392aa836e6bcfc29a68b26a8" }
+esp-hal                = { git = "https://github.com/darconeous/esp-hal.git", rev = "6477a7b71ef861fcf1da69c98c79a715d9679f32" }
+esp-rtos               = { git = "https://github.com/darconeous/esp-hal.git", rev = "6477a7b71ef861fcf1da69c98c79a715d9679f32" }
+esp-radio              = { git = "https://github.com/darconeous/esp-hal.git", rev = "6477a7b71ef861fcf1da69c98c79a715d9679f32" }
+esp-alloc              = { git = "https://github.com/darconeous/esp-hal.git", rev = "6477a7b71ef861fcf1da69c98c79a715d9679f32" }
+esp-println            = { git = "https://github.com/darconeous/esp-hal.git", rev = "6477a7b71ef861fcf1da69c98c79a715d9679f32" }
+esp-bootloader-esp-idf = { git = "https://github.com/darconeous/esp-hal.git", rev = "6477a7b71ef861fcf1da69c98c79a715d9679f32" }
+esp-storage            = { git = "https://github.com/darconeous/esp-hal.git", rev = "6477a7b71ef861fcf1da69c98c79a715d9679f32" }
+esp-phy                = { git = "https://github.com/darconeous/esp-hal.git", rev = "6477a7b71ef861fcf1da69c98c79a715d9679f32" }
 
 # Xtensa needs optimization even in dev builds; unoptimized images are too
 # slow to meet radio/BLE timing and blow past IRAM budgets.
