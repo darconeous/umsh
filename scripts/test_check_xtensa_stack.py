@@ -4,6 +4,7 @@ import unittest
 
 from check_xtensa_stack import (
     PATH_FRAMES,
+    code_words,
     communicator_path,
     construction_candidates,
     deepest_path,
@@ -97,12 +98,12 @@ TASK = ("_RNvMs1_NtCs0_16embassy_executor3rawINtB5_11TaskStorageNCNvNvNtCs1_"
 APP = "_RINvNtCs1_8firmware8external12communicatorINtNtCs2_7buoyant3app3AppE"
 
 
-def parsed(text):
-    return list(functions(text.splitlines(keepends=True)))
+def parsed(text, tables=frozenset()):
+    return list(functions(text.splitlines(keepends=True), tables))
 
 
-def path_through(text, root):
-    program = parsed(text)
+def path_through(text, root, tables=frozenset()):
+    program = parsed(text, tables)
     graph = {function.address: function for function in program}
     address = next(function.address for function in program if function.name == root)
     return deepest_path(graph, address)[0]
@@ -157,6 +158,78 @@ class CallPathTests(unittest.TestCase):
 42000100: entry a1, 64
 """
         self.assertEqual(path_through(text, "thunk"), [("thunk", 32), ("target", 64)])
+
+    def test_a_literal_pool_decoded_as_code_is_no_edge(self):
+        # As in the Pager: pool words past a return, reached by a branch
+        # around them, that decode to a call and a load of a real function.
+        text = """42000000 <poll>:
+42000000: entry a1, 100
+42000003: beqz.n a2, 42000010 <poll+0x10>
+42000005: retw.n
+42000007: l32r a1, 41ffff00 <literal> (42000100 <view>)
+4200000a: call12 42000100 <view>
+4200000d: ee.ld.qacc_l.l.128.ip a6, 0x110
+42000010: call8 42000200 <leaf>
+42000013: retw.n
+42000100 <view>:
+42000100: entry a1, 50000
+42000200 <leaf>:
+42000200: entry a1, 64
+"""
+        self.assertEqual(path_through(text, "poll"), [("poll", 100), ("leaf", 64)])
+
+    def test_control_stops_at_what_could_not_be_decoded(self):
+        text = """42000000 <poll>:
+42000000: entry a1, 100
+42000003: .byte 0x3c
+42000004: call8 42000100 <view>
+42000100 <view>:
+42000100: entry a1, 50000
+"""
+        self.assertEqual(path_through(text, "poll"), [("poll", 100)])
+
+    def test_a_jump_table_reaches_the_code_behind_it(self):
+        text = """42000000 <poll>:
+42000000: entry a1, 100
+42000003: jx a9
+42000006: l32r a1, 41ffff00 <literal> (42000300 <decoy>)
+42000009: call8 42000100 <arm>
+42000100 <arm>:
+42000100: entry a1, 1000
+42000300 <decoy>:
+42000300: entry a1, 50000
+"""
+        self.assertEqual(path_through(text, "poll"), [("poll", 100)])
+        self.assertEqual(path_through(text, "poll", {0x42000009}),
+                         [("poll", 100), ("arm", 1000)])
+
+    def test_a_branch_and_a_loop_reach_their_targets(self):
+        text = """42000000 <poll>:
+42000000: entry a1, 100
+42000003: bnei a8, 2, 42000010 <poll+0x10>
+42000006: loopnez a2, 42000020 <poll+0x20>
+42000009: retw.n
+42000010: call8 42000100 <one>
+42000013: retw.n
+42000020: call8 42000200 <two>
+42000023: retw.n
+42000100 <one>:
+42000100: entry a1, 1000
+42000200 <two>:
+42000200: entry a1, 2000
+"""
+        self.assertEqual(path_through(text, "poll"), [("poll", 100), ("two", 2000)])
+
+    def test_code_words_are_read_little_endian_from_the_data_columns(self):
+        dump = """
+firmware:     file format elf32-xtensa-le
+
+Contents of section .rodata:
+ 3c000120 14e12942 00000000 c8b72942 ffffff3f  ..)B......)B...?
+ 3c000130 14e12942 7f                          ..)B.
+"""
+        self.assertEqual(sorted(set(code_words(dump.splitlines()))),
+                         [0x4229b7c8, 0x4229e114])
 
     def test_each_member_of_a_cycle_counts_once(self):
         text = """42000000 <poll>:

@@ -19,9 +19,19 @@ ENTRY = re.compile(r"\bentry\s+a1,\s*(0x[0-9a-f]+|[0-9]+)")
 LOAD = re.compile(r"\bl32r\s+(a\d+),.*\(([0-9a-f]+) <")
 SUB = re.compile(r"\bsub\s+(a\d+),\s*a1,\s*(a\d+)")
 MOVSP = re.compile(r"\bmovsp\s+a1,\s*(a\d+)")
+INSTRUCTION = re.compile(r"\s*([0-9a-f]+):\s+(\S+)\s*(.*)")
 # A direct call, or a jump that may be a tail call. A jump within a function
 # names an address that starts no function, and so is no edge.
 CALL = re.compile(r"\b(?:call\d+|j)\s+([0-9a-f]+)\b")
+BRANCH = re.compile(r"(?:b[\w.]*|loop\w*)\s.*?\b([0-9a-f]{8})\b")
+# What control does not continue past.
+ENDS = frozenset(("retw", "retw.n", "ret", "ret.n", "j", "jx", "ill", "ill.n",
+                  "rfe", "rfi", "rfwo", "rfwu"))
+# A word of the hex dump's data columns.
+DUMP = re.compile(r" [0-9a-f]+ ((?:[0-9a-f]{8} ?){1,4})")
+# Where code runs, as a jump table would point to it.
+CODE_START = 0x40000000
+CODE_END = 0x44000000
 # How far into a function its prologue reaches.
 PROLOGUE_LINES = 8
 
@@ -81,36 +91,88 @@ def prologue_frame(name, lines):
     return size
 
 
-def functions(lines):
-    """Each function in objdump's disassembly, read a line at a time: only a
-    prologue and the addresses named are kept, so memory stays flat however
-    large the program. A target is whatever is called or loaded from a
-    literal, since most calls here are an L32R and a CALLX8; what starts no
-    function is dropped when the graph is walked."""
+def code_words(lines):
+    """Each word of objdump's `-s` hex dump that could be a code address.
+    Jump tables are made of these, in `.rodata`."""
+    for line in lines:
+        dump = DUMP.match(line)
+        if not dump:
+            continue
+        for word in dump[1].split():
+            if len(word) == 8:
+                value = int.from_bytes(bytes.fromhex(word), "little")
+                if CODE_START <= value < CODE_END:
+                    yield value
+
+
+def control_targets(instructions, tables):
+    """Everything called or loaded from a literal by what control can reach,
+    from the function's start and from `tables`, since most calls here are
+    an L32R and a CALLX8.
+
+    Reachability is what tells code from data. LLVM puts literal pools inside
+    functions, and objdump decodes them as instructions, so a sweep of every
+    line finds calls no code makes: a pool word that decodes to an L32R of a
+    real function has closed a cycle around the whole view chain.
+    """
+    places = {address: index for index, (address, _, _) in enumerate(instructions)}
+    pending = [0] + [index for address, index in places.items() if address in tables]
+    seen = set()
+    targets = set()
+    while pending:
+        index = pending.pop()
+        while index < len(instructions) and index not in seen:
+            seen.add(index)
+            _, mnemonic, operands = instructions[index]
+            if mnemonic.startswith("."):
+                break
+            text = f"{mnemonic} {operands}"
+            load = LOAD.search(text)
+            if load:
+                targets.add(int(load[2], 16))
+            target = CALL.search(text) or BRANCH.match(text)
+            if target:
+                address = int(target[1], 16)
+                targets.add(address)
+                if address in places:
+                    pending.append(places[address])
+            if mnemonic in ENDS:
+                break
+            index += 1
+    return targets
+
+
+def functions(lines, tables=frozenset()):
+    """Each function in objdump's disassembly, read a line at a time: only
+    one function's instructions are held, so memory stays flat however large
+    the program. What starts no function among its targets is dropped when
+    the graph is walked."""
     address = None
     name = None
     prologue = []
-    targets = set()
+    instructions = []
+
+    def function():
+        return Function(address, name, prologue_frame(name, prologue),
+                        control_targets(instructions, tables))
+
     for line in lines:
         header = HEADER.fullmatch(line.rstrip("\n"))
         if header:
             if name is not None:
-                yield Function(address, name, prologue_frame(name, prologue), targets)
+                yield function()
             address = int(header[1], 16)
             name = header[2]
             prologue = []
-            targets = set()
+            instructions = []
         elif name is not None:
             if len(prologue) < PROLOGUE_LINES:
                 prologue.append(line)
-            target = CALL.search(line)
-            if target:
-                targets.add(int(target[1], 16))
-            load = LOAD.search(line)
-            if load:
-                targets.add(int(load[2], 16))
+            instruction = INSTRUCTION.match(line)
+            if instruction:
+                instructions.append((int(instruction[1], 16), instruction[2], instruction[3]))
     if name is not None:
-        yield Function(address, name, prologue_frame(name, prologue), targets)
+        yield function()
 
 
 def function_frames(lines):
@@ -272,9 +334,13 @@ def main():
     cxxfilt = args.cxxfilt or re.sub(r"objdump$", "c++filt", args.objdump)
     symbols = subprocess.check_output([args.objdump, "-t", args.elf], text=True)
     available = stack_size(symbols)
+    tables = frozenset()
+    if args.communicator:
+        dump = subprocess.check_output([args.objdump, "-s", "-j", ".rodata", args.elf], text=True)
+        tables = frozenset(code_words(dump.splitlines()))
     with subprocess.Popen([args.objdump, "-d", "--no-show-raw-insn", args.elf],
                           stdout=subprocess.PIPE, text=True) as objdump:
-        program = list(functions(objdump.stdout))
+        program = list(functions(objdump.stdout, tables))
     if objdump.returncode:
         raise SystemExit(f"stack check: {args.objdump} failed")
     frames = [(function.name, function.frame) for function in program
