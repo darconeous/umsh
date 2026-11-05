@@ -77,12 +77,15 @@ pub fn display(
     dc: peripherals::GPIO11<'static>,
     lights: board::display::BootBacklights,
 ) -> board::display::Display {
-    // The write clock every T-Deck source runs the ST7789 at.
+    // Past the ST7789V's rated 62.5 MHz, and through the GPIO matrix rather
+    // than the IO MUX pins, but the panel holds up, and a frame goes out in
+    // less than a panel refresh. Other T-Deck sources write at 40, the next
+    // step down.
     let spi = board::SpiHandle::new(
         bus,
         cs,
         SpiConfig::default()
-            .with_frequency(Rate::from_mhz(40))
+            .with_frequency(Rate::from_mhz(80))
             .with_mode(Mode::_0),
     );
     board::display::Display::new(

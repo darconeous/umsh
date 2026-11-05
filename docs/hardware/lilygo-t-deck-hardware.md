@@ -234,6 +234,11 @@ anode on V3V.
   80 MHz, but Meshtastic's variant overrides it. The ST7789V datasheet's
   minimum serial write cycle is 16 ns (62.5 MHz). At 40 MHz a full
   153,600-byte frame takes about 31 ms.
+- **UMSH writes at 80 MHz**, past that rating, and holds up on the original
+  T-Deck; the Plus panel is untested at this clock. A full frame takes about
+  15 ms on the wire. The panel refreshes from the memory being written, along
+  the long axis and so sideways across the landscape screen, which leaves any
+  frame sent during a refresh with a slanted tear. No source lists a TE pin.
 
 ### 5.3 Initialization
 
