@@ -2872,6 +2872,50 @@ fn fragment_unavailable_marks_portion_and_settles() {
     )));
 }
 
+/// The wire checks an index against the count on the same report, not the
+/// assembly's: past it, the report names nothing here, and whatever its bit
+/// would have been must not keep the slot from settling.
+#[test]
+fn fragment_unavailable_past_the_assembly_is_ignored() {
+    let mut engine = engine();
+    let envelope = direct_envelope();
+    engine
+        .receive(&envelope, None, &fragment_msg(5, 0, 2, b"kept "), 0)
+        .unwrap();
+    drain(&mut engine);
+
+    // By hand: the encoder refuses the counts a sender may not use.
+    let report = |index: u8, count: u8| {
+        let mut buffer = [0u8; 16];
+        let mut encoder = umsh_core::options::OptionEncoder::new(&mut buffer);
+        encoder
+            .put(
+                option::MESSAGE_TYPE,
+                &[MessageType::MessageUnavailable.to_byte()],
+            )
+            .unwrap();
+        encoder
+            .put(option::MESSAGE_SEQUENCE, &[5, index, count])
+            .unwrap();
+        let len = encoder.finish();
+        buffer[..len].to_vec()
+    };
+    // Below the width of the assembly's masks, and past it.
+    for (index, count) in [(5, 6), (200, 201)] {
+        engine
+            .receive(&envelope, None, &report(index, count), 50)
+            .unwrap();
+        assert!(drain(&mut engine).is_empty());
+    }
+
+    engine.receive(&envelope, None, &report(1, 2), 100).unwrap();
+    assert!(drain(&mut engine).iter().any(|output| matches!(
+        output,
+        Drained::UpdateBody { body, status: CompletionStatus::Partial { finalized: true, .. }, .. }
+            if body == "kept [UNAVAILABLE]"
+    )));
+}
+
 // ---------------------------------------------------------------------
 // Group repair: jitter, addressability, cancellation
 // ---------------------------------------------------------------------

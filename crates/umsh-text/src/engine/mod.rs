@@ -2210,6 +2210,13 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
             match fragment {
                 Some(index) => {
                     let slot = self.pool.slots[slot_index].as_mut().expect("occupied");
+                    // The index is checked against the count on the same
+                    // report, which need not be this assembly's. A fragment
+                    // the message does not have says nothing about it, and
+                    // its bit would keep the slot from ever settling.
+                    if index >= slot.count {
+                        return;
+                    }
                     let bit = 1u16 << index;
                     if slot.present & bit == 0 {
                         slot.unavailable |= bit;
