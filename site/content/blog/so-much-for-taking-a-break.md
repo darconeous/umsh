@@ -1,7 +1,7 @@
 +++
 title = "So much for taking a break"
 description = "What has happened with UMSH over the past few months—a real mesh around Ashland, Oregon, communicator firmware for the T-LoRa Pager and T-Deck, MeshCore repeating—and where it's going."
-date = 2026-11-04
+date = 2026-11-05
 draft = false
 
 [extra]
