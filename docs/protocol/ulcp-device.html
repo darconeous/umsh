@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-824d6537.js";
+            window.path_to_searchindex_js = "searchindex-c88e99cf.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-517aa7d9.js"></script>
@@ -561,6 +561,9 @@ holds the device identity’s private key, it performs its own key agreement
 (<a href="security.html#unicast-key-agreement">Unicast Key Agreement</a>) for these
 peers—no symmetric keys are provisioned, and the entries contain no
 secret material.</p>
+<p>A device <strong>MAY</strong> hold more peers than one value can carry. <code>CMD_PROP_GET</code>
+on a list too long to return is answered with <code>STATUS_NOMEM</code>, never with
+some of its items; <code>CMD_PROP_INSERT</code> and <code>CMD_PROP_REMOVE</code> still apply.</p>
 <p>How the device node uses this list (management access control, secure
 diagnostics, and so on) is application behavior outside the scope of this
 protocol.</p>
