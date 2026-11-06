@@ -2547,10 +2547,10 @@ final class AppRuntime {
     ) async -> MessageSendResult {
         if let refusal = uncertifiedEmergencyRefusal(conversation) { return refusal }
         return await performChatCompose(conversation, clearsDraft: true) { clientToken in
-            try await radioConnection.composeText(
+            try await radioConnection.composeTyped(
                 conversationAddress: conversation.conversationAddress,
                 clientToken: clientToken,
-                body: body
+                text: body
             )
         }
     }
@@ -2712,11 +2712,19 @@ final class AppRuntime {
             return .failed("Only a message that was not delivered can be resent.")
         }
         let result = await performChatCompose(conversation, clearsDraft: false) { clientToken in
-            try await radioConnection.composeText(
-                conversationAddress: conversation.conversationAddress,
-                clientToken: clientToken,
-                body: message.body
-            )
+            if message.isStatus {
+                try await radioConnection.composeStatus(
+                    conversationAddress: conversation.conversationAddress,
+                    clientToken: clientToken,
+                    body: message.body
+                )
+            } else {
+                try await radioConnection.composeText(
+                    conversationAddress: conversation.conversationAddress,
+                    clientToken: clientToken,
+                    body: message.body
+                )
+            }
         }
         guard case .sent = result else { return result }
         if let applicationStore, let localIdentity {
@@ -4109,20 +4117,23 @@ final class AppRuntime {
                 let senderPeer = target.senderAddress.flatMap { address in
                     peers.first { $0.identity.canonicalAddress == address }
                 }
+                // A group message is from someone in particular, and the
+                // banner is unreadable without saying who.
+                let sender = await memberName(
+                    address: target.senderAddress,
+                    handle: target.senderHandle,
+                    hint: target.senderHint
+                )
                 notificationService.postInboundMessage(
                     conversationAddress: target.conversationAddress,
                     displayName: channel.title,
-                    // A group message is from someone in particular, and the
-                    // banner is unreadable without saying who.
-                    sender: await memberName(
-                        address: target.senderAddress,
-                        handle: target.senderHandle,
-                        hint: target.senderHint
-                    ),
+                    sender: sender,
                     senderAddress: target.senderAddress,
                     senderHint: senderPeer?.identity.hint,
                     channel: channel.avatarStyle,
-                    body: target.body
+                    body: target.isStatus
+                        ? statusLine(name: sender, body: target.body)
+                        : target.body
                 )
             } else {
                 // Muting a conversation silences its banners the same way
@@ -4133,14 +4144,17 @@ final class AppRuntime {
                 let peer = peers.first {
                     $0.identity.canonicalAddress == target.conversationAddress
                 }
+                let displayName = peer?.displayName ?? String(target.conversationAddress.prefix(10))
                 notificationService.postInboundMessage(
                     conversationAddress: target.conversationAddress,
-                    displayName: peer?.displayName ?? String(target.conversationAddress.prefix(10)),
+                    displayName: displayName,
                     sender: nil,
                     senderAddress: target.conversationAddress,
                     senderHint: peer?.identity.hint,
                     channel: nil,
-                    body: target.body
+                    body: target.isStatus
+                        ? statusLine(name: displayName, body: target.body)
+                        : target.body
                 )
             }
         }
@@ -4219,7 +4233,8 @@ final class AppRuntime {
                 body: text.body,
                 senderAddress: text.senderAddress,
                 senderHint: text.senderHint,
-                senderHandle: text.senderHandle
+                senderHandle: text.senderHandle,
+                isStatus: text.isStatus
             )
         }
         guard let reaction = try? await applicationStore.chatReactionNotificationTarget(
@@ -4232,7 +4247,8 @@ final class AppRuntime {
             body: Self.reactionLine(reaction.body, on: reaction.targetBody),
             senderAddress: reaction.senderAddress,
             senderHint: reaction.senderHint,
-            senderHandle: reaction.senderHandle
+            senderHandle: reaction.senderHandle,
+            isStatus: false
         )
     }
 
@@ -4296,6 +4312,7 @@ final class AppRuntime {
         let senderAddress: String?
         let senderHint: Data?
         let senderHandle: String?
+        let isStatus: Bool
     }
 
     /// Whether an address names a channel's group conversation rather than a
@@ -4491,6 +4508,8 @@ final class AppRuntime {
             isGapPlaceholder: stored.isGapPlaceholder,
             isUnavailable: stored.isUnavailable,
             isReceivedLate: stored.receivedLate,
+            isEditOfUnknown: stored.isEditOfUnknown,
+            isStatus: stored.isStatus,
             isDeliveredLate: stored.deliveredLate,
             isDeliveredFlooded: stored.deliveredFlooded,
             originalBody: stored.originalBody,

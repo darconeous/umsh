@@ -156,6 +156,7 @@ struct ApplicationStateLoader {
             isDeleted: preview.isDeleted,
             senderAddress: preview.senderAddress,
             senderHint: preview.senderHint,
+            isStatus: preview.isStatus,
             senderNodeHint: senderNodeHint
         )
     }

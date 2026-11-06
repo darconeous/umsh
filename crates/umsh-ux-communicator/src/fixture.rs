@@ -492,6 +492,7 @@ fn quote_of(heap: TextHeap, message: &Message, chat_name: &str) -> Option<Quote>
     Some(Quote {
         name,
         text: message.text.clone(),
+        unknown: false,
     })
 }
 
@@ -547,6 +548,7 @@ fn mockup_message(
         id: mockup_id(chat, index),
         direction: direction_of(from),
         sender: sender_of(from),
+        status: None,
         text,
         delivery: delivery(chat, index),
         reactions: their_reactions(chat, index)
@@ -559,6 +561,7 @@ fn mockup_message(
             .collect::<Reactions>(),
         card: invite.map(Card::Channel),
         reply,
+        unknown_original: false,
         time: Some(time),
         presence: condition.presence,
         edited: condition.edited,
@@ -644,11 +647,13 @@ fn long_message(heap: TextHeap, index: usize) -> Option<Message> {
         id: LONG_FIRST + index as MessageId,
         direction: direction_of(from),
         sender: sender_of(from),
+        status: None,
         text: SharedText::new(heap, &text)?,
         delivery: Delivery::Delivered,
         reactions: Reactions::new(),
         card: None,
         reply: None,
+        unknown_original: false,
         time: long_time(index),
         presence: long_presence(index),
         edited: false,
@@ -1950,6 +1955,7 @@ impl Store {
                 sender: sender_of(from),
                 presence: long_presence(index),
                 time: long_time(index),
+                status: false,
             });
         }
         let (from, _) = *messages(chat).get(index)?;
@@ -1958,6 +1964,7 @@ impl Store {
             sender: sender_of(from),
             presence: condition(chat, index).presence,
             time: Some(mockup_time(chat, index)),
+            status: false,
         })
     }
 
@@ -2006,6 +2013,7 @@ impl Store {
                 sender: message.sender.clone(),
                 presence: message.presence,
                 time: message.time,
+                status: message.status.is_some(),
             })?
         };
         if self.identified.get()
@@ -2126,6 +2134,19 @@ impl Store {
             }
             None => None,
         };
+        // What the node does with a status message, as far as its screens
+        // can tell.
+        let (status, text) = match text.strip_prefix("/me ") {
+            Some(words) if reply_to.is_none() => {
+                let name = match from {
+                    From::Me => s("Robin"),
+                    From::Peer => self.chat(chat).map(|chat| chat.name).unwrap_or_default(),
+                    From::Member(name) => s(name),
+                };
+                (SharedText::new(self.heap, &name), words)
+            }
+            _ => (None, text),
+        };
         let message = Message {
             id: self.next.get(),
             direction: match from {
@@ -2136,6 +2157,7 @@ impl Store {
                 From::Member(name) => Some(member(name)),
                 From::Me | From::Peer => None,
             },
+            status,
             text: SharedText::new(self.heap, text)?,
             delivery: match from {
                 // A channel's sends have no acknowledgment to wait for.
@@ -2146,6 +2168,7 @@ impl Store {
             reactions: Reactions::new(),
             card: self.contact_in(text).map(Card::Contact),
             reply,
+            unknown_original: false,
             time: Some(self.time()),
             presence: Presence::Present,
             edited: false,

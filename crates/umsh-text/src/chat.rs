@@ -222,6 +222,7 @@ impl Mutation {
                 presence,
                 late,
                 notify,
+                unknown_original,
             } => Change::Insert(Insert {
                 conversation,
                 sender,
@@ -240,6 +241,7 @@ impl Mutation {
                 presence,
                 late,
                 notify,
+                unknown_original,
             }),
             MutationKind::UpdateBody {
                 body: text,
@@ -254,10 +256,12 @@ impl Mutation {
             },
             MutationKind::Edit {
                 conversation,
+                sender,
                 original,
                 body: text,
             } => Change::Edit {
                 conversation,
+                sender,
                 original,
                 body: String::from(body(&text)),
             },
@@ -303,6 +307,7 @@ pub enum Change {
     /// Apply an edit to the referenced original message.
     Edit {
         conversation: ConversationKey,
+        sender: SenderScope,
         original: ResolvedRef,
         body: String,
     },
@@ -336,6 +341,8 @@ pub struct Insert {
     pub presence: Presence,
     pub late: bool,
     pub notify: bool,
+    /// See [`MutationKind::Insert::unknown_original`].
+    pub unknown_original: bool,
 }
 
 /// A change in a frame's delivery.

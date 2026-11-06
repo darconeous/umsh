@@ -1638,6 +1638,32 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
         try await session.removePeers(peerAddresses: peerAddresses)
     }
 
+    func composeTyped(
+        conversationAddress: String,
+        clientToken: UInt32,
+        text: String
+    ) async throws -> MobileChatComposeBatchRecord {
+        let session = try await currentMeshSession()
+        return try await session.composeTyped(
+            conversationAddress: conversationAddress,
+            clientToken: clientToken,
+            text: text
+        )
+    }
+
+    func composeStatus(
+        conversationAddress: String,
+        clientToken: UInt32,
+        body: String
+    ) async throws -> MobileChatComposeBatchRecord {
+        let session = try await currentMeshSession()
+        return try await session.composeStatus(
+            conversationAddress: conversationAddress,
+            clientToken: clientToken,
+            body: body
+        )
+    }
+
     func composeText(
         conversationAddress: String,
         clientToken: UInt32,

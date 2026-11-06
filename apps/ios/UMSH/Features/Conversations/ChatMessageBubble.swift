@@ -202,6 +202,9 @@ struct ChatMessageBubble: View, @MainActor Equatable {
     /// Who sent this, in a group conversation. Absent for a direct chat,
     /// where every inbound bubble has the same sender.
     var senderLabel: String?
+    /// The name status text opens with. Set only for status text, which has
+    /// no bubble.
+    var statusName: String?
     /// The sender's hint, which is what their avatar is derived from.
     var senderHint: MeshNodeHint?
     /// The outline of the sender's avatar. A sender this phone knows nothing
@@ -246,6 +249,7 @@ struct ChatMessageBubble: View, @MainActor Equatable {
             && lhs.isMostRecentOutbound == rhs.isMostRecentOutbound
             && lhs.expectsAcknowledgment == rhs.expectsAcknowledgment
             && lhs.senderLabel == rhs.senderLabel
+            && lhs.statusName == rhs.statusName
             && lhs.senderHint == rhs.senderHint
             && lhs.senderShape == rhs.senderShape
             && (lhs.onEdit == nil) == (rhs.onEdit == nil)
@@ -296,7 +300,7 @@ struct ChatMessageBubble: View, @MainActor Equatable {
                         // are the same person still talking, and repeating
                         // them on every bubble is what makes a group chat
                         // unreadable.
-                        if let senderLabel, presentation.isFirstInRun {
+                        if let senderLabel, presentation.isFirstInRun, statusName == nil {
                             senderLabelText(senderLabel)
                         }
                         reactionsAndBubble
@@ -378,7 +382,7 @@ struct ChatMessageBubble: View, @MainActor Equatable {
     /// avatar belongs beside the end of what that member said, as in Messages.
     @ViewBuilder
     private var gutter: some View {
-        if presentation.isLastInRun, let senderHint {
+        if presentation.isLastInRun, statusName == nil, let senderHint {
             Button {
                 onShowSender?()
             } label: {
@@ -407,7 +411,9 @@ struct ChatMessageBubble: View, @MainActor Equatable {
     /// keep the chips clear of the name. Absent unless this bubble carries both
     /// a label and reactions.
     private var labelClearance: CGFloat? {
-        guard senderLabel != nil, presentation.isFirstInRun, !message.reactions.isEmpty else {
+        guard senderLabel != nil, statusName == nil, presentation.isFirstInRun,
+              !message.reactions.isEmpty
+        else {
             return nil
         }
         return max(0, ReactionBadgeView.reach(for: message.reactions) - ReactionBadgeView.outset)
@@ -415,6 +421,14 @@ struct ChatMessageBubble: View, @MainActor Equatable {
 
     private var shape: BubbleShape {
         BubbleShape(isOutbound: message.isOutbound, showsTail: presentation.isLastInRun)
+    }
+
+    /// The strip kept clear above the message for its chips. They lap over a
+    /// bubble's corner, but status text has no corner to spare: they stand
+    /// clear of its first line instead.
+    private var reactionRoom: CGFloat {
+        guard !message.reactions.isEmpty else { return 0 }
+        return ReactionBadgeView.overhang + (statusName == nil ? 0 : 12)
     }
 
     /// The bubble with its reaction chips laid out over the top corner—the
@@ -460,7 +474,7 @@ struct ChatMessageBubble: View, @MainActor Equatable {
                     .accessibilityHint(onResend == nil ? "" : "Sends the message again")
                 }
             }
-            .padding(.top, message.reactions.isEmpty ? 0 : ReactionBadgeView.overhang)
+            .padding(.top, reactionRoom)
             .padding(
                 message.isOutbound ? .leading : .trailing,
                 message.reactions.isEmpty ? 0 : ReactionBadgeView.outset
@@ -585,7 +599,25 @@ struct ChatMessageBubble: View, @MainActor Equatable {
             .padding(tailEdge, BubbleShape.tailWidth)
     }
 
+    /// What the row shows of the message: its bubble, or status text in the
+    /// bubble's place.
+    @ViewBuilder
     private var bubble: some View {
+        if let statusName {
+            SelectableMessageText(
+                text: message.body,
+                textColor: .secondaryLabel,
+                statusName: statusName,
+                textAlignment: message.isOutbound ? .right : .left
+            )
+            .padding(.vertical, 2)
+            .padding(tailEdge, BubbleShape.tailWidth)
+        } else {
+            filledBubble
+        }
+    }
+
+    private var filledBubble: some View {
         ZStack(alignment: .leading) {
             if let reply = message.reply {
                 ReplyStack {
@@ -629,7 +661,14 @@ struct ChatMessageBubble: View, @MainActor Equatable {
     private func caption(at now: Date) -> String? {
         var parts: [String] = []
         if message.isEdited { parts.append("Edited") }
-        if message.isReceivedLate { parts.append("Received late") }
+        if message.isEditOfUnknown {
+            parts.append(String(
+                localized: "Received as an edit for an unknown previous message",
+                comment: "Under a message that arrived as an edit of a message this phone never received, shown as a message of its own."
+            ))
+        } else if message.isReceivedLate {
+            parts.append("Received late")
+        }
         if message.isOutbound, let label = deliveryLabel(at: now) { parts.append(label) }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
@@ -799,6 +838,9 @@ private struct SelectableMessageText: UIViewRepresentable {
     /// color: the body text and any link the detector finds both have to stay
     /// legible against it, and a link left to its own devices would not be.
     let textColor: UIColor
+    /// The bold name status text opens with.
+    var statusName: String?
+    var textAlignment: NSTextAlignment = .natural
 
     func makeUIView(context: Context) -> BubbleTextView {
         let view = BubbleTextView()
@@ -816,7 +858,12 @@ private struct SelectableMessageText: UIViewRepresentable {
     }
 
     func updateUIView(_ view: BubbleTextView, context: Context) {
-        let body = Self.attributed(text, color: textColor)
+        let body = Self.attributed(
+            text,
+            statusName: statusName,
+            alignment: textAlignment,
+            color: textColor
+        )
         if view.attributedText != body {
             view.attributedText = body
         }
@@ -837,14 +884,29 @@ private struct SelectableMessageText: UIViewRepresentable {
     /// know, and `umsh:cs:EMERGENCY` is exactly that: no `//`, no authority,
     /// nothing generic to recognize. Marking it here costs the detector
     /// nothing, since it passes over ranges that already carry a link.
-    private static func attributed(_ text: String, color: UIColor) -> NSAttributedString {
+    private static func attributed(
+        _ body: String,
+        statusName: String?,
+        alignment: NSTextAlignment,
+        color: UIColor
+    ) -> NSAttributedString {
+        let text = statusName.map { statusLine(name: $0, body: body) } ?? body
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = alignment
+        let font = UIFont.preferredFont(forTextStyle: .body)
         let body = NSMutableAttributedString(
             string: text,
-            attributes: [
-                .font: UIFont.preferredFont(forTextStyle: .body),
-                .foregroundColor: color
-            ]
+            attributes: [.font: font, .foregroundColor: color, .paragraphStyle: paragraph]
         )
+        if let statusName,
+           let name = text.range(of: statusName),
+           let bold = font.fontDescriptor.withSymbolicTraits(.traitBold) {
+            body.addAttribute(
+                .font,
+                value: UIFont(descriptor: bold, size: 0),
+                range: NSRange(name, in: text)
+            )
+        }
         guard let umshURI else { return body }
         for match in umshURI.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
             guard let range = Range(match.range, in: text),

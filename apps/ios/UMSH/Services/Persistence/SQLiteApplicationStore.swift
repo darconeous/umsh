@@ -186,6 +186,8 @@ struct StoredConversationPreview: Equatable, Sendable {
     /// and the hint the wire always carries.
     let senderAddress: String?
     let senderHint: Data?
+    /// Status text, which reads as its sender's name followed by its body.
+    let isStatus: Bool
 }
 
 struct StoredDirectConversation: Equatable, Sendable {
@@ -234,6 +236,8 @@ struct ChatNotificationTarget: Equatable, Sendable {
     let senderHint: Data?
     /// The name the sender attached to the message.
     let senderHandle: String?
+    /// Status text, which reads as its sender's name followed by its body.
+    let isStatus: Bool
 }
 
 /// An inbound reaction worth telling the user about: who put what on which
@@ -347,6 +351,11 @@ struct StoredChatMessage: Equatable, Sendable, Identifiable {
     var reactions: [StoredMessageReaction] = []
     /// Whether this message replies to another.
     var isReply = false
+    /// Came as an edit of a message this phone does not hold.
+    var isEditOfUnknown = false
+    /// Status text, which reads as its sender's name followed by its body,
+    /// with no bubble.
+    var isStatus = false
     /// The stored row it replies to, once that has been found.
     var replyTarget: StoredMessageRef?
     /// What it replies to, as it reads now: read with the page, so an edit
@@ -562,7 +571,7 @@ actor SQLiteApplicationStore {
     /// store refuses to open any database above this constant, so a stale value
     /// lets the new schema apply once and then locks the user out of their own
     /// data on the next launch. ``migrate(_:)`` checks the two agree.
-    static let currentSchemaVersion: Int32 = 28
+    static let currentSchemaVersion: Int32 = 29
 
     nonisolated(unsafe) private let database: OpaquePointer
 
@@ -1430,7 +1439,8 @@ actor SQLiteApplicationStore {
     ) throws -> ChatNotificationTarget? {
         let statement = try prepare(
             """
-            SELECT conversation_address, body, sender_address, sender_hint, sender_handle
+            SELECT conversation_address, body, sender_address, sender_hint, sender_handle,
+                message_type = 1
             FROM chat_message
             WHERE owner_identity_id = ? AND session_id = ? AND handle = ?
                 AND direction = 0 AND deleted = 0 AND presence = 0 AND body <> ''
@@ -1447,7 +1457,8 @@ actor SQLiteApplicationStore {
             body: Self.stringColumn(statement, at: 1),
             senderAddress: Self.optionalStringColumn(statement, at: 2),
             senderHint: Self.optionalDataColumn(statement, at: 3),
-            senderHandle: Self.optionalStringColumn(statement, at: 4)
+            senderHandle: Self.optionalStringColumn(statement, at: 4),
+            isStatus: sqlite3_column_int(statement, 5) != 0
         )
     }
 
@@ -2140,7 +2151,7 @@ actor SQLiteApplicationStore {
     private static func conversationTailColumns(owner: String, address: String) -> String {
         """
         lm.created_at_ms, lm.body, lm.direction, lm.deleted,
-        lm.sender_address, lm.sender_hint,
+        lm.sender_address, lm.sender_hint, lm.message_type = 1,
         (SELECT COUNT(*) FROM chat_message u
           WHERE u.owner_identity_id = \(owner)
             AND u.conversation_address = \(address)
@@ -2162,14 +2173,14 @@ actor SQLiteApplicationStore {
         """
     }
 
-    /// Reads the six preview columns and the unread count a tail block selects,
+    /// Reads the seven preview columns and the unread count a tail block selects,
     /// starting at `offset`. A conversation with no messages has a NULL
     /// timestamp and no preview.
     private static func conversationTail(
         _ statement: OpaquePointer,
         at offset: Int32
     ) -> (lastMessage: StoredConversationPreview?, unreadCount: Int) {
-        let unread = Int(sqlite3_column_int64(statement, offset + 6))
+        let unread = Int(sqlite3_column_int64(statement, offset + 7))
         guard sqlite3_column_type(statement, offset) != SQLITE_NULL else {
             return (nil, unread)
         }
@@ -2180,7 +2191,8 @@ actor SQLiteApplicationStore {
                 isOutbound: sqlite3_column_int(statement, offset + 2) == 1,
                 isDeleted: sqlite3_column_int(statement, offset + 3) != 0,
                 senderAddress: optionalStringColumn(statement, at: offset + 4),
-                senderHint: optionalDataColumn(statement, at: offset + 5)
+                senderHint: optionalDataColumn(statement, at: offset + 5),
+                isStatus: sqlite3_column_int(statement, offset + 6) != 0
             ),
             unread
         )
@@ -3055,7 +3067,7 @@ actor SQLiteApplicationStore {
         sender_address, sender_hint, sender_handle,
         rx_rssi_dbm, rx_snr_cb, rx_lqi, rx_hop_count,
         rx_route_hints, rx_source_authenticated, rowid, delivered_flooded,
-        regarding_handle IS NOT NULL OR regarding_wire_id IS NOT NULL,
+        regarding_handle IS NOT NULL OR regarding_wire_id IS NOT NULL OR regarding_unknown <> 0,
         regarding_target_session_id, regarding_target_handle,
         delivery_progress_at_ms,
         (SELECT group_concat(hex(f.repeaters), ',') FROM chat_delivery_fragment f
@@ -3067,7 +3079,9 @@ actor SQLiteApplicationStore {
         (SELECT MAX(f.anonymous_repeats) FROM chat_delivery_fragment f
             WHERE f.owner_identity_id = chat_message.owner_identity_id
                 AND f.session_id = chat_message.delivery_session_id
-                AND f.handle = chat_message.delivery_handle)
+                AND f.handle = chat_message.delivery_handle),
+        unknown_original,
+        message_type = 1
         """
 
     /// How many messages a transcript read will accept in one page, whatever
@@ -3772,6 +3786,8 @@ actor SQLiteApplicationStore {
             rowID: sqlite3_column_int64(statement, 23),
             deliveredFlooded: sqlite3_column_int(statement, 24) != 0,
             isReply: sqlite3_column_int(statement, 25) != 0,
+            isEditOfUnknown: sqlite3_column_int(statement, 31) != 0,
+            isStatus: sqlite3_column_int(statement, 32) != 0,
             replyTarget: optionalStringColumn(statement, at: 26).map { session in
                 StoredMessageRef(
                     sessionID: session,
@@ -4008,9 +4024,10 @@ actor SQLiteApplicationStore {
                     rx_route_hints, rx_source_authenticated,
                     is_reaction, regarding_wire_id, regarding_direction, regarding_sender_hint,
                     regarding_target_session_id, regarding_target_handle,
-                    delivery_session_id, delivery_handle, silent
+                    delivery_session_id, delivery_handle, silent,
+                    regarding_unknown, unknown_original
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?,
-                          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(owner_identity_id, session_id, handle) DO UPDATE SET
                     body = excluded.body,
                     complete = excluded.complete,
@@ -4023,6 +4040,10 @@ actor SQLiteApplicationStore {
                     text_color = excluded.text_color,
                     presence = excluded.presence,
                     received_late = MAX(chat_message.received_late, excluded.received_late),
+                    regarding_unknown =
+                        MAX(chat_message.regarding_unknown, excluded.regarding_unknown),
+                    unknown_original =
+                        MAX(chat_message.unknown_original, excluded.unknown_original),
                     -- A placeholder filled in later carries the metadata of
                     -- the frame that filled it; keep whichever row has any.
                     sender_hint = COALESCE(excluded.sender_hint, chat_message.sender_hint),
@@ -4113,6 +4134,8 @@ actor SQLiteApplicationStore {
             let silent = direction == .inbound && peerAddress == silentTestsIn
                 && isTestMessageBody(body: body)
             try check(sqlite3_bind_int(statement, 39, silent ? 1 : 0))
+            try check(sqlite3_bind_int(statement, 40, mutation.regardingUnknown ? 1 : 0))
+            try check(sqlite3_bind_int(statement, 41, mutation.unknownOriginal ? 1 : 0))
             try stepDone(statement)
             // A reaction or a reply can outrun the message it is about—
             // repaired gaps and channel-group reordering both do it. Whenever
@@ -4249,7 +4272,8 @@ actor SQLiteApplicationStore {
     /// identity here) but carries the *original's* wire ID, so later edits,
     /// deletes, and reactions referencing that ID resolve to it; reactions
     /// already waiting on it are adopted the way any late-arriving message
-    /// adopts them. Marked received-late—it is one, in the plainest sense.
+    /// adopts them. Marked received-late—it is one, in the plainest sense—
+    /// and as an edit of something unknown, which is what its bubble says.
     ///
     /// Inbound originals only: an unresolved edit of one of our own outbound
     /// messages describes a message this identity never sent, and stays
@@ -4271,8 +4295,8 @@ actor SQLiteApplicationStore {
                 owner_identity_id, session_id, handle, conversation_address,
                 direction, wire_id, sender_hint, body, complete,
                 deleted, created_at_ms, presence, received_late, is_reaction,
-                delivery_session_id, delivery_handle
-            ) VALUES (?, ?, ?, ?, 0, ?, ?, ?, 1, 0, ?, 0, 1, 0, ?, ?)
+                delivery_session_id, delivery_handle, unknown_original
+            ) VALUES (?, ?, ?, ?, 0, ?, ?, ?, 1, 0, ?, 0, 1, 0, ?, ?, 1)
             """
         )
         defer { sqlite3_finalize(statement) }
@@ -4414,6 +4438,11 @@ actor SQLiteApplicationStore {
     /// serially, so the newest is the only one still referenceable. `nil`
     /// when the target has not been stored yet; ``bindPendingRegarding``
     /// adopts those once it is.
+    ///
+    /// A sender that predates the two-octet form names its own messages in
+    /// the form that means ours, so a one-to-one reference to our own stream
+    /// that matches nothing there means theirs. Inbound rows without a hint
+    /// are one-to-one only. This goes when those senders do.
     private func resolveRegardingTarget(
         ownerIdentityID: String,
         sessionID: String,
@@ -4426,6 +4455,31 @@ actor SQLiteApplicationStore {
         guard let wireID = mutation.regardingWireId,
               let direction = mutation.regardingDirection
         else { return nil }
+        let found = try regardingTargetRow(
+            ownerIdentityID: ownerIdentityID,
+            conversationAddress: conversationAddress,
+            direction: direction,
+            wireID: wireID,
+            senderHint: mutation.regardingSenderHint.map { Data($0) }
+        )
+        guard found == nil, direction == .outbound else { return found }
+        return try regardingTargetRow(
+            ownerIdentityID: ownerIdentityID,
+            conversationAddress: conversationAddress,
+            direction: .inbound,
+            wireID: wireID,
+            senderHint: nil
+        )
+    }
+
+    /// The newest non-reaction row holding `wireID` on one stream.
+    private func regardingTargetRow(
+        ownerIdentityID: String,
+        conversationAddress: String,
+        direction: MobileChatDirection,
+        wireID: UInt8,
+        senderHint: Data?
+    ) throws -> (sessionID: String, handle: UInt32)? {
         // `IS` rather than `=` so a conversation without hints—every direct
         // one, and our own side of a group—matches null against null.
         let statement = try prepare(
@@ -4443,7 +4497,7 @@ actor SQLiteApplicationStore {
         try bind(conversationAddress, to: statement, at: 2)
         try check(sqlite3_bind_int(statement, 3, direction == .outbound ? 1 : 0))
         try check(sqlite3_bind_int(statement, 4, Int32(wireID)))
-        try bindOptional(mutation.regardingSenderHint.map { Data($0) }, to: statement, at: 5)
+        try bindOptional(senderHint, to: statement, at: 5)
         guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
         guard let session = sqlite3_column_text(statement, 0) else { return nil }
         return (String(cString: session), UInt32(sqlite3_column_int64(statement, 1)))
@@ -5509,6 +5563,29 @@ actor SQLiteApplicationStore {
                     ALTER TABLE chat_message ADD COLUMN silent INTEGER NOT NULL DEFAULT 0;
 
                     PRAGMA user_version = 28;
+                    """
+                )
+                try execute(database, sql: "COMMIT")
+            } catch {
+                try? execute(database, sql: "ROLLBACK")
+                throw error
+            }
+        }
+
+        if version < 29 {
+            try execute(database, sql: "BEGIN IMMEDIATE")
+            do {
+                // A reply whose Regarding could not be read, and a message
+                // that came as an edit of something unknown: each says so.
+                try execute(
+                    database,
+                    sql: """
+                    ALTER TABLE chat_message
+                        ADD COLUMN regarding_unknown INTEGER NOT NULL DEFAULT 0;
+                    ALTER TABLE chat_message
+                        ADD COLUMN unknown_original INTEGER NOT NULL DEFAULT 0;
+
+                    PRAGMA user_version = 29;
                     """
                 )
                 try execute(database, sql: "COMMIT")

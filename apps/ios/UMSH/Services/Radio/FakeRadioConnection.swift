@@ -1089,6 +1089,32 @@ actor FakeRadioConnection: RadioConnection {
         try await meshSession.setChatDisplayName(name: name)
     }
 
+    func composeTyped(
+        conversationAddress: String,
+        clientToken: UInt32,
+        text: String
+    ) async throws -> MobileChatComposeBatchRecord {
+        guard let meshSession else { throw RadioConnectionError.incompatibleProtocol }
+        return try await meshSession.composeTyped(
+            conversationAddress: conversationAddress,
+            clientToken: clientToken,
+            text: text
+        )
+    }
+
+    func composeStatus(
+        conversationAddress: String,
+        clientToken: UInt32,
+        body: String
+    ) async throws -> MobileChatComposeBatchRecord {
+        guard let meshSession else { throw RadioConnectionError.incompatibleProtocol }
+        return try await meshSession.composeStatus(
+            conversationAddress: conversationAddress,
+            clientToken: clientToken,
+            body: body
+        )
+    }
+
     func composeText(
         conversationAddress: String,
         clientToken: UInt32,

@@ -19,7 +19,9 @@ use alloc::vec::Vec;
 
 use umsh_core::{ChannelTag, NodeHint, PublicKey, RouterHint};
 use umsh_text::chat::{self, Insert, Mutation};
-use umsh_text::engine::{ArchiveKey, Direction, Presence, ResolvedRef, StreamCheckpoint};
+use umsh_text::engine::{
+    ArchiveKey, CompletionStatus, Direction, Presence, ResolvedRef, StreamCheckpoint,
+};
 use umsh_text::{ConversationKey, MessageType, SenderScope, WireRef};
 
 use crate::batch::{Batch, Change, CommitStep, Committed, Subject};
@@ -618,18 +620,18 @@ impl<D: Durable> MemoryStore<D> {
 
     /// The message `reference` names in `conversation`.
     ///
-    /// A one-to-one Regarding is one octet, a wire ID with no stream, so
-    /// the engine leaves it unresolved, scoped to the peer, when the ID
-    /// could be either party's. With `either_party`, such a reference
-    /// matches the newest message with that ID in either stream. An edit
-    /// or delete never does: its original is always its own sender's.
+    /// A `regarding` that the engine leaves to us in our own stream may, in
+    /// a one-to-one conversation, be from a sender that predates the
+    /// two-octet form and named its own message: when we hold none with
+    /// that ID, it means theirs. An edit or delete never does, as its
+    /// original is always its own sender's. This goes when those senders do.
     fn resolve_ref(
         &self,
         batch: &Batch<'_>,
         committed: &Committed,
         reference: &ResolvedRef,
         conversation: &ConversationKey,
-        either_party: bool,
+        regarding: bool,
     ) -> Option<u32> {
         match reference {
             ResolvedRef::Handle(handle) => self.resolve(batch, committed, *handle),
@@ -640,19 +642,23 @@ impl<D: Durable> MemoryStore<D> {
                     epoch: None,
                     wire_id: *message_id,
                 };
-                let one_to_one = matches!(
-                    conversation,
-                    ConversationKey::Direct { .. } | ConversationKey::ChannelDirect { .. }
-                );
-                let ours = (either_party && one_to_one && *sender != SenderScope::Local)
-                    .then(|| {
+                let peer = match conversation {
+                    ConversationKey::Direct { peer }
+                    | ConversationKey::ChannelDirect { peer, .. }
+                        if regarding && *sender == SenderScope::Local =>
+                    {
+                        Some(SenderScope::Peer(*peer))
+                    }
+                    _ => None,
+                };
+                self.resolve_wire(&alias)
+                    .or_else(|| {
                         self.resolve_wire(&WireAlias {
-                            sender: SenderScope::Local,
+                            sender: peer?,
                             ..alias
                         })
                     })
-                    .flatten();
-                self.resolve_wire(&alias).max(ours).map(|id| id.0)
+                    .map(|id| id.0)
             }
             // A room numbers its messages itself, whoever sent them.
             ResolvedRef::Unresolved(WireRef::RoomCanonical { message_id }) => {
@@ -667,6 +673,7 @@ impl<D: Durable> MemoryStore<D> {
                     .filter_map(|(_, ids)| ids.last().copied())
                     .max()
             }
+            ResolvedRef::Unknown => None,
         }
     }
 
@@ -737,12 +744,16 @@ impl<D: Durable> MemoryStore<D> {
                 presence,
                 late,
                 notify,
+                unknown_original,
                 ..
             }) => {
                 let sender_handle = sender_handle.as_deref();
                 let regarding_id = regarding.and_then(|reference| {
                     self.resolve_ref(batch, committed, &reference, &conversation, true)
                 });
+                let unknown_regarding = message_type == MessageType::Basic
+                    && regarding.is_some()
+                    && regarding_id.is_none();
                 // A slot already kept under this handle is filled in place.
                 if let Some(id) = self.resolve(batch, committed, mutation.handle) {
                     let mut noticed = false;
@@ -770,6 +781,8 @@ impl<D: Durable> MemoryStore<D> {
                         record.presence = presence;
                         record.flags.late |= late;
                         record.flags.notify |= notify;
+                        record.flags.unknown_regarding = unknown_regarding;
+                        record.flags.unknown_original |= unknown_original;
                         record.link = link.or(record.link);
                         record.time = record.time.or(batch.time());
                     });
@@ -826,6 +839,8 @@ impl<D: Durable> MemoryStore<D> {
                         flags: MessageFlags {
                             late,
                             notify,
+                            unknown_regarding,
+                            unknown_original,
                             ..MessageFlags::default()
                         },
                         delivery: Delivery::default(),
@@ -881,11 +896,22 @@ impl<D: Durable> MemoryStore<D> {
             }
             chat::Change::Edit {
                 conversation,
+                sender,
                 original,
                 ref body,
             } => {
                 let Some(id) = self.resolve_ref(batch, committed, &original, &conversation, false)
                 else {
+                    if sender != SenderScope::Local && !body.is_empty() {
+                        self.keep_orphan_edit(
+                            batch,
+                            committed,
+                            mutation,
+                            link,
+                            (conversation, sender, original),
+                            body,
+                        );
+                    }
                     return;
                 };
                 self.update_message(id, |message| {
@@ -924,6 +950,55 @@ impl<D: Durable> MemoryStore<D> {
                 committed.touch_message(MessageId(id));
             }
         }
+    }
+
+    /// Keep an edit of a message this node does not hold as a message of
+    /// its own, under its original's wire ID so that later references find
+    /// it: the edit carries all of the message there is, and its sender saw
+    /// it delivered.
+    fn keep_orphan_edit(
+        &mut self,
+        batch: &Batch<'_>,
+        committed: &mut Committed,
+        mutation: &Mutation,
+        link: Option<LinkInfo>,
+        (conversation, sender, original): (ConversationKey, SenderScope, ResolvedRef),
+        body: &str,
+    ) {
+        let wire_id = match original {
+            ResolvedRef::Unresolved(WireRef::SenderScoped { message_id, .. }) => Some(message_id),
+            _ => None,
+        };
+        let insert = Mutation {
+            change: chat::Change::Insert(Insert {
+                conversation,
+                sender,
+                sender_key: None,
+                direction: Direction::Inbound,
+                message_type: MessageType::Basic,
+                wire_id,
+                epoch: 0,
+                client_token: None,
+                sender_handle: None,
+                regarding: None,
+                bg_color: None,
+                text_color: None,
+                body: body.into(),
+                status: CompletionStatus::Complete,
+                presence: Presence::Present,
+                late: false,
+                notify: true,
+                unknown_original: true,
+            }),
+            handle: mutation.handle,
+            revision: mutation.revision,
+        };
+        self.mutate(batch, committed, &insert, link);
+        // The engine knows this message by its wire ID, not the edit's
+        // handle, so a reference to it must not go by that handle.
+        committed
+            .inserted
+            .retain(|(handle, _)| *handle != mutation.handle);
     }
 
     /// Make room: the oldest messages go first, across every chat, except
@@ -1031,6 +1106,7 @@ impl<D: Durable> ChatStore for MemoryStore<D> {
             MessageMeta {
                 chat: record.chat,
                 direction: record.direction,
+                message_type: record.message_type,
                 sender: record.sender,
                 sender_handle: record.sender_handle.clone(),
                 presence: record.presence,
@@ -1738,6 +1814,26 @@ mod tests {
     }
 
     #[test]
+    fn encoded_reactions_name_whose_message() {
+        conformance::reactions_name_whose_message(&mut Encoded);
+    }
+
+    #[test]
+    fn encoded_old_senders_reactions_to_their_own() {
+        conformance::old_senders_reactions_to_their_own(&mut Encoded);
+    }
+
+    #[test]
+    fn encoded_replies_to_unknown_messages() {
+        conformance::replies_to_unknown_messages(&mut Encoded);
+    }
+
+    #[test]
+    fn encoded_edits_of_unknown_messages() {
+        conformance::edits_of_unknown_messages(&mut Encoded);
+    }
+
+    #[test]
     fn encoded_edits_and_deletes() {
         conformance::edits_and_deletes(&mut Encoded);
     }
@@ -1896,6 +1992,26 @@ mod tests {
     #[test]
     fn reactions() {
         conformance::reactions(&mut Memory);
+    }
+
+    #[test]
+    fn reactions_name_whose_message() {
+        conformance::reactions_name_whose_message(&mut Memory);
+    }
+
+    #[test]
+    fn old_senders_reactions_to_their_own() {
+        conformance::old_senders_reactions_to_their_own(&mut Memory);
+    }
+
+    #[test]
+    fn replies_to_unknown_messages() {
+        conformance::replies_to_unknown_messages(&mut Memory);
+    }
+
+    #[test]
+    fn edits_of_unknown_messages() {
+        conformance::edits_of_unknown_messages(&mut Memory);
     }
 
     #[test]

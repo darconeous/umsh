@@ -321,6 +321,23 @@ impl Rig {
         (handle, committed)
     }
 
+    /// A frame from the peer, as `payload` spells it, heard in a direct
+    /// chat. Returns what this node committed.
+    fn hear_payload<S: ChatStore>(&mut self, store: &mut S, payload: &[u8]) -> Committed {
+        self.tick();
+        let envelope = Envelope {
+            path: DeliveryPath::Unicast,
+            conversation: direct(),
+            sender: SenderScope::Peer(PEER),
+        };
+        self.engine
+            .receive(&envelope, Some(PEER), payload, self.now_ms)
+            .expect("this node takes it");
+        self.drain(store, Some(Self::HEARD))
+            .result
+            .expect("what was heard commits")
+    }
+
     fn hear_text<S: ChatStore>(
         &mut self,
         store: &mut S,
@@ -506,6 +523,7 @@ pub fn positions<H: Harness>(harness: &mut H) {
                 MessageMeta {
                     chat: record.chat,
                     direction: record.direction,
+                    message_type: record.message_type,
                     sender: record.sender,
                     sender_handle: record.sender_handle,
                     presence: record.presence,
@@ -709,6 +727,163 @@ pub fn reactions<H: Harness>(harness: &mut H) {
     rig.hear(&mut store, direct(), about_mine(""));
     assert!(record(&store, mine).reactions.is_empty());
     assert_eq!(store.reactors(mine).count(), 0);
+}
+
+/// The peer's reaction about a message by wire ID, naming it as theirs or
+/// mine as the peer sees it.
+fn peers_reaction(wire: u8, direction: Direction) -> ComposeIntent<'static> {
+    ComposeIntent::Reply {
+        body: "<3",
+        regarding: RegardingRef::Wire {
+            message_id: wire,
+            direction,
+            sender_hint: None,
+            epoch: None,
+        },
+        status: true,
+    }
+}
+
+/// Two parties number their messages apart, so an ID in a direct chat is
+/// usually both of theirs: a reaction lands on the one whose it says it is.
+pub fn reactions_name_whose_message<H: Harness>(harness: &mut H) {
+    for reboot in [false, true] {
+        let mut store = harness.fresh();
+        let mut rig = Rig::new();
+        let (_, question) = rig.say(&mut store, direct(), "lunch?");
+        let wire = record(&store, question).wire_id.unwrap();
+        if reboot {
+            rig.reboot(&store);
+        }
+        let (_, _, answer) = rig.hear_text(&mut store, direct(), "sure");
+        assert_eq!(record(&store, answer).wire_id, Some(wire));
+
+        // To the peer, my question is inbound.
+        rig.hear(
+            &mut store,
+            direct(),
+            peers_reaction(wire, Direction::Inbound),
+        );
+        assert_eq!(record(&store, question).reactions.len(), 1, "{reboot}");
+        assert!(record(&store, answer).reactions.is_empty(), "{reboot}");
+
+        // Withdrawing it there leaves room to see the other.
+        rig.hear(
+            &mut store,
+            direct(),
+            ComposeIntent::Reply {
+                body: "",
+                regarding: RegardingRef::Wire {
+                    message_id: wire,
+                    direction: Direction::Inbound,
+                    sender_hint: None,
+                    epoch: None,
+                },
+                status: true,
+            },
+        );
+        assert!(record(&store, question).reactions.is_empty(), "{reboot}");
+
+        // And their own answer is outbound.
+        rig.hear(
+            &mut store,
+            direct(),
+            peers_reaction(wire, Direction::Outbound),
+        );
+        assert!(record(&store, question).reactions.is_empty(), "{reboot}");
+        assert_eq!(record(&store, answer).reactions.len(), 1, "{reboot}");
+    }
+}
+
+/// A sender that predates the two-octet form names its own messages in the
+/// form that means mine, which it can only mean when I sent no such message.
+pub fn old_senders_reactions_to_their_own<H: Harness>(harness: &mut H) {
+    let mut store = harness.fresh();
+    let mut rig = Rig::new();
+    // Far enough for the ID to lie in what this node could have sent, but
+    // did not, so the engine cannot rule it out and the store settles it.
+    rig.say(&mut store, direct(), "hi");
+    let mut said = None;
+    for _ in 0..=200 {
+        said = Some(rig.hear_text(&mut store, direct(), "more").2);
+    }
+    let said = said.unwrap();
+    let wire = record(&store, said).wire_id.unwrap();
+    assert_eq!(wire, 200);
+    rig.hear(
+        &mut store,
+        direct(),
+        peers_reaction(wire, Direction::Inbound),
+    );
+    assert_eq!(record(&store, said).reactions.len(), 1);
+}
+
+/// A reply that cannot be tied to an original says so, whether the form
+/// could not be read or the original is not held.
+pub fn replies_to_unknown_messages<H: Harness>(harness: &mut H) {
+    let mut store = harness.fresh();
+    let mut rig = Rig::new();
+    // A reply in a form this node reads, to a message it never had.
+    let (_, committed) = rig.hear(
+        &mut store,
+        direct(),
+        ComposeIntent::Reply {
+            body: "and?",
+            regarding: RegardingRef::Wire {
+                message_id: 90,
+                direction: Direction::Inbound,
+                sender_hint: None,
+                epoch: None,
+            },
+            status: false,
+        },
+    );
+    let unheld = committed.inserted[0].1;
+    // Sequence 1, a three-octet Regarding, and a body.
+    let committed = rig.hear_payload(
+        &mut store,
+        &[0x21, 0x01, 0x23, 0x05, 0x06, 0x08, 0xFF, b'h', b'i'],
+    );
+    let unread = committed.inserted[0].1;
+    harness.power_on(&mut store);
+    for id in [unread, unheld] {
+        let record = record(&store, id);
+        assert!(record.flags.unknown_regarding);
+        assert_eq!(record.regarding, None);
+    }
+    assert_eq!(body(&store, unread), "hi");
+    assert_eq!(body(&store, unheld), "and?");
+}
+
+/// An edit of a message this node never held is all there is of it: it
+/// stands as that message, later edits reach it, and it says what it is.
+pub fn edits_of_unknown_messages<H: Harness>(harness: &mut H) {
+    let mut store = harness.fresh();
+    let mut rig = Rig::new();
+    // Sequence 4, Editing 3, and a body.
+    let committed = rig.hear_payload(&mut store, &[0x21, 0x04, 0x31, 0x03, 0xFF, b'h', b'i']);
+    assert!(committed.inserted.is_empty(), "known by its wire ID alone");
+    let chat = store.chat_for(&direct()).unwrap();
+    let orphan = store.messages(chat, None).next().unwrap().unwrap().id;
+    assert_eq!(body(&store, orphan), "hi");
+    harness.power_on(&mut store);
+    assert!(record(&store, orphan).flags.unknown_original);
+    assert_eq!(record(&store, orphan).wire_id, Some(3));
+
+    // Sequence 5, Editing 3.
+    rig.hear_payload(&mut store, &[0x21, 0x05, 0x31, 0x03, 0xFF, b'y', b'o']);
+    assert_eq!(store.messages(chat, None).count(), 1);
+    assert_eq!(body(&store, orphan), "yo");
+
+    // An Editing that could not be read stands the same way.
+    let committed = rig.hear_payload(
+        &mut store,
+        &[0x21, 0x06, 0x32, 0x03, 0x04, 0xFF, b'o', b'k'],
+    );
+    let id = committed.inserted[0].1;
+    assert!(record(&store, id).flags.unknown_original);
+    assert_eq!(body(&store, id), "ok");
+    assert_eq!(store.messages(chat, None).count(), 2);
 }
 
 /// An edit changes its original in place, and its resend material with

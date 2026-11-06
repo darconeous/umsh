@@ -134,9 +134,15 @@ pub struct ContentMessage<'a> {
     pub bg_color: Option<[u8; 3]>,
     pub text_color: Option<[u8; 3]>,
     pub extensions: ExtensionOptions<'a>,
-    /// Raw body bytes; guaranteed UTF-8 when the message is unfragmented
-    /// and displayable.
+    /// Raw body bytes, which may not be valid UTF-8: the engine renders them
+    /// lossily rather than lose the message.
     pub body: &'a [u8],
+    /// A basic message that says it is a reply, in a Regarding this receiver
+    /// could not interpret: a reply to an unknown message.
+    pub unknown_regarding: bool,
+    /// The message says it is an edit, in an Editing this receiver could not
+    /// interpret: it stands as a message, the edit of something unknown.
+    pub unknown_editing: bool,
     /// Why this receiver cannot present the message, when it cannot. The
     /// message still occupies its position in the sender's sequence.
     pub undisplayable: Option<ValidateError>,
@@ -208,29 +214,31 @@ pub fn validate<'a>(
         _ => {}
     }
 
-    // A message this receiver cannot interpret is still accounted for in
-    // the sender's sequence, so its position is not repaired as a gap.
+    // A message this receiver cannot present is still accounted for in the
+    // sender's sequence, so its position is not repaired as a gap.
     // Continuations carry no message-level metadata of their own.
-    let undisplayable = if is_continuation {
-        None
+    let reading = if is_continuation {
+        Reading::of_continuation(message)
     } else {
-        undisplayable_reason(profile, envelope, message, info)
+        Reading::of(profile, envelope, message, info, fragmented.is_some())
     };
 
     validate_extensions(profile, &message.extensions, &mut notes)?;
 
     let mut content = ContentMessage {
-        message_type: message.message_type,
+        message_type: reading.message_type,
         sender_handle: message.sender_handle,
         sequence: message.sequence,
         sequence_reset: message.sequence_reset,
-        regarding: message.regarding,
+        regarding: reading.regarding,
         editing: message.editing,
         bg_color: message.bg_color,
         text_color: message.text_color,
         extensions: message.extensions,
         body: message.body,
-        undisplayable,
+        unknown_regarding: reading.unknown_regarding,
+        unknown_editing: reading.unknown_editing,
+        undisplayable: reading.undisplayable,
     };
 
     if message.channel_group_resend {
@@ -258,10 +266,6 @@ pub fn validate<'a>(
         content.bg_color = None;
         content.text_color = None;
         content.extensions = ExtensionOptions::empty();
-    } else if fragmented.is_none() && undisplayable.is_none() {
-        // Unfragmented content bodies must be complete UTF-8. Fragment bodies
-        // (including fragment zero) are validated only after reassembly.
-        core::str::from_utf8(message.body).map_err(|_| ParseError::InvalidUtf8)?;
     }
 
     Ok((Validated::Content(content), notes))
@@ -271,34 +275,93 @@ pub fn validate<'a>(
 const PRESENTATION_MASK: u16 =
     (1 << option::SENDER_HANDLE) | (1 << option::BACKGROUND_COLOR) | (1 << option::TEXT_COLOR);
 
-/// Why a message-leading frame cannot be presented, if it cannot. Message
-/// Type, Regarding, and Editing decide what the message *is*—a reaction
-/// without its target, or an edit without its original, would render as
-/// something the sender did not send—so losing any of them leaves nothing
-/// faithful to show.
-fn undisplayable_reason(
-    profile: &dyn TextProfile,
-    envelope: &Envelope,
-    message: &TextMessage<'_>,
-    info: &ParseInfo,
-) -> Option<ValidateError> {
-    for number in [option::MESSAGE_TYPE, option::REGARDING, option::EDITING] {
-        if info.undecodable(number) {
-            return Some(ValidateError::UndecodableOption(number));
+/// What a message-leading frame can be presented as, given what this
+/// receiver could interpret of it.
+///
+/// Its sender sees it delivered, so a message with a body is always shown:
+/// what could not be interpreted costs only its own meaning. A reaction is
+/// the one exception, as without its target it has nowhere to go.
+struct Reading {
+    message_type: MessageType,
+    regarding: Option<Regarding>,
+    unknown_regarding: bool,
+    unknown_editing: bool,
+    undisplayable: Option<ValidateError>,
+}
+
+impl Reading {
+    /// A continuation fragment, whose metadata belongs to fragment zero.
+    fn of_continuation(message: &TextMessage<'_>) -> Self {
+        Self {
+            message_type: message.message_type,
+            regarding: message.regarding,
+            unknown_regarding: false,
+            unknown_editing: false,
+            undisplayable: None,
         }
     }
-    if !profile.recognizes_content_type(message.message_type) {
-        return Some(ValidateError::UnrecognizedMessageType(
-            message.message_type.to_byte(),
-        ));
-    }
-    if let Some(regarding) = message.regarding {
-        let multicast_form = matches!(regarding, Regarding::Multicast { .. });
-        if multicast_form != envelope.conversation.uses_multicast_references() {
-            return Some(ValidateError::RegardingWidth);
+
+    fn of(
+        profile: &dyn TextProfile,
+        envelope: &Envelope,
+        message: &TextMessage<'_>,
+        info: &ParseInfo,
+        fragmented: bool,
+    ) -> Self {
+        let type_reason = if info.undecodable(option::MESSAGE_TYPE) {
+            Some(ValidateError::UndecodableOption(option::MESSAGE_TYPE))
+        } else if !profile.recognizes_content_type(message.message_type) {
+            Some(ValidateError::UnrecognizedMessageType(
+                message.message_type.to_byte(),
+            ))
+        } else {
+            None
+        };
+        let regarding_reason = if info.undecodable(option::REGARDING) {
+            Some(ValidateError::UndecodableOption(option::REGARDING))
+        } else {
+            message
+                .regarding
+                .is_some_and(|regarding| !fits(regarding, &envelope.conversation))
+                .then_some(ValidateError::RegardingWidth)
+        };
+        let editing_reason = info
+            .undecodable(option::EDITING)
+            .then_some(ValidateError::UndecodableOption(option::EDITING));
+
+        let message_type = if type_reason.is_some() {
+            MessageType::Basic
+        } else {
+            message.message_type
+        };
+        let reaction_lost = message_type == MessageType::Status && regarding_reason.is_some();
+        // Later fragments may carry a body this one does not.
+        let bodiless = message.body.is_empty() && !fragmented;
+        let undisplayable = type_reason
+            .or(regarding_reason)
+            .or(editing_reason)
+            .filter(|_| bodiless || reaction_lost);
+        Self {
+            message_type,
+            regarding: if regarding_reason.is_some() {
+                None
+            } else {
+                message.regarding
+            },
+            unknown_regarding: regarding_reason.is_some() && message_type == MessageType::Basic,
+            unknown_editing: editing_reason.is_some(),
+            undisplayable,
         }
     }
-    None
+}
+
+/// Whether a Regarding's form is one `conversation` uses.
+fn fits(regarding: Regarding, conversation: &ConversationKey) -> bool {
+    match regarding {
+        Regarding::Multicast { .. } => conversation.uses_multicast_references(),
+        Regarding::Own { .. } => conversation.is_one_to_one(),
+        Regarding::Unicast { .. } => !conversation.uses_multicast_references(),
+    }
 }
 
 fn validate_extensions(

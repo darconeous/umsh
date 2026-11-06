@@ -431,6 +431,7 @@ private enum NewConversationSheet: String, Identifiable {
 
 private struct ConversationRow: View {
     let item: ConversationListItem
+    @Environment(\.ownChatName) private var ownChatName
 
     var body: some View {
         HStack(spacing: 12) {
@@ -490,14 +491,19 @@ private struct ConversationRow: View {
         }
         guard let last = item.lastMessage else { return "No messages yet" }
         if last.isDeleted { return "Message deleted" }
-        if last.isOutbound { return "You: \(last.body)" }
-        // In a group the body alone does not say who is talking.
-        if case .channel = item {
-            let sender = last.senderAddress.map { String($0.prefix(6)) }
+        var sender: String?
+        if case .channel = item, !last.isOutbound {
+            sender = last.senderAddress.map { String($0.prefix(6)) }
                 ?? last.senderHintLabel
                 ?? "Unknown"
-            return "\(sender): \(last.body)"
         }
+        if last.isStatus {
+            let name = last.isOutbound ? ownChatName : sender ?? item.title
+            return statusLine(name: name, body: last.body)
+        }
+        if last.isOutbound { return "You: \(last.body)" }
+        // In a group the body alone does not say who is talking.
+        if let sender { return "\(sender): \(last.body)" }
         return last.body
     }
 }
@@ -514,6 +520,9 @@ struct VisibleConversationReporter: Sendable {
 
 extension EnvironmentValues {
     @Entry var visibleConversationReporter = VisibleConversationReporter()
+    /// What status text of mine opens with: the name I go by, or "You" while
+    /// I have none.
+    @Entry var ownChatName = String(localized: "You")
     /// Reads a bounded slice of whichever transcript is open. In the
     /// environment rather than passed down, because a transcript is reached
     /// from several places—the conversations list, a peer's profile, a

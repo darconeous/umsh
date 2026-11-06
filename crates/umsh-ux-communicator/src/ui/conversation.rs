@@ -12,7 +12,7 @@ use buoyant::view::popover::Dismissal;
 use buoyant::view::prelude::*;
 use buoyant::view::scroll_view::ScrollBarVisibility;
 use buoyant::view::text_field::TextFieldStatus;
-use buoyant::view::{GeometryReader, Lazy, LazyForEach, TextArea};
+use buoyant::view::{GeometryReader, HorizontalTextAlignment, Lazy, LazyForEach, TextArea};
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::RgbColor;
 use heapless::Vec;
@@ -55,6 +55,11 @@ const SIDE: u32 = 8;
 const fn bubble_max(m: &Metrics) -> u32 {
     let share = m.width * 3 / 4;
     if share < 330 { share } else { 330 }
+}
+/// The widest a status message is, whichever side it keeps to: it has no
+/// bubble to stand clear of the other side with.
+const fn status_max(m: &Metrics) -> u32 {
+    m.width - IN_X - SIDE
 }
 /// The card of how to send a message again.
 const RESEND_WIDTH: u32 = 360;
@@ -589,7 +594,11 @@ struct Row {
 /// member's name above its first and their avatar beside its last.
 fn item(row: &Row, message: &Message, i: usize) -> impl View<Rgb565, State> + use<> {
     let m = row.m;
-    let same = |n: &Neighbor| n.direction == message.direction && n.sender == message.sender;
+    // A status message names its sender and has no bubble: it joins no run.
+    let status = message.status.is_some();
+    let same = |n: &Neighbor| {
+        !status && !n.status && n.direction == message.direction && n.sender == message.sender
+    };
     let separator = message
         .time
         .and_then(|time| separator(time, row.node.time_before(row.chat, i), row.times));
@@ -627,7 +636,9 @@ fn item(row: &Row, message: &Message, i: usize) -> impl View<Rgb565, State> + us
     } else {
         HorizontalAlignment::Leading
     };
-    let sender = (!follows_same).then(|| message.sender.clone()).flatten();
+    let sender = (!follows_same && !status)
+        .then(|| message.sender.clone())
+        .flatten();
     let ends_run = row
         .node
         .neighbor(row.chat, i + 1)
@@ -637,7 +648,7 @@ fn item(row: &Row, message: &Message, i: usize) -> impl View<Rgb565, State> + us
     let avatar = message
         .sender
         .as_ref()
-        .filter(|_| beside_avatar && ends_run)
+        .filter(|_| beside_avatar && ends_run && !status)
         .map(|sender| {
             Lazy::new(sender.avatar.clone(), member_avatar)
                 .padding(Edges::Leading, MEMBER_AVATAR_X)
@@ -774,7 +785,16 @@ fn bubble(
     } else {
         HorizontalAlignment::Leading
     };
+    let widest = if message.status.is_some() {
+        status_max(m)
+    } else {
+        bubble_max(m)
+    };
     let look = Look {
+        status: message
+            .status
+            .as_ref()
+            .map(|name| StatusLine::new(m, name, &message.text)),
         text: message.text.clone(),
         reply: message.reply.clone(),
         card: message.card.as_ref().map(|card| match card {
@@ -837,7 +857,7 @@ fn bubble(
                 .padding(inner, RING_GAP - rest)
                 // Text wraps to fit; a short bubble keeps to its side.
                 .flex_frame()
-                .with_max_width(bubble_max(m) + 2 * RING_GAP)
+                .with_max_width(widest + 2 * RING_GAP)
                 .with_horizontal_alignment(side)
         },
     )
@@ -848,6 +868,8 @@ fn bubble(
 /// follow from whose it is and who can read it.
 #[derive(Clone)]
 struct Look {
+    /// A status message, which takes the place of the bubble.
+    status: Option<StatusLine>,
     text: SharedText,
     reply: Option<Quote>,
     card: Option<Card>,
@@ -888,6 +910,67 @@ impl Look {
         } else {
             (Edges::Trailing, Edges::Leading)
         }
+    }
+}
+
+/// A status message: its sender's name in bold, running straight on into
+/// its text.
+///
+/// One piece of text keeps to one weight, so the name and the words that
+/// fit beside it are set side by side, and the rest wraps below them.
+#[derive(Clone)]
+struct StatusLine {
+    name: SharedText,
+    /// Where the words beside the name end, in the message's text.
+    first: u16,
+}
+
+impl StatusLine {
+    fn new(m: &Metrics, name: &SharedText, text: &str) -> Self {
+        let gap = super::advance(" ", &font::REGULAR, m.body);
+        let taken = super::advance(name, &font::BOLD, m.body) + gap;
+        let room = status_max(m).saturating_sub(taken);
+        Self {
+            name: name.clone(),
+            first: first_line_end(text, room, |word| {
+                super::advance(word, &font::REGULAR, m.body)
+            }) as u16,
+        }
+    }
+}
+
+/// Where the first line of `text` ends when it is set `room` wide and
+/// broken between words, each `width` wide. A word that does not fit goes
+/// to the next line whole.
+fn first_line_end(text: &str, room: u32, width: impl Fn(&str) -> u32) -> usize {
+    let line = text.split('\n').next().unwrap_or_default();
+    let mut end = 0;
+    let mut used = 0;
+    for word in line.split_inclusive(' ') {
+        // The space a line ends on takes no room.
+        used += width(word.trim_end_matches(' '));
+        if used > room {
+            return end;
+        }
+        used += width(&word[word.trim_end_matches(' ').len()..]);
+        end += word.len();
+    }
+    end
+}
+
+/// A run of a status message's text.
+#[derive(Clone)]
+struct Words {
+    text: SharedText,
+    from: u16,
+    to: u16,
+}
+
+impl AsRef<str> for Words {
+    fn as_ref(&self) -> &str {
+        self.text
+            .get(self.from as usize..self.to as usize)
+            .unwrap_or_default()
     }
 }
 
@@ -942,6 +1025,90 @@ fn bubble_look(m: &'static Metrics, look: &Look) -> impl View<Rgb565, ()> + use<
 /// dots for parts still to come; or an invitation, which is its card
 /// alone: its text is only the channel's link.
 fn body_view(m: &'static Metrics, look: &Look) -> impl View<Rgb565, ()> + use<> {
+    let status = look
+        .status
+        .as_ref()
+        .map(|status| status_view(m, status, look));
+    let bubble = status.is_none().then(|| bubble_body(m, look));
+    VStack::new((status, bubble))
+}
+
+/// A status message, on its sender's side.
+fn status_view(
+    m: &'static Metrics,
+    status: &StatusLine,
+    look: &Look,
+) -> impl View<Rgb565, ()> + use<> {
+    let (side, wrapped) = if look.outbound {
+        (
+            HorizontalAlignment::Trailing,
+            HorizontalTextAlignment::Trailing,
+        )
+    } else {
+        (
+            HorizontalAlignment::Leading,
+            HorizontalTextAlignment::Leading,
+        )
+    };
+    let words = |from: u16, to: usize| Words {
+        text: look.text.clone(),
+        from,
+        to: to as u16,
+    };
+    let rest = look.text[status.first as usize..].trim_start_matches([' ', '\n']);
+    let from = (look.text.len() - rest.len()) as u16;
+    let lost = look.to_come;
+    VStack::new((
+        HStack::new((
+            super::line(
+                status.name.clone(),
+                &font::BOLD,
+                m.body,
+                theme::TEXT_SECONDARY,
+            ),
+            (status.first != 0).then(|| {
+                super::line(
+                    words(0, status.first as usize),
+                    &font::REGULAR,
+                    m.body,
+                    theme::TEXT_SECONDARY,
+                )
+            }),
+        ))
+        .with_spacing(super::advance(" ", &font::REGULAR, m.body)),
+        (!rest.is_empty()).then(|| {
+            Text::new(words(from, look.text.len()), &font::REGULAR)
+                .with_font_size(m.body)
+                .multiline_text_alignment(wrapped)
+                .foreground_color(theme::TEXT_SECONDARY)
+        }),
+        lost.map(|lost| {
+            to_come_dots(
+                m,
+                if lost {
+                    theme::AMBER
+                } else {
+                    theme::TEXT_TERTIARY
+                },
+            )
+        }),
+    ))
+    .with_spacing(0)
+    .with_alignment(side)
+    .hint_background_color(theme::BACKGROUND)
+    // Chips lap over a bubble's corner; status text has none to spare.
+    .padding(
+        Edges::Top,
+        if look.chips {
+            CHIP / 2 + CHIP_HALO + 2 - CHIP_RISE
+        } else {
+            0
+        },
+    )
+}
+
+/// A message's bubble.
+fn bubble_body(m: &'static Metrics, look: &Look) -> impl View<Rgb565, ()> + use<> {
     let Look {
         outbound,
         open,
@@ -1048,7 +1215,7 @@ fn quoted(
                 .name
                 .clone()
                 .map(|who| line(&font::BOLD)(who).foreground_color(name)),
-            reply.name.is_none().then(|| {
+            (reply.name.is_none() && !reply.unknown).then(|| {
                 Text::new("You", &font::BOLD)
                     .with_font_size(m.small)
                     .foreground_color(name)
@@ -1284,6 +1451,10 @@ fn delivery_shows(delivery: Delivery, newest: bool, channel: bool) -> bool {
 fn caption(message: &Message, delivery: bool) -> Option<Caption> {
     let mut color = theme::TEXT_TERTIARY;
     let status = match message.direction {
+        // One line, on the narrowest screen.
+        Direction::Inbound if message.unknown_original => {
+            Some(Status::Said("Received as an edit of an unknown message"))
+        }
         Direction::Inbound if message.late => Some(Status::Said("Received late")),
         Direction::Outbound if delivery => Some(match message.delivery {
             Delivery::Sending => Status::Said("Sending"),
@@ -1994,6 +2165,19 @@ fn member_avatar(style: &AvatarStyle) -> impl View<Rgb565, ()> + use<> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A word beside a status message's name stays whole, and the line ends
+    /// where the text does.
+    #[test]
+    fn a_status_lines_first_line_breaks_between_words() {
+        let width = |word: &str| word.len() as u32;
+        assert_eq!(first_line_end("one two three", 7, width), 8);
+        assert_eq!(first_line_end("one two three", 8, width), 8);
+        assert_eq!(first_line_end("one two three", 2, width), 0);
+        assert_eq!(first_line_end("one two", 100, width), 7);
+        assert_eq!(first_line_end("one\ntwo", 100, width), 3);
+        assert_eq!(first_line_end("", 100, width), 0);
+    }
 
     const TIMES: Times = Times {
         now: None,

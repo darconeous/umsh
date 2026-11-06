@@ -1598,10 +1598,22 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
     func composeReply(conversationAddress: String, clientToken: UInt32, target: MobileChatRegardingRef, body: String) async throws  -> MobileChatComposeBatchRecord
 
     /**
+     * Compose status text into a conversation, its body taken as it stands.
+     */
+    func composeStatus(conversationAddress: String, clientToken: UInt32, body: String) async throws  -> MobileChatComposeBatchRecord
+
+    /**
      * Compose a message into a conversation, addressed either by a peer's
-     * address or by a channel's conversation address.
+     * address or by a channel's conversation address, its body taken as it
+     * stands.
      */
     func composeText(conversationAddress: String, clientToken: UInt32, body: String) async throws  -> MobileChatComposeBatchRecord
+
+    /**
+     * Compose a new message as the user typed it into a conversation: a
+     * `/me ` prefix makes it status text. A reply does not come this way.
+     */
+    func composeTyped(conversationAddress: String, clientToken: UInt32, text: String) async throws  -> MobileChatComposeBatchRecord
 
     /**
      * The holder found the codes the same, sending this phone's identity,
@@ -2570,8 +2582,28 @@ open func composeReply(conversationAddress: String, clientToken: UInt32, target:
 }
 
     /**
+     * Compose status text into a conversation, its body taken as it stands.
+     */
+open func composeStatus(conversationAddress: String, clientToken: UInt32, body: String)async throws  -> MobileChatComposeBatchRecord  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemeshsession_compose_status(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(conversationAddress),FfiConverterUInt32.lower(clientToken),FfiConverterString.lower(body)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeMobileChatComposeBatchRecord_lift,
+            errorHandler: FfiConverterTypeMobileMeshError_lift
+        )
+}
+
+    /**
      * Compose a message into a conversation, addressed either by a peer's
-     * address or by a channel's conversation address.
+     * address or by a channel's conversation address, its body taken as it
+     * stands.
      */
 open func composeText(conversationAddress: String, clientToken: UInt32, body: String)async throws  -> MobileChatComposeBatchRecord  {
     return
@@ -2579,6 +2611,26 @@ open func composeText(conversationAddress: String, clientToken: UInt32, body: St
             rustFutureFunc: {
                 uniffi_umsh_mobile_core_fn_method_mobilemeshsession_compose_text(
                         self.uniffiCloneHandle(),FfiConverterString.lower(conversationAddress),FfiConverterUInt32.lower(clientToken),FfiConverterString.lower(body)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeMobileChatComposeBatchRecord_lift,
+            errorHandler: FfiConverterTypeMobileMeshError_lift
+        )
+}
+
+    /**
+     * Compose a new message as the user typed it into a conversation: a
+     * `/me ` prefix makes it status text. A reply does not come this way.
+     */
+open func composeTyped(conversationAddress: String, clientToken: UInt32, text: String)async throws  -> MobileChatComposeBatchRecord  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemeshsession_compose_typed(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(conversationAddress),FfiConverterUInt32.lower(clientToken),FfiConverterString.lower(text)
                 )
             },
             pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
@@ -6586,6 +6638,16 @@ public struct MobileChatMutationRecord: Equatable, Hashable {
     public var regardingWireId: UInt8?
     public var regardingDirection: MobileChatDirection?
     public var regardingSenderHint: Data?
+    /**
+     * The message says it replies to another, in a form this receiver could
+     * not read: a reply to an unknown message.
+     */
+    public var regardingUnknown: Bool
+    /**
+     * The message came as an edit of something this receiver could not
+     * identify, and stands as a message of its own.
+     */
+    public var unknownOriginal: Bool
     public var backgroundColor: Data?
     public var textColor: Data?
     public var originalHandle: UInt32?
@@ -6652,7 +6714,15 @@ public struct MobileChatMutationRecord: Equatable, Hashable {
          * `original_*` fields do for edits: the target's wire ID within
          * `regarding_direction`'s stream, plus the hint identifying which
          * member's stream in a channel group.
-         */regardingWireId: UInt8?, regardingDirection: MobileChatDirection?, regardingSenderHint: Data?, backgroundColor: Data?, textColor: Data?, originalHandle: UInt32?,
+         */regardingWireId: UInt8?, regardingDirection: MobileChatDirection?, regardingSenderHint: Data?,
+        /**
+         * The message says it replies to another, in a form this receiver could
+         * not read: a reply to an unknown message.
+         */regardingUnknown: Bool,
+        /**
+         * The message came as an edit of something this receiver could not
+         * identify, and stands as a message of its own.
+         */unknownOriginal: Bool, backgroundColor: Data?, textColor: Data?, originalHandle: UInt32?,
         /**
          * When an edit/delete references a message the engine no longer holds a
          * live handle for (composed before a restart), these export the wire
@@ -6702,6 +6772,8 @@ public struct MobileChatMutationRecord: Equatable, Hashable {
         self.regardingWireId = regardingWireId
         self.regardingDirection = regardingDirection
         self.regardingSenderHint = regardingSenderHint
+        self.regardingUnknown = regardingUnknown
+        self.unknownOriginal = unknownOriginal
         self.backgroundColor = backgroundColor
         self.textColor = textColor
         self.originalHandle = originalHandle
@@ -6752,6 +6824,8 @@ public struct FfiConverterTypeMobileChatMutationRecord: FfiConverterRustBuffer {
                 regardingWireId: FfiConverterOptionUInt8.read(from: &buf),
                 regardingDirection: FfiConverterOptionTypeMobileChatDirection.read(from: &buf),
                 regardingSenderHint: FfiConverterOptionData.read(from: &buf),
+                regardingUnknown: FfiConverterBool.read(from: &buf),
+                unknownOriginal: FfiConverterBool.read(from: &buf),
                 backgroundColor: FfiConverterOptionData.read(from: &buf),
                 textColor: FfiConverterOptionData.read(from: &buf),
                 originalHandle: FfiConverterOptionUInt32.read(from: &buf),
@@ -6788,6 +6862,8 @@ public struct FfiConverterTypeMobileChatMutationRecord: FfiConverterRustBuffer {
         FfiConverterOptionUInt8.write(value.regardingWireId, into: &buf)
         FfiConverterOptionTypeMobileChatDirection.write(value.regardingDirection, into: &buf)
         FfiConverterOptionData.write(value.regardingSenderHint, into: &buf)
+        FfiConverterBool.write(value.regardingUnknown, into: &buf)
+        FfiConverterBool.write(value.unknownOriginal, into: &buf)
         FfiConverterOptionData.write(value.backgroundColor, into: &buf)
         FfiConverterOptionData.write(value.textColor, into: &buf)
         FfiConverterOptionUInt32.write(value.originalHandle, into: &buf)
@@ -22108,7 +22184,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_compose_reply() != 30432) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_compose_text() != 46919) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_compose_status() != 65105) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_compose_text() != 21994) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_compose_typed() != 28844) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_confirm_code() != 49925) {

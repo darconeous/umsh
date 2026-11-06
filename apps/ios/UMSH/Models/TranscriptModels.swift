@@ -194,7 +194,7 @@ struct TranscriptWindow: Equatable {
     /// Nil for rows that are not bubbles at all: a tombstone or an unavailable
     /// marker interrupts a run the same way a different speaker does.
     private static func runKey(for message: ChatMessageSummary) -> String? {
-        guard !message.isDeleted, !message.isUnavailable else { return nil }
+        guard !message.isDeleted, !message.isUnavailable, !message.isStatus else { return nil }
         if message.isOutbound { return "out" }
         // In a direct chat every inbound message answers to the same key; in a
         // group the address distinguishes members, and the hint stands in

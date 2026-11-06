@@ -71,16 +71,42 @@ pub fn parse_with_info(payload: &[u8]) -> Result<(TextMessage<'_>, ParseInfo), P
         if info.seen_mask & bit != 0 {
             match number {
                 // Identity, sequencing, and reference options: duplication is
-                // unresolvable ambiguity, even with identical values.
-                option::MESSAGE_TYPE
-                | option::MESSAGE_SEQUENCE
-                | option::REGARDING
-                | option::EDITING => return Err(ParseError::DuplicateOption(number)),
-                // Zero-length flags are idempotent, but each occurrence must
-                // still be syntactically valid.
-                option::SEQUENCE_RESET | option::CHANNEL_GROUP_RESEND => {
+                // unresolvable ambiguity, even with identical values, so
+                // none of the occurrences can be trusted. The message stays
+                // readable without them, which validation sorts out.
+                option::MESSAGE_TYPE => {
+                    message.message_type = MessageType::Basic;
+                    info.undecodable_mask |= bit;
+                    continue;
+                }
+                option::MESSAGE_SEQUENCE => {
+                    message.sequence = None;
+                    info.undecodable_mask |= bit;
+                    continue;
+                }
+                option::REGARDING => {
+                    message.regarding = None;
+                    info.undecodable_mask |= bit;
+                    continue;
+                }
+                option::EDITING => {
+                    message.editing = None;
+                    info.undecodable_mask |= bit;
+                    continue;
+                }
+                // Zero-length flags are idempotent, but a value on any
+                // occurrence means this is not the flag we know.
+                option::SEQUENCE_RESET => {
                     if !value.is_empty() {
-                        return Err(ParseError::InvalidOptionValue);
+                        message.sequence_reset = false;
+                        info.undecodable_mask |= bit;
+                    }
+                    continue;
+                }
+                option::CHANNEL_GROUP_RESEND => {
+                    if !value.is_empty() {
+                        message.channel_group_resend = false;
+                        info.undecodable_mask |= bit;
                     }
                     continue;
                 }
@@ -94,10 +120,8 @@ pub fn parse_with_info(payload: &[u8]) -> Result<(TextMessage<'_>, ParseInfo), P
         info.seen_mask |= bit;
 
         // Options are non-critical: a value this receiver cannot decode is
-        // dropped and noted rather than rejecting the message. Message
-        // Sequence is the exception, since without it the message has no
-        // position to account for, and the zero-length flags keep the
-        // length rule their own sections give them.
+        // dropped and noted, never a reason to reject a message whose body
+        // can still be read.
         match number {
             option::MESSAGE_TYPE => match value {
                 [] => message.message_type = MessageType::Basic,
@@ -108,33 +132,39 @@ pub fn parse_with_info(payload: &[u8]) -> Result<(TextMessage<'_>, ParseInfo), P
                 Ok(handle) => message.sender_handle = Some(handle),
                 Err(_) => info.undecodable_mask |= bit,
             },
-            option::MESSAGE_SEQUENCE => {
-                message.sequence = Some(match value {
-                    [message_id] => MessageSequence {
+            option::MESSAGE_SEQUENCE => match value {
+                [message_id] => {
+                    message.sequence = Some(MessageSequence {
                         message_id: *message_id,
                         fragment: None,
-                    },
-                    [message_id, index, count] if *count >= 2 && *index < *count => {
-                        MessageSequence {
-                            message_id: *message_id,
-                            fragment: Some(Fragment {
-                                index: *index,
-                                count: *count,
-                            }),
-                        }
-                    }
-                    _ => return Err(ParseError::InvalidOptionValue),
-                });
-            }
-            option::SEQUENCE_RESET => {
-                if !value.is_empty() {
-                    return Err(ParseError::InvalidOptionValue);
+                    })
                 }
-                message.sequence_reset = true;
+                [message_id, index, count] if *count >= 2 && *index < *count => {
+                    message.sequence = Some(MessageSequence {
+                        message_id: *message_id,
+                        fragment: Some(Fragment {
+                            index: *index,
+                            count: *count,
+                        }),
+                    })
+                }
+                _ => info.undecodable_mask |= bit,
+            },
+            option::SEQUENCE_RESET => {
+                if value.is_empty() {
+                    message.sequence_reset = true;
+                } else {
+                    info.undecodable_mask |= bit;
+                }
             }
             option::REGARDING => match value {
                 [message_id] => {
                     message.regarding = Some(Regarding::Unicast {
+                        message_id: *message_id,
+                    })
+                }
+                [message_id, 0x00] => {
+                    message.regarding = Some(Regarding::Own {
                         message_id: *message_id,
                     })
                 }
@@ -159,10 +189,11 @@ pub fn parse_with_info(payload: &[u8]) -> Result<(TextMessage<'_>, ParseInfo), P
                 _ => info.undecodable_mask |= bit,
             },
             option::CHANNEL_GROUP_RESEND => {
-                if !value.is_empty() {
-                    return Err(ParseError::InvalidOptionValue);
+                if value.is_empty() {
+                    message.channel_group_resend = true;
+                } else {
+                    info.undecodable_mask |= bit;
                 }
-                message.channel_group_resend = true;
             }
             _ => unreachable!(),
         }
@@ -215,6 +246,10 @@ pub fn encode(msg: &TextMessage<'_>, buf: &mut [u8]) -> Result<usize, EncodeErro
             Regarding::Unicast { message_id } => {
                 regarding_buf[0] = message_id;
                 1
+            }
+            Regarding::Own { message_id } => {
+                regarding_buf[0] = message_id;
+                2
             }
             Regarding::Multicast {
                 message_id,

@@ -406,6 +406,16 @@ protocol RadioConnection: AnyObject, Sendable {
     /// unknown peers are ignored). Best-effort: the store is the authority
     /// and `prepareChat` rebuilds the registry on the next attach.
     func removeChatPeers(_ peerAddresses: [String]) async throws
+    func composeTyped(
+        conversationAddress: String,
+        clientToken: UInt32,
+        text: String
+    ) async throws -> MobileChatComposeBatchRecord
+    func composeStatus(
+        conversationAddress: String,
+        clientToken: UInt32,
+        body: String
+    ) async throws -> MobileChatComposeBatchRecord
     func composeText(
         conversationAddress: String,
         clientToken: UInt32,

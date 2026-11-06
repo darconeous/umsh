@@ -142,6 +142,9 @@ pub struct BodyRef {
 pub enum ResolvedRef {
     Handle(MessageHandle),
     Unresolved(crate::model::WireRef),
+    /// The message says it refers to another, in a form this receiver could
+    /// not interpret.
+    Unknown,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -216,6 +219,9 @@ pub enum MutationKind {
         /// eligibility: single-frame arrival, fragment completion, or the
         /// fragment notify deadline). Never set for placeholders or control.
         notify: bool,
+        /// The message came as an edit of something this receiver could not
+        /// identify, and stands as a message of its own.
+        unknown_original: bool,
     },
     /// Replace the rendered body (reassembly progress or finalization).
     UpdateBody {
@@ -229,6 +235,8 @@ pub enum MutationKind {
     /// Apply an edit to the referenced original message.
     Edit {
         conversation: ConversationKey,
+        /// Who sent the edit: who sent the original, should it not be held.
+        sender: SenderScope,
         original: ResolvedRef,
         body: BodyRef,
     },
@@ -448,6 +456,24 @@ pub enum ComposeIntent<'a> {
     Edit { original: ComposeRef, body: &'a str },
     /// Delete a previously composed message (empty edit on the wire).
     Delete { original: ComposeRef },
+}
+
+impl<'a> ComposeIntent<'a> {
+    /// A new message as a person typed it: `/me waves` is status text saying
+    /// `waves`, and anything else goes as written. A reply is never read
+    /// this way.
+    pub fn typed(text: &'a str) -> Self {
+        match text
+            .strip_prefix("/me ")
+            .filter(|body| !body.trim().is_empty())
+        {
+            Some(body) => Self::Text { body, status: true },
+            None => Self::Text {
+                body: text,
+                status: false,
+            },
+        }
+    }
 }
 
 /// Reference to a previously composed original for edits and deletes.
@@ -909,6 +935,7 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
             },
             (Some(original), false) => MutationKind::Edit {
                 conversation,
+                sender: SenderScope::Local,
                 original,
                 body: body_ref,
             },
@@ -929,6 +956,7 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                 presence: Presence::Present,
                 late: false,
                 notify: false,
+                unknown_original: false,
             },
         };
         self.emit_mutation(handle, kind);
@@ -1557,12 +1585,12 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                     original,
                 }
             } else {
-                let body = core::str::from_utf8(content.body).unwrap_or("");
                 let body_ref = self
-                    .arena_store(body)
+                    .arena_store_lossy(content.body)
                     .unwrap_or(BodyRef { offset: 0, len: 0 });
                 MutationKind::Edit {
                     conversation: key.conversation,
+                    sender: envelope.sender,
                     original,
                     body: body_ref,
                 }
@@ -1672,6 +1700,8 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                     message_type_byte: content.message_type.to_byte(),
                     regarding: content.regarding,
                     editing: content.editing,
+                    unknown_regarding: content.unknown_regarding,
+                    unknown_editing: content.unknown_editing,
                 };
                 slot.have_meta = true;
             }
@@ -1881,6 +1911,7 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
             } else {
                 MutationKind::Edit {
                     conversation: key.conversation,
+                    sender: key.sender,
                     original,
                     body: body_ref,
                 }
@@ -1921,7 +1952,8 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                 .and_then(|text| self.arena_store(text));
             let regarding = meta
                 .regarding
-                .map(|r| self.resolved_from_wire(key.conversation, Some(key.sender), r));
+                .map(|r| self.resolved_from_wire(key.conversation, Some(key.sender), r))
+                .or(meta.unknown_regarding.then_some(ResolvedRef::Unknown));
             self.emit_mutation(
                 handle,
                 MutationKind::Insert {
@@ -1941,6 +1973,7 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                     presence: Presence::Present,
                     late,
                     notify,
+                    unknown_original: meta.unknown_editing,
                 },
             );
             if let Some(stream) = self.inbound.get_mut(&key) {
@@ -1993,16 +2026,16 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
         now_ms: u64,
     ) -> MessageHandle {
         let handle = reuse.unwrap_or_else(|| self.alloc_handle());
-        let body = core::str::from_utf8(content.body).unwrap_or("");
         let body_ref = self
-            .arena_store(body)
+            .arena_store_lossy(content.body)
             .unwrap_or(BodyRef { offset: 0, len: 0 });
         let sender_handle = content
             .sender_handle
             .and_then(|handle_text| self.arena_store(handle_text));
         let regarding = content
             .regarding
-            .map(|r| self.resolved_from_wire(envelope.conversation, Some(envelope.sender), r));
+            .map(|r| self.resolved_from_wire(envelope.conversation, Some(envelope.sender), r))
+            .or(content.unknown_regarding.then_some(ResolvedRef::Unknown));
         let epoch = self
             .inbound
             .get(&StreamKey {
@@ -2030,6 +2063,7 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                 presence: Presence::Present,
                 late,
                 notify,
+                unknown_original: content.unknown_editing,
             },
         );
         let _ = now_ms;
@@ -2686,6 +2720,8 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                         self.local_key.0[2],
                     ]),
                 }
+            } else if conversation.is_one_to_one() {
+                Regarding::Own { message_id: id }
             } else {
                 Regarding::Unicast { message_id: id }
             });
@@ -2776,6 +2812,8 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                 message_id,
                 source_prefix,
             }
+        } else if direction == Direction::Outbound && conversation.is_one_to_one() {
+            Regarding::Own { message_id }
         } else {
             Regarding::Unicast { message_id }
         };
@@ -2787,7 +2825,7 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
         ))
     }
 
-    /// Resolve a received wire reference to a stable handle when unambiguous.
+    /// Resolve a received wire reference to a stable handle where it can be.
     fn resolved_from_wire(
         &self,
         conversation: ConversationKey,
@@ -2804,14 +2842,17 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                     self.local_key.0[1],
                     self.local_key.0[2],
                 ]);
-                if source_prefix == local_prefix
-                    && let Some(stream) = self.outbound.get(&conversation)
-                {
-                    let message_id = stream.edit_refs.resolve(message_id);
-                    if let Some(handle) = stream.refs.lookup(message_id) {
+                let ours = source_prefix == local_prefix;
+                let own_id = if ours {
+                    let stream = self.outbound.get(&conversation);
+                    let own_id = stream.map_or(message_id, |s| s.edit_refs.resolve(message_id));
+                    if let Some(handle) = stream.and_then(|s| s.refs.lookup(own_id)) {
                         return ResolvedRef::Handle(handle);
                     }
-                }
+                    own_id
+                } else {
+                    message_id
+                };
                 let key = StreamKey {
                     conversation,
                     sender: SenderScope::ClaimedMember(source_prefix),
@@ -2819,27 +2860,50 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                 // A reference naming an edit stands for the message it
                 // replaced; carry the collapsed ID into the fallback too, so
                 // the platform matches the row it actually stored.
-                let message_id = self
-                    .inbound
-                    .get(&key)
+                let member = self.inbound.get(&key);
+                let message_id = member
                     .map(|stream| stream.edit_refs.resolve(message_id))
                     .unwrap_or(message_id);
-                let unresolved = ResolvedRef::Unresolved(crate::model::WireRef::SenderScoped {
-                    sender: SenderScope::ClaimedMember(source_prefix),
-                    message_id,
+                if let Some(stream) = member
+                    && !stream.collided
+                    && let Some(handle) = stream.refs.lookup(message_id)
+                {
+                    return ResolvedRef::Handle(handle);
+                }
+                // Our own messages are kept as ours, whatever hint a member
+                // names them by, long after the ring has forgotten them.
+                ResolvedRef::Unresolved(crate::model::WireRef::SenderScoped {
+                    sender: if ours {
+                        SenderScope::Local
+                    } else {
+                        SenderScope::ClaimedMember(source_prefix)
+                    },
+                    message_id: if ours { own_id } else { message_id },
+                })
+            }
+            Regarding::Own { message_id } => {
+                let Some(sender) = sender else {
+                    return ResolvedRef::Unknown;
+                };
+                let stream = self.inbound.get(&StreamKey {
+                    conversation,
+                    sender,
                 });
-                match self.inbound.get(&key) {
-                    Some(stream) if !stream.collided => stream
-                        .refs
-                        .lookup(message_id)
-                        .map(ResolvedRef::Handle)
-                        .unwrap_or(unresolved),
-                    _ => unresolved,
+                let message_id = stream.map_or(message_id, |s| s.edit_refs.resolve(message_id));
+                match stream.and_then(|s| s.refs.lookup(message_id)) {
+                    Some(handle) => ResolvedRef::Handle(handle),
+                    None => ResolvedRef::Unresolved(crate::model::WireRef::SenderScoped {
+                        sender,
+                        message_id,
+                    }),
                 }
             }
+            Regarding::Unicast { message_id } if conversation.is_one_to_one() => {
+                self.resolved_addressed_to_us(conversation, sender, message_id)
+            }
             Regarding::Unicast { message_id } => {
-                // In a one-to-one conversation the reference may target
-                // either party's stream; resolve only when unambiguous.
+                // A room numbers its messages itself, but this node still
+                // keeps its own and the room's streams apart.
                 let inbound_key = sender.map(|sender| StreamKey {
                     conversation,
                     sender,
@@ -2864,6 +2928,64 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                 }
             }
         }
+    }
+
+    /// A one-octet reference in a one-to-one conversation: a message of ours.
+    ///
+    /// Senders that predate [`Regarding::Own`] also used this form for their
+    /// own messages, so an ID we cannot have sent is looked for in theirs.
+    /// The ring is too short to prove we did not send one we could have, so
+    /// that stays the store's to settle; it holds both streams, and looks in
+    /// ours first. This fallback goes when those senders do.
+    fn resolved_addressed_to_us(
+        &self,
+        conversation: ConversationKey,
+        sender: Option<SenderScope>,
+        message_id: u8,
+    ) -> ResolvedRef {
+        let outbound = self.outbound.get(&conversation);
+        let ours = outbound.map_or(message_id, |s| s.edit_refs.resolve(message_id));
+        if let Some(handle) = outbound.and_then(|s| s.refs.lookup(ours)) {
+            return ResolvedRef::Handle(handle);
+        }
+        if !self.may_have_sent(conversation, ours)
+            && let Some(sender) = sender
+        {
+            let stream = self.inbound.get(&StreamKey {
+                conversation,
+                sender,
+            });
+            let theirs = stream.map_or(message_id, |s| s.edit_refs.resolve(message_id));
+            return match stream.and_then(|s| s.refs.lookup(theirs)) {
+                Some(handle) => ResolvedRef::Handle(handle),
+                None => ResolvedRef::Unresolved(crate::model::WireRef::SenderScoped {
+                    sender,
+                    message_id: theirs,
+                }),
+            };
+        }
+        ResolvedRef::Unresolved(crate::model::WireRef::SenderScoped {
+            sender: SenderScope::Local,
+            message_id: ours,
+        })
+    }
+
+    /// Whether `message_id` lies in what this node has allocated in
+    /// `conversation`, as far as it can tell.
+    fn may_have_sent(&self, conversation: ConversationKey, message_id: u8) -> bool {
+        let next_id = match self.outbound.get(&conversation) {
+            Some(stream) => stream.next_id,
+            None => match self
+                .cold_checkpoints
+                .iter()
+                .find(|(key, _, _)| *key == conversation)
+            {
+                Some(&(_, next_id, _)) => next_id,
+                None => return false,
+            },
+        };
+        let delta = next_id.wrapping_sub(message_id);
+        delta != 0 && delta <= 128
     }
 
     // ------------------------------------------------------------------
@@ -2970,6 +3092,7 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                 presence: Presence::GapPending,
                 late: false,
                 notify: false,
+                unknown_original: false,
             },
         );
         if let Some(stream) = self.inbound.get_mut(&key) {
@@ -3024,9 +3147,8 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
             return true;
         }
 
-        let text = core::str::from_utf8(body).unwrap_or("");
         let body_ref = self
-            .arena_store(text)
+            .arena_store_lossy(body)
             .unwrap_or(BodyRef { offset: 0, len: 0 });
         let epoch = self
             .inbound
@@ -3052,6 +3174,7 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                 presence: Presence::Present,
                 late: true,
                 notify: true,
+                unknown_original: false,
             },
         );
         // The slot shows edited content; mark it as such.
@@ -3059,6 +3182,7 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
             placeholder,
             MutationKind::Edit {
                 conversation: key.conversation,
+                sender: key.sender,
                 original: ResolvedRef::Handle(placeholder),
                 body: body_ref,
             },
@@ -3094,6 +3218,7 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                 presence: Presence::Unavailable,
                 late: false,
                 notify: false,
+                unknown_original: false,
             },
         );
         if let Some(stream) = self.inbound.get_mut(&key) {
@@ -3129,6 +3254,22 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
         Some(BodyRef {
             offset: offset as u16,
             len: bytes.len() as u16,
+        })
+    }
+
+    /// Store `bytes` as text, each invalid sequence replaced by U+FFFD: a
+    /// sender that fumbled its encoding still said something.
+    fn arena_store_lossy(&mut self, bytes: &[u8]) -> Option<BodyRef> {
+        let offset = self.arena_used;
+        for chunk in bytes.utf8_chunks() {
+            self.arena_store(chunk.valid())?;
+            if !chunk.invalid().is_empty() {
+                self.arena_store("\u{FFFD}")?;
+            }
+        }
+        Some(BodyRef {
+            offset: offset as u16,
+            len: (self.arena_used - offset) as u16,
         })
     }
 

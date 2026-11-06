@@ -150,6 +150,12 @@ pub struct MobileChatMutationRecord {
     pub regarding_wire_id: Option<u8>,
     pub regarding_direction: Option<MobileChatDirection>,
     pub regarding_sender_hint: Option<Vec<u8>>,
+    /// The message says it replies to another, in a form this receiver could
+    /// not read: a reply to an unknown message.
+    pub regarding_unknown: bool,
+    /// The message came as an edit of something this receiver could not
+    /// identify, and stands as a message of its own.
+    pub unknown_original: bool,
     pub background_color: Option<Vec<u8>>,
     pub text_color: Option<Vec<u8>>,
     pub original_handle: Option<u32>,
@@ -345,6 +351,44 @@ impl MobileChatState {
         diagnostics
     }
 
+    /// Compose a new message as the user typed it, which may make it status
+    /// text; see [`ComposeIntent::typed`].
+    pub fn compose_typed(
+        &mut self,
+        conversation: ConversationKey,
+        client_token: u32,
+        text: &str,
+        budget: usize,
+        now_ms: u64,
+    ) -> Result<ComposedChatBatch, ComposeFailure> {
+        self.compose_batch(
+            conversation,
+            client_token,
+            ComposeIntent::typed(text),
+            budget,
+            now_ms,
+        )
+    }
+
+    /// Compose `body` as status text, as it stands.
+    pub fn compose_status(
+        &mut self,
+        conversation: ConversationKey,
+        client_token: u32,
+        body: &str,
+        budget: usize,
+        now_ms: u64,
+    ) -> Result<ComposedChatBatch, ComposeFailure> {
+        self.compose_batch(
+            conversation,
+            client_token,
+            ComposeIntent::Text { body, status: true },
+            budget,
+            now_ms,
+        )
+    }
+
+    /// Compose `body` as basic text, as it stands.
     pub fn compose_text(
         &mut self,
         conversation: ConversationKey,
@@ -415,15 +459,12 @@ impl MobileChatState {
         budget: usize,
         now_ms: u64,
     ) -> Result<ComposedChatBatch, ComposeFailure> {
-        let regarding = self.regarding_ref(target).ok_or(ComposeFailure::Refused)?;
-        self.compose_batch(
+        self.compose_regarding(
             conversation,
             client_token,
-            ComposeIntent::Reply {
-                body,
-                regarding,
-                status: true,
-            },
+            target,
+            body,
+            true,
             budget,
             now_ms,
         )
@@ -441,17 +482,12 @@ impl MobileChatState {
         budget: usize,
         now_ms: u64,
     ) -> Result<ComposedChatBatch, ComposeFailure> {
-        let Some(regarding) = self.regarding_ref(target) else {
-            return self.compose_text(conversation, client_token, body, budget, now_ms);
-        };
-        let reply = self.compose_batch(
+        let reply = self.compose_regarding(
             conversation,
             client_token,
-            ComposeIntent::Reply {
-                body,
-                regarding,
-                status: false,
-            },
+            target,
+            body,
+            false,
             budget,
             now_ms,
         );
@@ -462,6 +498,42 @@ impl MobileChatState {
                 self.compose_text(conversation, client_token, body, budget, now_ms)
             }
             composed => composed,
+        }
+    }
+
+    /// Compose about `target`. A row this session stored can still be one
+    /// the engine holds no handle for, as with an edit of a message never
+    /// received, so a refused handle falls back on the target's wire
+    /// coordinates.
+    #[allow(clippy::too_many_arguments)]
+    fn compose_regarding(
+        &mut self,
+        conversation: ConversationKey,
+        client_token: u32,
+        target: &MobileChatRegardingRef,
+        body: &str,
+        status: bool,
+        budget: usize,
+        now_ms: u64,
+    ) -> Result<ComposedChatBatch, ComposeFailure> {
+        let intent = |regarding| ComposeIntent::Reply {
+            body,
+            regarding,
+            status,
+        };
+        let regarding = self.regarding_ref(target).ok_or(ComposeFailure::Refused)?;
+        let composed = self.compose_batch(
+            conversation,
+            client_token,
+            intent(regarding),
+            budget,
+            now_ms,
+        );
+        match (composed, Self::wire_regarding_ref(target)) {
+            (Err(ComposeFailure::Refused), Some(wire)) if wire != regarding => {
+                self.compose_batch(conversation, client_token, intent(wire), budget, now_ms)
+            }
+            (composed, _) => composed,
         }
     }
 
@@ -528,6 +600,11 @@ impl MobileChatState {
         if target.session_id == self.session_id() {
             return Some(RegardingRef::Handle(MessageHandle(target.handle)));
         }
+        Self::wire_regarding_ref(target)
+    }
+
+    /// `target` by its coordinates on the wire, where it has them.
+    fn wire_regarding_ref(target: &MobileChatRegardingRef) -> Option<RegardingRef> {
         let sender_hint = match &target.sender_hint {
             None => None,
             Some(bytes) => Some(NodeHint(<[u8; 3]>::try_from(bytes.as_slice()).ok()?)),
@@ -769,6 +846,8 @@ fn mutation_record(session_id: u64, mutation: &Mutation) -> MobileChatMutationRe
         regarding_wire_id: None,
         regarding_direction: None,
         regarding_sender_hint: None,
+        regarding_unknown: false,
+        unknown_original: false,
         background_color: None,
         text_color: None,
         original_handle: None,
@@ -805,6 +884,7 @@ fn mutation_record(session_id: u64, mutation: &Mutation) -> MobileChatMutationRe
             record.presence = mobile_presence(insert.presence);
             record.received_late = insert.late;
             record.notify = insert.notify;
+            record.unknown_original = insert.unknown_original;
             apply_completion(&mut record, insert.status);
         }
         Change::UpdateBody {
@@ -823,6 +903,7 @@ fn mutation_record(session_id: u64, mutation: &Mutation) -> MobileChatMutationRe
             conversation,
             original,
             body,
+            ..
         } => {
             record.kind = MobileChatMutationKind::Edit;
             record.conversation_address = conversation_address(*conversation);
@@ -885,7 +966,7 @@ fn apply_original(record: &mut MobileChatMutationRecord, reference: ResolvedRef)
             record.original_direction = Some(wire_ref_direction(sender));
             record.original_sender_hint = claimed_hint(sender);
         }
-        ResolvedRef::Unresolved(WireRef::RoomCanonical { .. }) => {}
+        ResolvedRef::Unresolved(WireRef::RoomCanonical { .. }) | ResolvedRef::Unknown => {}
     }
 }
 
@@ -904,6 +985,7 @@ fn apply_regarding(record: &mut MobileChatMutationRecord, reference: ResolvedRef
             record.regarding_sender_hint = claimed_hint(sender);
         }
         ResolvedRef::Unresolved(WireRef::RoomCanonical { .. }) => {}
+        ResolvedRef::Unknown => record.regarding_unknown = true,
     }
 }
 
@@ -1005,7 +1087,9 @@ fn decode_address(value: &str) -> Option<PublicKey> {
 mod tests {
     use super::*;
     use umsh_core::ChannelKey;
+    use umsh_text::chat::Insert;
     use umsh_text::engine::MAX_FRAME;
+    use umsh_text::model::MessageType;
 
     const LOCAL: PublicKey = PublicKey([0xAA; 32]);
     const PEER: PublicKey = PublicKey([0x11; 32]);
@@ -1189,6 +1273,68 @@ mod tests {
         );
     }
 
+    /// A row this session stored for an edit of a message never received
+    /// is keyed by a handle the engine does not know it by.
+    #[test]
+    fn compose_reaction_falls_back_on_wire_coordinates() {
+        let (mut state, tag) = state_with_channel();
+        let target = MobileChatRegardingRef {
+            session_id: state.session_id(),
+            handle: 0xBEEF,
+            wire_id: Some(9),
+            direction: Some(MobileChatDirection::Inbound),
+            sender_hint: Some(vec![0x33, 0x44, 0x55]),
+            epoch: None,
+        };
+        let composed = state
+            .compose_reaction(
+                ConversationKey::ChannelGroup { channel: tag },
+                1,
+                &target,
+                "+1",
+                MAX_FRAME,
+                0,
+            )
+            .expect("the wire coordinates still name it");
+        assert!(composed.record.mutations.iter().any(|mutation| {
+            mutation.kind == MobileChatMutationKind::Insert && mutation.regarding_wire_id == Some(9)
+        }));
+    }
+
+    /// What could not be interpreted reaches the platform to be said.
+    #[test]
+    fn unknown_targets_are_exported() {
+        let mutation = Mutation {
+            handle: MessageHandle(1),
+            revision: 1,
+            change: Change::Insert(Insert {
+                conversation: direct(),
+                sender: SenderScope::Peer(PublicKey([0x11; 32])),
+                sender_key: None,
+                direction: Direction::Inbound,
+                message_type: MessageType::Basic,
+                wire_id: Some(3),
+                epoch: 0,
+                client_token: None,
+                sender_handle: None,
+                regarding: Some(ResolvedRef::Unknown),
+                bg_color: None,
+                text_color: None,
+                body: "hi".into(),
+                status: CompletionStatus::Complete,
+                presence: Presence::Present,
+                late: false,
+                notify: true,
+                unknown_original: true,
+            }),
+        };
+        let record = mutation_record(7, &mutation);
+        assert!(record.regarding_unknown);
+        assert!(record.unknown_original);
+        assert_eq!(record.regarding_handle, None);
+        assert_eq!(record.regarding_wire_id, None);
+    }
+
     /// The ordinary reaction: the target is a message the peer sent, and no
     /// live handle backs it, so the record must carry the wire coordinates
     /// for the platform to match against its own rows.
@@ -1294,6 +1440,29 @@ mod tests {
 
     /// A reply is ordinary text carrying the reference, so the platform can
     /// quote what it answers.
+    #[test]
+    fn only_what_is_typed_as_new_reads_a_me_prefix() {
+        let mut state = empty_state();
+        let typed = state
+            .compose_typed(direct(), 1, "/me waves", MAX_FRAME, 0)
+            .expect("typed status");
+        let insert = &typed.record.mutations[0];
+        assert_eq!(insert.message_type, Some(1));
+        assert_eq!(insert.body.as_deref(), Some("waves"));
+
+        let resent = empty_state()
+            .compose_text(direct(), 2, "/me waves", MAX_FRAME, 1)
+            .expect("literal text");
+        let insert = &resent.record.mutations[0];
+        assert_eq!(insert.message_type, Some(0));
+        assert_eq!(insert.body.as_deref(), Some("/me waves"));
+
+        let status = empty_state()
+            .compose_status(direct(), 3, "waves", MAX_FRAME, 2)
+            .expect("status again");
+        assert_eq!(status.record.mutations[0].message_type, Some(1));
+    }
+
     #[test]
     fn compose_reply_exports_basic_regarding() {
         let (mut state, tag) = state_with_channel();

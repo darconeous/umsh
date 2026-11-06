@@ -102,8 +102,12 @@ impl MessageSequence {
 /// Regarding option value: a reference to a previously sent message.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Regarding {
-    /// 1-byte form used in one-to-one conversations and rooms.
+    /// 1-byte form: in a one-to-one conversation, a message the frame's
+    /// recipient sent; in a room, a canonical room message.
     Unicast { message_id: u8 },
+    /// 2-byte form, used only in one-to-one conversations: a message the
+    /// frame's own sender sent.
+    Own { message_id: u8 },
     /// 4-byte form used in channel-group conversations.
     Multicast {
         message_id: u8,
@@ -114,7 +118,7 @@ pub enum Regarding {
 impl Regarding {
     pub fn message_id(&self) -> u8 {
         match self {
-            Self::Unicast { message_id } => *message_id,
+            Self::Unicast { message_id } | Self::Own { message_id } => *message_id,
             Self::Multicast { message_id, .. } => *message_id,
         }
     }
@@ -244,6 +248,12 @@ impl ConversationKey {
     /// True when message references use the 4-byte multicast Regarding form.
     pub fn uses_multicast_references(&self) -> bool {
         matches!(self, Self::ChannelGroup { .. })
+    }
+
+    /// True when two parties number their messages independently, with no
+    /// more than a Regarding's form to tell their streams apart.
+    pub fn is_one_to_one(&self) -> bool {
+        matches!(self, Self::Direct { .. } | Self::ChannelDirect { .. })
     }
 }
 

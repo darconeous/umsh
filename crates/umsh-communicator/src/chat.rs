@@ -790,16 +790,17 @@ impl<S: ChatStore> Chats<S> {
         events: &mut dyn FnMut(NodeEvent),
     ) -> Option<Message> {
         let conversation = self.conversation(chat)?;
-        let intent = match reply_to.and_then(|id| self.regarding(id, &conversation)) {
-            Some(regarding) => ComposeIntent::Reply {
+        let intent = match reply_to.map(|id| self.regarding(id, &conversation)) {
+            Some(Some(regarding)) => ComposeIntent::Reply {
                 body: text,
                 regarding,
                 status: false,
             },
-            None => ComposeIntent::Text {
+            Some(None) => ComposeIntent::Text {
                 body: text,
                 status: false,
             },
+            None => ComposeIntent::typed(text),
         };
         // A peer who prefers forward secrecy has a session asked for
         // before anything is said, when none is.
@@ -1267,6 +1268,7 @@ impl<S: ChatStore> Chats<S> {
             ),
             presence: presence(meta.presence),
             time: meta.time,
+            status: meta.message_type == MessageType::Status,
         })
     }
 
@@ -1677,6 +1679,9 @@ impl<S: ChatStore> Chats<S> {
                 .flatten();
             (SharedText::new(self.heap, body)?, card)
         };
+        let status = (record.message_type == MessageType::Status && !record.flags.deleted)
+            .then(|| self.status_name(record, conversation))
+            .flatten();
         let direction = direction(record.direction);
         let channel = matches!(conversation, ConversationKey::ChannelGroup { .. });
         let delivery = match direction {
@@ -1713,14 +1718,13 @@ impl<S: ChatStore> Chats<S> {
             id: record.id.0,
             direction,
             sender: self.record_sender(record, conversation),
+            status,
             text,
             delivery,
             reactions,
             card,
-            reply: record
-                .regarding
-                .filter(|_| record.message_type == MessageType::Basic)
-                .and_then(|regarding| self.quote(regarding, conversation)),
+            reply: self.reply(record, conversation),
+            unknown_original: record.flags.unknown_original,
             time: record.time,
             presence,
             edited: record.flags.edited,
@@ -1751,6 +1755,55 @@ impl<S: ChatStore> Chats<S> {
         })
     }
 
+    /// The name a status message opens with: ours, the member's, or the
+    /// peer's.
+    fn status_name(
+        &self,
+        record: &MessageRecord,
+        conversation: &ConversationKey,
+    ) -> Option<SharedText> {
+        let name = match record.direction {
+            engine::Direction::Outbound => self
+                .facade
+                .as_ref()
+                .map(|facade| cut::<24>(facade.local_handle()))
+                .filter(|handle| !handle.is_empty())
+                .unwrap_or_else(|| cut("You")),
+            engine::Direction::Inbound => match self.record_sender(record, conversation) {
+                Some(sender) => sender.name,
+                None => {
+                    let chat = self.store.chats().flatten();
+                    let kept = chat.into_iter().find(|kept| kept.id == record.chat)?;
+                    cut(&self.face(&kept)?.0)
+                }
+            },
+        };
+        SharedText::new(self.heap, &name)
+    }
+
+    /// What `record` shows of the message it replies to, if it is a reply:
+    /// a reply whose original cannot be found says so.
+    fn reply(
+        &self,
+        record: &MessageRecord,
+        conversation: &ConversationKey,
+    ) -> Option<model::Quote> {
+        if record.message_type != MessageType::Basic {
+            return None;
+        }
+        let quote = record
+            .regarding
+            .and_then(|regarding| self.quote(regarding, conversation));
+        if quote.is_some() || (record.regarding.is_none() && !record.flags.unknown_regarding) {
+            return quote;
+        }
+        Some(model::Quote {
+            name: None,
+            text: SharedText::new(self.heap, "Reply to an unknown message")?,
+            unknown: true,
+        })
+    }
+
     /// What a reply quotes of `id`, in `conversation`: who sent it, and
     /// as much of what it says as one line shows.
     fn quote(&self, id: MessageId, conversation: &ConversationKey) -> Option<model::Quote> {
@@ -1774,7 +1827,11 @@ impl<S: ChatStore> Chats<S> {
                 Some(SharedText::new(self.heap, &name)?)
             }
         };
-        Some(model::Quote { name, text })
+        Some(model::Quote {
+            name,
+            text,
+            unknown: false,
+        })
     }
 
     /// The hint an incoming channel message names its sender by, and the

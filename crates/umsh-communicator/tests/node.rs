@@ -1478,6 +1478,75 @@ fn a_reaction_is_kept_and_sent() {
     assert!(node.depart().is_some());
 }
 
+/// A reply or an edit whose target cannot be told still shows, and says
+/// what it is.
+#[test]
+fn a_message_about_something_unknown_is_shown_and_says_so() {
+    let sim = device();
+    let (node, _) = started(&sim);
+    let public = WellKnownChannels::derive().public;
+    let robin = PublicKey([0x37; 32]);
+
+    // Sequence 7, then a Regarding too narrow for a channel, and a body.
+    let payload = [0x21, 0x07, 0x21, 0x03, 0xFF, b'h', b'i'];
+    node.arrive(Arrival::Text(received(&public, robin, &payload)));
+    let Some(NodeEvent::Arrived { chat, message }) = events(&node)
+        .into_iter()
+        .find(|event| matches!(event, NodeEvent::Arrived { .. }))
+    else {
+        panic!("nothing arrived");
+    };
+    let shown = node.message(chat, message).unwrap();
+    assert_eq!(&*shown.text, "hi");
+    let quote = shown.reply.expect("a reply says it is one");
+    assert!(quote.unknown);
+    assert_eq!(&*quote.text, "Reply to an unknown message");
+    assert_eq!(quote.name, None);
+
+    // Sequence 8, an edit of a message never held, and a body.
+    let payload = [0x21, 0x08, 0x31, 0x03, 0xFF, b'y', b'o'];
+    node.arrive(Arrival::Text(received(&public, robin, &payload)));
+    assert_eq!(row_texts(&node, chat), ["hi", "yo"]);
+    let last = node.row_message(chat, 1).unwrap();
+    assert!(last.unknown_original);
+    assert!(!last.edited);
+}
+
+/// A status message reads as its sender's name followed by its text, and
+/// the chat list says it the same way.
+#[test]
+fn a_status_message_opens_with_its_senders_name() {
+    let sim = device();
+    let (node, _) = started(&sim);
+    let public = WellKnownChannels::derive().public;
+    let robin = PublicKey([0x37; 32]);
+
+    // Message Type 1, then Sequence 7, and a body.
+    let payload = [0x01, 0x01, 0x21, 0x07, 0xFF, b'w', b'a', b'v', b'e', b's'];
+    node.arrive(Arrival::Text(received(&public, robin, &payload)));
+    let Some(NodeEvent::Arrived { chat, message }) = events(&node)
+        .into_iter()
+        .find(|event| matches!(event, NodeEvent::Arrived { .. }))
+    else {
+        panic!("nothing arrived");
+    };
+    let shown = node.message(chat, message).unwrap();
+    assert_eq!(&*shown.text, "waves");
+    let name = shown.status.expect("status text names its sender");
+    assert_eq!(*name, *shown.sender.unwrap().name);
+    assert!(node.neighbor(chat, 0).unwrap().status);
+
+    // Typed as a new message, the prefix makes it status text; in reply to
+    // one, it is the reply's text.
+    let mine = node.send(chat, "/me nods", None, false).unwrap();
+    assert_eq!(&*mine.text, "nods");
+    assert!(mine.status.is_some());
+    let reply = node.send(chat, "/me nods", Some(message), false).unwrap();
+    assert_eq!(&*reply.text, "/me nods");
+    assert_eq!(reply.status, None);
+    assert!(reply.reply.is_some());
+}
+
 /// Robin's reaction to their own message on Public reaches its chips, and
 /// taking it back clears them.
 #[test]

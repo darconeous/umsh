@@ -445,6 +445,12 @@ impl ChatSummary {
     /// Shows `message` as the last one.
     pub fn preview(&mut self, message: &Message) {
         self.preview.clear();
+        if let Some(name) = &message.status {
+            push_cut(&mut self.preview, name);
+            push_cut(&mut self.preview, " ");
+            push_cut(&mut self.preview, &message.text);
+            return;
+        }
         match (message.direction, &message.sender) {
             (Direction::Outbound, _) => push_cut(&mut self.preview, "You: "),
             (Direction::Inbound, Some(sender)) => {
@@ -1062,6 +1068,9 @@ pub struct Message {
     pub direction: Direction,
     /// Who sent an incoming channel message.
     pub sender: Option<Sender>,
+    /// Set for a status message, which reads as this name followed by its
+    /// text, with no bubble.
+    pub status: Option<SharedText>,
     pub text: SharedText,
     pub delivery: Delivery,
     pub reactions: Reactions,
@@ -1070,6 +1079,8 @@ pub struct Message {
     pub card: Option<Card>,
     /// What it replies to, as it quotes it.
     pub reply: Option<Quote>,
+    /// It came as an edit of a message this node does not hold.
+    pub unknown_original: bool,
     /// When it was sent or received, in Unix seconds, when the clock was
     /// known.
     pub time: Option<u32>,
@@ -1109,6 +1120,8 @@ pub struct Neighbor {
     /// When it was sent or received, in Unix seconds, when the clock was
     /// known.
     pub time: Option<u32>,
+    /// A status message: it stands alone, outside any run.
+    pub status: bool,
 }
 
 /// A reply's quote of the message it answers.
@@ -1118,6 +1131,8 @@ pub struct Quote {
     pub name: Option<SharedText>,
     /// What it says, or as much of it as one line shows.
     pub text: SharedText,
+    /// The message it answers is unknown, and `text` says so.
+    pub unknown: bool,
 }
 
 /// A message arriving in parts: how many, which have come, and which will

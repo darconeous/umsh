@@ -24,6 +24,10 @@ pub struct FirstMeta {
     pub message_type_byte: u8,
     pub regarding: Option<Regarding>,
     pub editing: Option<u8>,
+    /// See [`crate::validate::ContentMessage::unknown_regarding`].
+    pub unknown_regarding: bool,
+    /// See [`crate::validate::ContentMessage::unknown_editing`].
+    pub unknown_editing: bool,
 }
 
 impl FirstMeta {

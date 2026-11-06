@@ -253,6 +253,14 @@ struct PeerImportDetails: Sendable {
 /// asks only when a chat last spoke, who spoke, and what they said; answering
 /// that by holding every message meant a refresh cost the whole history of
 /// every conversation, on a cadence set by radio traffic.
+/// Status text as a line of text: who, then what.
+func statusLine(name: String, body: String) -> String {
+    String(
+        localized: "\(name) \(body)",
+        comment: "Status text, like an IRC /me: a person's name, then what they say they did."
+    )
+}
+
 struct ConversationPreviewMessage: Hashable, Sendable {
     let createdAtMilliseconds: Int64
     let body: String
@@ -262,6 +270,8 @@ struct ConversationPreviewMessage: Hashable, Sendable {
     /// and the hint the wire always carries.
     let senderAddress: String?
     let senderHint: Data?
+    /// Status text, which reads as its sender's name followed by its body.
+    var isStatus: Bool = false
     /// The sender's hint as the core renders it, resolved when the list is
     /// loaded.
     var senderNodeHint: MeshNodeHint? = nil
@@ -445,6 +455,10 @@ struct ChatMessageSummary: Identifiable, Hashable, Sendable {
     var isUnavailable: Bool = false
     /// Filled its ordered slot out of order—annotated "Received late".
     var isReceivedLate: Bool = false
+    /// Came as an edit of a message this phone does not hold.
+    var isEditOfUnknown: Bool = false
+    /// Status text: its sender's name followed by its body, with no bubble.
+    var isStatus: Bool = false
     /// Outbound message delivered on a resend after a transport failure—
     /// annotated "Delivered Late".
     var isDeliveredLate: Bool = false

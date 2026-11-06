@@ -3353,16 +3353,19 @@ fn readable_message(payload: &[u8]) -> Option<Readable> {
         return None;
     }
     let (message, info) = umsh_text::text_message::parse_with_info(body).ok()?;
-    // The options that decide what a message is: a receiver shows
-    // nothing when it cannot decode one of them.
+    use umsh_text::MessageType::{MessageUnavailable, ResendRequest, Status};
     use umsh_text::model::option::{EDITING, MESSAGE_TYPE, REGARDING};
-    let readable = ![MESSAGE_TYPE, REGARDING, EDITING]
+    // A receiver shows any message with a body, whatever else it could not
+    // read of it, except a reaction it cannot tie to its target. With no
+    // body, there is only something to show if nothing is amiss.
+    let interpreted = ![MESSAGE_TYPE, REGARDING, EDITING]
         .into_iter()
         .any(|number| info.undecodable(number))
-        && matches!(
-            message.message_type,
-            umsh_text::MessageType::Basic | umsh_text::MessageType::Status
-        )
+        && matches!(message.message_type, umsh_text::MessageType::Basic | Status);
+    let reaction_lost = message.message_type == Status && info.undecodable(REGARDING);
+    let readable = !matches!(message.message_type, ResendRequest | MessageUnavailable)
+        && !reaction_lost
+        && (interpreted || !message.body.is_empty())
         && message
             .sequence
             .and_then(|sequence| sequence.fragment)
@@ -17682,6 +17685,31 @@ mod tests {
         session.detach();
         rx_effect(&mut session, &sealed_unar(2, &test_pairwise(), true), 5_000);
         assert!(session.take_queued_notice().expect("queued").cue);
+    }
+
+    /// A cue is owed for whatever a receiver will show, however much of the
+    /// message it could not read.
+    #[test]
+    fn a_message_is_readable_when_a_receiver_would_show_it() {
+        let text = |options: &[u8]| {
+            let mut payload = vec![PayloadType::TextMessage as u8];
+            payload.extend_from_slice(options);
+            readable_message(&payload).is_some()
+        };
+        // An unrecognized Message Type, then a body.
+        assert!(text(&[0x01, 0x20, 0xFF, b'x']));
+        // An undecodable Regarding, then a body.
+        assert!(text(&[0x43, 0x05, 0x06, 0x07, 0xFF, b'x']));
+        // An undecodable Editing, then a body.
+        assert!(text(&[0x52, 0x05, 0x06, 0xFF, b'x']));
+        // The same, with no body to show.
+        assert!(!text(&[0x01, 0x20]));
+        assert!(!text(&[0x43, 0x05, 0x06, 0x07]));
+        assert!(!text(&[0x52, 0x05, 0x06]));
+        // A reaction whose target cannot be read.
+        assert!(!text(&[0x01, 0x01, 0x43, 0x05, 0x06, 0x07, 0xFF, b'+']));
+        // Text-protocol bookkeeping, whatever it carries.
+        assert!(!text(&[0x01, 0x02, 0x21, 0x05, 0xFF, b'x']));
     }
 
     #[test]

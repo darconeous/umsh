@@ -25,7 +25,10 @@ extension MessageQuote {
         switch state {
         case .present: Self.oneLine(body)
         case .deleted: "Message deleted"
-        case .unavailable: "Message not available"
+        case .unavailable: String(
+            localized: "Reply to an unknown message",
+            comment: "The quote at the top of a reply whose original this phone does not have or could not identify."
+        )
         }
     }
 
@@ -117,7 +120,13 @@ struct ReplyQuoteView: View {
     }
 
     private var accessibilityLabel: String {
-        if let name { "Reply to \(name): \(quote.line)" } else { "Reply to \(quote.line)" }
+        if let name {
+            "Reply to \(name): \(quote.line)"
+        } else if quote.state == .unavailable {
+            quote.line
+        } else {
+            "Reply to \(quote.line)"
+        }
     }
 }
 

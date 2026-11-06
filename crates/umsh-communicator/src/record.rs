@@ -78,6 +78,11 @@ pub struct MessageFlags {
     /// To go under a session with forward secrecy, as it was sent: its
     /// frames go under one or not at all. Without, they never do.
     pub forward_secret: bool,
+    /// It says it replies to a message that could not be found, or that it
+    /// could not name in a form this node reads.
+    pub unknown_regarding: bool,
+    /// It came as an edit of a message this node does not hold.
+    pub unknown_original: bool,
 }
 
 /// How each fragment of an outbound message fared, as bitmaps over
@@ -198,6 +203,7 @@ pub struct MessageRecord {
 pub struct MessageMeta {
     pub chat: ChatId,
     pub direction: Direction,
+    pub message_type: MessageType,
     pub sender: SenderScope,
     pub sender_handle: Option<Name>,
     pub presence: Presence,

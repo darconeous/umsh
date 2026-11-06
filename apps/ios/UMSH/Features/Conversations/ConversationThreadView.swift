@@ -37,6 +37,7 @@ struct ConversationThreadView: View {
         var id: Data { hint }
     }
 
+    @Environment(\.ownChatName) private var ownChatName
     @Binding var conversation: ConversationListItem
     let radioSnapshot: RadioSnapshot
     let updateDraft: (Int64, String) async -> AppOperationResult
@@ -228,6 +229,7 @@ struct ConversationThreadView: View {
                                         senderLabel: isChannel && !message.isOutbound
                                             ? memberName(for: message)
                                             : nil,
+                                        statusName: statusName(for: message),
                                         senderHint: isChannel && !message.isOutbound
                                             ? message.senderNodeHint
                                             : nil,
@@ -1119,6 +1121,13 @@ struct ConversationThreadView: View {
     private func startReply(to message: ChatMessageSummary) {
         withAnimation(UMSHAnimation.accessory) { replyTarget = message }
         composerFocusRequest += 1
+    }
+
+    /// The name `message` opens with, if it is status text.
+    private func statusName(for message: ChatMessageSummary) -> String? {
+        guard message.isStatus else { return nil }
+        if message.isOutbound { return ownChatName }
+        return isChannel ? memberName(for: message) : conversation.title
     }
 
     /// Who the composer says the draft replies to.

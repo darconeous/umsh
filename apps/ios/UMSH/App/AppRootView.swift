@@ -495,6 +495,10 @@ struct AppRootView: View {
         // each one carrying it as a parameter.
         .environment(\.transcriptLoader, runtime.transcriptLoader)
         .environment(
+            \.ownChatName,
+            runtime.advertisedName.isEmpty ? String(localized: "You") : runtime.advertisedName
+        )
+        .environment(
             \.visibleConversationReporter,
             VisibleConversationReporter(
                 appeared: { [notificationService] address in

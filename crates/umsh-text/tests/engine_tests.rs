@@ -92,6 +92,7 @@ enum Drained {
         presence: Presence,
         late: bool,
         notify: bool,
+        unknown_original: bool,
     },
     UpdateBody {
         handle: MessageHandle,
@@ -156,6 +157,7 @@ fn drain(engine: &mut TestEngine) -> Vec<Drained> {
                     presence,
                     late,
                     notify,
+                    unknown_original,
                     ..
                 } => Drained::Insert {
                     handle: mutation.handle,
@@ -171,6 +173,7 @@ fn drain(engine: &mut TestEngine) -> Vec<Drained> {
                     presence,
                     late,
                     notify,
+                    unknown_original,
                 },
                 MutationKind::UpdateBody {
                     body,
@@ -387,6 +390,36 @@ fn compose_fragments_large_body() {
             .count(),
         1
     );
+}
+
+#[test]
+fn a_me_prefix_makes_typed_text_status_text() {
+    assert!(matches!(
+        ComposeIntent::typed("/me waves"),
+        ComposeIntent::Text {
+            body: "waves",
+            status: true
+        }
+    ));
+    for plain in ["/me ", "/me   ", "/me", "/mention", " /me waves", "hello"] {
+        assert!(matches!(
+            ComposeIntent::typed(plain),
+            ComposeIntent::Text { body, status: false } if body == plain
+        ));
+    }
+
+    let mut engine = engine();
+    engine
+        .compose(direct_conv(), 7, ComposeIntent::typed("/me waves"), 0)
+        .unwrap();
+    let outputs = drain(&mut engine);
+    let Drained::Transmit { payload, .. } = &outputs[1] else {
+        panic!("expected transmit");
+    };
+    let message = parse_payload(payload);
+    assert_eq!(message.message_type, MessageType::Status);
+    assert_eq!(message.regarding, None);
+    assert_eq!(message.body, b"waves");
 }
 
 #[test]
@@ -846,7 +879,7 @@ fn reaction_after_restart_targets_own_message_by_wire() {
     let message = parse_payload(payload);
     assert_eq!(
         message.regarding,
-        Some(umsh_text::Regarding::Unicast { message_id: 0 })
+        Some(umsh_text::Regarding::Own { message_id: 0 })
     );
     assert!(outputs.iter().any(|output| matches!(
         output,
@@ -1262,8 +1295,30 @@ fn transmits(outputs: &[Drained]) -> usize {
         .count()
 }
 
-/// A message of a type this receiver does not present still occupies its
-/// sequence position: nothing renders, and the next message sees no gap.
+/// A message of a type this receiver does not recognize is shown as a basic
+/// message, in its position.
+#[test]
+fn unrecognized_message_type_with_a_body_reads_as_a_basic_message() {
+    let mut engine = engine();
+    feed(&mut engine, &direct_envelope(), None, &sequenced(0, "a"), 0);
+    drain(&mut engine);
+
+    feed(
+        &mut engine,
+        &direct_envelope(),
+        None,
+        &extension_typed(1, "?"),
+        50,
+    );
+    assert!(drain(&mut engine).iter().any(|output| matches!(
+        output,
+        Drained::Insert { wire_id: Some(1), body, message_type: MessageType::Basic, .. }
+            if body == "?"
+    )));
+}
+
+/// With no body there is nothing to show, but the message still occupies its
+/// sequence position: the next message sees no gap.
 #[test]
 fn unrecognized_message_type_is_accounted_without_rendering() {
     let mut engine = engine();
@@ -1274,7 +1329,7 @@ fn unrecognized_message_type_is_accounted_without_rendering() {
         &mut engine,
         &direct_envelope(),
         None,
-        &extension_typed(1, "?"),
+        &extension_typed(1, ""),
         50,
     );
     let outputs = drain(&mut engine);
@@ -1313,8 +1368,8 @@ fn unrecognized_message_type_is_accounted_without_rendering() {
     assert_eq!(transmits(&drain(&mut engine)), 0);
 }
 
-/// An unrecognized-type message that arrives into a reserved gap ends its
-/// repair and removes the placeholder.
+/// An unrecognized-type message with no body that arrives into a reserved
+/// gap ends its repair and removes the placeholder.
 #[test]
 fn unrecognized_message_type_satisfies_a_reserved_gap() {
     let mut engine = engine();
@@ -1343,7 +1398,7 @@ fn unrecognized_message_type_satisfies_a_reserved_gap() {
         &mut engine,
         &direct_envelope(),
         None,
-        &extension_typed(1, "?"),
+        &extension_typed(1, ""),
         100,
     );
     let outputs = drain(&mut engine);
@@ -1353,11 +1408,10 @@ fn unrecognized_message_type_satisfies_a_reserved_gap() {
     assert_eq!(transmits(&drain(&mut engine)), 0);
 }
 
-/// Continuations that arrive before an unrecognized-type fragment zero are
-/// discarded with it, and later ones are duplicates: nothing renders and no
-/// fragment is requested.
+/// A fragmented message of an unrecognized type reassembles like any other,
+/// and no fragment is requested.
 #[test]
-fn unrecognized_message_type_discards_its_fragments() {
+fn unrecognized_message_type_keeps_its_fragments() {
     let mut engine = engine();
     feed(&mut engine, &direct_envelope(), None, &sequenced(0, "a"), 0);
     drain(&mut engine);
@@ -1382,10 +1436,12 @@ fn unrecognized_message_type_discards_its_fragments() {
         .unwrap();
     let outputs = drain(&mut engine);
     assert!(
-        !outputs
-            .iter()
-            .any(|output| matches!(output, Drained::Insert { .. } | Drained::UpdateBody { .. })),
-        "nothing renders: {outputs:?}"
+        outputs.iter().any(|output| matches!(
+            output,
+            Drained::UpdateBody { body, status: CompletionStatus::Complete, .. }
+                if body == "headmidtail"
+        )),
+        "the whole message renders: {outputs:?}"
     );
     engine.tick(60_000);
     assert_eq!(transmits(&drain(&mut engine)), 0);
@@ -2317,11 +2373,10 @@ fn peer_reaction_to_our_edit_wire_id_resolves_to_original() {
     );
 }
 
-#[test]
-fn ambiguous_one_to_one_reference_stays_unresolved() {
+/// Our message and the peer's, both numbered 0.
+fn colliding_engine() -> (TestEngine, MessageHandle, MessageHandle) {
     let mut engine = engine();
-    // Both sides used wire ID 0: our own message and the peer's.
-    engine
+    let mine = engine
         .compose(
             direct_conv(),
             1,
@@ -2340,18 +2395,230 @@ fn ambiguous_one_to_one_reference_stays_unresolved() {
         &sequenced(0, "theirs"),
         10,
     );
+    let outputs = drain(&mut engine);
+    let theirs = outputs
+        .iter()
+        .find_map(|output| match output {
+            Drained::Insert { handle, .. } => Some(*handle),
+            _ => None,
+        })
+        .unwrap();
+    (engine, mine, theirs)
+}
+
+#[test]
+fn a_one_octet_reference_means_the_recipients_message() {
+    let (mut engine, mine, _) = colliding_engine();
+    let mut reply = sequenced(1, "which?");
+    reply.regarding = Some(umsh_text::Regarding::Unicast { message_id: 0 });
+    feed(&mut engine, &direct_envelope(), None, &reply, 20);
+    assert!(drain(&mut engine).iter().any(|output| matches!(
+        output,
+        Drained::Insert { regarding: Some(ResolvedRef::Handle(handle)), .. } if *handle == mine
+    )));
+}
+
+#[test]
+fn a_two_octet_reference_means_the_senders_own_message() {
+    let (mut engine, _, theirs) = colliding_engine();
+    let mut reply = sequenced(1, "which?");
+    reply.regarding = Some(umsh_text::Regarding::Own { message_id: 0 });
+    feed(&mut engine, &direct_envelope(), None, &reply, 20);
+    assert!(drain(&mut engine).iter().any(|output| matches!(
+        output,
+        Drained::Insert { regarding: Some(ResolvedRef::Handle(handle)), .. } if *handle == theirs
+    )));
+}
+
+/// Our ring forgets, so a one-octet reference it does not hold is left for
+/// the store, which looks in our messages first.
+#[test]
+fn a_one_octet_reference_the_ring_has_forgotten_goes_to_our_stream() {
+    let mut engine = engine();
+    for token in 0..20 {
+        engine
+            .compose(
+                direct_conv(),
+                token,
+                ComposeIntent::Text {
+                    body: "mine",
+                    status: false,
+                },
+                0,
+            )
+            .unwrap();
+    }
+    drain(&mut engine);
+    feed(
+        &mut engine,
+        &direct_envelope(),
+        None,
+        &sequenced(0, "theirs"),
+        10,
+    );
     drain(&mut engine);
 
     let mut reply = sequenced(1, "which?");
     reply.regarding = Some(umsh_text::Regarding::Unicast { message_id: 0 });
     feed(&mut engine, &direct_envelope(), None, &reply, 20);
-    let outputs = drain(&mut engine);
-    assert!(outputs.iter().any(|output| matches!(
+    assert!(drain(&mut engine).iter().any(|output| matches!(
         output,
         Drained::Insert {
-            regarding: Some(ResolvedRef::Unresolved(_)),
+            regarding: Some(ResolvedRef::Unresolved(WireRef::SenderScoped {
+                sender: SenderScope::Local,
+                message_id: 0,
+            })),
             ..
         }
+    )));
+}
+
+/// What a reply or reaction to `target` puts on the air.
+fn regarding_sent(engine: &mut TestEngine, target: MessageHandle) -> Option<umsh_text::Regarding> {
+    engine
+        .compose(
+            direct_conv(),
+            9,
+            ComposeIntent::Reply {
+                body: "+1",
+                regarding: RegardingRef::Handle(target),
+                status: true,
+            },
+            30,
+        )
+        .unwrap();
+    let outputs = drain(engine);
+    outputs.iter().find_map(|output| match output {
+        Drained::Transmit { payload, .. } => parse_payload(payload).regarding,
+        _ => None,
+    })
+}
+
+#[test]
+fn compose_names_whose_message_it_means() {
+    let (mut engine, mine, theirs) = colliding_engine();
+    assert_eq!(
+        regarding_sent(&mut engine, theirs),
+        Some(umsh_text::Regarding::Unicast { message_id: 0 })
+    );
+    assert_eq!(
+        regarding_sent(&mut engine, mine),
+        Some(umsh_text::Regarding::Own { message_id: 0 })
+    );
+}
+
+/// A member's reaction to a message of ours the ring has forgotten is about
+/// ours, kept as ours, and not some member's who shares our hint.
+#[test]
+fn a_group_reference_to_us_outlives_the_ring() {
+    let mut engine = engine();
+    for token in 0..20 {
+        engine
+            .compose(
+                group_conv(),
+                token,
+                ComposeIntent::Text {
+                    body: "mine",
+                    status: false,
+                },
+                0,
+            )
+            .unwrap();
+    }
+    drain(&mut engine);
+
+    let mut emote = sequenced(0, "+1");
+    emote.message_type = MessageType::Status;
+    emote.regarding = Some(umsh_text::Regarding::Multicast {
+        message_id: 0,
+        source_prefix: NodeHint([LOCAL.0[0], LOCAL.0[1], LOCAL.0[2]]),
+    });
+    feed(&mut engine, &group_envelope(), None, &emote, 20);
+    assert!(drain(&mut engine).iter().any(|output| matches!(
+        output,
+        Drained::Insert {
+            regarding: Some(ResolvedRef::Unresolved(WireRef::SenderScoped {
+                sender: SenderScope::Local,
+                message_id: 0,
+            })),
+            ..
+        }
+    )));
+}
+
+#[test]
+fn a_reply_with_an_undecodable_regarding_is_a_reply_to_something_unknown() {
+    let mut engine = engine();
+    // Sequence 0, then a 3-byte Regarding.
+    let payload = [0x21, 0x00, 0x23, 0x05, 0x06, 0x08, 0xFF, b'h', b'i'];
+    engine
+        .receive(&direct_envelope(), None, &payload, 0)
+        .unwrap();
+    assert!(drain(&mut engine).iter().any(|output| matches!(
+        output,
+        Drained::Insert {
+            regarding: Some(ResolvedRef::Unknown),
+            body,
+            message_type: MessageType::Basic,
+            ..
+        } if body == "hi"
+    )));
+}
+
+#[test]
+fn a_fragmented_reply_with_an_undecodable_regarding_says_so_too() {
+    let mut engine = engine();
+    // Fragment 0 of 2 of ID 0, then a 3-byte Regarding.
+    let first = [0x23, 0x00, 0x00, 0x02, 0x23, 0x05, 0x06, 0x08, 0xFF, b'h'];
+    engine.receive(&direct_envelope(), None, &first, 0).unwrap();
+    assert!(drain(&mut engine).iter().any(|output| matches!(
+        output,
+        Drained::Insert {
+            regarding: Some(ResolvedRef::Unknown),
+            ..
+        }
+    )));
+}
+
+#[test]
+fn an_edit_with_an_undecodable_target_stands_as_a_message() {
+    let mut engine = engine();
+    // Sequence 0, then a 2-byte Editing.
+    let payload = [0x21, 0x00, 0x32, 0x05, 0x06, 0xFF, b'h', b'i'];
+    engine
+        .receive(&direct_envelope(), None, &payload, 0)
+        .unwrap();
+    assert!(drain(&mut engine).iter().any(|output| matches!(
+        output,
+        Drained::Insert { unknown_original: true, wire_id: Some(0), body, .. } if body == "hi"
+    )));
+}
+
+#[test]
+fn a_body_that_is_not_utf8_is_shown_as_far_as_it_can_be() {
+    let mut engine = engine();
+    let payload = [0x21, 0x00, 0xFF, b'h', 0x80, b'i'];
+    engine
+        .receive(&direct_envelope(), None, &payload, 0)
+        .unwrap();
+    assert!(drain(&mut engine).iter().any(|output| matches!(
+        output,
+        Drained::Insert { body, .. } if body == "h\u{FFFD}i"
+    )));
+}
+
+/// Nothing about a frame's options costs a body that can be read.
+#[test]
+fn a_message_with_undecodable_sequencing_is_shown_unsequenced() {
+    let mut engine = engine();
+    // A 2-byte Message Sequence.
+    let payload = [0x22, 0x05, 0x06, 0xFF, b'h', b'i'];
+    engine
+        .receive(&direct_envelope(), None, &payload, 0)
+        .unwrap();
+    assert!(drain(&mut engine).iter().any(|output| matches!(
+        output,
+        Drained::Insert { wire_id: None, body, .. } if body == "hi"
     )));
 }
 

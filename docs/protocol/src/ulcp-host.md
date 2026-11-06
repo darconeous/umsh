@@ -422,9 +422,10 @@ the board rather than of the protocol.
 An indication of one arrival is reserved for a message the operator
 reads: a frame the device authenticated with a provisioned key whose
 payload is a [text message](app-text-messages.md) of type basic or
-status, counted once, at its first fragment. Resend requests, Message
-Unavailable responses, continuation fragments, a message whose Message
-Type, Regarding, or Editing option does not decode, and every other
+status, or any other a receiver would
+[display](app-text-messages.md#message-options), counted once, at its first
+fragment. Resend requests, Message Unavailable responses, continuation
+fragments, a message a receiver would not display, and every other
 payload type are queued without one, as is any frame the device could
 not authenticate, since its content is unreadable, and any frame carrying
 a [delivery-critical](packet-options.md#forwarding-and-delivery-criticality)

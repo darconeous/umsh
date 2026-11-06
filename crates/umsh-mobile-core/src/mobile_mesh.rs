@@ -1022,6 +1022,12 @@ enum ManagementRequest {
 }
 
 enum ChatComposeRequest {
+    Typed {
+        text: String,
+    },
+    Status {
+        body: String,
+    },
     Text {
         body: String,
     },
@@ -2411,8 +2417,40 @@ impl MobileMeshSession {
             .map_err(|_| MobileMeshError::SessionUnavailable)
     }
 
+    /// Compose a new message as the user typed it into a conversation: a
+    /// `/me ` prefix makes it status text. A reply does not come this way.
+    pub async fn compose_typed(
+        &self,
+        conversation_address: String,
+        client_token: u32,
+        text: String,
+    ) -> Result<MobileChatComposeBatchRecord, MobileMeshError> {
+        self.compose_chat(
+            conversation_address,
+            client_token,
+            ChatComposeRequest::Typed { text },
+        )
+        .await
+    }
+
+    /// Compose status text into a conversation, its body taken as it stands.
+    pub async fn compose_status(
+        &self,
+        conversation_address: String,
+        client_token: u32,
+        body: String,
+    ) -> Result<MobileChatComposeBatchRecord, MobileMeshError> {
+        self.compose_chat(
+            conversation_address,
+            client_token,
+            ChatComposeRequest::Status { body },
+        )
+        .await
+    }
+
     /// Compose a message into a conversation, addressed either by a peer's
-    /// address or by a channel's conversation address.
+    /// address or by a channel's conversation address, its body taken as it
+    /// stands.
     pub async fn compose_text(
         &self,
         conversation_address: String,
@@ -4307,6 +4345,20 @@ async fn run_worker(
                                 .await;
                                 let now_ms = handle.now_ms().await;
                                 let composed = match &request {
+                                    ChatComposeRequest::Typed { text } => chat.compose_typed(
+                                        conversation,
+                                        client_token,
+                                        text,
+                                        budget,
+                                        now_ms,
+                                    ),
+                                    ChatComposeRequest::Status { body } => chat.compose_status(
+                                        conversation,
+                                        client_token,
+                                        body,
+                                        budget,
+                                        now_ms,
+                                    ),
                                     ChatComposeRequest::Text { body } => chat.compose_text(
                                         conversation,
                                         client_token,

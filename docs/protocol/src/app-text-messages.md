@@ -11,13 +11,22 @@ The payload consists of a CoAP-style option list terminated by a `0xFF` byte, fo
 
 Every recognized option is a singleton unless a specification explicitly declares otherwise. How a receiver treats a duplicated recognized option depends on the option's role:
 
-- An option that carries identity, sequencing, or reference semantics—Message Type, Message Sequence, Regarding, Editing, and extension options in the same role such as Sender Sequence—makes the message invalid when repeated, even if the repeated values are identical. The message MUST be dropped.
+- An option that carries identity, sequencing, or reference semantics—Message Type, Message Sequence, Regarding, Editing, and extension options in the same role such as Sender Sequence—cannot be trusted when repeated, even if the repeated values are identical. The option is treated as undecodable.
 - A presentation option—Sender Handle, Background Color, Text Color—keeps the first occurrence when repeated; later occurrences are ignored and MAY be reported diagnostically.
 - Duplicates of a zero-length flag option—Sequence Reset, Channel Group Resend—are idempotent.
 
 Repeated unrecognized options remain ignorable.
 
-A recognized option whose value the receiver cannot decode is ignored, with two exceptions. A message whose Message Sequence cannot be decoded is dropped. A message whose Message Type is unrecognized or undecodable, or whose Regarding or Editing is undecodable or of the wrong width for the conversation, is not displayed, but its sequence position is accounted for as with [Message Unavailable](#message-type).
+A sender that sees a message delivered must be able to rely on its body being shown. A receiver MUST display a message that has a body, whatever it could not interpret about the message, unless the message is a reaction. It loses only the meaning of the option it could not interpret:
+
+- An option a receiver cannot decode is otherwise ignored.
+- A message whose Message Sequence cannot be decoded is displayed as an unsequenced message.
+- A message whose Message Type is unrecognized or undecodable is displayed as a basic text message.
+- A basic text message whose Regarding is undecodable, or of the wrong width for the conversation, is displayed as a reply to an unknown message.
+- A message whose Editing is undecodable is displayed as a new message, marked as having been received as an edit of an unknown message. So is an edit whose original the receiver does not hold.
+- A body that is not valid UTF-8 is displayed with each invalid sequence replaced by U+FFFD.
+
+A reaction whose Regarding is undecodable or of the wrong width has nothing to attach to and is not displayed, nor is a message with no body whose Message Type or Editing could not be interpreted. Either way, its sequence position is accounted for as with [Message Unavailable](#message-type).
 
 | Number | Name | Value |
 |---:|---|---|
@@ -25,7 +34,7 @@ A recognized option whose value the receiver cannot decode is ignored, with two 
 | 1 | Sender Handle | UTF-8 string |
 | 2 | Message Sequence | 1 or 3 bytes (see below) |
 | 3 | Sequence Reset | 0 bytes (flag) |
-| 4 | Regarding | 1 or 4 bytes (see below) |
+| 4 | Regarding | 1, 2, or 4 bytes (see below) |
 | 5 | Editing | 1 byte |
 | 6 | Background Color | 3 bytes, RGB |
 | 7 | Text Color | 3 bytes, RGB |
@@ -43,6 +52,8 @@ A recognized option whose value the receiver cannot decode is ignored, with two 
 | 3 | Message Unavailable | Not normally displayed; see below |
 
 If absent or empty, the message type defaults to 0 (basic text).
+
+A client MAY send status text when a user starts a new message with `/me `, removing that prefix from the body. Replies are not treated this way.
 
 The presence of the `Regarding` option changes the semantics a bit: A **reply** is a type 0 message with a `Regarding` option specifying which message is being replied to. A **reaction** is a type 1 message with a `Regarding` option specifying which message is being reacted to; the body is a single Unicode emoji or a short text token such as `+1`, `-1`, `!`, or `?`. Implementations may differentiate reactions from plain status text by the presence of the Regarding option.
 
@@ -151,10 +162,14 @@ References a previously sent message for the purposes of replies and reactions.
 
 The option length depends on the conversation, not on how the MAC packet is addressed:
 
-- **One-to-one conversation** (unicast, or a blind-unicast conversation with a single logical destination): 1 byte—the Message ID of the referenced message.
+- **One-to-one conversation** (unicast, or a blind-unicast conversation with a single logical destination): the two parties number their messages independently, so the form says whose message is meant.
+    - 1 byte: the Message ID of a message sent by the recipient of this frame.
+    - 2 bytes: the Message ID of a message sent by the sender of this frame, followed by `0x00`. Any other second byte is undecodable.
 - **Channel-group conversation** (delivered by multicast to the channel): 4 bytes—the 1-byte Message ID followed by the first 3 bytes of the source public key of the original sender.
 
 The source prefix is necessary in multicast channels to disambiguate messages from different senders that may share the same Message ID. This means a message cannot be referenced if it is more than 255 messages old in that sender's sequence, or if the user has since reset their sequence ID.
+
+A receiver MAY accept a 1-byte Regarding that matches none of its own messages as a reference to one of the sender's.
 
 In chat rooms, the room assigns canonical Message IDs across all senders (see [Chat Rooms](app-chat-rooms.md#room-update)), so the 1-byte form is used and no source prefix is needed.
 
