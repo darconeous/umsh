@@ -1009,7 +1009,6 @@ th:first-child {
     width: 100%;
     max-width: 15rem;
     margin-inline: auto;
-    background: #ffffff;
     border: 1px solid var(--border);
     border-radius: 18px;
   }
@@ -1019,6 +1018,24 @@ th:first-child {
     font-size: 0.86rem;
     color: var(--ink-muted);
   }
+}
+
+// Landscape device screens want more room than a phone does.
+.shots--wide {
+  figure {
+    flex-basis: 18rem;
+  }
+
+  img {
+    max-width: 24rem;
+    border-radius: 0;
+  }
+}
+
+// Photographs take the whole column.
+.shots--photo img {
+  max-width: none;
+  border-radius: 0;
 }
 
 .faq-item {
