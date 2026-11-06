@@ -2415,11 +2415,11 @@ fn unreadable_rx_baseline_drops_the_frame_and_retries() {
     );
 }
 
-/// A forged unicast naming a stranger auto-registers it before its MIC
-/// fails. The stranger's window comes along, so a frame it had accepted is
+/// A forged unicast naming a stranger registers nothing, and when a real
+/// frame does, the stranger's window comes along: what it had accepted is
 /// still spent.
 #[test]
-fn forged_unicast_promotion_keeps_the_stranger_window() {
+fn forged_unicast_leaves_the_stranger_window_alone() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let remote = DummyIdentity::new([0xAB; 32]);
@@ -2439,14 +2439,16 @@ fn forged_unicast_promotion_keeps_the_stranger_window() {
         receive_rx_test_unicast(&mut mac, local_id, &remote, &forged, 100),
         None
     );
-    assert!(mac.peer_registry().lookup_by_key(&peer_key).is_some());
-    assert!(mac.rx_windows().is_registered(&peer_key));
+    assert!(mac.peer_registry().lookup_by_key(&peer_key).is_none());
+    assert!(!mac.rx_windows().is_registered(&peer_key));
 
     let keys = rx_test_keys(&mac, local_id, &remote);
     assert_eq!(
         receive_rx_test_unicast(&mut mac, local_id, &remote, &keys, 100),
         None
     );
+    assert!(mac.peer_registry().lookup_by_key(&peer_key).is_some());
+    assert!(mac.rx_windows().is_registered(&peer_key));
     assert_eq!(
         receive_rx_test_unicast(&mut mac, local_id, &remote, &keys, 101),
         Some(RxAcceptance::Advanced)
@@ -5416,6 +5418,86 @@ fn auto_registered_unicast_peer_reuses_oldest_auto_slot_when_registry_is_full() 
     assert_eq!(seen, Some((local_id, Some(second_key), b"second".to_vec())));
     assert!(mac.peer_registry().lookup_by_key(&first_key).is_none());
     assert!(mac.peer_registry().lookup_by_key(&second_key).is_some());
+}
+
+/// Naming a key proves nothing. A frame that fails its MIC under the key it
+/// claims leaves the registry exactly as it found it, however full.
+#[test]
+fn a_forged_full_key_unicast_evicts_nobody() {
+    let mut mac = make_small_peer_mac::<1>();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let local_key = *mac.identity(local_id).unwrap().identity().public_key();
+    let dst_hint = local_key.hint();
+    mac.set_auto_register_full_key_peers(true);
+
+    let honest = DummyIdentity::new([0xAB; 32]);
+    let honest_key = *honest.public_key();
+    let keys = mac
+        .crypto()
+        .derive_pairwise_keys(&SharedSecret([0u8; 32]), &local_key, &honest_key);
+    mac.radio_mut()
+        .queue_received_unicast(&honest, &keys, &dst_hint, b"hello", false);
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+    let before = mac.peer_registry().lookup_by_key(&honest_key).unwrap().0;
+
+    let forger = DummyIdentity::new([0xBC; 32]);
+    let forger_key = *forger.public_key();
+    let wrong = PairwiseKeys {
+        k_enc: [0xEE; 32],
+        k_mic: [0xEF; 32],
+    };
+    mac.radio_mut()
+        .queue_received_unicast(&forger, &wrong, &dst_hint, b"forged", false);
+
+    let mut delivered = false;
+    block_on(mac.receive_one(|_, event| {
+        delivered |= received_of_type(&event, PacketType::Unicast).is_some();
+    }))
+    .unwrap();
+
+    assert!(!delivered);
+    assert!(mac.peer_registry().lookup_by_key(&forger_key).is_none());
+    assert_eq!(
+        mac.peer_registry().lookup_by_key(&honest_key).unwrap().0,
+        before
+    );
+}
+
+/// A stranger an unauthenticated request asks this node to answer gets a
+/// free slot, or one another unproven key holds, and never a proven peer's.
+#[test]
+fn an_unproven_peer_never_displaces_a_proven_one() {
+    let mut mac = make_small_peer_mac::<1>();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let local_key = *mac.identity(local_id).unwrap().identity().public_key();
+    let first = *DummyIdentity::new([0xAB; 32]).public_key();
+    let second = *DummyIdentity::new([0xBC; 32]).public_key();
+
+    // Unproven entries give way to one another.
+    mac.ensure_unproven_peer(&first).unwrap();
+    assert!(!mac.peer_registry().lookup_by_key(&first).unwrap().1.proven);
+    mac.ensure_unproven_peer(&second).unwrap();
+    assert!(mac.peer_registry().lookup_by_key(&first).is_none());
+    assert!(mac.peer_registry().lookup_by_key(&second).is_some());
+
+    // A frame that authenticates makes the entry a peer.
+    mac.set_auto_register_full_key_peers(true);
+    let remote = DummyIdentity::new([0xBC; 32]);
+    let keys = mac
+        .crypto()
+        .derive_pairwise_keys(&SharedSecret([0u8; 32]), &local_key, &second);
+    mac.radio_mut()
+        .queue_received_unicast(&remote, &keys, &local_key.hint(), b"hello", false);
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+    assert!(mac.peer_registry().lookup_by_key(&second).unwrap().1.proven);
+
+    assert!(mac.ensure_unproven_peer(&first).is_err());
+    assert!(mac.peer_registry().lookup_by_key(&first).is_none());
+    assert!(mac.peer_registry().lookup_by_key(&second).is_some());
+
+    // An explicit local decision still can.
+    mac.ensure_transient_peer(&first).unwrap();
+    assert!(mac.peer_registry().lookup_by_key(&first).is_some());
 }
 
 #[test]

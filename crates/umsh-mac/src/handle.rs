@@ -238,6 +238,17 @@ impl<
             .is_ok()
     }
 
+    /// Ensures `key`, which nothing has proven, has a slot to be answered
+    /// through, without displacing a peer that has authenticated. Returns
+    /// whether a slot is held.
+    pub async fn ensure_unproven_peer(&self, key: &PublicKey) -> bool {
+        self.mac
+            .borrow_mut()
+            .await
+            .ensure_unproven_peer(key)
+            .is_ok()
+    }
+
     /// Adds or updates a shared channel and derives its multicast keys.
     pub async fn add_channel(&self, key: ChannelKey) -> Result<(), CapacityError> {
         self.mac.borrow_mut().await.add_channel(key)

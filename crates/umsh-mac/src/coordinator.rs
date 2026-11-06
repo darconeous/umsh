@@ -3437,6 +3437,8 @@ impl<
         original[..frame_len].copy_from_slice(&buf[..frame_len]);
         let handled = if let Some(local_id) = self.find_local_identity_for_dst(header.dst) {
             let mut handled = false;
+            self.admit_full_key_source(local_id, &buf[..frame_len], header, header.source, None)
+                .await;
             for (peer_id, peer_key) in
                 self.resolve_source_peer_candidates(&buf[..frame_len], header)
             {
@@ -3449,6 +3451,7 @@ impl<
                 else {
                     continue;
                 };
+                self.peer_registry.mark_proven(peer_id);
                 let payload = &buf[body_range.clone()];
                 if !Self::payload_is_allowed(header.packet_type(), payload) {
                     continue;
@@ -3877,6 +3880,14 @@ impl<
                     let Some(local_id) = self.find_local_identity_for_dst(Some(dst)) else {
                         continue;
                     };
+                    self.admit_full_key_source(
+                        local_id,
+                        &buf[..frame_len],
+                        header,
+                        source_addr,
+                        Some((&blind_addr.addr, &channel_keys)),
+                    )
+                    .await;
                     for (peer_id, peer_key) in
                         self.resolve_blind_source_peer_candidates(&buf[..frame_len], source_addr)
                     {
@@ -3895,6 +3906,7 @@ impl<
                             Ok(range) => range,
                             Err(_) => continue,
                         };
+                        self.peer_registry.mark_proven(peer_id);
                         let payload = &buf[body_range.clone()];
                         if !Self::payload_is_allowed(header.packet_type(), payload) {
                             continue;
@@ -5933,24 +5945,107 @@ impl<
         self.try_auto_register_peer(*key)
     }
 
-    fn try_auto_register_peer(&mut self, key: PublicKey) -> Result<PeerId, AddPeerError> {
-        #[cfg(feature = "software-crypto")]
-        {
-            if !umsh_crypto::is_valid_ed25519_public_key(&key) {
-                return Err(AddPeerError::InvalidPublicKey);
-            }
+    /// [`ensure_transient_peer`](Self::ensure_transient_peer) for a key
+    /// nothing has proven: the source of an unauthenticated request this node
+    /// is answering. Takes a free slot or one another unproven key holds, and
+    /// fails rather than displace a peer that has authenticated.
+    pub fn ensure_unproven_peer(&mut self, key: &PublicKey) -> Result<PeerId, AddPeerError> {
+        if let Some((peer_id, _)) = self.peer_registry.lookup_by_key(key) {
+            return Ok(peer_id);
         }
+        Self::check_auto_peer_key(key)?;
+        let now_ms = self.clock.now_ms();
+        let outcome = self
+            .peer_registry
+            .try_insert_or_update_unproven(*key, now_ms)?;
+        Ok(self.settle_auto_peer(*key, outcome, now_ms))
+    }
+
+    fn try_auto_register_peer(&mut self, key: PublicKey) -> Result<PeerId, AddPeerError> {
+        Self::check_auto_peer_key(&key)?;
         let now_ms = self.clock.now_ms();
         let outcome = self.peer_registry.try_insert_or_update_auto(key, now_ms)?;
+        Ok(self.settle_auto_peer(key, outcome, now_ms))
+    }
+
+    fn check_auto_peer_key(key: &PublicKey) -> Result<(), AddPeerError> {
+        #[cfg(feature = "software-crypto")]
+        if !umsh_crypto::is_valid_ed25519_public_key(key) {
+            return Err(AddPeerError::InvalidPublicKey);
+        }
+        let _ = key;
+        Ok(())
+    }
+
+    fn settle_auto_peer(
+        &mut self,
+        key: PublicKey,
+        outcome: crate::peers::AutoPeerUpdate,
+        now_ms: u64,
+    ) -> PeerId {
         if let Some(evicted) = outcome.evicted_key {
             self.clear_peer_slot_state(outcome.peer_id);
             self.rx_windows.unregister(&evicted, now_ms);
         }
-        // Registered before any MIC is checked, so a forged frame naming a
-        // stranger can promote it. Its window comes along intact, so that
-        // reopens nothing the stranger window had spent.
+        // A stranger's window comes along intact, so registering one reopens
+        // nothing the stranger window had spent.
         self.register_rx_window(key);
-        Ok(outcome.peer_id)
+        outcome.peer_id
+    }
+
+    /// Register an unknown full-key source if, and only if, this frame proves
+    /// it holds that key.
+    ///
+    /// A registry slot is what a peer's route, keys, and replay state live
+    /// under, so a claim alone must never take one: anyone can name any key.
+    /// The frame is opened on a copy, under keys derived for the claimed
+    /// source, and the ordinary receive path then opens it again as it would
+    /// a known peer's. That second pass falls only on a stranger's first frame.
+    async fn admit_full_key_source(
+        &mut self,
+        local_id: LocalIdentityId,
+        frame: &[u8],
+        header: &PacketHeader,
+        source: SourceAddrRef,
+        blind: Option<(&BlindAddr, &DerivedChannelKeys)>,
+    ) {
+        if !self.auto_register_full_key_peers {
+            return;
+        }
+        let SourceAddrRef::FullKeyAt { offset } = source else {
+            return;
+        };
+        let Some(key) = Self::full_key_at(frame, offset) else {
+            return;
+        };
+        if self.peer_registry.lookup_by_key(&key).is_some()
+            || Self::check_auto_peer_key(&key).is_err()
+        {
+            return;
+        }
+        let Ok(pairwise_keys) = self.derive_pairwise_keys_for_peer(local_id, &key).await else {
+            return;
+        };
+
+        let mut scratch = [0u8; FRAME];
+        let scratch = &mut scratch[..frame.len()];
+        scratch.copy_from_slice(frame);
+        let opened = match blind {
+            Some((addr, channel_keys)) => {
+                let blind_keys = self.crypto.derive_blind_keys(&pairwise_keys, channel_keys);
+                self.crypto
+                    .open_packet(scratch, header, &blind_keys, Some(addr))
+            }
+            None => self
+                .crypto
+                .open_packet(scratch, header, &pairwise_keys, None),
+        };
+        if opened.is_err() {
+            return;
+        }
+        if let Ok(peer_id) = self.try_auto_register_peer(key) {
+            let _ = self.cache_peer_crypto(local_id, peer_id, pairwise_keys);
+        }
     }
 
     fn replay_metadata<'a>(header: &PacketHeader, frame: &'a [u8]) -> Option<(u32, &'a [u8])> {
@@ -6083,7 +6178,7 @@ impl<
     }
 
     fn resolve_source_peer_candidates(
-        &mut self,
+        &self,
         frame: &[u8],
         header: &PacketHeader,
     ) -> Vec<(PeerId, PublicKey), PEERS> {
@@ -6093,21 +6188,11 @@ impl<
                     return Vec::new();
                 };
 
+                let mut out = Vec::new();
                 if let Some((peer_id, _)) = self.peer_registry.lookup_by_key(&peer_key) {
-                    let mut out = Vec::new();
                     let _ = out.push((peer_id, peer_key));
-                    return out;
                 }
-
-                if self.auto_register_full_key_peers {
-                    if let Ok(peer_id) = self.try_auto_register_peer(peer_key) {
-                        let mut out = Vec::new();
-                        let _ = out.push((peer_id, peer_key));
-                        return out;
-                    }
-                }
-
-                Vec::new()
+                out
             }
             SourceAddrRef::Hint(hint) => self
                 .peer_registry
@@ -6196,7 +6281,7 @@ impl<
     }
 
     fn resolve_blind_source_peer_candidates(
-        &mut self,
+        &self,
         frame: &[u8],
         source: SourceAddrRef,
     ) -> Vec<(PeerId, PublicKey), PEERS> {
@@ -6206,21 +6291,11 @@ impl<
                     return Vec::new();
                 };
 
+                let mut out = Vec::new();
                 if let Some((peer_id, _)) = self.peer_registry.lookup_by_key(&peer_key) {
-                    let mut out = Vec::new();
                     let _ = out.push((peer_id, peer_key));
-                    return out;
                 }
-
-                if self.auto_register_full_key_peers {
-                    if let Ok(peer_id) = self.try_auto_register_peer(peer_key) {
-                        let mut out = Vec::new();
-                        let _ = out.push((peer_id, peer_key));
-                        return out;
-                    }
-                }
-
-                Vec::new()
+                out
             }
             SourceAddrRef::Hint(hint) => self
                 .peer_registry

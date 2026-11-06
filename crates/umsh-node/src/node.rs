@@ -928,10 +928,10 @@ impl<M: MacBackend> LocalNode<M> {
             options = options.with_tx_delay_ms(delay);
         }
         // A broadcast solicitation's source is not auto-registered on
-        // receive, so the requester may be a complete stranger. Take a
-        // transient slot for them—never a pinned one—so the unicast
-        // below has somewhere to go.
-        let _ = self.mac.ensure_transient_peer(&plan.to).await;
+        // receive, so the requester may be a complete stranger, and may not
+        // be who it says. Take a slot for them only if that costs no peer
+        // its place, so the unicast below has somewhere to go.
+        let _ = self.mac.ensure_unproven_peer(&plan.to).await;
         let _ = self
             .send_response(&plan.to, plan.channel, &plan.framed, &options)
             .await;
@@ -1143,7 +1143,7 @@ impl<M: MacBackend> LocalNode<M> {
         ) else {
             return;
         };
-        let _ = self.mac.ensure_transient_peer(&to).await;
+        let _ = self.mac.ensure_unproven_peer(&to).await;
         let _ = self
             .send_response(&to, channel, &framed[..len + 1], &SendOptions::default())
             .await;

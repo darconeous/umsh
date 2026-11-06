@@ -51,6 +51,13 @@ pub trait MacBackend: Clone {
         let _ = key;
         false
     }
+    /// [`ensure_transient_peer`](Self::ensure_transient_peer) for a key
+    /// nothing has proven, such as the source of an unauthenticated request
+    /// being answered: never displaces a peer that has authenticated.
+    async fn ensure_unproven_peer(&self, key: &PublicKey) -> bool {
+        let _ = key;
+        false
+    }
     /// Add or refresh a private channel.
     async fn add_private_channel(
         &self,
@@ -325,6 +332,10 @@ impl<
 
     async fn ensure_transient_peer(&self, key: &PublicKey) -> bool {
         self.ensure_transient_peer(key).await
+    }
+
+    async fn ensure_unproven_peer(&self, key: &PublicKey) -> bool {
+        self.ensure_unproven_peer(key).await
     }
 
     async fn add_private_channel(

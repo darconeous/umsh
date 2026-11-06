@@ -113,6 +113,11 @@ pub struct PeerInfo {
     pub public_key: PublicKey,
     /// Whether this peer was explicitly configured by the local application.
     pub pinned: bool,
+    /// Whether this entry rests on more than a claim: a frame authenticated
+    /// under the key, or the local application asking for it. An entry that
+    /// does not is only a slot to answer a stranger through, and a stranger
+    /// that has proven nothing never displaces one that does.
+    pub proven: bool,
     /// Most recent learned route, if any.
     pub route: Option<CachedRoute>,
     /// Revision of the selected route. Use registry route methods to mutate it.
@@ -157,6 +162,7 @@ impl PeerInfo {
         Self {
             public_key,
             pinned,
+            proven: pinned,
             route: None,
             route_revision: 0,
             route_score: None,
@@ -474,13 +480,39 @@ impl<const N: usize, const H: usize> PeerRegistry<N, H> {
         Ok(PeerId((self.peers.len() - 1) as u8))
     }
 
-    /// Insert or refresh an opportunistically learned peer entry.
+    /// Insert or refresh an opportunistically learned peer entry, for a key
+    /// a verified frame or the local application stands behind.
     ///
-    /// When the registry is full, this may recycle the oldest non-pinned entry in place
-    /// rather than failing. Explicitly configured (`pinned`) peers are never displaced.
+    /// When the registry is full, this may recycle an unpinned entry in place
+    /// rather than failing: the oldest that has proven nothing, or failing
+    /// that the oldest there is. Explicitly configured (`pinned`) peers are
+    /// never displaced.
     pub fn try_insert_or_update_auto(
         &mut self,
         key: PublicKey,
+        now_ms: u64,
+    ) -> Result<AutoPeerUpdate, CapacityError> {
+        self.insert_or_update_auto(key, true, now_ms)
+    }
+
+    /// Insert or refresh an entry for a key nothing has proven, such as a
+    /// stranger an unauthenticated request asks this node to answer.
+    ///
+    /// When the registry is full this recycles only another entry that has
+    /// proven nothing, so an unauthenticated frame never costs a peer its
+    /// place. A full registry otherwise fails.
+    pub fn try_insert_or_update_unproven(
+        &mut self,
+        key: PublicKey,
+        now_ms: u64,
+    ) -> Result<AutoPeerUpdate, CapacityError> {
+        self.insert_or_update_auto(key, false, now_ms)
+    }
+
+    fn insert_or_update_auto(
+        &mut self,
+        key: PublicKey,
+        proven: bool,
         now_ms: u64,
     ) -> Result<AutoPeerUpdate, CapacityError> {
         if let Some((id, peer)) = self
@@ -490,16 +522,18 @@ impl<const N: usize, const H: usize> PeerRegistry<N, H> {
             .find(|(_, peer)| peer.public_key == key)
         {
             peer.last_seen_ms = seen_ms(now_ms);
+            peer.proven |= proven;
             return Ok(AutoPeerUpdate {
                 peer_id: PeerId(id as u8),
                 evicted_key: None,
             });
         }
 
+        let mut entry = PeerInfo::new(key, false, seen_ms(now_ms));
+        entry.proven = proven;
+
         if self.peers.len() < N {
-            self.peers
-                .push(PeerInfo::new(key, false, seen_ms(now_ms)))
-                .map_err(|_| CapacityError)?;
+            self.peers.push(entry).map_err(|_| CapacityError)?;
             return Ok(AutoPeerUpdate {
                 peer_id: PeerId((self.peers.len() - 1) as u8),
                 evicted_key: None,
@@ -511,20 +545,29 @@ impl<const N: usize, const H: usize> PeerRegistry<N, H> {
             .iter()
             .enumerate()
             .filter(|(index, peer)| {
-                !peer.pinned && self.route_hold(PeerId(*index as u8), now_ms).is_none()
+                !peer.pinned
+                    && (proven || !peer.proven)
+                    && self.route_hold(PeerId(*index as u8), now_ms).is_none()
             })
-            .min_by_key(|(_, peer)| peer.last_seen_ms)
+            .min_by_key(|(_, peer)| (peer.proven, peer.last_seen_ms))
         else {
             return Err(CapacityError);
         };
 
         let evicted_key = oldest.public_key;
         self.drop_hold(PeerId(index as u8));
-        self.peers[index] = PeerInfo::new(key, false, seen_ms(now_ms));
+        self.peers[index] = entry;
         Ok(AutoPeerUpdate {
             peer_id: PeerId(index as u8),
             evicted_key: Some(evicted_key),
         })
+    }
+
+    /// Record that a frame authenticated under this peer's key.
+    pub fn mark_proven(&mut self, id: PeerId) {
+        if let Some(peer) = self.get_mut(id) {
+            peer.proven = true;
+        }
     }
 
     /// Remove a peer, freeing its slot for reuse.
