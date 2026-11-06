@@ -28,3 +28,8 @@ if ! (cd firmware-esp32 && cargo +stable fmt --all --check); then
     echo "pre-commit: run 'cargo +stable fmt --all' in firmware-esp32/ and re-stage." >&2
     exit 1
 fi
+
+if ! (cd fuzz && cargo +stable fmt --all --check); then
+    echo "pre-commit: run 'cargo +stable fmt --all' in fuzz/ and re-stage." >&2
+    exit 1
+fi

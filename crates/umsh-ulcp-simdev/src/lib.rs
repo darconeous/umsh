@@ -50,6 +50,73 @@ pub use umsh_ulcp_device::{
     RadioRxInfo, RadioSettings, SessionConfig, TimeConfig, WifiConfig,
 };
 
+/// A configuration offering everything [`SimulatedPlatform`] can serve.
+///
+/// `stats` is the traffic ledger of a device that counts: a simulated
+/// device has no radio to count for, so most callers pass `None`.
+pub fn full_config(
+    duty: &'static DutyLedger,
+    stats: Option<&'static umsh_ulcp::stats::StatsLedger>,
+) -> SessionConfig {
+    SessionConfig {
+        dev_version: "umsh-simdev-test/0.1",
+        dev_model: None,
+        default_device_name: "Simulated test device",
+        mtu: 255,
+        tx_preamble_symbols: 32,
+        sync_word: 0x1424,
+        min_tx_power_dbm: -9,
+        max_tx_power_dbm: 22,
+        freq_khz_min: 150_000,
+        freq_khz_max: 960_000,
+        defaults: RadioSettings {
+            enabled: false,
+            freq_khz: 910_525,
+            bw_hz: 62_500,
+            sf: 7,
+            cr_denom: 5,
+            tx_power_dbm: 14,
+        },
+        default_duty_limit: 0xFFFF,
+        duty,
+        battery_diagnostics: Default::default(),
+        battery: Some(BatteryFields {
+            voltage: true,
+            level: true,
+            charge_state: true,
+        }),
+        alert: Some(AlertConfig::DEFAULT),
+        time: Some(TimeConfig),
+        gnss: Some(GnssConfig::DEFAULT),
+        display_motion_wake: false,
+        display: Some(DisplayConfig {
+            brightness: 128,
+            timeout_s: 30,
+        }),
+        keyboard: true,
+        sound: true,
+        illuminance: true,
+        temperatures: true,
+        ble: true,
+        ble_pairing: true,
+        ble_pin: true,
+        // A simulated power cycle is a rebuilt session, which is
+        // exactly what a host watching this device would see.
+        reboot: true,
+        dev_identity: true,
+        messaging: false,
+        stats,
+        mac_node: false,
+        meshcore_forwarder: false,
+        lan_bearer: umsh_ulcp_device::LanBearerRole::None,
+        wifi: Some(WifiConfig::STATION),
+        ip: Some(IpConfig::DUAL),
+        bridge_client: false,
+        i2c_buses: SIMULATED_I2C_BUSES,
+        i2c_devices: SIMULATED_I2C_DEVICES,
+    }
+}
+
 /// Bonds a fresh simulated device pretends to be holding.
 const SIMULATED_BONDS: u8 = 2;
 
@@ -421,8 +488,19 @@ impl SimulatedDevice {
     }
 }
 
+impl Default for SimulatedPlatform {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SimulatedPlatform {
-    fn new() -> Self {
+    /// The simulated bus peripheral, for checking what a transfer did.
+    pub fn i2c(&self) -> &SimulatedI2c {
+        &self.i2c
+    }
+
+    pub fn new() -> Self {
         Self {
             snapshot: None,
             held_lists: None,
@@ -927,64 +1005,7 @@ mod tests {
     use umsh_ulcp::{Frame, PropPayload, frame, ids::prop};
 
     pub(crate) fn test_config() -> SessionConfig {
-        SessionConfig {
-            dev_version: "umsh-simdev-test/0.1",
-            dev_model: None,
-            default_device_name: "Simulated test device",
-            mtu: 255,
-            tx_preamble_symbols: 32,
-            sync_word: 0x1424,
-            min_tx_power_dbm: -9,
-            max_tx_power_dbm: 22,
-            freq_khz_min: 150_000,
-            freq_khz_max: 960_000,
-            defaults: RadioSettings {
-                enabled: false,
-                freq_khz: 910_525,
-                bw_hz: 62_500,
-                sf: 7,
-                cr_denom: 5,
-                tx_power_dbm: 14,
-            },
-            default_duty_limit: 0xFFFF,
-            duty: Box::leak(Box::new(DutyLedger::new())),
-            battery_diagnostics: Default::default(),
-            battery: Some(BatteryFields {
-                voltage: true,
-                level: true,
-                charge_state: true,
-            }),
-            alert: Some(AlertConfig::DEFAULT),
-            time: Some(TimeConfig),
-            gnss: Some(GnssConfig::DEFAULT),
-            display_motion_wake: false,
-            display: Some(DisplayConfig {
-                brightness: 128,
-                timeout_s: 30,
-            }),
-            keyboard: true,
-            sound: true,
-            illuminance: true,
-            temperatures: true,
-            ble: true,
-            ble_pairing: true,
-            ble_pin: true,
-            // A simulated power cycle is a rebuilt session, which is
-            // exactly what a host watching this device would see.
-            reboot: true,
-            dev_identity: true,
-            messaging: false,
-            // A simulated device has no radio to count for.
-            stats: None,
-            mac_node: false,
-            meshcore_forwarder: false,
-            lan_bearer: umsh_ulcp_device::LanBearerRole::None,
-            wifi: Some(WifiConfig::STATION),
-            ip: Some(IpConfig::DUAL),
-            bridge_client: false,
-            i2c_buses: SIMULATED_I2C_BUSES,
-            i2c_devices: SIMULATED_I2C_DEVICES,
-        }
+        full_config(Box::leak(Box::new(DutyLedger::new())), None)
     }
 
     /// Attach and take delivery of the `CMD_SESSION_RESET` the attach

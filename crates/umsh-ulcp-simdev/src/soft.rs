@@ -137,6 +137,12 @@ pub struct SoftDevice<P: SoftPlatform> {
     /// `Clock::now_ms` is milliseconds since boot, and a reboot restarts
     /// it, so a device's uptime is measured from here.
     boot_ms: u64,
+    /// Whether a transmission waits for [`SoftDevice::complete_tx`], rather
+    /// than finishing the moment it starts.
+    deferred_tx: bool,
+    tx_in_flight: bool,
+    /// The most frames any one session call has emitted.
+    emit_high_water: usize,
 }
 
 impl<P: SoftPlatform> SoftDevice<P> {
@@ -159,6 +165,9 @@ impl<P: SoftPlatform> SoftDevice<P> {
             announcements: Vec::new(),
             now_ms: 0,
             boot_ms: 0,
+            deferred_tx: false,
+            tx_in_flight: false,
+            emit_high_water: 0,
         };
         device.boot();
         device
@@ -167,6 +176,7 @@ impl<P: SoftPlatform> SoftDevice<P> {
     /// Construct a fresh session and restore the platform's state into
     /// it, as a board does on the way up.
     fn boot(&mut self) {
+        self.tx_in_flight = false;
         self.session = DeviceSession::new(
             self.config,
             Status::RESET_POWER_ON,
@@ -221,6 +231,39 @@ impl<P: SoftPlatform> SoftDevice<P> {
 
     pub fn platform_mut(&mut self) -> &mut P {
         &mut self.platform
+    }
+
+    /// From here on a transmission stays in flight until
+    /// [`SoftDevice::complete_tx`] reports what became of it, as a radio's
+    /// does.
+    pub fn defer_tx(&mut self) {
+        self.deferred_tx = true;
+    }
+
+    /// Report what became of the transmission in flight, if there is one.
+    pub fn complete_tx(&mut self, outcome: TxOutcome, now_ms: u64) {
+        if !std::mem::take(&mut self.tx_in_flight) {
+            return;
+        }
+        self.now_ms = now_ms;
+        let device_ms = self.device_ms();
+        let mut emitted = Vec::new();
+        let effect = self.session.on_tx_result(outcome, device_ms, &mut |frame| {
+            emitted.push(frame.to_vec())
+        });
+        self.note_emitted(emitted.len());
+        self.execute(effect, &mut emitted);
+        self.queue_emitted(emitted);
+    }
+
+    /// The most frames any one session call has emitted so far. A firmware
+    /// driver stages a fixed number per call.
+    pub fn emit_high_water(&self) -> usize {
+        self.emit_high_water
+    }
+
+    fn note_emitted(&mut self, frames: usize) {
+        self.emit_high_water = self.emit_high_water.max(frames);
     }
 
     /// The caller's clock, rebased onto this device's boot.
@@ -327,6 +370,29 @@ impl<P: SoftPlatform> SoftDevice<P> {
         self.keep_lists();
     }
 
+    /// Serve one raw ULCP frame from a listed administrator, with a reply
+    /// that must fit `budget` octets, and return what the session emitted.
+    /// An exchange is one request and one response, and its TID is zero, so
+    /// nothing here is told apart by what it looks like.
+    ///
+    /// The caller has established what the binding requires and the
+    /// session cannot see (see [`Session::handle_admin_frame`]).
+    pub fn admin_request(&mut self, frame: &[u8], budget: usize, now_ms: u64) -> Vec<Vec<u8>> {
+        self.now_ms = now_ms;
+        let device_ms = self.device_ms();
+        let mut emitted = Vec::new();
+        let effect = self
+            .session
+            .handle_admin_frame(frame, device_ms, budget, &mut |bytes| {
+                emitted.push(bytes.to_vec())
+            });
+        self.note_emitted(emitted.len());
+        self.execute(effect, &mut emitted);
+        self.session.end_admin_exchange();
+        self.flush_session_reset_notice();
+        emitted
+    }
+
     /// The next raw frame for the device's own interface, if any.
     pub fn take_device_frame(&mut self) -> Option<Vec<u8>> {
         self.device_out.pop_front()
@@ -389,6 +455,7 @@ impl<P: SoftPlatform> SoftDevice<P> {
             .on_radio_rx(bytes, info, device_ms, &mut |frame| {
                 emitted.push(frame.to_vec())
             });
+        self.note_emitted(emitted.len());
         self.execute(effect, &mut emitted);
         self.queue_emitted(emitted);
     }
@@ -402,9 +469,19 @@ impl<P: SoftPlatform> SoftDevice<P> {
         self.queue_emitted(emitted);
     }
 
-    /// Advance the device's clock: the inbound queue ages, deadlines pass.
+    /// Advance the device's clock: the inbound queue ages, deadlines pass,
+    /// and a running alert that has reached its own ends, as it does on the
+    /// next pass of a firmware driver's loop.
     pub fn tick(&mut self, now_ms: u64) {
         self.now_ms = now_ms;
+        let device_ms = self.device_ms();
+        let mut emitted = Vec::new();
+        let effect = self
+            .session
+            .poll_alert(device_ms, &mut |frame| emitted.push(frame.to_vec()));
+        self.note_emitted(emitted.len());
+        self.execute(effect, &mut emitted);
+        self.queue_emitted(emitted);
     }
 
     fn handle_frame(&mut self, frame: &[u8]) {
@@ -413,6 +490,7 @@ impl<P: SoftPlatform> SoftDevice<P> {
         let effect = self
             .session
             .handle_frame(frame, device_ms, &mut |bytes| emitted.push(bytes.to_vec()));
+        self.note_emitted(emitted.len());
         self.execute(effect, &mut emitted);
         // What the host changed, the device's own interface hears.
         if self.device_interface && Writes::of(frame).any {
@@ -436,9 +514,11 @@ impl<P: SoftPlatform> SoftDevice<P> {
     fn execute(&mut self, mut effect: Option<Effect>, emitted: &mut Vec<Vec<u8>>) {
         while let Some(current) = effect {
             self.execute_one(current, emitted);
+            let before = emitted.len();
             effect = self
                 .session
                 .resume_multi(self.device_ms(), &mut |frame| emitted.push(frame.to_vec()));
+            self.note_emitted(emitted.len() - before);
         }
     }
 
@@ -451,8 +531,12 @@ impl<P: SoftPlatform> SoftDevice<P> {
             Effect::StartTransmit => {
                 let device_ms = self.device_ms();
                 self.air.push(self.session.tx_data().to_vec());
-                self.session
-                    .on_tx_result(TxOutcome::Sent, device_ms, &mut emit);
+                if self.deferred_tx {
+                    self.tx_in_flight = true;
+                } else {
+                    self.session
+                        .on_tx_result(TxOutcome::Sent, device_ms, &mut emit);
+                }
             }
             Effect::DrainQueue => {
                 let device_ms = self.device_ms();

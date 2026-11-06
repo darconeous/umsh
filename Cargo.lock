@@ -4770,6 +4770,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "umsh-fuzz-harness"
+version = "0.1.0"
+dependencies = [
+ "umsh-bridge-client",
+ "umsh-chat-room",
+ "umsh-core",
+ "umsh-crypto",
+ "umsh-hal",
+ "umsh-lan-bearer",
+ "umsh-mac",
+ "umsh-meshcore-forwarder",
+ "umsh-mobile-core",
+ "umsh-node",
+ "umsh-node-mgmt",
+ "umsh-sync",
+ "umsh-text",
+ "umsh-ulcp",
+ "umsh-ulcp-admin",
+ "umsh-ulcp-device",
+ "umsh-ulcp-simdev",
+ "umsh-ulcp-web-engine",
+ "umsh-uri",
+]
+
+[[package]]
 name = "umsh-gnss"
 version = "0.1.0"
 dependencies = [

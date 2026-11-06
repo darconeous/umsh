@@ -48,17 +48,19 @@ pub use regions::{
 };
 pub use time_zone::{fixed_offset_rule, rule_abbreviation, rule_offset_min, zone_rule};
 pub use ulcp::{
-    GattSegmentRecord, MobileGattReassembler, MobileUlcpSession, UlcpAlertState, UlcpAttachMode,
-    UlcpBatteryRecord, UlcpChargeState, UlcpDeviceConfigRecord, UlcpDfuMode, UlcpFixKind,
-    UlcpGnssRecord, UlcpGnssSettingsRecord, UlcpHostOwnership, UlcpIdentPositionRecord,
-    UlcpMeshCoreSettingsRecord, UlcpMismatchedResponseRecord, UlcpOperationErrorRecord,
-    UlcpPropertyFrameRecord, UlcpRadioSettingsRecord, UlcpReceivedFrameRecord,
-    UlcpRepeaterSettingsRecord, UlcpSessionPhase, UlcpSessionSnapshotRecord,
-    UlcpSessionUpdateRecord, UlcpSyncRecord, UlcpTimeRecord, inspect_ulcp_alert,
-    inspect_ulcp_battery, inspect_ulcp_property_frame, inspect_ulcp_status, inspect_ulcp_sync,
-    region_code_description, region_code_from_string, ulcp_gatt_segments,
-    ulcp_inspection_properties, ulcp_location_cell_meters, ulcp_max_dev_channels,
-    ulcp_max_dev_peers, ulcp_prop_get, ulcp_prop_set, ulcp_save,
+    GattSegmentRecord, MobileGattReassembler, MobileHdlcDecoder, MobileUlcpSession, UlcpAlertState,
+    UlcpAttachMode, UlcpBatteryRecord, UlcpChargeState, UlcpDeviceConfigRecord, UlcpDfuMode,
+    UlcpFixKind, UlcpGnssRecord, UlcpGnssSettingsRecord, UlcpHostOwnership,
+    UlcpIdentPositionRecord, UlcpMeshCoreSettingsRecord, UlcpMismatchedResponseRecord,
+    UlcpOperationErrorRecord, UlcpPropertyFrameRecord, UlcpRadioSettingsRecord,
+    UlcpReceivedFrameRecord, UlcpRepeaterSettingsRecord, UlcpSessionPhase,
+    UlcpSessionSnapshotRecord, UlcpSessionUpdateRecord, UlcpSyncRecord, UlcpTimeRecord,
+    describe_ulcp_frame, inspect_ulcp_alert, inspect_ulcp_battery, inspect_ulcp_battery_diagnostic,
+    inspect_ulcp_device_card, inspect_ulcp_properties, inspect_ulcp_property_frame,
+    inspect_ulcp_status, inspect_ulcp_sync, inspect_ulcp_wifi_scan_result, region_code_description,
+    region_code_from_string, ulcp_gatt_segments, ulcp_inspection_properties,
+    ulcp_location_cell_meters, ulcp_max_dev_channels, ulcp_max_dev_peers, ulcp_prop_get,
+    ulcp_prop_set, ulcp_property_record, ulcp_save,
 };
 
 pub use virtual_radio::{

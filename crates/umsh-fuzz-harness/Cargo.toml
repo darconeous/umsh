@@ -1,0 +1,29 @@
+[package]
+name = "umsh-fuzz-harness"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Harness behind the UMSH and ULCP fuzz targets; replayed by cargo test"
+publish = false
+
+[dependencies]
+umsh-bridge-client = { path = "../umsh-bridge-client" }
+umsh-chat-room = { path = "../umsh-chat-room" }
+umsh-core = { path = "../umsh-core" }
+umsh-crypto = { path = "../umsh-crypto", features = ["software-crypto"] }
+umsh-hal = { path = "../umsh-hal" }
+umsh-lan-bearer = { path = "../umsh-lan-bearer", features = ["std"] }
+umsh-mac = { path = "../umsh-mac", features = ["std", "software-crypto"] }
+umsh-meshcore-forwarder = { path = "../umsh-meshcore-forwarder" }
+umsh-mobile-core = { path = "../umsh-mobile-core" }
+umsh-node = { path = "../umsh-node" }
+umsh-node-mgmt = { path = "../umsh-node-mgmt" }
+umsh-sync = { path = "../umsh-sync" }
+umsh-text = { path = "../umsh-text" }
+umsh-ulcp = { path = "../umsh-ulcp" }
+umsh-ulcp-admin = { path = "../umsh-ulcp-admin" }
+umsh-ulcp-device = { path = "../umsh-ulcp-device" }
+umsh-ulcp-simdev = { path = "../umsh-ulcp-simdev" }
+umsh-ulcp-web-engine = { path = "../../tools/ulcp-web-debugger/engine" }
+umsh-uri = { path = "../umsh-uri" }

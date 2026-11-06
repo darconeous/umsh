@@ -1,0 +1,111 @@
+# Coverage-guided fuzzing, on a schedule rather than on pull requests.
+#
+# Separate from ci.yml, which cancels in progress: a night's run is not
+# something a push to main should interrupt. ci.yml's `fuzz-build` job keeps
+# the targets compiling, and `cargo test` replays every committed seed and
+# regression, so this job only has to find new things.
+#
+# A crash fails that target's job and uploads the input. Nothing here opens
+# issues or commits; a finding is minimized and committed by hand under
+# crates/umsh-fuzz-harness/regressions/. See fuzz/README.md.
+
+name: Fuzz
+
+on:
+  schedule:
+    # Off the hour, when scheduled runs are least likely to be dropped.
+    - cron: "17 7 * * *"
+  workflow_dispatch:
+    inputs:
+      sanitizer:
+        description: "cargo-fuzz sanitizer"
+        type: choice
+        options: [none, address]
+        default: none
+      seconds:
+        description: "Seconds per target; 0 uses the defaults below"
+        type: number
+        default: 0
+
+# Stateful targets run longer: their state space is what the night is for.
+env:
+  STATELESS_SECONDS: 300
+  STATEFUL_SECONDS: 1200
+
+jobs:
+  list:
+    name: list targets
+    runs-on: ubuntu-latest
+    outputs:
+      targets: ${{ steps.list.outputs.targets }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the pinned nightly
+        run: rustup show active-toolchain || rustup toolchain install
+        working-directory: fuzz
+
+      - name: Install cargo-fuzz
+        run: cargo +stable install cargo-fuzz --locked
+
+      - id: list
+        working-directory: fuzz
+        run: echo "targets=$(cargo fuzz list | jq -R . | jq -cs .)" >> "$GITHUB_OUTPUT"
+
+  fuzz:
+    name: ${{ matrix.target }}
+    needs: list
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        target: ${{ fromJson(needs.list.outputs.targets) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the pinned nightly
+        run: rustup show active-toolchain || rustup toolchain install
+        working-directory: fuzz
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+
+      - name: Install cargo-fuzz
+        run: cargo +stable install cargo-fuzz --locked
+
+      # The evolved corpus. Losing it costs regrowth only: seeds and
+      # regressions are committed.
+      - name: Restore corpus
+        uses: actions/cache@v4
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: fuzz-corpus-${{ matrix.target }}-
+
+      - name: Fuzz
+        env:
+          TARGET: ${{ matrix.target }}
+          FUZZ_SANITIZER: ${{ inputs.sanitizer || 'none' }}
+          REQUESTED_SECONDS: ${{ inputs.seconds || 0 }}
+        run: |
+          case "$TARGET" in
+            *_mac*|*_device|*_engine|*_loop|*_host_*|*_model|*_authenticated_*)
+              seconds=$STATEFUL_SECONDS ;;
+            *)
+              seconds=$STATELESS_SECONDS ;;
+          esac
+          if [ "$REQUESTED_SECONDS" -gt 0 ]; then
+            seconds=$REQUESTED_SECONDS
+          fi
+          make fuzz FUZZ_SECONDS="$seconds"
+
+      - name: Upload the crash
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crash-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}
+          if-no-files-found: ignore

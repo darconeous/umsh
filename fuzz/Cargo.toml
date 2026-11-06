@@ -1,0 +1,195 @@
+# Thin libFuzzer wrappers over umsh-fuzz-harness, in a workspace of their own
+# so the root's size-tuned release profile stays out of the way. Nothing here
+# but `fuzz_target!`: the harness lives in crates/umsh-fuzz-harness, where
+# `cargo test` keeps it building. The harness avoids umsh-ulcp-runtime, the
+# one crate that reaches the root's `[patch]` entries, so none are needed here.
+[package]
+name = "umsh-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+umsh-fuzz-harness = { path = "../crates/umsh-fuzz-harness" }
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "lan_bridge"
+path = "fuzz_targets/lan_bridge.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "meshcore_forwarder"
+path = "fuzz_targets/meshcore_forwarder.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "node_mgmt_envelope"
+path = "fuzz_targets/node_mgmt_envelope.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "text_codec"
+path = "fuzz_targets/text_codec.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "text_engine"
+path = "fuzz_targets/text_engine.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ulcp_frame"
+path = "fuzz_targets/ulcp_frame.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ulcp_gatt"
+path = "fuzz_targets/ulcp_gatt.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ulcp_hdlc"
+path = "fuzz_targets/ulcp_hdlc.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ulcp_snapshot"
+path = "fuzz_targets/ulcp_snapshot.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ulcp_values"
+path = "fuzz_targets/ulcp_values.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "umsh_options"
+path = "fuzz_targets/umsh_options.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "umsh_packet"
+path = "fuzz_targets/umsh_packet.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "umsh_payloads"
+path = "fuzz_targets/umsh_payloads.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "uri_base58"
+path = "fuzz_targets/uri_base58.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "umsh_mac_raw"
+path = "fuzz_targets/umsh_mac_raw.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "umsh_mac"
+path = "fuzz_targets/umsh_mac.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "umsh_mac_noninterference"
+path = "fuzz_targets/umsh_mac_noninterference.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ulcp_device"
+path = "fuzz_targets/ulcp_device.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "node_mgmt_device"
+path = "fuzz_targets/node_mgmt_device.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "node_mgmt_loop"
+path = "fuzz_targets/node_mgmt_loop.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "umsh_mac_loop"
+path = "fuzz_targets/umsh_mac_loop.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "umsh_authenticated_payloads"
+path = "fuzz_targets/umsh_authenticated_payloads.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ulcp_admin_model"
+path = "fuzz_targets/ulcp_admin_model.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ulcp_host_web"
+path = "fuzz_targets/ulcp_host_web.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ulcp_host_mobile"
+path = "fuzz_targets/ulcp_host_mobile.rs"
+test = false
+doc = false
+bench = false

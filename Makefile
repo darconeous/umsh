@@ -1,4 +1,5 @@
 .PHONY: docs rust-docs rust-docs-nightly docs-serve gh-pages web-debugger \
+	fuzz fuzz-build fuzz-check fuzz-seeds fuzz-min fuzz-coverage fuzz-smoke \
 	site site-serve site-check site-test site-preview \
 	regions-fetch regions-update regions-update-check regions-build \
 	regions-build-fixture regions-check regions-test regions-diff \
@@ -1115,3 +1116,53 @@ gh-pages-site: site docs
 
 clean-workspaces:
 	for DIR in .claude/worktrees/* ; do ( cd $$DIR ; cargo clean && rm -fr target packages/UMSHMobileCore/Artifacts/UMSHMobileCoreFFI.xcframework docs/protocol/book && cd firmware-esp32 && rm -fr target && cargo clean )  ; done
+
+# --- Fuzzing ------------------------------------------------------------
+# Targets live in crates/umsh-fuzz-harness; fuzz/ is thin libFuzzer wrappers
+# in a workspace of its own, which is why these change directory: its
+# rust-toolchain.toml pins the nightly cargo-fuzz needs. `cargo test` replays
+# the committed seeds and regressions without any of this.
+#
+#   make fuzz TARGET=text_engine FUZZ_SECONDS=600
+#   make fuzz-min TARGET=text_engine INPUT=artifacts/text_engine/crash-...
+
+FUZZ_SANITIZER ?= none
+FUZZ_SECONDS ?= 60
+FUZZ_MAX_LEN ?= 4096
+# Seconds one input may run before libFuzzer records it as a hang.
+FUZZ_TIMEOUT ?= 25
+FUZZ_SEEDS = ../crates/umsh-fuzz-harness/seeds
+# A dependency declaring cdylib is linked with the instrumentation's symbols
+# unresolved, which macOS's linker refuses unless told the fuzz binary will
+# supply them.
+ifeq ($(shell uname -s),Darwin)
+FUZZ_ENV = RUSTFLAGS="-Clink-arg=-Wl,-undefined,dynamic_lookup"
+endif
+
+fuzz-check:
+	@command -v cargo-fuzz >/dev/null || { echo "cargo install cargo-fuzz --locked" >&2; exit 1; }
+	@test -n "$(TARGET)" || { echo "TARGET= is required; 'cd fuzz && cargo fuzz list' lists them" >&2; exit 1; }
+
+fuzz-build:
+	cd fuzz && $(FUZZ_ENV) cargo fuzz build -s $(FUZZ_SANITIZER)
+
+fuzz: fuzz-check
+	mkdir -p fuzz/corpus/$(TARGET) crates/umsh-fuzz-harness/seeds/$(TARGET)
+	cd fuzz && $(FUZZ_ENV) cargo fuzz run -s $(FUZZ_SANITIZER) $(TARGET) corpus/$(TARGET) $(FUZZ_SEEDS)/$(TARGET) \
+		-- -max_total_time=$(FUZZ_SECONDS) -max_len=$(FUZZ_MAX_LEN) -timeout=$(FUZZ_TIMEOUT)
+
+# Every target briefly. Stops at the first crash.
+fuzz-smoke:
+	for target in $$(cd fuzz && cargo fuzz list); do \
+		$(MAKE) fuzz TARGET=$$target || exit 1; \
+	done
+
+fuzz-seeds:
+	cargo run -p umsh-fuzz-harness --example gen_seeds
+
+# Shrink a crash, ready to commit under regressions/<target>/.
+fuzz-min: fuzz-check
+	cd fuzz && $(FUZZ_ENV) cargo fuzz tmin -s $(FUZZ_SANITIZER) $(TARGET) $(INPUT)
+
+fuzz-coverage: fuzz-check
+	cd fuzz && $(FUZZ_ENV) cargo fuzz coverage $(TARGET) corpus/$(TARGET) $(FUZZ_SEEDS)/$(TARGET)

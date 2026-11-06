@@ -52,6 +52,10 @@ jobs:
       - name: cargo fmt --check (firmware-esp32)
         run: cd firmware-esp32 && cargo +stable fmt --all --check
 
+      # So is fuzz/, and for the same reason.
+      - name: cargo fmt --check (fuzz)
+        run: cd fuzz && cargo +stable fmt --all --check
+
       # The ESP32 device images are thin manifests over one set of sources,
       # each carrying its own copy of the feature table. A copy that drifts
       # only fails when its board is built, and the `esp32` job below does
@@ -124,6 +128,30 @@ jobs:
   # database is a build output that lives in the repository, so CI checks that
   # it still matches its source rather than compiling a global database on
   # every push.
+  # The wrappers build on the nightly fuzz/rust-toolchain.toml pins, so an API
+  # change that breaks one fails here rather than in the night's fuzzing. No
+  # fuzzing runs on a pull request: `cargo test` above already replays every
+  # committed seed and regression, and fuzz.yml does the rest on a schedule.
+  fuzz-build:
+    name: fuzz targets build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the pinned nightly
+        run: rustup show active-toolchain || rustup toolchain install
+        working-directory: fuzz
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+
+      - name: Install cargo-fuzz
+        run: cargo +stable install cargo-fuzz --locked
+
+      - name: cargo fuzz build
+        run: make fuzz-build
+
   regions:
     name: region database
     runs-on: ubuntu-latest
