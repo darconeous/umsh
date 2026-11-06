@@ -22,6 +22,12 @@ pub const TID_UNSOLICITED: u8 = 0;
 pub const TID_MAX: u8 = 7;
 
 /// Validated frame header byte.
+/// Largest raw ULCP frame a device accepts from a transport.
+pub const FRAME_IN_MAX: usize = 300;
+/// Largest ULCP frame a device emits (CMD_STR_RECV around a full-MTU
+/// payload).
+pub const FRAME_OUT_MAX: usize = 300;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Header(u8);
 

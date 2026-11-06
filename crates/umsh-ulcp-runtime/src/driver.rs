@@ -97,11 +97,7 @@ const _: () = assert!(umsh_ulcp_device::HELD_LISTS_MAX <= SNAPSHOT_MAX);
 /// descriptive options.
 pub const IDENTITY_BLOB_MAX: usize = 320;
 
-/// Largest raw ULCP frame accepted from a transport.
-pub const FRAME_IN_MAX: usize = 300;
-/// Largest ULCP frame the session emits (CMD_STR_RECV around a
-/// full-MTU payload).
-pub const FRAME_OUT_MAX: usize = 300;
+pub use umsh_ulcp::frame::{FRAME_IN_MAX, FRAME_OUT_MAX};
 
 /// One raw ULCP frame moving through the driver.
 pub type FrameBuf = heapless::Vec<u8, FRAME_IN_MAX>;
