@@ -6,7 +6,7 @@ extern crate alloc;
 
 use core::fmt;
 
-use umsh_core::options::OptionEncoder;
+use umsh_core::options::{OptionDecoder, OptionEncoder};
 
 /// Error returned when parsing or encoding chat-room management payloads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -123,7 +123,9 @@ fn parse_login(payload: &[u8]) -> Result<LoginParams<'_>, Error> {
     let mut last_message_timestamp = None;
     let mut session_timeout_minutes = None;
     let mut password = None;
-    let remainder = decode_options_allow_eof(payload, |number, value| {
+    let mut options = OptionDecoder::new(payload);
+    for option in &mut options {
+        let (number, value) = option.map_err(Error::Core)?;
         match number {
             0 => handle = Some(parse_utf8(value)?),
             1 => {
@@ -147,10 +149,9 @@ fn parse_login(payload: &[u8]) -> Result<LoginParams<'_>, Error> {
             3 => password = Some(value),
             _ => {}
         }
-        Ok(())
-    })?;
+    }
 
-    if !remainder.is_empty() {
+    if !options.remainder().is_empty() {
         return Err(Error::InvalidOptionValue);
     }
 
@@ -259,63 +260,6 @@ fn push_byte(dst: &mut [u8], pos: &mut usize, byte: u8) -> Result<(), Error> {
     copy_into(dst, pos, &[byte])
 }
 
-fn decode_options_allow_eof<'a>(
-    data: &'a [u8],
-    mut on_option: impl FnMut(u16, &'a [u8]) -> Result<(), Error>,
-) -> Result<&'a [u8], Error> {
-    let mut pos = 0usize;
-    let mut last_number = 0u16;
-
-    while pos < data.len() {
-        let first = data[pos];
-        if first == 0xFF {
-            return Ok(&data[pos + 1..]);
-        }
-        pos += 1;
-
-        let (delta, delta_len) = read_extended(&data[pos..], first >> 4)?;
-        pos += delta_len;
-        let (len, len_len) = read_extended(&data[pos..], first & 0x0F)?;
-        pos += len_len;
-
-        let end = pos
-            .checked_add(len as usize)
-            .ok_or(Error::InvalidOptionValue)?;
-        if end > data.len() {
-            return Err(Error::Core(umsh_core::ParseError::Truncated));
-        }
-        let number = last_number
-            .checked_add(delta)
-            .ok_or(Error::InvalidOptionValue)?;
-        on_option(number, &data[pos..end])?;
-        pos = end;
-        last_number = number;
-    }
-
-    Ok(&data[pos..])
-}
-
-fn read_extended(data: &[u8], nibble: u8) -> Result<(u16, usize), Error> {
-    match nibble {
-        0..=12 => Ok((nibble as u16, 0)),
-        13 => {
-            if data.is_empty() {
-                Err(Error::Core(umsh_core::ParseError::Truncated))
-            } else {
-                Ok((data[0] as u16 + 13, 1))
-            }
-        }
-        14 => {
-            if data.len() < 2 {
-                Err(Error::Core(umsh_core::ParseError::Truncated))
-            } else {
-                Ok((u16::from_be_bytes([data[0], data[1]]) + 269, 2))
-            }
-        }
-        _ => Err(Error::Core(umsh_core::ParseError::InvalidOptionNibble)),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -340,5 +284,14 @@ mod tests {
         let len = encode(&room_info, &mut buf).unwrap();
         let parsed = parse(&buf[..len]).unwrap();
         assert_eq!(parsed, room_info);
+    }
+
+    /// An extended field past sixteen bits is malformed, not a wrapped value.
+    #[test]
+    fn an_oversized_option_delta_is_rejected() {
+        assert_eq!(
+            parse(&[2, 0xE1, 0xFF, 0x00]),
+            Err(Error::Core(umsh_core::ParseError::MalformedOption))
+        );
     }
 }
