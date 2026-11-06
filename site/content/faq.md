@@ -63,16 +63,19 @@ Meshtastic or MeshCore.
 ### Can UMSH talk to Meshtastic or MeshCore?
 
 Not today. The packet formats, the cryptography, and the identity models are
-different at the lowest level, so this isn't a setting somewhere—a radio runs
-one of these protocols at a time, and anything joining the two would have to be
-a node that speaks both and translates.
+different at the lowest level, so this isn't a setting somewhere—anything
+joining the two would have to be a node that speaks both and translates.
 
 The radios themselves aren't locked to anything. UMSH runs on the same boards
 those projects run on, and you can flash back and forth as often as you like.
 
-There is some possibility that MeshCore support may be added to the app and to
-repeaters so that repeaters can forward both MeshCore and UMSH traffic, and the
-app can communicate with contacts from either. But that's far from decided.
+Several of the supported boards can forward MeshCore traffic alongside UMSH
+traffic, so one repeater can serve both networks. That only carries MeshCore's
+packets along; UMSH and MeshCore users still can't talk to each other. Forwarding
+is not well tested yet.
+
+There is some possibility that MeshCore support may be added to the app, so that
+it can communicate with contacts from either. But that's far from decided.
 
 </div>
 <div class="faq-item">
