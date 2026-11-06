@@ -955,14 +955,16 @@ end
 
 -- ---------------------------------------------------------------------------
 -- Phase B: Pairwise key search
--- The local key is a private-key entry {seed_bytes, ed25519_pubkey,
--- hint3_bytes} whose hint is the frame's destination; the peer is each
--- Ed25519 key `peer_keys` offers for the source, best first. Pairwise keys
--- are cached per pair, so a conversation pays for ECDH once.
--- attempt(pairwise_keys) returns plain, keys, full_cmac on success.
+-- Both ends of a frame derive the same pairwise keys, so a private-key entry
+-- {seed_bytes, ed25519_pubkey, hint3_bytes} opens it from either end. Seeds
+-- that are the destination go first, then seeds that are the source; the
+-- peer is each Ed25519 key `peer_lookup` offers for the other end, best
+-- first. Pairwise keys are cached per pair, so a conversation pays for ECDH
+-- once. attempt(pairwise_keys) returns plain, keys, full_cmac on success.
+-- src_bytes is a 3-byte hint or a full 32-byte key.
 -- Returns plain, "ok", keys, full_cmac, or nil and the reason:
---   "no matching private key"  no seed's hint is the destination
---   "unknown peer key"         one is, but no key for the source is known
+--   "no matching private key"  no seed is either end
+--   "unknown peer key"         one is, but no key for the other end is known
 --   "mic_mismatch"             every pairing was tried and none verified
 -- ---------------------------------------------------------------------------
 
@@ -985,23 +987,26 @@ local function pairwise_for(pk, peer_ed_pubkey)
   return keys or nil
 end
 
-function M.try_pairwise(privkey_list, dst_hint, peer_keys, attempt)
+function M.try_pairwise(privkey_list, dst_hint, src_bytes, peer_lookup, attempt)
   if not _has_aes then return nil, "no crypto" end
   local status = "no matching private key"
-  for _, pk in ipairs(privkey_list) do
-    if pk.hint3_bytes ~= dst_hint then goto continue end
-    if status == "no matching private key" then status = "unknown peer key" end
-    for _, peer in ipairs(peer_keys) do
-      if peer ~= pk.ed25519_pubkey then
-        local pw = pairwise_for(pk, peer)
-        if pw then
-          local plain, keys, full_cmac = attempt(pw)
-          if plain then return plain, "ok", keys, full_cmac end
-          status = "mic_mismatch"
+  for _, ends in ipairs({{dst_hint, src_bytes}, {src_bytes, dst_hint}}) do
+    local own, other = ends[1], ends[2]
+    for _, pk in ipairs(privkey_list) do
+      if own == pk.hint3_bytes or own == pk.ed25519_pubkey then
+        if status == "no matching private key" then status = "unknown peer key" end
+        for _, peer in ipairs(peer_lookup(other)) do
+          if peer ~= pk.ed25519_pubkey then
+            local pw = pairwise_for(pk, peer)
+            if pw then
+              local plain, keys, full_cmac = attempt(pw)
+              if plain then return plain, "ok", keys, full_cmac end
+              status = "mic_mismatch"
+            end
+          end
         end
       end
     end
-    ::continue::
   end
   return nil, status
 end
@@ -1010,7 +1015,7 @@ end
 -- Phase B: Unicast try-decrypt
 -- pkt_info: {fcf_byte, static_opts, dst_hint (3B), src_bytes (3B or 32B),
 --            secinfo_raw, is_encrypted, body_bytes, mic_bytes}
--- peer_lookup(src_bytes): the Ed25519 keys the source may hold, best first
+-- peer_lookup(addr): the Ed25519 keys an address may hold, best first
 -- Returns plaintext, "ok", keys, full_cmac, or nil + status.
 -- ---------------------------------------------------------------------------
 
@@ -1028,7 +1033,7 @@ function M.try_decrypt_unicast(pkt_info, privkey_list, peer_lookup)
     is_encrypted     = pkt_info.is_encrypted,
   }
 
-  return M.try_pairwise(privkey_list, pkt_info.dst_hint, peer_lookup(pkt_info.src_bytes),
+  return M.try_pairwise(privkey_list, pkt_info.dst_hint, pkt_info.src_bytes, peer_lookup,
     function(keys)
       local plain, _, full_cmac = M.verify_and_decrypt(keys, vpkt)
       if plain then return plain, keys, full_cmac end
@@ -1037,7 +1042,7 @@ end
 
 -- ---------------------------------------------------------------------------
 -- Phase B: Blind unicast try-decrypt
--- peer_lookup as for try_decrypt_unicast, applied to the decrypted SRC
+-- peer_lookup as for try_decrypt_unicast, applied to the decrypted addresses
 -- Returns payload_plaintext, dst_hint, src, status, keys, full_cmac; the
 -- plaintext is nil on failure, with dst_hint and src when the address block
 -- decrypted.
@@ -1077,8 +1082,8 @@ function M.try_decrypt_blind_unicast(pkt_info, privkey_list, channel_list, full_
     mic_bytes        = pkt_info.mic_bytes,
     is_encrypted     = pkt_info.is_encrypted,
   }
-  local plain, status, keys, full_cmac = M.try_pairwise(privkey_list, dst_hint,
-    peer_lookup(src_bytes), M.blind_attempt(channel_entry.derived_keys, vpkt))
+  local plain, status, keys, full_cmac = M.try_pairwise(privkey_list, dst_hint, src_bytes,
+    peer_lookup, M.blind_attempt(channel_entry.derived_keys, vpkt))
   return plain, dst_hint, src_bytes, status, keys, full_cmac
 end
 

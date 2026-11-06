@@ -16,6 +16,7 @@ function M.set_crypto(c) crypto_ref = c end
 local nodes    = {}   -- list of {pubkey_hex, pubkey_bytes, hint3_bytes, name}
 local privkeys = {}   -- list of {seed_bytes, seed_hex, name, ed25519_pubkey, hint3_bytes}
 local channels = {}   -- list of {raw_key_bytes, name, channel_id, derived_keys}
+local learned  = {}   -- 3-byte hint -> list of full keys the capture has shown
 
 -- ---------------------------------------------------------------------------
 -- Hex helpers
@@ -75,8 +76,8 @@ end
 -- ---------------------------------------------------------------------------
 -- Private-key entries
 -- The seed's own Ed25519 public key is derived once, here: its hint says
--- which frames the seed can be the destination of, and the whole key is the
--- peer when another seed is the destination.
+-- which frames the seed can be an end of, and the whole key is the peer when
+-- another seed is the other end.
 -- ---------------------------------------------------------------------------
 
 local function derive_privkey_pubkey(entry)
@@ -373,21 +374,47 @@ function M.lookup_node_by_key(pubkey_bytes)
   return nil
 end
 
--- The Ed25519 keys a frame's source may hold, best first: the key itself
--- when SRC is a full 32-byte key; for a hint, every node entry and then
--- every private-key entry whose hint it is.
-function M.peer_keys(src_bytes)
-  if #src_bytes == 32 then return {src_bytes} end
+-- Remember a full source key seen in the capture, so that the sender's
+-- hint-only frames can find it, as any receiver would. Anything else is
+-- ignored, which lets a caller pass SRC without checking which form it took.
+--
+-- Nothing proves a key claimed in a frame, and nothing needs to: a learned
+-- key is only ever a candidate for a pairing, and the MIC decides.
+function M.learn_key(key)
+  if #key ~= 32 then return end
+  local hint = key:sub(1, 3)
+  local keys = learned[hint]
+  if not keys then
+    keys = {}
+    learned[hint] = keys
+  end
+  for _, known in ipairs(keys) do
+    if known == key then return end
+  end
+  keys[#keys+1] = key
+end
+
+-- Learned keys belong to one capture, so they go whenever dissection restarts.
+function M.clear_learned()
+  learned = {}
+end
+
+-- The Ed25519 keys an address may hold, best first: the key itself when it
+-- is a full 32-byte key; for a hint, every node entry, then every private-key
+-- entry, then every key learned from the capture whose hint it is.
+function M.peer_keys(addr_bytes)
+  if #addr_bytes == 32 then return {addr_bytes} end
   local keys, seen = {}, {}
   local function add(key)
     if key and not seen[key] then seen[key] = true; keys[#keys+1] = key end
   end
   for _, n in ipairs(nodes) do
-    if n.hint3_bytes == src_bytes then add(n.pubkey_bytes) end
+    if n.hint3_bytes == addr_bytes then add(n.pubkey_bytes) end
   end
   for _, pk in ipairs(privkeys) do
-    if pk.hint3_bytes == src_bytes then add(pk.ed25519_pubkey) end
+    if pk.hint3_bytes == addr_bytes then add(pk.ed25519_pubkey) end
   end
+  for _, key in ipairs(learned[addr_bytes] or {}) do add(key) end
   return keys
 end
 

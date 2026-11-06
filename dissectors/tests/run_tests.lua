@@ -1771,7 +1771,7 @@ else
   umsh_proto.init()
 
   local frame_number = 0
-  local function dissect_frame(frame_hex)
+  local function dissect_frame(frame_hex, visited)
     frame_number = frame_number + 1
     tree_log = {}
     local info = {text = ""}
@@ -1783,7 +1783,7 @@ else
         if k == "info" then info:set(v) else rawset(t, k, v) end
       end,
     })
-    local pinfo = {number = frame_number, visited = false,
+    local pinfo = {number = frame_number, visited = visited or false,
                    abs_ts = frame_number, cols = cols}
     umsh_proto.dissector(ByteArray.new(frame_hex):tvb(), pinfo, record("Frame"))
     return {items = tree_log, info = info.text}
@@ -2081,9 +2081,11 @@ else
   end
 
   -- B's seed alone is the destination, but a hint SRC names a key nothing
-  -- holds; a full SRC still verifies.
+  -- holds; a full SRC still verifies. Each frame starts a fresh dissection,
+  -- or the full SRCs would teach the key to the hint frames after them.
   load_seeds(SEED_B)
   for _, case in ipairs(SEED_ONLY) do
+    umsh_proto.init()
     local r = dissect_frame(case[2])
     if case[4] then
       check(case[1] .. " with one seed reports an unknown peer key",
@@ -2095,11 +2097,120 @@ else
     end
   end
 
-  -- A's seed alone is not the destination, so no pairing is tried.
+  -- A's seed is the source of every one of these, and B's key is the peer
+  -- it needs: the pairing opens the frame from either end.
   load_seeds(SEED_A)
-  local not_ours = dissect_frame(SEED_ONLY[1][2])
-  check("a seed that is not the destination finds no key",
-        has(not_ours, "EXPERT: No key for decryption"), true)
+  for _, case in ipairs(SEED_ONLY) do
+    umsh_proto.init()
+    check(case[1] .. " from the source's seed needs the destination's key",
+          has(dissect_frame(case[2]), "EXPERT: Unknown peer key"), true)
+  end
+  umsh_proto.prefs.node_names = NODE_B_PUB .. ":NodeB"
+  umsh_proto.prefs_changed()
+  for _, case in ipairs(SEED_ONLY) do
+    check(case[1] .. " verifies from the source's seed", has(dissect_frame(case[2]), case[3]), true)
+  end
+
+  -- The destination's key can come from the capture like any other.
+  load_seeds(SEED_A)
+  dissect_frame("C4 " .. NODE_B_PUB)
+  check("a source's seed finds the destination's learned key",
+        has(dissect_frame(SEED_ONLY[1][2]), HELLO), true)
+
+  -- A seed that is neither end has nothing to try.
+  load_seeds("5152535455565758595A5B5C5D5E5F606162636465666768696A6B6C6D6E6F70:Other")
+  check("a seed that is neither end finds no key",
+        has(dissect_frame(SEED_ONLY[1][2]), "EXPERT: No key for decryption"), true)
+
+  -- ───────────────────────────────────────────────────────────────────────────
+  -- Keys learned from the capture. A's key arrives only as a full SRC, and
+  -- B's seed then opens A's hint-only frames.
+  -- ───────────────────────────────────────────────────────────────────────────
+  section("Learned keys")
+
+  local NODE_A_KEY = from_hex(NODE_A_PUB)
+  local NODE_A_HINT = NODE_A_KEY:sub(1, 3)
+  local HINT_FRAME = SEED_ONLY[1][2]
+  local unknown_peer = "EXPERT: Unknown peer key"
+
+  load_seeds(SEED_B)
+  check("a hint frame before the key is seen has no peer",
+        has(dissect_frame(HINT_FRAME), unknown_peer), true)
+  dissect_frame(EXAMPLE_4)
+  check("a hint frame after a full SRC decrypts",
+        has(dissect_frame(HINT_FRAME), HELLO), true)
+
+  load_seeds(SEED_B)
+  check("a frame before the full SRC starts out undecrypted",
+        has(dissect_frame(HINT_FRAME), unknown_peer), true)
+  dissect_frame(EXAMPLE_4)
+  check("the same frame decrypts when dissected again",
+        has(dissect_frame(HINT_FRAME, true), HELLO), true)
+
+  umsh_proto.init()
+  check("a restarted dissection forgets learned keys",
+        has(dissect_frame(HINT_FRAME), unknown_peer), true)
+
+  dissect_frame(EXAMPLE_4, true)
+  check("a re-dissected frame teaches nothing",
+        has(dissect_frame(HINT_FRAME), unknown_peer), true)
+
+  -- A claimed key is only a candidate: one sharing the hint costs an attempt
+  -- and leaves the real key to be found after it.
+  load_seeds(SEED_B)
+  keystore.learn_key(NODE_A_HINT .. string.rep("\0", 29))
+  dissect_frame(EXAMPLE_4)
+  check("a forged key sharing the hint does not hide the real one",
+        has(dissect_frame(HINT_FRAME), HELLO), true)
+  check("keys sharing a hint are both candidates",
+        #keystore.peer_keys(NODE_A_HINT), 2)
+
+  -- y = 1 has no X25519 image, so the conversion divides by zero. A frame
+  -- naming it must fail on its MIC, not out of the pairing.
+  load_seeds(SEED_B)
+  keystore.learn_key("\1" .. string.rep("\0", 31))
+  check("a key with no X25519 image fails on the MIC",
+        has(dissect_frame(
+          "D0 6C28FD 010000 E0 0000002A FF 8B6067EB6C F6D239C9051241ED8CA4C2D8891A3458"),
+          "EXPERT: MIC verification failed"), true)
+
+  load_seeds(SEED_B)
+  dissect_frame(EXAMPLE_4)
+  dissect_frame(EXAMPLE_4)
+  check("a key seen twice is learned once", #keystore.peer_keys(NODE_A_HINT), 1)
+
+  load_seeds(SEED_B)
+  dissect_frame(HINT_FRAME)
+  check("a source hint teaches nothing", #keystore.peer_keys(NODE_A_HINT), 0)
+
+  -- The remaining source forms need no seed to be read.
+  local LEARNED_FROM = {
+    {"a cleartext multicast SRC", MCAST[3][2]},
+    {"an unencrypted blind unicast SRC", SEED_ONLY[8][2]},
+    {"an encrypted blind unicast SRC, by channel key alone", SEED_ONLY[6][2]},
+  }
+  for _, case in ipairs(LEARNED_FROM) do
+    load_seeds()
+    dissect_frame(case[2])
+    check("learned from " .. case[1], keystore.peer_keys(NODE_A_HINT)[1], NODE_A_KEY)
+  end
+
+  -- No vector puts a full SRC inside a multicast's ciphertext, so seal one.
+  local CHANNEL = from_hex("B08D")
+  local SECINFO = from_hex("E0 00000010")
+  local channel_keys = crypto.derive_channel_keys(from_hex(CHAN_KEY))
+  local sealed_body = NODE_A_KEY .. "Hello"
+  local sealed_mic = crypto.s2v(channel_keys.k_mic,
+    {crypto.build_aad(from_hex("E4"), "", {channel = CHANNEL, secinfo = SECINFO})}, sealed_body)
+  local sealed = crypto.aes_ctr(channel_keys.k_enc,
+    crypto.build_ctr_iv(sealed_mic, SECINFO), sealed_body)
+  load_seeds()
+  local encrypted_mcast = dissect_frame(
+    "E4" .. hex(CHANNEL) .. hex(SECINFO) .. "FF" .. hex(sealed) .. hex(sealed_mic))
+  check("an encrypted multicast with a full SRC verifies",
+        has(encrypted_mcast, MIC_OK), true)
+  check("learned from an encrypted multicast SRC",
+        keystore.peer_keys(NODE_A_HINT)[1], NODE_A_KEY)
 end
 
 -- ─────────────────────────────────────────────────────────────────────────────

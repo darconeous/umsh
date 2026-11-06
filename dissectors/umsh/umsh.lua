@@ -202,15 +202,22 @@ umsh.experts = {
 -- walks the freed list. The crash lands before stdout is flushed, so piped
 -- tshark output comes back truncated or empty. keystore.rebuild_from_uat
 -- stays as the way back once upstream fixes it.
-umsh.prefs.node_names   = Pref.string("Node names",   "",
-  "One per line: <key>:<display-name>\n"
-  .. "<key> is 64 hex chars, 44 base58 chars, or umsh:n:<base58>")
+--
+-- The dialog gives a string preference a single line, so each of these holds
+-- one key there; Key File is what takes several. The stored name of the first
+-- is still node_names, which keeps the value already in a preferences file.
+umsh.prefs.node_names   = Pref.string("Public keys",  "",
+  "<key>:<display-name>\n"
+  .. "<key> is 64 hex chars, 44 base58 chars, or umsh:n:<base58>\n"
+  .. "For more than one, use Key File")
 umsh.prefs.privkeys     = Pref.string("Private keys", "",
-  "One per line: <ed25519-seed>:<display-name>\n"
-  .. "The seed is 64 hex chars or 44 base58 chars")
+  "<ed25519-seed>:<display-name>\n"
+  .. "The seed is 64 hex chars or 44 base58 chars\n"
+  .. "For more than one, use Key File")
 umsh.prefs.channel_keys = Pref.string("Channel keys", "",
-  "One per line:\n  <key>:<display-name>\n  umsh:ck:<base58>:<display-name>"
-  .. "\n  umsh:cs:<name>:<display-name>")
+  "One of:\n  <key>:<display-name>\n  umsh:ck:<base58>:<display-name>"
+  .. "\n  umsh:cs:<name>:<display-name>\n"
+  .. "For more than one, use Key File")
 
 umsh.prefs.udp_port     = Pref.uint  ("UDP Port", 15056, "UDP port to dissect as UMSH (0 = disabled)")
 umsh.prefs.keyfile      = Pref.string("Key File",  "",
@@ -268,6 +275,15 @@ function umsh.init()
   _ack_by_frame   = {}
   _ack_origin     = {}
   _ack_opt_origin = {}
+  keystore.clear_learned()
+end
+
+-- Keep a source key the capture has shown. Only the first pass adds to the
+-- table, so it is complete, and stays put, by the time frames are selected:
+-- a hint-only frame from before the sender's first full SRC finds the key
+-- when it is dissected again.
+local function learn_src_key(pinfo, src_bytes)
+  if src_bytes and not pinfo.visited then keystore.learn_key(src_bytes) end
 end
 
 -- Resolve an Ack MIC option value to the frame it acknowledges. Needs no
@@ -468,9 +484,10 @@ local function add_dst_hint(tree, buf, off, dst_bytes)
 end
 
 -- SRC is a 3-byte hint or a full 32-byte key, per the FCF S flag.
-local function add_src_addr(tree, buf, off, src_bytes, full_src)
+local function add_src_addr(tree, pinfo, buf, off, src_bytes, full_src)
   local name
   if full_src then
+    learn_src_key(pinfo, src_bytes)
     tree:add(f.src_key, buf(off, 32)):set_text(
       "Source Public Key: " .. base58.key_full(src_bytes))
     name = keystore.lookup_node_by_key(src_bytes)
@@ -487,8 +504,8 @@ local function add_src_addr(tree, buf, off, src_bytes, full_src)
 end
 
 -- Why a pairwise frame did not verify, from crypto.try_pairwise's status:
--- a seed was the destination but the source's key is unknown, or a pairing
--- was tried and its MIC failed, or no seed is the destination at all.
+-- a seed is one end but the other end's key is unknown, or a pairing was
+-- tried and its MIC failed, or no seed is either end.
 local function add_pairwise_failure(tree, status)
   if status == "unknown peer key" then
     tree:add_proto_expert_info(ef.no_peer_key)
@@ -867,7 +884,7 @@ local function dissect_broadcast(buf, pinfo, tree, off, full_src, fcf_byte, stat
   if off + src_len > buf_len then tree:add_proto_expert_info(ef.truncated); return end
 
   local src_bytes = tvb_bytes(buf, off, src_len)
-  local src_name  = add_src_addr(tree, buf, off, src_bytes, full_src)
+  local src_name  = add_src_addr(tree, pinfo, buf, off, src_bytes, full_src)
   off = off + src_len
 
   -- OPTIONS block (always present; 0xFF marker omitted for beacons with no payload)
@@ -1011,7 +1028,7 @@ local function dissect_unicast(buf, pinfo, tree, off, full_src, fcf_byte, static
   local src_len = full_src and 32 or 3
   if off + src_len > buf_len then tree:add_proto_expert_info(ef.truncated); return end
   local src_bytes = tvb_bytes(buf, off, src_len)
-  local src_name = add_src_addr(tree, buf, off, src_bytes, full_src)
+  local src_name = add_src_addr(tree, pinfo, buf, off, src_bytes, full_src)
   off = off + src_len
 
   -- SECINFO
@@ -1158,7 +1175,7 @@ local function dissect_multicast(buf, pinfo, tree, off, full_src, fcf_byte, stat
     local src_len = full_src and 32 or 3
     if off + src_len > buf_len then tree:add_proto_expert_info(ef.truncated); return end
     src_bytes = tvb_bytes(buf, off, src_len)
-    src_name  = add_src_addr(tree, buf, off, src_bytes, full_src)
+    src_name  = add_src_addr(tree, pinfo, buf, off, src_bytes, full_src)
     off = off + src_len
   end
 
@@ -1207,6 +1224,7 @@ local function dissect_multicast(buf, pinfo, tree, off, full_src, fcf_byte, stat
       _ctx.mic_verified = true
       local src_len = full_src and 32 or 3
       if dec_src then
+        learn_src_key(pinfo, dec_src)
         local dec_name = full_src and keystore.lookup_node_by_key(dec_src)
                                    or keystore.lookup_node(dec_src)
         local dec_label = dec_name or addr_short(dec_src)
@@ -1355,6 +1373,9 @@ local function dissect_blind_unicast(buf, pinfo, tree, off, full_src, fcf_byte, 
     local ok2, payload, dst_hint, dec_src, status, dec_keys, full_cmac =
       pcall(crypto.try_decrypt_blind_unicast, pkt_info, privkeys,
             keystore.get_all_channels(), full_src, keystore.peer_keys)
+    -- The address block decrypts with the channel key alone, so its SRC is
+    -- readable even when no seed here can open the payload.
+    if ok2 then learn_src_key(pinfo, dec_src) end
     if ok2 and payload then
       tree:add_proto_expert_info(ef.mic_ok)
       local d_name, s_name
@@ -1425,7 +1446,7 @@ local function dissect_blind_unicast(buf, pinfo, tree, off, full_src, fcf_byte, 
     local src_len = full_src and 32 or 3
     if off + src_len > buf_len then tree:add_proto_expert_info(ef.truncated); return end
     local src_bytes = tvb_bytes(buf, off, src_len)
-    local src_name = add_src_addr(tree, buf, off, src_bytes, full_src)
+    local src_name = add_src_addr(tree, pinfo, buf, off, src_bytes, full_src)
     off = off + src_len
 
     local body_len = buf_len - off - mic_len
@@ -1482,7 +1503,7 @@ local function dissect_blind_unicast(buf, pinfo, tree, off, full_src, fcf_byte, 
       is_encrypted     = false,
     }
     local ok2, plain, status, blind_keys, full_cmac =
-      pcall(crypto.try_pairwise, privkeys, dst_bytes, keystore.peer_keys(src_bytes),
+      pcall(crypto.try_pairwise, privkeys, dst_bytes, src_bytes, keystore.peer_keys,
             crypto.blind_attempt(ch_entry.derived_keys, pkt_info))
     if ok2 and plain then
       tree:add_proto_expert_info(ef.mic_ok)

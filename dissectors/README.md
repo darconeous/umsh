@@ -141,20 +141,28 @@ key preferences, or point the **Key File** preference at a
 
 ### Key preferences
 
-Three preferences hold the keys, one per line:
+Three preferences hold keys. Each field takes one key, so use a
+[key file](#key-file) for more than that:
 
 | Preference | Format | Holds |
 |---|---|---|
-| **Node names** | `<key>:<name>` | A 32-byte Ed25519 public key and a display name; annotates source and destination hints |
+| **Public keys** | `<key>:<name>` | A 32-byte Ed25519 public key and a display name; annotates source and destination hints |
 | **Private keys** | `<key>:<name>` | A 32-byte Ed25519 seed, for unicast and blind unicast decryption |
 | **Channel keys** | `<key>:<name>` or `umsh:cs:<name>:<label>` | A 32-byte symmetric channel key, for multicast and blind unicast decryption |
 
-A unicast or blind unicast decrypts with the destination's seed and the
-source's public key. The source key is the frame's own full SRC when it
-carries one; for a source hint it comes from **Node names**, or from another
-seed in **Private keys**. Without one, the frame is marked "Unknown peer key".
+A unicast or blind unicast decrypts with either end's seed and the other
+end's public key. The source key is the frame's own full SRC when it carries
+one. Any other key comes from **Public keys**, from another seed in **Private
+keys**, or from a full SRC seen elsewhere in the capture. Without one, the
+frame is marked "Unknown peer key".
 
-The name is optional. For example, **Channel keys** might hold:
+Keys learned from the capture are forgotten when dissection restarts, and they
+never supply a display name. A frame sent before its source's first full SRC
+decrypts only once it is dissected again, as when it is selected in Wireshark,
+or under `tshark -2`. An encrypted SRC is learned once a channel key reveals it.
+
+The name is optional. A channel may be given either of these ways, in
+**Channel keys** or a key file's `[channels]` section:
 
 ```text
 5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A:TestChannel
@@ -173,7 +181,7 @@ straight in.
 |---|---|---|
 | 64 hex characters | `ED54A59FB1AC3A51…` | all three |
 | 44 base58 characters | `GySVDr1omr3GTodgWFH7qD1ZKav9C5NMPFjdpwb33LvU` | all three |
-| `umsh:n:<44-base58>` | `umsh:n:GySVDr1omr3GTodg…` | node names |
+| `umsh:n:<44-base58>` | `umsh:n:GySVDr1omr3GTodg…` | public keys |
 | `umsh:ck:<44-base58>` | `umsh:ck:75hbt6uvDqjPZ9Wg…` | channel keys |
 | `umsh:cs:<name>` | `umsh:cs:public` | channel keys (derives the key from the name) |
 
