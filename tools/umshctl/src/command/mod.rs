@@ -21,6 +21,7 @@ pub mod phy;
 pub mod ping;
 pub mod props;
 pub mod repeater;
+pub mod replay;
 pub mod routes_cmd;
 pub mod tables;
 pub mod time;
@@ -270,6 +271,11 @@ pub enum Command {
     /// writing a Wireshark-compatible capture.
     Capture(capture::CaptureArgs),
 
+    /// Replay an exported fuzz corpus at a bench board, probing it as it
+    /// goes. This scrambles the board's settings, and refuses any board
+    /// but the one named.
+    Replay(replay::ReplayArgs),
+
     /// List nearby ULCP radios over BLE without connecting.
     ///
     /// This finds radios to attach *this tool* to. `discover` is the one
@@ -349,6 +355,10 @@ impl Command {
                 "capture listens on the attached radio's own receiver, which a mesh session \
                  cannot reach; `disconnect` first",
             ),
+            // A replay is frames on the attached radio's own link.
+            Self::Replay(_) => {
+                Some("replay needs the attached radio's own link; `disconnect` first")
+            }
             // Each of these becomes a node on the mesh, and this session
             // is already using the only radio there is.
             Self::Manage { .. }
@@ -451,6 +461,7 @@ impl Command {
             Self::Temperatures => info::temperatures(app.device()?).await,
             Self::Alert { op } => lifecycle::alert(app.device()?, op).await,
             Self::Capture(args) => capture::run(app, args).await,
+            Self::Replay(args) => replay::run(app, args).await,
             Self::BleScan { timeout } => ble_scan(app, timeout).await,
             Self::Default { op } => default(app, op.unwrap_or(DefaultOp::Show)),
             Self::Completions { shell } => {
