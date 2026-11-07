@@ -14,7 +14,8 @@ use umsh_text::engine::{CompletionStatus, Direction, Presence, StreamCheckpoint}
 use umsh_text::{ConversationKey, MessageType, SenderScope};
 
 use super::{
-    CHAT, ChatEntry, Disk, MAX_REACTORS, MESSAGE, MessageEntry, PEER, PeerEntry, Reactor, RecordKey,
+    CHAT, ChatEntry, Disk, MAX_REACTORS, MESSAGE, MessageEntry, PEER, PeerEntry, Reactor,
+    RecordKey, normalize_reactors,
 };
 use crate::ids::{ChatId, MessageId, PeerId};
 use crate::reaction::{Cluster, Reaction, Reactions};
@@ -172,9 +173,10 @@ pub(super) fn record(disk: &Disk, key: &RecordKey, out: &mut Vec<u8>) -> bool {
             });
             out.option(record.time, Out::u32);
             out.u32(message.revision);
-            // The store caps reactors at `MAX_REACTORS`; writing the count
-            // and the list from the same bound keeps them in agreement even
-            // if that cap were ever bypassed.
+            // The store holds reactors to `MAX_REACTORS`, both as reactions
+            // arrive and as records are restored; writing the count and the
+            // list from the same bound keeps them in agreement even if that
+            // cap were ever bypassed.
             let reactors = &message.reactors[..message.reactors.len().min(MAX_REACTORS)];
             debug_assert_eq!(reactors.len(), message.reactors.len());
             out.u8(u8::try_from(reactors.len()).unwrap_or(u8::MAX));
@@ -468,6 +470,7 @@ fn message(id: u32, input: &mut In<'_>) -> Option<MessageEntry> {
             reaction,
         });
     }
+    normalize_reactors(&mut reactors);
     let body = core::str::from_utf8(input.long()?).ok()?;
     let body = String::from(record::clip(body, BODY_MAX));
     Some(MessageEntry {

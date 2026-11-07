@@ -724,13 +724,10 @@ pub fn reactions<H: Harness>(harness: &mut H) {
         record(&store, mine).reactions[0].reaction,
         Reaction::Other(Cluster::new("\u{1f525}").unwrap())
     );
-    // A body this node cannot read as a reaction withdraws nothing: only a
-    // zero-length one does.
+    // A reaction this node cannot render still supersedes the sender's
+    // earlier one.
     rig.hear(&mut store, direct(), about_mine("okay"));
-    assert_eq!(
-        record(&store, mine).reactions[0].reaction,
-        Reaction::Other(Cluster::new("\u{1f525}").unwrap())
-    );
+    assert!(record(&store, mine).reactions.is_empty());
     rig.hear(&mut store, direct(), about_mine(""));
     assert!(record(&store, mine).reactions.is_empty());
     assert_eq!(store.reactors(mine).count(), 0);

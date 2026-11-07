@@ -87,6 +87,37 @@ struct Reactor {
     reaction: Reaction,
 }
 
+/// Bring `reactors`, oldest first, to at most `limit` entries. Senders are
+/// cheap to mint and the record is not, so the oldest other sender's
+/// reaction goes first; ours goes only when nothing else is left.
+fn trim_reactors(reactors: &mut Vec<Reactor>, limit: usize) {
+    while reactors.len() > limit {
+        let oldest = reactors
+            .iter()
+            .position(|reactor| !reactor.mine)
+            .unwrap_or(0);
+        reactors.remove(oldest);
+    }
+}
+
+/// Hold restored reactors to what the store itself keeps: each sender's
+/// latest reaction, and no more than [`MAX_REACTORS`]. A record written
+/// without those rules—by an older build, or damaged—still mounts, and
+/// what is written back from it agrees with the cap the encoder relies on.
+fn normalize_reactors(reactors: &mut Vec<Reactor>) {
+    let mut index = reactors.len();
+    while index > 0 {
+        index -= 1;
+        if reactors[index + 1..]
+            .iter()
+            .any(|later| later.who == reactors[index].who)
+        {
+            reactors.remove(index);
+        }
+    }
+    trim_reactors(reactors, MAX_REACTORS);
+}
+
 #[derive(Clone, Debug)]
 struct MessageEntry {
     /// The record, its reactions left to be counted on reading.
@@ -115,9 +146,10 @@ const PEER: usize = 2;
 /// How far ahead of what it has given out a durable store's kept
 /// counters reach.
 const ID_BLOCK: u32 = 64;
-/// The most senders' reactions one message keeps. Well under the record's
-/// one-octet count, and far more than a screen shows.
-pub(crate) const MAX_REACTORS: usize = 32;
+/// The most senders' reactions one message keeps: as many as a message's
+/// details list. Few enough that a full-length message's record, with its
+/// reactors, still fits the flash store's write buffer.
+pub(crate) const MAX_REACTORS: usize = 8;
 const _: () = assert!(MAX_REACTORS <= u8::MAX as usize);
 
 #[derive(Clone, Debug, Default)]
@@ -386,23 +418,20 @@ impl<D: Durable> MemoryStore<D> {
     /// read at all, an empty store over it cleared: storage that held
     /// something else before the store was put there.
     ///
-    ///
     /// A read that fails outright ([`StoreError::Io`]) is tried once more
-    /// and then reported, never cleared: a flash hiccup is no reason to
-    /// erase a whole history that may read fine on the next boot.
+    /// first, so a passing flash hiccup does not erase the history. One
+    /// that fails again is cleared like any other unreadable store: a
+    /// device with no chat history still works, and one whose store
+    /// refuses to mount does not boot.
     pub fn mount_or_clear(durable: D, quota: Quota) -> Result<Self, StoreError> {
         let mut store = Self::over(durable, quota);
         let mounted = match store.remount() {
             Err(StoreError::Io) => store.remount(),
             mounted => mounted,
         };
-        match mounted {
-            Ok(()) => {}
-            Err(StoreError::Io) => return Err(StoreError::Io),
-            Err(_) => {
-                store.durable.clear()?;
-                store.remount()?;
-            }
+        if mounted.is_err() {
+            store.durable.clear()?;
+            store.remount()?;
         }
         Ok(store)
     }
@@ -817,31 +846,14 @@ impl<D: Durable> MemoryStore<D> {
                 if message_type == MessageType::Status && regarding.is_some() {
                     if let Some(target) = regarding_id {
                         let who = SenderCode::from(&sender);
-                        // Only a zero-length body withdraws (app-text-
-                        // messages.md). One this node cannot read as a
-                        // reaction leaves the sender's earlier one in force.
-                        let reaction = if body.is_empty() {
-                            None
-                        } else {
-                            match Reaction::from_body(body) {
-                                Some(reaction) => Some(reaction),
-                                None => return,
-                            }
-                        };
+                        // Any reaction supersedes the sender's earlier one
+                        // (app-text-messages.md), including one this node
+                        // cannot render: that sender then shows none.
+                        let reaction = Reaction::from_body(body);
                         self.update_message(target, |message| {
                             message.reactors.retain(|reactor| reactor.who != who);
                             if let Some(reaction) = reaction {
-                                if message.reactors.len() >= MAX_REACTORS {
-                                    // Senders are cheap to mint; the record
-                                    // is not. The oldest other sender's
-                                    // reaction makes room.
-                                    let oldest = message
-                                        .reactors
-                                        .iter()
-                                        .position(|reactor| !reactor.mine)
-                                        .unwrap_or(0);
-                                    message.reactors.remove(oldest);
-                                }
+                                trim_reactors(&mut message.reactors, MAX_REACTORS - 1);
                                 message.reactors.push(Reactor {
                                     who,
                                     mine: direction == Direction::Outbound,
@@ -1707,6 +1719,80 @@ mod tests {
         fn power_on(&mut self, store: &mut MemoryStore<Kept>) {
             store.power_on().unwrap();
         }
+    }
+
+    /// A reaction from the peer whose key is `n` repeated.
+    fn reactor_from(n: u8) -> Reactor {
+        Reactor {
+            who: SenderCode::from(&SenderScope::Peer(PublicKey([n; 32]))),
+            mine: false,
+            reaction: Reaction::ALL[0],
+        }
+    }
+
+    /// Mount a store whose one message's record lists a reaction from each
+    /// sender in `senders`, in order—written as a build without the store's
+    /// reactor rules might have written it. Returns it and the message.
+    fn mounted_with_reactors(senders: &[u8]) -> (MemoryStore<Kept>, u32) {
+        let mut store = Encoded.fresh();
+        Rig::new().say(&mut store, direct(), "react to this");
+        let id = *store.disk.messages.keys().next().unwrap();
+        let key = RecordKey::Message(id);
+        let mut encode = |reactors: Vec<Reactor>| {
+            store.disk.messages.get_mut(&id).unwrap().reactors = reactors;
+            let mut out = Vec::new();
+            assert!(codec::record(&store.disk, &key, &mut out));
+            out
+        };
+        // The bare record and a one-reactor record differ first at the
+        // reactor count, and by one reactor's encoding after it.
+        let bare = encode(Vec::new());
+        let one = encode(alloc::vec![reactor_from(1)]);
+        let count_at = bare.iter().zip(&one).position(|(a, b)| a != b).unwrap();
+        let entry_len = one.len() - bare.len();
+        let mut record = bare[..count_at].to_vec();
+        record.push(u8::try_from(senders.len()).unwrap());
+        for &n in senders {
+            let one = encode(alloc::vec![reactor_from(n)]);
+            record.extend_from_slice(&one[count_at + 1..count_at + 1 + entry_len]);
+        }
+        record.extend_from_slice(&bare[count_at + 1..]);
+
+        let mut key_bytes = heapless::Vec::new();
+        codec::key(&key, &mut key_bytes);
+        let mut kept = store.durable.0.clone();
+        kept.insert(key_bytes.to_vec(), record);
+        (MemoryStore::mount(Kept(kept), Quota::DEFAULT).unwrap(), id)
+    }
+
+    /// A record holding more reactors than the store keeps mounts held to
+    /// the cap, oldest dropped, and writes back without tripping the
+    /// encoder's agreement check.
+    #[test]
+    fn a_restored_message_keeps_at_most_max_reactors() {
+        let senders: Vec<u8> = (1..=MAX_REACTORS as u8 + 1).collect();
+        let (store, id) = mounted_with_reactors(&senders);
+        let reactors = &store.disk.messages[&id].reactors;
+        assert_eq!(reactors.len(), MAX_REACTORS);
+        assert!(reactors[0].who == reactor_from(2).who, "the oldest goes");
+        assert!(reactors[MAX_REACTORS - 1].who == reactor_from(senders[MAX_REACTORS]).who);
+        let mut out = Vec::new();
+        assert!(codec::record(
+            &store.disk,
+            &RecordKey::Message(id),
+            &mut out
+        ));
+    }
+
+    /// A record listing one sender twice keeps only that sender's later
+    /// reaction, as a live store would have.
+    #[test]
+    fn a_restored_message_keeps_one_reaction_per_sender() {
+        let (store, id) = mounted_with_reactors(&[1, 2, 1]);
+        let reactors = &store.disk.messages[&id].reactors;
+        assert_eq!(reactors.len(), 2);
+        assert!(reactors[0].who == reactor_from(2).who);
+        assert!(reactors[1].who == reactor_from(1).who);
     }
 
     /// Every record reads back as it was written: a store mounted from
