@@ -1751,7 +1751,19 @@ where
                 // step, flushing between steps so the
                 // two-slot emitter never overflows and
                 // the transport applies backpressure.
+                // A destination displaced mid-drain discards what
+                // follows at the transport edge; stop there, so the
+                // frames it would have dropped stay queued.
                 loop {
+                    if let ReplySink::Transport {
+                        destination: Some((_, generation)),
+                        ..
+                    } = sink
+                        && *generation != rt.session_gen.load(Ordering::Acquire)
+                    {
+                        session.abandon_drain();
+                        break;
+                    }
                     let more = session
                         .drain_step(Instant::now().as_millis(), &mut |frame: &[u8]| {
                             emitter.push(frame)

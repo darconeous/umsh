@@ -710,7 +710,7 @@ impl SimulatedPlatform {
                     let ssid = name.as_bytes();
                     match SimulatedNetwork::attempt(session.known_networks().get(ssid)) {
                         Ok(()) => {
-                            net.chooser.joined(ssid);
+                            net.chooser.joined(ssid, now_ms);
                             session.set_wifi_network(ssid, false, epoch, &mut emit);
                         }
                         Err(reason) => {

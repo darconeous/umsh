@@ -701,7 +701,7 @@ pub async fn task(
             }
             let connected = controller.is_connected();
             if !connected && chooser.associated().is_some() {
-                chooser.lost();
+                chooser.lost(now);
             }
             let epoch = chooser.epoch();
             if let Some(naming) = chooser.naming() {
@@ -780,7 +780,7 @@ pub async fn task(
                     };
                     match join(&mut controller, entry).await {
                         None => {}
-                        Some(Ok(())) => chooser.joined(name.as_bytes()),
+                        Some(Ok(())) => chooser.joined(name.as_bytes(), Instant::now().as_millis()),
                         Some(Err(reason)) => {
                             super::debug_log(format_args!("wifi: join failed ({:?})", reason));
                             let now = Instant::now().as_millis();

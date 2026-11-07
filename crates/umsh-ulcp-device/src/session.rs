@@ -1491,9 +1491,9 @@ impl QueueEntry {
 }
 
 /// The circular FIFO inbound queue (spec §Inbound Queueing). When full,
-/// accepting a new frame evicts the oldest entry and counts it in
-/// `PROP_HOST_RX_QUEUE_DROPPED`, so the queue always holds the most
-/// recent accepted traffic.
+/// accepting a new frame evicts an older entry—unauthenticated ones
+/// first, then unacknowledged ones—and counts it in
+/// `PROP_HOST_RX_QUEUE_DROPPED`.
 struct RxQueue {
     entries: [QueueEntry; RX_QUEUE_CAPACITY],
     /// Index of the oldest entry.
@@ -1530,20 +1530,34 @@ impl RxQueue {
         }
     }
 
-    /// Append an entry (evicting the oldest when full) and return its
-    /// sequence handle.
+    /// Append an entry and return its sequence handle, or `None` when
+    /// the queue is full and the frame is not worth an eviction.
+    ///
+    /// A full queue gives up, in order: its oldest unauthenticated entry,
+    /// its oldest entry the device has not acknowledged, its oldest entry.
+    /// An unauthenticated frame arriving at a queue of nothing but
+    /// authenticated entries is the one dropped instead—a frame's
+    /// destination hint is public, so unreadable traffic must not be able
+    /// to push out messages the device already vouched for. Every loss
+    /// counts in `dropped`.
     fn push(
         &mut self,
         data: &[u8],
         info: &RadioRxInfo,
         rx_time_ms: u64,
         identity: Option<RxIdentity>,
-    ) -> u16 {
+    ) -> Option<u16> {
         debug_assert!(data.len() <= MAX_MTU);
         if self.len == RX_QUEUE_CAPACITY {
-            self.head = (self.head + 1) % RX_QUEUE_CAPACITY;
-            self.len -= 1;
+            let victim = self.position(|entry| entry.identity.is_none()).or_else(|| {
+                if identity.is_none() {
+                    None
+                } else {
+                    Some(self.position(|entry| !entry.acked).unwrap_or(0))
+                }
+            });
             self.dropped = self.dropped.wrapping_add(1);
+            self.remove_at(victim?);
         }
         let seq = self.next_seq;
         self.next_seq = self.next_seq.wrapping_add(1);
@@ -1559,7 +1573,24 @@ impl RxQueue {
         entry.seq = seq;
         entry.identity = identity;
         self.len += 1;
-        seq
+        Some(seq)
+    }
+
+    /// Offset from the head of the oldest entry matching `pred`.
+    fn position(&self, pred: impl Fn(&QueueEntry) -> bool) -> Option<usize> {
+        self.iter().position(pred)
+    }
+
+    /// Remove the entry `offset` places from the head, closing the gap
+    /// so the queue stays contiguous and in arrival order.
+    fn remove_at(&mut self, offset: usize) {
+        debug_assert!(offset < self.len);
+        for i in offset..self.len - 1 {
+            self.entries[(self.head + i) % RX_QUEUE_CAPACITY] =
+                self.entries[(self.head + i + 1) % RX_QUEUE_CAPACITY];
+        }
+        self.entries[(self.head + self.len - 1) % RX_QUEUE_CAPACITY].identity = None;
+        self.len -= 1;
     }
 
     fn pop_front(&mut self) -> Option<QueueEntry> {
@@ -3098,16 +3129,21 @@ impl SavedState {
     /// without building one.
     ///
     /// Unknown options are skipped (a newer writer's property, or a
-    /// retired one). Everything else—a bad format byte, a malformed
-    /// option block, a repeated single-valued property, an out-of-range
-    /// value, a table over capacity—rejects the whole payload, leaving
-    /// the caller to fall back to an older generation.
-    fn decode(config: &SessionConfig, bytes: &[u8]) -> Result<Self, SnapshotError> {
+    /// retired one). So, counted in the second return value, are values
+    /// this build cannot hold but that say nothing about the rest of the
+    /// record: a frequency outside this radio's band (the default
+    /// stays), table entries past this build's capacity, a Wi-Fi network
+    /// that no longer validates. Everything else—a bad format byte, a
+    /// malformed option block, a repeated single-valued property, any
+    /// other refused value—rejects the whole payload, leaving the caller
+    /// to fall back to an older generation.
+    fn decode(config: &SessionConfig, bytes: &[u8]) -> Result<(Self, u16), SnapshotError> {
         let (format, options) = bytes.split_first().ok_or(SnapshotError::Malformed)?;
         if *format != SNAPSHOT_FORMAT {
             return Err(SnapshotError::UnknownFormat);
         }
         let mut state = Self::defaults(config);
+        let mut skipped: u16 = 0;
         let mut seen: u64 = 0;
         for item in OptionDecoder::new(options) {
             let (number, value) = item.map_err(|_| SnapshotError::Malformed)?;
@@ -3121,24 +3157,38 @@ impl SavedState {
                 }
                 seen |= bit;
             }
-            state.absorb_option(config, number, value)?;
+            if !state.absorb_option(config, number, value)? {
+                skipped = skipped.saturating_add(1);
+            }
         }
-        Ok(state)
+        Ok((state, skipped))
     }
 
-    /// Validate and store one decoded option.
+    /// Validate and store one decoded option. `Ok(false)` is a value
+    /// skipped without rejecting the record (see [`SavedState::decode`]).
     fn absorb_option(
         &mut self,
         config: &SessionConfig,
         number: u16,
         value: &[u8],
-    ) -> Result<(), SnapshotError> {
+    ) -> Result<bool, SnapshotError> {
         let invalid = |_| SnapshotError::InvalidValue;
+        // A full table drops the entries past this build's capacity; a
+        // duplicate is still a corrupt record.
+        let truncated = |result: Result<(), Status>| match result {
+            Ok(()) => Ok(true),
+            Err(Status::NOMEM) => Ok(false),
+            Err(_) => Err(SnapshotError::InvalidValue),
+        };
         match u32::from(number) {
             prop::PHY_ENABLED => self.settings.enabled = parse_bool(value).map_err(invalid)?,
-            prop::PHY_FREQ => {
-                self.settings.freq_khz = validate_freq_khz(config, value).map_err(invalid)?
-            }
+            // A band this radio cannot tune (a snapshot carried across a
+            // hardware variant) keeps the default rather than costing
+            // every other saved value.
+            prop::PHY_FREQ => match validate_freq_khz(config, value) {
+                Ok(freq_khz) => self.settings.freq_khz = freq_khz,
+                Err(_) => return Ok(false),
+            },
             // A snapshot carrying a power this radio cannot reach—one
             // restored across a hardware change—clamps like a live
             // write rather than failing the whole restore.
@@ -3153,17 +3203,15 @@ impl SavedState {
             }
             prop::DEV_CHANNEL_KEYS => {
                 let key = channel_key_item(value)?;
-                self.dev_channel_keys
-                    .insert(ChannelKeyEntry {
-                        key,
-                        id: [0; items::CHANNEL_IDENTIFIER_LEN],
-                    })
-                    .map_err(invalid)?;
+                return truncated(self.dev_channel_keys.insert(ChannelKeyEntry {
+                    key,
+                    id: [0; items::CHANNEL_IDENTIFIER_LEN],
+                }));
             }
             prop::DEV_PEERS => {
                 let public_key: [u8; items::PUBLIC_KEY_LEN] =
                     value.try_into().map_err(|_| SnapshotError::InvalidValue)?;
-                self.dev_peers.insert(public_key).map_err(invalid)?;
+                return truncated(self.dev_peers.insert(public_key));
             }
             prop::DEV_NAME => {
                 if !valid_device_name(value) {
@@ -3253,7 +3301,7 @@ impl SavedState {
             prop::DEV_ADMINS => {
                 let public_key: [u8; items::PUBLIC_KEY_LEN] =
                     value.try_into().map_err(|_| SnapshotError::InvalidValue)?;
-                self.dev_admins.insert(public_key).map_err(invalid)?;
+                return truncated(self.dev_admins.insert(public_key));
             }
             prop::TZ_RULE => self.tz_rule = ZoneRule::parse(value).map_err(invalid)?,
             prop::TIME_24H => self.time_24h = parse_bool(value).map_err(invalid)?,
@@ -3267,17 +3315,22 @@ impl SavedState {
             prop::BLE_ENABLED => self.ble_enabled = parse_bool(value).map_err(invalid)?,
             #[cfg(feature = "wifi")]
             prop::WIFI_NETWORKS => {
-                let entry =
-                    wifi::NetworkEntry::decode(value).map_err(|_| SnapshotError::InvalidValue)?;
-                if self.wifi_networks.get(entry.ssid).is_some() {
-                    return Err(SnapshotError::InvalidValue);
-                }
+                // One option per network; one that no longer decodes or
+                // validates, repeats a network already restored, or
+                // overflows this build's table is skipped alone.
+                let Ok(entry) = wifi::NetworkEntry::decode(value) else {
+                    return Ok(false);
+                };
                 // Preserve valid saved credentials across changes in driver
                 // capabilities. New writes still check hardware support;
                 // the platform must refuse unsupported profiles at use time.
-                config.wifi.ok_or(SnapshotError::InvalidValue)?;
-                entry.validate().map_err(|_| SnapshotError::InvalidValue)?;
-                self.wifi_networks.insert(value).map_err(invalid)?;
+                if self.wifi_networks.get(entry.ssid).is_some()
+                    || config.wifi.is_none()
+                    || entry.validate().is_err()
+                {
+                    return Ok(false);
+                }
+                return Ok(self.wifi_networks.insert(value).is_ok());
             }
             #[cfg(feature = "bridge-client")]
             prop::BRIDGE_ENABLED
@@ -3307,7 +3360,7 @@ impl SavedState {
             }
             _ => unreachable!("SAVED_SCHEMA row without a decoder arm"),
         }
-        Ok(())
+        Ok(true)
     }
 
     /// Re-derive the channel identifiers left unset by
@@ -3425,6 +3478,12 @@ struct PendingIdentity {
 struct DrainState {
     tid: u8,
     remaining: usize,
+    /// Sequence handle of the frame the previous step emitted. It stays
+    /// queued until the driver comes back for the next step—which it
+    /// does only after flushing that frame to the transport—so a drain
+    /// abandoned between steps (an attach, a detach, a displaced host)
+    /// leaves it queued for the next session rather than lost.
+    emitted: Option<u16>,
 }
 
 /// The station's live state: `PROP_WIFI_NETWORK` and what the platform
@@ -3495,6 +3554,9 @@ pub struct Session<A: AesProvider, S: Sha256Provider, const TX: usize = 1> {
     /// nothing at all because every generation was unreadable, must stay
     /// distinguishable from one that simply has nothing saved.
     snapshot_rejected: bool,
+    /// Values the boot restore skipped rather than reject the record
+    /// for ([`Session::snapshot_skipped`]).
+    snapshot_skipped: u16,
     /// `PROP_DEV_KEY`: the live device identity public key.
     dev_key: Option<[u8; items::PUBLIC_KEY_LEN]>,
     /// RAM mirror of the *independently persisted* identity—the
@@ -3606,6 +3668,13 @@ pub struct Session<A: AesProvider, S: Sha256Provider, const TX: usize = 1> {
     /// the host's transport in every case, and keeps a discard with
     /// nobody attached from firing into the next session.
     session_reset_pending: Option<SessionResetReason>,
+    /// Transmit results still owed by the radio for frames whose session
+    /// was discarded while they were on the air. The front of `pending`
+    /// is always the frame the radio holds, so a discard that clears a
+    /// non-empty `pending` leaves exactly one result in flight; it
+    /// belongs to nobody and must not be credited to the next session's
+    /// frame. Device state: survives every discard.
+    orphaned_tx_results: u8,
     scratch: [u8; SCRATCH],
     /// Kept beside `scratch` rather than on the stack: a signature input
     /// holds about four frames.
@@ -3779,6 +3848,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             saved: None,
             saved_unwritten: false,
             snapshot_rejected: false,
+            snapshot_skipped: 0,
             dev_key: None,
             dev_key_persisted: None,
             held: None,
@@ -3805,6 +3875,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             multi: None,
             binding: Binding::Local,
             session_reset_pending: None,
+            orphaned_tx_results: 0,
             scratch: [0; SCRATCH],
             signatures: SignatureScratch::new(),
         }
@@ -4301,7 +4372,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// into the session that follows.
     pub fn detach(&mut self) {
         self.multi = None;
-        self.session = SessionState::default();
+        self.reset_session_state();
         self.session_reset_pending = None;
         self.attached = false;
         self.link_secure = false;
@@ -4354,8 +4425,17 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         if self.multi.as_ref().is_some_and(|state| !state.writes) {
             self.multi = None;
         }
-        self.session = SessionState::default();
+        self.reset_session_state();
         self.session_reset_pending = Some(reason);
+    }
+
+    /// Replace the session state with a fresh one, orphaning the result
+    /// of a transmit the radio still holds (see `orphaned_tx_results`).
+    fn reset_session_state(&mut self) {
+        if !self.session.pending.is_empty() {
+            self.orphaned_tx_results = self.orphaned_tx_results.saturating_add(1);
+        }
+        self.session = SessionState::default();
     }
 
     /// Emit any owed `CMD_SESSION_RESET` on the host transport, and
@@ -4565,6 +4645,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 self.session.drain = Some(DrainState {
                     tid,
                     remaining: self.host.queue.len,
+                    emitted: None,
                 });
                 Some(Effect::DrainQueue)
             }
@@ -4789,7 +4870,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     // completes (on_tx_result). A refused or failed ack
                     // leaves the frame queued unacked and the sender's
                     // retransmission hits the re-ack window later.
-                    let seq = self.host.queue.push(data, info, now_ms, identity);
+                    let seq = self.host.queue.push(data, info, now_ms, identity)?;
                     self.queued_notice = Some(QueuedNotice {
                         class: queued_class(data),
                         cue,
@@ -5234,6 +5315,13 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         now_ms: u64,
         emit: &mut impl FnMut(&[u8]),
     ) -> Option<Effect> {
+        if self.orphaned_tx_results > 0 {
+            // The radio finished a frame from a discarded session. Its
+            // airtime is not this session's to account, and the frame
+            // now at the front of `pending` is still on its way.
+            self.orphaned_tx_results -= 1;
+            return None;
+        }
         let pending = self.session.pending.pop_front()?;
         match outcome {
             TxOutcome::Sent => {
@@ -6411,10 +6499,29 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// `CMD_STR_RECV` with buffered metadata) or, once the covered set
     /// is exhausted, the completion status. Returns `true` while
     /// another call is needed; flush the transport between calls.
+    ///
+    /// A frame leaves the queue only when the next step is asked for,
+    /// which is the driver's word that the previous emission reached the
+    /// transport. A driver that stops early (its destination went away)
+    /// calls [`Session::abandon_drain`] instead, and the frame it could
+    /// not deliver stays queued.
     pub fn drain_step(&mut self, now_ms: u64, emit: &mut impl FnMut(&[u8])) -> bool {
         let Some(drain) = &mut self.session.drain else {
             return false;
         };
+        if let Some(seq) = drain.emitted.take() {
+            // Nothing else takes from the front while a drain runs, but
+            // a queue reset may have; only the frame emitted goes.
+            if self
+                .host
+                .queue
+                .iter()
+                .next()
+                .is_some_and(|entry| entry.seq == seq)
+            {
+                self.host.queue.pop_front();
+            }
+        }
         if drain.remaining == 0 {
             let tid = drain.tid;
             self.session.drain = None;
@@ -6422,7 +6529,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             return false;
         }
         drain.remaining -= 1;
-        let Some(entry) = self.host.queue.pop_front() else {
+        let Some(&entry) = self.host.queue.iter().next() else {
             // The covered set outliving the queue means state was reset
             // mid-drain; complete rather than stall.
             let tid = drain.tid;
@@ -6430,6 +6537,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             self.complete(tid, Status::OK, emit);
             return false;
         };
+        drain.emitted = Some(entry.seq);
         let mut rx_meta = [0u8; BufferedRxMeta::WIRE_LEN];
         let meta_len = BufferedRxMeta {
             rx: RxMeta {
@@ -6454,6 +6562,15 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             emit(&self.scratch[..len]);
         }
         true
+    }
+
+    /// Stop a drain without completing it: the frame the last step
+    /// emitted, and every covered frame after it, stay queued for a
+    /// later `CMD_QUEUE_DRAIN`. For a driver whose destination changed
+    /// mid-drain, so frames are not popped into a transport that
+    /// discards them.
+    pub fn abandon_drain(&mut self) {
+        self.session.drain = None;
     }
 
     /// Encode the current device and host domains as a snapshot for
@@ -6487,7 +6604,8 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// next-older committed generation; see [`Session::note_snapshot_
     /// rejected`] for what the device reports when none decodes.
     pub fn restore_at_boot(&mut self, bytes: &[u8]) -> Result<Effect, SnapshotError> {
-        let mut saved = SavedState::decode(&self.config, bytes)?;
+        let (mut saved, skipped) = SavedState::decode(&self.config, bytes)?;
+        self.snapshot_skipped = skipped;
         saved.derive_channel_ids(&self.engine);
         self.saved = Some(saved);
         self.apply_saved_device();
@@ -6504,6 +6622,14 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// host can tell apart from "nothing saved".
     pub fn note_snapshot_rejected(&mut self) {
         self.snapshot_rejected = true;
+    }
+
+    /// How many saved values the boot restore skipped while keeping the
+    /// rest of the record: an out-of-band frequency, table entries past
+    /// this build's capacity, a Wi-Fi network that no longer validates.
+    /// For the platform's diagnostics; the restore itself succeeded.
+    pub const fn snapshot_skipped(&self) -> u16 {
+        self.snapshot_skipped
     }
 
     /// What `PROP_SAVED` reports (spec §Saved State).
@@ -11653,7 +11779,7 @@ mod tests {
         set(&mut session, prop::GNSS_ENABLED, &[0]);
         let mut buf = [0u8; 512];
         let len = session.encode_snapshot(&mut buf).expect("snapshot");
-        let saved = SavedState::decode(&config, &buf[..len]).expect("decode");
+        let (saved, _) = SavedState::decode(&config, &buf[..len]).expect("decode");
         assert!(!saved.gnss_enabled);
 
         // And `CMD_RST` returns to the board default, not the protocol's.
@@ -11733,7 +11859,7 @@ mod tests {
                 }
                 let mut bytes = [0; SNAPSHOT_MAX];
                 let len = session.encode_snapshot(&mut bytes).unwrap();
-                let saved = SavedState::decode(&test_config(), &bytes[..len]).unwrap();
+                let (saved, _) = SavedState::decode(&test_config(), &bytes[..len]).unwrap();
                 assert_eq!(saved.settings, session.settings());
             }
         }
@@ -13026,6 +13152,40 @@ mod tests {
 
         let _ = session.reset(Status::RESET_SOFTWARE, &mut |_| {});
         assert_eq!(get(&mut session, prop::DEV_NAME), b"Test UMSH Device");
+    }
+
+    /// A transmit result for a frame the radio took before the session
+    /// was discarded belongs to nobody: the next host's frame is
+    /// completed by its own result, not by the stale one.
+    #[test]
+    fn a_stale_tx_result_is_not_credited_to_the_next_session() {
+        let mut session = test_session();
+        enable(&mut session);
+        let (_, effect) = send_packet(&mut session, 1, &[0xAB; 8], &[], 0);
+        assert_eq!(effect, Some(Effect::StartTransmit));
+
+        // The host goes away and another attaches while the radio still
+        // holds frame 1.
+        session.detach();
+        session.attach(true);
+        let (_, effect) = send_packet(&mut session, 2, &[0xCD; 8], &[], 0);
+        assert_eq!(effect, Some(Effect::StartTransmit));
+
+        // Frame 1's result arrives first and completes nothing.
+        let mut emitted = Vec::new();
+        let effect = session.on_tx_result(TxOutcome::Sent, 0, &mut |bytes: &[u8]| {
+            emitted.push(bytes.to_vec())
+        });
+        assert!(emitted.is_empty());
+        assert_eq!(effect, None);
+        assert_eq!(session.tx_data(), &[0xCD; 8]);
+
+        // Frame 2's own result completes tid 2.
+        let mut emitted = Vec::new();
+        session.on_tx_result(TxOutcome::Failed, 0, &mut |bytes: &[u8]| {
+            emitted.push(bytes.to_vec())
+        });
+        expect_status(&emitted[0], 2, Status::FAILURE);
     }
 
     #[test]
@@ -15612,6 +15772,77 @@ mod tests {
     }
 
     #[test]
+    fn a_full_queue_evicts_unauthenticated_then_unacked_entries_first() {
+        let identity = |counter| Some(RxIdentity::new(counter, &[0xA5; 16]).unwrap());
+        let info = RadioRxInfo::default();
+        let mut queue = RxQueue::default();
+        // Oldest first: one acked authenticated entry, then an
+        // unauthenticated one, then authenticated entries to capacity.
+        let acked = queue.push(&[0], &info, 0, identity(0)).unwrap();
+        queue.mark_acked(acked);
+        queue.push(&[1], &info, 0, None).unwrap();
+        for counter in 2..RX_QUEUE_CAPACITY as u32 {
+            queue
+                .push(&[counter as u8], &info, 0, identity(counter))
+                .unwrap();
+        }
+        let firsts = |queue: &RxQueue| -> Vec<u8> { queue.iter().map(|e| e.frame()[0]).collect() };
+
+        // A new authenticated frame displaces the unauthenticated entry,
+        // not the older acked one.
+        queue.push(&[100], &info, 0, identity(100)).unwrap();
+        assert_eq!(queue.dropped, 1);
+        assert_eq!(firsts(&queue)[..3], [0, 2, 3]);
+        assert_eq!(*firsts(&queue).last().unwrap(), 100);
+
+        // An unauthenticated frame cannot displace a queue of
+        // authenticated ones: it is the one dropped.
+        assert_eq!(queue.push(&[101], &info, 0, None), None);
+        assert_eq!(queue.dropped, 2);
+        assert!(!firsts(&queue).contains(&101));
+
+        // With nothing unauthenticated, the oldest unacked entry goes
+        // before the older acked one.
+        queue.push(&[102], &info, 0, identity(102)).unwrap();
+        assert_eq!(queue.dropped, 3);
+        assert_eq!(firsts(&queue)[..2], [0, 3]);
+        assert_eq!(queue.len, RX_QUEUE_CAPACITY);
+
+        // Every entry acked: the oldest goes.
+        let seqs: Vec<u16> = queue.iter().map(|e| e.seq).collect();
+        for seq in seqs {
+            queue.mark_acked(seq);
+        }
+        queue.push(&[103], &info, 0, identity(103)).unwrap();
+        assert_eq!(firsts(&queue)[0], 3);
+    }
+
+    #[test]
+    fn an_abandoned_drain_keeps_its_undelivered_frame() {
+        let mut session = queueing_session();
+        receive_detached(&mut session, &unicast_to([1, 0, 0]), 0);
+        receive_detached(&mut session, &unicast_to([2, 0, 0]), 0);
+        session.attach(true);
+
+        let mut buf = [0u8; 4];
+        let len = frame::queue_drain(&mut buf, 7).unwrap();
+        let (_, effect) = dispatch(&mut session, &buf[..len], 0);
+        assert_eq!(effect, Some(Effect::DrainQueue));
+        // The first frame is emitted, then its destination goes away
+        // before the driver comes back for the next step.
+        let mut emitted = Vec::new();
+        assert!(session.drain_step(0, &mut |bytes: &[u8]| emitted.push(bytes.to_vec())));
+        session.abandon_drain();
+        assert_eq!(queue_count(&mut session), 2);
+
+        // A later drain delivers both, oldest first.
+        let drained = drain(&mut session, 0);
+        assert_eq!(drained.len(), 2);
+        assert_eq!(drained[0].0, unicast_to([1, 0, 0]));
+        assert_eq!(queue_count(&mut session), 0);
+    }
+
+    #[test]
     fn live_arrivals_interleave_with_a_drain() {
         let mut session = queueing_session();
         receive_detached(&mut session, &unicast_to([1, 0, 0]), 0);
@@ -16719,6 +16950,45 @@ mod tests {
         let mut booted: TestSession =
             Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
         booted.restore_at_boot(&extended[..len + extra]).unwrap();
+        assert_eq!(booted.device_name(), "saved name");
+    }
+
+    /// Values this build cannot hold are skipped and counted, not a
+    /// reason to lose the rest of the record: a peer table one longer
+    /// than this build's, and a frequency outside this radio's band.
+    #[test]
+    fn an_oversized_peer_table_and_foreign_band_restore_the_rest() {
+        let mut bytes = vec![0u8; SNAPSHOT_MAX + 64 * 40];
+        bytes[0] = SNAPSHOT_FORMAT;
+        let mut encoder = OptionEncoder::new(&mut bytes[1..]);
+        encoder
+            .put(prop::PHY_FREQ as u16, &1u32.to_le_bytes())
+            .unwrap();
+        encoder.put(prop::PHY_LORA_SF as u16, &[9]).unwrap();
+        for index in 0..=MAX_DEV_PEERS {
+            encoder
+                .put(prop::DEV_PEERS as u16, &[index as u8 + 1; 32])
+                .unwrap();
+        }
+        encoder.put(prop::DEV_NAME as u16, b"saved name").unwrap();
+        let len = 1 + encoder.finish();
+
+        let fresh: TestSession = Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
+        let mut booted: TestSession =
+            Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
+        booted.restore_at_boot(&bytes[..len]).unwrap();
+        assert_eq!(booted.snapshot_skipped(), 2);
+        assert_eq!(booted.saved_status(), SavedStatus::Current);
+        assert_eq!(booted.device.peers.iter().count(), MAX_DEV_PEERS);
+        assert!(
+            booted
+                .device
+                .peers
+                .iter()
+                .all(|key| key[0] as usize <= MAX_DEV_PEERS)
+        );
+        assert_eq!(booted.settings().freq_khz, fresh.settings().freq_khz);
+        assert_eq!(booted.settings().sf, 9);
         assert_eq!(booted.device_name(), "saved name");
     }
 

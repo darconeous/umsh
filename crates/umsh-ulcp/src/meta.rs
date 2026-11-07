@@ -113,7 +113,7 @@ impl RxMeta {
         }
         out[0] = match self.rssi_dbm {
             None => 0xFF,
-            Some(rssi) => (-rssi).clamp(0, 254) as u8,
+            Some(rssi) => rssi.saturating_neg().clamp(0, 254) as u8,
         };
         out[1] = self.lqi.map(NonZeroU8::get).unwrap_or(0);
         // `i16::MIN` is the "unsupported" sentinel; it is physically
@@ -226,6 +226,20 @@ mod tests {
         // Spec example: RSSI -91 encodes as 91.
         assert_eq!(buf[0], 91);
         assert_eq!(RxMeta::decode(&buf).unwrap(), meta);
+    }
+
+    #[test]
+    fn rx_rssi_extremes_clamp() {
+        let mut buf = [0u8; RxMeta::WIRE_LEN];
+        for (rssi, octet) in [(i16::MIN, 254), (i16::MAX, 0), (-300, 254)] {
+            RxMeta {
+                rssi_dbm: Some(rssi),
+                ..RxMeta::default()
+            }
+            .encode(&mut buf)
+            .unwrap();
+            assert_eq!(buf[0], octet);
+        }
     }
 
     #[test]
