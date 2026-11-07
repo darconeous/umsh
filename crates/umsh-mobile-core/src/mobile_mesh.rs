@@ -1552,16 +1552,14 @@ impl CounterStore for SharedCounterStore {
     type Error = crate::CounterStoreError;
 
     async fn load(&self, context: &[u8]) -> Result<u32, Self::Error> {
-        self.0.load_boundary(context.to_vec())
+        CounterStore::load(self.0.as_ref(), context).await
     }
 
-    // Synchronous on purpose, like the commit itself: the MAC awaits this
-    // inside a wake cycle the worker may drop mid-await, and a commit handed
-    // to another thread would carry on after its cancellation—where it could
-    // land after a newer boundary and lower the stored one. A reservation is
-    // committed once per block of frames.
+    // The store's own thread commits, in the order asked: a commit whose
+    // wake cycle the worker dropped mid-await still lands before any newer
+    // one, so it can never lower the stored boundary.
     async fn store(&self, context: &[u8], value: u32) -> Result<(), Self::Error> {
-        self.0.commit_boundary(context.to_vec(), value)
+        CounterStore::store(self.0.as_ref(), context, value).await
     }
 
     async fn flush(&self) -> Result<(), Self::Error> {
