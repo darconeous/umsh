@@ -117,6 +117,9 @@ impl core::fmt::Debug for PfsSession {
 pub(crate) struct PfsSessionManager {
     sessions: Vec<PfsSession>,
     max_sessions: usize,
+    /// Requests and responses refused because the ephemeral key they named
+    /// is already an address this node knows.
+    refused_ephemeral_keys: u32,
 }
 
 #[cfg(feature = "software-crypto")]
@@ -133,12 +136,30 @@ impl PfsSessionManager {
         Self {
             sessions: Vec::new(),
             max_sessions: DEFAULT_MAX_PFS_SESSIONS,
+            refused_ephemeral_keys: 0,
         }
     }
 
     /// Borrow the tracked sessions.
     pub(crate) fn sessions(&self) -> &[PfsSession] {
         &self.sessions
+    }
+
+    /// How many requests and responses were refused for naming an ephemeral
+    /// key this node already knows.
+    pub(crate) fn refused_ephemeral_keys(&self) -> u32 {
+        self.refused_ephemeral_keys
+    }
+
+    fn note_refused_ephemeral_key(&mut self) {
+        self.refused_ephemeral_keys = self.refused_ephemeral_keys.saturating_add(1);
+    }
+
+    /// Whether the session held with `peer` is waiting for its response.
+    fn is_pending(&self, peer: &PublicKey) -> bool {
+        self.sessions
+            .iter()
+            .any(|session| session.peer_long_term == *peer && session.pending_local.is_some())
     }
 
     /// Return the active ephemeral route for `peer`, if any.
@@ -280,7 +301,8 @@ pub(crate) async fn request_session<M: MacBackend>(
 }
 
 /// Accept an inbound PFS request, and report whether the session stood when
-/// that was done: it does not if it was ended in the meantime, and then no
+/// that was done: it does not if it was ended in the meantime, or if the
+/// request named an ephemeral key this node already knows, and then no
 /// response goes out.
 ///
 /// `channel` is the carriage the request arrived on; the response follows it
@@ -303,6 +325,11 @@ pub(crate) async fn accept_request<M: MacBackend>(
     // The accepted lifetime is what the response carries, so both sides hold
     // the session to the same one.
     let duration_minutes = session_minutes(duration_minutes);
+    // Refused before anything is set up, so a session already held with
+    // this peer survives a request that could not replace it.
+    if !admit_peer_ephemeral(state, mac, parent, &peer_long_term, &peer_ephemeral).await {
+        return Ok(false);
+    }
     begin_session(state, mac, &peer_long_term, duration_minutes).await?;
     let Some(local_public) = establish(
         state,
@@ -337,6 +364,11 @@ pub(crate) async fn accept_request<M: MacBackend>(
 
 /// Accept an inbound PFS response for an existing request, and report whether
 /// the session stood when that was done.
+///
+/// A response with no request waiting for it—a repeat, or one that arrived
+/// after the request was ended or timed out—is dropped. So is one naming an
+/// ephemeral key this node already knows, and the request then waits out
+/// its deadline.
 #[cfg(feature = "software-crypto")]
 pub(crate) async fn accept_response<M: MacBackend>(
     state: &RefCell<LocalNodeState>,
@@ -346,6 +378,12 @@ pub(crate) async fn accept_response<M: MacBackend>(
     peer_ephemeral: PublicKey,
     duration_minutes: u16,
 ) -> Result<bool, NodeError<M>> {
+    if !state.borrow().pfs.is_pending(&peer_long_term) {
+        return Ok(false);
+    }
+    if !admit_peer_ephemeral(state, mac, parent, &peer_long_term, &peer_ephemeral).await {
+        return Ok(false);
+    }
     let established = establish(
         state,
         mac,
@@ -428,7 +466,8 @@ async fn begin_session<M: MacBackend>(
 }
 
 /// Activate the session waiting with `peer`, and return its local key, or
-/// `None` if it left the table while its identity was being registered.
+/// `None` if none is waiting or it left the table while its identity was
+/// being registered.
 #[cfg(feature = "software-crypto")]
 async fn establish<M: MacBackend>(
     state: &RefCell<LocalNodeState>,
@@ -439,7 +478,7 @@ async fn establish<M: MacBackend>(
     duration_minutes: u16,
 ) -> Result<Option<PublicKey>, NodeError<M>> {
     let Some(local_ephemeral) = state.borrow_mut().pfs.take_pending(peer) else {
-        return Err(NodeError::PfsSessionMissing);
+        return Ok(None);
     };
     let local_public = *local_ephemeral.public_key();
     let activated = activate_identity(
@@ -461,7 +500,42 @@ async fn establish<M: MacBackend>(
         return Ok(Some(local_public));
     }
     let _ = mac.remove_ephemeral(active.local_ephemeral_id).await;
+    let _ = mac.remove_peer(&peer_ephemeral).await;
     Ok(None)
+}
+
+/// Whether `key` may stand as `peer`'s half of a new session, counting it
+/// when it may not.
+///
+/// The key becomes a pinned peer for the session's life, the address its
+/// traffic is credited to `peer` under, and is removed with the session. So
+/// it must be no address this node already answers to or sends to: not one
+/// of its own keys, not a registered peer's, and not another session's.
+#[cfg(feature = "software-crypto")]
+async fn admit_peer_ephemeral<M: MacBackend>(
+    state: &RefCell<LocalNodeState>,
+    mac: &M,
+    parent: LocalIdentityId,
+    peer: &PublicKey,
+    key: &PublicKey,
+) -> bool {
+    let in_table = state.borrow().pfs.sessions().iter().any(|session| {
+        session.local_ephemeral == *key
+            || (session.state == PfsState::Active && session.peer_ephemeral == *key)
+    });
+    let mut known = *key == *peer || in_table;
+    if !known {
+        known = mac.identity_public_key(parent).await == Some(*key)
+            || mac.is_local_identity_key(key).await;
+    }
+    if !known {
+        mac.for_each_peer(&mut |registered| known |= registered == *key)
+            .await;
+    }
+    if known {
+        state.borrow_mut().pfs.note_refused_ephemeral_key();
+    }
+    !known
 }
 
 /// Drop the session under `local_ephemeral`, if it is still in the table,
@@ -478,11 +552,13 @@ async fn abandon<M: MacBackend>(
     }
 }
 
-/// Give back what a session removed from the table holds in the MAC.
+/// Give back what a session removed from the table holds in the MAC: its
+/// local identity and the pinned peer slot under the peer's ephemeral key.
 #[cfg(feature = "software-crypto")]
 async fn release<M: MacBackend>(mac: &M, session: PfsSession) {
     if session.state == PfsState::Active {
         let _ = mac.remove_ephemeral(session.local_ephemeral_id).await;
+        let _ = mac.remove_peer(&session.peer_ephemeral).await;
     }
 }
 
@@ -503,7 +579,13 @@ async fn activate_identity<M: MacBackend>(
 ) -> Result<ActivatedPfsIdentity, NodeError<M>> {
     let _peer_id = mac.add_peer(peer_ephemeral).await?;
     let local_public = *local_ephemeral.public_key();
-    let local_ephemeral_id = mac.register_ephemeral(parent, local_ephemeral).await?;
+    let local_ephemeral_id = match mac.register_ephemeral(parent, local_ephemeral).await {
+        Ok(id) => id,
+        Err(error) => {
+            let _ = mac.remove_peer(&peer_ephemeral).await;
+            return Err(error.into());
+        }
+    };
     let now_ms = mac.now_ms().await;
     Ok(ActivatedPfsIdentity {
         local_ephemeral_id,

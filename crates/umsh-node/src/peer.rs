@@ -305,7 +305,7 @@ where
             nonce,
             self.peer,
             sent_at_ms,
-            sent_at_ms + timeout_ms,
+            sent_at_ms.saturating_add(timeout_ms),
         );
 
         // The caller's options carry through unchanged: a ping that is
@@ -313,7 +313,13 @@ where
         // link the real traffic will not use. Only the ack request is
         // dropped, because the EchoResponse already serves as one.
         let opts = options.clone().with_ack_requested(false);
-        self.send(&buf[..n], &opts).await
+        let sent = self.send(&buf[..n], &opts).await;
+        if sent.is_err() {
+            // A ping that never left can only time out; the caller already
+            // has the error.
+            self.transport.local_node().forget_ping(nonce, self.peer);
+        }
+        sent
     }
 
     /// Solicit this peer's current identity by sending a targeted MAC

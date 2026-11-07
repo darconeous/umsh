@@ -69,9 +69,10 @@ pub struct Dispatch<'p> {
     pub frame: &'p [u8],
     /// The largest reply frame [`DeviceEngine::complete`] takes back. A
     /// read may answer with as much as the engine retains, because its
-    /// continuations are cut from the retained reply. Anything else must
-    /// fit one response payload, the envelope's worst case already
-    /// deducted, because there is no continuing it.
+    /// continuations are cut from the retained reply. Anything else gets
+    /// one response payload, the envelope's worst case already deducted,
+    /// because there is no continuing it; a longer reply is answered with
+    /// `STATUS_OK` in its place.
     pub budget: usize,
     /// A reset-class command, which is answered by no response payload
     /// at all. The caller executes it and completes with an empty reply.
@@ -93,7 +94,7 @@ pub enum CompleteError {
     /// [`DeviceEngine::complete`] was called without a dispatch in
     /// flight.
     NotDispatched,
-    /// The reply exceeds the budget the dispatch handed out, or its
+    /// A read's reply exceeds the budget the dispatch handed out, or its
     /// leading bytes leave a payload no room to carry any of it.
     TooLarge,
 }
@@ -413,6 +414,20 @@ impl<const PAYLOAD: usize, const POOL: usize, const ENTRIES: usize>
             self.forget_retained();
             return Ok(None);
         }
+
+        // Only a read can be continued. Anything else has already
+        // executed, so a reply too large for one payload is replaced by
+        // a status rather than refused: refusing it would leave nothing
+        // retained, and the retransmission would execute it again.
+        let mut status = [0u8; 8];
+        let fits = cut(reply, 0, in_flight.room).is_some_and(|first| first.remaining == 0);
+        let reply = if in_flight.read || fits {
+            reply
+        } else {
+            let len = frame::last_status(&mut status, frame::TID_UNSOLICITED, Status::OK)
+                .map_err(|_| CompleteError::TooLarge)?;
+            &status[..len]
+        };
 
         if reply.len() > in_flight.budget {
             return Err(CompleteError::TooLarge);
@@ -1432,24 +1447,43 @@ mod tests {
     }
 
     #[test]
-    fn a_reply_that_overruns_the_budget_is_refused_rather_than_truncated() {
+    fn a_write_whose_reply_overruns_its_payload_is_answered_ok_and_runs_once() {
         let mut engine = Engine::new(1);
-        let oversized = [0u8; POOL + 1];
-        let mut out = [0u8; PAYLOAD];
-
-        // A write is never continued, so its reply gets one payload.
         let mut frame_buf = [0u8; 8];
         let frame_len = frame::prop_set(&mut frame_buf, 0, prop::DEV_NAME, b"x").unwrap();
+        let write = &frame_buf[..frame_len];
+
         let mut payload = [0u8; PAYLOAD];
-        let len = request([1, 2], &frame_buf[..frame_len], &mut payload);
+        let mut out = [0u8; PAYLOAD];
+        let len = request([1, 2], write, &mut payload);
         let Ingress::Dispatch(dispatch) = engine.begin(&ALICE, &payload[..len], 0, &mut out) else {
             panic!("expected a dispatch");
         };
+        // A write is never continued, so its reply gets one payload.
         assert_eq!(dispatch.budget, PAYLOAD - OVERHEAD_MAX);
-        assert_eq!(
-            engine.complete(&oversized[..dispatch.budget + 1], &mut out),
-            Err(CompleteError::TooLarge)
-        );
+
+        // The echo of a value nearly a payload long.
+        let mut echo = [0u8; PAYLOAD];
+        let echo_len = frame::prop_is(&mut echo, 0, prop::DEV_NAME, &[b'n'; PAYLOAD - 8]).unwrap();
+        assert!(echo_len > dispatch.budget);
+        let len = engine
+            .complete(&echo[..echo_len], &mut out)
+            .expect("complete")
+            .expect("a response");
+        assert_eq!(reported_status(&out[..len]), Status::OK);
+
+        // The retransmission is answered from what was retained.
+        let again = exchange(&mut engine, &ALICE, [1, 2], write, None, &[], 0);
+        assert_eq!(again, Answer::Answered(out[..len].to_vec()));
+    }
+
+    #[test]
+    fn a_read_that_overruns_the_budget_is_refused_rather_than_truncated() {
+        let mut engine = Engine::new(1);
+        let oversized = [0u8; POOL + 1];
+        let mut out = [0u8; PAYLOAD];
+        let mut frame_buf = [0u8; 8];
+        let mut payload = [0u8; PAYLOAD];
 
         // A read gets all the engine retains, and not an octet more.
         let frame_len = get(prop::DEV_PEERS, &mut frame_buf);

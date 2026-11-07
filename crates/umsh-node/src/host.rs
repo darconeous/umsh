@@ -126,7 +126,10 @@ impl<M: MacBackend> Host<M> {
     /// Use this when you need to multiplex UMSH progress with other async sources using
     /// `select!`. If UMSH owns the task, prefer [`run`](Self::run).
     pub async fn pump_once(&mut self) -> Result<(), HostError<M::RunError>> {
-        let now_ms = self.mac.now_ms().await;
+        // The wait below may last indefinitely, so this is no time to stamp
+        // what it delivers by: each frame carries the time the MAC received
+        // it, and this stands in only for a backend that stamps none.
+        let wait_began_ms = self.mac.now_ms().await;
         let pending_pfs = Rc::new(RefCell::new(Vec::<PfsCommand>::new()));
         let pending_pfs_ref = pending_pfs.clone();
         let pending_identity = Rc::new(RefCell::new(
@@ -171,7 +174,7 @@ impl<M: MacBackend> Host<M> {
                                 &pending_identity_ref,
                                 &pending_peer_repeaters_ref,
                                 &pending_mobility_ref,
-                                now_ms,
+                                packet.received_at_ms().unwrap_or(wait_began_ms),
                             );
                         }
                     }
@@ -477,7 +480,7 @@ fn dispatch_payload_callbacks<M: MacBackend>(
     pending_identity: &Deferred<(LocalNode<M>, IdentityResponsePlan)>,
     pending_peer_repeaters: &Deferred<PeerRepeaterRequest<M>>,
     pending_mobility: &Deferred<(umsh_core::PublicKey, bool)>,
-    now_ms: u64,
+    received_at_ms: u64,
 ) {
     if packet.payload_type() == PayloadType::NodeIdentity {
         if let Ok(identity) = NodeIdentityPayload::from_bytes(packet.payload()) {
@@ -514,7 +517,7 @@ fn dispatch_payload_callbacks<M: MacBackend>(
                     &identity,
                     update,
                     packet.rssi().zip(packet.snr()),
-                    now_ms,
+                    received_at_ms,
                 );
             }
             node.dispatch_node_discovered(from, identity.name.as_deref());
@@ -548,23 +551,14 @@ fn dispatch_payload_callbacks<M: MacBackend>(
             .flatten();
         // Match borrowed variants before converting to owned.
         if let mac_command::MacCommand::EchoResponse { data } = command {
-            node.match_pong(
-                from,
-                data,
-                packet,
-                packet.received_at_ms().unwrap_or(now_ms),
-            );
+            node.match_pong(from, data, packet, received_at_ms);
         }
         // Identity Request: let the built-in responder (if enabled) build a
         // reply plan now, while the reception context is live; the async
         // pump sends it after this synchronous dispatch returns.
         if let mac_command::MacCommand::IdentityRequest { options } = command
-            && let Some(plan) = node.evaluate_identity_request(
-                packet,
-                from,
-                options,
-                packet.received_at_ms().unwrap_or(now_ms),
-            )
+            && let Some(plan) =
+                node.evaluate_identity_request(packet, from, options, received_at_ms)
         {
             pending_identity.borrow_mut().push((node.clone(), plan));
         }
