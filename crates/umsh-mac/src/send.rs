@@ -634,6 +634,10 @@ impl TxPriority {
 ///   deferred after overhearing another copy of the same packet before it transmitted.
 /// - **`power_dbm`**—a transmit power for this frame alone, which an ack takes from
 ///   the identity returning it; other frames go at their identity's power.
+/// - **`frame_counter`**—the counter an identity's frame was sealed or signed with,
+///   read from the frame when it is queued. The coordinator holds such a frame back
+///   until a committed counter reservation covers it.
+/// - **`counter_holds`**—how many times the frame has been held back that way.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct QueuedTx<const FRAME: usize = MAX_RESEND_FRAME_LEN> {
     /// Priority class.
@@ -656,6 +660,12 @@ pub struct QueuedTx<const FRAME: usize = MAX_RESEND_FRAME_LEN> {
     /// Transmit power in dBm for this frame alone, ahead of its
     /// identity's; `None` leaves it to the identity.
     pub power_dbm: Option<i8>,
+    /// The counter the owning identity sealed or signed this frame with;
+    /// `None` for a frame that carries none, or that no identity owns.
+    pub frame_counter: Option<u32>,
+    /// Times this frame was held back because no committed reservation
+    /// covered its counter yet.
+    pub counter_holds: u8,
 }
 
 impl<const FRAME: usize> QueuedTx<FRAME> {
@@ -700,6 +710,8 @@ impl<const FRAME: usize> QueuedTx<FRAME> {
             cad_attempts,
             forward_deferrals,
             power_dbm: None,
+            frame_counter: identity_id.and_then(|_| sealed_frame_counter(frame)),
+            counter_holds: 0,
         })
     }
 
@@ -718,6 +730,16 @@ impl<const FRAME: usize> QueuedTx<FRAME> {
     fn is_ready_immediate_ack(&self, now_ms: u64) -> bool {
         self.priority == TxPriority::ImmediateAck && self.is_ready(now_ms)
     }
+}
+
+/// The frame counter `frame` was sealed or signed with: its SECINFO
+/// counter, or for a signed broadcast, its signature's.
+fn sealed_frame_counter(frame: &[u8]) -> Option<u32> {
+    let header = PacketHeader::parse(frame).ok()?;
+    header
+        .sec_info
+        .map(|sec_info| sec_info.frame_counter)
+        .or(header.signature.map(|signature| signature.counter))
 }
 
 /// Fixed-capacity, priority-ordered transmit queue owned by the [`Mac`](crate::Mac) coordinator.
@@ -847,18 +869,39 @@ impl<const N: usize, const FRAME: usize> TxQueue<N, FRAME> {
         self.pop_best_matching(|entry| entry.is_ready_immediate_ack(now_ms))
     }
 
+    /// The entry [`pop_ready`](Self::pop_ready) would return, left in place.
+    pub fn peek_ready(&self, now_ms: u64) -> Option<&QueuedTx<FRAME>> {
+        self.best_matching(|entry| entry.is_ready(now_ms))
+            .map(|index| &self.entries[index])
+    }
+
+    /// The entry [`pop_ready_immediate_ack`](Self::pop_ready_immediate_ack)
+    /// would return, left in place.
+    pub fn peek_ready_immediate_ack(&self, now_ms: u64) -> Option<&QueuedTx<FRAME>> {
+        self.best_matching(|entry| entry.is_ready_immediate_ack(now_ms))
+            .map(|index| &self.entries[index])
+    }
+
+    /// Remove and return the entry queued under `sequence`.
+    pub fn take(&mut self, sequence: u32) -> Option<QueuedTx<FRAME>> {
+        self.remove_first_matching(|entry| entry.sequence == sequence)
+    }
+
     fn pop_best_matching(
         &mut self,
-        mut predicate: impl FnMut(&QueuedTx<FRAME>) -> bool,
+        predicate: impl FnMut(&QueuedTx<FRAME>) -> bool,
     ) -> Option<QueuedTx<FRAME>> {
-        let index = self
-            .entries
+        let index = self.best_matching(predicate)?;
+        Some(self.entries.swap_remove(index))
+    }
+
+    fn best_matching(&self, mut predicate: impl FnMut(&QueuedTx<FRAME>) -> bool) -> Option<usize> {
+        self.entries
             .iter()
             .enumerate()
             .filter(|(_, entry)| predicate(entry))
             .min_by_key(|(_, entry)| (entry.priority.rank(), entry.sequence))
-            .map(|(index, _)| index)?;
-        Some(self.entries.swap_remove(index))
+            .map(|(index, _)| index)
     }
 
     /// Return the earliest `not_before_ms` still ahead of `now_ms`, if any
@@ -917,6 +960,12 @@ impl<const N: usize, const FRAME: usize> TxQueue<N, FRAME> {
     #[cfg(test)]
     pub(crate) fn iter(&self) -> impl Iterator<Item = &QueuedTx<FRAME>> {
         self.entries.iter()
+    }
+
+    /// Every queued frame, in no particular order, to adjust in place
+    /// without disturbing its place in line.
+    pub(crate) fn iter_mut(&mut self) -> impl Iterator<Item = &mut QueuedTx<FRAME>> {
+        self.entries.iter_mut()
     }
 
     /// Hand every frame queued under `from` over to `to`.

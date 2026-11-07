@@ -99,8 +99,9 @@ fn a_send_whose_frame_vanished_is_retired_as_abandoned() {
         .queue_unicast(local_id, &peer_key, b"hello", &options)
         .unwrap()
         .unwrap();
-    // What a transmit cancelled at its await leaves behind: the frame is
-    // out of the queue and the entry is still `Queued`.
+    // The frame is out of the queue and the entry is still `Queued`. A
+    // cancelled transmit no longer leaves this behind (see below), but the
+    // sweep stays as the backstop for anything else that does.
     mac.tx_queue_mut().pop_next();
 
     let mut abandoned = None;
@@ -118,6 +119,117 @@ fn a_send_whose_frame_vanished_is_retired_as_abandoned() {
             .is_none()
     );
     assert_eq!(mac.counters().tx_orphans_reclaimed, 1);
+}
+
+/// Start one `transmit_next`, let the radio take the frame, and drop the
+/// future while the radio is still sending: what a driver losing a
+/// `select!` race does.
+fn cancel_mid_transmit(mac: &mut TestMac) {
+    mac.radio_mut().hold_transmit = true;
+    let waker = noop_waker();
+    let mut cx = Context::from_waker(&waker);
+    let mut on_event =
+        |_, event: MacEventRef<'_>| panic!("a cancelled transmit reports nothing: {event:?}");
+    {
+        let mut transmit = pin!(mac.transmit_next(&mut on_event));
+        assert!(transmit.as_mut().poll(&mut cx).is_pending());
+    }
+    mac.radio_mut().hold_transmit = false;
+}
+
+#[test]
+fn a_cancelled_transmit_keeps_the_retry_ladder() {
+    let (mut mac, local_id, peer_key) = keyed_mac();
+    let options = SendOptions::default().with_ack_requested(true);
+    let receipt = mac
+        .queue_unicast(local_id, &peer_key, b"hello", &options)
+        .unwrap()
+        .unwrap();
+    let sequence = mac.tx_queue().iter().next().unwrap().sequence;
+
+    cancel_mid_transmit(&mut mac);
+
+    let queued = mac.tx_queue().iter().next().unwrap();
+    assert_eq!(
+        queued.sequence, sequence,
+        "the frame keeps its place in line"
+    );
+    assert_eq!(queued.receipt, Some(receipt));
+    mac.service_pending_ack_timeouts(|_, event| panic!("nothing is lost: {event:?}"));
+    assert_eq!(mac.counters().tx_orphans_reclaimed, 0);
+
+    let sent = block_on(mac.transmit_next(&mut |_, _| {})).unwrap();
+    assert_eq!(sent, Some(receipt));
+    assert_eq!(mac.radio().transmitted.len(), 1);
+    assert!(mac.tx_queue().is_empty());
+    let pending = mac
+        .identity(local_id)
+        .unwrap()
+        .pending_ack(&receipt)
+        .unwrap();
+    assert_eq!(pending.retries, 0);
+    let AckState::AwaitingForward {
+        confirm_deadline_ms,
+    } = pending.state
+    else {
+        panic!("the send waits for a repeat: {:?}", pending.state);
+    };
+
+    // No repeat is heard, and the ladder's first rung is there.
+    let now_ms = mac.clock().now_ms();
+    mac.clock().advance_ms(confirm_deadline_ms - now_ms);
+    mac.service_pending_ack_timeouts(|_, _| {});
+    assert!(
+        mac.tx_queue()
+            .iter()
+            .any(|entry| entry.priority == TxPriority::Retry && entry.receipt == Some(receipt))
+    );
+}
+
+#[test]
+fn a_forward_cancelled_mid_transmit_keeps_suppressing_its_packet() {
+    let mut mac = make_repeater_mac();
+    let unar = build_passing_unar(false);
+    mac.radio_mut().queue_received_frame(unar.as_slice());
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+    assert_eq!(mac.tx_queue().len(), 1);
+    mac.clock().advance_ms(60_000);
+
+    cancel_mid_transmit(&mut mac);
+
+    // Still queued, and its key still marks the packet as one this
+    // repeater is carrying.
+    assert_eq!(mac.tx_queue().len(), 1);
+    let key = crate::forward_id::forwarding_dup_key(unar.as_slice()).unwrap();
+    let now_ms = mac.clock().now_ms();
+    assert!(mac.dup_cache().contains(&key, now_ms));
+
+    block_on(mac.transmit_next(&mut |_, _| {})).unwrap();
+    assert_eq!(mac.radio().transmitted.len(), 1);
+    assert!(mac.tx_queue().is_empty());
+}
+
+#[test]
+fn a_broadcast_cancelled_mid_transmit_still_airs() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let receipt = mac
+        .queue_broadcast(local_id, b"hello", &SendOptions::default())
+        .unwrap();
+
+    cancel_mid_transmit(&mut mac);
+    assert_eq!(mac.tx_queue().len(), 1);
+
+    let mut transmitted = None;
+    block_on(mac.transmit_next(&mut |_, event| {
+        if let MacEventRef::Transmitted { receipt, .. } = event {
+            transmitted = receipt;
+        }
+    }))
+    .unwrap();
+    assert_eq!(transmitted, Some(receipt));
+    assert_eq!(mac.radio().transmitted.len(), 1);
+    assert!(mac.tx_queue().is_empty());
 }
 
 #[test]
@@ -169,6 +281,94 @@ fn the_counter_reservation_is_durable_before_the_first_frame_airs() {
     let stored = mac.counter_store().stored.borrow();
     assert_eq!(stored.as_slice(), &[(context, 256)]);
     assert!(mac.counter_store().flushes.get() >= 1);
+}
+
+#[test]
+fn a_frame_waits_for_its_counter_reservation_and_others_go_ahead() {
+    let (mut mac, local_id, peer_key) = keyed_mac();
+    let context = mac
+        .identity(local_id)
+        .unwrap()
+        .identity()
+        .public_key()
+        .0
+        .to_vec();
+    mac.counter_store()
+        .loaded
+        .borrow_mut()
+        .insert(context.clone(), 128);
+    block_on(mac.load_persisted_counter(local_id)).unwrap();
+
+    let receipt = mac
+        .queue_unicast(
+            local_id,
+            &peer_key,
+            b"hello",
+            &SendOptions::default().with_ack_requested(true),
+        )
+        .unwrap()
+        .unwrap();
+    // A frame that carries no counter of this identity's.
+    mac.queue_mac_ack([0x11; 8]).unwrap();
+    mac.counter_store().failing_stores.set(u32::MAX);
+
+    block_on(mac.drain_tx_queue(&mut |_, _| {})).unwrap();
+
+    assert_eq!(mac.radio().transmitted.len(), 1, "only the ack aired");
+    let header = PacketHeader::parse(&mac.radio().transmitted[0]).unwrap();
+    assert_eq!(header.packet_type(), PacketType::MacAck);
+    assert_eq!(mac.counters().tx_counter_holds, 1);
+    let held = mac.tx_queue().iter().next().unwrap();
+    assert_eq!(held.receipt, Some(receipt));
+    assert_eq!(held.frame_counter, Some(128));
+
+    // The store recovers; when the frame comes due again its reservation
+    // commits and it goes.
+    mac.counter_store().failing_stores.set(0);
+    mac.clock().advance_ms(1_000);
+    block_on(mac.drain_tx_queue(&mut |_, _| {})).unwrap();
+
+    assert_eq!(mac.radio().transmitted.len(), 2);
+    assert!(mac.tx_queue().is_empty());
+    assert_eq!(
+        mac.counter_store().stored.borrow().as_slice(),
+        &[(context, 256)]
+    );
+}
+
+#[test]
+fn a_frame_whose_reservation_never_commits_is_abandoned() {
+    let (mut mac, local_id, peer_key) = keyed_mac();
+    let receipt = mac
+        .queue_unicast(
+            local_id,
+            &peer_key,
+            b"hello",
+            &SendOptions::default().with_ack_requested(true),
+        )
+        .unwrap()
+        .unwrap();
+    mac.counter_store().failing_stores.set(u32::MAX);
+
+    let mut abandoned = None;
+    for _ in 0..=crate::coordinator::MAX_COUNTER_HOLDS {
+        block_on(mac.drain_tx_queue(&mut |_, event| {
+            if let MacEventRef::TxAbandoned { receipt, .. } = event {
+                abandoned = receipt;
+            }
+        }))
+        .unwrap();
+        mac.clock().advance_ms(1_000);
+    }
+
+    assert_eq!(abandoned, Some(receipt));
+    assert!(mac.tx_queue().is_empty());
+    assert!(mac.radio().transmitted.is_empty(), "it never aired");
+    assert_eq!(mac.counters().tx_abandoned, 1);
+    assert_eq!(
+        mac.counters().tx_counter_holds,
+        u32::from(crate::coordinator::MAX_COUNTER_HOLDS)
+    );
 }
 
 #[test]
