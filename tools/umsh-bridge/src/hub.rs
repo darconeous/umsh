@@ -44,6 +44,8 @@ pub struct Hub {
 /// What happened to a frame, for logs and tests.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Verdict {
+    /// Longer than any UMSH frame, so no radio could carry it.
+    Oversized,
     /// The arrival client's rate limit is spent.
     RateLimited,
     /// Copied to this many interfaces. Zero when every other interface
@@ -54,6 +56,7 @@ pub enum Verdict {
 #[derive(Default, Debug, Clone, Copy)]
 pub struct Counters {
     pub received: u64,
+    pub oversized: u64,
     pub relayed: u64,
     pub rate_limited: u64,
     pub clamped: u64,
@@ -100,6 +103,12 @@ impl Hub {
     /// it.
     pub fn relay(&mut self, arrival: &mut Ingress, now: Instant) -> Verdict {
         self.counters.received += 1;
+        // Checked before admission, so a frame nothing can carry does
+        // not also spend the sender's rate limit.
+        if arrival.frame.data.len() > umsh_core::MAX_FRAME_LEN {
+            self.counters.oversized += 1;
+            return Verdict::Oversized;
+        }
         if !self.policy.admit(arrival.iface, now) {
             self.counters.rate_limited += 1;
             return Verdict::RateLimited;
@@ -129,6 +138,7 @@ impl Hub {
         let counters = self.counters;
         tracing::info!(
             received = counters.received,
+            oversized = counters.oversized,
             relayed = counters.relayed,
             rate_limited = counters.rate_limited,
             clamped = counters.clamped,
@@ -330,6 +340,24 @@ mod tests {
         let mut second = arrival(cabin, flood_frame(3));
         assert_eq!(hub.relay(&mut second, Instant::now()), Verdict::RateLimited);
         assert_eq!(drained(&interfaces, radio).len(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_frame_longer_than_any_umsh_frame_goes_nowhere() {
+        let (interfaces, mut hub) = hub("", None);
+        let cabin = interfaces.by_client(0).unwrap().id;
+        let radio = interfaces.radio.unwrap();
+
+        let mut oversized = arrival(cabin, vec![0u8; umsh_core::MAX_FRAME_LEN + 1]);
+        assert_eq!(
+            hub.relay(&mut oversized, Instant::now()),
+            Verdict::Oversized
+        );
+        assert_eq!(hub.counters.oversized, 1);
+        assert!(drained(&interfaces, radio).is_empty());
+
+        let mut largest = arrival(cabin, vec![0u8; umsh_core::MAX_FRAME_LEN]);
+        assert_eq!(hub.relay(&mut largest, Instant::now()), Verdict::Relayed(2));
     }
 
     #[tokio::test(start_paused = true)]

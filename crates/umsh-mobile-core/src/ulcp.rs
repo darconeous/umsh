@@ -1,7 +1,7 @@
 use std::{
     collections::{HashMap, VecDeque},
     net::SocketAddrV4,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, PoisonError},
 };
 
 use umsh_core::RegionCode;
@@ -1230,6 +1230,10 @@ pub enum UlcpAttachMode {
 /// transport lifecycle, byte shuttling, and timers.
 #[derive(uniffi::Object)]
 pub struct MobileUlcpSession {
+    /// Locked with poisoning ignored, here and in the reassembler and
+    /// decoder below: a panic that escaped one call is caught at the FFI
+    /// boundary, and refusing every later call over it would turn one bad
+    /// frame into a dead link.
     inner: Mutex<UlcpSessionState>,
     mode: UlcpAttachMode,
     lazy_inspection: bool,
@@ -1289,7 +1293,7 @@ impl MobileUlcpSession {
                     .map_err(|_| MobileError::InvalidPublicKeyLength)
             })
             .transpose()?;
-        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         let generation = state.generation.wrapping_add(1);
         *state = UlcpSessionState {
             generation,
@@ -1328,7 +1332,7 @@ impl MobileUlcpSession {
         let host_key: [u8; 32] = host_key
             .try_into()
             .map_err(|_| MobileError::InvalidPublicKeyLength)?;
-        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         if state.stage != SessionStage::AwaitingHost
             || !matches!(
                 state.ownership(),
@@ -1361,7 +1365,7 @@ impl MobileUlcpSession {
         if self.mode == UlcpAttachMode::Administrative {
             return Err(MobileError::AdministrativeSession);
         }
-        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         if matches!(state.stage, SessionStage::Idle | SessionStage::Releasing)
             || state.ownership() != UlcpHostOwnership::Ours
         {
@@ -1386,7 +1390,7 @@ impl MobileUlcpSession {
     /// radio can always be wiped; unlike `claim`/`configure` it makes no
     /// stage or ownership demands.
     pub fn factory_reset(&self) -> Result<UlcpSessionUpdateRecord, MobileError> {
-        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         let tid = state.allocate_tid();
         // Deliberately no ExpectedResponse: the device wipes storage and
         // reboots without answering, so `update` reports
@@ -1405,7 +1409,7 @@ impl MobileUlcpSession {
     /// Permitted from any stage, again like the factory reset: a radio
     /// worth restarting is often one that is not answering properly.
     pub fn reboot(&self) -> Result<UlcpSessionUpdateRecord, MobileError> {
-        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         let tid = state.allocate_tid();
         let frame = ulcp_reboot(tid)?;
         Ok(state.update(vec![frame]))
@@ -1424,7 +1428,7 @@ impl MobileUlcpSession {
     /// Re-sending `Locate` while an alert is running restarts that
     /// deadline, which is how a longer search keeps the alert alive.
     pub fn set_alert(&self, state: UlcpAlertState) -> Result<UlcpSessionUpdateRecord, MobileError> {
-        let mut session = self.inner.lock().expect("ULCP session mutex poisoned");
+        let mut session = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         if session.stage != SessionStage::Attached {
             return Err(MobileError::InvalidUlcpFrame);
         }
@@ -1456,7 +1460,7 @@ impl MobileUlcpSession {
         &self,
         request: MobileAnnouncementRecord,
     ) -> Result<UlcpSessionUpdateRecord, MobileError> {
-        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         state.begin_local_management()?;
         if !state.has_capability(cap::ADVERT) {
             return Err(MobileError::UnsupportedCapability);
@@ -1476,7 +1480,7 @@ impl MobileUlcpSession {
     /// Request DFU as a response-tracked local operation. Disconnecting
     /// without receiving STATUS_OK is an unknown outcome, never success.
     pub fn enter_dfu(&self, mode: UlcpDfuMode) -> Result<UlcpSessionUpdateRecord, MobileError> {
-        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         state.begin_local_management()?;
         let tid = state.allocate_management_tid()?;
         let mut buf = [0; 3];
@@ -1506,7 +1510,7 @@ impl MobileUlcpSession {
         &self,
         epoch_seconds: Option<u32>,
     ) -> Result<UlcpSessionUpdateRecord, MobileError> {
-        let mut session = self.inner.lock().expect("ULCP session mutex poisoned");
+        let mut session = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         if session.stage != SessionStage::Attached {
             return Err(MobileError::InvalidUlcpFrame);
         }
@@ -1529,7 +1533,7 @@ impl MobileUlcpSession {
         &self,
         settings: UlcpRadioSettingsRecord,
     ) -> Result<UlcpSessionUpdateRecord, MobileError> {
-        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         if state.stage != SessionStage::Attached {
             return Err(MobileError::InvalidUlcpFrame);
         }
@@ -1554,7 +1558,7 @@ impl MobileUlcpSession {
         &self,
         configuration: UlcpDeviceConfigRecord,
     ) -> Result<UlcpSessionUpdateRecord, MobileError> {
-        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         if state.stage != SessionStage::Attached {
             return Err(MobileError::InvalidUlcpFrame);
         }
@@ -1591,7 +1595,7 @@ impl MobileUlcpSession {
         tz_rule: Option<String>,
         time_24h: Option<bool>,
     ) -> Result<UlcpSessionUpdateRecord, MobileError> {
-        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         if state.stage != SessionStage::Attached {
             return Err(MobileError::InvalidUlcpFrame);
         }
@@ -1624,7 +1628,7 @@ impl MobileUlcpSession {
         &self,
         advert: Option<UlcpAdvertSettingsRecord>,
     ) -> Result<UlcpSessionUpdateRecord, MobileError> {
-        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         if state.stage != SessionStage::Attached {
             return Err(MobileError::InvalidUlcpFrame);
         }
@@ -1647,7 +1651,7 @@ impl MobileUlcpSession {
     /// refresh is in flight; authoritative provisioning is published when
     /// the full capability-gated read completes.
     pub fn refresh(&self) -> Result<UlcpSessionUpdateRecord, MobileError> {
-        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         if state.stage != SessionStage::Attached || !state.expected.is_empty() {
             return Err(MobileError::InvalidUlcpFrame);
         }
@@ -1675,7 +1679,7 @@ impl MobileUlcpSession {
     /// positioning properties and nothing else, so a screen watching a
     /// position does not re-read the PHY triple every time it looks.
     pub fn refresh_positioning(&self) -> Result<UlcpSessionUpdateRecord, MobileError> {
-        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         if state.stage != SessionStage::Attached || !state.expected.is_empty() {
             return Err(MobileError::InvalidUlcpFrame);
         }
@@ -1722,7 +1726,7 @@ impl MobileUlcpSession {
         &self,
         property_ids: Vec<u32>,
     ) -> Result<UlcpSessionUpdateRecord, MobileError> {
-        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         state.begin_local_management()?;
         state.management = Some(LocalManagement {
             fetch_queue: read_batches(property_ids),
@@ -1748,7 +1752,7 @@ impl MobileUlcpSession {
         &self,
         writes: Vec<MobileMeshPropertyWriteRecord>,
     ) -> Result<UlcpSessionUpdateRecord, MobileError> {
-        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         state.begin_local_management()?;
         state.management = Some(LocalManagement {
             write_queue: writes
@@ -1780,7 +1784,7 @@ impl MobileUlcpSession {
         property_id: u32,
         mutations: Vec<UlcpItemMutationRecord>,
     ) -> Result<UlcpSessionUpdateRecord, MobileError> {
-        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         state.begin_local_management()?;
         state.management = Some(LocalManagement {
             item_queue: mutations
@@ -1801,7 +1805,7 @@ impl MobileUlcpSession {
     /// operation completes immediately with no status—running
     /// configuration is all such a device has.
     pub fn begin_save(&self) -> Result<UlcpSessionUpdateRecord, MobileError> {
-        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         state.begin_local_management()?;
         if !state.has_capability(cap::SAVE) {
             state.management_event = Some(UlcpLocalManagementEventRecord {
@@ -1836,7 +1840,7 @@ impl MobileUlcpSession {
         channel_key: Vec<u8>,
     ) -> Result<UlcpSessionUpdateRecord, MobileError> {
         let id = dev_channel_identifier(&channel_key)?;
-        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         state.begin_device_domain_operation(cap::DEV_IDENTITY)?;
         let tid = state.allocate_tid();
         state
@@ -1859,7 +1863,7 @@ impl MobileUlcpSession {
         channel_key: Vec<u8>,
     ) -> Result<UlcpSessionUpdateRecord, MobileError> {
         let id = dev_channel_identifier(&channel_key)?;
-        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         state.begin_device_domain_operation(cap::DEV_IDENTITY)?;
         let tid = state.allocate_tid();
         state
@@ -1897,7 +1901,7 @@ impl MobileUlcpSession {
             desired.push_back(key);
         }
 
-        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         if state.stage != SessionStage::Attached || !state.expected.is_empty() {
             return Err(MobileError::InvalidUlcpFrame);
         }
@@ -1949,7 +1953,7 @@ impl MobileUlcpSession {
     /// the queue count reads zero. Requires an attached, otherwise-idle
     /// session on a device advertising `CAP_HOST_RX_QUEUE`.
     pub fn drain_queue(&self) -> Result<UlcpSessionUpdateRecord, MobileError> {
-        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         if state.stage != SessionStage::Attached || !state.expected.is_empty() {
             return Err(MobileError::InvalidUlcpFrame);
         }
@@ -2010,7 +2014,7 @@ impl MobileUlcpSession {
             encoded.push(wire.to_vec());
         }
 
-        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         if state.stage != SessionStage::Attached || !state.expected.is_empty() {
             return Err(MobileError::InvalidUlcpFrame);
         }
@@ -2053,7 +2057,7 @@ impl MobileUlcpSession {
     /// makes calling it on every attach cheap. Requires an attached,
     /// otherwise-idle session on a device advertising `CAP_HOST_AUTO_ACK`.
     pub fn set_host_auto_ack(&self, enabled: bool) -> Result<UlcpSessionUpdateRecord, MobileError> {
-        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         if state.stage != SessionStage::Attached || !state.expected.is_empty() {
             return Err(MobileError::InvalidUlcpFrame);
         }
@@ -2102,7 +2106,7 @@ impl MobileUlcpSession {
             }
         }
 
-        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         if state.stage != SessionStage::Attached || !state.expected.is_empty() {
             return Err(MobileError::InvalidUlcpFrame);
         }
@@ -2187,7 +2191,7 @@ impl MobileUlcpSession {
             }
         }
 
-        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         if state.stage != SessionStage::Attached || !state.expected.is_empty() {
             return Err(MobileError::InvalidUlcpFrame);
         }
@@ -2313,7 +2317,7 @@ impl MobileUlcpSession {
         nocca: bool,
         power_dbm: Option<i8>,
     ) -> Result<UlcpSessionUpdateRecord, MobileError> {
-        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         let raw_pipeline_active = state
             .expected
             .values()
@@ -2368,7 +2372,7 @@ impl MobileUlcpSession {
             // one this session cannot read is no evidence that the next
             // will be unreadable too. Nothing changed, so the update is
             // empty.
-            let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+            let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
             return Ok(state.update(Vec::new()));
         };
         if parsed.command() == Some(Cmd::StrRecv) {
@@ -2384,7 +2388,7 @@ impl MobileUlcpSession {
             // the frame: the frame is still delivered, with no
             // measurements attached.
             let metadata = BufferedRxMeta::decode(payload.metadata).unwrap_or_default();
-            let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+            let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
             if state.stage == SessionStage::Idle {
                 return Err(MobileError::UlcpUnexpectedFrame);
             }
@@ -2405,7 +2409,7 @@ impl MobileUlcpSession {
             // The reason is diagnostic, so it is not even read: what
             // matters is that the device started a session over, and a
             // reason this session cannot decode does not change that.
-            let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+            let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
             if state.stage == SessionStage::Idle {
                 return Err(MobileError::UlcpUnexpectedFrame);
             }
@@ -2429,7 +2433,7 @@ impl MobileUlcpSession {
             return Ok(state.update(outbound));
         }
         {
-            let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+            let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
             let tid = parsed.header.tid();
             let update = match state.expected.get(&tid) {
                 Some(ExpectedResponse::ManagementMultiGet(keys)) => {
@@ -2448,7 +2452,7 @@ impl MobileUlcpSession {
             }
         }
         let response = inspect_ulcp_property_frame(frame)?;
-        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         let mut outbound = Vec::new();
         let mut raw_transmit_result = None;
         let mut operation_error = None;
@@ -3236,7 +3240,7 @@ impl MobileUlcpSession {
 
     /// Invalidate all outstanding transactions for a disconnected transport.
     pub fn reset(&self) -> UlcpSessionUpdateRecord {
-        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         let generation = state.generation.wrapping_add(1);
         *state = UlcpSessionState {
             generation,
@@ -3251,7 +3255,7 @@ impl MobileUlcpSession {
     /// Their late correlated responses are ignored once; the attachment and
     /// all non-raw session state remain intact.
     pub fn abandon_raw_transmits(&self, transaction_ids: Vec<u8>) -> UlcpSessionUpdateRecord {
-        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         for tid in transaction_ids {
             if matches!(
                 state.expected.get(&tid),
@@ -3286,7 +3290,7 @@ impl MobileUlcpSession {
         let public_key: [u8; 32] = public_key
             .try_into()
             .map_err(|_| MobileError::InvalidPublicKeyLength)?;
-        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         state.begin_device_domain_operation(capability)?;
         let tid = state.allocate_tid();
         state.expected.insert(
@@ -3310,7 +3314,7 @@ impl MobileUlcpSession {
         let public_key: [u8; 32] = public_key
             .try_into()
             .map_err(|_| MobileError::InvalidPublicKeyLength)?;
-        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         state.begin_device_domain_operation(capability)?;
         let tid = state.allocate_tid();
         state.expected.insert(
@@ -7825,7 +7829,7 @@ impl MobileGattReassembler {
     /// and reports why, for the log: the spec makes a discarded segment a
     /// transport-level event, so the caller drops it and carries on.
     pub fn push(&self, segment: Vec<u8>) -> Result<Option<Vec<u8>>, MobileError> {
-        let mut reassembler = self.inner.lock().expect("GATT reassembler mutex poisoned");
+        let mut reassembler = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         match reassembler.push(&segment) {
             None => Ok(None),
             Some(Ok(frame)) => Ok(Some(frame.to_vec())),
@@ -7836,7 +7840,7 @@ impl MobileGattReassembler {
     pub fn reset(&self) {
         self.inner
             .lock()
-            .expect("GATT reassembler mutex poisoned")
+            .unwrap_or_else(PoisonError::into_inner)
             .reset();
     }
 }
@@ -7869,7 +7873,7 @@ impl MobileHdlcDecoder {
     /// line noise that belongs to nobody—a bridge opening a serial
     /// port mid-transmission, most commonly.
     pub fn push(&self, bytes: Vec<u8>) -> Vec<Vec<u8>> {
-        let mut decoder = self.inner.lock().expect("HDLC decoder mutex poisoned");
+        let mut decoder = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         let mut frames = Vec::new();
         for byte in bytes {
             if let Some(Ok(frame)) = decoder.push(byte) {
@@ -7885,7 +7889,7 @@ impl MobileHdlcDecoder {
     pub fn reset(&self) {
         self.inner
             .lock()
-            .expect("HDLC decoder mutex poisoned")
+            .unwrap_or_else(PoisonError::into_inner)
             .reset();
     }
 }

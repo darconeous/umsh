@@ -42,6 +42,11 @@ use crate::tunnel::{Dequeued, TunnelFrame, TunnelQueue};
 /// only bounds a burst.
 const READ_CHUNK: usize = 4096;
 
+/// How long one write to the host may block. The writes happen outside
+/// [`HostRelay::next_event`], so a host that stops reading would
+/// otherwise stall this relay—its listener and its hub delivery with it.
+const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// The shape of a bridge's soft device.
 ///
 /// Deliberately spare. A board's capabilities describe hardware, and
@@ -259,10 +264,14 @@ impl HostRelay {
                 continue;
             };
             while let Some(wire) = device.take_outbound() {
-                if let Err(error) = stream.write_all(&wire).await {
-                    self.detach(&mut device, &mut current, format!("write failed: {error}"));
-                    break;
-                }
+                let reason =
+                    match tokio::time::timeout(WRITE_TIMEOUT, stream.write_all(&wire)).await {
+                        Ok(Ok(())) => continue,
+                        Ok(Err(error)) => format!("write failed: {error}"),
+                        Err(_elapsed) => "write stalled".to_string(),
+                    };
+                self.detach(&mut device, &mut current, reason);
+                break;
             }
         }
     }

@@ -21,6 +21,10 @@ use crate::lan::LanRelay;
 use crate::tls::{self, Credential};
 use crate::tunnel::{Dequeued, TunnelQueue, TunnelReader, TunnelWriter, pump_writer};
 
+/// How long one connection attempt, or the TLS handshake that follows
+/// it, may take before the client gives up on it and backs off.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
 pub async fn run(identity: BridgeIdentity, mut config: ClientConfig) -> Result<()> {
     let credential =
         Credential::for_identity(&identity).context("minting this client's TLS credential")?;
@@ -106,17 +110,15 @@ async fn session(
         Some(name) => tls::server_name(name)?,
         None => tls::server_name(host_of(&config.server))?,
     };
-    let stream = connector
-        .connect(name, stream)
+    let stream = tokio::time::timeout(CONNECT_TIMEOUT, connector.connect(name, stream))
         .await
+        .map_err(|_| anyhow!("no TLS handshake within {CONNECT_TIMEOUT:?}"))?
         .context("TLS handshake")?;
     tracing::info!(?peer, "tunnel established");
 
+    let idle_timeout = Duration::from_secs(config.tunnel.idle_timeout_secs);
     let (read_half, write_half) = tokio::io::split(stream);
-    let mut reader = TunnelReader::new(
-        read_half,
-        Duration::from_secs(config.tunnel.idle_timeout_secs),
-    );
+    let mut reader = TunnelReader::new(read_half, idle_timeout);
     let mut writer = TunnelWriter::new(
         write_half,
         Duration::from_secs(config.tunnel.keepalive_secs),
@@ -131,23 +133,35 @@ async fn session(
     let session = to_server.generation();
 
     let queue = to_server.clone();
-    let pump =
-        tokio::task::spawn_local(async move { pump_writer(&mut writer, &queue, session).await });
+    let mut pump = tokio::task::spawn_local(async move {
+        pump_writer(&mut writer, &queue, session, idle_timeout).await
+    });
 
-    let outcome = loop {
-        match reader.read_frame().await {
-            Ok(frame) => {
-                // Passed on unmodified—to the device as the body of a
-                // CMD_STR_SEND: the server composed it and the client
-                // has no business editing it.
-                for queue in to_local {
-                    if queue.push(frame.clone()) {
-                        tracing::warn!("a local side is not keeping up; dropped the oldest frame");
+    let read_loop = async {
+        loop {
+            match reader.read_frame().await {
+                Ok(frame) => {
+                    // Passed on unmodified—to the device as the body of a
+                    // CMD_STR_SEND: the server composed it and the client
+                    // has no business editing it.
+                    for queue in to_local {
+                        if queue.push(frame.clone()) {
+                            tracing::warn!(
+                                "a local side is not keeping up; dropped the oldest frame"
+                            );
+                        }
                     }
                 }
+                Err(error) => break Err(anyhow!("{error}")),
             }
-            Err(error) => break Err(anyhow!("{error}")),
         }
+    };
+    // A writer that failed or stalled ends the session as surely as a
+    // reader that did: the tunnel can no longer carry this side's
+    // traffic, and reconnecting is how it gets a working one.
+    let outcome = tokio::select! {
+        outcome = read_loop => outcome,
+        ended = &mut pump => crate::server::writer_ended(ended),
     };
 
     // Ending the writer's session unparks it whether or not it is
@@ -195,13 +209,16 @@ async fn connect_any(server: &str) -> Result<TcpStream> {
 
     let mut last = None;
     for address in &addresses {
-        match TcpStream::connect(address).await {
-            Ok(stream) => return Ok(stream),
-            Err(error) => {
-                tracing::debug!(%address, "connect failed: {error}");
-                last = Some(error);
-            }
-        }
+        let error = match tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(address)).await {
+            Ok(Ok(stream)) => return Ok(stream),
+            Ok(Err(error)) => error,
+            Err(_elapsed) => std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!("no connection within {CONNECT_TIMEOUT:?}"),
+            ),
+        };
+        tracing::debug!(%address, "connect failed: {error}");
+        last = Some(error);
     }
     Err(anyhow!(last.expect("at least one address was tried"))
         .context(format!("connecting to {server}")))

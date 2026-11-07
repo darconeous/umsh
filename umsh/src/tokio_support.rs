@@ -118,6 +118,10 @@ pub use umsh_lan_bearer::radio::{RxMode, UdpMulticastRadio, UdpMulticastRadioErr
 pub use umsh_lan_bearer::socket::{LanConfig, LanSocket};
 
 /// Counter store that persists one file per context key.
+///
+/// Each store replaces its file atomically—a synced temporary renamed
+/// over the original—so a crash leaves the old boundary or the new one,
+/// never a torn record that would read back as something lower.
 #[derive(Clone, Debug)]
 pub struct TokioFileCounterStore {
     root: PathBuf,
@@ -140,18 +144,41 @@ impl CounterStore for TokioFileCounterStore {
     type Error = FileStoreError;
 
     async fn load(&self, context: &[u8]) -> Result<u32, Self::Error> {
-        match fs::read(self.path_for(context)) {
-            Ok(bytes) if bytes.len() == 4 => Ok(u32::from_be_bytes(
-                bytes.try_into().expect("fixed counter bytes"),
-            )),
-            Ok(_) => Ok(0),
+        match tokio::fs::read(self.path_for(context)).await {
+            Ok(bytes) => match <[u8; 4]>::try_from(bytes.as_slice()) {
+                Ok(bytes) => Ok(u32::from_be_bytes(bytes)),
+                // Reading this as zero would restart the counter below
+                // values already sent, which is the one thing a counter
+                // store exists to prevent.
+                Err(_) => Err(FileStoreError::Io(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("counter record is {} bytes, not 4", bytes.len()),
+                ))),
+            },
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(0),
             Err(error) => Err(FileStoreError::Io(error)),
         }
     }
 
     async fn store(&self, context: &[u8], value: u32) -> Result<(), Self::Error> {
-        fs::write(self.path_for(context), value.to_be_bytes()).map_err(FileStoreError::Io)
+        let destination = self.path_for(context);
+        let temporary = destination.with_extension("ctr.pending");
+        let written = async {
+            let mut file = tokio::fs::File::create(&temporary).await?;
+            tokio::io::AsyncWriteExt::write_all(&mut file, &value.to_be_bytes()).await?;
+            file.sync_all().await?;
+            drop(file);
+            tokio::fs::rename(&temporary, &destination).await?;
+            // The rename is durable only once the directory is.
+            #[cfg(unix)]
+            tokio::fs::File::open(&self.root).await?.sync_all().await?;
+            Ok(())
+        }
+        .await;
+        if written.is_err() {
+            let _ = tokio::fs::remove_file(&temporary).await;
+        }
+        written.map_err(FileStoreError::Io)
     }
 
     async fn flush(&self) -> Result<(), Self::Error> {
@@ -324,6 +351,22 @@ mod tests {
         assert_eq!(store.load(b"peer").await.unwrap(), 0);
         store.store(b"peer", 42).await.unwrap();
         assert_eq!(store.load(b"peer").await.unwrap(), 42);
+        assert!(
+            !store
+                .path_for(b"peer")
+                .with_extension("ctr.pending")
+                .exists(),
+            "the temporary is renamed away"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn a_counter_record_of_the_wrong_length_is_an_error_not_zero() {
+        let root = temp_dir("counter-store-torn");
+        let store = TokioFileCounterStore::new(&root).unwrap();
+        fs::write(store.path_for(b"peer"), [0x00, 0x01]).unwrap();
+        assert!(store.load(b"peer").await.is_err());
         let _ = fs::remove_dir_all(root);
     }
 
