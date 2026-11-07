@@ -2120,6 +2120,52 @@ fn fragmented_completion_notifies_exactly_once() {
     assert_eq!(notifies, 1, "completion notifies exactly once");
 }
 
+/// Undrained, the progress renders of a long message fill the arena; its
+/// final render takes their room instead of coming out empty.
+#[test]
+fn a_final_render_on_a_full_arena_displaces_progress_renders() {
+    let mut engine = engine();
+    let fragments: Vec<Vec<u8>> = (0..10u8).map(|index| vec![b'a' + index; 160]).collect();
+    for (index, fragment) in fragments.iter().enumerate() {
+        feed_fragment(&mut engine, 5, index as u8, 10, fragment, index as u64);
+    }
+
+    let outputs = drain(&mut engine);
+    let whole: String = fragments
+        .iter()
+        .map(|fragment| core::str::from_utf8(fragment).unwrap())
+        .collect();
+    let finals: Vec<_> = outputs
+        .iter()
+        .filter_map(|output| match output {
+            Drained::UpdateBody {
+                body,
+                status: CompletionStatus::Complete,
+                notify,
+                ..
+            } => Some((body, *notify)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(finals, [(&whole, true)]);
+    // The insert announcing the message keeps its body.
+    assert!(outputs.iter().any(|output| matches!(
+        output,
+        Drained::Insert { body, .. } if body.starts_with(&whole[..160])
+    )));
+    // Every progress render that stayed resolves to its own body.
+    for output in &outputs {
+        if let Drained::UpdateBody {
+            body,
+            status: CompletionStatus::Partial { present, .. },
+            ..
+        } = output
+        {
+            assert!(body.starts_with(&whole[..160 * present.count_ones() as usize]));
+        }
+    }
+}
+
 #[test]
 fn stalled_fragment_notifies_at_deadline_once() {
     let mut engine = engine();
