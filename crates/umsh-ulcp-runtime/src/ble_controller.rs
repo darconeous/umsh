@@ -49,6 +49,10 @@ pub fn accesses_device_name(request: AttClient<'_>, name_handle: u16) -> bool {
 #[derive(Default)]
 struct State {
     failed: bool,
+    /// A privacy command the controller could not take even after retrying
+    /// in place. This stack cannot advertise privately, but a rebuilt one
+    /// may: unlike `failed`, it asks for reconstruction, not a lockout.
+    retry: bool,
     runner_exited: bool,
     local_irk: bool,
     resolution: bool,
@@ -72,6 +76,7 @@ struct State {
 impl State {
     fn ready(&self) -> bool {
         !self.failed
+            && !self.retry
             && !self.runner_exited
             && !self.advertising_invalidated
             && self.local_irk
@@ -138,6 +143,7 @@ impl ControllerState {
         Self(
             Mutex::new(RefCell::new(State {
                 failed: false,
+                retry: false,
                 runner_exited: false,
                 local_irk: false,
                 resolution: false,
@@ -174,21 +180,29 @@ impl ControllerState {
         self.with(|s| s.advertising_invalidated = true);
         self.1.signal(());
     }
+    /// Whether this stack can advertise privately at all: false after any
+    /// privacy failure, whether it is latched or awaiting a rebuild.
     pub fn failed(&self) -> bool {
+        self.with(|s| s.failed || s.retry)
+    }
+    /// A privacy failure that rebuilding the stack does not cure. It holds
+    /// until Bluetooth is toggled.
+    pub fn latched(&self) -> bool {
         self.with(|s| s.failed)
     }
     pub fn fail(&self) {
         self.with(|s| s.failed = true);
         self.1.signal(());
     }
-    /// Transport/runner exits request reconstruction, not a privacy lockout.
-    /// A privacy failure remains latched even if the runner subsequently exits.
+    /// Transport/runner exits, and privacy commands the controller kept
+    /// refusing as busy, request reconstruction, not a privacy lockout.
+    /// A latched privacy failure holds even if the runner subsequently exits.
     pub fn runner_exited(&self) {
         self.with(|s| s.runner_exited = true);
         self.1.signal(());
     }
     pub fn needs_recovery(&self) -> bool {
-        self.with(|s| s.runner_exited && !s.failed)
+        self.with(|s| (s.runner_exited || s.retry) && !s.failed)
     }
     /// Trouble publishes its generic initialized flag before syncing privacy.
     /// Do not request an advertising operation until that sync has completed:
@@ -196,7 +210,7 @@ impl ControllerState {
     pub async fn wait_for_privacy(&self) -> bool {
         loop {
             let status = self.with(|s| {
-                if s.failed || s.runner_exited || s.advertising_invalidated {
+                if s.failed || s.retry || s.runner_exited || s.advertising_invalidated {
                     Some(false)
                 } else if s.local_irk && s.resolution && s.timeout {
                     Some(true)
@@ -229,6 +243,30 @@ impl ControllerState {
     pub fn link_failed(&self) -> bool {
         self.with(|s| s.tx_failed || s.disconnected)
     }
+}
+
+/// The first in-place retry of a privacy command the controller refused as
+/// momentarily unable; each later pause doubles.
+const RETRY_FIRST_PAUSE_MS: u64 = if cfg!(test) { 1 } else { 100 };
+/// No pause exceeds this. Past it the stack is rebuilt instead, on the
+/// stack-recovery backoff.
+const RETRY_LAST_PAUSE_MS: u64 = if cfg!(test) { 8 } else { 5_000 };
+
+/// Status codes with which a controller declines a command it may take
+/// later: it is busy, the command conflicts with something in progress, or
+/// a resource is momentarily exhausted. Any other code, and every error this
+/// guard produces itself, says the configuration cannot work.
+fn is_transient<E>(error: &cmd::Error<E>) -> bool {
+    use bt_hci::param::Error as Hci;
+    matches!(
+        error,
+        cmd::Error::Hci(
+            Hci::CONTROLLER_BUSY
+                | Hci::CMD_DISALLOWED
+                | Hci::MEMORY_CAPACITY_EXCEEDED
+                | Hci::LIMIT_REACHED
+        )
+    )
 }
 
 /// Owns the controller on ESP32; on nRF it owns a forwarding borrow so the
@@ -333,7 +371,21 @@ where
                 s.resolution = false;
             });
         }
-        let result = self.inner.exec(command).await;
+        let mut pause_ms = RETRY_FIRST_PAUSE_MS;
+        let result = loop {
+            let result = self.inner.exec(command).await;
+            match &result {
+                Err(error) if is_transient(error) && pause_ms <= RETRY_LAST_PAUSE_MS => {
+                    crate::log::debug_log(format_args!(
+                        "BLE privacy HCI command 0x{:04x} refused: {error:?}; retry in {pause_ms} ms",
+                        opcode.to_raw()
+                    ));
+                    embassy_time::Timer::after_millis(pause_ms).await;
+                    pause_ms *= 2;
+                }
+                _ => break result,
+            }
+        };
         if let Err(error) = &result {
             crate::log::debug_log(format_args!(
                 "BLE privacy HCI command 0x{:04x} failed: {error:?}",
@@ -341,8 +393,12 @@ where
             ));
         }
         self.state.with(|s| {
-            if result.is_err() {
-                s.failed = true;
+            if let Err(error) = &result {
+                if is_transient(error) {
+                    s.retry = true;
+                } else {
+                    s.failed = true;
+                }
                 return;
             }
             if opcode == LeAddDeviceToResolvingList::OPCODE && bytes[..7] == [0; 7] {
@@ -499,6 +555,9 @@ mod tests {
     struct Fake {
         capacity: u8,
         fail: Option<cmd::Opcode>,
+        /// The status `fail` is refused with, and how many more times.
+        code: bt_hci::param::Error,
+        refusals: core::cell::Cell<u32>,
         calls: RefCell<std::vec::Vec<(cmd::Opcode, std::vec::Vec<u8>)>>,
     }
     impl embedded_io::ErrorType for Fake {
@@ -528,8 +587,9 @@ mod tests {
             self.calls
                 .borrow_mut()
                 .push((T::OPCODE, data[..command.params().size()].to_vec()));
-            if self.fail == Some(T::OPCODE) {
-                return Err(cmd::Error::Hci(bt_hci::param::Error::CMD_DISALLOWED));
+            if self.fail == Some(T::OPCODE) && self.refusals.get() > 0 {
+                self.refusals.set(self.refusals.get() - 1);
+                return Err(cmd::Error::Hci(self.code));
             }
             let capacity = [self.capacity];
             let result: &[u8] = if T::OPCODE == LeReadResolvingListSize::OPCODE {
@@ -541,14 +601,33 @@ mod tests {
         }
     }
     fn controller(capacity: u8, fail: Option<cmd::Opcode>) -> Guarded<Fake> {
+        refusing(
+            capacity,
+            fail,
+            bt_hci::param::Error::INVALID_HCI_PARAMETERS,
+            u32::MAX,
+        )
+    }
+    fn refusing(
+        capacity: u8,
+        fail: Option<cmd::Opcode>,
+        code: bt_hci::param::Error,
+        refusals: u32,
+    ) -> Guarded<Fake> {
         Guarded::new(
             Fake {
                 capacity,
                 fail,
+                code,
+                refusals: core::cell::Cell::new(refusals),
                 calls: RefCell::new(std::vec::Vec::new()),
             },
             Box::leak(Box::new(ControllerState::new())),
         )
+    }
+    fn add_local_irk() -> LeAddDeviceToResolvingList {
+        use bt_hci::param::*;
+        LeAddDeviceToResolvingList::new(AddrKind::PUBLIC, BdAddr::default(), [0; 16], [1; 16])
     }
     fn advertising_params(private: bool) -> LeSetAdvParams {
         use bt_hci::param::*;
@@ -674,5 +753,77 @@ mod tests {
         assert!(!c.state.needs_recovery());
         embassy_futures::block_on(setup(&c));
         assert!(embassy_futures::block_on(c.exec(&LeSetAdvEnable::new(true))).is_ok());
+    }
+
+    #[test]
+    fn a_controller_busy_for_a_moment_is_asked_again() {
+        use bt_hci::param::Error as Hci;
+        let c = refusing(
+            5,
+            Some(LeAddDeviceToResolvingList::OPCODE),
+            Hci::CONTROLLER_BUSY,
+            2,
+        );
+        embassy_futures::block_on(setup(&c));
+        let asked = c
+            .inner
+            .calls
+            .borrow()
+            .iter()
+            .filter(|(op, _)| *op == LeAddDeviceToResolvingList::OPCODE)
+            .count();
+        assert_eq!(asked, 3);
+        assert!(!c.state.failed());
+        assert!(embassy_futures::block_on(c.exec(&LeSetAdvEnable::new(true))).is_ok());
+    }
+    #[test]
+    fn a_controller_that_stays_busy_asks_for_a_new_stack_not_a_lockout() {
+        use bt_hci::param::Error as Hci;
+        for code in [
+            Hci::CONTROLLER_BUSY,
+            Hci::CMD_DISALLOWED,
+            Hci::MEMORY_CAPACITY_EXCEEDED,
+            Hci::LIMIT_REACHED,
+        ] {
+            let c = refusing(5, Some(LeAddDeviceToResolvingList::OPCODE), code, u32::MAX);
+            embassy_futures::block_on(async {
+                c.exec(&LeClearResolvingList::new()).await.unwrap();
+                assert!(c.exec(&add_local_irk()).await.is_err());
+            });
+            // This stack never advertises without privacy...
+            assert!(c.state.failed());
+            assert!(!embassy_futures::block_on(c.state.wait_for_privacy()));
+            assert!(embassy_futures::block_on(c.exec(&LeSetAdvEnable::new(true))).is_err());
+            // ...but a rebuilt one may, without the user toggling Bluetooth.
+            assert!(!c.state.latched());
+            assert!(c.state.needs_recovery());
+            c.state.reset();
+            assert!(!c.state.failed());
+        }
+    }
+    #[test]
+    fn a_refusal_that_says_the_configuration_cannot_work_is_latched() {
+        use bt_hci::param::Error as Hci;
+        let c = refusing(
+            5,
+            Some(LeAddDeviceToResolvingList::OPCODE),
+            Hci::UNSUPPORTED,
+            1,
+        );
+        embassy_futures::block_on(async {
+            c.exec(&LeClearResolvingList::new()).await.unwrap();
+            assert!(c.exec(&add_local_irk()).await.is_err());
+        });
+        // Asked once: only a transient refusal is retried in place.
+        let asked = c
+            .inner
+            .calls
+            .borrow()
+            .iter()
+            .filter(|(op, _)| *op == LeAddDeviceToResolvingList::OPCODE)
+            .count();
+        assert_eq!(asked, 1);
+        assert!(c.state.latched());
+        assert!(!c.state.needs_recovery());
     }
 }

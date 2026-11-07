@@ -3635,7 +3635,7 @@ mod firmware {
             } else {
                 recovery.reset();
             }
-            if BLE_CONTROLLER_STATE.failed() {
+            if BLE_CONTROLLER_STATE.latched() {
                 debug_log(format_args!(
                     "BLE privacy failed; toggle Bluetooth to retry"
                 ));
