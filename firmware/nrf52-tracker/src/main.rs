@@ -1239,6 +1239,13 @@ mod firmware {
     > = embassy_sync::blocking_mutex::Mutex::new(core::cell::RefCell::new(
         ble_privacy::PairingDeadline::new(),
     ));
+    /// A local IRK the store could not save, in use until it can: a host
+    /// bonded to it could not resolve this device after a reboot, so
+    /// pairing stays refused meanwhile.
+    static UNSAVED_LOCAL_IRK: embassy_sync::blocking_mutex::Mutex<
+        ThreadModeRawMutex,
+        core::cell::Cell<Option<[u8; 16]>>,
+    > = embassy_sync::blocking_mutex::Mutex::new(core::cell::Cell::new(None));
     /// When the current pairing lockout ends.
     static PAIRING_LOCKOUT_DEADLINE: embassy_sync::blocking_mutex::Mutex<
         ThreadModeRawMutex,
@@ -1681,7 +1688,9 @@ mod firmware {
             pin_configured,
             PAIRING_LOCKED_OUT.load(Ordering::Acquire),
         );
-        stack.set_pairing_enabled(enabled && !BLE_REKEY_PENDING.load(Ordering::Acquire));
+        stack.set_pairing_enabled(
+            enabled && !BLE_REKEY_PENDING.load(Ordering::Acquire) && !local_irk_unsaved(),
+        );
         debug_log(format_args!(
             "pairing gate enabled={} mode={} pin={} locked={} failures={} bonds={}/{}",
             enabled,
@@ -1714,6 +1723,28 @@ mod firmware {
             set_pairing_mode(state.pairing_mode);
         }
         UI_REFRESH.signal(());
+    }
+
+    fn local_irk_unsaved() -> bool {
+        UNSAVED_LOCAL_IRK.lock(|irk| irk.get().is_some())
+    }
+
+    /// Tries again to save an unsaved local IRK. Whether the store now
+    /// holds one.
+    async fn save_local_irk(store: &BleStoreMutex) -> bool {
+        let Some(irk) = UNSAVED_LOCAL_IRK.lock(|irk| irk.get()) else {
+            return true;
+        };
+        let mut store = store.lock().await;
+        if store.snapshot().local_irk.is_none() && store.set_local_irk(irk).await.is_err() {
+            debug_log(format_args!(
+                "BLE local IRK still not saved; pairing refused"
+            ));
+            return false;
+        }
+        UNSAVED_LOCAL_IRK.lock(|irk| irk.set(None));
+        debug_log(format_args!("BLE local IRK saved"));
+        true
     }
 
     /// Forgetting every host forgets the failures that locked pairing too.
@@ -2430,7 +2461,9 @@ mod firmware {
                 }
                 Either3::Second(true) => {
                     debug_log(format_args!("pairing mode requested"));
-                    let locked_out = PAIRING_LOCKED_OUT.load(Ordering::Acquire);
+                    // An unsaved IRK refuses a window as a lockout does.
+                    let locked_out =
+                        PAIRING_LOCKED_OUT.load(Ordering::Acquire) || !save_local_irk(store).await;
                     // A window that cannot be walked through is not a
                     // window: while locked out nothing is opened and the
                     // caller is told so rather than left waiting out a
@@ -3596,6 +3629,7 @@ mod firmware {
             BLE_REKEY_PENDING.store(false, Ordering::Release);
             BLE_WIPE_WAITING_REPLY.store(false, Ordering::Release);
             let started = Instant::now();
+            save_local_irk(&store).await;
             let initial = store.lock().await.snapshot().clone();
             if initial.privacy_migration_pending {
                 debug_log(format_args!("BLE blocked: privacy migration not committed"));
@@ -3603,6 +3637,7 @@ mod firmware {
             } else {
                 let Some(irk) = initial
                     .local_irk
+                    .or(UNSAVED_LOCAL_IRK.lock(|irk| irk.get()))
                     .and_then(IdentityResolvingKey::from_le_bytes)
                 else {
                     ble_disabled_park("missing local IRK").await
@@ -3622,11 +3657,13 @@ mod firmware {
                     } else {
                         IoCapabilities::NoInputNoOutput
                     })
-                    .set_pairing_enabled(pairing_enabled(
-                        PAIRING_MODE.load(Ordering::Acquire),
-                        initial.pin.is_some(),
-                        PAIRING_LOCKED_OUT.load(Ordering::Acquire),
-                    ))
+                    .set_pairing_enabled(
+                        pairing_enabled(
+                            PAIRING_MODE.load(Ordering::Acquire),
+                            initial.pin.is_some(),
+                            PAIRING_LOCKED_OUT.load(Ordering::Acquire),
+                        ) && !local_irk_unsaved(),
+                    )
                     .build();
                     // The store decodes only six-digit PINs, so a refusal here is a bug.
                     // Fail closed, neither rebooting nor pairing without the PIN: Bluetooth
@@ -6969,10 +7006,14 @@ mod firmware {
                 while local_irk == [0; 16] {
                     rng.fill_bytes(&mut local_irk).await;
                 }
-                ble_store
-                    .set_local_irk(local_irk)
-                    .await
-                    .unwrap_or_else(|_| panic!("local irk persist"));
+                // Not saved, it is used from RAM and pairing waits for a
+                // later save; no host can have bonded to an IRK not yet made.
+                if ble_store.set_local_irk(local_irk).await.is_err() {
+                    debug_log(format_args!(
+                        "BLE local IRK not saved; pairing refused until it is"
+                    ));
+                    UNSAVED_LOCAL_IRK.lock(|irk| irk.set(Some(local_irk)));
+                }
             }
             #[cfg(feature = "ble-store-fault-inject")]
             {

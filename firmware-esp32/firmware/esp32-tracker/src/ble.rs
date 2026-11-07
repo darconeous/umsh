@@ -232,10 +232,14 @@ pub(crate) async fn mount(
         while local_irk == [0; 16] {
             draw(b"ble-local-irk", &mut local_irk);
         }
-        store
-            .set_local_irk(local_irk)
-            .await
-            .unwrap_or_else(|_| panic!("local irk persist failed"));
+        // Not saved, it is used from RAM and pairing waits for a later
+        // save; no host can have bonded to an IRK not yet made.
+        if store.set_local_irk(local_irk).await.is_err() {
+            debug_log(format_args!(
+                "BLE local IRK not saved; pairing refused until it is"
+            ));
+            UNSAVED_LOCAL_IRK.lock(|irk| irk.set(Some(local_irk)));
+        }
     }
     store
 }
@@ -448,6 +452,13 @@ static PAIRING_LOCKED_OUT: AtomicBool = AtomicBool::new(false);
 static PAIRING_FAILURES: AtomicU8 = AtomicU8::new(0);
 /// Pairing lockouts so far this power cycle; see `PairingRuntime`.
 static PAIRING_LOCKOUTS: AtomicU8 = AtomicU8::new(0);
+/// A local IRK the store could not save, in use until it can: a host
+/// bonded to it could not resolve this device after a reboot, so pairing
+/// stays refused meanwhile.
+static UNSAVED_LOCAL_IRK: embassy_sync::blocking_mutex::Mutex<
+    CriticalSectionRawMutex,
+    core::cell::Cell<Option<[u8; 16]>>,
+> = embassy_sync::blocking_mutex::Mutex::new(core::cell::Cell::new(None));
 /// When the current pairing lockout ends.
 static PAIRING_LOCKOUT_DEADLINE: embassy_sync::blocking_mutex::Mutex<
     CriticalSectionRawMutex,
@@ -671,6 +682,28 @@ pub(crate) fn set_advertising_allowed(allowed: bool) {
     ADV_POLICY_CHANGED.signal(());
 }
 
+fn local_irk_unsaved() -> bool {
+    UNSAVED_LOCAL_IRK.lock(|irk| irk.get().is_some())
+}
+
+/// Tries again to save an unsaved local IRK. Whether the store now holds
+/// one.
+async fn save_local_irk(store: &BleStoreMutex) -> bool {
+    let Some(irk) = UNSAVED_LOCAL_IRK.lock(|irk| irk.get()) else {
+        return true;
+    };
+    let mut store = store.lock().await;
+    if store.snapshot().local_irk.is_none() && store.set_local_irk(irk).await.is_err() {
+        debug_log(format_args!(
+            "BLE local IRK still not saved; pairing refused"
+        ));
+        return false;
+    }
+    UNSAVED_LOCAL_IRK.lock(|irk| irk.set(None));
+    debug_log(format_args!("BLE local IRK saved"));
+    true
+}
+
 fn apply_pairing_gate<C: Controller, P: PacketPool>(stack: &Stack<'_, C, P>) {
     let pin_configured = PAIRING_PIN.load(Ordering::Acquire) != u32::MAX;
     let bonds = usize::from(BLE_BOND_COUNT.load(Ordering::Acquire));
@@ -679,7 +712,9 @@ fn apply_pairing_gate<C: Controller, P: PacketPool>(stack: &Stack<'_, C, P>) {
         pin_configured,
         PAIRING_LOCKED_OUT.load(Ordering::Acquire),
     );
-    stack.set_pairing_enabled(enabled && !BLE_REKEY_PENDING.load(Ordering::Acquire));
+    stack.set_pairing_enabled(
+        enabled && !BLE_REKEY_PENDING.load(Ordering::Acquire) && !local_irk_unsaved(),
+    );
     debug_log(format_args!(
         "pairing gate enabled={} mode={} pin={} locked={} failures={} bonds={}/{}",
         enabled,
@@ -927,7 +962,9 @@ async fn pairing_config_task<C: Controller, P: PacketPool>(
             }
             PairingRequest::Window(true) => {
                 debug_log(format_args!("pairing mode requested"));
-                let locked_out = PAIRING_LOCKED_OUT.load(Ordering::Acquire);
+                // An unsaved IRK refuses a window as a lockout does.
+                let locked_out =
+                    PAIRING_LOCKED_OUT.load(Ordering::Acquire) || !save_local_irk(store).await;
                 // A window that cannot be walked through is not a window:
                 // while locked out nothing is opened and the caller is
                 // told so rather than left waiting out a timeout—and
@@ -1915,6 +1952,7 @@ async fn run_ble_stack(
     store: &BleStoreMutex,
     server: &UlcpServer<'_>,
 ) {
+    save_local_irk(store).await;
     let initial = store.lock().await.snapshot().clone();
     if initial.privacy_migration_pending {
         debug_log(format_args!("BLE blocked: privacy migration not committed"));
@@ -1923,6 +1961,7 @@ async fn run_ble_stack(
     }
     let Some(irk) = initial
         .local_irk
+        .or(UNSAVED_LOCAL_IRK.lock(|irk| irk.get()))
         .and_then(IdentityResolvingKey::from_le_bytes)
     else {
         BLE_CONTROLLER_STATE.fail();
@@ -1939,11 +1978,13 @@ async fn run_ble_stack(
         } else {
             IoCapabilities::NoInputNoOutput
         })
-        .set_pairing_enabled(pairing_enabled(
-            PAIRING_MODE.load(Ordering::Acquire),
-            initial.pin.is_some(),
-            PAIRING_LOCKED_OUT.load(Ordering::Acquire),
-        ))
+        .set_pairing_enabled(
+            pairing_enabled(
+                PAIRING_MODE.load(Ordering::Acquire),
+                initial.pin.is_some(),
+                PAIRING_LOCKED_OUT.load(Ordering::Acquire),
+            ) && !local_irk_unsaved(),
+        )
         .build();
     // The store decodes only six-digit PINs, so a refusal here is a bug.
     // Fail closed, neither rebooting nor pairing without the PIN: Bluetooth
