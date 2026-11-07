@@ -7223,8 +7223,8 @@ fn send_unicast_uses_cached_source_route_when_present() {
         if OptionNumber::from(number) != OptionNumber::SourceRoute {
             continue;
         }
-        for chunk in value.chunks_exact(2) {
-            source_route.push([chunk[0], chunk[1]]);
+        for chunk in value.as_chunks::<2>().0 {
+            source_route.push(*chunk);
         }
     }
 

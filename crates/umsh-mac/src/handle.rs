@@ -182,6 +182,10 @@ impl<
     /// purpose. Call this before a deliberate reboot: a replay boundary
     /// left in RAM is a command the device will happily execute again
     /// when the sender's retry arrives after boot.
+    #[allow(
+        clippy::result_unit_err,
+        reason = "public API; a caller can only proceed or refuse, whichever write failed"
+    )]
     pub async fn flush_frame_counters(&self) -> Result<(), ()> {
         let mut mac = self.mac.borrow_mut().await;
         let tx = mac.service_counter_persistence().await.map(|_| ());

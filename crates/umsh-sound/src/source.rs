@@ -203,9 +203,9 @@ impl Source for Clip<'_> {
         let n = left.min(out.len());
         for (sample, pair) in out[..n]
             .iter_mut()
-            .zip(self.bytes[self.at * 2..].chunks_exact(2))
+            .zip(self.bytes[self.at * 2..].as_chunks::<2>().0)
         {
-            *sample = i16::from_le_bytes([pair[0], pair[1]]);
+            *sample = i16::from_le_bytes(*pair);
         }
         self.at += n;
         n

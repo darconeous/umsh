@@ -735,6 +735,10 @@ impl<M: RawMutex> DeviceControl<M> {
 
     /// Await the RSSI sample requested via [`request_rssi`](Self::request_rssi),
     /// in dBm. `Err(())` means the read failed at the radio.
+    #[allow(
+        clippy::result_unit_err,
+        reason = "public API; there is one way to fail, and its doc names it"
+    )]
     pub async fn wait_rssi(&self) -> Result<i16, ()> {
         self.rssi_resp.wait().await
     }

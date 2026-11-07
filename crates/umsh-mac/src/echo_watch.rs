@@ -94,8 +94,8 @@ impl EchoWatches {
             .and_then(|options| options.source_route)
             .and_then(|range| frame.get(range))
         {
-            for pair in bytes.chunks_exact(2) {
-                let _ = route.push(RouterHint([pair[0], pair[1]]));
+            for pair in bytes.as_chunks::<2>().0 {
+                let _ = route.push(RouterHint(*pair));
             }
         }
         self.expire(now_ms);

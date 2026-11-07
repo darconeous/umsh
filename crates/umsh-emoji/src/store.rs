@@ -118,7 +118,9 @@ impl<'a> Glyph<'a> {
         self.palette
             .get(1..)
             .unwrap_or_default()
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|c| (u16::from_be_bytes([c[0], c[1]]), c[2]))
     }
 

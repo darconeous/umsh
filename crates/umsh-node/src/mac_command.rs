@@ -782,8 +782,10 @@ impl<'a> PeerRepeaterEntryView<'a> {
     pub fn regions(&self) -> impl Iterator<Item = [u8; 2]> + 'a {
         self.find(peer_repeater_entry::REGIONS)
             .unwrap_or(&[])
-            .chunks_exact(2)
-            .map(|code| [code[0], code[1]])
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .copied()
     }
 
     fn find(&self, number: u16) -> Option<&'a [u8]> {

@@ -6483,8 +6483,8 @@ impl<
         // everything sent back. Only a repeater consuming the final hint
         // may leave an empty option behind, for provenance.
         let mut hints: Vec<RouterHint, MAX_SOURCE_ROUTE_HINTS> = Vec::new();
-        for pair in remaining.chunks_exact(2).rev() {
-            hints.push(RouterHint([pair[0], pair[1]])).ok()?;
+        for pair in remaining.as_chunks::<2>().0.iter().rev() {
+            hints.push(RouterHint(*pair)).ok()?;
         }
         for hint in traced_hints {
             hints.push(hint).ok()?;

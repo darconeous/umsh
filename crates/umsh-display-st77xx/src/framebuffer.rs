@@ -170,8 +170,8 @@ impl<const N: usize> Default for SentStripes<N> {
 fn stripe_hash(pixels: &[u8]) -> u64 {
     // FNV-1a, and a rotate-xor-multiply with the golden-ratio constant.
     let (mut a, mut b) = (0x811c_9dc5_u32, 0x9e37_79b9_u32);
-    for word in pixels.chunks_exact(4) {
-        let word = u32::from_le_bytes([word[0], word[1], word[2], word[3]]);
+    for word in pixels.as_chunks::<4>().0 {
+        let word = u32::from_le_bytes(*word);
         a = (a ^ word).wrapping_mul(0x0100_0193);
         b = (b.rotate_left(5) ^ word).wrapping_mul(0x9e37_79b1);
     }

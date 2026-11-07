@@ -364,8 +364,8 @@ fn loratap_snr(centibels: i16) -> u8 {
 
 fn ipv4_checksum(header: &[u8]) -> u16 {
     let mut sum = 0u32;
-    for word in header.chunks_exact(2) {
-        sum += u32::from(u16::from_be_bytes([word[0], word[1]]));
+    for word in header.as_chunks::<2>().0 {
+        sum += u32::from(u16::from_be_bytes(*word));
     }
     while sum > 0xffff {
         sum = (sum & 0xffff) + (sum >> 16);

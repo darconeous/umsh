@@ -207,9 +207,7 @@ pub fn fixed_items<const N: usize>(
     if !value.len().is_multiple_of(N) {
         return Err(ItemError::BadLength);
     }
-    Ok(value
-        .chunks_exact(N)
-        .map(|chunk| chunk.try_into().expect("chunks_exact yields N-byte chunks")))
+    Ok(value.as_chunks::<N>().0.iter())
 }
 
 /// Iterate the PUI-length-prefixed items of a whole-table value

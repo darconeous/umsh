@@ -4432,10 +4432,7 @@ fn decode_interval(value: &[u8]) -> Result<u32, UlcpError> {
 /// Decode a digest table of fixed-size items. A ragged tail is not an
 /// item and is left out; every whole item before it stands.
 fn decode_fixed_list<const N: usize>(value: &[u8]) -> Vec<[u8; N]> {
-    value
-        .chunks_exact(N)
-        .map(|chunk| chunk.try_into().expect("chunks_exact yields N-byte chunks"))
-        .collect()
+    value.as_chunks::<N>().0.to_vec()
 }
 
 /// Render one ULCP frame as a one-line human-readable summary:

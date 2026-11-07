@@ -83,6 +83,10 @@ fn erased_journal_slot<F: JournalFlash>(
 /// Pick the write target for a two-page rotating journal starting at
 /// `page0`: the next erased slot after the current record, or the
 /// opposite page after erasing it.
+#[allow(
+    clippy::result_unit_err,
+    reason = "public API; the caller only reports that the write failed"
+)]
 pub async fn journal_write_target<F: JournalFlash>(
     flash: &mut F,
     current: Option<u32>,
@@ -256,6 +260,10 @@ impl<M: RawMutex + 'static, F: JournalFlash + 'static> ProtoStore<M, F> {
         (len == payload.len()).then_some(len)
     }
 
+    #[allow(
+        clippy::result_unit_err,
+        reason = "public API; the caller only reports that the write failed"
+    )]
     pub async fn persist(&mut self, payload: &[u8]) -> Result<(), ()> {
         if payload.len() > Self::MAX_PAYLOAD {
             return Err(());
@@ -268,6 +276,10 @@ impl<M: RawMutex + 'static, F: JournalFlash + 'static> ProtoStore<M, F> {
     /// authoritative and the caller reports failure. Pages are never
     /// erased as part of a clear—stale records are reclaimed by the
     /// ordinary rotation.
+    #[allow(
+        clippy::result_unit_err,
+        reason = "public API; the caller only reports that the write failed"
+    )]
     pub async fn clear(&mut self) -> Result<(), ()> {
         self.write(proto::RecordRef::Cleared).await
     }

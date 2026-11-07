@@ -556,7 +556,7 @@ impl core::str::FromStr for PublicKey {
             crate::base58::ENCODED_LEN => crate::base58::decode(bytes).map(Self),
             64 => {
                 let mut key = [0u8; 32];
-                for (slot, pair) in key.iter_mut().zip(bytes.chunks_exact(2)) {
+                for (slot, pair) in key.iter_mut().zip(bytes.as_chunks::<2>().0) {
                     *slot = (hex_value(pair[0])? << 4) | hex_value(pair[1])?;
                 }
                 Ok(Self(key))

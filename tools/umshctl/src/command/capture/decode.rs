@@ -544,8 +544,10 @@ fn route_text(value: &[u8]) -> String {
         return hex_text(value);
     }
     value
-        .chunks_exact(2)
-        .map(|hint| RouterHint([hint[0], hint[1]]).to_string())
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|hint| RouterHint(*hint).to_string())
         .collect::<Vec<_>>()
         .join(",")
 }

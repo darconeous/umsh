@@ -1328,6 +1328,10 @@ pub async fn quiesce_for_reboot() {
 /// Preserve accepted replay counters before acknowledging a DFU request.
 /// Unlike unconditional reboot, DFU must refuse if persistence fails,
 /// or if the node never answers.
+#[allow(
+    clippy::result_unit_err,
+    reason = "public API; DFU refuses the same way for either failure"
+)]
 pub async fn prepare_for_dfu() -> Result<(), ()> {
     if !NODE_UP.load(Ordering::Relaxed) {
         return Ok(());

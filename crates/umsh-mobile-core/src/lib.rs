@@ -800,7 +800,7 @@ pub fn inspect_peer_identity(input: String) -> Result<NodeUriPreviewRecord, Mobi
         .collect::<String>();
     if hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         let mut public_key = [0u8; 32];
-        for (index, pair) in hex.as_bytes().chunks_exact(2).enumerate() {
+        for (index, pair) in hex.as_bytes().as_chunks::<2>().0.iter().enumerate() {
             let pair =
                 core::str::from_utf8(pair).map_err(|_| MobileError::InvalidAddressCharacter)?;
             public_key[index] =

@@ -1151,7 +1151,7 @@ mod tests {
     use crate::{constant_time_eq, dbl};
 
     #[cfg(feature = "software-crypto")]
-    use super::{software::*, *};
+    use super::*;
     #[cfg(feature = "software-crypto")]
     use umsh_core::{MicSize, NodeHint, PacketBuilder, PacketHeader, PublicKey};
 
@@ -2470,7 +2470,7 @@ mod frame_signature_tests {
         signature_input,
     };
 
-    use super::{software::*, *};
+    use super::*;
 
     const SIGNER_SEED: [u8; 32] = [0x11; 32];
     const CHANNEL_A: ChannelKey = ChannelKey([0x5A; 32]);

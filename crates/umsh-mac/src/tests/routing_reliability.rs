@@ -1301,8 +1301,10 @@ fn queued_shape(mac: &mut TestMac) -> (Option<u8>, Option<Vec<RouterHint>>) {
         header.flood_hops.map(|hops| hops.remaining()),
         options.source_route.map(|route| {
             frame[route]
-                .chunks_exact(2)
-                .map(|hint| RouterHint([hint[0], hint[1]]))
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|hint| RouterHint(*hint))
                 .collect::<std::vec::Vec<_>>()
         }),
     )
@@ -1709,8 +1711,10 @@ fn queued_ack_shape(mac: &mut TestMac) -> AckShape {
         flood_hops: header.flood_hops.map(|hops| hops.remaining()),
         source_route: options.source_route.map(|route| {
             frame[route]
-                .chunks_exact(2)
-                .map(|hint| RouterHint([hint[0], hint[1]]))
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|hint| RouterHint(*hint))
                 .collect()
         }),
         traced: trace.is_some(),

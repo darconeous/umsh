@@ -162,10 +162,7 @@ impl<const PAYLOAD: usize> Device<PAYLOAD> {
                 emitted.push(bytes.to_vec())
             });
         let listed = value_of(&emitted[0]);
-        self.admins = listed
-            .chunks_exact(32)
-            .map(|k| k.try_into().unwrap())
-            .collect();
+        self.admins = listed.as_chunks::<32>().0.to_vec();
     }
 
     /// Persist the device domain over the local link, the way

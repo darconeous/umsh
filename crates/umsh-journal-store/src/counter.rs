@@ -178,8 +178,8 @@ impl CounterMap {
 
     fn decode_entries(entries: &[u8]) -> Option<Self> {
         let mut map = Self::new();
-        let mut records = entries.chunks_exact(ENTRY_LEN);
-        for record in &mut records {
+        let (records, remainder) = entries.as_chunks::<ENTRY_LEN>();
+        for record in records {
             let kind = record[0];
             if kind != KIND_TX && kind != KIND_RX {
                 return None;
@@ -193,7 +193,7 @@ impl CounterMap {
             };
             map.entries.push(entry).ok()?;
         }
-        records.remainder().is_empty().then_some(map)
+        remainder.is_empty().then_some(map)
     }
 
     /// A record from before entries were tagged, so that a device keeps

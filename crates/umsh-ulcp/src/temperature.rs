@@ -27,8 +27,8 @@ pub fn encode_readings(values: &[u16], out: &mut [u8]) -> Result<usize, Error> {
     if out.len() < len {
         return Err(Error::BufferTooSmall);
     }
-    for (value, bytes) in values.iter().zip(out[..len].chunks_exact_mut(2)) {
-        bytes.copy_from_slice(&value.to_le_bytes());
+    for (value, bytes) in values.iter().zip(out[..len].as_chunks_mut::<2>().0) {
+        *bytes = value.to_le_bytes();
     }
     Ok(len)
 }

@@ -793,7 +793,7 @@ fn decode_public_key(input: &str) -> Result<PublicKey, Box<dyn std::error::Error
     let input = input.trim();
     if input.len() == 64 && input.as_bytes().iter().all(|byte| byte.is_ascii_hexdigit()) {
         let mut bytes = [0u8; 32];
-        for (index, chunk) in input.as_bytes().chunks_exact(2).enumerate() {
+        for (index, chunk) in input.as_bytes().as_chunks::<2>().0.iter().enumerate() {
             let high = decode_hex_nibble(chunk[0])?;
             let low = decode_hex_nibble(chunk[1])?;
             bytes[index] = (high << 4) | low;

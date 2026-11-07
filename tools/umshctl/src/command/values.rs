@@ -81,7 +81,9 @@ impl FromStr for BytesArg {
             ));
         }
         text.as_bytes()
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|pair| {
                 u8::from_str_radix(core::str::from_utf8(pair).unwrap_or_default(), 16)
                     .map_err(|error| error.to_string())
