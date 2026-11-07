@@ -63,6 +63,10 @@ pub trait ChatStore {
     fn chat_for(&self, conversation: &ConversationKey) -> Option<ChatId>;
     fn draft<'b>(&self, chat: ChatId, out: &'b mut [u8]) -> Result<Option<&'b str>, StoreError>;
     fn update_chat(&mut self, chat: ChatId, change: ChatChange<'_>) -> Result<ChatId, StoreError>;
+    /// The chats the latest [`commit`](ChatStore::commit) or
+    /// [`update_chat`](ChatStore::update_chat) removed, messages and all,
+    /// to keep within the store's quota of chats.
+    fn evicted(&self) -> &[ChatId];
 
     fn peer(&self, key: &PublicKey) -> Result<Option<PeerRecord>, StoreError>;
     fn peers_with_hint(&self, hint: NodeHint) -> impl Iterator<Item = PublicKey> + '_;

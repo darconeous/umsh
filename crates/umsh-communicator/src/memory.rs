@@ -49,6 +49,11 @@ pub struct Quota {
     pub keep_per_chat: usize,
     /// Heard peers kept besides the saved ones, most recently heard first.
     pub heard_peers: usize,
+    /// Chats kept before one goes, messages and all: a stranger's chat
+    /// never answered first, the longest quiet first, a chat the user
+    /// keeps (named, or its peer saved) only when no other is left, and
+    /// never the one the user is opening.
+    pub chats: usize,
 }
 
 impl Quota {
@@ -56,6 +61,7 @@ impl Quota {
         bytes: 300 * 1024,
         keep_per_chat: 50,
         heard_peers: 32,
+        chats: 64,
     };
 }
 
@@ -370,6 +376,8 @@ pub struct MemoryStore<D: Durable = Volatile> {
     dirty: Dirty,
     /// Where records are encoded on their way to the durable layer.
     scratch: Vec<u8>,
+    /// The chats the latest commit or chat change evicted.
+    evicted: Vec<ChatId>,
     /// Power goes once a commit finishes this step.
     cut: Option<CommitStep>,
     /// Power is gone: nothing more is written until it is back.
@@ -414,6 +422,7 @@ impl<D: Durable> MemoryStore<D> {
             durable,
             dirty: Dirty::default(),
             scratch: Vec::new(),
+            evicted: Vec::new(),
             cut: None,
             off: false,
         }
@@ -476,6 +485,7 @@ impl<D: Durable> MemoryStore<D> {
     /// Read the records back from what keeps them, and rebuild the index.
     fn remount(&mut self) -> Result<(), StoreError> {
         self.dirty.take();
+        self.evicted.clear();
         if D::KEEPS {
             let mut disk = Disk::default();
             self.durable
@@ -621,6 +631,98 @@ impl<D: Durable> MemoryStore<D> {
         }
         if unread {
             entry.record.unread += 1;
+        }
+    }
+
+    /// Remove a chat and its messages.
+    fn remove_chat(&mut self, chat: u32) {
+        let messages: Vec<u32> = self
+            .index
+            .chat_messages
+            .get(&chat)
+            .into_iter()
+            .flatten()
+            .copied()
+            .collect();
+        for id in messages {
+            self.remove_message(id);
+        }
+        if let Some(entry) = self.disk.chats.remove(&chat) {
+            self.dirty.mark(RecordKey::Chat(chat));
+            self.index.remove_chat(chat, &entry);
+        }
+    }
+
+    /// Whether the user keeps whom `conversation` is with: a peer saved or
+    /// given an alias, or a channel, which is only ever one the user holds.
+    fn kept_by_user(&self, conversation: &ConversationKey) -> bool {
+        let peer = |key: &PublicKey| {
+            self.disk
+                .peers
+                .get(&key.0)
+                .is_some_and(|peer| peer.record.saved || peer.record.alias.is_some())
+        };
+        match conversation {
+            ConversationKey::Direct { peer: key }
+            | ConversationKey::ChannelDirect { peer: key, .. }
+            | ConversationKey::Room { room: key } => peer(key),
+            ConversationKey::ChannelGroup { channel } => {
+                self.disk.channels.contains_key(&channel.0)
+            }
+        }
+    }
+
+    /// How much `chat` is worth keeping, least first: a stranger's chat
+    /// never answered, then one with nothing in it, then one answered,
+    /// then one the user keeps, then one of those answered.
+    ///
+    /// The user keeps a chat they named, or one whose peer or channel they
+    /// keep. A chat is answered when the user said something there, reacted
+    /// to something, or left a draft: what goes with it is theirs, and
+    /// cannot be had again from anyone else. A chat with nothing in it is
+    /// most often one the user has just opened, and costs only its record.
+    fn worth(&self, id: u32, chat: &ChatEntry) -> u8 {
+        let kept = chat.record.name.is_some() || self.kept_by_user(&chat.record.conversation);
+        let mut messages = self
+            .index
+            .chat_messages
+            .get(&id)
+            .into_iter()
+            .flatten()
+            .filter_map(|id| self.disk.messages.get(id))
+            .peekable();
+        let empty = messages.peek().is_none();
+        let answered = chat.draft.is_some()
+            || messages.any(|message| {
+                message.record.direction == Direction::Outbound
+                    || message.reactors.iter().any(|reactor| reactor.mine)
+            });
+        match (kept, answered) {
+            (true, answered) => 3 + u8::from(answered),
+            (false, true) => 2,
+            (false, false) => u8::from(empty),
+        }
+    }
+
+    /// Bring the chats within the quota, the least worth keeping first
+    /// (see [`MemoryStore::worth`]) and, among those worth the same, the
+    /// longest quiet, but never `spare`: the chat the user is opening.
+    /// Those that go are added to [`MemoryStore::evicted`].
+    fn evict_chats(&mut self, spare: Option<u32>) {
+        while self.disk.chats.len() > self.quota.chats {
+            // Oldest first, so the first of the least worth is the quietest.
+            let victim = self
+                .index
+                .by_activity
+                .values()
+                .filter(|&&id| Some(id) != spare)
+                .filter_map(|&id| Some((id, self.worth(id, self.disk.chats.get(&id)?))))
+                .min_by_key(|&(_, worth)| worth);
+            let Some((victim, _)) = victim else {
+                break;
+            };
+            self.remove_chat(victim);
+            self.evicted.push(ChatId(victim));
         }
     }
 
@@ -1102,6 +1204,7 @@ impl<D: Durable> MemoryStore<D> {
 
 impl<D: Durable> ChatStore for MemoryStore<D> {
     fn commit(&mut self, batch: &Batch<'_>) -> Result<Committed, StoreError> {
+        self.evicted.clear();
         self.writable()?;
         for checkpoint in batch.checkpoints() {
             let used = self.disk.tick();
@@ -1124,7 +1227,10 @@ impl<D: Durable> ChatStore for MemoryStore<D> {
         if self.reached(CommitStep::Archives)? {
             return Err(StoreError::Io);
         }
-        let committed = self.apply(batch);
+        let mut committed = self.apply(batch);
+        self.evict_chats(None);
+        let evicted = &self.evicted;
+        committed.chats.retain(|chat| !evicted.contains(chat));
         self.evict();
         self.check_index();
         // Power lost after the transcript loses nothing: the commit is
@@ -1311,9 +1417,11 @@ impl<D: Durable> ChatStore for MemoryStore<D> {
     }
 
     fn update_chat(&mut self, chat: ChatId, change: ChatChange<'_>) -> Result<ChatId, StoreError> {
+        self.evicted.clear();
         self.writable()?;
         if let ChatChange::Open { conversation, name } = change {
             let id = self.open_chat(&conversation, name);
+            self.evict_chats(Some(id));
             self.check_index();
             self.settle()?;
             return Ok(ChatId(id));
@@ -1322,21 +1430,7 @@ impl<D: Durable> ChatStore for MemoryStore<D> {
             return Err(StoreError::NotFound);
         }
         if let ChatChange::Delete = change {
-            let messages: Vec<u32> = self
-                .index
-                .chat_messages
-                .get(&chat.0)
-                .into_iter()
-                .flatten()
-                .copied()
-                .collect();
-            for id in messages {
-                self.remove_message(id);
-            }
-            if let Some(entry) = self.disk.chats.remove(&chat.0) {
-                self.dirty.mark(RecordKey::Chat(chat.0));
-                self.index.remove_chat(chat.0, &entry);
-            }
+            self.remove_chat(chat.0);
             self.check_index();
             self.settle()?;
             return Ok(chat);
@@ -1360,6 +1454,10 @@ impl<D: Durable> ChatStore for MemoryStore<D> {
         self.check_index();
         self.settle()?;
         Ok(chat)
+    }
+
+    fn evicted(&self) -> &[ChatId] {
+        &self.evicted
     }
 
     fn peer(&self, key: &PublicKey) -> Result<Option<PeerRecord>, StoreError> {
@@ -2089,6 +2187,221 @@ mod tests {
         assert_eq!(count(direct()), 20);
         assert_eq!(count(group()), 50);
         assert!(store.usage().bytes > store.usage().quota);
+    }
+
+    /// The direct chat with the peer whose key is `n` repeated.
+    fn with(n: u8) -> ConversationKey {
+        ConversationKey::Direct {
+            peer: PublicKey([n; 32]),
+        }
+    }
+
+    /// One message in the direct chat with `n`: theirs, heard, or ours,
+    /// sent. Returns what the store committed.
+    fn said<S: ChatStore>(store: &mut S, n: u8, direction: Direction) -> Committed {
+        static HANDLE: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(1);
+        let handle = HANDLE.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        let sender = match direction {
+            Direction::Inbound => SenderScope::Peer(PublicKey([n; 32])),
+            Direction::Outbound => SenderScope::Local,
+        };
+        let insert = Mutation {
+            change: chat::Change::Insert(Insert {
+                conversation: with(n),
+                sender,
+                sender_key: None,
+                direction,
+                message_type: MessageType::Basic,
+                wire_id: Some(handle as u8),
+                epoch: 0,
+                client_token: None,
+                sender_handle: None,
+                regarding: None,
+                bg_color: None,
+                text_color: None,
+                body: "hello".into(),
+                status: CompletionStatus::Complete,
+                presence: Presence::Present,
+                late: false,
+                notify: direction == Direction::Inbound,
+                unknown_original: false,
+            }),
+            handle: umsh_text::engine::sequence::MessageHandle(handle),
+            revision: 1,
+        };
+        let resolve = |_| None;
+        let mut batch = Batch::new(Some(1_700_000_000), &resolve);
+        batch.push_chat(&umsh_text::chat::ChatOutput::Mutation(insert), None);
+        store.commit(&batch).unwrap()
+    }
+
+    fn heard<S: ChatStore>(store: &mut S, n: u8) -> Committed {
+        said(store, n, Direction::Inbound)
+    }
+
+    fn chat_with<S: ChatStore>(store: &S, n: u8) -> Option<ChatId> {
+        store.chat_for(&with(n))
+    }
+
+    fn keeping(chats: usize) -> MemoryStore<Kept> {
+        MemoryStore::mount(
+            Kept::default(),
+            Quota {
+                chats,
+                ..Quota::DEFAULT
+            },
+        )
+        .unwrap()
+    }
+
+    /// Past the quota, a stranger's chat never answered goes first, then
+    /// one answered, then one the user keeps; among those worth the same,
+    /// the longest quiet.
+    #[test]
+    fn chats_past_the_quota_go_least_worth_first() {
+        let mut store = keeping(4);
+        heard(&mut store, 1);
+        heard(&mut store, 2);
+        said(&mut store, 2, Direction::Outbound);
+        store
+            .update_peer(&PublicKey([3; 32]), PeerChange::Save { name: None })
+            .unwrap();
+        heard(&mut store, 3);
+        heard(&mut store, 4);
+        let named = chat_with(&store, 4).unwrap();
+        store
+            .update_chat(named, ChatChange::Rename(Some("Ridge")))
+            .unwrap();
+
+        // A fifth: the quietest stranger never answered goes.
+        let stranger = chat_with(&store, 1).unwrap();
+        heard(&mut store, 5);
+        assert_eq!(store.evicted(), [stranger]);
+        assert_eq!(chat_with(&store, 1), None);
+        assert_eq!(store.message_count(stranger), 0);
+        assert_eq!(store.usage().chats, 4);
+
+        // Answered, the fifth is worth as much as the second, and newer.
+        said(&mut store, 5, Direction::Outbound);
+        assert!(store.evicted().is_empty());
+        let answered = chat_with(&store, 2).unwrap();
+        // A stranger with nobody less worth keeping goes at once, and is
+        // not reported as changed.
+        let committed = heard(&mut store, 6);
+        assert_eq!(store.evicted().len(), 1);
+        assert_eq!(chat_with(&store, 6), None);
+        assert!(committed.chats.is_empty());
+        assert!(
+            committed
+                .messages
+                .iter()
+                .all(|&id| store.message(id).unwrap().is_none())
+        );
+
+        // A chat this node starts goes ahead of a kept one: the quietest
+        // answered goes.
+        said(&mut store, 7, Direction::Outbound);
+        assert_eq!(store.evicted(), [answered]);
+        for kept in [3, 4, 5, 7] {
+            assert!(chat_with(&store, kept).is_some(), "{kept}");
+        }
+
+        // What was evicted stays gone once mounted again.
+        let mounted = MemoryStore::mount(
+            Kept(store.durable.0.clone()),
+            Quota {
+                chats: 4,
+                ..Quota::DEFAULT
+            },
+        )
+        .unwrap();
+        assert_eq!(mounted.index, store.index);
+        assert_eq!(mounted.usage(), store.usage());
+    }
+
+    /// Chats the user keeps outlast any number of strangers, and one goes
+    /// only when nothing else is left to go or the user opens a chat.
+    #[test]
+    fn kept_chats_survive_strangers() {
+        let mut store = keeping(3);
+        store
+            .update_peer(&PublicKey([1; 32]), PeerChange::Save { name: None })
+            .unwrap();
+        heard(&mut store, 1);
+        store
+            .update_peer(
+                &PublicKey([2; 32]),
+                PeerChange::Heard {
+                    at: None,
+                    name: None,
+                    identity: None,
+                    linked: false,
+                    fill: false,
+                },
+            )
+            .unwrap();
+        store
+            .update_peer(&PublicKey([2; 32]), PeerChange::Alias(Some("Ash")))
+            .unwrap();
+        heard(&mut store, 2);
+        store
+            .update_channel(
+                &ChannelTag([7; 16]),
+                ChannelChange::Add {
+                    name: "Ridge",
+                    access: crate::ChannelAccess::Private,
+                    builtin: None,
+                },
+            )
+            .unwrap();
+        Rig::new().say(
+            &mut store,
+            ConversationKey::ChannelGroup {
+                channel: ChannelTag([7; 16]),
+            },
+            "on the ridge",
+        );
+        let kept: Vec<ChatId> = store.chats().map(Result::unwrap).map(|c| c.id).collect();
+
+        for n in 10..60 {
+            heard(&mut store, n);
+            assert_eq!(store.evicted().len(), 1);
+            assert_eq!(chat_with(&store, n), None);
+        }
+        let now: Vec<ChatId> = store.chats().map(Result::unwrap).map(|c| c.id).collect();
+        assert_eq!(now, kept);
+
+        // The chat the user opens is never the one to go: the quietest
+        // kept chat does.
+        let opened = store
+            .update_chat(
+                ChatId(0),
+                ChatChange::Open {
+                    conversation: with(99),
+                    name: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(store.evicted(), [kept[2]]);
+        // Opened and empty, it goes after a stranger never answered.
+        heard(&mut store, 60);
+        assert_eq!(chat_with(&store, 60), None);
+        assert!(store.chat(opened).is_some());
+
+        // A kept chat to come: the empty one goes ahead of the kept ones,
+        // and then the quietest kept one.
+        for n in [61, 62] {
+            store
+                .update_peer(&PublicKey([n; 32]), PeerChange::Save { name: None })
+                .unwrap();
+        }
+        heard(&mut store, 61);
+        assert_eq!(store.evicted(), [opened]);
+        heard(&mut store, 62);
+        assert_eq!(store.evicted(), [kept[1]]);
+        assert!(chat_with(&store, 61).is_some());
+        assert!(chat_with(&store, 62).is_some());
+        assert!(store.chat(kept[0]).is_some());
     }
 
     #[test]
