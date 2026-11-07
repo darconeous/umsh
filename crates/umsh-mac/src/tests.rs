@@ -12929,6 +12929,108 @@ fn a_real_repeater_rewrite_confirms_the_senders_repeat_only_entry() {
     );
 }
 
+/// A frame that carries a pending send's MIC over different contents is not
+/// that send carried onward: it neither stands the send down nor is
+/// reported as a forward. The genuine rewrite still is.
+#[test]
+fn a_frame_that_only_shares_the_routing_identity_confirms_nothing() {
+    let (mut sender, local_id, peer_key) = make_sender_mac();
+    let _ = sender
+        .queue_unicast(
+            local_id,
+            &peer_key,
+            b"hello",
+            &SendOptions::default().with_trace(),
+        )
+        .unwrap();
+    let receipt = sole_tracked_receipt(&sender, local_id);
+    let _ = block_on(sender.transmit_next(&mut |_, _| {})).unwrap();
+    let original = sender.radio().transmitted[0].clone();
+    let (rewritten, _) = forward_through(0x30, original.as_slice());
+
+    let mut forged = rewritten.clone();
+    let body = PacketHeader::parse(&forged).unwrap().body_range;
+    forged[body.start] ^= 0x01;
+    assert_eq!(
+        crate::forward_id::forwarding_dup_key(&forged),
+        crate::forward_id::forwarding_dup_key(&rewritten),
+        "the forgery keys as the send does"
+    );
+
+    assert!(heard_forwards(&mut sender, &forged).is_empty());
+    assert!(
+        sender
+            .identity(local_id)
+            .unwrap()
+            .pending_ack(&receipt)
+            .is_some(),
+        "the send still waits for a repeat"
+    );
+    assert_eq!(sender.counters().forward_echo_mismatched, 1);
+
+    assert_eq!(heard_forwards(&mut sender, &rewritten).len(), 1);
+    assert!(
+        sender
+            .identity(local_id)
+            .unwrap()
+            .pending_ack(&receipt)
+            .is_none()
+    );
+    assert_eq!(sender.counters().forward_echo_mismatched, 1);
+}
+
+/// What a forwarder may rewrite—the flood budget, whether one is present at
+/// all, the trace and the source route—leaves a frame the same packet;
+/// anything else makes it a different one.
+#[test]
+fn same_packet_ignores_exactly_what_a_forwarder_may_rewrite() {
+    let source = DummyIdentity::new([0xAB; 32]);
+    let keys = PairwiseKeys {
+        k_enc: [3; 32],
+        k_mic: [4; 32],
+    };
+    let dst = NodeHint([0x77, 0x66, 0x55]);
+    let route = [RouterHint([1, 2]), RouterHint([3, 4])];
+    let sent = build_received_unicast_frame(
+        &source,
+        &keys,
+        &dst,
+        b"ping",
+        true,
+        None,
+        None,
+        Some(&route),
+    );
+    let carried = build_received_unicast_frame(
+        &source,
+        &keys,
+        &dst,
+        b"ping",
+        true,
+        Some((2, 1)),
+        Some(&[RouterHint([1, 2])]),
+        Some(&route[1..]),
+    );
+    assert!(crate::forward_id::same_packet(&sent, &carried));
+
+    let other = build_received_unicast_frame(
+        &source,
+        &keys,
+        &dst,
+        b"pong",
+        true,
+        None,
+        None,
+        Some(&route),
+    );
+    assert!(!crate::forward_id::same_packet(&sent, &other));
+
+    let mut flipped = sent.clone();
+    let body = PacketHeader::parse(&flipped).unwrap().body_range;
+    flipped[body.start] ^= 0x01;
+    assert!(!crate::forward_id::same_packet(&sent, &flipped));
+}
+
 /// Forward `frame` through a repeater whose identity is seeded with `seed`,
 /// returning the rewrite it queued and the router hint it signs it with.
 fn forward_through(seed: u8, frame: &[u8]) -> (heapless::Vec<u8, 256>, RouterHint) {

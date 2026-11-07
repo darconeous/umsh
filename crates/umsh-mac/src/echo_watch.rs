@@ -44,9 +44,24 @@ pub(crate) struct Echo {
     pub repeater: Option<RouterHint>,
 }
 
+/// What an overheard frame turned out to be.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Heard {
+    /// None of the watched frames.
+    Unwatched,
+    /// A forward of a watched frame.
+    Echo(Echo),
+    /// A frame with a watched frame's routing identity that differs from
+    /// it where no forwarder may rewrite: not a forward of it.
+    Mismatched,
+}
+
 #[derive(Clone, Debug)]
 struct EchoWatch {
     key: DupCacheKey,
+    /// The frame's [`forward_id::static_fingerprint`], which a forward of
+    /// it shares and a frame merely carrying its key does not.
+    fingerprint: u64,
     identity_id: LocalIdentityId,
     receipt: SendReceipt,
     until_ms: u64,
@@ -83,8 +98,15 @@ impl EchoWatches {
         let Some(key) = forward_id::forwarding_dup_key_parsed(&header, frame) else {
             return;
         };
+        let Some(fingerprint) = forward_id::static_fingerprint(&header, frame) else {
+            return;
+        };
         let until_ms = now_ms.saturating_add(ECHO_WATCH_MS);
-        if let Some(entry) = self.entries.iter_mut().find(|entry| entry.key == key) {
+        if let Some(entry) = self
+            .entries
+            .iter_mut()
+            .find(|entry| entry.key == key && entry.fingerprint == fingerprint)
+        {
             entry.until_ms = until_ms;
             return;
         }
@@ -112,6 +134,7 @@ impl EchoWatches {
         }
         let _ = self.entries.push(EchoWatch {
             key,
+            fingerprint,
             identity_id,
             receipt,
             until_ms,
@@ -120,16 +143,32 @@ impl EchoWatches {
     }
 
     /// The watched send `frame` is a forward of, if any.
-    pub(crate) fn heard(&mut self, frame: &[u8], now_ms: u64) -> Option<Echo> {
+    pub(crate) fn heard(&mut self, frame: &[u8], now_ms: u64) -> Heard {
         self.expire(now_ms);
         if self.entries.is_empty() {
-            return None;
+            return Heard::Unwatched;
         }
-        let header = PacketHeader::parse(frame).ok()?;
-        let key = forward_id::forwarding_dup_key_parsed(&header, frame)?;
-        let entry = self.entries.iter().find(|entry| entry.key == key)?;
-        let options = ParsedOptions::extract(frame, header.options_range.clone()).ok()?;
-        Some(Echo {
+        let Ok(header) = PacketHeader::parse(frame) else {
+            return Heard::Unwatched;
+        };
+        let Some(key) = forward_id::forwarding_dup_key_parsed(&header, frame) else {
+            return Heard::Unwatched;
+        };
+        if !self.entries.iter().any(|entry| entry.key == key) {
+            return Heard::Unwatched;
+        }
+        let fingerprint = forward_id::static_fingerprint(&header, frame);
+        let Some(entry) = self
+            .entries
+            .iter()
+            .find(|entry| entry.key == key && Some(entry.fingerprint) == fingerprint)
+        else {
+            return Heard::Mismatched;
+        };
+        let Ok(options) = ParsedOptions::extract(frame, header.options_range.clone()) else {
+            return Heard::Unwatched;
+        };
+        Heard::Echo(Echo {
             identity_id: entry.identity_id,
             receipt: entry.receipt,
             repeater: forwarding_repeater(&header, &options, frame, &entry.route),

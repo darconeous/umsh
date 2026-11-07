@@ -63,6 +63,79 @@ pub fn forwarding_dup_key(frame: &[u8]) -> Option<DupCacheKey> {
     forwarding_dup_key_parsed(&header, frame)
 }
 
+/// Whether `heard` is `sent` as some forwarder may have passed it on: the
+/// two agree on every byte a forwarder may not rewrite.
+///
+/// Sharing a routing identity is not enough to say so. The key is a MIC, or
+/// a 32-bit hash for frames without one, and a frame that carries ours over
+/// different contents is not our packet, however it came to match.
+pub(crate) fn same_packet(sent: &[u8], heard: &[u8]) -> bool {
+    let (Ok(sent_header), Ok(heard_header)) =
+        (PacketHeader::parse(sent), PacketHeader::parse(heard))
+    else {
+        return false;
+    };
+    match (
+        static_bytes(&sent_header, sent),
+        static_bytes(&heard_header, heard),
+    ) {
+        (Some(sent), Some(heard)) => sent.eq(heard),
+        _ => false,
+    }
+}
+
+/// A 64-bit digest of the bytes of `frame` a forwarder may not rewrite, for
+/// telling a forward of `frame` apart from a frame that merely shares its
+/// routing identity without keeping the whole frame.
+///
+/// FNV-1a, not a cryptographic hash: anyone able to forge a collision could
+/// as easily send the frame itself, which would be a genuine forward.
+pub(crate) fn static_fingerprint(header: &PacketHeader, frame: &[u8]) -> Option<u64> {
+    let mut hash = 0xCBF2_9CE4_8422_2325u64;
+    for byte in static_bytes(header, frame)? {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01B3);
+    }
+    Some(hash)
+}
+
+/// The bytes of `frame` no forwarder may rewrite, in order: the FCF without
+/// its flood-hops-present bit, everything else outside the option block
+/// except the flood-hop byte, and each static option as its number, length
+/// and value. `None` when the options do not decode.
+fn static_bytes<'a>(
+    header: &PacketHeader,
+    frame: &'a [u8],
+) -> Option<impl Iterator<Item = u8> + 'a> {
+    let options = header.options_range.clone();
+    let fixed_start = if header.fcf.flood_hops_present() {
+        2
+    } else {
+        1
+    };
+    let fixed = frame.get(fixed_start..options.start)?;
+    let trailing = frame.get(options.end..)?;
+    if umsh_core::iter_options(frame, options.clone()).any(|entry| entry.is_err()) {
+        return None;
+    }
+    let static_options = umsh_core::iter_options(frame, options)
+        .filter_map(Result::ok)
+        .filter(|(number, _)| !OptionNumber::from(*number).is_dynamic())
+        .flat_map(|(number, value)| {
+            number
+                .to_be_bytes()
+                .into_iter()
+                .chain((value.len() as u16).to_be_bytes())
+                .chain(value.iter().copied())
+        });
+    Some(
+        core::iter::once(header.fcf.aad_byte())
+            .chain(fixed.iter().copied())
+            .chain(static_options)
+            .chain(trailing.iter().copied()),
+    )
+}
+
 /// FNV-1a over the fields a repeater may not rewrite, for packets that
 /// carry no MIC to key on.
 fn normalized_routable_hash32(header: &PacketHeader, frame: &[u8]) -> u32 {

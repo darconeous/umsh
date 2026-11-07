@@ -1169,6 +1169,10 @@ pub struct MacCounters {
     /// Times a frame was held back because no committed reservation
     /// covered its counter, the counter store having refused the write.
     pub tx_counter_holds: u32,
+    /// Receptions that carried the routing identity of a frame this node
+    /// sent but differed from it where no forwarder may rewrite. They
+    /// confirm nothing and are not reported as forwards.
+    pub forward_echo_mismatched: u32,
 }
 
 impl MacCounters {
@@ -3408,18 +3412,24 @@ impl<
         // The pending table decides what the repeat means for a retry; the
         // watch, which also covers sends with no retry to call off, decides
         // whom to tell.
+        let mut mismatched = false;
         let forwarding_confirmed = self
-            .observe_forwarding_confirmation(&buf[..frame_len])
+            .observe_forwarding_confirmation(&buf[..frame_len], &mut mismatched)
             .is_some();
-        if let Some(echo) = self.echo_watches.heard(&buf[..frame_len], received_at_ms) {
-            on_event(
+        match self.echo_watches.heard(&buf[..frame_len], received_at_ms) {
+            crate::echo_watch::Heard::Echo(echo) => on_event(
                 echo.identity_id,
                 crate::MacEventRef::Forwarded {
                     identity_id: echo.identity_id,
                     receipt: echo.receipt,
                     repeater: echo.repeater,
                 },
-            );
+            ),
+            crate::echo_watch::Heard::Mismatched => mismatched = true,
+            crate::echo_watch::Heard::Unwatched => {}
+        }
+        if mismatched {
+            MacCounters::bump(&mut self.counters.forward_echo_mismatched);
         }
 
         match header.packet_type() {
@@ -8527,22 +8537,34 @@ impl<
     /// every pending send still waiting for a repeat is matched, and a retry
     /// queued on its behalf is withdrawn.
     ///
+    /// A frame matches a pending send only if it is that send's frame as a
+    /// forwarder may have rewritten it ([`forward_id::same_packet`]); one
+    /// that merely shares its routing identity confirms nothing and sets
+    /// `mismatched`.
+    ///
     /// Returns `Some((identity_id, receipt))` on successful confirmation,
     /// `None` otherwise. A send expecting an ACK moves on to wait for it; a
     /// [`CompletionSignal::RepeatOnly`] send is finished by the repeat itself.
     fn observe_forwarding_confirmation(
         &mut self,
         frame: &[u8],
+        mismatched: &mut bool,
     ) -> Option<(LocalIdentityId, SendReceipt)> {
         self.expire_post_tx_listen_if_needed();
         let received_key = Self::confirmation_key(frame)?;
 
-        // Whatever the pending table decides below, the wait itself is over.
-        if self
+        // Whatever the pending table decides below, the wait itself is over
+        // once its frame is heard carried onward.
+        if let Some(listen) = self
             .post_tx_listen
             .as_ref()
-            .map(|listen| listen.confirm_key == received_key)
-            .unwrap_or(false)
+            .filter(|listen| listen.confirm_key == received_key)
+            && self
+                .identity(listen.identity_id)
+                .and_then(|slot| slot.pending_ack(&listen.receipt))
+                .is_none_or(|pending| {
+                    crate::forward_id::same_packet(pending.resend.frame.as_slice(), frame)
+                })
         {
             self.post_tx_listen = None;
         }
@@ -8555,6 +8577,10 @@ impl<
             };
             for (receipt, pending) in slot.pending_acks.iter() {
                 if pending.confirm_key.as_ref() != Some(&received_key) {
+                    continue;
+                }
+                if !crate::forward_id::same_packet(pending.resend.frame.as_slice(), frame) {
+                    *mismatched = true;
                     continue;
                 }
                 ours = true;
