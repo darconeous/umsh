@@ -367,6 +367,9 @@ async fn forward_secrecy_is_held_with_a_peer_who_prefers_it() {
             let alice = board(near, [0x11; 32]).await;
             let bob = board(far, [0x22; 32]).await;
 
+            // Bob's node answers a session request only from a peer its
+            // MAC holds as a contact.
+            bob.mesh.peer(alice.key).await.unwrap();
             phone_inserts(&alice.sim, prop::DEV_PEERS, &bob.key.0);
             alice.node.pump();
             let peers = alice.node.peers();
@@ -419,6 +422,9 @@ async fn what_is_said_under_forward_secrecy_lands_in_the_same_chat() {
             let alice = board(near, [0x11; 32]).await;
             let bob = board(far, [0x22; 32]).await;
 
+            // Bob's node answers a session request only from a peer its
+            // MAC holds as a contact.
+            bob.mesh.peer(alice.key).await.unwrap();
             phone_inserts(&alice.sim, prop::DEV_PEERS, &bob.key.0);
             alice.node.pump();
             let peers = alice.node.peers();

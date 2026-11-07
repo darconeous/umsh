@@ -1649,6 +1649,20 @@ impl<M: MacBackend> LocalNode<M> {
         self.state.borrow().pfs.refused_ephemeral_keys()
     }
 
+    /// How many session requests this node refused for coming from a peer
+    /// that is not a contact.
+    #[cfg(feature = "software-crypto")]
+    pub fn pfs_refused_requesters(&self) -> u32 {
+        self.state.borrow().pfs.refused_requesters()
+    }
+
+    /// How many session requests this node refused for coming too soon
+    /// after the same peer's last.
+    #[cfg(feature = "software-crypto")]
+    pub fn pfs_rate_limited_requests(&self) -> u32 {
+        self.state.borrow().pfs.rate_limited_requests()
+    }
+
     /// Join a channel. Registers the channel key in the MAC if this is
     /// the first node to join it. Returns the bound channel handle.
     #[cfg(feature = "software-crypto")]

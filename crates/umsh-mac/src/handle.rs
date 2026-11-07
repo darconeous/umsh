@@ -643,6 +643,17 @@ impl<
         }
     }
 
+    /// Whether the application holds `key` as a contact
+    /// ([`PeerHolds::by_application`](crate::PeerHolds::by_application)).
+    pub async fn is_application_peer(&self, key: &PublicKey) -> bool {
+        self.mac
+            .borrow()
+            .await
+            .peer_registry()
+            .lookup_by_key(key)
+            .is_some_and(|(_, peer)| peer.holds.by_application())
+    }
+
     /// Invoke `f` with the key of every channel registered in the MAC.
     pub async fn for_each_channel(&self, f: &mut dyn FnMut(&umsh_core::ChannelKey)) {
         let mac = self.mac.borrow().await;

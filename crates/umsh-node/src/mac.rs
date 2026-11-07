@@ -183,6 +183,13 @@ pub trait MacBackend: Clone {
         let _ = f;
     }
 
+    /// Whether the application holds `key` as a contact, rather than the
+    /// MAC knowing it only as a learned peer or a session's.
+    async fn is_application_peer(&self, key: &PublicKey) -> bool {
+        let _ = key;
+        false
+    }
+
     /// Invoke `f` with the key of every channel registered in the MAC.
     async fn for_each_channel(&self, f: &mut dyn FnMut(&umsh_core::ChannelKey)) {
         let _ = f;
@@ -492,6 +499,10 @@ impl<
 
     async fn for_each_peer(&self, f: &mut dyn FnMut(umsh_core::PublicKey)) {
         self.for_each_peer(f).await
+    }
+
+    async fn is_application_peer(&self, key: &PublicKey) -> bool {
+        self.is_application_peer(key).await
     }
 
     async fn for_each_channel(&self, f: &mut dyn FnMut(&umsh_core::ChannelKey)) {

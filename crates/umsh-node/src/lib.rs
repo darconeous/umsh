@@ -879,6 +879,7 @@ mod tests {
 
         let peer = PublicKey([0x55; 32]);
         let options = SendOptions::default().with_ack_requested(true);
+        block_on_ready(node.peer(peer)).unwrap();
         block_on_ready(node.handle_pfs_command(
             &peer,
             None,
@@ -988,12 +989,15 @@ mod tests {
         // come back as the ceiling; anything else is accepted as asked.
         for (requested, accepted) in [
             (0u16, MAX_PFS_SESSION_MINUTES),
+            (MAX_PFS_SESSION_MINUTES + 1, MAX_PFS_SESSION_MINUTES),
             (u16::MAX, MAX_PFS_SESSION_MINUTES),
+            (MAX_PFS_SESSION_MINUTES, MAX_PFS_SESSION_MINUTES),
             (45, 45),
         ] {
             let mac = FakeMac::new(vec![[3u8; 32]]);
             let options = SendOptions::default();
             let state = RefCell::new(LocalNodeState::new());
+            block_on_ready(mac.add_peer(PublicKey([0x55; 32]))).unwrap();
             block_on_ready(pfs::accept_request(
                 &state,
                 &mac,
@@ -1112,6 +1116,7 @@ mod tests {
         let node = test_node(mac.clone());
         let peer = PublicKey([0x55; 32]);
         let options = SendOptions::default();
+        block_on_ready(node.peer(peer)).unwrap();
 
         mac.state.borrow_mut().hold_add_peer = true;
         let request = OwnedMacCommand::PfsSessionRequest {
@@ -1147,8 +1152,9 @@ mod tests {
             block_on_ready(node.request_pfs(&PublicKey([peer; 32]), 60, &options)).unwrap();
         }
 
-        mac.state.borrow_mut().hold_add_peer = true;
         let answered = PublicKey([0x44; 32]);
+        block_on_ready(node.peer(answered)).unwrap();
+        mac.state.borrow_mut().hold_add_peer = true;
         let request = OwnedMacCommand::PfsSessionRequest {
             ephemeral_key: PublicKey([0x45; 32]),
             duration_minutes: 60,
@@ -1179,8 +1185,11 @@ mod tests {
             duration_minutes: 60,
         };
 
+        block_on_ready(node.peer(peer)).unwrap();
+
         block_on_ready(node.handle_pfs_command(&peer, None, &request(0x44), &options)).unwrap();
         let first = node.pfs_local_keys();
+        mac.state.borrow_mut().now_ms += 60_000;
         block_on_ready(node.handle_pfs_command(&peer, None, &request(0x45), &options)).unwrap();
 
         assert_eq!(node.pfs_local_keys().len(), 1);
@@ -1191,31 +1200,112 @@ mod tests {
         );
         // The replaced session's peer slot went with it.
         let peers: Vec<PublicKey> = mac.state.borrow().peers.iter().map(|(k, _)| *k).collect();
-        assert_eq!(peers, vec![PublicKey([0x45; 32])]);
+        assert_eq!(peers, vec![peer, PublicKey([0x45; 32])]);
     }
 
+    /// A repeat of the request that opened the session, under the same
+    /// ephemeral key, gets the response it got before, on the carriage the
+    /// repeat came on, and opens nothing.
     #[cfg(feature = "software-crypto")]
     #[test]
-    fn pfs_repeated_request_under_the_same_key_leaves_the_session_standing() {
+    fn pfs_repeated_request_under_the_same_key_gets_the_same_response() {
         let mac = FakeMac::new(vec![[7u8; 32], [8u8; 32]]);
         let node = test_node(mac.clone());
         let peer = PublicKey([0x55; 32]);
+        let channel = ChannelKey([0x33; 32]);
         let options = SendOptions::default();
+        let request = |duration_minutes| OwnedMacCommand::PfsSessionRequest {
+            ephemeral_key: PublicKey([0x44; 32]),
+            duration_minutes,
+        };
+        block_on_ready(node.peer(peer)).unwrap();
+
+        block_on_ready(node.handle_pfs_command(&peer, None, &request(45), &options)).unwrap();
+        let first = node.pfs_local_keys();
+        let answered = mac.take_unicasts();
+        // Inside the rate limit's window, and asking for another lifetime.
+        let repeat =
+            block_on_ready(node.handle_pfs_command(&peer, Some(channel), &request(90), &options));
+
+        assert!(repeat.unwrap().is_none());
+        let again = mac.take_unicasts();
+        assert_eq!(again.len(), 1);
+        assert_eq!(again[0].payload, answered[0].payload);
+        assert_eq!(again[0].channel, Some(channel));
+        assert_eq!(node.pfs_local_keys(), first);
+        assert_eq!(node.state().borrow().pfs.sessions().len(), 1);
+        assert!(mac.state.borrow().removed_ephemerals.is_empty());
+        assert_eq!(node.pfs_refused_ephemeral_keys(), 0);
+        assert_eq!(node.pfs_rate_limited_requests(), 0);
+    }
+
+    /// Only a contact may open a session: a stranger, or a peer the MAC
+    /// learned without the application adding it, is refused and counted.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn pfs_request_from_a_peer_that_is_not_a_contact_is_refused() {
+        let mac = FakeMac::new(vec![[7u8; 32]]);
+        let node = test_node(mac.clone());
+        let options = SendOptions::default();
+        let stranger = PublicKey([0x55; 32]);
+        let learned = PublicKey([0x56; 32]);
+        block_on_ready(mac.ensure_transient_peer(&learned));
         let request = OwnedMacCommand::PfsSessionRequest {
             ephemeral_key: PublicKey([0x44; 32]),
             duration_minutes: 60,
         };
 
-        block_on_ready(node.handle_pfs_command(&peer, None, &request, &options)).unwrap();
+        for requester in [&stranger, &learned] {
+            let answered =
+                block_on_ready(node.handle_pfs_command(requester, None, &request, &options));
+            assert!(answered.unwrap().is_none());
+        }
+
+        assert!(mac.take_unicasts().is_empty());
+        assert!(node.state().borrow().pfs.sessions().is_empty());
+        assert_eq!(node.pfs_refused_requesters(), 2);
+        let peers: Vec<PublicKey> = mac.state.borrow().peers.iter().map(|(k, _)| *k).collect();
+        assert_eq!(peers, vec![learned]);
+    }
+
+    /// A contact opens at most one session a minute: a further request is
+    /// refused and counted, and leaves the standing session in place.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn pfs_requests_from_one_peer_are_limited_to_one_a_minute() {
+        let mac = FakeMac::new(vec![[7u8; 32], [8u8; 32], [9u8; 32]]);
+        let node = test_node(mac.clone());
+        let peer = PublicKey([0x55; 32]);
+        let other = PublicKey([0x66; 32]);
+        let options = SendOptions::default();
+        let request = |key: u8| OwnedMacCommand::PfsSessionRequest {
+            ephemeral_key: PublicKey([key; 32]),
+            duration_minutes: 60,
+        };
+        block_on_ready(node.peer(peer)).unwrap();
+        block_on_ready(node.peer(other)).unwrap();
+
+        let opened = block_on_ready(node.handle_pfs_command(&peer, None, &request(0x44), &options));
+        assert!(opened.unwrap().is_some());
         let first = node.pfs_local_keys();
         mac.take_unicasts();
-        let repeat = block_on_ready(node.handle_pfs_command(&peer, None, &request, &options));
 
-        assert!(repeat.unwrap().is_none());
+        mac.state.borrow_mut().now_ms += 59_999;
+        let early = block_on_ready(node.handle_pfs_command(&peer, None, &request(0x45), &options));
+        assert!(early.unwrap().is_none());
         assert!(mac.take_unicasts().is_empty());
         assert_eq!(node.pfs_local_keys(), first);
-        assert!(mac.state.borrow().removed_ephemerals.is_empty());
-        assert_eq!(node.pfs_refused_ephemeral_keys(), 1);
+        assert_eq!(node.pfs_rate_limited_requests(), 1);
+
+        // Another peer has its own window.
+        let theirs =
+            block_on_ready(node.handle_pfs_command(&other, None, &request(0x46), &options));
+        assert!(theirs.unwrap().is_some());
+
+        mac.state.borrow_mut().now_ms += 1;
+        let later = block_on_ready(node.handle_pfs_command(&peer, None, &request(0x47), &options));
+        assert!(later.unwrap().is_some());
+        assert_eq!(node.pfs_rate_limited_requests(), 1);
     }
 
     #[cfg(feature = "software-crypto")]
@@ -1226,6 +1316,9 @@ mod tests {
         let node = test_node(mac.clone());
         let options = SendOptions::default();
         block_on_ready(node.peer(PublicKey([0xC0; 32]))).unwrap();
+        for n in 0..20u8 {
+            block_on_ready(node.peer(PublicKey([0x80 + n; 32]))).unwrap();
+        }
         let registered = mac.state.borrow().peers.len();
 
         for n in 0..20u8 {
@@ -1335,6 +1428,7 @@ mod tests {
         let contact = PublicKey([0x42; 32]);
         let mallory = PublicKey([0x66; 32]);
         block_on_ready(node.peer(contact)).unwrap();
+        block_on_ready(node.peer(mallory)).unwrap();
 
         let request = OwnedMacCommand::PfsSessionRequest {
             ephemeral_key: contact,
@@ -1356,22 +1450,19 @@ mod tests {
         let node = test_node(mac.clone());
         let options = SendOptions::default();
         let own = PublicKey([0x11; 32]);
+        let peer = PublicKey([0x55; 32]);
         mac.set_own_key(own);
+        block_on_ready(node.peer(peer)).unwrap();
 
         let request = OwnedMacCommand::PfsSessionRequest {
             ephemeral_key: own,
             duration_minutes: 60,
         };
-        let answered = block_on_ready(node.handle_pfs_command(
-            &PublicKey([0x55; 32]),
-            None,
-            &request,
-            &options,
-        ));
+        let answered = block_on_ready(node.handle_pfs_command(&peer, None, &request, &options));
 
         assert!(answered.unwrap().is_none());
         assert!(mac.take_unicasts().is_empty());
-        assert!(mac.state.borrow().peers.is_empty());
+        assert_eq!(mac.state.borrow().peers.len(), 1);
         assert_eq!(node.pfs_refused_ephemeral_keys(), 1);
     }
 
@@ -1408,23 +1499,32 @@ mod tests {
     #[cfg(feature = "software-crypto")]
     #[test]
     fn pfs_unsent_response_leaves_nothing_behind() {
-        let mac = FakeMac::new(vec![[7u8; 32]]);
+        let mac = FakeMac::new(vec![[7u8; 32], [8u8; 32]]);
         let node = test_node(mac.clone());
         let peer = PublicKey([0x55; 32]);
         let options = SendOptions::default();
+        block_on_ready(node.peer(peer)).unwrap();
 
         mac.state.borrow_mut().refuse_sends = true;
-        let request = OwnedMacCommand::PfsSessionRequest {
-            ephemeral_key: PublicKey([0x44; 32]),
+        let request = |key: u8| OwnedMacCommand::PfsSessionRequest {
+            ephemeral_key: PublicKey([key; 32]),
             duration_minutes: 60,
         };
-        assert!(block_on_ready(node.handle_pfs_command(&peer, None, &request, &options)).is_err());
+        let failed = block_on_ready(node.handle_pfs_command(&peer, None, &request(0x44), &options));
+        assert!(failed.is_err());
 
         assert!(node.state().borrow().pfs.sessions().is_empty());
         assert_eq!(
             mac.state.borrow().removed_ephemerals,
             vec![LocalIdentityId(10)]
         );
+
+        // Nothing was answered, so the peer's retry is not held to the
+        // rate limit.
+        mac.state.borrow_mut().refuse_sends = false;
+        let retry = block_on_ready(node.handle_pfs_command(&peer, None, &request(0x45), &options));
+        assert!(retry.unwrap().is_some());
+        assert_eq!(node.pfs_rate_limited_requests(), 0);
     }
 
     #[cfg(feature = "software-crypto")]
@@ -1771,6 +1871,10 @@ mod tests {
                 state.peers.push((*key, peer_id));
             }
             true
+        }
+
+        async fn is_application_peer(&self, key: &PublicKey) -> bool {
+            self.state.borrow().contacts.contains(key)
         }
 
         async fn for_each_peer(&self, f: &mut dyn FnMut(PublicKey)) {

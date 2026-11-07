@@ -34,6 +34,16 @@ const DEFAULT_MAX_PFS_SESSIONS: usize = 4;
 #[cfg(feature = "software-crypto")]
 const PFS_REQUEST_TIMEOUT_MS: u64 = 30_000;
 
+/// How often one peer may open a session here: a further request inside
+/// this window is refused, unless it repeats the one already answered.
+#[cfg(feature = "software-crypto")]
+const PFS_REQUEST_INTERVAL_MS: u64 = 60_000;
+
+/// How many peers' latest requests are remembered for
+/// [`PFS_REQUEST_INTERVAL_MS`].
+#[cfg(feature = "software-crypto")]
+const MAX_RECENT_REQUESTERS: usize = 16;
+
 /// The longest PFS session this node agrees to, in minutes.
 ///
 /// A responder answers a longer request with this, and either side reads a
@@ -86,6 +96,9 @@ pub(crate) struct PfsSession {
     /// Deadline by which a [`Requested`](PfsState::Requested) session must
     /// receive its response, after which it is abandoned. Unused once `Active`.
     pub request_deadline_ms: u64,
+    /// The lifetime this node accepted, when it answered the peer's request:
+    /// what a repeat of that request is answered with again.
+    answered_minutes: Option<u16>,
     pending_local: Option<SoftwareIdentity>,
 }
 
@@ -100,6 +113,7 @@ impl core::fmt::Debug for PfsSession {
             .field("expires_ms", &self.expires_ms)
             .field("state", &self.state)
             .field("request_deadline_ms", &self.request_deadline_ms)
+            .field("answered_minutes", &self.answered_minutes)
             .finish()
     }
 }
@@ -120,6 +134,13 @@ pub(crate) struct PfsSessionManager {
     /// Requests and responses refused because the ephemeral key they named
     /// is already an address this node knows.
     refused_ephemeral_keys: u32,
+    /// Requests refused because the requester is not a contact.
+    refused_requesters: u32,
+    /// Requests refused for coming too soon after the same peer's last.
+    rate_limited_requests: u32,
+    /// The peers whose requests this node answered within
+    /// [`PFS_REQUEST_INTERVAL_MS`], and when, oldest first.
+    recent_requests: Vec<(PublicKey, u64)>,
 }
 
 #[cfg(feature = "software-crypto")]
@@ -137,6 +158,9 @@ impl PfsSessionManager {
             sessions: Vec::new(),
             max_sessions: DEFAULT_MAX_PFS_SESSIONS,
             refused_ephemeral_keys: 0,
+            refused_requesters: 0,
+            rate_limited_requests: 0,
+            recent_requests: Vec::new(),
         }
     }
 
@@ -153,6 +177,64 @@ impl PfsSessionManager {
 
     fn note_refused_ephemeral_key(&mut self) {
         self.refused_ephemeral_keys = self.refused_ephemeral_keys.saturating_add(1);
+    }
+
+    /// How many requests were refused for coming from a peer that is not a
+    /// contact.
+    pub(crate) fn refused_requesters(&self) -> u32 {
+        self.refused_requesters
+    }
+
+    fn note_refused_requester(&mut self) {
+        self.refused_requesters = self.refused_requesters.saturating_add(1);
+    }
+
+    /// How many requests were refused for coming too soon after the same
+    /// peer's last.
+    pub(crate) fn rate_limited_requests(&self) -> u32 {
+        self.rate_limited_requests
+    }
+
+    /// Whether `peer` may open a session at `now_ms`, counting it when it
+    /// may not: one opened in the last [`PFS_REQUEST_INTERVAL_MS`] stops it.
+    fn admit_request(&mut self, peer: &PublicKey, now_ms: u64) -> bool {
+        self.recent_requests
+            .retain(|(_, at)| now_ms.saturating_sub(*at) < PFS_REQUEST_INTERVAL_MS);
+        if self
+            .recent_requests
+            .iter()
+            .any(|(requester, _)| requester == peer)
+        {
+            self.rate_limited_requests = self.rate_limited_requests.saturating_add(1);
+            return false;
+        }
+        true
+    }
+
+    /// Start `peer`'s window: this node answered its request at `now_ms`.
+    fn note_answered(&mut self, peer: &PublicKey, now_ms: u64) {
+        if self.recent_requests.len() >= MAX_RECENT_REQUESTERS {
+            self.recent_requests.remove(0);
+        }
+        self.recent_requests.push((*peer, now_ms));
+    }
+
+    /// The response this node sent to `peer`'s request naming
+    /// `peer_ephemeral`, if that request opened a session that still stands:
+    /// its local key and accepted lifetime.
+    fn answer_to(
+        &self,
+        peer: &PublicKey,
+        peer_ephemeral: &PublicKey,
+        now_ms: u64,
+    ) -> Option<(PublicKey, u16)> {
+        let session = self.sessions.iter().find(|session| {
+            session.peer_long_term == *peer
+                && session.state == PfsState::Active
+                && session.peer_ephemeral == *peer_ephemeral
+                && session.expires_ms > now_ms
+        })?;
+        Some((session.local_ephemeral, session.answered_minutes?))
     }
 
     /// Whether the session held with `peer` is waiting for its response.
@@ -281,7 +363,7 @@ pub(crate) async fn request_session<M: MacBackend>(
     options: &SendOptions,
 ) -> Result<Option<SendReceipt>, NodeError<M>> {
     let duration_minutes = session_minutes(duration_minutes);
-    let local_public = begin_session(state, mac, peer, duration_minutes).await?;
+    let local_public = begin_session(state, mac, peer, duration_minutes, false).await?;
     let sent = send_pfs_command(
         mac,
         parent,
@@ -300,10 +382,15 @@ pub(crate) async fn request_session<M: MacBackend>(
     sent
 }
 
-/// Accept an inbound PFS request, and report whether the session stood when
-/// that was done: it does not if it was ended in the meantime, or if the
-/// request named an ephemeral key this node already knows, and then no
-/// response goes out.
+/// Accept an inbound PFS request, and report whether it opened a session
+/// that stood when that was done.
+///
+/// Only a contact may open a session, and once a minute at most. A request
+/// that repeats the one that opened the standing session, under the same
+/// ephemeral key, gets the same response again and opens nothing. No
+/// response goes out for a request refused as coming from a stranger or too
+/// soon, for one naming an ephemeral key this node already knows, or when
+/// the session was ended while it was being set up.
 ///
 /// `channel` is the carriage the request arrived on; the response follows it
 /// back.
@@ -322,15 +409,47 @@ pub(crate) async fn accept_request<M: MacBackend>(
     channel: Option<ChannelKey>,
     options: &SendOptions,
 ) -> Result<bool, NodeError<M>> {
-    // The accepted lifetime is what the response carries, so both sides hold
-    // the session to the same one.
-    let duration_minutes = session_minutes(duration_minutes);
     // Refused before anything is set up, so a session already held with
     // this peer survives a request that could not replace it.
+    if !mac.is_application_peer(&peer_long_term).await {
+        state.borrow_mut().pfs.note_refused_requester();
+        return Ok(false);
+    }
+    let now_ms = mac.now_ms().await;
+    let answer = state
+        .borrow()
+        .pfs
+        .answer_to(&peer_long_term, &peer_ephemeral, now_ms);
+    if let Some((local_public, duration_minutes)) = answer {
+        // The response was lost, or the peer asked again before it arrived.
+        send_pfs_command(
+            mac,
+            parent,
+            &peer_long_term,
+            channel,
+            &MacCommand::PfsSessionResponse {
+                ephemeral_key: local_public,
+                duration_minutes,
+            },
+            options,
+        )
+        .await?;
+        return Ok(false);
+    }
+    if !state
+        .borrow_mut()
+        .pfs
+        .admit_request(&peer_long_term, now_ms)
+    {
+        return Ok(false);
+    }
     if !admit_peer_ephemeral(state, mac, parent, &peer_long_term, &peer_ephemeral).await {
         return Ok(false);
     }
-    begin_session(state, mac, &peer_long_term, duration_minutes).await?;
+    // The accepted lifetime is what the response carries, so both sides hold
+    // the session to the same one.
+    let duration_minutes = session_minutes(duration_minutes);
+    begin_session(state, mac, &peer_long_term, duration_minutes, true).await?;
     let Some(local_public) = establish(
         state,
         mac,
@@ -359,6 +478,10 @@ pub(crate) async fn accept_request<M: MacBackend>(
         abandon(state, mac, &local_public).await;
         return Err(error);
     }
+    state
+        .borrow_mut()
+        .pfs
+        .note_answered(&peer_long_term, now_ms);
     Ok(true)
 }
 
@@ -436,12 +559,15 @@ pub(crate) async fn expire_sessions<M: MacBackend>(
 /// Put a [`Requested`](PfsState::Requested) session with `peer` in the table
 /// under a fresh key, and return that key. A session already held with them
 /// is released first, so that its slot in the MAC is free for this one's.
+/// `answering` says this node is answering the peer's request with
+/// `duration_minutes`.
 #[cfg(feature = "software-crypto")]
 async fn begin_session<M: MacBackend>(
     state: &RefCell<LocalNodeState>,
     mac: &M,
     peer: &PublicKey,
     duration_minutes: u16,
+    answering: bool,
 ) -> Result<PublicKey, NodeError<M>> {
     let mut secret = [0u8; 32];
     mac.fill_random(&mut secret).await;
@@ -457,6 +583,7 @@ async fn begin_session<M: MacBackend>(
         expires_ms: now_ms.saturating_add(u64::from(duration_minutes) * 60_000),
         state: PfsState::Requested,
         request_deadline_ms: now_ms.saturating_add(PFS_REQUEST_TIMEOUT_MS),
+        answered_minutes: answering.then_some(duration_minutes),
         pending_local: Some(local_ephemeral),
     })?;
     if let Some(displaced) = displaced {
