@@ -146,7 +146,11 @@ impl LanSocket {
 /// The address of the interface the host would send to `group` through.
 ///
 /// Connecting a UDP socket sends nothing; it only asks the routing table.
-fn routed_interface(group: SocketAddrV4) -> io::Result<Ipv4Addr> {
+/// The answer changes when the network does—a new DHCP lease, a roam to
+/// another network—and a membership joined on the old address no longer
+/// hears the group, so a long-lived participant asks again from time to
+/// time.
+pub fn routed_interface(group: SocketAddrV4) -> io::Result<Ipv4Addr> {
     let probe = StdUdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))?;
     probe.connect(group)?;
     match probe.local_addr()? {

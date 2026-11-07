@@ -14,12 +14,14 @@
 //! far side's duplicate caches have already seen.
 
 use std::collections::VecDeque;
+use std::io;
+use std::net::{Ipv4Addr, SocketAddrV4};
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context as _, Result};
-use tokio::time::Instant;
-use umsh_lan_bearer::socket::{LanConfig, LanSocket};
+use tokio::time::{Instant, MissedTickBehavior};
+use umsh_lan_bearer::socket::{LanConfig, LanSocket, routed_interface};
 use umsh_lan_bearer::{Datagram, MAX_FRAME, classify};
 use umsh_ulcp::meta::RxMeta;
 
@@ -37,41 +39,115 @@ const CROSSINGS_CAP: usize = 256;
 /// not up yet, or an interface that went away.
 const REJOIN_DELAY: Duration = Duration::from_secs(3);
 
+/// How often a membership on the routed interface asks the routing table
+/// again. A membership joined on an address the host no longer holds
+/// stays open and hears nothing, so a change of address is only ever
+/// found by looking.
+pub const RECHECK_INTERVAL: Duration = Duration::from_secs(30);
+
+/// Finds the address of the interface the host routes a group through.
+pub type Resolver = Box<dyn Fn(SocketAddrV4) -> io::Result<Ipv4Addr>>;
+
 pub struct LanRelay {
     config: LanConfig,
     /// Frames heard from the group, for whoever consumes this interface.
     inbound: Arc<TunnelQueue>,
     /// Frames to send to the group.
     outbound: Arc<TunnelQueue>,
+    resolve: Resolver,
+    recheck: Duration,
+}
+
+/// Why a session ended without an error.
+enum Ended {
+    /// The routed interface's address changed under the membership.
+    Moved { from: Ipv4Addr, to: Ipv4Addr },
+    /// The outbound queue's session was ended.
+    Cleared,
 }
 
 impl LanRelay {
     pub fn new(config: LanConfig, inbound: Arc<TunnelQueue>, outbound: Arc<TunnelQueue>) -> Self {
+        Self::with_resolver(
+            config,
+            inbound,
+            outbound,
+            Box::new(routed_interface),
+            RECHECK_INTERVAL,
+        )
+    }
+
+    /// A relay that finds the routed interface with `resolve`, asking it
+    /// again every `recheck`. Only consulted when the configuration names
+    /// no interface.
+    pub fn with_resolver(
+        config: LanConfig,
+        inbound: Arc<TunnelQueue>,
+        outbound: Arc<TunnelQueue>,
+        resolve: Resolver,
+        recheck: Duration,
+    ) -> Self {
         Self {
             config,
             inbound,
             outbound,
+            resolve,
+            recheck,
         }
     }
 
     /// Stay joined and relaying for as long as the process runs.
     pub async fn run(&self) -> ! {
+        // Kept across memberships, so a frame cannot cross again just
+        // because the membership it crossed on was replaced.
+        let mut crossings = Crossings::default();
         loop {
-            if let Err(error) = self.session().await {
-                tracing::warn!(group = %self.config.group, "lan: {error:#}");
+            match self.session(&mut crossings).await {
+                // Nothing went wrong with the frames waiting to go out;
+                // they leave through the new membership.
+                Ok(Ended::Moved { from, to }) => {
+                    tracing::info!(
+                        group = %self.config.group,
+                        %from,
+                        %to,
+                        "lan interface changed; rejoining"
+                    );
+                    continue;
+                }
+                Ok(Ended::Cleared) => {}
+                Err(error) => tracing::warn!(group = %self.config.group, "lan: {error:#}"),
             }
             self.outbound.clear();
             tokio::time::sleep(REJOIN_DELAY).await;
         }
     }
 
-    async fn session(&self) -> Result<()> {
-        let socket = LanSocket::bind(self.config)
-            .with_context(|| format!("joining {}", self.config.group))?;
-        tracing::info!(group = %self.config.group, "lan joined");
+    /// The interface to join on: the configured one, or else the one the
+    /// group is routed through now.
+    fn interface(&self) -> io::Result<Ipv4Addr> {
+        match self.config.interface {
+            Ipv4Addr::UNSPECIFIED => (self.resolve)(self.config.group),
+            interface => Ok(interface),
+        }
+    }
+
+    async fn session(&self, crossings: &mut Crossings) -> Result<Ended> {
+        let interface = self
+            .interface()
+            .with_context(|| format!("routing {}", self.config.group))?;
+        let socket = LanSocket::bind(LanConfig {
+            interface,
+            ..self.config
+        })
+        .with_context(|| format!("joining {} on {interface}", self.config.group))?;
+        tracing::info!(group = %self.config.group, %interface, "lan joined");
+
+        // A configured interface is the operator's to change.
+        let routed = self.config.interface.is_unspecified();
+        let mut recheck = tokio::time::interval_at(Instant::now() + self.recheck, self.recheck);
+        recheck.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
         let metadata = unmeasured();
-        let mut crossings = Crossings::default();
         let mut datagram = [0u8; MAX_FRAME + 1];
         let generation = self.outbound.generation();
         loop {
@@ -93,7 +169,7 @@ impl LanRelay {
                 }
                 dequeued = core::future::poll_fn(|cx| self.outbound.poll_pop(generation, cx)) => {
                     let Dequeued::Frame(frame) = dequeued else {
-                        return Ok(());
+                        return Ok(Ended::Cleared);
                     };
                     if frame.data.is_empty() || frame.data.len() > MAX_FRAME {
                         continue;
@@ -108,6 +184,19 @@ impl LanRelay {
                         tracing::debug!("lan send failed: {error}");
                     }
                 }
+                _ = recheck.tick(), if routed => match self.interface() {
+                    Ok(now) if now != interface => {
+                        return Ok(Ended::Moved { from: interface, to: now });
+                    }
+                    Ok(_) => {}
+                    // No route at all is a network that is down, not one
+                    // that moved: the membership outlasts the interface
+                    // going down and up on the same address, so it stays
+                    // until an answer says the address is different.
+                    Err(error) => {
+                        tracing::debug!(group = %self.config.group, "lan: no route: {error}");
+                    }
+                },
             }
         }
     }
