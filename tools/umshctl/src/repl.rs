@@ -490,7 +490,7 @@ mod tests {
                 .iter()
                 .map(|pair| pair.display.as_str())
                 .collect::<Vec<_>>(),
-            ["repeater"],
+            ["repeater", "replay"],
         );
     }
 
