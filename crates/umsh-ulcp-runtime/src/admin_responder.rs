@@ -270,9 +270,9 @@ pub async fn responder_loop<CS: CounterStore + 'static, M: RawMutex + 'static>(
                         if let Some(completion) = completion {
                             completion.complete(false);
                         }
-                        // Nothing goes out. The administrator retransmits,
-                        // and gets here again—which is the honest
-                        // outcome for a reply this device cannot carry.
+                        // Only a read this device cannot carry gets here.
+                        // Nothing goes out, and the read runs again on the
+                        // administrator's retransmission.
                         debug_log(format_args!("admin: reply REFUSED {error:?}"));
                         continue;
                     }

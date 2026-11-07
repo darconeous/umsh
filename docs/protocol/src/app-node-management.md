@@ -202,6 +202,14 @@ complete response of the most recent exchange. A request whose token
 matches the retained token is answered by retransmitting the retained
 response, without executing anything.
 
+Only a read can be continued, so the response to any other request is
+carried in one payload. When the response a request produces does not
+fit—a `CMD_PROP_IS` echoing a value nearly a payload long, for
+example—the device answers and retains a `CMD_PROP_IS` of
+`PROP_LAST_STATUS` reporting `STATUS_OK` in its place. The request has
+executed, once, and the administrator reads the value back if it needs
+it.
+
 A read (`CMD_PROP_GET` or `CMD_PROP_MULTI_GET`) changes nothing, so its
 response is not retained: a retransmitted read is executed again and
 answered with current values. The exception is a read whose response

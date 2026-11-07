@@ -58,8 +58,8 @@ pub fn serve(
             assert!(Envelope::parse(&out[..len]).is_ok(), "a fresh reply");
             (Some(out[..len].to_vec()), Some(repeatable))
         }
-        // A reply this device cannot carry goes out as nothing, and the
-        // administrator retransmits.
+        // Only a read this device cannot carry goes out as nothing, and the
+        // administrator retransmits. A write is answered with a status.
         Ok(None) | Err(_) => (None, Some(repeatable)),
     }
 }
