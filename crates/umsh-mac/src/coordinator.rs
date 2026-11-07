@@ -3506,7 +3506,13 @@ impl<
                 let verified =
                     verified.is_some_and(|v| v.local_id == local_id && v.peer_id == peer_id);
                 let mut acceptance = None;
-                if !verified {
+                if verified {
+                    // A released frame skips the resync it waited on, not the
+                    // window: taking it there makes a later copy a duplicate.
+                    // Behind the baseline its Frame Verified set, it is
+                    // already spent.
+                    acceptance = self.accept_unicast_replay(peer_id, header, &buf[..frame_len]);
+                } else {
                     match Self::resync_command(payload) {
                         Some((MAC_COMMAND_VERIFY_FRAME_ID, nonce)) => {
                             if self
@@ -3962,7 +3968,12 @@ impl<
                         let verified = verified
                             .is_some_and(|v| v.local_id == local_id && v.peer_id == peer_id);
                         let mut acceptance = None;
-                        if !verified {
+                        if verified {
+                            // As for unicast: a released frame is taken by the
+                            // window, so a later copy is a duplicate.
+                            acceptance =
+                                self.accept_unicast_replay(peer_id, header, &buf[..frame_len]);
+                        } else {
                             match Self::resync_command(payload) {
                                 Some((MAC_COMMAND_VERIFY_FRAME_ID, nonce)) => {
                                     if self

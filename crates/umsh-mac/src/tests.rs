@@ -4493,6 +4493,41 @@ fn frame_verified_delivers_the_held_frame_and_adopts_its_counter() {
 }
 
 #[test]
+fn a_released_frame_ahead_of_its_frame_verified_is_delivered_once() {
+    let (mut mac, _, remote, _, keys, dst_hint) = desynchronized_peer();
+    mac.radio_mut().queue_received_unicast_with_counter(
+        &remote,
+        &keys,
+        &dst_hint,
+        b"hello after reboot",
+        true,
+        7,
+    );
+    let held = last_queued_received(&mac);
+    let _ = block_on(mac.receive_one(|_, _| {})).unwrap();
+    let (nonce, _) = pop_verify_frame(&mut mac, &keys);
+
+    // A baseline below the held frame's own counter.
+    mac.radio_mut().queue_received_unicast_with_counter(
+        &remote,
+        &keys,
+        &dst_hint,
+        &frame_verified_payload(nonce),
+        true,
+        5,
+    );
+    let (delivered, _) = receive_and_collect(&mut mac);
+    assert_eq!(delivered, [b"hello after reboot".to_vec()]);
+
+    mac.radio_mut().queue_received_frame(&held);
+    let (delivered, _) = receive_and_collect(&mut mac);
+    assert!(
+        delivered.is_empty(),
+        "a copy of a released frame is a duplicate"
+    );
+}
+
+#[test]
 fn frame_verified_with_a_foreign_nonce_is_discarded_unacked() {
     let (mut mac, _, remote, _, keys, dst_hint) = desynchronized_peer();
     mac.radio_mut().queue_received_unicast_with_counter(
