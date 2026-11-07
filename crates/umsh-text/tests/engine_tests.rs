@@ -1177,6 +1177,48 @@ fn gap_triggers_bounded_repair_after_grace() {
 }
 
 #[test]
+fn gaps_past_the_repair_table_add_no_untracked_placeholders() {
+    let mut engine = engine();
+    feed(&mut engine, &direct_envelope(), None, &sequenced(0, "a"), 0);
+    drain(&mut engine);
+    let placeholders = |outputs: &[Drained]| {
+        outputs
+            .iter()
+            .filter(|output| {
+                matches!(
+                    output,
+                    Drained::Insert {
+                        presence: Presence::GapPending,
+                        ..
+                    }
+                )
+            })
+            .count()
+    };
+
+    // A gap of eight fills the repair table, each with its placeholder.
+    feed(
+        &mut engine,
+        &direct_envelope(),
+        None,
+        &sequenced(9, "j"),
+        100,
+    );
+    assert_eq!(placeholders(&drain(&mut engine)), 8);
+
+    // A second gap of eight finds no room to track a repair, so it shows no
+    // spinner that nothing would ever resolve.
+    feed(
+        &mut engine,
+        &direct_envelope(),
+        None,
+        &sequenced(18, "s"),
+        200,
+    );
+    assert_eq!(placeholders(&drain(&mut engine)), 0);
+}
+
+#[test]
 fn oversized_gap_rebaselines_without_repair() {
     let mut engine = engine();
     feed(&mut engine, &direct_envelope(), None, &sequenced(0, "a"), 0);

@@ -1238,7 +1238,10 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
             if !due {
                 continue;
             }
-            let body = self.render_to_arena(index, false);
+            // Not yet notified, so the next tick tries again.
+            let Some(body) = self.try_render_to_arena(index, false) else {
+                break;
+            };
             let slot = self.pool.slots[index].as_mut().expect("occupied");
             slot.notified = true;
             let status = CompletionStatus::Partial {
@@ -1369,8 +1372,14 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                     if can_repair {
                         let group =
                             matches!(envelope.conversation, ConversationKey::ChannelGroup { .. });
-                        let base_deadline = now_ms + self.config.reorder_grace_ms;
+                        let base_deadline = now_ms.saturating_add(self.config.reorder_grace_ms);
                         for step in 1..=gap {
+                            // A placeholder is only shown for a gap the
+                            // engine will go on to repair or retire; one
+                            // with no repair entry would spin forever.
+                            if self.inbound.get(&key).expect("present").pending.is_full() {
+                                break;
+                            }
                             let missing = baseline.wrapping_add(step);
                             let jitter = if group {
                                 self.jitter.jitter_ms(self.config.group_jitter_ms)
@@ -1585,9 +1594,12 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                     original,
                 }
             } else {
-                let body_ref = self
-                    .arena_store_lossy(content.body)
-                    .unwrap_or(BodyRef { offset: 0, len: 0 });
+                // An edit that does not fit the arena is dropped, reported by
+                // `arena_store`'s diagnostic, rather than replacing the
+                // original with an empty body.
+                let Some(body_ref) = self.arena_store_lossy(content.body) else {
+                    return;
+                };
                 MutationKind::Edit {
                     conversation: key.conversation,
                     sender: envelope.sender,
@@ -2230,8 +2242,11 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                     } else if self.pool.slots[slot_index]
                         .as_ref()
                         .is_some_and(|slot| slot.announced)
+                        && let Some(body) = self.try_render_to_arena(slot_index, false)
                     {
-                        let body = self.render_to_arena(slot_index, false);
+                        // Out of room, the progress update is skipped: the
+                        // partial body already shown stays, and the next
+                        // update or the final render carries what changed.
                         let slot = self.pool.slots[slot_index].as_ref().expect("occupied");
                         let status = CompletionStatus::Partial {
                             present: slot.present,
@@ -2274,6 +2289,11 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                 .as_ref()
                 .is_some_and(|slot| now_ms >= slot.deadline_ms);
             if expired {
+                // Several slots can expire on one tick; each final render
+                // needs arena room, and the rest wait for the next tick.
+                if !self.arena_has_room_for_a_render() {
+                    break;
+                }
                 self.finalize_slot(index, now_ms, RepairOutcome::Expired, true);
             }
         }
@@ -3251,7 +3271,12 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
 
     fn arena_store(&mut self, text: &str) -> Option<BodyRef> {
         let bytes = text.as_bytes();
-        if self.arena_used + bytes.len() > ARENA_SIZE || bytes.len() > u16::MAX as usize {
+        if bytes.len() > u16::MAX as usize
+            || self
+                .arena_used
+                .checked_add(bytes.len())
+                .is_none_or(|end| end > ARENA_SIZE)
+        {
             self.push_output(Output::Diagnostic(Diagnostic::OutputOverflow));
             return None;
         }
@@ -3268,11 +3293,17 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
     /// sender that fumbled its encoding still said something.
     fn arena_store_lossy(&mut self, bytes: &[u8]) -> Option<BodyRef> {
         let offset = self.arena_used;
-        for chunk in bytes.utf8_chunks() {
+        let stored = bytes.utf8_chunks().try_for_each(|chunk| {
             self.arena_store(chunk.valid())?;
             if !chunk.invalid().is_empty() {
                 self.arena_store("\u{FFFD}")?;
             }
+            Some(())
+        });
+        if stored.is_none() {
+            // Give back what the part that did fit took.
+            self.arena_used = offset;
+            return None;
         }
         Some(BodyRef {
             offset: offset as u16,
@@ -3280,8 +3311,18 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
         })
     }
 
-    /// Render a slot into the arena, returning the body reference.
-    fn render_to_arena(&mut self, slot_index: usize, final_render: bool) -> BodyRef {
+    /// Whether the arena can take the largest body a slot renders to.
+    ///
+    /// Work that renders a slot waits for the next tick, when the arena
+    /// starts empty again, rather than render into too little room and
+    /// replace a body already shown with an empty one.
+    fn arena_has_room_for_a_render(&self) -> bool {
+        ARENA_SIZE - self.arena_used >= REASSEMBLED_BODY_MAX + 64
+    }
+
+    /// Render a slot into the arena, returning the body reference, or `None`
+    /// when the arena is out of room.
+    fn try_render_to_arena(&mut self, slot_index: usize, final_render: bool) -> Option<BodyRef> {
         let mut scratch = [0u8; REASSEMBLED_BODY_MAX + 64];
         let result = fragment::render_slot(
             &self.pool,
@@ -3303,6 +3344,12 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
         }
         let text = core::str::from_utf8(&scratch[..result.len]).unwrap_or("");
         self.arena_store(text)
+    }
+
+    /// Render a slot into the arena for a final mutation that must be
+    /// emitted regardless; out of room, the body is empty.
+    fn render_to_arena(&mut self, slot_index: usize, final_render: bool) -> BodyRef {
+        self.try_render_to_arena(slot_index, final_render)
             .unwrap_or(BodyRef { offset: 0, len: 0 })
     }
 }
