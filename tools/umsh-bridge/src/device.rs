@@ -42,6 +42,19 @@ use crate::udp_radio::UdpFakeRadio;
 /// radio that is simply gone should not spin the CPU about it.
 const REOPEN_DELAY: Duration = Duration::from_secs(3);
 
+/// How long opening the device, preparing it, or one transmit hand-off
+/// may take. A device that stops answering mid-exchange would otherwise
+/// hold the relay forever; past this the session counts as failed and
+/// [`DeviceRelay::run`] reopens it.
+const DEVICE_OP_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Bound one device operation by [`DEVICE_OP_TIMEOUT`].
+async fn bounded<T>(what: &str, op: impl Future<Output = Result<T>>) -> Result<T> {
+    tokio::time::timeout(DEVICE_OP_TIMEOUT, op)
+        .await
+        .map_err(|_| anyhow!("{what}: no answer within {DEVICE_OP_TIMEOUT:?}"))?
+}
+
 /// How many times a frame is offered to a device whose node has no room
 /// for it.
 const MAX_HANDOFF_ATTEMPTS: u8 = 5;
@@ -406,8 +419,8 @@ impl DeviceRelay {
     }
 
     async fn session(&self) -> Result<()> {
-        let mut device = Device::open(&self.config).await?;
-        device.prepare().await?;
+        let mut device = bounded("opening the device", Device::open(&self.config)).await?;
+        bounded("preparing the device", device.prepare()).await?;
         let max_frame_size = device.max_frame_size();
         tracing::info!(
             radio = %self.config.describe(),
@@ -475,7 +488,10 @@ impl DeviceRelay {
     /// failure of this hand-off.
     async fn transmit(&self, device: &mut Device, frame: &TunnelFrame) -> Result<()> {
         for attempt in 1..=MAX_HANDOFF_ATTEMPTS {
-            match device.transmit(frame).await {
+            let sent = tokio::time::timeout(DEVICE_OP_TIMEOUT, device.transmit(frame))
+                .await
+                .map_err(|_| anyhow!("transmitting: no answer within {DEVICE_OP_TIMEOUT:?}"))?;
+            match sent {
                 Ok(()) => {
                     tracing::trace!(len = frame.data.len(), attempt, "device tx");
                     return Ok(());

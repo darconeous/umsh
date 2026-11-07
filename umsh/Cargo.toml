@@ -39,7 +39,7 @@ umsh-uri = { path = "../crates/umsh-uri", default-features = false }
 embassy-executor = { version = "0.10", optional = true, features = ["platform-std", "executor-thread"] }
 embassy-time = { version = "0.5", optional = true, features = ["std"] }
 rand = { workspace = true, optional = true, features = ["std", "thread_rng", "sys_rng"] }
-tokio = { version = "1", optional = true, features = ["io-std", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio = { version = "1", optional = true, features = ["fs", "io-std", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-serial = { version = "5", optional = true }
 btleplug = { version = "0.11", optional = true }
 futures-util = { version = "0.3", optional = true }

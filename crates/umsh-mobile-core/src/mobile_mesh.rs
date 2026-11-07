@@ -15,7 +15,7 @@ use std::{
     fmt,
     rc::Rc,
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, PoisonError,
         atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
         mpsc as std_mpsc,
     },
@@ -1089,15 +1089,19 @@ struct BridgeTransmitCompletions {
     /// it processes the queued command and cancels the affected tickets.
     poisoned: AtomicBool,
     pending: Mutex<BTreeMap<u64, oneshot::Sender<bool>>>,
+    /// How long a transmit waits for its completion before failing it;
+    /// [`TRANSMIT_COMPLETION_TIMEOUT`] outside tests.
+    timeout: Option<Duration>,
 }
 
 impl BridgeTransmitCompletions {
-    fn new() -> Self {
+    fn new(timeout: Option<Duration>) -> Self {
         Self {
             next_id: AtomicU64::new(1),
             failure_generation: AtomicU64::new(0),
             poisoned: AtomicBool::new(false),
             pending: Mutex::new(BTreeMap::new()),
+            timeout,
         }
     }
 
@@ -1153,10 +1157,20 @@ impl BridgeTransmitCompletions {
     }
 }
 
+/// How long a transmit waits for the platform to report the frame's
+/// radio result. The platform's own ULCP exchange gives up well before
+/// this; past it, the report is not coming—a lost completion, a stalled
+/// bridge—and holding the wait would wedge the MAC behind one frame.
+const TRANSMIT_COMPLETION_TIMEOUT: Duration = Duration::from_secs(35);
+
 struct BridgeRadio {
     inbound: mpsc::UnboundedReceiver<InboundFrame>,
     outbound: NotifyingSender<MobileMeshOutboundFrameRecord>,
     completions: Arc<BridgeTransmitCompletions>,
+    /// The worker's own command queue, for failing the outbound batch
+    /// when a completion never arrives. Weak, so the worker holding it
+    /// does not keep its own queue open after the session is dropped.
+    commands: mpsc::WeakUnboundedSender<WorkerCommand>,
     /// The longest frame's airtime at the radio's settings, in ms, once
     /// the platform reports it; 0 until then.
     frame_ms: Arc<AtomicU32>,
@@ -1209,15 +1223,32 @@ impl Radio for BridgeRadio {
         // the device queue. This is an async wait, not a thread block, so
         // the worker keeps servicing commands and timers while the frame is
         // in flight; the MAC itself stays serialized behind its own borrow.
-        match completion_rx.await {
-            Ok(true) => Ok(()),
+        let completion = match self.completions.timeout {
+            Some(limit) => tokio::time::timeout(limit, completion_rx).await,
+            None => Ok(completion_rx.await),
+        };
+        match completion {
+            Ok(Ok(true)) => Ok(()),
             // The public completion API poisons the bridge and queues
             // FailOutboundTransmissions before releasing this wait. Return
             // success here solely to keep an ordinary rejected frame from
             // terminating the long-lived MAC driver; the queued command
             // cancels its ACK ticket immediately.
-            Ok(false) => Ok(()),
-            Err(_) => Err(TxError::Io(BridgeRadioError::Closed)),
+            Ok(Ok(false)) => Ok(()),
+            Ok(Err(_)) => Err(TxError::Io(BridgeRadioError::Closed)),
+            // No report: treat it exactly as a rejected frame, the way
+            // complete_outbound_frame does—poison first, so the frames
+            // queued behind this one are suppressed rather than dispatched,
+            // then queue the cancellation and retire the ticket. A report
+            // that arrives later finds no ticket and is ignored.
+            Err(_elapsed) => {
+                self.completions.poison();
+                if let Some(commands) = self.commands.upgrade() {
+                    let _ = commands.send(WorkerCommand::FailOutboundTransmissions);
+                }
+                let _ = self.completions.complete(id, false);
+                Ok(())
+            }
         }
     }
 
@@ -1272,11 +1303,13 @@ impl CounterStore for SharedCounterStore {
     }
 
     async fn store(&self, context: &[u8], value: u32) -> Result<(), Self::Error> {
-        self.0.commit_boundary(context.to_vec(), value)
+        self.0
+            .commit_boundary_blocking(context.to_vec(), value)
+            .await
     }
 
     async fn flush(&self) -> Result<(), Self::Error> {
-        CounterStore::flush(self.0.as_ref()).await
+        self.0.flush_blocking().await
     }
 }
 
@@ -1444,7 +1477,13 @@ impl MobileMeshSession {
         identity: Arc<MobileIdentity>,
         counter_store: Arc<MobileCounterStore>,
     ) -> Result<Arc<Self>, MobileMeshError> {
-        Self::build(identity, counter_store, false).await
+        Self::build(
+            identity,
+            counter_store,
+            false,
+            Some(TRANSMIT_COMPLETION_TIMEOUT),
+        )
+        .await
     }
 
     /// Send one traced Echo Request to `peer`. Without a `path` it pings
@@ -2640,38 +2679,50 @@ impl MobileMeshSession {
         // Re-arm before draining: anything enqueued mid-drain triggers a
         // fresh notification rather than being silently swallowed.
         self.wake.drained();
-        let mut outbound_frames = Vec::new();
-        if let Ok(receiver) = self.outbound.lock() {
-            outbound_frames.extend(receiver.try_iter());
-        }
-        let mut ping_events = Vec::new();
-        if let Ok(receiver) = self.events.lock() {
-            ping_events.extend(receiver.try_iter());
-        }
-        let mut management_events = Vec::new();
-        if let Ok(receiver) = self.management.lock() {
-            management_events.extend(receiver.try_iter());
-        }
-        let mut advertisement_events = Vec::new();
-        if let Ok(receiver) = self.advertisements.lock() {
-            advertisement_events.extend(receiver.try_iter());
-        }
-        let mut peer_heard_events = Vec::new();
-        if let Ok(receiver) = self.peer_heard.lock() {
-            peer_heard_events.extend(receiver.try_iter());
-        }
+        let outbound_frames: Vec<_> = self
+            .outbound
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .try_iter()
+            .collect();
+        let ping_events: Vec<_> = self
+            .events
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .try_iter()
+            .collect();
+        let management_events: Vec<_> = self
+            .management
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .try_iter()
+            .collect();
+        let advertisement_events: Vec<_> = self
+            .advertisements
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .try_iter()
+            .collect();
+        let peer_heard_events: Vec<_> = self
+            .peer_heard
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .try_iter()
+            .collect();
         // Each report is the whole set, so only the latest matters.
         let local_destination_hints = self
             .local_hints
             .lock()
-            .ok()
-            .and_then(|receiver| receiver.try_iter().last());
+            .unwrap_or_else(PoisonError::into_inner)
+            .try_iter()
+            .last();
         // Each state is whole, so only the latest matters.
         let meet = self
             .meet_states
             .lock()
-            .ok()
-            .and_then(|receiver| receiver.try_iter().last());
+            .unwrap_or_else(PoisonError::into_inner)
+            .try_iter()
+            .last();
         let mut chat_mutations = Vec::new();
         let mut chat_deliveries = Vec::new();
         let mut chat_repeats = Vec::new();
@@ -2679,14 +2730,23 @@ impl MobileMeshSession {
         let mut chat_sender_resolutions = Vec::new();
         let mut chat_diagnostics = Vec::new();
         let mut chat_batch_id = None;
-        if let Ok(mut pending) = self.pending_chat_events.lock() {
-            if pending.is_none()
-                && let Ok(receiver) = self.chat_events.lock()
-            {
-                let events = receiver.try_iter().collect::<Vec<_>>();
-                if !events.is_empty()
-                    && let Ok(mut next) = self.next_chat_batch_id.lock()
-                {
+        {
+            let mut pending = self
+                .pending_chat_events
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if pending.is_none() {
+                let events = self
+                    .chat_events
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .try_iter()
+                    .collect::<Vec<_>>();
+                if !events.is_empty() {
+                    let mut next = self
+                        .next_chat_batch_id
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner);
                     let id = *next;
                     *next = next.wrapping_add(1).max(1);
                     *pending = Some(PendingChatEventBatch { id, events });
@@ -2796,18 +2856,35 @@ impl MobileMeshSession {
     /// otherwise idle, so multi-second protocol deadlines—MAC ACK
     /// timeouts, ping timeouts, repair timers—resolve in wall-clock
     /// milliseconds without changing any production code path.
+    ///
+    /// The one exception is the transmit completion timeout, which is off:
+    /// the platform completing a frame is the test thread, running in real
+    /// time, and an idle worker would fast-forward past any virtual
+    /// deadline before it got there.
     #[cfg(test)]
     async fn new_with_virtual_time(
         identity: Arc<MobileIdentity>,
         counter_store: Arc<MobileCounterStore>,
     ) -> Result<Arc<Self>, MobileMeshError> {
-        Self::build(identity, counter_store, true).await
+        Self::build(identity, counter_store, true, None).await
+    }
+
+    /// [`new_with_virtual_time`](Self::new_with_virtual_time), with a
+    /// transmit completion timeout, for testing that timeout.
+    #[cfg(test)]
+    async fn new_with_virtual_time_and_completion_timeout(
+        identity: Arc<MobileIdentity>,
+        counter_store: Arc<MobileCounterStore>,
+        completion_timeout: Duration,
+    ) -> Result<Arc<Self>, MobileMeshError> {
+        Self::build(identity, counter_store, true, Some(completion_timeout)).await
     }
 
     async fn build(
         identity: Arc<MobileIdentity>,
         counter_store: Arc<MobileCounterStore>,
         virtual_time: bool,
+        completion_timeout: Option<Duration>,
     ) -> Result<Arc<Self>, MobileMeshError> {
         let (commands, command_rx) = mpsc::unbounded_channel();
         let wake = Arc::new(WakeSignal::new());
@@ -2856,8 +2933,9 @@ impl MobileMeshSession {
         let (ready_tx, ready_rx) = oneshot::channel();
         let worker_identity = identity.take_for_session()?;
         let local_key = *worker_identity.public_key();
-        let transmit_completions = Arc::new(BridgeTransmitCompletions::new());
+        let transmit_completions = Arc::new(BridgeTransmitCompletions::new(completion_timeout));
         let worker_transmit_completions = transmit_completions.clone();
+        let worker_commands = commands.downgrade();
 
         std::thread::Builder::new()
             .name("umsh-mobile-mesh".to_owned())
@@ -2892,6 +2970,7 @@ impl MobileMeshSession {
                         worker_identity,
                         SharedCounterStore(counter_store),
                         command_rx,
+                        worker_commands,
                         outbound_tx,
                         worker_transmit_completions,
                         event_tx,
@@ -3579,6 +3658,7 @@ async fn run_worker(
     identity: SoftwareIdentity,
     counter_store: SharedCounterStore,
     mut commands: mpsc::UnboundedReceiver<WorkerCommand>,
+    own_commands: mpsc::WeakUnboundedSender<WorkerCommand>,
     outbound: NotifyingSender<MobileMeshOutboundFrameRecord>,
     transmit_completions: Arc<BridgeTransmitCompletions>,
     events: NotifyingSender<MobileMeshPingEventRecord>,
@@ -3601,6 +3681,7 @@ async fn run_worker(
         inbound: inbound_rx,
         outbound,
         completions: transmit_completions,
+        commands: own_commands,
         frame_ms: frame_ms.clone(),
     };
     let mac = MobileMac::new(
@@ -3858,6 +3939,22 @@ async fn run_worker(
         }
     };
 
+    // Persist the frame counters an authenticated send advanced. A failed
+    // write is reported and survived rather than ending the worker: it may
+    // be a passing storage error, and the MAC already refuses secure sends
+    // once the last persisted reservation is used up.
+    let persist_counters = || async {
+        match handle.service_counter_persistence().await {
+            Ok(_) => true,
+            Err(error) => {
+                let _ = chat_events.send(MobileChatWorkerEvent::Diagnostic(format!(
+                    "frame counter persistence failed: {error}"
+                )));
+                false
+            }
+        }
+    };
+
     let pump_loop = async {
         loop {
             if host.pump_once().await.is_err() {
@@ -3980,9 +4077,11 @@ async fn run_worker(
                                 // This write is caused by a real authenticated send. It is
                                 // deliberately not performed during startup. Do not move it
                                 // into session construction: reboot loops must remain read-only.
-                                if handle.service_counter_persistence().await.is_err() {
+                                if !persist_counters().await {
+                                    // Reported as failed, so a late reply must
+                                    // not report it again as answered.
+                                    pending.borrow_mut().remove(&peer.0);
                                     emit_ping_failure(&events, operation_id);
-                                    return;
                                 }
                             }
                             if result.is_err() {
@@ -4002,9 +4101,7 @@ async fn run_worker(
                                 &management_events,
                             )
                             .await;
-                            if handle.service_counter_persistence().await.is_err() {
-                                return;
-                            }
+                            persist_counters().await;
                         }
                         Some(WorkerCommand::CancelManagement { operation_id }) => {
                             let Some(peer) =
@@ -4027,9 +4124,7 @@ async fn run_worker(
                                 )
                                 .await;
                             }
-                            if handle.service_counter_persistence().await.is_err() {
-                                return;
-                            }
+                            persist_counters().await;
                         }
                         Some(WorkerCommand::Advertise { name, timestamp, scheduled, response }) => {
                             // Signed, so a listener can trust what it says
@@ -4069,12 +4164,11 @@ async fn run_worker(
                                 },
                                 Err(_) => Err(MobileMeshError::SendFailed),
                             };
-                            if result.is_ok()
-                                && handle.service_counter_persistence().await.is_err()
-                            {
-                                let _ = response.send(Err(MobileMeshError::SendFailed));
-                                return;
-                            }
+                            let result = if result.is_ok() && !persist_counters().await {
+                                Err(MobileMeshError::SendFailed)
+                            } else {
+                                result
+                            };
                             let _ = response.send(result);
                         }
                         Some(WorkerCommand::Beacon { response }) => {
@@ -4092,12 +4186,11 @@ async fn run_worker(
                                 .await
                                 .map(|_| ())
                                 .map_err(|_| MobileMeshError::SendFailed);
-                            if result.is_ok()
-                                && handle.service_counter_persistence().await.is_err()
-                            {
-                                let _ = response.send(Err(MobileMeshError::SendFailed));
-                                return;
-                            }
+                            let result = if result.is_ok() && !persist_counters().await {
+                                Err(MobileMeshError::SendFailed)
+                            } else {
+                                result
+                            };
                             let _ = response.send(result);
                         }
                         Some(WorkerCommand::SignIdentityBundle { name, timestamp, response }) => {
@@ -4132,12 +4225,11 @@ async fn run_worker(
                             // A real authenticated send advances the frame counter;
                             // persist it before acknowledging, as the ping/advertise
                             // paths do.
-                            if result.is_ok()
-                                && handle.service_counter_persistence().await.is_err()
-                            {
-                                let _ = response.send(Err(MobileMeshError::SendFailed));
-                                return;
-                            }
+                            let result = if result.is_ok() && !persist_counters().await {
+                                Err(MobileMeshError::SendFailed)
+                            } else {
+                                result
+                            };
                             let _ = response.send(result);
                         }
                         Some(WorkerCommand::RequestIdentityByHint {
@@ -4172,12 +4264,11 @@ async fn run_worker(
                                 }
                                 None => Err(MobileMeshError::UnknownConversation),
                             };
-                            if result.is_ok()
-                                && handle.service_counter_persistence().await.is_err()
-                            {
-                                let _ = response.send(Err(MobileMeshError::SendFailed));
-                                return;
-                            }
+                            let result = if result.is_ok() && !persist_counters().await {
+                                Err(MobileMeshError::SendFailed)
+                            } else {
+                                result
+                            };
                             let _ = response.send(result);
                         }
                         Some(WorkerCommand::PeerRepeatersPage { peer, cursor, source_route, response }) => {
@@ -4236,11 +4327,10 @@ async fn run_worker(
                             );
                             // A real authenticated send advances the frame
                             // counter; persist it as the ping path does.
-                            if handle.service_counter_persistence().await.is_err() {
-                                if let Some(page) = peer_repeater_pages.borrow_mut().remove(&nonce) {
-                                    let _ = page.response.send(Err(MobileMeshError::SendFailed));
-                                }
-                                return;
+                            if !persist_counters().await
+                                && let Some(page) = peer_repeater_pages.borrow_mut().remove(&nonce)
+                            {
+                                let _ = page.response.send(Err(MobileMeshError::SendFailed));
                             }
                         }
                         Some(WorkerCommand::SetChatDisplayName { name, response }) => {
@@ -4302,12 +4392,11 @@ async fn run_worker(
                                     .map_err(|_| MobileMeshError::SendFailed)
                             }
                             .await;
-                            if result.is_ok()
-                                && handle.service_counter_persistence().await.is_err()
-                            {
-                                let _ = response.send(Err(MobileMeshError::SendFailed));
-                                return;
-                            }
+                            let result = if result.is_ok() && !persist_counters().await {
+                                Err(MobileMeshError::SendFailed)
+                            } else {
+                                result
+                            };
                             let _ = response.send(result);
                         }
                         Some(WorkerCommand::PeerRoute { peer, response }) => {
@@ -4451,9 +4540,7 @@ async fn run_worker(
                                         now_ms,
                                     )
                                     .await;
-                                    if sent > 0
-                                        && handle.service_counter_persistence().await.is_err()
-                                    {
+                                    if sent > 0 && !persist_counters().await {
                                         Err(MobileMeshError::CounterPersistenceFailed)
                                     } else {
                                         Ok(())
@@ -4461,11 +4548,7 @@ async fn run_worker(
                                 }
                                 None => Err(MobileMeshError::ChatBatchMissing),
                             };
-                            let fatal = result == Err(MobileMeshError::CounterPersistenceFailed);
                             let _ = response.send(result);
-                            if fatal {
-                                return;
-                            }
                         }
                         Some(WorkerCommand::RejectChatBatch {
                             batch_id,
@@ -4521,8 +4604,8 @@ async fn run_worker(
                                 now_ms,
                             )
                             .await;
-                            if sent > 0 && handle.service_counter_persistence().await.is_err() {
-                                return;
+                            if sent > 0 {
+                                persist_counters().await;
                             }
                         }
                         Some(WorkerCommand::FailOutboundTransmissions) => {
@@ -4671,8 +4754,8 @@ async fn run_worker(
                             received_at_ms,
                         )
                         .await;
-                        if sent > 0 && handle.service_counter_persistence().await.is_err() {
-                            return;
+                        if sent > 0 {
+                            persist_counters().await;
                         }
                     }
                 }
@@ -4704,9 +4787,7 @@ async fn run_worker(
                                 .await;
                             }
                         }
-                        if handle.service_counter_persistence().await.is_err() {
-                            return;
-                        }
+                        persist_counters().await;
                     }
                     chat.facade.tick(now_ms);
                     for stall in chat_queue.service(&mut chat.facade, now_ms) {
@@ -4730,16 +4811,15 @@ async fn run_worker(
                         now_ms,
                     )
                     .await;
-                    if sent > 0 && handle.service_counter_persistence().await.is_err() {
-                        return;
+                    if sent > 0 {
+                        persist_counters().await;
                     }
                 }
             }
         }
     };
 
-    // Either loop ending (pump error, shutdown command, fatal persistence
-    // failure) ends the session.
+    // Either loop ending (pump error, shutdown command) ends the session.
     tokio::select! {
         _ = pump_loop => {}
         _ = command_loop => {}
@@ -7175,6 +7255,67 @@ mod tests {
                 (second, MobileMeshPingOutcome::TimedOut),
             ]
         );
+    }
+
+    /// A frame the platform never reports on fails at the completion
+    /// timeout instead of holding the MAC: the operation that sent it ends,
+    /// its ticket is retired, and the next send reaches the platform.
+    #[tokio::test]
+    async fn a_transmit_the_platform_never_completes_fails_instead_of_wedging() {
+        let directory = tempfile::tempdir().unwrap();
+        let local_identity = identity(65);
+        let silent_peer = identity(66);
+        let store =
+            MobileCounterStore::new(directory.path().join("stuck").display().to_string()).unwrap();
+        let session = MobileMeshSession::new_with_virtual_time_and_completion_timeout(
+            local_identity,
+            store,
+            Duration::from_secs(35),
+        )
+        .await
+        .unwrap();
+        let first = session.ping(address(&silent_peer), 30_000, None).unwrap();
+
+        // Never completed: the platform has lost this frame.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut stuck = None;
+        loop {
+            let update = session.poll_update();
+            if stuck.is_none() {
+                stuck = update.outbound_frames.first().map(|frame| frame.id);
+            }
+            if update
+                .ping_events
+                .iter()
+                .any(|event| event.operation_id == first)
+            {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "an uncompleted transmit wedged the session"
+            );
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let stuck = stuck.expect("the ping's frame reached the platform");
+        assert!(
+            session.complete_outbound_frame(stuck, true).is_err(),
+            "a report after the timeout finds no ticket"
+        );
+
+        // Arriving is the point; completing it would race this frame's own
+        // virtual-time deadline from this real-time thread.
+        session.ping(address(&silent_peer), 30_000, None).unwrap();
+        loop {
+            if !session.poll_update().outbound_frames.is_empty() {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "nothing reached the platform after the timeout"
+            );
+            std::thread::sleep(Duration::from_millis(2));
+        }
     }
 
     /// The virtual-time seam: with the worker runtime's clock paused, a

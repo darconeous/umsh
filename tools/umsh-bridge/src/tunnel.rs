@@ -226,18 +226,34 @@ impl TunnelQueue {
 /// after the `clear` that opened it, so clearing the queue again is what
 /// ends this pump—and a pump that is spawned but not yet polled cannot
 /// adopt a successor's session in the meantime.
+///
+/// A write that makes no progress for `write_timeout` ends the pump with
+/// [`std::io::ErrorKind::TimedOut`]: a peer that has stopped reading
+/// would otherwise hold the writer, and the session with it, forever.
 pub async fn pump_writer<W: AsyncWrite + Unpin>(
     writer: &mut TunnelWriter<W>,
     queue: &TunnelQueue,
     generation: u64,
+    write_timeout: Duration,
 ) -> std::io::Result<()> {
     let interval = writer.keepalive_interval();
     loop {
         let next = core::future::poll_fn(|cx| queue.poll_pop(generation, cx));
-        match tokio::time::timeout(interval, next).await {
-            Err(_elapsed) => writer.write_keepalive().await?,
+        let written = match tokio::time::timeout(interval, next).await {
+            Err(_elapsed) => tokio::time::timeout(write_timeout, writer.write_keepalive()).await,
             Ok(Dequeued::SessionEnded) => return Ok(()),
-            Ok(Dequeued::Frame(frame)) => writer.write_frame(&frame).await?,
+            Ok(Dequeued::Frame(frame)) => {
+                tokio::time::timeout(write_timeout, writer.write_frame(&frame)).await
+            }
+        };
+        match written {
+            Ok(result) => result?,
+            Err(_elapsed) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "tunnel write stalled: the peer stopped reading",
+                ));
+            }
         }
     }
 }
@@ -566,7 +582,7 @@ mod tests {
             let generation = queue.generation();
             tokio::spawn(async move {
                 let mut writer = TunnelWriter::new(client, Duration::from_secs(10));
-                pump_writer(&mut writer, &queue, generation).await
+                pump_writer(&mut writer, &queue, generation, Duration::from_secs(30)).await
             })
         };
 
@@ -577,6 +593,28 @@ mod tests {
 
         queue.clear();
         pump.await.unwrap().unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_peer_that_stops_reading_ends_the_pump() {
+        // A one-byte pipe the peer never drains: the first keepalive
+        // fills it and the next write can make no progress.
+        let (client, held) = tokio::io::duplex(1);
+        let queue = TunnelQueue::new(8, Duration::from_secs(10));
+        let mut writer = TunnelWriter::new(client, Duration::from_secs(10));
+        let generation = queue.generation();
+
+        let started = Instant::now();
+        let error = pump_writer(&mut writer, &queue, generation, Duration::from_secs(30))
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        assert!(
+            started.elapsed() >= Duration::from_secs(40),
+            "{:?}",
+            started.elapsed()
+        );
+        drop(held);
     }
 
     #[tokio::test(start_paused = true)]

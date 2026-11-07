@@ -13,6 +13,7 @@ use std::collections::VecDeque;
 use std::io;
 use std::net::Ipv4Addr;
 use std::task::{Context, Poll};
+use std::time::{Duration, Instant};
 
 use umsh_hal::{BearerId, Radio, RxInfo, RxOrigin, Snr, TxError, TxOptions};
 
@@ -47,12 +48,19 @@ pub struct UdpMulticastRadio {
     mode: RxMode,
     t_frame_ms: u32,
     recv_buf: [u8; MAX_FRAME + 1],
-    /// Frames this radio sent whose echoes have not yet come back.
-    unheard: VecDeque<Vec<u8>>,
+    /// Frames this radio sent whose echoes have not yet come back, with
+    /// when each was sent, oldest first.
+    unheard: VecDeque<(Instant, Vec<u8>)>,
 }
 
 /// How many sent frames are remembered for their echoes.
 const UNHEARD_CAP: usize = 16;
+
+/// How long a sent frame waits for its echo. Loopback returns one at
+/// once; past this the echo is not coming—multicast loopback was off, or
+/// the datagram was lost—and a later identical frame from someone else
+/// is a real reception that must not be mistaken for it.
+const UNHEARD_TTL: Duration = Duration::from_secs(5);
 
 impl UdpMulticastRadio {
     /// The frame time a simulated channel reports: LoRa-like, so retry
@@ -88,6 +96,17 @@ impl UdpMulticastRadio {
     pub fn socket(&self) -> &LanSocket {
         &self.socket
     }
+
+    /// Drop sent frames whose echo has had [`UNHEARD_TTL`] to arrive.
+    fn forget_unheard_before(&mut self, now: Instant) {
+        while self
+            .unheard
+            .front()
+            .is_some_and(|(sent, _)| now.duration_since(*sent) >= UNHEARD_TTL)
+        {
+            self.unheard.pop_front();
+        }
+    }
 }
 
 impl Radio for UdpMulticastRadio {
@@ -107,10 +126,12 @@ impl Radio for UdpMulticastRadio {
             .send(data)
             .await
             .map_err(|error| TxError::Io(UdpMulticastRadioError::Io(error)))?;
+        let now = Instant::now();
+        self.forget_unheard_before(now);
         if self.unheard.len() == UNHEARD_CAP {
             self.unheard.pop_front();
         }
-        self.unheard.push_back(data.to_vec());
+        self.unheard.push_back((now, data.to_vec()));
         Ok(())
     }
 
@@ -134,8 +155,9 @@ impl Radio for UdpMulticastRadio {
             }
             // A radio does not hear itself. Every participant shares the
             // group's port, so its echo is known by content, not source.
+            self.forget_unheard_before(Instant::now());
             let frame = &self.recv_buf[..len];
-            if let Some(index) = self.unheard.iter().position(|sent| sent == frame) {
+            if let Some(index) = self.unheard.iter().position(|(_, sent)| sent == frame) {
                 self.unheard.remove(index);
                 continue;
             }
@@ -161,5 +183,25 @@ impl Radio for UdpMulticastRadio {
 
     fn t_frame_ms(&self) -> u32 {
         self.t_frame_ms
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn an_echo_that_never_came_is_forgotten() {
+        let mut radio = UdpMulticastRadio::bind_v4(Ipv4Addr::new(239, 255, 42, 97), 47_197)
+            .await
+            .unwrap();
+        let now = Instant::now();
+        let long_ago = now.checked_sub(UNHEARD_TTL).unwrap();
+        radio.unheard.push_back((long_ago, vec![1, 2, 3]));
+        radio.unheard.push_back((now, vec![4, 5, 6]));
+
+        radio.forget_unheard_before(now);
+        assert_eq!(radio.unheard.len(), 1);
+        assert_eq!(radio.unheard[0].1, [4, 5, 6]);
     }
 }

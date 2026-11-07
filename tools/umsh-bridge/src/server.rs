@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::mpsc;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc};
 use tokio_rustls::TlsAcceptor;
 
 use crate::config::{Config, ServerConfig};
@@ -32,6 +32,19 @@ use crate::tunnel::{TunnelQueue, TunnelReader, TunnelWriter, pump_writer};
 /// hub's work per frame is bounded and small, so this only ever absorbs
 /// a burst.
 const HUB_BACKLOG: usize = 64;
+
+/// How long a new connection has to complete its TLS handshake. A peer
+/// that opens a socket and says nothing must not hold it indefinitely.
+pub const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Connections allowed to be mid-handshake at once, across every
+/// listener. Past this, accepting waits for a handshake to finish, so a
+/// flood of silent sockets queues in the kernel rather than here.
+const MAX_HANDSHAKES: usize = 256;
+
+/// The kernel's queue of not-yet-accepted connections, matching what
+/// [`TcpListener::bind`] asks for.
+const LISTEN_BACKLOG: i32 = 1024;
 
 /// A bridge server ready to serve: everything that can refuse the
 /// configuration has run, and every listener it names is open.
@@ -84,9 +97,7 @@ pub async fn bind(identity: BridgeIdentity, config: Config) -> Result<BoundServe
 
     let mut tunnel_listeners = Vec::new();
     for address in &server.listen {
-        let listener = TcpListener::bind(address)
-            .await
-            .with_context(|| format!("listening on {address}"))?;
+        let listener = listen(*address).with_context(|| format!("listening on {address}"))?;
         tunnel_listeners.push(listener);
     }
     if tunnel_listeners.is_empty() {
@@ -107,6 +118,33 @@ pub async fn bind(identity: BridgeIdentity, config: Config) -> Result<BoundServe
         tunnel_listeners,
         host_listeners,
     })
+}
+
+/// Open a tunnel listener.
+///
+/// An IPv6 socket is made v6-only, so the default pair of `0.0.0.0:P`
+/// and `[::]:P` are two listeners rather than a collision: where the
+/// system default is dual-stack, as on Linux, the v6 bind would
+/// otherwise claim the v4 port too.
+fn listen(address: SocketAddr) -> std::io::Result<TcpListener> {
+    use socket2::{Domain, Protocol, Socket, Type};
+
+    let socket = Socket::new(
+        Domain::for_address(address),
+        Type::STREAM,
+        Some(Protocol::TCP),
+    )?;
+    if address.is_ipv6() {
+        socket.set_only_v6(true)?;
+    }
+    // What tokio's own bind does, so a restart is not refused over the
+    // previous run's connections in TIME_WAIT.
+    #[cfg(unix)]
+    socket.set_reuse_address(true)?;
+    socket.set_nonblocking(true)?;
+    socket.bind(&address.into())?;
+    socket.listen(LISTEN_BACKLOG)?;
+    TcpListener::from_std(socket.into())
 }
 
 impl BoundServer {
@@ -210,6 +248,7 @@ impl BoundServer {
                 .map(|client| client.name.clone())
                 .collect(),
             ingress: ingress_tx,
+            handshakes: Arc::new(Semaphore::new(MAX_HANDSHAKES)),
         });
 
         for listener in tunnel_listeners {
@@ -231,10 +270,17 @@ struct Shared {
     tunnel: crate::config::TunnelConfig,
     client_names: Vec<String>,
     ingress: mpsc::Sender<Ingress>,
+    /// Permits for connections still in their TLS handshake.
+    handshakes: Arc<Semaphore>,
 }
 
 async fn accept_loop(listener: TcpListener, acceptor: TlsAcceptor, shared: Arc<Shared>) {
     loop {
+        // Taken before accepting, so at the limit the next connection
+        // waits in the kernel's backlog rather than holding a socket here.
+        let Ok(permit) = shared.handshakes.clone().acquire_owned().await else {
+            return;
+        };
         let (stream, peer) = match listener.accept().await {
             Ok(accepted) => accepted,
             Err(error) => {
@@ -250,16 +296,25 @@ async fn accept_loop(listener: TcpListener, acceptor: TlsAcceptor, shared: Arc<S
         let acceptor = acceptor.clone();
         let shared = shared.clone();
         tokio::task::spawn_local(async move {
-            if let Err(error) = serve(stream, acceptor, shared).await {
+            if let Err(error) = serve(stream, acceptor, shared, permit).await {
                 tracing::info!(%peer, "connection ended: {error:#}");
             }
         });
     }
 }
 
-async fn serve(stream: TcpStream, acceptor: TlsAcceptor, shared: Arc<Shared>) -> Result<()> {
+async fn serve(
+    stream: TcpStream,
+    acceptor: TlsAcceptor,
+    shared: Arc<Shared>,
+    handshake: OwnedSemaphorePermit,
+) -> Result<()> {
     let peer = stream.peer_addr().ok();
-    let stream = acceptor.accept(stream).await.context("TLS handshake")?;
+    let handshaken = tokio::time::timeout(HANDSHAKE_TIMEOUT, acceptor.accept(stream)).await;
+    drop(handshake);
+    let stream = handshaken
+        .map_err(|_| anyhow!("no TLS handshake within {HANDSHAKE_TIMEOUT:?}"))?
+        .context("TLS handshake")?;
 
     // The handshake already proved the peer holds a pinned identity's
     // key, and proved it for the key its certificate names; this is
@@ -298,41 +353,50 @@ async fn serve(stream: TcpStream, acceptor: TlsAcceptor, shared: Arc<Shared>) ->
     iface.set_connected(true);
     tracing::info!(client = %name, ?peer, "client attached");
 
+    let idle_timeout = Duration::from_secs(shared.tunnel.idle_timeout_secs);
     let (read_half, write_half) = tokio::io::split(stream);
-    let mut reader = TunnelReader::new(
-        read_half,
-        Duration::from_secs(shared.tunnel.idle_timeout_secs),
-    );
+    let mut reader = TunnelReader::new(read_half, idle_timeout);
     let mut writer = TunnelWriter::new(
         write_half,
         Duration::from_secs(shared.tunnel.keepalive_secs),
     );
 
     let egress = iface.egress.clone();
-    let pump =
-        tokio::task::spawn_local(async move { pump_writer(&mut writer, &egress, session).await });
+    let mut pump = tokio::task::spawn_local(async move {
+        pump_writer(&mut writer, &egress, session, idle_timeout).await
+    });
 
-    let outcome = loop {
-        match reader.read_frame().await {
-            Ok(frame) => {
-                let ingress = Ingress {
-                    iface: iface.id,
-                    frame,
-                };
-                if shared.ingress.send(ingress).await.is_err() {
-                    break Err(anyhow!("the hub stopped"));
+    let read_loop = async {
+        loop {
+            match reader.read_frame().await {
+                Ok(frame) => {
+                    let ingress = Ingress {
+                        iface: iface.id,
+                        frame,
+                    };
+                    if shared.ingress.send(ingress).await.is_err() {
+                        break Err(anyhow!("the hub stopped"));
+                    }
                 }
+                Err(error) => break Err(anyhow!("{error}")),
             }
-            Err(error) => break Err(anyhow!("{error}")),
         }
+    };
+    // Either half ending ends the session: a writer that failed or
+    // stalled leaves a connection that can no longer deliver anything,
+    // and one whose session was ended by a successor's clear has been
+    // displaced.
+    let outcome = tokio::select! {
+        outcome = read_loop => outcome,
+        ended = &mut pump => writer_ended(ended),
     };
 
     // Only tear the interface down if this connection is still the one
-    // holding it. A displaced session lingers until its idle timeout
-    // fires, and by then a successor owns the interface—marking it
-    // down here would silence the live session until *its* idle timer
-    // noticed. The successor's clear bumped the generation, which is how
-    // this connection knows its claim has lapsed.
+    // holding it. A displaced session's writer ends at once, but a
+    // successor already owns the interface—marking it down here would
+    // silence the live session until *its* idle timer noticed. The
+    // successor's clear bumped the generation, which is how this
+    // connection knows its claim has lapsed.
     if iface.egress.generation() == session {
         iface.set_connected(false);
         iface.egress.clear();
@@ -344,6 +408,17 @@ async fn serve(stream: TcpStream, acceptor: TlsAcceptor, shared: Arc<Shared>) ->
         "client detached"
     );
     outcome
+}
+
+/// The session outcome for a writer task that ended first.
+pub(crate) fn writer_ended(
+    ended: std::result::Result<std::io::Result<()>, tokio::task::JoinError>,
+) -> Result<()> {
+    match ended {
+        Ok(Ok(())) => Err(anyhow!("the session was displaced")),
+        Ok(Err(error)) => Err(anyhow!("tunnel write failed: {error}")),
+        Err(error) => Err(anyhow!("tunnel writer stopped: {error}")),
+    }
 }
 
 /// Move an interface's received frames into the hub.
@@ -386,4 +461,23 @@ fn load_identity(config: &mut Config) -> Result<BridgeIdentity> {
             .expect("validated: every role has an identity")
             .key_file,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn the_v4_and_v6_wildcards_bind_the_same_port_side_by_side() {
+        let v4 = listen(SocketAddr::from(([0, 0, 0, 0], 0))).unwrap();
+        let port = v4.local_addr().unwrap().port();
+        match listen(SocketAddr::from(([0u16; 8], port))) {
+            Ok(v6) => assert_eq!(v6.local_addr().unwrap().port(), port),
+            // A host with no IPv6 at all has nothing to collide with.
+            Err(error) if error.kind() != std::io::ErrorKind::AddrInUse => {
+                eprintln!("no IPv6 here: {error}");
+            }
+            Err(error) => panic!("the v6 wildcard collided with the v4 one: {error}"),
+        }
+    }
 }

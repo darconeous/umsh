@@ -345,6 +345,45 @@ fn the_exit_clamp_lowers_a_budget_on_the_way_through() {
     });
 }
 
+#[test]
+fn a_connection_that_never_starts_a_handshake_is_dropped() {
+    use tokio::io::AsyncReadExt as _;
+    with_local(|| async {
+        let dir = tempfile::tempdir().unwrap();
+        umsh_bridge::keygen::write_identity(&dir.path().join("identity.key"), false).unwrap();
+        umsh_bridge::keygen::write_identity(&dir.path().join("cabin.key"), false).unwrap();
+        let cabin = BridgeIdentity::load(&dir.path().join("cabin.key"))
+            .unwrap()
+            .public_key()
+            .to_string();
+        let d = dir.path().display();
+        let tunnel = serve(&format!(
+            "[identity]\nkey_file = \"{d}/identity.key\"\n\
+             [server]\nlisten = [\"127.0.0.1:0\"]\n\
+             [[server.clients]]\nname = \"cabin\"\naddress = \"{cabin}\"\n"
+        ))
+        .await;
+
+        // Connect, then say nothing: no ClientHello ever arrives.
+        let mut stream = tokio::net::TcpStream::connect(tunnel).await.unwrap();
+        tokio::time::pause();
+        let started = tokio::time::Instant::now();
+        let mut buf = [0u8; 16];
+        let read = tokio::time::timeout(Duration::from_secs(60), stream.read(&mut buf))
+            .await
+            .expect("the silent connection was left open");
+        assert!(
+            matches!(read, Ok(0) | Err(_)),
+            "the server sent {read:?} to a peer that never said hello"
+        );
+        assert!(
+            started.elapsed() >= umsh_bridge::server::HANDSHAKE_TIMEOUT,
+            "dropped after {:?}, before the handshake timeout",
+            started.elapsed()
+        );
+    });
+}
+
 /// A raw pinned tunnel connection with the configured client's
 /// identity, for tests that need to hold more than one at a time.
 async fn connect_pinned(config: &Config) -> tokio_rustls::client::TlsStream<tokio::net::TcpStream> {
