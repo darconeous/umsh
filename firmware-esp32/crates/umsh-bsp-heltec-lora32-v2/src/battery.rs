@@ -28,6 +28,13 @@ use crate::vext::VextHandle;
 
 /// Samples per burst (after the discarded throwaway read).
 const BURST: usize = 8;
+
+/// Polls of a oneshot conversion before it is given up on. A conversion
+/// finishes in tens of microseconds, a small fraction of this many polls;
+/// one still busy after them is not going to finish, and the sample is
+/// reported unavailable rather than spinning the executor forever.
+const READ_POLL_LIMIT: u32 = 10_000;
+
 /// Extra settle after `Vext` comes up before the burst; the divider's
 /// source impedance is ~320 kΩ and the doc recommends a few ms.
 const DIVIDER_SETTLE_MS: u64 = 5;
@@ -60,8 +67,9 @@ impl BatterySampler {
     /// radio is down, or `Adc::new` panics), raises `Vext` if it was
     /// down, settles the divider, discards one read, then medians a
     /// burst and applies the ×3.2 divider ratio. Both the claim and the
-    /// rail are left as they were found.
-    pub async fn sample_mv(&mut self) -> u16 {
+    /// rail are left as they were found. `None` when a conversion failed
+    /// or never finished.
+    pub async fn sample_mv(&mut self) -> Option<u16> {
         let was_on = self.vext.is_on();
         self.vext.enable().await;
         Timer::after_millis(DIVIDER_SETTLE_MS).await;
@@ -69,19 +77,22 @@ impl BatterySampler {
         let mut config = AdcConfig::new();
         let mut pin = config.enable_pin(self.gpio13.reborrow(), Attenuation::_6dB);
         let mut adc = Adc::new(self.adc2.reborrow(), config);
-        let mut read_raw = || loop {
-            match adc.read_oneshot(&mut pin) {
-                Ok(value) => return value,
-                Err(nb::Error::WouldBlock) => continue,
-                Err(nb::Error::Other(())) => return 0,
+        let mut read_raw = || {
+            for _ in 0..READ_POLL_LIMIT {
+                match adc.read_oneshot(&mut pin) {
+                    Ok(value) => return Some(value),
+                    Err(nb::Error::WouldBlock) => continue,
+                    Err(nb::Error::Other(())) => return None,
+                }
             }
+            None
         };
 
-        let _ = read_raw();
         let mut burst = [0u16; BURST];
-        for slot in &mut burst {
-            *slot = read_raw();
-        }
+        let complete = read_raw().is_some()
+            && burst
+                .iter_mut()
+                .all(|slot| read_raw().map(|value| *slot = value).is_some());
         drop(read_raw);
         // Dropping the `Adc` releases the ADC2 claim for the radio.
         drop(adc);
@@ -89,12 +100,15 @@ impl BatterySampler {
         if !was_on {
             self.vext.disable();
         }
+        if !complete {
+            return None;
+        }
 
         burst.sort_unstable();
         let median = u32::from(burst[BURST / 2]);
 
         let adc_mv = median * FULL_SCALE_MV / FULL_SCALE_CODE;
         let battery_mv = adc_mv * u32::from(crate::BATTERY_DIVIDER_RATIO_X10) / 10;
-        battery_mv.min(u32::from(u16::MAX)) as u16
+        Some(battery_mv.min(u32::from(u16::MAX)) as u16)
     }
 }

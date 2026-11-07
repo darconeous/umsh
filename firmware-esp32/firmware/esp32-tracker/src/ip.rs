@@ -49,7 +49,7 @@ pub async fn update(stack: Stack<'static>, settings: &Settings, linked: bool) {
             }),
             Method::Auto => {
                 let mut dhcp = embassy_net::DhcpConfig::default();
-                dhcp.hostname = Some(settings.hostname.as_str().try_into().unwrap());
+                dhcp.hostname = Some(settings.hostname.clone());
                 ConfigV4::Dhcp(dhcp)
             }
         };

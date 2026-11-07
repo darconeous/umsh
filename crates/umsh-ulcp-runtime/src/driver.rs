@@ -1427,22 +1427,32 @@ fn note_device_change<A, S, const TXQ: usize>(
     }
 }
 
+/// How long a write the board's store refused waits before it is offered
+/// again. A store that failed once is likely to fail again at once, and
+/// every attempt is a flash operation that can stall the chip; nothing
+/// is lost by waiting, because the session keeps what is owed.
+const PERSIST_RETRY_DELAY: Duration = Duration::from_secs(30);
+
 /// Writes the snapshot [`note_device_change`] kept in step, if flash does
-/// not hold it yet.
+/// not hold it yet. False when one was owed and the store refused it.
 async fn write_device_changes<A, S, const TXQ: usize, E>(
     session: &mut Session<A, S, TXQ>,
     snapshot_buf: &mut [u8],
     env: &mut E,
-) where
+) -> bool
+where
     A: AesProvider,
     S: Sha256Provider,
     E: DeviceEnv,
 {
-    if let Some(len) = session.unwritten_snapshot(snapshot_buf)
-        && env.persist_snapshot(&snapshot_buf[..len]).await.is_ok()
-    {
-        session.note_snapshot_written();
+    let Some(len) = session.unwritten_snapshot(snapshot_buf) else {
+        return true;
+    };
+    if env.persist_snapshot(&snapshot_buf[..len]).await.is_err() {
+        return false;
     }
+    session.note_snapshot_written();
+    true
 }
 
 /// Generate, persist, and install a fresh device identity.
@@ -2142,6 +2152,9 @@ where
     // When the snapshot is written for the device's own changes, while
     // one is owed.
     let mut save_due: Option<Instant> = None;
+    // Until when the device lists are not offered to the board's store
+    // again, after it refused them.
+    let mut lists_retry_at: Option<Instant> = None;
     loop {
         // Resolve the next event in its own statement so the select's
         // futures—one of which mutably borrows `env`—are dropped
@@ -2491,7 +2504,14 @@ where
             }
             Either4::Fourth(Either3::Third(())) => {
                 save_due = None;
-                write_device_changes(session, snapshot_buf, &mut env).await;
+                if !write_device_changes(session, snapshot_buf, &mut env).await {
+                    env.trace(format_args!("snapshot save FAILED; retrying later"));
+                    save_due = Some(Instant::now() + PERSIST_RETRY_DELAY);
+                }
+                // The lists' own retry wait ends here too: this is either
+                // that deadline or a board about to power off, which
+                // wants them kept as much as the snapshot.
+                lists_retry_at = None;
                 rt.snapshot.done.signal(());
             }
             Either4::Fourth(Either3::Second(())) => {
@@ -2510,11 +2530,21 @@ where
         // compare when they did not.
         sync_dev_domain(session, &mut dev_domain_synced, &mut env);
         // The board's own store keeps the device lists as they change.
-        // One it could not take is offered again after the next event.
-        if let Some(len) = session.lists_to_keep(snapshot_buf)
-            && env.persist_lists(Some(&snapshot_buf[..len])).await.is_ok()
+        // One it could not take is offered again once the retry delay has
+        // passed, not after every event: the save deadline is what wakes
+        // the loop for it.
+        if lists_retry_at.is_none_or(|at| Instant::now() >= at)
+            && let Some(len) = session.lists_to_keep(snapshot_buf)
         {
-            session.note_lists_kept();
+            if env.persist_lists(Some(&snapshot_buf[..len])).await.is_ok() {
+                session.note_lists_kept();
+                lists_retry_at = None;
+            } else {
+                env.trace(format_args!("device lists save FAILED; retrying later"));
+                let at = Instant::now() + PERSIST_RETRY_DELAY;
+                lists_retry_at = Some(at);
+                save_due = Some(save_due.map_or(at, |due| due.min(at)));
+            }
         }
         // PROP_MAC_BACKHAUL is session-scoped but its routing lives in
         // the mux, which nothing inside the session can reach. Mirroring

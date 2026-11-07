@@ -26,6 +26,13 @@ use esp_hal::peripherals::{ADC1, GPIO1, GPIO37};
 
 /// Samples per burst (after the discarded throwaway read).
 const BURST: usize = 8;
+
+/// Polls of a oneshot conversion before it is given up on. A conversion
+/// finishes in tens of microseconds, a small fraction of this many polls;
+/// one still busy after them is not going to finish, and the sample is
+/// reported unavailable rather than spinning the executor forever.
+const READ_POLL_LIMIT: u32 = 10_000;
+
 /// Settle after the gate opens before the burst; the divider's ~490 kΩ
 /// source impedance and the ADC input cap need a few ms (§11.4).
 const DIVIDER_SETTLE_MS: u64 = 5;
@@ -61,31 +68,42 @@ impl BatterySampler {
     ///
     /// Opens the divider gate, settles, discards one read, medians a
     /// burst of calibrated (millivolt) conversions, applies the ×4.9
-    /// divider ratio, and closes the gate again.
-    pub async fn sample_mv(&mut self) -> u16 {
+    /// divider ratio, and closes the gate again. `None` when a
+    /// conversion failed or never finished.
+    pub async fn sample_mv(&mut self) -> Option<u16> {
         self.gate.set_high();
         Timer::after_millis(DIVIDER_SETTLE_MS).await;
 
-        let _ = self.read_raw();
         let mut burst = [0u16; BURST];
-        for slot in &mut burst {
-            *slot = self.read_raw();
-        }
+        let complete = self.read_burst(&mut burst);
         self.gate.set_low();
+        if !complete {
+            return None;
+        }
 
         burst.sort_unstable();
         let adc_mv = u32::from(burst[BURST / 2]);
         let battery_mv = adc_mv * u32::from(crate::BATTERY_DIVIDER_RATIO_X10) / 10;
-        battery_mv.min(u32::from(u16::MAX)) as u16
+        Some(battery_mv.min(u32::from(u16::MAX)) as u16)
     }
 
-    fn read_raw(&mut self) -> u16 {
-        loop {
+    fn read_raw(&mut self) -> Option<u16> {
+        for _ in 0..READ_POLL_LIMIT {
             match self.adc.read_oneshot(&mut self.pin) {
-                Ok(value) => return value,
+                Ok(value) => return Some(value),
                 Err(nb::Error::WouldBlock) => continue,
-                Err(nb::Error::Other(())) => return 0,
+                Err(nb::Error::Other(())) => return None,
             }
         }
+        None
+    }
+
+    /// One discarded conversion, then a burst into `burst`. False when
+    /// any of them was unavailable.
+    fn read_burst(&mut self, burst: &mut [u16; BURST]) -> bool {
+        self.read_raw().is_some()
+            && burst
+                .iter_mut()
+                .all(|slot| self.read_raw().map(|value| *slot = value).is_some())
     }
 }
