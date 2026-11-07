@@ -336,4 +336,29 @@ function M.parse_trace(value)
   return {form = form, entries = entries}
 end
 
+-- Who put a frame on the air, as far as the frame itself says. Each forwarder
+-- has to leave a mark: a trace record, a flood hop, or a source route hint
+-- gone. The last of these leaves nothing to see until the route runs out.
+M.TX_SENDER    = "sender"     -- not forwarded
+M.TX_REPEATER  = "repeater"   -- forwarded, and the trace entry returned names who by
+M.TX_FORWARDED = "forwarded"  -- forwarded, by a hop the frame does not name
+M.TX_UNKNOWN   = "unknown"    -- hints remain on a source route, so either
+
+-- trace:        parse_trace's result, or nil
+-- source_route: the Source Route value, or nil
+-- fhops:        the FHOPS byte, or nil
+function M.transmitted_by(trace, source_route, fhops)
+  if trace then
+    if trace.entries[1] then return M.TX_REPEATER, trace.entries[1] end
+    -- A last-resort lone 0xFF is a repeater dropping even its own hint.
+    -- Any other empty trace has never been forwarded.
+    if trace.form == M.TRACE_TRUNCATED then return M.TX_FORWARDED end
+    return M.TX_SENDER
+  end
+  if fhops and (fhops & 0x0F) > 0 then return M.TX_FORWARDED end
+  if source_route == "" then return M.TX_FORWARDED end
+  if source_route then return M.TX_UNKNOWN end
+  return M.TX_SENDER
+end
+
 return M

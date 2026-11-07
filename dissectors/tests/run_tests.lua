@@ -2211,6 +2211,72 @@ else
         has(encrypted_mcast, MIC_OK), true)
   check("learned from an encrypted multicast SRC",
         keystore.peer_keys(NODE_A_HINT)[1], NODE_A_KEY)
+
+  -- ───────────────────────────────────────────────────────────────────────────
+  -- Transmitted By: what each frame says about who put it on the air.
+  -- ───────────────────────────────────────────────────────────────────────────
+  section("Transmitted By")
+
+  local b58 = require("base58")
+  local SENDER_A = "Transmitted By: " .. b58.node_hint(NODE_A_HINT) .. " (sender)"
+  local REPEATER = "Transmitted By: " .. b58.router_hint_full(from_hex("AABB")) .. " (repeater)"
+  local NOT_SENDER = "Transmitted By: - (not the sender)"
+  local EITHER = "Transmitted By: ? (sender or a repeater on its source route)"
+
+  load_seeds(SEED_B)
+  local TX_CASES = {
+    {"a direct frame",                         "C0 ED54A5",                 SENDER_A},
+    {"a flood no one has forwarded",           "C1 30 ED54A5",              SENDER_A},
+    {"a flood hop with no trace",              "C1 21 ED54A5",              NOT_SENDER},
+    {"an empty trace",                         "C0 ED54A5 70",              SENDER_A},
+    {"a lone complete hints-only trace",       "C0 ED54A5 71 FE",           SENDER_A},
+    {"a trace record",                         "C0 ED54A5 74 AABB 5A14",    REPEATER},
+    {"the newest of two records",              "C0 ED54A5 78 AABB 5A14 CCDD 5A14", REPEATER},
+    {"a hints-only trace",                     "C0 ED54A5 73 FE AABB",      REPEATER},
+    {"a truncated trace",                      "C0 ED54A5 73 FF AABB",      REPEATER},
+    {"a last-resort lone 0xFF",                "C0 ED54A5 71 FF",           NOT_SENDER},
+    {"a trace beats the flood count",          "C1 21 ED54A5 74 AABB 5A14", REPEATER},
+    {"an empty trace beats a remaining route", "C0 ED54A5 32 AABB 40",      SENDER_A},
+    {"an exhausted source route",              "C0 ED54A5 30",              NOT_SENDER},
+    {"hints left on a source route",           "C0 ED54A5 32 AABB",         EITHER},
+    {"a flood hop beats a remaining route",    "C1 21 ED54A5 32 AABB",      NOT_SENDER},
+    {"a malformed trace counts for nothing",   "C0 ED54A5 72 AABB",         SENDER_A},
+  }
+  for _, case in ipairs(TX_CASES) do
+    check(case[1] .. ": " .. case[3], has(dissect_frame(case[2]), case[3]), true)
+  end
+  check("a frame whose options cannot be read says nothing",
+        has(dissect_frame("C0 ED54A5 E0"), "Transmitted By"), false)
+
+  check("a full source key is shown whole",
+        has(dissect_frame(EXAMPLE_4), "Transmitted By: " .. b58.key_full(NODE_A_KEY) .. " (sender)"),
+        true)
+  check("an encrypted multicast shows its decrypted source",
+        has(dissect_frame(MCAST[1][2]), SENDER_A), true)
+  check("a blind unicast shows its decrypted source",
+        has(dissect_frame(SEED_ONLY[5][2]), SENDER_A), true)
+
+  -- The ack carries no addresses, so its sender is the request's destination.
+  dissect_frame(EXAMPLE_4)
+  local SENDER_B = "Transmitted By: " .. b58.node_hint(from_hex("6C28FD")) .. " (sender)"
+  check("an ack is transmitted by the request's destination",
+        has(dissect_frame("C8 FEA5FD44 16616CD1"), SENDER_B), true)
+  umsh_proto.init()
+  check("an ack answering nothing has no address to show",
+        has(dissect_frame("C8 FEA5FD44 16616CD1"), "Transmitted By: sender"), true)
+
+  umsh_proto.prefs.node_names = NODE_A_PUB .. ":NodeA"
+  umsh_proto.prefs_changed()
+  check("a named sender shows its name",
+        has(dissect_frame("C0 ED54A5"), "Transmitted By: NodeA (sender)"), true)
+
+  umsh_proto.prefs.channel_keys = ""
+  umsh_proto.prefs_changed()
+  check("an unreadable source is still the sender",
+        has(dissect_frame(MCAST[1][2]), "Transmitted By: sender"), true)
+  check("an unreadable source forwarded is not",
+        has(dissect_frame("E1 21 B08D E0 00000005 FF D44BB60E346DE5F4"
+                          .. " F3C48B8F96EAA1EFF61947E849771670"), NOT_SENDER), true)
 end
 
 -- ─────────────────────────────────────────────────────────────────────────────

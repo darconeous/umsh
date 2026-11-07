@@ -90,6 +90,7 @@ f.opt_ack_frame    = ProtoField.framenum("umsh.opt.ack_frame",    "Acknowledges 
 f.dst_hint     = ProtoField.bytes  ("umsh.dst",          "Destination Hint")
 f.src_hint     = ProtoField.bytes  ("umsh.src_hint",     "Source Hint")
 f.src_key      = ProtoField.bytes  ("umsh.src_key",      "Source Public Key")
+f.transmitted_by = ProtoField.string("umsh.transmitted_by", "Transmitted By")
 f.channel_id   = ProtoField.bytes  ("umsh.channel_id",   "Channel ID")
 f.ack_mic      = ProtoField.bytes  ("umsh.ack_mic",      "ACK MIC")
 f.ack_tag      = ProtoField.bytes  ("umsh.ack_tag",      "ACK Tag")
@@ -157,7 +158,7 @@ umsh.fields = {
   f.opt_route_retry, f.opt_fence, f.opt_ack_mic, f.opt_ack_frame,
   f.opt_frame_sig, f.opt_frame_sig_ctr,
   f.opt_signal_entry, f.opt_unknown,
-  f.dst_hint, f.src_hint, f.src_key, f.channel_id, f.ack_mic, f.ack_tag,
+  f.dst_hint, f.src_hint, f.src_key, f.transmitted_by, f.channel_id, f.ack_mic, f.ack_tag,
   f.src_name, f.dst_name, f.channel_name, f.src_addr, f.dst_addr, f.violation,
   f.secinfo, f.scf, f.scf_enc, f.scf_mic_size, f.scf_salt_bit, f.scf_signed,
   f.frame_ctr, f.salt, f.mic, f.signature,
@@ -483,6 +484,12 @@ local function add_dst_hint(tree, buf, off, dst_bytes)
   return name
 end
 
+-- Remember the frame's source for Transmitted By, however it came to light.
+local function note_sender(src_bytes, name)
+  _ctx.sender_addr = addr_short(src_bytes)
+  _ctx.sender_name = name
+end
+
 -- SRC is a 3-byte hint or a full 32-byte key, per the FCF S flag.
 local function add_src_addr(tree, pinfo, buf, off, src_bytes, full_src)
   local name
@@ -500,7 +507,33 @@ local function add_src_addr(tree, pinfo, buf, off, src_bytes, full_src)
   if name and name ~= "" then
     tree:add(f.src_name, buf(off, #src_bytes), name)
   end
+  note_sender(src_bytes, name)
   return name
+end
+
+-- The node that put this frame on the air: the source, or a repeater that
+-- forwarded it. Added once the options are read, since that is where the
+-- evidence is; a frame cut short of them says nothing either way.
+local function add_transmitted_by(tree, buf)
+  if not _ctx.options_read then return end
+  local kind, hop = options.transmitted_by(_ctx.trace, _ctx.source_route, _ctx.fhops)
+  local range = buf(0, 0)
+  local value, text
+  if kind == options.TX_REPEATER then
+    range = buf(_ctx.trace_off + hop.offset, 2)
+    value = base58.router_hint(hop.hint) or ""
+    text  = base58.router_hint_full(hop.hint) .. " (repeater)"
+  elseif kind == options.TX_FORWARDED then
+    value, text = "-", "- (not the sender)"
+  elseif kind == options.TX_UNKNOWN then
+    value, text = "?", "? (sender or a repeater on its source route)"
+  else
+    -- An encrypted source this capture holds no key for is still the sender.
+    value = _ctx.sender_addr or "sender"
+    local name = _ctx.sender_name
+    text = (name and name ~= "" and name or value) .. " (sender)"
+  end
+  tree:add(f.transmitted_by, range, value):set_text("Transmitted By: " .. text):set_generated()
 end
 
 -- Why a pairwise frame did not verify, from crypto.try_pairwise's status:
@@ -618,7 +651,10 @@ end
 local SECINFO_TYPES = {[2] = true, [3] = true, [4] = true, [6] = true, [7] = true}
 
 local function parse_options(buf, start_off, bound, tree, static_opts_out, pinfo)
-  if start_off >= bound then return start_off, {} end
+  if start_off >= bound then
+    _ctx.options_read = true
+    return start_off, {}
+  end
 
   local avail = bound - start_off
   local raw   = tvb_bytes(buf, start_off, avail)
@@ -637,6 +673,8 @@ local function parse_options(buf, start_off, bound, tree, static_opts_out, pinfo
     end
     return start_off, {}
   end
+
+  _ctx.options_read = true
 
   -- A block that is nothing but its terminator carries no options. Adding a
   -- subtree for it puts an `Options: ff` row in the majority of packets that
@@ -691,6 +729,7 @@ local function parse_options(buf, start_off, bound, tree, static_opts_out, pinfo
         -- describes N+1 transmissions, since the legs into the first
         -- repeater and out of the last one belong to no hint.
         local hints, extra = split_hints(val)
+        _ctx.source_route = _ctx.source_route or val
         local routers = #hints
         local path    = route_path(hints, " → ")
         local item = opts_tree:add(f.opt_srcroute, buf(opt_off, consumed), path)
@@ -726,6 +765,7 @@ local function parse_options(buf, start_off, bound, tree, static_opts_out, pinfo
           item:add_proto_expert_info(ef.bad_opt_value,
             string.format("Malformed Trace value (%d bytes)", val_len))
         else
+          if not _ctx.trace then _ctx.trace, _ctx.trace_off = trace, val_off end
           local hints = {}
           for i, entry in ipairs(trace.entries) do hints[i] = entry.hint end
           local path = route_path(hints, " ← ")
@@ -984,6 +1024,8 @@ local function dissect_uack(buf, pinfo, tree, off, fcf_byte, static_opts)
       -- genuine, so a tag mismatch below leaves the columns empty rather
       -- than asserting a conversation that did not happen.
       set_endpoints(pinfo, origin.dst_label, origin.src_label)
+      _ctx.sender_addr = origin.dst_addr
+      _ctx.sender_name = origin.dst_name
       -- The same reversal for the filterable fields, so
       -- `umsh.src_addr == "GySV"` catches the acks GySV sent too. They
       -- are generated: the ack carries none of these bytes, and they
@@ -1228,6 +1270,7 @@ local function dissect_multicast(buf, pinfo, tree, off, full_src, fcf_byte, stat
         local dec_name = full_src and keystore.lookup_node_by_key(dec_src)
                                    or keystore.lookup_node(dec_src)
         local dec_label = dec_name or addr_short(dec_src)
+        note_sender(dec_src, dec_name)
         tree:add(f.dec_src, buf(body_start, src_len)):set_text(
           "Decrypted SRC: " .. (dec_name or base58.addr(dec_src)))
         tree:add(f.src_addr, buf(body_start, src_len),
@@ -1390,6 +1433,7 @@ local function dissect_blind_unicast(buf, pinfo, tree, off, full_src, fcf_byte, 
         local src_disp_len = full_src and 32 or 3
         s_name = full_src and keystore.lookup_node_by_key(dec_src)
                             or keystore.lookup_node(dec_src)
+        note_sender(dec_src, s_name)
         tree:add(f.dec_src, buf(addr_start + 3, src_disp_len)):set_text(
           "Decrypted SRC: " .. (s_name or base58.addr(dec_src)))
         tree:add(f.src_addr, buf(addr_start + 3, src_disp_len),
@@ -1650,6 +1694,8 @@ function umsh.dissector(buf, pinfo, tree)
       mic_verified = _ctx.mic_verified,
     })
   end
+
+  add_transmitted_by(root, buf)
 
   -- The per-type dissectors own the Info column and rewrite it after most
   -- of the checks have run, so these go on last.

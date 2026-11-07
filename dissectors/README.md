@@ -377,6 +377,24 @@ way a standalone ack is—by the public four-byte MIC prefix, which needs no
 keys. The acknowledged frame is linked in the tree and named on the summary
 line.
 
+## Transmitted By
+
+`umsh.transmitted_by` names the node that put the frame on the air, from what
+the frame says about its own forwarding:
+
+| Value | Meaning |
+|---|---|
+| The source address | The sender transmitted it. A name is shown when one is configured, and `sender` when the source is encrypted and no key reveals it |
+| A router hint | The most recent repeater in the trace |
+| `-` | A repeater transmitted it, but the frame does not name which: a flood hop with no trace, a source route that has run out, or a trace cut to a lone `0xFF` |
+| `?` | Hints remain on a source route and there is no trace, so the sender and a repeater that took its hint off the route look the same |
+
+Traces and flood hop counts are dynamic fields no MIC covers, so this is what
+the frame claims rather than something a key has proven.
+
+A MAC ack's sender is the destination of the packet it answers, so an address
+appears only for an ack matched to its request.
+
 ## Frame Signatures
 
 A signed frame is marked "signed" on the summary line. With the SCF's `D`
