@@ -6,6 +6,8 @@ use core::num::NonZeroU32;
 
 use umsh_core::options::HopSignal;
 use umsh_core::{ChannelKey, NodeHint, PublicKey, RouterHint};
+#[cfg(feature = "software-crypto")]
+use umsh_mac::PeerHolder;
 use umsh_mac::{CachedRoute, LocalIdentityId, SendOptions};
 
 #[cfg(feature = "software-crypto")]
@@ -574,10 +576,12 @@ impl<M: MacBackend> LocalNode<M> {
         Ok(PeerConnection::new(self.clone(), key))
     }
 
-    /// Remove a peer from the MAC and drop this node's per-peer bookkeeping:
-    /// outstanding pings and per-peer subscription tables. Returns whether
-    /// the peer was registered in the MAC. Idempotent—removing an unknown
-    /// peer still clears any node-layer residue and reports `false`.
+    /// Give back the application's hold on a peer in the MAC and drop this
+    /// node's per-peer bookkeeping: outstanding pings and per-peer
+    /// subscription tables. A session holding the same key keeps its slot
+    /// until it ends. Returns whether the MAC had the peer as a contact, or
+    /// removed it as a learned peer nobody held. Idempotent—removing an
+    /// unknown peer still clears any node-layer residue and reports `false`.
     pub async fn remove_peer(&self, key: &PublicKey) -> bool {
         let removed = self.mac.remove_peer(key).await;
         let mut state = self.state.borrow_mut();
@@ -1645,6 +1649,20 @@ impl<M: MacBackend> LocalNode<M> {
         self.state.borrow().pfs.refused_ephemeral_keys()
     }
 
+    /// How many session requests this node refused for coming from a peer
+    /// that is not a contact.
+    #[cfg(feature = "software-crypto")]
+    pub fn pfs_refused_requesters(&self) -> u32 {
+        self.state.borrow().pfs.refused_requesters()
+    }
+
+    /// How many session requests this node refused for coming too soon
+    /// after the same peer's last.
+    #[cfg(feature = "software-crypto")]
+    pub fn pfs_rate_limited_requests(&self) -> u32 {
+        self.state.borrow().pfs.rate_limited_requests()
+    }
+
     /// Join a channel. Registers the channel key in the MAC if this is
     /// the first node to join it. Returns the bound channel handle.
     #[cfg(feature = "software-crypto")]
@@ -1860,8 +1878,41 @@ impl<M: MacBackend> LocalNode<M> {
         };
         let _ = self.mac.remove_ephemeral(slot.id).await;
         for peer in slot.peers {
-            let _ = self.mac.remove_peer(&peer).await;
+            let _ = self.mac.release_peer(&peer, PeerHolder::Session).await;
         }
+    }
+
+    /// Hold a peer slot for `peer` until the contact exchange under `id`
+    /// closes. A session key is a stranger to the MAC until something
+    /// registers it, and room for it is made as for a reply to a stranger.
+    #[cfg(feature = "software-crypto")]
+    async fn hold_meet_peer(
+        &self,
+        id: LocalIdentityId,
+        peer: &PublicKey,
+    ) -> Result<(), NodeError<M>> {
+        if !self.mac.ensure_transient_peer(peer).await
+            || self
+                .mac
+                .hold_peer(*peer, PeerHolder::Session)
+                .await
+                .is_err()
+        {
+            return Err(NodeError::PeerMissing);
+        }
+        // The exchange may have closed, or another send reached `peer`,
+        // while the slot was being taken.
+        let kept = match self.state.borrow_mut().meet.as_mut() {
+            Some(slot) if slot.id == id && !slot.peers.contains(peer) => {
+                slot.peers.push(*peer);
+                true
+            }
+            _ => false,
+        };
+        if !kept {
+            let _ = self.mac.release_peer(peer, PeerHolder::Session).await;
+        }
+        Ok(())
     }
 
     /// Send one Meet frame from the session identity: ack-requested and not
@@ -1879,15 +1930,14 @@ impl<M: MacBackend> LocalNode<M> {
             let receipt = self.mac.send_broadcast(id, frame, &options).await?;
             return Ok(self.register_non_ack_send(id, receipt));
         };
-        // A session key is a stranger to the MAC until something registers
-        // it; register it here, and remember it for close.
-        if !self.mac.ensure_transient_peer(peer).await {
-            return Err(NodeError::PeerMissing);
-        }
-        if let Some(slot) = self.state.borrow_mut().meet.as_mut()
-            && !slot.peers.contains(peer)
-        {
-            slot.peers.push(*peer);
+        let reached = self
+            .state
+            .borrow()
+            .meet
+            .as_ref()
+            .is_some_and(|slot| slot.peers.contains(peer));
+        if !reached {
+            self.hold_meet_peer(id, peer).await?;
         }
         let receipt = self
             .mac

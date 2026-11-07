@@ -29,8 +29,8 @@ use crate::{
     cache::{DupCacheKey, DuplicateCache},
     peers::CachedRoute,
     peers::{
-        ChannelTable, FarHop, HeldRouteOutcome, PeerCryptoMap, PeerId, PeerRegistry, RouteFailure,
-        RouteOffer,
+        ChannelTable, FarHop, HeldRouteOutcome, HoldRelease, PeerCryptoMap, PeerHolder, PeerId,
+        PeerRegistry, RouteFailure, RouteOffer,
     },
     route_score::{Hop, path_score},
     rx_windows::{RxWindow, RxWindows},
@@ -1760,7 +1760,14 @@ impl<
         self.identities.get_mut(id.0 as usize)?.as_mut()
     }
 
-    /// Registers or refreshes a known remote peer in the shared registry.
+    /// Registers or refreshes a contact the application holds; see
+    /// [`hold_peer`](Self::hold_peer).
+    pub fn add_peer(&mut self, key: PublicKey) -> Result<PeerId, AddPeerError> {
+        self.hold_peer(key, PeerHolder::Application)
+    }
+
+    /// Registers or refreshes a peer that `holder` holds. The entry is never
+    /// evicted while anything holds it.
     ///
     /// When the `software-crypto` feature is enabled, the supplied public key
     /// is validated as a well-formed Ed25519 compressed point on the curve.
@@ -1770,22 +1777,34 @@ impl<
     /// The peer's receive window becomes a registered one, keeping whatever
     /// it knew as a stranger, and its stored baseline is merged in before
     /// its first frame is judged.
-    pub fn add_peer(&mut self, key: PublicKey) -> Result<PeerId, AddPeerError> {
+    pub fn hold_peer(
+        &mut self,
+        key: PublicKey,
+        holder: PeerHolder,
+    ) -> Result<PeerId, AddPeerError> {
         #[cfg(feature = "software-crypto")]
         {
             if !umsh_crypto::is_valid_ed25519_public_key(&key) {
                 return Err(AddPeerError::InvalidPublicKey);
             }
         }
-        let peer_id = self.peer_registry.try_insert_or_update(key)?;
+        let peer_id = self.peer_registry.try_insert_or_update(key, holder)?;
         self.register_rx_window(key);
         Ok(peer_id)
     }
 
-    /// Removes a registered peer and every piece of per-peer transport state:
+    /// Gives back the application's hold on a contact; see
+    /// [`release_peer`](Self::release_peer). An entry nothing holds, such as
+    /// a learned peer, is removed.
+    pub fn remove_peer(&mut self, key: &PublicKey) -> bool {
+        self.release_peer(key, PeerHolder::Application)
+    }
+
+    /// Gives back `holder`'s hold on `key`, and once nothing holds it
+    /// removes the peer and every piece of per-peer transport state:
     /// pairwise crypto, per-channel replay windows, pending counter resyncs,
-    /// and frames held for verification. Returns whether the peer was
-    /// registered.
+    /// and frames held for verification. Returns whether `holder` held the
+    /// peer, or for the application whether it removed an entry nobody held.
     ///
     /// The peer registry is dense, so removal moves the last entry into the
     /// freed slot; state keyed by the moved peer's old identifier is re-keyed
@@ -1793,10 +1812,15 @@ impl<
     /// its stored baseline is deliberately retained: if the peer is re-added
     /// later, replay protection resumes from it instead of accepting replays
     /// from before the removal.
-    pub fn remove_peer(&mut self, key: &PublicKey) -> bool {
+    pub fn release_peer(&mut self, key: &PublicKey, holder: PeerHolder) -> bool {
         let Some((peer_id, _)) = self.peer_registry.lookup_by_key(key) else {
             return false;
         };
+        match self.peer_registry.release(peer_id, holder) {
+            HoldRelease::NotHeld => return false,
+            HoldRelease::StillHeld => return true,
+            HoldRelease::LastHolder => {}
+        }
         self.clear_peer_slot_state(peer_id);
         self.rx_windows.unregister(key, self.clock.now_ms());
         let Some(removal) = self.peer_registry.remove(peer_id) else {
@@ -6201,7 +6225,7 @@ impl<
     /// Ensure `key` is registered at least transiently, returning its slot.
     ///
     /// A known peer is returned as-is; an unknown one is auto-registered
-    /// exactly like a full-source sender would be—unpinned and
+    /// exactly like a full-source sender would be—held by nothing and
     /// LRU-evictable, never promoted. This is the node layer's hook for
     /// answering a stranger (an Identity Request reply, say) whose frame
     /// arrived on a path that does not auto-register its source, such as a
