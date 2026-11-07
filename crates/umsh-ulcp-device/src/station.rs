@@ -188,6 +188,9 @@ impl Chooser {
                 || (!intent.hold.is_empty() && intent.hold != on)
         });
         if drop {
+            // A deliberate drop ends a join that may long since have
+            // settled; forgive it before forgetting when it began.
+            self.settle(now_ms);
             self.associated = None;
             self.unsettled_since_ms = None;
         }
