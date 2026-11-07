@@ -170,7 +170,8 @@ pub async fn claim_chat_partition(
 /// communicator's tasks. The settings it caches and its chats grow on the
 /// heap, and its messages' text is kept here. Its chats are read from
 /// `partition` of `flash`, which is cleared if it holds no chats a store
-/// can read. Never inlined, as [`communicator`] is not.
+/// can read, and kept only in memory if it cannot even be cleared. Never
+/// inlined, as [`communicator`] is not.
 #[cfg(feature = "communicator")]
 #[inline(never)]
 pub fn communicator_node(
@@ -180,18 +181,20 @@ pub fn communicator_node(
 ) -> &'static super::communicator::Node {
     use super::communicator::{CLOCK, Node, port};
     use umsh_bsp_esp32::flash_store::Bounced;
-    use umsh_communicator::{FlashMap, FlashMapStore, Quota};
+    use umsh_communicator::{FlashMap, MemoryStore, Quota};
 
     // Where items are laid out on their way to and from flash: the
     // largest, a message's record, is about 1.8 KB.
     let buffer = alloc::boxed::Box::leak(alloc::vec![0u8; 2048].into_boxed_slice());
     let started = embassy_time::Instant::now();
     let range = partition.clone();
-    let store = FlashMapStore::mount_or_clear(
+    let (store, error) = MemoryStore::mount_or_volatile(
         FlashMap::new(Bounced::new(flash), partition, buffer),
         Quota::DEFAULT,
-    )
-    .unwrap_or_else(|e| panic!("chat store: {e:?}"));
+    );
+    if let Some(e) = error {
+        esp_println::println!("chats: flash unusable ({e:?}); chats kept until power off");
+    }
     let usage = umsh_communicator::ChatStore::usage(&store);
     esp_println::println!(
         "chats: 0x{:06x}..0x{:06x} mounted in {} ms, {} chats, {} messages, {} B",

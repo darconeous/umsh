@@ -736,6 +736,33 @@ mod tests {
         );
     }
 
+    /// Flash that cannot even be cleared leaves a store in memory alone,
+    /// which takes commits as any other does.
+    #[test]
+    fn flash_that_cannot_be_cleared_leaves_a_store_in_memory() {
+        let mut flash = foreign();
+        flash.fail_after(0);
+        let (mut store, error) = crate::MemoryStore::mount_or_volatile(
+            FlashMap::new(flash, 0..SIZE as u32, buffer()),
+            Quota::DEFAULT,
+        );
+        assert!(error.is_some());
+        assert!(!store.durable().is_kept());
+        let (_, id) = Rig::new().say(&mut store, direct(), "kept for now");
+        assert!(store.message(id).unwrap().is_some());
+    }
+
+    /// A partition that mounts is kept, as by `mount_or_clear`.
+    #[test]
+    fn flash_that_mounts_is_kept() {
+        let (store, error) = crate::MemoryStore::mount_or_volatile(
+            FlashMap::new(RamFlash::new(SIZE), 0..SIZE as u32, buffer()),
+            Quota::DEFAULT,
+        );
+        assert!(error.is_none());
+        assert!(store.durable().is_kept());
+    }
+
     /// Slots are reused, so a store that keeps evicting stays within a
     /// small flash however long it runs.
     #[test]

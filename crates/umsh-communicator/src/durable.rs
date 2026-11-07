@@ -45,3 +45,44 @@ impl Durable for Volatile {
         Ok(())
     }
 }
+
+/// A durable layer, or none when the layer could not be had: storage
+/// that fails even to be cleared. A store over [`MaybeKept::Volatile`]
+/// works as one in memory, and its chats last until power is lost.
+#[derive(Debug)]
+pub enum MaybeKept<D> {
+    Kept(D),
+    Volatile,
+}
+
+impl<D> MaybeKept<D> {
+    /// Whether what the store holds outlasts a power cycle.
+    pub fn is_kept(&self) -> bool {
+        matches!(self, Self::Kept(_))
+    }
+}
+
+impl<D: Durable> Durable for MaybeKept<D> {
+    const KEEPS: bool = D::KEEPS;
+
+    fn write(&mut self, key: &[u8], record: Option<&[u8]>) -> Result<(), StoreError> {
+        match self {
+            Self::Kept(durable) => durable.write(key, record),
+            Self::Volatile => Ok(()),
+        }
+    }
+
+    fn read(&mut self, each: &mut dyn FnMut(&[u8], &[u8])) -> Result<(), StoreError> {
+        match self {
+            Self::Kept(durable) => durable.read(each),
+            Self::Volatile => Ok(()),
+        }
+    }
+
+    fn clear(&mut self) -> Result<(), StoreError> {
+        match self {
+            Self::Kept(durable) => durable.clear(),
+            Self::Volatile => Ok(()),
+        }
+    }
+}

@@ -55,10 +55,15 @@ const EMPTY_LIT: Duration = Duration::from_millis(300);
 const EMPTY_DARK: Duration = Duration::from_millis(200);
 
 /// The communicator's node, over the session's device link, with its
-/// chats kept in the [`PARTITION`].
+/// chats kept in the [`PARTITION`], or in memory alone when that flash
+/// cannot be used at all.
 pub(crate) type Node = CommunicatorNode<
     DriverPort<CriticalSectionRawMutex>,
-    umsh_communicator::FlashMapStore<umsh_bsp_esp32::flash_store::Bounced>,
+    umsh_communicator::MemoryStore<
+        umsh_communicator::MaybeKept<
+            umsh_communicator::FlashMap<umsh_bsp_esp32::flash_store::Bounced>,
+        >,
+    >,
 >;
 
 /// The label of the partition the chats are kept in.

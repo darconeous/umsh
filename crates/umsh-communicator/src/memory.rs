@@ -25,7 +25,7 @@ use umsh_text::engine::{
 use umsh_text::{ConversationKey, MessageType, SenderScope, WireRef};
 
 use crate::batch::{Batch, Change, CommitStep, Committed, Subject};
-use crate::durable::{Durable, Volatile};
+use crate::durable::{Durable, MaybeKept, Volatile};
 use crate::ids::{ChatId, MessageId, PeerId};
 use crate::reaction::{REACTIONS, Reacted, Reaction, Reactions};
 use crate::record::{
@@ -389,6 +389,19 @@ impl MemoryStore {
 
     pub fn with_quota(quota: Quota) -> Self {
         Self::over(Volatile, quota)
+    }
+}
+
+impl<D: Durable> MemoryStore<MaybeKept<D>> {
+    /// [`MemoryStore::mount_or_clear`] over `durable`, or, when even
+    /// clearing it fails, an empty store that keeps nothing, with the
+    /// error that left it so. A device whose storage is gone still boots,
+    /// and its chats last until power is lost.
+    pub fn mount_or_volatile(durable: D, quota: Quota) -> (Self, Option<StoreError>) {
+        match Self::mount_or_clear(MaybeKept::Kept(durable), quota) {
+            Ok(store) => (store, None),
+            Err(error) => (Self::over(MaybeKept::Volatile, quota), Some(error)),
+        }
     }
 }
 
