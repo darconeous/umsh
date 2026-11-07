@@ -1373,6 +1373,9 @@ async fn apply_effect<A, S, const TXQ: usize, M, const RX: usize, const TX: usiz
             }
         }
         Some(Effect::StartTransmit) => {
+            let Some(id) = session.tx_radio_id() else {
+                return;
+            };
             let mut data: heapless::Vec<u8, MAX_PAYLOAD> = heapless::Vec::new();
             if data.extend_from_slice(session.tx_data()).is_err() {
                 env.trace(format_args!(
@@ -1397,6 +1400,7 @@ async fn apply_effect<A, S, const TXQ: usize, M, const RX: usize, const TX: usiz
             rt.radio
                 .tx
                 .send(TxRequest {
+                    id,
                     data,
                     power_dbm,
                     cad,
@@ -2247,12 +2251,15 @@ where
         // scrutinee would hold them for the whole match.
         let event = {
             // Only wait for a TX completion while one is outstanding,
-            // so a spurious tx_done can never be consumed early.
+            // so a spurious tx_done can never be consumed early, and only
+            // for the pending frame's own: the result of a frame an
+            // attach or detach discarded, still at the radio then, is
+            // dropped rather than taken as this one's.
+            let awaiting = session.tx_radio_id();
             let tx_done = async {
-                if session.has_pending_tx() {
-                    rt.radio.tx_done.wait().await
-                } else {
-                    core::future::pending().await
+                match awaiting {
+                    Some(id) => rt.radio.completion(id).await,
+                    None => core::future::pending().await,
                 }
             };
             // The locate alert's deadline. Enforced here rather than by

@@ -199,6 +199,10 @@ pub struct RxFrame {
 
 /// A queued transmit request from the MAC to the runner task.
 pub struct TxRequest {
+    /// Chosen by the requester and echoed with the result (see
+    /// [`Channels::tx_done`]), so a requester that stopped waiting for
+    /// one transmit cannot take its result as the next one's.
+    pub id: u32,
     pub data: Vec<u8, MAX_PAYLOAD>,
     /// Per-frame TX power override in dBm; `None` uses the runner's
     /// configured power.
@@ -219,11 +223,14 @@ pub struct TxRequest {
 pub struct Channels<M: RawMutex, const RX: usize, const TX: usize> {
     pub rx: Channel<M, RxFrame, RX>,
     pub tx: Channel<M, TxRequest, TX>,
-    pub tx_done: Signal<M, Result<(), TxError<RadioError>>>,
+    /// The result of a transmit, under its request's [`TxRequest::id`].
+    /// Wait for one with [`completion`](Self::completion).
+    pub tx_done: Signal<M, (u32, Result<(), TxError<RadioError>>)>,
     pub rx_waker: AtomicWaker,
     /// The spreading factor [`device_runner`] last configured the chip
     /// with, or zero before it has configured one.
     spreading_factor: AtomicU8,
+    next_tx_id: AtomicU32,
 }
 
 impl<M: RawMutex, const RX: usize, const TX: usize> Channels<M, RX, TX> {
@@ -234,6 +241,30 @@ impl<M: RawMutex, const RX: usize, const TX: usize> Channels<M, RX, TX> {
             tx_done: Signal::new(),
             rx_waker: AtomicWaker::new(),
             spreading_factor: AtomicU8::new(0),
+            next_tx_id: AtomicU32::new(0),
+        }
+    }
+
+    /// A fresh [`TxRequest::id`], for a requester that keeps no numbering
+    /// of its own.
+    pub fn next_tx_id(&self) -> u32 {
+        self.next_tx_id.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// Runner side: report the result of the transmit `request` asked for.
+    pub fn complete(&self, request: &TxRequest, result: Result<(), TxError<RadioError>>) {
+        self.tx_done.signal((request.id, result));
+    }
+
+    /// The result of the transmit whose request carried `id`. A result
+    /// for any other request, such as one whose requester stopped waiting,
+    /// is discarded.
+    pub async fn completion(&self, id: u32) -> Result<(), TxError<RadioError>> {
+        loop {
+            let (done, result) = self.tx_done.wait().await;
+            if done == id {
+                return result;
+            }
         }
     }
 }
@@ -279,15 +310,17 @@ impl<M: RawMutex + 'static, const RX: usize, const TX: usize> umsh_hal::Radio
         frame_data
             .extend_from_slice(data)
             .map_err(|_| TxError::Io(RadioError::PayloadSizeUnexpected(data.len())))?;
+        let id = self.ch.next_tx_id();
         self.ch
             .tx
             .send(TxRequest {
+                id,
                 data: frame_data,
                 power_dbm: options.power_dbm.map(i32::from),
                 cad: options.cad,
             })
             .await;
-        self.ch.tx_done.wait().await
+        self.ch.completion(id).await
     }
 
     fn poll_receive(
@@ -581,7 +614,7 @@ where
         };
         match select4(elapsed, ch.tx.receive(), settings, request).await {
             Either4::First(()) => return None,
-            Either4::Second(_) => ch.tx_done.signal(Err(TxError::CadTimeout)),
+            Either4::Second(request) => ch.complete(&request, Err(TxError::CadTimeout)),
             Either4::Third(new_settings) => return Some(new_settings),
             Either4::Fourth(Either::First(())) => {
                 if let Some(ctl) = ctl {
@@ -731,7 +764,7 @@ where
                     // report busy anyway). The MAC treats this like any other
                     // busy verdict and retries after backoff.
                     if rx_gate.is_busy(clock.now_ms()) {
-                        ch.tx_done.signal(Err(TxError::CadTimeout));
+                        ch.complete(&tx_req, Err(TxError::CadTimeout));
                         continue;
                     }
                     // TX is also NOT cancel-safe—run the CAD gate and
@@ -747,7 +780,7 @@ where
                         &tx_req,
                     )
                     .await;
-                    ch.tx_done.signal(result);
+                    ch.complete(&tx_req, result);
                     continue 'outer; // chip is left in standby—re-prepare RX
                 }
             }
@@ -1331,7 +1364,7 @@ where
                         // Same RX gate as `runner`: don't tear down an
                         // in-flight reception for the CAD gate.
                         if rx_gate.is_busy(clock.now_ms()) {
-                            ch.tx_done.signal(Err(TxError::CadTimeout));
+                            ch.complete(&tx_req, Err(TxError::CadTimeout));
                             continue;
                         }
                         let result = perform_tx(
@@ -1344,7 +1377,7 @@ where
                             &tx_req,
                         )
                         .await;
-                        ch.tx_done.signal(result);
+                        ch.complete(&tx_req, result);
                         continue 'rx;
                     }
                     Either4::Third(new_settings) => {

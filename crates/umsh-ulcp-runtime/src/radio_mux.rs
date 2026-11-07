@@ -174,7 +174,7 @@ where
     // Which attachment the next hand-off scan starts at.
     let mut handoff_start: usize = 0;
     // The transmit currently at the radio, if any. The frame bytes are
-    // kept because `tx_done` reports only a result, and the copy owed to
+    // kept because `tx_done` reports only an id and a result, and the copy owed to
     // the other clients can only be sent once the radio confirms the
     // frame actually went out.
     let mut in_flight: Option<InFlight> = None;
@@ -187,7 +187,10 @@ where
         // spurious tx_done can never be attributed to anyone.
         let tx_done = async {
             match in_flight {
-                Some(_) => real.tx_done.wait().await,
+                // The mux is the real radio's only requester and waits out
+                // every transmit it grants, so what completes there is the
+                // transmit in flight, whatever id it carries.
+                Some(_) => real.tx_done.wait().await.1,
                 None => core::future::pending().await,
             }
         };
@@ -260,7 +263,9 @@ where
                         Err(_) => {}
                     }
                 }
-                clients[sent.owner].tx_done.signal(result);
+                // Under the requester's own id: a requester that stopped
+                // waiting for this transmit cannot take it as its next.
+                clients[sent.owner].tx_done.signal((sent.id, result));
                 if aired {
                     // Every attachment hears what the antenna sends,
                     // whichever client sent it.
@@ -307,17 +312,25 @@ where
                     // and this frame is gone. Reporting it as a busy
                     // channel is both true of the link and the one
                     // outcome the sender already knows how to retry.
-                    clients[SESSION].tx_done.signal(if delivered {
-                        Ok(())
-                    } else {
-                        Err(TxError::CadTimeout)
-                    });
+                    clients[SESSION].tx_done.signal((
+                        request.id,
+                        if delivered {
+                            Ok(())
+                        } else {
+                            Err(TxError::CadTimeout)
+                        },
+                    ));
                     continue;
                 }
 
                 let data = request.data.clone();
+                let id = request.id;
                 real.tx.send(request).await;
-                in_flight = Some(InFlight { owner: who, data });
+                in_flight = Some(InFlight {
+                    owner: who,
+                    id,
+                    data,
+                });
             }
             Either4::Fourth(index) => handoff_start = (index + 1) % bridges.len(),
         }
@@ -327,6 +340,8 @@ where
 /// A transmit handed to the radio, held until its completion is known.
 struct InFlight {
     owner: usize,
+    /// The requester's [`TxRequest::id`], which its result carries back.
+    id: u32,
     data: heapless::Vec<u8, MAX_PAYLOAD>,
 }
 
@@ -499,8 +514,8 @@ mod tests {
                 assert!(session.rx.try_receive().is_err());
                 assert!(bridge.output.borrow().is_empty());
                 assert_eq!(stats.get(Counter::TxPackets), 0);
-                real.tx_done.signal(Ok(()));
-                node.tx_done.wait().await.unwrap();
+                real.tx_done.signal((0, Ok(())));
+                node.tx_done.wait().await.1.unwrap();
                 session.rx.receive().await;
                 assert_eq!(*bridge.output.borrow(), vec![vec![0xA1]]);
 
@@ -518,8 +533,8 @@ mod tests {
                     .input
                     .send(heapless::Vec::from_slice(&[0xB2]).unwrap())
                     .await;
-                real.tx_done.signal(Ok(()));
-                node.tx_done.wait().await.unwrap();
+                real.tx_done.signal((0, Ok(())));
+                node.tx_done.wait().await.1.unwrap();
                 session.rx.receive().await;
                 assert_eq!(bridge.output.borrow().len(), 2);
                 for tag in [0, 1, 2, 3, 0xB2] {
@@ -534,12 +549,12 @@ mod tests {
                 session.rx.receive().await;
                 session.tx.send(tx_request(0xC2)).await;
                 real.tx.receive().await;
-                real.tx_done.signal(Ok(()));
-                session.tx_done.wait().await.unwrap();
+                real.tx_done.signal((0, Ok(())));
+                session.tx_done.wait().await.1.unwrap();
                 node.rx.receive().await;
                 mode.set_backhaul(true);
                 session.tx.send(tx_request(0xC3)).await;
-                session.tx_done.wait().await.unwrap();
+                session.tx_done.wait().await.1.unwrap();
                 assert_eq!(node.rx.receive().await.info.origin, RxOrigin::Backhaul);
                 assert_eq!(bridge.output.borrow().len(), 3);
                 assert_eq!(bridge.output.borrow()[2], vec![0xC2]);
@@ -641,8 +656,8 @@ mod tests {
                 // The node's transmissions go to the tunnel only.
                 node.tx.send(tx_request(0xA1)).await;
                 real.tx.receive().await;
-                real.tx_done.signal(Ok(()));
-                node.tx_done.wait().await.unwrap();
+                real.tx_done.signal((0, Ok(())));
+                node.tx_done.wait().await.1.unwrap();
                 assert_eq!(*tunnel.output.borrow(), vec![vec![0xA1]]);
                 session.rx.receive().await;
 
@@ -748,6 +763,7 @@ mod tests {
         let mut data = heapless::Vec::new();
         data.push(tag).unwrap();
         TxRequest {
+            id: u32::from(tag),
             data,
             power_dbm: None,
             cad: CadPolicy::Skip,
@@ -775,14 +791,14 @@ mod tests {
             );
 
             real.tx_done
-                .signal(Err(TxError::Io(RadioError::TransmitTimeout)));
-            assert!(a.tx_done.wait().await.is_err());
+                .signal((0, Err(TxError::Io(RadioError::TransmitTimeout))));
+            assert!(a.tx_done.wait().await.1.is_err());
             assert!(b.tx_done.try_take().is_none(), "completion leaked to B");
 
             let granted = real.tx.receive().await;
             assert_eq!(granted.data.as_slice(), &[0xB1]);
-            real.tx_done.signal(Ok(()));
-            assert!(b.tx_done.wait().await.is_ok());
+            real.tx_done.signal((0, Ok(())));
+            assert!(b.tx_done.wait().await.1.is_ok());
             assert!(a.tx_done.try_take().is_none(), "completion leaked to A");
         });
     }
@@ -804,10 +820,10 @@ mod tests {
             for _ in 0..3 {
                 let granted = real.tx.receive().await;
                 order.push(granted.data[0]);
-                real.tx_done.signal(Ok(()));
+                real.tx_done.signal((0, Ok(())));
                 // Consume the routed completion so the next wait is clean.
                 let owner = if order.last() == Some(&0xB1) { b } else { a };
-                assert!(owner.tx_done.wait().await.is_ok());
+                assert!(owner.tx_done.wait().await.1.is_ok());
             }
             assert_eq!(order, [0xA1, 0xB1, 0xA2]);
         });
@@ -884,8 +900,8 @@ mod tests {
             assert_eq!(b.rx.receive().await.data.as_slice(), &[0x22]);
             assert_eq!(a.rx.receive().await.data.as_slice(), &[0x22]);
 
-            real.tx_done.signal(Ok(()));
-            assert!(a.tx_done.wait().await.is_ok());
+            real.tx_done.signal((0, Ok(())));
+            assert!(a.tx_done.wait().await.1.is_ok());
         });
     }
 
@@ -899,8 +915,8 @@ mod tests {
         run(real, clients, async {
             a.tx.send(tx_request(0xA1)).await;
             assert_eq!(real.tx.receive().await.data.as_slice(), &[0xA1]);
-            real.tx_done.signal(Ok(()));
-            assert!(a.tx_done.wait().await.is_ok());
+            real.tx_done.signal((0, Ok(())));
+            assert!(a.tx_done.wait().await.1.is_ok());
 
             let copy = b.rx.receive().await;
             assert_eq!(copy.data.as_slice(), &[0xA1]);
@@ -924,8 +940,8 @@ mod tests {
             a.tx.send(tx_request(0xA1)).await;
             assert_eq!(real.tx.receive().await.data.as_slice(), &[0xA1]);
             // CAD found the channel busy, so the frame never went out.
-            real.tx_done.signal(Err(TxError::CadTimeout));
-            assert!(a.tx_done.wait().await.is_err());
+            real.tx_done.signal((0, Err(TxError::CadTimeout)));
+            assert!(a.tx_done.wait().await.1.is_err());
 
             assert!(
                 b.rx.try_receive().is_err(),
@@ -952,7 +968,7 @@ mod tests {
                 "backhaul frame reached the radio"
             );
             assert!(
-                session.tx_done.wait().await.is_ok(),
+                session.tx_done.wait().await.1.is_ok(),
                 "a delivered frame must complete"
             );
 
@@ -968,8 +984,8 @@ mod tests {
             // how the host sees anything at all from here.
             node.tx.send(tx_request(0x77)).await;
             assert_eq!(real.tx.receive().await.data.as_slice(), &[0x77]);
-            real.tx_done.signal(Ok(()));
-            assert!(node.tx_done.wait().await.is_ok());
+            real.tx_done.signal((0, Ok(())));
+            assert!(node.tx_done.wait().await.1.is_ok());
             let copy = session.rx.receive().await;
             assert_eq!(copy.data.as_slice(), &[0x77]);
             assert_eq!(copy.info.origin, RxOrigin::LocalTx);
@@ -987,13 +1003,13 @@ mod tests {
             // Nobody drains the node, so its queue fills at depth 4.
             for tag in 0..4u8 {
                 session.tx.send(tx_request(tag)).await;
-                assert!(session.tx_done.wait().await.is_ok());
+                assert!(session.tx_done.wait().await.1.is_ok());
             }
             session.tx.send(tx_request(0xFF)).await;
             // The frame is gone rather than queued, and saying so lets
             // the sender retry instead of counting it as delivered.
             assert!(matches!(
-                session.tx_done.wait().await,
+                session.tx_done.wait().await.1,
                 Err(TxError::CadTimeout)
             ));
         });
@@ -1008,7 +1024,7 @@ mod tests {
         run(real, clients, async {
             // A previous requester abandoned its completion.
             a.tx_done
-                .signal(Err(TxError::Io(RadioError::TransmitTimeout)));
+                .signal((0xA0, Err(TxError::Io(RadioError::TransmitTimeout))));
 
             a.tx.send(tx_request(0xA1)).await;
             let granted = real.tx.receive().await;
@@ -1017,8 +1033,36 @@ mod tests {
             // of this transmit can reach the client now.
             assert!(a.tx_done.try_take().is_none(), "stale completion survived");
 
-            real.tx_done.signal(Ok(()));
-            assert!(a.tx_done.wait().await.is_ok());
+            real.tx_done.signal((0, Ok(())));
+            assert!(a.tx_done.wait().await.1.is_ok());
+        });
+    }
+
+    /// A requester that stopped waiting for one transmit, as the session
+    /// driver does when an attach or detach discards its pending frame,
+    /// gets the next one's result and not the abandoned one's, even when
+    /// it is already waiting as the abandoned result arrives.
+    #[test]
+    fn an_abandoned_transmit_result_is_not_taken_as_the_next_ones() {
+        let real = channels();
+        let a = channels();
+        let clients: &'static [&'static TestCh] = Box::leak(Box::new([a]));
+
+        run(real, clients, async {
+            a.tx.send(tx_request(0xA1)).await;
+            assert_eq!(real.tx.receive().await.data.as_slice(), &[0xA1]);
+            a.tx.send(tx_request(0xA2)).await;
+
+            let mut waiting = core::pin::pin!(a.completion(0xA2));
+            real.tx_done
+                .signal((0, Err(TxError::Io(RadioError::TransmitTimeout))));
+            let granted = match select(waiting.as_mut(), real.tx.receive()).await {
+                Either::First(result) => panic!("took the abandoned result: {result:?}"),
+                Either::Second(granted) => granted,
+            };
+            assert_eq!(granted.data.as_slice(), &[0xA2]);
+            real.tx_done.signal((0, Ok(())));
+            assert!(waiting.await.is_ok());
         });
     }
 
@@ -1044,8 +1088,8 @@ mod tests {
             // never sees, and the reason counting happens here.
             session.tx.send(tx_request(0xA1)).await;
             let _ = real.tx.receive().await;
-            real.tx_done.signal(Ok(()));
-            assert!(session.tx_done.wait().await.is_ok());
+            real.tx_done.signal((0, Ok(())));
+            assert!(session.tx_done.wait().await.1.is_ok());
             // Its own client is skipped, but the other one gets a copy;
             // that copy is not a reception and must not be counted.
             assert_eq!(node.rx.receive().await.info.origin, RxOrigin::LocalTx);
@@ -1053,15 +1097,15 @@ mod tests {
             // A busy channel is an attempt, not a transmission.
             node.tx.send(tx_request(0xB1)).await;
             let _ = real.tx.receive().await;
-            real.tx_done.signal(Err(TxError::CadTimeout));
-            assert!(node.tx_done.wait().await.is_err());
+            real.tx_done.signal((0, Err(TxError::CadTimeout)));
+            assert!(node.tx_done.wait().await.1.is_err());
 
             // A radio fault is neither.
             node.tx.send(tx_request(0xB2)).await;
             let _ = real.tx.receive().await;
             real.tx_done
-                .signal(Err(TxError::Io(RadioError::TransmitTimeout)));
-            assert!(node.tx_done.wait().await.is_err());
+                .signal((0, Err(TxError::Io(RadioError::TransmitTimeout))));
+            assert!(node.tx_done.wait().await.1.is_err());
 
             real.rx.send(umsh_rx_frame(0x01)).await;
             let _ = session.rx.receive().await;
@@ -1093,16 +1137,16 @@ mod tests {
         run_with_stats(real, clients, backhaul_mode(), stats, async {
             session.tx.send(tx_request(0x51)).await;
             let _ = node.rx.receive().await;
-            assert!(session.tx_done.wait().await.is_ok());
+            assert!(session.tx_done.wait().await.1.is_ok());
 
             // Now fill the node's queue so the next one is refused.
             for tag in 0..4u8 {
                 session.tx.send(tx_request(tag)).await;
-                assert!(session.tx_done.wait().await.is_ok());
+                assert!(session.tx_done.wait().await.1.is_ok());
             }
             session.tx.send(tx_request(0xFF)).await;
             assert!(matches!(
-                session.tx_done.wait().await,
+                session.tx_done.wait().await.1,
                 Err(TxError::CadTimeout)
             ));
 

@@ -306,6 +306,7 @@ fn sleep_recovery_is_bounded_and_retries_on_the_next_configuration() {
 
 fn tx_request() -> TxRequest {
     TxRequest {
+        id: 7,
         data: heapless::Vec::from_slice(&[1, 2, 3]).unwrap(),
         power_dbm: None,
         cad: CadPolicy::Skip,
@@ -343,7 +344,7 @@ fn disabled_radio_refuses_transmits_without_waking() {
             assert!(poll(runner.as_mut()).is_pending());
             assert!(matches!(
                 poll(core::pin::pin!(channel.tx_done.wait())),
-                Poll::Ready(Err(TxError::CadTimeout))
+                Poll::Ready((7, Err(TxError::CadTimeout)))
             ));
         }
         assert_eq!(chip.borrow().commands.len(), count);
@@ -395,7 +396,7 @@ fn preamble_refuses_transmits_until_a_max_frame_could_have_ended() {
         assert!(
             matches!(
                 poll(core::pin::pin!(channel.tx_done.wait())),
-                Poll::Ready(Err(TxError::CadTimeout))
+                Poll::Ready((7, Err(TxError::CadTimeout)))
             ),
             "refused at {now}"
         );
@@ -445,7 +446,7 @@ fn transmit_without_completion_times_out_and_cold_starts_the_chip() {
     assert!(poll(runner.as_mut()).is_pending());
     assert!(matches!(
         poll(core::pin::pin!(channel.tx_done.wait())),
-        Poll::Ready(Err(TxError::Io(RadioError::TransmitTimeout)))
+        Poll::Ready((7, Err(TxError::Io(RadioError::TransmitTimeout))))
     ));
     // The cold start restores the TCXO mode a refused SetTx can clear.
     assert!(
@@ -548,7 +549,7 @@ fn refused_rx_backs_off_and_keeps_serving_requests() {
     assert!(poll(task.as_mut()).is_pending());
     assert!(matches!(
         poll(core::pin::pin!(channel.tx_done.wait())),
-        Poll::Ready(Err(TxError::CadTimeout))
+        Poll::Ready((7, Err(TxError::CadTimeout)))
     ));
     control.request_rssi();
     assert!(poll(task.as_mut()).is_pending());
@@ -617,7 +618,7 @@ fn fixed_runner_refuses_transmits_while_rx_is_refused() {
     assert!(poll(task.as_mut()).is_pending());
     assert!(matches!(
         poll(core::pin::pin!(channel.tx_done.wait())),
-        Poll::Ready(Err(TxError::CadTimeout))
+        Poll::Ready((7, Err(TxError::CadTimeout)))
     ));
     assert_eq!(set_rx_attempts(&chip), 1);
     clock.0.set(10);

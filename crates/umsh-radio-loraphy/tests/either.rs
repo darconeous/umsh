@@ -204,6 +204,7 @@ fn either_chip_boots_receives_and_transmits() {
             channel
                 .tx
                 .try_send(TxRequest {
+                    id: 7,
                     data: heapless::Vec::from_slice(&[1, 2, 3]).unwrap(),
                     power_dbm: None,
                     cad: umsh_hal::CadPolicy::Skip,

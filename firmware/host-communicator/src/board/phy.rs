@@ -75,7 +75,7 @@ impl Phy {
                     if let Some(radio) = membership.as_mut().and_then(|joined| joined.radio.as_mut()) {
                         let _ = radio.transmit(&request.data, TxOptions::default()).await;
                     }
-                    REAL_CH.tx_done.signal(Ok(()));
+                    REAL_CH.complete(&request, Ok(()));
                 }
                 Some(received) = poll_fn(|cx| match joined {
                     Some(ref mut radio) => radio.poll_receive(cx, &mut buf).map(Result::ok),

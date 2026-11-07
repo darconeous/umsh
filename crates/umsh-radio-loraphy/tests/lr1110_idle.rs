@@ -343,6 +343,7 @@ fn lr1110_can_start_a_transmission_after_reenable() {
         channel
             .tx
             .try_send(umsh_radio_loraphy::TxRequest {
+                id: 7,
                 data: heapless::Vec::from_slice(&[1, 2, 3]).unwrap(),
                 power_dbm: None,
                 cad: umsh_hal::CadPolicy::Skip,

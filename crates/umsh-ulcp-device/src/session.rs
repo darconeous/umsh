@@ -700,6 +700,9 @@ pub enum IdentitySource {
 }
 
 struct PendingTx {
+    /// The radio request id this frame is sent under (see
+    /// [`Session::tx_radio_id`]).
+    radio_id: u32,
     data: HeaplessVec<u8, MAX_MTU>,
     tid: u8,
     airtime_ms: u32,
@@ -3478,6 +3481,11 @@ pub struct Session<A: AesProvider, S: Sha256Provider, const TX: usize = 1> {
     device: DeviceDomain,
     host: HostDomain,
     session: SessionState<TX>,
+    /// The radio request id the next queued transmit is given. Kept out of
+    /// `session`, which an attach or detach replaces, so a frame queued
+    /// after one never shares an id with a frame still at the radio from
+    /// before it.
+    next_tx_radio_id: u32,
     /// Whether a host is currently attached: accepted frames are
     /// delivered live when true and queued when false. Starts detached;
     /// the transport binding reports attach/detach edges.
@@ -3781,6 +3789,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             device: DeviceDomain::post_reset(&config),
             host: HostDomain::default(),
             session: SessionState::default(),
+            next_tx_radio_id: 0,
             attached: false,
             device_interface: false,
             link_secure: false,
@@ -3866,6 +3875,22 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// Whether a transmit is awaiting [`Session::on_tx_result`].
     pub fn has_pending_tx(&self) -> bool {
         !self.session.pending.is_empty()
+    }
+
+    /// The radio request id to send the pending transmit under, and so
+    /// the one result [`Session::on_tx_result`] is to be told of. Each
+    /// queued frame has its own, never reused by the frames after it,
+    /// across attaches and detaches too: a result that arrives for a
+    /// frame an attach or detach discarded carries an id no pending frame
+    /// has, and belongs to nobody.
+    pub fn tx_radio_id(&self) -> Option<u32> {
+        self.session.pending.front().map(|pending| pending.radio_id)
+    }
+
+    fn take_tx_radio_id(&mut self) -> u32 {
+        let id = self.next_tx_radio_id;
+        self.next_tx_radio_id = id.wrapping_add(1);
+        id
     }
 
     /// Number of received frames currently waiting for the host.
@@ -5207,9 +5232,11 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         }
         let mut data = HeaplessVec::new();
         data.extend_from_slice(&buf[..frame_len]).ok()?;
+        let radio_id = self.take_tx_radio_id();
         self.session
             .pending
             .push_back(PendingTx {
+                radio_id,
                 data,
                 tid: TID_UNSOLICITED,
                 airtime_ms,
@@ -8577,7 +8604,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         // The MTU check above proves this fixed-capacity copy can succeed.
         data.extend_from_slice(payload.data)
             .expect("payload bounded by MAX_MTU");
+        let radio_id = self.take_tx_radio_id();
         let queued = self.session.pending.push_back(PendingTx {
+            radio_id,
             data,
             tid,
             airtime_ms,
@@ -13332,6 +13361,31 @@ mod tests {
         // The new session is free to transmit (no stale BUSY).
         let (_, effect) = send_packet(&mut session, 4, &[0x02; 4], &[], 0);
         assert_eq!(effect, Some(Effect::StartTransmit));
+    }
+
+    /// A frame queued after an attach or detach is sent under a radio id
+    /// that no frame from before it had, so the driver can tell the result
+    /// of a discarded frame still at the radio from its own.
+    #[test]
+    fn transmits_never_share_a_radio_id_across_attach_and_detach() {
+        let mut session = test_session();
+        enable(&mut session);
+        assert_eq!(session.tx_radio_id(), None);
+        send_packet(&mut session, 3, &[0x01; 4], &[], 0);
+        let discarded = session.tx_radio_id().expect("a pending transmit");
+
+        session.detach();
+        session.attach(true);
+        enable(&mut session);
+        assert_eq!(session.tx_radio_id(), None);
+        send_packet(&mut session, 4, &[0x02; 4], &[], 0);
+        let next = session.tx_radio_id().expect("a pending transmit");
+        assert_ne!(next, discarded);
+
+        session.on_tx_result(TxOutcome::Sent, 0, &mut |_: &[u8]| {});
+        send_packet(&mut session, 5, &[0x03; 4], &[], 0);
+        let after = session.tx_radio_id().expect("the next frame");
+        assert!(after != next && after != discarded);
     }
 
     #[test]
