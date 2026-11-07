@@ -3783,6 +3783,34 @@ mod firmware {
         }
     }
 
+    /// Tells the USB driver whether a cable is in.
+    ///
+    /// MPSL owns `POWER`, so its USB events cannot drive the driver, which
+    /// therefore runs on a [`SoftwareVbusDetect`] that starts out saying
+    /// present. Without this, a pulled cable never reached the USB stack:
+    /// the CDC port, and with it the host's attachment, stayed up with
+    /// nobody on the other end. `USBREGSTATUS` reads the same detector
+    /// those events come from, so polling it reports the same edges, a
+    /// little later.
+    #[embassy_executor::task]
+    async fn usb_vbus_task(vbus: &'static SoftwareVbusDetect) {
+        let mut present = true;
+        let mut ready = true;
+        loop {
+            Timer::after_millis(500).await;
+            let status = pac::POWER.usbregstatus().read();
+            if status.vbusdetect() != present {
+                present = status.vbusdetect();
+                ready = false;
+                vbus.detected(present);
+            }
+            if present && !ready && status.outputrdy() {
+                ready = true;
+                vbus.ready();
+            }
+        }
+    }
+
     /// Owns the USB `Sender`, HDLC-encodes frames, and writes USB packets.
     #[embassy_executor::task]
     async fn output_task(
@@ -6927,12 +6955,14 @@ mod firmware {
         let boot_identity = boot_identity_keys.map(|(_secret, public)| public);
 
         // ── USB stack ────────────────────────────────────────────────────────
-        // HardwareVbusDetect cannot share POWER with MPSL. This tethered device
-        // treats USB as present/ready; CDC connection state still supplies the
-        // protocol attach/detach edges used by advertising arbitration.
+        // HardwareVbusDetect cannot share POWER with MPSL, so the cable is
+        // reported by polling (see `usb_vbus_task`); CDC connection state
+        // still supplies the protocol attach/detach edges used by
+        // advertising arbitration.
         static VBUS: StaticCell<SoftwareVbusDetect> = StaticCell::new();
-        let vbus = VBUS.init(SoftwareVbusDetect::new(true, true));
-        let driver = Driver::new(p.USBD, Irqs, &*vbus);
+        let vbus: &'static SoftwareVbusDetect = VBUS.init(SoftwareVbusDetect::new(true, true));
+        let driver = Driver::new(p.USBD, Irqs, vbus);
+        spawner.spawn(usb_vbus_task(vbus).unwrap());
 
         let mut config = Config::new(BOARD_USB.vid, BOARD_USB.pid);
         config.manufacturer = Some("UMSH");
