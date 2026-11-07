@@ -2539,7 +2539,19 @@ async fn output_pump(tx: &mut WiredTx, panic_report: Option<heapless::String<128
         };
         #[cfg(not(feature = "debug-log"))]
         let outbound = OUT_CH.wired.receive().await;
+        // A frame with a completion is one the driver waits on: it learns
+        // whether the frame went out, and a frame whose completion has
+        // already settled goes nowhere.
+        if outbound
+            .completion
+            .is_some_and(|completion| !completion.is_pending())
+        {
+            continue;
+        }
         if SESSION_GEN.load(Ordering::Acquire) != outbound.generation {
+            if let Some(completion) = outbound.completion {
+                completion.complete(false);
+            }
             continue;
         }
         #[cfg(feature = "board-tlora-pager")]
@@ -2554,14 +2566,26 @@ async fn output_pump(tx: &mut WiredTx, panic_report: Option<heapless::String<128
         }
         let mut wire = [0u8; WIRE_MAX];
         let Ok(len) = hdlc::encode_frame(&outbound.frame, &mut wire) else {
+            if let Some(completion) = outbound.completion {
+                completion.complete(false);
+            }
             continue;
         };
+        let mut sent = true;
         for chunk in generation_checked(wire[..len].chunks(64), outbound.generation, || {
             SESSION_GEN.load(Ordering::Acquire)
         }) {
-            if !wired_write_all(tx, chunk).await {
+            if outbound
+                .completion
+                .is_some_and(|completion| !completion.is_pending())
+                || !wired_write_all(tx, chunk).await
+            {
+                sent = false;
                 break;
             }
+        }
+        if let Some(completion) = outbound.completion {
+            completion.complete(sent && SESSION_GEN.load(Ordering::Acquire) == outbound.generation);
         }
     }
 }
