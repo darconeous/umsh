@@ -239,7 +239,9 @@ impl<P: LocalPort> Settings<P> {
 
     fn take(&mut self, event: Event, events: &mut impl FnMut(NodeEvent)) {
         match event {
-            Event::Changed(_) | Event::Resync => events(NodeEvent::SettingsChanged),
+            Event::Changed(_) | Event::Resync | Event::Overflowed => {
+                events(NodeEvent::SettingsChanged)
+            }
             Event::Written { id, outcome, .. } => {
                 if self
                     .wifi_save

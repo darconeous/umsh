@@ -28,4 +28,4 @@ pub mod model;
 pub use descriptor::{Access, Descriptor, Kind};
 pub use exchange::{Arrival, Busy, Exchange, Request, Ticket};
 pub use local::{ANSWER_TIMEOUT_MS, LocalExchange, LocalPort, PortBusy, PortFrame};
-pub use model::{Event, Freshness, Model, Refusal, WriteId, WriteOutcome};
+pub use model::{Event, Freshness, Model, OBSERVED_EVENTS_MAX, Refusal, WriteId, WriteOutcome};
