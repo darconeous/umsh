@@ -19,7 +19,7 @@ use crate::mac::MacBackend;
 use crate::peer::PeerConnection;
 use crate::peer_repeaters::{self, PeerRepeaterTable};
 #[cfg(feature = "software-crypto")]
-use crate::pfs::{PfsSessionManager, PfsState};
+use crate::pfs::{self, PfsSessionManager, PfsState};
 use crate::receive::ReceivedPacketRef;
 use crate::ticket::{SendProgressTicket, SendToken};
 use crate::transport::Transport;
@@ -236,7 +236,7 @@ pub(crate) struct LocalNodeState {
     peer_repeaters: PeerRepeaterTable,
     peer_repeaters_responder: bool,
     #[cfg(feature = "software-crypto")]
-    pfs: PfsSessionManager,
+    pub(crate) pfs: PfsSessionManager,
     /// The session identity of a contact exchange in progress.
     #[cfg(feature = "software-crypto")]
     meet: Option<MeetSlot>,
@@ -1437,12 +1437,15 @@ impl<M: MacBackend> LocalNode<M> {
         duration_minutes: u16,
         options: &SendOptions,
     ) -> Result<SendProgressTicket, NodeError<M>> {
-        let receipt = self
-            .state
-            .borrow_mut()
-            .pfs
-            .request_session(&self.mac, self.identity_id, peer, duration_minutes, options)
-            .await?;
+        let receipt = pfs::request_session(
+            &self.state,
+            &self.mac,
+            self.identity_id,
+            peer,
+            duration_minutes,
+            options,
+        )
+        .await?;
         Ok(self.register_ack_send(self.identity_id, receipt))
     }
 
@@ -1452,12 +1455,15 @@ impl<M: MacBackend> LocalNode<M> {
         peer: &PublicKey,
         options: &SendOptions,
     ) -> Result<(), NodeError<M>> {
-        let _ = self
-            .state
-            .borrow_mut()
-            .pfs
-            .end_session(&self.mac, self.identity_id, peer, true, options)
-            .await?;
+        let _ = pfs::end_session(
+            &self.state,
+            &self.mac,
+            self.identity_id,
+            peer,
+            true,
+            options,
+        )
+        .await?;
         Ok(())
     }
 
@@ -1803,50 +1809,44 @@ impl<M: MacBackend> LocalNode<M> {
                 ephemeral_key,
                 duration_minutes,
             } => {
-                self.state
-                    .borrow_mut()
-                    .pfs
-                    .accept_request(
-                        &self.mac,
-                        self.identity_id,
-                        *from,
-                        ephemeral_key,
-                        duration_minutes,
-                        channel,
-                        options,
-                    )
-                    .await?;
-                Ok(Some(PfsLifecycle::Established(*from)))
+                let established = pfs::accept_request(
+                    &self.state,
+                    &self.mac,
+                    self.identity_id,
+                    *from,
+                    ephemeral_key,
+                    duration_minutes,
+                    channel,
+                    options,
+                )
+                .await?;
+                Ok(established.then_some(PfsLifecycle::Established(*from)))
             }
             OwnedMacCommand::PfsSessionResponse {
                 ephemeral_key,
                 duration_minutes,
             } => {
-                if self
-                    .state
-                    .borrow_mut()
-                    .pfs
-                    .accept_response(
-                        &self.mac,
-                        self.identity_id,
-                        *from,
-                        ephemeral_key,
-                        duration_minutes,
-                    )
-                    .await?
-                {
-                    Ok(Some(PfsLifecycle::Established(*from)))
-                } else {
-                    Ok(None)
-                }
+                let established = pfs::accept_response(
+                    &self.state,
+                    &self.mac,
+                    self.identity_id,
+                    *from,
+                    ephemeral_key,
+                    duration_minutes,
+                )
+                .await?;
+                Ok(established.then_some(PfsLifecycle::Established(*from)))
             }
             OwnedMacCommand::EndPfsSession => {
-                let _ = self
-                    .state
-                    .borrow_mut()
-                    .pfs
-                    .end_session(&self.mac, self.identity_id, from, false, options)
-                    .await?;
+                let _ = pfs::end_session(
+                    &self.state,
+                    &self.mac,
+                    self.identity_id,
+                    from,
+                    false,
+                    options,
+                )
+                .await?;
                 Ok(Some(PfsLifecycle::Ended(*from)))
             }
             _ => Ok(None),
@@ -1988,11 +1988,7 @@ impl<M: MacBackend> LocalNode<M> {
     #[cfg(feature = "software-crypto")]
     pub(crate) async fn expire_pfs_sessions(&self) -> Result<Vec<PublicKey>, NodeError<M>> {
         let now_ms = self.mac.now_ms().await;
-        self.state
-            .borrow_mut()
-            .pfs
-            .expire_sessions(&self.mac, now_ms)
-            .await
+        pfs::expire_sessions(&self.state, &self.mac, now_ms).await
     }
 
     /// Drop any sent PFS requests that were not answered before their deadline,

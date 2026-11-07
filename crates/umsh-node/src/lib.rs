@@ -770,14 +770,15 @@ mod tests {
     #[cfg(feature = "software-crypto")]
     #[test]
     fn pfs_session_manager_request_and_teardown() {
-        use crate::pfs::PfsSessionManager;
+        use crate::{node::LocalNodeState, pfs};
 
         let mac = FakeMac::new(vec![[3u8; 32]]);
         let peer_long_term = PublicKey([0x55; 32]);
         let options = SendOptions::default().with_ack_requested(true);
 
-        let mut pfs = PfsSessionManager::new();
-        block_on_ready(pfs.request_session(
+        let state = RefCell::new(LocalNodeState::new());
+        block_on_ready(pfs::request_session(
+            &state,
             &mac,
             LocalIdentityId(1),
             &peer_long_term,
@@ -799,7 +800,8 @@ mod tests {
         );
 
         assert!(
-            block_on_ready(pfs.end_session(
+            block_on_ready(pfs::end_session(
+                &state,
                 &mac,
                 LocalIdentityId(1),
                 &peer_long_term,
@@ -819,13 +821,14 @@ mod tests {
     #[cfg(feature = "software-crypto")]
     #[test]
     fn pfs_end_session_errors_when_missing() {
-        use crate::pfs::PfsSessionManager;
+        use crate::{node::LocalNodeState, pfs};
 
         let mac = FakeMac::new(Vec::new());
         let options = SendOptions::default();
-        let mut pfs = PfsSessionManager::new();
+        let state = RefCell::new(LocalNodeState::new());
 
-        let error = block_on_ready(pfs.end_session(
+        let error = block_on_ready(pfs::end_session(
+            &state,
             &mac,
             LocalIdentityId(1),
             &PublicKey([0x77; 32]),
@@ -839,7 +842,8 @@ mod tests {
     #[cfg(feature = "software-crypto")]
     #[test]
     fn pfs_responder_answers_with_a_finite_lifetime() {
-        use crate::pfs::{MAX_PFS_SESSION_MINUTES, PfsSessionManager};
+        use crate::node::LocalNodeState;
+        use crate::pfs::{self, MAX_PFS_SESSION_MINUTES};
 
         // Zero, which no node may send, and a request past the ceiling both
         // come back as the ceiling; anything else is accepted as asked.
@@ -850,8 +854,9 @@ mod tests {
         ] {
             let mac = FakeMac::new(vec![[3u8; 32]]);
             let options = SendOptions::default();
-            let mut pfs = PfsSessionManager::new();
-            block_on_ready(pfs.accept_request(
+            let state = RefCell::new(LocalNodeState::new());
+            block_on_ready(pfs::accept_request(
+                &state,
                 &mac,
                 LocalIdentityId(1),
                 PublicKey([0x55; 32]),
@@ -871,7 +876,7 @@ mod tests {
             };
             assert_eq!(duration_minutes, accepted, "requested {requested}");
             assert_eq!(
-                pfs.sessions()[0].expires_ms - mac.state.borrow().now_ms,
+                state.borrow().pfs.sessions()[0].expires_ms - mac.state.borrow().now_ms,
                 u64::from(accepted) * 60_000,
                 "requested {requested}"
             );
@@ -881,15 +886,24 @@ mod tests {
     #[cfg(feature = "software-crypto")]
     #[test]
     fn pfs_zero_duration_never_means_forever() {
-        use crate::pfs::{MAX_PFS_SESSION_MINUTES, PfsSessionManager};
+        use crate::node::LocalNodeState;
+        use crate::pfs::{self, MAX_PFS_SESSION_MINUTES};
 
         let mac = FakeMac::new(vec![[3u8; 32]]);
         let peer = PublicKey([0x55; 32]);
         let options = SendOptions::default();
-        let mut pfs = PfsSessionManager::new();
+        let state = RefCell::new(LocalNodeState::new());
 
         // The initiator never puts 0 on the wire.
-        block_on_ready(pfs.request_session(&mac, LocalIdentityId(1), &peer, 0, &options)).unwrap();
+        block_on_ready(pfs::request_session(
+            &state,
+            &mac,
+            LocalIdentityId(1),
+            &peer,
+            0,
+            &options,
+        ))
+        .unwrap();
         let sent = mac.take_unicasts();
         assert!(matches!(
             parse_owned_mac_command(&sent[0].payload),
@@ -900,7 +914,8 @@ mod tests {
         ));
 
         // A response that names 0 anyway still yields a session that ends.
-        block_on_ready(pfs.accept_response(
+        block_on_ready(pfs::accept_response(
+            &state,
             &mac,
             LocalIdentityId(1),
             peer,
@@ -908,15 +923,168 @@ mod tests {
             0,
         ))
         .unwrap();
-        let expires_ms = pfs.sessions()[0].expires_ms;
+        let expires_ms = state.borrow().pfs.sessions()[0].expires_ms;
         assert_eq!(
             expires_ms - mac.state.borrow().now_ms,
             u64::from(MAX_PFS_SESSION_MINUTES) * 60_000
         );
         assert_eq!(
-            block_on_ready(pfs.expire_sessions(&mac, expires_ms)).unwrap(),
+            block_on_ready(pfs::expire_sessions(&state, &mac, expires_ms)).unwrap(),
             vec![peer]
         );
+    }
+
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn pfs_session_ended_during_activation_stays_ended() {
+        let mac = FakeMac::new(vec![[7u8; 32]]);
+        let node = test_node(mac.clone());
+        let peer = PublicKey([0x55; 32]);
+        let options = SendOptions::default();
+        block_on_ready(node.request_pfs(&peer, 60, &options)).unwrap();
+
+        // The response is underway when the user ends the session.
+        mac.state.borrow_mut().hold_add_peer = true;
+        let response = OwnedMacCommand::PfsSessionResponse {
+            ephemeral_key: PublicKey([0x44; 32]),
+            duration_minutes: 60,
+        };
+        let mut accepting = pin!(node.handle_pfs_command(&peer, None, &response, &options));
+        assert!(parks(accepting.as_mut()));
+        block_on_ready(node.end_pfs(&peer, &options)).unwrap();
+        mac.state.borrow_mut().hold_add_peer = false;
+
+        assert!(block_on_ready(accepting).unwrap().is_none());
+        assert!(node.pfs_local_keys().is_empty());
+        assert!(matches!(
+            block_on_ready(node.pfs_status(&peer)).unwrap(),
+            crate::PfsStatus::Inactive
+        ));
+        assert_eq!(
+            mac.state.borrow().removed_ephemerals,
+            vec![LocalIdentityId(10)]
+        );
+    }
+
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn pfs_session_ended_while_answering_gets_no_response() {
+        let mac = FakeMac::new(vec![[7u8; 32]]);
+        let node = test_node(mac.clone());
+        let peer = PublicKey([0x55; 32]);
+        let options = SendOptions::default();
+
+        mac.state.borrow_mut().hold_add_peer = true;
+        let request = OwnedMacCommand::PfsSessionRequest {
+            ephemeral_key: PublicKey([0x44; 32]),
+            duration_minutes: 60,
+        };
+        let mut accepting = pin!(node.handle_pfs_command(&peer, None, &request, &options));
+        assert!(parks(accepting.as_mut()));
+        block_on_ready(node.end_pfs(&peer, &options)).unwrap();
+        mac.state.borrow_mut().hold_add_peer = false;
+
+        assert!(block_on_ready(accepting).unwrap().is_none());
+        let sent = mac.take_unicasts();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(
+            parse_owned_mac_command(&sent[0].payload),
+            OwnedMacCommand::EndPfsSession
+        );
+        assert!(node.pfs_local_keys().is_empty());
+        assert_eq!(
+            mac.state.borrow().removed_ephemerals,
+            vec![LocalIdentityId(10)]
+        );
+    }
+
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn pfs_session_being_answered_holds_its_place_in_the_table() {
+        let mac = FakeMac::new(vec![[1u8; 32], [2u8; 32], [3u8; 32], [4u8; 32], [5u8; 32]]);
+        let node = test_node(mac.clone());
+        let options = SendOptions::default();
+        for peer in 1..=3 {
+            block_on_ready(node.request_pfs(&PublicKey([peer; 32]), 60, &options)).unwrap();
+        }
+
+        mac.state.borrow_mut().hold_add_peer = true;
+        let answered = PublicKey([0x44; 32]);
+        let request = OwnedMacCommand::PfsSessionRequest {
+            ephemeral_key: PublicKey([0x45; 32]),
+            duration_minutes: 60,
+        };
+        let mut accepting = pin!(node.handle_pfs_command(&answered, None, &request, &options));
+        assert!(parks(accepting.as_mut()));
+
+        let refused = block_on_ready(node.request_pfs(&PublicKey([9; 32]), 60, &options));
+        assert!(matches!(
+            refused,
+            Err(crate::NodeError::PfsSessionTableFull)
+        ));
+
+        mac.state.borrow_mut().hold_add_peer = false;
+        assert!(block_on_ready(accepting).unwrap().is_some());
+        assert_eq!(node.state().borrow().pfs.sessions().len(), 4);
+    }
+
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn pfs_repeated_request_replaces_the_session_and_its_identity() {
+        let mac = FakeMac::new(vec![[7u8; 32], [8u8; 32]]);
+        let node = test_node(mac.clone());
+        let peer = PublicKey([0x55; 32]);
+        let options = SendOptions::default();
+        let request = OwnedMacCommand::PfsSessionRequest {
+            ephemeral_key: PublicKey([0x44; 32]),
+            duration_minutes: 60,
+        };
+
+        block_on_ready(node.handle_pfs_command(&peer, None, &request, &options)).unwrap();
+        let first = node.pfs_local_keys();
+        block_on_ready(node.handle_pfs_command(&peer, None, &request, &options)).unwrap();
+
+        assert_eq!(node.pfs_local_keys().len(), 1);
+        assert_ne!(node.pfs_local_keys(), first);
+        assert_eq!(
+            mac.state.borrow().removed_ephemerals,
+            vec![LocalIdentityId(10)]
+        );
+    }
+
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn pfs_unsent_response_leaves_nothing_behind() {
+        let mac = FakeMac::new(vec![[7u8; 32]]);
+        let node = test_node(mac.clone());
+        let peer = PublicKey([0x55; 32]);
+        let options = SendOptions::default();
+
+        mac.state.borrow_mut().refuse_sends = true;
+        let request = OwnedMacCommand::PfsSessionRequest {
+            ephemeral_key: PublicKey([0x44; 32]),
+            duration_minutes: 60,
+        };
+        assert!(block_on_ready(node.handle_pfs_command(&peer, None, &request, &options)).is_err());
+
+        assert!(node.state().borrow().pfs.sessions().is_empty());
+        assert_eq!(
+            mac.state.borrow().removed_ephemerals,
+            vec![LocalIdentityId(10)]
+        );
+    }
+
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn pfs_unsent_request_leaves_nothing_behind() {
+        let mac = FakeMac::new(vec![[7u8; 32]]);
+        let node = test_node(mac.clone());
+        let peer = PublicKey([0x55; 32]);
+
+        mac.state.borrow_mut().refuse_sends = true;
+        assert!(block_on_ready(node.request_pfs(&peer, 60, &SendOptions::default())).is_err());
+
+        assert!(node.state().borrow().pfs.sessions().is_empty());
     }
 
     #[cfg(feature = "software-crypto")]
@@ -1105,6 +1273,10 @@ mod tests {
         channels: Vec<umsh_core::ChannelKey>,
         observations: Vec<umsh_mac::TransmitterObservation>,
         own_key: Option<PublicKey>,
+        /// Parks `add_peer`, as a busy MAC would.
+        hold_add_peer: bool,
+        /// Fails every unicast.
+        refuse_sends: bool,
     }
 
     #[cfg(feature = "software-crypto")]
@@ -1178,6 +1350,14 @@ mod tests {
             &self,
             key: PublicKey,
         ) -> Result<PeerId, MacBackendError<Self::SendError, Self::CapacityError>> {
+            core::future::poll_fn(|_| {
+                if self.state.borrow().hold_add_peer {
+                    Poll::Pending
+                } else {
+                    Poll::Ready(())
+                }
+            })
+            .await;
             let mut state = self.state.borrow_mut();
             if let Some((_, existing)) = state
                 .peers
@@ -1257,6 +1437,9 @@ mod tests {
             options: &SendOptions,
         ) -> Result<Option<SendReceipt>, MacBackendError<Self::SendError, Self::CapacityError>>
         {
+            if self.state.borrow().refuse_sends {
+                return Err(MacBackendError::Send(SendError::PeerMissing));
+            }
             self.state.borrow_mut().unicasts.push(SentUnicast {
                 from,
                 to: *dst,
@@ -1358,6 +1541,14 @@ mod tests {
             Poll::Ready(value) => value,
             Poll::Pending => panic!("test future unexpectedly returned Poll::Pending"),
         }
+    }
+
+    /// Polls `future` once and reports whether it parked.
+    #[cfg(feature = "software-crypto")]
+    fn parks<F: Future>(future: core::pin::Pin<&mut F>) -> bool {
+        future
+            .poll(&mut Context::from_waker(Waker::noop()))
+            .is_pending()
     }
 
     // --- Identity Request responder ---
