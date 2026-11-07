@@ -56,6 +56,17 @@
         }
       }
     },
+    "%@ %@" : {
+      "comment" : "Status text, like an IRC /me: a person's name, then what they say they did.",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ %2$@"
+          }
+        }
+      }
+    },
     "%@ dB" : {
       "comment" : "A signal-to-noise ratio, in decibels. The placeholder is a number."
     },
@@ -1739,6 +1750,9 @@
     "Receive filters" : {
 
     },
+    "Received as an edit for an unknown previous message" : {
+      "comment" : "Under a message that arrived as an edit of a message this phone never received, shown as a message of its own."
+    },
     "Receiver" : {
 
     },
@@ -1831,6 +1845,9 @@
     },
     "Reply Path" : {
       "comment" : "Section header: the route a ping reply took."
+    },
+    "Reply to an unknown message" : {
+      "comment" : "The quote at the top of a reply whose original this phone does not have or could not identify."
     },
     "Replying to %@" : {
 
