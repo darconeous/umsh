@@ -201,6 +201,13 @@ pub trait MacBackend: Clone {
         None
     }
 
+    /// Whether `key` is the key of any identity registered in the MAC,
+    /// long-term or ephemeral.
+    async fn is_local_identity_key(&self, key: &PublicKey) -> bool {
+        let _ = key;
+        false
+    }
+
     /// Return the route the MAC currently has cached for `peer`.
     async fn peer_route(&self, peer: &PublicKey) -> Option<CachedRoute> {
         let _ = peer;
@@ -491,6 +498,18 @@ impl<
 
     async fn identity_public_key(&self, id: LocalIdentityId) -> Option<PublicKey> {
         self.identity_public_key(id).await
+    }
+
+    async fn is_local_identity_key(&self, key: &PublicKey) -> bool {
+        for index in 0..IDENTITIES {
+            let Ok(index) = u8::try_from(index) else {
+                break;
+            };
+            if self.identity_public_key(LocalIdentityId(index)).await == Some(*key) {
+                return true;
+            }
+        }
+        false
     }
 
     async fn peer_route(&self, peer: &PublicKey) -> Option<CachedRoute> {

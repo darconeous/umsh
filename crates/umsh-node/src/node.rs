@@ -375,6 +375,9 @@ pub enum NodeError<M: MacBackend> {
     AppEncode(AppEncodeError),
     /// A source route longer than a frame can carry.
     RouteTooLong,
+    /// The MAC queued a send that was to be tracked without a receipt to
+    /// track it by.
+    Untracked,
     /// The referenced PFS session was missing.
     #[cfg(feature = "software-crypto")]
     PfsSessionMissing,
@@ -423,6 +426,7 @@ where
             Self::PeerMissing => f.write_str("PeerMissing"),
             Self::AppEncode(e) => f.debug_tuple("AppEncode").field(e).finish(),
             Self::RouteTooLong => f.write_str("RouteTooLong"),
+            Self::Untracked => f.write_str("Untracked"),
             #[cfg(feature = "software-crypto")]
             Self::PfsSessionMissing => f.write_str("PfsSessionMissing"),
             #[cfg(feature = "software-crypto")]
@@ -830,7 +834,7 @@ impl<M: MacBackend> LocalNode<M> {
         channel: Option<ChannelKey>,
         payload: &[u8],
         ack_mic: Option<[u8; 4]>,
-    ) -> Result<SendProgressTicket, crate::MacBackendError<M::SendError, M::CapacityError>> {
+    ) -> Result<SendProgressTicket, NodeError<M>> {
         let options = SendOptions {
             track_transmission: true,
             ack_mic,
@@ -839,7 +843,7 @@ impl<M: MacBackend> LocalNode<M> {
         let receipt = self
             .send_response(to, channel, payload, &options)
             .await?
-            .expect("tracked response must return a local receipt");
+            .ok_or(NodeError::Untracked)?;
         Ok(self.register_non_ack_send(self.identity_id, receipt))
     }
 
@@ -1351,6 +1355,15 @@ impl<M: MacBackend> LocalNode<M> {
         });
     }
 
+    /// Stop waiting for the ping with `nonce` to `peer`, as when it was
+    /// never sent. A newer ping to the same peer is left waiting.
+    pub(crate) fn forget_ping(&self, nonce: u16, peer: PublicKey) {
+        self.state
+            .borrow_mut()
+            .pending_pings
+            .retain(|ping| ping.nonce != nonce || ping.peer != peer);
+    }
+
     pub(crate) async fn now_ms(&self) -> u64 {
         self.mac.now_ms().await
     }
@@ -1556,6 +1569,14 @@ impl<M: MacBackend> LocalNode<M> {
             .filter(|session| session.state == PfsState::Active)
             .map(|session| session.local_ephemeral)
             .collect()
+    }
+
+    /// How many session requests and responses this node refused for naming
+    /// an ephemeral key it already knows: one of its own, a registered
+    /// peer's, or another session's.
+    #[cfg(feature = "software-crypto")]
+    pub fn pfs_refused_ephemeral_keys(&self) -> u32 {
+        self.state.borrow().pfs.refused_ephemeral_keys()
     }
 
     /// Join a channel. Registers the channel key in the MAC if this is
@@ -1838,7 +1859,7 @@ impl<M: MacBackend> LocalNode<M> {
                 Ok(established.then_some(PfsLifecycle::Established(*from)))
             }
             OwnedMacCommand::EndPfsSession => {
-                let _ = pfs::end_session(
+                match pfs::end_session(
                     &self.state,
                     &self.mac,
                     self.identity_id,
@@ -1846,8 +1867,14 @@ impl<M: MacBackend> LocalNode<M> {
                     false,
                     options,
                 )
-                .await?;
-                Ok(Some(PfsLifecycle::Ended(*from)))
+                .await
+                {
+                    Ok(_) => Ok(Some(PfsLifecycle::Ended(*from))),
+                    // A repeat, or an end that crossed this node's own:
+                    // there is no session left to end.
+                    Err(NodeError::PfsSessionMissing) => Ok(None),
+                    Err(error) => Err(error),
+                }
             }
             _ => Ok(None),
         }
