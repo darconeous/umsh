@@ -42,10 +42,14 @@ use crate::udp_radio::UdpFakeRadio;
 /// radio that is simply gone should not spin the CPU about it.
 const REOPEN_DELAY: Duration = Duration::from_secs(3);
 
-/// How long opening the device, preparing it, or one transmit hand-off
-/// may take. A device that stops answering mid-exchange would otherwise
-/// hold the relay forever; past this the session counts as failed and
+/// How long preparing the device or one transmit hand-off may take. A
+/// device that stops answering mid-exchange would otherwise hold the relay
+/// forever; past this the session counts as failed and
 /// [`DeviceRelay::run`] reopens it.
+///
+/// Opening is not bounded here: every step of it already has its own
+/// limit, and over BLE those include discovery and a pairing prompt a
+/// person has 90 seconds to answer.
 const DEVICE_OP_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Bound one device operation by [`DEVICE_OP_TIMEOUT`].
@@ -419,7 +423,7 @@ impl DeviceRelay {
     }
 
     async fn session(&self) -> Result<()> {
-        let mut device = bounded("opening the device", Device::open(&self.config)).await?;
+        let mut device = Device::open(&self.config).await?;
         bounded("preparing the device", device.prepare()).await?;
         let max_frame_size = device.max_frame_size();
         tracing::info!(
