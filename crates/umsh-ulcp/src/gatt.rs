@@ -127,9 +127,18 @@ impl ExactSizeIterator for Segments<'_> {}
 /// Split one frame into segments carrying at most `seg_payload` frame bytes.
 ///
 /// `seg_payload` is the negotiated usable ATT value size minus the header
-/// octet (`ATT_MTU - 3 - 1`). It must be nonzero in every build profile.
+/// octet (`ATT_MTU - 3 - 1`). An ATT MTU too small to carry any frame
+/// byte yields no segments: the frame cannot be sent on that link, which
+/// is the link's failure to report, not a reason to stop the device.
 pub fn segments(frame: &[u8], seg_payload: usize) -> Segments<'_> {
-    assert!(seg_payload >= 1, "GATT segment payload must be nonzero");
+    if seg_payload == 0 {
+        return Segments {
+            frame: &[],
+            seg_payload: 1,
+            offset: 0,
+            emitted_empty: true,
+        };
+    }
     Segments {
         frame,
         seg_payload,
@@ -316,9 +325,10 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "GATT segment payload must be nonzero")]
-    fn zero_segment_payload_panics_unconditionally() {
-        let _ = segments(b"frame", 0);
+    fn zero_segment_payload_yields_nothing() {
+        assert_eq!(segments(b"frame", 0).len(), 0);
+        assert!(segments(b"frame", 0).next().is_none());
+        assert!(segments(&[], 0).next().is_none());
     }
 
     #[test]

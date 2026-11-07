@@ -57,7 +57,10 @@ impl DutyTracker {
                 self.bins[self.current] = 0;
             }
         }
-        self.interval = interval;
+        // A backward step (a clock adjustment, an out-of-order caller)
+        // keeps the newest interval seen: rewinding it would make the next
+        // fresh stamp rotate over, and zero, bins that are still live.
+        self.interval = self.interval.max(interval);
     }
 
     /// Record `airtime_ms` of transmission into the current bin,
@@ -276,6 +279,19 @@ mod tests {
         }
         // Spec's table: 1% ≈ 655.
         assert_eq!(duty.usage(0), 655);
+    }
+
+    #[test]
+    fn backward_timestamp_does_not_clear_the_current_bin() {
+        let mut duty = DutyTracker::new();
+        duty.record(5 * INTERVAL_MS, 10_000);
+        let before = duty.usage(5 * INTERVAL_MS);
+        assert!(before > 0);
+        // A stale stamp from an earlier interval, then a fresh one in the
+        // same interval as the recording: the airtime is still counted.
+        assert_eq!(duty.usage(3 * INTERVAL_MS), before);
+        assert_eq!(duty.usage(5 * INTERVAL_MS), before);
+        assert_eq!(duty.usage(5 * INTERVAL_MS + 1), before);
     }
 
     #[test]

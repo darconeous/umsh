@@ -28,6 +28,10 @@ pub const RETRY_MIN_MS: u64 = 2_000;
 /// The longest: a wrong passphrase is retried a few times an hour, which
 /// costs nothing and recovers by itself when someone fixes the router.
 pub const RETRY_MAX_MS: u64 = 900_000;
+/// How long an association must last to count as a join that worked. One
+/// that drops sooner (a rejecting access point, a link that never carries
+/// traffic) is a failure, and backs off like one.
+pub const JOIN_SETTLE_MS: u64 = 60_000;
 /// Hidden candidates are probed by name every this many searches; each
 /// costs a directed scan on every channel.
 pub const HIDDEN_PROBE_EVERY: u32 = 4;
@@ -87,6 +91,9 @@ pub struct Chooser {
     last_joined: NetworkName,
     /// The network associated now.
     associated: Option<NetworkName>,
+    /// When `associated` was joined, until the join has lasted
+    /// [`JOIN_SETTLE_MS`] and its network's failures are forgiven.
+    unsettled_since_ms: Option<u64>,
     /// A held network has been joined during this hold, so losing it
     /// from the air ends the hold.
     held_joined: bool,
@@ -108,6 +115,7 @@ impl Default for Chooser {
             slots: Vec::new(),
             last_joined: NetworkName::default(),
             associated: None,
+            unsettled_since_ms: None,
             held_joined: false,
             search_wait_ms: SEARCH_MIN_MS,
             next_search_ms: 0,
@@ -181,6 +189,7 @@ impl Chooser {
         });
         if drop {
             self.associated = None;
+            self.unsettled_since_ms = None;
         }
         self.enabled = enabled;
         self.intent = intent;
@@ -344,10 +353,10 @@ impl Chooser {
         self.search_wait_ms = (self.search_wait_ms * 2).min(SEARCH_MAX_MS);
     }
 
-    /// The station associated with `ssid`.
-    pub fn joined(&mut self, ssid: &[u8]) {
+    /// The station associated with `ssid`. Its backoff is cleared only
+    /// once the association has lasted [`JOIN_SETTLE_MS`].
+    pub fn joined(&mut self, ssid: &[u8], now_ms: u64) {
         if let Some(slot) = self.slot_mut(ssid) {
-            slot.failures = 0;
             slot.retry_at_ms = 0;
             slot.heard = true;
         }
@@ -356,14 +365,40 @@ impl Chooser {
         let mut name = NetworkName::default();
         _ = name.set(ssid);
         self.associated = Some(name);
+        self.unsettled_since_ms = Some(now_ms);
         self.held_joined = true;
     }
 
-    /// The association dropped. The network goes on being tried first:
-    /// a dropped link is usually a moment, and the next join says
-    /// whether it is more.
-    pub fn lost(&mut self) {
-        if let Some(name) = self.associated.take() {
+    /// Forgive the associated network's failures once its join has
+    /// lasted [`JOIN_SETTLE_MS`].
+    fn settle(&mut self, now_ms: u64) {
+        let Some(since) = self.unsettled_since_ms else {
+            return;
+        };
+        if now_ms.saturating_sub(since) < JOIN_SETTLE_MS {
+            return;
+        }
+        self.unsettled_since_ms = None;
+        if let Some(name) = self.associated
+            && let Some(slot) = self.slot_mut(name.as_bytes())
+        {
+            slot.failures = 0;
+        }
+    }
+
+    /// The association dropped. A join that lasted goes on being tried
+    /// first: a dropped link is usually a moment, and the next join says
+    /// whether it is more. One that dropped before it settled is a failed
+    /// join, and the network backs off.
+    pub fn lost(&mut self, now_ms: u64) {
+        self.settle(now_ms);
+        let Some(name) = self.associated else {
+            return;
+        };
+        if self.unsettled_since_ms.take().is_some() {
+            self.failed(name.as_bytes(), LinkReason::Lost, now_ms);
+        } else {
+            self.associated = None;
             self.failure = Some((name, LinkReason::Lost));
         }
     }
@@ -372,6 +407,7 @@ impl Chooser {
     /// ends here: a held network that was joined and is now not heard.
     pub fn failed(&mut self, ssid: &[u8], reason: LinkReason, now_ms: u64) -> bool {
         self.associated = None;
+        self.unsettled_since_ms = None;
         let mut name = NetworkName::default();
         if name.set(ssid).is_ok() {
             self.failure = Some((name, reason));
@@ -403,6 +439,7 @@ impl Chooser {
 
     /// What to do now.
     pub fn next(&mut self, mode: Mode<'_>, now_ms: u64) -> Next {
+        self.settle(now_ms);
         match mode {
             Mode::Paused => Next::Wait(None),
             Mode::Hold(ssid) => {
@@ -526,16 +563,62 @@ mod tests {
         let mut chooser = chooser(&[(b"Home", false, false), (b"Cafe", false, false)]);
         scan(&mut chooser, &[(b"Home", -80), (b"Cafe", -50)], 0);
         assert_eq!(chooser.next(Mode::Choose, 0), Next::Join(name(b"Cafe")));
-        chooser.joined(b"Home");
-        chooser.lost();
-        scan(&mut chooser, &[(b"Home", -80), (b"Cafe", -50)], 0);
-        assert_eq!(chooser.next(Mode::Choose, 0), Next::Join(name(b"Home")));
+        chooser.joined(b"Home", 0);
+        chooser.lost(JOIN_SETTLE_MS);
+        scan(
+            &mut chooser,
+            &[(b"Home", -80), (b"Cafe", -50)],
+            JOIN_SETTLE_MS,
+        );
+        assert_eq!(
+            chooser.next(Mode::Choose, JOIN_SETTLE_MS),
+            Next::Join(name(b"Home"))
+        );
+    }
+
+    #[test]
+    fn short_lived_joins_back_off() {
+        let mut chooser = chooser(&[(b"Home", false, false)]);
+        let mut now = 0;
+        let mut waits = std::vec::Vec::new();
+        for _ in 0..4 {
+            scan(&mut chooser, &[(b"Home", -50)], now);
+            assert_eq!(chooser.next(Mode::Choose, now), Next::Join(name(b"Home")));
+            chooser.joined(b"Home", now);
+            // An access point that accepts the join and drops it at once.
+            chooser.lost(now + 1_000);
+            let retry_at = chooser.slot(b"Home").unwrap().retry_at_ms;
+            waits.push(retry_at - (now + 1_000));
+            assert_eq!(chooser.failure.map(|f| f.1), Some(LinkReason::Lost));
+            now = retry_at;
+        }
+        assert_eq!(
+            waits,
+            [
+                RETRY_MIN_MS,
+                2 * RETRY_MIN_MS,
+                4 * RETRY_MIN_MS,
+                8 * RETRY_MIN_MS
+            ]
+        );
+
+        // A join that lasts forgives the failures; its loss is retried
+        // at once.
+        scan(&mut chooser, &[(b"Home", -50)], now);
+        assert_eq!(chooser.next(Mode::Choose, now), Next::Join(name(b"Home")));
+        chooser.joined(b"Home", now);
+        chooser.lost(now + JOIN_SETTLE_MS);
+        assert_eq!(chooser.slot(b"Home").unwrap().failures, 0);
+        assert_eq!(
+            chooser.next(Mode::Choose, now + JOIN_SETTLE_MS),
+            Next::Join(name(b"Home"))
+        );
     }
 
     #[test]
     fn a_working_association_is_kept() {
         let mut chooser = chooser(&[(b"Home", false, false), (b"Cafe", false, false)]);
-        chooser.joined(b"Home");
+        chooser.joined(b"Home", 0);
         scan(&mut chooser, &[(b"Home", -90), (b"Cafe", -30)], 0);
         assert_eq!(chooser.next(Mode::Choose, 0), Next::Wait(None));
     }
@@ -604,17 +687,21 @@ mod tests {
             chooser.next(Mode::Hold(b"Home"), 1),
             Next::Wait(Some(RETRY_MIN_MS))
         );
-        chooser.joined(b"Home");
-        assert_eq!(chooser.next(Mode::Hold(b"Home"), 1), Next::Wait(None));
-        chooser.lost();
-        // Dropped: retried first, and a failure other than not found
-        // keeps the hold.
+        chooser.joined(b"Home", RETRY_MIN_MS);
         assert_eq!(
-            chooser.next(Mode::Hold(b"Home"), 1),
+            chooser.next(Mode::Hold(b"Home"), RETRY_MIN_MS),
+            Next::Wait(None)
+        );
+        let later = RETRY_MIN_MS + JOIN_SETTLE_MS;
+        chooser.lost(later);
+        // Dropped after it settled: retried first, and a failure other
+        // than not found keeps the hold.
+        assert_eq!(
+            chooser.next(Mode::Hold(b"Home"), later),
             Next::Join(name(b"Home"))
         );
-        assert!(!chooser.failed(b"Home", LinkReason::Auth, 1));
-        assert!(chooser.failed(b"Home", LinkReason::NotFound, 2));
+        assert!(!chooser.failed(b"Home", LinkReason::Auth, later));
+        assert!(chooser.failed(b"Home", LinkReason::NotFound, later + 1));
     }
 
     #[test]
@@ -695,12 +782,12 @@ mod tests {
         assert_eq!(chooser.link_down().state, LinkState::Connecting);
         chooser.failed(b"Home", LinkReason::NotFound, 0);
         assert_eq!(chooser.naming(), Some(NetworkName::default()));
-        chooser.joined(b"Home");
+        chooser.joined(b"Home", 0);
         assert_eq!(chooser.naming(), Some(name(b"Home")));
-        chooser.lost();
+        chooser.lost(0);
         assert_eq!(chooser.link_down().reason, LinkReason::Lost);
         assert_eq!(chooser.naming(), Some(name(b"Home")));
-        chooser.joined(b"Home");
+        chooser.joined(b"Home", 0);
 
         // New flags are not a new credential.
         let flags = table(&[(b"Home", b"password", true), (b"Cafe", b"password", true)]);
@@ -711,7 +798,7 @@ mod tests {
 
         // Holding the network already joined keeps it; holding another
         // drops it.
-        chooser.joined(b"Home");
+        chooser.joined(b"Home", 0);
         intent.hold.set(b"Home").unwrap();
         intent.epoch += 1;
         assert!(!chooser.configure(true, intent, &renewed, 3));
@@ -721,7 +808,7 @@ mod tests {
         assert!(chooser.configure(true, intent, &renewed, 4));
 
         // A leave drops it even when the same network is held again.
-        chooser.joined(b"Cafe");
+        chooser.joined(b"Cafe", 0);
         intent.leaves += 1;
         intent.epoch += 1;
         assert!(chooser.configure(true, intent, &renewed, 5));
@@ -734,7 +821,7 @@ mod tests {
         assert_eq!(chooser.link_down().reason, LinkReason::Auth);
         assert_eq!(chooser.naming(), None, "the session names a held network");
 
-        chooser.joined(b"Cafe");
+        chooser.joined(b"Cafe", 0);
         intent.paused = true;
         intent.hold = NetworkName::default();
         assert!(chooser.configure(true, intent, &renewed, 6));
