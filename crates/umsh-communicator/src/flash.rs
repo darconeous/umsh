@@ -258,15 +258,26 @@ impl<F: NorFlash> Durable for FlashMap<F> {
         self.free.clear();
         self.next_slot = 0;
 
-        // Each slot's newest item comes last.
-        let mut newest: BTreeMap<u32, Vec<u8>> = BTreeMap::new();
+        // Each slot's newest item comes last. A first pass finds where,
+        // so that the second hands each record over straight from the
+        // buffer rather than holding a copy of every one at once.
+        let mut newest: BTreeMap<u32, usize> = BTreeMap::new();
         let map = self.map.as_mut().expect("the map is open");
         let mut items = now(map.fetch_all_items(self.buffer))?.map_err(error)?;
-        while let Some((slot, item)) = now(items.next::<&[u8]>(self.buffer))?.map_err(error)? {
-            newest.insert(slot, item.to_vec());
+        let mut at = 0;
+        while let Some((slot, _)) = now(items.next::<&[u8]>(self.buffer))?.map_err(error)? {
+            newest.insert(slot, at);
+            at += 1;
         }
 
-        for (slot, item) in newest {
+        let mut items = now(map.fetch_all_items(self.buffer))?.map_err(error)?;
+        let mut at = 0;
+        while let Some((slot, item)) = now(items.next::<&[u8]>(self.buffer))?.map_err(error)? {
+            let this = at;
+            at += 1;
+            if newest.get(&slot) != Some(&this) {
+                continue;
+            }
             self.next_slot = self.next_slot.max(slot.saturating_add(1));
             let record = item.split_first().and_then(|(&len, rest)| {
                 (usize::from(len) <= rest.len()).then(|| rest.split_at(usize::from(len)))
