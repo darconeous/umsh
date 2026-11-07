@@ -1382,7 +1382,7 @@ fn node_on(
     flash: &SharedFlash,
 ) -> CommunicatorNode<Port, FlashMapStore<SharedFlash>> {
     let clock: &'static TestClock = Box::leak(Box::new(TestClock(AtomicU64::new(0))));
-    let buffer = Box::leak(vec![0u8; 2048].into_boxed_slice());
+    let buffer = Box::leak(vec![0u8; umsh_communicator::FLASH_BUFFER_LEN].into_boxed_slice());
     let size = flash.0.borrow().bytes().len() as u32;
     let store = FlashMapStore::mount(
         FlashMap::new(flash.clone(), 0..size, buffer),

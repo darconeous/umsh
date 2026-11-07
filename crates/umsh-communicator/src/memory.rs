@@ -38,6 +38,9 @@ use crate::wire::{AliasCode, ArchiveCode, ConversationCode, SenderCode, archive_
 
 mod codec;
 
+pub(crate) use codec::KEY_MAX;
+pub use codec::RECORD_MAX;
+
 /// How much a store keeps before it evicts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Quota {
@@ -1671,6 +1674,7 @@ impl<D: Durable> ChatStore for MemoryStore<D> {
 
     fn keep_device_lists(&mut self, record: Option<&[u8]>) -> Result<(), StoreError> {
         self.writable()?;
+        fits(record)?;
         self.disk.device_lists = record.map(<[u8]>::to_vec);
         self.dirty.mark(RecordKey::DeviceLists);
         self.settle()
@@ -1689,6 +1693,7 @@ impl<D: Durable> ChatStore for MemoryStore<D> {
 
     fn keep_recent_picks(&mut self, record: Option<&[u8]>) -> Result<(), StoreError> {
         self.writable()?;
+        fits(record)?;
         self.disk.recent_picks = record.map(<[u8]>::to_vec);
         self.dirty.mark(RecordKey::RecentPicks);
         self.settle()
@@ -1750,6 +1755,89 @@ impl<D: Durable> ChatStore for MemoryStore<D> {
         self.dirty.mark(RecordKey::Counters);
         self.settle()
     }
+}
+
+/// Refuses a record kept for someone else that is longer than any the
+/// store writes of its own, before it is handed to a layer sized for those.
+fn fits(record: Option<&[u8]>) -> Result<(), StoreError> {
+    match record {
+        Some(record) if record.len() > RECORD_MAX => Err(StoreError::BufferTooSmall),
+        _ => Ok(()),
+    }
+}
+
+/// The key and record of the longest message the store can hold: every
+/// field present at its longest, a full body, and as many reactors as are
+/// kept, each a sender's key and a cluster as long as one can be.
+#[cfg(test)]
+pub(crate) fn longest_message() -> (Vec<u8>, Vec<u8>) {
+    use crate::reaction::{CLUSTER_MAX, Cluster};
+    use crate::record::NAME_MAX;
+
+    let peer = PublicKey([0xEE; 32]);
+    let conversation = ConversationKey::ChannelDirect {
+        channel: ChannelTag([0xDD; 16]),
+        peer,
+    };
+    let body: String = core::iter::repeat_n('x', BODY_MAX).collect();
+    // One grapheme cluster: a letter and its marks.
+    let cluster: String = core::iter::once('e')
+        .chain(core::iter::repeat_n('\u{301}', (CLUSTER_MAX - 1) / 2))
+        .collect();
+    assert_eq!(cluster.len(), CLUSTER_MAX);
+    let reactors = (0..MAX_REACTORS as u8)
+        .map(|n| Reactor {
+            who: SenderCode::from(&SenderScope::Peer(PublicKey([n; 32]))),
+            mine: false,
+            reaction: Reaction::Other(Cluster::new(&cluster).unwrap()),
+        })
+        .collect();
+    let message = MessageEntry {
+        record: MessageRecord {
+            id: MessageId(u32::MAX),
+            chat: ChatId(u32::MAX),
+            direction: Direction::Inbound,
+            sender: SenderScope::Peer(peer),
+            sender_handle: Some(record::name(&"h".repeat(NAME_MAX))),
+            wire_id: Some(u8::MAX),
+            epoch: u16::MAX,
+            message_type: MessageType::Basic,
+            regarding: Some(MessageId(u32::MAX)),
+            body_len: body.len() as u16,
+            bg_color: Some([0xFF; 3]),
+            text_color: Some([0xFF; 3]),
+            status: CompletionStatus::Partial {
+                present: u16::MAX,
+                count: u8::MAX,
+                finalized: true,
+            },
+            presence: Presence::Present,
+            flags: MessageFlags::default(),
+            delivery: Delivery::default(),
+            link: Some(LinkInfo {
+                rssi_dbm: Some(-120),
+                snr_centibels: Some(-200),
+                hop_count: Some(u8::MAX),
+                authenticated: true,
+                forward_secret: true,
+                sender_verified: true,
+            }),
+            time: Some(u32::MAX),
+            reactions: Reactions::new(),
+        },
+        conversation,
+        body,
+        revision: u32::MAX,
+        reactors,
+    };
+    let mut disk = Disk::default();
+    disk.messages.insert(u32::MAX, message);
+    let key = RecordKey::Message(u32::MAX);
+    let mut key_bytes = heapless::Vec::new();
+    codec::key(&key, &mut key_bytes);
+    let mut out = Vec::new();
+    assert!(codec::record(&disk, &key, &mut out));
+    (key_bytes.to_vec(), out)
 }
 
 fn copy_text<'b>(text: &str, out: &'b mut [u8]) -> Result<&'b str, StoreError> {
@@ -2187,6 +2275,83 @@ mod tests {
         assert_eq!(count(direct()), 20);
         assert_eq!(count(group()), 50);
         assert!(store.usage().bytes > store.usage().quota);
+    }
+
+    /// The longest message encodes to exactly [`RECORD_MAX`] and reads
+    /// back whole; a chat and a peer at their longest encode shorter.
+    #[test]
+    fn the_longest_message_is_record_max() {
+        use crate::record::NAME_MAX;
+        let (key, record) = longest_message();
+        assert_eq!(record.len(), RECORD_MAX);
+        assert!(key.len() <= KEY_MAX);
+        let mut disk = Disk::default();
+        codec::restore(&mut disk, &key, &record);
+        let (_, message) = disk.messages.first_key_value().unwrap();
+        assert_eq!(message.reactors.len(), MAX_REACTORS);
+        assert_eq!(message.body.len(), BODY_MAX);
+
+        let mut store = Encoded.fresh();
+        let named = store
+            .update_chat(
+                ChatId(0),
+                ChatChange::Open {
+                    conversation: ConversationKey::ChannelDirect {
+                        channel: ChannelTag([1; 16]),
+                        peer: PublicKey([2; 32]),
+                    },
+                    name: Some(&"n".repeat(NAME_MAX)),
+                },
+            )
+            .unwrap();
+        let draft = "d".repeat(BODY_MAX);
+        store
+            .update_chat(named, ChatChange::Draft(Some(&draft)))
+            .unwrap();
+        let peer = PublicKey([3; 32]);
+        store
+            .update_peer(
+                &peer,
+                PeerChange::Heard {
+                    at: Some(u32::MAX),
+                    name: Some(&"p".repeat(NAME_MAX)),
+                    identity: Some(&[0xAA; IDENTITY_MAX]),
+                    linked: true,
+                    fill: false,
+                },
+            )
+            .unwrap();
+        store
+            .update_peer(
+                &peer,
+                PeerChange::Route(Some(&[RouterHint([4, 5]); ROUTE_MAX])),
+            )
+            .unwrap();
+        store
+            .update_peer(&peer, PeerChange::Alias(Some(&"a".repeat(NAME_MAX))))
+            .unwrap();
+        let longest = store.durable.0.values().map(Vec::len).max().unwrap();
+        assert!(longest < RECORD_MAX, "{longest}");
+    }
+
+    /// A record kept for someone else longer than any the store writes is
+    /// refused, and the one kept before stays.
+    #[test]
+    fn records_past_record_max_are_refused() {
+        let mut store = Encoded.fresh();
+        store.keep_device_lists(Some(&[1, 2, 3])).unwrap();
+        let long = alloc::vec![0; RECORD_MAX + 1];
+        assert_eq!(
+            store.keep_device_lists(Some(&long)),
+            Err(StoreError::BufferTooSmall)
+        );
+        assert_eq!(
+            store.keep_recent_picks(Some(&long)),
+            Err(StoreError::BufferTooSmall)
+        );
+        let mut out = [0; 8];
+        assert_eq!(store.device_lists(&mut out).unwrap(), Some(&[1, 2, 3][..]));
+        store.keep_device_lists(Some(&long[..RECORD_MAX])).unwrap();
     }
 
     /// The direct chat with the peer whose key is `n` repeated.

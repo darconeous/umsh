@@ -316,7 +316,7 @@ impl Board {
 /// partition that is a file beside the device's other state.
 fn chats(dir: &Path, files: &mut HostPlatform) -> io::Result<&'static Node> {
     let flash = FileFlash::open(&dir.join("chats.flash"))?;
-    let buffer = Box::leak(vec![0u8; 2048].into_boxed_slice());
+    let buffer = Box::leak(vec![0u8; umsh_communicator::FLASH_BUFFER_LEN].into_boxed_slice());
     let store = FlashMapStore::mount(
         FlashMap::new(flash, 0..flash::SIZE as u32, buffer),
         Quota::DEFAULT,
