@@ -164,34 +164,64 @@ pub enum Command {
     CloseMeet,
 }
 
+/// What a full [`Inbox`] has dropped since boot.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct InboxDrops {
+    /// Text frames.
+    pub texts: u32,
+    /// Everything else: identities, answers, timeouts, session changes,
+    /// and contact-exchange frames.
+    pub others: u32,
+}
+
+struct Arrivals {
+    queue: VecDeque<Arrival>,
+    drops: InboxDrops,
+}
+
 /// What the device node received, waiting for the chats.
 pub struct Inbox<R: RawMutex> {
-    arrivals: Mutex<R, RefCell<VecDeque<Arrival>>>,
+    arrivals: Mutex<R, RefCell<Arrivals>>,
     ready: Signal<R, ()>,
 }
 
 impl<R: RawMutex> Inbox<R> {
     pub const fn new() -> Self {
         Self {
-            arrivals: Mutex::new(RefCell::new(VecDeque::new())),
+            arrivals: Mutex::new(RefCell::new(Arrivals {
+                queue: VecDeque::new(),
+                drops: InboxDrops {
+                    texts: 0,
+                    others: 0,
+                },
+            })),
             ready: Signal::new(),
         }
     }
 
     pub fn push(&self, arrival: Arrival) {
         self.arrivals.lock(|arrivals| {
-            let mut arrivals = arrivals.borrow_mut();
-            if arrivals.len() >= INBOX_FRAMES {
+            let Arrivals { queue, drops } = &mut *arrivals.borrow_mut();
+            if queue.len() >= INBOX_FRAMES {
                 // A message outweighs word of who is around.
-                let oldest = arrivals
+                let oldest = queue
                     .iter()
                     .position(|arrival| !matches!(arrival, Arrival::Text(_)))
                     .unwrap_or(0);
-                arrivals.remove(oldest);
+                let dropped = match queue.remove(oldest) {
+                    Some(Arrival::Text(_)) => &mut drops.texts,
+                    _ => &mut drops.others,
+                };
+                *dropped = dropped.saturating_add(1);
             }
-            arrivals.push_back(arrival);
+            queue.push_back(arrival);
         });
         self.ready.signal(());
+    }
+
+    /// What the inbox has dropped for want of room.
+    pub fn drops(&self) -> InboxDrops {
+        self.arrivals.lock(|arrivals| arrivals.borrow().drops)
     }
 
     /// Wakes the chat task without an arrival: there is word of a frame
@@ -202,7 +232,7 @@ impl<R: RawMutex> Inbox<R> {
 
     fn take(&self) -> Option<Arrival> {
         self.arrivals
-            .lock(|arrivals| arrivals.borrow_mut().pop_front())
+            .lock(|arrivals| arrivals.borrow_mut().queue.pop_front())
     }
 }
 
@@ -519,4 +549,32 @@ async fn ask_channel<M: MacBackend>(
     _hint: &NodeHint,
     _options: &SendOptions,
 ) {
+}
+
+#[cfg(test)]
+mod tests {
+    use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+
+    use super::*;
+
+    #[test]
+    fn a_full_inbox_counts_what_it_drops() {
+        let inbox = Inbox::<NoopRawMutex>::new();
+        let peer = PublicKey([7; 32]);
+        for _ in 0..INBOX_FRAMES + 2 {
+            inbox.push(Arrival::PingTimeout { peer });
+        }
+        assert_eq!(
+            inbox.drops(),
+            InboxDrops {
+                texts: 0,
+                others: 2
+            }
+        );
+        let mut held = 0;
+        while inbox.take().is_some() {
+            held += 1;
+        }
+        assert_eq!(held, INBOX_FRAMES);
+    }
 }
