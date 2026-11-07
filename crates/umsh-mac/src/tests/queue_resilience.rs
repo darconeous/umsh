@@ -202,7 +202,7 @@ fn forwards_leave_room_in_the_queue_for_acknowledgements() {
     while mac
         .tx_queue()
         .count_matching(|entry| entry.priority == TxPriority::Forward)
-        < 16 - crate::coordinator::TX_RESERVED_NON_FORWARD
+        < crate::coordinator::forward_slots(16)
     {
         mac.tx_queue_mut()
             .enqueue_with_state(
@@ -222,11 +222,19 @@ fn forwards_leave_room_in_the_queue_for_acknowledgements() {
     mac.radio_mut().queue_received_frame(unar.as_slice());
     let _ = block_on(mac.receive_one(|_, _| {})).unwrap();
     assert_eq!(mac.counters().forward_queue_full, 1);
-    assert_eq!(
-        mac.tx_queue().len(),
-        16 - crate::coordinator::TX_RESERVED_NON_FORWARD
-    );
+    assert_eq!(mac.tx_queue().len(), crate::coordinator::forward_slots(16));
 
     // The reserved slots are still there for this node's own traffic.
     mac.queue_mac_ack([0x11; 8]).unwrap();
+}
+
+#[test]
+fn the_forward_reserve_scales_with_the_queue() {
+    use crate::coordinator::forward_slots;
+    // The shallowest queues the firmware builds still forward through most
+    // of their slots.
+    assert_eq!(forward_slots(4), 3);
+    assert_eq!(forward_slots(8), 6);
+    assert_eq!(forward_slots(16), 12);
+    assert_eq!(forward_slots(1), 1);
 }

@@ -85,10 +85,16 @@ const COUNTER_PERSIST_SCHEDULE_OFFSET: u32 = 100;
 /// How long a retransmission that found the transmit queue full waits
 /// before the timeout sweep tries to queue it again.
 const RETRY_ENQUEUE_DEFER_MS: u64 = 250;
-/// Transmit-queue slots forwards may never occupy, so a repeater busy with
-/// other people's traffic keeps room for its acknowledgements, its
-/// retransmissions, and its own sends.
-pub(crate) const TX_RESERVED_NON_FORWARD: usize = 4;
+/// How many of a `tx`-slot transmit queue's slots forwards may occupy.
+///
+/// A quarter is kept back, so a repeater busy with other people's traffic
+/// keeps room for its acknowledgements, its retransmissions, and its own
+/// sends. The reserve scales with the queue: a fixed count sized for a deep
+/// queue would leave a shallow one almost nothing to forward with.
+pub(crate) const fn forward_slots(tx: usize) -> usize {
+    let forward = tx - tx / 4;
+    if forward == 0 { 1 } else { forward }
+}
 const MAC_COMMAND_ECHO_REQUEST_ID: u8 = 4;
 const MAC_COMMAND_ECHO_RESPONSE_ID: u8 = 5;
 const COUNTER_RESYNC_NONCE_LEN: usize = 4;
@@ -352,8 +358,10 @@ impl<I: NodeIdentity> From<I> for LocalIdentity<I> {
 /// - `persisted_counter`—the last boundary safely committed to the store.
 /// - `pending_persist_target`—a scheduled future boundary written on the next call to
 ///   [`Mac::service_counter_persistence`]. [`Mac::drain_tx_queue`] makes that call before
-///   it transmits anything, so a scheduled reservation is durable before the frame that
-///   scheduled it reaches the air.
+///   it transmits anything, so while the store accepts writes a scheduled reservation is
+///   durable before the frame that scheduled it reaches the air. A write the store refuses
+///   does not hold the frame back: until the slot runs out of window (below), frames air on
+///   counters no committed boundary covers yet.
 ///
 /// If the live counter reaches `persisted_counter + TX_COUNTER_PERSIST_BLOCK_SIZE` without a
 /// successful flush, secure sends on that identity are blocked
@@ -2933,9 +2941,10 @@ impl<
         // same counter after a power loss, and every peer that heard the
         // first would refuse the second as a replay. This costs no extra
         // writes—only reservations a send already scheduled are written—and
-        // with nothing scheduled it touches no storage. A failed write is
-        // tried again on the next pass; `CounterPersistenceLag` still bounds
-        // how far sends may run ahead of the store.
+        // with nothing scheduled it touches no storage. A failed write does
+        // not hold the queue: it is tried again on the next pass, and the
+        // frames go out meanwhile on counters no boundary covers yet, up to
+        // the limit `CounterPersistenceLag` enforces.
         if !self.tx_queue.is_empty() {
             let _ = self.service_counter_persistence().await;
         }
@@ -7121,14 +7130,13 @@ impl<
             }
         };
 
-        // Forwards never take the last few queue slots: those are kept for
-        // this node's acknowledgements, retransmissions and own sends, which
-        // a burst of other people's traffic would otherwise crowd out.
-        let forward_cap = TX.saturating_sub(TX_RESERVED_NON_FORWARD).max(1);
+        // Forwards never take the whole queue: the rest is kept for this
+        // node's acknowledgements, retransmissions and own sends, which a
+        // burst of other people's traffic would otherwise crowd out.
         if self
             .tx_queue
             .count_matching(|entry| entry.priority == TxPriority::Forward)
-            >= forward_cap
+            >= forward_slots(TX)
         {
             MacCounters::bump(&mut self.counters.forward_queue_full);
             return false;
