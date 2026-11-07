@@ -12,7 +12,7 @@ use umsh_core::{
 };
 use umsh_crypto::{
     AesProvider, CryptoEngine, CryptoError, DerivedChannelKeys, NodeIdentity, PairwiseKeys,
-    Sha256Provider,
+    Sha256Provider, budget::VerifyBudget,
 };
 use umsh_hal::{Clock, CounterStore, Radio, RxInfo, RxOrigin, Snr, TxError, TxOptions};
 
@@ -1190,6 +1190,11 @@ pub struct MacCounters {
     /// open within [`REFUSED_KEY_TTL_MS`](crate::REFUSED_KEY_TTL_MS): passed
     /// over if the key is unusable, else opened under the keys it derived.
     pub auto_register_recalled: u32,
+    /// Signed frames dropped undelivered because the receive path had spent
+    /// its verification budget
+    /// ([`VERIFY_BUDGET_PER_SECOND`](umsh_crypto::budget::VERIFY_BUDGET_PER_SECOND)).
+    /// A forward one was due still went out.
+    pub rx_verify_over_budget: u32,
 }
 
 impl MacCounters {
@@ -1233,6 +1238,8 @@ pub struct Mac<
     operating_policy: OperatingPolicy,
     auto_register_full_key_peers: bool,
     admissions: crate::admission::Admissions,
+    /// What the receive path may spend on Ed25519 verification.
+    verify_budget: VerifyBudget,
     counters: MacCounters,
     held_frames: Vec<HeldFrame<FRAME>, VERIFY_HELD_FRAMES>,
     /// Keys [`Self::verify_nonce`]. Drawn the first time a frame is held,
@@ -1294,6 +1301,7 @@ impl<
             operating_policy,
             auto_register_full_key_peers: false,
             admissions: crate::admission::Admissions::new(),
+            verify_budget: VerifyBudget::new(),
             counters: MacCounters::default(),
             held_frames: Vec::new(),
             verify_key: None,
@@ -3745,6 +3753,12 @@ impl<
                 }
                 let verified =
                     verified.is_some_and(|v| v.local_id == local_id && v.peer_id == peer_id);
+                // A held frame its sender vouched for was acknowledged
+                // already, so it is never dropped here.
+                if !verified && self.unicast_over_verify_budget(header) {
+                    handled = true;
+                    break;
+                }
                 let mut acceptance = None;
                 if !verified {
                     match Self::resync_command(payload) {
@@ -3927,8 +3941,13 @@ impl<
                 // The pairwise window judged the counter; the signature,
                 // checked against the key that opened the frame, only says
                 // whether it verified.
-                let signature =
-                    self.signature_status(header, &buf[..frame_len], Some(&peer_key), None, None);
+                let signature = self.charged_signature_status(
+                    header,
+                    &buf[..frame_len],
+                    Some(&peer_key),
+                    None,
+                    None,
+                );
                 on_event(
                     local_id,
                     crate::MacEventRef::Received(
@@ -4201,6 +4220,11 @@ impl<
                         }
                         let verified = verified
                             .is_some_and(|v| v.local_id == local_id && v.peer_id == peer_id);
+                        // As on the unicast path.
+                        if !verified && self.unicast_over_verify_budget(header) {
+                            handled = true;
+                            break;
+                        }
                         let mut acceptance = None;
                         if !verified {
                             match Self::resync_command(payload) {
@@ -4401,7 +4425,7 @@ impl<
                             .channels
                             .lookup_by_key(&resolved_channel_key)
                             .map(|channel| channel.derived.commitment);
-                        let signature = self.signature_status(
+                        let signature = self.charged_signature_status(
                             header,
                             &buf[..frame_len],
                             Some(&peer_key),
@@ -7032,6 +7056,39 @@ impl<
         }
     }
 
+    /// Whether a signed unicast finds the receive path's verification budget
+    /// spent, counted if it does.
+    ///
+    /// Asked before the frame spends its counter or earns an ack, so one
+    /// dropped here is one its sender sends again. Spends nothing: its
+    /// verification is charged where it runs
+    /// ([`Self::charged_signature_status`]).
+    fn unicast_over_verify_budget(&mut self, header: &PacketHeader) -> bool {
+        if header.signature().is_none() || self.verify_budget.ready(self.clock.now_ms()) {
+            return false;
+        }
+        MacCounters::bump(&mut self.counters.rx_verify_over_budget);
+        true
+    }
+
+    /// [`Self::signature_status`], charged to the receive path's
+    /// verification budget. The caller has already asked
+    /// [`Self::unicast_over_verify_budget`], so the charge lands; one that
+    /// does not, as for a held frame its sender vouched for, still verifies.
+    fn charged_signature_status(
+        &mut self,
+        header: &PacketHeader,
+        frame: &[u8],
+        key: Option<&PublicKey>,
+        blind_addr: Option<&BlindAddr>,
+        channel: Option<&ChannelCommitment>,
+    ) -> SignatureStatus {
+        if header.signature().is_some() {
+            let _ = self.verify_budget.try_spend(self.clock.now_ms());
+        }
+        self.signature_status(header, frame, key, blind_addr, channel)
+    }
+
     /// Whether `frame`'s signature verifies against `key`, as a
     /// [`SignatureStatus`]. The frame must already be open. `channel` is the
     /// commitment of the channel whose key opened it, for the frames that
@@ -7086,10 +7143,13 @@ impl<
     ///    dropped without any Ed25519 work: the MIC covers the signature, so
     ///    the bytes match a frame that already verified. Counter occupancy
     ///    alone never drops a frame before it is verified.
-    /// 2. A signature that does not verify makes the frame
+    /// 2. With the receive path's verification budget spent, the frame is
+    ///    dropped and counted. It is not passed on as unverified: what its
+    ///    signature would have decided is left undecided, not decided against.
+    /// 3. A signature that does not verify makes the frame
     ///    [`NotVerified`](SignatureStatus::NotVerified). It never touches a
     ///    signer's window; the caller takes it down the unsigned path.
-    /// 3. A verified frame is judged by the signer's window: accepted, or
+    /// 4. A verified frame is judged by the signer's window: accepted, or
     ///    dropped as a replay or stale. A stale frame from a known peer far
     ///    behind its baseline starts a counter resynchronization.
     ///
@@ -7116,6 +7176,10 @@ impl<
                 .duplicate_age_ms(counter, tag, now_ms)
                 .is_some()
         }) {
+            return None;
+        }
+        if !self.verify_budget.try_spend(now_ms) {
+            MacCounters::bump(&mut self.counters.rx_verify_over_budget);
             return None;
         }
         if self.signature_status(header, frame, Some(&signer), None, channel)
