@@ -9,7 +9,7 @@ use crate::identity_responder::IdentityResponsePlan;
 use crate::mac::MacBackend;
 #[cfg(feature = "software-crypto")]
 use crate::node::PfsLifecycle;
-use crate::node::{LocalNode, LocalNodeState, NodeMembership};
+use crate::node::{ChannelJoins, LocalNode, LocalNodeState, NodeMembership};
 use crate::receive::ReceivedPacketRef;
 use crate::{NodeIdentityPayload, OwnedMacCommand, mac_command};
 use umsh_core::PayloadType;
@@ -52,6 +52,8 @@ pub enum HostError<E> {
 pub struct Host<M: MacBackend> {
     mac: M,
     dispatcher: Rc<RefCell<EventDispatcher>>,
+    /// Shared by every node this host adds, as the MAC is.
+    channel_joins: Rc<RefCell<ChannelJoins>>,
     nodes: Vec<(LocalIdentityId, LocalNode<M>)>,
     pfs_control_options: SendOptions,
 }
@@ -62,6 +64,7 @@ impl<M: MacBackend> Host<M> {
         Self {
             mac,
             dispatcher: Rc::new(RefCell::new(EventDispatcher::new())),
+            channel_joins: Rc::default(),
             nodes: Vec::new(),
             pfs_control_options: SendOptions::default()
                 .with_ack_requested(true)
@@ -96,6 +99,7 @@ impl<M: MacBackend> Host<M> {
             self.mac.clone(),
             self.dispatcher.clone(),
             membership,
+            self.channel_joins.clone(),
             state,
         );
         self.nodes.push((identity_id, node.clone()));

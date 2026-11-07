@@ -232,7 +232,14 @@ mod tests {
         let dispatcher = Rc::new(RefCell::new(crate::dispatch::EventDispatcher::new()));
         let membership = Rc::new(RefCell::new(NodeMembership::new()));
         let state = Rc::new(RefCell::new(LocalNodeState::new()));
-        let node = LocalNode::new(LocalIdentityId(1), mac, dispatcher, membership, state);
+        let node = LocalNode::new(
+            LocalIdentityId(1),
+            mac,
+            dispatcher,
+            membership,
+            Rc::default(),
+            state,
+        );
         let peer = PublicKey([0x41; 32]);
         let peer_connection = block_on_ready(node.peer(peer)).unwrap();
 
@@ -261,6 +268,7 @@ mod tests {
             mac,
             Rc::new(RefCell::new(crate::dispatch::EventDispatcher::new())),
             Rc::new(RefCell::new(NodeMembership::new())),
+            Rc::default(),
             Rc::new(RefCell::new(LocalNodeState::new())),
         )
     }
@@ -315,6 +323,30 @@ mod tests {
 
     #[cfg(feature = "software-crypto")]
     #[test]
+    fn a_channel_stays_registered_until_its_last_node_leaves() {
+        let mac = FakeMac::new(Vec::new());
+        let mut host = crate::Host::new(mac.clone());
+        let first = host.add_node(LocalIdentityId(1));
+        let second = host.add_node(LocalIdentityId(2));
+        let channel = crate::Channel::private(umsh_core::ChannelKey([0x55; 32]), "shared");
+
+        block_on_ready(first.join(&channel)).unwrap();
+        let bound = block_on_ready(second.join(&channel)).unwrap();
+
+        block_on_ready(first.leave(&channel)).unwrap();
+        assert!(mac.holds_channel(channel.key()));
+        assert!(bound.is_active());
+
+        // Leaving twice does not count as a second member leaving.
+        block_on_ready(first.leave(&channel)).unwrap();
+        assert!(mac.holds_channel(channel.key()));
+
+        block_on_ready(second.leave(&channel)).unwrap();
+        assert!(!mac.holds_channel(channel.key()));
+    }
+
+    #[cfg(feature = "software-crypto")]
+    #[test]
     fn receive_callbacks_can_observe_rx_metadata() {
         use crate::node::{LocalNode, LocalNodeState, NodeMembership};
 
@@ -322,7 +354,14 @@ mod tests {
         let dispatcher = Rc::new(RefCell::new(crate::dispatch::EventDispatcher::new()));
         let membership = Rc::new(RefCell::new(NodeMembership::new()));
         let state = Rc::new(RefCell::new(LocalNodeState::new()));
-        let node = LocalNode::new(LocalIdentityId(1), mac, dispatcher, membership, state);
+        let node = LocalNode::new(
+            LocalIdentityId(1),
+            mac,
+            dispatcher,
+            membership,
+            Rc::default(),
+            state,
+        );
         let peer = PublicKey([0x44; 32]);
 
         let observed = Rc::new(RefCell::new(None));
@@ -370,7 +409,14 @@ mod tests {
         let dispatcher = Rc::new(RefCell::new(crate::dispatch::EventDispatcher::new()));
         let membership = Rc::new(RefCell::new(NodeMembership::new()));
         let state = Rc::new(RefCell::new(LocalNodeState::new()));
-        let node = LocalNode::new(LocalIdentityId(1), mac, dispatcher, membership, state);
+        let node = LocalNode::new(
+            LocalIdentityId(1),
+            mac,
+            dispatcher,
+            membership,
+            Rc::default(),
+            state,
+        );
         let peer = PublicKey([0x33; 32]);
 
         let hits = Rc::new(RefCell::new(0u32));
@@ -457,7 +503,14 @@ mod tests {
         let dispatcher = Rc::new(RefCell::new(crate::dispatch::EventDispatcher::new()));
         let membership = Rc::new(RefCell::new(NodeMembership::new()));
         let state = Rc::new(RefCell::new(LocalNodeState::new()));
-        let node = LocalNode::new(LocalIdentityId(1), mac, dispatcher, membership, state);
+        let node = LocalNode::new(
+            LocalIdentityId(1),
+            mac,
+            dispatcher,
+            membership,
+            Rc::default(),
+            state,
+        );
 
         let peer = PublicKey([0x42; 32]);
         let peer_connection = block_on_ready(node.peer(peer)).unwrap();
@@ -529,6 +582,7 @@ mod tests {
             mac.clone(),
             Rc::new(RefCell::new(crate::dispatch::EventDispatcher::new())),
             Rc::new(RefCell::new(NodeMembership::new())),
+            Rc::default(),
             Rc::new(RefCell::new(LocalNodeState::new())),
         );
         let peer_connection = block_on_ready(node.peer(PublicKey([0x55; 32]))).unwrap();
@@ -753,6 +807,7 @@ mod tests {
             mac.clone(),
             dispatcher.clone(),
             membership,
+            Rc::default(),
             state,
         );
 
@@ -816,6 +871,7 @@ mod tests {
             mac.clone(),
             dispatcher,
             membership,
+            Rc::default(),
             state,
         );
 
@@ -1809,6 +1865,7 @@ mod tests {
             mac.clone(),
             dispatcher,
             membership,
+            Rc::default(),
             state,
         )
     }

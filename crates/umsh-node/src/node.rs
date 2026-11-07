@@ -367,6 +367,46 @@ pub(crate) struct ChannelMembershipEntry {
     pub active: bool,
 }
 
+/// How many of a host's nodes are members of each channel, shared by all of
+/// them as their MAC is. The MAC holds one registration per channel key, so
+/// it goes only when the last member leaves.
+#[derive(Default)]
+pub(crate) struct ChannelJoins {
+    #[cfg(feature = "software-crypto")]
+    counts: Vec<(ChannelKey, usize)>,
+}
+
+#[cfg(feature = "software-crypto")]
+impl ChannelJoins {
+    fn members(&self, key: &ChannelKey) -> usize {
+        self.counts
+            .iter()
+            .find(|(held, _)| held == key)
+            .map_or(0, |(_, count)| *count)
+    }
+
+    fn joined(&mut self, key: &ChannelKey) {
+        match self.counts.iter_mut().find(|(held, _)| held == key) {
+            Some((_, count)) => *count += 1,
+            None => self.counts.push((*key, 1)),
+        }
+    }
+
+    /// Records that one member left, returning how many remain.
+    fn left(&mut self, key: &ChannelKey) -> usize {
+        let Some(index) = self.counts.iter().position(|(held, _)| held == key) else {
+            return 0;
+        };
+        let count = &mut self.counts[index].1;
+        *count = count.saturating_sub(1);
+        let remaining = *count;
+        if remaining == 0 {
+            self.counts.swap_remove(index);
+        }
+        remaining
+    }
+}
+
 impl NodeMembership {
     pub fn new() -> Self {
         Self {
@@ -497,16 +537,20 @@ pub struct LocalNode<M: MacBackend> {
     dispatcher: Rc<RefCell<EventDispatcher>>,
     #[allow(dead_code)] // Used by channel methods (software-crypto feature)
     membership: Rc<RefCell<NodeMembership>>,
+    #[allow(dead_code)] // Used by channel methods (software-crypto feature)
+    channel_joins: Rc<RefCell<ChannelJoins>>,
     state: Rc<RefCell<LocalNodeState>>,
 }
 
 impl<M: MacBackend> LocalNode<M> {
-    /// Create a new local node.
+    /// Create a new local node. It counts its channel memberships with the
+    /// other nodes sharing `channel_joins`, as the nodes of one host do.
     pub(crate) fn new(
         identity_id: LocalIdentityId,
         mac: M,
         dispatcher: Rc<RefCell<EventDispatcher>>,
         membership: Rc<RefCell<NodeMembership>>,
+        channel_joins: Rc<RefCell<ChannelJoins>>,
         state: Rc<RefCell<LocalNodeState>>,
     ) -> Self {
         Self {
@@ -514,6 +558,7 @@ impl<M: MacBackend> LocalNode<M> {
             mac,
             dispatcher,
             membership,
+            channel_joins,
             state,
         }
     }
@@ -1622,6 +1667,7 @@ impl<M: MacBackend> LocalNode<M> {
         // `leave` unregisters the key, so a dormant entry has no MAC state to
         // reuse.
         self.mac.add_private_channel(*channel.key()).await?;
+        self.channel_joins.borrow_mut().joined(channel.key());
         let mut membership = self.membership.borrow_mut();
 
         if let Some(entry) = membership
@@ -1652,9 +1698,13 @@ impl<M: MacBackend> LocalNode<M> {
         })
     }
 
-    /// Leave a channel. Marks the membership entry inactive, bumps that
-    /// entry's generation counter, and unregisters the channel key from the
-    /// MAC so inbound traffic on it is no longer decrypted.
+    /// Leave a channel. Marks the membership entry inactive and bumps that
+    /// entry's generation counter. When no other node of this host is still
+    /// a member, also unregisters the channel key from the MAC so inbound
+    /// traffic on it is no longer decrypted.
+    ///
+    /// An error means the key was unregistered while another node joined
+    /// it, and could not be registered again for that node.
     #[cfg(feature = "software-crypto")]
     pub async fn leave(&self, channel: &Channel) -> Result<(), NodeError<M>> {
         {
@@ -1669,7 +1719,15 @@ impl<M: MacBackend> LocalNode<M> {
             entry.active = false;
             entry.generation = entry.generation.wrapping_add(1);
         }
+        if self.channel_joins.borrow_mut().left(channel.key()) > 0 {
+            return Ok(());
+        }
         self.mac.remove_channel(channel.key()).await;
+        // A node that joined while the key was being removed may have
+        // registered it first and so lost it to this removal.
+        if self.channel_joins.borrow().members(channel.key()) > 0 {
+            self.mac.add_private_channel(*channel.key()).await?;
+        }
         Ok(())
     }
 
