@@ -3589,9 +3589,14 @@ mod firmware {
                         initial.pin.is_some(),
                         PAIRING_LOCKED_OUT.load(Ordering::Acquire),
                     ))
-                    .set_fixed_passkey(initial.pin)
-                    .expect("valid persisted PIN")
                     .build();
+                    // The store decodes only six-digit PINs, so a refusal here is a bug.
+                    // Fail closed, neither rebooting nor pairing without the PIN: Bluetooth
+                    // stays off until a valid PIN is set over USB and Bluetooth is toggled.
+                    if stack.set_fixed_passkey(initial.pin).is_err() {
+                        debug_log(format_args!("BLE blocked: stored PIN refused"));
+                        BLE_CONTROLLER_STATE.fail();
+                    }
                     for bond in &initial.bonds {
                         if let Some(bond) = trouble_bond(bond) {
                             if stack.add_bond_information(bond).is_err() {
