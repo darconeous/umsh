@@ -117,6 +117,8 @@ pub const fn property_name(key: u32) -> Option<&'static str> {
         prop::STAT_LAN_EXPORT_DROPPED => "PROP_STAT_LAN_EXPORT_DROPPED",
         prop::STAT_RX_OWN_HINT => "PROP_STAT_RX_OWN_HINT",
         prop::STAT_RADIO_RESETS => "PROP_STAT_RADIO_RESETS",
+        prop::STAT_HOST_RX_DROPPED => "PROP_STAT_HOST_RX_DROPPED",
+        prop::STAT_HOST_OUT_DROPPED => "PROP_STAT_HOST_OUT_DROPPED",
         prop::BLE_PAIRING_PIN => "PROP_BLE_PAIRING_PIN",
         prop::DEV_ADMINS => "PROP_DEV_ADMINS",
         prop::TIME => "PROP_TIME",
@@ -278,6 +280,8 @@ pub const PROPERTIES: &[u32] = &[
     prop::STAT_LAN_EXPORT_DROPPED,
     prop::STAT_RX_OWN_HINT,
     prop::STAT_RADIO_RESETS,
+    prop::STAT_HOST_RX_DROPPED,
+    prop::STAT_HOST_OUT_DROPPED,
     prop::BLE_PAIRING_PIN,
     prop::DEV_ADMINS,
     prop::TIME,
@@ -469,7 +473,9 @@ pub const fn property_type(key: u32) -> Option<PropertyType> {
         | prop::STAT_LAN_EXPORTED
         | prop::STAT_LAN_EXPORT_DROPPED
         | prop::STAT_RX_OWN_HINT
-        | prop::STAT_RADIO_RESETS => U32,
+        | prop::STAT_RADIO_RESETS
+        | prop::STAT_HOST_RX_DROPPED
+        | prop::STAT_HOST_OUT_DROPPED => U32,
         prop::BLE_PAIRING_PIN => U32,
         prop::TIME => U32,
         prop::TZ_RULE => Text,

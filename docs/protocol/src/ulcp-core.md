@@ -1090,6 +1090,29 @@ current device- and host-domain state, and begins detached operation:
 accepted frames are queued rather than delivered, and acknowledgement
 delegation (if enabled) becomes active.
 
+### A Host That Stops Reading {#stalled-host}
+
+A host asserts flow control by not reading: the transport's own
+backpressure—notification pacing over BLE, an unread USB endpoint, a full
+TCP window—holds back the device's output. A device serves more than its
+attached host, so it does not let that hold the rest of it back for long:
+
+* A live `CMD_STR_RECV` the transport cannot take at once **MAY** be
+  discarded. It is lost as though on the air, and a sender that asked for
+  an acknowledgement retransmits. The device counts it in
+  [`PROP_STAT_HOST_RX_DROPPED`](ulcp-radio.md#prop-stat-host-rx-dropped).
+* Any other frame for the host **MAY** be discarded once the host has
+  refused output for 5 seconds, and from then on until it takes output
+  again. The device counts each in
+  [`PROP_STAT_HOST_OUT_DROPPED`](ulcp-radio.md#prop-stat-host-out-dropped).
+  A [`CMD_QUEUE_DRAIN`](ulcp-host.md#cmd-queue-drain) cut short this way
+  ends without its completion, and the frames it did not deliver stay
+  queued.
+
+A host that stops reading for longer than that cannot rely on having
+received every answer and publication since, and **SHOULD** synchronize
+again, as after an attach, once it resumes.
+
 ### Local Sockets {#local-sockets}
 
 A device that runs as a process—a virtual radio hosted beside the

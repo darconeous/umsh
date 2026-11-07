@@ -54,6 +54,8 @@ Id   | Mnemonic              | Commands | Description
 4844 | `PROP_STAT_MESHCORE_DECLINED` | Get, Set | MeshCore packets neither forwarded nor duplicates
 4850 | `PROP_STAT_RX_OWN_HINT` | Get, Set | Received packets whose trace names this device as the last hop
 4851 | `PROP_STAT_RADIO_RESETS` | Get, Set | Times the radio chip was reset after it stopped responding
+4852 | `PROP_STAT_HOST_RX_DROPPED` | Get, Set | Received packets not delivered live because the host was not reading
+4853 | `PROP_STAT_HOST_OUT_DROPPED` | Get, Set | Other frames for the host discarded after it stopped reading
 
 ### PROP 32: `PROP_PHY_ENABLED` {#prop-phy-enabled}
 
@@ -366,3 +368,17 @@ was told: a transmission that did not complete within its time limit, or any
 other radio operation that did not finish. A transmission abandoned this way
 increments neither `PROP_STAT_TX_PACKETS` nor `PROP_STAT_TX_CHANNEL_BUSY`.
 Requires `CAP_STATS`.
+
+### PROP 4852: `PROP_STAT_HOST_RX_DROPPED` {#prop-stat-host-rx-dropped}
+
+Packets received over the air that the device discarded instead of delivering
+live as `CMD_STR_RECV`, because the attached host's transport could not take
+the frame at once (see [A Host That Stops
+Reading](ulcp-core.md#stalled-host)). Requires `CAP_STATS`.
+
+### PROP 4853: `PROP_STAT_HOST_OUT_DROPPED` {#prop-stat-host-out-dropped}
+
+Frames for the attached host other than live receptions—answers,
+publications, frames of a queue drain—that the device discarded after the
+host had stopped reading (see [A Host That Stops
+Reading](ulcp-core.md#stalled-host)). Requires `CAP_STATS`.

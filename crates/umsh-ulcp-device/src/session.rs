@@ -1562,6 +1562,10 @@ impl RxQueue {
         seq
     }
 
+    fn front(&self) -> Option<&QueueEntry> {
+        (self.len > 0).then(|| &self.entries[self.head])
+    }
+
     fn pop_front(&mut self) -> Option<QueueEntry> {
         if self.len == 0 {
             return None;
@@ -3425,6 +3429,10 @@ struct PendingIdentity {
 struct DrainState {
     tid: u8,
     remaining: usize,
+    /// The front of the queue went out in the last step. It leaves the
+    /// queue at the start of the next: the driver asks for another step
+    /// only once the host's transport has taken the last one.
+    emitted: bool,
 }
 
 /// The station's live state: `PROP_WIFI_NETWORK` and what the platform
@@ -4565,6 +4573,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 self.session.drain = Some(DrainState {
                     tid,
                     remaining: self.host.queue.len,
+                    emitted: false,
                 });
                 Some(Effect::DrainQueue)
             }
@@ -6411,10 +6420,17 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// `CMD_STR_RECV` with buffered metadata) or, once the covered set
     /// is exhausted, the completion status. Returns `true` while
     /// another call is needed; flush the transport between calls.
+    ///
+    /// A frame leaves the queue only when the next step is asked for, so
+    /// a drain the transport could not carry ends with
+    /// [`abandon_drain`](Self::abandon_drain) and loses nothing.
     pub fn drain_step(&mut self, now_ms: u64, emit: &mut impl FnMut(&[u8])) -> bool {
         let Some(drain) = &mut self.session.drain else {
             return false;
         };
+        if core::mem::take(&mut drain.emitted) {
+            self.host.queue.pop_front();
+        }
         if drain.remaining == 0 {
             let tid = drain.tid;
             self.session.drain = None;
@@ -6422,7 +6438,8 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             return false;
         }
         drain.remaining -= 1;
-        let Some(entry) = self.host.queue.pop_front() else {
+        drain.emitted = true;
+        let Some(entry) = self.host.queue.front().copied() else {
             // The covered set outliving the queue means state was reset
             // mid-drain; complete rather than stall.
             let tid = drain.tid;
@@ -6454,6 +6471,19 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             emit(&self.scratch[..len]);
         }
         true
+    }
+
+    /// End the drain in progress without its completion, because the
+    /// host stopped taking its frames. The frame the last step emitted
+    /// stays at the front of the queue for the next drain.
+    pub fn abandon_drain(&mut self) {
+        self.session.drain = None;
+    }
+
+    /// The traffic ledger behind the `PROP_STAT_*` properties, where the
+    /// board has one.
+    pub fn stats_ledger(&self) -> Option<&'static StatsLedger> {
+        self.config.stats
     }
 
     /// Encode the current device and host domains as a snapshot for
@@ -15643,6 +15673,34 @@ mod tests {
             frames += 1;
         }
         assert_eq!(frames, 1);
+        assert_eq!(queue_count(&mut session), 0);
+    }
+
+    /// A drain cut short because the host stopped reading loses nothing:
+    /// the frame it last emitted stays queued, and the next drain starts
+    /// there.
+    #[test]
+    fn an_abandoned_drain_keeps_the_frame_it_last_emitted() {
+        let mut session = queueing_session();
+        receive_detached(&mut session, &unicast_to([1, 0, 0]), 0);
+        receive_detached(&mut session, &unicast_to([2, 0, 0]), 0);
+        session.attach(true);
+
+        let mut buf = [0u8; 4];
+        let len = frame::queue_drain(&mut buf, 7).unwrap();
+        let (_, effect) = dispatch(&mut session, &buf[..len], 10_000);
+        assert_eq!(effect, Some(Effect::DrainQueue));
+        let mut emitted = Vec::new();
+        // The first frame goes out and is taken; the second goes out and
+        // is not.
+        assert!(session.drain_step(10_000, &mut |bytes: &[u8]| emitted.push(bytes.to_vec())));
+        assert!(session.drain_step(10_000, &mut |bytes: &[u8]| emitted.push(bytes.to_vec())));
+        session.abandon_drain();
+        assert_eq!(queue_count(&mut session), 1);
+
+        let rest = drain(&mut session, 10_000);
+        assert_eq!(rest.len(), 1);
+        assert_eq!(rest[0].0, unicast_to([2, 0, 0]));
         assert_eq!(queue_count(&mut session), 0);
     }
 

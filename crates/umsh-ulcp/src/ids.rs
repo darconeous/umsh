@@ -372,6 +372,14 @@ pub mod prop {
     /// doing what it was told (`PROP_STAT_RADIO_RESETS`)—`UINT32_LE`.
     /// Requires `CAP_STATS`.
     pub const STAT_RADIO_RESETS: u32 = 4851;
+    /// Receptions not delivered live because the attached host's
+    /// transport could not take them (`PROP_STAT_HOST_RX_DROPPED`)—
+    /// `UINT32_LE`. Requires `CAP_STATS`.
+    pub const STAT_HOST_RX_DROPPED: u32 = 4852;
+    /// Other frames for the attached host discarded after it stopped
+    /// reading (`PROP_STAT_HOST_OUT_DROPPED`)—`UINT32_LE`. Requires
+    /// `CAP_STATS`.
+    pub const STAT_HOST_OUT_DROPPED: u32 = 4853;
     /// Persisted, write-only BLE pairing passkey (`PROP_BLE_PAIRING_PIN`).
     pub const BLE_PAIRING_PIN: u32 = 4864;
     /// Nodes authorized to manage this device over the mesh

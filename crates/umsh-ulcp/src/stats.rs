@@ -83,10 +83,16 @@ pub enum Counter {
     /// Times the radio driver reset a radio chip that stopped doing what
     /// it was told.
     RadioResets,
+    /// Receptions not delivered live because the attached host's
+    /// transport could not take them.
+    HostRxDropped,
+    /// Other frames for the attached host discarded after it stopped
+    /// reading.
+    HostOutDropped,
 }
 
 /// How many counters a ledger holds.
-pub const COUNTERS: usize = 20;
+pub const COUNTERS: usize = 22;
 
 impl Counter {
     /// Every counter, in identifier order.
@@ -111,6 +117,8 @@ impl Counter {
         Counter::LanExportDropped,
         Counter::RxOwnHint,
         Counter::RadioResets,
+        Counter::HostRxDropped,
+        Counter::HostOutDropped,
     ];
 
     /// The property identifier this counter is read and cleared through.
@@ -136,6 +144,8 @@ impl Counter {
             Counter::LanExportDropped => prop::STAT_LAN_EXPORT_DROPPED,
             Counter::RxOwnHint => prop::STAT_RX_OWN_HINT,
             Counter::RadioResets => prop::STAT_RADIO_RESETS,
+            Counter::HostRxDropped => prop::STAT_HOST_RX_DROPPED,
+            Counter::HostOutDropped => prop::STAT_HOST_OUT_DROPPED,
         }
     }
 
@@ -162,6 +172,8 @@ impl Counter {
             prop::STAT_LAN_EXPORT_DROPPED => Counter::LanExportDropped,
             prop::STAT_RX_OWN_HINT => Counter::RxOwnHint,
             prop::STAT_RADIO_RESETS => Counter::RadioResets,
+            prop::STAT_HOST_RX_DROPPED => Counter::HostRxDropped,
+            prop::STAT_HOST_OUT_DROPPED => Counter::HostOutDropped,
             _ => return None,
         })
     }

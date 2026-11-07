@@ -38,6 +38,7 @@ use umsh_radio_loraphy::{
 };
 use umsh_ulcp::Status;
 use umsh_ulcp::i2c::{ScanRequest, TransferRequest};
+use umsh_ulcp::stats::{Counter, StatsLedger};
 use umsh_ulcp_device::listeners::{Mirrors, Writes};
 use umsh_ulcp_device::{
     Effect, I2C_DATA_MAX, IdentityForm, IdentitySource, MAX_CHANNEL_KEYS, MAX_DEV_ADMINS,
@@ -229,6 +230,10 @@ pub struct OutFrame {
 pub struct TransportChannels<M: RawMutex> {
     pub wired: Channel<M, OutFrame, 4>,
     pub ble: Channel<M, OutFrame, 4>,
+    /// Per transport, whether its host has refused output for
+    /// [`HOST_STALL_LIMIT`] and not taken any since. Only the driver
+    /// reads or writes these.
+    stalled: [AtomicBool; 2],
 }
 
 impl<M: RawMutex> TransportChannels<M> {
@@ -236,6 +241,7 @@ impl<M: RawMutex> TransportChannels<M> {
         Self {
             wired: Channel::new(),
             ble: Channel::new(),
+            stalled: [const { AtomicBool::new(false) }; 2],
         }
     }
 
@@ -245,7 +251,22 @@ impl<M: RawMutex> TransportChannels<M> {
             Transport::Ble => &self.ble,
         }
     }
+
+    fn stalled(&self, transport: Transport) -> &AtomicBool {
+        &self.stalled[match transport {
+            Transport::Usb => 0,
+            Transport::Ble => 1,
+        }]
+    }
 }
+
+/// How long a frame other than a live reception waits for a host that is
+/// not reading before it is discarded (`ulcp-core.md`, A Host That Stops
+/// Reading). The driver serves the radio, the device's own interface, and
+/// administrators as well as the host; this is the longest one host's
+/// backpressure may hold all of them back, and only once: from then until
+/// the host takes a frame again, what does not fit is dropped at once.
+const HOST_STALL_LIMIT: Duration = Duration::from_secs(5);
 
 impl<M: RawMutex> Default for TransportChannels<M> {
     fn default() -> Self {
@@ -1023,6 +1044,11 @@ pub struct DeviceRuntime<M: RawMutex + 'static, const RX: usize, const TX: usize
 struct Emitter {
     finish_ble_wipe: bool,
     completion: Option<crate::reply_completion::ReplyCompletion>,
+    /// What is staged is live receptions, which never wait for a host
+    /// that is not reading.
+    live: bool,
+    /// Where frames dropped for a host that is not reading are counted.
+    stats: Option<&'static StatsLedger>,
     /// The request being served changes properties, so its answers are
     /// told to the listeners that did not ask.
     mirror: bool,
@@ -1036,6 +1062,8 @@ impl Emitter {
         Self {
             finish_ble_wipe: false,
             completion: None,
+            live: false,
+            stats: None,
             mirror: false,
             bufs: [[0; FRAME_OUT_MAX]; 2],
             lens: [0; 2],
@@ -1066,13 +1094,21 @@ impl Emitter {
         }
     }
 
-    /// Hand all staged frames to whoever is being answered.
-    async fn flush<M: RawMutex>(&mut self, sink: &mut ReplySink<'_, M>) {
+    /// Hand all staged frames to whoever is being answered. False when
+    /// any of them was dropped because the host is not reading.
+    async fn flush<M: RawMutex>(&mut self, sink: &mut ReplySink<'_, M>) -> bool {
+        let mut handed = true;
+        let plain = HostFrame {
+            stats: self.stats,
+            ..HostFrame::default()
+        };
         for index in 0..self.count {
             let frame = &self.bufs[index][..self.lens[index]];
             let to_host = HostFrame {
                 completion: self.completion,
                 finish_ble_wipe: self.finish_ble_wipe && index + 1 == self.count,
+                live: self.live,
+                stats: self.stats,
             };
             match sink {
                 ReplySink::Transport {
@@ -1090,7 +1126,7 @@ impl Emitter {
                             }
                         }
                     }
-                    to_host.send(*destination, out, frame).await;
+                    handed &= to_host.send(*destination, out, frame).await;
                 }
                 ReplySink::Admin {
                     reply,
@@ -1110,7 +1146,7 @@ impl Emitter {
                                 if let Some(link) = device {
                                     link.publish(mirror);
                                 }
-                                HostFrame::default().send(*destination, out, mirror).await;
+                                plain.send(*destination, out, mirror).await;
                             }
                         }
                     } else {
@@ -1126,12 +1162,12 @@ impl Emitter {
                         // Everyone listening hears a publication, the host
                         // included, whoever's request it came out of.
                         link.publish(frame);
-                        HostFrame::default().send(*destination, out, frame).await;
+                        plain.send(*destination, out, frame).await;
                     } else {
                         if self.mirror {
                             let mut mirrors = Mirrors::new(frame);
                             while let Some(mirror) = mirrors.next() {
-                                HostFrame::default().send(*destination, out, mirror).await;
+                                plain.send(*destination, out, mirror).await;
                             }
                         }
                         // Queued is delivered: the interface is in process.
@@ -1146,6 +1182,8 @@ impl Emitter {
         self.count = 0;
         self.finish_ble_wipe = false;
         self.completion = None;
+        self.live = false;
+        handed
     }
 }
 
@@ -1156,49 +1194,84 @@ fn is_publication(frame: &[u8]) -> bool {
 }
 
 /// How one frame goes out to the attached host.
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 struct HostFrame {
     completion: Option<crate::reply_completion::ReplyCompletion>,
     /// The final frame of a bond wipe, if it goes out over BLE.
     finish_ble_wipe: bool,
+    /// A live reception: it goes now or not at all.
+    live: bool,
+    stats: Option<&'static StatsLedger>,
 }
 
 impl HostFrame {
+    /// Queue `frame` for the host attached at `destination`. False when it
+    /// was dropped because that host is not reading; a frame with nobody
+    /// to go to is not one of those.
     async fn send<M: RawMutex>(
         self,
         destination: Option<(Transport, u32)>,
         out: &TransportChannels<M>,
         frame: &[u8],
-    ) {
+    ) -> bool {
         // Nobody attached: the frame has nowhere to go.
         let Some((transport, generation)) = destination else {
             if let Some(completion) = self.completion {
                 completion.complete(false);
             }
-            return;
+            return true;
         };
         let mut copy: FrameBuf = heapless::Vec::new();
         if copy.extend_from_slice(frame).is_err() {
             // FRAME_OUT_MAX == FrameBuf capacity, so this cannot happen;
             // assert in debug rather than silently drop.
             debug_assert!(false, "Emitter frame copy exceeded FrameBuf capacity");
-            return;
+            return true;
         }
-        let send = out.for_transport(transport).send(OutFrame {
+        let channel = out.for_transport(transport);
+        let stalled = out.stalled(transport);
+        let queued = OutFrame {
             completion: self.completion,
             finish_ble_wipe: self.finish_ble_wipe && transport == Transport::Ble,
             generation,
             frame: copy,
-        });
-        if let Some(completion) = self.completion {
-            if embassy_time::with_deadline(completion.deadline(), send)
-                .await
-                .is_err()
-            {
-                completion.complete(false);
+        };
+        let queued = match channel.try_send(queued) {
+            Ok(()) => {
+                // Taking a frame is what ends a stall.
+                stalled.store(false, Ordering::Relaxed);
+                return true;
             }
-        } else {
-            send.await;
+            Err(embassy_sync::channel::TrySendError::Full(queued)) => queued,
+        };
+        if self.live {
+            self.dropped(Counter::HostRxDropped);
+            return false;
+        }
+        if !stalled.load(Ordering::Relaxed) {
+            // A reply with a completion already carries its own deadline.
+            let deadline = self.completion.map_or_else(
+                || Instant::now() + HOST_STALL_LIMIT,
+                |completion| completion.deadline(),
+            );
+            if embassy_time::with_deadline(deadline, channel.send(queued))
+                .await
+                .is_ok()
+            {
+                return true;
+            }
+            stalled.store(true, Ordering::Relaxed);
+        }
+        self.dropped(Counter::HostOutDropped);
+        false
+    }
+
+    fn dropped(&self, counter: Counter) {
+        if let Some(completion) = self.completion {
+            completion.complete(false);
+        }
+        if let Some(stats) = self.stats {
+            stats.bump(counter);
         }
     }
 }
@@ -1760,18 +1833,26 @@ where
                 // Deliver the covered frames one per
                 // step, flushing between steps so the
                 // two-slot emitter never overflows and
-                // the transport applies backpressure.
-                loop {
+                // the transport applies backpressure. A
+                // host that stopped reading ends the
+                // drain where it is: the frame it did not
+                // take stays queued for the next one.
+                let finished = loop {
                     let more = session
                         .drain_step(Instant::now().as_millis(), &mut |frame: &[u8]| {
                             emitter.push(frame)
                         });
-                    emitter.flush(sink).await;
-                    if !more {
-                        break;
+                    if !emitter.flush(sink).await {
+                        session.abandon_drain();
+                        break false;
                     }
+                    if !more {
+                        break true;
+                    }
+                };
+                if finished {
+                    env.queue_emptied();
                 }
-                env.queue_emptied();
             }
             Some(Effect::SaveSnapshot { tid }) => {
                 let result = match session.encode_snapshot(snapshot_buf) {
@@ -2052,6 +2133,7 @@ where
     E: DeviceEnv,
 {
     let mut emitter = Emitter::new();
+    emitter.stats = session.stats_ledger();
     let mut arbitration = SessionArbitration::new(rt.session_gen.load(Ordering::Acquire));
     // Last device-domain generation and backhaul switch mirrored to the
     // device node. `None` forces the first publication even on a bare
@@ -2412,6 +2494,7 @@ where
                 if let Some(notice) = session.take_queued_notice() {
                     env.frame_queued(notice);
                 }
+                emitter.live = true;
                 emitter.flush(&mut ReplySink::host(&arbitration, &rt)).await;
                 apply_effect(session, effect, &rt, &mut env).await;
             }
@@ -2638,6 +2721,92 @@ mod ble_reply_tests {
                 })
                 .await;
             assert_eq!(&reply[..], b"clear response");
+        });
+    }
+}
+
+#[cfg(test)]
+mod stalled_host_tests {
+    use super::*;
+    use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+
+    fn ledger() -> &'static StatsLedger {
+        Box::leak(Box::new(StatsLedger::new()))
+    }
+
+    /// Fill the wired transport's queue, as a host that stopped reading
+    /// leaves it.
+    fn full(out: &TransportChannels<NoopRawMutex>) {
+        while out
+            .wired
+            .try_send(OutFrame {
+                finish_ble_wipe: false,
+                completion: None,
+                generation: 1,
+                frame: heapless::Vec::new(),
+            })
+            .is_ok()
+        {}
+    }
+
+    fn usb(out: &TransportChannels<NoopRawMutex>) -> ReplySink<'_, NoopRawMutex> {
+        ReplySink::Transport {
+            destination: Some((Transport::Usb, 1)),
+            out,
+            device: None,
+        }
+    }
+
+    #[test]
+    fn a_live_reception_never_waits_for_a_host_that_is_not_reading() {
+        embassy_futures::block_on(async {
+            let out = TransportChannels::<NoopRawMutex>::new();
+            let stats = ledger();
+            full(&out);
+            let mut emitter = Emitter::new();
+            emitter.stats = Some(stats);
+            emitter.live = true;
+            emitter.push(b"heard");
+            let started = Instant::now();
+            assert!(!emitter.flush(&mut usb(&out)).await);
+            assert!(Instant::now() - started < Duration::from_secs(1));
+            assert_eq!(stats.get(Counter::HostRxDropped), 1);
+            assert_eq!(stats.get(Counter::HostOutDropped), 0);
+            // A dropped reception says nothing about the host's replies.
+            assert!(!out.stalled(Transport::Usb).load(Ordering::Relaxed));
+        });
+    }
+
+    #[test]
+    fn a_host_that_stops_reading_is_waited_for_once() {
+        embassy_futures::block_on(async {
+            let out = TransportChannels::<NoopRawMutex>::new();
+            let stats = ledger();
+            full(&out);
+            let mut emitter = Emitter::new();
+            emitter.stats = Some(stats);
+
+            // A reply waits out its deadline, then the host is stalled.
+            emitter.completion = Some(crate::reply_completion::ReplyCompletion::begin(
+                Instant::now() + Duration::from_millis(20),
+            ));
+            emitter.push(b"answer");
+            assert!(!emitter.flush(&mut usb(&out)).await);
+            assert!(out.stalled(Transport::Usb).load(Ordering::Relaxed));
+
+            // While it stays stalled, nothing waits for it.
+            emitter.push(b"publication");
+            let started = Instant::now();
+            assert!(!emitter.flush(&mut usb(&out)).await);
+            assert!(Instant::now() - started < Duration::from_secs(1));
+            assert_eq!(stats.get(Counter::HostOutDropped), 2);
+
+            // Once it takes a frame, it is served again.
+            out.wired.try_receive().unwrap();
+            emitter.push(b"next answer");
+            assert!(emitter.flush(&mut usb(&out)).await);
+            assert!(!out.stalled(Transport::Usb).load(Ordering::Relaxed));
+            assert_eq!(stats.get(Counter::HostOutDropped), 2);
         });
     }
 }
