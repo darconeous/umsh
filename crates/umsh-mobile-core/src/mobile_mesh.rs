@@ -1132,6 +1132,21 @@ impl BridgeTransmitCompletions {
         self.failure_generation.fetch_add(1, Ordering::SeqCst);
     }
 
+    /// [`poison`](Self::poison), but only while frame `id` still waits for
+    /// its result. A failure reported for a frame already retired—its wait
+    /// timed out first—belongs to no frame now in flight, and must not fail
+    /// the batch that is.
+    fn poison_if_pending(&self, id: u64) -> bool {
+        let Ok(pending) = self.pending.lock() else {
+            return false;
+        };
+        if !pending.contains_key(&id) {
+            return false;
+        }
+        self.poison();
+        true
+    }
+
     fn clear_poison(&self) {
         self.poisoned.store(false, Ordering::SeqCst);
     }
@@ -2436,7 +2451,9 @@ impl MobileMeshSession {
             // A rejected frame fails the whole outbound batch. Poison before
             // releasing this frame's wait so the MAC drain cannot dispatch
             // the frames queued behind it (see fail_outbound_transmissions).
-            self.transmit_completions.poison();
+            if !self.transmit_completions.poison_if_pending(frame_id) {
+                return Err(MobileMeshError::SessionUnavailable);
+            }
             self.commands
                 .send(WorkerCommand::FailOutboundTransmissions)
                 .map_err(|_| MobileMeshError::SessionUnavailable)?;
@@ -7319,6 +7336,17 @@ mod tests {
             );
             std::thread::sleep(Duration::from_millis(2));
         }
+
+        // The platform's own watchdog now reports the long-gone frame as
+        // failed. It belongs to no frame in flight, so it fails nothing.
+        assert!(session.complete_outbound_frame(stuck, false).is_err());
+        assert!(
+            !session
+                .transmit_completions
+                .poisoned
+                .load(std::sync::atomic::Ordering::SeqCst),
+            "a late failure report failed the frame now in flight"
+        );
     }
 
     /// The virtual-time seam: with the worker runtime's clock paused, a
