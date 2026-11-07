@@ -22,7 +22,7 @@ use lora_phy::{
 };
 use umsh_hal::{CadPolicy, Clock};
 use umsh_radio_loraphy::{
-    Channels, DeviceControl, DeviceSettings, RxStrategy, TxError, TxRequest, device_runner,
+    Channels, DeviceControl, DeviceSettings, RxStrategy, TxError, TxRequest, device_runner, runner,
 };
 use umsh_ulcp::stats::{Counter, StatsLedger};
 
@@ -45,6 +45,8 @@ struct Chip {
     irq_flags: u16,
     /// BUSY is stuck high until the next reset.
     busy_stuck: bool,
+    /// Every SetRx fails on the bus.
+    refuse_rx: bool,
 }
 
 struct Bus(Rc<RefCell<Chip>>);
@@ -67,6 +69,7 @@ impl SpiDevice for Bus {
             match opcode {
                 0x02 => chip.irq_flags = 0,
                 0x80 => chip.mode = Mode::Standby,
+                0x82 if chip.refuse_rx => return Err(ErrorKind::Other),
                 0x82 => chip.mode = Mode::Receiving,
                 0x83 => chip.mode = Mode::Transmitting,
                 0x84 => {
@@ -504,4 +507,120 @@ fn busy_stuck_after_a_receive_irq_resets_the_chip() {
     assert!(channel.tx.try_send(tx_request()).is_ok());
     assert!(poll(runner.as_mut()).is_pending());
     assert_eq!(chip.borrow().mode, Mode::Transmitting);
+}
+
+fn set_rx_attempts(chip: &Rc<RefCell<Chip>>) -> usize {
+    chip.borrow()
+        .commands
+        .iter()
+        .filter(|cmd| cmd[0] == 0x82)
+        .count()
+}
+
+/// A chip that refuses every SetRx is retried on a lengthening backoff,
+/// not in a hot loop, and the runner keeps answering transmits and RSSI
+/// requests while it waits.
+#[test]
+fn refused_rx_backs_off_and_keeps_serving_requests() {
+    let chip = Rc::new(RefCell::new(Chip::default()));
+    let (lora, channel, control) = fixture(chip.clone());
+    let clock = TestClock::default();
+    chip.borrow_mut().refuse_rx = true;
+    let mut task = core::pin::pin!(device_runner(
+        lora,
+        channel,
+        control,
+        8,
+        32,
+        RxStrategy::Continuous,
+        None,
+        clock.clone(),
+    ));
+    control.apply(settings(true));
+    assert!(poll(task.as_mut()).is_pending());
+    assert_eq!(set_rx_attempts(&chip), 1);
+
+    // Polling again inside the pause does not retry.
+    assert!(poll(task.as_mut()).is_pending());
+    assert_eq!(set_rx_attempts(&chip), 1);
+
+    assert!(channel.tx.try_send(tx_request()).is_ok());
+    assert!(poll(task.as_mut()).is_pending());
+    assert!(matches!(
+        poll(core::pin::pin!(channel.tx_done.wait())),
+        Poll::Ready(Err(TxError::CadTimeout))
+    ));
+    control.request_rssi();
+    assert!(poll(task.as_mut()).is_pending());
+    assert_eq!(
+        poll(core::pin::pin!(control.wait_rssi())),
+        Poll::Ready(Err(()))
+    );
+    assert_eq!(set_rx_attempts(&chip), 1);
+
+    // 10 ms, then 20 ms, then 40 ms between attempts.
+    clock.0.set(10);
+    assert!(poll(task.as_mut()).is_pending());
+    assert_eq!(set_rx_attempts(&chip), 2);
+    clock.0.set(29);
+    assert!(poll(task.as_mut()).is_pending());
+    assert_eq!(set_rx_attempts(&chip), 2);
+    clock.0.set(30);
+    assert!(poll(task.as_mut()).is_pending());
+    assert_eq!(set_rx_attempts(&chip), 3);
+
+    // Once the chip accepts again, the runner is listening and transmits.
+    chip.borrow_mut().refuse_rx = false;
+    clock.0.set(70);
+    assert!(poll(task.as_mut()).is_pending());
+    assert_eq!(chip.borrow().mode, Mode::Receiving);
+    assert!(channel.tx.try_send(tx_request()).is_ok());
+    assert!(poll(task.as_mut()).is_pending());
+    assert_eq!(chip.borrow().mode, Mode::Transmitting);
+}
+
+/// The fixed-configuration runner answers transmits the same way while a
+/// refused SetRx holds it in backoff.
+#[test]
+fn fixed_runner_refuses_transmits_while_rx_is_refused() {
+    let chip = Rc::new(RefCell::new(Chip::default()));
+    let (mut lora, channel, _) = fixture(chip.clone());
+    let clock = TestClock::default();
+    let mdltn = lora
+        .create_modulation_params(
+            SpreadingFactor::_10,
+            Bandwidth::_500KHz,
+            CodingRate::_4_5,
+            917_500_000,
+        )
+        .unwrap();
+    let rx_pkt = lora
+        .create_rx_packet_params(8, false, 255, true, false, &mdltn)
+        .unwrap();
+    let tx_pkt = lora
+        .create_tx_packet_params(32, false, true, false, &mdltn)
+        .unwrap();
+    chip.borrow_mut().refuse_rx = true;
+    let mut task = core::pin::pin!(runner(
+        lora,
+        channel,
+        mdltn,
+        rx_pkt,
+        tx_pkt,
+        22,
+        None,
+        clock.clone(),
+    ));
+    assert!(poll(task.as_mut()).is_pending());
+    assert_eq!(set_rx_attempts(&chip), 1);
+    assert!(channel.tx.try_send(tx_request()).is_ok());
+    assert!(poll(task.as_mut()).is_pending());
+    assert!(matches!(
+        poll(core::pin::pin!(channel.tx_done.wait())),
+        Poll::Ready(Err(TxError::CadTimeout))
+    ));
+    assert_eq!(set_rx_attempts(&chip), 1);
+    clock.0.set(10);
+    assert!(poll(task.as_mut()).is_pending());
+    assert_eq!(set_rx_attempts(&chip), 2);
 }

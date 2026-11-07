@@ -63,7 +63,7 @@ pub async fn bring_up<I: I2c, D: DelayNs>(
     pmic: &mut Axp2101<I>,
     delay: &mut D,
     cold_boot: bool,
-) -> Result<(), Error<I::Error>> {
+) -> Result<Unconfigured, Error<I::Error>> {
     // Refuse to configure rails at a chip that is not an AXP2101—
     // writing rail registers blind can drive a supply somewhere wrong.
     pmic.probe().await?;
@@ -97,18 +97,23 @@ pub async fn bring_up<I: I2c, D: DelayNs>(
 
     pmic.set_charge_current(CHARGE_CURRENT).await?;
     pmic.set_charge_voltage(CHARGE_VOLTAGE).await?;
-    // The charge LED means "charging", driven by the charger itself.
-    pmic.set_charge_led(ChargeLed::Charger).await?;
 
-    pmic.enable_telemetry().await?;
-    // Temperature telemetry is optional; an enable failure must not prevent
-    // boot. Its reader checks the enable bit and reports an unavailable slot.
-    let _ = pmic.set_die_temperature_measurement(true).await;
+    // From here to the IRQ setup, every step is a convenience a board can
+    // run without: a failure is reported to the caller for its log, and
+    // bring-up carries on rather than refusing to boot over it.
+    let mut unconfigured = Unconfigured::default();
+    // The charge LED means "charging", driven by the charger itself.
+    unconfigured.charge_led = pmic.set_charge_led(ChargeLed::Charger).await.is_err();
+    // Readers of the ADC channels report what they cannot read as
+    // unavailable.
+    unconfigured.telemetry = pmic.enable_telemetry().await.is_err();
+    // Its reader checks the enable bit and reports an unavailable slot.
+    unconfigured.die_temperature = pmic.set_die_temperature_measurement(true).await.is_err();
     // The TS pin is populated on this board (§6.5), so the charger's
     // thermal protection has something real to act on. Whether the part
     // is an NTC or the fixed resistor often fitted in its place is still
     // open—`thermistor_raw` is there to answer it.
-    pmic.set_thermistor_measurement(true).await?;
+    unconfigured.thermistor = pmic.set_thermistor_measurement(true).await.is_err();
 
     // Events latched while the MCU was down would hold the IRQ line
     // asserted forever; clear before enabling (§5.5).
@@ -117,9 +122,27 @@ pub async fn bring_up<I: I2c, D: DelayNs>(
 
     // The PMIC's own hard power-off on a 4 s POWER hold—the escape
     // hatch that works even with firmware wedged. MeshCore parity.
-    pmic.set_power_off_press(PowerOffPress::S4).await?;
+    unconfigured.power_off_press = pmic.set_power_off_press(PowerOffPress::S4).await.is_err();
 
-    Ok(())
+    Ok(unconfigured)
+}
+
+/// The optional steps of [`bring_up`] the PMIC refused. Each is true when
+/// that step failed and the board came up without it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Unconfigured {
+    pub charge_led: bool,
+    pub telemetry: bool,
+    pub die_temperature: bool,
+    pub thermistor: bool,
+    pub power_off_press: bool,
+}
+
+impl Unconfigured {
+    /// Whether every step succeeded.
+    pub fn is_none(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 /// Quiesce the switched rails ahead of a software power-off: GNSS and

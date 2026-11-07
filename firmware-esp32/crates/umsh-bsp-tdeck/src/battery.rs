@@ -13,6 +13,12 @@ pub use umsh_tdeck_peripherals::battery::Rail;
 /// Samples per burst, after one discarded read.
 const BURST: usize = 7;
 
+/// Polls of a oneshot conversion before it is given up on. A conversion
+/// finishes in tens of microseconds, a small fraction of this many polls;
+/// one still busy after them is not going to finish, and the sample is
+/// reported unavailable rather than spinning the executor forever.
+const READ_POLL_LIMIT: u32 = 10_000;
+
 type CalScheme = AdcCalCurve<ADC1<'static>>;
 
 pub struct BatterySampler {
@@ -30,24 +36,34 @@ impl BatterySampler {
         }
     }
 
-    /// The rail in millivolts: the divider's reading doubled.
-    pub async fn sample_mv(&mut self) -> u16 {
-        let _ = self.read_raw();
+    /// The rail in millivolts: the divider's reading doubled. `None`
+    /// when a conversion failed or never finished.
+    pub async fn sample_mv(&mut self) -> Option<u16> {
         let mut burst = [0u16; BURST];
-        for slot in &mut burst {
-            *slot = self.read_raw();
+        if !self.read_burst(&mut burst) {
+            return None;
         }
         burst.sort_unstable();
-        burst[BURST / 2].saturating_mul(2)
+        Some(burst[BURST / 2].saturating_mul(2))
     }
 
-    fn read_raw(&mut self) -> u16 {
-        loop {
+    fn read_raw(&mut self) -> Option<u16> {
+        for _ in 0..READ_POLL_LIMIT {
             match self.adc.read_oneshot(&mut self.pin) {
-                Ok(value) => return value,
+                Ok(value) => return Some(value),
                 Err(nb::Error::WouldBlock) => continue,
-                Err(nb::Error::Other(())) => return 0,
+                Err(nb::Error::Other(())) => return None,
             }
         }
+        None
+    }
+
+    /// One discarded conversion, then a burst into `burst`. False when
+    /// any of them was unavailable.
+    fn read_burst(&mut self, burst: &mut [u16; BURST]) -> bool {
+        self.read_raw().is_some()
+            && burst
+                .iter_mut()
+                .all(|slot| self.read_raw().map(|value| *slot = value).is_some())
     }
 }

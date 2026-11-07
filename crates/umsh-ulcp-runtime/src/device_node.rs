@@ -841,9 +841,22 @@ impl Default for NodeHooks {
 
 // ─── Loops ───────────────────────────────────────────────────────────────────
 
-/// Drives the device node's MAC pump. Never returns while healthy; an
-/// exit means the MAC hit an unrecoverable radio error, and rebooting
-/// through the panic handler beats silently losing the device identity.
+/// Wake cycles [`pump_loop`] saw end in an error, since boot.
+static PUMP_ERRORS: AtomicU32 = AtomicU32::new(0);
+
+/// How many of the device node's wake cycles have ended in an error since
+/// boot. Each was logged and passed over; none of them stopped the pump.
+pub fn pump_errors() -> u32 {
+    PUMP_ERRORS.load(Ordering::Relaxed)
+}
+
+/// Drives the device node's MAC pump. Never returns.
+///
+/// A wake cycle that ends in an error—a radio operation that failed, a
+/// callback that could not be delivered—costs that cycle and nothing
+/// else: it is logged, counted in [`pump_errors`], and the pump carries
+/// on after a short pause so a persistent failure cannot spin the CPU.
+/// Rebooting would trade one lost frame for the whole device.
 pub async fn pump_loop<CS: CounterStore + 'static>(
     mut host: DeviceNodeHost<CS>,
     mac: DeviceNodeHandle<CS>,
@@ -861,8 +874,14 @@ pub async fn pump_loop<CS: CounterStore + 'static>(
     // is released, and nothing else had to be woken to notice.
     loop {
         if let Err(error) = host.pump_once().await {
-            debug_log(format_args!("node pump: EXITED error={error:?}"));
-            break;
+            let errors = PUMP_ERRORS.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
+            // A failure that repeats every cycle would otherwise fill the
+            // log at the retry rate; the first few and then every power
+            // of two show both that it happened and that it persists.
+            if errors <= 4 || errors.is_power_of_two() {
+                debug_log(format_args!("node pump: error={error:?} count={errors}"));
+            }
+            Timer::after_millis(10).await;
         }
         let counters = mac.counters().await;
         publish_mac_counters(counters);
@@ -870,7 +889,6 @@ pub async fn pump_loop<CS: CounterStore + 'static>(
             mirrors.advance(stats, counters);
         }
     }
-    panic!("device node host exited");
 }
 
 /// One [`Mirror`] per MAC tally the ledger carries.
@@ -1379,8 +1397,17 @@ pub async fn reboot_quiesce_loop<CS: CounterStore + 'static>(mac: DeviceNodeHand
     }
 }
 
-static IDENT_REQUEST: Signal<NodeMutex, IdentityForm> = Signal::new();
-static IDENT_RESPONSE: Signal<NodeMutex, Option<IdentityBlob>> = Signal::new();
+/// Requests carry a sequence number that the answer echoes, so an answer
+/// that arrives after its caller gave up cannot satisfy the next request.
+static IDENT_SEQ: AtomicU32 = AtomicU32::new(0);
+static IDENT_REQUEST: Signal<NodeMutex, (u32, IdentityForm)> = Signal::new();
+static IDENT_RESPONSE: Signal<NodeMutex, (u32, Option<IdentityBlob>)> = Signal::new();
+
+/// How long [`sign_identity_blob`] waits for the node's answer. Building
+/// and signing the blob is a few milliseconds of work; a node that has
+/// not answered in this long is not going to, and the ULCP read waiting
+/// on it must fail rather than hang the session.
+const IDENT_ANSWER_LIMIT: Duration = Duration::from_secs(4);
 
 /// A complete signed node-identity blob: the canonical unsigned encoding
 /// followed by its 64-octet detached signature.
@@ -1398,9 +1425,22 @@ pub async fn sign_identity_blob(out: &mut [u8], form: IdentityForm) -> Option<us
     if !NODE_UP.load(Ordering::Relaxed) {
         return None;
     }
+    let seq = IDENT_SEQ.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
     IDENT_RESPONSE.reset();
-    IDENT_REQUEST.signal(form);
-    let blob = IDENT_RESPONSE.wait().await?;
+    IDENT_REQUEST.signal((seq, form));
+    let answer = async {
+        loop {
+            let (answered, blob) = IDENT_RESPONSE.wait().await;
+            if answered == seq {
+                return blob;
+            }
+        }
+    };
+    let Ok(blob) = with_timeout(IDENT_ANSWER_LIMIT, answer).await else {
+        debug_log(format_args!("identity blob: no answer, giving up"));
+        return None;
+    };
+    let blob = blob?;
     if blob.len() > out.len() {
         return None;
     }
@@ -1415,7 +1455,7 @@ pub async fn identity_blob_loop<CS: CounterStore + 'static>(
 ) {
     use umsh_crypto::NodeIdentity as _;
     loop {
-        let form = IDENT_REQUEST.wait().await;
+        let (seq, form) = IDENT_REQUEST.wait().await;
         let mut blob = IdentityBlob::new();
         let _ = blob.resize_default(blob.capacity());
         // The node's own profile is the canonical statement of what this
@@ -1432,10 +1472,13 @@ pub async fn identity_blob_loop<CS: CounterStore + 'static>(
             Some(body + 64)
         }
         .await;
-        IDENT_RESPONSE.signal(signed.map(|len| {
-            blob.truncate(len);
-            blob
-        }));
+        IDENT_RESPONSE.signal((
+            seq,
+            signed.map(|len| {
+                blob.truncate(len);
+                blob
+            }),
+        ));
     }
 }
 

@@ -61,8 +61,14 @@ pub(super) struct Settings {
     networks: KnownNetworks,
     intent: StationIntent,
     pub v4: ip::V4Config,
-    pub hostname: heapless::String<63>,
+    /// At most 32 bytes: the longest DHCP host name embassy-net carries.
+    /// The builder below stops at capacity, so a long device name is
+    /// truncated rather than refused.
+    pub hostname: heapless::String<HOSTNAME_MAX>,
 }
+
+/// embassy-net's `DhcpConfig::hostname` capacity.
+pub(super) const HOSTNAME_MAX: usize = 32;
 
 /// The settings, and a count of their changes, so the task can tell a
 /// change without copying the credentials out to compare them.
@@ -165,7 +171,7 @@ fn settings_generation() -> u32 {
 
 /// The station's DHCP host name, which is also its mDNS one.
 #[cfg(feature = "lan-bearer")]
-pub(super) fn hostname() -> Option<heapless::String<63>> {
+pub(super) fn hostname() -> Option<heapless::String<HOSTNAME_MAX>> {
     SETTINGS.lock(|cell| cell.borrow().1.as_ref().map(|s| s.hostname.clone()))
 }
 fn scan_state() -> (bool, u32) {

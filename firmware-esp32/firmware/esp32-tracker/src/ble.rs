@@ -440,6 +440,11 @@ static PAIRING_PIN: AtomicU32 = AtomicU32::new(u32::MAX);
 /// on one that does.
 static BLE_BOND_COUNT: AtomicU8 = AtomicU8::new(0);
 static PAIRING_MODE: AtomicBool = AtomicBool::new(true);
+
+/// Complete frames a BLE host wrote that were dropped because `INPUT_CH`
+/// was full, since boot.
+static BLE_INPUT_DROPPED: AtomicU32 = AtomicU32::new(0);
+
 /// The user held the button through boot for the pairing window; seeded
 /// at the mount, acted on once the supervisor starts.
 static FORCE_BLUETOOTH_AT_BOOT: AtomicBool = AtomicBool::new(false);
@@ -1129,16 +1134,56 @@ async fn gatt_connection<C: Controller, P: PacketPool>(
     let mut name_announced = false;
     let mut reassembler: gatt::Reassembler<{ gatt::MAX_FRAME }> = gatt::Reassembler::new();
 
+    // Reap a connection that never reaches encryption, so an unbonded or
+    // unresolvable central—e.g. an iOS OS-level background reconnect that
+    // presents an RPA we can't resolve—cannot squat the peripheral slot at
+    // NoEncryption and lock out the real client. A bonded reconnect
+    // encrypts in well under a second; 5 s leaves headroom for a slow
+    // negotiated connection interval. A deliberate pairing (the user
+    // opened the window, then enters the PIN on the phone) gets the full
+    // pairing-window grace instead.
+    let grace = if PAIRING_MODE.load(Ordering::Acquire) {
+        Duration::from_secs(40)
+    } else {
+        Duration::from_secs(5)
+    };
+    let mut link_encrypted = false;
+    let mut deadline = core::pin::pin!(Timer::after(grace));
+
     loop {
-        // The two link-level signals share one arm so the GATT event match
-        // below keeps its shape.
-        let link_signal = async {
-            match select(ADV_POLICY_CHANGED.wait(), DEVICE_NAME_CHANGED.wait()).await {
-                Either::First(()) => LinkSignal::AdvertisingPolicy,
-                Either::Second(()) => LinkSignal::DeviceName,
+        let event = {
+            let grace_guard = async {
+                if link_encrypted {
+                    core::future::pending::<()>().await
+                } else {
+                    deadline.as_mut().await
+                }
+            };
+            // The two link-level signals share one arm so the GATT event
+            // match below keeps its shape.
+            let link_signal = async {
+                match select(ADV_POLICY_CHANGED.wait(), DEVICE_NAME_CHANGED.wait()).await {
+                    Either::First(()) => LinkSignal::AdvertisingPolicy,
+                    Either::Second(()) => LinkSignal::DeviceName,
+                }
+            };
+            match select(
+                select3(conn.next(), OUT_CH.ble.receive(), link_signal),
+                grace_guard,
+            )
+            .await
+            {
+                Either::First(event) => event,
+                Either::Second(()) => {
+                    debug_log(format_args!(
+                        "unencrypted connection grace expired; disconnecting squatter"
+                    ));
+                    conn.raw().disconnect();
+                    break;
+                }
             }
         };
-        match select3(conn.next(), OUT_CH.ble.receive(), link_signal).await {
+        match event {
             Either3::First(GattConnectionEvent::Disconnected { reason }) => {
                 debug_log(format_args!("disconnected reason={reason:?}"));
                 break;
@@ -1186,6 +1231,9 @@ async fn gatt_connection<C: Controller, P: PacketPool>(
                     conn.raw().is_bonded_peer(),
                     conn.raw().security_level(),
                 ));
+                // Link is encrypted: this is not a squatter, so stop the
+                // unencrypted-connection reaper regardless of bond state.
+                link_encrypted = true;
                 if bond.is_some() || conn.raw().is_bonded_peer() {
                     let peer = conn.raw().peer_identity();
                     let raw = peer.addr.to_bytes();
@@ -1352,7 +1400,22 @@ async fn gatt_connection<C: Controller, P: PacketPool>(
                             let mut value: FrameBuf = heapless::Vec::new();
                             match value.extend_from_slice(frame) {
                                 Ok(()) => {
-                                    INPUT_CH.send(InEvent::Frame(Transport::Ble, value)).await;
+                                    // Never wait for room: this task is also
+                                    // the only one draining the driver's BLE
+                                    // output, and the driver may be blocked
+                                    // sending to it. A host retries a request
+                                    // it got no answer to.
+                                    if INPUT_CH
+                                        .try_send(InEvent::Frame(Transport::Ble, value))
+                                        .is_err()
+                                    {
+                                        let dropped = BLE_INPUT_DROPPED
+                                            .fetch_add(1, Ordering::Relaxed)
+                                            .wrapping_add(1);
+                                        debug_log(format_args!(
+                                            "gatt frame-in dropped: input full count={dropped}"
+                                        ));
+                                    }
                                 }
                                 Err(()) => debug_log(format_args!(
                                     "gatt frame-in complete staging=FAILED len={}",

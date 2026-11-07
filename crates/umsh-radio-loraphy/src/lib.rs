@@ -504,6 +504,101 @@ where
     }
 }
 
+/// First pause after the radio refuses to start listening.
+const ARM_BACKOFF_MIN_MS: u64 = 10;
+/// Longest pause between attempts to start listening.
+const ARM_BACKOFF_MAX_MS: u64 = 1_000;
+
+/// The pause before the runner next tries to put a radio that refused
+/// into RX: [`ARM_BACKOFF_MIN_MS`], doubling on each consecutive failure
+/// up to [`ARM_BACKOFF_MAX_MS`], and back to the minimum once an attempt
+/// succeeds. Without it, a chip that answers every attempt with an error
+/// keeps the runner re-arming at full speed and starves everything else
+/// it serves.
+struct ArmBackoff {
+    next_ms: u64,
+}
+
+impl ArmBackoff {
+    const fn new() -> Self {
+        Self {
+            next_ms: ARM_BACKOFF_MIN_MS,
+        }
+    }
+
+    fn reset(&mut self) {
+        self.next_ms = ARM_BACKOFF_MIN_MS;
+    }
+
+    /// The deadline for this failure's pause, lengthening the next one.
+    fn deadline(&mut self, now_ms: u64) -> u64 {
+        let delay = self.next_ms;
+        self.next_ms = (delay * 2).min(ARM_BACKOFF_MAX_MS);
+        now_ms.saturating_add(delay)
+    }
+}
+
+/// Serve everything asked of a runner whose radio is not listening, until
+/// `deadline_ms` passes (`None`) or new settings arrive (`Some`). With no
+/// deadline, only settings end the wait.
+///
+/// Nothing that arrives meanwhile is left waiting: a transmit is refused
+/// with [`TxError::CadTimeout`]—the one transmit error the MAC sheds and
+/// retries without tearing down its pump—an RSSI sample fails, and a
+/// temperature reading reports none, without touching the chip. `ctl` is
+/// `None` for [`runner`], which has no control handle and serves only
+/// transmits.
+async fn serve_idle<M, C, const RX: usize, const TX: usize>(
+    ch: &Channels<M, RX, TX>,
+    ctl: Option<&DeviceControl<M>>,
+    clock: &C,
+    deadline_ms: Option<u64>,
+) -> Option<DeviceSettings>
+where
+    M: RawMutex,
+    C: Clock,
+{
+    use embassy_futures::select::{Either4, select4};
+
+    loop {
+        let elapsed = async {
+            match deadline_ms {
+                Some(at) => core::future::poll_fn(|cx| clock.poll_delay_until(cx, at)).await,
+                None => core::future::pending().await,
+            }
+        };
+        let settings = async {
+            match ctl {
+                Some(ctl) => ctl.settings.wait().await,
+                None => core::future::pending().await,
+            }
+        };
+        let request = async {
+            match ctl {
+                Some(ctl) => select(ctl.rssi_req.wait(), ctl.temperature_req.wait()).await,
+                None => core::future::pending().await,
+            }
+        };
+        match select4(elapsed, ch.tx.receive(), settings, request).await {
+            Either4::First(()) => return None,
+            Either4::Second(_) => ch.tx_done.signal(Err(TxError::CadTimeout)),
+            Either4::Third(new_settings) => return Some(new_settings),
+            Either4::Fourth(Either::First(())) => {
+                if let Some(ctl) = ctl {
+                    ctl.rssi_resp.signal(Err(()));
+                }
+            }
+            Either4::Fourth(Either::Second(id)) => {
+                // Keep a disabled radio asleep, including during the
+                // enable-to-RX transition or a configuration failure.
+                if let Some(ctl) = ctl {
+                    ctl.temperature_resp.signal((id, None));
+                }
+            }
+        }
+    }
+}
+
 /// Background loop: owns the `lora_phy::LoRa` instance, switches between
 /// continuous RX and TX as requests arrive. Never returns.
 ///
@@ -546,6 +641,7 @@ where
     let mut rx_buf = [0u8; MAX_PAYLOAD];
     let rx_busy_window = rx_busy_window_ms(&mdltn, tx_pkt.preamble_length);
     let op_limit_ms = u64::from(rx_busy_window) + CHIP_OP_SLACK_MS;
+    let mut backoff = ArmBackoff::new();
 
     'outer: loop {
         let armed = chip_op!(lora, clock, stats, op_limit_ms, async {
@@ -554,8 +650,11 @@ where
             lora.start_rx().await
         });
         if !matches!(armed, Some(Ok(()))) {
+            let deadline = backoff.deadline(clock.now_ms());
+            serve_idle(ch, None, &clock, Some(deadline)).await;
             continue;
         }
+        backoff.reset();
 
         // Inner loop: stay in continuous RX, handling partial-packet IRQs
         // (PreambleReceived) without re-preparing. Break back to the outer
@@ -619,7 +718,13 @@ where
                         Err(_) => continue 'outer,
                     }
                 }
-                Either::First(Err(_)) => continue 'outer,
+                Either::First(Err(_)) => {
+                    // The IRQ line itself failed. Pause as for a failed
+                    // arm, rather than re-arming into the same failure.
+                    let deadline = backoff.deadline(clock.now_ms());
+                    serve_idle(ch, None, &clock, Some(deadline)).await;
+                    continue 'outer;
+                }
                 Either::Second(tx_req) => {
                     // A reception is in flight: refuse instead of tearing down
                     // RX for the CAD gate (which would lose the frame and
@@ -836,9 +941,8 @@ pub enum RxStrategy {
     ///
     /// Only for chips whose driver implements `RxMode::DutyCycle`
     /// (SX126x, LR11xx). An SX127x rejects it with
-    /// `DutyCycleUnsupported` at RX setup, which the runner's
-    /// prepare-retry loop turns into a busy spin—SX127x boards must
-    /// pass [`RxStrategy::Continuous`].
+    /// `DutyCycleUnsupported` at RX setup, so the runner never gets it
+    /// listening—SX127x boards must pass [`RxStrategy::Continuous`].
     PreambleDutyCycle,
 }
 
@@ -1031,27 +1135,14 @@ where
     // the params-failure path below idles while the session still
     // believes the radio is enabled), so a request can race into an idle
     // window. Transmits are not gated at all on the node's side.
-    async fn wait_settings_while_idle<M: RawMutex, const RX: usize, const TX: usize>(
+    async fn wait_settings_while_idle<M: RawMutex, C: Clock, const RX: usize, const TX: usize>(
         ch: &Channels<M, RX, TX>,
         ctl: &DeviceControl<M>,
+        clock: &C,
     ) -> DeviceSettings {
         loop {
-            match select4(
-                ctl.settings.wait(),
-                ch.tx.receive(),
-                ctl.rssi_req.wait(),
-                ctl.temperature_req.wait(),
-            )
-            .await
-            {
-                Either4::First(new_settings) => return new_settings,
-                Either4::Second(_) => ch.tx_done.signal(Err(TxError::CadTimeout)),
-                Either4::Third(()) => ctl.rssi_resp.signal(Err(())),
-                Either4::Fourth(id) => {
-                    // Keep a disabled radio asleep, including during the
-                    // enable-to-RX transition or a configuration failure.
-                    ctl.temperature_resp.signal((id, None));
-                }
+            if let Some(settings) = serve_idle(ch, Some(ctl), clock, None).await {
+                return settings;
             }
         }
     }
@@ -1113,7 +1204,7 @@ where
                     }
                     // No periodic work while disabled. A failed sleep is
                     // retried on the next configuration request.
-                    settings = Some(wait_settings_while_idle(ch, ctl).await);
+                    settings = Some(wait_settings_while_idle(ch, ctl, &clock).await);
                 }
             }
         };
@@ -1137,7 +1228,7 @@ where
             Ok::<_, RadioError>((mdltn, rx_pkt, tx_pkt))
         })();
         let Ok((mdltn, rx_pkt, mut tx_pkt)) = params else {
-            settings = Some(wait_settings_while_idle(ch, ctl).await);
+            settings = Some(wait_settings_while_idle(ch, ctl, &clock).await);
             continue 'reconfigure;
         };
         ch.spreading_factor
@@ -1152,6 +1243,7 @@ where
             }
         };
 
+        let mut backoff = ArmBackoff::new();
         'rx: loop {
             // prepare_for_rx wakes a sleeping modem and restores its complete
             // configuration after the cold sleep, including TCXO/RF switches.
@@ -1161,8 +1253,15 @@ where
                 lora.start_rx().await
             });
             if !matches!(armed, Some(Ok(()))) {
+                let deadline = backoff.deadline(clock.now_ms());
+                if let Some(new_settings) = serve_idle(ch, Some(ctl), &clock, Some(deadline)).await
+                {
+                    settings = Some(new_settings);
+                    continue 'reconfigure;
+                }
                 continue;
             }
+            backoff.reset();
 
             let mut rx_gate = RxBusyGate::new(rx_busy_window);
             loop {
@@ -1217,7 +1316,17 @@ where
                             Err(_) => continue 'rx,
                         }
                     }
-                    Either4::First(Err(_)) => continue 'rx,
+                    Either4::First(Err(_)) => {
+                        // See `runner`: pause before re-arming.
+                        let deadline = backoff.deadline(clock.now_ms());
+                        if let Some(new_settings) =
+                            serve_idle(ch, Some(ctl), &clock, Some(deadline)).await
+                        {
+                            settings = Some(new_settings);
+                            continue 'reconfigure;
+                        }
+                        continue 'rx;
+                    }
                     Either4::Second(tx_req) => {
                         // Same RX gate as `runner`: don't tear down an
                         // in-flight reception for the CAD gate.

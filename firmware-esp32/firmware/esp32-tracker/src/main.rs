@@ -1101,11 +1101,13 @@ async fn battery_task(mut sampler: BatterySampler) {
                     last => Some(last),
                 }
             } else {
-                Some(sampler.sample_mv().await)
+                sampler.sample_mv().await
             }
         };
+        // A conversion that failed or never finished leaves nothing to
+        // serve, the same as no reading yet.
         #[cfg(not(feature = "board-heltec-v2"))]
-        let sampled = Some(sampler.sample_mv().await);
+        let sampled = sampler.sample_mv().await;
         let Some(mv) = sampled else {
             continue;
         };
@@ -3450,10 +3452,13 @@ async fn main(spawner: Spawner) {
         // down; a warm restart's rails were under firmware control the
         // whole time.
         let cold_boot = boot_reason == Status::RESET_POWER_ON;
-        board_power::bring_up(&mut pmic, &mut Delay, cold_boot)
+        let unconfigured = board_power::bring_up(&mut pmic, &mut Delay, cold_boot)
             .await
             .unwrap_or_else(|e| panic!("pmu bring-up failed: {e:?}"));
         println!("pmu: rails up (cold_boot={cold_boot})");
+        if !unconfigured.is_none() {
+            println!("pmu: optional setup FAILED: {unconfigured:?}");
+        }
         // Seed the host-presence mirror from a direct VBUS read, so a battery boot
         // does not spend its first minute pretending to have USB (the
         // optimistic initial value) while the battery task waits out

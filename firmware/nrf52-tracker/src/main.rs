@@ -1063,6 +1063,9 @@ mod firmware {
     /// Framing-free receive path and connection edges into the shared
     /// ULCP driver (`InEvent`/`FrameBuf` and the queue types live there).
     static INPUT_CH: InputChannel<ThreadModeRawMutex> = InputChannel::new();
+    /// Complete frames a BLE host wrote that were dropped because
+    /// `INPUT_CH` was full, since boot.
+    static BLE_INPUT_DROPPED: AtomicU32 = AtomicU32::new(0);
     type FrameBuf = driver::FrameBuf;
     const FRAME_IN_MAX: usize = driver::FRAME_IN_MAX;
 
@@ -3158,7 +3161,22 @@ mod firmware {
                                             "gatt frame-in complete len={}",
                                             frame.len()
                                         ));
-                                        INPUT_CH.send(InEvent::Frame(Transport::Ble, value)).await;
+                                        // Never wait for room: this task is
+                                        // also the only one draining the
+                                        // driver's BLE output, and the driver
+                                        // may be blocked sending to it. A host
+                                        // retries a request it got no answer to.
+                                        if INPUT_CH
+                                            .try_send(InEvent::Frame(Transport::Ble, value))
+                                            .is_err()
+                                        {
+                                            let dropped = BLE_INPUT_DROPPED
+                                                .fetch_add(1, Ordering::Relaxed)
+                                                .wrapping_add(1);
+                                            debug_log(format_args!(
+                                                "gatt frame-in dropped: input full count={dropped}"
+                                            ));
+                                        }
                                     }
                                     Err(()) => debug_log(format_args!(
                                         "gatt frame-in complete staging=FAILED len={}",
@@ -3605,6 +3623,34 @@ mod firmware {
         }
     }
 
+    /// Bring the radio up, or report why not: `LoRa::new` under a
+    /// deadline, because every lora-phy command waits on BUSY with no
+    /// limit of its own, and a chip that holds BUSY high would otherwise
+    /// hang boot before USB or BLE comes up. Either failure degrades to a
+    /// USB/BLE-only device (RF dead) rather than a startup panic and a
+    /// reboot loop: a display-less field node must stay reachable to
+    /// diagnose.
+    async fn radio_within_deadline(kind: RadioKind) -> Option<LoraRadio> {
+        // enable_public_network=false → sync word 0x1424 (private).
+        // session_config().sync_word must match this choice.
+        match umsh_radio_loraphy::probe::init_within(
+            Timer::after(Duration::from_secs(2)),
+            LoRa::new(kind, false, Delay),
+        )
+        .await
+        {
+            Ok(Ok(lora)) => Some(lora),
+            Ok(Err(error)) => {
+                debug_log(format_args!("radio init FAILED (RF disabled): {error:?}"));
+                None
+            }
+            Err(_) => {
+                debug_log(format_args!("radio init FAILED (RF disabled): timed out"));
+                None
+            }
+        }
+    }
+
     /// Owns the `lora_phy::LoRa` instance via the reconfigurable device
     /// runner. TX uses MeshCore's 32-symbol SF7 preamble; existing per-radio
     /// RX acquisition settings remain unchanged.
@@ -3773,11 +3819,20 @@ mod firmware {
             debug_log(format_args!("usb debug attached"));
             let mut decoder: hdlc::Decoder<FRAME_IN_MAX> = hdlc::Decoder::new();
             let mut local_generation = SESSION_GEN.load(Ordering::Acquire);
+            // True while this task's own attach is still unprocessed: the
+            // single generation bump it causes must not reset the
+            // decoder, because the bytes in flight belong to the very
+            // session being attached. Any other generation movement is a
+            // displacement and resets.
+            let mut own_attach_pending = true;
             INPUT_CH.send(InEvent::Attached(Transport::Usb)).await;
             loop {
                 let generation = SESSION_GEN.load(Ordering::Acquire);
                 if generation != local_generation {
-                    decoder.reset();
+                    if !(own_attach_pending && generation == local_generation.wrapping_add(1)) {
+                        decoder.reset();
+                    }
+                    own_attach_pending = false;
                     local_generation = generation;
                 }
                 let mut packet = [0u8; 64];
@@ -6389,16 +6444,9 @@ mod firmware {
                 rx_boost: true,
             };
 
-            // enable_public_network=false → sync word 0x1424 (private).
-            // session_config().sync_word must match this choice.
-            // Radio init failure degrades to a USB/BLE-only device (RF dead)
-            // rather than a startup panic → reboot loop: a display-less
-            // field node must stay reachable to diagnose.
-            match LoRa::new(Sx126x::new(radio_spi, iv, lora_config), false, Delay).await {
-                Ok(lora) => {
-                    spawner.spawn(radio_task(lora).unwrap());
-                }
-                Err(error) => debug_log(format_args!("radio init FAILED (RF disabled): {error:?}")),
+            if let Some(lora) = radio_within_deadline(Sx126x::new(radio_spi, iv, lora_config)).await
+            {
+                spawner.spawn(radio_task(lora).unwrap());
             }
         }
 
@@ -6427,11 +6475,9 @@ mod firmware {
                 rx_boost: true,
                 rf_switch: Some(RF_SWITCH),
             };
-            match LoRa::new(Lr1110::new(radio_spi, iv, lora_config), false, Delay).await {
-                Ok(lora) => {
-                    spawner.spawn(radio_task(lora).unwrap());
-                }
-                Err(error) => debug_log(format_args!("radio init FAILED (RF disabled): {error:?}")),
+            if let Some(lora) = radio_within_deadline(Lr1110::new(radio_spi, iv, lora_config)).await
+            {
+                spawner.spawn(radio_task(lora).unwrap());
             }
         }
 
@@ -6494,11 +6540,9 @@ mod firmware {
             // (bidirectional RF, 2026-07-23); on the XIAO kit it is still
             // only schematic-confirmed, which is exactly the case this
             // degrade-instead-of-panic path exists for.
-            match LoRa::new(Sx126x::new(radio_spi, iv, lora_config), false, Delay).await {
-                Ok(lora) => {
-                    spawner.spawn(radio_task(lora).unwrap());
-                }
-                Err(error) => debug_log(format_args!("radio init FAILED (RF disabled): {error:?}")),
+            if let Some(lora) = radio_within_deadline(Sx126x::new(radio_spi, iv, lora_config)).await
+            {
+                spawner.spawn(radio_task(lora).unwrap());
             }
         }
 
@@ -6546,11 +6590,9 @@ mod firmware {
 
             // Radio init failure degrades to a USB/BLE-only device (RF dead)
             // rather than a startup panic → reboot loop.
-            match LoRa::new(Sx126x::new(radio_spi, iv, lora_config), false, Delay).await {
-                Ok(lora) => {
-                    spawner.spawn(radio_task(lora).unwrap());
-                }
-                Err(error) => debug_log(format_args!("radio init FAILED (RF disabled): {error:?}")),
+            if let Some(lora) = radio_within_deadline(Sx126x::new(radio_spi, iv, lora_config)).await
+            {
+                spawner.spawn(radio_task(lora).unwrap());
             }
         }
 
