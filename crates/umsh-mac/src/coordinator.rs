@@ -82,6 +82,13 @@ pub enum WakeReason {
 pub(crate) const TX_COUNTER_PERSIST_BLOCK_SIZE: u32 = 128;
 const TX_COUNTER_PERSIST_BLOCK_MASK: u32 = TX_COUNTER_PERSIST_BLOCK_SIZE - 1;
 const COUNTER_PERSIST_SCHEDULE_OFFSET: u32 = 100;
+/// How long a retransmission that found the transmit queue full waits
+/// before the timeout sweep tries to queue it again.
+const RETRY_ENQUEUE_DEFER_MS: u64 = 250;
+/// Transmit-queue slots forwards may never occupy, so a repeater busy with
+/// other people's traffic keeps room for its acknowledgements, its
+/// retransmissions, and its own sends.
+pub(crate) const TX_RESERVED_NON_FORWARD: usize = 4;
 const MAC_COMMAND_ECHO_REQUEST_ID: u8 = 4;
 const MAC_COMMAND_ECHO_RESPONSE_ID: u8 = 5;
 const COUNTER_RESYNC_NONCE_LEN: usize = 4;
@@ -344,7 +351,9 @@ impl<I: NodeIdentity> From<I> for LocalIdentity<I> {
 /// - `frame_counter`—the live in-use value, advanced on every secured send.
 /// - `persisted_counter`—the last boundary safely committed to the store.
 /// - `pending_persist_target`—a scheduled future boundary written on the next call to
-///   [`Mac::service_counter_persistence`].
+///   [`Mac::service_counter_persistence`]. [`Mac::drain_tx_queue`] makes that call before
+///   it transmits anything, so a scheduled reservation is durable before the frame that
+///   scheduled it reaches the air.
 ///
 /// If the live counter reaches `persisted_counter + TX_COUNTER_PERSIST_BLOCK_SIZE` without a
 /// successful flush, secure sends on that identity are blocked
@@ -1115,6 +1124,18 @@ pub struct MacCounters {
     /// not be read. The window stays unrestored and the next frame tries
     /// again.
     pub rx_counter_restore_failures: u32,
+    /// Retransmissions that found the transmit queue full when they came
+    /// due. Each is rescheduled a moment later rather than lost.
+    pub retry_enqueue_deferred: u32,
+    /// Receptions this repeater would have forwarded, refused because
+    /// forwards already held their share of the transmit queue.
+    pub forward_queue_full: u32,
+    /// Immediate acknowledgements that found no room in the transmit queue.
+    pub ack_enqueue_failed: u32,
+    /// Tracked sends whose frame left the queue without ever completing a
+    /// transmission—a driver cancelled mid-transmit—and that were retired
+    /// as abandoned instead of holding their slot forever.
+    pub tx_orphans_reclaimed: u32,
 }
 
 impl MacCounters {
@@ -2328,6 +2349,7 @@ impl<
         .and_then(|entry| self.tx_queue.enqueue_entry(entry.with_power_dbm(power_dbm)))
         .is_err()
         {
+            MacCounters::bump(&mut self.counters.ack_enqueue_failed);
             if let Some(receipt) = tracked_receipt {
                 let _ = self
                     .identity_mut(from)
@@ -2381,6 +2403,16 @@ impl<
             .enqueue(TxPriority::ImmediateAck, frame, None, None)
             .map_err(|_| SendError::QueueFull)?;
         Ok(())
+    }
+
+    /// Undo [`Self::prepare_pending_ack`] for a send that failed before its
+    /// frame was queued.
+    fn forget_pending_ack(&mut self, from: LocalIdentityId, receipt: Option<SendReceipt>) {
+        if let Some(receipt) = receipt {
+            let _ = self
+                .identity_mut(from)
+                .and_then(|slot| slot.remove_pending_ack(&receipt));
+        }
     }
 
     /// Enqueues a unicast frame and optional pending-ACK state.
@@ -2444,15 +2476,26 @@ impl<
             None
         };
 
-        self.crypto.seal_packet(&mut packet, &pairwise_keys)?;
-        if let Some(receipt) = receipt {
-            self.refresh_pending_resend(
-                from,
-                receipt,
-                packet.as_bytes(),
-                shape.source_route.as_ref().map(|route| route.as_slice()),
-                options.flood_hops,
-            )?;
+        // From here the pending entry exists; every failure must take it
+        // back out, or it would sit `Queued` with no frame behind it.
+        let sealed = self
+            .crypto
+            .seal_packet(&mut packet, &pairwise_keys)
+            .map(drop)
+            .map_err(SendError::from)
+            .and_then(|()| match receipt {
+                Some(receipt) => self.refresh_pending_resend(
+                    from,
+                    receipt,
+                    packet.as_bytes(),
+                    shape.source_route.as_ref().map(|route| route.as_slice()),
+                    options.flood_hops,
+                ),
+                None => Ok(()),
+            });
+        if let Err(err) = sealed {
+            self.forget_pending_ack(from, receipt);
+            return Err(err);
         }
         // A non-ACK send that rides through repeaters is tracked under an
         // internal receipt so it can retry until a repeat is heard. The caller
@@ -2586,17 +2629,26 @@ impl<
             None
         };
 
-        self.crypto
+        // As for a unicast: a failure past this point takes the pending
+        // entry back out.
+        let sealed = self
+            .crypto
             .seal_blind_packet(&mut packet, &blind_keys, channel_keys)
-            .map_err(SendError::Crypto)?;
-        if let Some(receipt) = receipt {
-            self.refresh_pending_resend(
-                from,
-                receipt,
-                packet.as_bytes(),
-                shape.source_route.as_ref().map(|route| route.as_slice()),
-                options.flood_hops,
-            )?;
+            .map(drop)
+            .map_err(SendError::Crypto)
+            .and_then(|()| match receipt {
+                Some(receipt) => self.refresh_pending_resend(
+                    from,
+                    receipt,
+                    packet.as_bytes(),
+                    shape.source_route.as_ref().map(|route| route.as_slice()),
+                    options.flood_hops,
+                ),
+                None => Ok(()),
+            });
+        if let Err(err) = sealed {
+            self.forget_pending_ack(from, receipt);
+            return Err(err);
         }
         // A non-ACK send that rides through repeaters is tracked under an
         // internal receipt so it can retry until a repeat is heard. The caller
@@ -2747,6 +2799,7 @@ impl<
             Err(TxError::CadTimeout) => {
                 let next_attempt = queued.cad_attempts.saturating_add(1);
                 if next_attempt >= MAX_CAD_ATTEMPTS {
+                    self.forget_unaired_forward(&queued);
                     self.abandon_transmit(identity_id, receipt, queued.priority, on_event);
                     return Ok(None);
                 }
@@ -2776,6 +2829,7 @@ impl<
             // over one frame would end every other send with it, so the
             // frame is dropped the way an exhausted busy channel drops it.
             Err(TxError::Io(_)) => {
+                self.forget_unaired_forward(&queued);
                 self.abandon_transmit(identity_id, receipt, queued.priority, on_event);
                 return Ok(None);
             }
@@ -2817,6 +2871,25 @@ impl<
     /// dropped without an event. A *retransmission* is neither: its send
     /// has aired before and its deadlines still stand, so the attempt is
     /// dropped quietly and the timers judge the send.
+    /// A forward that never aired stops suppressing its packet.
+    ///
+    /// The duplicate key is recorded when a forward is queued. If the
+    /// forward is then dropped without going out, a key left behind would
+    /// make this repeater ignore every identical retransmission from the
+    /// sender for the key's whole lifetime: a black hole for that packet.
+    /// Forwards withdrawn because enough other repeaters were heard
+    /// carrying the packet, or because its acknowledgement was overheard,
+    /// keep their key: the packet got through, and later copies of it are
+    /// not worth the airtime.
+    fn forget_unaired_forward(&mut self, queued: &crate::QueuedTx<FRAME>) {
+        if queued.priority != TxPriority::Forward || queued.receipt.is_some() {
+            return;
+        }
+        if let Some(key) = Self::confirmation_key(queued.frame.as_slice()) {
+            self.dup_cache.remove(&key);
+        }
+    }
+
     fn abandon_transmit(
         &mut self,
         identity_id: Option<LocalIdentityId>,
@@ -2854,6 +2927,18 @@ impl<
         &mut self,
         on_event: &mut impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
     ) -> Result<(), MacError<<P::Radio as Radio>::Error>> {
+        // A send that just took a counter only *scheduled* the reservation
+        // covering it. Commit that before anything goes on the air: a frame
+        // that aired on an unreserved counter would be sent again under the
+        // same counter after a power loss, and every peer that heard the
+        // first would refuse the second as a replay. This costs no extra
+        // writes—only reservations a send already scheduled are written—and
+        // with nothing scheduled it touches no storage. A failed write is
+        // tried again on the next pass; `CounterPersistenceLag` still bounds
+        // how far sends may run ahead of the store.
+        if !self.tx_queue.is_empty() {
+            let _ = self.service_counter_persistence().await;
+        }
         while !self.tx_queue.is_empty() {
             let queue_len = self.tx_queue.len();
             let _ = self.transmit_next(on_event).await?;
@@ -2887,8 +2972,7 @@ impl<
             let _ = self.receive_one(&mut on_event).await?;
         }
         self.drain_tx_queue(&mut on_event).await?;
-        self.service_pending_ack_timeouts(&mut on_event)
-            .map_err(|_| MacError::QueueFull)?;
+        self.service_pending_ack_timeouts(&mut on_event);
         Ok(())
     }
 
@@ -3083,8 +3167,7 @@ impl<
 
         self.drain_tx_queue(&mut on_event).await?;
 
-        self.service_pending_ack_timeouts(&mut on_event)
-            .map_err(|_| MacError::QueueFull)?;
+        self.service_pending_ack_timeouts(&mut on_event);
 
         Ok(())
     }
@@ -4421,10 +4504,14 @@ impl<
     }
 
     /// Expire or retry pending ACK state based on `now_ms`.
+    ///
+    /// Infallible by design. A retransmission that finds the transmit queue
+    /// full is a congestion condition, not a fault: it is put back to come due
+    /// again shortly, and the sweep carries on with every other entry.
     pub fn service_pending_ack_timeouts(
         &mut self,
         mut on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
-    ) -> Result<(), CapacityError> {
+    ) {
         self.expire_post_tx_listen_if_needed();
 
         #[derive(Clone)]
@@ -4447,10 +4534,25 @@ impl<
             /// A repeat-confirmed send whose ladder ran out. Nobody is
             /// waiting on the outcome, so the entry just goes away.
             Abandon { receipt: SendReceipt },
+            /// A send still marked `Queued` whose frame is no longer in the
+            /// queue: the transmit that popped it was cancelled before it
+            /// completed. No timer covers `Queued`, so it is retired here.
+            Orphaned { receipt: SendReceipt },
+        }
+
+        // One action per pending entry at most, and both hold `ACKS`.
+        fn push_action<const FRAME: usize, const ACKS: usize>(
+            actions: &mut Vec<Action<FRAME>, ACKS>,
+            action: Action<FRAME>,
+        ) {
+            if actions.push(action).is_err() {
+                unreachable!("one action per pending entry");
+            }
         }
 
         let now_ms = self.clock.now_ms();
         let t_frame_ms = self.radio.t_frame_ms();
+        let deferred_ms = now_ms.saturating_add(RETRY_ENQUEUE_DEFER_MS);
 
         for index in 0..self.identities.len() {
             let identity_id = LocalIdentityId(index as u8);
@@ -4461,9 +4563,19 @@ impl<
 
                 let mut actions: Vec<Action<FRAME>, ACKS> = Vec::new();
                 for (receipt, pending) in slot.pending_acks.iter_mut() {
-                    if !matches!(pending.state, crate::AckState::Queued { .. })
-                        && now_ms >= pending.ack_deadline_ms
-                    {
+                    // The sweep and the transmit path both run under
+                    // `&mut self`, so a transmit is never in flight here: a
+                    // `Queued` entry with nothing queued has lost its frame.
+                    if matches!(pending.state, crate::AckState::Queued { .. }) {
+                        if !self.tx_queue.contains_matching(|entry| {
+                            entry.receipt == Some(*receipt)
+                                && entry.identity_id == Some(identity_id)
+                        }) {
+                            push_action(&mut actions, Action::Orphaned { receipt: *receipt });
+                        }
+                        continue;
+                    }
+                    if now_ms >= pending.ack_deadline_ms {
                         if pending.expects_ack() {
                             let revision = core::mem::take(&mut pending.cached_route_revision);
                             if self
@@ -4475,9 +4587,7 @@ impl<
                             }
                         }
                         if !pending.expects_ack() {
-                            actions
-                                .push(Action::Abandon { receipt: *receipt })
-                                .map_err(|_| CapacityError)?;
+                            push_action(&mut actions, Action::Abandon { receipt: *receipt });
                         } else if Self::can_attempt_route_retry(
                             pending,
                             self.peer_registry.lookup_by_key(&pending.peer).is_some_and(
@@ -4490,21 +4600,23 @@ impl<
                             } else {
                                 u64::from(self.rng.random_range(..backoff_cap_ms.saturating_add(1)))
                             };
-                            actions
-                                .push(Action::RouteRetry {
+                            push_action(
+                                &mut actions,
+                                Action::RouteRetry {
                                     receipt: *receipt,
                                     peer: pending.peer,
                                     resend: pending.resend.clone(),
                                     not_before_ms: now_ms.saturating_add(backoff_ms),
-                                })
-                                .map_err(|_| CapacityError)?;
+                                },
+                            );
                         } else {
-                            actions
-                                .push(Action::Timeout {
+                            push_action(
+                                &mut actions,
+                                Action::Timeout {
                                     receipt: *receipt,
                                     peer: pending.peer,
-                                })
-                                .map_err(|_| CapacityError)?;
+                                },
+                            );
                         }
                         continue;
                     }
@@ -4524,13 +4636,14 @@ impl<
                         };
                         let not_before_ms = now_ms.saturating_add(backoff_ms);
                         pending.state = crate::AckState::RetryQueued;
-                        actions
-                            .push(Action::Retry {
+                        push_action(
+                            &mut actions,
+                            Action::Retry {
                                 receipt: *receipt,
                                 resend: pending.resend.clone(),
                                 not_before_ms,
-                            })
-                            .map_err(|_| CapacityError)?;
+                            },
+                        );
                     }
                 }
                 actions
@@ -4543,7 +4656,7 @@ impl<
                         resend,
                         not_before_ms,
                     } => {
-                        self.tx_queue.enqueue_with_state(
+                        let queued = self.tx_queue.enqueue_with_state(
                             TxPriority::Retry,
                             resend.frame.as_slice(),
                             Some(receipt),
@@ -4551,7 +4664,20 @@ impl<
                             not_before_ms,
                             0,
                             0,
-                        )?;
+                        );
+                        if queued.is_err() {
+                            // Give the rung back and look again shortly.
+                            MacCounters::bump(&mut self.counters.retry_enqueue_deferred);
+                            if let Some(pending) = self
+                                .identity_mut(identity_id)
+                                .and_then(|slot| slot.pending_ack_mut(&receipt))
+                            {
+                                pending.retries = pending.retries.saturating_sub(1);
+                                pending.state = crate::AckState::AwaitingForward {
+                                    confirm_deadline_ms: deferred_ms,
+                                };
+                            }
+                        }
                     }
                     Action::RouteRetry {
                         receipt,
@@ -4592,22 +4718,7 @@ impl<
                                 not_before_ms.saturating_add(self.forwarded_ack_timeout_ms(
                                     Self::allowed_forward_count(rewritten.frame.as_slice()),
                                 ));
-                            if let Some(pending) = self
-                                .identity_mut(identity_id)
-                                .and_then(|slot| slot.pending_ack_mut(&receipt))
-                            {
-                                pending.resend = rewritten.clone();
-                                pending.route_retry_spent = true;
-                                pending.retries = 0;
-                                pending.sent_ms = 0;
-                                pending.ack_deadline_ms = retry_deadline_ms;
-                                pending.state = crate::AckState::RetryQueued;
-                                // The rebuilt frame is a distinct forwarding
-                                // identity; a repeat of the abandoned one no
-                                // longer confirms this attempt.
-                                pending.confirm_key = rewritten_key;
-                            }
-                            self.tx_queue.enqueue_with_state(
+                            let queued = self.tx_queue.enqueue_with_state(
                                 TxPriority::Retry,
                                 rewritten.frame.as_slice(),
                                 Some(receipt),
@@ -4615,7 +4726,33 @@ impl<
                                 not_before_ms,
                                 0,
                                 0,
-                            )?;
+                            );
+                            if queued.is_err() {
+                                MacCounters::bump(&mut self.counters.retry_enqueue_deferred);
+                            }
+                            let Some(pending) = self
+                                .identity_mut(identity_id)
+                                .and_then(|slot| slot.pending_ack_mut(&receipt))
+                            else {
+                                continue;
+                            };
+                            if queued.is_err() {
+                                // The send keeps its expired deadline and its
+                                // unspent Route Retry, so the next sweep
+                                // decides again once the queue has room.
+                                pending.ack_deadline_ms = deferred_ms;
+                                continue;
+                            }
+                            pending.resend = rewritten;
+                            pending.route_retry_spent = true;
+                            pending.retries = 0;
+                            pending.sent_ms = 0;
+                            pending.ack_deadline_ms = retry_deadline_ms;
+                            pending.state = crate::AckState::RetryQueued;
+                            // The rebuilt frame is a distinct forwarding
+                            // identity; a repeat of the abandoned one no
+                            // longer confirms this attempt.
+                            pending.confirm_key = rewritten_key;
                         } else {
                             if let Some(slot) = self.identity_mut(identity_id) {
                                 slot.pending_acks.remove(&receipt);
@@ -4646,11 +4783,22 @@ impl<
                             entry.receipt == Some(receipt) && entry.identity_id == Some(identity_id)
                         });
                     }
+                    Action::Orphaned { receipt } => {
+                        MacCounters::bump(&mut self.counters.tx_orphans_reclaimed);
+                        if let Some(slot) = self.identity_mut(identity_id) {
+                            slot.pending_acks.remove(&receipt);
+                        }
+                        on_event(
+                            identity_id,
+                            crate::MacEventRef::TxAbandoned {
+                                identity_id,
+                                receipt: Some(receipt),
+                            },
+                        );
+                    }
                 }
             }
         }
-
-        Ok(())
     }
 
     /// Cancel a pending ACK-requested send, stopping retransmissions.
@@ -4847,7 +4995,7 @@ impl<
     fn tx_not_before_ms(&self, options: &SendOptions) -> u64 {
         options
             .tx_delay_ms
-            .map(|delay| self.clock.now_ms() + u64::from(delay))
+            .map(|delay| self.clock.now_ms().saturating_add(u64::from(delay)))
             .unwrap_or(0)
     }
 
@@ -5256,6 +5404,8 @@ impl<
         identity: LocalIdentity<P::Identity>,
         pfs_parent: Option<LocalIdentityId>,
     ) -> Result<LocalIdentityId, CapacityError> {
+        // Identity ids are slot indices carried in a `u8`.
+        const { assert!(IDENTITIES <= u8::MAX as usize + 1) };
         let initial_frame_counter = nonzero_initial_frame_counter(self.rng.next_u32());
 
         if let Some((index, slot)) = self
@@ -6970,6 +7120,19 @@ impl<
                 return false;
             }
         };
+
+        // Forwards never take the last few queue slots: those are kept for
+        // this node's acknowledgements, retransmissions and own sends, which
+        // a burst of other people's traffic would otherwise crowd out.
+        let forward_cap = TX.saturating_sub(TX_RESERVED_NON_FORWARD).max(1);
+        if self
+            .tx_queue
+            .count_matching(|entry| entry.priority == TxPriority::Forward)
+            >= forward_cap
+        {
+            MacCounters::bump(&mut self.counters.forward_queue_full);
+            return false;
+        }
 
         let now_ms = self.clock.now_ms();
         if self

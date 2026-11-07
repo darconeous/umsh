@@ -108,7 +108,7 @@ impl Setup {
             .unwrap();
         pending.state = AckState::AwaitingAck;
         pending.ack_deadline_ms = 0;
-        self.mac.service_pending_ack_timeouts(|_, _| {}).unwrap();
+        self.mac.service_pending_ack_timeouts(|_, _| {});
         let retry = self.mac.tx_queue_mut().pop_next().expect("a route retry");
         assert_eq!(retry.priority, TxPriority::Retry);
         retry.frame.as_slice().iter().copied().collect()
@@ -387,11 +387,8 @@ fn an_oversized_route_retry_resends_the_original() {
     pending.state = AckState::AwaitingAck;
     pending.ack_deadline_ms = 0;
     let mut timed_out = false;
-    setup
-        .mac
-        .service_pending_ack_timeouts(|_, event| {
-            timed_out |= matches!(event, MacEventRef::AckTimeout { .. });
-        })
-        .unwrap();
+    setup.mac.service_pending_ack_timeouts(|_, event| {
+        timed_out |= matches!(event, MacEventRef::AckTimeout { .. });
+    });
     assert!(timed_out);
 }

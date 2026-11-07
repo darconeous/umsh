@@ -2,6 +2,7 @@ mod ack_authentication;
 mod bearer;
 #[cfg(feature = "software-crypto")]
 mod colliding_channels;
+mod queue_resilience;
 mod routing_reliability;
 mod send_shapes;
 #[cfg(feature = "software-crypto")]
@@ -2895,7 +2896,7 @@ fn routed_mac_ack_retries_until_its_repeat_is_heard() {
     // Nothing repeats it: past the confirmation window (but short of the
     // ladder's terminal deadline) the identical frame is retransmitted.
     mac.clock().advance_ms(500);
-    mac.service_pending_ack_timeouts(|_, _| {}).unwrap();
+    mac.service_pending_ack_timeouts(|_, _| {});
     let retry = mac.tx_queue_mut().pop_next().unwrap();
     assert_eq!(retry.priority, TxPriority::Retry);
     assert_eq!(retry.receipt, Some(receipt));
@@ -2971,7 +2972,7 @@ fn routed_mac_ack_retries_once_then_goes_quiet() {
     let deadline_ms = confirm_deadline_ms(&mac);
     mac.clock()
         .advance_ms(deadline_ms.saturating_sub(mac.clock().now_ms()));
-    mac.service_pending_ack_timeouts(|_, _| {}).unwrap();
+    mac.service_pending_ack_timeouts(|_, _| {});
     mac.clock().advance_ms(t_frame + 1);
     block_on(mac.transmit_next(&mut |_, _| {})).unwrap();
     assert_eq!(mac.radio().transmitted.len(), 2);
@@ -2981,7 +2982,7 @@ fn routed_mac_ack_retries_once_then_goes_quiet() {
     let deadline_ms = confirm_deadline_ms(&mac);
     mac.clock()
         .advance_ms(deadline_ms.saturating_sub(mac.clock().now_ms()));
-    mac.service_pending_ack_timeouts(|_, _| {}).unwrap();
+    mac.service_pending_ack_timeouts(|_, _| {});
     assert!(mac.tx_queue_mut().pop_next().is_none(), "no second retry");
     let terminal_ms = mac
         .identity(local_id)
@@ -2990,7 +2991,7 @@ fn routed_mac_ack_retries_once_then_goes_quiet() {
         .map_or(0, |pending| pending.ack_deadline_ms);
     mac.clock()
         .advance_ms(terminal_ms.saturating_sub(mac.clock().now_ms()));
-    mac.service_pending_ack_timeouts(|_, _| {}).unwrap();
+    mac.service_pending_ack_timeouts(|_, _| {});
     assert!(
         mac.identity(local_id)
             .unwrap()
@@ -5045,8 +5046,7 @@ fn unanswered_frame_verified_fails_the_held_send() {
             MacEventRef::AckReceived { receipt, .. } => outcomes.push((receipt, true)),
             MacEventRef::AckTimeout { receipt, .. } => outcomes.push((receipt, false)),
             _ => {}
-        })
-        .unwrap();
+        });
         if !outcomes.is_empty() {
             break;
         }
@@ -11407,7 +11407,7 @@ fn confirmed_forwarded_send_no_longer_retries_on_confirmation_timeout() {
     pending.state = AckState::AwaitingAck;
     pending.ack_deadline_ms = 999_999;
 
-    mac.service_pending_ack_timeouts(|_, _| {}).unwrap();
+    mac.service_pending_ack_timeouts(|_, _| {});
 
     assert!(mac.tx_queue().is_empty());
 }
@@ -11633,8 +11633,7 @@ fn service_pending_ack_timeouts_emits_timeout_and_removes_entry() {
         if let MacEventRef::AckTimeout { peer, receipt } = event {
             seen = Some((identity, peer, receipt));
         }
-    })
-    .unwrap();
+    });
 
     assert_eq!(seen, Some((local_id, peer_key, receipt)));
     assert!(
@@ -11682,7 +11681,7 @@ fn service_pending_ack_timeouts_requeues_forwarded_retry() {
         confirm_deadline_ms: 0,
     };
 
-    mac.service_pending_ack_timeouts(|_, _| {}).unwrap();
+    mac.service_pending_ack_timeouts(|_, _| {});
 
     let retry = mac.tx_queue_mut().pop_next().unwrap();
     assert_eq!(retry.priority, TxPriority::Retry);
@@ -11741,8 +11740,7 @@ fn service_pending_ack_timeouts_reroutes_failed_source_route_once() {
         if let MacEventRef::AckTimeout { peer, receipt } = event {
             timeout_seen = Some((identity, peer, receipt));
         }
-    })
-    .unwrap();
+    });
 
     assert!(timeout_seen.is_none());
 
@@ -11885,7 +11883,7 @@ fn route_retry_survives_a_timeout_sweep_before_it_airs() {
     pending.state = AckState::AwaitingAck;
     pending.ack_deadline_ms = 0;
 
-    mac.service_pending_ack_timeouts(|_, _| {}).unwrap();
+    mac.service_pending_ack_timeouts(|_, _| {});
     assert_eq!(mac.tx_queue_mut().len(), 1);
     let now_ms = mac.clock().now_ms();
     assert!(
@@ -11905,8 +11903,7 @@ fn route_retry_survives_a_timeout_sweep_before_it_airs() {
         if matches!(event, MacEventRef::AckTimeout { .. }) {
             timeout_seen = true;
         }
-    })
-    .unwrap();
+    });
 
     assert!(!timeout_seen, "the retry had not aired yet");
     assert_eq!(mac.tx_queue_mut().len(), 1, "the retry is still queued");
@@ -11957,7 +11954,7 @@ fn route_retry_preserves_the_authenticated_header() {
         .unwrap();
     pending.state = AckState::AwaitingAck;
     pending.ack_deadline_ms = 0;
-    mac.service_pending_ack_timeouts(|_, _| {}).unwrap();
+    mac.service_pending_ack_timeouts(|_, _| {});
     let retry = mac.tx_queue_mut().pop_next().unwrap();
 
     let collect_aad = |frame: &[u8]| {
@@ -12008,7 +12005,7 @@ fn route_retry_adds_a_trace_with_signal() {
         .unwrap();
     pending.state = AckState::AwaitingAck;
     pending.ack_deadline_ms = 0;
-    mac.service_pending_ack_timeouts(|_, _| {}).unwrap();
+    mac.service_pending_ack_timeouts(|_, _| {});
     let retry = mac.tx_queue_mut().pop_next().unwrap();
     let frame = retry.frame.as_slice();
     let header = PacketHeader::parse(frame).unwrap();
@@ -12077,8 +12074,7 @@ fn route_retry_escalates_a_send_narrowed_by_a_cached_direct_route() {
         if matches!(event, MacEventRef::AckTimeout { .. }) {
             timeout_seen = true;
         }
-    })
-    .unwrap();
+    });
     assert!(!timeout_seen, "the send should be retried, not abandoned");
 
     let retry = mac.tx_queue_mut().pop_next().unwrap();
@@ -12136,8 +12132,7 @@ fn route_retry_is_not_attempted_when_the_caller_chose_the_narrow_budget() {
         if matches!(event, MacEventRef::AckTimeout { .. }) {
             timeout_seen = true;
         }
-    })
-    .unwrap();
+    });
 
     assert!(timeout_seen, "a caller-chosen direct send should time out");
     assert!(
@@ -12180,8 +12175,7 @@ fn route_retry_is_not_attempted_when_the_send_already_flooded_as_asked() {
         if matches!(event, MacEventRef::AckTimeout { .. }) {
             timeout_seen = true;
         }
-    })
-    .unwrap();
+    });
 
     assert!(timeout_seen);
     assert!(mac.tx_queue_mut().pop_next().is_none());
@@ -12222,7 +12216,7 @@ fn route_retry_restores_the_full_budget_after_a_narrowed_source_routed_send() {
         .unwrap();
     pending.state = AckState::AwaitingAck;
     pending.ack_deadline_ms = 0;
-    mac.service_pending_ack_timeouts(|_, _| {}).unwrap();
+    mac.service_pending_ack_timeouts(|_, _| {});
 
     // The route just failed, so rediscovery must flood as widely as the
     // application originally allowed rather than inherit the narrowed budget.
@@ -12271,8 +12265,8 @@ fn queued_retry_does_not_rearm_forward_confirmation_before_retransmit() {
         confirm_deadline_ms: 0,
     };
 
-    mac.service_pending_ack_timeouts(|_, _| {}).unwrap();
-    mac.service_pending_ack_timeouts(|_, _| {}).unwrap();
+    mac.service_pending_ack_timeouts(|_, _| {});
+    mac.service_pending_ack_timeouts(|_, _| {});
 
     assert_eq!(mac.tx_queue().len(), 1);
     assert!(matches!(
@@ -12730,7 +12724,7 @@ fn non_ack_unicast_with_hops_retries_until_the_ladder_ends() {
         };
         mac.clock()
             .advance_ms(confirm_deadline_ms.saturating_sub(mac.clock().now_ms()));
-        mac.service_pending_ack_timeouts(&mut on_event).unwrap();
+        mac.service_pending_ack_timeouts(&mut on_event);
         assert_eq!(mac.tx_queue().len(), 1, "a retry is queued");
         // The retry jitter is flat: at most one frame time.
         mac.clock().advance_ms(t_frame + 1);
@@ -12747,7 +12741,7 @@ fn non_ack_unicast_with_hops_retries_until_the_ladder_ends() {
         .ack_deadline_ms;
     mac.clock()
         .advance_ms(deadline_ms.saturating_sub(mac.clock().now_ms()));
-    mac.service_pending_ack_timeouts(&mut on_event).unwrap();
+    mac.service_pending_ack_timeouts(&mut on_event);
 
     assert!(
         mac.identity(local_id)
@@ -12788,7 +12782,7 @@ fn non_ack_direct_unicast_is_transmitted_exactly_once() {
     assert!(mac.tx_queue().is_empty());
 
     mac.clock().advance_ms(1_000_000);
-    mac.service_pending_ack_timeouts(|_, _| {}).unwrap();
+    mac.service_pending_ack_timeouts(|_, _| {});
     assert!(mac.tx_queue().is_empty(), "nothing ever retries");
 }
 
@@ -13187,7 +13181,7 @@ fn late_repeat_withdraws_a_queued_retry() {
     };
     mac.clock()
         .advance_ms(confirm_deadline_ms.saturating_sub(mac.clock().now_ms()));
-    mac.service_pending_ack_timeouts(|_, _| {}).unwrap();
+    mac.service_pending_ack_timeouts(|_, _| {});
     assert_eq!(
         mac.tx_queue().len(),
         1,
@@ -13246,7 +13240,7 @@ fn late_repeat_moves_an_ack_requested_send_to_awaiting_ack() {
     };
     mac.clock()
         .advance_ms(confirm_deadline_ms.saturating_sub(mac.clock().now_ms()));
-    mac.service_pending_ack_timeouts(|_, _| {}).unwrap();
+    mac.service_pending_ack_timeouts(|_, _| {});
     assert_eq!(mac.tx_queue().len(), 1);
 
     let frame = mac
@@ -13303,7 +13297,7 @@ fn complete_ack_withdraws_a_queued_retry() {
     };
     mac.clock()
         .advance_ms(confirm_deadline_ms.saturating_sub(mac.clock().now_ms()));
-    mac.service_pending_ack_timeouts(|_, _| {}).unwrap();
+    mac.service_pending_ack_timeouts(|_, _| {});
     assert_eq!(mac.tx_queue().len(), 1);
 
     let ack_v = mac

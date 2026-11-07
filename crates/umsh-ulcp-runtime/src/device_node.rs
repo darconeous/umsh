@@ -380,6 +380,8 @@ pub fn mac_counters() -> MacCounters {
         route_retry_oversize: MAC_ROUTE_RETRY_OVERSIZE.load(Ordering::Relaxed),
         rx_counter_persist_failures: MAC_RX_COUNTER_PERSIST_FAILURES.load(Ordering::Relaxed),
         rx_counter_restore_failures: MAC_RX_COUNTER_RESTORE_FAILURES.load(Ordering::Relaxed),
+        // Tallies no ULCP property publishes yet read as zero.
+        ..MacCounters::default()
     }
 }
 

@@ -98,6 +98,22 @@ impl<const N: usize> DuplicateCache<N> {
         let _ = self.entries.push_back((key, now_ms));
     }
 
+    /// Forget `key`, so the next copy of its packet counts as new.
+    pub fn remove(&mut self, key: &DupCacheKey) {
+        if !self.entries.iter().any(|(entry, _)| entry == key) {
+            return;
+        }
+        let mut kept = Deque::new();
+        while let Some(entry) = self.entries.pop_front() {
+            if &entry.0 != key {
+                // Capacity is unchanged and only entries are dropped, so
+                // every survivor fits.
+                let _ = kept.push_back(entry);
+            }
+        }
+        self.entries = kept;
+    }
+
     /// Drop aged-out entries from the front of the ring.
     ///
     /// Insertion order only bounds age from one side, and TTLs differ by

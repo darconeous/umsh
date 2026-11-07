@@ -392,7 +392,7 @@ fn expire_attempt(mac: &mut TestMac, local_id: LocalIdentityId, receipt: SendRec
         .unwrap();
     pending.state = AckState::AwaitingAck;
     pending.ack_deadline_ms = 0;
-    mac.service_pending_ack_timeouts(|_, _| {}).unwrap();
+    mac.service_pending_ack_timeouts(|_, _| {});
 }
 
 #[test]
@@ -705,8 +705,7 @@ fn failed_ack_requested_enqueue_does_not_invalidate_route() {
         .is_err()
     );
     mac.clock().advance_ms(100_000);
-    mac.service_pending_ack_timeouts(|_, _| panic!("nothing transmitted"))
-        .unwrap();
+    mac.service_pending_ack_timeouts(|_, _| panic!("nothing transmitted"));
     assert_eq!(
         mac.peer_registry().get(peer_id).unwrap().route,
         Some(CachedRoute::Direct)
@@ -1549,8 +1548,7 @@ fn expire_and_report(mac: &mut TestMac, local_id: LocalIdentityId, receipt: Send
         if matches!(event, MacEventRef::AckTimeout { .. }) {
             timed_out = true;
         }
-    })
-    .unwrap();
+    });
     timed_out
 }
 

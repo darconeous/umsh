@@ -903,6 +903,16 @@ impl<const N: usize, const FRAME: usize> TxQueue<N, FRAME> {
         Some(self.entries.swap_remove(index))
     }
 
+    /// Whether any queued frame matches `predicate`.
+    pub fn contains_matching(&self, predicate: impl FnMut(&QueuedTx<FRAME>) -> bool) -> bool {
+        self.entries.iter().any(predicate)
+    }
+
+    /// How many queued frames match `predicate`.
+    pub fn count_matching(&self, mut predicate: impl FnMut(&QueuedTx<FRAME>) -> bool) -> usize {
+        self.entries.iter().filter(|entry| predicate(entry)).count()
+    }
+
     /// Every queued frame, in no particular order.
     #[cfg(test)]
     pub(crate) fn iter(&self) -> impl Iterator<Item = &QueuedTx<FRAME>> {

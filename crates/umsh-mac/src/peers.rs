@@ -394,6 +394,8 @@ impl<const N: usize, const H: usize> Default for PeerRegistry<N, H> {
 impl<const N: usize, const H: usize> PeerRegistry<N, H> {
     /// Create an empty peer registry.
     pub fn new() -> Self {
+        // Peer ids are slot indices carried in a `u8`.
+        const { assert!(N <= u8::MAX as usize + 1) };
         Self {
             peers: Vec::new(),
             holds: Vec::new(),
