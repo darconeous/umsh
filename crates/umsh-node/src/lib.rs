@@ -213,7 +213,9 @@ mod tests {
     #[cfg(feature = "software-crypto")]
     use umsh_mac::MacEventRef;
     #[cfg(feature = "software-crypto")]
-    use umsh_mac::{CapacityError, LocalIdentityId, PeerId, SendError, SendOptions, SendReceipt};
+    use umsh_mac::{
+        CapacityError, LocalIdentityId, PeerHolder, PeerId, SendError, SendOptions, SendReceipt,
+    };
 
     #[cfg(feature = "software-crypto")]
     use crate::ReceivedPacketRef;
@@ -1260,6 +1262,70 @@ mod tests {
         assert_eq!(mac.state.borrow().removed_ephemerals.len(), 20);
     }
 
+    /// A contact the application adds under a session's peer ephemeral key
+    /// while the session lasts is still a contact once the session ends.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn pfs_session_end_keeps_a_contact_added_under_its_key() {
+        let mac = FakeMac::new(vec![[7u8; 32]]);
+        let node = test_node(mac.clone());
+        let options = SendOptions::default();
+        let peer = PublicKey([0x55; 32]);
+        let peer_ephemeral = PublicKey([0x44; 32]);
+        block_on_ready(node.peer(peer)).unwrap();
+        let request = OwnedMacCommand::PfsSessionRequest {
+            ephemeral_key: peer_ephemeral,
+            duration_minutes: 60,
+        };
+        let opened = block_on_ready(node.handle_pfs_command(&peer, None, &request, &options));
+        assert!(opened.unwrap().is_some());
+
+        block_on_ready(node.peer(peer_ephemeral)).unwrap();
+        let end = OwnedMacCommand::EndPfsSession;
+        block_on_ready(node.handle_pfs_command(&peer, None, &end, &options)).unwrap();
+
+        assert!(node.state().borrow().pfs.sessions().is_empty());
+        assert!(
+            mac.state
+                .borrow()
+                .peers
+                .iter()
+                .any(|(k, _)| *k == peer_ephemeral)
+        );
+        assert!(block_on_ready(node.remove_peer(&peer_ephemeral)));
+        assert!(
+            !mac.state
+                .borrow()
+                .peers
+                .iter()
+                .any(|(k, _)| *k == peer_ephemeral)
+        );
+    }
+
+    /// Closing a contact exchange gives back only the slots it held: a
+    /// contact it reached, whether added before or during the exchange,
+    /// stays, and a stranger it reached goes.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn closing_a_meet_keeps_the_contacts_it_reached() {
+        let mac = FakeMac::new(vec![[7u8; 32], [8u8; 32]]);
+        let node = test_node(mac.clone());
+        let before = PublicKey([0x41; 32]);
+        let during = PublicKey([0x42; 32]);
+        let stranger = PublicKey([0x43; 32]);
+        block_on_ready(node.peer(before)).unwrap();
+
+        block_on_ready(node.open_meet()).unwrap();
+        for to in [&before, &during, &stranger] {
+            block_on_ready(node.send_meet(Some(to), b"meet")).unwrap();
+        }
+        block_on_ready(node.peer(during)).unwrap();
+        block_on_ready(node.close_meet());
+
+        let peers: Vec<PublicKey> = mac.state.borrow().peers.iter().map(|(k, _)| *k).collect();
+        assert_eq!(peers, vec![before, during]);
+    }
+
     #[cfg(feature = "software-crypto")]
     #[test]
     fn pfs_request_naming_a_registered_peer_is_refused() {
@@ -1557,6 +1623,10 @@ mod tests {
         broadcasts: Vec<(Vec<u8>, SendOptions)>,
         removed_ephemerals: Vec<LocalIdentityId>,
         peers: Vec<(PublicKey, PeerId)>,
+        /// The peers the application holds, once each.
+        contacts: Vec<PublicKey>,
+        /// One entry per session hold.
+        session_holds: Vec<PublicKey>,
         channels: Vec<umsh_core::ChannelKey>,
         observations: Vec<umsh_mac::TransmitterObservation>,
         own_key: Option<PublicKey>,
@@ -1633,9 +1703,10 @@ mod tests {
             Ok(())
         }
 
-        async fn add_peer(
+        async fn hold_peer(
             &self,
             key: PublicKey,
+            holder: PeerHolder,
         ) -> Result<PeerId, MacBackendError<Self::SendError, Self::CapacityError>> {
             core::future::poll_fn(|_| {
                 if self.state.borrow().hold_add_peer {
@@ -1646,6 +1717,13 @@ mod tests {
             })
             .await;
             let mut state = self.state.borrow_mut();
+            match holder {
+                PeerHolder::Application if !state.contacts.contains(&key) => {
+                    state.contacts.push(key)
+                }
+                PeerHolder::Application => {}
+                PeerHolder::Session => state.session_holds.push(key),
+            }
             if let Some((_, existing)) = state
                 .peers
                 .iter()
@@ -1659,11 +1737,40 @@ mod tests {
             Ok(peer_id)
         }
 
-        async fn remove_peer(&self, key: &PublicKey) -> bool {
+        async fn release_peer(&self, key: &PublicKey, holder: PeerHolder) -> bool {
             let mut state = self.state.borrow_mut();
-            let before = state.peers.len();
-            state.peers.retain(|(existing, _)| existing != key);
-            state.peers.len() != before
+            if !state.peers.iter().any(|(existing, _)| existing == key) {
+                return false;
+            }
+            let holds = match holder {
+                PeerHolder::Application => &mut state.contacts,
+                PeerHolder::Session => &mut state.session_holds,
+            };
+            let held = match holds.iter().position(|held| held == key) {
+                Some(index) => {
+                    holds.remove(index);
+                    true
+                }
+                None => false,
+            };
+            let still_held = state.contacts.contains(key) || state.session_holds.contains(key);
+            if !held && (holder == PeerHolder::Session || still_held) {
+                return false;
+            }
+            if !still_held {
+                state.peers.retain(|(existing, _)| existing != key);
+            }
+            true
+        }
+
+        async fn ensure_transient_peer(&self, key: &PublicKey) -> bool {
+            let mut state = self.state.borrow_mut();
+            if !state.peers.iter().any(|(existing, _)| existing == key) {
+                let peer_id = PeerId(state.next_peer_id);
+                state.next_peer_id = state.next_peer_id.wrapping_add(1);
+                state.peers.push((*key, peer_id));
+            }
+            true
         }
 
         async fn for_each_peer(&self, f: &mut dyn FnMut(PublicKey)) {

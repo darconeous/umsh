@@ -358,8 +358,9 @@ pub use observations::{
     MAX_TRANSMITTER_OBSERVATIONS, TransmitterObservation, TransmitterObservations,
 };
 pub use peers::{
-    CachedRoute, ChannelState, ChannelTable, PeerCryptoMap, PeerCryptoState, PeerId, PeerInfo,
-    PeerRegistry, PeerRemoval, PeerRouteStatus, RouteCandidate, RouteHold,
+    CachedRoute, ChannelState, ChannelTable, HoldRelease, PeerCryptoMap, PeerCryptoState,
+    PeerHolder, PeerHolds, PeerId, PeerInfo, PeerRegistry, PeerRemoval, PeerRouteStatus,
+    RouteCandidate, RouteHold,
 };
 pub use rx_windows::{NeedsRestore, RX_COUNTER_PERSIST_INTERVAL, RxWindow, RxWindows};
 pub use send::{

@@ -106,13 +106,81 @@ pub(crate) enum FarHop {
     Repeater(RouterHint),
 }
 
+/// Who takes or gives back a hold on a peer entry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PeerHolder {
+    /// The local application, for a contact it added. It holds an entry at
+    /// most once: adding the same contact again only refreshes it.
+    Application,
+    /// One session that addresses the peer under this key: a PFS session's
+    /// peer ephemeral, or a peer a contact exchange reached. Every hold taken
+    /// is given back once.
+    Session,
+}
+
+/// The holders of a peer entry. An entry anything holds is never evicted,
+/// and it is removed only when its last holder gives it back.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PeerHolds {
+    application: bool,
+    sessions: u8,
+}
+
+impl PeerHolds {
+    /// How many holders the entry has, the application counting once.
+    pub fn count(&self) -> u8 {
+        u8::from(self.application).saturating_add(self.sessions)
+    }
+
+    /// Whether anything holds the entry.
+    pub fn is_held(&self) -> bool {
+        self.application || self.sessions > 0
+    }
+
+    /// Whether the local application holds the entry: a contact it added.
+    pub fn by_application(&self) -> bool {
+        self.application
+    }
+
+    /// How many sessions hold the entry.
+    pub fn sessions(&self) -> u8 {
+        self.sessions
+    }
+
+    /// Take `holder`'s hold. Fails only when the session count is full.
+    fn take(&mut self, holder: PeerHolder) -> Result<(), CapacityError> {
+        match holder {
+            PeerHolder::Application => self.application = true,
+            PeerHolder::Session => {
+                self.sessions = self.sessions.checked_add(1).ok_or(CapacityError)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Give back `holder`'s hold, reporting whether it had one.
+    fn give_back(&mut self, holder: PeerHolder) -> bool {
+        match holder {
+            PeerHolder::Application => core::mem::take(&mut self.application),
+            PeerHolder::Session => match self.sessions.checked_sub(1) {
+                Some(sessions) => {
+                    self.sessions = sessions;
+                    true
+                }
+                None => false,
+            },
+        }
+    }
+}
+
 /// Shared metadata tracked for a remote peer.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PeerInfo {
     /// Full public key.
     pub public_key: PublicKey,
-    /// Whether this peer was explicitly configured by the local application.
-    pub pinned: bool,
+    /// Who holds this entry. An entry nobody holds was learned, and may be
+    /// recycled for another.
+    pub holds: PeerHolds,
     /// Whether this entry rests on more than a claim: a frame authenticated
     /// under the key, or the local application asking for it. An entry that
     /// does not is only a slot to answer a stranger through, and a stranger
@@ -158,11 +226,11 @@ pub struct PeerInfo {
 }
 
 impl PeerInfo {
-    fn new(public_key: PublicKey, pinned: bool, last_seen_ms: u64) -> Self {
+    fn new(public_key: PublicKey, holds: PeerHolds, last_seen_ms: u64) -> Self {
         Self {
             public_key,
-            pinned,
-            proven: pinned,
+            holds,
+            proven: holds.is_held(),
             route: None,
             route_revision: 0,
             route_score: None,
@@ -361,6 +429,18 @@ pub struct AutoPeerUpdate {
     pub evicted_key: Option<PublicKey>,
 }
 
+/// Outcome of giving back a hold on a peer entry
+/// ([`PeerRegistry::release`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HoldRelease {
+    /// The holder had no hold to give back; nothing changed.
+    NotHeld,
+    /// The hold was given back, and another holder keeps the entry.
+    StillHeld,
+    /// Nothing holds the entry any more, and it should be removed.
+    LastHolder,
+}
+
 /// Outcome of removing a peer from the registry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PeerRemoval {
@@ -463,31 +543,60 @@ impl<const N: usize, const H: usize> PeerRegistry<N, H> {
         self.peers.get_mut(id.0 as usize)
     }
 
-    /// Insert or refresh an explicitly configured peer entry.
-    pub fn try_insert_or_update(&mut self, key: PublicKey) -> Result<PeerId, CapacityError> {
+    /// Insert or refresh a peer entry `holder` holds.
+    ///
+    /// An application hold is taken at most once; every session hold
+    /// counts, and each must be given back with [`Self::release`].
+    pub fn try_insert_or_update(
+        &mut self,
+        key: PublicKey,
+        holder: PeerHolder,
+    ) -> Result<PeerId, CapacityError> {
         if let Some((id, peer)) = self
             .peers
             .iter_mut()
             .enumerate()
             .find(|(_, peer)| peer.public_key == key)
         {
-            peer.public_key = key;
-            peer.pinned = true;
+            peer.holds.take(holder)?;
             return Ok(PeerId(id as u8));
         }
 
+        let mut holds = PeerHolds::default();
+        holds.take(holder)?;
         self.peers
-            .push(PeerInfo::new(key, true, 0))
+            .push(PeerInfo::new(key, holds, 0))
             .map_err(|_| CapacityError)?;
         Ok(PeerId((self.peers.len() - 1) as u8))
+    }
+
+    /// Give back `holder`'s hold on `id`. The entry stays in the registry;
+    /// [`HoldRelease::LastHolder`] says it is now the caller's to
+    /// [`remove`](Self::remove).
+    ///
+    /// The application may also remove an entry nobody holds, such as a
+    /// learned peer. A session never removes an entry it did not hold, so a
+    /// stray release cannot take a contact or a learned peer with it.
+    pub fn release(&mut self, id: PeerId, holder: PeerHolder) -> HoldRelease {
+        let Some(peer) = self.get_mut(id) else {
+            return HoldRelease::NotHeld;
+        };
+        let held = peer.holds.give_back(holder);
+        if !held && (holder == PeerHolder::Session || peer.holds.is_held()) {
+            HoldRelease::NotHeld
+        } else if peer.holds.is_held() {
+            HoldRelease::StillHeld
+        } else {
+            HoldRelease::LastHolder
+        }
     }
 
     /// Insert or refresh an opportunistically learned peer entry, for a key
     /// a verified frame or the local application stands behind.
     ///
-    /// When the registry is full, this may recycle an unpinned entry in place
-    /// rather than failing: the oldest that has proven nothing, or failing
-    /// that the oldest there is. Explicitly configured (`pinned`) peers are
+    /// When the registry is full, this may recycle an entry nobody holds in
+    /// place rather than failing: the oldest that has proven nothing, or
+    /// failing that the oldest there is. A held entry (see [`PeerHolds`]) is
     /// never displaced.
     pub fn try_insert_or_update_auto(
         &mut self,
@@ -531,7 +640,7 @@ impl<const N: usize, const H: usize> PeerRegistry<N, H> {
             });
         }
 
-        let mut entry = PeerInfo::new(key, false, seen_ms(now_ms));
+        let mut entry = PeerInfo::new(key, PeerHolds::default(), seen_ms(now_ms));
         entry.proven = proven;
 
         if self.peers.len() < N {
@@ -547,7 +656,7 @@ impl<const N: usize, const H: usize> PeerRegistry<N, H> {
             .iter()
             .enumerate()
             .filter(|(index, peer)| {
-                !peer.pinned
+                !peer.holds.is_held()
                     && (proven || !peer.proven)
                     && self.route_hold(PeerId(*index as u8), now_ms).is_none()
             })

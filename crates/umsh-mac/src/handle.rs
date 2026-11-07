@@ -10,7 +10,7 @@ use crate::{
     DEFAULT_DUP, DEFAULT_FRAME, DEFAULT_IDENTITIES, DEFAULT_PEERS, DEFAULT_ROUTE_HOLDS,
     DEFAULT_RX_STRANGERS, DEFAULT_TX, Platform,
     coordinator::{CounterPersistenceError, LocalIdentityId, Mac, MacError, SendError},
-    peers::PeerId,
+    peers::{PeerHolder, PeerId},
     send::{SendOptions, SendReceipt},
 };
 
@@ -219,19 +219,37 @@ impl<
             .await
     }
 
-    /// Registers or refreshes a remote peer in the shared registry.
+    /// Registers or refreshes a contact the application holds.
     pub async fn add_peer(&self, key: PublicKey) -> Result<PeerId, AddPeerError> {
         self.mac.borrow_mut().await.add_peer(key)
     }
 
-    /// Removes a registered peer and its per-peer transport state, reporting
-    /// whether the peer was registered. Persisted RX counter boundaries are
-    /// retained so replay protection survives a later re-add.
+    /// Registers or refreshes a peer that `holder` holds
+    /// ([`Mac::hold_peer`](crate::Mac::hold_peer)).
+    pub async fn hold_peer(
+        &self,
+        key: PublicKey,
+        holder: PeerHolder,
+    ) -> Result<PeerId, AddPeerError> {
+        self.mac.borrow_mut().await.hold_peer(key, holder)
+    }
+
+    /// Gives back the application's hold on a contact
+    /// ([`Mac::remove_peer`](crate::Mac::remove_peer)).
     pub async fn remove_peer(&self, key: &PublicKey) -> bool {
         self.mac.borrow_mut().await.remove_peer(key)
     }
 
-    /// Ensures `key` is registered at least transiently (unpinned,
+    /// Gives back `holder`'s hold on `key`, removing the peer and its
+    /// per-peer transport state once nothing holds it
+    /// ([`Mac::release_peer`](crate::Mac::release_peer)). Persisted RX
+    /// counter boundaries are retained so replay protection survives a later
+    /// re-add.
+    pub async fn release_peer(&self, key: &PublicKey, holder: PeerHolder) -> bool {
+        self.mac.borrow_mut().await.release_peer(key, holder)
+    }
+
+    /// Ensures `key` is registered at least transiently (held by nothing,
     /// LRU-evictable), so an explicit reply to a stranger has a slot to send
     /// through. Returns whether a slot is held.
     pub async fn ensure_transient_peer(&self, key: &PublicKey) -> bool {

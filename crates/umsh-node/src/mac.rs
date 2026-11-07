@@ -1,7 +1,7 @@
 use umsh_core::{ChannelKey, PublicKey};
 use umsh_mac::{
     AddPeerError, CachedRoute, CapacityError, LocalIdentityId, MacError, MacEventRef, MacHandle,
-    PeerId, Platform, SendDestination, SendError, SendOptions, SendReceipt,
+    PeerHolder, PeerId, Platform, SendDestination, SendError, SendOptions, SendReceipt,
 };
 
 /// Pluggable backend that the node layer delegates to for MAC operations.
@@ -33,19 +33,35 @@ pub trait MacBackend: Clone {
         on_event: impl FnMut(LocalIdentityId, MacEventRef<'_>),
     ) -> Result<(), Self::RunError>;
 
-    /// Add or refresh a peer.
+    /// Add or refresh a peer that `holder` holds. An application hold is
+    /// taken at most once; every session hold counts, and each is given back
+    /// with [`release_peer`](Self::release_peer).
+    async fn hold_peer(
+        &self,
+        key: PublicKey,
+        holder: PeerHolder,
+    ) -> Result<PeerId, MacBackendError<Self::SendError, Self::CapacityError>>;
+    /// Give back `holder`'s hold on a peer. Once nothing holds it, the peer
+    /// and its per-peer transport state are removed. Reports whether `holder`
+    /// held it, or for the application whether it removed a peer nobody held.
+    async fn release_peer(&self, key: &PublicKey, holder: PeerHolder) -> bool {
+        let _ = (key, holder);
+        false
+    }
+    /// Add or refresh a contact the application holds.
     async fn add_peer(
         &self,
         key: PublicKey,
-    ) -> Result<PeerId, MacBackendError<Self::SendError, Self::CapacityError>>;
-    /// Remove a peer and its per-peer transport state, reporting whether it
-    /// was registered.
-    async fn remove_peer(&self, key: &PublicKey) -> bool {
-        let _ = key;
-        false
+    ) -> Result<PeerId, MacBackendError<Self::SendError, Self::CapacityError>> {
+        self.hold_peer(key, PeerHolder::Application).await
     }
-    /// Ensure `key` holds at least a transient (unpinned, LRU-evictable)
-    /// peer slot, so an explicit reply to a stranger can be sent. Reports
+    /// Give back the application's hold on a contact; see
+    /// [`release_peer`](Self::release_peer).
+    async fn remove_peer(&self, key: &PublicKey) -> bool {
+        self.release_peer(key, PeerHolder::Application).await
+    }
+    /// Ensure `key` holds at least a transient (held by nothing,
+    /// LRU-evictable) peer slot, so an explicit reply to a stranger can be sent. Reports
     /// whether a slot is held.
     async fn ensure_transient_peer(&self, key: &PublicKey) -> bool {
         let _ = key;
@@ -323,18 +339,19 @@ impl<
         self.next_event(on_event).await
     }
 
-    async fn add_peer(
+    async fn hold_peer(
         &self,
         key: PublicKey,
+        holder: PeerHolder,
     ) -> Result<PeerId, MacBackendError<Self::SendError, Self::CapacityError>> {
-        self.add_peer(key).await.map_err(|err| match err {
+        self.hold_peer(key, holder).await.map_err(|err| match err {
             AddPeerError::Capacity => MacBackendError::Capacity(CapacityError),
             AddPeerError::InvalidPublicKey => MacBackendError::InvalidPublicKey,
         })
     }
 
-    async fn remove_peer(&self, key: &PublicKey) -> bool {
-        self.remove_peer(key).await
+    async fn release_peer(&self, key: &PublicKey, holder: PeerHolder) -> bool {
+        self.release_peer(key, holder).await
     }
 
     async fn ensure_transient_peer(&self, key: &PublicKey) -> bool {

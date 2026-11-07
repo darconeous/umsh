@@ -711,7 +711,9 @@ fn echo_response_mirrors_a_signal_trace_request() {
 fn peer_registry_looks_up_by_hint_and_updates_route() {
     let mut registry = PeerRegistry::<4>::new();
     let key = test_pubkey(0xA1);
-    let peer_id = registry.try_insert_or_update(key).unwrap();
+    let peer_id = registry
+        .try_insert_or_update(key, PeerHolder::Application)
+        .unwrap();
 
     let matches: heapless::Vec<PeerId, 4> = registry
         .lookup_by_hint(&key.hint())
@@ -1043,6 +1045,92 @@ fn remove_last_peer_needs_no_rekey() {
     let (kept_id, kept) = mac.peer_registry().lookup_by_key(&first_key).unwrap();
     assert_eq!(kept_id, first_id);
     assert_eq!(kept.public_key, first_key);
+}
+
+fn holds_of<const N: usize, const H: usize>(
+    registry: &PeerRegistry<N, H>,
+    key: &PublicKey,
+) -> Option<PeerHolds> {
+    registry.lookup_by_key(key).map(|(_, peer)| peer.holds)
+}
+
+/// A contact added while a session holds the same key outlives the session,
+/// and the session's hold outlives the contact's removal.
+#[test]
+fn a_peer_slot_stays_until_its_last_holder_lets_go() {
+    let mut mac = make_mac();
+    let key = test_pubkey(0xAB);
+
+    mac.hold_peer(key, PeerHolder::Session).unwrap();
+    mac.add_peer(key).unwrap();
+    assert_eq!(holds_of(mac.peer_registry(), &key).unwrap().count(), 2);
+    assert!(mac.release_peer(&key, PeerHolder::Session));
+    let holds = holds_of(mac.peer_registry(), &key).expect("the contact keeps the slot");
+    assert!(holds.by_application());
+    assert_eq!(holds.sessions(), 0);
+    assert!(mac.remove_peer(&key));
+    assert!(holds_of(mac.peer_registry(), &key).is_none());
+
+    // Two sessions and a contact: each lets go of its own hold only.
+    mac.add_peer(key).unwrap();
+    mac.hold_peer(key, PeerHolder::Session).unwrap();
+    mac.hold_peer(key, PeerHolder::Session).unwrap();
+    assert!(mac.remove_peer(&key));
+    assert_eq!(holds_of(mac.peer_registry(), &key).unwrap().sessions(), 2);
+    assert!(!mac.remove_peer(&key), "the contact is already gone");
+    assert!(mac.release_peer(&key, PeerHolder::Session));
+    assert!(holds_of(mac.peer_registry(), &key).is_some());
+    assert!(mac.release_peer(&key, PeerHolder::Session));
+    assert!(holds_of(mac.peer_registry(), &key).is_none());
+}
+
+/// The application holds a contact once, however often it adds it.
+#[test]
+fn adding_a_contact_again_holds_it_once() {
+    let mut mac = make_mac();
+    let key = test_pubkey(0xAB);
+    mac.add_peer(key).unwrap();
+    mac.add_peer(key).unwrap();
+    assert_eq!(holds_of(mac.peer_registry(), &key).unwrap().count(), 1);
+    assert!(mac.remove_peer(&key));
+    assert!(holds_of(mac.peer_registry(), &key).is_none());
+}
+
+/// A session gives back only a hold it took: a stray release leaves a
+/// contact and a learned peer in place. The application may still remove a
+/// learned peer nobody holds.
+#[test]
+fn a_session_never_removes_a_peer_it_does_not_hold() {
+    let mut mac = make_mac();
+    let contact = test_pubkey(0xAB);
+    let learned = test_pubkey(0xBC);
+    mac.add_peer(contact).unwrap();
+    mac.ensure_transient_peer(&learned).unwrap();
+
+    assert!(!mac.release_peer(&contact, PeerHolder::Session));
+    assert!(!mac.release_peer(&learned, PeerHolder::Session));
+    assert!(
+        holds_of(mac.peer_registry(), &contact)
+            .unwrap()
+            .by_application()
+    );
+    assert!(!holds_of(mac.peer_registry(), &learned).unwrap().is_held());
+
+    assert!(mac.remove_peer(&learned));
+    assert!(holds_of(mac.peer_registry(), &learned).is_none());
+}
+
+/// A slot a session holds is never recycled for a learned peer.
+#[test]
+fn a_session_held_peer_is_never_evicted() {
+    let mut mac = make_small_peer_mac::<1>();
+    let held = test_pubkey(0xAB);
+    let stranger = test_pubkey(0xBC);
+    mac.hold_peer(held, PeerHolder::Session).unwrap();
+
+    assert!(mac.ensure_transient_peer(&stranger).is_err());
+    assert!(holds_of(mac.peer_registry(), &held).is_some());
+    assert!(holds_of(mac.peer_registry(), &stranger).is_none());
 }
 
 #[test]

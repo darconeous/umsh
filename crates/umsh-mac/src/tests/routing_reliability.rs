@@ -1267,9 +1267,15 @@ fn adopting_or_clearing_ends_the_hold() {
 fn holds_are_bounded_and_follow_their_peer() {
     let route = CachedRoute::source(&[RouterHint([1, 2])]).unwrap();
     let mut registry = PeerRegistry::<4, 1>::new();
-    let first = registry.try_insert_or_update(PublicKey([1; 32])).unwrap();
-    let second = registry.try_insert_or_update(PublicKey([2; 32])).unwrap();
-    let third = registry.try_insert_or_update(PublicKey([3; 32])).unwrap();
+    let first = registry
+        .try_insert_or_update(PublicKey([1; 32]), PeerHolder::Application)
+        .unwrap();
+    let second = registry
+        .try_insert_or_update(PublicKey([2; 32]), PeerHolder::Application)
+        .unwrap();
+    let third = registry
+        .try_insert_or_update(PublicKey([3; 32]), PeerHolder::Application)
+        .unwrap();
     assert!(registry.hold_route(third, route.clone(), 1, 1_000, 0));
     // One slot, taken until the hold runs out.
     assert!(!registry.hold_route(second, route.clone(), 1, 1_000, 0));
@@ -1287,7 +1293,9 @@ fn holds_are_bounded_and_follow_their_peer() {
 
     // A registry with no room for holds never holds.
     let mut none = PeerRegistry::<4>::new();
-    let id = none.try_insert_or_update(PublicKey([1; 32])).unwrap();
+    let id = none
+        .try_insert_or_update(PublicKey([1; 32]), PeerHolder::Application)
+        .unwrap();
     assert!(!none.hold_route(id, route, 1, 1_000, 0));
 }
 

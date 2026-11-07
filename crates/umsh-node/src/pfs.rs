@@ -12,7 +12,7 @@ use umsh_core::PublicKey;
 #[cfg(feature = "software-crypto")]
 use umsh_crypto::{NodeIdentity, software::SoftwareIdentity};
 #[cfg(feature = "software-crypto")]
-use umsh_mac::{LocalIdentityId, SendOptions, SendReceipt};
+use umsh_mac::{LocalIdentityId, PeerHolder, SendOptions, SendReceipt};
 #[cfg(feature = "software-crypto")]
 use zeroize::Zeroize;
 
@@ -500,15 +500,15 @@ async fn establish<M: MacBackend>(
         return Ok(Some(local_public));
     }
     let _ = mac.remove_ephemeral(active.local_ephemeral_id).await;
-    let _ = mac.remove_peer(&peer_ephemeral).await;
+    let _ = mac.release_peer(&peer_ephemeral, PeerHolder::Session).await;
     Ok(None)
 }
 
 /// Whether `key` may stand as `peer`'s half of a new session, counting it
 /// when it may not.
 ///
-/// The key becomes a pinned peer for the session's life, the address its
-/// traffic is credited to `peer` under, and is removed with the session. So
+/// The session holds the key's peer slot for its life, the address its
+/// traffic is credited to `peer` under, and gives it back when it ends. So
 /// it must be no address this node already answers to or sends to: not one
 /// of its own keys, not a registered peer's, and not another session's.
 #[cfg(feature = "software-crypto")]
@@ -553,12 +553,15 @@ async fn abandon<M: MacBackend>(
 }
 
 /// Give back what a session removed from the table holds in the MAC: its
-/// local identity and the pinned peer slot under the peer's ephemeral key.
+/// local identity and its hold on the peer slot under the peer's ephemeral
+/// key. A contact the application added under that key since keeps the slot.
 #[cfg(feature = "software-crypto")]
 async fn release<M: MacBackend>(mac: &M, session: PfsSession) {
     if session.state == PfsState::Active {
         let _ = mac.remove_ephemeral(session.local_ephemeral_id).await;
-        let _ = mac.remove_peer(&session.peer_ephemeral).await;
+        let _ = mac
+            .release_peer(&session.peer_ephemeral, PeerHolder::Session)
+            .await;
     }
 }
 
@@ -577,12 +580,12 @@ async fn activate_identity<M: MacBackend>(
     peer_ephemeral: PublicKey,
     duration_minutes: u16,
 ) -> Result<ActivatedPfsIdentity, NodeError<M>> {
-    let _peer_id = mac.add_peer(peer_ephemeral).await?;
+    let _peer_id = mac.hold_peer(peer_ephemeral, PeerHolder::Session).await?;
     let local_public = *local_ephemeral.public_key();
     let local_ephemeral_id = match mac.register_ephemeral(parent, local_ephemeral).await {
         Ok(id) => id,
         Err(error) => {
-            let _ = mac.remove_peer(&peer_ephemeral).await;
+            let _ = mac.release_peer(&peer_ephemeral, PeerHolder::Session).await;
             return Err(error.into());
         }
     };
