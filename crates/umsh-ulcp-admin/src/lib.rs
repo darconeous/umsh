@@ -7,8 +7,8 @@
 //! - [`exchange`]: what a link to a device does—take a request, hand back
 //!   its answer, and pass on whatever the device publishes.
 //! - [`local`]: the device's own session, reached in process. A local
-//!   binding answers every request exactly once, so the link has no
-//!   timeouts.
+//!   binding answers every request exactly once and at once, so a request
+//!   left unanswered is given up on after a fixed wait.
 //! - [`descriptor`]: the properties the model covers, each with its
 //!   codec from [`umsh_ulcp`], its capability gate, and its kind.
 //! - [`model`]: the cache, the requests waiting to go out, and the writes
@@ -27,5 +27,5 @@ pub mod model;
 
 pub use descriptor::{Access, Descriptor, Kind};
 pub use exchange::{Arrival, Busy, Exchange, Request, Ticket};
-pub use local::{LocalExchange, LocalPort, PortBusy, PortFrame};
+pub use local::{ANSWER_TIMEOUT_MS, LocalExchange, LocalPort, PortBusy, PortFrame};
 pub use model::{Event, Freshness, Model, Refusal, WriteId, WriteOutcome};

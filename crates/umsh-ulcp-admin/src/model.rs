@@ -388,9 +388,10 @@ impl Model {
 
     /// Take in everything the link has delivered, and hand it every
     /// request it will take, until neither moves. `now_ms` dates what is
-    /// read.
+    /// read, and tells the link the time.
     pub fn pump<E: Exchange>(&mut self, exchange: &mut E, now_ms: u64) {
         self.now_ms = now_ms;
+        exchange.expire(now_ms);
         let mut scratch = core::mem::take(&mut self.scratch);
         if scratch.len() < E::ANSWER_MAX {
             scratch.resize(E::ANSWER_MAX, 0);

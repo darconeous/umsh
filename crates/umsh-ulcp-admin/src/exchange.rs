@@ -73,7 +73,7 @@ pub enum Arrival<'b> {
     /// The answer to `ticket`: one ULCP frame, as the device emitted it.
     Answer { ticket: Ticket, frame: &'b [u8] },
     /// The link gave up on `ticket`, so whether a write it carried took
-    /// effect is unknown. A local link never says this.
+    /// effect is unknown.
     Lost { ticket: Ticket },
     /// A frame the device published unasked.
     Publication { frame: &'b [u8] },
@@ -93,4 +93,11 @@ pub trait Exchange {
 
     /// The next thing to arrive, written into `out`.
     fn receive<'b>(&mut self, out: &'b mut [u8]) -> Option<Arrival<'b>>;
+
+    /// The time is now `now_ms`. A request the link gives up on by then is
+    /// reported [`Arrival::Lost`] by the next [`Exchange::receive`]. A
+    /// link that keeps its own clock ignores this.
+    fn expire(&mut self, now_ms: u64) {
+        let _ = now_ms;
+    }
 }
