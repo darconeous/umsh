@@ -174,6 +174,10 @@ impl Membership {
     }
 }
 
+/// Host events waiting for the device: a host that writes faster than
+/// the device reads waits for room.
+pub const HOST_EVENT_DEPTH: usize = 64;
+
 /// Run `device` until the sender of `host` is dropped, joining its group
 /// on the interface and with the loopback `base` names, and telling
 /// `queued` of each frame queued while no host is attached.
@@ -184,7 +188,7 @@ impl Membership {
 pub async fn run<P: SoftPlatform>(
     mut device: SoftDevice<P>,
     base: LanConfig,
-    mut host: mpsc::UnboundedReceiver<HostEvent>,
+    mut host: mpsc::Receiver<HostEvent>,
     mut queued: impl FnMut(QueuedNotice),
 ) {
     let started = Instant::now();
@@ -279,7 +283,7 @@ const READ_CHUNK: usize = 4096;
 /// A connection is a session: connecting attaches, closing detaches, and
 /// a new connection replaces the current one, whose socket is closed.
 #[cfg(unix)]
-pub async fn serve(listener: UnixListener, host: mpsc::UnboundedSender<HostEvent>) {
+pub async fn serve(listener: UnixListener, host: mpsc::Sender<HostEvent>) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     let mut current: Option<OwnedReadHalf> = None;
@@ -318,7 +322,7 @@ pub async fn serve(listener: UnixListener, host: mpsc::UnboundedSender<HostEvent
                 Ok(len) => HostEvent::Bytes(buf[..len].to_vec()),
             },
         };
-        if host.send(event).is_err() {
+        if host.send(event).await.is_err() {
             break;
         }
     }
@@ -383,14 +387,9 @@ mod tests {
         *frames(&wire)[0].last().unwrap()
     }
 
-    fn running(
-        dir: &Path,
-    ) -> (
-        mpsc::UnboundedSender<HostEvent>,
-        tokio::task::JoinHandle<()>,
-    ) {
+    fn running(dir: &Path) -> (mpsc::Sender<HostEvent>, tokio::task::JoinHandle<()>) {
         let device = SoftDevice::new(session_config("test"), HostPlatform::new(dir).unwrap());
-        let (host, events) = mpsc::unbounded_channel();
+        let (host, events) = mpsc::channel(HOST_EVENT_DEPTH);
         (
             host,
             tokio::spawn(run(device, host_local(), events, |_| {})),
@@ -407,11 +406,11 @@ mod tests {
 
         let mut request = [0u8; 16];
         let len = frame::prop_get(&mut request, 1, prop::PROTOCOL_VERSION).unwrap();
-        host.send(HostEvent::Bytes(encoded(&request[..len])))
+        host.try_send(HostEvent::Bytes(encoded(&request[..len])))
             .unwrap();
         let (event, mut first) = attach();
-        host.send(event).unwrap();
-        host.send(HostEvent::Bytes(encoded(&request[..len])))
+        host.try_send(event).unwrap();
+        host.try_send(HostEvent::Bytes(encoded(&request[..len])))
             .unwrap();
 
         // The session reset, then the one answer: the request sent
@@ -420,7 +419,7 @@ mod tests {
         assert!(next(&mut first).await.is_some());
 
         let (event, mut second) = attach();
-        host.send(event).unwrap();
+        host.try_send(event).unwrap();
         assert!(next(&mut second).await.is_some());
         // The first host's sink is gone.
         assert_eq!(next(&mut first).await, None);
@@ -441,20 +440,20 @@ mod tests {
             port: 47_113,
         };
         device.session_mut().set_lan_bearer_group(Some(group));
-        let (host, events) = mpsc::unbounded_channel();
+        let (host, events) = mpsc::channel(HOST_EVENT_DEPTH);
         let task = tokio::spawn(run(device, host_local(), events, |_| {}));
         let (event, mut out) = attach();
-        host.send(event).unwrap();
+        host.try_send(event).unwrap();
         let mut request = [0u8; 16];
         let len = frame::prop_get(&mut request, 1, prop::LAN_BEARER_STATE).unwrap();
-        host.send(HostEvent::Bytes(encoded(&request[..len])))
+        host.try_send(HostEvent::Bytes(encoded(&request[..len])))
             .unwrap();
         next(&mut out).await;
         assert_eq!(next_value(&mut out).await, State::Disabled as u8);
 
         // Switching the PHY on joins the group, and the host hears it.
         let len = frame::prop_set(&mut request, 2, prop::PHY_ENABLED, &[1]).unwrap();
-        host.send(HostEvent::Bytes(encoded(&request[..len])))
+        host.try_send(HostEvent::Bytes(encoded(&request[..len])))
             .unwrap();
         let mut heard = Vec::new();
         while let Some(wire) = next(&mut out).await {
