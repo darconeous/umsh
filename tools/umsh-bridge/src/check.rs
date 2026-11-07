@@ -56,25 +56,17 @@ pub fn check(path: &Path) -> Result<()> {
                 Some(names) => names.join(", "),
                 None => other_interfaces(&server.interface_names(), &client.name).join(", "),
             };
-            let rate = match client.max_frames_per_minute {
-                Some(limit) => format!("{limit}/min"),
-                None => "unlimited".to_string(),
-            };
             println!(
-                "client:      {} [{}] -> {fan_out} ({rate})",
-                client.name, client.address
+                "client:      {} [{}] -> {fan_out} ({}/min)",
+                client.name,
+                client.address,
+                client.max_frames_per_minute()
             );
             if client.address.0 == *identity.public_key() {
                 // The same condition refuses to start the server.
                 anyhow::bail!(
                     "client \"{}\" lists this bridge's own identity as its address",
                     client.name
-                );
-            }
-            if client.max_frames_per_minute.is_none() {
-                println!(
-                    "  warning: no rate limit; an authenticated but misbehaving client is the \
-                     realistic failure mode"
                 );
             }
         }

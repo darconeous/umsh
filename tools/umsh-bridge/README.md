@@ -358,7 +358,7 @@ configured on each device with `umshctl repeater`.
 | --- | --- | --- |
 | `name` | *(required)* | Interface name, used in log lines and in other clients' `allow_to`. `"radio"` and `"lan"` are reserved for the server's own interfaces. |
 | `address` | *(required)* | This client's identity, as the UMSH address its `keygen identity` printed. An identity names exactly one client. |
-| `max_frames_per_minute` | *(unlimited)* | Budget for frames arriving from this client. `check` warns when absent: an authenticated but misbehaving client is the realistic failure mode. The budget counts everything the client's node transmits—its repeats, its own traffic, its beacons and acks—including the repeats it makes of frames the bridge handed it. |
+| `max_frames_per_minute` | 60 | Budget for frames arriving from this client; an authenticated but misbehaving client is the realistic failure mode. The budget counts everything the client's node transmits—its repeats, its own traffic, its beacons and acks—including the repeats it makes of frames the bridge handed it. |
 | `allow_to` | *(all)* | Interfaces this client's traffic may be fanned out to (client and host names, `"radio"`, and `"lan"`). The place to stop two clients whose radios share a segment from doubling every frame's airtime. |
 
 ## Command reference

@@ -76,11 +76,22 @@ pub struct ClientEntry {
     /// printed.
     pub address: Address,
     /// Forwarding budget for frames arriving from this client. Absent
-    /// means unlimited, which the spec advises against.
+    /// is [`DEFAULT_CLIENT_FRAMES_PER_MINUTE`].
     pub max_frames_per_minute: Option<u32>,
     /// Interfaces this client's traffic may be fanned out to. Absent
     /// means all of them.
     pub allow_to: Option<Vec<String>>,
+}
+
+/// A client's forwarding budget when its entry names none: about one
+/// frame a second, what a busy node transmits on its own.
+pub const DEFAULT_CLIENT_FRAMES_PER_MINUTE: u32 = 60;
+
+impl ClientEntry {
+    pub fn max_frames_per_minute(&self) -> u32 {
+        self.max_frames_per_minute
+            .unwrap_or(DEFAULT_CLIENT_FRAMES_PER_MINUTE)
+    }
 }
 
 /// A host interface: a plain socket presenting a simulated ULCP device
@@ -508,6 +519,16 @@ impl ServerConfig {
         {
             bail!("[server.lan] max_frames_per_minute is 0; nothing from the LAN would cross");
         }
+        if let Some(client) = self
+            .clients
+            .iter()
+            .find(|client| client.max_frames_per_minute == Some(0))
+        {
+            bail!(
+                "client \"{}\" has max_frames_per_minute 0; nothing from it would cross",
+                client.name
+            );
+        }
         if let Some(clamp) = self.limits.exit_clamp
             && clamp > 15
         {
@@ -839,6 +860,28 @@ mod tests {
             address(2)
         ));
         assert!(parse(&text).is_err());
+    }
+
+    #[test]
+    fn a_client_budget_defaults_and_cannot_be_zero() {
+        let entry = |extra: &str| {
+            server_config(&format!(
+                "[server.radio]\ntype = \"serial\"\nport = \"/dev/ttyACM0\"\n\
+                 [[server.clients]]\nname = \"cabin\"\naddress = \"{}\"\n{extra}",
+                address(2)
+            ))
+        };
+        let server = parse(&entry("")).unwrap().server.unwrap();
+        assert_eq!(
+            server.clients[0].max_frames_per_minute(),
+            DEFAULT_CLIENT_FRAMES_PER_MINUTE
+        );
+        let server = parse(&entry("max_frames_per_minute = 600\n"))
+            .unwrap()
+            .server
+            .unwrap();
+        assert_eq!(server.clients[0].max_frames_per_minute(), 600);
+        assert!(parse(&entry("max_frames_per_minute = 0\n")).is_err());
     }
 
     #[test]

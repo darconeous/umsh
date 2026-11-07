@@ -83,7 +83,7 @@ impl Policy {
                     InterfaceKind::Client(index) => {
                         let client = &config.clients[index];
                         (
-                            client.max_frames_per_minute.map(RateLimit::per_minute),
+                            Some(RateLimit::per_minute(client.max_frames_per_minute())),
                             resolve(&client.name, &client.allow_to)?,
                         )
                     }
@@ -313,13 +313,21 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn the_servers_own_radio_and_an_unlimited_client_are_never_refused() {
+    async fn the_servers_own_radio_is_never_refused() {
         let (_, interfaces, mut policy) = two_clients("");
         let radio = interfaces.radio.unwrap();
-        let cabin = interfaces.by_client(0).unwrap().id;
         for _ in 0..1000 {
             assert!(policy.admit(radio, Instant::now()));
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_client_that_names_no_budget_gets_the_default() {
+        let (_, interfaces, mut policy) = two_clients("");
+        let cabin = interfaces.by_client(0).unwrap().id;
+        for _ in 0..crate::config::DEFAULT_CLIENT_FRAMES_PER_MINUTE {
             assert!(policy.admit(cabin, Instant::now()));
         }
+        assert!(!policy.admit(cabin, Instant::now()));
     }
 }
