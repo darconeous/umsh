@@ -1,7 +1,27 @@
 //! Pure BLE security-policy helpers shared by embedded code and host tests.
 
-/// Authentication failures allowed in one power cycle before pairing locks.
+/// Authentication failures allowed before pairing first locks.
 pub const MAX_PAIRING_FAILURES: u8 = 3;
+
+/// How long the first lockout lasts. Each later one in the same power
+/// cycle lasts twice as long as the one before, up to [`LOCKOUT_MAX_MS`].
+pub const LOCKOUT_FIRST_MS: u64 = 60_000;
+/// The longest a lockout lasts.
+pub const LOCKOUT_MAX_MS: u64 = 3_600_000;
+
+/// How long the `lockouts`-th lockout of this power cycle lasts (1-based).
+pub const fn lockout_ms(lockouts: u8) -> u64 {
+    let doublings = if lockouts == 0 { 0 } else { lockouts - 1 };
+    if doublings >= 6 {
+        return LOCKOUT_MAX_MS;
+    }
+    let ms = LOCKOUT_FIRST_MS << doublings;
+    if ms > LOCKOUT_MAX_MS {
+        LOCKOUT_MAX_MS
+    } else {
+        ms
+    }
+}
 
 /// Non-OOB pairing admission.
 ///
@@ -36,18 +56,42 @@ pub enum PairingFailureClass {
 /// testable without a controller or real BLE connection. The embedded task
 /// loads this state from atomics, applies one transition, and publishes it
 /// back without awaiting in between.
+///
+/// A lockout ends after [`lockout_ms`], and the PIN stays the same, so each
+/// attempt after one can leak more of it: past the first lockout, a single
+/// failure locks again, each time for twice as long.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PairingRuntime {
     pub pairing_mode: bool,
     pub failures: u8,
     pub locked_out: bool,
+    /// Lockouts so far this power cycle, the current one included.
+    pub lockouts: u8,
 }
 
 impl PairingRuntime {
     pub const fn record_failure(mut self, failure: PairingFailureClass) -> Self {
         let (failures, locked_out) = record_pairing_failure(self.failures, failure);
+        if locked_out && !self.locked_out {
+            self.lockouts = self.lockouts.saturating_add(1);
+        }
         self.failures = failures;
         self.locked_out = locked_out;
+        self
+    }
+
+    /// How long the lockout that `record_failure` just began lasts.
+    pub const fn lockout_ms(self) -> u64 {
+        lockout_ms(self.lockouts)
+    }
+
+    /// The lockout has run its course: pairing opens again, and the next
+    /// authentication failure locks it again.
+    pub const fn lockout_expired(mut self) -> Self {
+        if self.locked_out {
+            self.locked_out = false;
+            self.failures = MAX_PAIRING_FAILURES - 1;
+        }
         self
     }
 
@@ -58,6 +102,7 @@ impl PairingRuntime {
         self.pairing_mode = false;
         self.failures = 0;
         self.locked_out = false;
+        self.lockouts = 0;
         self
     }
 
@@ -75,7 +120,7 @@ impl PairingFailureClass {
     }
 }
 
-/// Apply one pairing failure to the per-power-cycle lockout counter.
+/// Apply one pairing failure to the lockout counter.
 ///
 /// Protocol errors and policy rejections deliberately leave the counter
 /// unchanged so a remote peer cannot lock out legitimate pairing without
@@ -149,8 +194,8 @@ mod tests {
 
     #[test]
     fn lockout_applies_only_where_a_passkey_can_be_probed() {
-        // With a PIN, the failure limit closes the window for the rest of the
-        // power cycle even while pairing mode is armed.
+        // With a PIN, the failure limit closes the window until the lockout
+        // ends, even while pairing mode is armed.
         assert!(!pairing_enabled(true, true, true));
         // Under Just Works there is no passkey to leak, so a remote peer
         // cannot deny pairing by failing the confirm value.
@@ -163,6 +208,7 @@ mod tests {
             pairing_mode: true,
             failures: 2,
             locked_out: false,
+            lockouts: 1,
         }
         .pairing_succeeded();
 
@@ -172,6 +218,7 @@ mod tests {
                 pairing_mode: false,
                 failures: 0,
                 locked_out: false,
+                lockouts: 0,
             }
         );
     }
@@ -182,11 +229,56 @@ mod tests {
             pairing_mode: true,
             failures: 1,
             locked_out: false,
+            lockouts: 0,
         }
         .bonded_reconnect();
 
         assert!(!state.pairing_mode);
         assert_eq!(state.failures, 1);
         assert!(!state.locked_out);
+    }
+
+    #[test]
+    fn a_lockout_ends_and_then_one_failure_locks_again_for_longer() {
+        let mut state = PairingRuntime {
+            pairing_mode: true,
+            failures: 0,
+            locked_out: false,
+            lockouts: 0,
+        };
+        for _ in 0..MAX_PAIRING_FAILURES {
+            state = state.record_failure(PairingFailureClass::ConfirmValue);
+        }
+        assert!(state.locked_out);
+        assert_eq!(state.lockout_ms(), 60_000);
+        let mut expected = 60_000;
+        for _ in 0..8 {
+            state = state.lockout_expired();
+            assert!(!state.locked_out);
+            assert!(pairing_enabled(true, true, state.locked_out));
+            // A failure that is not authentication leaks nothing.
+            state = state.record_failure(PairingFailureClass::Other);
+            assert!(!state.locked_out);
+            state = state.record_failure(PairingFailureClass::DhKeyCheck);
+            assert!(state.locked_out);
+            expected = (expected * 2).min(LOCKOUT_MAX_MS);
+            assert_eq!(state.lockout_ms(), expected);
+        }
+        assert_eq!(state.lockout_ms(), LOCKOUT_MAX_MS);
+        // Success forgets the escalation.
+        let state = state.pairing_succeeded();
+        assert_eq!(state.lockouts, 0);
+        assert_eq!(lockout_ms(255), LOCKOUT_MAX_MS);
+    }
+
+    #[test]
+    fn an_expiry_with_no_lockout_changes_nothing() {
+        let state = PairingRuntime {
+            pairing_mode: true,
+            failures: 1,
+            locked_out: false,
+            lockouts: 0,
+        };
+        assert_eq!(state.lockout_expired(), state);
     }
 }

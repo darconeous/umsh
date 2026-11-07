@@ -322,6 +322,7 @@ mod tests {
             pairing_mode: false,
             failures: 2,
             locked_out: false,
+            lockouts: 0,
         };
         for exit in 0..4 {
             let mut state = initial;

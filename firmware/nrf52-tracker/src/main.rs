@@ -1213,6 +1213,8 @@ mod firmware {
     static PAIRING_MODE: AtomicBool = AtomicBool::new(true);
     static PAIRING_LOCKED_OUT: AtomicBool = AtomicBool::new(false);
     static PAIRING_FAILURES: AtomicU8 = AtomicU8::new(0);
+    /// Pairing lockouts so far this power cycle; see `PairingRuntime`.
+    static PAIRING_LOCKOUTS: AtomicU8 = AtomicU8::new(0);
     /// Set when the T-1000E user button is held through power-on. This is
     /// deliberately independent of bond count: physical presence opens one
     /// pairing window even when existing bonds are present.
@@ -1232,6 +1234,13 @@ mod firmware {
     static BLE_WIPE_REPLY_DEADLINE: Signal<ThreadModeRawMutex, Instant> = Signal::new();
     static BLE_PRIVACY_RNG: Mutex<ThreadModeRawMutex, Option<IdentityRng>> = Mutex::new(None);
     static PAIRING_DEADLINE: embassy_sync::blocking_mutex::Mutex<
+        ThreadModeRawMutex,
+        core::cell::RefCell<ble_privacy::PairingDeadline>,
+    > = embassy_sync::blocking_mutex::Mutex::new(core::cell::RefCell::new(
+        ble_privacy::PairingDeadline::new(),
+    ));
+    /// When the current pairing lockout ends.
+    static PAIRING_LOCKOUT_DEADLINE: embassy_sync::blocking_mutex::Mutex<
         ThreadModeRawMutex,
         core::cell::RefCell<ble_privacy::PairingDeadline>,
     > = embassy_sync::blocking_mutex::Mutex::new(core::cell::RefCell::new(
@@ -1690,16 +1699,29 @@ mod firmware {
             pairing_mode: PAIRING_MODE.load(Ordering::Acquire),
             failures: PAIRING_FAILURES.load(Ordering::Acquire),
             locked_out: PAIRING_LOCKED_OUT.load(Ordering::Acquire),
+            lockouts: PAIRING_LOCKOUTS.load(Ordering::Acquire),
         }
     }
 
     fn publish_pairing_runtime(state: PairingRuntime) {
         PAIRING_FAILURES.store(state.failures, Ordering::Release);
         PAIRING_LOCKED_OUT.store(state.locked_out, Ordering::Release);
+        PAIRING_LOCKOUTS.store(state.lockouts, Ordering::Release);
+        if !state.locked_out {
+            PAIRING_LOCKOUT_DEADLINE.lock(|d| d.borrow_mut().close());
+        }
         if PAIRING_MODE.load(Ordering::Acquire) != state.pairing_mode {
             set_pairing_mode(state.pairing_mode);
         }
         UI_REFRESH.signal(());
+    }
+
+    /// Forgetting every host forgets the failures that locked pairing too.
+    fn clear_pairing_lockout() {
+        PAIRING_FAILURES.store(0, Ordering::Release);
+        PAIRING_LOCKED_OUT.store(false, Ordering::Release);
+        PAIRING_LOCKOUTS.store(0, Ordering::Release);
+        PAIRING_LOCKOUT_DEADLINE.lock(|d| d.borrow_mut().close());
     }
 
     async fn persist_bond(
@@ -2307,20 +2329,28 @@ mod firmware {
     }
 
     async fn pairing_timeout<C: Controller, P: PacketPool>(stack: &Stack<'_, C, P>) -> ! {
+        async fn at(deadline: Option<u64>) {
+            match deadline {
+                Some(deadline) => Timer::at(Instant::from_millis(deadline)).await,
+                None => core::future::pending::<()>().await,
+            }
+        }
         loop {
-            let deadline = PAIRING_DEADLINE.lock(|d| d.borrow().at());
-            let expires = async {
-                if let Some(deadline) = deadline {
-                    Timer::at(Instant::from_millis(deadline)).await;
-                } else {
-                    core::future::pending::<()>().await;
+            let window = PAIRING_DEADLINE.lock(|d| d.borrow().at());
+            let lockout = PAIRING_LOCKOUT_DEADLINE.lock(|d| d.borrow().at());
+            match select3(at(window), at(lockout), PAIRING_TIMER_RESET.wait()).await {
+                Either3::First(()) => {
+                    set_pairing_mode(false);
+                    BLE_LED_MODE.store(0, Ordering::Release);
+                    UI_REFRESH.signal(());
+                    apply_pairing_gate(stack);
                 }
-            };
-            if let Either::First(()) = select(expires, PAIRING_TIMER_RESET.wait()).await {
-                set_pairing_mode(false);
-                BLE_LED_MODE.store(0, Ordering::Release);
-                UI_REFRESH.signal(());
-                apply_pairing_gate(stack);
+                Either3::Second(()) => {
+                    debug_log(format_args!("pairing lockout ended"));
+                    publish_pairing_runtime(pairing_runtime().lockout_expired());
+                    apply_pairing_gate(stack);
+                }
+                Either3::Third(()) => {}
             }
         }
     }
@@ -2468,8 +2498,7 @@ mod firmware {
                         }
                         stack.set_io_capabilities(IoCapabilities::NoInputNoOutput);
                         PAIRING_PIN.store(u32::MAX, Ordering::Release);
-                        PAIRING_FAILURES.store(0, Ordering::Release);
-                        PAIRING_LOCKED_OUT.store(false, Ordering::Release);
+                        clear_pairing_lockout();
                         set_pairing_mode(true);
                         BLE_LED_MODE.store(2, Ordering::Release);
                         PAIRING_TIMER_RESET.signal(());
@@ -3057,6 +3086,15 @@ mod firmware {
                             after.failures, after.locked_out,
                         ));
                         if after.locked_out && !before.locked_out {
+                            debug_log(format_args!(
+                                "pairing locked for {} s",
+                                after.lockout_ms() / 1000
+                            ));
+                            PAIRING_LOCKOUT_DEADLINE.lock(|d| {
+                                d.borrow_mut()
+                                    .open(Instant::now().as_millis(), after.lockout_ms())
+                            });
+                            PAIRING_TIMER_RESET.signal(());
                             apply_pairing_gate(stack);
                         }
                     }
@@ -3673,8 +3711,7 @@ mod firmware {
                             if ok {
                                 set_bond_count(0);
                                 PAIRING_PIN.store(u32::MAX, Ordering::Release);
-                                PAIRING_FAILURES.store(0, Ordering::Release);
-                                PAIRING_LOCKED_OUT.store(false, Ordering::Release);
+                                clear_pairing_lockout();
                                 set_pairing_mode(true);
                             }
                             BLE_WIPE_ACK.signal(ok);
