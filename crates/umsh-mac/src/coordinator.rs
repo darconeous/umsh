@@ -85,6 +85,12 @@ const COUNTER_PERSIST_SCHEDULE_OFFSET: u32 = 100;
 /// How long a retransmission that found the transmit queue full waits
 /// before the timeout sweep tries to queue it again.
 const RETRY_ENQUEUE_DEFER_MS: u64 = 250;
+/// How long a frame waits, after the counter store refused the reservation
+/// covering it, before the reservation is tried again.
+const COUNTER_HOLD_RETRY_MS: u64 = 1_000;
+/// How many times a frame is held for its reservation before it is
+/// abandoned: about half a minute of a store refusing every write.
+pub(crate) const MAX_COUNTER_HOLDS: u8 = 30;
 /// How many of a `tx`-slot transmit queue's slots forwards may occupy.
 ///
 /// A quarter is kept back, so a repeater busy with other people's traffic
@@ -357,11 +363,11 @@ impl<I: NodeIdentity> From<I> for LocalIdentity<I> {
 /// - `frame_counter`—the live in-use value, advanced on every secured send.
 /// - `persisted_counter`—the last boundary safely committed to the store.
 /// - `pending_persist_target`—a scheduled future boundary written on the next call to
-///   [`Mac::service_counter_persistence`]. [`Mac::drain_tx_queue`] makes that call before
-///   it transmits anything, so while the store accepts writes a scheduled reservation is
-///   durable before the frame that scheduled it reaches the air. A write the store refuses
-///   does not hold the frame back: until the slot runs out of window (below), frames air on
-///   counters no committed boundary covers yet.
+///   [`Mac::service_counter_persistence`]. [`Mac::transmit_next`] makes that call before
+///   it transmits a frame whose counter no committed boundary covers, so a reservation is
+///   durable before the frame that scheduled it reaches the air. While the store refuses
+///   the write, that frame is held back and tried again shortly; traffic that carries no
+///   counter of this identity's goes out meanwhile, and a frame held too long is abandoned.
 ///
 /// If the live counter reaches `persisted_counter + TX_COUNTER_PERSIST_BLOCK_SIZE` without a
 /// successful flush, secure sends on that identity are blocked
@@ -432,6 +438,20 @@ impl<I: NodeIdentity, const PEERS: usize, const ACKS: usize, const FRAME: usize>
     /// Return the persisted frame-counter reservation boundary.
     pub fn persisted_counter(&self) -> u32 {
         self.persisted_counter
+    }
+
+    /// Whether a frame sealed with `counter` may go on the air: a
+    /// committed boundary lies above it, so after a power loss this
+    /// identity starts past it and never uses it again. Always true for an
+    /// identity that keeps no reservation.
+    pub fn counter_reserved(&self, counter: u32) -> bool {
+        if !self.counter_persistence_enabled {
+            return true;
+        }
+        // Below the boundary within half the counter space, the same
+        // wrapping order the counter itself follows.
+        let ahead = self.persisted_counter.wrapping_sub(counter);
+        ahead != 0 && ahead < 1 << 31
     }
     /// Overwrite the current frame counter.
     ///
@@ -1084,7 +1104,8 @@ impl<RadioError> From<RadioError> for MacError<RadioError> {
 pub struct MacCounters {
     /// Frames the radio accepted for transmission, including forwards.
     pub tx_frames: u32,
-    /// Frames given up on after [`MAX_CAD_ATTEMPTS`] busy channels.
+    /// Frames given up on: after [`MAX_CAD_ATTEMPTS`] busy channels, a
+    /// radio fault, or a counter reservation the store kept refusing.
     pub tx_abandoned: u32,
     /// Frames the radio handed up, whoever they were addressed to.
     pub rx_frames: u32,
@@ -1145,6 +1166,9 @@ pub struct MacCounters {
     /// forever. A cancelled transmit keeps its frame queued, so this stays
     /// at zero unless something else loses one.
     pub tx_orphans_reclaimed: u32,
+    /// Times a frame was held back because no committed reservation
+    /// covered its counter, the counter store having refused the write.
+    pub tx_counter_holds: u32,
 }
 
 impl MacCounters {
@@ -2762,6 +2786,21 @@ impl<
     ) -> Result<Option<SendReceipt>, MacError<<P::Radio as Radio>::Error>> {
         self.expire_post_tx_listen_if_needed();
         let now_ms = self.clock.now_ms();
+        // A frame that aired on an unreserved counter would be sent again
+        // under the same counter after a power loss, and every peer that
+        // heard the first would refuse the second as a replay. So the
+        // reservation a send scheduled is committed before its frame goes
+        // out—only reservations already scheduled are written, and with
+        // none due this touches no storage. Only immediate acks, which carry
+        // no counter, may go during a listen window.
+        if self.post_tx_listen.is_none()
+            && self.tx_queue.contains_matching(|entry| {
+                entry.is_ready(now_ms) && !Self::counter_reserved_for(&self.identities, entry)
+            })
+        {
+            let _ = self.service_counter_persistence().await;
+            self.hold_unreserved(now_ms, on_event);
+        }
         let queued = if self.post_tx_listen.is_some() {
             self.tx_queue.peek_ready_immediate_ack(now_ms)
         } else {
@@ -2913,6 +2952,58 @@ impl<
         }
     }
 
+    /// Whether `entry` may go on the air as far as its counter goes: it
+    /// carries none of an identity's, or a committed reservation covers it.
+    fn counter_reserved_for(
+        identities: &[Option<IdentitySlot<P::Identity, PEERS, ACKS, FRAME>>],
+        entry: &crate::QueuedTx<FRAME>,
+    ) -> bool {
+        let (Some(identity_id), Some(counter)) = (entry.identity_id, entry.frame_counter) else {
+            return true;
+        };
+        identities
+            .get(usize::from(identity_id.0))
+            .and_then(Option::as_ref)
+            .is_none_or(|slot| slot.counter_reserved(counter))
+    }
+
+    /// Hold back every ready frame whose counter is still unreserved after
+    /// the store was asked to commit it.
+    ///
+    /// A held frame keeps its place in line and comes due again a moment
+    /// later, when the reservation is tried once more; the frames behind it
+    /// go out meanwhile. One the store has refused for
+    /// [`MAX_COUNTER_HOLDS`] tries is abandoned like any frame that cannot
+    /// be sent.
+    fn hold_unreserved(
+        &mut self,
+        now_ms: u64,
+        on_event: &mut impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
+    ) {
+        let identities = &self.identities;
+        let mut expired = Vec::<u32, TX>::new();
+        let mut holds = 0u32;
+        for entry in self.tx_queue.iter_mut() {
+            if !entry.is_ready(now_ms) || Self::counter_reserved_for(identities, entry) {
+                continue;
+            }
+            if entry.counter_holds >= MAX_COUNTER_HOLDS {
+                // One push per queued entry, and both hold `TX`.
+                let _ = expired.push(entry.sequence);
+                continue;
+            }
+            entry.counter_holds += 1;
+            entry.not_before_ms = now_ms.saturating_add(COUNTER_HOLD_RETRY_MS);
+            holds += 1;
+        }
+        self.counters.tx_counter_holds = self.counters.tx_counter_holds.saturating_add(holds);
+        for sequence in expired {
+            if let Some(entry) = self.tx_queue.take(sequence) {
+                self.abandon_transmit(entry.identity_id, entry.receipt, entry.priority, on_event);
+            }
+        }
+    }
+
     fn abandon_transmit(
         &mut self,
         identity_id: Option<LocalIdentityId>,
@@ -2950,19 +3041,8 @@ impl<
         &mut self,
         on_event: &mut impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
     ) -> Result<(), MacError<<P::Radio as Radio>::Error>> {
-        // A send that just took a counter only *scheduled* the reservation
-        // covering it. Commit that before anything goes on the air: a frame
-        // that aired on an unreserved counter would be sent again under the
-        // same counter after a power loss, and every peer that heard the
-        // first would refuse the second as a replay. This costs no extra
-        // writes—only reservations a send already scheduled are written—and
-        // with nothing scheduled it touches no storage. A failed write does
-        // not hold the queue: it is tried again on the next pass, and the
-        // frames go out meanwhile on counters no boundary covers yet, up to
-        // the limit `CounterPersistenceLag` enforces.
-        if !self.tx_queue.is_empty() {
-            let _ = self.service_counter_persistence().await;
-        }
+        // Each transmit commits the counter reservation its frame needs
+        // first; see `transmit_next`.
         while !self.tx_queue.is_empty() {
             let queue_len = self.tx_queue.len();
             let _ = self.transmit_next(on_event).await?;
