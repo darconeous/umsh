@@ -950,7 +950,7 @@ impl FakeWifi {
                     security: ap.2,
                 })
                 .collect();
-            nearby.sort_unstable_by(|a, b| b.rssi.cmp(&a.rssi));
+            nearby.sort_unstable_by_key(|ap| core::cmp::Reverse(ap.rssi));
             reading.nearby = nearby;
         }
     }
@@ -2219,7 +2219,7 @@ impl Node for Store {
 
     fn chats(&self, into: &mut Chats) {
         for chat in (0..MAX_CHATS).map_while(|index| self.chat_at(index)) {
-            _ = into.extend(self.chat(chat));
+            into.extend(self.chat(chat));
         }
     }
 

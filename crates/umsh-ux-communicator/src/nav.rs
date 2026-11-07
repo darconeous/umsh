@@ -621,6 +621,10 @@ pub enum DeviceConfirm {
 
 /// A screen on the navigation stack.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "no allocator here; the navigation stack is fixed-size"
+)]
 pub enum Screen {
     Chats {
         focus: FocusState,

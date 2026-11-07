@@ -211,13 +211,13 @@ impl<'a> TraceRef<'a> {
     /// Parse a Trace option value. `None` when it is malformed: a length
     /// of 2 mod 4, or an odd length that does not begin with a sentinel.
     pub fn parse(value: &'a [u8]) -> Option<Self> {
-        if value.len() % 4 == 0 {
+        if value.len().is_multiple_of(4) {
             return Some(Self {
                 form: TraceForm::Signal,
                 entries: value,
             });
         }
-        if value.len() % 2 == 0 {
+        if value.len().is_multiple_of(2) {
             return None;
         }
         let form = match value[0] {

@@ -53,11 +53,14 @@ pub(crate) struct NodeMembership {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct SubscriptionHandle(NonZeroU32);
 
+/// The unregistration a [`Subscription`] holds until it runs, once.
+type SubscriptionCancel = Rc<RefCell<Option<Box<dyn FnMut() -> bool>>>>;
+
 /// Owned subscription guard.
 ///
 /// Dropping the value automatically unregisters the callback.
 pub struct Subscription {
-    cancel: Rc<RefCell<Option<Box<dyn FnMut() -> bool>>>>,
+    cancel: SubscriptionCancel,
 }
 
 impl Subscription {
@@ -72,7 +75,7 @@ impl Subscription {
         Self::run_cancel(&self.cancel)
     }
 
-    fn run_cancel(cancel: &Rc<RefCell<Option<Box<dyn FnMut() -> bool>>>>) -> bool {
+    fn run_cancel(cancel: &SubscriptionCancel) -> bool {
         let Some(mut cancel) = cancel.borrow_mut().take() else {
             return false;
         };
@@ -177,15 +180,18 @@ pub struct PongMetadata {
     pub lqi: Option<u8>,
 }
 
+/// Callbacks of one kind, kept in a [`HandlerTable`].
+type Handlers<F> = HandlerTable<Box<F>>;
+
 pub(crate) struct PeerSubscriptions {
     peer: PublicKey,
-    pub(crate) receive_handlers: HandlerTable<Box<dyn FnMut(&ReceivedPacketRef<'_>) -> bool>>,
-    pub(crate) ack_received_handlers: HandlerTable<Box<dyn FnMut(SendToken)>>,
-    pub(crate) ack_timeout_handlers: HandlerTable<Box<dyn FnMut(SendToken)>>,
-    pub(crate) pfs_established_handlers: HandlerTable<Box<dyn FnMut()>>,
-    pub(crate) pfs_ended_handlers: HandlerTable<Box<dyn FnMut()>>,
-    pub(crate) pong_handlers: HandlerTable<Box<dyn FnMut(u64)>>,
-    pub(crate) ping_timeout_handlers: HandlerTable<Box<dyn FnMut()>>,
+    pub(crate) receive_handlers: Handlers<dyn FnMut(&ReceivedPacketRef<'_>) -> bool>,
+    pub(crate) ack_received_handlers: Handlers<dyn FnMut(SendToken)>,
+    pub(crate) ack_timeout_handlers: Handlers<dyn FnMut(SendToken)>,
+    pub(crate) pfs_established_handlers: Handlers<dyn FnMut()>,
+    pub(crate) pfs_ended_handlers: Handlers<dyn FnMut()>,
+    pub(crate) pong_handlers: Handlers<dyn FnMut(u64)>,
+    pub(crate) ping_timeout_handlers: Handlers<dyn FnMut()>,
 }
 
 impl PeerSubscriptions {
@@ -203,20 +209,25 @@ impl PeerSubscriptions {
     }
 }
 
+type NodeDiscoveredHandler = dyn FnMut(PublicKey, Option<&str>);
+type MacCommandHandler = dyn FnMut(PublicKey, &OwnedMacCommand);
+type TransmittedHandler = dyn FnMut(&[u8]);
+type PongMetadataHandler = dyn FnMut(PublicKey, &PongMetadata);
+
 pub(crate) struct LocalNodeState {
-    receive_handlers: HandlerTable<Box<dyn FnMut(&ReceivedPacketRef<'_>) -> bool>>,
-    node_discovered_handlers: HandlerTable<Box<dyn FnMut(PublicKey, Option<&str>)>>,
-    beacon_handlers: HandlerTable<Box<dyn FnMut(NodeHint, Option<PublicKey>)>>,
-    mac_command_handlers: HandlerTable<Box<dyn FnMut(PublicKey, &OwnedMacCommand)>>,
-    transmitted_handlers: HandlerTable<Box<dyn FnMut(&[u8])>>,
-    ack_received_handlers: HandlerTable<Box<dyn FnMut(PublicKey, SendToken)>>,
-    ack_timeout_handlers: HandlerTable<Box<dyn FnMut(PublicKey, SendToken)>>,
-    pfs_established_handlers: HandlerTable<Box<dyn FnMut(PublicKey)>>,
-    pfs_ended_handlers: HandlerTable<Box<dyn FnMut(PublicKey)>>,
-    pfs_failed_handlers: HandlerTable<Box<dyn FnMut(PublicKey, PfsFailure)>>,
-    pong_handlers: HandlerTable<Box<dyn FnMut(PublicKey, u64)>>,
-    pong_metadata_handlers: HandlerTable<Box<dyn FnMut(PublicKey, &PongMetadata)>>,
-    ping_timeout_handlers: HandlerTable<Box<dyn FnMut(PublicKey)>>,
+    receive_handlers: Handlers<dyn FnMut(&ReceivedPacketRef<'_>) -> bool>,
+    node_discovered_handlers: Handlers<NodeDiscoveredHandler>,
+    beacon_handlers: Handlers<dyn FnMut(NodeHint, Option<PublicKey>)>,
+    mac_command_handlers: Handlers<MacCommandHandler>,
+    transmitted_handlers: Handlers<TransmittedHandler>,
+    ack_received_handlers: Handlers<dyn FnMut(PublicKey, SendToken)>,
+    ack_timeout_handlers: Handlers<dyn FnMut(PublicKey, SendToken)>,
+    pfs_established_handlers: Handlers<dyn FnMut(PublicKey)>,
+    pfs_ended_handlers: Handlers<dyn FnMut(PublicKey)>,
+    pfs_failed_handlers: Handlers<dyn FnMut(PublicKey, PfsFailure)>,
+    pong_handlers: Handlers<dyn FnMut(PublicKey, u64)>,
+    pong_metadata_handlers: Handlers<PongMetadataHandler>,
+    ping_timeout_handlers: Handlers<dyn FnMut(PublicKey)>,
     pending_pings: Vec<PendingPing>,
     peer_subscriptions: Vec<PeerSubscriptions>,
     identity_responder: Option<IdentityResponder>,
@@ -1545,11 +1556,12 @@ impl<M: MacBackend> LocalNode<M> {
     /// the first node to join it. Returns the bound channel handle.
     #[cfg(feature = "software-crypto")]
     pub async fn join(&self, channel: &Channel) -> Result<BoundChannel<M>, NodeError<M>> {
-        let membership = self.membership.borrow_mut();
-
         // Check if already joined.
-        if let Some(entry) = membership.channels.iter().find(|e| e.channel == *channel) {
-            if entry.active {
+        {
+            let membership = self.membership.borrow_mut();
+            if let Some(entry) = membership.channels.iter().find(|e| e.channel == *channel)
+                && entry.active
+            {
                 return Ok(BoundChannel {
                     node: self.clone(),
                     channel: entry.channel.clone(),
@@ -1561,8 +1573,7 @@ impl<M: MacBackend> LocalNode<M> {
         // Either new or re-joining after a leave. Both register with the MAC:
         // `leave` unregisters the key, so a dormant entry has no MAC state to
         // reuse.
-        drop(membership);
-        self.mac.add_private_channel(channel.key().clone()).await?;
+        self.mac.add_private_channel(*channel.key()).await?;
         let mut membership = self.membership.borrow_mut();
 
         if let Some(entry) = membership
@@ -1856,16 +1867,14 @@ impl<M: MacBackend> LocalNode<M> {
         };
         let packet = attributed.as_ref().unwrap_or(packet);
 
-        if let Some((_, peer)) = peer {
-            if let Some(entry) = state
+        if let Some((_, peer)) = peer
+            && let Some(entry) = state
                 .peer_subscriptions
                 .iter_mut()
                 .find(|entry| entry.peer == peer)
-            {
-                if entry.receive_handlers.any_mut(|handler| handler(packet)) {
-                    return true;
-                }
-            }
+            && entry.receive_handlers.any_mut(|handler| handler(packet))
+        {
+            return true;
         }
 
         state.receive_handlers.any_mut(|handler| handler(packet))

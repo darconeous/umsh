@@ -1170,6 +1170,13 @@ impl<const N: usize, const WINDOWS: usize> ChannelTable<N, WINDOWS> {
     }
 }
 
+/// `now_ms` as the whole seconds an arrival is recorded in, plus one. The
+/// count wraps, and is only ever compared by wrapping difference; the one
+/// second in every wrap that lands on zero is recorded a second late.
+fn arrival_seconds(now_ms: u64) -> NonZeroU32 {
+    NonZeroU32::new(((now_ms / 1000) as u32).wrapping_add(1)).unwrap_or(NonZeroU32::MIN)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1294,11 +1301,4 @@ mod tests {
             u8::MAX
         );
     }
-}
-
-/// `now_ms` as the whole seconds an arrival is recorded in, plus one. The
-/// count wraps, and is only ever compared by wrapping difference; the one
-/// second in every wrap that lands on zero is recorded a second late.
-fn arrival_seconds(now_ms: u64) -> NonZeroU32 {
-    NonZeroU32::new(((now_ms / 1000) as u32).wrapping_add(1)).unwrap_or(NonZeroU32::MIN)
 }

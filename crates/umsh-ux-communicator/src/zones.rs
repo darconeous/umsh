@@ -161,7 +161,7 @@ pub fn offset_text(offset_min: i16) -> String<12> {
         let sign = if offset_min < 0 { '\u{2212}' } else { '+' };
         let magnitude = offset_min.unsigned_abs();
         _ = core::fmt::write(&mut text, format_args!("{sign}{}", magnitude / 60));
-        if magnitude % 60 != 0 {
+        if !magnitude.is_multiple_of(60) {
             _ = core::fmt::write(&mut text, format_args!(":{:02}", magnitude % 60));
         }
     }

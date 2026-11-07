@@ -448,8 +448,8 @@ impl Chooser {
             .map(|slot| slot.retry_at_ms)
             .min();
         if now_ms >= self.next_search_ms {
-            let probe_hidden =
-                self.searches % HIDDEN_PROBE_EVERY == 0 && candidates().any(|slot| slot.hidden);
+            let probe_hidden = self.searches.is_multiple_of(HIDDEN_PROBE_EVERY)
+                && candidates().any(|slot| slot.hidden);
             return Next::Scan { probe_hidden };
         }
         Next::Wait(Some(

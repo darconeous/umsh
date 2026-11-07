@@ -696,11 +696,11 @@ mod tests {
     fn heartbeat_pulses_at_regular_interval() {
         let mut e = engine(0);
         // First pulse.
-        assert_eq!(e.tick(0).on, true);
-        assert_eq!(e.tick(49).on, true);
+        assert!(e.tick(0).on);
+        assert!(e.tick(49).on);
         // Off gap.
-        assert_eq!(e.tick(50).on, false);
-        assert_eq!(e.tick(1_999).on, false);
+        assert!(!e.tick(50).on);
+        assert!(!e.tick(1_999).on);
         // Second pulse.
         let d = e.tick(2_000);
         assert_eq!(
@@ -795,19 +795,19 @@ mod tests {
         // ON 100, OFF 100, ON 100, OFF 100, ON 100.
         let mut e = engine(0);
         e.play(LedSequence::PowerOff, 0);
-        assert_eq!(e.tick(0).on, true); // start of 1st ON
-        assert_eq!(e.tick(99).on, true);
-        assert_eq!(e.tick(100).on, false); // 1st OFF
-        assert_eq!(e.tick(199).on, false);
-        assert_eq!(e.tick(200).on, true); // 2nd ON
-        assert_eq!(e.tick(299).on, true);
-        assert_eq!(e.tick(300).on, false); // 2nd OFF
-        assert_eq!(e.tick(399).on, false);
-        assert_eq!(e.tick(400).on, true); // 3rd ON
-        assert_eq!(e.tick(499).on, true);
+        assert!(e.tick(0).on); // start of 1st ON
+        assert!(e.tick(99).on);
+        assert!(!e.tick(100).on); // 1st OFF
+        assert!(!e.tick(199).on);
+        assert!(e.tick(200).on); // 2nd ON
+        assert!(e.tick(299).on);
+        assert!(!e.tick(300).on); // 2nd OFF
+        assert!(!e.tick(399).on);
+        assert!(e.tick(400).on); // 3rd ON
+        assert!(e.tick(499).on);
         // After 500ms, sequence done → heartbeat. At t=500 we're past
         // the heartbeat ON pulse (0..50), in the off-gap → false.
-        assert_eq!(e.tick(500).on, false);
+        assert!(!e.tick(500).on);
     }
 
     #[test]
@@ -815,12 +815,12 @@ mod tests {
         // ON 120, OFF 120, ON 120.
         let mut e = engine(1_000);
         e.play(LedSequence::PairingHold, 1_000);
-        assert_eq!(e.tick(1_000).on, true);
-        assert_eq!(e.tick(1_120).on, false);
-        assert_eq!(e.tick(1_240).on, true);
-        assert_eq!(e.tick(1_359).on, true);
+        assert!(e.tick(1_000).on);
+        assert!(!e.tick(1_120).on);
+        assert!(e.tick(1_240).on);
+        assert!(e.tick(1_359).on);
         // Done: back to the heartbeat's off-gap.
-        assert_eq!(e.tick(1_360).on, false);
+        assert!(!e.tick(1_360).on);
     }
 
     #[test]
@@ -859,7 +859,7 @@ mod tests {
         // The sequence takes over immediately (ON for 50ms).
         let mut e = engine(0);
         // Confirm heartbeat is currently ON.
-        assert_eq!(e.tick(2_010).on, true);
+        assert!(e.tick(2_010).on);
         e.play(LedSequence::LocationAdvert, 2_010);
         let d = e.tick(2_010);
         assert_eq!(
@@ -896,7 +896,7 @@ mod tests {
         // Start PowerOff (3 flashes), then mid-flash request PowerOn.
         let mut e = engine(0);
         e.play(LedSequence::PowerOff, 0);
-        assert_eq!(e.tick(50).on, true); // still in 1st PowerOff ON
+        assert!(e.tick(50).on); // still in 1st PowerOff ON
         e.play(LedSequence::PowerOn, 50);
         // PowerOn is 1s ON starting at 50; ends at 1050.
         let d = e.tick(50);
@@ -914,14 +914,14 @@ mod tests {
         // ON 50, OFF 50, ON 50.
         let mut e = engine(0);
         e.play(LedSequence::LocationAdvert, 0);
-        assert_eq!(e.tick(0).on, true);
-        assert_eq!(e.tick(49).on, true);
-        assert_eq!(e.tick(50).on, false);
-        assert_eq!(e.tick(99).on, false);
-        assert_eq!(e.tick(100).on, true);
-        assert_eq!(e.tick(149).on, true);
+        assert!(e.tick(0).on);
+        assert!(e.tick(49).on);
+        assert!(!e.tick(50).on);
+        assert!(!e.tick(99).on);
+        assert!(e.tick(100).on);
+        assert!(e.tick(149).on);
         // After 150ms → back to heartbeat (off-gap since past pulse window).
-        assert_eq!(e.tick(150).on, false);
+        assert!(!e.tick(150).on);
     }
 
     #[test]
@@ -930,15 +930,15 @@ mod tests {
         let mut e = engine(0);
         e.start_alert(0);
         assert!(e.alert_active());
-        assert_eq!(e.tick(0).on, true);
-        assert_eq!(e.tick(120).on, false);
-        assert_eq!(e.tick(240).on, true);
+        assert!(e.tick(0).on);
+        assert!(!e.tick(120).on);
+        assert!(e.tick(240).on);
         // Dark for the rest of the period...
-        assert_eq!(e.tick(600).on, false);
-        assert_eq!(e.tick(1_499).on, false);
+        assert!(!e.tick(600).on);
+        assert!(!e.tick(1_499).on);
         // ...then again, indefinitely.
-        assert_eq!(e.tick(1_500).on, true);
-        assert_eq!(e.tick(1_500 * 100).on, true);
+        assert!(e.tick(1_500).on);
+        assert!(e.tick(1_500 * 100).on);
 
         e.stop_alert();
         assert!(!e.alert_active());
@@ -950,11 +950,11 @@ mod tests {
         e.start_alert(0);
         // A one-shot fired mid-alert must not show through.
         e.play(LedSequence::PowerOn, 0);
-        assert_eq!(e.tick(600).on, false, "alert gap, not the 1 s PowerOn hold");
+        assert!(!e.tick(600).on, "alert gap, not the 1 s PowerOn hold");
 
         // Stopping the alert releases the LED to what was underneath.
         e.stop_alert();
-        assert_eq!(e.tick(600).on, true, "the preempted PowerOn resumes");
+        assert!(e.tick(600).on, "the preempted PowerOn resumes");
     }
 
     #[test]
@@ -963,7 +963,7 @@ mod tests {
         e.start_alert(0);
         // A host re-arming the deadline must not restart the blink.
         e.start_alert(700);
-        assert_eq!(e.tick(1_500).on, true, "still on the original period");
+        assert!(e.tick(1_500).on, "still on the original period");
     }
 
     #[test]

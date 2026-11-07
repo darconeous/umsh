@@ -260,7 +260,7 @@ async fn receive(
 
     // The subscription borrows nothing from the stack, so it can hold
     // its own counter and outlive each turn of the pump below.
-    let _subscription = stack.node.on_receive(move |packet| show(packet));
+    let _subscription = stack.node.on_receive(show);
 
     let deadline = args
         .timeout

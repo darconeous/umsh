@@ -143,7 +143,7 @@ impl<I: I2c> Bhi260<I> {
         delay: &mut impl DelayNs,
     ) -> Result<Version, Error<I::Error>> {
         if firmware.len() < 4
-            || firmware.len() % 4 != 0
+            || !firmware.len().is_multiple_of(4)
             || firmware.len() / 4 > u16::MAX as usize
             || firmware[..2] != [0x2b, 0x66]
         {

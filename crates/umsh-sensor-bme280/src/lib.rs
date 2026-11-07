@@ -94,7 +94,7 @@ fn compensate(trim: [u8; 6], raw: u32) -> Option<u16> {
     // Bosch integer compensation, widened so corrupt trims cannot overflow.
     let adc = i64::from(raw);
     let delta = (adc >> 4) - t1;
-    let fine = (((adc >> 3) - (t1 << 1)) * t2 >> 11) + (((delta * delta) >> 12) * t3 >> 14);
+    let fine = ((((adc >> 3) - (t1 << 1)) * t2) >> 11) + ((((delta * delta) >> 12) * t3) >> 14);
     let hundredths_c = (fine * 5 + 128) >> 8;
     if !(-4000..=8500).contains(&hundredths_c) {
         return None;

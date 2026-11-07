@@ -277,29 +277,28 @@ where
                 payload,
             } => {
                 // Try to decode as text.
-                if let [pt, rest @ ..] = payload.as_slice() {
-                    if *pt == umsh_core::PayloadType::TextMessage as u8 {
-                        if let Ok(msg) = umsh_text::parse_text_message(rest) {
-                            let alias = self.peer_alias_display(&from);
-                            let mut line = String::new();
-                            let _ = write!(
-                                &mut line,
-                                "<{}> {}",
-                                alias,
-                                msg.body_str().unwrap_or("<invalid utf-8>")
-                            );
-                            self.out.write_line(&line).await?;
-                            if self.settings.show_hex {
-                                let mut hex = String::new();
-                                let _ = write!(&mut hex, "  hex:");
-                                for b in payload.iter() {
-                                    let _ = write!(&mut hex, " {:02x}", b);
-                                }
-                                self.out.write_line(&hex).await?;
-                            }
-                            return Ok(());
+                if let [pt, rest @ ..] = payload.as_slice()
+                    && *pt == umsh_core::PayloadType::TextMessage as u8
+                    && let Ok(msg) = umsh_text::parse_text_message(rest)
+                {
+                    let alias = self.peer_alias_display(&from);
+                    let mut line = String::new();
+                    let _ = write!(
+                        &mut line,
+                        "<{}> {}",
+                        alias,
+                        msg.body_str().unwrap_or("<invalid utf-8>")
+                    );
+                    self.out.write_line(&line).await?;
+                    if self.settings.show_hex {
+                        let mut hex = String::new();
+                        let _ = write!(&mut hex, "  hex:");
+                        for b in payload.iter() {
+                            let _ = write!(&mut hex, " {:02x}", b);
                         }
+                        self.out.write_line(&hex).await?;
                     }
+                    return Ok(());
                 }
                 // Unknown payload—show origin + hint.
                 let alias = self.peer_alias_display(&from);
@@ -1109,7 +1108,7 @@ where
         };
         let mut bytes: Vec<u8> = Vec::new();
         let hex = hex.trim_start_matches("0x");
-        if hex.len() % 2 != 0 {
+        if !hex.len().is_multiple_of(2) {
             return self.write_err("hex must have even length").await;
         }
         for chunk in hex.as_bytes().chunks(2) {
@@ -1154,10 +1153,10 @@ where
     }
 
     fn peer_alias_display(&self, key: &PublicKey) -> String {
-        if let Some(entry) = self.peers.get(key) {
-            if let Some(a) = &entry.alias {
-                return String::from(a.as_str());
-            }
+        if let Some(entry) = self.peers.get(key)
+            && let Some(a) = &entry.alias
+        {
+            return String::from(a.as_str());
         }
         // Fall back to the spec's star-truncated base58 hint rendering.
         let mut s = String::new();

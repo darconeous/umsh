@@ -291,10 +291,10 @@ pub async fn responder_loop<CS: CounterStore + 'static, M: RawMutex + 'static>(
             completion,
         )
         .await;
-        if let Some(completion) = completion {
-            if !completion.complete(sent) {
-                engine.fail_retained(&request.from, [request.payload[0], request.payload[1]]);
-            }
+        if let Some(completion) = completion
+            && !completion.complete(sent)
+        {
+            engine.fail_retained(&request.from, [request.payload[0], request.payload[1]]);
         }
     }
 }

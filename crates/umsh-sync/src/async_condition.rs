@@ -151,7 +151,7 @@ impl<'a> Drop for AsyncConditionWait<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::future::{Either, FutureExt, pending, ready, select};
+    use futures::future::{Either, FutureExt, pending, select};
 
     /// Straight port of the upstream `test_async_condition` test, adapted
     /// to `futures::executor::block_on` since we don't have `fuchsia_async`.
@@ -192,7 +192,6 @@ mod tests {
             })
             .now_or_never();
         assert_eq!(resolved, Some(2));
-        let _ = ready::<()>(()); // touch `ready` import to avoid unused-import lint
     }
 
     /// Dropping one waiter must not stop a later trigger from waking a

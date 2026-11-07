@@ -368,7 +368,6 @@ where
         }
     }
     state.touching = true;
-    drop(tracked);
     app.send_touch(&Touch::new(
         0,
         TouchPoint::new(point.x, point.y),
@@ -432,7 +431,6 @@ where
             None
         }
     };
-    drop(tracked);
     if let Some(pick) = chosen {
         choose(app, pick, now);
     }

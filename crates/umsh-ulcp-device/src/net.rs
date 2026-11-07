@@ -266,6 +266,10 @@ impl NetworkName {
     }
 
     /// Take a host's choice, or say it is not an SSID.
+    #[allow(
+        clippy::result_unit_err,
+        reason = "public API; there is one way to fail, and its doc names it"
+    )]
     pub fn set(&mut self, ssid: &[u8]) -> Result<(), ()> {
         if ssid.len() > wifi::SSID_MAX_LEN {
             return Err(());

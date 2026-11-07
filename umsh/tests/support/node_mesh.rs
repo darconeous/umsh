@@ -369,8 +369,10 @@ where
             // The device asks for no acknowledgment: the administrator's
             // token retry is the reliability layer. The response does
             // acknowledge the request, as the firmware's does.
-            let mut options = SendOptions::default();
-            options.ack_mic = ack_mic;
+            let options = SendOptions {
+                ack_mic,
+                ..SendOptions::default()
+            };
             self.device_peer
                 .send(&response, &options)
                 .await

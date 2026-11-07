@@ -472,7 +472,7 @@ fn parse_degrees(field: &[u8], hemisphere: &[u8], degree_digits: usize) -> Optio
     if minutes >= 60 * 100_000 {
         return None;
     }
-    let scaled = degrees as i64 * DEGREE_SCALE as i64 + (minutes as i64 * 100) / 60;
+    let scaled = degrees as i64 * DEGREE_SCALE as i64 + (minutes * 100) / 60;
     let signed = match hemisphere {
         b"N" | b"E" => scaled,
         b"S" | b"W" => -scaled,

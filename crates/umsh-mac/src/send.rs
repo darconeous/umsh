@@ -671,6 +671,10 @@ impl<const FRAME: usize> QueuedTx<FRAME> {
     }
 
     /// Create a queue entry with explicit timer and CAD state.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "public API; the queue entry's fields, one for one"
+    )]
     pub fn try_new_with_state(
         priority: TxPriority,
         frame: &[u8],
@@ -789,6 +793,10 @@ impl<const N: usize, const FRAME: usize> TxQueue<N, FRAME> {
     }
 
     /// Enqueue a frame with explicit timer and CAD state.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "public API; the queue entry's fields, one for one"
+    )]
     pub fn enqueue_with_state(
         &mut self,
         priority: TxPriority,
@@ -1130,6 +1138,10 @@ pub struct ReceivedPacketRef<'a> {
 }
 
 impl<'a> ReceivedPacketRef<'a> {
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "public API; the packet's parsed parts, one for one"
+    )]
     pub fn new(
         wire: &'a [u8],
         payload_bytes: &'a [u8],
@@ -1469,6 +1481,10 @@ impl<'a> ReceivedPacketRef<'a> {
 
 /// Borrowing view of an inbound MAC event.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "no allocator here; an event is a transient view handed to a callback"
+)]
 pub enum MacEventRef<'a> {
     /// Accepted inbound packet with parsed metadata and resolved sender/channel information.
     Received(ReceivedPacketRef<'a>),

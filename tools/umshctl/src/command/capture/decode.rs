@@ -684,12 +684,8 @@ mod tests {
         let map = field_map(&header, MAC_ACK.len());
         assert_eq!(map[0], Some(Field::Fcf));
         assert_eq!(map[1], Some(Field::FloodHops));
-        for index in 2..6 {
-            assert_eq!(map[index], Some(Field::AckMic), "byte {index}");
-        }
-        for index in 6..10 {
-            assert_eq!(map[index], Some(Field::AckTag), "byte {index}");
-        }
+        assert_eq!(map[2..6], [Some(Field::AckMic); 4]);
+        assert_eq!(map[6..10], [Some(Field::AckTag); 4]);
         assert!(
             !map.contains(&Some(Field::Mic)),
             "a MAC ack carries no MIC of its own",

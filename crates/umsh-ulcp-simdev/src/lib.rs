@@ -121,8 +121,6 @@ pub fn full_config(
 const SIMULATED_BONDS: u8 = 2;
 
 /// A deterministic, RAM-backed device that speaks HDLC-Lite exactly like USB.
-
-/// A deterministic, RAM-backed device that speaks HDLC-Lite exactly like USB.
 pub struct SimulatedDevice {
     device: SoftDevice<SimulatedPlatform>,
 }

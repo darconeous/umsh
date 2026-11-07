@@ -506,9 +506,6 @@ mod tests {
     struct MockUart {
         script: Vec<u8>,
         offset: usize,
-        /// Shared, because the pump takes the UART by value and a test
-        /// still has to see what was sent to it.
-        written: Rc<RefCell<Vec<u8>>>,
     }
 
     impl MockUart {
@@ -516,13 +513,7 @@ mod tests {
             Self {
                 script: text.bytes().collect(),
                 offset: 0,
-                written: Rc::new(RefCell::new(Vec::new())),
             }
-        }
-
-        /// A handle on everything written to this port.
-        fn written(&self) -> Rc<RefCell<Vec<u8>>> {
-            Rc::clone(&self.written)
         }
     }
 

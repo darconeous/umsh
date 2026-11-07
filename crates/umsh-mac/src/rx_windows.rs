@@ -235,14 +235,11 @@ impl<const PEERS: usize, const STRANGERS: usize> RxWindows<PEERS, STRANGERS> {
             entry.touch(now_ms);
             return Ok(Some(entry));
         }
-        Ok(self
-            .strangers
-            .iter_mut()
-            .find(|entry| entry.key == *key)
-            .map(|entry| {
-                entry.touch(now_ms);
-                entry
-            }))
+        let mut stranger = self.strangers.iter_mut().find(|entry| entry.key == *key);
+        if let Some(entry) = &mut stranger {
+            entry.touch(now_ms);
+        }
+        Ok(stranger)
     }
 
     /// Whether `key` holds a registered entry.

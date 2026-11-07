@@ -201,12 +201,11 @@ impl<P: LocalPort> Settings<P> {
     /// When [`Settings::pump`] next has something to do without being
     /// woken by the device.
     pub fn next_deadline(&self) -> Option<u64> {
-        [self.save_at, self.statistics_at, self.wifi_at]
+        let soonest = [self.save_at, self.statistics_at, self.wifi_at]
             .into_iter()
             .flatten()
-            .fold(Some(self.airtime_at), |next, at| {
-                next.map(|next| next.min(at))
-            })
+            .fold(self.airtime_at, u64::min);
+        Some(soonest)
     }
 
     /// Keeps the counters being read while `on`: at the next pump, and
@@ -1001,7 +1000,9 @@ impl<P: LocalPort> Settings<P> {
                 }
             }
         }
-        reading.nearby.sort_unstable_by(|a, b| b.rssi.cmp(&a.rssi));
+        reading
+            .nearby
+            .sort_unstable_by_key(|nearby| core::cmp::Reverse(nearby.rssi));
     }
 
     /// The device's counters, as last read.

@@ -988,8 +988,10 @@ async fn an_on_demand_announcement_carries_the_options_the_host_chose() {
     // A channel the device does not hold is refused by name, not by
     // shape: the identifier is well-formed, the channel is simply not
     // provisioned.
-    let mut multicast = Announcement::default();
-    multicast.channel = Some([0xEE; 16]);
+    let mut multicast = Announcement {
+        channel: Some([0xEE; 16]),
+        ..Announcement::default()
+    };
     let refusal = radio.announce(&multicast).await.unwrap_err();
     assert!(
         matches!(refusal, UlcpError::Status(Status::CHANNEL_NOT_FOUND)),

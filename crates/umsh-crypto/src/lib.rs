@@ -777,10 +777,8 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
     /// unconditionally, whatever bytes occupy those positions.
     pub fn build_ctr_iv(&self, mic: &[u8], sec_info_bytes: &[u8]) -> [u8; 16] {
         let mut iv = [0u8; 16];
-        let mut written = 0usize;
-        for byte in mic.iter().chain(sec_info_bytes.iter()).take(16) {
-            iv[written] = *byte;
-            written += 1;
+        for (slot, byte) in iv.iter_mut().zip(mic.iter().chain(sec_info_bytes)) {
+            *slot = *byte;
         }
         iv[8] &= 0x7F;
         iv[12] &= 0x7F;

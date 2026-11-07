@@ -83,7 +83,7 @@ pub fn matching(words: &str, query: &str) -> Option<Match> {
     if whole || aliases.split(' ').any(|a| a.eq_ignore_ascii_case(typed)) {
         return Some(Match::Name);
     }
-    let head = name_words().last().unwrap_or_default();
+    let head = name_words().next_back().unwrap_or_default();
     if begins(head, last) || aliases.split(' ').any(|t| begins(t, last)) {
         Some(Match::Head)
     } else {

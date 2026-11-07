@@ -98,7 +98,7 @@ fn auto_lock_name(seconds: u16) -> String<16> {
     let mut name = String::new();
     if let Some(index) = AUTO_LOCK_CHOICES.iter().position(|&c| c == seconds) {
         _ = name.push_str(NAMES[index]);
-    } else if seconds % 60 == 0 {
+    } else if seconds.is_multiple_of(60) {
         _ = core::fmt::write(&mut name, format_args!("{} minutes", seconds / 60));
     } else {
         _ = core::fmt::write(&mut name, format_args!("{seconds} seconds"));

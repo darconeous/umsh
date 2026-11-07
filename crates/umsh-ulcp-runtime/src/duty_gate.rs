@@ -104,7 +104,7 @@ mod tests {
     fn block_on<F: Future>(future: F) -> F::Output {
         let mut future = core::pin::pin!(future);
         let waker = Waker::noop();
-        let mut context = Context::from_waker(&waker);
+        let mut context = Context::from_waker(waker);
         loop {
             if let Poll::Ready(output) = future.as_mut().poll(&mut context) {
                 return output;

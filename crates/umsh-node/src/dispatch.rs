@@ -31,18 +31,16 @@ impl EventDispatcher {
         match *event {
             MacEventRef::Transmitted {
                 identity_id: tx_id,
-                receipt,
+                receipt: Some(receipt),
                 ..
             } => {
-                if let Some(receipt) = receipt {
-                    let token = SendToken::new(tx_id, receipt);
-                    self.update_ticket(&token, |state| {
-                        state.transmitted = true;
-                        if state.non_ack {
-                            state.finished = true;
-                        }
-                    });
-                }
+                let token = SendToken::new(tx_id, receipt);
+                self.update_ticket(&token, |state| {
+                    state.transmitted = true;
+                    if state.non_ack {
+                        state.finished = true;
+                    }
+                });
             }
             // Forwards go on arriving after a send that asked for no
             // acknowledgment is finished, and still count.
@@ -77,15 +75,13 @@ impl EventDispatcher {
             }
             MacEventRef::TxAbandoned {
                 identity_id: tx_id,
-                receipt,
+                receipt: Some(receipt),
             } => {
-                if let Some(receipt) = receipt {
-                    let token = SendToken::new(tx_id, receipt);
-                    self.update_ticket(&token, |state| {
-                        state.failed = true;
-                        state.finished = true;
-                    });
-                }
+                let token = SendToken::new(tx_id, receipt);
+                self.update_ticket(&token, |state| {
+                    state.failed = true;
+                    state.finished = true;
+                });
             }
             _ => {}
         }

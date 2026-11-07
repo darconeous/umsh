@@ -137,12 +137,10 @@ impl Inventory {
 
     /// Reuse startup driver results; property reads never touch the bus.
     pub fn finish(&mut self, panel_initialized: bool, pmic_present: bool, rtc_present: bool) {
-        if panel_initialized {
-            if let Some(addr) = self.panel {
-                for device in &mut self.devices[..self.len] {
-                    if device.bus == 0 && device.addr == addr {
-                        device.name = OLED;
-                    }
+        if panel_initialized && let Some(addr) = self.panel {
+            for device in &mut self.devices[..self.len] {
+                if device.bus == 0 && device.addr == addr {
+                    device.name = OLED;
                 }
             }
         }

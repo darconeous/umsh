@@ -127,23 +127,13 @@ impl<M: MacBackend> Host<M> {
     /// `select!`. If UMSH owns the task, prefer [`run`](Self::run).
     pub async fn pump_once(&mut self) -> Result<(), HostError<M::RunError>> {
         let now_ms = self.mac.now_ms().await;
-        let pending_pfs = Rc::new(RefCell::new(Vec::<(
-            LocalIdentityId,
-            umsh_core::PublicKey,
-            Option<umsh_core::ChannelKey>,
-            OwnedMacCommand,
-        )>::new()));
+        let pending_pfs = Rc::new(RefCell::new(Vec::<PfsCommand>::new()));
         let pending_pfs_ref = pending_pfs.clone();
         let pending_identity = Rc::new(RefCell::new(
             Vec::<(LocalNode<M>, IdentityResponsePlan)>::new(),
         ));
         let pending_identity_ref = pending_identity.clone();
-        let pending_peer_repeaters = Rc::new(RefCell::new(Vec::<(
-            LocalNode<M>,
-            umsh_core::PublicKey,
-            Option<umsh_core::ChannelKey>,
-            Vec<u8>,
-        )>::new()));
+        let pending_peer_repeaters = Rc::new(RefCell::new(Vec::<PeerRepeaterRequest<M>>::new()));
         let pending_peer_repeaters_ref = pending_peer_repeaters.clone();
         let pending_mobility = Rc::new(RefCell::new(Vec::<(umsh_core::PublicKey, bool)>::new()));
         let pending_mobility_ref = pending_mobility.clone();
@@ -210,12 +200,7 @@ impl<M: MacBackend> Host<M> {
             .await
             .map_err(HostError::Mac)?;
 
-        let queued: Vec<(
-            LocalIdentityId,
-            umsh_core::PublicKey,
-            Option<umsh_core::ChannelKey>,
-            OwnedMacCommand,
-        )> = pending_pfs.borrow_mut().drain(..).collect();
+        let queued: Vec<PfsCommand> = pending_pfs.borrow_mut().drain(..).collect();
         // Forward secrecy needs the software crypto back end; without it, a
         // peer's request goes unanswered.
         #[cfg(feature = "software-crypto")]
@@ -232,12 +217,8 @@ impl<M: MacBackend> Host<M> {
             node.send_identity_response(plan).await;
         }
 
-        let peer_repeater_requests: Vec<(
-            LocalNode<M>,
-            umsh_core::PublicKey,
-            Option<umsh_core::ChannelKey>,
-            Vec<u8>,
-        )> = pending_peer_repeaters.borrow_mut().drain(..).collect();
+        let peer_repeater_requests: Vec<PeerRepeaterRequest<M>> =
+            pending_peer_repeaters.borrow_mut().drain(..).collect();
         for (node, from, channel, request) in peer_repeater_requests {
             node.answer_peer_repeaters_request(from, channel, &request)
                 .await;
@@ -465,32 +446,37 @@ impl IdentityUpdate {
     }
 }
 
+/// Work a pump cycle's synchronous dispatch leaves for after it returns.
+type Deferred<T> = Rc<RefCell<Vec<T>>>;
+/// A MAC command answered by the PFS machinery: identity, sender, the channel
+/// it arrived on, and the command.
+type PfsCommand = (
+    LocalIdentityId,
+    umsh_core::PublicKey,
+    Option<umsh_core::ChannelKey>,
+    OwnedMacCommand,
+);
+/// A Peer Repeaters Request to answer: the node asked, who asked, the channel
+/// it arrived on, and the request's body.
+type PeerRepeaterRequest<M> = (
+    LocalNode<M>,
+    umsh_core::PublicKey,
+    Option<umsh_core::ChannelKey>,
+    Vec<u8>,
+);
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the deferred-work queues of one pump cycle"
+)]
 fn dispatch_payload_callbacks<M: MacBackend>(
     node: &LocalNode<M>,
     packet: &ReceivedPacketRef<'_>,
     from: umsh_core::PublicKey,
-    pending_pfs: &Rc<
-        RefCell<
-            Vec<(
-                LocalIdentityId,
-                umsh_core::PublicKey,
-                Option<umsh_core::ChannelKey>,
-                OwnedMacCommand,
-            )>,
-        >,
-    >,
-    pending_identity: &Rc<RefCell<Vec<(LocalNode<M>, IdentityResponsePlan)>>>,
-    pending_peer_repeaters: &Rc<
-        RefCell<
-            Vec<(
-                LocalNode<M>,
-                umsh_core::PublicKey,
-                Option<umsh_core::ChannelKey>,
-                Vec<u8>,
-            )>,
-        >,
-    >,
-    pending_mobility: &Rc<RefCell<Vec<(umsh_core::PublicKey, bool)>>>,
+    pending_pfs: &Deferred<PfsCommand>,
+    pending_identity: &Deferred<(LocalNode<M>, IdentityResponsePlan)>,
+    pending_peer_repeaters: &Deferred<PeerRepeaterRequest<M>>,
+    pending_mobility: &Deferred<(umsh_core::PublicKey, bool)>,
     now_ms: u64,
 ) {
     if packet.payload_type() == PayloadType::NodeIdentity {
@@ -536,77 +522,76 @@ fn dispatch_payload_callbacks<M: MacBackend>(
         return;
     }
 
-    if packet.payload_type() == PayloadType::MacCommand {
-        if let Ok(command) = mac_command::parse(packet.payload()) {
-            // A MAC command is addressed to one node. A command that arrives by
-            // multicast or broadcast is ignored unless its own definition gives
-            // rules for that carriage (mac-commands.md), and today the Identity
-            // Request is the only one that does. Anything else is dropped here,
-            // before observers see it.
-            let addressed_to_one_node = matches!(
-                packet.packet_family(),
-                umsh_mac::PacketFamily::Unicast | umsh_mac::PacketFamily::BlindUnicast
+    if packet.payload_type() == PayloadType::MacCommand
+        && let Ok(command) = mac_command::parse(packet.payload())
+    {
+        // A MAC command is addressed to one node. A command that arrives by
+        // multicast or broadcast is ignored unless its own definition gives
+        // rules for that carriage (mac-commands.md), and today the Identity
+        // Request is the only one that does. Anything else is dropped here,
+        // before observers see it.
+        let addressed_to_one_node = matches!(
+            packet.packet_family(),
+            umsh_mac::PacketFamily::Unicast | umsh_mac::PacketFamily::BlindUnicast
+        );
+        if !addressed_to_one_node
+            && !matches!(command, mac_command::MacCommand::IdentityRequest { .. })
+        {
+            return;
+        }
+        // The carriage this request arrived on, which is the carriage its
+        // response owes it back. `Some` only for a blind unicast: a plain
+        // unicast is answered in kind, and the identity responder decides
+        // for itself how to answer a multicast or broadcast solicitation.
+        let reply_channel = matches!(packet.packet_family(), umsh_mac::PacketFamily::BlindUnicast)
+            .then(|| packet.channel().map(|c| *c.key))
+            .flatten();
+        // Match borrowed variants before converting to owned.
+        if let mac_command::MacCommand::EchoResponse { data } = command {
+            node.match_pong(
+                from,
+                data,
+                packet,
+                packet.received_at_ms().unwrap_or(now_ms),
             );
-            if !addressed_to_one_node
-                && !matches!(command, mac_command::MacCommand::IdentityRequest { .. })
-            {
-                return;
-            }
-            // The carriage this request arrived on, which is the carriage its
-            // response owes it back. `Some` only for a blind unicast: a plain
-            // unicast is answered in kind, and the identity responder decides
-            // for itself how to answer a multicast or broadcast solicitation.
-            let reply_channel =
-                matches!(packet.packet_family(), umsh_mac::PacketFamily::BlindUnicast)
-                    .then(|| packet.channel().map(|c| *c.key))
-                    .flatten();
-            // Match borrowed variants before converting to owned.
-            if let mac_command::MacCommand::EchoResponse { data } = command {
-                node.match_pong(
-                    from,
-                    data,
-                    packet,
-                    packet.received_at_ms().unwrap_or(now_ms),
-                );
-            }
-            // Identity Request: let the built-in responder (if enabled) build a
-            // reply plan now, while the reception context is live; the async
-            // pump sends it after this synchronous dispatch returns.
-            if let mac_command::MacCommand::IdentityRequest { options } = command {
-                if let Some(plan) = node.evaluate_identity_request(
-                    packet,
-                    from,
-                    options,
-                    packet.received_at_ms().unwrap_or(now_ms),
-                ) {
-                    pending_identity.borrow_mut().push((node.clone(), plan));
-                }
-            }
-            // Peer Repeaters Request: the answer needs the MAC's transmitter
-            // observations, which only an async borrow reaches, so it is
-            // built by the pump after this synchronous dispatch returns.
-            if let mac_command::MacCommand::PeerRepeatersRequest { options } = command
-                && node.peer_repeaters_responder_enabled()
-            {
-                pending_peer_repeaters.borrow_mut().push((
-                    node.clone(),
-                    from,
-                    reply_channel,
-                    Vec::from(options),
-                ));
-            }
-            let owned = OwnedMacCommand::from(command);
-            node.dispatch_mac_command(from, &owned);
-            if matches!(
-                owned,
-                OwnedMacCommand::PfsSessionRequest { .. }
-                    | OwnedMacCommand::PfsSessionResponse { .. }
-                    | OwnedMacCommand::EndPfsSession
-            ) {
-                pending_pfs
-                    .borrow_mut()
-                    .push((node.identity_id(), from, reply_channel, owned));
-            }
+        }
+        // Identity Request: let the built-in responder (if enabled) build a
+        // reply plan now, while the reception context is live; the async
+        // pump sends it after this synchronous dispatch returns.
+        if let mac_command::MacCommand::IdentityRequest { options } = command
+            && let Some(plan) = node.evaluate_identity_request(
+                packet,
+                from,
+                options,
+                packet.received_at_ms().unwrap_or(now_ms),
+            )
+        {
+            pending_identity.borrow_mut().push((node.clone(), plan));
+        }
+        // Peer Repeaters Request: the answer needs the MAC's transmitter
+        // observations, which only an async borrow reaches, so it is
+        // built by the pump after this synchronous dispatch returns.
+        if let mac_command::MacCommand::PeerRepeatersRequest { options } = command
+            && node.peer_repeaters_responder_enabled()
+        {
+            pending_peer_repeaters.borrow_mut().push((
+                node.clone(),
+                from,
+                reply_channel,
+                Vec::from(options),
+            ));
+        }
+        let owned = OwnedMacCommand::from(command);
+        node.dispatch_mac_command(from, &owned);
+        if matches!(
+            owned,
+            OwnedMacCommand::PfsSessionRequest { .. }
+                | OwnedMacCommand::PfsSessionResponse { .. }
+                | OwnedMacCommand::EndPfsSession
+        ) {
+            pending_pfs
+                .borrow_mut()
+                .push((node.identity_id(), from, reply_channel, owned));
         }
     }
 }

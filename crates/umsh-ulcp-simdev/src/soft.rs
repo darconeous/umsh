@@ -43,10 +43,18 @@ pub trait SoftPlatform {
     /// The configuration snapshot saved by `CMD_SAVE`, if any.
     fn load_snapshot(&mut self) -> Option<Vec<u8>>;
     /// Persist a snapshot, or erase it with `None`.
+    #[allow(
+        clippy::result_unit_err,
+        reason = "public trait; a failed store carries nothing the device reports"
+    )]
     fn store_snapshot(&mut self, snapshot: Option<&[u8]>) -> Result<(), ()>;
     /// The device identity's secret key, if one is stored.
     fn load_identity(&mut self) -> Option<[u8; 32]>;
     /// Persist the device identity's secret key, or erase it with `None`.
+    #[allow(
+        clippy::result_unit_err,
+        reason = "public trait; a failed store carries nothing the device reports"
+    )]
     fn store_identity(&mut self, secret: Option<&[u8; 32]>) -> Result<(), ()>;
     /// A fresh identity secret.
     fn generate_secret(&mut self) -> [u8; 32];
@@ -84,6 +92,10 @@ pub trait SoftPlatform {
         None
     }
     /// Keep the record of the device lists, or erase it with `None`.
+    #[allow(
+        clippy::result_unit_err,
+        reason = "public trait; a failed store carries nothing the device reports"
+    )]
     fn store_lists(&mut self, record: Option<&[u8]>) -> Result<(), ()> {
         let _ = record;
         Err(())
@@ -356,7 +368,7 @@ impl<P: SoftPlatform> SoftDevice<P> {
                 if writes.any && self.session.is_attached() {
                     let mut mirrors = Mirrors::new(&frame);
                     while let Some(mirror) = mirrors.next() {
-                        self.to_host(mirror);
+                        self.send_to_host(mirror);
                     }
                 }
                 self.device_out.push_back(frame);
@@ -633,7 +645,7 @@ impl<P: SoftPlatform> SoftDevice<P> {
             if is_publication(&frame) {
                 self.publish(frame);
             } else {
-                self.to_host(&frame);
+                self.send_to_host(&frame);
             }
         }
     }
@@ -643,14 +655,14 @@ impl<P: SoftPlatform> SoftDevice<P> {
     /// host is sent one only while it is there to receive it.
     fn publish(&mut self, frame: Vec<u8>) {
         if self.session.is_attached() || !self.device_interface {
-            self.to_host(&frame);
+            self.send_to_host(&frame);
         }
         if self.device_interface {
             self.device_out.push_back(frame);
         }
     }
 
-    fn to_host(&mut self, frame: &[u8]) {
+    fn send_to_host(&mut self, frame: &[u8]) {
         let mut encoded = vec![0; hdlc::max_encoded_len(frame.len())];
         let len = hdlc::encode_frame(frame, &mut encoded)
             .expect("soft device output buffer uses HDLC worst-case size");

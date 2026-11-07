@@ -145,6 +145,10 @@ impl CounterMap {
         self.entries.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
     /// Serialize into `out` (sized [`ENCODED_MAX`] or larger); returns
     /// the encoded length. Layout: [`FORMAT`], then per entry its kind
     /// (1 byte), tag, little-endian u32 value.

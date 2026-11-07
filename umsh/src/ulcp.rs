@@ -5503,10 +5503,12 @@ mod tests {
         radio.set_prop(prop::PHY_TX_POWER, &[3]).await.unwrap();
     }
 
+    type Answer = Box<dyn FnMut(&Frame<'_>) -> Vec<Vec<u8>> + Send>;
+
     /// A stand-in device whose answers a test writes: each request frame
     /// goes to `answer`, which returns the frames to reply with.
     struct ScriptLink {
-        answer: Box<dyn FnMut(&Frame<'_>) -> Vec<Vec<u8>> + Send>,
+        answer: Answer,
         replies: VecDeque<Vec<u8>>,
     }
 
@@ -5532,9 +5534,7 @@ mod tests {
 
     /// Answer single and multi-property reads from `value`: a value, or
     /// the status refusing that property.
-    fn answering(
-        value: fn(u32) -> Result<Vec<u8>, Status>,
-    ) -> Box<dyn FnMut(&Frame<'_>) -> Vec<Vec<u8>> + Send> {
+    fn answering(value: fn(u32) -> Result<Vec<u8>, Status>) -> Answer {
         Box::new(move |request| {
             let tid = request.header.tid();
             let mut buf = vec![0u8; 512];
@@ -5563,10 +5563,7 @@ mod tests {
         })
     }
 
-    fn scripted(
-        answer: Box<dyn FnMut(&Frame<'_>) -> Vec<Vec<u8>> + Send>,
-        caps: &[u32],
-    ) -> UlcpDevice<ScriptLink> {
+    fn scripted(answer: Answer, caps: &[u32]) -> UlcpDevice<ScriptLink> {
         let mut radio = UlcpDevice::bare(
             ScriptLink {
                 answer,

@@ -189,6 +189,10 @@ impl PfsSessionManager {
     ///
     /// `channel` is the carriage the request arrived on; the response follows
     /// it back.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the parts of one inbound request"
+    )]
     pub(crate) async fn accept_request<M: MacBackend>(
         &mut self,
         mac: &M,

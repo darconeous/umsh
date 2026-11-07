@@ -161,7 +161,7 @@ mod tests {
     fn decode_rejects_bad_input() {
         assert_eq!(decode(b"7NeD"), Err(AddressParseError::InvalidLength));
         // '0', 'O', 'I', and 'l' are excluded from the base58 alphabet.
-        for bad in [b'0', b'O', b'I', b'l'] {
+        for bad in *b"0OIl" {
             let mut digits = *b"11111111111111111111111111111111111111111111";
             digits[10] = bad;
             assert_eq!(decode(&digits), Err(AddressParseError::InvalidCharacter));

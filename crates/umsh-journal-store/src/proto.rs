@@ -71,6 +71,7 @@ pub fn classify_identity(payload: Option<&[u8]>) -> StoredIdentity {
 /// binds a store to the session checks the snapshot fits it.
 pub const SLOT_SIZE: usize = 2048;
 pub const COMMIT_OFFSET: usize = SLOT_SIZE - 4;
+#[cfg(test)]
 const CRC_OFFSET: usize = COMMIT_OFFSET - 4;
 const MAGIC: [u8; 4] = *b"UPRS";
 const KIND_SNAPSHOT: u8 = 0;
@@ -87,6 +88,10 @@ pub const fn max_payload(slot_size: usize) -> usize {
 
 /// What a journal record asserts about the saved protocol state.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "no allocator here, and the snapshot is what the type is for"
+)]
 pub enum Record {
     /// A saved snapshot with its opaque payload.
     Snapshot(heapless::Vec<u8, MAX_PAYLOAD>),
@@ -301,7 +306,7 @@ mod tests {
     fn block_on<F: Future>(future: F) -> F::Output {
         let mut future = core::pin::pin!(future);
         let waker = Waker::noop();
-        let mut context = Context::from_waker(&waker);
+        let mut context = Context::from_waker(waker);
         loop {
             if let Poll::Ready(output) = future.as_mut().poll(&mut context) {
                 return output;

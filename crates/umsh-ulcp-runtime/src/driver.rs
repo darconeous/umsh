@@ -247,6 +247,12 @@ impl<M: RawMutex> TransportChannels<M> {
     }
 }
 
+impl<M: RawMutex> Default for TransportChannels<M> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Frames held for the device's own interface until it reads them.
 pub const DEVICE_LINK_DEPTH: usize = 8;
 
@@ -265,6 +271,10 @@ pub struct DeviceLink<M: RawMutex> {
 }
 
 /// What the device's own interface reads from its [`DeviceLink`].
+#[allow(
+    clippy::large_enum_variant,
+    reason = "no allocator here; a frame is handed straight through"
+)]
 pub enum DeviceFrame {
     /// An answer or a publication, as the session emitted it.
     Frame(FrameBuf),
@@ -637,6 +647,10 @@ pub trait DeviceEnv {
     }
     /// Fill `secret` from the platform's cryptographic RNG. Fails closed:
     /// an error refuses identity generation rather than degrading.
+    #[allow(
+        clippy::result_unit_err,
+        reason = "public trait every board implements; the failure carries nothing"
+    )]
     fn fill_secret(&mut self, secret: &mut [u8; 32]) -> Result<(), ()>;
     /// One fresh battery measurement (`Effect::SampleBattery`). Only
     /// emitted when the board's `SessionConfig::battery` advertises
@@ -2096,7 +2110,7 @@ where
                 } else {
                     env.trace(format_args!("proto-store boot-restore=ok"));
                 }
-                apply_effect(&session, Some(effect), &rt, &mut env).await;
+                apply_effect(session, Some(effect), &rt, &mut env).await;
             }
             Err(_) => {
                 env.trace(format_args!("proto-store boot-restore=BARE"));
@@ -2121,8 +2135,8 @@ where
     // silence: the boot-time GNSS clock read waits on exactly this, and on
     // a bare device it would otherwise wait for a host that may never come.
     env.publish_device_name(session.device_name()).await;
-    sync_dev_domain(&session, &mut dev_domain_synced, &mut env);
-    sync_hosted(&session, &mut hosted_synced, &mut env);
+    sync_dev_domain(session, &mut dev_domain_synced, &mut env);
+    sync_hosted(session, &mut hosted_synced, &mut env);
     env.boot_settings_ready();
 
     // When the snapshot is written for the device's own changes, while
@@ -2209,7 +2223,7 @@ where
                 // with no alert running is simply nothing.
                 let effect = session.cancel_alert(&mut |frame: &[u8]| emitter.push(frame));
                 emitter.flush(&mut ReplySink::host(&arbitration, &rt)).await;
-                apply_effect(&session, effect, &rt, &mut env).await;
+                apply_effect(session, effect, &rt, &mut env).await;
             }
             Either4::First(InEvent::Toggle(setting)) => {
                 // PHY enable needs the same radio effect as a host write;
@@ -2242,7 +2256,7 @@ where
                     if setting == Setting::Gnss {
                         env.gnss_switched(enabled);
                     }
-                    apply_effect(&session, effect, &rt, &mut env).await;
+                    apply_effect(session, effect, &rt, &mut env).await;
                     // Keep an existing snapshot in step, so a switch the
                     // operator flipped is still flipped after a reboot.
                     note_device_change(session, &mut save_due);
@@ -2383,7 +2397,7 @@ where
                     env.frame_queued(notice);
                 }
                 emitter.flush(&mut ReplySink::host(&arbitration, &rt)).await;
-                apply_effect(&session, effect, &rt, &mut env).await;
+                apply_effect(session, effect, &rt, &mut env).await;
             }
             Either4::Third(result) => {
                 let now_ms = Instant::now().as_millis();
@@ -2395,7 +2409,7 @@ where
                 let effect =
                     session.on_tx_result(outcome, now_ms, &mut |frame: &[u8]| emitter.push(frame));
                 emitter.flush(&mut ReplySink::host(&arbitration, &rt)).await;
-                apply_effect(&session, effect, &rt, &mut env).await;
+                apply_effect(session, effect, &rt, &mut env).await;
             }
             Either4::Fourth(Either3::First(event)) => {
                 // The board decided this is worth announcing; publish it
@@ -2488,13 +2502,13 @@ where
                         emitter.push(frame)
                     });
                 emitter.flush(&mut ReplySink::host(&arbitration, &rt)).await;
-                apply_effect(&session, effect, &rt, &mut env).await;
+                apply_effect(session, effect, &rt, &mut env).await;
             }
         }
         // Any of the arms may have moved the device-domain tables
         // (property mutation, CMD_RST, CMD_RESTORE); one u32
         // compare when they did not.
-        sync_dev_domain(&session, &mut dev_domain_synced, &mut env);
+        sync_dev_domain(session, &mut dev_domain_synced, &mut env);
         // The board's own store keeps the device lists as they change.
         // One it could not take is offered again after the next event.
         if let Some(len) = session.lists_to_keep(snapshot_buf)
@@ -2512,7 +2526,7 @@ where
         crate::radio_mux::MUX_MODE.set_backhaul(session.backhaul());
         // The host key moves on a host's write, a host replacement, and a
         // reset off the mesh alike; one compare covers them all.
-        sync_hosted(&session, &mut hosted_synced, &mut env);
+        sync_hosted(session, &mut hosted_synced, &mut env);
         // Session state was discarded under a host that did not ask for
         // it; tell it, so it can re-establish whatever it was holding
         // there. Drained here rather than at the discard because a

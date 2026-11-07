@@ -31,9 +31,9 @@ impl UserPreferences {
 
     pub const fn encode(self) -> u8 {
         MAGIC
-            | (self.asleep as u8) * ASLEEP
-            | (self.silent as u8) * SILENT
-            | (self.battery_critical as u8) * BATTERY_CRITICAL
+            | ((self.asleep as u8) * ASLEEP)
+            | ((self.silent as u8) * SILENT)
+            | ((self.battery_critical as u8) * BATTERY_CRITICAL)
     }
 
     pub const fn decode(value: u8) -> Self {

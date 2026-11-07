@@ -2904,7 +2904,7 @@ impl MobileUlcpSession {
                     state.reread(prop::HOST_RX_QUEUE_COUNT);
                 } else {
                     let status_code = reported_status(&response.value);
-                    if status_code == u32::from(umsh_ulcp::Status::OK.0) {
+                    if status_code == umsh_ulcp::Status::OK.0 {
                         // A completed drain leaves the queue empty by
                         // definition; the cached count is patched rather
                         // than re-read, like every other table mutation.
@@ -6826,10 +6826,10 @@ fn validate_device_settings(
     }
     if let Some(repeater) = &configuration.repeater {
         let regions = encode_region_list(&repeater.regions)?;
-        if let Some(default_region) = &repeater.default_region {
-            if default_region.len() != items::REGION_CODE_LEN {
-                return Err(MobileError::InvalidUlcpFrame);
-            }
+        if let Some(default_region) = &repeater.default_region
+            && default_region.len() != items::REGION_CODE_LEN
+        {
+            return Err(MobileError::InvalidUlcpFrame);
         }
         // Enabling last means the forwarding policy is already whole by
         // the time the device starts acting on it. The device does not
@@ -6969,14 +6969,13 @@ fn validate_radio_settings(
     if settings.frequency_khz == 0 {
         return Err(MobileError::InvalidUlcpFrame);
     }
-    if let Some(name) = &settings.device_name {
-        if !capabilities.device_name
+    if let Some(name) = &settings.device_name
+        && (!capabilities.device_name
             || name.is_empty()
             || name.len() > 64
-            || name.as_bytes().contains(&0)
-        {
-            return Err(MobileError::InvalidUlcpFrame);
-        }
+            || name.as_bytes().contains(&0))
+    {
+        return Err(MobileError::InvalidUlcpFrame);
     }
     let lora = (
         settings.bandwidth_hz,
@@ -7219,13 +7218,17 @@ fn decode_ipv4_config(value: &[u8]) -> Result<UlcpIpConfigRecord, MobileError> {
     let carries_address = matches!(config.method, ip::Method::Static);
     Ok(UlcpIpConfigRecord {
         method: config.method.code(),
-        address: carries_address
-            .then(|| config.address.to_vec())
-            .unwrap_or_default(),
+        address: if carries_address {
+            config.address.to_vec()
+        } else {
+            Vec::new()
+        },
         prefix: config.prefix,
-        gateway: carries_address
-            .then(|| config.gateway.to_vec())
-            .unwrap_or_default(),
+        gateway: if carries_address {
+            config.gateway.to_vec()
+        } else {
+            Vec::new()
+        },
     })
 }
 
@@ -7234,13 +7237,17 @@ fn decode_ipv6_config(value: &[u8]) -> Result<UlcpIpConfigRecord, MobileError> {
     let carries_address = matches!(config.method, ip::Method::Static);
     Ok(UlcpIpConfigRecord {
         method: config.method.code(),
-        address: carries_address
-            .then(|| config.address.to_vec())
-            .unwrap_or_default(),
+        address: if carries_address {
+            config.address.to_vec()
+        } else {
+            Vec::new()
+        },
         prefix: config.prefix,
-        gateway: carries_address
-            .then(|| config.gateway.to_vec())
-            .unwrap_or_default(),
+        gateway: if carries_address {
+            config.gateway.to_vec()
+        } else {
+            Vec::new()
+        },
     })
 }
 
@@ -12150,7 +12157,7 @@ mod tests {
         };
         // The same presence rule as the whole-domain write.
         assert_eq!(
-            session.configure_positioning(Some(whole.clone()), None, None),
+            session.configure_positioning(Some(whole), None, None),
             Err(MobileError::InvalidUlcpFrame)
         );
         assert_eq!(

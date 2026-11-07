@@ -238,6 +238,12 @@ impl<M: RawMutex, const RX: usize, const TX: usize> Channels<M, RX, TX> {
     }
 }
 
+impl<M: RawMutex, const RX: usize, const TX: usize> Default for Channels<M, RX, TX> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // ─── LoraphyRadio ────────────────────────────────────────────────────────────
 
 /// Implements `umsh_hal::Radio` over the shared [`Channels`].

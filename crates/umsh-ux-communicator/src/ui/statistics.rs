@@ -96,7 +96,7 @@ fn grouped(count: u32) -> Value {
     _ = core::fmt::write(&mut digits, format_args!("{count}"));
     let mut text = Value::new();
     for (i, digit) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i) % 3 == 0 {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
             _ = text.push(',');
         }
         _ = text.push(digit);

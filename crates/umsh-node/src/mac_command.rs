@@ -1048,7 +1048,7 @@ impl PeerRepeaterEntry<'_> {
             )?;
         }
         if !self.regions.is_empty() {
-            if self.regions.len() % 2 != 0 {
+            if !self.regions.len().is_multiple_of(2) {
                 return Err(AppEncodeError::InvalidField);
             }
             put_option(

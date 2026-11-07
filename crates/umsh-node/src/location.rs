@@ -95,11 +95,11 @@ impl NodeLocation {
         let (lat_idx, lon_idx) = encode_indices(lat, lon, precision as u32);
 
         let mut bytes = [0u8; MAX_PRECISION as usize];
-        for k in 0..precision as usize {
+        for (k, byte) in bytes.iter_mut().enumerate().take(precision as usize) {
             let shift = 4 * (precision as usize - 1 - k);
             let hi = ((lat_idx >> shift) & 0xF) as u8;
             let lo = ((lon_idx >> shift) & 0xF) as u8;
-            bytes[k] = (hi << 4) | lo;
+            *byte = (hi << 4) | lo;
         }
         Self {
             len: precision,
@@ -146,11 +146,11 @@ impl NodeLocation {
         let lon_idx = (((lon + LON_SPAN_E7 / 2) * cells) / LON_SPAN_E7).min(i64::from(max_index));
 
         let mut bytes = [0u8; MAX_PRECISION as usize];
-        for k in 0..precision as usize {
+        for (k, byte) in bytes.iter_mut().enumerate().take(precision as usize) {
             let shift = 4 * (precision as usize - 1 - k);
             let hi = ((lat_idx >> shift) & 0xF) as u8;
             let lo = ((lon_idx >> shift) & 0xF) as u8;
-            bytes[k] = (hi << 4) | lo;
+            *byte = (hi << 4) | lo;
         }
         Self {
             len: precision,
@@ -164,6 +164,10 @@ impl NodeLocation {
     }
 
     /// Number of encoded bytes (0 if unspecified).
+    #[allow(
+        clippy::len_without_is_empty,
+        reason = "`is_unspecified` asks that question in this type's terms"
+    )]
     pub fn len(&self) -> usize {
         self.len as usize
     }

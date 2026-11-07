@@ -1053,6 +1053,10 @@ struct InboundFrame {
 }
 
 #[derive(Clone)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "short-lived; crosses one channel on its way to the app"
+)]
 enum MobileChatWorkerEvent {
     Mutation(MobileChatMutationRecord),
     SenderResolution(MobileChatSenderResolutionRecord),
@@ -3567,6 +3571,10 @@ async fn service_management<M: MacBackend>(
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the worker owns one end of each channel; a struct would only be unpacked here"
+)]
 async fn run_worker(
     identity: SoftwareIdentity,
     counter_store: SharedCounterStore,
@@ -6965,7 +6973,8 @@ mod tests {
                     })
                     .unwrap();
                 }
-                for event in bob.poll_update().advertisement_events {
+                let events = bob.poll_update().advertisement_events;
+                if let Some(event) = events.into_iter().next() {
                     received.push(
                         crate::decode_node_identity(event.peer_address, event.payload).unwrap(),
                     );

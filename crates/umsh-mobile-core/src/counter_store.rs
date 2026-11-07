@@ -121,13 +121,13 @@ impl MobileCounterStore {
                 .map_err(|_| CounterStoreError::IoFailure)?;
             file.write_all(&record)
                 .map_err(|_| CounterStoreError::IoFailure)?;
-            fail_at(failpoint, CommitStage::AfterWrite)?;
+            fail_at(failpoint, CommitStage::Written)?;
             file.sync_all().map_err(|_| CounterStoreError::IoFailure)?;
-            fail_at(failpoint, CommitStage::AfterFileSync)?;
+            fail_at(failpoint, CommitStage::FileSynced)?;
             drop(file);
 
             fs::rename(&temporary, &destination).map_err(|_| CounterStoreError::IoFailure)?;
-            fail_at(failpoint, CommitStage::AfterRename)?;
+            fail_at(failpoint, CommitStage::Renamed)?;
             File::open(&self.root)
                 .and_then(|directory| directory.sync_all())
                 .map_err(|_| CounterStoreError::IoFailure)?;
@@ -218,9 +218,9 @@ fn checksum(bytes: &[u8]) -> u32 {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CommitStage {
-    AfterWrite,
-    AfterFileSync,
-    AfterRename,
+    Written,
+    FileSynced,
+    Renamed,
 }
 
 fn fail_at(requested: Option<CommitStage>, current: CommitStage) -> Result<(), CounterStoreError> {
@@ -253,7 +253,7 @@ mod tests {
 
     #[test]
     fn failures_before_rename_preserve_previous_boundary() {
-        for stage in [CommitStage::AfterWrite, CommitStage::AfterFileSync] {
+        for stage in [CommitStage::Written, CommitStage::FileSynced] {
             let (_directory, store) = store();
             store.commit_boundary(b"primary".to_vec(), 128).unwrap();
             assert_eq!(
@@ -269,7 +269,7 @@ mod tests {
         let (directory, store) = store();
         store.commit_boundary(b"primary".to_vec(), 128).unwrap();
         assert_eq!(
-            store.commit_boundary_unlocked(b"primary", 256, Some(CommitStage::AfterRename)),
+            store.commit_boundary_unlocked(b"primary", 256, Some(CommitStage::Renamed)),
             Err(CounterStoreError::IoFailure)
         );
 

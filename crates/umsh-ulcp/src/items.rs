@@ -204,7 +204,7 @@ pub fn fixed_items<const N: usize>(
     value: &[u8],
 ) -> Result<impl ExactSizeIterator<Item = &[u8; N]> + Clone, ItemError> {
     const { assert!(N > 0) };
-    if value.len() % N != 0 {
+    if !value.len().is_multiple_of(N) {
         return Err(ItemError::BadLength);
     }
     Ok(value

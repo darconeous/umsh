@@ -1259,82 +1259,6 @@ fn env_sensors(set: &PropSet, _ctx: &Context) -> Vec<Line> {
     env
 }
 
-#[cfg(test)]
-mod temperature_tests {
-    use super::*;
-
-    #[test]
-    fn temperature_labels_growth_unknown_and_bad_metadata() {
-        let mut set = PropSet::new();
-        set.insert(prop::TEMPERATURES, Ok(vec![0xa5, 0x0b, 0xff, 0xff]));
-        set.insert(
-            prop::TEMPERATURE_NAMES,
-            Ok(b"\x03Die\x03Die\x03New".to_vec()),
-        );
-        assert_eq!(
-            render_temperatures(&set),
-            [
-                ("0: Die".into(), "25.0 °C (298.1 K)".into()),
-                ("1: Die".into(), "unavailable".into()),
-                ("2: New".into(), "not read".into()),
-            ]
-        );
-        for value in [
-            Ok(b"\x03Die".to_vec()),
-            Ok(vec![0]),
-            Err(Status::PROP_NOT_FOUND),
-        ] {
-            set.insert(prop::TEMPERATURE_NAMES, value);
-            let lines = render_temperatures(&set);
-            assert_eq!(lines[0].0, "sensor names");
-            assert_eq!(
-                lines[1],
-                ("0: Temperature 1".into(), "25.0 °C (298.1 K)".into())
-            );
-            assert_eq!(lines[2].1, "unavailable");
-        }
-        set.insert(prop::TEMPERATURES, Ok(vec![0]));
-        assert_eq!(
-            render_temperatures(&set).last().unwrap().1,
-            "invalid reading"
-        );
-        set.insert(prop::TEMPERATURES, Ok(vec![]));
-        set.insert(prop::TEMPERATURE_NAMES, Ok(vec![]));
-        assert_eq!(
-            render_temperatures(&set),
-            [("temperatures".into(), "no sensors".into())]
-        );
-    }
-
-    #[test]
-    fn temperature_only_topic_and_shell_output() {
-        let ctx = Context {
-            caps: vec![cap::TEMPERATURE],
-            remote: false,
-            expect_host_key: None,
-            dev_version: String::new(),
-            dev_model: None,
-        };
-        let sensors = topic("sensors").unwrap();
-        assert!((sensors.gate)(&ctx));
-        assert_eq!(
-            (sensors.keys)(&ctx),
-            [prop::TEMPERATURES, prop::TEMPERATURE_NAMES]
-        );
-        let mut set = PropSet::new();
-        set.insert(prop::TEMPERATURES, Ok(vec![0xff, 0xff]));
-        assert!(
-            env_sensors(&set, &ctx)
-                .contains(&("TEMPERATURE_0_DECIKELVIN".into(), "unknown".into()))
-        );
-        assert!(
-            !render_sensors(&set, &ctx)
-                .iter()
-                .any(|(label, _)| label == "illuminance")
-        );
-    }
-}
-
 // ─── host ────────────────────────────────────────────────────────────
 
 fn host_keys(ctx: &Context) -> Vec<u32> {
@@ -1511,4 +1435,80 @@ pub fn refusals(set: &PropSet, keys: &[u32]) -> Vec<(u32, Status)> {
         .filter_map(|&key| set.refusal(key).map(|status| (key, status)))
         .filter(|(_, status)| !matches!(*status, Status::UNIMPLEMENTED | Status::PROP_NOT_FOUND))
         .collect()
+}
+
+#[cfg(test)]
+mod temperature_tests {
+    use super::*;
+
+    #[test]
+    fn temperature_labels_growth_unknown_and_bad_metadata() {
+        let mut set = PropSet::new();
+        set.insert(prop::TEMPERATURES, Ok(vec![0xa5, 0x0b, 0xff, 0xff]));
+        set.insert(
+            prop::TEMPERATURE_NAMES,
+            Ok(b"\x03Die\x03Die\x03New".to_vec()),
+        );
+        assert_eq!(
+            render_temperatures(&set),
+            [
+                ("0: Die".into(), "25.0 °C (298.1 K)".into()),
+                ("1: Die".into(), "unavailable".into()),
+                ("2: New".into(), "not read".into()),
+            ]
+        );
+        for value in [
+            Ok(b"\x03Die".to_vec()),
+            Ok(vec![0]),
+            Err(Status::PROP_NOT_FOUND),
+        ] {
+            set.insert(prop::TEMPERATURE_NAMES, value);
+            let lines = render_temperatures(&set);
+            assert_eq!(lines[0].0, "sensor names");
+            assert_eq!(
+                lines[1],
+                ("0: Temperature 1".into(), "25.0 °C (298.1 K)".into())
+            );
+            assert_eq!(lines[2].1, "unavailable");
+        }
+        set.insert(prop::TEMPERATURES, Ok(vec![0]));
+        assert_eq!(
+            render_temperatures(&set).last().unwrap().1,
+            "invalid reading"
+        );
+        set.insert(prop::TEMPERATURES, Ok(vec![]));
+        set.insert(prop::TEMPERATURE_NAMES, Ok(vec![]));
+        assert_eq!(
+            render_temperatures(&set),
+            [("temperatures".into(), "no sensors".into())]
+        );
+    }
+
+    #[test]
+    fn temperature_only_topic_and_shell_output() {
+        let ctx = Context {
+            caps: vec![cap::TEMPERATURE],
+            remote: false,
+            expect_host_key: None,
+            dev_version: String::new(),
+            dev_model: None,
+        };
+        let sensors = topic("sensors").unwrap();
+        assert!((sensors.gate)(&ctx));
+        assert_eq!(
+            (sensors.keys)(&ctx),
+            [prop::TEMPERATURES, prop::TEMPERATURE_NAMES]
+        );
+        let mut set = PropSet::new();
+        set.insert(prop::TEMPERATURES, Ok(vec![0xff, 0xff]));
+        assert!(
+            env_sensors(&set, &ctx)
+                .contains(&("TEMPERATURE_0_DECIKELVIN".into(), "unknown".into()))
+        );
+        assert!(
+            !render_sensors(&set, &ctx)
+                .iter()
+                .any(|(label, _)| label == "illuminance")
+        );
+    }
 }

@@ -252,7 +252,7 @@ fn flush_walks_every_page_with_the_column_offset() {
             "page {page} address run"
         );
         for data in &writes[page * transactions_per_page + 1..(page + 1) * transactions_per_page] {
-            assert!(data.len() + 1 <= 32, "write needs FIFO refills");
+            assert!(data.len() < 32, "write needs FIFO refills");
             assert_eq!(data[0], CTRL_DATA);
         }
     }
@@ -331,7 +331,7 @@ fn drawing_off_clears_only_that_pixel() {
     Pixel(Point::new(0, 3), BinaryColor::Off)
         .draw(&mut fb)
         .unwrap();
-    assert_eq!(fb.0[0], 0xFF & !(1 << 3));
+    assert_eq!(fb.0[0], !(1 << 3));
 }
 
 #[test]

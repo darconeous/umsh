@@ -33,7 +33,7 @@ use crate::{
         RouteOffer,
     },
     route_score::{Hop, path_score},
-    rx_windows::{NeedsRestore, RxWindow, RxWindows},
+    rx_windows::{RxWindow, RxWindows},
     send::{
         CompletionSignal, PendingAck, PendingAckError, QueuedTx, ResendRecord, RxBaselineAdoption,
         SendOptions, SendReceipt, SignatureStatus, TxPriority, TxQueue,
@@ -272,6 +272,10 @@ pub struct LocalIdentityId(pub u8);
 ///
 /// Use [`LocalIdentity::public_key`] or [`LocalIdentity::hint`] to inspect the address
 /// presented to the network without matching on the variant.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "no allocator here; identities live in fixed slots"
+)]
 pub enum LocalIdentity<I: NodeIdentity> {
     /// Long-term platform identity.
     LongTerm(I),
@@ -1638,10 +1642,10 @@ impl<
     /// ([`Self::prepare_rx_window`]), so that is the exception.
     fn judging_rx_window(&mut self, peer_id: PeerId, now_ms: u64) -> Option<&mut RxWindow> {
         let key = self.peer_registry.get(peer_id)?.public_key;
-        match self.rx_windows.window_for_judging(&key, now_ms) {
-            Ok(entry) => entry,
-            Err(NeedsRestore(_)) => None,
-        }
+        self.rx_windows
+            .window_for_judging(&key, now_ms)
+            .ok()
+            .flatten()
     }
 
     #[cfg(feature = "software-crypto")]
@@ -2137,6 +2141,10 @@ impl<
 
     /// `retransmission`: the frame acknowledged is a copy of one already
     /// acknowledged, so the earlier ack did not arrive.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "each comes from a different part of the frame being acknowledged"
+    )]
     fn queue_routed_mac_ack(
         &mut self,
         from: LocalIdentityId,
@@ -3861,7 +3869,7 @@ impl<
             let channel_candidates: Vec<(ChannelKey, DerivedChannelKeys), CHANNELS> = self
                 .channels
                 .lookup_by_id(&channel_id)
-                .map(|channel| (channel.channel_key.clone(), channel.derived.clone()))
+                .map(|channel| (channel.channel_key, channel.derived.clone()))
                 .collect();
             if channel_candidates.is_empty() {
                 false
@@ -4504,25 +4512,25 @@ impl<
                     if let crate::AckState::AwaitingForward {
                         confirm_deadline_ms,
                     } = pending.state
+                        && now_ms >= confirm_deadline_ms
+                        && pending.retries < pending.max_retries
                     {
-                        if now_ms >= confirm_deadline_ms && pending.retries < pending.max_retries {
-                            pending.retries = pending.retries.saturating_add(1);
-                            let backoff_cap_ms = t_frame_ms;
-                            let backoff_ms = if backoff_cap_ms == 0 {
-                                0
-                            } else {
-                                u64::from(self.rng.random_range(..backoff_cap_ms.saturating_add(1)))
-                            };
-                            let not_before_ms = now_ms.saturating_add(backoff_ms);
-                            pending.state = crate::AckState::RetryQueued;
-                            actions
-                                .push(Action::Retry {
-                                    receipt: *receipt,
-                                    resend: pending.resend.clone(),
-                                    not_before_ms,
-                                })
-                                .map_err(|_| CapacityError)?;
-                        }
+                        pending.retries = pending.retries.saturating_add(1);
+                        let backoff_cap_ms = t_frame_ms;
+                        let backoff_ms = if backoff_cap_ms == 0 {
+                            0
+                        } else {
+                            u64::from(self.rng.random_range(..backoff_cap_ms.saturating_add(1)))
+                        };
+                        let not_before_ms = now_ms.saturating_add(backoff_ms);
+                        pending.state = crate::AckState::RetryQueued;
+                        actions
+                            .push(Action::Retry {
+                                receipt: *receipt,
+                                resend: pending.resend.clone(),
+                                not_before_ms,
+                            })
+                            .map_err(|_| CapacityError)?;
                     }
                 }
                 actions
@@ -4666,10 +4674,11 @@ impl<
         });
 
         // Clear the post-tx listen if it was tracking this receipt.
-        if let Some(listen) = &self.post_tx_listen {
-            if listen.identity_id == identity_id && listen.receipt == receipt {
-                self.post_tx_listen = None;
-            }
+        if let Some(listen) = &self.post_tx_listen
+            && listen.identity_id == identity_id
+            && listen.receipt == receipt
+        {
+            self.post_tx_listen = None;
         }
 
         removed
@@ -4719,14 +4728,13 @@ impl<
         if policy.require_full_source && !options.full_source {
             return Err(SendError::PolicyViolation);
         }
-        if let Some(max_flood_hops) = policy.max_flood_hops {
-            if options
+        if let Some(max_flood_hops) = policy.max_flood_hops
+            && options
                 .flood_hops
                 .map(|hops| hops > max_flood_hops)
                 .unwrap_or(false)
-            {
-                return Err(SendError::PolicyViolation);
-            }
+        {
+            return Err(SendError::PolicyViolation);
         }
 
         Ok(())
@@ -5037,9 +5045,7 @@ impl<
             return (!route.is_empty()).then(|| route.clone());
         }
 
-        let Some(peer) = self.peer_registry.get(peer_id) else {
-            return None;
-        };
+        let peer = self.peer_registry.get(peer_id)?;
         match peer.route.as_ref() {
             Some(CachedRoute::Source(route)) => Some(route.clone()),
             _ => None,
@@ -5857,16 +5863,15 @@ impl<
             .send_response(local_id, &peer_key, carriage, payload.as_slice(), &options)
             .await
             .is_ok()
+            && let Some(slot) = self.identity_mut(local_id)
         {
-            if let Some(slot) = self.identity_mut(local_id) {
-                let _ = slot.pending_counter_resync_mut().insert(
-                    peer_id,
-                    PendingCounterResync {
-                        nonce,
-                        requested_ms: now_ms,
-                    },
-                );
-            }
+            let _ = slot.pending_counter_resync_mut().insert(
+                peer_id,
+                PendingCounterResync {
+                    nonce,
+                    requested_ms: now_ms,
+                },
+            );
         }
     }
 
@@ -7013,7 +7018,7 @@ impl<
             .as_ref()
             .and_then(|range| frame.get(range.clone()))
             .unwrap_or(&[]);
-        if source_route_bytes.len() % 2 != 0 {
+        if !source_route_bytes.len().is_multiple_of(2) {
             return None;
         }
 
@@ -7092,12 +7097,7 @@ impl<
                     }
                     saw_region_code = true;
                     let region_code = [value[0], value[1]];
-                    if self
-                        .repeater
-                        .regions
-                        .iter()
-                        .any(|configured| *configured == region_code)
-                    {
+                    if self.repeater.regions.contains(&region_code) {
                         matched_region_code = true;
                     }
                 }
@@ -7318,15 +7318,14 @@ impl<
                     }
                     seen_singletons |= bit;
                 }
-                if !inserted_region {
-                    if let Some(region_code) = plan.insert_region_code {
-                        if number > OptionNumber::RegionCode.as_u16() {
-                            encoder
-                                .put(OptionNumber::RegionCode.as_u16(), &region_code)
-                                .map_err(|_| CapacityError)?;
-                            inserted_region = true;
-                        }
-                    }
+                if !inserted_region
+                    && let Some(region_code) = plan.insert_region_code
+                    && number > OptionNumber::RegionCode.as_u16()
+                {
+                    encoder
+                        .put(OptionNumber::RegionCode.as_u16(), &region_code)
+                        .map_err(|_| CapacityError)?;
+                    inserted_region = true;
                 }
                 if !inserted_station
                     && matches!(plan.station_action, ForwardStationAction::Replace)
@@ -7419,12 +7418,12 @@ impl<
                 )
                 .map_err(|_| CapacityError)?;
         }
-        if let Some(region_code) = plan.insert_region_code {
-            if !inserted_region {
-                encoder
-                    .put(OptionNumber::RegionCode.as_u16(), &region_code)
-                    .map_err(|_| CapacityError)?;
-            }
+        if let Some(region_code) = plan.insert_region_code
+            && !inserted_region
+        {
+            encoder
+                .put(OptionNumber::RegionCode.as_u16(), &region_code)
+                .map_err(|_| CapacityError)?;
         }
         Ok(encoder.finish())
     }

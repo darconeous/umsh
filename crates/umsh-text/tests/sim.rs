@@ -278,7 +278,7 @@ impl Sim {
         let now = self.now;
 
         // Platform tick cadence.
-        if now % TICK_INTERVAL_MS == 0 {
+        if now.is_multiple_of(TICK_INTERVAL_MS) {
             for index in 0..self.nodes.len() {
                 self.nodes[index].engine.tick(now);
                 self.process_outputs(index);

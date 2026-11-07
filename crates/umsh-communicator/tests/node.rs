@@ -2228,7 +2228,7 @@ fn said_on_public(
     let member = PublicKey([from; 32]);
     let payload = composed(member, public, "Robin", text);
     node.arrive(Arrival::Text(received(&public, member, &payload)));
-    let Some(NodeEvent::Arrived { chat, message }) = events(&node)
+    let Some(NodeEvent::Arrived { chat, message }) = events(node)
         .into_iter()
         .find(|event| matches!(event, NodeEvent::Arrived { .. }))
     else {

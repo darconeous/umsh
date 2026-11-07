@@ -173,10 +173,10 @@ impl mesh::RadioErrand for Errand {
 /// Take the attachment over as this tool's radio, run `op` against
 /// `target`, and hand the attachment back.
 pub async fn run(app: &mut App, target: KeyArg, op: Operation) -> Result<()> {
-    if let Operation::Manage(ManageOp::Dfu { mode, yes }) = &op {
-        if !super::lifecycle::confirm_dfu(app.interactive, *yes, &address(&target.0), *mode)? {
-            return Ok(());
-        }
+    if let Operation::Manage(ManageOp::Dfu { mode, yes }) = &op
+        && !super::lifecycle::confirm_dfu(app.interactive, *yes, &address(&target.0), *mode)?
+    {
+        return Ok(());
     }
     // Ask before borrowing the radio: a cancelled wipe should not have
     // cost an attach, and this is the last point where the terminal is

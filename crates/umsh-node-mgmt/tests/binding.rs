@@ -238,7 +238,7 @@ impl<const PAYLOAD: usize> Device<PAYLOAD> {
                     let mut sample = Sample::default();
                     sample.snapshot = Ok(umsh_ulcp::BatteryStatus::default());
                     let mut config = umsh_ulcp::battery_gauge_config::Config::default();
-                    config.set(4, self.battery_samples as u32).unwrap();
+                    config.set(4, self.battery_samples).unwrap();
                     sample.gauge_config = Ok(config);
                     let mut telemetry = umsh_ulcp::battery_gauge_telemetry::Telemetry::default();
                     telemetry.raw[11] = self.battery_samples as u16;
@@ -382,7 +382,7 @@ fn converse_lossy<const PAYLOAD: usize>(
         match step {
             Step::Send { len } => {
                 requests += 1;
-                let response = device.deliver(key, &wire[..len].to_vec(), now);
+                let response = device.deliver(key, &wire[..len], now);
                 // The MAC acknowledges whatever reaches the device, whether
                 // or not anything answers it. That completes a reset;
                 // anything else waits out its response deadline.

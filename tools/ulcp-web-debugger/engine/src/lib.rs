@@ -126,6 +126,10 @@ pub enum Transport {
 /// contract and can be reused by other web frontends.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "short-lived; serialized for the browser as soon as it is drained"
+)]
 pub enum Event {
     Trace {
         timestamp_ms: u64,
@@ -939,6 +943,10 @@ const PROPERTY_SPECS: &[PropertySpec] = &[
     ),
 ];
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one row of the property table, kept on one line at each call"
+)]
 const fn spec(
     key: u32,
     group: &'static str,
@@ -1433,19 +1441,20 @@ impl DebuggerEngine {
             }
         };
         let mut refresh_after_command = false;
-        if payload.key == prop::LAST_STATUS && !unsolicited {
-            if let Some(command) = self.pending_commands[tid as usize].take() {
-                let (status, success) = match pui::decode(payload.value) {
-                    Ok((code, _)) => (format!("{:?}", umsh_ulcp::Status(code)), code == 0),
-                    Err(_) => ("MALFORMED STATUS".into(), false),
-                };
-                self.events.push_back(Event::CommandResult {
-                    command: command.name(),
-                    status,
-                    success,
-                });
-                refresh_after_command = success;
-            }
+        if payload.key == prop::LAST_STATUS
+            && !unsolicited
+            && let Some(command) = self.pending_commands[tid as usize].take()
+        {
+            let (status, success) = match pui::decode(payload.value) {
+                Ok((code, _)) => (format!("{:?}", umsh_ulcp::Status(code)), code == 0),
+                Err(_) => ("MALFORMED STATUS".into(), false),
+            };
+            self.events.push_back(Event::CommandResult {
+                command: command.name(),
+                status,
+                success,
+            });
+            refresh_after_command = success;
         }
         if payload.key == prop::LAST_STATUS
             && pending.is_some_and(|pending| pending.key != prop::LAST_STATUS)
@@ -1474,35 +1483,37 @@ impl DebuggerEngine {
             decoded: decode_property(payload.key, payload.value),
             unsolicited,
         });
-        if payload.key == prop::LAST_STATUS && unsolicited && self.attach.announced {
-            if let Ok((code, _)) = pui::decode(payload.value) {
-                let status = umsh_ulcp::Status(code);
-                if status.is_reset() {
-                    let restore_tid = (1..=TID_MAX).find(|tid| {
-                        self.pending_commands[*tid as usize] == Some(CommonCommand::Restore)
+        if payload.key == prop::LAST_STATUS
+            && unsolicited
+            && self.attach.announced
+            && let Ok((code, _)) = pui::decode(payload.value)
+        {
+            let status = umsh_ulcp::Status(code);
+            if status.is_reset() {
+                let restore_tid = (1..=TID_MAX).find(|tid| {
+                    self.pending_commands[*tid as usize] == Some(CommonCommand::Restore)
+                });
+                if self.reset_requested {
+                    self.events.push_back(Event::CommandResult {
+                        command: "reset",
+                        status: format!("{status:?}"),
+                        success: true,
                     });
-                    if self.reset_requested {
-                        self.events.push_back(Event::CommandResult {
-                            command: "reset",
-                            status: format!("{status:?}"),
-                            success: true,
-                        });
-                    } else if status == umsh_ulcp::Status::RESET_RESTORED {
-                        if let Some(tid) = restore_tid {
-                            self.events.push_back(Event::CommandResult {
-                                command: "restore",
-                                status: format!("{status:?}"),
-                                success: true,
-                            });
-                            self.pending[tid as usize] = None;
-                        }
-                    }
-                    self.reset_requested = false;
-                    self.pending.fill(None);
-                    self.pending_commands.fill(None);
-                    self.queued_gets.clear();
-                    refresh_after_command = true;
+                } else if status == umsh_ulcp::Status::RESET_RESTORED
+                    && let Some(tid) = restore_tid
+                {
+                    self.events.push_back(Event::CommandResult {
+                        command: "restore",
+                        status: format!("{status:?}"),
+                        success: true,
+                    });
+                    self.pending[tid as usize] = None;
                 }
+                self.reset_requested = false;
+                self.pending.fill(None);
+                self.pending_commands.fill(None);
+                self.queued_gets.clear();
+                refresh_after_command = true;
             }
         }
         if self.attach.requested {

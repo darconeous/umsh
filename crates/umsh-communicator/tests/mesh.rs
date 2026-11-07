@@ -159,8 +159,10 @@ async fn board(radio: SimulatedRadio, secret: [u8; 32]) -> Board {
 async fn repeater(radio: SimulatedRadio, secret: [u8; 32]) -> PublicKey {
     let identity = SoftwareIdentity::from_secret_bytes(&secret);
     let key = *identity.public_key();
-    let mut config = RepeaterConfig::default();
-    config.enabled = true;
+    let config = RepeaterConfig {
+        enabled: true,
+        ..RepeaterConfig::default()
+    };
     let mac: &'static AsyncRefCell<MeshMac> = Box::leak(Box::new(AsyncRefCell::new(Mac::new(
         radio,
         CryptoEngine::new(SoftwareAes, SoftwareSha256),

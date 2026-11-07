@@ -5214,14 +5214,14 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 nocca: true,
             })
             .ok()?;
-        if let Some((peer_index, identity)) = plan.replay {
-            if let Some(slot) = self.host.peer_keys.entries[peer_index].as_mut() {
-                slot.window.mark_ack_queued(
-                    identity.counter,
-                    &identity.mic[..usize::from(identity.mic_len)],
-                    now_ms,
-                );
-            }
+        if let Some((peer_index, identity)) = plan.replay
+            && let Some(slot) = self.host.peer_keys.entries[peer_index].as_mut()
+        {
+            slot.window.mark_ack_queued(
+                identity.counter,
+                &identity.mic[..usize::from(identity.mic_len)],
+                now_ms,
+            );
         }
         Some(Effect::StartTransmit)
     }
@@ -5234,9 +5234,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         now_ms: u64,
         emit: &mut impl FnMut(&[u8]),
     ) -> Option<Effect> {
-        let Some(pending) = self.session.pending.pop_front() else {
-            return None;
-        };
+        let pending = self.session.pending.pop_front()?;
         match outcome {
             TxOutcome::Sent => {
                 self.config.duty.record(now_ms, pending.airtime_ms);
@@ -10327,11 +10325,10 @@ mod tests {
     /// Drive a multi-property command to completion, serving every
     /// deferred effect the way the driver loop does, and return the
     /// entries of the `CMD_PROP_ARE`.
-    fn multi(
-        session: &mut TestSession,
-        request: &[u8],
-        now_ms: u64,
-    ) -> (u8, Vec<(u32, Vec<u8>)>, Vec<Effect>) {
+    /// A multi-get's status, entries, and the effects it left.
+    type MultiReply = (u8, Vec<(u32, Vec<u8>)>, Vec<Effect>);
+
+    fn multi(session: &mut TestSession, request: &[u8], now_ms: u64) -> MultiReply {
         multi_budgeted(session, request, now_ms, MULTI_MAX)
     }
 
@@ -10340,7 +10337,7 @@ mod tests {
         request: &[u8],
         now_ms: u64,
         reply_budget: usize,
-    ) -> (u8, Vec<(u32, Vec<u8>)>, Vec<Effect>) {
+    ) -> MultiReply {
         let mut emitted = Vec::new();
         let mut served = Vec::new();
         let mut pending =
@@ -11747,11 +11744,8 @@ mod tests {
     #[test]
     fn every_local_toggle_flips_its_own_property() {
         // (start, toggle, property)—each starts at its post-reset value.
-        let cases: [(
-            bool,
-            fn(&mut TestSession, &mut Vec<Vec<u8>>) -> Option<bool>,
-            u32,
-        ); 3] = [
+        type Toggle = fn(&mut TestSession, &mut Vec<Vec<u8>>) -> Option<bool>;
+        let cases: [(bool, Toggle, u32); 3] = [
             (
                 false,
                 |session, emitted| {
@@ -18722,7 +18716,7 @@ mod tests {
         let mut session = test_session();
         let mut buf = [0u8; 64];
         let len = frame::prop_set(&mut buf, 0, prop::DEV_PRIVATE_KEY, &[0x11; 32]).unwrap();
-        let effect = dispatch_tid0_silent(&mut session, &buf[..len].to_vec());
+        let effect = dispatch_tid0_silent(&mut session, &buf[..len]);
         assert_eq!(effect, Some(Effect::ProvisionIdentity { tid: 0 }));
         let public_key = public_of(&[0x11; 32]);
         session.respond_identity(0, Ok(public_key), &mut |_: &[u8]| {
@@ -18753,14 +18747,14 @@ mod tests {
         // NOP, empty drain, save, and clear: silent success, recorded
         // in PROP_LAST_STATUS only.
         let len = frame::nop(&mut buf, 0).unwrap();
-        assert!(dispatch_tid0_silent(&mut session, &buf[..len].to_vec()).is_none());
+        assert!(dispatch_tid0_silent(&mut session, &buf[..len]).is_none());
         assert_eq!(last_status_of(&mut session), Status::OK.0);
 
         let len = frame::queue_drain(&mut buf, 0).unwrap();
-        assert!(dispatch_tid0_silent(&mut session, &buf[..len].to_vec()).is_none());
+        assert!(dispatch_tid0_silent(&mut session, &buf[..len]).is_none());
 
         let len = frame::save(&mut buf, 0).unwrap();
-        let effect = dispatch_tid0_silent(&mut session, &buf[..len].to_vec());
+        let effect = dispatch_tid0_silent(&mut session, &buf[..len]);
         assert_eq!(effect, Some(Effect::SaveSnapshot { tid: 0 }));
         session.respond_save(0, Ok(()), &mut |_: &[u8]| {
             panic!("tid-0 save must be silent")
@@ -18769,7 +18763,7 @@ mod tests {
 
         // A TID-zero failure is recorded silently.
         let len = frame::clear(&mut buf, 0).unwrap();
-        let effect = dispatch_tid0_silent(&mut session, &buf[..len].to_vec());
+        let effect = dispatch_tid0_silent(&mut session, &buf[..len]);
         assert_eq!(effect, Some(Effect::ClearSaved { tid: 0 }));
         session.respond_clear(0, Err(()), &mut |_: &[u8]| {
             panic!("tid-0 clear must be silent")
@@ -18784,24 +18778,24 @@ mod tests {
         // TID-zero SET and INSERT mutate state without a correlated
         // response.
         let len = frame::prop_set(&mut buf, 0, prop::PHY_DUTY_LIMIT, &99u16.to_le_bytes()).unwrap();
-        assert!(dispatch_tid0_silent(&mut session, &buf[..len].to_vec()).is_none());
+        assert!(dispatch_tid0_silent(&mut session, &buf[..len]).is_none());
         assert_eq!(get(&mut session, prop::PHY_DUTY_LIMIT), 99u16.to_le_bytes());
 
         let item = [items::FILTER_PKT_TYPE, 0];
         let len = frame::prop_insert(&mut buf, 0, prop::HOST_RX_FILTERS, &item).unwrap();
-        assert!(dispatch_tid0_silent(&mut session, &buf[..len].to_vec()).is_none());
+        assert!(dispatch_tid0_silent(&mut session, &buf[..len]).is_none());
         assert_eq!(
             get(&mut session, prop::HOST_RX_FILTERS),
             [2, items::FILTER_PKT_TYPE, 0]
         );
 
         let len = frame::prop_remove(&mut buf, 0, prop::HOST_RX_FILTERS, &item).unwrap();
-        assert!(dispatch_tid0_silent(&mut session, &buf[..len].to_vec()).is_none());
+        assert!(dispatch_tid0_silent(&mut session, &buf[..len]).is_none());
         assert!(get(&mut session, prop::HOST_RX_FILTERS).is_empty());
 
         // TID-zero GET expects no response either.
         let len = frame::prop_get(&mut buf, 0, prop::PHY_MTU).unwrap();
-        assert!(dispatch_tid0_silent(&mut session, &buf[..len].to_vec()).is_none());
+        assert!(dispatch_tid0_silent(&mut session, &buf[..len]).is_none());
     }
 
     #[test]

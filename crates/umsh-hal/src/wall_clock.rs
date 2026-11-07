@@ -270,11 +270,7 @@ impl WallClockState {
         match previous {
             None => Update::Set,
             Some(previous) => {
-                let delta = if epoch > previous {
-                    epoch - previous
-                } else {
-                    previous - epoch
-                };
+                let delta = epoch.abs_diff(previous);
                 if delta >= NOTABLE_STEP_SECS {
                     Update::Stepped { previous }
                 } else {
@@ -319,11 +315,7 @@ impl WallClockState {
         {
             return Update::Refused;
         }
-        let delta = if epoch > previous {
-            epoch - previous
-        } else {
-            previous - epoch
-        };
+        let delta = epoch.abs_diff(previous);
         if delta < RTC_CORRECTION_SECS {
             return Update::Unchanged;
         }

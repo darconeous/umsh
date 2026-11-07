@@ -1374,6 +1374,7 @@ pub struct PingReply {
 
 /// Where the latest ping to a saved peer stands.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(clippy::large_enum_variant, reason = "no allocator here")]
 pub enum PingView {
     Waiting,
     NoReply,

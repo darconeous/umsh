@@ -62,6 +62,7 @@ enum Drained {
         payload: Vec<u8>,
     },
     StoreCheckpoint {
+        #[allow(dead_code, reason = "read through `Debug` when an assertion fails")]
         conversation: ConversationKey,
         next_id: u8,
     },
@@ -98,6 +99,7 @@ enum Drained {
         handle: MessageHandle,
         body: String,
         status: CompletionStatus,
+        #[allow(dead_code, reason = "read through `Debug` when an assertion fails")]
         late: bool,
         notify: bool,
     },

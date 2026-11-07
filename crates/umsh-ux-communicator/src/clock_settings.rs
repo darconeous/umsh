@@ -50,6 +50,9 @@ pub enum Part {
     Half,
 }
 
+/// The Set Time page's date, whether a part is being edited, and which.
+type SetTimeFields<'a> = (&'a mut DateParts, &'a mut bool, &'a mut Option<(Part, u16)>);
+
 impl Part {
     pub const ALL: [Self; 6] = [
         Self::Month,
@@ -291,7 +294,7 @@ impl State {
         });
     }
 
-    fn set_time_mut(&mut self) -> Option<(&mut DateParts, &mut bool, &mut Option<(Part, u16)>)> {
+    fn set_time_mut(&mut self) -> Option<SetTimeFields<'_>> {
         match self.screens.last_mut() {
             Some(Screen::Device {
                 page:

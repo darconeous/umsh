@@ -144,7 +144,7 @@ impl UnusedOutput {
 pub const fn encode_rail_mv(millivolts: u16) -> Option<u8> {
     if millivolts < reg::LDO_VOL_MIN_MV
         || millivolts > reg::LDO_VOL_MAX_MV
-        || (millivolts - reg::LDO_VOL_MIN_MV) % reg::LDO_VOL_STEP_MV != 0
+        || !(millivolts - reg::LDO_VOL_MIN_MV).is_multiple_of(reg::LDO_VOL_STEP_MV)
     {
         return None;
     }

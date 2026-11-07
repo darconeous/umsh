@@ -1035,7 +1035,7 @@ fn public_identity_record(key: &PublicKey) -> PublicIdentityRecord {
 
     PublicIdentityRecord {
         canonical_address,
-        hint: render_node_hint_bytes(NodeHint::from_public_key(&key).0),
+        hint: render_node_hint_bytes(NodeHint::from_public_key(key).0),
     }
 }
 

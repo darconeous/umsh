@@ -24,11 +24,12 @@ impl State {
     }
 
     fn complete(&mut self, id: u32, sent: bool) -> bool {
-        if let Some((active, result)) = &mut self.active {
-            if *active == id && result.is_none() {
-                *result = Some(sent);
-                return sent;
-            }
+        if let Some((active, result)) = &mut self.active
+            && *active == id
+            && result.is_none()
+        {
+            *result = Some(sent);
+            return sent;
         }
         false
     }

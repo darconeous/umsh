@@ -665,7 +665,7 @@ mod tests {
                 .map(|tone| tone.frequency_hz)
                 .filter(|frequency| *frequency != 0);
             let first = heard.next().expect("a melody with no notes");
-            (first, heard.last().unwrap_or(first))
+            (first, heard.next_back().unwrap_or(first))
         }
 
         assert!(
@@ -739,10 +739,10 @@ mod tests {
     #[test]
     fn toggle_silenced_returns_new_state() {
         let mut e = BuzzerEngine::new();
-        assert_eq!(e.toggle_silenced(), true);
-        assert_eq!(e.is_silenced(), true);
-        assert_eq!(e.toggle_silenced(), false);
-        assert_eq!(e.is_silenced(), false);
+        assert!(e.toggle_silenced());
+        assert!(e.is_silenced());
+        assert!(!e.toggle_silenced());
+        assert!(!e.is_silenced());
     }
 
     /// Total playing time of one pass of a melody.

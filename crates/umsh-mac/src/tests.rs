@@ -1196,6 +1196,7 @@ fn a_learned_route_can_be_put_back_for_a_registered_peer() {
 fn mac_handle_clones_share_send_queue_state() {
     let mac = umsh_sync::AsyncRefCell::new(make_mac());
     let handle = MacHandle::new(&mac);
+    #[allow(clippy::clone_on_copy, reason = "cloning is what this test is about")]
     let handle_clone = handle.clone();
 
     let (local_id, peer_id, peer_key, receipt) = block_on(async {
@@ -5887,7 +5888,7 @@ fn receive_one_delivers_source_routed_blind_unicast_without_immediate_ack() {
 
     let channel_key = ChannelKey([0x5A; 32]);
     let channel_id = mac.crypto().derive_channel_id(&channel_key);
-    mac.add_channel(channel_key.clone()).unwrap();
+    mac.add_channel(channel_key).unwrap();
     let channel_keys = mac
         .channels()
         .lookup_by_id(&channel_id)
@@ -6142,7 +6143,7 @@ fn receive_one_repeater_forwards_blind_unicast_using_original_encrypted_frame() 
     };
     let channel_key = ChannelKey([0x5A; 32]);
     let channel_id = mac.crypto().derive_channel_id(&channel_key);
-    mac.add_channel(channel_key.clone()).unwrap();
+    mac.add_channel(channel_key).unwrap();
     let channel_keys = mac
         .channels()
         .lookup_by_id(&channel_id)
@@ -6188,7 +6189,7 @@ fn receive_one_delivers_multicast_for_known_channel() {
     let channel_key = ChannelKey([0x5A; 32]);
     let channel_id = mac.crypto().derive_channel_id(&channel_key);
     mac.add_peer(peer_key).unwrap();
-    mac.add_channel(channel_key.clone()).unwrap();
+    mac.add_channel(channel_key).unwrap();
 
     let derived = mac.crypto().derive_channel_keys(&channel_key);
     let keys = PairwiseKeys {
@@ -6236,7 +6237,7 @@ fn receive_one_does_not_answer_an_echo_request_carried_by_multicast() {
     let channel_key = ChannelKey([0x5A; 32]);
     let channel_id = mac.crypto().derive_channel_id(&channel_key);
     mac.add_peer(*remote.public_key()).unwrap();
-    mac.add_channel(channel_key.clone()).unwrap();
+    mac.add_channel(channel_key).unwrap();
 
     let derived = mac.crypto().derive_channel_keys(&channel_key);
     let keys = PairwiseKeys {
@@ -6264,7 +6265,7 @@ fn receive_one_drops_replayed_multicast_after_first_delivery() {
     let channel_key = ChannelKey([0x5A; 32]);
     let channel_id = mac.crypto().derive_channel_id(&channel_key);
     mac.add_peer(peer_key).unwrap();
-    mac.add_channel(channel_key.clone()).unwrap();
+    mac.add_channel(channel_key).unwrap();
 
     let derived = mac.crypto().derive_channel_keys(&channel_key);
     let keys = PairwiseKeys {
@@ -6335,7 +6336,7 @@ fn receive_one_multicast_with_full_registry_still_delivers_unknown_sender() {
     let remote = DummyIdentity::new([0xAB; 32]);
     let channel_key = ChannelKey([0x5A; 32]);
     let channel_id = mac.crypto().derive_channel_id(&channel_key);
-    mac.add_channel(channel_key.clone()).unwrap();
+    mac.add_channel(channel_key).unwrap();
 
     let derived = mac.crypto().derive_channel_keys(&channel_key);
     let keys = PairwiseKeys {
@@ -7163,8 +7164,10 @@ fn explicitly_empty_source_route_is_not_put_on_the_wire() {
     mac.install_pairwise_keys(local_id, peer_id, keys.clone())
         .unwrap();
 
-    let mut options = SendOptions::default();
-    options.source_route = Some(heapless::Vec::new());
+    let options = SendOptions {
+        source_route: Some(heapless::Vec::new()),
+        ..SendOptions::default()
+    };
     let _ = block_on(mac.send_unicast(local_id, &peer_key, b"hi", &options)).unwrap();
 
     let queued = mac.tx_queue_mut().pop_next().expect("queued unicast");
@@ -7570,7 +7573,7 @@ fn receive_one_learns_flood_hops_for_multicast_sender() {
     let peer_id = mac.add_peer(peer_key).unwrap();
     let channel_key = ChannelKey([0x5A; 32]);
     let channel_id = mac.crypto().derive_channel_id(&channel_key);
-    mac.add_channel(channel_key.clone()).unwrap();
+    mac.add_channel(channel_key).unwrap();
 
     let derived = mac.crypto().derive_channel_keys(&channel_key);
     let keys = PairwiseKeys {
@@ -7606,7 +7609,7 @@ fn receive_one_learns_flood_hops_and_regions_for_multicast_sender() {
     let peer_id = mac.add_peer(peer_key).unwrap();
     let channel_key = ChannelKey([0x5A; 32]);
     let channel_id = mac.crypto().derive_channel_id(&channel_key);
-    mac.add_channel(channel_key.clone()).unwrap();
+    mac.add_channel(channel_key).unwrap();
 
     let derived = mac.crypto().derive_channel_keys(&channel_key);
     let keys = PairwiseKeys {
@@ -8105,7 +8108,7 @@ fn receive_one_repeater_adds_ack_guard_to_flood_forward_of_ack_requested_packet(
         };
         let channel_key = ChannelKey([0x5A; 32]);
         let channel_id = mac.crypto().derive_channel_id(&channel_key);
-        mac.add_channel(channel_key.clone()).unwrap();
+        mac.add_channel(channel_key).unwrap();
         let channel_keys = mac
             .channels()
             .lookup_by_id(&channel_id)
@@ -9602,7 +9605,7 @@ fn counters_record_a_forwarded_frame() {
     };
     let channel_key = ChannelKey([0x5A; 32]);
     let channel_id = mac.crypto().derive_channel_id(&channel_key);
-    mac.add_channel(channel_key.clone()).unwrap();
+    mac.add_channel(channel_key).unwrap();
     let channel_keys = mac
         .channels()
         .lookup_by_id(&channel_id)
@@ -10154,25 +10157,23 @@ fn modeled_route_retry_recovers_after_mid_route_break_via_alternate_repeaters() 
         25,
         2400,
         |node_index, identity_id, event| {
-            if node_index == bob {
-                if let Some(packet) = received_of_type(event, PacketType::Unicast) {
-                    if packet.payload_bytes() == b"recover-via-route-retry" {
-                        bob_recovered_delivery.set(bob_recovered_delivery.get() + 1);
-                        if packet.options().route_retry {
-                            route_retry_seen.set(true);
-                        }
-                    }
+            if node_index == bob
+                && let Some(packet) = received_of_type(event, PacketType::Unicast)
+                && packet.payload_bytes() == b"recover-via-route-retry"
+            {
+                bob_recovered_delivery.set(bob_recovered_delivery.get() + 1);
+                if packet.options().route_retry {
+                    route_retry_seen.set(true);
                 }
             }
-            if node_index == alice {
-                if let MacEventRef::AckTimeout {
+            if node_index == alice
+                && let MacEventRef::AckTimeout {
                     receipt: timed_out, ..
                 } = event
-                {
-                    if identity_id == scenario.identity_ids[alice] && *timed_out == receipt {
-                        ack_timeout_seen.set(true);
-                    }
-                }
+                && identity_id == scenario.identity_ids[alice]
+                && *timed_out == receipt
+            {
+                ack_timeout_seen.set(true);
             }
         },
         || {
@@ -11105,10 +11106,10 @@ fn modeled_mixed_packet_classes_coexist_on_the_same_mesh() {
             if node_index != bob {
                 return;
             }
-            if let Some(packet) = received_of_type(event, PacketType::Unicast) {
-                if packet.payload_bytes() == b"mixed-unicast" {
-                    bob_unicast.set(bob_unicast.get() + 1);
-                }
+            if let Some(packet) = received_of_type(event, PacketType::Unicast)
+                && packet.payload_bytes() == b"mixed-unicast"
+            {
+                bob_unicast.set(bob_unicast.get() + 1);
             }
         },
         || {
@@ -11144,10 +11145,10 @@ fn modeled_mixed_packet_classes_coexist_on_the_same_mesh() {
             if node_index != bob {
                 return;
             }
-            if let Some(packet) = received_of_type(event, PacketType::Multicast) {
-                if packet.payload_bytes() == b"mixed-multicast" {
-                    bob_multicast.set(bob_multicast.get() + 1);
-                }
+            if let Some(packet) = received_of_type(event, PacketType::Multicast)
+                && packet.payload_bytes() == b"mixed-multicast"
+            {
+                bob_multicast.set(bob_multicast.get() + 1);
             }
         },
         || bob_multicast.get() == 1,
@@ -11179,10 +11180,10 @@ fn modeled_mixed_packet_classes_coexist_on_the_same_mesh() {
             if node_index != alice {
                 return;
             }
-            if let Some(packet) = received_of_type(event, PacketType::BlindUnicast) {
-                if packet.payload_bytes() == b"mixed-blind" {
-                    alice_blind.set(alice_blind.get() + 1);
-                }
+            if let Some(packet) = received_of_type(event, PacketType::BlindUnicast)
+                && packet.payload_bytes() == b"mixed-blind"
+            {
+                alice_blind.set(alice_blind.get() + 1);
             }
         },
         || {
@@ -13515,6 +13516,10 @@ fn rewrite_forwarded_fixture(frame: &[u8]) -> heapless::Vec<u8, 256> {
     stored
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "test fixture: one knob per frame property"
+)]
 fn build_received_unicast_frame(
     source: &DummyIdentity,
     keys: &PairwiseKeys,
@@ -14030,7 +14035,7 @@ impl DummyRadio {
             .payload(payload)
             .build()
             .unwrap();
-        self.queue_received_frame(&frame);
+        self.queue_received_frame(frame);
     }
 
     fn queue_received_mac_ack(&mut self, ack_trailer: [u8; 8]) {
@@ -14235,6 +14240,10 @@ impl DummyRadio {
         self.queue_received_frame(packet.as_bytes());
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "test fixture: one knob per frame property"
+    )]
     fn queue_received_unicast_with_route(
         &mut self,
         source: &DummyIdentity,
@@ -14264,6 +14273,10 @@ impl DummyRadio {
 
     /// A unicast from `source`; a `trace` is carried hints-only (see
     /// [`encode_trace`]).
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "test fixture: one knob per frame property"
+    )]
     fn queue_received_unicast_with_thresholds(
         &mut self,
         source: &DummyIdentity,
@@ -14473,6 +14486,10 @@ impl DummyRadio {
         self.queue_received_frame(packet.as_bytes());
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "test fixture: one knob per frame property"
+    )]
     fn queue_received_blind_unicast_with_route(
         &mut self,
         source: &DummyIdentity,

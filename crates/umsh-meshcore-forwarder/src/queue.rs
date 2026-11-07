@@ -29,6 +29,10 @@ impl<const N: usize> DelayQueue<N> {
 
     /// Schedule `frame`, or hand it back when the queue is full: new work
     /// is what gets dropped, never work already accepted.
+    #[allow(
+        clippy::result_large_err,
+        reason = "handing the frame back is the contract; no allocator here"
+    )]
     pub fn push(&mut self, due_ms: u64, priority: u8, frame: Frame) -> Result<(), Frame> {
         self.entries
             .push(Scheduled {

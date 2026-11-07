@@ -103,6 +103,10 @@ fn promiscuous_outcome(result: Result<Vec<u8>, UlcpError>) -> Result<()> {
 /// path is a `poll` function, not an `async fn`—which is exactly what
 /// lets the relay poll a receive and a transmit from the same `&mut`
 /// without holding a borrow across an await.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "one value, held for the daemon's whole run"
+)]
 enum Device {
     #[cfg(feature = "serial-radio")]
     Serial(UlcpDevice<umsh::ulcp::SerialFrameLink<tokio_serial::SerialStream>>),

@@ -180,11 +180,11 @@ impl<'a, K, S> Builder<'a, K, S> {
         if self.option_error.is_some() {
             return;
         }
-        if let Some(last) = self.last_option_number {
-            if number < last {
-                self.option_error = Some(BuildError::OptionOutOfOrder);
-                return;
-            }
+        if let Some(last) = self.last_option_number
+            && number < last
+        {
+            self.option_error = Some(BuildError::OptionOutOfOrder);
+            return;
         }
         let mut live = match self.last_option_number {
             Some(last_number) => {

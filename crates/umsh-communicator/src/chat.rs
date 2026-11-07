@@ -779,6 +779,10 @@ impl<S: ChatStore> Chats<S> {
     /// `forward_secret`, as the composer showed it, it goes to the chat's
     /// peer under a session with forward secrecy or not at all; without,
     /// never under one.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "public API; each is a separate input to one send"
+    )]
     pub fn send(
         &mut self,
         chat: model::ChatId,

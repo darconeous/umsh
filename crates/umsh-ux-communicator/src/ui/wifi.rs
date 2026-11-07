@@ -491,7 +491,7 @@ fn state_line(
 ) -> impl View<Rgb565, State> + use<> {
     HStack::new((
         label::<16>(text, &font::SEMIBOLD, m.body, theme::TEXT_SECONDARY),
-        phase.map(|phase| spinner::<State>(phase)),
+        phase.map(spinner::<State>),
         Spacer::default(),
     ))
     .with_spacing(10)
@@ -508,7 +508,7 @@ fn section(
 ) -> impl View<Rgb565, State> + use<> {
     HStack::new((
         label::<16>(text, &font::BOLD, m.small, theme::TEXT_SECONDARY),
-        phase.map(|phase| spinner::<State>(phase)),
+        phase.map(spinner::<State>),
         Spacer::default(),
     ))
     .with_spacing(8)

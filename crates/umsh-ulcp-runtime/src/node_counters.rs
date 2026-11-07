@@ -150,13 +150,11 @@ impl<MC: RawMutex + 'static, MF: RawMutex + 'static, F: JournalFlash + 'static>
         }
         let mut payload = [0u8; ENCODED_MAX];
         let len = counters.map.encode(&mut payload).ok_or(())?;
-        match counters.journal.as_mut() {
-            Some(journal) => journal.persist(&payload[..len]).await?,
-            // No journal mounted (a board built without persistence, or
-            // before the boot-time mount): RAM only. Report success so
-            // the MAC marks the boundary instead of re-flushing every
-            // cycle.
-            None => {}
+        // No journal mounted (a board built without persistence, or before
+        // the boot-time mount): RAM only. Report success so the MAC marks the
+        // boundary instead of re-flushing every cycle.
+        if let Some(journal) = counters.journal.as_mut() {
+            journal.persist(&payload[..len]).await?;
         }
         counters.dirty = false;
         Ok(())

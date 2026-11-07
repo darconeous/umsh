@@ -286,9 +286,9 @@ impl ScanRequest {
 
     /// Decode and validate a `CMD_I2C_SCAN` payload.
     pub fn parse(payload: &[u8]) -> Result<Self, I2cError> {
-        let request = match payload {
-            &[bus] => Self::new(bus),
-            &[bus, first, last] => Self { bus, first, last },
+        let request = match *payload {
+            [bus] => Self::new(bus),
+            [bus, first, last] => Self { bus, first, last },
             _ => return Err(I2cError::Parse),
         };
         if request.first > request.last || request.last > ADDRESS_MAX {
@@ -298,6 +298,10 @@ impl ScanRequest {
     }
 
     /// How many addresses the scan probes, which bounds the reply.
+    #[allow(
+        clippy::len_without_is_empty,
+        reason = "a scan always probes at least one address"
+    )]
     pub const fn len(&self) -> usize {
         self.last as usize - self.first as usize + 1
     }
