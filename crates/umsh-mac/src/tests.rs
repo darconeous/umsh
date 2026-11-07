@@ -14006,6 +14006,9 @@ struct DummyRadio {
     cad_calls: u32,
     /// Transmits still to fail with a radio fault before they succeed.
     tx_faults: u8,
+    /// While set, a transmit never completes: it stays pending until the
+    /// caller drops it, the way a driver's `select!` cancels one.
+    hold_transmit: bool,
     received: heapless::Deque<heapless::Vec<u8, 256>, 16>,
     /// Signal quality reported for every received frame. Defaults to the
     /// zeroes `RxInfo::default` would give, so tests that do not care read
@@ -14613,6 +14616,9 @@ impl Radio for DummyRadio {
         data: &[u8],
         options: TxOptions,
     ) -> Result<(), TxError<Self::Error>> {
+        if self.hold_transmit {
+            core::future::pending::<()>().await;
+        }
         if !matches!(options.cad, umsh_hal::CadPolicy::Skip) {
             self.cad_calls = self.cad_calls.wrapping_add(1);
             if self.cad_responses.pop_front().unwrap_or(false) {

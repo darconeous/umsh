@@ -1141,8 +1141,9 @@ pub struct MacCounters {
     /// Immediate acknowledgements that found no room in the transmit queue.
     pub ack_enqueue_failed: u32,
     /// Tracked sends whose frame left the queue without ever completing a
-    /// transmission—a driver cancelled mid-transmit—and that were retired
-    /// as abandoned instead of holding their slot forever.
+    /// transmission, retired as abandoned instead of holding their slot
+    /// forever. A cancelled transmit keeps its frame queued, so this stays
+    /// at zero unless something else loses one.
     pub tx_orphans_reclaimed: u32,
 }
 
@@ -2748,6 +2749,13 @@ impl<
     /// traffic is eligible. Forwarded sends arm a new listen window after the
     /// radio transmit completes. Non-immediate traffic honors queued CAD backoff
     /// state and gives up after the configured maximum number of CAD attempts.
+    ///
+    /// Cancel-safe: the frame stays queued until the radio has answered, so a
+    /// caller that drops this future mid-transmit (losing a `select!`, say)
+    /// leaves it where it was—same place in line, same retry and duplicate
+    /// bookkeeping—and the next call sends it. If the radio had already put
+    /// it on the air, the second copy is the same sealed bytes, which every
+    /// receiver discards as a duplicate.
     pub async fn transmit_next(
         &mut self,
         on_event: &mut impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
@@ -2755,14 +2763,15 @@ impl<
         self.expire_post_tx_listen_if_needed();
         let now_ms = self.clock.now_ms();
         let queued = if self.post_tx_listen.is_some() {
-            self.tx_queue.pop_ready_immediate_ack(now_ms)
+            self.tx_queue.peek_ready_immediate_ack(now_ms)
         } else {
-            self.tx_queue.pop_ready(now_ms)
+            self.tx_queue.peek_ready(now_ms)
         };
         let Some(queued) = queued else {
             return Ok(None);
         };
 
+        let sequence = queued.sequence;
         let receipt = queued.receipt;
         let identity_id = queued.identity_id;
 
@@ -2781,6 +2790,7 @@ impl<
                 .map(|slot| slot.pending_ack(&receipt).is_none())
                 .unwrap_or(true)
         {
+            let _ = self.tx_queue.take(sequence);
             return Ok(None);
         }
 
@@ -2798,11 +2808,16 @@ impl<
                     .and_then(IdentitySlot::tx_power_dbm)
             }),
         };
-        match self
+        let result = self
             .radio
             .transmit(queued.frame.as_slice(), tx_options)
-            .await
-        {
+            .await;
+        // Nothing else reaches the queue while `self` is borrowed for the
+        // transmit, so the entry is still there.
+        let Some(queued) = self.tx_queue.take(sequence) else {
+            return Ok(None);
+        };
+        match result {
             Ok(()) => {}
             Err(TxError::CadTimeout) => {
                 let next_attempt = queued.cad_attempts.saturating_add(1);
@@ -4544,8 +4559,10 @@ impl<
             /// waiting on the outcome, so the entry just goes away.
             Abandon { receipt: SendReceipt },
             /// A send still marked `Queued` whose frame is no longer in the
-            /// queue: the transmit that popped it was cancelled before it
-            /// completed. No timer covers `Queued`, so it is retired here.
+            /// queue. A cancelled transmit no longer causes this—the frame
+            /// stays queued until the radio answers—but no timer covers
+            /// `Queued`, so whatever else loses a frame, it is retired here
+            /// rather than holding its slot forever.
             Orphaned { receipt: SendReceipt },
         }
 
@@ -4572,9 +4589,9 @@ impl<
 
                 let mut actions: Vec<Action<FRAME>, ACKS> = Vec::new();
                 for (receipt, pending) in slot.pending_acks.iter_mut() {
-                    // The sweep and the transmit path both run under
-                    // `&mut self`, so a transmit is never in flight here: a
-                    // `Queued` entry with nothing queued has lost its frame.
+                    // The transmit path leaves a frame queued until the radio
+                    // answers, cancelled or not, so a `Queued` entry with
+                    // nothing queued has lost its frame.
                     if matches!(pending.state, crate::AckState::Queued { .. }) {
                         if !self.tx_queue.contains_matching(|entry| {
                             entry.receipt == Some(*receipt)

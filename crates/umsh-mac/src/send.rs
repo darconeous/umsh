@@ -847,18 +847,39 @@ impl<const N: usize, const FRAME: usize> TxQueue<N, FRAME> {
         self.pop_best_matching(|entry| entry.is_ready_immediate_ack(now_ms))
     }
 
+    /// The entry [`pop_ready`](Self::pop_ready) would return, left in place.
+    pub fn peek_ready(&self, now_ms: u64) -> Option<&QueuedTx<FRAME>> {
+        self.best_matching(|entry| entry.is_ready(now_ms))
+            .map(|index| &self.entries[index])
+    }
+
+    /// The entry [`pop_ready_immediate_ack`](Self::pop_ready_immediate_ack)
+    /// would return, left in place.
+    pub fn peek_ready_immediate_ack(&self, now_ms: u64) -> Option<&QueuedTx<FRAME>> {
+        self.best_matching(|entry| entry.is_ready_immediate_ack(now_ms))
+            .map(|index| &self.entries[index])
+    }
+
+    /// Remove and return the entry queued under `sequence`.
+    pub fn take(&mut self, sequence: u32) -> Option<QueuedTx<FRAME>> {
+        self.remove_first_matching(|entry| entry.sequence == sequence)
+    }
+
     fn pop_best_matching(
         &mut self,
-        mut predicate: impl FnMut(&QueuedTx<FRAME>) -> bool,
+        predicate: impl FnMut(&QueuedTx<FRAME>) -> bool,
     ) -> Option<QueuedTx<FRAME>> {
-        let index = self
-            .entries
+        let index = self.best_matching(predicate)?;
+        Some(self.entries.swap_remove(index))
+    }
+
+    fn best_matching(&self, mut predicate: impl FnMut(&QueuedTx<FRAME>) -> bool) -> Option<usize> {
+        self.entries
             .iter()
             .enumerate()
             .filter(|(_, entry)| predicate(entry))
             .min_by_key(|(_, entry)| (entry.priority.rank(), entry.sequence))
-            .map(|(index, _)| index)?;
-        Some(self.entries.swap_remove(index))
+            .map(|(index, _)| index)
     }
 
     /// Return the earliest `not_before_ms` still ahead of `now_ms`, if any
