@@ -87,12 +87,17 @@ jobs:
       - name: cargo test (umsh-ulcp-runtime gnss, device-node)
         run: cargo test --locked -p umsh-ulcp-runtime --features gnss,device-node
 
-      # Report-only for now: there are pre-existing clippy warnings in the
-      # tree (collapsible-if, needless-borrow, too-many-arguments). Flip to
-      # `cargo clippy -- -D warnings` once those are cleaned up.
-      - name: cargo clippy (report only)
-        run: cargo clippy --all-targets
-        continue-on-error: true
+      - name: cargo clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      # The same feature gap as the test run above.
+      - name: cargo clippy (umsh-ulcp-runtime gnss, device-node)
+        run: cargo clippy -p umsh-ulcp-runtime --all-targets --features gnss,device-node -- -D warnings
+
+      # `+stable` because the nightly fuzz/rust-toolchain.toml pins carries no
+      # clippy component.
+      - name: cargo clippy (fuzz)
+        run: cd fuzz && cargo +stable clippy --all-targets -- -D warnings
 
       - name: Install mdbook
         uses: peaceiris/actions-mdbook@v2
