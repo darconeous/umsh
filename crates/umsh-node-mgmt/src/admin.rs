@@ -196,8 +196,14 @@ pub struct Exchange<const REQUEST: usize> {
     /// The most recent REMAINING the device offered, for progress
     /// reporting.
     remaining: Option<u32>,
+    /// Consecutive continuations that carried nothing. A device that keeps
+    /// answering with empty fragments is not reading any further.
+    stalled_rounds: u8,
     state: State,
 }
+
+/// Empty continuations in a row after which an exchange gives up.
+const MAX_STALLED_ROUNDS: u8 = 8;
 
 impl<const REQUEST: usize> Exchange<REQUEST> {
     /// Begin an operation carrying `frame`.
@@ -233,6 +239,7 @@ impl<const REQUEST: usize> Exchange<REQUEST> {
             counter: seed,
             resets,
             remaining: None,
+            stalled_rounds: 0,
             state: State::Due { at_ms: now_ms },
         })
     }
@@ -437,12 +444,17 @@ impl<const REQUEST: usize> Exchange<REQUEST> {
         self.token = self.counter.to_be_bytes();
 
         if stalled {
+            self.stalled_rounds = self.stalled_rounds.saturating_add(1);
+            if self.stalled_rounds >= MAX_STALLED_ROUNDS {
+                return Some(self.finish(Outcome::Failed(Failure::TimedOut)));
+            }
             // An empty fragment carries the read no further. Asking again
             // at once would spin; the deadline paces it instead.
-            let at_ms = now_ms + RESPONSE_WAIT_MIN_MS;
+            let at_ms = now_ms.saturating_add(RESPONSE_WAIT_MIN_MS);
             self.state = State::Due { at_ms };
             return Some(Step::Wait { deadline_ms: at_ms });
         }
+        self.stalled_rounds = 0;
 
         self.state = State::Due { at_ms: now_ms };
         Some(self.poll(now_ms, out))

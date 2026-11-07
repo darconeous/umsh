@@ -125,19 +125,23 @@ pub fn decode(data: &[u8]) -> Result<Vec<Ring>, GeometryError> {
 
     let mut reader = Reader { data, offset: 1 };
     let ring_count = reader.varint()?;
-    let mut rings = Vec::with_capacity(ring_count as usize);
+    // Counts are read from the blob; every ring and point takes at least
+    // one byte, so what remains bounds what a sound blob can hold.
+    let remaining = |reader: &Reader<'_>| data.len() - reader.offset;
+    let mut rings = Vec::with_capacity((ring_count as usize).min(remaining(&reader)));
     for index in 0..ring_count {
         let role = reader.byte()?;
         if index == 0 && role != RING_EXTERIOR {
             return Err(GeometryError::MissingExterior);
         }
         let point_count = reader.varint()?;
-        let mut points = Vec::with_capacity(point_count as usize);
+        let mut points = Vec::with_capacity((point_count as usize).min(remaining(&reader)));
         let mut longitude: i64 = 0;
         let mut latitude: i64 = 0;
         for _ in 0..point_count {
-            longitude += reader.zigzag()?;
-            latitude += reader.zigzag()?;
+            // A sound blob never overflows; a damaged one must not panic.
+            longitude = longitude.wrapping_add(reader.zigzag()?);
+            latitude = latitude.wrapping_add(reader.zigzag()?);
             points.push((longitude as i32, latitude as i32));
         }
         rings.push(Ring { role, points });

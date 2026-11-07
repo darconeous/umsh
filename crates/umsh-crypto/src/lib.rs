@@ -801,7 +801,11 @@ pub fn hkdf_sha256<S: Sha256Provider>(
     info: &[u8],
     okm: &mut [u8],
 ) {
-    let prk = sha.hmac(salt, &[ikm]);
+    // RFC 5869 caps the output at 255 blocks; past that the one-octet
+    // counter would wrap and repeat blocks. Every caller asks for a key or
+    // two.
+    assert!(okm.len() <= 255 * 32, "HKDF output longer than 255 blocks");
+    let mut prk = sha.hmac(salt, &[ikm]);
     let mut previous = [0u8; 32];
     let mut previous_len = 0usize;
     let mut written = 0usize;
@@ -815,6 +819,8 @@ pub fn hkdf_sha256<S: Sha256Provider>(
         written += take;
         counter = counter.wrapping_add(1);
     }
+    prk.zeroize();
+    previous.zeroize();
 }
 
 fn aes_ctr_with_cipher<C: AesCipher>(cipher: &C, iv: &[u8; 16], data: &mut [u8]) {
@@ -1073,13 +1079,18 @@ pub mod software {
     pub type SoftwareCryptoEngine = CryptoEngine<SoftwareAes, SoftwareSha256>;
 
     fn signing_key_to_x25519(secret: &SigningKey) -> x25519_dalek::StaticSecret {
-        let digest = Sha512::digest(secret.to_bytes());
+        let mut seed = secret.to_bytes();
+        let mut digest = Sha512::digest(seed);
+        seed.zeroize();
         let mut scalar = [0u8; 32];
         scalar.copy_from_slice(&digest[..32]);
+        digest.as_mut_slice().zeroize();
         scalar[0] &= 248;
         scalar[31] &= 127;
         scalar[31] |= 64;
-        x25519_dalek::StaticSecret::from(scalar)
+        let secret = x25519_dalek::StaticSecret::from(scalar);
+        scalar.zeroize();
+        secret
     }
 
     fn public_key_to_x25519(public: &PublicKey) -> Result<x25519_dalek::PublicKey, CryptoError> {

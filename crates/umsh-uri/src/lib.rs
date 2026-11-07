@@ -195,10 +195,21 @@ pub fn encode_base58_bytes(bytes: &[u8]) -> String {
     out
 }
 
+/// The longest base58 text [`decode_base58_bytes`] accepts. Decoding is
+/// quadratic in the input, and the text arrives from QR codes and links;
+/// every payload a URI carries encodes to far less than this.
+pub const MAX_BASE58_TEXT: usize = 2048;
+
 /// Decode a variable-length base58 string produced by
 /// [`encode_base58_bytes`].
 pub fn decode_base58_bytes(input: &str) -> Result<alloc::vec::Vec<u8>, Error> {
     let bytes = input.as_bytes();
+    if bytes.len() > MAX_BASE58_TEXT {
+        return Err(Error::InvalidLength {
+            expected: MAX_BASE58_TEXT,
+            actual: bytes.len(),
+        });
+    }
     let zeros = bytes.iter().take_while(|&&byte| byte == b'1').count();
     let mut out: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
     for &digit in &bytes[zeros..] {

@@ -46,7 +46,9 @@ impl<'a> OptionEncoder<'a> {
             number
         };
         let delta_len = encoded_len(delta);
-        let value_len = encoded_len(value.len() as u16);
+        let value_len_field =
+            u16::try_from(value.len()).map_err(|_| EncodeError::OptionValueTooLarge)?;
+        let value_len = encoded_len(value_len_field);
         let required = 1 + delta_len + value_len + value.len();
         if self.pos + required > self.buf.len() {
             return Err(EncodeError::BufferTooSmall);
@@ -56,7 +58,7 @@ impl<'a> OptionEncoder<'a> {
         self.pos += 1;
         let delta_nibble = write_extended(&mut self.buf[self.pos..], delta)?;
         self.pos += delta_len;
-        let len_nibble = write_extended(&mut self.buf[self.pos..], value.len() as u16)?;
+        let len_nibble = write_extended(&mut self.buf[self.pos..], value_len_field)?;
         self.pos += value_len;
         self.buf[header_pos] = (delta_nibble << 4) | len_nibble;
         self.buf[self.pos..self.pos + value.len()].copy_from_slice(value);

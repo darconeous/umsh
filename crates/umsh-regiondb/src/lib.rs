@@ -610,9 +610,14 @@ fn decode_region_ids(data: &[u8]) -> Vec<u32> {
         value |= u64::from(byte & 0x7F) << shift;
         if byte & 0x80 != 0 {
             shift += 7;
+            // A varint longer than 64 bits is damage; what decoded before
+            // it is still good.
+            if shift > 63 {
+                break;
+            }
             continue;
         }
-        current += value;
+        current = current.saturating_add(value);
         identifiers.push(current as u32);
         value = 0;
         shift = 0;
