@@ -9,8 +9,8 @@
 //! one.
 
 use std::collections::HashMap;
-use std::net::SocketAddr;
-use std::sync::Arc;
+use std::net::{IpAddr, Ipv6Addr, SocketAddr};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
@@ -38,9 +38,14 @@ const HUB_BACKLOG: usize = 64;
 pub const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Connections allowed to be mid-handshake at once, across every
-/// listener. Past this, accepting waits for a handshake to finish, so a
-/// flood of silent sockets queues in the kernel rather than here.
+/// listener. A connection past this is closed as soon as it is accepted.
 const MAX_HANDSHAKES: usize = 256;
+
+/// Connections from one source allowed to be mid-handshake at once, so
+/// one host cannot hold every one of [`MAX_HANDSHAKES`]. A source is an
+/// IPv4 address or an IPv6 /64, the block a single host is handed. A
+/// connection past this is closed as soon as it is accepted.
+pub const MAX_HANDSHAKES_PER_SOURCE: usize = 8;
 
 /// The kernel's queue of not-yet-accepted connections, matching what
 /// [`TcpListener::bind`] asks for.
@@ -249,6 +254,7 @@ impl BoundServer {
                 .collect(),
             ingress: ingress_tx,
             handshakes: Arc::new(Semaphore::new(MAX_HANDSHAKES)),
+            handshakes_by_source: Mutex::new(HashMap::new()),
         });
 
         for listener in tunnel_listeners {
@@ -272,15 +278,72 @@ struct Shared {
     ingress: mpsc::Sender<Ingress>,
     /// Permits for connections still in their TLS handshake.
     handshakes: Arc<Semaphore>,
+    /// How many of those each source holds. A source with none has no
+    /// entry.
+    handshakes_by_source: Mutex<HashMap<IpAddr, usize>>,
+}
+
+impl Shared {
+    /// Admit a connection from `peer` to its handshake, or `None` if
+    /// either the server or that source is at its limit.
+    fn admit(self: &Arc<Self>, peer: IpAddr) -> Option<HandshakeSlot> {
+        let permit = self.handshakes.clone().try_acquire_owned().ok()?;
+        let source = source_of(peer);
+        let mut counts = self
+            .handshakes_by_source
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let count = counts.entry(source).or_insert(0);
+        if *count >= MAX_HANDSHAKES_PER_SOURCE {
+            return None;
+        }
+        *count += 1;
+        Some(HandshakeSlot {
+            _permit: permit,
+            shared: self.clone(),
+            source,
+        })
+    }
+}
+
+/// A connection's place among those mid-handshake, given back on drop.
+struct HandshakeSlot {
+    _permit: OwnedSemaphorePermit,
+    shared: Arc<Shared>,
+    source: IpAddr,
+}
+
+impl Drop for HandshakeSlot {
+    fn drop(&mut self) {
+        let mut counts = self
+            .shared
+            .handshakes_by_source
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some(count) = counts.get_mut(&self.source) {
+            *count -= 1;
+            if *count == 0 {
+                counts.remove(&self.source);
+            }
+        }
+    }
+}
+
+/// The source a per-source limit counts `peer` against: an IPv4 address
+/// as itself, whether or not it arrived mapped into IPv6, and an IPv6
+/// address as its /64.
+fn source_of(peer: IpAddr) -> IpAddr {
+    match peer {
+        IpAddr::V4(_) => peer,
+        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(v4) => IpAddr::V4(v4),
+            None => IpAddr::V6(Ipv6Addr::from_bits(v6.to_bits() & (u128::MAX << 64))),
+        },
+    }
 }
 
 async fn accept_loop(listener: TcpListener, acceptor: TlsAcceptor, shared: Arc<Shared>) {
     loop {
-        // Taken before accepting, so at the limit the next connection
-        // waits in the kernel's backlog rather than holding a socket here.
-        let Ok(permit) = shared.handshakes.clone().acquire_owned().await else {
-            return;
-        };
         let (stream, peer) = match listener.accept().await {
             Ok(accepted) => accepted,
             Err(error) => {
@@ -292,11 +355,19 @@ async fn accept_loop(listener: TcpListener, acceptor: TlsAcceptor, shared: Arc<S
                 continue;
             }
         };
+        // Accepted before admitting, so a connection over a limit is
+        // closed here rather than left in the kernel's backlog, where it
+        // would stand ahead of every other source's.
+        let Some(slot) = shared.admit(peer.ip()) else {
+            tracing::debug!(%peer, "too many handshakes in progress; closing");
+            drop(stream);
+            continue;
+        };
         stream.set_nodelay(true).ok();
         let acceptor = acceptor.clone();
         let shared = shared.clone();
         tokio::task::spawn_local(async move {
-            if let Err(error) = serve(stream, acceptor, shared, permit).await {
+            if let Err(error) = serve(stream, acceptor, shared, slot).await {
                 tracing::info!(%peer, "connection ended: {error:#}");
             }
         });
@@ -307,7 +378,7 @@ async fn serve(
     stream: TcpStream,
     acceptor: TlsAcceptor,
     shared: Arc<Shared>,
-    handshake: OwnedSemaphorePermit,
+    handshake: HandshakeSlot,
 ) -> Result<()> {
     let peer = stream.peer_addr().ok();
     let handshaken = tokio::time::timeout(HANDSHAKE_TIMEOUT, acceptor.accept(stream)).await;
@@ -479,5 +550,16 @@ mod tests {
             }
             Err(error) => panic!("the v6 wildcard collided with the v4 one: {error}"),
         }
+    }
+
+    #[test]
+    fn a_source_is_an_ipv4_address_or_an_ipv6_slash_64() {
+        let v4: IpAddr = "192.0.2.7".parse().unwrap();
+        assert_eq!(source_of(v4), v4);
+        assert_eq!(source_of("::ffff:192.0.2.7".parse().unwrap()), v4);
+        assert_eq!(
+            source_of("2001:db8:1:2:aaaa:bbbb:cccc:dddd".parse().unwrap()),
+            "2001:db8:1:2::".parse::<IpAddr>().unwrap()
+        );
     }
 }

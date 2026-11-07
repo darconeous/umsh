@@ -345,24 +345,29 @@ fn the_exit_clamp_lowers_a_budget_on_the_way_through() {
     });
 }
 
+/// Serve a tunnel listener with one configured client and no radio.
+async fn serve_tunnel_only(dir: &Path) -> SocketAddr {
+    umsh_bridge::keygen::write_identity(&dir.join("identity.key"), false).unwrap();
+    umsh_bridge::keygen::write_identity(&dir.join("cabin.key"), false).unwrap();
+    let cabin = BridgeIdentity::load(&dir.join("cabin.key"))
+        .unwrap()
+        .public_key()
+        .to_string();
+    let d = dir.display();
+    serve(&format!(
+        "[identity]\nkey_file = \"{d}/identity.key\"\n\
+         [server]\nlisten = [\"127.0.0.1:0\"]\n\
+         [[server.clients]]\nname = \"cabin\"\naddress = \"{cabin}\"\n"
+    ))
+    .await
+}
+
 #[test]
 fn a_connection_that_never_starts_a_handshake_is_dropped() {
     use tokio::io::AsyncReadExt as _;
     with_local(|| async {
         let dir = tempfile::tempdir().unwrap();
-        umsh_bridge::keygen::write_identity(&dir.path().join("identity.key"), false).unwrap();
-        umsh_bridge::keygen::write_identity(&dir.path().join("cabin.key"), false).unwrap();
-        let cabin = BridgeIdentity::load(&dir.path().join("cabin.key"))
-            .unwrap()
-            .public_key()
-            .to_string();
-        let d = dir.path().display();
-        let tunnel = serve(&format!(
-            "[identity]\nkey_file = \"{d}/identity.key\"\n\
-             [server]\nlisten = [\"127.0.0.1:0\"]\n\
-             [[server.clients]]\nname = \"cabin\"\naddress = \"{cabin}\"\n"
-        ))
-        .await;
+        let tunnel = serve_tunnel_only(dir.path()).await;
 
         // Connect, then say nothing: no ClientHello ever arrives.
         let mut stream = tokio::net::TcpStream::connect(tunnel).await.unwrap();
@@ -381,6 +386,50 @@ fn a_connection_that_never_starts_a_handshake_is_dropped() {
             "dropped after {:?}, before the handshake timeout",
             started.elapsed()
         );
+    });
+}
+
+/// One address cannot hold every handshake: past its share, its next
+/// connection is closed at once, while the ones before it are still
+/// waiting out their handshake timeout.
+#[test]
+fn one_address_holds_only_its_share_of_the_handshakes() {
+    use tokio::io::AsyncReadExt as _;
+    with_local(|| async {
+        let dir = tempfile::tempdir().unwrap();
+        let tunnel = serve_tunnel_only(dir.path()).await;
+        let limit = umsh_bridge::server::MAX_HANDSHAKES_PER_SOURCE;
+
+        let mut silent = Vec::new();
+        for _ in 0..limit {
+            silent.push(tokio::net::TcpStream::connect(tunnel).await.unwrap());
+        }
+        let mut over = tokio::net::TcpStream::connect(tunnel).await.unwrap();
+
+        let started = std::time::Instant::now();
+        let mut buf = [0u8; 16];
+        let read =
+            tokio::time::timeout(umsh_bridge::server::HANDSHAKE_TIMEOUT, over.read(&mut buf))
+                .await
+                .expect("the connection over the limit was left open");
+        assert!(
+            matches!(read, Ok(0) | Err(_)),
+            "the server sent {read:?} to a connection over the limit"
+        );
+        assert!(
+            started.elapsed() < umsh_bridge::server::HANDSHAKE_TIMEOUT / 2,
+            "closed only after {:?}",
+            started.elapsed()
+        );
+
+        for stream in &mut silent {
+            assert!(
+                tokio::time::timeout(Duration::from_millis(50), stream.read(&mut buf))
+                    .await
+                    .is_err(),
+                "a connection within the limit was closed"
+            );
+        }
     });
 }
 

@@ -5,13 +5,18 @@
 //! radio or endpoint on the LAN would send, and what it hears is what the
 //! bridge put there.
 
-use std::net::{Ipv4Addr, SocketAddr};
+use std::cell::Cell;
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::path::Path;
+use std::rc::Rc;
+use std::sync::Arc;
 use std::time::Duration;
 
 use umsh::tokio_support::{LanConfig, LanSocket, UdpMulticastRadio};
 use umsh_bridge::config::Config;
 use umsh_bridge::identity::BridgeIdentity;
+use umsh_bridge::lan::LanRelay;
+use umsh_bridge::tunnel::{Dequeued, TunnelQueue};
 use umsh_core::{NodeHint, PacketBuilder};
 use umsh_hal::{CadPolicy, Radio, TxOptions};
 
@@ -262,5 +267,68 @@ fn two_participants_on_one_lan_do_not_circulate_a_frame() {
             heard_on_lan(&lan, &[], Duration::from_secs(1)).await,
             [frame]
         );
+    });
+}
+
+/// Whether a frame the participant sends to the group comes out of the
+/// relay's inbound queue.
+async fn relayed(lan: &LanSocket, inbound: &TunnelQueue, frame: &[u8]) -> bool {
+    lan.send(frame).await.unwrap();
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(500);
+    while let Ok(Dequeued::Frame(heard)) = tokio::time::timeout_at(deadline, inbound.pop()).await {
+        if heard.data == frame {
+            return true;
+        }
+    }
+    false
+}
+
+/// A relay on the routed interface keeps asking the routing table, and
+/// when the address under its membership changes it rejoins on the new
+/// one, rather than staying joined on an address that hears nothing.
+#[test]
+fn a_relay_follows_its_routed_interface_to_a_new_address() {
+    const RECHECK: Duration = Duration::from_millis(100);
+    with_local(|| async {
+        let port = free_udp_port();
+        let config = LanConfig {
+            group: SocketAddrV4::new(LAN, port),
+            interface: Ipv4Addr::UNSPECIFIED,
+            loopback: true,
+        };
+        let routed = Rc::new(Cell::new(Ipv4Addr::LOCALHOST));
+        let resolver = {
+            let routed = routed.clone();
+            Box::new(move |_| Ok(routed.get()))
+        };
+        let inbound = Arc::new(TunnelQueue::new(16, Duration::from_secs(60)));
+        let outbound = Arc::new(TunnelQueue::new(16, Duration::from_secs(60)));
+        let relay = LanRelay::with_resolver(config, inbound.clone(), outbound, resolver, RECHECK);
+        let lan = lan_participant(port);
+        tokio::task::spawn_local(async move { relay.run().await });
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        assert!(relayed(&lan, &inbound, &broadcast(0x41)).await);
+
+        // The routed address moves to one this host does not hold. A relay
+        // that never looked again would still be joined on loopback, and
+        // still hear the group there; this one follows the address, where
+        // the join fails.
+        routed.set(Ipv4Addr::new(192, 0, 2, 1));
+        tokio::time::sleep(RECHECK * 3).await;
+        assert!(!relayed(&lan, &inbound, &broadcast(0x42)).await);
+
+        // The address comes back to loopback: the relay's next attempt
+        // joins there, and it hears the group again.
+        routed.set(Ipv4Addr::LOCALHOST);
+        let mut tag = 0x43;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(8);
+        while !relayed(&lan, &inbound, &broadcast(tag)).await {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "the relay never rejoined"
+            );
+            tag += 1;
+        }
     });
 }
