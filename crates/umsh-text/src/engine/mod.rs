@@ -913,6 +913,7 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
         }
 
         // Emit the transcript mutation.
+        self.reclaim_arena(body.len());
         let body_ref = self
             .arena_store(body)
             .unwrap_or(BodyRef { offset: 0, len: 0 });
@@ -1597,7 +1598,7 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                 // An edit that does not fit the arena is dropped, reported by
                 // `arena_store`'s diagnostic, rather than replacing the
                 // original with an empty body.
-                let Some(body_ref) = self.arena_store_lossy(content.body) else {
+                let Some(body_ref) = self.arena_store_lossy_reclaiming(content.body) else {
                     return;
                 };
                 MutationKind::Edit {
@@ -1885,7 +1886,13 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                         message_id: original_id,
                     },
                 ));
-            let body_ref = self.render_to_arena(slot_index, true);
+            // As with an unfragmented edit, one the arena cannot hold is
+            // dropped, reported by `arena_store`'s diagnostic, rather than
+            // read as empty, which would delete the original.
+            let Some(body_ref) = self.render_to_arena(slot_index, true) else {
+                self.pool.close_slot(slot_index);
+                return;
+            };
             // A reassembly that reused a gap placeholder turned out to be an
             // edit, not a standalone bubble: retire the spinner row and apply
             // the edit under a fresh handle.
@@ -1946,15 +1953,24 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                 finalized: false,
             }
         };
-        let body_ref = self.render_to_arena(slot_index, complete);
+        let body_ref = if announced && !complete {
+            // A progress update is skipped when the arena is short: the next
+            // one or the final render carries what changed.
+            self.try_render_to_arena(slot_index, false)
+        } else {
+            self.render_to_arena(slot_index, complete)
+        };
         // Notify exactly once, when the message becomes complete (the notify
         // deadline in `tick` covers messages that stall incomplete).
-        let notify = complete && !notified;
+        let notify = complete && !notified && (body_ref.is_some() || !announced);
         if notify && let Some(slot) = self.pool.slots[slot_index].as_mut() {
             slot.notified = true;
         }
 
         if !announced {
+            // Out of room even once progress renders have given way, a
+            // message not yet shown is shown empty rather than not at all.
+            let body_ref = body_ref.unwrap_or(BodyRef { offset: 0, len: 0 });
             let slot = self.pool.slots[slot_index].as_mut().expect("occupied");
             slot.announced = true;
             let meta = slot.meta;
@@ -1991,7 +2007,8 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
             if let Some(stream) = self.inbound.get_mut(&key) {
                 stream.refs.record(id, handle);
             }
-        } else {
+        } else if let Some(body_ref) = body_ref {
+            // One the arena cannot hold leaves the body already shown.
             self.emit_mutation(
                 handle,
                 MutationKind::UpdateBody {
@@ -2039,7 +2056,7 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
     ) -> MessageHandle {
         let handle = reuse.unwrap_or_else(|| self.alloc_handle());
         let body_ref = self
-            .arena_store_lossy(content.body)
+            .arena_store_lossy_reclaiming(content.body)
             .unwrap_or(BodyRef { offset: 0, len: 0 });
         let sender_handle = content
             .sender_handle
@@ -2500,8 +2517,12 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
         let handle = slot.handle;
         let complete = slot.is_complete();
 
-        if announced && !complete {
-            let body = self.render_to_arena(slot_index, true);
+        // Out of room even once progress renders have given way, the body
+        // already shown stays rather than being replaced with an empty one.
+        if announced
+            && !complete
+            && let Some(body) = self.render_to_arena(slot_index, true)
+        {
             let slot = self.pool.slots[slot_index].as_ref().expect("occupied");
             let status = CompletionStatus::Partial {
                 present: slot.present,
@@ -3175,7 +3196,7 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
         }
 
         let body_ref = self
-            .arena_store_lossy(body)
+            .arena_store_lossy_reclaiming(body)
             .unwrap_or(BodyRef { offset: 0, len: 0 });
         let epoch = self
             .inbound
@@ -3320,9 +3341,119 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
         ARENA_SIZE - self.arena_used >= REASSEMBLED_BODY_MAX + 64
     }
 
+    /// Make room for `needed` more bytes in the arena by dropping queued
+    /// progress renders, oldest first. Returns whether there is room.
+    ///
+    /// A progress render shows part of a message that a later render of
+    /// the same message carries forward, and a progress update is already
+    /// skipped when the arena is short. So one can give way to a body that
+    /// must be emitted, rather than that body being emitted empty.
+    ///
+    /// Moves the bodies after each dropped one, so it must run before the
+    /// caller takes any [`BodyRef`] it has yet to queue.
+    fn reclaim_arena(&mut self, needed: usize) -> bool {
+        while ARENA_SIZE - self.arena_used < needed {
+            let Some(index) = self.outputs.iter().position(|output| {
+                matches!(
+                    output,
+                    Output::StoreMessage(MessageMutation {
+                        kind: MutationKind::UpdateBody {
+                            status: CompletionStatus::Partial {
+                                finalized: false,
+                                ..
+                            },
+                            late: false,
+                            notify: false,
+                            ..
+                        },
+                        ..
+                    })
+                )
+            }) else {
+                return false;
+            };
+            let mut dropped = None;
+            for at in 0..self.outputs.len() {
+                let output = self.outputs.pop_front().expect("within the length");
+                if at == index {
+                    dropped = Some(output);
+                } else {
+                    // Room was just made by the pop.
+                    let _ = self.outputs.push_back(output);
+                }
+            }
+            let Some(Output::StoreMessage(MessageMutation {
+                kind: MutationKind::UpdateBody { body, .. },
+                ..
+            })) = dropped
+            else {
+                unreachable!("the position found a progress render");
+            };
+            self.arena_release(body);
+        }
+        true
+    }
+
+    /// Give back `freed`'s bytes, moving every body after it down to close
+    /// the gap. A body still referenced by a queued output is kept.
+    fn arena_release(&mut self, freed: BodyRef) {
+        let start = usize::from(freed.offset);
+        let len = usize::from(freed.len);
+        let end = start + len;
+        if len == 0
+            || self.outputs.iter_mut().any(|output| {
+                let mut shared = false;
+                for_each_body(output, |body| shared |= *body == freed);
+                shared
+            })
+        {
+            return;
+        }
+        self.arena.copy_within(end..self.arena_used, start);
+        self.arena_used -= len;
+        for output in self.outputs.iter_mut() {
+            for_each_body(output, |body| {
+                if usize::from(body.offset) >= end {
+                    body.offset -= freed.len;
+                }
+            });
+        }
+    }
+
+    /// Store `bytes` lossily, as [`arena_store_lossy`](Self::arena_store_lossy)
+    /// does, for a body that must be emitted: progress renders give way to
+    /// it first.
+    fn arena_store_lossy_reclaiming(&mut self, bytes: &[u8]) -> Option<BodyRef> {
+        let needed = bytes
+            .utf8_chunks()
+            .map(|chunk| {
+                let replacement = if chunk.invalid().is_empty() { 0 } else { 3 };
+                chunk.valid().len() + replacement
+            })
+            .sum();
+        self.reclaim_arena(needed);
+        self.arena_store_lossy(bytes)
+    }
+
     /// Render a slot into the arena, returning the body reference, or `None`
     /// when the arena is out of room.
     fn try_render_to_arena(&mut self, slot_index: usize, final_render: bool) -> Option<BodyRef> {
+        self.render_slot_to_arena(slot_index, final_render, false)
+    }
+
+    /// Render a slot into the arena for a mutation that must be emitted:
+    /// progress renders give way to it first. `None` only when the arena
+    /// holds nothing that can.
+    fn render_to_arena(&mut self, slot_index: usize, final_render: bool) -> Option<BodyRef> {
+        self.render_slot_to_arena(slot_index, final_render, true)
+    }
+
+    fn render_slot_to_arena(
+        &mut self,
+        slot_index: usize,
+        final_render: bool,
+        reclaim: bool,
+    ) -> Option<BodyRef> {
         let mut scratch = [0u8; REASSEMBLED_BODY_MAX + 64];
         let result = fragment::render_slot(
             &self.pool,
@@ -3343,14 +3474,31 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
             }));
         }
         let text = core::str::from_utf8(&scratch[..result.len]).unwrap_or("");
+        if reclaim {
+            self.reclaim_arena(text.len());
+        }
         self.arena_store(text)
     }
+}
 
-    /// Render a slot into the arena for a final mutation that must be
-    /// emitted regardless; out of room, the body is empty.
-    fn render_to_arena(&mut self, slot_index: usize, final_render: bool) -> BodyRef {
-        self.try_render_to_arena(slot_index, final_render)
-            .unwrap_or(BodyRef { offset: 0, len: 0 })
+/// Calls `f` on each body `output` refers to.
+fn for_each_body(output: &mut Output, mut f: impl FnMut(&mut BodyRef)) {
+    let Output::StoreMessage(mutation) = output else {
+        return;
+    };
+    match &mut mutation.kind {
+        MutationKind::Insert {
+            sender_handle,
+            body,
+            ..
+        } => {
+            if let Some(handle) = sender_handle {
+                f(handle);
+            }
+            f(body);
+        }
+        MutationKind::UpdateBody { body, .. } | MutationKind::Edit { body, .. } => f(body),
+        MutationKind::Delete { .. } => {}
     }
 }
 

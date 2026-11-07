@@ -132,8 +132,10 @@ impl<MC: RawMutex + 'static, MF: RawMutex + 'static, F: JournalFlash + 'static>
 
     async fn load(&self, context: &[u8]) -> Result<u32, Self::Error> {
         // Missing entries read as 0, the MAC's "no boundary persisted
-        // yet" sentinel.
-        Ok(self.counters.lock().await.map.get(context).unwrap_or(0))
+        // yet" sentinel. A read counts as a use: the MAC reads a peer's
+        // boundary as it registers the peer, which keeps the peers it holds
+        // from being the ones a full map drops.
+        Ok(self.counters.lock().await.map.recall(context).unwrap_or(0))
     }
 
     async fn store(&self, context: &[u8], value: u32) -> Result<(), Self::Error> {

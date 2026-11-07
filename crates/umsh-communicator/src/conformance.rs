@@ -724,9 +724,21 @@ pub fn reactions<H: Harness>(harness: &mut H) {
         record(&store, mine).reactions[0].reaction,
         Reaction::Other(Cluster::new("\u{1f525}").unwrap())
     );
-    // A reaction this node cannot render still supersedes the sender's
-    // earlier one.
+    // A word counts as its first letter.
     rig.hear(&mut store, direct(), about_mine("okay"));
+    assert_eq!(
+        record(&store, mine).reactions[0].reaction,
+        Reaction::Other(Cluster::new("o").unwrap())
+    );
+    // A reaction this node cannot render, here a cluster too long to keep,
+    // still supersedes the sender's earlier one.
+    rig.hear(
+        &mut store,
+        direct(),
+        about_mine(
+            "\u{1f468}\u{1f3fb}\u{200d}\u{1f469}\u{1f3fb}\u{200d}\u{1f467}\u{1f3fb}\u{200d}\u{1f466}\u{1f3fb}",
+        ),
+    );
     assert!(record(&store, mine).reactions.is_empty());
     rig.hear(&mut store, direct(), about_mine(""));
     assert!(record(&store, mine).reactions.is_empty());

@@ -25,7 +25,7 @@ use umsh_crypto::CryptoEngine;
 use umsh_crypto::software::{SoftwareAes, SoftwareSha256};
 use umsh_hal::{CadPolicy, Radio, RxBuffered, RxInfo, RxOrigin, Snr, TxError, TxOptions};
 use umsh_ulcp::Status;
-use umsh_ulcp::airtime::lora_airtime_ms;
+use umsh_ulcp::airtime::lora_airtime_ms_with_preamble;
 use umsh_ulcp::alert::AlertState;
 use umsh_ulcp::announce::Announcement;
 use umsh_ulcp::battery::BatteryStatus;
@@ -68,6 +68,10 @@ const ATTACH_NOTICE_LIMIT: usize = 4;
 /// and nothing else.
 const FALLBACK_MTU: usize = 255;
 
+/// The transmit preamble UMSH firmware sends, in symbols, for estimating a
+/// device's frame airtime before it reports `PROP_PHY_T_FRAME`.
+const FIRMWARE_TX_PREAMBLE: u16 = 32;
+
 /// The frame airtime assumed when the device's cannot be learned and
 /// nothing better is cached: the slowest LoRa settings there are (SF12,
 /// 125 kHz, CR 4/8) carrying a whole frame behind the 32-symbol preamble
@@ -80,7 +84,7 @@ fn conservative_t_frame_ms(max_frame_size: usize) -> u32 {
     } else {
         max_frame_size
     };
-    umsh_ulcp::airtime::lora_airtime_ms_with_preamble(12, 125_000, 8, frame, 32).max(1)
+    lora_airtime_ms_with_preamble(12, 125_000, 8, frame, FIRMWARE_TX_PREAMBLE).max(1)
 }
 
 /// Run one attach exchange, absorbing the loss-of-state notices a device
@@ -1628,11 +1632,12 @@ where
         let mut radio = Self::bare(link, config);
         radio.mode = AttachMode::Remote;
         radio.max_frame_size = umsh_node_mgmt::REQUEST_MAX;
-        radio.t_frame_ms = lora_airtime_ms(
+        radio.t_frame_ms = lora_airtime_ms_with_preamble(
             radio.config.spreading_factor,
             radio.config.bandwidth_hz,
             radio.config.coding_rate_denom,
             radio.max_frame_size,
+            FIRMWARE_TX_PREAMBLE,
         )
         .max(1);
         radio
@@ -2437,9 +2442,8 @@ where
                 if bw == 0 || mtu == 0 || !(5..=12).contains(&sf) || !(5..=8).contains(&cr) {
                     return Err(UlcpError::Protocol("invalid legacy PHY parameters"));
                 }
-                // Existing UMSH firmware uses a fixed 32-symbol TX preamble.
                 // This compatibility estimate is only needed before T_FRAME.
-                umsh_ulcp::airtime::lora_airtime_ms_with_preamble(sf, bw, cr, usize::from(mtu), 32)
+                lora_airtime_ms_with_preamble(sf, bw, cr, usize::from(mtu), FIRMWARE_TX_PREAMBLE)
             }
             Err(error) => return Err(error),
         };
@@ -5966,9 +5970,9 @@ mod tests {
     #[test]
     fn airtime_is_plausible() {
         // ~255-byte frame at SF11/BW250 is on the order of seconds.
-        let airtime = lora_airtime_ms(11, 250_000, 5, 255);
+        let airtime = lora_airtime_ms_with_preamble(11, 250_000, 5, 255, FIRMWARE_TX_PREAMBLE);
         assert!((500..5_000).contains(&airtime), "airtime {airtime}");
         // Faster settings give shorter airtime.
-        assert!(lora_airtime_ms(7, 250_000, 5, 255) < airtime);
+        assert!(lora_airtime_ms_with_preamble(7, 250_000, 5, 255, FIRMWARE_TX_PREAMBLE) < airtime);
     }
 }

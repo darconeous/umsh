@@ -121,26 +121,30 @@ impl<T> HandlerTable<T> {
         };
         slot.take().is_some()
     }
+}
 
-    fn any_mut(&mut self, mut f: impl FnMut(&mut T) -> bool) -> bool {
-        for slot in &mut self.slots {
-            let Some(handler) = slot.as_mut() else {
-                continue;
-            };
-            if f(handler) {
-                return true;
-            }
-        }
-        false
+impl<F: ?Sized> HandlerTable<Rc<RefCell<F>>> {
+    /// The handlers registered now, each with its handle, to be called once
+    /// the table is no longer borrowed.
+    fn snapshot(&self) -> Vec<(SubscriptionHandle, Rc<RefCell<F>>)> {
+        self.slots
+            .iter()
+            .enumerate()
+            .filter_map(|(index, slot)| {
+                let handler = slot.as_ref()?;
+                let handle = SubscriptionHandle(NonZeroU32::new((index + 1) as u32).unwrap());
+                Some((handle, handler.clone()))
+            })
+            .collect()
     }
 
-    fn for_each_mut(&mut self, mut f: impl FnMut(&mut T)) {
-        for slot in &mut self.slots {
-            let Some(handler) = slot.as_mut() else {
-                continue;
-            };
-            f(handler);
-        }
+    /// Whether `handle` still names `handler`: neither unsubscribed nor
+    /// replaced by a later subscription that reused its slot.
+    fn holds(&self, handle: SubscriptionHandle, handler: &Rc<RefCell<F>>) -> bool {
+        self.slots
+            .get(handle.0.get() as usize - 1)
+            .and_then(Option::as_ref)
+            .is_some_and(|held| Rc::ptr_eq(held, handler))
     }
 }
 
@@ -181,7 +185,11 @@ pub struct PongMetadata {
 }
 
 /// Callbacks of one kind, kept in a [`HandlerTable`].
-type Handlers<F> = HandlerTable<Box<F>>;
+///
+/// Each is shared so that dispatch can take its own reference and call it
+/// with the node unborrowed: a handler may subscribe, unsubscribe (itself
+/// included), or reach the node while it runs.
+type Handlers<F> = HandlerTable<Rc<RefCell<F>>>;
 
 pub(crate) struct PeerSubscriptions {
     peer: PublicKey,
@@ -292,6 +300,12 @@ impl LocalNodeState {
             .expect("peer subscriptions just inserted")
     }
 
+    fn find_peer_subscriptions(&self, peer: PublicKey) -> Option<&PeerSubscriptions> {
+        self.peer_subscriptions
+            .iter()
+            .find(|entry| entry.peer == peer)
+    }
+
     pub(crate) fn find_peer_subscriptions_mut(
         &mut self,
         peer: PublicKey,
@@ -351,6 +365,46 @@ pub(crate) struct ChannelMembershipEntry {
     pub generation: u64,
     /// False after leave(); entry kept until re-joined or GC'd.
     pub active: bool,
+}
+
+/// How many of a host's nodes are members of each channel, shared by all of
+/// them as their MAC is. The MAC holds one registration per channel key, so
+/// it goes only when the last member leaves.
+#[derive(Default)]
+pub(crate) struct ChannelJoins {
+    #[cfg(feature = "software-crypto")]
+    counts: Vec<(ChannelKey, usize)>,
+}
+
+#[cfg(feature = "software-crypto")]
+impl ChannelJoins {
+    fn members(&self, key: &ChannelKey) -> usize {
+        self.counts
+            .iter()
+            .find(|(held, _)| held == key)
+            .map_or(0, |(_, count)| *count)
+    }
+
+    fn joined(&mut self, key: &ChannelKey) {
+        match self.counts.iter_mut().find(|(held, _)| held == key) {
+            Some((_, count)) => *count += 1,
+            None => self.counts.push((*key, 1)),
+        }
+    }
+
+    /// Records that one member left, returning how many remain.
+    fn left(&mut self, key: &ChannelKey) -> usize {
+        let Some(index) = self.counts.iter().position(|(held, _)| held == key) else {
+            return 0;
+        };
+        let count = &mut self.counts[index].1;
+        *count = count.saturating_sub(1);
+        let remaining = *count;
+        if remaining == 0 {
+            self.counts.swap_remove(index);
+        }
+        remaining
+    }
 }
 
 impl NodeMembership {
@@ -483,16 +537,20 @@ pub struct LocalNode<M: MacBackend> {
     dispatcher: Rc<RefCell<EventDispatcher>>,
     #[allow(dead_code)] // Used by channel methods (software-crypto feature)
     membership: Rc<RefCell<NodeMembership>>,
+    #[allow(dead_code)] // Used by channel methods (software-crypto feature)
+    channel_joins: Rc<RefCell<ChannelJoins>>,
     state: Rc<RefCell<LocalNodeState>>,
 }
 
 impl<M: MacBackend> LocalNode<M> {
-    /// Create a new local node.
+    /// Create a new local node. It counts its channel memberships with the
+    /// other nodes sharing `channel_joins`, as the nodes of one host do.
     pub(crate) fn new(
         identity_id: LocalIdentityId,
         mac: M,
         dispatcher: Rc<RefCell<EventDispatcher>>,
         membership: Rc<RefCell<NodeMembership>>,
+        channel_joins: Rc<RefCell<ChannelJoins>>,
         state: Rc<RefCell<LocalNodeState>>,
     ) -> Self {
         Self {
@@ -500,6 +558,7 @@ impl<M: MacBackend> LocalNode<M> {
             mac,
             dispatcher,
             membership,
+            channel_joins,
             state,
         }
     }
@@ -647,7 +706,7 @@ impl<M: MacBackend> LocalNode<M> {
         self.state
             .borrow_mut()
             .receive_handlers
-            .insert(Box::new(handler))
+            .insert(Rc::new(RefCell::new(handler)))
     }
 
     pub fn on_receive<F>(&self, handler: F) -> Subscription
@@ -666,7 +725,7 @@ impl<M: MacBackend> LocalNode<M> {
         self.state
             .borrow_mut()
             .node_discovered_handlers
-            .insert(Box::new(handler))
+            .insert(Rc::new(RefCell::new(handler)))
     }
 
     pub fn on_node_discovered<F>(&self, handler: F) -> Subscription
@@ -685,7 +744,7 @@ impl<M: MacBackend> LocalNode<M> {
         self.state
             .borrow_mut()
             .beacon_handlers
-            .insert(Box::new(handler))
+            .insert(Rc::new(RefCell::new(handler)))
     }
 
     pub fn on_beacon<F>(&self, handler: F) -> Subscription
@@ -704,7 +763,7 @@ impl<M: MacBackend> LocalNode<M> {
         self.state
             .borrow_mut()
             .mac_command_handlers
-            .insert(Box::new(handler))
+            .insert(Rc::new(RefCell::new(handler)))
     }
 
     pub fn on_mac_command<F>(&self, handler: F) -> Subscription
@@ -1171,7 +1230,7 @@ impl<M: MacBackend> LocalNode<M> {
         self.state
             .borrow_mut()
             .transmitted_handlers
-            .insert(Box::new(handler))
+            .insert(Rc::new(RefCell::new(handler)))
     }
 
     /// Subscribe to raw on-wire bytes of every frame successfully handed to the radio.
@@ -1191,7 +1250,7 @@ impl<M: MacBackend> LocalNode<M> {
         self.state
             .borrow_mut()
             .ack_received_handlers
-            .insert(Box::new(handler))
+            .insert(Rc::new(RefCell::new(handler)))
     }
 
     pub fn on_ack_received<F>(&self, handler: F) -> Subscription
@@ -1210,7 +1269,7 @@ impl<M: MacBackend> LocalNode<M> {
         self.state
             .borrow_mut()
             .ack_timeout_handlers
-            .insert(Box::new(handler))
+            .insert(Rc::new(RefCell::new(handler)))
     }
 
     pub fn on_ack_timeout<F>(&self, handler: F) -> Subscription
@@ -1229,7 +1288,7 @@ impl<M: MacBackend> LocalNode<M> {
         self.state
             .borrow_mut()
             .pfs_established_handlers
-            .insert(Box::new(handler))
+            .insert(Rc::new(RefCell::new(handler)))
     }
 
     pub fn on_pfs_established<F>(&self, handler: F) -> Subscription
@@ -1248,7 +1307,7 @@ impl<M: MacBackend> LocalNode<M> {
         self.state
             .borrow_mut()
             .pfs_ended_handlers
-            .insert(Box::new(handler))
+            .insert(Rc::new(RefCell::new(handler)))
     }
 
     pub fn on_pfs_ended<F>(&self, handler: F) -> Subscription
@@ -1267,7 +1326,7 @@ impl<M: MacBackend> LocalNode<M> {
         self.state
             .borrow_mut()
             .pfs_failed_handlers
-            .insert(Box::new(handler))
+            .insert(Rc::new(RefCell::new(handler)))
     }
 
     /// Subscribe to PFS negotiation failures for any peer. The handler is
@@ -1291,7 +1350,7 @@ impl<M: MacBackend> LocalNode<M> {
         self.state
             .borrow_mut()
             .pong_handlers
-            .insert(Box::new(handler))
+            .insert(Rc::new(RefCell::new(handler)))
     }
 
     pub fn on_pong<F>(&self, handler: F) -> Subscription
@@ -1311,7 +1370,7 @@ impl<M: MacBackend> LocalNode<M> {
             .state
             .borrow_mut()
             .pong_metadata_handlers
-            .insert(Box::new(handler));
+            .insert(Rc::new(RefCell::new(handler)));
         let state = self.state.clone();
         Subscription::new(move || state.borrow_mut().pong_metadata_handlers.remove(handle))
     }
@@ -1323,7 +1382,7 @@ impl<M: MacBackend> LocalNode<M> {
         self.state
             .borrow_mut()
             .ping_timeout_handlers
-            .insert(Box::new(handler))
+            .insert(Rc::new(RefCell::new(handler)))
     }
 
     pub fn on_ping_timeout<F>(&self, handler: F) -> Subscription
@@ -1384,13 +1443,15 @@ impl<M: MacBackend> LocalNode<M> {
             return;
         }
         let nonce = u16::from_be_bytes([data[0], data[1]]);
-        let mut state = self.state.borrow_mut();
-        let idx = state
-            .pending_pings
-            .iter()
-            .position(|p| p.nonce == nonce && p.peer == from);
-        if let Some(idx) = idx {
-            let ping = state.pending_pings.swap_remove(idx);
+        let ping = {
+            let mut state = self.state.borrow_mut();
+            let idx = state
+                .pending_pings
+                .iter()
+                .position(|p| p.nonce == nonce && p.peer == from);
+            idx.map(|idx| state.pending_pings.swap_remove(idx))
+        };
+        if let Some(ping) = ping {
             let rtt_ms = now_ms.saturating_sub(ping.sent_at_ms);
             let trace = packet.trace();
             let route_hints = trace
@@ -1412,34 +1473,39 @@ impl<M: MacBackend> LocalNode<M> {
                 snr_centibels: packet.snr().map(|snr| snr.as_centibels()),
                 lqi: packet.lqi().map(core::num::NonZeroU8::get),
             };
-            if let Some(entry) = state.peer_subscriptions.iter_mut().find(|e| e.peer == from) {
-                entry.pong_handlers.for_each_mut(|h| h(rtt_ms));
-            }
-            state.pong_handlers.for_each_mut(|h| h(from, rtt_ms));
-            state
-                .pong_metadata_handlers
-                .for_each_mut(|handler| handler(from, &metadata));
+            self.each_handler(
+                |state| Some(&state.find_peer_subscriptions(from)?.pong_handlers),
+                |h| h(rtt_ms),
+            );
+            self.each_handler(|state| Some(&state.pong_handlers), |h| h(from, rtt_ms));
+            self.each_handler(
+                |state| Some(&state.pong_metadata_handlers),
+                |h| h(from, &metadata),
+            );
         }
     }
 
     /// Called periodically by the host timeout service. Fires timeout handlers for expired pings.
     pub(crate) fn expire_pings(&self, now_ms: u64) {
-        let mut state = self.state.borrow_mut();
-        let mut i = 0;
-        while i < state.pending_pings.len() {
-            if now_ms >= state.pending_pings[i].deadline_ms {
-                let ping = state.pending_pings.swap_remove(i);
-                if let Some(entry) = state
-                    .peer_subscriptions
-                    .iter_mut()
-                    .find(|e| e.peer == ping.peer)
-                {
-                    entry.ping_timeout_handlers.for_each_mut(|h| h());
+        let expired = {
+            let mut state = self.state.borrow_mut();
+            let mut expired = Vec::new();
+            let mut i = 0;
+            while i < state.pending_pings.len() {
+                if now_ms >= state.pending_pings[i].deadline_ms {
+                    expired.push(state.pending_pings.swap_remove(i).peer);
+                } else {
+                    i += 1;
                 }
-                state.ping_timeout_handlers.for_each_mut(|h| h(ping.peer));
-            } else {
-                i += 1;
             }
+            expired
+        };
+        for peer in expired {
+            self.each_handler(
+                |state| Some(&state.find_peer_subscriptions(peer)?.ping_timeout_handlers),
+                |h| h(),
+            );
+            self.each_handler(|state| Some(&state.ping_timeout_handlers), |h| h(peer));
         }
     }
 
@@ -1601,6 +1667,7 @@ impl<M: MacBackend> LocalNode<M> {
         // `leave` unregisters the key, so a dormant entry has no MAC state to
         // reuse.
         self.mac.add_private_channel(*channel.key()).await?;
+        self.channel_joins.borrow_mut().joined(channel.key());
         let mut membership = self.membership.borrow_mut();
 
         if let Some(entry) = membership
@@ -1631,9 +1698,13 @@ impl<M: MacBackend> LocalNode<M> {
         })
     }
 
-    /// Leave a channel. Marks the membership entry inactive, bumps that
-    /// entry's generation counter, and unregisters the channel key from the
-    /// MAC so inbound traffic on it is no longer decrypted.
+    /// Leave a channel. Marks the membership entry inactive and bumps that
+    /// entry's generation counter. When no other node of this host is still
+    /// a member, also unregisters the channel key from the MAC so inbound
+    /// traffic on it is no longer decrypted.
+    ///
+    /// An error means the key was unregistered while another node joined
+    /// it, and could not be registered again for that node.
     #[cfg(feature = "software-crypto")]
     pub async fn leave(&self, channel: &Channel) -> Result<(), NodeError<M>> {
         {
@@ -1648,7 +1719,15 @@ impl<M: MacBackend> LocalNode<M> {
             entry.active = false;
             entry.generation = entry.generation.wrapping_add(1);
         }
+        if self.channel_joins.borrow_mut().left(channel.key()) > 0 {
+            return Ok(());
+        }
         self.mac.remove_channel(channel.key()).await;
+        // A node that joined while the key was being removed may have
+        // registered it first and so lost it to this removal.
+        if self.channel_joins.borrow().members(channel.key()) > 0 {
+            self.mac.add_private_channel(*channel.key()).await?;
+        }
         Ok(())
     }
 
@@ -1884,10 +1963,9 @@ impl<M: MacBackend> LocalNode<M> {
     /// whose session key with forward secrecy sent it, so that what a peer
     /// says under a session reaches every handler as theirs.
     pub(crate) fn dispatch_received_packet(&self, packet: &ReceivedPacketRef<'_>) -> bool {
-        let mut state = self.state.borrow_mut();
         let peer = packet
             .from_key()
-            .map(|key| (key, canonical_peer(&state, key)));
+            .map(|key| (key, canonical_peer(&self.state.borrow(), key)));
         let attributed = match peer {
             Some((key, peer)) if peer != key => Some(packet.attributed_to(peer)),
             _ => None,
@@ -1895,121 +1973,152 @@ impl<M: MacBackend> LocalNode<M> {
         let packet = attributed.as_ref().unwrap_or(packet);
 
         if let Some((_, peer)) = peer
-            && let Some(entry) = state
-                .peer_subscriptions
-                .iter_mut()
-                .find(|entry| entry.peer == peer)
-            && entry.receive_handlers.any_mut(|handler| handler(packet))
+            && self.any_handler(
+                |state| Some(&state.find_peer_subscriptions(peer)?.receive_handlers),
+                |handler| handler(packet),
+            )
         {
             return true;
         }
 
-        state.receive_handlers.any_mut(|handler| handler(packet))
+        self.any_handler(
+            |state| Some(&state.receive_handlers),
+            |handler| handler(packet),
+        )
     }
 
     pub(crate) fn dispatch_node_discovered(&self, key: PublicKey, name: Option<&str>) {
-        self.state
-            .borrow_mut()
-            .node_discovered_handlers
-            .for_each_mut(|handler| handler(key, name));
+        self.each_handler(
+            |state| Some(&state.node_discovered_handlers),
+            |handler| handler(key, name),
+        );
     }
 
     pub(crate) fn dispatch_beacon(&self, from_hint: NodeHint, from_key: Option<PublicKey>) {
-        self.state
-            .borrow_mut()
-            .beacon_handlers
-            .for_each_mut(|handler| handler(from_hint, from_key));
+        self.each_handler(
+            |state| Some(&state.beacon_handlers),
+            |handler| handler(from_hint, from_key),
+        );
     }
 
     pub(crate) fn dispatch_mac_command(&self, from: PublicKey, command: &OwnedMacCommand) {
-        self.state
-            .borrow_mut()
-            .mac_command_handlers
-            .for_each_mut(|handler| handler(from, command));
+        self.each_handler(
+            |state| Some(&state.mac_command_handlers),
+            |handler| handler(from, command),
+        );
     }
 
     pub(crate) fn dispatch_transmitted(&self, wire_bytes: &[u8]) {
-        self.state
-            .borrow_mut()
-            .transmitted_handlers
-            .for_each_mut(|handler| handler(wire_bytes));
+        self.each_handler(
+            |state| Some(&state.transmitted_handlers),
+            |handler| handler(wire_bytes),
+        );
     }
 
     pub(crate) fn dispatch_ack_received(&self, peer: PublicKey, token: SendToken) {
-        let mut state = self.state.borrow_mut();
-        let peer = canonical_peer(&state, peer);
-        if let Some(entry) = state
-            .peer_subscriptions
-            .iter_mut()
-            .find(|entry| entry.peer == peer)
-        {
-            entry
-                .ack_received_handlers
-                .for_each_mut(|handler| handler(token));
-        }
-        state
-            .ack_received_handlers
-            .for_each_mut(|handler| handler(peer, token));
+        let peer = canonical_peer(&self.state.borrow(), peer);
+        self.each_handler(
+            |state| Some(&state.find_peer_subscriptions(peer)?.ack_received_handlers),
+            |handler| handler(token),
+        );
+        self.each_handler(
+            |state| Some(&state.ack_received_handlers),
+            |handler| handler(peer, token),
+        );
     }
 
     pub(crate) fn dispatch_ack_timeout(&self, peer: PublicKey, token: SendToken) {
-        let mut state = self.state.borrow_mut();
-        let peer = canonical_peer(&state, peer);
-        if let Some(entry) = state
-            .peer_subscriptions
-            .iter_mut()
-            .find(|entry| entry.peer == peer)
-        {
-            entry
-                .ack_timeout_handlers
-                .for_each_mut(|handler| handler(token));
-        }
-        state
-            .ack_timeout_handlers
-            .for_each_mut(|handler| handler(peer, token));
+        let peer = canonical_peer(&self.state.borrow(), peer);
+        self.each_handler(
+            |state| Some(&state.find_peer_subscriptions(peer)?.ack_timeout_handlers),
+            |handler| handler(token),
+        );
+        self.each_handler(
+            |state| Some(&state.ack_timeout_handlers),
+            |handler| handler(peer, token),
+        );
     }
 
     #[cfg(feature = "software-crypto")]
     pub(crate) fn dispatch_pfs_established(&self, peer: PublicKey) {
-        let mut state = self.state.borrow_mut();
-        let peer = canonical_peer(&state, peer);
-        if let Some(entry) = state
-            .peer_subscriptions
-            .iter_mut()
-            .find(|entry| entry.peer == peer)
-        {
-            entry
-                .pfs_established_handlers
-                .for_each_mut(|handler| handler());
-        }
-        state
-            .pfs_established_handlers
-            .for_each_mut(|handler| handler(peer));
+        let peer = canonical_peer(&self.state.borrow(), peer);
+        self.each_handler(
+            |state| {
+                Some(
+                    &state
+                        .find_peer_subscriptions(peer)?
+                        .pfs_established_handlers,
+                )
+            },
+            |handler| handler(),
+        );
+        self.each_handler(
+            |state| Some(&state.pfs_established_handlers),
+            |handler| handler(peer),
+        );
     }
 
     #[cfg(feature = "software-crypto")]
     pub(crate) fn dispatch_pfs_ended(&self, peer: PublicKey) {
-        let mut state = self.state.borrow_mut();
-        let peer = canonical_peer(&state, peer);
-        if let Some(entry) = state
-            .peer_subscriptions
-            .iter_mut()
-            .find(|entry| entry.peer == peer)
-        {
-            entry.pfs_ended_handlers.for_each_mut(|handler| handler());
-        }
-        state
-            .pfs_ended_handlers
-            .for_each_mut(|handler| handler(peer));
+        let peer = canonical_peer(&self.state.borrow(), peer);
+        self.each_handler(
+            |state| Some(&state.find_peer_subscriptions(peer)?.pfs_ended_handlers),
+            |handler| handler(),
+        );
+        self.each_handler(
+            |state| Some(&state.pfs_ended_handlers),
+            |handler| handler(peer),
+        );
     }
 
     #[cfg(feature = "software-crypto")]
     pub(crate) fn dispatch_pfs_failed(&self, peer: PublicKey, reason: PfsFailure) {
-        let mut state = self.state.borrow_mut();
-        let peer = canonical_peer(&state, peer);
-        state
-            .pfs_failed_handlers
-            .for_each_mut(|handler| handler(peer, reason));
+        let peer = canonical_peer(&self.state.borrow(), peer);
+        self.each_handler(
+            |state| Some(&state.pfs_failed_handlers),
+            |handler| handler(peer, reason),
+        );
+    }
+
+    /// Calls the handlers `table` names until one returns true, with the
+    /// node unborrowed while each runs.
+    ///
+    /// The handlers are those registered when dispatch began: one added by
+    /// an earlier handler waits for the next event, and one unsubscribed by
+    /// an earlier handler is not called. A handler already running further
+    /// up this stack is passed over rather than entered twice.
+    fn any_handler<F: ?Sized>(
+        &self,
+        table: impl Fn(&LocalNodeState) -> Option<&Handlers<F>>,
+        mut call: impl FnMut(&mut F) -> bool,
+    ) -> bool {
+        let Some(handlers) = table(&self.state.borrow()).map(HandlerTable::snapshot) else {
+            return false;
+        };
+        for (handle, handler) in handlers {
+            if !table(&self.state.borrow()).is_some_and(|table| table.holds(handle, &handler)) {
+                continue;
+            }
+            let Ok(mut handler) = handler.try_borrow_mut() else {
+                continue;
+            };
+            if call(&mut handler) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Calls every handler `table` names, as [`any_handler`](Self::any_handler) does.
+    fn each_handler<F: ?Sized>(
+        &self,
+        table: impl Fn(&LocalNodeState) -> Option<&Handlers<F>>,
+        mut call: impl FnMut(&mut F),
+    ) {
+        self.any_handler(table, |handler| {
+            call(handler);
+            false
+        });
     }
 
     #[cfg(feature = "software-crypto")]

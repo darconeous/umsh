@@ -92,22 +92,14 @@ impl Reaction {
     /// Reading is looser than writing, as it is on iOS: the tokens, their
     /// longer spellings, and the emoji other clients send all count as
     /// their emote, and a body that is none of them counts as its first
-    /// grapheme cluster, so 👍🏽 stays whole. A cluster that is a letter or
-    /// a digit, as in a word, is no reaction.
+    /// grapheme cluster, whatever it is, so 👍🏽 stays whole and a word
+    /// counts as its first letter (app-text-messages.md).
     pub fn from_body(body: &str) -> Option<Self> {
         let trimmed = body.trim();
         let first = umsh_grapheme::first_cluster(trimmed)?;
         Self::spelled(trimmed)
             .or_else(|| Self::spelled(first))
-            .or_else(|| {
-                // A keycap starts with its digit.
-                let pictured = first.contains(['\u{FE0F}', '\u{20E3}'])
-                    || !first.starts_with(char::is_alphanumeric);
-                pictured
-                    .then(|| Cluster::new(first))
-                    .flatten()
-                    .map(Self::Other)
-            })
+            .or_else(|| Cluster::new(first).map(Self::Other))
     }
 
     fn spelled(body: &str) -> Option<Self> {
@@ -191,8 +183,8 @@ mod tests {
             Reaction::from_body("\u{1f44d}\u{1f3fd} nice"),
             Some(Reaction::ThumbsUp)
         );
-        assert_eq!(Reaction::from_body("nice"), None);
         assert_eq!(Reaction::from_body(""), None);
+        assert_eq!(Reaction::from_body("  "), None);
     }
 
     #[test]
@@ -209,9 +201,25 @@ mod tests {
         ] {
             assert_eq!(Reaction::from_body(body).unwrap().body(), body);
         }
-        assert_eq!(Reaction::from_body("\u{e9}t\u{e9}"), None);
         // Too long to keep: a family of four, toned.
         let family = "\u{1f468}\u{1f3fb}\u{200d}\u{1f469}\u{1f3fb}\u{200d}\u{1f467}\u{1f3fb}\u{200d}\u{1f466}\u{1f3fb}";
         assert_eq!(Reaction::from_body(family), None);
+    }
+
+    /// The spec asks for the first grapheme cluster of any body, letters
+    /// and digits included.
+    #[test]
+    fn a_word_or_number_reads_as_its_first_cluster() {
+        for (body, first) in [
+            ("nice", "n"),
+            ("\u{e9}t\u{e9}", "\u{e9}"),
+            ("e\u{301}t\u{e9}", "e\u{301}"),
+            ("42", "4"),
+        ] {
+            assert_eq!(
+                Reaction::from_body(body),
+                Some(Reaction::Other(Cluster::new(first).unwrap()))
+            );
+        }
     }
 }

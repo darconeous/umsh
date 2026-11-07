@@ -9,7 +9,7 @@ use crate::identity_responder::IdentityResponsePlan;
 use crate::mac::MacBackend;
 #[cfg(feature = "software-crypto")]
 use crate::node::PfsLifecycle;
-use crate::node::{LocalNode, LocalNodeState, NodeMembership};
+use crate::node::{ChannelJoins, LocalNode, LocalNodeState, NodeMembership};
 use crate::receive::ReceivedPacketRef;
 use crate::{NodeIdentityPayload, OwnedMacCommand, mac_command};
 use umsh_core::PayloadType;
@@ -45,9 +45,15 @@ pub enum HostError<E> {
 /// short and side-effect-free with respect to the MAC: record what you need (e.g. push to a
 /// queue or set a flag) and perform any follow-up sends after `pump_once` / `run` returns
 /// control to your own task.
+///
+/// The node is not borrowed while its callbacks run, so a callback may subscribe or
+/// unsubscribe, itself included. One added during an event first hears the next event, and
+/// one removed during an event hears no more of it.
 pub struct Host<M: MacBackend> {
     mac: M,
     dispatcher: Rc<RefCell<EventDispatcher>>,
+    /// Shared by every node this host adds, as the MAC is.
+    channel_joins: Rc<RefCell<ChannelJoins>>,
     nodes: Vec<(LocalIdentityId, LocalNode<M>)>,
     pfs_control_options: SendOptions,
 }
@@ -58,6 +64,7 @@ impl<M: MacBackend> Host<M> {
         Self {
             mac,
             dispatcher: Rc::new(RefCell::new(EventDispatcher::new())),
+            channel_joins: Rc::default(),
             nodes: Vec::new(),
             pfs_control_options: SendOptions::default()
                 .with_ack_requested(true)
@@ -92,6 +99,7 @@ impl<M: MacBackend> Host<M> {
             self.mac.clone(),
             self.dispatcher.clone(),
             membership,
+            self.channel_joins.clone(),
             state,
         );
         self.nodes.push((identity_id, node.clone()));

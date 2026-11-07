@@ -107,22 +107,60 @@ impl CounterMap {
             .map(|entry| entry.value)
     }
 
-    /// Upsert `key` to `value`. Returns whether the map changed (an
-    /// equal-value overwrite is a no-op, so callers can skip a flush).
-    /// Nothing the map could hold is also refused as [`MapFull`].
+    /// The stored value for `key`, if any, marking it the most recently
+    /// used.
+    pub fn recall(&mut self, key: &[u8]) -> Option<u32> {
+        let tag = Tag::of(key)?;
+        let index = self.position(tag)?;
+        Some(self.promote(index).value)
+    }
+
+    /// Upsert `key` to `value`, marking it the most recently used. Returns
+    /// whether the map changed (an equal-value overwrite is a no-op, so
+    /// callers can skip a flush).
+    ///
+    /// A full map makes room for a new context by dropping the least
+    /// recently used RX boundary. That peer, heard from again, starts at
+    /// first contact. TX boundaries are never dropped, so a full map of
+    /// nothing else refuses with [`MapFull`], as it does a context the map
+    /// could not hold.
     pub fn set(&mut self, key: &[u8], value: u32) -> Result<bool, MapFull> {
         let tag = Tag::of(key).ok_or(MapFull)?;
-        if let Some(entry) = self.entries.iter_mut().find(|entry| entry.tag == tag) {
+        if let Some(index) = self.position(tag) {
+            let entry = self.promote(index);
             if entry.value == value {
                 return Ok(false);
             }
             entry.value = value;
             return Ok(true);
         }
+        if self.entries.is_full() {
+            let oldest_rx = self
+                .entries
+                .iter()
+                .position(|entry| entry.tag.kind == KIND_RX)
+                .ok_or(MapFull)?;
+            self.entries.remove(oldest_rx);
+        }
         self.entries
             .push(Entry { tag, value })
             .map_err(|_| MapFull)?;
         Ok(true)
+    }
+
+    fn position(&self, tag: Tag) -> Option<usize> {
+        self.entries.iter().position(|entry| entry.tag == tag)
+    }
+
+    /// Moves the entry at `index` to the back, where the most recently used
+    /// one is kept. The order is what a record holds, so it outlasts a
+    /// restart; and since the node reads every registered peer's boundary
+    /// at boot, the peers it no longer holds drift to the front.
+    fn promote(&mut self, index: usize) -> &mut Entry {
+        let entry = self.entries.remove(index);
+        // The removal just made room for it.
+        let _ = self.entries.push(entry);
+        self.entries.last_mut().expect("entry just pushed")
     }
 
     /// Drop every entry (factory clear).
@@ -335,6 +373,44 @@ mod tests {
         map.clear();
         assert_eq!(map.len(), 0);
         assert_eq!(map.get(&[0x00; 32]), None);
+    }
+
+    fn rx_context(peer: u8) -> [u8; 39] {
+        let mut context = [peer; 39];
+        context[..7].copy_from_slice(RX_PREFIX);
+        context
+    }
+
+    #[test]
+    fn a_full_map_drops_the_least_recently_used_rx_boundary() {
+        let mut map = CounterMap::new();
+        let tx_key = [0xEE; 32];
+        map.set(&tx_key, 128).unwrap();
+        for peer in 1..MAX_ENTRIES as u8 {
+            map.set(&rx_context(peer), u32::from(peer)).unwrap();
+        }
+        assert_eq!(map.len(), MAX_ENTRIES);
+
+        // Reading peer 1 and rewriting peer 2 make them the most recent,
+        // which leaves peer 3 the least recently used.
+        assert_eq!(map.recall(&rx_context(1)), Some(1));
+        assert_eq!(map.set(&rx_context(2), 2), Ok(false));
+
+        assert_eq!(map.set(&rx_context(0xF0), 9), Ok(true));
+        assert_eq!(map.len(), MAX_ENTRIES);
+        assert_eq!(map.get(&rx_context(3)), None);
+        assert_eq!(map.get(&rx_context(1)), Some(1));
+        assert_eq!(map.get(&rx_context(2)), Some(2));
+        assert_eq!(map.get(&rx_context(0xF0)), Some(9));
+        // The TX boundary, though least recently used, stays.
+        assert_eq!(map.get(&tx_key), Some(128));
+
+        // The order is in the record, so a restart keeps it.
+        let mut buf = [0u8; ENCODED_MAX];
+        let len = map.encode(&mut buf).unwrap();
+        let mut restored = CounterMap::decode(&buf[..len]).unwrap();
+        assert_eq!(restored.set(&rx_context(0xF1), 10), Ok(true));
+        assert_eq!(restored.get(&rx_context(4)), None);
     }
 
     #[test]
