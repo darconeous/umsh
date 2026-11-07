@@ -36,8 +36,8 @@ repository = "https://github.com/darconeous/umsh"
 # workspace boundaries. The trouble-host rev must stay in lockstep with the
 # root workspace pin (audited fork).
 [patch.crates-io]
-lora-phy        = { git = "https://github.com/darconeous/lora-rs.git", rev = "82fac79903ace2a7cfb4bbfb71b6dcabee1d17b9" }
-lora-modulation = { git = "https://github.com/darconeous/lora-rs.git", rev = "82fac79903ace2a7cfb4bbfb71b6dcabee1d17b9" }
+lora-phy        = { git = "https://github.com/darconeous/lora-rs.git", rev = "0a97a66d2c634f43db07cc6b045d51497204e772" }
+lora-modulation = { git = "https://github.com/darconeous/lora-rs.git", rev = "0a97a66d2c634f43db07cc6b045d51497204e772" }
 trouble-host    = { git = "https://github.com/darconeous/trouble.git", rev = "675edc8a373b58ccdeaf1821653b41e19e595bab" }
 
 # The whole esp-hal family is pinned to a single repo rev instead of the

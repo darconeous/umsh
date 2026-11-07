@@ -662,6 +662,56 @@ pub async fn serve_absent<M, C, const RX: usize, const TX: usize>(
     }
 }
 
+/// How long one attempt at [`bring_up`] may take. A sound chip initializes
+/// in tens of milliseconds; every lora-phy command waits on BUSY with no
+/// limit of its own, so one that holds BUSY high would otherwise hang the
+/// attempt.
+const BRING_UP_LIMIT_MS: u64 = 2_000;
+/// The pause after [`bring_up`]'s first failed attempt, doubling after each
+/// further one up to [`BRING_UP_RETRY_MAX_MS`].
+const BRING_UP_RETRY_MIN_MS: u64 = 2_000;
+const BRING_UP_RETRY_MAX_MS: u64 = 300_000;
+
+/// Initialize a radio built with `LoRa::uninitialized`, trying again on a
+/// lengthening backoff until it comes up, and serve what is asked of the
+/// radio as [`serve_absent`] does while it is down. Run before
+/// [`device_runner`], in the same task.
+///
+/// Each attempt starts with the chip's reset, so one cut short by its
+/// limit leaves nothing for the next to trip over. `failed` hears each
+/// failure: the radio's error, or `None` for an attempt that ran out of
+/// time. After a [`shutdown`](DeviceControl::shutdown) nothing touches the
+/// chip again; this serves requests and never returns.
+pub async fn bring_up<RK, DLY, M, C, const RX: usize, const TX: usize>(
+    lora: &mut LoRa<RK, DLY>,
+    ch: &Channels<M, RX, TX>,
+    ctl: &DeviceControl<M>,
+    clock: &C,
+    mut failed: impl FnMut(Option<RadioError>),
+) where
+    RK: RadioKind,
+    DLY: embedded_hal_async::delay::DelayNs,
+    M: RawMutex,
+    C: Clock,
+{
+    let mut pause_ms = BRING_UP_RETRY_MIN_MS;
+    loop {
+        if ctl.shutdown_requested() {
+            serve_absent(ch, ctl, clock, None).await;
+        }
+        let deadline_ms = clock.now_ms().saturating_add(BRING_UP_LIMIT_MS);
+        let limit = core::future::poll_fn(|cx| clock.poll_delay_until(cx, deadline_ms));
+        match select(lora.init(), limit).await {
+            Either::First(Ok(())) => return,
+            Either::First(Err(error)) => failed(Some(error)),
+            Either::Second(()) => failed(None),
+        }
+        let retry_ms = clock.now_ms().saturating_add(pause_ms);
+        serve_absent(ch, ctl, clock, Some(retry_ms)).await;
+        pause_ms = (pause_ms * 2).min(BRING_UP_RETRY_MAX_MS);
+    }
+}
+
 /// Background loop: owns the `lora_phy::LoRa` instance, switches between
 /// continuous RX and TX as requests arrive. Never returns.
 ///

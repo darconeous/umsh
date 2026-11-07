@@ -22,7 +22,8 @@ use lora_phy::{
 };
 use umsh_hal::{CadPolicy, Clock};
 use umsh_radio_loraphy::{
-    Channels, DeviceControl, DeviceSettings, RxStrategy, TxError, TxRequest, device_runner, runner,
+    Channels, DeviceControl, DeviceSettings, RxStrategy, TxError, TxRequest, bring_up,
+    device_runner, runner,
 };
 use umsh_ulcp::stats::{Counter, StatsLedger};
 
@@ -47,6 +48,9 @@ struct Chip {
     busy_stuck: bool,
     /// Every SetRx fails on the bus.
     refuse_rx: bool,
+    /// How many more SetStandby commands fail on the bus, failing the
+    /// initialization each starts.
+    standby_failures: usize,
 }
 
 struct Bus(Rc<RefCell<Chip>>);
@@ -68,6 +72,10 @@ impl SpiDevice for Bus {
             chip.commands.push(command.to_vec());
             match opcode {
                 0x02 => chip.irq_flags = 0,
+                0x80 if chip.standby_failures != 0 => {
+                    chip.standby_failures -= 1;
+                    return Err(ErrorKind::Other);
+                }
                 0x80 => chip.mode = Mode::Standby,
                 0x82 if chip.refuse_rx => return Err(ErrorKind::Other),
                 0x82 => chip.mode = Mode::Receiving,
@@ -174,14 +182,8 @@ fn settings(enabled: bool) -> DeviceSettings {
     }
 }
 
-fn fixture(
-    chip: Rc<RefCell<Chip>>,
-) -> (
-    LoRa<Sx126x<Bus, Pins, Sx1262>, Delay>,
-    &'static Channels<NoopRawMutex, 4, 2>,
-    &'static DeviceControl<NoopRawMutex>,
-) {
-    let kind = Sx126x::new(
+fn radio_kind(chip: Rc<RefCell<Chip>>) -> Sx126x<Bus, Pins, Sx1262> {
+    Sx126x::new(
         Bus(chip.clone()),
         Pins(chip),
         Config {
@@ -190,7 +192,57 @@ fn fixture(
             use_dcdc: true,
             rx_boost: true,
         },
-    );
+    )
+}
+
+/// A radio whose initialization fails is tried again on a lengthening
+/// backoff, and what is asked of it meanwhile is answered.
+#[test]
+fn a_radio_that_fails_to_initialize_is_retried_on_a_backoff() {
+    let chip = Rc::new(RefCell::new(Chip {
+        standby_failures: 2,
+        ..Chip::default()
+    }));
+    let mut lora = LoRa::uninitialized(radio_kind(chip.clone()), false, Delay);
+    let channel: &Channels<NoopRawMutex, 4, 2> = Box::leak(Box::new(Channels::new()));
+    let control: &DeviceControl<NoopRawMutex> = Box::leak(Box::new(DeviceControl::new()));
+    let clock = TestClock::default();
+    let failures = Cell::new(0);
+    let mut task = core::pin::pin!(bring_up(&mut lora, channel, control, &clock, |_| {
+        failures.set(failures.get() + 1)
+    }));
+
+    assert!(poll(task.as_mut()).is_pending());
+    assert_eq!(failures.get(), 1);
+    assert!(channel.tx.try_send(tx_request()).is_ok());
+    assert!(poll(task.as_mut()).is_pending());
+    assert!(matches!(
+        poll(core::pin::pin!(channel.tx_done.wait())),
+        Poll::Ready((7, Err(TxError::CadTimeout)))
+    ));
+
+    // 2 s, then 4 s, between attempts.
+    clock.0.set(1_999);
+    assert!(poll(task.as_mut()).is_pending());
+    assert_eq!(failures.get(), 1);
+    clock.0.set(2_000);
+    assert!(poll(task.as_mut()).is_pending());
+    assert_eq!(failures.get(), 2);
+    clock.0.set(5_999);
+    assert!(poll(task.as_mut()).is_pending());
+    clock.0.set(6_000);
+    assert_eq!(poll(task.as_mut()), Poll::Ready(()));
+    assert_eq!(failures.get(), 2);
+}
+
+fn fixture(
+    chip: Rc<RefCell<Chip>>,
+) -> (
+    LoRa<Sx126x<Bus, Pins, Sx1262>, Delay>,
+    &'static Channels<NoopRawMutex, 4, 2>,
+    &'static DeviceControl<NoopRawMutex>,
+) {
+    let kind = radio_kind(chip);
     let lora = match poll(core::pin::pin!(LoRa::new(kind, false, Delay))) {
         Poll::Ready(Ok(lora)) => lora,
         _ => panic!("mock initialization should finish synchronously"),

@@ -3686,39 +3686,40 @@ mod firmware {
         }
     }
 
-    /// Bring the radio up, or report why not: `LoRa::new` under a
-    /// deadline, because every lora-phy command waits on BUSY with no
-    /// limit of its own, and a chip that holds BUSY high would otherwise
-    /// hang boot before USB or BLE comes up. Either failure degrades to a
-    /// USB/BLE-only device (RF dead) rather than a startup panic and a
-    /// reboot loop: a display-less field node must stay reachable to
-    /// diagnose.
-    async fn radio_within_deadline(kind: RadioKind) -> Option<LoraRadio> {
+    /// The board's radio driver, not yet talking to the chip: the radio
+    /// task brings it up (see `radio_task`).
+    fn unready_radio(kind: RadioKind) -> LoraRadio {
         // enable_public_network=false → sync word 0x1424 (private).
         // session_config().sync_word must match this choice.
-        match umsh_radio_loraphy::probe::init_within(
-            Timer::after(Duration::from_secs(2)),
-            LoRa::new(kind, false, Delay),
-        )
-        .await
-        {
-            Ok(Ok(lora)) => Some(lora),
-            Ok(Err(error)) => {
-                debug_log(format_args!("radio init FAILED (RF disabled): {error:?}"));
-                None
-            }
-            Err(_) => {
-                debug_log(format_args!("radio init FAILED (RF disabled): timed out"));
-                None
-            }
-        }
+        LoRa::uninitialized(kind, false, Delay)
     }
 
     /// Owns the `lora_phy::LoRa` instance via the reconfigurable device
     /// runner. TX uses MeshCore's 32-symbol SF7 preamble; existing per-radio
     /// RX acquisition settings remain unchanged.
+    ///
+    /// The radio is brought up here rather than at boot, under a limit per
+    /// attempt and retried on a backoff: every lora-phy command waits on
+    /// BUSY with no limit of its own, so a chip that holds BUSY high would
+    /// otherwise hang boot before USB or BLE comes up. Until it comes up,
+    /// the device is USB/BLE-only (RF dead) and what is asked of the radio
+    /// is still answered: a display-less field node must stay reachable to
+    /// diagnose.
     #[embassy_executor::task]
-    async fn radio_task(lora: LoraRadio) {
+    async fn radio_task(mut lora: LoraRadio) {
+        umsh_radio_loraphy::bring_up(
+            &mut lora,
+            &RADIO_CH,
+            &DEVICE_CTL,
+            &umsh_bsp_nrf52840::EmbassyClock,
+            |error| match error {
+                Some(error) => {
+                    debug_log(format_args!("radio init FAILED (RF disabled): {error:?}"))
+                }
+                None => debug_log(format_args!("radio init FAILED (RF disabled): timed out")),
+            },
+        )
+        .await;
         #[cfg(not(feature = "t1000e"))]
         const RX_PREAMBLE: u16 = 8;
         // Hardware bring-up established that the LR1110 misses MeshCore-US
@@ -6507,10 +6508,8 @@ mod firmware {
                 rx_boost: true,
             };
 
-            if let Some(lora) = radio_within_deadline(Sx126x::new(radio_spi, iv, lora_config)).await
-            {
-                spawner.spawn(radio_task(lora).unwrap());
-            }
+            spawner
+                .spawn(radio_task(unready_radio(Sx126x::new(radio_spi, iv, lora_config))).unwrap());
         }
 
         // ── LR1110 LoRa radio (T-1000E) ─────────────────────────────────────
@@ -6538,10 +6537,8 @@ mod firmware {
                 rx_boost: true,
                 rf_switch: Some(RF_SWITCH),
             };
-            if let Some(lora) = radio_within_deadline(Lr1110::new(radio_spi, iv, lora_config)).await
-            {
-                spawner.spawn(radio_task(lora).unwrap());
-            }
+            spawner
+                .spawn(radio_task(unready_radio(Lr1110::new(radio_spi, iv, lora_config))).unwrap());
         }
 
         // ── SX1262 LoRa radio (SenseCAP Solar Node, XIAO nRF52840 kit) ──────
@@ -6603,10 +6600,8 @@ mod firmware {
             // (bidirectional RF, 2026-07-23); on the XIAO kit it is still
             // only schematic-confirmed, which is exactly the case this
             // degrade-instead-of-panic path exists for.
-            if let Some(lora) = radio_within_deadline(Sx126x::new(radio_spi, iv, lora_config)).await
-            {
-                spawner.spawn(radio_task(lora).unwrap());
-            }
+            spawner
+                .spawn(radio_task(unready_radio(Sx126x::new(radio_spi, iv, lora_config))).unwrap());
         }
 
         // ── SX1262 LoRa radio (Wio Tracker L1) ──────────────────────────────
@@ -6653,10 +6648,8 @@ mod firmware {
 
             // Radio init failure degrades to a USB/BLE-only device (RF dead)
             // rather than a startup panic → reboot loop.
-            if let Some(lora) = radio_within_deadline(Sx126x::new(radio_spi, iv, lora_config)).await
-            {
-                spawner.spawn(radio_task(lora).unwrap());
-            }
+            spawner
+                .spawn(radio_task(unready_radio(Sx126x::new(radio_spi, iv, lora_config))).unwrap());
         }
 
         // The mux is the radio runner's only client; the session (and,

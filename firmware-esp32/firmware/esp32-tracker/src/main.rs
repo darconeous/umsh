@@ -1938,9 +1938,23 @@ impl DeviceEnv for BoardDeviceEnv {
 /// frames, until the host re-arms RX—a few percent of unretried
 /// traffic lost, unfixable chip-side without breaking real detection.
 /// See `docs/sx1262-rx-duty-cycle-findings.md` before reintroducing it.
+///
+/// The chip is initialized here, under a limit per attempt and retried on
+/// a backoff; what is asked of the radio is answered meanwhile.
 #[embassy_executor::task]
-async fn radio_task(lora: board_radio::Radio, rx_preamble_symbols: u16) {
+async fn radio_task(mut lora: board_radio::Radio, rx_preamble_symbols: u16) {
     use umsh_radio_loraphy::RxStrategy;
+    umsh_radio_loraphy::bring_up(
+        &mut lora,
+        &RADIO_CH,
+        &DEVICE_CTL,
+        &umsh_hal::EmbassyClock,
+        |error| match error {
+            Some(error) => debug_log(format_args!("radio init FAILED (RF disabled): {error:?}")),
+            None => debug_log(format_args!("radio init FAILED (RF disabled): timed out")),
+        },
+    )
+    .await;
     umsh_radio_loraphy::device_runner(
         lora,
         &RADIO_CH,
@@ -1954,9 +1968,10 @@ async fn radio_task(lora: board_radio::Radio, rx_preamble_symbols: u16) {
     .await;
 }
 
-/// Stands in for `radio_task` on a board whose radio did not come up,
-/// so a transmit, an RSSI sample, or a temperature reading asked of it
-/// is answered rather than waiting forever.
+/// Stands in for `radio_task` on a board whose radio driver could not be
+/// built (its chip did not answer the board's probe), so a transmit, an
+/// RSSI sample, or a temperature reading asked of it is answered rather
+/// than waiting forever.
 #[embassy_executor::task]
 async fn radio_absent_task() {
     umsh_radio_loraphy::serve_absent(&RADIO_CH, &DEVICE_CTL, &umsh_hal::EmbassyClock, None).await;
@@ -4049,15 +4064,16 @@ async fn main(spawner: Spawner) {
         peripherals.GPIO26,
         InputConfig::default().with_pull(Pull::None),
     );
-    // One deadline over the whole bring-up: a board that probes its
-    // radio talks to it before `LoRa::new` does, and with no module
-    // fitted, as on some original T-Decks, BUSY never falls. `false`
-    // selects the private-network sync word (0x12 → 0x1424), matching
-    // SessionConfig::sync_word above.
+    // A deadline over building the driver: a board that probes its radio
+    // talks to it first, and with no module fitted, as on some original
+    // T-Decks, BUSY never falls. `false` selects the private-network sync
+    // word (0x12 → 0x1424), matching SessionConfig::sync_word above.
     //
-    // A radio that does not come up leaves a USB/BLE-only device (RF
-    // dead) rather than a startup panic and a reboot loop: a field node
-    // must stay reachable to diagnose.
+    // A driver that cannot be built leaves a USB/BLE-only device (RF dead)
+    // until the next boot, rather than a startup panic and a reboot loop:
+    // a field node must stay reachable to diagnose. One that can is
+    // initialized by the radio task, which retries a chip that does not
+    // come up at first.
     let radio =
         umsh_radio_loraphy::probe::init_within(Timer::after(Duration::from_secs(2)), async {
             #[cfg(feature = "radio-sx126x")]
@@ -4072,15 +4088,10 @@ async fn main(spawner: Spawner) {
             .await;
             #[cfg(feature = "radio-sx127x")]
             let built = board_radio::new_radio_kind(radio_spi, radio_reset, radio_dio0).await;
-            let (kind, profile) = match built {
-                Ok(built) => built,
-                Err(error) => {
-                    debug_log(format_args!("radio init FAILED (RF disabled): {error:?}"));
-                    return None;
-                }
-            };
-            match LoRa::new(kind, false, Delay).await {
-                Ok(lora) => Some((lora, profile)),
+            match built {
+                // Initialized by the radio task, which retries a chip that
+                // does not come up at first.
+                Ok((kind, profile)) => Some((LoRa::uninitialized(kind, false, Delay), profile)),
                 Err(error) => {
                     debug_log(format_args!("radio init FAILED (RF disabled): {error:?}"));
                     None
@@ -4089,7 +4100,9 @@ async fn main(spawner: Spawner) {
         })
         .await
         .unwrap_or_else(|_| {
-            debug_log(format_args!("radio init FAILED (RF disabled): no LoRa radio"));
+            debug_log(format_args!(
+                "radio init FAILED (RF disabled): no LoRa radio"
+            ));
             None
         });
     match radio {
