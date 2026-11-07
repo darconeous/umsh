@@ -192,7 +192,7 @@ pub use transport::Transport;
 
 #[cfg(test)]
 mod tests {
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     use std::{
         cell::RefCell,
         collections::VecDeque,
@@ -202,28 +202,28 @@ mod tests {
         rc::Rc,
         task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
     };
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     use umsh_core::{NodeHint, PublicKey};
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     use umsh_crypto::NodeIdentity;
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     use umsh_crypto::software::SoftwareIdentity;
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     use umsh_hal::Snr;
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     use umsh_mac::MacEventRef;
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     use umsh_mac::{CapacityError, LocalIdentityId, PeerId, SendError, SendOptions, SendReceipt};
 
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     use crate::ReceivedPacketRef;
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     use crate::{MacBackend, MacBackendError, OwnedMacCommand, SendToken};
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
-    use umsh_core::ChannelId;
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
+    use umsh_core::ChannelKey;
+    #[cfg(feature = "software-crypto")]
     use umsh_text::OwnedTextMessage;
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[test]
     fn peer_receive_handlers_precede_node_receive_handlers() {
         use crate::node::{LocalNode, LocalNodeState, NodeMembership};
@@ -252,7 +252,7 @@ mod tests {
         assert_eq!(call_order.borrow().as_slice(), ["peer"]);
     }
 
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     fn test_node(mac: FakeMac) -> crate::node::LocalNode<FakeMac> {
         use crate::node::{LocalNode, LocalNodeState, NodeMembership};
 
@@ -265,7 +265,7 @@ mod tests {
         )
     }
 
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[test]
     fn leaving_a_channel_unregisters_its_key_from_the_mac() {
         let mac = FakeMac::new(Vec::new());
@@ -280,7 +280,7 @@ mod tests {
         assert!(node.bound_channel(&channel).is_none());
     }
 
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[test]
     fn rejoining_after_leave_re_registers_the_key_with_the_mac() {
         let mac = FakeMac::new(Vec::new());
@@ -298,7 +298,7 @@ mod tests {
         assert!(!first.is_active());
     }
 
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[test]
     fn leaving_a_channel_that_was_never_joined_is_a_no_op() {
         let mac = FakeMac::new(Vec::new());
@@ -313,7 +313,7 @@ mod tests {
         assert!(node.bound_channel(&joined).is_some());
     }
 
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[test]
     fn receive_callbacks_can_observe_rx_metadata() {
         use crate::node::{LocalNode, LocalNodeState, NodeMembership};
@@ -361,7 +361,7 @@ mod tests {
         );
     }
 
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[test]
     fn subscription_guard_unregisters_on_drop() {
         use crate::node::{LocalNode, LocalNodeState, NodeMembership};
@@ -388,7 +388,7 @@ mod tests {
         assert_eq!(*hits.borrow(), 1);
     }
 
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[test]
     fn callbacks_observe_control_side_events_and_peer_ack_state() {
         use crate::node::{LocalNode, LocalNodeState, NodeMembership};
@@ -457,7 +457,7 @@ mod tests {
     /// caller's options carry through untouched. The one exception is the ack
     /// request: the echo response already acknowledges the ping, so asking
     /// for a MAC ack too would put a second frame on the air for nothing.
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[test]
     fn ping_honours_caller_options_but_never_requests_a_mac_ack() {
         use crate::node::{LocalNode, LocalNodeState, NodeMembership};
@@ -509,7 +509,7 @@ mod tests {
     /// lets an oversize request fail at the builder, rather than being quietly
     /// shortened to a length that measures a different frame than the caller
     /// asked about.
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[test]
     fn ping_data_is_not_capped_by_the_node_layer() {
         let mac = FakeMac::new(vec![[7u8; 32]]);
@@ -531,7 +531,7 @@ mod tests {
     /// measuring the path the channel's traffic takes, so it has to be carried
     /// the same way—and the reply that comes back on the channel matches the
     /// pending ping just as a unicast reply would.
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[test]
     fn ping_over_a_bound_channel_sends_a_blind_unicast() {
         let mac = FakeMac::new(vec![[0x3c; 32]]);
@@ -552,7 +552,7 @@ mod tests {
         let sent = mac.take_unicasts().pop().expect("ping send");
         assert_eq!(
             sent.channel,
-            Some(*channel.channel_id()),
+            Some(*channel.key()),
             "a channel-bound ping goes out blind on that channel"
         );
         assert!(!sent.options.ack_requested, "the echo response is the ack");
@@ -579,7 +579,7 @@ mod tests {
     /// A new ping to a peer cancels the one still waiting: the old one's
     /// echo is ignored and its deadline never fires, while the new one is
     /// answered and timed on its own.
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[test]
     fn a_new_ping_cancels_the_one_still_waiting() {
         let mac = FakeMac::new(vec![[7u8; 32], [9u8; 32]]);
@@ -618,7 +618,7 @@ mod tests {
 
     /// A traced reply reports how each repeater heard the hop beyond it,
     /// unless its trace lost the signal in transit.
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[test]
     fn a_pong_reports_the_trace_signal_the_trace_kept() {
         use umsh_core::options::HopSignal;
@@ -658,7 +658,7 @@ mod tests {
         }
     }
 
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[test]
     fn pfs_routed_send_tracks_ack_against_ephemeral_identity() {
         use crate::node::{LocalNode, LocalNodeState, NodeMembership};
@@ -721,7 +721,7 @@ mod tests {
         assert!(ticket.is_finished());
     }
 
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[test]
     fn pfs_accepted_session_reports_its_local_address_until_it_ends() {
         use crate::node::{LocalNode, LocalNodeState, NodeMembership};
@@ -767,7 +767,7 @@ mod tests {
         assert!(node.pfs_local_keys().is_empty());
     }
 
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[test]
     fn pfs_session_manager_request_and_teardown() {
         use crate::pfs::PfsSessionManager;
@@ -816,7 +816,7 @@ mod tests {
         );
     }
 
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[test]
     fn pfs_end_session_errors_when_missing() {
         use crate::pfs::PfsSessionManager;
@@ -836,7 +836,7 @@ mod tests {
         assert!(matches!(error, crate::NodeError::PfsSessionMissing));
     }
 
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[test]
     fn pfs_responder_answers_with_a_finite_lifetime() {
         use crate::pfs::{MAX_PFS_SESSION_MINUTES, PfsSessionManager};
@@ -878,7 +878,7 @@ mod tests {
         }
     }
 
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[test]
     fn pfs_zero_duration_never_means_forever() {
         use crate::pfs::{MAX_PFS_SESSION_MINUTES, PfsSessionManager};
@@ -919,7 +919,7 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "unsafe-advanced")]
+    #[cfg(feature = "software-crypto")]
     fn encode_text_payload(text: &str) -> Vec<u8> {
         let message = OwnedTextMessage::basic(text);
         let mut body = [0u8; 512];
@@ -930,12 +930,12 @@ mod tests {
         payload
     }
 
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     fn test_unicast_packet<'a>(from: PublicKey, payload: &'a [u8]) -> ReceivedPacketRef<'a> {
         test_unicast_packet_with_rx(from, payload, umsh_mac::RxMetadata::default())
     }
 
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     fn test_unicast_packet_with_rx<'a>(
         from: PublicKey,
         payload: &'a [u8],
@@ -970,7 +970,7 @@ mod tests {
 
     /// A received frame that arrived inside a channel—a blind unicast, or
     /// the multicast a solicitation can ride.
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     fn test_channel_packet<'a>(
         from: PublicKey,
         packet_type: umsh_core::PacketType,
@@ -1011,7 +1011,7 @@ mod tests {
     /// A received broadcast frame, as a solicitation would arrive: optionally
     /// carrying an FHOPS byte and a Route option. Only the ranges matter, so
     /// the wire is just the route bytes.
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     fn test_broadcast_packet(
         from: PublicKey,
         flood_hops: Option<u8>,
@@ -1023,7 +1023,7 @@ mod tests {
     /// As above, plus an accumulated trace of router hints (carried as a
     /// hints-only trace)—what a steered solicitation looks like once
     /// repeaters have prepended themselves to it.
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     fn test_broadcast_packet_with_trace(
         from: PublicKey,
         flood_hops: Option<u8>,
@@ -1039,7 +1039,7 @@ mod tests {
     }
 
     /// As above, with `trace` the whole Trace option value, in any form.
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     fn test_broadcast_packet_with_traces(
         from: PublicKey,
         flood_hops: Option<u8>,
@@ -1085,13 +1085,13 @@ mod tests {
         )
     }
 
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[derive(Clone, Default)]
     struct FakeMac {
         state: Rc<RefCell<FakeMacState>>,
     }
 
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[derive(Default)]
     struct FakeMacState {
         random_blocks: VecDeque<[u8; 32]>,
@@ -1107,7 +1107,7 @@ mod tests {
         own_key: Option<PublicKey>,
     }
 
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[derive(Clone, Debug, PartialEq, Eq)]
     struct SentUnicast {
         from: LocalIdentityId,
@@ -1118,7 +1118,7 @@ mod tests {
         channel: Option<ChannelKey>,
     }
 
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     impl FakeMac {
         fn new(random_blocks: Vec<[u8; 32]>) -> Self {
             Self {
@@ -1159,7 +1159,7 @@ mod tests {
         }
     }
 
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     impl MacBackend for FakeMac {
         type SendError = SendError;
         type CapacityError = CapacityError;
@@ -1233,7 +1233,7 @@ mod tests {
         async fn send_multicast(
             &self,
             _from: LocalIdentityId,
-            _channel: &ChannelId,
+            _channel: &ChannelKey,
             _payload: &[u8],
             _options: &SendOptions,
         ) -> Result<SendReceipt, MacBackendError<Self::SendError, Self::CapacityError>> {
@@ -1271,7 +1271,7 @@ mod tests {
             &self,
             from: LocalIdentityId,
             dst: &PublicKey,
-            channel: &ChannelId,
+            channel: &ChannelKey,
             payload: &[u8],
             options: &SendOptions,
         ) -> Result<Option<SendReceipt>, MacBackendError<Self::SendError, Self::CapacityError>>
@@ -1328,14 +1328,14 @@ mod tests {
         }
     }
 
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     fn parse_owned_mac_command(payload: &[u8]) -> OwnedMacCommand {
         OwnedMacCommand::from(
             crate::parse_mac_command_payload(umsh_core::PacketType::Unicast, payload).unwrap(),
         )
     }
 
-    #[cfg(feature = "unsafe-advanced")]
+    #[cfg(feature = "software-crypto")]
     fn block_on_ready<F: Future>(future: F) -> F::Output {
         fn raw_waker() -> RawWaker {
             fn clone(_: *const ()) -> RawWaker {
@@ -1362,7 +1362,7 @@ mod tests {
 
     // --- Identity Request responder ---
 
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     fn responder_node(mac: &FakeMac) -> crate::LocalNode<FakeMac> {
         use crate::node::{LocalNode, LocalNodeState, NodeMembership};
         let dispatcher = Rc::new(RefCell::new(crate::dispatch::EventDispatcher::new()));
@@ -1377,7 +1377,7 @@ mod tests {
         )
     }
 
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     fn test_profile(public_key: PublicKey) -> crate::NodeIdentityProfile {
         crate::NodeIdentityProfile::new(
             public_key,
@@ -1387,7 +1387,7 @@ mod tests {
         .with_name("repeater-1")
     }
 
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[test]
     fn responder_answers_selected_request_with_unicast_identity() {
         let mac = FakeMac::new(Vec::new());
@@ -1432,7 +1432,7 @@ mod tests {
     /// A blind request concealed both endpoints behind the channel key. The
     /// identity reply follows it back onto that channel rather than naming the
     /// pair in the clear.
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[test]
     fn identity_response_follows_a_blind_request_onto_its_channel() {
         let mac = FakeMac::new(Vec::new());
@@ -1464,7 +1464,7 @@ mod tests {
         assert_eq!(sent.len(), 1);
         assert_eq!(
             sent[0].channel,
-            Some(channel_id),
+            Some(channel_key),
             "a blind request must not be answered off its channel"
         );
     }
@@ -1472,7 +1472,7 @@ mod tests {
     /// A multicast solicitation carries a channel too, but every node it
     /// selects answers the same frame; targeted unicast replies are what keep
     /// one solicitation from filling the channel with them.
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[test]
     fn identity_response_to_a_multicast_solicitation_stays_unicast() {
         let mac = FakeMac::new(vec![[0x12; 32]]);
@@ -1505,7 +1505,7 @@ mod tests {
         assert_eq!(sent[0].channel, None);
     }
 
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[test]
     fn responder_answers_broadcast_solicitation_with_delayed_full_source_reply() {
         let mac = FakeMac::new(vec![[0x12; 32]]);
@@ -1547,7 +1547,7 @@ mod tests {
 
     /// A `FILTER_NODE_HINT` names one answering node, so the solicitation may
     /// be flood routed and the reply keeps its normal flood budget.
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[test]
     fn responder_answers_flood_routed_hint_filtered_solicitation() {
         let mac = FakeMac::new(vec![[0x12; 32]]);
@@ -1583,7 +1583,7 @@ mod tests {
     /// A one-byte prefix keeps the hold: it selects a 256th of everything the
     /// request reaches, and a hint-filtered request may be flood routed, so
     /// that fraction is of the whole mesh rather than one neighborhood.
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[test]
     fn responder_holds_a_reply_to_a_one_byte_hint_prefix() {
         let mac = FakeMac::new(vec![[0x12; 32]]);
@@ -1616,7 +1616,7 @@ mod tests {
     /// the two-byte router hint a route named it by, steers the ask to the hop
     /// before it so it arrives with an empty Route option, and gets an answer
     /// back down the trace the request accumulated on the way.
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[test]
     fn responder_answers_a_router_hint_prefix_and_replies_down_the_trace() {
         let mac = FakeMac::new(vec![[0x12; 32]]);
@@ -1673,7 +1673,7 @@ mod tests {
     /// An ask after a hint goes where it is aimed and never floods: to
     /// direct range with no route, or along the one given, traced so the
     /// answer has a way home.
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[test]
     fn an_identity_request_is_aimed_and_never_floods() {
         let mac = FakeMac::new(vec![[0x12; 32], [0x13; 32]]);
@@ -1719,7 +1719,7 @@ mod tests {
     /// below the node layer can recognize a repeat of one; a repeater that
     /// carried a copy it should have left alone used to buy the requester an
     /// extra reply from every node in earshot.
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[test]
     fn responder_answers_one_solicitation_once() {
         let mac = FakeMac::new(vec![[0x12; 32], [0x13; 32], [0x14; 32]]);
@@ -1778,7 +1778,7 @@ mod tests {
 
     /// Suppression names a solicitation, not a peer: two requesters asking at
     /// once both get an answer.
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[test]
     fn responder_answers_every_requester_that_asks() {
         let mac = FakeMac::new(vec![[0x12; 32], [0x13; 32]]);
@@ -1804,7 +1804,7 @@ mod tests {
         assert_eq!(mac.take_unicasts().len(), 2);
     }
 
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[test]
     fn responder_drops_repeated_or_routed_broadcast_solicitations() {
         let mac = FakeMac::new(Vec::new());
@@ -1854,7 +1854,7 @@ mod tests {
     /// That trace is the requester's only path home—the reply carries no
     /// flood budget, and receiving a broadcast teaches the MAC no route—so
     /// the reply must go back down it, copied verbatim rather than reversed.
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[test]
     fn responder_routes_its_reply_back_down_the_requests_trace() {
         let mac = FakeMac::new(vec![[0x00; 32]]);
@@ -1908,7 +1908,7 @@ mod tests {
     /// the requester learns nothing, because a routed reply arrives with its
     /// Route option consumed and its `FHOPS_ACC` counting only the tail.
     ///
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[test]
     fn identity_response_mirrors_the_trace_options_its_request_carried() {
         let mac = FakeMac::new(vec![[0x00; 32]]);
@@ -1949,7 +1949,7 @@ mod tests {
     /// responder mirrors what it was sent and invents nothing; whether an
     /// unrouted reply still earns a trace is the MAC's discovery floor to
     /// decide, not the responder's.
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[test]
     fn identity_response_to_an_untraced_request_mirrors_nothing() {
         let mac = FakeMac::new(vec![[0x00; 32]]);
@@ -1975,7 +1975,7 @@ mod tests {
 
     /// The ordinary in-range case is unchanged: no trace in, no route out,
     /// and above all no empty Route option on the wire.
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[test]
     fn responder_leaves_an_untraced_reply_unrouted() {
         let mac = FakeMac::new(vec![[0x00; 32]]);
@@ -2000,7 +2000,7 @@ mod tests {
         assert_eq!(unicasts[0].options.flood_hops, None);
     }
 
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[test]
     fn responder_ignores_request_that_filters_exclude() {
         let mac = FakeMac::new(Vec::new());
@@ -2022,7 +2022,7 @@ mod tests {
         );
     }
 
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[test]
     fn responder_respects_ignore_policy() {
         let mac = FakeMac::new(Vec::new());
@@ -2046,7 +2046,7 @@ mod tests {
     /// has opted out of being discovered must still be able to read it back.
     /// Silencing the responder with a policy rather than uninstalling it is
     /// what keeps the two independent.
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[test]
     fn never_respond_policy_keeps_the_profile_readable() {
         let mac = FakeMac::new(Vec::new());
@@ -2068,7 +2068,7 @@ mod tests {
         );
     }
 
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[test]
     fn responder_disabled_yields_no_plan() {
         let mac = FakeMac::new(Vec::new());
@@ -2081,7 +2081,7 @@ mod tests {
         );
     }
 
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[test]
     fn default_policy_full_source_tracks_authentication() {
         use crate::identity_responder::{IdentityRequestContext, default_respond_policy};
@@ -2114,7 +2114,7 @@ mod tests {
 
     // --- Peer Repeaters responder ---
 
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     fn peer_identity(name: &str, regions: &[&str]) -> crate::NodeIdentityPayload {
         crate::NodeIdentityPayload {
             role: crate::NodeRole::Repeater,
@@ -2130,7 +2130,7 @@ mod tests {
     }
 
     /// The request options a requester would put on the wire.
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     fn peer_repeaters_request(nonce: Option<u16>, cursor: Option<&[u8]>) -> Vec<u8> {
         let mut builder = crate::mac_command::PeerRepeatersRequestBuilder::new();
         if let Some(nonce) = nonce {
@@ -2144,32 +2144,32 @@ mod tests {
 
     /// Pull the one response the responder sent back off the fake MAC and
     /// reparse it exactly as a receiver would.
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     /// The peer-repeater listing names the neighborhood around this node. A
     /// request that arrived concealed on a channel is answered there, not in
     /// the open.
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[test]
     fn peer_repeaters_response_follows_a_blind_request_onto_its_channel() {
         let mac = FakeMac::new(Vec::new());
         let node = responder_node(&mac);
         node.enable_peer_repeaters_responder();
-        let channel_id = umsh_core::ChannelId([0xC1, 0xD2]);
+        let channel = ChannelKey([0x5A; 32]);
 
         block_on_ready(node.answer_peer_repeaters_request(
             PublicKey([0x41; 32]),
-            Some(channel_id),
+            Some(channel),
             &peer_repeaters_request(Some(7), None),
         ));
 
         let sent = mac.take_unicasts();
         assert_eq!(sent.len(), 1);
-        assert_eq!(sent[0].channel, Some(channel_id));
+        assert_eq!(sent[0].channel, Some(channel));
     }
 
     /// Pull the one response the responder sent back off the fake MAC and
     /// reparse it exactly as a receiver would.
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     fn sent_response(mac: &FakeMac) -> (PublicKey, Vec<u8>) {
         let mut unicasts = mac.take_unicasts();
         assert_eq!(unicasts.len(), 1, "exactly one response frame");
@@ -2188,15 +2188,27 @@ mod tests {
 
     /// A node is not its own neighbor, whichever source names it: its own
     /// advertisement heard back, or a trace that begins with its own hint.
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[test]
     fn the_listing_never_names_the_node_itself() {
         let mac = FakeMac::new(Vec::new());
         let own = PublicKey([0x5A; 32]);
         mac.set_own_key(own);
         let node = responder_node(&mac);
-        node.observe_peer_identity(own, &peer_identity("Myself", &[]), None, 0);
-        node.observe_peer_identity(PublicKey([0xAA; 32]), &peer_identity("Ridge", &[]), None, 0);
+        node.observe_peer_identity(
+            own,
+            &peer_identity("Myself", &[]),
+            crate::IdentityUpdate::Replace,
+            None,
+            0,
+        );
+        node.observe_peer_identity(
+            PublicKey([0xAA; 32]),
+            &peer_identity("Ridge", &[]),
+            crate::IdentityUpdate::Replace,
+            None,
+            0,
+        );
         mac.observe(
             umsh_core::RouterHint([own.0[0], own.0[1]]),
             -82,
@@ -2208,12 +2220,18 @@ mod tests {
         assert_eq!(names, [Some("Ridge")]);
     }
 
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[test]
     fn a_disabled_responder_answers_nothing() {
         let mac = FakeMac::new(Vec::new());
         let node = responder_node(&mac);
-        node.observe_peer_identity(PublicKey([0xAA; 32]), &peer_identity("Ridge", &[]), None, 0);
+        node.observe_peer_identity(
+            PublicKey([0xAA; 32]),
+            &peer_identity("Ridge", &[]),
+            crate::IdentityUpdate::Replace,
+            None,
+            0,
+        );
 
         block_on_ready(node.answer_peer_repeaters_request(
             PublicKey([0x41; 32]),
@@ -2223,7 +2241,7 @@ mod tests {
         assert!(mac.take_unicasts().is_empty());
     }
 
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[test]
     fn a_response_echoes_the_nonce_and_reports_what_both_sources_know() {
         let mac = FakeMac::new(Vec::new());
@@ -2236,6 +2254,7 @@ mod tests {
         node.observe_peer_identity(
             peer,
             &peer_identity("Ridge", &["SJC", "0x1234"]),
+            crate::IdentityUpdate::Replace,
             Some((-60, umsh_hal::Snr::from_decibels(8))),
             0,
         );
@@ -2289,7 +2308,7 @@ mod tests {
         assert!(entries[1].regions().next().is_none());
     }
 
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[test]
     fn a_full_table_pages_and_the_cursor_resumes_where_it_stopped() {
         let mac = FakeMac::new(Vec::new());
@@ -2302,6 +2321,7 @@ mod tests {
             node.observe_peer_identity(
                 PublicKey([seed; 32]),
                 &peer_identity(&format!("Repeater number {seed:08}"), &["Rogue Valley"]),
+                crate::IdentityUpdate::Replace,
                 None,
                 0,
             );
@@ -2356,14 +2376,20 @@ mod tests {
 
     /// A cursor names a place in a listing. If the listing has changed since,
     /// resuming into it would skip or repeat peers, so the walk restarts.
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[test]
     fn a_cursor_from_a_changed_listing_restarts_the_walk() {
         let mac = FakeMac::new(Vec::new());
         let node = responder_node(&mac);
         node.enable_peer_repeaters_responder();
         for seed in 0..3u8 {
-            node.observe_peer_identity(PublicKey([seed; 32]), &peer_identity("Peer", &[]), None, 0);
+            node.observe_peer_identity(
+                PublicKey([seed; 32]),
+                &peer_identity("Peer", &[]),
+                crate::IdentityUpdate::Replace,
+                None,
+                0,
+            );
         }
 
         // A cursor whose generation matches resumes; index 2 leaves one entry.
@@ -2382,6 +2408,7 @@ mod tests {
         node.observe_peer_identity(
             PublicKey([0x77; 32]),
             &peer_identity("Newcomer", &[]),
+            crate::IdentityUpdate::Replace,
             None,
             0,
         );
@@ -2401,7 +2428,7 @@ mod tests {
 
     /// The listing is the answer even when it is empty—a repeater that
     /// knows of nobody says so rather than staying silent.
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[cfg(feature = "software-crypto")]
     #[test]
     fn an_empty_neighborhood_still_answers() {
         let mac = FakeMac::new(Vec::new());
