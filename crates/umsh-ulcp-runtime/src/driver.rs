@@ -2155,6 +2155,9 @@ where
     // Until when the device lists are not offered to the board's store
     // again, after it refused them.
     let mut lists_retry_at: Option<Instant> = None;
+    // Set by a save request this pass served, so its completion is
+    // signaled once the device lists are written too.
+    let mut snapshot_settled = false;
     loop {
         // Resolve the next event in its own statement so the select's
         // futures—one of which mutably borrows `env`—are dropped
@@ -2510,9 +2513,11 @@ where
                 }
                 // The lists' own retry wait ends here too: this is either
                 // that deadline or a board about to power off, which
-                // wants them kept as much as the snapshot.
+                // wants them kept as much as the snapshot. The lists are
+                // written at the foot of this loop; the board is told the
+                // save is done only after that.
                 lists_retry_at = None;
-                rt.snapshot.done.signal(());
+                snapshot_settled = true;
             }
             Either4::Fourth(Either3::Second(())) => {
                 // The alert outlived its deadline: stop the indication
@@ -2545,6 +2550,9 @@ where
                 lists_retry_at = Some(at);
                 save_due = Some(save_due.map_or(at, |due| due.min(at)));
             }
+        }
+        if core::mem::take(&mut snapshot_settled) {
+            rt.snapshot.done.signal(());
         }
         // PROP_MAC_BACKHAUL is session-scoped but its routing lives in
         // the mux, which nothing inside the session can reach. Mirroring
