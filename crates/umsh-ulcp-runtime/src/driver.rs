@@ -268,6 +268,10 @@ impl<M: RawMutex> TransportChannels<M> {
 /// the host takes a frame again, what does not fit is dropped at once.
 const HOST_STALL_LIMIT: Duration = Duration::from_secs(5);
 
+/// How long a `PROP_PHY_RSSI` get waits for the radio runner. A sound
+/// runner answers in milliseconds.
+const RSSI_SAMPLE_LIMIT: Duration = Duration::from_secs(2);
+
 impl<M: RawMutex> Default for TransportChannels<M> {
     fn default() -> Self {
         Self::new()
@@ -1765,9 +1769,12 @@ where
             Some(Effect::SampleRssi { tid }) => {
                 // Round-trip to the radio runner for an
                 // instantaneous RSSI sample, then answer the
-                // deferred PROP_PHY_RSSI get.
-                rt.ctl.request_rssi();
-                let sample = rt.ctl.wait_rssi().await;
+                // deferred PROP_PHY_RSSI get. Bounded: a radio that
+                // never answers fails this get rather than stopping
+                // the driver, and its late answer is discarded.
+                let sample = embassy_time::with_timeout(RSSI_SAMPLE_LIMIT, rt.ctl.sample_rssi())
+                    .await
+                    .unwrap_or(Err(()));
                 session.respond_rssi(tid, sample, &mut |frame: &[u8]| emitter.push(frame));
                 emitter.flush(sink).await;
             }

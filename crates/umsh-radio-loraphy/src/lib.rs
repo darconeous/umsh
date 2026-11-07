@@ -42,7 +42,8 @@ use core::task::{Context, Poll};
 
 use embassy_futures::select::{Either, select};
 use embassy_sync::{
-    blocking_mutex::raw::RawMutex, channel::Channel, signal::Signal, waitqueue::AtomicWaker,
+    blocking_mutex::raw::RawMutex, channel::Channel, mutex::Mutex, signal::Signal,
+    waitqueue::AtomicWaker,
 };
 use heapless::Vec;
 use lora_phy::{
@@ -616,9 +617,9 @@ where
             Either4::First(()) => return None,
             Either4::Second(request) => ch.complete(&request, Err(TxError::CadTimeout)),
             Either4::Third(new_settings) => return Some(new_settings),
-            Either4::Fourth(Either::First(())) => {
+            Either4::Fourth(Either::First(id)) => {
                 if let Some(ctl) = ctl {
-                    ctl.rssi_resp.signal(Err(()));
+                    ctl.rssi_resp.signal((id, Err(())));
                 }
             }
             Either4::Fourth(Either::Second(id)) => {
@@ -628,6 +629,35 @@ where
                     ctl.temperature_resp.signal((id, None));
                 }
             }
+        }
+    }
+}
+
+/// Stand in for [`device_runner`] on a board whose radio did not come up,
+/// until `until_ms` passes (forever with `None`).
+///
+/// The device stays reachable over USB and BLE either way. What this adds
+/// is that nothing asked of the radio waits for an answer that would never
+/// come: a transmit is refused as a busy channel, an RSSI sample fails,
+/// a temperature reading reports none, and new settings are taken and
+/// held, so a runner started later begins from them (see
+/// [`DeviceControl::latest`]). A shutdown is acknowledged at once, because
+/// there is no chip to put to sleep.
+pub async fn serve_absent<M, C, const RX: usize, const TX: usize>(
+    ch: &Channels<M, RX, TX>,
+    ctl: &DeviceControl<M>,
+    clock: &C,
+    until_ms: Option<u64>,
+) where
+    M: RawMutex,
+    C: Clock,
+{
+    loop {
+        if ctl.shutdown_requested() {
+            ctl.shutdown_complete();
+        }
+        if serve_idle(ch, Some(ctl), clock, until_ms).await.is_none() {
+            return;
         }
     }
 }
@@ -806,11 +836,19 @@ pub struct DeviceSettings {
 /// [`Channels`].
 pub struct DeviceControl<M: RawMutex> {
     settings: Signal<M, DeviceSettings>,
-    rssi_req: Signal<M, ()>,
-    rssi_resp: Signal<M, Result<i16, ()>>,
+    /// The settings last applied, for a runner that starts after they were.
+    latest: embassy_sync::blocking_mutex::Mutex<M, core::cell::Cell<Option<DeviceSettings>>>,
+    rssi_req: Signal<M, u32>,
+    rssi_resp: Signal<M, (u32, Result<i16, ()>)>,
+    rssi_sequence: AtomicU32,
+    /// Held across one RSSI request and its answer, so a second caller
+    /// cannot replace the first one's request while it waits.
+    rssi_turn: Mutex<M, ()>,
     temperature_req: Signal<M, u32>,
     temperature_resp: Signal<M, (u32, Option<u16>)>,
     temperature_sequence: AtomicU32,
+    /// [`rssi_turn`](Self::rssi_turn)'s counterpart for temperature.
+    temperature_turn: Mutex<M, ()>,
     shutdown: AtomicBool,
     shutdown_done: Signal<M, ()>,
 }
@@ -819,11 +857,15 @@ impl<M: RawMutex> DeviceControl<M> {
     pub const fn new() -> Self {
         Self {
             settings: Signal::new(),
+            latest: embassy_sync::blocking_mutex::Mutex::new(core::cell::Cell::new(None)),
             rssi_req: Signal::new(),
             rssi_resp: Signal::new(),
+            rssi_sequence: AtomicU32::new(0),
+            rssi_turn: Mutex::new(()),
             temperature_req: Signal::new(),
             temperature_resp: Signal::new(),
             temperature_sequence: AtomicU32::new(0),
+            temperature_turn: Mutex::new(()),
             shutdown: AtomicBool::new(false),
             shutdown_done: Signal::new(),
         }
@@ -860,34 +902,48 @@ impl<M: RawMutex> DeviceControl<M> {
     /// Apply new settings. The runner picks them up at its next await
     /// point and rebuilds modulation/packet params.
     pub fn apply(&self, settings: DeviceSettings) {
+        self.latest.lock(|latest| latest.set(Some(settings)));
         self.settings.signal(settings);
     }
 
-    /// Request an instantaneous-RSSI sample from the runner. Pair with
-    /// [`wait_rssi`](Self::wait_rssi). Only meaningful while the radio is in RX
-    /// (i.e. enabled); the caller is responsible for that gating.
-    pub fn request_rssi(&self) {
-        self.rssi_resp.reset();
-        self.rssi_req.signal(());
+    /// The settings last [applied](Self::apply), if any.
+    pub fn latest(&self) -> Option<DeviceSettings> {
+        self.latest.lock(core::cell::Cell::get)
     }
 
-    /// Await the RSSI sample requested via [`request_rssi`](Self::request_rssi),
-    /// in dBm. `Err(())` means the read failed at the radio.
+    /// An instantaneous-RSSI sample from the runner, in dBm. `Err(())`
+    /// means the read failed at the radio, or there is no radio. Only
+    /// meaningful while the radio is in RX (i.e. enabled).
+    ///
+    /// Callers take turns, and the caller bounds the wait; canceling it
+    /// leaves the runner free to finish its bus work. A late answer to a
+    /// canceled request cannot satisfy a later one.
     #[allow(
         clippy::result_unit_err,
         reason = "public API; there is one way to fail, and its doc names it"
     )]
-    pub async fn wait_rssi(&self) -> Result<i16, ()> {
-        self.rssi_resp.wait().await
+    pub async fn sample_rssi(&self) -> Result<i16, ()> {
+        let _turn = self.rssi_turn.lock().await;
+        let id = self.rssi_sequence.fetch_add(1, Ordering::Relaxed);
+        self.rssi_resp.reset();
+        self.rssi_req.signal(id);
+        loop {
+            let (reply_id, sample) = self.rssi_resp.wait().await;
+            if reply_id == id {
+                return sample;
+            }
+        }
     }
 
-    /// Fresh temperature request, one consumer at a time. The caller bounds
-    /// this wait; canceling it leaves the runner free to finish bus work.
-    /// A late response from a canceled request cannot satisfy a later get.
+    /// A fresh temperature reading. Callers take turns, and the caller
+    /// bounds this wait; canceling it leaves the runner free to finish bus
+    /// work. A late response from a canceled request cannot satisfy a
+    /// later get.
     pub async fn sample_temperature(&self) -> Option<u16> {
         if self.shutdown.load(Ordering::Acquire) {
             return None;
         }
+        let _turn = self.temperature_turn.lock().await;
         let id = self.temperature_sequence.fetch_add(1, Ordering::Relaxed);
         self.temperature_resp.reset();
         self.temperature_req.signal(id);
@@ -910,15 +966,15 @@ impl<M: RawMutex> DeviceControl<M> {
         .await
         {
             Either::First(settings) => ControlRequest::Settings(settings),
-            Either::Second(Either::First(())) => ControlRequest::Rssi,
+            Either::Second(Either::First(id)) => ControlRequest::Rssi(id),
             Either::Second(Either::Second(id)) => ControlRequest::Temperature(id),
         }
     }
 
-    /// Runner side: the sample a [`ControlRequest::Rssi`] asked for, or
-    /// `Err(())` where there is none to take.
-    pub fn answer_rssi(&self, sample: Result<i16, ()>) {
-        self.rssi_resp.signal(sample);
+    /// Runner side: the sample a [`ControlRequest::Rssi`] asked for, under
+    /// the request's own id, or `Err(())` where there is none to take.
+    pub fn answer_rssi(&self, id: u32, sample: Result<i16, ()>) {
+        self.rssi_resp.signal((id, sample));
     }
 
     /// Runner side: the reading a [`ControlRequest::Temperature`] asked
@@ -945,8 +1001,8 @@ pub enum ControlRequest {
     /// New settings to run with.
     Settings(DeviceSettings),
     /// An instantaneous RSSI sample, answered with
-    /// [`DeviceControl::answer_rssi`].
-    Rssi,
+    /// [`DeviceControl::answer_rssi`] under this id.
+    Rssi(u32),
     /// A temperature reading, answered with
     /// [`DeviceControl::answer_temperature`] under this id.
     Temperature(u32),
@@ -1159,7 +1215,12 @@ where
     use embassy_futures::select::{Either4, select4};
 
     let mut rx_buf = [0u8; MAX_PAYLOAD];
-    let mut settings: Option<DeviceSettings> = None;
+    // Settings applied before this runner started, as when the radio came
+    // up late (see `serve_absent`); any applied since arrive by signal.
+    // The signal is cleared first, so settings already read here are not
+    // applied a second time.
+    ctl.settings.reset();
+    let mut settings: Option<DeviceSettings> = ctl.latest();
     let mut sleeping = false;
 
     // Wait for new settings while idle, failing any TX or RSSI request
@@ -1384,7 +1445,7 @@ where
                         settings = Some(new_settings);
                         continue 'reconfigure;
                     }
-                    Either4::Fourth(Either::First(())) => {
+                    Either4::Fourth(Either::First(id)) => {
                         // Sample the instantaneous channel RSSI. Like TX,
                         // `get_rssi` runs to completion or to its limit
                         // outside the select (only `wait_for_irq` and the
@@ -1396,7 +1457,8 @@ where
                         // caught an RX window), so re-arm RX afterwards.
                         let sample = chip_op!(lora, clock, stats, op_limit_ms, lora.get_rssi());
                         let reset = sample.is_none();
-                        ctl.rssi_resp.signal(sample.and_then(Result::ok).ok_or(()));
+                        ctl.rssi_resp
+                            .signal((id, sample.and_then(Result::ok).ok_or(())));
                         if reset || rx_mode != RxMode::Continuous {
                             continue 'rx;
                         }

@@ -202,6 +202,28 @@ fn fixture(
     )
 }
 
+/// A radio that comes up after the session configured it, as one retried
+/// after a failed bring-up does, starts from the settings already applied.
+#[test]
+fn a_runner_started_late_begins_from_the_settings_already_applied() {
+    let chip = Rc::new(RefCell::new(Chip::default()));
+    let (lora, channel, control) = fixture(chip.clone());
+    control.apply(settings(true));
+    let mut runner = core::pin::pin!(device_runner(
+        lora,
+        channel,
+        control,
+        8,
+        32,
+        RxStrategy::Continuous,
+        None,
+        TestClock::default(),
+    ));
+    assert!(poll(runner.as_mut()).is_pending());
+    assert_eq!(chip.borrow().mode, Mode::Receiving);
+    assert_eq!(set_rx_attempts(&chip), 1);
+}
+
 #[test]
 fn disabled_radio_sleeps_without_polling_and_reenable_restores_rx() {
     let chip = Rc::new(RefCell::new(Chip::default()));
@@ -241,12 +263,12 @@ fn disabled_radio_sleeps_without_polling_and_reenable_restores_rx() {
         );
         // Repeated disable and RSSI requests cannot wake or poll the chip.
         control.apply(settings(false));
-        control.request_rssi();
-        assert!(poll(runner.as_mut()).is_pending());
-        assert_eq!(
-            poll(core::pin::pin!(control.wait_rssi())),
-            Poll::Ready(Err(()))
-        );
+        {
+            let mut rssi = core::pin::pin!(control.sample_rssi());
+            assert!(poll(rssi.as_mut()).is_pending());
+            assert!(poll(runner.as_mut()).is_pending());
+            assert_eq!(poll(rssi.as_mut()), Poll::Ready(Err(())));
+        }
         assert!(poll(runner.as_mut()).is_pending());
         assert_eq!(chip.borrow().commands.len(), count);
     }
@@ -551,12 +573,12 @@ fn refused_rx_backs_off_and_keeps_serving_requests() {
         poll(core::pin::pin!(channel.tx_done.wait())),
         Poll::Ready((7, Err(TxError::CadTimeout)))
     ));
-    control.request_rssi();
-    assert!(poll(task.as_mut()).is_pending());
-    assert_eq!(
-        poll(core::pin::pin!(control.wait_rssi())),
-        Poll::Ready(Err(()))
-    );
+    {
+        let mut rssi = core::pin::pin!(control.sample_rssi());
+        assert!(poll(rssi.as_mut()).is_pending());
+        assert!(poll(task.as_mut()).is_pending());
+        assert_eq!(poll(rssi.as_mut()), Poll::Ready(Err(())));
+    }
     assert_eq!(set_rx_attempts(&chip), 1);
 
     // 10 ms, then 20 ms, then 40 ms between attempts.

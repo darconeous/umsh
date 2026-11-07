@@ -372,6 +372,16 @@ const DEV_VERSION: &str = concat!("umsh/", env!("GIT_DESCRIBE"));
 /// limits. Set once, before the device task—the only reader—is spawned.
 static RADIO_PROFILE: OnceLock<umsh_radio_loraphy::RadioProfile> = OnceLock::new();
 
+/// What `PROP_DEV_MODEL` and the TX power and tuning limits report on a
+/// board whose radio did not come up: the board's own profile where it
+/// has only one. The Pager probes for one of two, and with neither found
+/// reports its SX1262 model; both run this one image.
+#[cfg(not(feature = "board-tlora-pager"))]
+const ABSENT_RADIO_PROFILE: umsh_radio_loraphy::RadioProfile = board_radio::PROFILE;
+#[cfg(feature = "board-tlora-pager")]
+const ABSENT_RADIO_PROFILE: umsh_radio_loraphy::RadioProfile =
+    umsh_radio_loraphy::RadioProfile::sx1262(board::MODEL_SX1262);
+
 fn radio_profile() -> &'static umsh_radio_loraphy::RadioProfile {
     RADIO_PROFILE
         .try_get()
@@ -1942,6 +1952,14 @@ async fn radio_task(lora: board_radio::Radio, rx_preamble_symbols: u16) {
         umsh_hal::EmbassyClock,
     )
     .await;
+}
+
+/// Stands in for `radio_task` on a board whose radio did not come up,
+/// so a transmit, an RSSI sample, or a temperature reading asked of it
+/// is answered rather than waiting forever.
+#[embassy_executor::task]
+async fn radio_absent_task() {
+    umsh_radio_loraphy::serve_absent(&RADIO_CH, &DEVICE_CTL, &umsh_hal::EmbassyClock, None).await;
 }
 
 /// Owns the real `RADIO_CH` bundle and multiplexes it across the
@@ -4036,7 +4054,11 @@ async fn main(spawner: Spawner) {
     // fitted, as on some original T-Decks, BUSY never falls. `false`
     // selects the private-network sync word (0x12 → 0x1424), matching
     // SessionConfig::sync_word above.
-    let (lora, profile) =
+    //
+    // A radio that does not come up leaves a USB/BLE-only device (RF
+    // dead) rather than a startup panic and a reboot loop: a field node
+    // must stay reachable to diagnose.
+    let radio =
         umsh_radio_loraphy::probe::init_within(Timer::after(Duration::from_secs(2)), async {
             #[cfg(feature = "radio-sx126x")]
             let built = board_radio::new_radio_kind(
@@ -4050,17 +4072,37 @@ async fn main(spawner: Spawner) {
             .await;
             #[cfg(feature = "radio-sx127x")]
             let built = board_radio::new_radio_kind(radio_spi, radio_reset, radio_dio0).await;
-            let (kind, profile) = built.unwrap_or_else(|e| panic!("radio init failed: {e:?}"));
-            let lora = LoRa::new(kind, false, Delay)
-                .await
-                .unwrap_or_else(|e| panic!("radio init failed: {e:?}"));
-            (lora, profile)
+            let (kind, profile) = match built {
+                Ok(built) => built,
+                Err(error) => {
+                    debug_log(format_args!("radio init FAILED (RF disabled): {error:?}"));
+                    return None;
+                }
+            };
+            match LoRa::new(kind, false, Delay).await {
+                Ok(lora) => Some((lora, profile)),
+                Err(error) => {
+                    debug_log(format_args!("radio init FAILED (RF disabled): {error:?}"));
+                    None
+                }
+            }
         })
         .await
-        .unwrap_or_else(|_| panic!("radio init failed: no LoRa radio"));
-    debug_log(format_args!("radio: {}", profile.model));
-    let _ = RADIO_PROFILE.init(profile);
-    spawner.spawn(radio_task(lora, profile.rx_preamble_symbols).unwrap());
+        .unwrap_or_else(|_| {
+            debug_log(format_args!("radio init FAILED (RF disabled): no LoRa radio"));
+            None
+        });
+    match radio {
+        Some((lora, profile)) => {
+            debug_log(format_args!("radio: {}", profile.model));
+            let _ = RADIO_PROFILE.init(profile);
+            spawner.spawn(radio_task(lora, profile.rx_preamble_symbols).unwrap());
+        }
+        None => {
+            let _ = RADIO_PROFILE.init(ABSENT_RADIO_PROFILE);
+            spawner.spawn(radio_absent_task().unwrap());
+        }
+    }
     spawner.spawn(radio_mux_task().unwrap());
 
     // ── The wired transport ───────────────────────────────────────────────

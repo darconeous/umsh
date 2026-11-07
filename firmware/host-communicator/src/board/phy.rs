@@ -64,7 +64,7 @@ impl Phy {
                         enabled = settings.enabled;
                     }
                     // Nothing measures the group.
-                    ControlRequest::Rssi => DEVICE_CTL.answer_rssi(Err(())),
+                    ControlRequest::Rssi(id) => DEVICE_CTL.answer_rssi(id, Err(())),
                     ControlRequest::Temperature(id) => DEVICE_CTL.answer_temperature(id, None),
                 },
                 Ok(()) = self.group.changed() => {}

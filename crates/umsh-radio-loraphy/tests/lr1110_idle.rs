@@ -294,12 +294,12 @@ fn lr1110_disable_reenable_and_shutdown_use_cold_sleep() {
         assert_eq!(chip.borrow().mode, Mode::Sleeping);
         let count = chip.borrow().commands.len();
         control.apply(settings(false));
-        control.request_rssi();
-        assert!(poll(runner.as_mut()).is_pending());
-        assert_eq!(
-            poll(core::pin::pin!(control.wait_rssi())),
-            Poll::Ready(Err(()))
-        );
+        {
+            let mut rssi = core::pin::pin!(control.sample_rssi());
+            assert!(poll(rssi.as_mut()).is_pending());
+            assert!(poll(runner.as_mut()).is_pending());
+            assert_eq!(poll(rssi.as_mut()), Poll::Ready(Err(())));
+        }
         assert_eq!(chip.borrow().commands.len(), count);
     }
     control.apply(settings(true));
