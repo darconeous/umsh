@@ -94,7 +94,27 @@ pub enum Event {
     /// The device reset, or publications were lost: every value is stale,
     /// and being read again.
     Resync,
+    /// More happened to the cache than the queue holds, so the
+    /// [`Event::Changed`], [`Event::Unavailable`] and [`Event::Resync`]
+    /// waiting were dropped in favor of this: anything may have changed.
+    /// What a write or save came to is never dropped.
+    Overflowed,
 }
+
+impl Event {
+    /// Whether it tells of the cache, rather than of a write the owner
+    /// asked for.
+    const fn observes(&self) -> bool {
+        matches!(
+            self,
+            Self::Changed(_) | Self::Unavailable { .. } | Self::Resync | Self::Overflowed
+        )
+    }
+}
+
+/// The most events about the cache that wait to be taken: one for every
+/// covered property. Past it they collapse into [`Event::Overflowed`].
+pub const OBSERVED_EVENTS_MAX: usize = COVERED.len();
 
 /// Why a write was refused before it went anywhere.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -388,9 +408,10 @@ impl Model {
 
     /// Take in everything the link has delivered, and hand it every
     /// request it will take, until neither moves. `now_ms` dates what is
-    /// read.
+    /// read, and tells the link the time.
     pub fn pump<E: Exchange>(&mut self, exchange: &mut E, now_ms: u64) {
         self.now_ms = now_ms;
+        exchange.expire(now_ms);
         let mut scratch = core::mem::take(&mut self.scratch);
         if scratch.len() < E::ANSWER_MAX {
             scratch.resize(E::ANSWER_MAX, 0);
@@ -407,6 +428,40 @@ impl Model {
             }
         }
         self.scratch = scratch;
+    }
+
+    /// Queues `event`. One about the cache that says nothing new is
+    /// dropped: a [`Event::Changed`] or [`Event::Unavailable`] for a
+    /// property already queued, a second [`Event::Resync`], or anything
+    /// while an [`Event::Overflowed`] waits.
+    fn emit(&mut self, event: Event) {
+        if event.observes() {
+            let mut waiting = self.events.iter_mut().filter(|e| e.observes());
+            let already = waiting.any(|queued| match (queued, &event) {
+                (Event::Overflowed, _) | (Event::Resync, Event::Resync) => true,
+                (Event::Changed(queued), Event::Changed(key)) => queued == key,
+                (
+                    Event::Unavailable {
+                        key: queued,
+                        status: held,
+                    },
+                    Event::Unavailable { key, status },
+                ) if queued == key => {
+                    *held = *status;
+                    true
+                }
+                _ => false,
+            });
+            if already {
+                return;
+            }
+            if self.events.iter().filter(|e| e.observes()).count() >= OBSERVED_EVENTS_MAX {
+                self.events.retain(|e| !e.observes());
+                self.events.push_back(Event::Overflowed);
+                return;
+            }
+        }
+        self.events.push_back(event);
     }
 
     /// The next thing that happened.
@@ -593,7 +648,7 @@ impl Model {
             if let Some(entry) = self.entries.get_mut(&key) {
                 entry.freshness = Freshness::Unavailable(status);
             }
-            self.events.push_back(Event::Unavailable { key, status });
+            self.emit(Event::Unavailable { key, status });
         }
     }
 
@@ -715,7 +770,7 @@ impl Model {
                 if result.is_ok() {
                     self.read(prop::SAVED);
                 }
-                self.events.push_back(Event::Saved { id, result });
+                self.emit(Event::Saved { id, result });
             }
             // Only a refusal is ever answered; there is nothing to keep.
             Write::FactoryReset | Write::Reboot => {}
@@ -744,7 +799,7 @@ impl Model {
         {
             entry.pending.remove(position);
         }
-        self.events.push_back(Event::Written { id, key, outcome });
+        self.emit(Event::Written { id, key, outcome });
     }
 
     fn finish_write(&mut self, id: WriteId, write: &Write, outcome: WriteOutcome) {
@@ -753,7 +808,7 @@ impl Model {
                 WriteOutcome::Refused(status) => Err(status),
                 _ => Err(Status::FAILURE),
             };
-            self.events.push_back(Event::Saved { id, result });
+            self.emit(Event::Saved { id, result });
             return;
         }
         let keys: Vec<u32> = write.keys().collect();
@@ -800,7 +855,7 @@ impl Model {
         {
             caps.freshness = Freshness::Fresh { at_ms: self.now_ms };
         }
-        self.events.push_back(Event::Resync);
+        self.emit(Event::Resync);
         self.refresh();
     }
 
@@ -812,7 +867,7 @@ impl Model {
         entry.freshness = Freshness::Fresh { at_ms: self.now_ms };
         if entry.value.as_deref() != Some(value) {
             entry.value = Some(value.to_vec());
-            self.events.push_back(Event::Changed(key));
+            self.emit(Event::Changed(key));
         }
     }
 
@@ -855,7 +910,7 @@ impl Model {
             _ => false,
         };
         if changed {
-            self.events.push_back(Event::Changed(key));
+            self.emit(Event::Changed(key));
         }
     }
 
@@ -907,7 +962,7 @@ impl Model {
             encoded.extend_from_slice(item);
         }
         entry.value = Some(encoded);
-        self.events.push_back(Event::Changed(key));
+        self.emit(Event::Changed(key));
     }
 
     fn end_read(&mut self, key: u32) {
@@ -941,7 +996,7 @@ impl Model {
         };
         if entry.value.as_deref() != Some(value) {
             entry.value = Some(value.to_vec());
-            self.events.push_back(Event::Changed(key));
+            self.emit(Event::Changed(key));
         }
     }
 
@@ -1582,6 +1637,40 @@ mod tests {
         model.pump(&mut script, 0);
         events(&mut model);
         (model, script)
+    }
+
+    /// Events about the cache say each thing once, and past
+    /// [`OBSERVED_EVENTS_MAX`] collapse into one [`Event::Overflowed`];
+    /// what a write came to is kept, in order.
+    #[test]
+    fn events_about_the_cache_coalesce_and_overflow() {
+        let mut model = Model::new();
+        model.know(prop::DEV_NAME, b"A");
+        model.know(prop::DEV_NAME, b"B");
+        model.resync();
+        model.resync();
+        assert_eq!(
+            events(&mut model),
+            [Event::Changed(prop::DEV_NAME), Event::Resync]
+        );
+
+        let written = Event::Written {
+            id: WriteId(9),
+            key: prop::DEV_NAME,
+            outcome: WriteOutcome::Applied,
+        };
+        model.emit(written);
+        for (n, descriptor) in COVERED.iter().enumerate() {
+            model.know(descriptor.key, &[n as u8, 0xA5]);
+        }
+        assert_eq!(model.events.len(), OBSERVED_EVENTS_MAX + 1);
+        model.resync();
+        model.know(prop::DEV_NAME, b"C");
+        assert_eq!(events(&mut model), [written, Event::Overflowed]);
+
+        // Once taken, the queue says each thing again.
+        model.know(prop::DEV_NAME, b"D");
+        assert_eq!(events(&mut model), [Event::Changed(prop::DEV_NAME)]);
     }
 
     #[test]

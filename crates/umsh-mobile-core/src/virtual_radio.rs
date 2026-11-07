@@ -16,6 +16,7 @@
 
 use std::fmt;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tokio::sync::{mpsc, oneshot};
@@ -113,7 +114,11 @@ pub trait MobileWireSink: Send + Sync {
 /// the device and releases its state directory.
 #[derive(uniffi::Object)]
 pub struct MobileVirtualRadio {
-    events: mpsc::UnboundedSender<HostEvent>,
+    events: mpsc::Sender<HostEvent>,
+    /// Host events dropped because the device fell [`lan::HOST_EVENT_DEPTH`]
+    /// behind. Bytes lost this way cost the frames they were part of,
+    /// which the host's own retries cover.
+    dropped: AtomicU64,
     /// Dropped to stop the device.
     stop: Mutex<Option<oneshot::Sender<()>>>,
 }
@@ -159,19 +164,19 @@ impl MobileVirtualRadio {
     /// A host in this process attached, taking replies at `sink`: the
     /// device starts a session, announcing it with `CMD_SESSION_RESET`.
     pub fn attach(&self, sink: Arc<dyn MobileWireSink>) {
-        let _ = self.events.send(HostEvent::Attach(Box::new(move |bytes| {
+        self.send(HostEvent::Attach(Box::new(move |bytes| {
             sink.on_wire(bytes)
         })));
     }
 
     /// Bytes from the attached host, in HDLC-Lite, in any chunking.
     pub fn receive(&self, bytes: Vec<u8>) {
-        let _ = self.events.send(HostEvent::Bytes(bytes));
+        self.send(HostEvent::Bytes(bytes));
     }
 
     /// The host went away: the device carries on detached.
     pub fn detach(&self) {
-        let _ = self.events.send(HostEvent::Detach);
+        self.send(HostEvent::Detach);
     }
 
     /// Stop the device. It cannot be started again; make another.
@@ -183,6 +188,14 @@ impl MobileVirtualRadio {
 }
 
 impl MobileVirtualRadio {
+    /// Hand the device a host event without waiting: these are called on
+    /// the platform's threads, which may be the one a sink reports on.
+    fn send(&self, event: HostEvent) {
+        if let Err(mpsc::error::TrySendError::Full(_)) = self.events.try_send(event) {
+            self.dropped.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
     fn launch(
         dir: PathBuf,
         socket: Option<PathBuf>,
@@ -195,7 +208,7 @@ impl MobileVirtualRadio {
             .map_err(|_| MobileVirtualRadioError::StateUnavailable)?
             .ok_or(MobileVirtualRadioError::StateInUse)?;
 
-        let (events, host_events) = mpsc::unbounded_channel();
+        let (events, host_events) = mpsc::channel(lan::HOST_EVENT_DEPTH);
         let socket_events = events.clone();
         let (stop, stopped) = oneshot::channel::<()>();
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();
@@ -261,6 +274,7 @@ impl MobileVirtualRadio {
             .map_err(|_| MobileVirtualRadioError::WorkerUnavailable)??;
         Ok(Arc::new(Self {
             events,
+            dropped: AtomicU64::new(0),
             stop: Mutex::new(Some(stop)),
         }))
     }

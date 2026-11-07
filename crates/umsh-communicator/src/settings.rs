@@ -201,10 +201,15 @@ impl<P: LocalPort> Settings<P> {
     /// When [`Settings::pump`] next has something to do without being
     /// woken by the device.
     pub fn next_deadline(&self) -> Option<u64> {
-        let soonest = [self.save_at, self.statistics_at, self.wifi_at]
-            .into_iter()
-            .flatten()
-            .fold(self.airtime_at, u64::min);
+        let soonest = [
+            self.save_at,
+            self.statistics_at,
+            self.wifi_at,
+            self.exchange.next_deadline(),
+        ]
+        .into_iter()
+        .flatten()
+        .fold(self.airtime_at, u64::min);
         Some(soonest)
     }
 
@@ -234,7 +239,9 @@ impl<P: LocalPort> Settings<P> {
 
     fn take(&mut self, event: Event, events: &mut impl FnMut(NodeEvent)) {
         match event {
-            Event::Changed(_) | Event::Resync => events(NodeEvent::SettingsChanged),
+            Event::Changed(_) | Event::Resync | Event::Overflowed => {
+                events(NodeEvent::SettingsChanged)
+            }
             Event::Written { id, outcome, .. } => {
                 if self
                     .wifi_save

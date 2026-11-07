@@ -6,7 +6,8 @@ use umsh_ulcp::frame::Cmd;
 use umsh_ulcp::ids::{cap, prop, saved};
 use umsh_ulcp::profiles;
 use umsh_ulcp_admin::{
-    Event, Freshness, LocalExchange, LocalPort, Model, PortBusy, PortFrame, Refusal, WriteOutcome,
+    ANSWER_TIMEOUT_MS, Event, Exchange, Freshness, LocalExchange, LocalPort, Model, PortBusy,
+    PortFrame, Refusal, WriteOutcome,
 };
 use umsh_ulcp_simdev::{
     AlertConfig, BatteryFields, DutyLedger, GnssConfig, RadioSettings, SessionConfig,
@@ -78,12 +79,28 @@ struct Port {
     sent: Vec<Vec<u8>>,
     /// Report a dropped publication before the next frame.
     overrun: bool,
+    /// While set, requests are kept here instead of reaching the device,
+    /// until [`Port::release`] hands them over.
+    held: Option<Vec<Vec<u8>>>,
+}
+
+impl Port {
+    /// Hand the oldest `count` held requests to the device, late.
+    fn release(&mut self, count: usize) {
+        let held = self.held.as_mut().unwrap();
+        for frame in held.drain(..count).collect::<Vec<_>>() {
+            self.sim.device_request(&frame, 1_000);
+        }
+    }
 }
 
 impl LocalPort for Port {
     fn send(&mut self, frame: &[u8]) -> Result<(), PortBusy> {
         self.sent.push(frame.to_vec());
-        self.sim.device_request(frame, 1_000);
+        match self.held.as_mut() {
+            Some(held) => held.push(frame.to_vec()),
+            None => self.sim.device_request(frame, 1_000),
+        }
         Ok(())
     }
 
@@ -104,6 +121,7 @@ fn device() -> (Model, LocalExchange<Port>) {
         sim,
         sent: Vec::new(),
         overrun: false,
+        held: None,
     });
     let mut model = Model::new();
     model.refresh();
@@ -111,6 +129,10 @@ fn device() -> (Model, LocalExchange<Port>) {
     while model.next_event().is_some() {}
     exchange.port_mut().sent.clear();
     (model, exchange)
+}
+
+fn tid_of(frame: &[u8]) -> u8 {
+    Frame::parse(frame).unwrap().header.tid()
 }
 
 fn events(model: &mut Model) -> Vec<Event> {
@@ -134,6 +156,7 @@ fn one_bundle_fills_the_cache() {
         sim,
         sent: Vec::new(),
         overrun: false,
+        held: None,
     });
     let mut model = Model::new();
     model.refresh();
@@ -403,6 +426,7 @@ fn wifi_networks_are_kept_by_name_and_scans_arrive_as_published() {
         sim,
         sent: Vec::new(),
         overrun: false,
+        held: None,
     });
     let mut model = Model::new();
     model.refresh();
@@ -461,4 +485,68 @@ fn wifi_networks_are_kept_by_name_and_scans_arrive_as_published() {
             ..
         }
     )));
+}
+
+/// A request the device never answers is given up on at its deadline,
+/// and its TID comes back: at once if the answer turns up late, and after
+/// a second wait otherwise. Until then nothing goes out under it, so a
+/// late answer is never taken for another request's.
+#[test]
+fn an_unanswered_request_is_given_up_and_its_tid_comes_back() {
+    let (mut model, mut exchange) = device();
+    exchange.port_mut().held = Some(Vec::new());
+    let start = 2_000;
+
+    // Seven writes take the seven TIDs; the eighth waits for one.
+    let ids: Vec<_> = (0..8)
+        .map(|n| model.set_device_name(&format!("Trail {n}")).unwrap())
+        .collect();
+    model.pump(&mut exchange, start);
+    assert_eq!(exchange.port().sent.len(), 7);
+    assert_eq!(exchange.outstanding(), 7);
+    assert_eq!(exchange.next_deadline(), Some(start + ANSWER_TIMEOUT_MS));
+
+    // Just short of the deadline, nothing is given up.
+    model.pump(&mut exchange, start + ANSWER_TIMEOUT_MS - 1);
+    assert!(events(&mut model).is_empty());
+
+    // At it, all seven are lost, and whether they took is unknown.
+    model.pump(&mut exchange, start + ANSWER_TIMEOUT_MS);
+    assert_eq!(exchange.outstanding(), 0);
+    let lost: Vec<_> = events(&mut model)
+        .into_iter()
+        .filter_map(|event| match event {
+            Event::Written { id, outcome, .. } => Some((id, outcome)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        lost,
+        ids[..7]
+            .iter()
+            .map(|&id| (id, WriteOutcome::Unknown))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(model.freshness(prop::DEV_NAME), Freshness::Stale);
+    // Their TIDs are not free yet: the eighth still waits.
+    assert_eq!(exchange.port().sent.len(), 7);
+
+    // The first answer turns up late. It is discarded, and its TID is
+    // free at once: the eighth write goes out under it.
+    exchange.port_mut().release(1);
+    model.pump(&mut exchange, start + ANSWER_TIMEOUT_MS + 1);
+    assert_eq!(exchange.late_answers(), 1);
+    assert_eq!(exchange.port().sent.len(), 8);
+    let sent = &exchange.port().sent;
+    assert_eq!(tid_of(&sent[7]), tid_of(&sent[0]));
+    assert_eq!(exchange.outstanding(), 1);
+
+    // The other six come free after the second wait.
+    model.pump(&mut exchange, start + 2 * ANSWER_TIMEOUT_MS);
+    for _ in 0..6 {
+        exchange
+            .submit(&umsh_ulcp_admin::Request::Get(prop::DEV_NAME))
+            .unwrap();
+    }
+    assert_eq!(exchange.outstanding(), 7);
 }

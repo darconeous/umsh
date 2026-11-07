@@ -1,10 +1,11 @@
 //! The device's own session, reached in process.
 //!
 //! A local binding answers every request that carries a non-zero TID
-//! exactly once, so a [`LocalExchange`] holds a request until its answer
-//! comes and never gives up on one: a missing answer would be a bug in the
-//! device, not a condition to recover from. What the device publishes
-//! arrives on the same port, in order with the answers.
+//! exactly once, and at once, so an answer that has not come within
+//! [`ANSWER_TIMEOUT_MS`] is not coming: a [`LocalExchange`] gives the
+//! request up as [`Arrival::Lost`] and, after a second wait in which a
+//! late answer is discarded, takes its TID back. What the device
+//! publishes arrives on the same port, in order with the answers.
 //!
 //! The exchange is not an attach. It resets no session state and
 //! displaces no host, and it reaches the device domain only.
@@ -17,6 +18,11 @@ use crate::exchange::{Arrival, Busy, Exchange, Request, Ticket};
 /// Largest frame a local binding carries: the most a session emits in one
 /// frame, and what the firmware driver's frame buffers hold.
 pub const FRAME_MAX: usize = 300;
+
+/// How long a request waits for its answer before the exchange gives it
+/// up, and then how long its TID stays out of use in case the answer was
+/// only late.
+pub const ANSWER_TIMEOUT_MS: u64 = 10_000;
 
 /// The device's port into its own session: where requests go in and the
 /// session's frames for the interface come out.
@@ -42,26 +48,54 @@ pub enum PortFrame {
     Overrun,
 }
 
+/// What a TID is doing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Slot {
+    Free,
+    /// A request waits under it for its answer until `deadline_ms`.
+    Waiting {
+        ticket: Ticket,
+        deadline_ms: u64,
+    },
+    /// Its request went unanswered past its deadline, and is yet to be
+    /// reported lost.
+    Lost {
+        ticket: Ticket,
+        until_ms: u64,
+    },
+    /// Its request was given up on. An answer under it now is late and
+    /// discarded; at `until_ms` it is free again.
+    Expired {
+        until_ms: u64,
+    },
+}
+
 /// An [`Exchange`] over the device's own session.
 ///
 /// Requests are told apart by TID, so at most seven are outstanding at
-/// once; an eighth waits for an answer to free one. TIDs are handed out in
-/// rotation, so one is reused as late as possible.
+/// once; an eighth waits for an answer, or a timeout, to free one. TIDs
+/// are handed out in rotation, so one is reused as late as possible.
 pub struct LocalExchange<P> {
     port: P,
-    /// The ticket outstanding under each TID. TID 0 is never used.
-    outstanding: [Option<Ticket>; TID_MAX as usize + 1],
+    /// What each TID is doing. TID 0 is never used.
+    slots: [Slot; TID_MAX as usize + 1],
     next_tid: u8,
     next_ticket: u32,
+    now_ms: u64,
+    /// Answers discarded because their request had been given up on, or
+    /// that came under a TID nothing asked under.
+    late: u32,
 }
 
 impl<P: LocalPort> LocalExchange<P> {
     pub const fn new(port: P) -> Self {
         Self {
             port,
-            outstanding: [None; TID_MAX as usize + 1],
+            slots: [Slot::Free; TID_MAX as usize + 1],
             next_tid: 1,
             next_ticket: 0,
+            now_ms: 0,
+            late: 0,
         }
     }
 
@@ -73,15 +107,37 @@ impl<P: LocalPort> LocalExchange<P> {
         &mut self.port
     }
 
-    /// Requests handed to the device and not yet answered.
+    /// Requests handed to the device and waiting on their answers.
     pub fn outstanding(&self) -> usize {
-        self.outstanding.iter().flatten().count()
+        self.slots
+            .iter()
+            .filter(|slot| matches!(slot, Slot::Waiting { .. }))
+            .count()
+    }
+
+    /// Answers discarded: late ones, and any under a TID nothing asked
+    /// under.
+    pub fn late_answers(&self) -> u32 {
+        self.late
+    }
+
+    /// When [`Exchange::expire`] next has something to give up on or to
+    /// free.
+    pub fn next_deadline(&self) -> Option<u64> {
+        self.slots
+            .iter()
+            .filter_map(|slot| match *slot {
+                Slot::Waiting { deadline_ms, .. } => Some(deadline_ms),
+                Slot::Expired { until_ms } => Some(until_ms),
+                Slot::Free | Slot::Lost { .. } => None,
+            })
+            .min()
     }
 
     fn free_tid(&self) -> Option<u8> {
         (0..TID_MAX)
             .map(|offset| (self.next_tid - 1 + offset) % TID_MAX + 1)
-            .find(|&tid| self.outstanding[usize::from(tid)].is_none())
+            .find(|&tid| self.slots[usize::from(tid)] == Slot::Free)
     }
 }
 
@@ -99,34 +155,74 @@ impl<P: LocalPort> Exchange for LocalExchange<P> {
             .map_err(|PortBusy| Busy::Full)?;
         let ticket = Ticket(self.next_ticket);
         self.next_ticket = self.next_ticket.wrapping_add(1);
-        self.outstanding[usize::from(tid)] = Some(ticket);
+        self.slots[usize::from(tid)] = Slot::Waiting {
+            ticket,
+            deadline_ms: self.now_ms.saturating_add(ANSWER_TIMEOUT_MS),
+        };
         self.next_tid = tid % TID_MAX + 1;
         Ok(ticket)
     }
 
     fn receive<'b>(&mut self, out: &'b mut [u8]) -> Option<Arrival<'b>> {
         loop {
-            let len = match self.port.receive(out)? {
-                PortFrame::Overrun => return Some(Arrival::Overrun),
-                PortFrame::Frame(len) => len,
+            let len = match self.port.receive(out) {
+                Some(PortFrame::Overrun) => return Some(Arrival::Overrun),
+                Some(PortFrame::Frame(len)) => len,
+                // Nothing came: report what was given up on, oldest first.
+                None => {
+                    let next = self.next_ticket;
+                    let slot = self
+                        .slots
+                        .iter_mut()
+                        .filter_map(|slot| match *slot {
+                            Slot::Lost { ticket, until_ms } => Some((slot, ticket, until_ms)),
+                            _ => None,
+                        })
+                        .max_by_key(|(_, ticket, _)| next.wrapping_sub(ticket.0));
+                    let (slot, ticket, until_ms) = slot?;
+                    *slot = Slot::Expired { until_ms };
+                    return Some(Arrival::Lost { ticket });
+                }
             };
+            // A frame the session cannot have meant is dropped; whatever
+            // it answered is given up on at its deadline.
             let Ok(parsed) = Frame::parse(&out[..len]) else {
-                debug_assert!(false, "the session emitted an unparseable frame");
                 continue;
             };
             let tid = parsed.header.tid();
             if tid == TID_UNSOLICITED {
                 return Some(Arrival::Publication { frame: &out[..len] });
             }
-            match self.outstanding[usize::from(tid)].take() {
-                Some(ticket) => {
+            let slot = &mut self.slots[usize::from(tid)];
+            match core::mem::replace(slot, Slot::Free) {
+                // An answer that beat the report of its loss still counts.
+                Slot::Waiting { ticket, .. } | Slot::Lost { ticket, .. } => {
                     return Some(Arrival::Answer {
                         ticket,
                         frame: &out[..len],
                     });
                 }
-                None => debug_assert!(false, "an answer under TID {tid}, which nothing asked"),
+                // The answer to a request already given up on: the TID is
+                // free at once, since nothing more can come under it.
+                Slot::Expired { .. } | Slot::Free => self.late = self.late.wrapping_add(1),
             }
+        }
+    }
+
+    fn expire(&mut self, now_ms: u64) {
+        self.now_ms = now_ms;
+        for slot in &mut self.slots {
+            *slot = match *slot {
+                Slot::Waiting {
+                    ticket,
+                    deadline_ms,
+                } if deadline_ms <= now_ms => Slot::Lost {
+                    ticket,
+                    until_ms: now_ms.saturating_add(ANSWER_TIMEOUT_MS),
+                },
+                Slot::Expired { until_ms } if until_ms <= now_ms => Slot::Free,
+                other => other,
+            };
         }
     }
 }

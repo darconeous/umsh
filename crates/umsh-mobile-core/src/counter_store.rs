@@ -5,7 +5,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{Read, Write},
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{Arc, mpsc},
 };
 
 const FILE_MAGIC: &[u8; 4] = b"UMCT";
@@ -46,10 +46,53 @@ impl std::error::Error for CounterStoreError {}
 /// it over the previous boundary, then synchronizes the containing directory.
 /// An error at any stage is treated as ambiguous by the caller and therefore
 /// cannot release a prepared authenticated frame for transmission.
+///
+/// Every operation runs on one thread of the store's own, in the order it
+/// was asked for: the fsyncs never hold the thread that drives the MAC, and
+/// a commit whose caller stopped waiting still lands before any asked for
+/// after it, so a newer boundary is never overwritten by an older one. The
+/// caller learns that a boundary is durable only from the thread's reply.
 #[derive(uniffi::Object)]
 pub struct MobileCounterStore {
-    root: PathBuf,
-    operation_lock: Mutex<()>,
+    jobs: mpsc::Sender<Job>,
+    #[cfg(test)]
+    files: Arc<CounterFiles>,
+}
+
+/// One operation for the commit thread, and where its result goes.
+enum Job {
+    Load {
+        context: Vec<u8>,
+        reply: Reply<Result<u32, CounterStoreError>>,
+    },
+    Commit {
+        context: Vec<u8>,
+        boundary: u32,
+        reply: Reply<Result<(), CounterStoreError>>,
+    },
+    Flush {
+        reply: Reply<Result<(), CounterStoreError>>,
+    },
+}
+
+/// Where a result goes: back to an awaiting task, or to a blocked caller.
+enum Reply<T> {
+    Await(tokio::sync::oneshot::Sender<T>),
+    Block(mpsc::SyncSender<T>),
+}
+
+impl<T> Reply<T> {
+    fn send(self, value: T) {
+        // A caller that stopped waiting learns nothing; the work is done.
+        match self {
+            Self::Await(reply) => {
+                let _ = reply.send(value);
+            }
+            Self::Block(reply) => {
+                let _ = reply.send(value);
+            }
+        }
+    }
 }
 
 #[uniffi::export]
@@ -60,18 +103,24 @@ impl MobileCounterStore {
         if !root.is_absolute() {
             return Err(CounterStoreError::InvalidRootDirectory);
         }
+        let files = Arc::new(CounterFiles { root });
+        let (jobs, queue) = mpsc::channel();
+        let worker = files.clone();
+        // The thread ends once the store, and with it the queue's sender,
+        // is dropped.
+        std::thread::Builder::new()
+            .name("umsh-counter-store".to_owned())
+            .spawn(move || worker.serve(&queue))
+            .map_err(|_| CounterStoreError::IoFailure)?;
         Ok(Arc::new(Self {
-            root,
-            operation_lock: Mutex::new(()),
+            jobs,
+            #[cfg(test)]
+            files,
         }))
     }
 
     pub fn load_boundary(&self, context: Vec<u8>) -> Result<u32, CounterStoreError> {
-        let _guard = self
-            .operation_lock
-            .lock()
-            .map_err(|_| CounterStoreError::IoFailure)?;
-        self.load_boundary_unlocked(&context)
+        self.block(|reply| Job::Load { context, reply })?
     }
 
     pub fn commit_boundary(
@@ -79,15 +128,66 @@ impl MobileCounterStore {
         context: Vec<u8>,
         boundary: u32,
     ) -> Result<(), CounterStoreError> {
-        let _guard = self
-            .operation_lock
-            .lock()
-            .map_err(|_| CounterStoreError::IoFailure)?;
-        self.commit_boundary_unlocked(&context, boundary, None)
+        self.block(|reply| Job::Commit {
+            context,
+            boundary,
+            reply,
+        })?
     }
 }
 
 impl MobileCounterStore {
+    /// Queue a job and wait on this thread for its result.
+    fn block<T>(&self, job: impl FnOnce(Reply<T>) -> Job) -> Result<T, CounterStoreError> {
+        let (reply, result) = mpsc::sync_channel(1);
+        self.jobs
+            .send(job(Reply::Block(reply)))
+            .map_err(|_| CounterStoreError::IoFailure)?;
+        result.recv().map_err(|_| CounterStoreError::IoFailure)
+    }
+
+    /// Queue a job and await its result. Dropping the future leaves the job
+    /// queued: it still runs, in its turn.
+    async fn queue<T>(&self, job: impl FnOnce(Reply<T>) -> Job) -> Result<T, CounterStoreError> {
+        let (reply, result) = tokio::sync::oneshot::channel();
+        self.jobs
+            .send(job(Reply::Await(reply)))
+            .map_err(|_| CounterStoreError::IoFailure)?;
+        // A job that never reported is ambiguous, and an ambiguous commit
+        // is a failed one.
+        result.await.map_err(|_| CounterStoreError::IoFailure)
+    }
+}
+
+/// The records themselves, touched only by the commit thread.
+struct CounterFiles {
+    root: PathBuf,
+}
+
+impl CounterFiles {
+    fn serve(&self, queue: &mpsc::Receiver<Job>) {
+        while let Ok(job) = queue.recv() {
+            match job {
+                Job::Load { context, reply } => reply.send(self.load_boundary_unlocked(&context)),
+                Job::Commit {
+                    context,
+                    boundary,
+                    reply,
+                } => reply.send(self.commit_boundary_unlocked(&context, boundary, None)),
+                Job::Flush { reply } => reply.send(self.flush()),
+            }
+        }
+    }
+
+    fn flush(&self) -> Result<(), CounterStoreError> {
+        if !self.root.exists() {
+            return Ok(());
+        }
+        File::open(&self.root)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|_| CounterStoreError::IoFailure)
+    }
+
     fn load_boundary_unlocked(&self, context: &[u8]) -> Result<u32, CounterStoreError> {
         let path = self.record_path(context)?;
         let mut file = match File::open(path) {
@@ -156,24 +256,22 @@ impl umsh_hal::CounterStore for MobileCounterStore {
     type Error = CounterStoreError;
 
     async fn load(&self, context: &[u8]) -> Result<u32, Self::Error> {
-        self.load_boundary(context.to_vec())
+        let context = context.to_vec();
+        self.queue(|reply| Job::Load { context, reply }).await?
     }
 
     async fn store(&self, context: &[u8], value: u32) -> Result<(), Self::Error> {
-        self.commit_boundary(context.to_vec(), value)
+        let context = context.to_vec();
+        self.queue(|reply| Job::Commit {
+            context,
+            boundary: value,
+            reply,
+        })
+        .await?
     }
 
     async fn flush(&self) -> Result<(), Self::Error> {
-        let _guard = self
-            .operation_lock
-            .lock()
-            .map_err(|_| CounterStoreError::IoFailure)?;
-        if !self.root.exists() {
-            return Ok(());
-        }
-        File::open(&self.root)
-            .and_then(|directory| directory.sync_all())
-            .map_err(|_| CounterStoreError::IoFailure)
+        self.queue(|reply| Job::Flush { reply }).await?
     }
 }
 
@@ -257,7 +355,9 @@ mod tests {
             let (_directory, store) = store();
             store.commit_boundary(b"primary".to_vec(), 128).unwrap();
             assert_eq!(
-                store.commit_boundary_unlocked(b"primary", 256, Some(stage)),
+                store
+                    .files
+                    .commit_boundary_unlocked(b"primary", 256, Some(stage)),
                 Err(CounterStoreError::IoFailure)
             );
             assert_eq!(store.load_boundary(b"primary".to_vec()).unwrap(), 128);
@@ -269,7 +369,9 @@ mod tests {
         let (directory, store) = store();
         store.commit_boundary(b"primary".to_vec(), 128).unwrap();
         assert_eq!(
-            store.commit_boundary_unlocked(b"primary", 256, Some(CommitStage::Renamed)),
+            store
+                .files
+                .commit_boundary_unlocked(b"primary", 256, Some(CommitStage::Renamed)),
             Err(CounterStoreError::IoFailure)
         );
 
@@ -286,12 +388,36 @@ mod tests {
             store.load_boundary(Vec::new()),
             Err(CounterStoreError::InvalidContext)
         );
-        fs::create_dir_all(&store.root).unwrap();
-        fs::write(store.record_path(b"primary").unwrap(), b"partial").unwrap();
+        fs::create_dir_all(&store.files.root).unwrap();
+        fs::write(store.files.record_path(b"primary").unwrap(), b"partial").unwrap();
         assert_eq!(
             store.load_boundary(b"primary".to_vec()),
             Err(CounterStoreError::CorruptRecord)
         );
+    }
+
+    /// Commits land in the order they were asked for, including those whose
+    /// callers stopped waiting: an older boundary never lands over a newer
+    /// one, and every load sees the commits asked for before it.
+    #[tokio::test]
+    async fn commits_land_in_order_even_when_abandoned() {
+        use umsh_hal::CounterStore as _;
+        let (_directory, store) = store();
+        for step in 1..=40u32 {
+            let commit = store.store(b"primary", step * 128);
+            if step % 2 == 1 {
+                // Polled once, which queues it, then dropped.
+                let _ = tokio::time::timeout(std::time::Duration::ZERO, commit).await;
+            } else {
+                commit.await.unwrap();
+                assert_eq!(store.load(b"primary").await.unwrap(), step * 128);
+            }
+        }
+        // One abandoned last, then a load: the load waits its turn.
+        let _ = tokio::time::timeout(std::time::Duration::ZERO, store.store(b"primary", 41 * 128))
+            .await;
+        assert_eq!(store.load(b"primary").await.unwrap(), 41 * 128);
+        assert_eq!(store.load_boundary(b"primary".to_vec()).unwrap(), 41 * 128);
     }
 
     #[test]

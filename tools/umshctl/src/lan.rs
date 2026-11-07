@@ -82,9 +82,9 @@ pub async fn open(group: Option<SocketAddrV4>) -> Result<DuplexStream> {
                 port: group.port(),
             }));
     }
-    let (events, host_events) = mpsc::unbounded_channel();
+    let (events, host_events) = mpsc::channel(lan::HOST_EVENT_DEPTH);
     let (wire_tx, wire_rx) = mpsc::unbounded_channel();
-    let _ = events.send(HostEvent::Attach(Box::new(move |wire| {
+    let _ = events.try_send(HostEvent::Attach(Box::new(move |wire| {
         let _ = wire_tx.send(wire);
     })));
     tokio::task::spawn_local(async move {
@@ -101,7 +101,7 @@ pub async fn open(group: Option<SocketAddrV4>) -> Result<DuplexStream> {
 /// stops the device.
 async fn relay(
     mut pipe: DuplexStream,
-    events: mpsc::UnboundedSender<HostEvent>,
+    events: mpsc::Sender<HostEvent>,
     mut wire: mpsc::UnboundedReceiver<Vec<u8>>,
 ) {
     let mut buf = vec![0u8; READ_CHUNK];
@@ -110,7 +110,11 @@ async fn relay(
             read = pipe.read(&mut buf) => match read {
                 Ok(0) | Err(_) => break,
                 Ok(len) => {
-                    if events.send(HostEvent::Bytes(buf[..len].to_vec())).is_err() {
+                    if events
+                        .send(HostEvent::Bytes(buf[..len].to_vec()))
+                        .await
+                        .is_err()
+                    {
                         break;
                     }
                 }

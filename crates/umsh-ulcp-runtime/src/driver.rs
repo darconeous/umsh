@@ -344,10 +344,28 @@ impl<M: RawMutex> DeviceLink<M> {
         }
     }
 
+    /// An answer too large for the link goes out as a `NOMEM` status under
+    /// the same TID, so the interface hears that its request failed and
+    /// takes the TID back instead of waiting it out.
     async fn answer(&self, frame: &[u8]) {
-        match FrameBuf::from_slice(frame) {
-            Ok(copy) => self.frames.send(copy).await,
-            Err(()) => debug_assert!(false, "an answer exceeds FrameBuf"),
+        if let Ok(copy) = FrameBuf::from_slice(frame) {
+            self.frames.send(copy).await;
+            return;
+        }
+        let Some(header) = frame
+            .first()
+            .copied()
+            .and_then(umsh_ulcp::frame::Header::from_byte)
+        else {
+            return;
+        };
+        let mut status = [0u8; 16];
+        let Ok(len) = umsh_ulcp::frame::last_status(&mut status, header.tid(), Status::NOMEM)
+        else {
+            return;
+        };
+        if let Ok(copy) = FrameBuf::from_slice(&status[..len]) {
+            self.frames.send(copy).await;
         }
     }
 }

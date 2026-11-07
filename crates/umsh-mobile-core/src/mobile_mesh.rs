@@ -709,10 +709,76 @@ impl WakeSignal {
     }
 }
 
-/// A producer channel endpoint that arms the wake signal on every enqueue.
+/// Frames waiting for the platform to carry them to the radio. The MAC
+/// hands over one at a time and waits for its result, so this is slack.
+const OUTBOUND_DEPTH: usize = 64;
+/// Ping, management and advertisement reports waiting for `poll_update`.
+const REPORT_DEPTH: usize = 256;
+/// Chat effects waiting to form a batch. They wait while a batch is out
+/// and unacknowledged, so this is deep.
+const CHAT_EVENT_DEPTH: usize = 4096;
+/// Distinct senders heard between two polls.
+const HEARD_MAX: usize = 256;
+/// Requests from the platform waiting for the worker.
+const COMMAND_DEPTH: usize = 256;
+/// Received frames waiting for the MAC.
+const INBOUND_DEPTH: usize = 64;
+
+/// What fell off the session's bounded queues because the platform or the
+/// worker fell behind, by queue, until a chat batch reports it.
+struct Dropped {
+    counts: [AtomicU64; Dropped::KINDS.len()],
+}
+
+impl Dropped {
+    const KINDS: [&'static str; 7] = [
+        "outbound frames",
+        "ping reports",
+        "management reports",
+        "advertisements",
+        "heard senders",
+        "chat events",
+        "received frames",
+    ];
+    const OUTBOUND: usize = 0;
+    const PINGS: usize = 1;
+    const MANAGEMENT: usize = 2;
+    const ADVERTISEMENTS: usize = 3;
+    const HEARD: usize = 4;
+    const CHAT: usize = 5;
+    const INBOUND: usize = 6;
+
+    fn new() -> Self {
+        Self {
+            counts: core::array::from_fn(|_| AtomicU64::new(0)),
+        }
+    }
+
+    fn count(&self, kind: usize) {
+        self.counts[kind].fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// One diagnostic for each queue that dropped anything since the last
+    /// report.
+    fn report(&self) -> Vec<String> {
+        self.counts
+            .iter()
+            .zip(Self::KINDS)
+            .filter_map(|(count, kind)| match count.swap(0, Ordering::Relaxed) {
+                0 => None,
+                n => Some(format!("dropped {n} {kind}: the queue was full")),
+            })
+            .collect()
+    }
+}
+
+/// A producer end of a bounded queue that arms the wake signal on every
+/// enqueue. A full queue drops the value and counts it.
 struct NotifyingSender<T> {
-    tx: std_mpsc::Sender<T>,
+    tx: std_mpsc::SyncSender<T>,
     wake: Arc<WakeSignal>,
+    dropped: Arc<Dropped>,
+    kind: usize,
 }
 
 impl<T> Clone for NotifyingSender<T> {
@@ -720,15 +786,113 @@ impl<T> Clone for NotifyingSender<T> {
         Self {
             tx: self.tx.clone(),
             wake: self.wake.clone(),
+            dropped: self.dropped.clone(),
+            kind: self.kind,
         }
     }
 }
 
 impl<T> NotifyingSender<T> {
-    fn send(&self, value: T) -> Result<(), std_mpsc::SendError<T>> {
-        self.tx.send(value)?;
+    fn send(&self, value: T) -> Result<(), std_mpsc::TrySendError<T>> {
+        let sent = self.tx.try_send(value);
+        if let Err(std_mpsc::TrySendError::Full(_)) = sent {
+            self.dropped.count(self.kind);
+        }
+        // Even a drop wakes the platform: it is behind, and should drain.
         self.wake.notify();
-        Ok(())
+        sent
+    }
+}
+
+/// A bounded queue of `depth` whose producer end arms `wake`.
+fn notifying_channel<T>(
+    depth: usize,
+    wake: &Arc<WakeSignal>,
+    dropped: &Arc<Dropped>,
+    kind: usize,
+) -> (NotifyingSender<T>, Mutex<std_mpsc::Receiver<T>>) {
+    let (tx, rx) = std_mpsc::sync_channel(depth);
+    let sender = NotifyingSender {
+        tx,
+        wake: wake.clone(),
+        dropped: dropped.clone(),
+        kind,
+    };
+    (sender, Mutex::new(rx))
+}
+
+/// The latest of something that is reported whole each time, so only the
+/// latest matters: set by the worker, taken by `poll_update`.
+struct Slot<T> {
+    value: Mutex<Option<T>>,
+    wake: Arc<WakeSignal>,
+}
+
+impl<T> Slot<T> {
+    fn new(wake: &Arc<WakeSignal>) -> Self {
+        Self {
+            value: Mutex::new(None),
+            wake: wake.clone(),
+        }
+    }
+
+    fn set(&self, value: T) {
+        *self.value.lock().unwrap_or_else(PoisonError::into_inner) = Some(value);
+        self.wake.notify();
+    }
+
+    fn take(&self) -> Option<T> {
+        self.value
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+    }
+}
+
+/// The senders heard since the last poll, each once, in the order first
+/// heard. Hearing one again proves no more than that it is there; it is
+/// marked authenticated if any of its frames was.
+struct HeardSlot {
+    heard: Mutex<Vec<MobileMeshPeerHeardRecord>>,
+    wake: Arc<WakeSignal>,
+    dropped: Arc<Dropped>,
+}
+
+impl HeardSlot {
+    fn new(wake: &Arc<WakeSignal>, dropped: &Arc<Dropped>) -> Self {
+        Self {
+            heard: Mutex::new(Vec::new()),
+            wake: wake.clone(),
+            dropped: dropped.clone(),
+        }
+    }
+
+    fn hear(&self, record: MobileMeshPeerHeardRecord) {
+        {
+            let mut heard = self.heard.lock().unwrap_or_else(PoisonError::into_inner);
+            let same = heard.iter().position(|held| {
+                held.peer_address == record.peer_address && held.node_hint == record.node_hint
+            });
+            match same {
+                Some(index) => heard[index].source_authenticated |= record.source_authenticated,
+                None if heard.len() < HEARD_MAX => heard.push(record),
+                None => self.dropped.count(Dropped::HEARD),
+            }
+        }
+        self.wake.notify();
+    }
+
+    fn take(&self) -> Vec<MobileMeshPeerHeardRecord> {
+        core::mem::take(&mut *self.heard.lock().unwrap_or_else(PoisonError::into_inner))
+    }
+}
+
+/// Why a request that cannot wait was not taken: the worker is gone, or
+/// so far behind that its queue is full.
+fn command_refused<T>(error: mpsc::error::TrySendError<T>) -> MobileMeshError {
+    match error {
+        mpsc::error::TrySendError::Full(_) => MobileMeshError::OperationInProgress,
+        mpsc::error::TrySendError::Closed(_) => MobileMeshError::SessionUnavailable,
     }
 }
 
@@ -745,7 +909,10 @@ pub struct MobileMeshSessionUpdateRecord {
     pub advertisement_events: Vec<MobileMeshAdvertisementRecord>,
     pub peer_heard_events: Vec<MobileMeshPeerHeardRecord>,
     /// Chat effects remain in the facade until Swift durably applies them and
-    /// acknowledges this batch. Repeated polls may return the same batch.
+    /// acknowledges this batch. Until then the batch is handed out again
+    /// by a poll at least a second after the last that carried it, or by
+    /// the first poll after a new wake listener; a poll in between carries
+    /// no batch.
     pub chat_batch_id: Option<u64>,
     pub chat_mutations: Vec<MobileChatMutationRecord>,
     pub chat_deliveries: Vec<MobileChatDeliveryRecord>,
@@ -985,7 +1152,6 @@ enum WorkerCommand {
         peer: PublicKey,
         response: oneshot::Sender<bool>,
     },
-    FailOutboundTransmissions,
     Receive(MobileMeshRxRecord),
     /// Add Peer's contact exchange. Answers whether the request was taken.
     Meet {
@@ -1066,9 +1232,64 @@ enum MobileChatWorkerEvent {
     Diagnostic(String),
 }
 
+/// How soon a chat batch the platform holds unacknowledged is handed out
+/// again. A poll sooner than this leaves it out, so a burst of wakes does
+/// not copy a large batch over and over.
+const CHAT_REDELIVERY: Duration = Duration::from_secs(1);
+
+/// A chat batch out with the platform, sorted by kind as the update
+/// record carries it.
 struct PendingChatEventBatch {
     id: u64,
-    events: Vec<MobileChatWorkerEvent>,
+    mutations: Vec<MobileChatMutationRecord>,
+    deliveries: Vec<MobileChatDeliveryRecord>,
+    repeats: Vec<MobileChatRepeatRecord>,
+    archive_lookups: Vec<MobileChatArchiveLookupRecord>,
+    sender_resolutions: Vec<MobileChatSenderResolutionRecord>,
+    diagnostics: Vec<String>,
+    /// When a poll last handed it out; `None` until one has, or since a
+    /// new wake listener came.
+    handed_out: Option<std::time::Instant>,
+}
+
+impl PendingChatEventBatch {
+    fn new(id: u64, events: Vec<MobileChatWorkerEvent>, diagnostics: Vec<String>) -> Self {
+        let mut batch = Self {
+            id,
+            mutations: Vec::new(),
+            deliveries: Vec::new(),
+            repeats: Vec::new(),
+            archive_lookups: Vec::new(),
+            sender_resolutions: Vec::new(),
+            diagnostics,
+            handed_out: None,
+        };
+        for event in events {
+            match event {
+                MobileChatWorkerEvent::Mutation(record) => batch.mutations.push(record),
+                MobileChatWorkerEvent::Delivery(record) => batch.deliveries.push(record),
+                MobileChatWorkerEvent::Repeats(record) => batch.repeats.push(record),
+                MobileChatWorkerEvent::ArchiveLookup(record) => batch.archive_lookups.push(record),
+                MobileChatWorkerEvent::SenderResolution(record) => {
+                    batch.sender_resolutions.push(record);
+                }
+                MobileChatWorkerEvent::Diagnostic(record) => batch.diagnostics.push(record),
+            }
+        }
+        batch
+    }
+
+    /// Whether a poll at `now` hands it out: the first time, and again once
+    /// [`CHAT_REDELIVERY`] has passed without an acknowledgment.
+    fn due(&mut self, now: std::time::Instant) -> bool {
+        let due = self
+            .handed_out
+            .is_none_or(|at| now.duration_since(at) >= CHAT_REDELIVERY);
+        if due {
+            self.handed_out = Some(now);
+        }
+        due
+    }
 }
 
 #[derive(Debug)]
@@ -1080,14 +1301,18 @@ enum BridgeRadioError {
 struct BridgeTransmitCompletions {
     next_id: AtomicU64,
     failure_generation: AtomicU64,
-    /// A link-wide failure was declared and its `FailOutboundTransmissions`
-    /// command has not yet been processed by the worker. While set, no new
-    /// transmission may reach the platform: the MAC's in-progress drain loop
-    /// would otherwise keep dispatching the frames queued behind the one the
-    /// failure caught mid-flight, because each later `transmit` call samples
-    /// the generation only after the bump. The worker clears the flag when
-    /// it processes the queued command and cancels the affected tickets.
+    /// A link-wide failure was declared and the worker has not yet handled
+    /// it. While set, no new transmission may reach the platform: the MAC's
+    /// in-progress drain loop would otherwise keep dispatching the frames
+    /// queued behind the one the failure caught mid-flight, because each
+    /// later `transmit` call samples the generation only after the bump.
+    /// The worker clears the flag when it cancels the affected tickets.
     poisoned: AtomicBool,
+    /// A failure waits for the worker to cancel its tickets. A flag and a
+    /// wakeup rather than a queued command, so a full command queue can
+    /// never lose one and leave the bridge poisoned for good.
+    failure_requested: AtomicBool,
+    failure: tokio::sync::Notify,
     pending: Mutex<BTreeMap<u64, oneshot::Sender<bool>>>,
     /// How long a transmit waits for its completion before failing it;
     /// [`TRANSMIT_COMPLETION_TIMEOUT`] outside tests.
@@ -1100,6 +1325,8 @@ impl BridgeTransmitCompletions {
             next_id: AtomicU64::new(1),
             failure_generation: AtomicU64::new(0),
             poisoned: AtomicBool::new(false),
+            failure_requested: AtomicBool::new(false),
+            failure: tokio::sync::Notify::new(),
             pending: Mutex::new(BTreeMap::new()),
             timeout,
         }
@@ -1126,10 +1353,22 @@ impl BridgeTransmitCompletions {
     }
 
     /// Declare a link-wide failure: refuse new platform dispatches until the
-    /// worker processes the corresponding cancellation command.
+    /// worker has cancelled what the failure covers.
     fn poison(&self) {
         self.poisoned.store(true, Ordering::SeqCst);
         self.failure_generation.fetch_add(1, Ordering::SeqCst);
+        self.failure_requested.store(true, Ordering::SeqCst);
+        self.failure.notify_one();
+    }
+
+    /// Wait until a failure has been declared, and take it.
+    async fn failure_declared(&self) {
+        loop {
+            if self.failure_requested.swap(false, Ordering::SeqCst) {
+                return;
+            }
+            self.failure.notified().await;
+        }
     }
 
     /// [`poison`](Self::poison), but only while frame `id` still waits for
@@ -1179,13 +1418,9 @@ impl BridgeTransmitCompletions {
 const TRANSMIT_COMPLETION_TIMEOUT: Duration = Duration::from_secs(35);
 
 struct BridgeRadio {
-    inbound: mpsc::UnboundedReceiver<InboundFrame>,
+    inbound: mpsc::Receiver<InboundFrame>,
     outbound: NotifyingSender<MobileMeshOutboundFrameRecord>,
     completions: Arc<BridgeTransmitCompletions>,
-    /// The worker's own command queue, for failing the outbound batch
-    /// when a completion never arrives. Weak, so the worker holding it
-    /// does not keep its own queue open after the session is dropped.
-    commands: mpsc::WeakUnboundedSender<WorkerCommand>,
     /// The longest frame's airtime at the radio's settings, in ms, once
     /// the platform reports it; 0 until then.
     frame_ms: Arc<AtomicU32>,
@@ -1217,18 +1452,24 @@ impl Radio for BridgeRadio {
             // platform. Its queued cancellation owns the ticket outcome.
             return Ok(());
         };
-        if self
-            .outbound
-            .send(MobileMeshOutboundFrameRecord {
-                id,
-                data: data.to_vec(),
-                nocca,
-                power_dbm: options.power_dbm,
-            })
-            .is_err()
-        {
-            let _ = self.completions.complete(id, false);
-            return Err(TxError::Io(BridgeRadioError::Closed));
+        match self.outbound.send(MobileMeshOutboundFrameRecord {
+            id,
+            data: data.to_vec(),
+            nocca,
+            power_dbm: options.power_dbm,
+        }) {
+            Ok(()) => {}
+            // The platform has stopped taking frames: this one fails as a
+            // rejected frame would, and so does the batch behind it.
+            Err(std_mpsc::TrySendError::Full(_)) => {
+                self.completions.poison();
+                let _ = self.completions.complete(id, false);
+                return Ok(());
+            }
+            Err(std_mpsc::TrySendError::Disconnected(_)) => {
+                let _ = self.completions.complete(id, false);
+                return Err(TxError::Io(BridgeRadioError::Closed));
+            }
         }
 
         // Awaiting here is deliberate: Radio::transmit completes only after
@@ -1252,15 +1493,12 @@ impl Radio for BridgeRadio {
             Ok(Ok(false)) => Ok(()),
             Ok(Err(_)) => Err(TxError::Io(BridgeRadioError::Closed)),
             // No report: treat it exactly as a rejected frame, the way
-            // complete_outbound_frame does—poison first, so the frames
-            // queued behind this one are suppressed rather than dispatched,
-            // then queue the cancellation and retire the ticket. A report
-            // that arrives later finds no ticket and is ignored.
+            // complete_outbound_frame does—poison, which suppresses the
+            // frames queued behind this one and asks the worker to cancel
+            // them, then retire the ticket. A report that arrives later
+            // finds no ticket and is ignored.
             Err(_elapsed) => {
                 self.completions.poison();
-                if let Some(commands) = self.commands.upgrade() {
-                    let _ = commands.send(WorkerCommand::FailOutboundTransmissions);
-                }
                 let _ = self.completions.complete(id, false);
                 Ok(())
             }
@@ -1314,16 +1552,14 @@ impl CounterStore for SharedCounterStore {
     type Error = crate::CounterStoreError;
 
     async fn load(&self, context: &[u8]) -> Result<u32, Self::Error> {
-        self.0.load_boundary(context.to_vec())
+        CounterStore::load(self.0.as_ref(), context).await
     }
 
-    // Synchronous on purpose, like the commit itself: the MAC awaits this
-    // inside a wake cycle the worker may drop mid-await, and a commit handed
-    // to another thread would carry on after its cancellation—where it could
-    // land after a newer boundary and lower the stored one. A reservation is
-    // committed once per block of frames.
+    // The store's own thread commits, in the order asked: a commit whose
+    // wake cycle the worker dropped mid-await still lands before any newer
+    // one, so it can never lower the stored boundary.
     async fn store(&self, context: &[u8], value: u32) -> Result<(), Self::Error> {
-        self.0.commit_boundary(context.to_vec(), value)
+        CounterStore::store(self.0.as_ref(), context, value).await
     }
 
     async fn flush(&self) -> Result<(), Self::Error> {
@@ -1469,20 +1705,21 @@ pub struct MobileMeshSession {
     /// worker: it never changes for the life of a session, and it is what
     /// a device has to list before this phone may manage it.
     local_key: PublicKey,
-    commands: mpsc::UnboundedSender<WorkerCommand>,
+    commands: mpsc::Sender<WorkerCommand>,
     outbound: Mutex<std_mpsc::Receiver<MobileMeshOutboundFrameRecord>>,
     transmit_completions: Arc<BridgeTransmitCompletions>,
     events: Mutex<std_mpsc::Receiver<MobileMeshPingEventRecord>>,
     management: Mutex<std_mpsc::Receiver<MobileMeshManagementEventRecord>>,
     advertisements: Mutex<std_mpsc::Receiver<MobileMeshAdvertisementRecord>>,
-    peer_heard: Mutex<std_mpsc::Receiver<MobileMeshPeerHeardRecord>>,
-    local_hints: Mutex<std_mpsc::Receiver<Vec<Vec<u8>>>>,
-    meet_states: Mutex<std_mpsc::Receiver<MobileMeetStateRecord>>,
+    peer_heard: Arc<HeardSlot>,
+    local_hints: Arc<Slot<Vec<Vec<u8>>>>,
+    meet_states: Arc<Slot<MobileMeetStateRecord>>,
     /// The longest frame's airtime at the radio's settings, in ms; 0 until
     /// the platform reports it.
     frame_ms: Arc<AtomicU32>,
     chat_events: Mutex<std_mpsc::Receiver<MobileChatWorkerEvent>>,
     pending_chat_events: Mutex<Option<PendingChatEventBatch>>,
+    dropped: Arc<Dropped>,
     next_chat_batch_id: Mutex<u64>,
     next_operation_id: Mutex<u64>,
     wake: Arc<WakeSignal>,
@@ -1523,13 +1760,13 @@ impl MobileMeshSession {
             .transpose()?;
         let operation_id = self.next_operation_id()?;
         self.commands
-            .send(WorkerCommand::Ping {
+            .try_send(WorkerCommand::Ping {
                 operation_id,
                 peer,
                 timeout_ms,
                 path,
             })
-            .map_err(|_| MobileMeshError::SessionUnavailable)?;
+            .map_err(command_refused)?;
         Ok(operation_id)
     }
 
@@ -1879,8 +2116,8 @@ impl MobileMeshSession {
     /// that has already ended does nothing.
     pub fn cancel_management(&self, operation_id: u64) -> Result<(), MobileMeshError> {
         self.commands
-            .send(WorkerCommand::CancelManagement { operation_id })
-            .map_err(|_| MobileMeshError::SessionUnavailable)
+            .try_send(WorkerCommand::CancelManagement { operation_id })
+            .map_err(command_refused)
     }
 
     /// Broadcast a signed node-identity advertisement describing this phone.
@@ -1923,6 +2160,7 @@ impl MobileMeshSession {
                 scheduled,
                 response,
             })
+            .await
             .map_err(|_| MobileMeshError::SessionUnavailable)?;
         result
             .await
@@ -1936,6 +2174,7 @@ impl MobileMeshSession {
         let (response, result) = oneshot::channel();
         self.commands
             .send(WorkerCommand::Beacon { response })
+            .await
             .map_err(|_| MobileMeshError::SessionUnavailable)?;
         result
             .await
@@ -1952,6 +2191,7 @@ impl MobileMeshSession {
         let (response, result) = oneshot::channel();
         self.commands
             .send(WorkerCommand::RequestIdentity { peer, response })
+            .await
             .map_err(|_| MobileMeshError::SessionUnavailable)?;
         result
             .await
@@ -2001,6 +2241,7 @@ impl MobileMeshSession {
                 source_route,
                 response,
             })
+            .await
             .map_err(|_| MobileMeshError::SessionUnavailable)?;
         result
             .await
@@ -2033,6 +2274,7 @@ impl MobileMeshSession {
                 hint: NodeHint(hint),
                 response,
             })
+            .await
             .map_err(|_| MobileMeshError::SessionUnavailable)?;
         result
             .await
@@ -2068,6 +2310,7 @@ impl MobileMeshSession {
                 source_route,
                 response,
             })
+            .await
             .map_err(|_| MobileMeshError::SessionUnavailable)?;
         result
             .await
@@ -2092,6 +2335,7 @@ impl MobileMeshSession {
         let (response, result) = oneshot::channel();
         self.commands
             .send(WorkerCommand::SetChatDisplayName { name, response })
+            .await
             .map_err(|_| MobileMeshError::SessionUnavailable)?;
         result
             .await
@@ -2126,6 +2370,7 @@ impl MobileMeshSession {
                 },
                 response,
             })
+            .await
             .map_err(|_| MobileMeshError::SessionUnavailable)?;
         result
             .await
@@ -2144,6 +2389,7 @@ impl MobileMeshSession {
                 name,
                 response,
             })
+            .await
             .map_err(|_| MobileMeshError::SessionUnavailable)?;
         result
             .await
@@ -2168,6 +2414,7 @@ impl MobileMeshSession {
         let (response, result) = oneshot::channel();
         self.commands
             .send(WorkerCommand::SetAdvertisedLocation { location, response })
+            .await
             .map_err(|_| MobileMeshError::SessionUnavailable)?;
         result
             .await
@@ -2186,6 +2433,7 @@ impl MobileMeshSession {
         let (response, result) = oneshot::channel();
         self.commands
             .send(WorkerCommand::PeerRoute { peer, response })
+            .await
             .map_err(|_| MobileMeshError::SessionUnavailable)?;
         result
             .await
@@ -2201,6 +2449,7 @@ impl MobileMeshSession {
         let (response, result) = oneshot::channel();
         self.commands
             .send(WorkerCommand::ClearPeerRoute { peer, response })
+            .await
             .map_err(|_| MobileMeshError::SessionUnavailable)?;
         result
             .await
@@ -2238,6 +2487,7 @@ impl MobileMeshSession {
                 hold_ms,
                 response,
             })
+            .await
             .map_err(|_| MobileMeshError::SessionUnavailable)?;
         result
             .await
@@ -2254,6 +2504,7 @@ impl MobileMeshSession {
         let (response, result) = oneshot::channel();
         self.commands
             .send(WorkerCommand::AdoptLearnedPeerRoute { peer, response })
+            .await
             .map_err(|_| MobileMeshError::SessionUnavailable)?;
         result
             .await
@@ -2317,6 +2568,7 @@ impl MobileMeshSession {
                 timestamp,
                 response,
             })
+            .await
             .map_err(|_| MobileMeshError::SessionUnavailable)?;
         result
             .await
@@ -2339,6 +2591,7 @@ impl MobileMeshSession {
         let (response, result) = oneshot::channel();
         self.commands
             .send(WorkerCommand::ExportHostPeerKeys { peers, response })
+            .await
             .map_err(|_| MobileMeshError::SessionUnavailable)?;
         result
             .await
@@ -2360,6 +2613,7 @@ impl MobileMeshSession {
         let (response, result) = oneshot::channel();
         self.commands
             .send(WorkerCommand::RegisterPeers { peers, response })
+            .await
             .map_err(|_| MobileMeshError::SessionUnavailable)?;
         result
             .await
@@ -2379,6 +2633,7 @@ impl MobileMeshSession {
         let (response, result) = oneshot::channel();
         self.commands
             .send(WorkerCommand::RemovePeers { peers, response })
+            .await
             .map_err(|_| MobileMeshError::SessionUnavailable)?;
         result
             .await
@@ -2411,6 +2666,7 @@ impl MobileMeshSession {
         let (response, result) = oneshot::channel();
         self.commands
             .send(WorkerCommand::RegisterChannels { channels, response })
+            .await
             .map_err(|_| MobileMeshError::SessionUnavailable)?;
         result
             .await
@@ -2424,6 +2680,7 @@ impl MobileMeshSession {
         let (response, result) = oneshot::channel();
         self.commands
             .send(WorkerCommand::RemoveChannels { keys, response })
+            .await
             .map_err(|_| MobileMeshError::SessionUnavailable)?;
         result
             .await
@@ -2434,9 +2691,17 @@ impl MobileMeshSession {
         if frame.data.is_empty() || frame.data.len() > MAX_FRAME_SIZE {
             return Err(MobileMeshError::SessionUnavailable);
         }
-        self.commands
-            .send(WorkerCommand::Receive(frame))
-            .map_err(|_| MobileMeshError::SessionUnavailable)
+        // A full queue is a receive overrun: the frame is lost, as it
+        // would be over the air, and counted.
+        match self.commands.try_send(WorkerCommand::Receive(frame)) {
+            Ok(()) => Ok(()),
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                self.dropped.count(Dropped::INBOUND);
+                self.wake.notify();
+                Ok(())
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => Err(MobileMeshError::SessionUnavailable),
+        }
     }
 
     /// Report the actual physical radio result for an outbound
@@ -2451,12 +2716,9 @@ impl MobileMeshSession {
             // A rejected frame fails the whole outbound batch. Poison before
             // releasing this frame's wait so the MAC drain cannot dispatch
             // the frames queued behind it (see fail_outbound_transmissions).
-            if !self.transmit_completions.poison_if_pending(frame_id) {
+            if self.commands.is_closed() || !self.transmit_completions.poison_if_pending(frame_id) {
                 return Err(MobileMeshError::SessionUnavailable);
             }
-            self.commands
-                .send(WorkerCommand::FailOutboundTransmissions)
-                .map_err(|_| MobileMeshError::SessionUnavailable)?;
         }
         self.transmit_completions
             .complete(frame_id, transmitted)
@@ -2474,6 +2736,7 @@ impl MobileMeshSession {
                 checkpoints,
                 response,
             })
+            .await
             .map_err(|_| MobileMeshError::SessionUnavailable)?;
         result
             .await
@@ -2609,6 +2872,7 @@ impl MobileMeshSession {
         let (response, result) = oneshot::channel();
         self.commands
             .send(WorkerCommand::CommitChatBatch { batch_id, response })
+            .await
             .map_err(|_| MobileMeshError::SessionUnavailable)?;
         result
             .await
@@ -2627,6 +2891,7 @@ impl MobileMeshSession {
                 checkpoints,
                 response,
             })
+            .await
             .map_err(|_| MobileMeshError::SessionUnavailable)?;
         result
             .await
@@ -2640,12 +2905,12 @@ impl MobileMeshSession {
         payload: Vec<u8>,
     ) -> Result<(), MobileMeshError> {
         self.commands
-            .send(WorkerCommand::ChatArchiveResult {
+            .try_send(WorkerCommand::ChatArchiveResult {
                 request_id,
                 kind,
                 payload,
             })
-            .map_err(|_| MobileMeshError::SessionUnavailable)
+            .map_err(command_refused)
     }
 
     pub fn acknowledge_chat_batch(&self, batch_id: u64) -> Result<(), MobileMeshError> {
@@ -2668,16 +2933,16 @@ impl MobileMeshSession {
     /// after the MAC had accepted the frames, ensuring optimistic UI rows do
     /// not remain in `Sending` indefinitely.
     pub fn fail_outbound_transmissions(&self) -> Result<(), MobileMeshError> {
+        if self.commands.is_closed() {
+            return Err(MobileMeshError::SessionUnavailable);
+        }
         // Poison before anything else: from this instant until the worker
-        // processes the command below (the sole clearer), every frame the
-        // MAC's in-progress drain loop tries to hand to the platform is
+        // handles the failure it requests (the sole clearer), every frame
+        // the MAC's in-progress drain loop tries to hand to the platform is
         // suppressed instead of dispatched. Without this, releasing the
         // blocked transmit lets the drain advance to the next queued frame,
         // which samples the post-bump generation and goes out as if healthy.
         self.transmit_completions.poison();
-        self.commands
-            .send(WorkerCommand::FailOutboundTransmissions)
-            .map_err(|_| MobileMeshError::SessionUnavailable)?;
         // Release a transmit wait already in progress; the drain it unblocks
         // is defused by the poison above.
         self.transmit_completions.fail_all();
@@ -2688,6 +2953,17 @@ impl MobileMeshSession {
     /// has new data for `poll_update`. If data is already pending, the
     /// listener fires immediately.
     pub fn set_wake_listener(&self, listener: Arc<dyn MobileMeshWakeListener>) {
+        // A new listener has seen no batch: the next poll hands out the one
+        // pending, however recently another listener was given it.
+        if let Some(batch) = self
+            .pending_chat_events
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_mut()
+        {
+            batch.handed_out = None;
+            self.wake.notify();
+        }
         self.wake.set_listener(Some(listener));
     }
 
@@ -2723,33 +2999,11 @@ impl MobileMeshSession {
             .unwrap_or_else(PoisonError::into_inner)
             .try_iter()
             .collect();
-        let peer_heard_events: Vec<_> = self
-            .peer_heard
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .try_iter()
-            .collect();
-        // Each report is the whole set, so only the latest matters.
-        let local_destination_hints = self
-            .local_hints
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .try_iter()
-            .last();
-        // Each state is whole, so only the latest matters.
-        let meet = self
-            .meet_states
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .try_iter()
-            .last();
-        let mut chat_mutations = Vec::new();
-        let mut chat_deliveries = Vec::new();
-        let mut chat_repeats = Vec::new();
-        let mut chat_archive_lookups = Vec::new();
-        let mut chat_sender_resolutions = Vec::new();
-        let mut chat_diagnostics = Vec::new();
-        let mut chat_batch_id = None;
+        let peer_heard_events = self.peer_heard.take();
+        // Each report is whole, so only the latest matters.
+        let local_destination_hints = self.local_hints.take();
+        let meet = self.meet_states.take();
+        let mut update_chat = None;
         {
             let mut pending = self
                 .pending_chat_events
@@ -2762,34 +3016,51 @@ impl MobileMeshSession {
                     .unwrap_or_else(PoisonError::into_inner)
                     .try_iter()
                     .collect::<Vec<_>>();
-                if !events.is_empty() {
+                let diagnostics = self.dropped.report();
+                if !events.is_empty() || !diagnostics.is_empty() {
                     let mut next = self
                         .next_chat_batch_id
                         .lock()
                         .unwrap_or_else(PoisonError::into_inner);
                     let id = *next;
                     *next = next.wrapping_add(1).max(1);
-                    *pending = Some(PendingChatEventBatch { id, events });
+                    *pending = Some(PendingChatEventBatch::new(id, events, diagnostics));
                 }
             }
-            if let Some(batch) = pending.as_ref() {
-                chat_batch_id = Some(batch.id);
-                for event in batch.events.iter().cloned() {
-                    match event {
-                        MobileChatWorkerEvent::Mutation(record) => chat_mutations.push(record),
-                        MobileChatWorkerEvent::Delivery(record) => chat_deliveries.push(record),
-                        MobileChatWorkerEvent::Repeats(record) => chat_repeats.push(record),
-                        MobileChatWorkerEvent::ArchiveLookup(record) => {
-                            chat_archive_lookups.push(record);
-                        }
-                        MobileChatWorkerEvent::SenderResolution(record) => {
-                            chat_sender_resolutions.push(record);
-                        }
-                        MobileChatWorkerEvent::Diagnostic(record) => chat_diagnostics.push(record),
-                    }
-                }
+            if let Some(batch) = pending.as_mut()
+                && batch.due(std::time::Instant::now())
+            {
+                update_chat = Some((
+                    batch.id,
+                    batch.mutations.clone(),
+                    batch.deliveries.clone(),
+                    batch.repeats.clone(),
+                    batch.archive_lookups.clone(),
+                    batch.sender_resolutions.clone(),
+                    batch.diagnostics.clone(),
+                ));
             }
         }
+        let (
+            chat_batch_id,
+            chat_mutations,
+            chat_deliveries,
+            chat_repeats,
+            chat_archive_lookups,
+            chat_sender_resolutions,
+            chat_diagnostics,
+        ) = match update_chat {
+            Some((id, mutations, deliveries, repeats, lookups, resolutions, diagnostics)) => (
+                Some(id),
+                mutations,
+                deliveries,
+                repeats,
+                lookups,
+                resolutions,
+                diagnostics,
+            ),
+            None => Default::default(),
+        };
         MobileMeshSessionUpdateRecord {
             outbound_frames,
             ping_events,
@@ -2814,6 +3085,7 @@ impl MobileMeshSession {
         let (response, result) = oneshot::channel();
         self.commands
             .send(WorkerCommand::Meet { request, response })
+            .await
             .map_err(|_| MobileMeshError::SessionUnavailable)?;
         result
             .await
@@ -2830,12 +3102,12 @@ impl MobileMeshSession {
         let peer = decode_peer(&peer_address).map_err(|_| MobileMeshError::InvalidPeer)?;
         let operation_id = self.next_operation_id()?;
         self.commands
-            .send(WorkerCommand::Manage {
+            .try_send(WorkerCommand::Manage {
                 operation_id,
                 peer,
                 request,
             })
-            .map_err(|_| MobileMeshError::SessionUnavailable)?;
+            .map_err(command_refused)?;
         Ok(operation_id)
     }
 
@@ -2865,6 +3137,7 @@ impl MobileMeshSession {
                 request,
                 response,
             })
+            .await
             .map_err(|_| MobileMeshError::SessionUnavailable)?;
         result
             .await
@@ -2906,56 +3179,32 @@ impl MobileMeshSession {
         virtual_time: bool,
         completion_timeout: Option<Duration>,
     ) -> Result<Arc<Self>, MobileMeshError> {
-        let (commands, command_rx) = mpsc::unbounded_channel();
+        let (commands, command_rx) = mpsc::channel(COMMAND_DEPTH);
         let wake = Arc::new(WakeSignal::new());
-        let (outbound_tx, outbound) = std_mpsc::channel();
-        let (event_tx, events) = std_mpsc::channel();
-        let (management_tx, management) = std_mpsc::channel();
-        let (advertisement_tx, advertisements) = std_mpsc::channel();
-        let (peer_heard_tx, peer_heard) = std_mpsc::channel();
-        let (local_hints_tx, local_hints) = std_mpsc::channel();
-        let (meet_tx, meet_states) = std_mpsc::channel();
-        let (chat_event_tx, chat_events) = std_mpsc::channel();
-        let outbound_tx = NotifyingSender {
-            tx: outbound_tx,
-            wake: wake.clone(),
-        };
-        let event_tx = NotifyingSender {
-            tx: event_tx,
-            wake: wake.clone(),
-        };
-        let management_tx = NotifyingSender {
-            tx: management_tx,
-            wake: wake.clone(),
-        };
-        let advertisement_tx = NotifyingSender {
-            tx: advertisement_tx,
-            wake: wake.clone(),
-        };
-        let peer_heard_tx = NotifyingSender {
-            tx: peer_heard_tx,
-            wake: wake.clone(),
-        };
-        let local_hints_tx = NotifyingSender {
-            tx: local_hints_tx,
-            wake: wake.clone(),
-        };
-        let meet_tx = NotifyingSender {
-            tx: meet_tx,
-            wake: wake.clone(),
-        };
+        let dropped = Arc::new(Dropped::new());
+        let (outbound_tx, outbound) =
+            notifying_channel(OUTBOUND_DEPTH, &wake, &dropped, Dropped::OUTBOUND);
+        let (event_tx, events) = notifying_channel(REPORT_DEPTH, &wake, &dropped, Dropped::PINGS);
+        let (management_tx, management) =
+            notifying_channel(REPORT_DEPTH, &wake, &dropped, Dropped::MANAGEMENT);
+        let (advertisement_tx, advertisements) =
+            notifying_channel(REPORT_DEPTH, &wake, &dropped, Dropped::ADVERTISEMENTS);
+        let (chat_event_tx, chat_events) =
+            notifying_channel(CHAT_EVENT_DEPTH, &wake, &dropped, Dropped::CHAT);
+        let peer_heard = Arc::new(HeardSlot::new(&wake, &dropped));
+        let local_hints = Arc::new(Slot::new(&wake));
+        let meet_states = Arc::new(Slot::new(&wake));
         let frame_ms = Arc::new(AtomicU32::new(0));
         let worker_frame_ms = frame_ms.clone();
-        let chat_event_tx = NotifyingSender {
-            tx: chat_event_tx,
-            wake: wake.clone(),
-        };
+        let worker_dropped = dropped.clone();
+        let worker_peer_heard = peer_heard.clone();
+        let worker_local_hints = local_hints.clone();
+        let worker_meet_states = meet_states.clone();
         let (ready_tx, ready_rx) = oneshot::channel();
         let worker_identity = identity.take_for_session()?;
         let local_key = *worker_identity.public_key();
         let transmit_completions = Arc::new(BridgeTransmitCompletions::new(completion_timeout));
         let worker_transmit_completions = transmit_completions.clone();
-        let worker_commands = commands.downgrade();
 
         std::thread::Builder::new()
             .name("umsh-mobile-mesh".to_owned())
@@ -2990,15 +3239,15 @@ impl MobileMeshSession {
                         worker_identity,
                         SharedCounterStore(counter_store),
                         command_rx,
-                        worker_commands,
+                        worker_dropped,
                         outbound_tx,
                         worker_transmit_completions,
                         event_tx,
                         management_tx,
                         advertisement_tx,
-                        peer_heard_tx,
-                        local_hints_tx,
-                        meet_tx,
+                        worker_peer_heard,
+                        worker_local_hints,
+                        worker_meet_states,
                         worker_frame_ms,
                         chat_event_tx,
                         ready_tx,
@@ -3013,17 +3262,18 @@ impl MobileMeshSession {
         Ok(Arc::new(Self {
             local_key,
             commands,
-            outbound: Mutex::new(outbound),
+            outbound,
             transmit_completions,
-            events: Mutex::new(events),
-            management: Mutex::new(management),
-            advertisements: Mutex::new(advertisements),
-            peer_heard: Mutex::new(peer_heard),
-            local_hints: Mutex::new(local_hints),
-            meet_states: Mutex::new(meet_states),
+            events,
+            management,
+            advertisements,
+            peer_heard,
+            local_hints,
+            meet_states,
             frame_ms,
-            chat_events: Mutex::new(chat_events),
+            chat_events,
             pending_chat_events: Mutex::new(None),
+            dropped,
             next_chat_batch_id: Mutex::new(1),
             next_operation_id: Mutex::new(1),
             wake,
@@ -3034,7 +3284,9 @@ impl MobileMeshSession {
 impl Drop for MobileMeshSession {
     fn drop(&mut self) {
         self.transmit_completions.fail_all();
-        let _ = self.commands.send(WorkerCommand::Shutdown);
+        // Best effort: a full queue still ends the worker, once it has
+        // taken what is queued and finds the channel closed.
+        let _ = self.commands.try_send(WorkerCommand::Shutdown);
     }
 }
 
@@ -3677,16 +3929,16 @@ async fn service_management<M: MacBackend>(
 async fn run_worker(
     identity: SoftwareIdentity,
     counter_store: SharedCounterStore,
-    mut commands: mpsc::UnboundedReceiver<WorkerCommand>,
-    own_commands: mpsc::WeakUnboundedSender<WorkerCommand>,
+    mut commands: mpsc::Receiver<WorkerCommand>,
+    dropped: Arc<Dropped>,
     outbound: NotifyingSender<MobileMeshOutboundFrameRecord>,
     transmit_completions: Arc<BridgeTransmitCompletions>,
     events: NotifyingSender<MobileMeshPingEventRecord>,
     management_events: NotifyingSender<MobileMeshManagementEventRecord>,
     advertisements: NotifyingSender<MobileMeshAdvertisementRecord>,
-    peer_heard: NotifyingSender<MobileMeshPeerHeardRecord>,
-    local_hints: NotifyingSender<Vec<Vec<u8>>>,
-    meet_states: NotifyingSender<MobileMeetStateRecord>,
+    peer_heard: Arc<HeardSlot>,
+    local_hints: Arc<Slot<Vec<Vec<u8>>>>,
+    meet_states: Arc<Slot<MobileMeetStateRecord>>,
     frame_ms: Arc<AtomicU32>,
     chat_events: NotifyingSender<MobileChatWorkerEvent>,
     ready: oneshot::Sender<Result<(), MobileMeshError>>,
@@ -3695,13 +3947,12 @@ async fn run_worker(
     // The MAC takes ownership of the identity below; standalone bundle
     // signing (advertisements, QR bundles) uses this retained clone.
     let signer = identity.clone();
-    let (inbound_tx, inbound_rx) = mpsc::unbounded_channel();
+    let (inbound_tx, inbound_rx) = mpsc::channel(INBOUND_DEPTH);
     let worker_completions = transmit_completions.clone();
     let radio = BridgeRadio {
         inbound: inbound_rx,
         outbound,
         completions: transmit_completions,
-        commands: own_commands,
         frame_ms: frame_ms.clone(),
     };
     let mac = MobileMac::new(
@@ -3763,7 +4014,7 @@ async fn run_worker(
         if packet.payload_type() == PayloadType::Meet {
             return false;
         }
-        let _ = peer_heard_events.send(MobileMeshPeerHeardRecord {
+        peer_heard_events.hear(MobileMeshPeerHeardRecord {
             peer_address: packet.from_key().map(|peer| encode_peer_address(&peer)),
             node_hint: packet.from_hint().map(|hint| hint.0.to_vec()),
             source_authenticated: packet.source_authenticated(),
@@ -3954,7 +4205,7 @@ async fn run_worker(
             .collect();
         let mut reported = reported_hints.borrow_mut();
         if *reported != hints {
-            let _ = local_hints.send(hints.clone());
+            local_hints.set(hints.clone());
             *reported = hints;
         }
     };
@@ -3994,6 +4245,16 @@ async fn run_worker(
         loop {
             tokio::select! {
                 biased;
+                () = worker_completions.failure_declared() => {
+                    let now_ms = handle.now_ms().await;
+                    for receipt in chat_queue.fail_all(&mut chat.facade, now_ms) {
+                        let _ = handle.cancel_pending_ack(identity_id, receipt).await;
+                    }
+                    publish_chat_drain(chat.drain(), &mut chat_queue, &chat_events);
+                    // Every frame the failure covered is now cancelled; new
+                    // transmissions may reach the platform again.
+                    worker_completions.clear_poison();
+                }
                 command = commands.recv() => {
                     match command {
                         Some(WorkerCommand::RegisterPeers { peers, response }) => {
@@ -4628,18 +4889,14 @@ async fn run_worker(
                                 persist_counters().await;
                             }
                         }
-                        Some(WorkerCommand::FailOutboundTransmissions) => {
-                            let now_ms = handle.now_ms().await;
-                            for receipt in chat_queue.fail_all(&mut chat.facade, now_ms) {
-                                let _ = handle.cancel_pending_ack(identity_id, receipt).await;
-                            }
-                            publish_chat_drain(chat.drain(), &mut chat_queue, &chat_events);
-                            // Every frame the failure covered is now cancelled;
-                            // new transmissions may reach the platform again.
-                            worker_completions.clear_poison();
-                        }
                         Some(WorkerCommand::Receive(record)) => {
-                            let _ = inbound_tx.send(InboundFrame { record });
+                            // A radio that cannot keep up loses frames, as
+                            // it would over the air.
+                            if let Err(mpsc::error::TrySendError::Full(_)) =
+                                inbound_tx.try_send(InboundFrame { record })
+                            {
+                                dropped.count(Dropped::INBOUND);
+                            }
                         }
                         Some(WorkerCommand::Meet { request, response }) => {
                             let now_ms = handle.now_ms().await;
@@ -5046,7 +5303,7 @@ async fn drive_meet<M: MacBackend>(
     meeting: &RefCell<PhoneMeeting>,
     node: &LocalNode<M>,
     now_ms: u64,
-    states: &NotifyingSender<MobileMeetStateRecord>,
+    states: &Slot<MobileMeetStateRecord>,
 ) {
     loop {
         let command = meeting.borrow_mut().meeting.command();
@@ -5065,7 +5322,7 @@ async fn drive_meet<M: MacBackend>(
         }
     }
     if let Some(state) = meeting.borrow_mut().take_state() {
-        let _ = states.send(state);
+        states.set(state);
     }
 }
 
@@ -7419,6 +7676,69 @@ mod tests {
         }
     }
 
+    /// A full queue drops what comes next, counts it, and says so once.
+    #[test]
+    fn a_full_queue_drops_and_reports_it() {
+        let wake = Arc::new(WakeSignal::new());
+        let dropped = Arc::new(Dropped::new());
+        let (tx, rx) = notifying_channel::<u32>(2, &wake, &dropped, Dropped::PINGS);
+        assert!(tx.send(1).is_ok());
+        assert!(tx.send(2).is_ok());
+        assert!(matches!(tx.send(3), Err(std_mpsc::TrySendError::Full(3))));
+        assert_eq!(
+            dropped.report(),
+            ["dropped 1 ping reports: the queue was full"]
+        );
+        assert!(dropped.report().is_empty());
+        assert_eq!(rx.lock().unwrap().try_iter().collect::<Vec<_>>(), [1, 2]);
+    }
+
+    /// A sender heard again between polls is reported once, authenticated
+    /// if any of its frames was; past the cap, new senders are counted.
+    #[test]
+    fn heard_senders_coalesce_and_are_bounded() {
+        let wake = Arc::new(WakeSignal::new());
+        let dropped = Arc::new(Dropped::new());
+        let heard = HeardSlot::new(&wake, &dropped);
+        let record = |n: usize, authenticated| MobileMeshPeerHeardRecord {
+            peer_address: None,
+            node_hint: Some(n.to_be_bytes()[5..].to_vec()),
+            source_authenticated: authenticated,
+        };
+        heard.hear(record(1, false));
+        heard.hear(record(1, true));
+        heard.hear(record(1, false));
+        assert_eq!(heard.take(), [record(1, true)]);
+        assert!(heard.take().is_empty());
+
+        for n in 0..=HEARD_MAX {
+            heard.hear(record(n, false));
+        }
+        assert_eq!(heard.take().len(), HEARD_MAX);
+        assert_eq!(
+            dropped.report(),
+            ["dropped 1 heard senders: the queue was full"]
+        );
+    }
+
+    /// A declared failure reaches the worker however many are declared
+    /// before it looks, and once it has looked, no stale one remains.
+    #[tokio::test]
+    async fn a_declared_failure_is_taken_once() {
+        let completions = BridgeTransmitCompletions::new(None);
+        completions.poison();
+        completions.poison();
+        tokio::time::timeout(Duration::from_secs(1), completions.failure_declared())
+            .await
+            .expect("the failure was declared");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), completions.failure_declared())
+                .await
+                .is_err(),
+            "two declarations before the worker looked are one failure"
+        );
+    }
+
     struct TestWakeListener {
         signal: std_mpsc::Sender<()>,
     }
@@ -7598,11 +7918,20 @@ mod tests {
                     Some(crate::MobileChatDirection::Inbound)
                 );
                 let batch_id = bob_update.chat_batch_id.expect("owned chat batch");
+                // A poll straight after is not handed the batch again...
+                let again = bob.poll_update();
+                assert_eq!(again.chat_batch_id, None);
+                assert!(again.chat_mutations.is_empty());
+                // ...but a new listener is, whole.
+                let (signal, _wakes) = std_mpsc::channel();
+                bob.set_wake_listener(Arc::new(TestWakeListener { signal }));
+                let replayed = bob.poll_update();
                 assert_eq!(
-                    bob.poll_update().chat_batch_id,
+                    replayed.chat_batch_id,
                     Some(batch_id),
                     "unacknowledged chat effects must be replayed"
                 );
+                assert_eq!(replayed.chat_mutations, bob_update.chat_mutations);
                 bob.acknowledge_chat_batch(batch_id).unwrap();
                 assert!(bob.poll_update().chat_mutations.is_empty());
                 break;
