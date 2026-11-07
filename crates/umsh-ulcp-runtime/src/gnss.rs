@@ -49,12 +49,6 @@ use umsh_node::location::{MAX_PRECISION, NodeLocation};
 use umsh_ulcp::gnss::GnssSnapshot;
 use umsh_ulcp::ids::prop;
 
-/// How many consumers can wait on [`ANNOUNCE`] at once.
-///
-/// One: the ULCP driver's publication arm. A second would be a second
-/// thing publishing the same property.
-const ANNOUNCE_RECEIVERS: usize = 1;
-
 /// Precision the cached snapshot's location is encoded at.
 ///
 /// The finest the format carries. What a *host* sees is this; what the
@@ -118,12 +112,62 @@ static POLICY: CriticalSectionMutex<Cell<Policy>> = CriticalSectionMutex::new(Ce
 /// slot, for the one thing that waits on it.
 static CONFIGURED: Watch<CriticalSectionRawMutex, (), 1> = Watch::new();
 
-/// Publications waiting for the driver's select loop.
+/// Publications waiting for the driver's select loop: the latest of each
+/// kind, so one cycle that changes the fix, steps the clock, and moves
+/// the identity is announced in full. A single slot would keep only the
+/// last of the three.
 ///
-/// A `Watch` rather than a `Signal` because the driver's hook must be
-/// cancellation-safe: the select drops and re-creates it on every other
-/// event, and a `Signal` would lose whatever it was cancelled on.
-static ANNOUNCE: Watch<CriticalSectionRawMutex, Announce, ANNOUNCE_RECEIVERS> = Watch::new();
+/// A later publication of a kind replaces an earlier one still waiting,
+/// which is what a host wants: the current value, not the history.
+static PENDING: CriticalSectionMutex<Cell<Pending>> =
+    CriticalSectionMutex::new(Cell::new(Pending {
+        gnss: None,
+        time: None,
+        identity: None,
+    }));
+
+/// Wakes the [`Announcer`] when something is added to [`PENDING`].
+static ANNOUNCED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
+/// Whether the [`Announcer`] has been handed out.
+static ANNOUNCER_TAKEN: AtomicBool = AtomicBool::new(false);
+
+#[derive(Clone, Copy)]
+struct Pending {
+    gnss: Option<(u32, GnssSnapshot)>,
+    time: Option<Option<u32>>,
+    identity: Option<(NodeLocation, Option<i32>)>,
+}
+
+impl Pending {
+    fn put(&mut self, announce: Announce) {
+        match announce {
+            Announce::Gnss(key, snapshot) => {
+                // Only `PROP_GNSS_FIX` is announced; a second key would
+                // need a slot of its own.
+                debug_assert!(self.gnss.is_none_or(|(held, _)| held == key));
+                self.gnss = Some((key, snapshot));
+            }
+            Announce::Time(epoch) => self.time = Some(epoch),
+            Announce::IdentityFix(location, altitude_m) => {
+                self.identity = Some((location, altitude_m));
+            }
+        }
+    }
+
+    /// The next announcement, in the order a fix produces them.
+    fn take(&mut self) -> Option<Announce> {
+        if let Some((key, snapshot)) = self.gnss.take() {
+            return Some(Announce::Gnss(key, snapshot));
+        }
+        if let Some(epoch) = self.time.take() {
+            return Some(Announce::Time(epoch));
+        }
+        self.identity
+            .take()
+            .map(|(location, altitude_m)| Announce::IdentityFix(location, altitude_m))
+    }
+}
 
 /// The last cell offered to the identity, at the advertised precision.
 ///
@@ -174,16 +218,34 @@ fn store(current: GnssSnapshot) -> GnssSnapshot {
 
 /// A handle on the publication stream, held by whatever drives the ULCP
 /// session's announcement arm.
-pub type Announcer =
-    embassy_sync::watch::Receiver<'static, CriticalSectionRawMutex, Announce, ANNOUNCE_RECEIVERS>;
+pub struct Announcer(());
+
+impl Announcer {
+    /// The next publication. Cancellation-safe: a publication is taken
+    /// only in the poll that returns it.
+    pub async fn changed(&mut self) -> Announce {
+        loop {
+            let next = PENDING.lock(|pending| {
+                let mut held = pending.get();
+                let next = held.take();
+                pending.set(held);
+                next
+            });
+            if let Some(announce) = next {
+                return announce;
+            }
+            ANNOUNCED.wait().await;
+        }
+    }
+}
 
 /// Take the publication receiver.
 ///
-/// Cancellation-safe to await. `None` only if one was already taken,
-/// which would mean two things publishing the same properties—a wiring
-/// mistake rather than a runtime condition.
+/// `None` only if one was already taken, which would mean two things
+/// publishing the same properties—a wiring mistake rather than a runtime
+/// condition.
 pub fn announcer() -> Option<Announcer> {
-    ANNOUNCE.receiver()
+    (!ANNOUNCER_TAKEN.swap(true, Ordering::AcqRel)).then_some(Announcer(()))
 }
 
 /// Forget everything the receiver said.
@@ -436,7 +498,12 @@ impl umsh_gnss::pump::Sink for FixSink {
 }
 
 fn publish(announce: Announce) {
-    ANNOUNCE.sender().send(announce);
+    PENDING.lock(|pending| {
+        let mut held = pending.get();
+        held.put(announce);
+        pending.set(held);
+    });
+    ANNOUNCED.signal(());
 }
 
 #[cfg(test)]
@@ -471,6 +538,31 @@ mod tests {
             }),
             time_from_fix: true,
         }
+    }
+
+    /// One cycle can change the fix, step the clock, and move the identity;
+    /// all three are announced, each at its latest value.
+    #[test]
+    fn every_kind_of_announcement_waiting_is_delivered() {
+        let mut pending = Pending {
+            gnss: None,
+            time: None,
+            identity: None,
+        };
+        let location = NodeLocation::from_e7(481_173_000, 115_166_666, 5);
+        pending.put(Announce::Gnss(prop::GNSS_FIX, GnssSnapshot::SEARCHING));
+        pending.put(Announce::Time(Some(1_700_000_000)));
+        pending.put(Announce::IdentityFix(location, Some(31)));
+        let fixed = to_snapshot(&fixed_at(481_173_000, 115_166_666));
+        pending.put(Announce::Gnss(prop::GNSS_FIX, fixed));
+
+        assert_eq!(pending.take(), Some(Announce::Gnss(prop::GNSS_FIX, fixed)));
+        assert_eq!(pending.take(), Some(Announce::Time(Some(1_700_000_000))));
+        assert_eq!(
+            pending.take(),
+            Some(Announce::IdentityFix(location, Some(31)))
+        );
+        assert_eq!(pending.take(), None);
     }
 
     #[test]
