@@ -3,14 +3,14 @@
 use core::{
     marker::PhantomData,
     pin::Pin,
-    task::{Context, Poll},
+    task::{Context, Poll, Waker},
 };
 use std::{
     cell::RefCell,
     collections::BTreeMap,
     fs, io,
     path::PathBuf,
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{Arc, Mutex, MutexGuard, PoisonError},
     time::{Duration, Instant},
 };
 
@@ -35,19 +35,57 @@ impl DelayNs for TokioDelay {
 
 /// Monotonic clock backed by `std::time::Instant`.
 ///
-/// Implements [`Clock::poll_delay_until`] using `tokio::time::Sleep` so that
-/// the MAC coordinator can efficiently await timer deadlines.
+/// Implements [`Clock::poll_delay_until`] with one `tokio::time::Sleep`,
+/// set to the earliest deadline anyone is waiting on. Everyone polling
+/// the clock is woken when it fires, and each re-checks its own deadline,
+/// so two futures waiting on one clock never take each other's wakeup.
 #[derive(Debug)]
 pub struct StdClock {
     origin: Instant,
-    pending_sleep: RefCell<Option<Pin<Box<tokio::time::Sleep>>>>,
+    timer: RefCell<Timer>,
+}
+
+/// The one sleep a [`StdClock`] keeps, and who waits on it.
+#[derive(Debug, Default)]
+struct Timer {
+    sleep: Option<Pin<Box<tokio::time::Sleep>>>,
+    /// What `sleep` is set to, until it fires.
+    armed: Option<tokio::time::Instant>,
+    waiters: Arc<Waiters>,
+}
+
+/// Every task that polled the clock since the sleep last fired. The sleep
+/// is polled with this as its waker, so firing wakes them all.
+#[derive(Debug, Default)]
+struct Waiters(Mutex<Vec<Waker>>);
+
+impl Waiters {
+    fn add(&self, waker: &Waker) {
+        let mut wakers = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        if !wakers.iter().any(|held| held.will_wake(waker)) {
+            wakers.push(waker.clone());
+        }
+    }
+}
+
+impl std::task::Wake for Waiters {
+    fn wake(self: Arc<Self>) {
+        self.wake_by_ref();
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        let wakers = core::mem::take(&mut *self.0.lock().unwrap_or_else(PoisonError::into_inner));
+        for waker in wakers {
+            waker.wake();
+        }
+    }
 }
 
 impl Clone for StdClock {
     fn clone(&self) -> Self {
         Self {
             origin: self.origin,
-            pending_sleep: RefCell::new(None),
+            timer: RefCell::default(),
         }
     }
 }
@@ -56,7 +94,7 @@ impl Default for StdClock {
     fn default() -> Self {
         Self {
             origin: Instant::now(),
-            pending_sleep: RefCell::new(None),
+            timer: RefCell::default(),
         }
     }
 }
@@ -87,10 +125,33 @@ impl Clock for StdClock {
         let remaining = Duration::from_millis(deadline_ms - now);
         let target = tokio::time::Instant::now() + remaining;
 
-        let mut cell = self.pending_sleep.borrow_mut();
-        let sleep = cell.get_or_insert_with(|| Box::pin(tokio::time::sleep_until(target)));
-        sleep.as_mut().reset(target);
-        sleep.as_mut().poll(cx)
+        let mut timer = self.timer.borrow_mut();
+        let timer = &mut *timer;
+        timer.waiters.add(cx.waker());
+        // Only ever earlier: a later deadline waits for the earlier one to
+        // fire, then sets the sleep again.
+        if timer.armed.is_none_or(|armed| target < armed) {
+            match timer.sleep.as_mut() {
+                Some(sleep) => sleep.as_mut().reset(target),
+                None => timer.sleep = Some(Box::pin(tokio::time::sleep_until(target))),
+            }
+            timer.armed = Some(target);
+        }
+        let Some(sleep) = timer.sleep.as_mut() else {
+            unreachable!("armed above");
+        };
+        let fan_out = Waker::from(timer.waiters.clone());
+        if sleep
+            .as_mut()
+            .poll(&mut Context::from_waker(&fan_out))
+            .is_ready()
+        {
+            // Fired: everyone, this poller included, looks again at its own
+            // deadline, and the next poll sets the sleep to the earliest.
+            timer.armed = None;
+            std::task::Wake::wake_by_ref(&timer.waiters);
+        }
+        Poll::Pending
     }
 }
 
@@ -353,6 +414,35 @@ mod tests {
             .expect("system time before unix epoch")
             .as_nanos();
         std::env::temp_dir().join(format!("umsh-{name}-{unique}"))
+    }
+
+    /// Two tasks waiting on one clock with different deadlines both wake,
+    /// the earlier first: neither takes the other's wakeup.
+    #[tokio::test(flavor = "current_thread")]
+    async fn every_waiter_on_one_clock_wakes() {
+        use std::rc::Rc;
+
+        let clock = Rc::new(StdClock::new());
+        let finished = Rc::new(RefCell::new(Vec::new()));
+        let local = tokio::task::LocalSet::new();
+        let start = clock.now_ms();
+        for (name, after_ms) in [("early", 30), ("late", 60)] {
+            let clock = clock.clone();
+            let finished = finished.clone();
+            local.spawn_local(async move {
+                poll_fn(|cx| clock.poll_delay_until(cx, start + after_ms)).await;
+                finished.borrow_mut().push((name, clock.now_ms() - start));
+            });
+        }
+        tokio::time::timeout(Duration::from_secs(2), local)
+            .await
+            .expect("both waiters woke");
+        let finished = finished.borrow();
+        assert_eq!(finished.len(), 2);
+        assert_eq!(finished[0].0, "early");
+        assert!(finished[0].1 >= 30 && finished[0].1 < 60, "{finished:?}");
+        assert_eq!(finished[1].0, "late");
+        assert!(finished[1].1 >= 60, "{finished:?}");
     }
 
     #[tokio::test]
