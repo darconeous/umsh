@@ -140,20 +140,47 @@ impl TokioFileCounterStore {
     }
 }
 
+impl TokioFileCounterStore {
+    fn write_durably(&self, context: &[u8], value: u32) -> io::Result<()> {
+        use std::io::Write as _;
+        let destination = self.path_for(context);
+        let temporary = destination.with_extension("ctr.pending");
+        let written = (|| {
+            let mut file = fs::File::create(&temporary)?;
+            file.write_all(&value.to_be_bytes())?;
+            file.sync_all()?;
+            drop(file);
+            fs::rename(&temporary, &destination)?;
+            // The rename is durable only once the directory is.
+            #[cfg(unix)]
+            fs::File::open(&self.root)?.sync_all()?;
+            Ok(())
+        })();
+        if written.is_err() {
+            let _ = fs::remove_file(&temporary);
+        }
+        written
+    }
+}
+
+// Both operations run to completion without yielding. The MAC awaits them
+// inside a wake cycle, and a host may drive that cycle from a `select!`
+// that drops it whenever another branch wins; a write that yielded could be
+// cut off before it finished every time, and the reservation it carries
+// would never land. A reservation is written once per block of frames, so
+// holding the thread for one synced write costs little.
 impl CounterStore for TokioFileCounterStore {
     type Error = FileStoreError;
 
     async fn load(&self, context: &[u8]) -> Result<u32, Self::Error> {
-        match tokio::fs::read(self.path_for(context)).await {
+        match fs::read(self.path_for(context)) {
             Ok(bytes) => match <[u8; 4]>::try_from(bytes.as_slice()) {
                 Ok(bytes) => Ok(u32::from_be_bytes(bytes)),
-                // Reading this as zero would restart the counter below
-                // values already sent, which is the one thing a counter
-                // store exists to prevent.
-                Err(_) => Err(FileStoreError::Io(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("counter record is {} bytes, not 4", bytes.len()),
-                ))),
+                // Only a crash during the in-place write older versions made
+                // leaves a record of another length. Refusing it would lock
+                // that context out for good—the MAC does not retry a failed
+                // restore—so it reads as unrecorded, as it always has.
+                Err(_) => Ok(0),
             },
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(0),
             Err(error) => Err(FileStoreError::Io(error)),
@@ -161,24 +188,8 @@ impl CounterStore for TokioFileCounterStore {
     }
 
     async fn store(&self, context: &[u8], value: u32) -> Result<(), Self::Error> {
-        let destination = self.path_for(context);
-        let temporary = destination.with_extension("ctr.pending");
-        let written = async {
-            let mut file = tokio::fs::File::create(&temporary).await?;
-            tokio::io::AsyncWriteExt::write_all(&mut file, &value.to_be_bytes()).await?;
-            file.sync_all().await?;
-            drop(file);
-            tokio::fs::rename(&temporary, &destination).await?;
-            // The rename is durable only once the directory is.
-            #[cfg(unix)]
-            tokio::fs::File::open(&self.root).await?.sync_all().await?;
-            Ok(())
-        }
-        .await;
-        if written.is_err() {
-            let _ = tokio::fs::remove_file(&temporary).await;
-        }
-        written.map_err(FileStoreError::Io)
+        self.write_durably(context, value)
+            .map_err(FileStoreError::Io)
     }
 
     async fn flush(&self) -> Result<(), Self::Error> {
@@ -362,11 +373,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_counter_record_of_the_wrong_length_is_an_error_not_zero() {
+    async fn a_torn_counter_record_reads_as_unrecorded() {
         let root = temp_dir("counter-store-torn");
         let store = TokioFileCounterStore::new(&root).unwrap();
         fs::write(store.path_for(b"peer"), [0x00, 0x01]).unwrap();
-        assert!(store.load(b"peer").await.is_err());
+        assert_eq!(store.load(b"peer").await.unwrap(), 0);
         let _ = fs::remove_dir_all(root);
     }
 

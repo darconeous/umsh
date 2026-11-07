@@ -88,44 +88,6 @@ impl MobileCounterStore {
 }
 
 impl MobileCounterStore {
-    /// [`commit_boundary`](Self::commit_boundary) on tokio's blocking
-    /// pool, so the fsyncs and rename it waits on do not stall the async
-    /// thread that drives the MAC.
-    pub(crate) async fn commit_boundary_blocking(
-        self: &Arc<Self>,
-        context: Vec<u8>,
-        boundary: u32,
-    ) -> Result<(), CounterStoreError> {
-        let store = self.clone();
-        tokio::task::spawn_blocking(move || store.commit_boundary(context, boundary))
-            .await
-            // A commit that did not report is ambiguous, and an ambiguous
-            // commit is a failed one.
-            .map_err(|_| CounterStoreError::IoFailure)?
-    }
-
-    /// The directory sync [`umsh_hal::CounterStore::flush`] performs, on
-    /// tokio's blocking pool.
-    pub(crate) async fn flush_blocking(self: &Arc<Self>) -> Result<(), CounterStoreError> {
-        let store = self.clone();
-        tokio::task::spawn_blocking(move || store.flush_now())
-            .await
-            .map_err(|_| CounterStoreError::IoFailure)?
-    }
-
-    fn flush_now(&self) -> Result<(), CounterStoreError> {
-        let _guard = self
-            .operation_lock
-            .lock()
-            .map_err(|_| CounterStoreError::IoFailure)?;
-        if !self.root.exists() {
-            return Ok(());
-        }
-        File::open(&self.root)
-            .and_then(|directory| directory.sync_all())
-            .map_err(|_| CounterStoreError::IoFailure)
-    }
-
     fn load_boundary_unlocked(&self, context: &[u8]) -> Result<u32, CounterStoreError> {
         let path = self.record_path(context)?;
         let mut file = match File::open(path) {
@@ -202,7 +164,16 @@ impl umsh_hal::CounterStore for MobileCounterStore {
     }
 
     async fn flush(&self) -> Result<(), Self::Error> {
-        self.flush_now()
+        let _guard = self
+            .operation_lock
+            .lock()
+            .map_err(|_| CounterStoreError::IoFailure)?;
+        if !self.root.exists() {
+            return Ok(());
+        }
+        File::open(&self.root)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|_| CounterStoreError::IoFailure)
     }
 }
 

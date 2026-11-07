@@ -1302,14 +1302,17 @@ impl CounterStore for SharedCounterStore {
         self.0.load_boundary(context.to_vec())
     }
 
+    // Synchronous on purpose, like the commit itself: the MAC awaits this
+    // inside a wake cycle the worker may drop mid-await, and a commit handed
+    // to another thread would carry on after its cancellation—where it could
+    // land after a newer boundary and lower the stored one. A reservation is
+    // committed once per block of frames.
     async fn store(&self, context: &[u8], value: u32) -> Result<(), Self::Error> {
-        self.0
-            .commit_boundary_blocking(context.to_vec(), value)
-            .await
+        self.0.commit_boundary(context.to_vec(), value)
     }
 
     async fn flush(&self) -> Result<(), Self::Error> {
-        self.0.flush_blocking().await
+        CounterStore::flush(self.0.as_ref()).await
     }
 }
 
