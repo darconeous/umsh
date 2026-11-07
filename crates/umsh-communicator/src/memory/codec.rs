@@ -13,7 +13,9 @@ use umsh_core::{ChannelTag, NodeHint, PublicKey, RouterHint};
 use umsh_text::engine::{CompletionStatus, Direction, Presence, StreamCheckpoint};
 use umsh_text::{ConversationKey, MessageType, SenderScope};
 
-use super::{CHAT, ChatEntry, Disk, MESSAGE, MessageEntry, PEER, PeerEntry, Reactor, RecordKey};
+use super::{
+    CHAT, ChatEntry, Disk, MAX_REACTORS, MESSAGE, MessageEntry, PEER, PeerEntry, Reactor, RecordKey,
+};
 use crate::ids::{ChatId, MessageId, PeerId};
 use crate::reaction::{Cluster, Reaction, Reactions};
 use crate::record::{
@@ -170,8 +172,13 @@ pub(super) fn record(disk: &Disk, key: &RecordKey, out: &mut Vec<u8>) -> bool {
             });
             out.option(record.time, Out::u32);
             out.u32(message.revision);
-            out.u8(message.reactors.len() as u8);
-            for reactor in &message.reactors {
+            // The store caps reactors at `MAX_REACTORS`; writing the count
+            // and the list from the same bound keeps them in agreement even
+            // if that cap were ever bypassed.
+            let reactors = &message.reactors[..message.reactors.len().min(MAX_REACTORS)];
+            debug_assert_eq!(reactors.len(), message.reactors.len());
+            out.u8(u8::try_from(reactors.len()).unwrap_or(u8::MAX));
+            for reactor in reactors {
                 out.sender(&reactor.who.scope());
                 out.flag(reactor.mine);
                 match reactor.reaction {
@@ -514,7 +521,7 @@ pub(super) fn settle(disk: &mut Disk) -> Vec<RecordKey> {
         disk.messages.remove(id);
     }
 
-    let past = |highest: Option<u32>| highest.map_or(0, |id| id + 1);
+    let past = |highest: Option<u32>| highest.map_or(0, |id| id.saturating_add(1));
     let used = [
         past(disk.chats.keys().max().copied()),
         past(disk.messages.keys().max().copied()),

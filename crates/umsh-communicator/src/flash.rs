@@ -267,7 +267,7 @@ impl<F: NorFlash> Durable for FlashMap<F> {
         }
 
         for (slot, item) in newest {
-            self.next_slot = self.next_slot.max(slot + 1);
+            self.next_slot = self.next_slot.max(slot.saturating_add(1));
             let record = item.split_first().and_then(|(&len, rest)| {
                 (usize::from(len) <= rest.len()).then(|| rest.split_at(usize::from(len)))
             });
