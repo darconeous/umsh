@@ -223,6 +223,21 @@ pub struct PeerInfo {
     /// the application configured. Use [`PeerInfo::heard_within`] to
     /// read it.
     pub last_seen_ms: u64,
+    /// An acknowledgment from this peer has completed a send of ours: proof
+    /// of an exchange, which a key minted to send one frame does not have.
+    pub acknowledged: bool,
+}
+
+/// What an entry rests on, for choosing which may give way to a newcomer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Standing {
+    /// A claim: nothing has authenticated under the key.
+    Claimed,
+    /// Frames have authenticated under the key, which anyone who mints one
+    /// can arrange.
+    Authenticated,
+    /// The peer has acknowledged a send of ours.
+    Acknowledged,
 }
 
 impl PeerInfo {
@@ -242,6 +257,17 @@ impl PeerInfo {
             unflooded_arrival_s: None,
             trace_owed: false,
             last_seen_ms,
+            acknowledged: false,
+        }
+    }
+
+    fn standing(&self) -> Standing {
+        if self.acknowledged {
+            Standing::Acknowledged
+        } else if self.proven {
+            Standing::Authenticated
+        } else {
+            Standing::Claimed
         }
     }
 
@@ -441,6 +467,15 @@ pub enum HoldRelease {
     LastHolder,
 }
 
+/// Where a new entry would go in the registry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Vacancy {
+    /// A slot no entry occupies.
+    Free,
+    /// One another entry gives up.
+    Displacing,
+}
+
 /// Outcome of removing a peer from the registry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PeerRemoval {
@@ -595,15 +630,29 @@ impl<const N: usize, const H: usize> PeerRegistry<N, H> {
     /// a verified frame or the local application stands behind.
     ///
     /// When the registry is full, this may recycle an entry nobody holds in
-    /// place rather than failing: the oldest that has proven nothing, or
-    /// failing that the oldest there is. A held entry (see [`PeerHolds`]) is
-    /// never displaced.
+    /// place rather than failing: the oldest that has proven least. A held
+    /// entry (see [`PeerHolds`]) is never displaced.
     pub fn try_insert_or_update_auto(
         &mut self,
         key: PublicKey,
         now_ms: u64,
     ) -> Result<AutoPeerUpdate, CapacityError> {
-        self.insert_or_update_auto(key, true, now_ms)
+        self.insert_or_update_auto(key, true, Standing::Acknowledged, now_ms)
+    }
+
+    /// Insert or refresh an entry for a stranger whose only proof is a frame
+    /// it authenticated under its own key.
+    ///
+    /// Anyone can mint a key to send such a frame, so when the registry is
+    /// full this recycles only an entry that has not
+    /// [acknowledged](PeerInfo::acknowledged) a send of ours. A full
+    /// registry otherwise fails.
+    pub fn try_insert_or_update_self_proven(
+        &mut self,
+        key: PublicKey,
+        now_ms: u64,
+    ) -> Result<AutoPeerUpdate, CapacityError> {
+        self.insert_or_update_auto(key, true, Standing::Authenticated, now_ms)
     }
 
     /// Insert or refresh an entry for a key nothing has proven, such as a
@@ -617,13 +666,40 @@ impl<const N: usize, const H: usize> PeerRegistry<N, H> {
         key: PublicKey,
         now_ms: u64,
     ) -> Result<AutoPeerUpdate, CapacityError> {
-        self.insert_or_update_auto(key, false, now_ms)
+        self.insert_or_update_auto(key, false, Standing::Claimed, now_ms)
     }
 
+    /// Where [`try_insert_or_update_self_proven`](Self::try_insert_or_update_self_proven)
+    /// would put a key not yet registered at `now_ms`, or `None` if nowhere.
+    pub fn vacancy_for_self_proven(&self, now_ms: u64) -> Option<Vacancy> {
+        if self.peers.len() < N {
+            return Some(Vacancy::Free);
+        }
+        self.displaceable(Standing::Authenticated, now_ms)
+            .map(|_| Vacancy::Displacing)
+    }
+
+    /// The entry a newcomer recycles at a full registry: the oldest of those
+    /// resting on least, among those resting on no more than `displaces`.
+    fn displaceable(&self, displaces: Standing, now_ms: u64) -> Option<usize> {
+        self.peers
+            .iter()
+            .enumerate()
+            .filter(|(index, peer)| {
+                !peer.holds.is_held()
+                    && peer.standing() <= displaces
+                    && self.route_hold(PeerId(*index as u8), now_ms).is_none()
+            })
+            .min_by_key(|(_, peer)| (peer.standing(), peer.last_seen_ms))
+            .map(|(index, _)| index)
+    }
+
+    /// `displaces` is the most an entry may rest on and still give way.
     fn insert_or_update_auto(
         &mut self,
         key: PublicKey,
         proven: bool,
+        displaces: Standing,
         now_ms: u64,
     ) -> Result<AutoPeerUpdate, CapacityError> {
         if let Some((id, peer)) = self
@@ -651,21 +727,11 @@ impl<const N: usize, const H: usize> PeerRegistry<N, H> {
             });
         }
 
-        let Some((index, oldest)) = self
-            .peers
-            .iter()
-            .enumerate()
-            .filter(|(index, peer)| {
-                !peer.holds.is_held()
-                    && (proven || !peer.proven)
-                    && self.route_hold(PeerId(*index as u8), now_ms).is_none()
-            })
-            .min_by_key(|(_, peer)| (peer.proven, peer.last_seen_ms))
-        else {
+        let Some(index) = self.displaceable(displaces, now_ms) else {
             return Err(CapacityError);
         };
 
-        let evicted_key = oldest.public_key;
+        let evicted_key = self.peers[index].public_key;
         self.drop_hold(PeerId(index as u8));
         self.peers[index] = entry;
         Ok(AutoPeerUpdate {
@@ -678,6 +744,14 @@ impl<const N: usize, const H: usize> PeerRegistry<N, H> {
     pub fn mark_proven(&mut self, id: PeerId) {
         if let Some(peer) = self.get_mut(id) {
             peer.proven = true;
+        }
+    }
+
+    /// Record that an acknowledgment from this peer completed a send of ours.
+    pub fn mark_acknowledged(&mut self, id: PeerId) {
+        if let Some(peer) = self.get_mut(id) {
+            peer.proven = true;
+            peer.acknowledged = true;
         }
     }
 
