@@ -1063,9 +1063,6 @@ mod firmware {
     /// Framing-free receive path and connection edges into the shared
     /// ULCP driver (`InEvent`/`FrameBuf` and the queue types live there).
     static INPUT_CH: InputChannel<ThreadModeRawMutex> = InputChannel::new();
-    /// Complete frames a BLE host wrote that were dropped because
-    /// `INPUT_CH` was full, since boot.
-    static BLE_INPUT_DROPPED: AtomicU32 = AtomicU32::new(0);
     type FrameBuf = driver::FrameBuf;
     const FRAME_IN_MAX: usize = driver::FRAME_IN_MAX;
 
@@ -2767,6 +2764,91 @@ mod firmware {
         }
     }
 
+    /// What became of a frame handed to [`deliver_outbound`].
+    enum Delivered {
+        /// Sent, or dropped as not this link's to carry.
+        Done,
+        /// Its reply outlived its deadline, and the link was disconnected
+        /// to discard the segments the controller still held.
+        Disconnected,
+    }
+
+    /// Carry one frame of the driver's BLE output to the connected host.
+    async fn deliver_outbound(
+        server: &UlcpServer<'_>,
+        conn: &GattConnection<'_, '_, DefaultPacketPool>,
+        outbound: OutFrame,
+        attached: bool,
+    ) -> Result<Delivered, trouble_host::Error> {
+        if attached
+            && (conn.raw().is_bonded_peer()
+                || (outbound.finish_ble_wipe && BLE_WIPE_WAITING_REPLY.load(Ordering::Acquire)))
+        {
+            let completion = outbound.completion;
+            let result = if let Some(completion) = completion {
+                match embassy_time::with_deadline(
+                    completion.deadline(),
+                    send_ble_frame(server, conn, outbound),
+                )
+                .await
+                {
+                    Ok(result) => result,
+                    Err(_) => {
+                        completion.complete(false);
+                        // Discard controller-queued segments from the expired reply.
+                        conn.raw().disconnect();
+                        return Ok(Delivered::Disconnected);
+                    }
+                }
+            } else {
+                send_ble_frame(server, conn, outbound).await
+            };
+            if result.is_err() {
+                if let Some(completion) = completion {
+                    completion.complete(false);
+                }
+            }
+            result?;
+        } else {
+            if let Some(completion) = outbound.completion {
+                completion.complete(false);
+            }
+            debug_log(format_args!(
+                "ble outbound dropped attached={} bonded={} level={:?}",
+                attached,
+                conn.raw().is_bonded_peer(),
+                conn.raw().security_level(),
+            ));
+        }
+        Ok(Delivered::Done)
+    }
+
+    /// Queue `event` for the driver, carrying the driver's BLE output while
+    /// `INPUT_CH` has no room. The driver can be blocked sending to this
+    /// task while this task waits on the driver; serving its output is
+    /// what lets both move. Nothing the host wrote is dropped: over BLE a
+    /// host does not resend a request, it gives the link up.
+    async fn queue_input(
+        server: &UlcpServer<'_>,
+        conn: &GattConnection<'_, '_, DefaultPacketPool>,
+        attached: bool,
+        event: InEvent,
+    ) -> Result<Delivered, trouble_host::Error> {
+        let mut queued = core::pin::pin!(INPUT_CH.send(event));
+        loop {
+            match select(queued.as_mut(), OUT_CH.ble.receive()).await {
+                Either::First(()) => return Ok(Delivered::Done),
+                Either::Second(outbound) => {
+                    if let Delivered::Disconnected =
+                        deliver_outbound(server, conn, outbound, attached).await?
+                    {
+                        return Ok(Delivered::Disconnected);
+                    }
+                }
+            }
+        }
+    }
+
     async fn gatt_connection<C: Controller, P: PacketPool>(
         stack: &Stack<'_, C, P>,
         store: &BleStoreMutex,
@@ -3161,21 +3243,20 @@ mod firmware {
                                             "gatt frame-in complete len={}",
                                             frame.len()
                                         ));
-                                        // Never wait for room: this task is
-                                        // also the only one draining the
-                                        // driver's BLE output, and the driver
-                                        // may be blocked sending to it. A host
-                                        // retries a request it got no answer to.
-                                        if INPUT_CH
-                                            .try_send(InEvent::Frame(Transport::Ble, value))
-                                            .is_err()
+                                        // Waits for room, but keeps carrying
+                                        // the driver's BLE output meanwhile:
+                                        // this task is the only one that
+                                        // drains it, and the driver may be
+                                        // blocked sending to it.
+                                        if let Delivered::Disconnected = queue_input(
+                                            server,
+                                            conn,
+                                            attached,
+                                            InEvent::Frame(Transport::Ble, value),
+                                        )
+                                        .await?
                                         {
-                                            let dropped = BLE_INPUT_DROPPED
-                                                .fetch_add(1, Ordering::Relaxed)
-                                                .wrapping_add(1);
-                                            debug_log(format_args!(
-                                                "gatt frame-in dropped: input full count={dropped}"
-                                            ));
+                                            break;
                                         }
                                     }
                                     Err(()) => debug_log(format_args!(
@@ -3200,7 +3281,16 @@ mod firmware {
                             (false, true) => {
                                 debug_log(format_args!("cccd subscribed=true"));
                                 attached = true;
-                                INPUT_CH.send(InEvent::Attached(Transport::Ble)).await;
+                                if let Delivered::Disconnected = queue_input(
+                                    server,
+                                    conn,
+                                    attached,
+                                    InEvent::Attached(Transport::Ble),
+                                )
+                                .await?
+                                {
+                                    break;
+                                }
                                 // Publish only after enqueueing, so teardown knows
                                 // whether the protocol session needs a detach.
                                 set_ble_link(BleLinkState::Attached);
@@ -3209,7 +3299,16 @@ mod firmware {
                                 debug_log(format_args!("cccd subscribed=false"));
                                 attached = false;
                                 reassembler.reset();
-                                INPUT_CH.send(InEvent::Detached(Transport::Ble)).await;
+                                if let Delivered::Disconnected = queue_input(
+                                    server,
+                                    conn,
+                                    attached,
+                                    InEvent::Detached(Transport::Ble),
+                                )
+                                .await?
+                                {
+                                    break;
+                                }
                                 set_ble_link(BleLinkState::Connected);
                             }
                             (false, false) => debug_log(format_args!(
@@ -3283,46 +3382,10 @@ mod firmware {
                     supervision_timeout.as_micros(),
                 )),
                 Either3::Second(outbound) => {
-                    if attached
-                        && (conn.raw().is_bonded_peer()
-                            || (outbound.finish_ble_wipe
-                                && BLE_WIPE_WAITING_REPLY.load(Ordering::Acquire)))
+                    if let Delivered::Disconnected =
+                        deliver_outbound(server, conn, outbound, attached).await?
                     {
-                        let completion = outbound.completion;
-                        let result = if let Some(completion) = completion {
-                            match embassy_time::with_deadline(
-                                completion.deadline(),
-                                send_ble_frame(server, conn, outbound),
-                            )
-                            .await
-                            {
-                                Ok(result) => result,
-                                Err(_) => {
-                                    completion.complete(false);
-                                    // Discard controller-queued segments from the expired reply.
-                                    conn.raw().disconnect();
-                                    break;
-                                }
-                            }
-                        } else {
-                            send_ble_frame(server, conn, outbound).await
-                        };
-                        if result.is_err() {
-                            if let Some(completion) = completion {
-                                completion.complete(false);
-                            }
-                        }
-                        result?;
-                    } else {
-                        if let Some(completion) = outbound.completion {
-                            completion.complete(false);
-                        }
-                        debug_log(format_args!(
-                            "ble outbound dropped attached={} bonded={} level={:?}",
-                            attached,
-                            conn.raw().is_bonded_peer(),
-                            conn.raw().security_level(),
-                        ));
+                        break;
                     }
                 }
                 Either3::Third(LinkSignal::AdvertisingPolicy) => {

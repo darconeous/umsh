@@ -441,10 +441,6 @@ static PAIRING_PIN: AtomicU32 = AtomicU32::new(u32::MAX);
 static BLE_BOND_COUNT: AtomicU8 = AtomicU8::new(0);
 static PAIRING_MODE: AtomicBool = AtomicBool::new(true);
 
-/// Complete frames a BLE host wrote that were dropped because `INPUT_CH`
-/// was full, since boot.
-static BLE_INPUT_DROPPED: AtomicU32 = AtomicU32::new(0);
-
 /// The user held the button through boot for the pairing window; seeded
 /// at the mount, acted on once the supervisor starts.
 static FORCE_BLUETOOTH_AT_BOOT: AtomicBool = AtomicBool::new(false);
@@ -1112,6 +1108,50 @@ async fn send_ble_frame(
     Ok(())
 }
 
+/// Carry one frame of the driver's BLE output to the connected host.
+async fn deliver_outbound(
+    server: &UlcpServer<'_>,
+    conn: &GattConnection<'_, '_, DefaultPacketPool>,
+    outbound: OutFrame,
+    attached: bool,
+) -> Result<(), trouble_host::Error> {
+    if attached
+        && (conn.raw().is_bonded_peer()
+            || (outbound.finish_ble_wipe && BLE_WIPE_WAITING_REPLY.load(Ordering::Acquire)))
+    {
+        send_ble_frame(server, conn, outbound).await
+    } else {
+        debug_log(format_args!(
+            "ble outbound dropped attached={} bonded={}",
+            attached,
+            conn.raw().is_bonded_peer(),
+        ));
+        Ok(())
+    }
+}
+
+/// Queue `event` for the driver, carrying the driver's BLE output while
+/// `INPUT_CH` has no room. The driver can be blocked sending to this task
+/// while this task waits on the driver; serving its output is what lets
+/// both move. Nothing the host wrote is dropped: over BLE a host does not
+/// resend a request, it gives the link up.
+async fn queue_input(
+    server: &UlcpServer<'_>,
+    conn: &GattConnection<'_, '_, DefaultPacketPool>,
+    attached: bool,
+    event: InEvent,
+) -> Result<(), trouble_host::Error> {
+    let mut queued = core::pin::pin!(INPUT_CH.send(event));
+    loop {
+        match select(queued.as_mut(), OUT_CH.ble.receive()).await {
+            Either::First(()) => return Ok(()),
+            Either::Second(outbound) => {
+                deliver_outbound(server, conn, outbound, attached).await?;
+            }
+        }
+    }
+}
+
 async fn gatt_connection<C: Controller, P: PacketPool>(
     stack: &Stack<'_, C, P>,
     store: &BleStoreMutex,
@@ -1400,22 +1440,17 @@ async fn gatt_connection<C: Controller, P: PacketPool>(
                             let mut value: FrameBuf = heapless::Vec::new();
                             match value.extend_from_slice(frame) {
                                 Ok(()) => {
-                                    // Never wait for room: this task is also
-                                    // the only one draining the driver's BLE
-                                    // output, and the driver may be blocked
-                                    // sending to it. A host retries a request
-                                    // it got no answer to.
-                                    if INPUT_CH
-                                        .try_send(InEvent::Frame(Transport::Ble, value))
-                                        .is_err()
-                                    {
-                                        let dropped = BLE_INPUT_DROPPED
-                                            .fetch_add(1, Ordering::Relaxed)
-                                            .wrapping_add(1);
-                                        debug_log(format_args!(
-                                            "gatt frame-in dropped: input full count={dropped}"
-                                        ));
-                                    }
+                                    // Waits for room, but keeps carrying the
+                                    // driver's BLE output meanwhile: this task
+                                    // is the only one that drains it, and the
+                                    // driver may be blocked sending to it.
+                                    queue_input(
+                                        server,
+                                        conn,
+                                        attached,
+                                        InEvent::Frame(Transport::Ble, value),
+                                    )
+                                    .await?;
                                 }
                                 Err(()) => debug_log(format_args!(
                                     "gatt frame-in complete staging=FAILED len={}",
@@ -1436,7 +1471,8 @@ async fn gatt_connection<C: Controller, P: PacketPool>(
                         (false, true) => {
                             debug_log(format_args!("cccd subscribed=true"));
                             attached = true;
-                            INPUT_CH.send(InEvent::Attached(Transport::Ble)).await;
+                            queue_input(server, conn, attached, InEvent::Attached(Transport::Ble))
+                                .await?;
                             // Publish only after enqueueing, so teardown knows
                             // whether the protocol session needs a detach.
                             set_ble_link(BleLinkState::Attached);
@@ -1445,7 +1481,8 @@ async fn gatt_connection<C: Controller, P: PacketPool>(
                             debug_log(format_args!("cccd subscribed=false"));
                             attached = false;
                             reassembler.reset();
-                            INPUT_CH.send(InEvent::Detached(Transport::Ble)).await;
+                            queue_input(server, conn, attached, InEvent::Detached(Transport::Ble))
+                                .await?;
                             set_ble_link(BleLinkState::Connected);
                         }
                         _ => {}
@@ -1466,19 +1503,7 @@ async fn gatt_connection<C: Controller, P: PacketPool>(
             }
             Either3::First(_) => {}
             Either3::Second(outbound) => {
-                if attached
-                    && (conn.raw().is_bonded_peer()
-                        || (outbound.finish_ble_wipe
-                            && BLE_WIPE_WAITING_REPLY.load(Ordering::Acquire)))
-                {
-                    send_ble_frame(server, conn, outbound).await?;
-                } else {
-                    debug_log(format_args!(
-                        "ble outbound dropped attached={} bonded={}",
-                        attached,
-                        conn.raw().is_bonded_peer(),
-                    ));
-                }
+                deliver_outbound(server, conn, outbound, attached).await?;
             }
             Either3::Third(LinkSignal::AdvertisingPolicy) => {
                 if !advertising_permitted()
