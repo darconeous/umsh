@@ -97,6 +97,12 @@ pub async fn bring_up<I: I2c, D: DelayNs>(
 
     pmic.set_charge_current(CHARGE_CURRENT).await?;
     pmic.set_charge_voltage(CHARGE_VOLTAGE).await?;
+    // The TS pin is populated on this board (§6.5), so the charger's
+    // thermal protection has something real to act on. Whether the part
+    // is an NTC or the fixed resistor often fitted in its place is still
+    // open—`thermistor_raw` is there to answer it. Until it is, this step
+    // is treated as part of charging safety, not a convenience.
+    pmic.set_thermistor_measurement(true).await?;
 
     // From here to the IRQ setup, every step is a convenience a board can
     // run without: a failure is reported to the caller for its log, and
@@ -109,11 +115,6 @@ pub async fn bring_up<I: I2c, D: DelayNs>(
     unconfigured.telemetry = pmic.enable_telemetry().await.is_err();
     // Its reader checks the enable bit and reports an unavailable slot.
     unconfigured.die_temperature = pmic.set_die_temperature_measurement(true).await.is_err();
-    // The TS pin is populated on this board (§6.5), so the charger's
-    // thermal protection has something real to act on. Whether the part
-    // is an NTC or the fixed resistor often fitted in its place is still
-    // open—`thermistor_raw` is there to answer it.
-    unconfigured.thermistor = pmic.set_thermistor_measurement(true).await.is_err();
 
     // Events latched while the MCU was down would hold the IRQ line
     // asserted forever; clear before enabling (§5.5).
@@ -134,7 +135,6 @@ pub struct Unconfigured {
     pub charge_led: bool,
     pub telemetry: bool,
     pub die_temperature: bool,
-    pub thermistor: bool,
     pub power_off_press: bool,
 }
 
