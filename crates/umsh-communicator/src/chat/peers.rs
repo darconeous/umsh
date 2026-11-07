@@ -633,6 +633,7 @@ impl<S: ChatStore> Chats<S> {
                 .then_some(name_given);
                 let open = ChatChange::Open { conversation, name };
                 let chat = self.store.update_chat(ChatId(0), open).ok()?;
+                self.announce_evicted(events);
                 events(NodeEvent::ChatChanged(chat.0));
                 chat
             }

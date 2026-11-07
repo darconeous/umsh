@@ -18,7 +18,7 @@ use super::{
     RecordKey, normalize_reactors,
 };
 use crate::ids::{ChatId, MessageId, PeerId};
-use crate::reaction::{Cluster, Reaction, Reactions};
+use crate::reaction::{CLUSTER_MAX, Cluster, Reaction, Reactions};
 use crate::record::{
     self, BODY_MAX, BuiltinChannel, ChannelAccess, ChannelRecord, ChatRecord, Delivery,
     IDENTITY_MAX, LinkInfo, MessageFlags, MessageRecord, NAME_MAX, Name, PeerRecord, ROUTE_MAX,
@@ -26,7 +26,38 @@ use crate::record::{
 use crate::wire::{ConversationCode, SenderCode};
 
 /// The longest key: an archive's.
-pub(super) const KEY_MAX: usize = 1 + 49 + 2;
+pub(crate) const KEY_MAX: usize = 1 + 49 + 2;
+
+/// The longest record the store writes: a message's, every field present
+/// at its longest, with [`MAX_REACTORS`] reactors each holding a cluster
+/// of [`CLUSTER_MAX`]. A chat's, its draft as long as a body, holds less
+/// around it, and an archive is one frame. Device lists and recent picks
+/// longer than this are refused.
+pub const RECORD_MAX: usize = {
+    const CONVERSATION: usize = 1 + 16 + 32;
+    const SENDER: usize = 1 + 32;
+    const NAME: usize = 2 + NAME_MAX;
+    const REACTOR: usize = SENDER + 1 + 1 + 1 + CLUSTER_MAX;
+    4 // chat
+        + CONVERSATION
+        + 1 // direction
+        + SENDER
+        + NAME // sender handle
+        + 2 // wire ID
+        + 2 // epoch
+        + 1 // type
+        + 5 // regarding
+        + 2 * 4 // colors
+        + 5 // status
+        + 1 // presence
+        + 1 // flags
+        + 6 // delivery
+        + 1 + 3 + 3 + 2 + 1 // link
+        + 5 // time
+        + 4 // revision
+        + 1 + MAX_REACTORS * REACTOR
+        + 2 + BODY_MAX
+};
 
 const COUNTERS: u8 = 0;
 const CHECKPOINT: u8 = 1;

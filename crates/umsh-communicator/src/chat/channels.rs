@@ -181,6 +181,7 @@ impl<S: ChatStore> Chats<S> {
             name: shown,
         };
         let chat = self.store.update_chat(ChatId(0), open).ok()?;
+        self.announce_evicted(events);
         if kept.is_some() && shown.is_some() {
             _ = self.store.update_chat(chat, ChatChange::Rename(shown));
         }

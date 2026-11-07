@@ -181,11 +181,13 @@ pub fn communicator_node(
 ) -> &'static super::communicator::Node {
     use super::communicator::{CLOCK, Node, port};
     use umsh_bsp_esp32::flash_store::Bounced;
-    use umsh_communicator::{FlashMap, MemoryStore, Quota};
+    use umsh_communicator::{FLASH_BUFFER_LEN, FlashMap, MemoryStore, Quota, RECORD_MAX};
 
-    // Where items are laid out on their way to and from flash: the
-    // largest, a message's record, is about 1.8 KB.
-    let buffer = alloc::boxed::Box::leak(alloc::vec![0u8; 2048].into_boxed_slice());
+    // The device lists the store keeps for the session must not be refused.
+    const _: () = assert!(umsh_ulcp_device::HELD_LISTS_MAX <= RECORD_MAX);
+    // Where items are laid out on their way to and from flash: room for
+    // the longest, a full message with all its reactors.
+    let buffer = alloc::boxed::Box::leak(alloc::vec![0u8; FLASH_BUFFER_LEN].into_boxed_slice());
     let started = embassy_time::Instant::now();
     let range = partition.clone();
     let (store, error) = MemoryStore::mount_or_volatile(

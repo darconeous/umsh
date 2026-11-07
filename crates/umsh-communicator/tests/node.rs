@@ -686,6 +686,51 @@ fn a_channel_the_device_will_not_hold_goes_again() {
     assert_eq!(node.chat(more.id), None);
 }
 
+/// A chat the store evicts to keep within its quota is told to the
+/// interface as removed.
+#[test]
+fn a_chat_evicted_for_room_is_removed() {
+    let sim = device();
+    identify(&sim);
+    let clock: &'static TestClock = Box::leak(Box::new(TestClock(AtomicU64::new(0))));
+    // Public and EMERGENCY, and one more.
+    let quota = Quota {
+        chats: 3,
+        ..Quota::DEFAULT
+    };
+    let node = CommunicatorNode::new(
+        Port(sim.clone()),
+        MemoryStore::with_quota(quota),
+        ChannelCrypto::software(),
+        &std::alloc::System,
+        clock,
+        Seeds {
+            session_id: 1,
+            jitter_seed: 2,
+        },
+    );
+    node.pump();
+    assert!(node.started());
+    events(&node);
+
+    let robin = node
+        .direct_chat(&address_of(&PublicKey([0x37; 32])), "", &node.avatar())
+        .unwrap();
+    assert!(
+        !events(&node)
+            .iter()
+            .any(|event| matches!(event, NodeEvent::ChatRemoved(_)))
+    );
+    // Opening another, Robin's empty chat is the least worth keeping.
+    let ash = node
+        .direct_chat(&address_of(&PublicKey([0x38; 32])), "", &node.avatar())
+        .unwrap();
+    assert!(events(&node).contains(&NodeEvent::ChatRemoved(robin.id)));
+    assert_eq!(node.chat(robin.id), None);
+    assert!(node.chat(ash.id).is_some());
+    assert_eq!(chats(&node).len(), 3);
+}
+
 /// This node's code carries its contact, read afresh: who it is, signed,
 /// and mobile, as a communicator's device identity starts out, so it
 /// carries no position.
@@ -1337,7 +1382,7 @@ fn node_on(
     flash: &SharedFlash,
 ) -> CommunicatorNode<Port, FlashMapStore<SharedFlash>> {
     let clock: &'static TestClock = Box::leak(Box::new(TestClock(AtomicU64::new(0))));
-    let buffer = Box::leak(vec![0u8; 2048].into_boxed_slice());
+    let buffer = Box::leak(vec![0u8; umsh_communicator::FLASH_BUFFER_LEN].into_boxed_slice());
     let size = flash.0.borrow().bytes().len() as u32;
     let store = FlashMapStore::mount(
         FlashMap::new(flash.clone(), 0..size, buffer),

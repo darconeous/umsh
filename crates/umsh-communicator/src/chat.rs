@@ -492,6 +492,7 @@ impl<S: ChatStore> Chats<S> {
                 name: None,
             };
             if let Ok(chat) = self.store.update_chat(ChatId(0), open) {
+                self.announce_evicted(events);
                 events(NodeEvent::ChatChanged(chat.0));
             }
         }
@@ -759,6 +760,15 @@ impl<S: ChatStore> Chats<S> {
         }
         for chat in &committed.chats {
             events(NodeEvent::ChatChanged(chat.0));
+        }
+        self.announce_evicted(events);
+    }
+
+    /// Tells the interface of the chats the store last evicted to keep
+    /// within its quota.
+    fn announce_evicted(&self, events: &mut dyn FnMut(NodeEvent)) {
+        for chat in self.store.evicted() {
+            events(NodeEvent::ChatRemoved(chat.0));
         }
     }
 

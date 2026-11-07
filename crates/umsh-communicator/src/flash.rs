@@ -132,6 +132,15 @@ where
 /// does not search for each of its items.
 const CACHED_SLOTS: usize = 4096;
 
+/// How long [`FlashMap`]'s buffer must be: room for its longest item, a
+/// [`RECORD_MAX`] record after the longest key and its length, behind the
+/// slot that `sequential-storage` keys it by, in whole words of the widest
+/// flash it takes (32 octets).
+///
+/// [`RECORD_MAX`]: crate::RECORD_MAX
+pub const FLASH_BUFFER_LEN: usize =
+    (4 + 1 + crate::memory::KEY_MAX + crate::RECORD_MAX).next_multiple_of(32);
+
 /// A store's records, kept in a `sequential-storage` map on `F`.
 pub struct FlashMap<F: NorFlash> {
     map: Option<MapStorage<u32, F, HeapKeyPointerCache<u32>>>,
@@ -155,9 +164,8 @@ impl<F: NorFlash> FlashMap<F> {
     /// The store in `range` of `flash`, read and written through
     /// `buffer`: its header in the first sector, and the map in the rest.
     ///
-    /// `buffer` holds the largest item: a message's record with its key,
-    /// about 1.8 KB. Some drivers want it word-aligned, and in memory they
-    /// can write from.
+    /// `buffer` holds the largest item: [`FLASH_BUFFER_LEN`] octets. Some
+    /// drivers want it word-aligned, and in memory they can write from.
     pub fn new(flash: F, range: Range<u32>, buffer: &'static mut [u8]) -> Self {
         let header = range.start;
         let mut map = Self {
@@ -317,7 +325,10 @@ fn error<E>(error: sequential_storage::Error<E>) -> StoreError {
     match error {
         sequential_storage::Error::FullStorage => StoreError::Full,
         sequential_storage::Error::Corrupted { .. } => StoreError::Corrupt,
-        sequential_storage::Error::BufferTooSmall(_) => StoreError::BufferTooSmall,
+        sequential_storage::Error::BufferTooSmall(_)
+        | sequential_storage::Error::SerializationError(
+            sequential_storage::map::SerializationError::BufferTooSmall,
+        ) => StoreError::BufferTooSmall,
         _ => StoreError::Io,
     }
 }
@@ -490,7 +501,7 @@ mod tests {
     const SIZE: usize = 64 * 4096;
 
     fn buffer() -> &'static mut [u8] {
-        alloc::boxed::Box::leak(alloc::vec![0u8; 2048].into_boxed_slice())
+        alloc::boxed::Box::leak(alloc::vec![0u8; FLASH_BUFFER_LEN].into_boxed_slice())
     }
 
     fn mount(flash: RamFlash) -> FlashMapStore<RamFlash> {
@@ -761,6 +772,30 @@ mod tests {
         );
         assert!(error.is_none());
         assert!(store.durable().is_kept());
+    }
+
+    /// The longest message the store can hold is written and read back
+    /// through a buffer of [`FLASH_BUFFER_LEN`], and was too long for the
+    /// 2048 octets it used to be given.
+    #[test]
+    fn the_longest_message_fits_the_buffer() {
+        let (key, record) = crate::memory::longest_message();
+        let mut small = FlashMap::new(
+            RamFlash::new(SIZE),
+            0..SIZE as u32,
+            alloc::boxed::Box::leak(alloc::vec![0u8; 2048].into_boxed_slice()),
+        );
+        assert_eq!(
+            small.write(&key, Some(&record)),
+            Err(StoreError::BufferTooSmall)
+        );
+
+        let mut map = FlashMap::new(RamFlash::new(SIZE), 0..SIZE as u32, buffer());
+        map.write(&key, Some(&record)).unwrap();
+        let mut read = Vec::new();
+        map.read(&mut |key, record| read.push((key.to_vec(), record.to_vec())))
+            .unwrap();
+        assert_eq!(read, [(key, record)]);
     }
 
     /// Slots are reused, so a store that keeps evicting stays within a
