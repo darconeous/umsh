@@ -390,6 +390,66 @@ mod tests {
 
     #[cfg(feature = "software-crypto")]
     #[test]
+    fn a_handler_may_unsubscribe_itself_subscribe_another_and_reach_the_node() {
+        let node = test_node(FakeMac::new(Vec::new()));
+        let peer = PublicKey([0x55; 32]);
+        let calls = Rc::new(RefCell::new(Vec::new()));
+        let own = Rc::new(RefCell::new(None::<crate::Subscription>));
+        let added = Rc::new(RefCell::new(None::<crate::Subscription>));
+
+        let first = {
+            let node = node.clone();
+            let calls = calls.clone();
+            let own = own.clone();
+            let added = added.clone();
+            node.clone().on_receive(move |_| {
+                calls.borrow_mut().push("first");
+                assert!(own.borrow_mut().take().unwrap().unsubscribe());
+                let calls = calls.clone();
+                *added.borrow_mut() = Some(node.on_receive(move |_| {
+                    calls.borrow_mut().push("second");
+                    true
+                }));
+                block_on_ready(node.peer(peer)).unwrap();
+                true
+            })
+        };
+        *own.borrow_mut() = Some(first);
+
+        // The handler added during dispatch waits for the next packet.
+        assert!(node.dispatch_received_packet(&test_unicast_packet(peer, &[0x01])));
+        assert_eq!(calls.borrow().as_slice(), ["first"]);
+
+        assert!(node.dispatch_received_packet(&test_unicast_packet(peer, &[0x02])));
+        assert_eq!(calls.borrow().as_slice(), ["first", "second"]);
+    }
+
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn a_handler_unsubscribed_by_an_earlier_one_is_not_called() {
+        let node = test_node(FakeMac::new(Vec::new()));
+        let calls = Rc::new(RefCell::new(Vec::new()));
+        let later = Rc::new(RefCell::new(None::<crate::Subscription>));
+
+        let _first = {
+            let calls = calls.clone();
+            let later = later.clone();
+            node.on_beacon(move |_, _| {
+                calls.borrow_mut().push("first");
+                drop(later.borrow_mut().take());
+            })
+        };
+        *later.borrow_mut() = Some({
+            let calls = calls.clone();
+            node.on_beacon(move |_, _| calls.borrow_mut().push("later"))
+        });
+
+        node.dispatch_beacon(NodeHint([1, 2, 3]), None);
+        assert_eq!(calls.borrow().as_slice(), ["first"]);
+    }
+
+    #[cfg(feature = "software-crypto")]
+    #[test]
     fn callbacks_observe_control_side_events_and_peer_ack_state() {
         use crate::node::{LocalNode, LocalNodeState, NodeMembership};
 

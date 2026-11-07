@@ -1,4 +1,5 @@
-use alloc::boxed::Box;
+use alloc::rc::Rc;
+use core::cell::RefCell;
 
 use umsh_core::{MicSize, PublicKey};
 use umsh_mac::SendOptions;
@@ -72,7 +73,7 @@ where
             .borrow_mut()
             .peer_subscriptions_mut(self.peer)
             .receive_handlers
-            .insert(Box::new(handler))
+            .insert(Rc::new(RefCell::new(handler)))
     }
 
     /// Stop a send made through this connection: its queued transmissions,
@@ -108,7 +109,7 @@ where
             .borrow_mut()
             .peer_subscriptions_mut(self.peer)
             .ack_received_handlers
-            .insert(Box::new(handler))
+            .insert(Rc::new(RefCell::new(handler)))
     }
 
     pub fn on_ack_received<F>(&self, handler: F) -> Subscription
@@ -137,7 +138,7 @@ where
             .borrow_mut()
             .peer_subscriptions_mut(self.peer)
             .ack_timeout_handlers
-            .insert(Box::new(handler))
+            .insert(Rc::new(RefCell::new(handler)))
     }
 
     pub fn on_ack_timeout<F>(&self, handler: F) -> Subscription
@@ -167,7 +168,7 @@ where
             .borrow_mut()
             .peer_subscriptions_mut(self.peer)
             .pfs_established_handlers
-            .insert(Box::new(handler));
+            .insert(Rc::new(RefCell::new(handler)));
         let state = self.transport.local_node().state().clone();
         let peer = self.peer;
         Subscription::new(move || {
@@ -190,7 +191,7 @@ where
             .borrow_mut()
             .peer_subscriptions_mut(self.peer)
             .pfs_ended_handlers
-            .insert(Box::new(handler));
+            .insert(Rc::new(RefCell::new(handler)));
         let state = self.transport.local_node().state().clone();
         let peer = self.peer;
         Subscription::new(move || {
@@ -213,7 +214,7 @@ where
             .borrow_mut()
             .peer_subscriptions_mut(self.peer)
             .pong_handlers
-            .insert(Box::new(handler));
+            .insert(Rc::new(RefCell::new(handler)));
         let state = self.transport.local_node().state().clone();
         let peer = self.peer;
         Subscription::new(move || {
@@ -236,7 +237,7 @@ where
             .borrow_mut()
             .peer_subscriptions_mut(self.peer)
             .ping_timeout_handlers
-            .insert(Box::new(handler));
+            .insert(Rc::new(RefCell::new(handler)));
         let state = self.transport.local_node().state().clone();
         let peer = self.peer;
         Subscription::new(move || {
