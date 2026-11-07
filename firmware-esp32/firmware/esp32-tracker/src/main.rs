@@ -1406,6 +1406,14 @@ fn battery_snapshot(reading: &board_battery::Reading) -> umsh_ulcp::battery::Bat
 #[cfg(feature = "pmic-axp2101")]
 #[embassy_executor::task]
 async fn pmu_irq_task(pmic: &'static SharedPmic, mut irq: Input<'static>) {
+    /// The pause after a pass that found nothing to serve, doubling while
+    /// that goes on: a line held low with nothing latched, or a status
+    /// read that keeps failing, costs a bus transaction per pass and keeps
+    /// the chip out of light sleep. Capped at a second, because a source
+    /// that latches meanwhile, such as a power-key press, waits it out.
+    const IDLE_PAUSE_MIN_MS: u64 = 50;
+    const IDLE_PAUSE_MAX_MS: u64 = 1_000;
+    let mut idle_pause_ms = IDLE_PAUSE_MIN_MS;
     loop {
         // GPIO waits wake the chip from light sleep when the PMU asserts IRQ.
         irq.wait_for(Event::LowLevel).await;
@@ -1413,7 +1421,8 @@ async fn pmu_irq_task(pmic: &'static SharedPmic, mut irq: Input<'static>) {
             Ok(taken) => taken,
             Err(_) => {
                 debug_log(format_args!("pmu irq: status read FAILED"));
-                Timer::after_millis(250).await;
+                Timer::after_millis(idle_pause_ms.max(250)).await;
+                idle_pause_ms = (idle_pause_ms * 2).min(IDLE_PAUSE_MAX_MS);
                 continue;
             }
         };
@@ -1440,8 +1449,15 @@ async fn pmu_irq_task(pmic: &'static SharedPmic, mut irq: Input<'static>) {
         // it is cleared becomes an unbounded I2C flood on the bus the
         // battery reads and the RTC share. Empty means the line is low
         // with nothing latched at all—noise, or a source this build
-        // does not enable—and is worth backing off from much harder.
-        Timer::after_millis(if taken.is_empty() { 50 } else { 2 }).await;
+        // does not enable—and is worth backing off from much harder, and
+        // harder still the longer it goes on. A source served resets it.
+        if taken.is_empty() {
+            Timer::after_millis(idle_pause_ms).await;
+            idle_pause_ms = (idle_pause_ms * 2).min(IDLE_PAUSE_MAX_MS);
+        } else {
+            idle_pause_ms = IDLE_PAUSE_MIN_MS;
+            Timer::after_millis(2).await;
+        }
     }
 }
 
