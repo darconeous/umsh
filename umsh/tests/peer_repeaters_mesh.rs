@@ -14,6 +14,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use rand::rng;
+use tokio::sync::Notify;
 
 use umsh::core::PublicKey;
 use umsh::crypto::software::{SoftwareAes, SoftwareIdentity, SoftwareSha256};
@@ -48,13 +49,11 @@ const PATIENCE: Duration = Duration::from_secs(30);
 /// Response bodies the asker's node took in, in arrival order.
 type Responses = Rc<RefCell<Vec<Vec<u8>>>>;
 
-/// Both nodes on a link: one answering, one asking.
-///
-/// Pumped by hand rather than spawned—the node layer is `!Send`, and a
-/// test that owns its own scheduling cannot race itself.
+/// Both nodes on a link: one answering, one asking. Their [`Pumps`] run
+/// beside the test.
 struct Mesh<'a, R: Radio> {
-    asker_host: Host<SimHandle<'a, R>>,
-    repeater_host: Host<SimHandle<'a, R>>,
+    /// Signaled each time either pump completes a wake cycle.
+    cycled: Rc<Notify>,
     asker_node: LocalNode<SimHandle<'a, R>>,
     asker_key: PublicKey,
     target: PeerConnection<LocalNode<SimHandle<'a, R>>>,
@@ -66,12 +65,12 @@ impl<R: Radio> Mesh<'_, R>
 where
     R::Error: core::fmt::Debug,
 {
-    /// One turn of both hosts.
+    /// Wait for either pump to complete a cycle, or a moment if neither
+    /// does.
     async fn turn(&mut self) {
         tokio::select! {
-            result = self.asker_host.pump_once() => result.expect("asker host"),
-            result = self.repeater_host.pump_once() => result.expect("repeater host"),
-            _ = tokio::time::sleep(Duration::from_millis(20)) => {}
+            () = self.cycled.notified() => {}
+            () = tokio::time::sleep(Duration::from_millis(20)) => {}
         }
     }
 
@@ -110,6 +109,35 @@ where
     async fn settle(&mut self, turns: usize) {
         for _ in 0..turns {
             self.turn().await;
+        }
+    }
+}
+
+/// Both hosts' data pumps, which run beside the test and are never
+/// cancelled while it lasts: the node layer is `!Send`, so they are
+/// sibling futures in the test's own task.
+struct Pumps<'a, R: Radio> {
+    asker_host: Host<SimHandle<'a, R>>,
+    repeater_host: Host<SimHandle<'a, R>>,
+    cycled: Rc<Notify>,
+}
+
+impl<R: Radio> Pumps<'_, R>
+where
+    R::Error: core::fmt::Debug,
+{
+    /// Do `work` with both pumps running beside it.
+    async fn beside<T>(self, work: impl Future<Output = T>) -> T {
+        let Self {
+            mut asker_host,
+            mut repeater_host,
+            cycled,
+        } = self;
+        let cycle = async || cycled.notify_one();
+        tokio::select! {
+            result = asker_host.run_with(cycle) => panic!("asker host stopped: {result:?}"),
+            result = repeater_host.run_with(cycle) => panic!("repeater host stopped: {result:?}"),
+            output = work => output,
         }
     }
 }
@@ -174,7 +202,7 @@ fn repeater_identity(name: &str, regions: &[&str]) -> NodeIdentityPayload {
 async fn stand_up<'a, R: Radio>(
     asker_mac: &'a AsyncRefCell<SimMac<R>>,
     repeater_mac: &'a AsyncRefCell<SimMac<R>>,
-) -> Mesh<'a, R> {
+) -> (Mesh<'a, R>, Pumps<'a, R>) {
     let asker_identity = SoftwareIdentity::from_secret_bytes(&[0x11; 32]);
     let repeater_identity_key = SoftwareIdentity::from_secret_bytes(&[0x22; 32]);
     let asker_key = *asker_identity.public_key();
@@ -211,27 +239,36 @@ async fn stand_up<'a, R: Radio>(
         })
     };
 
-    Mesh {
-        asker_host,
-        repeater_host,
+    let cycled = Rc::new(Notify::new());
+    let mesh = Mesh {
+        cycled: cycled.clone(),
         asker_node,
         asker_key,
         target,
         responses,
         _subscription: subscription,
-    }
+    };
+    let pumps = Pumps {
+        asker_host,
+        repeater_host,
+        cycled,
+    };
+    (mesh, pumps)
 }
 
-/// `mesh!(name, binding)`—two nodes on a link, bound to `binding`.
+/// `mesh!(name, binding, { body })`—two nodes on a link, bound to
+/// `binding` for `body`, which runs with both pumps beside it.
 macro_rules! mesh {
-    ($name:literal, $mesh:ident) => {
+    ($name:literal, $mesh:ident, $body:block) => {{
         let scratch = Scratch::new($name);
         let (asker_radio, repeater_radio) = link();
         let asker_mac = AsyncRefCell::new(build_mac(asker_radio, scratch.join("asker")));
         let repeater_mac = AsyncRefCell::new(build_mac(repeater_radio, scratch.join("repeater")));
+        let (mesh, pumps) = stand_up(&asker_mac, &repeater_mac).await;
         #[allow(unused_mut)]
-        let mut $mesh = stand_up(&asker_mac, &repeater_mac).await;
-    };
+        let mut $mesh = mesh;
+        pumps.beside(async $body).await
+    }};
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────
@@ -241,40 +278,41 @@ macro_rules! mesh {
 /// carried it.
 #[tokio::test(flavor = "current_thread")]
 async fn a_repeater_names_the_repeaters_it_knows_of() {
-    mesh!("listing", mesh);
-    mesh.announce(&repeater_identity("Ridgeline", &["SJC", "Rogue Valley"]))
-        .await;
+    mesh!("listing", mesh, {
+        mesh.announce(&repeater_identity("Ridgeline", &["SJC", "Rogue Valley"]))
+            .await;
 
-    let body = mesh.ask(0xBEEF, None).await;
-    let view = PeerRepeatersResponseView::new(&body);
-    assert_eq!(view.nonce(), Some(0xBEEF), "the request's nonce came back");
-    assert_eq!(view.cursor(), None, "one page held the neighborhood");
+        let body = mesh.ask(0xBEEF, None).await;
+        let view = PeerRepeatersResponseView::new(&body);
+        assert_eq!(view.nonce(), Some(0xBEEF), "the request's nonce came back");
+        assert_eq!(view.cursor(), None, "one page held the neighborhood");
 
-    let entries: Vec<_> = view.entries().collect();
-    assert_eq!(entries.len(), 1, "one node has been heard from");
-    assert_eq!(
-        view.total().map(usize::from),
-        Some(entries.len()),
-        "Total counts the listing this page came from"
-    );
+        let entries: Vec<_> = view.entries().collect();
+        assert_eq!(entries.len(), 1, "one node has been heard from");
+        assert_eq!(
+            view.total().map(usize::from),
+            Some(entries.len()),
+            "Total counts the listing this page came from"
+        );
 
-    let entry = &entries[0];
-    assert_eq!(entry.name(), Some("Ridgeline"));
-    assert_eq!(
-        entry.hint(),
-        Some(&mesh.asker_key.hint().0[..]),
-        "the identity supplied the whole node hint"
-    );
-    assert_eq!(
-        entry.regions().collect::<Vec<_>>(),
-        vec![[0x78, 0x53], [0xC0, 0xF9]],
-        "region strings reach the asker as derived codes"
-    );
-    assert!(
-        entry.rssi_snr().is_some(),
-        "the same peer was heard on the air, so the link is described too"
-    );
-    assert!(entry.last_heard_min().is_some());
+        let entry = &entries[0];
+        assert_eq!(entry.name(), Some("Ridgeline"));
+        assert_eq!(
+            entry.hint(),
+            Some(&mesh.asker_key.hint().0[..]),
+            "the identity supplied the whole node hint"
+        );
+        assert_eq!(
+            entry.regions().collect::<Vec<_>>(),
+            vec![[0x78, 0x53], [0xC0, 0xF9]],
+            "region strings reach the asker as derived codes"
+        );
+        assert!(
+            entry.rssi_snr().is_some(),
+            "the same peer was heard on the air, so the link is described too"
+        );
+        assert!(entry.last_heard_min().is_some());
+    });
 }
 
 /// A node that has only been heard is not a repeater for having been heard.
@@ -282,63 +320,66 @@ async fn a_repeater_names_the_repeaters_it_knows_of() {
 /// it puts nothing in the list.
 #[tokio::test(flavor = "current_thread")]
 async fn a_node_merely_heard_is_not_listed() {
-    mesh!("observed", mesh);
-    let body = mesh.ask(1, None).await;
-    let view = PeerRepeatersResponseView::new(&body);
+    mesh!("observed", mesh, {
+        let body = mesh.ask(1, None).await;
+        let view = PeerRepeatersResponseView::new(&body);
 
-    assert_eq!(view.total(), Some(0), "nobody has been heard forwarding");
-    assert_eq!(view.entries().count(), 0);
-    assert_eq!(view.cursor(), None);
+        assert_eq!(view.total(), Some(0), "nobody has been heard forwarding");
+        assert_eq!(view.entries().count(), 0);
+        assert_eq!(view.cursor(), None);
+    });
 }
 
 /// An identity that does not claim to repeat introduces nobody, however
 /// directly it was heard.
 #[tokio::test(flavor = "current_thread")]
 async fn a_handset_that_announces_itself_is_not_listed() {
-    mesh!("handset", mesh);
-    let mut handset = repeater_identity("Handset", &[]);
-    handset.role = NodeRole::Chat;
-    handset.capabilities = NodeCapabilities::TEXT_MESSAGES;
-    mesh.announce(&handset).await;
+    mesh!("handset", mesh, {
+        let mut handset = repeater_identity("Handset", &[]);
+        handset.role = NodeRole::Chat;
+        handset.capabilities = NodeCapabilities::TEXT_MESSAGES;
+        mesh.announce(&handset).await;
 
-    let body = mesh.ask(2, None).await;
-    let view = PeerRepeatersResponseView::new(&body);
-    assert_eq!(view.total(), Some(0));
-    assert_eq!(view.entries().count(), 0);
+        let body = mesh.ask(2, None).await;
+        let view = PeerRepeatersResponseView::new(&body);
+        assert_eq!(view.total(), Some(0));
+        assert_eq!(view.entries().count(), 0);
+    });
 }
 
 /// MAC commands are unicast-only unless the command defines multicast rules,
 /// and this one does not.
 #[tokio::test(flavor = "current_thread")]
 async fn a_multicast_request_is_not_answered() {
-    mesh!("multicast", mesh);
-    let channel = umsh::node::Channel::private(umsh::core::ChannelKey([0x33; 32]), "trail");
-    let asker_channel = mesh
-        .asker_node
-        .join(&channel)
-        .await
-        .expect("the asker can join");
+    mesh!("multicast", mesh, {
+        let channel = umsh::node::Channel::private(umsh::core::ChannelKey([0x33; 32]), "trail");
+        let asker_channel = mesh
+            .asker_node
+            .join(&channel)
+            .await
+            .expect("the asker can join");
 
-    let options = umsh::node::mac_command::PeerRepeatersRequestBuilder::new()
-        .nonce(7)
+        let options = umsh::node::mac_command::PeerRepeatersRequestBuilder::new()
+            .nonce(7)
+            .unwrap()
+            .build();
+        let mut buf = [0u8; 64];
+        buf[0] = umsh::core::PayloadType::MacCommand as u8;
+        let len = umsh::node::mac_command::encode(
+            &umsh::node::mac_command::MacCommand::PeerRepeatersRequest { options: &options },
+            &mut buf[1..],
+        )
         .unwrap()
-        .build();
-    let mut buf = [0u8; 64];
-    buf[0] = umsh::core::PayloadType::MacCommand as u8;
-    let len = umsh::node::mac_command::encode(
-        &umsh::node::mac_command::MacCommand::PeerRepeatersRequest { options: &options },
-        &mut buf[1..],
-    )
-    .unwrap()
-        + 1;
-    asker_channel
-        .send_all(&buf[..len], &SendOptions::default())
-        .await
-        .expect("the asker can send on the channel");
+            + 1;
+        asker_channel
+            .send_all(&buf[..len], &SendOptions::default())
+            .await
+            .expect("the asker can send on the channel");
 
-    mesh.settle(20).await;
-    assert!(
-        mesh.responses.borrow().is_empty(),
-        "a multicast MAC command is dropped before any responder sees it"
-    );
+        mesh.settle(20).await;
+        assert!(
+            mesh.responses.borrow().is_empty(),
+            "a multicast MAC command is dropped before any responder sees it"
+        );
+    });
 }

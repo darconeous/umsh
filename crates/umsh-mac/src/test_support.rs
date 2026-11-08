@@ -13,7 +13,7 @@ use std::{
     vec::Vec,
 };
 
-use core::task::{Context, Poll};
+use core::task::{Context, Poll, Waker};
 use embedded_hal_async::delay::DelayNs;
 use rand::{Rng, TryCryptoRng, TryRng};
 use umsh_core::PublicKey;
@@ -141,6 +141,40 @@ pub struct SimulatedNetwork {
 struct NetworkState {
     inboxes: Vec<VecDeque<QueuedFrame>>,
     links: Vec<Vec<LinkProfile>>,
+    receivers: Receivers,
+}
+
+/// The waker each radio left when it found its inbox empty.
+///
+/// A radio's `poll_receive` that returns `Pending` has to be woken when a
+/// frame reaches it, as a real driver's interrupt would; the network is
+/// what knows when that happens.
+#[derive(Default)]
+struct Receivers(Vec<Option<Waker>>);
+
+impl Receivers {
+    fn add(&mut self) {
+        self.0.push(None);
+    }
+
+    fn park(&mut self, id: usize, waker: &Waker) {
+        match &mut self.0[id] {
+            Some(parked) if parked.will_wake(waker) => {}
+            slot => *slot = Some(waker.clone()),
+        }
+    }
+
+    /// Take the waker of the radio `id`, to be woken once the state that
+    /// holds it is no longer borrowed.
+    fn take(&mut self, id: usize) -> Option<Waker> {
+        self.0.get_mut(id).and_then(Option::take)
+    }
+}
+
+fn wake_all(wakers: impl IntoIterator<Item = Waker>) {
+    for waker in wakers {
+        waker.wake();
+    }
 }
 
 struct QueuedFrame {
@@ -180,6 +214,7 @@ impl SimulatedNetwork {
             inner: Rc::new(RefCell::new(NetworkState {
                 inboxes: Vec::new(),
                 links: Vec::new(),
+                receivers: Receivers::default(),
             })),
         }
     }
@@ -197,6 +232,7 @@ impl SimulatedNetwork {
             row.push(LinkProfile::default());
         }
         state.inboxes.push(VecDeque::new());
+        state.receivers.add();
         state.links.push(vec![LinkProfile::default(); id + 1]);
         SimulatedRadio {
             network: self.clone(),
@@ -245,16 +281,20 @@ impl SimulatedNetwork {
 
     /// Inject a frame directly into one radio's receive queue with explicit metadata.
     pub fn inject_frame_with_info(&self, to: usize, frame: &[u8], rssi: i16, snr: Snr) {
-        let mut state = self.inner.borrow_mut();
-        let Some(queue) = state.inboxes.get_mut(to) else {
-            panic!("unknown simulated radio id {to}");
+        let waker = {
+            let mut state = self.inner.borrow_mut();
+            let Some(queue) = state.inboxes.get_mut(to) else {
+                panic!("unknown simulated radio id {to}");
+            };
+            queue.push_back(QueuedFrame {
+                data: frame.to_vec(),
+                rssi,
+                snr,
+                origin: RxOrigin::Air,
+            });
+            state.receivers.take(to)
         };
-        queue.push_back(QueuedFrame {
-            data: frame.to_vec(),
-            rssi,
-            snr,
-            origin: RxOrigin::Air,
-        });
+        wake_all(waker);
     }
 
     fn transmit(&self, from: usize, frame: &[u8]) {
@@ -267,6 +307,7 @@ impl SimulatedNetwork {
             .enumerate()
             .filter_map(|(to, link)| link.connected.then_some((to, link.rssi, link.snr)))
             .collect();
+        let mut wakers = Vec::new();
         for (to, rssi, snr) in deliveries {
             state.inboxes[to].push_back(QueuedFrame {
                 data: frame.to_vec(),
@@ -274,15 +315,21 @@ impl SimulatedNetwork {
                 snr,
                 origin: RxOrigin::Air,
             });
+            wakers.extend(state.receivers.take(to));
         }
+        drop(state);
+        wake_all(wakers);
     }
 
-    fn receive(&self, id: usize, buf: &mut [u8]) -> RxInfo {
+    /// Take the next frame queued for radio `id`. With none queued, the
+    /// result is empty and `waker` is woken when one arrives.
+    fn receive(&self, id: usize, buf: &mut [u8], waker: &Waker) -> RxInfo {
         let mut state = self.inner.borrow_mut();
         let Some(queue) = state.inboxes.get_mut(id) else {
             panic!("unknown simulated radio id {id}");
         };
         let Some(frame) = queue.pop_front() else {
+            state.receivers.park(id, waker);
             return RxInfo {
                 len: 0,
                 rssi: 0,
@@ -335,10 +382,10 @@ impl Radio for SimulatedRadio {
 
     fn poll_receive(
         &mut self,
-        _cx: &mut Context<'_>,
+        cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<Result<RxInfo, Self::Error>> {
-        let rx = self.network.receive(self.id, buf);
+        let rx = self.network.receive(self.id, buf, cx.waker());
         if rx.len == 0 {
             Poll::Pending
         } else {
@@ -400,6 +447,7 @@ pub struct ModeledNetwork {
 
 struct ModeledNetworkState {
     inboxes: Vec<VecDeque<QueuedFrame>>,
+    receivers: Receivers,
     links: Vec<Vec<ModeledLinkProfile>>,
     in_flight: Vec<InFlightTransmission>,
     scheduled: Vec<ScheduledDelivery>,
@@ -434,6 +482,7 @@ impl ModeledNetwork {
         Self {
             inner: Rc::new(RefCell::new(ModeledNetworkState {
                 inboxes: Vec::new(),
+                receivers: Receivers::default(),
                 links: Vec::new(),
                 in_flight: Vec::new(),
                 scheduled: Vec::new(),
@@ -472,6 +521,7 @@ impl ModeledNetwork {
             row.push(ModeledLinkProfile::default());
         }
         state.inboxes.push(VecDeque::new());
+        state.receivers.add();
         state
             .links
             .push(vec![ModeledLinkProfile::default(); id + 1]);
@@ -515,16 +565,20 @@ impl ModeledNetwork {
     /// unmeasured, and outside the radio channel, so it neither collides
     /// nor occupies the air.
     pub fn deliver_from_bearer(&self, to: usize, frame: &[u8], bearer: umsh_hal::BearerId) {
-        let mut state = self.inner.borrow_mut();
-        let Some(queue) = state.inboxes.get_mut(to) else {
-            panic!("unknown modeled radio id {to}");
+        let waker = {
+            let mut state = self.inner.borrow_mut();
+            let Some(queue) = state.inboxes.get_mut(to) else {
+                panic!("unknown modeled radio id {to}");
+            };
+            queue.push_back(QueuedFrame {
+                data: frame.to_vec(),
+                rssi: 0,
+                snr: Snr::from_centibels(0),
+                origin: RxOrigin::Bearer(bearer),
+            });
+            state.receivers.take(to)
         };
-        queue.push_back(QueuedFrame {
-            data: frame.to_vec(),
-            rssi: 0,
-            snr: Snr::from_centibels(0),
-            origin: RxOrigin::Bearer(bearer),
-        });
+        wake_all(waker);
     }
 
     /// Return whether any future deliveries are still pending.
@@ -536,6 +590,7 @@ impl ModeledNetwork {
         let now_ms = self.clock.now_ms();
         let mut state = self.inner.borrow_mut();
         state.in_flight.retain(|tx| tx.end_ms > now_ms);
+        let mut wakers = Vec::new();
         let mut index = 0usize;
         while index < state.scheduled.len() {
             if state.scheduled[index].available_at_ms > now_ms {
@@ -552,7 +607,10 @@ impl ModeledNetwork {
                 snr: delivery.snr,
                 origin: RxOrigin::Air,
             });
+            wakers.extend(state.receivers.take(delivery.to));
         }
+        drop(state);
+        wake_all(wakers);
     }
 
     fn channel_busy(&self, from: usize, now_ms: u64) -> bool {
@@ -666,13 +724,17 @@ impl ModeledNetwork {
         Ok(())
     }
 
-    fn receive(&self, id: usize, buf: &mut [u8]) -> RxInfo {
+    /// Take the next frame due at radio `id`. With none due, the result is
+    /// empty and `waker` is woken when one becomes due—which takes the
+    /// shared clock being moved through [`advance_ms`](Self::advance_ms).
+    fn receive(&self, id: usize, buf: &mut [u8], waker: &Waker) -> RxInfo {
         self.promote_due_frames();
         let mut state = self.inner.borrow_mut();
         let Some(queue) = state.inboxes.get_mut(id) else {
             panic!("unknown modeled radio id {id}");
         };
         let Some(frame) = queue.pop_front() else {
+            state.receivers.park(id, waker);
             return RxInfo {
                 len: 0,
                 rssi: 0,
@@ -766,10 +828,10 @@ impl Radio for ModeledRadio {
 
     fn poll_receive(
         &mut self,
-        _cx: &mut Context<'_>,
+        cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<Result<RxInfo, Self::Error>> {
-        let rx = self.network.receive(self.id, buf);
+        let rx = self.network.receive(self.id, buf, cx.waker());
         if rx.len == 0 {
             Poll::Pending
         } else {

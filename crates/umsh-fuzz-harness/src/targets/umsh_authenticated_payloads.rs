@@ -2,6 +2,7 @@
 //! layer and into a chat session, the way an application receives them.
 
 use std::cell::RefCell;
+use std::pin::pin;
 use std::rc::Rc;
 
 use umsh_hal::{Clock, RxOrigin};
@@ -15,7 +16,7 @@ use umsh_text::validate::DirectChannelProfile;
 
 use crate::block_on;
 use crate::fixup::{self, cast};
-use crate::mac::{Station, WAKE_BOUND};
+use crate::mac::Station;
 use crate::script::{Fields, records};
 
 pub const OP_RX: u8 = 0;
@@ -63,14 +64,16 @@ pub fn run(data: &[u8]) {
         false
     });
 
-    let settle = |host: &mut Host<_>| {
+    // The pump is one future for the whole run, as on a device: a cycle
+    // it has begun is finished on a later poll, never dropped. Each poll
+    // runs it until it waits; a node that never does trips the radio's
+    // own bound on polls.
+    let mut pump = pin!(host.run());
+    let mut settle = || {
         block_on::ready(async { cell.borrow_mut().await.radio_mut().refill() });
-        for _ in 0..WAKE_BOUND {
-            if block_on::poll_once(host.pump_once()).is_none() {
-                return;
-            }
+        if let Some(result) = block_on::poll_pinned(pump.as_mut()) {
+            panic!("the pump stopped: {result:?}");
         }
-        panic!("the node never went idle");
     };
 
     for record in records(data) {
@@ -91,7 +94,7 @@ pub fn run(data: &[u8]) {
             }
             _ => clock.advance_ms(u64::from(Fields::new(record.body).u16()) * 8),
         }
-        settle(&mut host);
+        settle();
         let mut chat = chat.borrow_mut();
         chat.tick(clock.now_ms());
         let _ = chat.drain();

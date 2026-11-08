@@ -164,83 +164,87 @@ async fn explore(
         None => None,
     };
 
-    let (mut stack, local_key) = NodeStack::build(mac, identity, ctx).await?;
-    // A stranger answers with its whole key in the source address,
-    // having no reason to think this node has heard of it. Without this
-    // the MAC has nowhere to put that key and drops the answer.
-    stack.handle.set_auto_register_full_key_peers(true).await;
+    let (stack, mut pump, local_key) = NodeStack::build(mac, identity, ctx).await?;
 
-    field("listening as", local_key.to_string());
+    pump.drive(async {
+        // A stranger answers with its whole key in the source address,
+        // having no reason to think this node has heard of it. Without this
+        // the MAC has nowhere to put that key and drops the answer.
+        stack.handle.set_auto_register_full_key_peers(true).await;
 
-    let seen: Rc<RefCell<Vec<PublicKey>>> = Rc::new(RefCell::new(Vec::new()));
-    let started = Instant::now();
+        field("listening as", local_key.to_string());
 
-    let nonce = if args.passive {
-        note("listening only; nothing is transmitted");
-        None
-    } else {
-        let nonce = ask(&mut stack, args, vantage.as_deref()).await?;
-        field("asked", describe_ask(args));
-        Some(nonce)
-    };
+        let seen: Rc<RefCell<Vec<PublicKey>>> = Rc::new(RefCell::new(Vec::new()));
+        let started = Instant::now();
 
-    // An advertisement is addressed to everybody, so this only reads it—
-    // returning false leaves it for anyone else who is listening.
-    let sink = seen.clone();
-    let _subscription = stack.node.on_receive(move |packet| {
-        let Some(identity) = advertisement(packet) else {
-            return false;
+        let nonce = if args.passive {
+            note("listening only; nothing is transmitted");
+            None
+        } else {
+            let nonce = ask(&stack, args, vantage.as_deref()).await?;
+            field("asked", describe_ask(args));
+            Some(nonce)
         };
-        let Some(key) = packet.from_key() else {
-            return false;
-        };
-        let mut seen = sink.borrow_mut();
-        if seen.contains(&key) {
-            return false;
-        }
-        seen.push(key);
-        report(&key, &identity, packet, nonce, started);
-        false
-    });
 
-    note(format!("listening for {} s", args.timeout));
-    let deadline = Instant::now() + Duration::from_secs(args.timeout);
-    loop {
-        if Instant::now() >= deadline {
-            break;
-        }
-        tokio::select! {
-            result = stack.pump_until(deadline.min(Instant::now() + POLL)) => result?,
-            // Ctrl-C ends the command rather than the process, so the
-            // shell gets its prompt back and the radio comes home.
-            _ = tokio::signal::ctrl_c() => {
-                println!();
+        // An advertisement is addressed to everybody, so this only reads it—
+        // returning false leaves it for anyone else who is listening.
+        let sink = seen.clone();
+        let _subscription = stack.node.on_receive(move |packet| {
+            let Some(identity) = advertisement(packet) else {
+                return false;
+            };
+            let Some(key) = packet.from_key() else {
+                return false;
+            };
+            let mut seen = sink.borrow_mut();
+            if seen.contains(&key) {
+                return false;
+            }
+            seen.push(key);
+            report(&key, &identity, packet, nonce, started);
+            false
+        });
+
+        note(format!("listening for {} s", args.timeout));
+        let deadline = Instant::now() + Duration::from_secs(args.timeout);
+        loop {
+            if Instant::now() >= deadline {
                 break;
             }
+            tokio::select! {
+                () = stack.wait_until(deadline.min(Instant::now() + POLL)) => {}
+                // Ctrl-C ends the command rather than the process, so the
+                // shell gets its prompt back and the radio comes home.
+                _ = tokio::signal::ctrl_c() => {
+                    println!();
+                    break;
+                }
+            }
         }
-    }
 
-    let count = seen.borrow().len();
-    match count {
-        0 if args.passive => note("nothing advertised itself"),
-        0 => note("nobody answered"),
-        1 => field("heard", "1 node"),
-        many => field("heard", format!("{many} nodes")),
-    }
+        let count = seen.borrow().len();
+        match count {
+            0 if args.passive => note("nothing advertised itself"),
+            0 => note("nobody answered"),
+            1 => field("heard", "1 node"),
+            many => field("heard", format!("{many} nodes")),
+        }
 
-    // An answer that came back over a trace taught the MAC a way home.
-    routes.harvest(&stack.handle).await;
-    if let Err(error) = routes.store() {
-        crate::output::warn(format!("could not save learned routes: {error:#}"));
-    }
-    let _ = stack.handle.service_counter_persistence().await;
-    Ok(())
+        // An answer that came back over a trace taught the MAC a way home.
+        routes.harvest(&stack.handle).await;
+        if let Err(error) = routes.store() {
+            crate::output::warn(format!("could not save learned routes: {error:#}"));
+        }
+        let _ = stack.handle.service_counter_persistence().await;
+        Ok(())
+    })
+    .await
 }
 
 /// Broadcast one Identity Request, and return the nonce it carries so
 /// the answers can be told from unsolicited advertisements.
 async fn ask(
-    stack: &mut NodeStack<'_>,
+    stack: &NodeStack<'_>,
     args: &DiscoverArgs,
     vantage: Option<&[RouterHint]>,
 ) -> Result<u32> {

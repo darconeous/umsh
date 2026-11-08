@@ -14,12 +14,14 @@
 //! that key is listed in its `PROP_DEV_ADMINS`, which `dev-admin add`
 //! does over a bench link.
 
-use std::collections::VecDeque;
+use std::cell::Cell;
 use std::path::Path;
+use std::rc::Rc;
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
 use rand::{Rng as _, rng};
+use tokio::sync::Notify;
 use tokio::time::Instant;
 
 use umsh::core::PublicKey;
@@ -237,9 +239,8 @@ pub struct StackContext {
     pub target: connection::Target,
     pub tap: FrameTap,
     pub label: String,
-    /// The policy [`NodeStack::pump_until`] heals a lost link with, or
-    /// `None` when the caller does its own healing (the mesh driver) or
-    /// wants the failure (`--no-reconnect`).
+    /// The policy the [`Pump`] heals a lost link with, or `None` when the
+    /// caller wants the failure (`--no-reconnect`).
     pub self_heal: Option<Recovery>,
 }
 
@@ -342,30 +343,30 @@ pub fn build_mac(radio: CtlRadio, store: TokioFileCounterStore) -> AsyncRefCell<
     ))
 }
 
-/// The tool as a node: a host MAC over the borrowed radio, one local
-/// node standing for the administrator identity, and the pump that keeps
-/// both moving.
+/// The tool as a node: a host MAC over the borrowed radio and one local
+/// node standing for the administrator identity. The [`Pump`] that keeps
+/// both moving is kept apart, so it can run beside the work done here.
 pub struct NodeStack<'a> {
-    pub host: CtlHost<'a>,
     pub node: LocalNode<CtlHandle<'a>>,
     pub handle: CtlHandle<'a>,
-    mac: &'a AsyncRefCell<CtlMac>,
-    ctx: StackContext,
     /// How many times the link under the radio has been put back. A
     /// caller that had an exchange in flight compares this before and
     /// after to learn whether the exchange straddled a recovery.
-    recoveries: u32,
+    recoveries: Rc<Cell<u32>>,
+    /// Signaled each time the pump completes a wake cycle.
+    cycled: Rc<Notify>,
     started: Instant,
 }
 
 impl<'a> NodeStack<'a> {
     /// Register `identity` on the borrowed MAC and stand a node up on it,
-    /// returning the stack and the administrator's public key.
+    /// returning the stack, the pump that has to run beside whatever is
+    /// done with it, and the administrator's public key.
     pub async fn build(
         mac: &'a AsyncRefCell<CtlMac>,
         identity: SoftwareIdentity,
         ctx: &StackContext,
-    ) -> Result<(Self, PublicKey)> {
+    ) -> Result<(Self, Pump<'a>, PublicKey)> {
         let handle = MacHandle::new(mac);
         let local_key = *identity.public_key();
         let identity_id = handle
@@ -381,16 +382,24 @@ impl<'a> NodeStack<'a> {
 
         let mut host: CtlHost<'a> = Host::new(handle);
         let node = host.add_node(identity_id);
+        let recoveries = Rc::new(Cell::new(0));
+        let cycled = Rc::new(Notify::new());
+        let pump = Pump {
+            host,
+            mac,
+            ctx: ctx.clone(),
+            recoveries: recoveries.clone(),
+            cycled: cycled.clone(),
+        };
         Ok((
             Self {
-                host,
                 node,
                 handle,
-                mac,
-                ctx: ctx.clone(),
-                recoveries: 0,
+                recoveries,
+                cycled,
                 started: Instant::now(),
             },
+            pump,
             local_key,
         ))
     }
@@ -407,80 +416,26 @@ impl<'a> NodeStack<'a> {
 
     /// How many times the link under the radio has been put back.
     pub fn recoveries(&self) -> u32 {
-        self.recoveries
+        self.recoveries.get()
     }
 
-    /// Whether the radio's transport has reported itself gone.
-    pub async fn radio_link_lost(&self) -> bool {
-        self.mac.borrow().await.radio().link_lost()
-    }
-
-    /// Put the link back under the radio, attempt after attempt, until
-    /// it is back or `abort` resolves.
-    ///
-    /// The MAC and everything standing on it survive: identities,
-    /// peers, routes, pending acknowledgments. Only the transport under
-    /// the device handle is replaced, and the session-scoped state this
-    /// host asserts on the radio is asserted again. The exclusive borrow
-    /// is uncontended here—nothing is pumping while the radio is known
-    /// to be gone.
-    pub async fn recover(
-        &mut self,
-        policy: &Recovery,
-        abort: impl Future<Output = ()>,
-    ) -> Result<Recovered> {
-        let mut mac = self.mac.borrow_mut().await;
-        let radio = mac.radio_mut();
-        let outcome = connection::recover_device(radio, &self.ctx.relink(), policy, abort).await?;
-        if outcome == Recovered::Attached {
-            prepare_radio(radio).await?;
-            self.recoveries += 1;
+    /// Wait until the pump completes a wake cycle or `deadline` arrives,
+    /// whichever is first: the moment to look again at whatever the
+    /// caller is waiting for.
+    pub async fn wait_until(&self, deadline: Instant) {
+        tokio::select! {
+            () = self.cycled.notified() => {}
+            () = tokio::time::sleep_until(deadline) => {}
         }
-        Ok(outcome)
     }
 
-    /// Drive the MAC until it has nothing to do or `deadline` arrives.
-    ///
-    /// A quiet radio produces no MAC wake, so the timeouts that retire an
-    /// unanswered acknowledgment need their own nudge afterwards.
-    ///
-    /// A radio whose link has gone is put back here, when the stack was
-    /// told to: the pump is where the loss is noticed, and the caller's
-    /// own deadline loop simply comes round again once the link is back.
-    /// Ctrl-C ends the wait, not the process.
-    pub async fn pump_until(&mut self, deadline: Instant) -> Result<()> {
-        let pumped = tokio::select! {
-            result = self.host.pump_once() => result,
-            _ = tokio::time::sleep_until(deadline) => Ok(()),
-        };
-        if let Err(error) = pumped {
-            let policy = self.ctx.self_heal.clone();
-            if let Some(policy) = policy
-                && self.radio_link_lost().await
-            {
-                let interrupted = async {
-                    let _ = tokio::signal::ctrl_c().await;
-                };
-                return match self.recover(&policy, interrupted).await? {
-                    Recovered::Attached => Ok(()),
-                    Recovered::Interrupted => bail!("reconnect interrupted"),
-                };
-            }
-            bail!("the radio stopped answering: {error:?}");
-        }
-        self.host.service_protocol_timeouts().await;
-        let _ = self.handle.service_counter_persistence().await;
-        Ok(())
-    }
-
-    /// Carry one exchange to its end, pumping the host in between, giving
-    /// up at `give_up`.
+    /// Carry one exchange to its end, giving up at `give_up`.
     ///
     /// An exchange that ends without an outcome—this tool ran out of
     /// patience, or the radio underneath went away—is abandoned, so the
     /// manager is free for the next one.
     pub async fn exchange(
-        &mut self,
+        &self,
         manager: &mut NodeManager<CtlHandle<'a>>,
         request: &[u8],
         give_up: Instant,
@@ -496,7 +451,7 @@ impl<'a> NodeStack<'a> {
     }
 
     async fn carry(
-        &mut self,
+        &self,
         manager: &mut NodeManager<CtlHandle<'a>>,
         give_up: Instant,
     ) -> Result<Outcome> {
@@ -513,8 +468,109 @@ impl<'a> NodeStack<'a> {
                 Progress::Waiting { deadline_ms } => deadline_ms,
             };
             let wait = Duration::from_millis(deadline_ms.saturating_sub(self.now_ms()));
-            self.pump_until(Instant::now() + wait).await?;
+            self.wait_until(Instant::now() + wait).await;
         }
+    }
+}
+
+/// The node's data pump: the host that drives the MAC, and what it takes
+/// to put a lost link back under it.
+///
+/// The pump runs beside the work for as long as the work lasts, and is
+/// never raced or timed out: a cycle in progress holds what it has just
+/// received. Dropping it is stopping the node.
+pub struct Pump<'a> {
+    host: CtlHost<'a>,
+    mac: &'a AsyncRefCell<CtlMac>,
+    ctx: StackContext,
+    recoveries: Rc<Cell<u32>>,
+    cycled: Rc<Notify>,
+}
+
+/// Why a [`Pump`] stopped before the work beside it was done.
+pub enum Stopped {
+    /// The radio failed, or its link was lost and could not be put back.
+    Failed(anyhow::Error),
+    /// Putting a lost link back was given up on.
+    Interrupted,
+}
+
+impl<'a> Pump<'a> {
+    /// Do `work` with the pump running beside it.
+    ///
+    /// A link lost meanwhile is put back under the stack's self-heal
+    /// policy, and Ctrl-C ends the attempt—the wait, not the process.
+    pub async fn drive<T>(&mut self, work: impl Future<Output = Result<T>>) -> Result<T> {
+        let interrupted = || async {
+            let _ = tokio::signal::ctrl_c().await;
+        };
+        match self.drive_until(work, interrupted).await {
+            Ok(result) => result,
+            Err(Stopped::Failed(error)) => Err(error),
+            Err(Stopped::Interrupted) => bail!("reconnect interrupted"),
+        }
+    }
+
+    /// Do `work` with the pump running beside it, ending any attempt to
+    /// put a lost link back when the future `abort` makes resolves.
+    ///
+    /// The pump is dropped only once the work is done, and the node stops
+    /// with it. A pump that stops first ends the work, and says why.
+    pub async fn drive_until<T, A: Future<Output = ()>>(
+        &mut self,
+        work: impl Future<Output = T>,
+        abort: impl FnMut() -> A,
+    ) -> Result<T, Stopped> {
+        tokio::select! {
+            result = work => Ok(result),
+            stopped = self.run(abort) => Err(stopped),
+        }
+    }
+
+    /// Pump until the radio fails, putting a lost link back each time it
+    /// goes when the stack was told to.
+    async fn run<A: Future<Output = ()>>(&mut self, mut abort: impl FnMut() -> A) -> Stopped {
+        loop {
+            let cycled = self.cycled.clone();
+            let Err(error) = self.host.run_with(async || cycled.notify_one()).await else {
+                unreachable!("the host pump returns only with an error");
+            };
+            let error = anyhow!("the radio stopped answering: {error:?}");
+            let Some(policy) = self.ctx.self_heal.clone() else {
+                return Stopped::Failed(error);
+            };
+            if !self.mac.borrow().await.radio().link_lost() {
+                return Stopped::Failed(error);
+            }
+            match self.recover(&policy, abort()).await {
+                Ok(Recovered::Attached) => {}
+                Ok(Recovered::Interrupted) => return Stopped::Interrupted,
+                Err(error) => return Stopped::Failed(error),
+            }
+        }
+    }
+
+    /// Put the link back under the radio, attempt after attempt, until
+    /// it is back or `abort` resolves.
+    ///
+    /// The MAC and everything standing on it survive: identities,
+    /// peers, routes, pending acknowledgments. Only the transport under
+    /// the device handle is replaced, and the session-scoped state this
+    /// host asserts on the radio is asserted again. Work beside the pump
+    /// that reaches for the MAC meanwhile waits for the borrow held here.
+    async fn recover(
+        &mut self,
+        policy: &Recovery,
+        abort: impl Future<Output = ()>,
+    ) -> Result<Recovered> {
+        let mut mac = self.mac.borrow_mut().await;
+        let radio = mac.radio_mut();
+        let outcome = connection::recover_device(radio, &self.ctx.relink(), policy, abort).await?;
+        if outcome == Recovered::Attached {
+            prepare_radio(radio).await?;
+            self.recoveries.set(self.recoveries.get() + 1);
+        }
+        Ok(outcome)
     }
 }
 
@@ -586,9 +642,7 @@ pub async fn open_remote(app: &mut App, target: PublicKey, greeting: Greeting) -
     let Some(session) = app.session.take() else {
         bail!("not attached—try `ble-scan` or `connect`");
     };
-    // The driver heals the link itself, so the stack under it does not.
-    let ctx = StackContext::for_session(&session, None);
-    let recovery = app.recovery.clone();
+    let ctx = StackContext::for_session(&session, app.recovery.clone());
     let connection::Session {
         device,
         target: local_target,
@@ -608,9 +662,7 @@ pub async fn open_remote(app: &mut App, target: PublicKey, greeting: Greeting) -
     prepare_radio(&mut radio).await?;
 
     let (link, endpoint) = mesh_link();
-    let driver = tokio::task::spawn_local(drive(
-        radio, store, identity, target, endpoint, ctx, recovery,
-    ));
+    let driver = tokio::task::spawn_local(drive(radio, store, identity, target, endpoint, ctx));
 
     // From here the radio belongs to the driver, and the only way back to
     // it is through the join handle.
@@ -714,24 +766,10 @@ async fn drive(
     target: PublicKey,
     endpoint: MeshEndpoint,
     ctx: StackContext,
-    recovery: Option<Recovery>,
 ) -> CtlRadio {
     let mac = build_mac(radio, store);
-    serve(&mac, identity, target, endpoint, &ctx, recovery.as_ref()).await;
+    serve(&mac, identity, target, endpoint, &ctx).await;
     mac.into_inner().into_radio()
-}
-
-/// One step of the driver loop: what the select settled on.
-enum Step {
-    /// A request to carry.
-    Carry(MeshRequest),
-    /// The MAC made progress on its own.
-    Pumped,
-    /// The MAC could not be pumped; whether that is the link is decided
-    /// once the borrow is released.
-    Failed(anyhow::Error),
-    /// The link is gone; the session is over.
-    Closed,
 }
 
 /// Whether an exchange that straddled a recovery deserves a second try.
@@ -787,8 +825,8 @@ impl Driver<'_> {
             }
             // This command could not be carried—it ran out of patience,
             // or the engine would not take it. The session survives: a
-            // radio that has actually died fails the pump on the very
-            // next turn of the loop, and that is dealt with there.
+            // radio that has actually died stops the pump, and that ends
+            // the session.
             Err(error) => endpoint.refuse(format!("{error:#}")),
         }
         // An exchange is where a route is learned, so this is where
@@ -809,9 +847,8 @@ async fn serve(
     target: PublicKey,
     mut endpoint: MeshEndpoint,
     ctx: &StackContext,
-    recovery: Option<&Recovery>,
 ) {
-    let (stack, _local_key) = match NodeStack::build(mac, identity, ctx).await {
+    let (stack, mut pump, _local_key) = match NodeStack::build(mac, identity, ctx).await {
         Ok(built) => built,
         Err(error) => return endpoint.fail(MeshFault::Radio(format!("{error:#}"))),
     };
@@ -843,70 +880,25 @@ async fn serve(
         routes,
     };
 
-    let mut fatal = None;
-    loop {
-        // The arms only settle what happened. Everything that needs the
-        // stack runs below, once the futures borrowing it are gone.
-        let step = tokio::select! {
-            request = endpoint.next() => match request {
-                Some(request) => Step::Carry(request),
-                None => Step::Closed,
-            },
-            result = driver.stack.host.pump_once() => match result {
-                Ok(()) => Step::Pumped,
-                Err(error) => Step::Failed(anyhow!("the radio stopped answering: {error:?}")),
-            },
-        };
-        match step {
-            Step::Closed => break,
-            Step::Pumped => {
-                driver.stack.host.service_protocol_timeouts().await;
-                let _ = driver.stack.handle.service_counter_persistence().await;
-            }
-            Step::Failed(error) => {
-                let Some(policy) = recovery else {
-                    fatal = Some(MeshFault::Radio(format!("{error:#}")));
-                    break;
-                };
-                if !driver.stack.radio_link_lost().await {
-                    fatal = Some(MeshFault::Radio(format!("{error:#}")));
-                    break;
-                }
-                // The session goes on while the link is put back: what
-                // arrives meanwhile waits its turn, and the handle being
-                // dropped—the user leaving—is what ends the wait.
-                let mut deferred = VecDeque::new();
-                let outcome = {
-                    let closed = async {
-                        while let Some(request) = endpoint.next().await {
-                            deferred.push_back(request);
-                        }
-                    };
-                    driver.stack.recover(policy, closed).await
-                };
-                match outcome {
-                    Ok(Recovered::Attached) => {
-                        for request in deferred {
-                            driver.carry(&mut endpoint, request).await;
-                        }
-                    }
-                    Ok(Recovered::Interrupted) => break,
-                    Err(error) => {
-                        fatal = Some(MeshFault::Radio(format!("{error:#}")));
-                        break;
-                    }
-                }
-            }
-            Step::Carry(request) => driver.carry(&mut endpoint, request).await,
+    // The session goes on while a lost link is put back: a request that
+    // reaches for the MAC meanwhile waits its turn, and the handle being
+    // dropped—the user leaving—is what ends the wait.
+    let closing = endpoint.closing();
+    let carried = async {
+        while let Some(request) = endpoint.next().await {
+            driver.carry(&mut endpoint, request).await;
         }
-    }
+    };
+    let served = pump.drive_until(carried, || closing.closed()).await;
+
     let _ = driver.stack.handle.service_counter_persistence().await;
     driver.routes.harvest(&driver.stack.handle).await;
     if let Err(error) = driver.routes.store() {
         crate::output::warn(format!("could not save learned routes: {error:#}"));
     }
-    if let Some(fault) = fatal {
-        endpoint.fail(fault);
+    match served {
+        Ok(()) | Err(Stopped::Interrupted) => {}
+        Err(Stopped::Failed(error)) => endpoint.fail(MeshFault::Radio(format!("{error:#}"))),
     }
 }
 

@@ -854,12 +854,22 @@ pub async fn pump_loop<CS: CounterStore + 'static>(
     // the ledger's cells belong to it, and a host's clear must not be
     // overwritten by the next pass through this loop.
     let mut mirrors = MacMirrors::new();
-    // `Host::run` is this loop without the republish. Spelling it out here
-    // is what lets the counters be refreshed on a schedule that already
-    // exists: one wake cycle has just completed, the coordinator's borrow
-    // is released, and nothing else had to be woken to notice.
+    // The counters are refreshed on a schedule that already exists: one
+    // wake cycle has just completed, the coordinator's borrow is released,
+    // and nothing else had to be woken to notice.
     loop {
-        if let Err(error) = host.pump_once().await {
+        let result = host
+            .run_with(async || {
+                let counters = mac.counters().await;
+                publish_mac_counters(counters);
+                if let Some(stats) = stats {
+                    mirrors.advance(stats, counters);
+                }
+            })
+            .await;
+        // `run_with` returns only with the cycle's error, which ended that
+        // cycle and nothing more: the pump starts again.
+        if let Err(error) = result {
             let errors = PUMP_ERRORS.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
             // A failure that repeats every cycle would otherwise fill the
             // log at the retry rate; the first few and then every power
@@ -867,13 +877,8 @@ pub async fn pump_loop<CS: CounterStore + 'static>(
             if errors <= 4 || errors.is_power_of_two() {
                 debug_log(format_args!("node pump: error={error:?} count={errors}"));
             }
-            Timer::after_millis(10).await;
         }
-        let counters = mac.counters().await;
-        publish_mac_counters(counters);
-        if let Some(stats) = stats {
-            mirrors.advance(stats, counters);
-        }
+        Timer::after_millis(10).await;
     }
 }
 

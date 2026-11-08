@@ -5,7 +5,7 @@
 //! or correlates ping replies.
 
 use core::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     marker::PhantomData,
     pin::Pin,
     task::{Context, Poll},
@@ -37,7 +37,7 @@ use umsh_mac::{Mac, MacHandle, OperatingPolicy, RepeaterConfig, SendDestination,
 use umsh_node::meet::MeetCommand;
 use umsh_node::{
     Host, LocalNode, MacBackend, NodeCapabilities, NodeIdentityPayload, NodeIdentityProfile,
-    NodeRole, PongMetadata, Transport,
+    NodeRole, PfsSessionRecord, PongMetadata, Transport,
     location::{MAX_PRECISION, NodeLocation},
 };
 use umsh_sync::AsyncRefCell;
@@ -3954,6 +3954,7 @@ async fn run_worker(
         completions: transmit_completions,
         frame_ms: frame_ms.clone(),
     };
+    let records_store = counter_store.0.clone();
     let mac = MobileMac::new(
         radio,
         CryptoEngine::new(SoftwareAes, SoftwareSha256),
@@ -3986,6 +3987,23 @@ async fn run_worker(
 
     let mut host = Host::new(handle);
     let node = host.add_node(identity_id);
+    // The sessions with forward secrecy the previous run held. Their keys
+    // went with it, but a peer still using one is told the session is
+    // over. Restored before the first pump and the first report of the
+    // hints the radio passes up, so no such frame goes unrecognized.
+    let kept_records = records_store
+        .load_forward_secrecy_records(&local_key)
+        .unwrap_or_default();
+    node.restore_pfs_session_records(
+        &PfsSessionRecord::decode_all(&kept_records),
+        Some(unix_seconds()),
+    )
+    .await;
+    // Restoring dropped whatever had run out, so the records are kept again
+    // once the pump starts.
+    let pfs_records_changed = Rc::new(Cell::new(true));
+    let changed = pfs_records_changed.clone();
+    let pfs_records_subscription = node.on_pfs_records_changed(move || changed.set(true));
     // What this phone currently says about itself. The session starts
     // discoverable with no name and no location; the app pushes the
     // stored preferences via `set_discoverable` and
@@ -4171,10 +4189,13 @@ async fn run_worker(
         advertisement_subscription,
         meet_subscription,
         peer_repeaters_subscription,
+        pfs_records_subscription,
     );
     let _ = ready.send(Ok(()));
-    let mut protocol_timeout_tick = tokio::time::interval(Duration::from_millis(50));
-    protocol_timeout_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // The worker's own deadlines: the contact exchange, management lanes,
+    // the chat engine. The node layer's are the pump's.
+    let mut service_tick = tokio::time::interval(Duration::from_millis(50));
+    service_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     // The worker runs as two sibling loops polled by one outer select.
     //
@@ -4184,22 +4205,25 @@ async fn run_worker(
     // whose arm bodies suspend the task would deadlock: the arm waits on
     // the borrow, and the pump future that owns it is never re-polled to
     // release it. As sibling futures of the outer select, the pump makes
-    // progress whenever the command loop is waiting.
+    // progress whenever the command loop is waiting. The pump is never
+    // cancelled: it ends only with the session.
     let inbound_ready = tokio::sync::Notify::new();
     let meet_ready = tokio::sync::Notify::new();
-    let timeout_servicer = host.protocol_timeout_servicer();
 
     // What the phone answers to besides its own key is every ephemeral
-    // identity the MAC holds: sessions with forward secrecy, which begin
-    // and end in the pump and lapse in the timeout service, and the
-    // contact exchange's session key. Each of those checks after running.
-    // Reported only on change: a session starts with none.
+    // identity the MAC holds: sessions with forward secrecy, which begin,
+    // end, and lapse in the pump, and the contact exchange's session key.
+    // Besides those, it listens for the addresses of sessions a previous
+    // run lost, whose peers may still be using them. Each of those checks
+    // after running. Reported only on change: a session starts with none.
     let reported_hints = RefCell::new(Vec::<Vec<u8>>::new());
     let report_local_hints = || async {
+        let retired = handle.retired_addresses().await;
         let hints: Vec<Vec<u8>> = handle
             .ephemeral_keys()
             .await
             .iter()
+            .chain(retired.iter().map(|retired| &retired.address))
             .map(|key| key.hint().0.to_vec())
             .collect();
         let mut reported = reported_hints.borrow_mut();
@@ -4225,20 +4249,32 @@ async fn run_worker(
         }
     };
 
-    let pump_loop = async {
-        loop {
-            if host.pump_once().await.is_err() {
-                return;
-            }
-            report_local_hints().await;
-            if !inbound_text.borrow().is_empty() {
-                inbound_ready.notify_one();
-            }
-            if !heard_meet.borrow().is_empty() {
-                meet_ready.notify_one();
-            }
+    // Kept whenever they change; a write that fails is tried again on the
+    // next pass.
+    let keep_pfs_records = || async {
+        if !pfs_records_changed.replace(false) {
+            return;
+        }
+        let records = node.pfs_session_records(Some(unix_seconds())).await;
+        if records_store
+            .keep_forward_secrecy_records(&local_key, &PfsSessionRecord::encode_all(&records))
+            .is_err()
+        {
+            pfs_records_changed.set(true);
         }
     };
+    report_local_hints().await;
+
+    let pump_loop = host.run_with(async || {
+        keep_pfs_records().await;
+        report_local_hints().await;
+        if !inbound_text.borrow().is_empty() {
+            inbound_ready.notify_one();
+        }
+        if !heard_meet.borrow().is_empty() {
+            meet_ready.notify_one();
+        }
+    });
 
     let command_loop = async {
         loop {
@@ -5035,8 +5071,8 @@ async fn run_worker(
                         }
                     }
                 }
-                _ = protocol_timeout_tick.tick() => {
-                    timeout_servicer.service().await;
+                _ = service_tick.tick() => {
+                    keep_pfs_records().await;
                     report_local_hints().await;
                     let now_ms = handle.now_ms().await;
                     if meeting.borrow().meeting.is_open() {
@@ -8723,6 +8759,115 @@ mod tests {
             );
             std::thread::sleep(Duration::from_millis(5));
         }
+    }
+
+    /// A session with forward secrecy that a previous run held is listened
+    /// for from the start, and a peer still using it is told it is over.
+    #[tokio::test]
+    async fn a_session_lost_to_a_restart_is_ended_with_its_peer() {
+        use umsh_core::{PacketBuilder, PacketHeader, PayloadType};
+        use umsh_crypto::{
+            CryptoEngine, PairwiseKeys,
+            software::{SoftwareAes, SoftwareSha256},
+        };
+        use umsh_node::{MacCommand, PfsSessionRecord, mac_command};
+
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("pfs-restart").display().to_string();
+        let alice_identity = identity(78);
+        let alice_key = decode_peer(&address(&alice_identity)).unwrap();
+        let carol_key = *SoftwareIdentity::from_secret_bytes(&[79; 32]).public_key();
+        let record = PfsSessionRecord {
+            peer: carol_key,
+            local_ephemeral: *SoftwareIdentity::from_secret_bytes(&[80; 32]).public_key(),
+            peer_ephemeral: *SoftwareIdentity::from_secret_bytes(&[81; 32]).public_key(),
+            expires_at: None,
+            lifetime_s: 3_600,
+        };
+        let store = MobileCounterStore::new(root.clone()).unwrap();
+        store
+            .keep_forward_secrecy_records(&alice_key, &PfsSessionRecord::encode_all(&[record]))
+            .unwrap();
+
+        let alice = MobileMeshSession::new(alice_identity.clone(), store.clone())
+            .await
+            .unwrap();
+        let entry = alice
+            .host_peer_key_entries(vec![encode_peer_address(&carol_key)])
+            .await
+            .unwrap()
+            .remove(0);
+        let pairwise = PairwiseKeys {
+            k_enc: entry.k_enc.try_into().unwrap(),
+            k_mic: entry.k_mic.try_into().unwrap(),
+        };
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Some(hints) = alice.poll_update().local_destination_hints {
+                assert_eq!(hints, vec![record.local_ephemeral.hint().0.to_vec()]);
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the retired address was not reported"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        // Carol, still holding the session, says something under it. The
+        // keys are hers alone now, so what she sealed it with does not
+        // matter.
+        let mut buf = [0u8; 256];
+        let frame = PacketBuilder::new(&mut buf)
+            .unicast(record.local_ephemeral.hint())
+            .source_full(&record.peer_ephemeral)
+            .frame_counter(9)
+            .encrypted()
+            .payload(&[PayloadType::TextMessage as u8, 0])
+            .build()
+            .unwrap();
+        alice
+            .receive(MobileMeshRxRecord {
+                data: frame.as_bytes().to_vec(),
+                rssi_dbm: Some(-70),
+                lqi: None,
+                snr_cb: Some(60),
+                was_buffered: false,
+                was_acknowledged: false,
+                age_seconds: 0,
+            })
+            .unwrap();
+
+        let engine = CryptoEngine::new(SoftwareAes, SoftwareSha256);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        'ended: loop {
+            for outbound in alice.poll_update().outbound_frames {
+                alice.complete_outbound_frame(outbound.id, true).unwrap();
+                let mut data = outbound.data;
+                let Ok(header) = PacketHeader::parse(&data) else {
+                    continue;
+                };
+                let Ok(range) = engine.open_packet(&mut data, &header, &pairwise, None) else {
+                    continue;
+                };
+                let body = &data[range];
+                if body.first() == Some(&(PayloadType::MacCommand as u8))
+                    && mac_command::parse(&body[1..]) == Ok(MacCommand::EndPfsSession)
+                {
+                    assert_eq!(header.dst, Some(carol_key.hint()));
+                    break 'ended;
+                }
+            }
+            assert!(Instant::now() < deadline, "the session was not ended");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        // Until Carol acknowledges, the record stays.
+        assert_eq!(
+            PfsSessionRecord::decode_all(&store.load_forward_secrecy_records(&alice_key).unwrap())
+                .len(),
+            1
+        );
     }
 
     /// `public` chat is shown only with its sender's full key.

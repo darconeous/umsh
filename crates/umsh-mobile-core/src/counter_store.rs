@@ -4,7 +4,7 @@ use std::{
     fmt,
     fs::{self, File, OpenOptions},
     io::{Read, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, mpsc},
 };
 
@@ -73,6 +73,15 @@ enum Job {
     Flush {
         reply: Reply<Result<(), CounterStoreError>>,
     },
+    LoadRecords {
+        node: umsh_core::PublicKey,
+        reply: Reply<Result<Vec<u8>, CounterStoreError>>,
+    },
+    KeepRecords {
+        node: umsh_core::PublicKey,
+        records: Vec<u8>,
+        reply: Reply<Result<(), CounterStoreError>>,
+    },
 }
 
 /// Where a result goes: back to an awaiting task, or to a blocked caller.
@@ -137,6 +146,34 @@ impl MobileCounterStore {
 }
 
 impl MobileCounterStore {
+    /// The records `node` keeps of its sessions with forward secrecy, as
+    /// [`umsh_node::PfsSessionRecord::encode_all`] wrote them: empty when
+    /// it keeps none.
+    pub(crate) fn load_forward_secrecy_records(
+        &self,
+        node: &umsh_core::PublicKey,
+    ) -> Result<Vec<u8>, CounterStoreError> {
+        let node = *node;
+        self.block(|reply| Job::LoadRecords { node, reply })?
+    }
+
+    /// Keep `records` as everything `node` holds of its sessions with
+    /// forward secrecy, as durably as a counter boundary, in turn with the
+    /// boundaries.
+    pub(crate) fn keep_forward_secrecy_records(
+        &self,
+        node: &umsh_core::PublicKey,
+        records: &[u8],
+    ) -> Result<(), CounterStoreError> {
+        let node = *node;
+        let records = records.to_vec();
+        self.block(|reply| Job::KeepRecords {
+            node,
+            records,
+            reply,
+        })?
+    }
+
     /// Queue a job and wait on this thread for its result.
     fn block<T>(&self, job: impl FnOnce(Reply<T>) -> Job) -> Result<T, CounterStoreError> {
         let (reply, result) = mpsc::sync_channel(1);
@@ -175,6 +212,14 @@ impl CounterFiles {
                     reply,
                 } => reply.send(self.commit_boundary_unlocked(&context, boundary, None)),
                 Job::Flush { reply } => reply.send(self.flush()),
+                Job::LoadRecords { node, reply } => {
+                    reply.send(self.load_forward_secrecy_records(&node));
+                }
+                Job::KeepRecords {
+                    node,
+                    records,
+                    reply,
+                } => reply.send(self.keep_forward_secrecy_records(&node, &records)),
             }
         }
     }
@@ -208,9 +253,67 @@ impl CounterFiles {
         failpoint: Option<CommitStage>,
     ) -> Result<(), CounterStoreError> {
         let destination = self.record_path(context)?;
+        self.write_atomically(&destination, &encode_record(boundary), failpoint)
+    }
+
+    /// The records `node` keeps of its sessions with forward secrecy, as
+    /// [`umsh_node::PfsSessionRecord::encode_all`] wrote them: empty when
+    /// it keeps none.
+    fn load_forward_secrecy_records(
+        &self,
+        node: &umsh_core::PublicKey,
+    ) -> Result<Vec<u8>, CounterStoreError> {
+        match fs::read(self.forward_secrecy_path(node)) {
+            Ok(records) => Ok(records),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+            Err(_) => Err(CounterStoreError::IoFailure),
+        }
+    }
+
+    /// Keep `records` as everything `node` holds of its sessions with
+    /// forward secrecy, as durably as a counter boundary.
+    fn keep_forward_secrecy_records(
+        &self,
+        node: &umsh_core::PublicKey,
+        records: &[u8],
+    ) -> Result<(), CounterStoreError> {
+        let path = self.forward_secrecy_path(node);
+        if !records.is_empty() {
+            return self.write_atomically(&path, records, None);
+        }
+        // Keeping nothing is having no file: nothing is written, and the
+        // directory is not made, for a node that never held a session.
+        match fs::remove_file(&path) {
+            Ok(()) => File::open(&self.root)
+                .and_then(|directory| directory.sync_all())
+                .map_err(|_| CounterStoreError::IoFailure),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(_) => Err(CounterStoreError::IoFailure),
+        }
+    }
+
+    /// Beside the counter boundaries, named for the node: only public keys
+    /// go in it, never a session's private key.
+    fn forward_secrecy_path(&self, node: &umsh_core::PublicKey) -> PathBuf {
+        let mut filename = String::with_capacity(node.0.len() * 2 + 4);
+        for byte in node.0 {
+            use fmt::Write as _;
+            write!(&mut filename, "{byte:02x}").expect("writing to String cannot fail");
+        }
+        filename.push_str(".pfs");
+        self.root.join(filename)
+    }
+
+    /// Write `record` to a temporary file, synchronize it, rename it over
+    /// `destination`, then synchronize the directory.
+    fn write_atomically(
+        &self,
+        destination: &Path,
+        record: &[u8],
+        failpoint: Option<CommitStage>,
+    ) -> Result<(), CounterStoreError> {
         fs::create_dir_all(&self.root).map_err(|_| CounterStoreError::IoFailure)?;
         let temporary = destination.with_extension("pending");
-        let record = encode_record(boundary);
 
         let result = (|| {
             let mut file = OpenOptions::new()
@@ -219,14 +322,14 @@ impl CounterFiles {
                 .write(true)
                 .open(&temporary)
                 .map_err(|_| CounterStoreError::IoFailure)?;
-            file.write_all(&record)
+            file.write_all(record)
                 .map_err(|_| CounterStoreError::IoFailure)?;
             fail_at(failpoint, CommitStage::Written)?;
             file.sync_all().map_err(|_| CounterStoreError::IoFailure)?;
             fail_at(failpoint, CommitStage::FileSynced)?;
             drop(file);
 
-            fs::rename(&temporary, &destination).map_err(|_| CounterStoreError::IoFailure)?;
+            fs::rename(&temporary, destination).map_err(|_| CounterStoreError::IoFailure)?;
             fail_at(failpoint, CommitStage::Renamed)?;
             File::open(&self.root)
                 .and_then(|directory| directory.sync_all())

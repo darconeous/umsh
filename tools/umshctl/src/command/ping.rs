@@ -250,7 +250,7 @@ pub async fn run(ctl: &mut Ctl<'_>, args: PingArgs) -> Result<()> {
 
         if seq < args.count {
             let until = Instant::now() + Duration::from_secs(args.interval);
-            pump_until(ctl, until, || false).await?;
+            wait_until(ctl, until, || false).await;
         }
     }
 
@@ -300,7 +300,7 @@ async fn one_ping(
             None => peer.send(&payload, &options).await,
         }
         .map_err(describe_send)?;
-        pump_until(ctl, deadline, || ticket.is_finished()).await?;
+        wait_until(ctl, deadline, || ticket.is_finished()).await;
         return Ok(if ticket.was_acked() {
             Reply::Acked(started.elapsed().as_millis() as u64)
         } else {
@@ -328,10 +328,10 @@ async fn one_ping(
     }
     .map_err(describe_send)?;
 
-    pump_until(ctl, deadline, || {
+    wait_until(ctl, deadline, || {
         pong.borrow().is_some() || *expired.borrow()
     })
-    .await?;
+    .await;
 
     Ok(match pong.borrow_mut().take() {
         Some(metadata) => Reply::Echo(metadata),
@@ -339,18 +339,11 @@ async fn one_ping(
     })
 }
 
-/// Drive the host until `done` or the deadline, whichever comes first.
-async fn pump_until(
-    ctl: &mut Ctl<'_>,
-    deadline: Instant,
-    mut done: impl FnMut() -> bool,
-) -> Result<()> {
+/// Wait until `done` or the deadline, whichever comes first.
+async fn wait_until(ctl: &Ctl<'_>, deadline: Instant, mut done: impl FnMut() -> bool) {
     while !done() && Instant::now() < deadline {
-        // A quiet radio produces no MAC wake, so the deadlines that retire
-        // an unanswered ping need their own nudge—which the pump does.
-        ctl.stack.pump_until(deadline).await?;
+        ctl.stack.wait_until(deadline).await;
     }
-    Ok(())
 }
 
 /// What went wrong on the way to the antenna, in the terms of the flag

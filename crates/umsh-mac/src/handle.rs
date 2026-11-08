@@ -530,6 +530,16 @@ impl<
         self.mac.borrow().await.clock().now_ms()
     }
 
+    /// Have the driver complete a wake cycle no later than `deadline_ms`.
+    /// See [`Mac::wake_by`].
+    ///
+    /// The borrow's release re-polls a driver waiting in
+    /// [`next_event`](Self::next_event), so the request takes effect on the
+    /// wait already in progress.
+    pub async fn wake_by(&self, deadline_ms: u64) {
+        self.mac.borrow_mut().await.wake_by(deadline_ms);
+    }
+
     #[cfg(feature = "software-crypto")]
     /// Registers an ephemeral software identity with the shared coordinator.
     pub async fn register_ephemeral(
@@ -637,6 +647,35 @@ impl<
     /// MAC answers to besides its long-term identities'.
     pub async fn ephemeral_keys(&self) -> heapless::Vec<PublicKey, IDENTITIES> {
         self.mac.borrow().await.ephemeral_keys().collect()
+    }
+
+    /// See [`Mac::watch_retired_address`](crate::Mac::watch_retired_address).
+    pub async fn watch_retired_address(
+        &self,
+        parent: LocalIdentityId,
+        address: PublicKey,
+        peer: PublicKey,
+    ) -> Result<(), crate::CapacityError> {
+        self.mac
+            .borrow_mut()
+            .await
+            .watch_retired_address(parent, address, peer)
+    }
+
+    /// See [`Mac::forget_retired_address`](crate::Mac::forget_retired_address).
+    pub async fn forget_retired_address(&self, address: &PublicKey) -> bool {
+        self.mac.borrow_mut().await.forget_retired_address(address)
+    }
+
+    /// The retired addresses watched: addresses this MAC holds no key
+    /// for, but whose traffic it still recognizes.
+    pub async fn retired_addresses(&self) -> heapless::Vec<crate::RetiredAddress, IDENTITIES> {
+        self.mac
+            .borrow()
+            .await
+            .retired_addresses()
+            .copied()
+            .collect()
     }
 
     /// Return the public key of a local identity, if that slot is occupied.

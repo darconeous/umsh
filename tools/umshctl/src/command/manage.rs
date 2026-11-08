@@ -212,51 +212,55 @@ async fn operate(
     op: Operation,
     no_save: bool,
 ) -> Result<()> {
-    let (stack, local_key) = NodeStack::build(mac, identity, ctx).await?;
-    let peer = stack
-        .node
-        .peer(target)
-        .await
-        .map_err(|error| anyhow!("registering the device as a peer: {error:?}"))?;
-    // What an earlier invocation learned about reaching this node, put
-    // back before the first frame. This is the path that matters most:
-    // `manage` and `ping` are run from scripts, over and over, and each
-    // one used to start by flooding for a route it had just been told.
-    let mut routes = crate::routes::RouteCache::load();
-    if let Some(record) = routes.get(&target) {
-        peer.restore_route(record.route.clone()).await;
-    }
+    let (stack, mut pump, local_key) = NodeStack::build(mac, identity, ctx).await?;
 
-    // The first token has only to be unpredictable; the manager keeps
-    // every one after it distinct from all of its own, and the device
-    // forgets this process's tokens long before another random seed
-    // could land on them.
-    let mut seed = [0u8; 2];
-    rng().fill_bytes(&mut seed);
-    let manager = NodeManager::new(peer, u16::from_be_bytes(seed));
+    pump.drive(async {
+        let peer = stack
+            .node
+            .peer(target)
+            .await
+            .map_err(|error| anyhow!("registering the device as a peer: {error:?}"))?;
+        // What an earlier invocation learned about reaching this node, put
+        // back before the first frame. This is the path that matters most:
+        // `manage` and `ping` are run from scripts, over and over, and each
+        // one used to start by flooding for a route it had just been told.
+        let mut routes = crate::routes::RouteCache::load();
+        if let Some(record) = routes.get(&target) {
+            peer.restore_route(record.route.clone()).await;
+        }
 
-    field("administrator", local_key.to_string());
-    field(
-        match op {
-            Operation::Manage(_) => "device",
-            Operation::PeerRepeaters => "repeater",
-            Operation::Ping(_) => "target",
-        },
-        target.to_string(),
-    );
+        // The first token has only to be unpredictable; the manager keeps
+        // every one after it distinct from all of its own, and the device
+        // forgets this process's tokens long before another random seed
+        // could land on them.
+        let mut seed = [0u8; 2];
+        rng().fill_bytes(&mut seed);
+        let manager = NodeManager::new(peer, u16::from_be_bytes(seed));
 
-    let mut ctl = Ctl {
-        stack,
-        target,
-        manager,
-    };
-    let result = run_op(&mut ctl, op, no_save).await;
-    let _ = ctl.stack.handle.service_counter_persistence().await;
-    routes.harvest(&ctl.stack.handle).await;
-    if let Err(error) = routes.store() {
-        crate::output::warn(format!("could not save learned routes: {error:#}"));
-    }
-    result
+        field("administrator", local_key.to_string());
+        field(
+            match op {
+                Operation::Manage(_) => "device",
+                Operation::PeerRepeaters => "repeater",
+                Operation::Ping(_) => "target",
+            },
+            target.to_string(),
+        );
+
+        let mut ctl = Ctl {
+            stack,
+            target,
+            manager,
+        };
+        let result = run_op(&mut ctl, op, no_save).await;
+        let _ = ctl.stack.handle.service_counter_persistence().await;
+        routes.harvest(&ctl.stack.handle).await;
+        if let Err(error) = routes.store() {
+            crate::output::warn(format!("could not save learned routes: {error:#}"));
+        }
+        result
+    })
+    .await
 }
 
 /// The tool as a node, for the duration of one operation.
@@ -479,7 +483,7 @@ async fn peer_repeaters(ctl: &mut Ctl<'_>) -> Result<()> {
             if Instant::now() >= deadline {
                 break None;
             }
-            ctl.stack.pump_until(deadline).await?;
+            ctl.stack.wait_until(deadline).await;
         };
 
         let Some(body) = body else {

@@ -570,6 +570,8 @@ This identity separation is not unconditional. The PFS handshake messages are au
 
 Additionally, implementations that use a single device-wide frame counter expose a correlation opportunity: an observer who can read the frame counter field across packets (e.g. by receiving a packet before and after the PFS handshake) may notice continuity in the counter value and link the ephemeral addresses to the originating nodes. Implementations that wish to preserve wire-level identity unlinkability should use independent frame counters for each node address—including ephemeral ones—so that session traffic is not correlated with long-term traffic through counter continuity.
 
+A node that keeps records of its [retired sessions](#retired-sessions) holds, in its storage, the link between each ephemeral address and the long-term identities that established it. Anyone who can read that storage learns which ephemeral addresses belonged to whom. The same link is usually available to a patient observer anyway: the handshake names the long-term addresses, and the ephemeral addresses appear on the air immediately afterward.
+
 From the application layer's perspective, the implementation maps the ephemeral identity back to the originating long-term node ID throughout the session, so applications continue to see communication with the same peer they initiated the session with.
 
 ### Session Lifetime
@@ -587,3 +589,13 @@ Upon session end, both sides **must securely erase/zeroize the private keys for 
 
 > [!CAUTION]
 > Implementations must ensure that the private keys for ephemeral addresses are not swapped to disk, written to logs, or otherwise persisted in any form. On embedded platforms, this requires explicitly zeroing the key material in RAM before releasing it. Failure to securely erase these keys eliminates the PFS property entirely.
+
+### Retired Sessions
+
+A device that reboots loses its ephemeral private keys, and with them every session it held. Its peer has no way to learn this on its own and goes on sending to the lost ephemeral address until the session's duration runs out.
+
+To end such a session promptly, a node MAY keep, in durable storage, the *public* half of each session it holds: its own ephemeral address, the peer's ephemeral address, the peer's long-term address, and when the session expires. After a reboot, a session it can no longer use is *retired*. The node keeps its record until the agreed duration has passed, the session is ended, or a new session with that peer replaces it. A node that cannot tell how much of the duration remains counts the whole agreed duration from when it booted.
+
+When a node receives a unicast or blind unicast whose destination hint is that of a retired session's local ephemeral address, and whose source is that session peer's ephemeral address, it discards the packet. It SHOULD then send an [End PFS Session](mac-commands.md#end-pfs-session-8) to the peer, and forget the record once that command is acknowledged. A node that does not hear an acknowledgment keeps the record, and the next such packet prompts another End PFS Session.
+
+Only public keys are kept. The private keys are erased exactly as for any other session end, so a retired session's traffic stays as irrecoverable as that of a session that simply expired.

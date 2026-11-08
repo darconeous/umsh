@@ -14,6 +14,10 @@ use alloc::vec::Vec;
 use core::cell::RefCell;
 use core::fmt::Write as _;
 
+/// Room for every record the device node keeps of its sessions with
+/// forward secrecy, with some to spare.
+const FORWARD_SECRECY_MAX: usize = 1024;
+
 use umsh_core::{ChannelKey, ChannelTag, NodeHint, PublicKey, base58};
 use umsh_text::chat::{Change, ChatFacade, ChatOutput, Seeds};
 use umsh_text::engine::sequence::MessageHandle;
@@ -110,7 +114,7 @@ impl Rows {
 /// Whether the peer's radio acknowledged every fragment of an outbound
 /// message.
 fn acknowledged(delivery: &record::Delivery) -> bool {
-    delivery.acked != 0 && delivery.sent & !delivery.acked == 0
+    delivery.delivered()
 }
 
 /// How an outbound message came out, once it has: delivered (`true`) or
@@ -1379,6 +1383,27 @@ impl<S: ChatStore> Chats<S> {
     pub fn keep_recent_picks(&mut self, picks: &str) {
         let record = Some(picks.as_bytes()).filter(|p| !p.is_empty());
         _ = self.store.keep_recent_picks(record);
+    }
+
+    /// What the device node keeps here of its sessions with forward
+    /// secrecy: empty when it keeps nothing, or what it kept cannot be
+    /// read.
+    pub fn forward_secrecy_records(&self) -> Vec<u8> {
+        let mut out = vec![0; FORWARD_SECRECY_MAX];
+        let kept = self
+            .store
+            .forward_secrecy_records(&mut out)
+            .ok()
+            .flatten()
+            .map_or(0, <[u8]>::len);
+        out.truncate(kept);
+        out
+    }
+
+    /// Keeps `records` as the device node's sessions with forward secrecy.
+    pub fn keep_forward_secrecy_records(&mut self, records: &[u8]) {
+        let record = Some(records).filter(|r| !r.is_empty());
+        _ = self.store.keep_forward_secrecy_records(record);
     }
 
     /// How `message` reached this device, or which repeaters carried mine,

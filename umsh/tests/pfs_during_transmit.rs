@@ -69,8 +69,9 @@ impl Radio for GatedRadio {
 }
 
 /// Holds `pump` on the air, starts `operation` so that it waits on the MAC,
-/// then lets the transmission finish and the pump dispatch its result.
-async fn run_during_transmit<T>(
+/// then lets the transmission finish and the pump dispatch its result, with
+/// the pump running beside the operation until the operation is done.
+async fn run_during_transmit<T: core::fmt::Debug>(
     pump: impl Future<Output = T>,
     on_air: &Cell<bool>,
     finish: &Cell<bool>,
@@ -87,12 +88,15 @@ async fn run_during_transmit<T>(
     assert!(operation.as_mut().poll(&mut cx).is_pending());
 
     finish.set(true);
-    tokio::time::timeout(PATIENCE, pump)
-        .await
-        .expect("the pump finishes once the transmission does");
-    tokio::time::timeout(PATIENCE, operation)
-        .await
-        .expect("the operation finishes once the pump lets go of the MAC");
+    let finished = async {
+        tokio::time::timeout(PATIENCE, operation)
+            .await
+            .expect("the operation finishes once the pump lets go of the MAC");
+    };
+    tokio::select! {
+        result = pump => panic!("the pump stopped: {result:?}"),
+        () = finished => {}
+    }
 }
 
 /// A node with `hello` queued for `peer`, and the handles to hold its
@@ -133,7 +137,7 @@ async fn a_request_waits_for_the_mac_with_the_state_free() {
     node_with_a_queued_send!(scratch, mac, host, node, peer, on_air, finish);
     let options = SendOptions::default();
 
-    run_during_transmit(host.pump_once(), &on_air, &finish, async {
+    run_during_transmit(host.run(), &on_air, &finish, async {
         node.request_pfs(&peer, 60, &options).await.expect("sent");
     })
     .await;
@@ -150,7 +154,7 @@ async fn an_end_waits_for_the_mac_with_the_state_free() {
     let options = SendOptions::default();
     node.request_pfs(&peer, 60, &options).await.expect("sent");
 
-    run_during_transmit(host.pump_once(), &on_air, &finish, async {
+    run_during_transmit(host.run(), &on_air, &finish, async {
         node.end_pfs(&peer, &options).await.expect("ended");
     })
     .await;

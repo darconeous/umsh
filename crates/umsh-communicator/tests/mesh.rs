@@ -13,7 +13,8 @@ use umsh::crypto::{CryptoEngine, NodeIdentity};
 use umsh::mac::test_support::{SimulatedNetwork, SimulatedRadio};
 use umsh::mac::{Mac, MacHandle, OperatingPolicy, RepeaterConfig};
 use umsh::node::{
-    Host, IdentityUpdate, LocalNode, NodeCapabilities, NodeIdentityPayload, NodeRole, PfsStatus,
+    Host, IdentityUpdate, LocalNode, NodeCapabilities, NodeIdentityPayload, NodeRole,
+    PfsSessionRecord, PfsStatus,
 };
 use umsh::tokio_support::{MemoryCounterStore, MemoryKeyValueStore, StdClock, TokioPlatform};
 use umsh_communicator::task::{self, Inbox};
@@ -42,9 +43,6 @@ type MeshMac = Mac<Platform, 5, 16, 4, 8, 8, 255, 32>;
 
 /// A test that stops making progress fails rather than hangs.
 const PATIENCE: Duration = Duration::from_secs(20);
-
-/// How long one turn of a device node's pump waits for its radio.
-const TURN: Duration = Duration::from_millis(5);
 
 /// The board's clock, from when the test started.
 struct Since(Instant);
@@ -115,15 +113,10 @@ async fn board(radio: SimulatedRadio, secret: [u8; 32]) -> Board {
 
     let inbox: &'static Inbox<NoopRawMutex> = Box::leak(Box::new(Inbox::new()));
     std::mem::forget(task::listen(&mesh, inbox, key, WellKnownChannels::derive()));
-    // The simulated radio wakes no one when a frame reaches it, so the
-    // pump is polled again every few milliseconds.
+    // The device node's data pump, as its own task for the life of the
+    // test: never raced, never timed out.
     spawn_local(async move {
-        loop {
-            if let Ok(pumped) = tokio::time::timeout(TURN, host.pump_once()).await {
-                pumped.unwrap();
-            }
-            handle.service_counter_persistence().await.unwrap();
-        }
+        host.run().await.unwrap();
     });
     let board = Board {
         node,
@@ -175,11 +168,7 @@ async fn repeater(radio: SimulatedRadio, secret: [u8; 32]) -> PublicKey {
     let handle = MacHandle::new(mac);
     handle.add_identity(identity).await.unwrap();
     spawn_local(async move {
-        loop {
-            if let Ok(served) = tokio::time::timeout(TURN, handle.next_event(|_, _| {})).await {
-                served.unwrap();
-            }
-        }
+        handle.run(|_, _| {}).await.unwrap();
     });
     key
 }
@@ -394,6 +383,16 @@ async fn forward_secrecy_is_held_with_a_peer_who_prefers_it() {
 
             alice.node.set_forward_secrecy(peer, true);
             until("the chat does not show the session", shown).await;
+            // Each board keeps the public half of the session, to know it
+            // again should a reboot lose the rest.
+            let kept =
+                |board: &Board| PfsSessionRecord::decode_all(&board.node.forward_secrecy_records());
+            until("the session was not kept", || {
+                kept(&alice).len() == 1 && kept(&bob).len() == 1
+            })
+            .await;
+            assert_eq!(kept(&alice)[0].peer, bob.key);
+            assert_eq!(kept(&bob)[0].peer, alice.key);
             let during = say("Meet at the ridge").await;
             assert!(secret(during));
             // Bob holds the session once Alice's first frame under it
@@ -403,6 +402,10 @@ async fn forward_secrecy_is_held_with_a_peer_who_prefers_it() {
             alice.node.set_forward_secrecy(peer, false);
             assert!(!shown(), "the chat shows the session ended at once");
             until_secrecy(&alice, &bob, false).await;
+            until("the ended session was still kept", || {
+                kept(&alice).is_empty() && kept(&bob).is_empty()
+            })
+            .await;
             let after = say("Almost there").await;
             assert!(!secret(after));
             assert!(!secret(before) && secret(during), "each keeps its own");

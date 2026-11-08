@@ -363,10 +363,31 @@ where
     R: RawMutex,
     F: Future<Output = ()>,
 {
+    // The sessions with forward secrecy the device node held before this
+    // boot: their keys are gone, and a peer still using one is told the
+    // session is over. What the records become is kept again as it
+    // changes, and the loop comes round at least once a tick to see.
+    #[cfg(feature = "software-crypto")]
+    let (pfs_records_changed, _pfs_records_subscription) = {
+        let kept = node.forward_secrecy_records();
+        mesh.restore_pfs_session_records(
+            &umsh_node::PfsSessionRecord::decode_all(&kept),
+            node.clock().wall(),
+        )
+        .await;
+        let changed = alloc::rc::Rc::new(core::cell::Cell::new(true));
+        let flag = changed.clone();
+        (changed, mesh.on_pfs_records_changed(move || flag.set(true)))
+    };
     let mut tick_at = node.clock().now_ms();
     loop {
         while let Some(arrival) = inbox.take() {
             node.arrive(arrival);
+        }
+        #[cfg(feature = "software-crypto")]
+        if pfs_records_changed.replace(false) {
+            let records = mesh.pfs_session_records(node.clock().wall()).await;
+            node.keep_forward_secrecy_records(&umsh_node::PfsSessionRecord::encode_all(&records));
         }
         // What a frame carries changes with the channels held and with how
         // the device node is set up, so it is measured again on each tick

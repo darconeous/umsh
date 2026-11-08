@@ -17,7 +17,7 @@ use zeroize::Zeroize;
 
 #[cfg(feature = "software-crypto")]
 use crate::{
-    MacCommand,
+    MacCommand, SendToken,
     mac::MacBackend,
     mac_command,
     node::{LocalNodeState, NodeError},
@@ -164,6 +164,148 @@ impl core::fmt::Debug for PfsSession {
     }
 }
 
+/// The public half of a session with forward secrecy: what a node keeps of
+/// it in durable storage so that, after a reboot loses the session's private
+/// key, it still recognizes traffic the peer goes on sending under it and can
+/// end the session (security.md, Retired Sessions).
+///
+/// Every field is public. Nothing here can open the session's traffic.
+#[cfg(feature = "software-crypto")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PfsSessionRecord {
+    /// The peer's long-term address.
+    pub peer: PublicKey,
+    /// The address this node answered to during the session.
+    pub local_ephemeral: PublicKey,
+    /// The address the peer sent from during the session.
+    pub peer_ephemeral: PublicKey,
+    /// When the session ends, in seconds since the Unix epoch, if the
+    /// node knew the time when the record was taken.
+    pub expires_at: Option<u32>,
+    /// What was left of the session, in seconds, when the record was taken.
+    /// Counted from any later moment, this is never short of what is left.
+    pub lifetime_s: u32,
+}
+
+#[cfg(feature = "software-crypto")]
+impl PfsSessionRecord {
+    /// Length of one record's encoding.
+    pub const ENCODED_LEN: usize = 1 + 3 * 32 + 4 + 4;
+    const VERSION: u8 = 1;
+
+    /// Encode as a version byte, the three keys, then `expires_at` (0 when
+    /// unknown) and `lifetime_s`, big-endian.
+    pub fn encode(&self) -> [u8; Self::ENCODED_LEN] {
+        let mut out = [0u8; Self::ENCODED_LEN];
+        out[0] = Self::VERSION;
+        out[1..33].copy_from_slice(&self.peer.0);
+        out[33..65].copy_from_slice(&self.local_ephemeral.0);
+        out[65..97].copy_from_slice(&self.peer_ephemeral.0);
+        out[97..101].copy_from_slice(&self.expires_at.unwrap_or(0).to_be_bytes());
+        out[101..105].copy_from_slice(&self.lifetime_s.to_be_bytes());
+        out
+    }
+
+    /// Decode one record, or `None` for anything that is not one.
+    pub fn decode(bytes: &[u8]) -> Option<Self> {
+        let bytes: &[u8; Self::ENCODED_LEN] = bytes.try_into().ok()?;
+        if bytes[0] != Self::VERSION {
+            return None;
+        }
+        let key = |at: usize| {
+            let mut key = [0u8; 32];
+            key.copy_from_slice(&bytes[at..at + 32]);
+            PublicKey(key)
+        };
+        let word = |at: usize| {
+            u32::from_be_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]])
+        };
+        Some(Self {
+            peer: key(1),
+            local_ephemeral: key(33),
+            peer_ephemeral: key(65),
+            expires_at: Some(word(97)).filter(|at| *at != 0),
+            lifetime_s: word(101),
+        })
+    }
+
+    /// Encode `records` one after another.
+    pub fn encode_all(records: &[Self]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(records.len() * Self::ENCODED_LEN);
+        for record in records {
+            out.extend_from_slice(&record.encode());
+        }
+        out
+    }
+
+    /// Decode what [`Self::encode_all`] wrote, skipping any record that
+    /// does not decode.
+    pub fn decode_all(bytes: &[u8]) -> Vec<Self> {
+        bytes
+            .chunks_exact(Self::ENCODED_LEN)
+            .filter_map(Self::decode)
+            .collect()
+    }
+
+    /// What is left of the session at `now_unix`, in milliseconds. Without
+    /// both times, the session is held to the whole of `lifetime_s`; and it
+    /// is never held past that, whatever the clock says.
+    pub fn remaining_ms(&self, now_unix: Option<u32>) -> u64 {
+        let lifetime_s = match (self.expires_at, now_unix) {
+            (Some(expires_at), Some(now)) => expires_at.saturating_sub(now).min(self.lifetime_s),
+            _ => self.lifetime_s,
+        };
+        u64::from(lifetime_s) * 1000
+    }
+
+    /// The record of a session ending at `expires_ms`, or `None` once it
+    /// has ended.
+    fn of(
+        peer: PublicKey,
+        local_ephemeral: PublicKey,
+        peer_ephemeral: PublicKey,
+        expires_ms: u64,
+        now_ms: u64,
+        now_unix: Option<u32>,
+    ) -> Option<Self> {
+        let remaining_ms = expires_ms.checked_sub(now_ms).filter(|ms| *ms > 0)?;
+        let lifetime_s = u32::try_from(remaining_ms.div_ceil(1000)).unwrap_or(u32::MAX);
+        Some(Self {
+            peer,
+            local_ephemeral,
+            peer_ephemeral,
+            expires_at: now_unix.map(|now| now.saturating_add(lifetime_s)),
+            lifetime_s,
+        })
+    }
+}
+
+/// How far ending a retired session with its peer has got.
+#[cfg(feature = "software-crypto")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Closing {
+    /// Nothing sent, or what was sent went unanswered.
+    Idle,
+    /// The End PFS Session is being queued.
+    Sending,
+    /// Sent, waiting for the peer's acknowledgment.
+    AwaitingAck(SendToken),
+    /// Acknowledged: the session has ended at both ends.
+    Closed,
+}
+
+/// A session this node can no longer use, kept until it would have ended so
+/// that the peer's traffic under it is recognized; see [`PfsSessionRecord`].
+#[cfg(feature = "software-crypto")]
+#[derive(Debug)]
+pub(crate) struct RetiredPfsSession {
+    peer_long_term: PublicKey,
+    local_ephemeral: PublicKey,
+    peer_ephemeral: PublicKey,
+    expires_ms: u64,
+    closing: Closing,
+}
+
 #[cfg(feature = "software-crypto")]
 /// Fixed-capacity manager for endpoint-level PFS sessions.
 ///
@@ -176,6 +318,8 @@ impl core::fmt::Debug for PfsSession {
 /// finds at its next step whether it was ended or replaced in the meantime.
 pub(crate) struct PfsSessionManager {
     sessions: Vec<PfsSession>,
+    /// Sessions lost to a reboot, held to the same capacity as live ones.
+    retired: Vec<RetiredPfsSession>,
     max_sessions: usize,
     /// Requests and responses refused because the ephemeral key they named
     /// is already an address this node knows.
@@ -197,6 +341,9 @@ pub(crate) struct PfsSessionManager {
     /// The peers whose requests this node answered within
     /// [`PFS_REQUEST_INTERVAL_MS`], and when, oldest first.
     recent_requests: Vec<(PublicKey, u64)>,
+    /// Set whenever what [`Self::records`] would return changes, until
+    /// [`Self::take_records_changed`] reports it.
+    records_changed: bool,
 }
 
 #[cfg(feature = "software-crypto")]
@@ -212,6 +359,7 @@ impl PfsSessionManager {
     pub(crate) fn new() -> Self {
         Self {
             sessions: Vec::new(),
+            retired: Vec::new(),
             max_sessions: DEFAULT_MAX_PFS_SESSIONS,
             refused_ephemeral_keys: 0,
             refused_requesters: 0,
@@ -221,7 +369,156 @@ impl PfsSessionManager {
             stale_ends: 0,
             undelivered_sessions: 0,
             recent_requests: Vec::new(),
+            records_changed: false,
         }
+    }
+
+    /// The record of every session holding keys and every retired one, as of
+    /// `now_ms` on the MAC clock and `now_unix` on the wall clock.
+    pub(crate) fn records(&self, now_ms: u64, now_unix: Option<u32>) -> Vec<PfsSessionRecord> {
+        let active = self
+            .sessions
+            .iter()
+            .filter(|session| session.state.has_keys())
+            .map(|session| {
+                (
+                    session.peer_long_term,
+                    session.local_ephemeral,
+                    session.peer_ephemeral,
+                    session.expires_ms,
+                )
+            });
+        let retired = self.retired.iter().map(|retired| {
+            (
+                retired.peer_long_term,
+                retired.local_ephemeral,
+                retired.peer_ephemeral,
+                retired.expires_ms,
+            )
+        });
+        active
+            .chain(retired)
+            .filter_map(|(peer, local, peer_ephemeral, expires_ms)| {
+                PfsSessionRecord::of(peer, local, peer_ephemeral, expires_ms, now_ms, now_unix)
+            })
+            .collect()
+    }
+
+    /// Whether the records changed since this was last asked.
+    pub(crate) fn take_records_changed(&mut self) -> bool {
+        core::mem::take(&mut self.records_changed)
+    }
+
+    /// Note that `session` left the table.
+    fn note_removed(&mut self, session: &PfsSession) {
+        if session.state.has_keys() {
+            self.records_changed = true;
+        }
+    }
+
+    /// Retire `record`, ending at `expires_ms`, unless a session with its
+    /// peer is already known or the table is full.
+    fn retire(&mut self, record: &PfsSessionRecord, expires_ms: u64) -> bool {
+        let known = self
+            .sessions
+            .iter()
+            .any(|session| session.peer_long_term == record.peer)
+            || self
+                .retired
+                .iter()
+                .any(|retired| retired.peer_long_term == record.peer);
+        if known || self.retired.len() >= self.max_sessions {
+            return false;
+        }
+        self.retired.push(RetiredPfsSession {
+            peer_long_term: record.peer,
+            local_ephemeral: record.local_ephemeral,
+            peer_ephemeral: record.peer_ephemeral,
+            expires_ms,
+            closing: Closing::Idle,
+        });
+        self.records_changed = true;
+        true
+    }
+
+    /// Remove the retired session with `peer`, returning its local address.
+    fn take_retired_peer(&mut self, peer: &PublicKey) -> Option<PublicKey> {
+        let index = self
+            .retired
+            .iter()
+            .position(|retired| retired.peer_long_term == *peer)?;
+        self.records_changed = true;
+        Some(self.retired.swap_remove(index).local_ephemeral)
+    }
+
+    /// Remove one retired session that has ended, returning its local
+    /// address and peer, and whether it ended by the peer acknowledging
+    /// its close.
+    fn take_finished_retired(&mut self, now_ms: u64) -> Option<(PublicKey, PublicKey, bool)> {
+        let index = self.retired.iter().position(|retired| {
+            retired.closing == Closing::Closed || retired.expires_ms <= now_ms
+        })?;
+        self.records_changed = true;
+        let retired = self.retired.swap_remove(index);
+        Some((
+            retired.local_ephemeral,
+            retired.peer_long_term,
+            retired.closing == Closing::Closed,
+        ))
+    }
+
+    /// Begin closing the retired session under `address`, returning its
+    /// peer, unless a close is already under way or done.
+    fn begin_close(&mut self, address: &PublicKey) -> Option<PublicKey> {
+        let retired = self
+            .retired
+            .iter_mut()
+            .find(|retired| retired.local_ephemeral == *address)?;
+        if retired.closing != Closing::Idle {
+            return None;
+        }
+        retired.closing = Closing::Sending;
+        Some(retired.peer_long_term)
+    }
+
+    /// Record what became of queueing the close for `address`: `Some`
+    /// waits for that send's acknowledgment, `None` counts it closed, and
+    /// a failure (`sent == false`) leaves it to be tried again.
+    fn close_queued(&mut self, address: &PublicKey, sent: bool, token: Option<SendToken>) {
+        let Some(retired) = self
+            .retired
+            .iter_mut()
+            .find(|retired| retired.local_ephemeral == *address)
+        else {
+            return;
+        };
+        if retired.closing != Closing::Sending {
+            return;
+        }
+        retired.closing = match (sent, token) {
+            (false, _) => Closing::Idle,
+            (true, Some(token)) => Closing::AwaitingAck(token),
+            (true, None) => Closing::Closed,
+        };
+    }
+
+    /// Settle the close sent as `token`: acknowledged, or not, in which
+    /// case the next stale frame tries again. Reports whether `token` was
+    /// one.
+    pub(crate) fn close_settled(&mut self, token: SendToken, acked: bool) -> bool {
+        let Some(retired) = self
+            .retired
+            .iter_mut()
+            .find(|retired| retired.closing == Closing::AwaitingAck(token))
+        else {
+            return false;
+        };
+        retired.closing = if acked {
+            Closing::Closed
+        } else {
+            Closing::Idle
+        };
+        true
     }
 
     /// Borrow the tracked sessions.
@@ -473,7 +770,9 @@ impl PfsSessionManager {
             .iter_mut()
             .find(|existing| existing.peer_long_term == session.peer_long_term)
         {
-            return Ok(Some(core::mem::replace(existing, session)));
+            let displaced = core::mem::replace(existing, session);
+            self.note_removed(&displaced);
+            return Ok(Some(displaced));
         }
         if self.sessions.len() >= self.max_sessions {
             return Err(NodeError::PfsSessionTableFull);
@@ -488,7 +787,9 @@ impl PfsSessionManager {
             .sessions
             .iter()
             .position(|session| session.peer_long_term == *peer)?;
-        Some(self.sessions.swap_remove(index))
+        let session = self.sessions.swap_remove(index);
+        self.note_removed(&session);
+        Some(session)
     }
 
     /// Remove the session under the local key `local_ephemeral`.
@@ -497,7 +798,9 @@ impl PfsSessionManager {
             .sessions
             .iter()
             .position(|session| session.local_ephemeral == *local_ephemeral)?;
-        Some(self.sessions.swap_remove(index))
+        let session = self.sessions.swap_remove(index);
+        self.note_removed(&session);
+        Some(session)
     }
 
     /// Remove one session past its end.
@@ -506,7 +809,9 @@ impl PfsSessionManager {
             .sessions
             .iter()
             .position(|session| session.expires_ms <= now_ms)?;
-        Some(self.sessions.swap_remove(index))
+        let session = self.sessions.swap_remove(index);
+        self.note_removed(&session);
+        Some(session)
     }
 
     /// Take the local identity of the session held with `peer`, if it is
@@ -543,7 +848,19 @@ impl PfsSessionManager {
             Some(_) => PfsState::Answered,
             None => PfsState::Active,
         };
+        self.records_changed = true;
         true
+    }
+
+    /// The earliest moment a session ends or a request is abandoned.
+    pub(crate) fn next_deadline_ms(&self) -> Option<u64> {
+        let sessions = self.sessions.iter().map(|session| match session.state {
+            PfsState::Requested => session.expires_ms.min(session.request_deadline_ms),
+            PfsState::Answered | PfsState::Active => session.expires_ms,
+        });
+        // A retired session goes at the end of the lifetime it was held to.
+        let retired = self.retired.iter().map(|retired| retired.expires_ms);
+        sessions.chain(retired).min()
     }
 
     /// Drop any `Requested` sessions whose response deadline has passed and
@@ -564,14 +881,7 @@ impl PfsSessionManager {
     }
 }
 
-/// How an inbound PFS command arrived.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct Carriage {
-    /// The channel a blind unicast arrived on: an answer follows it back.
-    pub(crate) channel: Option<ChannelKey>,
-    /// The frame counter it was sent under.
-    pub(crate) counter: Option<u32>,
-}
+pub(crate) use crate::host::PfsCarriage as Carriage;
 
 /// Initiate a new PFS session request.
 #[cfg(feature = "software-crypto")]
@@ -781,8 +1091,10 @@ pub(crate) async fn accept_response<M: MacBackend>(
 }
 
 /// Take an inbound End from `from`, and return the peer whose session it
-/// ended, if any. Which session that is, if any, is
-/// [`PfsSessionManager::end_target`]'s to judge.
+/// ended, if any. Which held session that is, if any, is
+/// [`PfsSessionManager::end_target`]'s to judge. A session this node lost
+/// to a reboot, and keeps only as a retired record, ends too: the peer's
+/// End is what says it is over.
 #[cfg(feature = "software-crypto")]
 pub(crate) async fn accept_end<M: MacBackend>(
     state: &RefCell<LocalNodeState>,
@@ -792,12 +1104,19 @@ pub(crate) async fn accept_end<M: MacBackend>(
 ) -> Option<PublicKey> {
     let session = {
         let mut state = state.borrow_mut();
-        let target = state.pfs.end_target(from, carriage.counter)?;
-        state.pfs.take_local(&target)?
+        state
+            .pfs
+            .end_target(from, carriage.counter)
+            .and_then(|target| state.pfs.take_local(&target))
     };
-    let peer = session.peer_long_term;
-    release(mac, session).await;
-    Some(peer)
+    if let Some(session) = session {
+        let peer = session.peer_long_term;
+        release(mac, session).await;
+        return Some(peer);
+    }
+    let address = state.borrow_mut().pfs.take_retired_peer(from)?;
+    let _ = mac.forget_retired_address(&address).await;
+    Some(*from)
 }
 
 /// End one session and optionally notify the peer.
@@ -810,10 +1129,18 @@ pub(crate) async fn end_session<M: MacBackend>(
     notify_peer: bool,
     options: &SendOptions,
 ) -> Result<bool, NodeError<M>> {
-    let Some(session) = state.borrow_mut().pfs.take_peer(peer) else {
-        return Err(NodeError::PfsSessionMissing);
-    };
-    release(mac, session).await;
+    let session = state.borrow_mut().pfs.take_peer(peer);
+    if let Some(session) = session {
+        release(mac, session).await;
+    } else {
+        // A session lost to a reboot ends the same way, and the peer's
+        // End is what tells a node its retired session is over.
+        let retired = state.borrow_mut().pfs.take_retired_peer(peer);
+        let Some(address) = retired else {
+            return Err(NodeError::PfsSessionMissing);
+        };
+        let _ = mac.forget_retired_address(&address).await;
+    }
     if notify_peer {
         send_pfs_command(mac, parent, peer, None, &MacCommand::EndPfsSession, options).await?;
     }
@@ -864,6 +1191,103 @@ pub(crate) async fn expire_sessions<M: MacBackend>(
     }
 }
 
+/// Retire the sessions `records` describe: this node lost their keys, but
+/// recognizes the traffic their peers go on sending under them. A record
+/// with nothing left of its session, or with a peer a session is already
+/// known with, is dropped, as is any past the table's capacity.
+#[cfg(feature = "software-crypto")]
+pub(crate) async fn restore_records<M: MacBackend>(
+    state: &RefCell<LocalNodeState>,
+    mac: &M,
+    parent: LocalIdentityId,
+    records: &[PfsSessionRecord],
+    now_unix: Option<u32>,
+) {
+    let now_ms = mac.now_ms().await;
+    for record in records {
+        let remaining_ms = record.remaining_ms(now_unix);
+        if remaining_ms == 0 {
+            continue;
+        }
+        let retired = state
+            .borrow_mut()
+            .pfs
+            .retire(record, now_ms.saturating_add(remaining_ms));
+        if retired
+            && !mac
+                .watch_retired_address(parent, record.local_ephemeral, record.peer_ephemeral)
+                .await
+        {
+            let _ = state.borrow_mut().pfs.take_retired_peer(&record.peer);
+        }
+    }
+    // Whatever was dropped is gone from the records too.
+    let next = {
+        let mut state = state.borrow_mut();
+        state.pfs.records_changed = true;
+        state.pfs.next_deadline_ms()
+    };
+    // A retired session has to lapse on a quiet radio too.
+    if let Some(deadline_ms) = next {
+        mac.wake_by(deadline_ms).await;
+    }
+}
+
+/// Ask the peer of the retired session under `address` to end it, unless
+/// that is already under way.
+#[cfg(feature = "software-crypto")]
+pub(crate) async fn close_retired<M: MacBackend>(
+    state: &RefCell<LocalNodeState>,
+    mac: &M,
+    parent: LocalIdentityId,
+    address: &PublicKey,
+    options: &SendOptions,
+) {
+    let Some(peer) = state.borrow_mut().pfs.begin_close(address) else {
+        return;
+    };
+    // The peer may be nobody this run has spoken to yet.
+    if mac.add_peer(peer).await.is_err() {
+        state.borrow_mut().pfs.close_queued(address, false, None);
+        return;
+    }
+    let (sent, token) = match send_pfs_command(
+        mac,
+        parent,
+        &peer,
+        None,
+        &MacCommand::EndPfsSession,
+        options,
+    )
+    .await
+    {
+        Ok(receipt) => (true, receipt.map(|receipt| SendToken::new(parent, receipt))),
+        Err(_) => (false, None),
+    };
+    state.borrow_mut().pfs.close_queued(address, sent, token);
+}
+
+/// Drop the retired sessions that are over, and return the peers of those
+/// that ended by the peer acknowledging their close.
+#[cfg(feature = "software-crypto")]
+pub(crate) async fn settle_retired<M: MacBackend>(
+    state: &RefCell<LocalNodeState>,
+    mac: &M,
+    now_ms: u64,
+) -> Vec<PublicKey> {
+    let mut closed = Vec::new();
+    loop {
+        let finished = state.borrow_mut().pfs.take_finished_retired(now_ms);
+        let Some((address, peer, acknowledged)) = finished else {
+            return closed;
+        };
+        let _ = mac.forget_retired_address(&address).await;
+        if acknowledged {
+            closed.push(peer);
+        }
+    }
+}
+
 /// Put a [`Requested`](PfsState::Requested) session with `peer` in the table
 /// under a fresh key, and return that key. A session already held with them
 /// is released first, so that its slot in the MAC is free for this one's.
@@ -884,6 +1308,7 @@ async fn begin_session<M: MacBackend>(
     secret.zeroize();
     let local_public = *local_ephemeral.public_key();
     let now_ms = mac.now_ms().await;
+    let request_deadline_ms = now_ms.saturating_add(PFS_REQUEST_TIMEOUT_MS);
     let displaced = state.borrow_mut().pfs.install(PfsSession {
         peer_long_term: *peer,
         local_ephemeral_id: LocalIdentityId(u8::MAX),
@@ -891,14 +1316,21 @@ async fn begin_session<M: MacBackend>(
         peer_ephemeral: PublicKey([0u8; 32]),
         expires_ms: now_ms.saturating_add(u64::from(duration_minutes) * 60_000),
         state: PfsState::Requested,
-        request_deadline_ms: now_ms.saturating_add(PFS_REQUEST_TIMEOUT_MS),
+        request_deadline_ms,
         answered_minutes: answering.then_some(duration_minutes),
         handshake_counter,
         undelivered: 0,
         pending_local: Some(local_ephemeral),
     })?;
+    // A request nobody answers has to be noticed on a quiet radio.
+    mac.wake_by(request_deadline_ms).await;
     if let Some(displaced) = displaced {
         release(mac, displaced).await;
+    }
+    // A new session with the peer replaces a retired one too.
+    let retired = state.borrow_mut().pfs.take_retired_peer(peer);
+    if let Some(address) = retired {
+        let _ = mac.forget_retired_address(&address).await;
     }
     Ok(local_public)
 }

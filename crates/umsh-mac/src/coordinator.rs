@@ -1268,6 +1268,9 @@ pub struct Mac<
     multicast_dup_cache: DuplicateCache<DUP>,
     tx_queue: TxQueue<TX, FRAME>,
     post_tx_listen: Option<PostTxListen>,
+    /// The moment a wake cycle has been asked to complete by; see
+    /// [`Self::wake_by`].
+    requested_wake_ms: Option<u64>,
     repeater: RepeaterConfig,
     operating_policy: OperatingPolicy,
     auto_register_full_key_peers: bool,
@@ -1282,6 +1285,22 @@ pub struct Mac<
     /// A frame's signature input, assembled here rather than on the stack or
     /// in a send's future.
     sig_input: [u8; SIGNATURE_INPUT_MAX],
+    /// Addresses of sessions this MAC can no longer use but still
+    /// recognizes; see [`Self::watch_retired_address`].
+    retired_addresses: Vec<RetiredAddress, IDENTITIES>,
+}
+
+/// An address a MAC holds no key for but still recognizes: the ephemeral
+/// address of a forward-secrecy session lost to a reboot, and the peer
+/// still using it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RetiredAddress {
+    /// The long-term identity the address belonged to.
+    pub parent: LocalIdentityId,
+    /// The retired address itself.
+    pub address: PublicKey,
+    /// The address its traffic comes from.
+    pub peer: PublicKey,
 }
 
 impl<
@@ -1329,6 +1348,7 @@ impl<
             multicast_dup_cache: DuplicateCache::new(),
             tx_queue: TxQueue::new(),
             post_tx_listen: None,
+            requested_wake_ms: None,
             repeater,
             operating_policy,
             auto_register_full_key_peers: false,
@@ -1338,6 +1358,7 @@ impl<
             held_frames: Vec::new(),
             verify_key: None,
             sig_input: [0; SIGNATURE_INPUT_MAX],
+            retired_addresses: Vec::new(),
         }
     }
 
@@ -1809,6 +1830,73 @@ impl<
             .map(IdentitySlot::identity)
             .filter(|identity| identity.is_ephemeral())
             .map(|identity| *identity.public_key())
+    }
+
+    /// Recognize `address` as one of `parent`'s retired addresses: one this
+    /// MAC holds no key for, but whose traffic from `peer` it still reports
+    /// with [`MacEventRef::RetiredAddressHeard`](crate::MacEventRef::RetiredAddressHeard).
+    ///
+    /// Watching an address already watched replaces its entry.
+    pub fn watch_retired_address(
+        &mut self,
+        parent: LocalIdentityId,
+        address: PublicKey,
+        peer: PublicKey,
+    ) -> Result<(), CapacityError> {
+        let retired = RetiredAddress {
+            parent,
+            address,
+            peer,
+        };
+        if let Some(entry) = self
+            .retired_addresses
+            .iter_mut()
+            .find(|entry| entry.address == address)
+        {
+            *entry = retired;
+            return Ok(());
+        }
+        self.retired_addresses
+            .push(retired)
+            .map_err(|_| CapacityError)
+    }
+
+    /// Stop recognizing `address`, reporting whether it was watched.
+    pub fn forget_retired_address(&mut self, address: &PublicKey) -> bool {
+        let before = self.retired_addresses.len();
+        self.retired_addresses
+            .retain(|entry| entry.address != *address);
+        self.retired_addresses.len() != before
+    }
+
+    /// Every retired address watched.
+    pub fn retired_addresses(&self) -> impl Iterator<Item = &RetiredAddress> + '_ {
+        self.retired_addresses.iter()
+    }
+
+    /// The retired address a frame for `dst` from `source` was sent to,
+    /// if any. Both ends have to match: the destination by hint, and the
+    /// source by hint or full key.
+    fn retired_address_for(
+        &self,
+        frame: &[u8],
+        dst: Option<umsh_core::NodeHint>,
+        source: SourceAddrRef,
+    ) -> Option<RetiredAddress> {
+        let dst = dst?;
+        self.retired_addresses
+            .iter()
+            .find(|entry| {
+                entry.address.hint() == dst
+                    && match source {
+                        SourceAddrRef::Hint(hint) => hint == entry.peer.hint(),
+                        SourceAddrRef::FullKeyAt { offset } => {
+                            Self::full_key_at(frame, offset) == Some(entry.peer)
+                        }
+                        SourceAddrRef::Encrypted { .. } | SourceAddrRef::None => false,
+                    }
+            })
+            .copied()
     }
 
     /// Mutably borrow an identity slot by identifier.
@@ -3263,6 +3351,7 @@ impl<
         &mut self,
         mut on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
     ) -> Result<(), MacError<<P::Radio as Radio>::Error>> {
+        self.retire_requested_wake();
         self.drain_tx_queue(&mut on_event).await?;
         if self.post_tx_listen.is_some() {
             self.service_post_tx_listen(&mut on_event).await?;
@@ -3274,11 +3363,37 @@ impl<
         Ok(())
     }
 
+    /// Have the driver complete a wake cycle no later than `deadline_ms`.
+    ///
+    /// The layers above keep deadlines of their own—an unanswered ping, a
+    /// session that lapses—and a quiet radio never wakes them. Asking here
+    /// makes the moment one of the MAC's own wake sources. Requests combine:
+    /// the earliest stands until a cycle completes at or after it.
+    pub fn wake_by(&mut self, deadline_ms: u64) {
+        self.requested_wake_ms = Some(
+            self.requested_wake_ms
+                .map_or(deadline_ms, |at| at.min(deadline_ms)),
+        );
+    }
+
+    /// Forget a [`wake_by`](Self::wake_by) request whose moment has come:
+    /// the cycle now completing is the one it asked for. Kept, it would be a
+    /// deadline in the past that pins every later wait.
+    fn retire_requested_wake(&mut self) {
+        if self
+            .requested_wake_ms
+            .is_some_and(|at| self.clock.now_ms() >= at)
+        {
+            self.requested_wake_ms = None;
+        }
+    }
+
     /// Compute the earliest deadline across all coordinator timers.
     ///
     /// Returns `None` when there are no pending timers.  The returned value
     /// covers pending ACK deadlines (both `ack_deadline_ms` and forwarding
-    /// `confirm_deadline_ms`), the post-transmit listen window, and
+    /// `confirm_deadline_ms`), the post-transmit listen window, a
+    /// [`wake_by`](Self::wake_by) request, and
     /// transmit-queue entries still waiting for their `not_before_ms`. A queue
     /// entry already due is not a deadline but ready work; whether it can
     /// actually go out is a separate question, answered by the wait predicate
@@ -3288,7 +3403,7 @@ impl<
     }
 
     fn earliest_deadline_at(&self, now_ms: u64) -> Option<u64> {
-        let mut earliest: Option<u64> = None;
+        let mut earliest: Option<u64> = self.requested_wake_ms;
 
         if let Some(listen) = &self.post_tx_listen {
             earliest =
@@ -3459,6 +3574,7 @@ impl<
         buf: &mut [u8; FRAME],
         mut on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
     ) -> Result<(), MacError<<P::Radio as Radio>::Error>> {
+        self.retire_requested_wake();
         match reason {
             WakeReason::Received(rx) => {
                 let frame_len = rx.len.min(buf.len());
@@ -3900,7 +4016,13 @@ impl<
                     break;
                 }
                 let mut acceptance = None;
-                if !verified {
+                if verified {
+                    // A released frame skips the resync it waited on, not the
+                    // window: taking it there makes a later copy a duplicate.
+                    // Behind the baseline its Frame Verified set, it is
+                    // already spent.
+                    acceptance = self.accept_unicast_replay(peer_id, header, &buf[..frame_len]);
+                } else {
                     match Self::resync_command(payload) {
                         Some((MAC_COMMAND_VERIFY_FRAME_ID, nonce)) => {
                             if self
@@ -4122,6 +4244,16 @@ impl<
                 break;
             }
             handled
+        } else if let Some(retired) =
+            self.retired_address_for(&buf[..frame_len], header.dst, header.source)
+        {
+            on_event(
+                retired.parent,
+                crate::MacEventRef::RetiredAddressHeard {
+                    address: retired.address,
+                },
+            );
+            true
         } else {
             false
         };
@@ -4299,6 +4431,18 @@ impl<
                     };
                     let (dst, source_addr) = (blind_addr.dst, blind_addr.source);
                     let Some(local_id) = self.find_local_identity_for_dst(Some(dst)) else {
+                        if let Some(retired) =
+                            self.retired_address_for(&buf[..frame_len], Some(dst), source_addr)
+                        {
+                            on_event(
+                                retired.parent,
+                                crate::MacEventRef::RetiredAddressHeard {
+                                    address: retired.address,
+                                },
+                            );
+                            handled = true;
+                            break;
+                        }
                         continue;
                     };
                     self.admit_full_key_source(
@@ -4380,7 +4524,12 @@ impl<
                             break;
                         }
                         let mut acceptance = None;
-                        if !verified {
+                        if verified {
+                            // As for unicast: a released frame is taken by the
+                            // window, so a later copy is a duplicate.
+                            acceptance =
+                                self.accept_unicast_replay(peer_id, header, &buf[..frame_len]);
+                        } else {
                             match Self::resync_command(payload) {
                                 Some((MAC_COMMAND_VERIFY_FRAME_ID, nonce)) => {
                                     if self

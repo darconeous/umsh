@@ -25,8 +25,8 @@ pub trait MacBackend: Clone {
     /// Drive the MAC until one wake cycle completes, invoking `on_event` for
     /// each emitted event.
     ///
-    /// This is the single wake-driven step the node layer builds `pump_once` /
-    /// `run` on top of; it waits for radio activity or a protocol deadline
+    /// This is the single wake-driven step [`Host::run`](crate::Host::run)
+    /// is built on; it waits for radio activity or a protocol deadline
     /// rather than busy-polling.
     async fn next_event(
         &self,
@@ -134,6 +134,11 @@ pub trait MacBackend: Clone {
     async fn fill_random(&self, dest: &mut [u8]);
     /// Return the current MAC clock time.
     async fn now_ms(&self) -> u64;
+    /// Have [`next_event`](Self::next_event) complete a wake cycle no later
+    /// than `deadline_ms` on the MAC clock, so a deadline the node layer
+    /// keeps is reached even on a quiet radio. Requests combine: the
+    /// earliest stands until a cycle completes at or after it.
+    async fn wake_by(&self, deadline_ms: u64);
 
     #[cfg(feature = "software-crypto")]
     async fn register_ephemeral(
@@ -144,6 +149,27 @@ pub trait MacBackend: Clone {
 
     #[cfg(feature = "software-crypto")]
     async fn remove_ephemeral(&self, id: LocalIdentityId) -> bool;
+
+    /// Recognize `address`, one of `parent`'s retired addresses, in traffic
+    /// from `peer`, returning whether it is watched; see
+    /// [`umsh_mac::Mac::watch_retired_address`]. A backend that cannot
+    /// watch one watches nothing.
+    async fn watch_retired_address(
+        &self,
+        parent: LocalIdentityId,
+        address: PublicKey,
+        peer: PublicKey,
+    ) -> bool {
+        let _ = (parent, address, peer);
+        false
+    }
+
+    /// Stop recognizing the retired `address`, returning whether it was
+    /// watched.
+    async fn forget_retired_address(&self, address: &PublicKey) -> bool {
+        let _ = address;
+        false
+    }
 
     /// Send everything from `id`, and the acks it returns, at `power_dbm`
     /// in dBm; `None` sends at the configured power.
@@ -447,6 +473,10 @@ impl<
         self.now_ms().await
     }
 
+    async fn wake_by(&self, deadline_ms: u64) {
+        self.wake_by(deadline_ms).await
+    }
+
     #[cfg(feature = "software-crypto")]
     async fn register_ephemeral(
         &self,
@@ -461,6 +491,21 @@ impl<
     #[cfg(feature = "software-crypto")]
     async fn remove_ephemeral(&self, id: LocalIdentityId) -> bool {
         self.remove_ephemeral(id).await
+    }
+
+    async fn watch_retired_address(
+        &self,
+        parent: LocalIdentityId,
+        address: PublicKey,
+        peer: PublicKey,
+    ) -> bool {
+        self.watch_retired_address(parent, address, peer)
+            .await
+            .is_ok()
+    }
+
+    async fn forget_retired_address(&self, address: &PublicKey) -> bool {
+        self.forget_retired_address(address).await
     }
 
     async fn set_tx_power_dbm(&self, id: LocalIdentityId, power_dbm: Option<i8>) {

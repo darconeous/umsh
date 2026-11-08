@@ -92,14 +92,19 @@ pub struct Delivery {
     pub sent: u16,
     pub acked: u16,
     pub failed: u16,
+    /// How many fragments the message went in, once word of one has said;
+    /// 0 until then.
+    pub fragments: u8,
 }
 
 impl Delivery {
-    /// Takes the latest word on one fragment. A failed fragment that is
-    /// sent again, or acknowledged after all, has not failed. An
+    /// Takes the latest word on one fragment of a message that went in
+    /// `fragments` (0 when the word does not say). A failed fragment that
+    /// is sent again, or acknowledged after all, has not failed. An
     /// acknowledged one was delivered, so a resend of it that goes
     /// unanswered does not fail it.
-    pub fn set(&mut self, fragment: Option<u8>, state: DeliveryState) {
+    pub fn set(&mut self, fragment: Option<u8>, fragments: u8, state: DeliveryState) {
+        self.fragments = self.fragments.max(fragments);
         let bit = 1u16 << fragment.unwrap_or(0).min(15);
         match state {
             DeliveryState::Sent => self.sent |= bit,
@@ -112,12 +117,23 @@ impl Delivery {
         }
     }
 
+    /// Whether all of the message was acknowledged: every fragment it went
+    /// in, or, while how many is not known, every one sent. A fragment
+    /// acknowledged before the next is sent leaves the message delivered
+    /// in part.
+    pub fn delivered(&self) -> bool {
+        let all = match self.fragments {
+            0 => self.sent,
+            count => u16::MAX >> (16 - u32::from(count.min(16))),
+        };
+        self.acked != 0 && all & !self.acked == 0 && self.sent & !self.acked == 0
+    }
+
     /// Whether word is still to come: nothing has failed, a fragment sent
     /// is unacknowledged or none was sent, and, for a `multicast`, which
     /// no acknowledgment follows, nothing was sent yet.
     pub fn awaited(&self, multicast: bool) -> bool {
-        let delivered = self.acked != 0 && self.sent & !self.acked == 0;
-        self.failed == 0 && !delivered && !(multicast && self.sent != 0)
+        self.failed == 0 && !self.delivered() && !(multicast && self.sent != 0)
     }
 
     /// Fails what was awaited of a message whose frames went with a
@@ -431,11 +447,11 @@ mod tests {
     #[test]
     fn an_acknowledged_fragment_outlasts_a_resend_that_fails() {
         let mut delivery = Delivery::default();
-        delivery.set(None, DeliveryState::Sent);
-        delivery.set(None, DeliveryState::Acked);
+        delivery.set(None, 1, DeliveryState::Sent);
+        delivery.set(None, 1, DeliveryState::Acked);
         // A peer asked for it again, and the resend went unanswered.
-        delivery.set(None, DeliveryState::Sent);
-        delivery.set(None, DeliveryState::Failed);
+        delivery.set(None, 0, DeliveryState::Sent);
+        delivery.set(None, 0, DeliveryState::Failed);
         assert_eq!(delivery.failed, 0);
         assert_eq!(delivery.state(None), Some(DeliveryState::Acked));
         assert!(!delivery.awaited(false));
@@ -444,11 +460,40 @@ mod tests {
     #[test]
     fn an_unacknowledged_fragment_fails() {
         let mut delivery = Delivery::default();
-        delivery.set(Some(0), DeliveryState::Sent);
-        delivery.set(Some(0), DeliveryState::Acked);
-        delivery.set(Some(1), DeliveryState::Sent);
-        delivery.set(Some(1), DeliveryState::Failed);
+        delivery.set(Some(0), 2, DeliveryState::Sent);
+        delivery.set(Some(0), 2, DeliveryState::Acked);
+        delivery.set(Some(1), 2, DeliveryState::Sent);
+        delivery.set(Some(1), 2, DeliveryState::Failed);
         assert_eq!(delivery.state(Some(0)), Some(DeliveryState::Acked));
         assert_eq!(delivery.state(Some(1)), Some(DeliveryState::Failed));
+    }
+
+    /// The first frame to a peer goes alone until it is acknowledged, so a
+    /// long message's first fragment can be acknowledged before the next is
+    /// sent: that is not the message delivered.
+    #[test]
+    fn a_message_is_delivered_only_once_every_fragment_is_acknowledged() {
+        let mut delivery = Delivery::default();
+        delivery.set(Some(0), 3, DeliveryState::Sent);
+        delivery.set(Some(0), 3, DeliveryState::Acked);
+        assert!(!delivery.delivered());
+        assert!(delivery.awaited(false));
+        delivery.set(Some(1), 3, DeliveryState::Sent);
+        delivery.set(Some(2), 3, DeliveryState::Sent);
+        delivery.set(Some(1), 3, DeliveryState::Acked);
+        assert!(!delivery.delivered());
+        delivery.set(Some(2), 3, DeliveryState::Acked);
+        assert!(delivery.delivered());
+        assert!(!delivery.awaited(false));
+    }
+
+    /// A resend reported without the count does not forget it.
+    #[test]
+    fn a_resend_keeps_the_fragment_count() {
+        let mut delivery = Delivery::default();
+        delivery.set(Some(0), 2, DeliveryState::Sent);
+        delivery.set(Some(0), 0, DeliveryState::Acked);
+        assert_eq!(delivery.fragments, 2);
+        assert!(!delivery.delivered());
     }
 }

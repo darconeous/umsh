@@ -10,7 +10,6 @@ use crate::mac::MacBackend;
 #[cfg(feature = "software-crypto")]
 use crate::node::PfsLifecycle;
 use crate::node::{ChannelJoins, LocalNode, LocalNodeState, NodeMembership};
-use crate::pfs::Carriage as PfsCarriage;
 use crate::receive::ReceivedPacketRef;
 use crate::{NodeIdentityPayload, OwnedMacCommand, mac_command};
 use umsh_core::{PayloadType, PublicKey};
@@ -32,20 +31,30 @@ pub enum HostError<E> {
 /// 1. construct a `Host` from a shared [`MacHandle`](umsh_mac::MacHandle)
 /// 2. register one or more [`LocalNode`]s with [`add_node`](Self::add_node)
 /// 3. attach callbacks to nodes / peers / wrappers
-/// 4. drive progress with [`run`](Self::run) or [`pump_once`](Self::pump_once)
+/// 4. drive it with [`run`](Self::run)
 ///
-/// `run()` is the preferred long-lived driver. `pump_once()` exists for callers that need to
-/// multiplex UMSH progress with other async work using `select!`.
+/// # The pump is never cancelled
+///
+/// [`run`](Self::run) is the node's data pump. Run it as its own task, or as a sibling future
+/// polled alongside the rest of the application, for as long as the node is up. Everything
+/// else talks to the node through [`LocalNode`] and the handles made from it; a send through
+/// one wakes the pump. Never race the pump as a losing `select!` arm or put it under a
+/// timeout: a cycle in progress holds work in its own future—a frame just received, the
+/// requests it carried, the replies they are owed—and dropping the future loses that work.
+/// Dropping the pump is stopping the node, the way a power cut is.
+///
+/// The pump needs nothing from its caller between cycles. The deadlines the node layer keeps
+/// (pings and forward-secrecy requests nobody answers, sessions that lapse) are wake sources
+/// of the MAC's own, through [`MacBackend::wake_by`].
 ///
 /// # Callback re-entrancy
 ///
 /// Receive and control callbacks (`on_receive`, `on_text`, `on_ack_received`, …) are invoked
-/// synchronously from inside [`pump_once`](Self::pump_once) while the coordinator borrow is
-/// held. A callback therefore MUST NOT call back into the MAC—it cannot `await` a `send`,
-/// and a blocking or re-entrant borrow of the coordinator would deadlock. Keep callbacks
-/// short and side-effect-free with respect to the MAC: record what you need (e.g. push to a
-/// queue or set a flag) and perform any follow-up sends after `pump_once` / `run` returns
-/// control to your own task.
+/// synchronously from inside the pump while the coordinator borrow is held. A callback
+/// therefore MUST NOT call back into the MAC—it cannot `await` a `send`, and a blocking or
+/// re-entrant borrow of the coordinator would deadlock. Keep callbacks short and
+/// side-effect-free with respect to the MAC: record what you need (e.g. push to a queue or
+/// set a flag) and perform any follow-up sends from your own task.
 ///
 /// The node is not borrowed while its callbacks run, so a callback may subscribe or
 /// unsubscribe, itself included. One added during an event first hears the next event, and
@@ -132,9 +141,9 @@ impl<M: MacBackend> Host<M> {
     /// meaningful work to do (radio activity or a protocol deadline), dispatches any resulting
     /// callbacks, services PFS command handling, and then returns.
     ///
-    /// Use this when you need to multiplex UMSH progress with other async sources using
-    /// `select!`. If UMSH owns the task, prefer [`run`](Self::run).
-    pub async fn pump_once(&mut self) -> Result<(), HostError<M::RunError>> {
+    /// Not cancel-safe, and not meant to be: only [`run_with`](Self::run_with) calls it, and
+    /// this crate's tests, through [`step`](Self::step).
+    async fn pump_once(&mut self) -> Result<(), HostError<M::RunError>> {
         // The wait below may last indefinitely, so this is no time to stamp
         // what it delivers by: each frame carries the time the MAC received
         // it, and this stands in only for a backend that stamps none.
@@ -153,6 +162,11 @@ impl<M: MacBackend> Host<M> {
         let undelivered_pfs = Rc::new(RefCell::new(Vec::<(LocalNode<M>, PublicKey)>::new()));
         #[cfg(feature = "software-crypto")]
         let undelivered_pfs_ref = undelivered_pfs.clone();
+        // Traffic for a retired session, answered once the event is done.
+        let retired_heard = Rc::new(RefCell::new(
+            Vec::<(LocalNode<M>, umsh_core::PublicKey)>::new(),
+        ));
+        let retired_heard_ref = retired_heard.clone();
         let dispatcher = self.dispatcher.clone();
         let nodes = self.nodes.clone();
         self.mac
@@ -201,24 +215,26 @@ impl<M: MacBackend> Host<M> {
                         }
                     }
                     umsh_mac::MacEventRef::AckReceived { peer, receipt, .. } => {
+                        let token = crate::SendToken::new(identity_id, receipt);
                         #[cfg(feature = "software-crypto")]
-                        node.note_pfs_delivery(identity_id, true);
-                        node.dispatch_ack_received(
-                            peer,
-                            crate::SendToken::new(identity_id, receipt),
-                        );
+                        {
+                            node.settle_pfs_close(token, true);
+                            node.note_pfs_delivery(identity_id, true);
+                        }
+                        node.dispatch_ack_received(peer, token);
                     }
                     umsh_mac::MacEventRef::AckTimeout { peer, receipt } => {
+                        let token = crate::SendToken::new(identity_id, receipt);
                         #[cfg(feature = "software-crypto")]
-                        if let Some(session) = node.note_pfs_delivery(identity_id, false) {
-                            undelivered_pfs_ref
-                                .borrow_mut()
-                                .push((node.clone(), session));
+                        {
+                            node.settle_pfs_close(token, false);
+                            if let Some(session) = node.note_pfs_delivery(identity_id, false) {
+                                undelivered_pfs_ref
+                                    .borrow_mut()
+                                    .push((node.clone(), session));
+                            }
                         }
-                        node.dispatch_ack_timeout(
-                            peer,
-                            crate::SendToken::new(identity_id, receipt),
-                        );
+                        node.dispatch_ack_timeout(peer, token);
                     }
                     umsh_mac::MacEventRef::Transmitted { wire_bytes, .. } => {
                         node.dispatch_transmitted(wire_bytes);
@@ -227,7 +243,23 @@ impl<M: MacBackend> Host<M> {
                     // Ticket resolution (failed + finished) is handled by
                     // dispatch_ticket_state above; there is no peer to
                     // notify since the frame never aired.
-                    umsh_mac::MacEventRef::TxAbandoned { .. } => {}
+                    #[cfg_attr(not(feature = "software-crypto"), allow(unused_variables))]
+                    umsh_mac::MacEventRef::TxAbandoned {
+                        identity_id,
+                        receipt,
+                    } =>
+                    {
+                        #[cfg(feature = "software-crypto")]
+                        if let Some(receipt) = receipt {
+                            node.settle_pfs_close(
+                                crate::SendToken::new(identity_id, receipt),
+                                false,
+                            );
+                        }
+                    }
+                    umsh_mac::MacEventRef::RetiredAddressHeard { address } => {
+                        retired_heard_ref.borrow_mut().push((node, address));
+                    }
                 }
             })
             .await
@@ -260,6 +292,16 @@ impl<M: MacBackend> Host<M> {
             }
         }
 
+        let heard: Vec<(LocalNode<M>, umsh_core::PublicKey)> =
+            retired_heard.borrow_mut().drain(..).collect();
+        #[cfg(feature = "software-crypto")]
+        for (node, address) in heard {
+            node.close_retired_pfs(&address, &self.pfs_control_options)
+                .await;
+        }
+        #[cfg(not(feature = "software-crypto"))]
+        drop(heard);
+
         let identity_replies: Vec<(LocalNode<M>, IdentityResponsePlan)> =
             pending_identity.borrow_mut().drain(..).collect();
         for (node, plan) in identity_replies {
@@ -284,43 +326,58 @@ impl<M: MacBackend> Host<M> {
         Ok(())
     }
 
-    /// Service node-layer deadlines independently of MAC/radio wake events.
+    /// Fire the node-layer deadlines that have come, then ask the MAC to wake
+    /// the pump by the earliest of those still ahead.
     ///
-    /// A quiet radio is not a MAC wake source, so applications that multiplex
-    /// [`pump_once`](Self::pump_once) with other work must also call this from
-    /// their own timer. In particular, ping and PFS request timeouts must fire
-    /// even when the remote peer sends no response at all.
-    pub async fn service_protocol_timeouts(&mut self) {
+    /// Ping and PFS request timeouts have to fire even when the remote peer
+    /// sends nothing at all, and a quiet radio wakes no one; the request
+    /// makes the next deadline one of the MAC's own wake sources. A deadline
+    /// set outside the pump asks for its own wake as it is set.
+    async fn service_protocol_timeouts(&mut self) {
         let now_ms = self.mac.now_ms().await;
         service_node_timeouts(&self.nodes, now_ms).await;
-    }
-
-    /// Detach an owned handle that services the same node-layer deadlines as
-    /// [`service_protocol_timeouts`](Self::service_protocol_timeouts).
-    ///
-    /// Use this when the host pump runs as its own long-lived future (so the
-    /// `Host` is exclusively borrowed) and a sibling timer task must still
-    /// fire ping/PFS timeouts—e.g. while the pump is parked awaiting a slow
-    /// physical transmit. The handle snapshots the current node set; nodes
-    /// added afterwards are not covered by it.
-    pub fn protocol_timeout_servicer(&self) -> ProtocolTimeoutServicer<M>
-    where
-        M: Clone,
-    {
-        ProtocolTimeoutServicer {
-            mac: self.mac.clone(),
-            nodes: self.nodes.clone(),
+        let next = self
+            .nodes
+            .iter()
+            .filter_map(|(_, node)| node.next_deadline_ms())
+            .min();
+        if let Some(deadline_ms) = next {
+            self.mac.wake_by(deadline_ms).await;
         }
     }
 
-    /// Run the shared MAC/Host loop forever.
+    /// One wake cycle, run to completion, for tests that script the MAC's
+    /// events and check what each cycle did.
+    #[cfg(test)]
+    pub(crate) async fn step(&mut self) -> Result<(), HostError<M::RunError>> {
+        self.pump_once().await
+    }
+
+    /// Run the node's data pump until the MAC fails.
     ///
-    /// This is the preferred long-lived driver for node-based applications. It keeps the
-    /// runtime wake policy inside the MAC/Host stack rather than requiring callers to write
-    /// poll/sleep loops themselves.
+    /// This is the one driver of a `Host`, and it is never cancelled; see
+    /// [the type's documentation](Self#the-pump-is-never-cancelled). It
+    /// returns only with the MAC's error.
     pub async fn run(&mut self) -> Result<(), HostError<M::RunError>> {
+        self.run_with(async || {}).await
+    }
+
+    /// [`run`](Self::run), awaiting `after_cycle` each time a wake cycle
+    /// completes.
+    ///
+    /// The hook runs inside the pump, at the one moment it is known to have
+    /// just finished something and to hold no borrow of the coordinator:
+    /// the place to republish what a cycle changes, such as the MAC's
+    /// tallies. The next cycle waits for it, so keep it short.
+    pub async fn run_with(
+        &mut self,
+        mut after_cycle: impl AsyncFnMut(),
+    ) -> Result<(), HostError<M::RunError>> {
+        // Deadlines set before the pump started ask for their wake here.
+        self.service_protocol_timeouts().await;
         loop {
             self.pump_once().await?;
+            after_cycle().await;
         }
     }
 
@@ -348,21 +405,7 @@ impl<M: MacBackend> Host<M> {
             // Surface it so applications can report the failure.
             Err(err) => node.dispatch_pfs_failed(from, err.pfs_failure()),
         }
-    }
-}
-
-/// Owned deadline-service handle detached from a [`Host`]; see
-/// [`Host::protocol_timeout_servicer`].
-pub struct ProtocolTimeoutServicer<M: MacBackend> {
-    mac: M,
-    nodes: Vec<(LocalIdentityId, LocalNode<M>)>,
-}
-
-impl<M: MacBackend> ProtocolTimeoutServicer<M> {
-    /// Fire any elapsed ping and PFS deadlines on the snapshot's nodes.
-    pub async fn service(&self) {
-        let now_ms = self.mac.now_ms().await;
-        service_node_timeouts(&self.nodes, now_ms).await;
+        node.dispatch_pfs_records_changed();
     }
 }
 
@@ -377,11 +420,17 @@ async fn service_node_timeouts<M: MacBackend>(
                 node.dispatch_pfs_ended(peer);
             }
         }
+        // A retired session whose peer acknowledged its close has ended at
+        // both ends; one past its lifetime just goes.
+        for peer in node.settle_retired_pfs().await {
+            node.dispatch_pfs_ended(peer);
+        }
         // Abandon sent PFS requests that were never answered, so the
         // requester reports a timeout instead of sitting in `Requested`.
         for peer in node.expire_pfs_requests(now_ms) {
             node.dispatch_pfs_failed(peer, crate::node::PfsFailure::Timeout);
         }
+        node.dispatch_pfs_records_changed();
     }
 
     for (_, node) in nodes {
@@ -517,6 +566,17 @@ impl IdentityUpdate {
             Self::Fill
         }
     }
+}
+
+/// How an inbound PFS command arrived. The pump records it whether or not
+/// forward secrecy is built in, so it lives here rather than in the PFS
+/// module.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct PfsCarriage {
+    /// The channel a blind unicast arrived on: an answer follows it back.
+    pub(crate) channel: Option<umsh_core::ChannelKey>,
+    /// The frame counter it was sent under.
+    pub(crate) counter: Option<u32>,
 }
 
 /// Work a pump cycle's synchronous dispatch leaves for after it returns.

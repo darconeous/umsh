@@ -215,7 +215,7 @@ The responder MAY accept a shorter lifetime than was requested, and both parties
 
 Terminates the PFS session between the sender and the recipient. May be sent by either party, including one that no longer holds the session. Upon receipt, both sides securely erase the private keys for their ephemeral addresses and revert to using their long-term keys. See [Session Lifetime](security.md#session-lifetime) for all conditions under which a session ends, and for when the recipient acts on an End.
 
-No command-specific payload. The sender and recipient are identified by the packet's addressing fields.
+No command-specific payload. Like the handshake, this command travels between the two parties' long-term addresses under their long-term pairwise keys, and it names the session by its sender: each pair of long-term addresses holds at most one session. A node that has lost its ephemeral keys can therefore still end a session, as it does for a [retired session](security.md#retired-sessions).
 
 ## No-Op (9)
 

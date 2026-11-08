@@ -51,7 +51,7 @@ pub const RECORD_MAX: usize = {
         + 5 // status
         + 1 // presence
         + 1 // flags
-        + 6 // delivery
+        + 7 // delivery, its fragment count last
         + 1 + 3 + 3 + 2 + 1 // link
         + 5 // time
         + 4 // revision
@@ -68,6 +68,7 @@ const PEER_RECORD: u8 = 5;
 const CHANNEL: u8 = 6;
 const DEVICE_LISTS: u8 = 7;
 const RECENT_PICKS: u8 = 8;
+const FORWARD_SECRECY: u8 = 9;
 
 /// A reactor's reaction that is not one of the emotes, its cluster after.
 /// The emotes are their place in [`Reaction::ALL`].
@@ -108,6 +109,7 @@ pub(super) fn key(key: &RecordKey, out: &mut heapless::Vec<u8, KEY_MAX>) {
         }
         RecordKey::DeviceLists => put(&[DEVICE_LISTS]),
         RecordKey::RecentPicks => put(&[RECENT_PICKS]),
+        RecordKey::ForwardSecrecy => put(&[FORWARD_SECRECY]),
     }
 }
 
@@ -226,6 +228,8 @@ pub(super) fn record(disk: &Disk, key: &RecordKey, out: &mut Vec<u8>) -> bool {
                 }
             }
             out.long(&message.body);
+            // Last, so a record kept before it was is read without it.
+            out.u8(record.delivery.fragments);
         }
         RecordKey::Peer(peer) => {
             let Some(peer) = disk.peers.get(peer) else {
@@ -277,6 +281,12 @@ pub(super) fn record(disk: &Disk, key: &RecordKey, out: &mut Vec<u8>) -> bool {
             };
             out.bytes(picks);
         }
+        RecordKey::ForwardSecrecy => {
+            let Some(records) = &disk.forward_secrecy else {
+                return false;
+            };
+            out.bytes(records);
+        }
     }
     true
 }
@@ -298,6 +308,7 @@ fn restore_one(disk: &mut Disk, key: &[u8], record: &[u8]) -> Option<()> {
         }
         DEVICE_LISTS => disk.device_lists = Some(record.to_vec()),
         RECENT_PICKS => disk.recent_picks = Some(record.to_vec()),
+        FORWARD_SECRECY => disk.forward_secrecy = Some(record.to_vec()),
         CHECKPOINT => {
             let conversation = input.conversation()?;
             let checkpoint = StreamCheckpoint {
@@ -461,10 +472,11 @@ fn message(id: u32, input: &mut In<'_>) -> Option<MessageEntry> {
         unknown_regarding: flags & 32 != 0,
         unknown_original: flags & 64 != 0,
     };
-    let delivery = Delivery {
+    let mut delivery = Delivery {
         sent: input.u16()?,
         acked: input.u16()?,
         failed: input.u16()?,
+        fragments: 0,
     };
     let link = input.option(|input| {
         let rssi_dbm = input.option(In::i16)?;
@@ -504,6 +516,9 @@ fn message(id: u32, input: &mut In<'_>) -> Option<MessageEntry> {
     normalize_reactors(&mut reactors);
     let body = core::str::from_utf8(input.long()?).ok()?;
     let body = String::from(record::clip(body, BODY_MAX));
+    // A record kept before the count was ends here, and has it from the
+    // next word of its delivery.
+    delivery.fragments = input.u8().unwrap_or(0);
     Some(MessageEntry {
         record: MessageRecord {
             id: MessageId(id),

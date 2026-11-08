@@ -181,6 +181,8 @@ struct Disk {
     device_lists: Option<Vec<u8>>,
     /// The characters last picked, as the interface keeps them.
     recent_picks: Option<Vec<u8>>,
+    /// The device node's sessions with forward secrecy, as it keeps them.
+    forward_secrecy: Option<Vec<u8>>,
 }
 
 impl Disk {
@@ -216,6 +218,7 @@ enum RecordKey {
     Channel([u8; 16]),
     DeviceLists,
     RecentPicks,
+    ForwardSecrecy,
 }
 
 /// Records changed since they were last handed to the durable layer, in
@@ -851,13 +854,14 @@ impl<D: Durable> MemoryStore<D> {
                 Change::Delivery {
                     handle,
                     fragment,
+                    fragments,
                     state,
                 } => {
                     if let Some(id) = self.resolve(batch, &committed, handle)
                         && let Some(message) = self.disk.messages.get_mut(&id)
                     {
                         self.dirty.mark(RecordKey::Message(id));
-                        message.record.delivery.set(fragment, state);
+                        message.record.delivery.set(fragment, fragments, state);
                         committed.touch_message(MessageId(id));
                     }
                 }
@@ -1699,6 +1703,27 @@ impl<D: Durable> ChatStore for MemoryStore<D> {
         self.settle()
     }
 
+    fn forward_secrecy_records<'b>(
+        &self,
+        out: &'b mut [u8],
+    ) -> Result<Option<&'b [u8]>, StoreError> {
+        let Some(records) = &self.disk.forward_secrecy else {
+            return Ok(None);
+        };
+        let out = out
+            .get_mut(..records.len())
+            .ok_or(StoreError::BufferTooSmall)?;
+        out.copy_from_slice(records);
+        Ok(Some(out))
+    }
+
+    fn keep_forward_secrecy_records(&mut self, record: Option<&[u8]>) -> Result<(), StoreError> {
+        self.writable()?;
+        self.disk.forward_secrecy = record.map(<[u8]>::to_vec);
+        self.dirty.mark(RecordKey::ForwardSecrecy);
+        self.settle()
+    }
+
     fn interrupt(&mut self) -> Result<(), StoreError> {
         self.writable()?;
         let Disk {
@@ -2119,6 +2144,11 @@ mod tests {
     #[test]
     fn encoded_device_lists() {
         conformance::device_lists(&mut Encoded);
+    }
+
+    #[test]
+    fn encoded_forward_secrecy_records() {
+        conformance::forward_secrecy_records(&mut Encoded);
     }
 
     #[test]
@@ -2597,6 +2627,11 @@ mod tests {
     #[test]
     fn recent_picks() {
         conformance::recent_picks(&mut Memory);
+    }
+
+    #[test]
+    fn forward_secrecy_records() {
+        conformance::forward_secrecy_records(&mut Memory);
     }
 
     #[test]
