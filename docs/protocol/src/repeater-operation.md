@@ -52,6 +52,8 @@ Before forwarding a packet, the repeater checks the cache:
 
 To avoid racy reforward behavior, the repeater should insert the cache key into the cache as soon as it accepts the packet for forwarding, not after transmission completes.
 
+A forward the repeater gives up without transmitting—its channel-access budget spent, or the queue unable to hold it—SHOULD release its cache key, so that a retransmission of the packet is forwarded. Left in place, the key would suppress every copy of a packet this repeater never carried. A forward abandoned because [other repeaters were overheard carrying the packet](channel-access.md#flood-forwarding-contention-window) keeps its key: the packet went onward without it.
+
 Shorter cache keys increase the probability of false-positive collisions. Deployments that use 4-byte or 8-byte MICs should account for this when sizing the duplicate cache.
 
 ### Entry Expiry

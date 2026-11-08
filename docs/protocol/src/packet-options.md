@@ -94,7 +94,7 @@ This distinction allows forwarding-related metadata (source routes, traces, stat
 - A sender MUST NOT include more than one. A packet carrying more than one is handled as carrying an unrecognized forwarding-critical option.
 - Semantics: packet must be received with at least this RSSI to be flood-forwarded. This option does not apply to source-routed hops.
 - Example: value `130` means `-130 dBm`
-- If present with no value (length 0), default is `-100 dBm` (THIS VALUE IS SUBJECT TO CHANGE)
+- If present with no value (length 0), default is `-100 dBm`
 - If a repeater has a locally configured minimum RSSI, it must use the higher of the packet's minimum RSSI threshold and the repeater's configured minimum RSSI threshold.
 
 ### Route Retry (option 6)
@@ -147,7 +147,7 @@ On a [Verify Frame](mac-commands.md#verify-frame-12) the option names the packet
 ### Minimum SNR (option 9)
 - Type: signed 1-byte integer, in dB
 - Semantics: packet must be received with at least this SNR to be flood-forwarded. This option does not apply to source-routed hops.
-- If present with no value (length 0), default is `-3 dB`. (THIS VALUE IS SUBJECT TO CHANGE)
+- If present with no value (length 0), default is `-3 dB`.
 - A sender MUST NOT include more than one. A packet carrying more than one is handled as carrying an unrecognized forwarding-critical option.
 - If a repeater has a locally configured minimum SNR, it must use the higher of the packet's minimum SNR and the repeater's configured minimum SNR.
 
@@ -160,6 +160,7 @@ On a [Verify Frame](mac-commands.md#verify-frame-12) the option names the packet
 - Because this option is dynamic, repeaters may insert it while flood-forwarding a packet that currently has no region code.
 - A repeater must never rewrite an existing region code and must never add a second region code to a packet that already has one or more region-code options.
 - Region insertion is a local policy decision. When no explicit local policy exists, a reasonable default is the IATA code of the closest regional commercial airport.
+- Copies that differ only in a region code are duplicates of one another, so when repeaters with different policies hear one untagged packet, its region is whichever the first of them to forward it inserts. A sender that needs its packet confined to a region includes the option itself.
 - Region insertion applies only during flood forwarding. An untagged source-routed packet is first tagged by the repeater that flood-forwards it—the one that receives it with an already-empty source route—not by the repeater that emptied the route.
 
 #### Region Code Encoding
