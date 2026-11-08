@@ -1485,6 +1485,9 @@ struct QueueEntry {
     lqi: Option<core::num::NonZeroU8>,
     rx_time_ms: u64,
     acked: bool,
+    /// Whether the device authenticated the frame against a provisioned
+    /// key when it queued it. Only an authenticated frame can be acked.
+    authenticated: bool,
     /// Monotonic (wrapping) sequence number: a stable handle that a
     /// pending ack transmission can use to mark this exact entry
     /// later, immune to queue rotation and eviction.
@@ -1501,6 +1504,7 @@ impl QueueEntry {
         lqi: None,
         rx_time_ms: 0,
         acked: false,
+        authenticated: false,
         seq: 0,
         identity: None,
     };
@@ -1510,10 +1514,12 @@ impl QueueEntry {
     }
 }
 
-/// The circular FIFO inbound queue (spec §Inbound Queueing). When full,
-/// accepting a new frame evicts the oldest entry and counts it in
-/// `PROP_HOST_RX_QUEUE_DROPPED`, so the queue always holds the most
-/// recent accepted traffic.
+/// The FIFO inbound queue (spec §Inbound Queueing). When full, a new
+/// frame displaces the oldest unauthenticated entry, or failing that—
+/// and only for an authenticated arrival—the oldest entry. An
+/// unauthenticated arrival never displaces an authenticated entry; it
+/// is refused instead. Either loss counts in
+/// `PROP_HOST_RX_QUEUE_DROPPED`.
 struct RxQueue {
     entries: [QueueEntry; RX_QUEUE_CAPACITY],
     /// Index of the oldest entry.
@@ -1550,19 +1556,30 @@ impl RxQueue {
         }
     }
 
-    /// Append an entry (evicting the oldest when full) and return its
-    /// sequence handle.
+    /// Append an entry and return its sequence handle, making room when
+    /// full by the eviction order above. `None` means the queue holds
+    /// only authenticated entries and the unauthenticated arrival was
+    /// refused (and counted).
     fn push(
         &mut self,
         data: &[u8],
         info: &RadioRxInfo,
         rx_time_ms: u64,
+        authenticated: bool,
         identity: Option<RxIdentity>,
-    ) -> u16 {
+    ) -> Option<u16> {
         debug_assert!(data.len() <= MAX_MTU);
         if self.len == RX_QUEUE_CAPACITY {
-            self.head = (self.head + 1) % RX_QUEUE_CAPACITY;
-            self.len -= 1;
+            let unauthenticated = self.iter().position(|entry| !entry.authenticated);
+            let victim = match unauthenticated {
+                Some(offset) => offset,
+                None if authenticated => 0,
+                None => {
+                    self.dropped = self.dropped.wrapping_add(1);
+                    return None;
+                }
+            };
+            self.remove_at(victim);
             self.dropped = self.dropped.wrapping_add(1);
         }
         let seq = self.next_seq;
@@ -1576,10 +1593,28 @@ impl RxQueue {
         entry.lqi = info.lqi;
         entry.rx_time_ms = rx_time_ms;
         entry.acked = false;
+        entry.authenticated = authenticated;
         entry.seq = seq;
         entry.identity = identity;
         self.len += 1;
-        seq
+        Some(seq)
+    }
+
+    /// Remove the entry `offset` places from the oldest, closing the gap
+    /// by moving the newer entries back one slot so FIFO order holds.
+    fn remove_at(&mut self, offset: usize) {
+        debug_assert!(offset < self.len);
+        if offset == 0 {
+            self.head = (self.head + 1) % RX_QUEUE_CAPACITY;
+            self.len -= 1;
+            return;
+        }
+        for index in offset..self.len - 1 {
+            let to = (self.head + index) % RX_QUEUE_CAPACITY;
+            let from = (self.head + index + 1) % RX_QUEUE_CAPACITY;
+            self.entries[to] = self.entries[from];
+        }
+        self.len -= 1;
     }
 
     fn front(&self) -> Option<&QueueEntry> {
@@ -4834,21 +4869,29 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     // An unauthenticated frame reaches the queue on the
                     // strength of a receive filter alone: its content
                     // is unreadable, so nothing says it is a message.
-                    let (ack, identity, cue, silent) = match verdict {
+                    let (ack, identity, cue, silent, authenticated) = match verdict {
                         SecureRx::New {
                             ack,
                             identity,
                             cue,
                             silent,
-                        } => (ack, identity, cue, silent),
-                        _ => (None, None, false, false),
+                        } => (ack, identity, cue, silent, true),
+                        _ => (None, None, false, false, false),
                     };
                     // Entries start unacknowledged: RX_FLAG_ACKED is
                     // earned only when the ack transmission actually
                     // completes (on_tx_result). A refused or failed ack
                     // leaves the frame queued unacked and the sender's
                     // retransmission hits the re-ack window later.
-                    let seq = self.host.queue.push(data, info, now_ms, identity);
+                    //
+                    // A full queue of authenticated entries refuses an
+                    // unauthenticated arrival (counted as dropped): a
+                    // forged frame costs nothing to send, and must not
+                    // push out a message the device vouched for.
+                    let seq = self
+                        .host
+                        .queue
+                        .push(data, info, now_ms, authenticated, identity)?;
                     self.queued_notice = Some(QueuedNotice {
                         class: queued_class(data),
                         cue,
@@ -17264,6 +17307,100 @@ mod tests {
             flags[1..].iter().all(|flags| *flags == RX_FLAG_BUFFERED),
             "no other entry may borrow the confirmation"
         );
+    }
+
+    #[test]
+    fn a_full_queue_evicts_an_unauthenticated_entry_for_an_authenticated_arrival() {
+        let mut session = auto_ack_session();
+        let keys = test_pairwise();
+        // One genuine message, then forgeries to the host's public hint
+        // until the queue is full.
+        let genuine = sealed_unar(1, &keys, false);
+        assert_eq!(
+            rx_effect(&mut session, &genuine, 0),
+            Some(Effect::StartTransmit)
+        );
+        session.on_tx_result(TxOutcome::Sent, 0, &mut |_: &[u8]| {});
+        let forged = unicast_ack_req_to([0xC4, 0xC4, 0xC4]);
+        for _ in 1..RX_QUEUE_CAPACITY {
+            assert!(rx_effect(&mut session, &forged, 0).is_none());
+        }
+
+        // A second genuine message displaces the oldest forgery, not the
+        // older genuine one.
+        let second = sealed_unar(2, &keys, false);
+        assert_eq!(
+            rx_effect(&mut session, &second, 0),
+            Some(Effect::StartTransmit)
+        );
+        session.on_tx_result(TxOutcome::Sent, 0, &mut |_: &[u8]| {});
+
+        session.attach(true);
+        assert_eq!(
+            get(&mut session, prop::HOST_RX_QUEUE_DROPPED),
+            1u32.to_le_bytes()
+        );
+        let drained = drain(&mut session, 0);
+        assert_eq!(drained.len(), RX_QUEUE_CAPACITY);
+        assert_eq!(drained[0].0, genuine);
+        assert_eq!(drained[0].1.flags, RX_FLAG_BUFFERED | RX_FLAG_ACKED);
+        assert!(
+            drained[1..RX_QUEUE_CAPACITY - 1]
+                .iter()
+                .all(|(frame, _)| *frame == forged)
+        );
+        assert_eq!(drained.last().unwrap().0, second);
+        assert_eq!(
+            drained.last().unwrap().1.flags,
+            RX_FLAG_BUFFERED | RX_FLAG_ACKED
+        );
+    }
+
+    #[test]
+    fn a_full_queue_of_authenticated_entries_refuses_an_unauthenticated_arrival() {
+        let mut session = auto_ack_session();
+        let keys = test_pairwise();
+        for counter in 1..=RX_QUEUE_CAPACITY as u32 {
+            assert_eq!(
+                rx_effect(&mut session, &sealed_unar(counter, &keys, false), 0),
+                Some(Effect::StartTransmit)
+            );
+            session.on_tx_result(TxOutcome::Sent, 0, &mut |_: &[u8]| {});
+        }
+        // Forgeries to the host's public hint are dropped on arrival.
+        let forged = unicast_ack_req_to([0xC4, 0xC4, 0xC4]);
+        for _ in 0..3 {
+            assert!(rx_effect(&mut session, &forged, 0).is_none());
+        }
+
+        session.attach(true);
+        assert_eq!(
+            get(&mut session, prop::HOST_RX_QUEUE_DROPPED),
+            3u32.to_le_bytes()
+        );
+        let drained = drain(&mut session, 0);
+        assert_eq!(drained.len(), RX_QUEUE_CAPACITY);
+        for (counter, (frame, meta)) in (1..).zip(&drained) {
+            assert_eq!(*frame, sealed_unar(counter, &keys, false));
+            assert_eq!(meta.flags, RX_FLAG_BUFFERED | RX_FLAG_ACKED);
+        }
+
+        // An authenticated arrival still gets in, displacing the oldest.
+        session.detach();
+        for counter in 17..=(16 + RX_QUEUE_CAPACITY as u32) {
+            rx_effect(&mut session, &sealed_unar(counter, &keys, false), 0);
+            session.on_tx_result(TxOutcome::Sent, 0, &mut |_: &[u8]| {});
+        }
+        let newest = sealed_unar(99, &keys, false);
+        assert_eq!(
+            rx_effect(&mut session, &newest, 0),
+            Some(Effect::StartTransmit)
+        );
+        session.on_tx_result(TxOutcome::Sent, 0, &mut |_: &[u8]| {});
+        session.attach(true);
+        let drained = drain(&mut session, 0);
+        assert_eq!(drained[0].0, sealed_unar(18, &keys, false));
+        assert_eq!(drained.last().unwrap().0, newest);
     }
 
     /// Build a sealed UNAR carrying flood-hop state with the given
