@@ -191,7 +191,7 @@ pub use peer_repeaters::{
     MAX_PEER_REPEATERS, MergedPeerRepeater, PeerRepeaterRecord, PeerRepeaterTable,
 };
 #[cfg(feature = "software-crypto")]
-pub use pfs::PfsSessionRecord;
+pub use pfs::{PFS_MIC_SIZE, PfsSessionRecord};
 pub use receive::{
     ChannelInfoRef, PacketFamily, ReceivedPacketRef, RepeaterHints, RxAcceptance, RxMetadata,
     SignatureStatus, Snr,
@@ -773,6 +773,8 @@ mod tests {
 
         block_on_ready(node.request_pfs(&peer, 60, &options)).unwrap();
         let request = mac.take_unicasts().pop().expect("request send");
+        // The handshake goes under the long-term keys, with the MIC asked for.
+        assert_eq!(request.options.mic_size, options.mic_size);
         let request_command = parse_owned_mac_command(&request.payload);
         let request_ephemeral = match request_command {
             OwnedMacCommand::PfsSessionRequest { ephemeral_key, .. } => ephemeral_key,
@@ -799,6 +801,18 @@ mod tests {
         let sent = mac.take_unicasts().pop().expect("pfs-routed send");
         assert_eq!(sent.from, LocalIdentityId(10));
         assert_eq!(sent.to, PublicKey([0x44; 32]));
+        assert_eq!(sent.options.mic_size, crate::PFS_MIC_SIZE);
+        assert_eq!(crate::PFS_MIC_SIZE.byte_len(), 4);
+        assert!(
+            sent.options.ack_requested,
+            "only the MIC size is overridden"
+        );
+
+        // Sent outside the session, the same options keep their MIC.
+        block_on_ready(node.send_with_secrecy(&peer, &payload, &options, false)).unwrap();
+        let long_term = mac.take_unicasts().pop().expect("long-term send");
+        assert_eq!(long_term.from, LocalIdentityId(1));
+        assert_eq!(long_term.options.mic_size, options.mic_size);
 
         let pairwise_from_pfs = PublicKey([0x44; 32]);
         dispatcher.borrow_mut().dispatch_ticket_state(
@@ -811,6 +825,83 @@ mod tests {
         );
         assert!(ticket.was_acked());
         assert!(ticket.is_finished());
+    }
+
+    /// A send in flight under a session that ends fails then and there: the
+    /// session identity is gone from the MAC, and no ack or timeout will
+    /// ever arrive for it.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn pfs_session_end_fails_its_sends_in_flight_at_once() {
+        use crate::node::{LocalNode, LocalNodeState, NodeMembership};
+
+        let mac = FakeMac::new(vec![[7u8; 32], [9u8; 32]]);
+        let dispatcher = Rc::new(RefCell::new(crate::dispatch::EventDispatcher::new()));
+        let node = LocalNode::new(
+            LocalIdentityId(1),
+            mac.clone(),
+            dispatcher.clone(),
+            Rc::new(RefCell::new(NodeMembership::new())),
+            Rc::new(RefCell::new(LocalNodeState::new())),
+        );
+        let peer = PublicKey([0x55; 32]);
+        let peer_connection = block_on_ready(node.peer(peer)).unwrap();
+        let options = SendOptions::default().with_ack_requested(true);
+        block_on_ready(node.request_pfs(&peer, 60, &options)).unwrap();
+        block_on_ready(node.handle_pfs_command(
+            &peer,
+            frame(),
+            &OwnedMacCommand::PfsSessionResponse {
+                ephemeral_key: PublicKey([0x44; 32]),
+                duration_minutes: 60,
+            },
+            &options,
+        ))
+        .unwrap();
+        let payload = encode_text_payload("in flight");
+        let ticket = block_on_ready(peer_connection.send(&payload, &options)).unwrap();
+        let session_id = ticket.token().unwrap().identity_id;
+        assert_eq!(session_id, LocalIdentityId(10));
+        assert!(!ticket.is_finished());
+
+        block_on_ready(node.end_pfs(&peer, &options)).unwrap();
+
+        assert_eq!(mac.state.borrow().removed_ephemerals, vec![session_id]);
+        assert!(ticket.has_failed());
+        assert!(ticket.is_finished());
+    }
+
+    /// Failing a removed identity's tickets leaves finished ones as they
+    /// were and other identities' alone, and forgets them: a later identity
+    /// in the same slot starts its receipts over, and its events must not
+    /// reach them.
+    #[test]
+    fn failing_an_identity_finishes_only_its_open_tickets_and_forgets_them() {
+        use crate::dispatch::EventDispatcher;
+        use crate::ticket::SendProgressTicket;
+
+        let mut dispatcher = EventDispatcher::new();
+        let mut ticket = |identity: u8, receipt: u32| {
+            let token = SendToken::new(LocalIdentityId(identity), SendReceipt(receipt));
+            SendProgressTicket::new(token, dispatcher.register_ticket(token, false))
+        };
+        let acked = ticket(10, 1);
+        let open = ticket(10, 2);
+        let other = ticket(1, 2);
+        let ack = |receipt| MacEventRef::AckReceived {
+            peer: PublicKey([0x44; 32]),
+            receipt: SendReceipt(receipt),
+            via_route_retry: false,
+        };
+        dispatcher.dispatch_ticket_state(LocalIdentityId(10), &ack(1));
+
+        dispatcher.fail_identity(LocalIdentityId(10));
+
+        assert!(acked.was_acked() && !acked.has_failed());
+        assert!(open.has_failed() && open.is_finished());
+        assert!(!other.is_finished());
+        dispatcher.dispatch_ticket_state(LocalIdentityId(10), &ack(2));
+        assert!(!open.was_acked());
     }
 
     #[cfg(feature = "software-crypto")]

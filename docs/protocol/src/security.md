@@ -558,15 +558,19 @@ The PFS property arises not from any difference in how the keys are derived, but
 
 An ephemeral node address is a fully functional temporary UMSH node identity: it has an address hint, can be addressed directly, and its private key is converted to X25519 for ECDH the same way a long-term identity is.
 
-Because a PFS session is indistinguishable from an ordinary unicast session at the MAC layer, it requires no changes to MAC-layer processing, no changes to any application-layer protocol, and adds zero per-packet overhead. Once the two-message handshake completes, every subsequent packet in the session is exactly the size it would have been without PFS.
+Because a PFS session is processed exactly like an ordinary unicast session at the MAC layer, it requires no changes to MAC-layer processing and no changes to any application-layer protocol.
+
+Packets sent between the ephemeral addresses SHOULD use a 4-byte MIC (see [MIC Size Selection Guidance](#mic-size-selection-guidance)). The session's keys are erased when it ends, so the shorter tag suffices, and each session packet is 12 bytes smaller than it would be with a 16-byte MIC.
 
 ### Wire-Level Privacy
 
 While a PFS session is active, packet hint fields are derived from the ephemeral node address rather than the long-term address. A passive observer sees packets flowing between two unfamiliar node IDs that appear only for the duration of the session. The only packets that expose the long-term node IDs are the two handshake messages (PFS Session Request and PFS Session Response), which are themselves protected by the long-term pairwise keys.
 
-Because ephemeral node addresses are structurally identical to long-term node addresses, an observer cannot distinguish PFS session traffic from ordinary unicast traffic, nor associate the ephemeral addresses with the original nodes that created the session.
+Because ephemeral node addresses are structurally identical to long-term node addresses, an observer cannot tell ephemeral addresses from long-term ones, nor associate the ephemeral addresses with the original nodes that created the session.
 
 This identity separation is not unconditional. The PFS handshake messages are authenticated with the nodes' long-term keys, so an attacker who later compromises a long-term private key can retroactively identify which long-term identities established the session—even though the session's content remains protected by the erased ephemeral keys.
+
+The SCF is sent in the clear, so a session packet's 4-byte MIC is visible to an observer. It suggests that a packet may be session traffic, but not which long-term identities it belongs to.
 
 Additionally, implementations that use a single device-wide frame counter expose a correlation opportunity: an observer who can read the frame counter field across packets (e.g. by receiving a packet before and after the PFS handshake) may notice continuity in the counter value and link the ephemeral addresses to the originating nodes. Implementations that wish to preserve wire-level identity unlinkability should use independent frame counters for each node address—including ephemeral ones—so that session traffic is not correlated with long-term traffic through counter continuity.
 

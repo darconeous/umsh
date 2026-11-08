@@ -87,6 +87,26 @@ impl EventDispatcher {
         }
     }
 
+    /// Fail every unfinished ticket of `identity_id`, whose identity is
+    /// gone and its sends with it: the MAC reports nothing more for them.
+    /// The tickets are forgotten too, so a later identity given the same
+    /// slot, whose receipts start over, never updates them.
+    pub fn fail_identity(&mut self, identity_id: LocalIdentityId) {
+        self.ticket_states.retain(|(token, weak)| {
+            if token.identity_id != identity_id {
+                return weak.strong_count() > 0;
+            }
+            if let Some(rc) = weak.upgrade() {
+                let mut state = rc.borrow_mut();
+                if !state.finished {
+                    state.failed = true;
+                    state.finished = true;
+                }
+            }
+            false
+        });
+    }
+
     fn update_ticket(&mut self, token: &SendToken, f: impl FnOnce(&mut TicketState)) {
         if let Some(pos) = self.ticket_states.iter().position(|(t, _)| t == token) {
             let (_, weak) = &self.ticket_states[pos];

@@ -1,5 +1,7 @@
 use alloc::boxed::Box;
 use alloc::rc::Rc;
+#[cfg(feature = "software-crypto")]
+use alloc::rc::Weak;
 use alloc::vec::Vec;
 use core::cell::RefCell;
 use core::num::NonZeroU32;
@@ -252,6 +254,10 @@ pub(crate) struct LocalNodeState {
     /// The session identity of a contact exchange in progress.
     #[cfg(feature = "software-crypto")]
     meet: Option<MeetSlot>,
+    /// The tickets of this node's sends, for failing those of a session
+    /// identity when it is removed.
+    #[cfg(feature = "software-crypto")]
+    tickets: Weak<RefCell<EventDispatcher>>,
 }
 
 /// A contact exchange's session identity and the peers registered to reach
@@ -289,6 +295,24 @@ impl LocalNodeState {
             pfs: PfsSessionManager::new(),
             #[cfg(feature = "software-crypto")]
             meet: None,
+            #[cfg(feature = "software-crypto")]
+            tickets: Weak::new(),
+        }
+    }
+
+    /// Remove the session identity `id` from the MAC, and fail the tickets
+    /// of its sends still in flight: they die with it, and no event will
+    /// ever finish them.
+    #[cfg(feature = "software-crypto")]
+    pub(crate) async fn remove_session_identity<M: MacBackend>(
+        state: &RefCell<Self>,
+        mac: &M,
+        id: LocalIdentityId,
+    ) {
+        let _ = mac.remove_ephemeral(id).await;
+        let tickets = state.borrow().tickets.upgrade();
+        if let Some(tickets) = tickets {
+            tickets.borrow_mut().fail_identity(id);
         }
     }
 
@@ -518,6 +542,10 @@ impl<M: MacBackend> LocalNode<M> {
         membership: Rc<RefCell<NodeMembership>>,
         state: Rc<RefCell<LocalNodeState>>,
     ) -> Self {
+        #[cfg(feature = "software-crypto")]
+        {
+            state.borrow_mut().tickets = Rc::downgrade(&dispatcher);
+        }
         Self {
             identity_id,
             mac,
@@ -1674,7 +1702,8 @@ impl<M: MacBackend> LocalNode<M> {
     }
 
     /// Sends `payload` to `to` from the session identity `route` names, to
-    /// the peer's ephemeral key, or without one from this node's own.
+    /// the peer's ephemeral key, with a [`pfs::PFS_MIC_SIZE`] MIC; or
+    /// without one from this node's own, as `options` ask.
     #[cfg(feature = "software-crypto")]
     async fn send_via(
         &self,
@@ -1684,12 +1713,18 @@ impl<M: MacBackend> LocalNode<M> {
         options: &SendOptions,
     ) -> Result<SendProgressTicket, NodeError<M>> {
         let (identity, receipt) = match route {
-            Some((local_id, peer_ephemeral)) => (
-                local_id,
-                self.mac
-                    .send_unicast(local_id, &peer_ephemeral, payload, options)
-                    .await?,
-            ),
+            Some((local_id, peer_ephemeral)) => {
+                let options = SendOptions {
+                    mic_size: pfs::PFS_MIC_SIZE,
+                    ..options.clone()
+                };
+                (
+                    local_id,
+                    self.mac
+                        .send_unicast(local_id, &peer_ephemeral, payload, &options)
+                        .await?,
+                )
+            }
             None => (
                 self.identity_id,
                 self.mac
@@ -1991,7 +2026,7 @@ impl<M: MacBackend> LocalNode<M> {
         let Some(slot) = self.state.borrow_mut().meet.take() else {
             return;
         };
-        let _ = self.mac.remove_ephemeral(slot.id).await;
+        LocalNodeState::remove_session_identity(&self.state, &self.mac, slot.id).await;
         for peer in slot.peers {
             let _ = self.mac.release_peer(&peer, PeerHolder::Session).await;
         }

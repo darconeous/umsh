@@ -1252,6 +1252,42 @@ fn queue_unicast_enqueues_frame_and_pending_ack() {
     );
 }
 
+/// A session identity's sends go with it: nothing it queued airs once it is
+/// removed, under keys about to be erased or into a slot a later identity
+/// takes. Other identities' frames stay queued.
+#[cfg(feature = "software-crypto")]
+#[test]
+fn removing_an_ephemeral_identity_drops_its_queued_frames() {
+    let mut mac = make_mac();
+    let parent_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let ephemeral = umsh_crypto::software::SoftwareIdentity::from_secret_bytes(&[0x55; 32]);
+    let ephemeral_id = mac.register_ephemeral(parent_id, ephemeral).unwrap();
+    let peer_key = test_pubkey(0xAB);
+    let peer_id = mac.add_peer(peer_key).unwrap();
+    let keys = PairwiseKeys {
+        k_enc: [1; 32],
+        k_mic: [2; 32],
+    };
+    mac.install_pairwise_keys(parent_id, peer_id, keys.clone())
+        .unwrap();
+    mac.install_pairwise_keys(ephemeral_id, peer_id, keys)
+        .unwrap();
+    let options = SendOptions::default().with_ack_requested(true).no_flood();
+    mac.queue_unicast(parent_id, &peer_key, b"long-term", &options)
+        .unwrap();
+    mac.queue_unicast(ephemeral_id, &peer_key, b"session", &options)
+        .unwrap();
+    assert_eq!(mac.tx_queue().len(), 2);
+
+    assert!(mac.remove_ephemeral(ephemeral_id));
+
+    assert_eq!(mac.tx_queue().len(), 1);
+    assert!(
+        !mac.tx_queue()
+            .contains_matching(|entry| entry.identity_id == Some(ephemeral_id))
+    );
+}
+
 /// A host that outlives its MAC can put back a route it learned through
 /// an earlier one, which is what keeps a tool invoked once per command
 /// from re-flooding for a path it knew a second ago.

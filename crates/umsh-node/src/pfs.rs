@@ -26,6 +26,15 @@ use crate::{
 #[cfg(feature = "software-crypto")]
 const DEFAULT_MAX_PFS_SESSIONS: usize = 4;
 
+/// The MIC size of every frame sent under a PFS session, whatever the
+/// sender's options ask for.
+///
+/// The session's keys are erased within [`MAX_PFS_SESSION_MINUTES`], so a
+/// 2^-32 forgery chance per attempt is enough. The handshake and End PFS Session go under the
+/// long-term keys and keep the MIC the caller chose.
+#[cfg(feature = "software-crypto")]
+pub const PFS_MIC_SIZE: umsh_core::MicSize = umsh_core::MicSize::Mic4;
+
 /// How long a sent PFS request waits for a response before it is abandoned and
 /// reported as a [`PfsFailure::Timeout`](crate::PfsFailure::Timeout). A
 /// `Requested` session holds no MAC resources (the ephemeral identity is only
@@ -1111,7 +1120,7 @@ pub(crate) async fn accept_end<M: MacBackend>(
     };
     if let Some(session) = session {
         let peer = session.peer_long_term;
-        release(mac, session).await;
+        release(state, mac, session).await;
         return Some(peer);
     }
     let address = state.borrow_mut().pfs.take_retired_peer(from)?;
@@ -1131,7 +1140,7 @@ pub(crate) async fn end_session<M: MacBackend>(
 ) -> Result<bool, NodeError<M>> {
     let session = state.borrow_mut().pfs.take_peer(peer);
     if let Some(session) = session {
-        release(mac, session).await;
+        release(state, mac, session).await;
     } else {
         // A session lost to a reboot ends the same way, and the peer's
         // End is what tells a node its retired session is over.
@@ -1159,7 +1168,7 @@ pub(crate) async fn end_undelivered<M: MacBackend>(
 ) -> Option<PublicKey> {
     let session = state.borrow_mut().pfs.take_undelivered(local_ephemeral)?;
     let peer = session.peer_long_term;
-    release(mac, session).await;
+    release(state, mac, session).await;
     // Best effort: a peer that still holds its half hears it under the
     // long-term keys, if the trouble was the session's alone.
     let _ = send_pfs_command(
@@ -1187,7 +1196,7 @@ pub(crate) async fn expire_sessions<M: MacBackend>(
             return Ok(expired);
         };
         expired.push(session.peer_long_term);
-        release(mac, session).await;
+        release(state, mac, session).await;
     }
 }
 
@@ -1325,7 +1334,7 @@ async fn begin_session<M: MacBackend>(
     // A request nobody answers has to be noticed on a quiet radio.
     mac.wake_by(request_deadline_ms).await;
     if let Some(displaced) = displaced {
-        release(mac, displaced).await;
+        release(state, mac, displaced).await;
     }
     // A new session with the peer replaces a retired one too.
     let retired = state.borrow_mut().pfs.take_retired_peer(peer);
@@ -1424,7 +1433,7 @@ async fn abandon<M: MacBackend>(
 ) {
     let session = state.borrow_mut().pfs.take_local(local_ephemeral);
     if let Some(session) = session {
-        release(mac, session).await;
+        release(state, mac, session).await;
     }
 }
 
@@ -1432,9 +1441,9 @@ async fn abandon<M: MacBackend>(
 /// local identity and its hold on the peer slot under the peer's ephemeral
 /// key. A contact the application added under that key since keeps the slot.
 #[cfg(feature = "software-crypto")]
-async fn release<M: MacBackend>(mac: &M, session: PfsSession) {
+async fn release<M: MacBackend>(state: &RefCell<LocalNodeState>, mac: &M, session: PfsSession) {
     if session.state.has_keys() {
-        let _ = mac.remove_ephemeral(session.local_ephemeral_id).await;
+        LocalNodeState::remove_session_identity(state, mac, session.local_ephemeral_id).await;
         let _ = mac
             .release_peer(&session.peer_ephemeral, PeerHolder::Session)
             .await;

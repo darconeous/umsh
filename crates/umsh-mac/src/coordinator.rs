@@ -1808,6 +1808,11 @@ impl<
 
     #[cfg(feature = "software-crypto")]
     /// Remove an ephemeral identity slot if one exists at `id`.
+    ///
+    /// Its sends go with it, and no event reports them: frames still queued
+    /// are dropped rather than aired under keys about to be erased, and a
+    /// later identity given the slot, whose receipts start over, must not
+    /// hear of them. The owner finishes their tickets itself.
     pub fn remove_ephemeral(&mut self, id: LocalIdentityId) -> bool {
         if let Some(slot) = self.identities.get_mut(id.0 as usize) {
             let should_remove = slot
@@ -1817,6 +1822,15 @@ impl<
             if should_remove {
                 *slot = None;
                 self.held_frames.retain(|held| held.local_id != id);
+                self.tx_queue
+                    .remove_all_matching(|entry| entry.identity_id == Some(id));
+                if self
+                    .post_tx_listen
+                    .as_ref()
+                    .is_some_and(|listen| listen.identity_id == id)
+                {
+                    self.post_tx_listen = None;
+                }
                 return true;
             }
         }
