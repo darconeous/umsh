@@ -1916,7 +1916,7 @@ pub(crate) async fn run(
         } else {
             recovery.reset();
         }
-        if BLE_CONTROLLER_STATE.latched() {
+        if BLE_CONTROLLER_STATE.failed() {
             debug_log(format_args!(
                 "BLE privacy failed; toggle Bluetooth to retry"
             ));
