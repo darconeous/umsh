@@ -31,20 +31,30 @@ pub enum HostError<E> {
 /// 1. construct a `Host` from a shared [`MacHandle`](umsh_mac::MacHandle)
 /// 2. register one or more [`LocalNode`]s with [`add_node`](Self::add_node)
 /// 3. attach callbacks to nodes / peers / wrappers
-/// 4. drive progress with [`run`](Self::run) or [`pump_once`](Self::pump_once)
+/// 4. drive it with [`run`](Self::run)
 ///
-/// `run()` is the preferred long-lived driver. `pump_once()` exists for callers that need to
-/// multiplex UMSH progress with other async work using `select!`.
+/// # The pump is never cancelled
+///
+/// [`run`](Self::run) is the node's data pump. Run it as its own task, or as a sibling future
+/// polled alongside the rest of the application, for as long as the node is up. Everything
+/// else talks to the node through [`LocalNode`] and the handles made from it; a send through
+/// one wakes the pump. Never race the pump as a losing `select!` arm or put it under a
+/// timeout: a cycle in progress holds work in its own future—a frame just received, the
+/// requests it carried, the replies they are owed—and dropping the future loses that work.
+/// Dropping the pump is stopping the node, the way a power cut is.
+///
+/// The pump needs nothing from its caller between cycles. The deadlines the node layer keeps
+/// (pings and forward-secrecy requests nobody answers, sessions that lapse) are wake sources
+/// of the MAC's own, through [`MacBackend::wake_by`].
 ///
 /// # Callback re-entrancy
 ///
 /// Receive and control callbacks (`on_receive`, `on_text`, `on_ack_received`, …) are invoked
-/// synchronously from inside [`pump_once`](Self::pump_once) while the coordinator borrow is
-/// held. A callback therefore MUST NOT call back into the MAC—it cannot `await` a `send`,
-/// and a blocking or re-entrant borrow of the coordinator would deadlock. Keep callbacks
-/// short and side-effect-free with respect to the MAC: record what you need (e.g. push to a
-/// queue or set a flag) and perform any follow-up sends after `pump_once` / `run` returns
-/// control to your own task.
+/// synchronously from inside the pump while the coordinator borrow is held. A callback
+/// therefore MUST NOT call back into the MAC—it cannot `await` a `send`, and a blocking or
+/// re-entrant borrow of the coordinator would deadlock. Keep callbacks short and
+/// side-effect-free with respect to the MAC: record what you need (e.g. push to a queue or
+/// set a flag) and perform any follow-up sends from your own task.
 pub struct Host<M: MacBackend> {
     mac: M,
     dispatcher: Rc<RefCell<EventDispatcher>>,
@@ -123,9 +133,8 @@ impl<M: MacBackend> Host<M> {
     /// meaningful work to do (radio activity or a protocol deadline), dispatches any resulting
     /// callbacks, services PFS command handling, and then returns.
     ///
-    /// Use this when you need to multiplex UMSH progress with other async sources using
-    /// `select!`. If UMSH owns the task, prefer [`run`](Self::run).
-    pub async fn pump_once(&mut self) -> Result<(), HostError<M::RunError>> {
+    /// Not cancel-safe, and not meant to be: only [`run_with`](Self::run_with) calls it.
+    async fn pump_once(&mut self) -> Result<(), HostError<M::RunError>> {
         let now_ms = self.mac.now_ms().await;
         let pending_pfs = Rc::new(RefCell::new(Vec::<PfsCommand>::new()));
         let pending_pfs_ref = pending_pfs.clone();
@@ -266,43 +275,51 @@ impl<M: MacBackend> Host<M> {
         Ok(())
     }
 
-    /// Service node-layer deadlines independently of MAC/radio wake events.
+    /// Fire the node-layer deadlines that have come, then ask the MAC to wake
+    /// the pump by the earliest of those still ahead.
     ///
-    /// A quiet radio is not a MAC wake source, so applications that multiplex
-    /// [`pump_once`](Self::pump_once) with other work must also call this from
-    /// their own timer. In particular, ping and PFS request timeouts must fire
-    /// even when the remote peer sends no response at all.
-    pub async fn service_protocol_timeouts(&mut self) {
+    /// Ping and PFS request timeouts have to fire even when the remote peer
+    /// sends nothing at all, and a quiet radio wakes no one; the request
+    /// makes the next deadline one of the MAC's own wake sources. A deadline
+    /// set outside the pump asks for its own wake as it is set.
+    async fn service_protocol_timeouts(&mut self) {
         let now_ms = self.mac.now_ms().await;
         service_node_timeouts(&self.nodes, now_ms).await;
-    }
-
-    /// Detach an owned handle that services the same node-layer deadlines as
-    /// [`service_protocol_timeouts`](Self::service_protocol_timeouts).
-    ///
-    /// Use this when the host pump runs as its own long-lived future (so the
-    /// `Host` is exclusively borrowed) and a sibling timer task must still
-    /// fire ping/PFS timeouts—e.g. while the pump is parked awaiting a slow
-    /// physical transmit. The handle snapshots the current node set; nodes
-    /// added afterwards are not covered by it.
-    pub fn protocol_timeout_servicer(&self) -> ProtocolTimeoutServicer<M>
-    where
-        M: Clone,
-    {
-        ProtocolTimeoutServicer {
-            mac: self.mac.clone(),
-            nodes: self.nodes.clone(),
+        let next = self
+            .nodes
+            .iter()
+            .filter_map(|(_, node)| node.next_deadline_ms())
+            .min();
+        if let Some(deadline_ms) = next {
+            self.mac.wake_by(deadline_ms).await;
         }
     }
 
-    /// Run the shared MAC/Host loop forever.
+    /// Run the node's data pump until the MAC fails.
     ///
-    /// This is the preferred long-lived driver for node-based applications. It keeps the
-    /// runtime wake policy inside the MAC/Host stack rather than requiring callers to write
-    /// poll/sleep loops themselves.
+    /// This is the one driver of a `Host`, and it is never cancelled; see
+    /// [the type's documentation](Self#the-pump-is-never-cancelled). It
+    /// returns only with the MAC's error.
     pub async fn run(&mut self) -> Result<(), HostError<M::RunError>> {
+        self.run_with(async || {}).await
+    }
+
+    /// [`run`](Self::run), awaiting `after_cycle` each time a wake cycle
+    /// completes.
+    ///
+    /// The hook runs inside the pump, at the one moment it is known to have
+    /// just finished something and to hold no borrow of the coordinator:
+    /// the place to republish what a cycle changes, such as the MAC's
+    /// tallies. The next cycle waits for it, so keep it short.
+    pub async fn run_with(
+        &mut self,
+        mut after_cycle: impl AsyncFnMut(),
+    ) -> Result<(), HostError<M::RunError>> {
+        // Deadlines set before the pump started ask for their wake here.
+        self.service_protocol_timeouts().await;
         loop {
             self.pump_once().await?;
+            after_cycle().await;
         }
     }
 
@@ -331,21 +348,6 @@ impl<M: MacBackend> Host<M> {
             Err(err) => node.dispatch_pfs_failed(from, err.pfs_failure()),
         }
         node.dispatch_pfs_records_changed();
-    }
-}
-
-/// Owned deadline-service handle detached from a [`Host`]; see
-/// [`Host::protocol_timeout_servicer`].
-pub struct ProtocolTimeoutServicer<M: MacBackend> {
-    mac: M,
-    nodes: Vec<(LocalIdentityId, LocalNode<M>)>,
-}
-
-impl<M: MacBackend> ProtocolTimeoutServicer<M> {
-    /// Fire any elapsed ping and PFS deadlines on the snapshot's nodes.
-    pub async fn service(&self) {
-        let now_ms = self.mac.now_ms().await;
-        service_node_timeouts(&self.nodes, now_ms).await;
     }
 }
 

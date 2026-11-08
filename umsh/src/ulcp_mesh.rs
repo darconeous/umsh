@@ -159,6 +159,17 @@ impl FrameLink for MeshFrameLink {
     }
 }
 
+/// Resolves once the device handle's end of a mesh link is dropped; see
+/// [`MeshEndpoint::closing`].
+pub struct MeshClosing(mpsc::UnboundedSender<Result<Vec<u8>, MeshFault>>);
+
+impl MeshClosing {
+    /// Wait for the device handle to let go of the link.
+    pub async fn closed(&self) {
+        self.0.closed().await;
+    }
+}
+
 /// The driver's half: requests to carry, and outcomes to report.
 pub struct MeshEndpoint {
     requests: mpsc::UnboundedReceiver<Vec<u8>>,
@@ -227,6 +238,13 @@ impl MeshEndpoint {
     /// not take it—where the next command may well succeed.
     pub fn refuse(&mut self, message: String) {
         self.report(Err(MeshFault::Exchange(message)));
+    }
+
+    /// A watch on the device handle's end of the link, for work that has
+    /// to end when the handle is dropped while this endpoint is busy
+    /// elsewhere.
+    pub fn closing(&self) -> MeshClosing {
+        MeshClosing(self.replies.clone())
     }
 
     /// Report a terminal failure and close the link. The device handle

@@ -188,6 +188,8 @@ pub(super) fn record(disk: &Disk, key: &RecordKey, out: &mut Vec<u8>) -> bool {
                 }
             }
             out.long(&message.body);
+            // Last, so a record kept before it was is read without it.
+            out.u8(record.delivery.fragments);
         }
         RecordKey::Peer(peer) => {
             let Some(peer) = disk.peers.get(peer) else {
@@ -430,10 +432,11 @@ fn message(id: u32, input: &mut In<'_>) -> Option<MessageEntry> {
         unknown_regarding: flags & 32 != 0,
         unknown_original: flags & 64 != 0,
     };
-    let delivery = Delivery {
+    let mut delivery = Delivery {
         sent: input.u16()?,
         acked: input.u16()?,
         failed: input.u16()?,
+        fragments: 0,
     };
     let link = input.option(|input| {
         let rssi_dbm = input.option(In::i16)?;
@@ -472,6 +475,9 @@ fn message(id: u32, input: &mut In<'_>) -> Option<MessageEntry> {
     }
     let body = core::str::from_utf8(input.long()?).ok()?;
     let body = String::from(record::clip(body, BODY_MAX));
+    // A record kept before the count was ends here, and has it from the
+    // next word of its delivery.
+    delivery.fragments = input.u8().unwrap_or(0);
     Some(MessageEntry {
         record: MessageRecord {
             id: MessageId(id),

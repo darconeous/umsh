@@ -116,48 +116,52 @@ async fn deliver(
     args: &SendArgs,
 ) -> Result<()> {
     let text = args.text.join(" ");
-    let (mut stack, local_key) = NodeStack::build(mac, identity, ctx).await?;
-    let peer = stack
-        .node
-        .peer(target)
-        .await
-        .map_err(|error| anyhow!("registering the node as a peer: {error:?}"))?;
+    let (stack, mut pump, local_key) = NodeStack::build(mac, identity, ctx).await?;
 
-    // Whatever an earlier invocation learned about reaching this node.
-    let mut routes = RouteCache::load();
-    let known = routes.get(&target).is_some();
-    if let Some(record) = routes.get(&target) {
-        peer.restore_route(record.route.clone()).await;
-    }
+    pump.drive(async {
+        let peer = stack
+            .node
+            .peer(target)
+            .await
+            .map_err(|error| anyhow!("registering the node as a peer: {error:?}"))?;
 
-    field("from", local_key.to_string());
-    field("to", target.to_string());
-    if !known {
-        note("no route known; this message floods to find one");
-    }
+        // Whatever an earlier invocation learned about reaching this node.
+        let mut routes = RouteCache::load();
+        let known = routes.get(&target).is_some();
+        if let Some(record) = routes.get(&target) {
+            peer.restore_route(record.route.clone()).await;
+        }
 
-    let options = SendOptions::default()
-        .with_ack_requested(!args.no_ack)
-        .with_flood_hops(DISCOVERY_FLOOD_HOPS);
-    // What the radio had already sent, so the wait below can tell this
-    // frame's transmission from any that came before it.
-    let before = stack.handle.counters().await;
-    let chat = UnicastTextChatWrapper::new(peer);
-    let ticket = chat
-        .send_text(&text, &options)
-        .await
-        .map_err(|error| anyhow!("sending: {error:?}"))?;
+        field("from", local_key.to_string());
+        field("to", target.to_string());
+        if !known {
+            note("no route known; this message floods to find one");
+        }
 
-    let outcome = settle(&mut stack, &ticket, args, before).await;
-    routes.harvest(&stack.handle).await;
-    if let Err(error) = routes.store() {
-        crate::output::warn(format!("could not save learned routes: {error:#}"));
-    }
-    let _ = stack.handle.service_counter_persistence().await;
-    outcome
+        let options = SendOptions::default()
+            .with_ack_requested(!args.no_ack)
+            .with_flood_hops(DISCOVERY_FLOOD_HOPS);
+        // What the radio had already sent, so the wait below can tell this
+        // frame's transmission from any that came before it.
+        let before = stack.handle.counters().await;
+        let chat = UnicastTextChatWrapper::new(peer);
+        let ticket = chat
+            .send_text(&text, &options)
+            .await
+            .map_err(|error| anyhow!("sending: {error:?}"))?;
+
+        let outcome = settle(&stack, &ticket, args, before).await;
+        routes.harvest(&stack.handle).await;
+        if let Err(error) = routes.store() {
+            crate::output::warn(format!("could not save learned routes: {error:#}"));
+        }
+        let _ = stack.handle.service_counter_persistence().await;
+        outcome
+    })
+    .await
 }
 
-/// Pump the radio until the message is done, or until patience runs out.
+/// Wait until the message is done, or until patience runs out.
 ///
 /// "Done" means two different things. An acknowledged send is done when
 /// the MAC says so—an ack arrived, or every retransmission timed out.
@@ -166,7 +170,7 @@ async fn deliver(
 /// been anywhere near the radio; what finishes that one is the frame
 /// actually going out, which the MAC's own transmit counters report.
 async fn settle(
-    stack: &mut NodeStack<'_>,
+    stack: &NodeStack<'_>,
     ticket: &SendProgressTicket,
     args: &SendArgs,
     before: MacCounters,
@@ -190,7 +194,7 @@ async fn settle(
                     args.timeout
                 );
             }
-            stack.pump_until(give_up.min(Instant::now() + POLL)).await?;
+            stack.wait_until(give_up.min(Instant::now() + POLL)).await;
         }
     }
     while !ticket.is_finished() {
@@ -200,7 +204,7 @@ async fn settle(
                 args.timeout
             );
         }
-        stack.pump_until(give_up.min(Instant::now() + POLL)).await?;
+        stack.wait_until(give_up.min(Instant::now() + POLL)).await;
     }
     if ticket.was_acked() {
         field("delivered", "acknowledged by the far end");
@@ -212,7 +216,7 @@ async fn settle(
     bail!("the send finished without an acknowledgment or a failure")
 }
 
-/// How long a single pump waits before the deadline is checked again.
+/// How long a single wait lasts before the deadline is checked again.
 const POLL: Duration = Duration::from_millis(250);
 
 async fn receive(
@@ -221,75 +225,79 @@ async fn receive(
     ctx: &StackContext,
     args: &ListenArgs,
 ) -> Result<()> {
-    let (mut stack, local_key) = NodeStack::build(mac, identity, ctx).await?;
-    field("listening as", local_key.to_string());
+    let (stack, mut pump, local_key) = NodeStack::build(mac, identity, ctx).await?;
 
-    // A unicast carries a short hint for its sender rather than a whole
-    // key, so the receiver has to know in advance who might be calling.
-    // The remembered routes are this tool's address book of everyone it
-    // has reached; `--from` covers anyone it has not.
-    let mut routes = RouteCache::load();
-    let mut expected: Vec<PublicKey> = args.from.iter().map(|key| PublicKey(key.0)).collect();
-    for (key, _) in routes.iter() {
-        if !expected.contains(&key) {
-            expected.push(key);
-        }
-    }
-    for key in &expected {
-        let peer = stack
-            .node
-            .peer(*key)
-            .await
-            .map_err(|error| anyhow!("registering {key} as a peer: {error:?}"))?;
-        if let Some(record) = routes.get(key) {
-            peer.restore_route(record.route.clone()).await;
-        }
-    }
+    pump.drive(async {
+        field("listening as", local_key.to_string());
 
-    match expected.len() {
-        0 => note("no nodes known to listen for; name one with --from"),
-        1 => field("expecting", expected[0].to_string()),
-        // `routes` prints the list itself; a count here keeps the
-        // banner short without hiding that the set is not empty.
-        count => field("expecting", format!("{count} known nodes")),
-    }
-    note(match args.timeout {
-        Some(seconds) => format!("for {seconds} s, or until interrupted"),
-        None => "until interrupted".to_string(),
-    });
-
-    // The subscription borrows nothing from the stack, so it can hold
-    // its own counter and outlive each turn of the pump below.
-    let _subscription = stack.node.on_receive(show);
-
-    let deadline = args
-        .timeout
-        .map(|seconds| Instant::now() + Duration::from_secs(seconds));
-    loop {
-        if let Some(deadline) = deadline
-            && Instant::now() >= deadline
-        {
-            break;
-        }
-        let next = deadline.unwrap_or_else(|| Instant::now() + POLL);
-        tokio::select! {
-            result = stack.pump_until(next.min(Instant::now() + POLL)) => result?,
-            // Ctrl-C ends the command rather than the process, so the
-            // shell gets its prompt back and the radio comes home.
-            _ = tokio::signal::ctrl_c() => {
-                println!();
-                break;
+        // A unicast carries a short hint for its sender rather than a whole
+        // key, so the receiver has to know in advance who might be calling.
+        // The remembered routes are this tool's address book of everyone it
+        // has reached; `--from` covers anyone it has not.
+        let mut routes = RouteCache::load();
+        let mut expected: Vec<PublicKey> = args.from.iter().map(|key| PublicKey(key.0)).collect();
+        for (key, _) in routes.iter() {
+            if !expected.contains(&key) {
+                expected.push(key);
             }
         }
-    }
+        for key in &expected {
+            let peer = stack
+                .node
+                .peer(*key)
+                .await
+                .map_err(|error| anyhow!("registering {key} as a peer: {error:?}"))?;
+            if let Some(record) = routes.get(key) {
+                peer.restore_route(record.route.clone()).await;
+            }
+        }
 
-    // Every sender taught a route on the way in; keep them.
-    routes.harvest(&stack.handle).await;
-    if let Err(error) = routes.store() {
-        crate::output::warn(format!("could not save learned routes: {error:#}"));
-    }
-    let _ = stack.handle.service_counter_persistence().await;
-    Ok(())
+        match expected.len() {
+            0 => note("no nodes known to listen for; name one with --from"),
+            1 => field("expecting", expected[0].to_string()),
+            // `routes` prints the list itself; a count here keeps the
+            // banner short without hiding that the set is not empty.
+            count => field("expecting", format!("{count} known nodes")),
+        }
+        note(match args.timeout {
+            Some(seconds) => format!("for {seconds} s, or until interrupted"),
+            None => "until interrupted".to_string(),
+        });
+
+        // The subscription borrows nothing from the stack, so it can hold
+        // its own counter and outlive each turn of the pump below.
+        let _subscription = stack.node.on_receive(show);
+
+        let deadline = args
+            .timeout
+            .map(|seconds| Instant::now() + Duration::from_secs(seconds));
+        loop {
+            if let Some(deadline) = deadline
+                && Instant::now() >= deadline
+            {
+                break;
+            }
+            let next = deadline.unwrap_or_else(|| Instant::now() + POLL);
+            tokio::select! {
+                () = stack.wait_until(next.min(Instant::now() + POLL)) => {}
+                // Ctrl-C ends the command rather than the process, so the
+                // shell gets its prompt back and the radio comes home.
+                _ = tokio::signal::ctrl_c() => {
+                    println!();
+                    break;
+                }
+            }
+        }
+
+        // Every sender taught a route on the way in; keep them.
+        routes.harvest(&stack.handle).await;
+        if let Err(error) = routes.store() {
+            crate::output::warn(format!("could not save learned routes: {error:#}"));
+        }
+        let _ = stack.handle.service_counter_persistence().await;
+        Ok(())
+    })
+    .await
 }
 
 /// Print one received packet, if it is a text message.

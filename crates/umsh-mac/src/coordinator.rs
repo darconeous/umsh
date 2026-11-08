@@ -1154,6 +1154,9 @@ pub struct Mac<
     multicast_unknown_dup_cache: DuplicateCache<DUP>,
     tx_queue: TxQueue<TX, FRAME>,
     post_tx_listen: Option<PostTxListen>,
+    /// The moment a wake cycle has been asked to complete by; see
+    /// [`Self::wake_by`].
+    requested_wake_ms: Option<u64>,
     repeater: RepeaterConfig,
     operating_policy: OperatingPolicy,
     auto_register_full_key_peers: bool,
@@ -1230,6 +1233,7 @@ impl<
             multicast_unknown_dup_cache: DuplicateCache::new(),
             tx_queue: TxQueue::new(),
             post_tx_listen: None,
+            requested_wake_ms: None,
             repeater,
             operating_policy,
             auto_register_full_key_peers: false,
@@ -2964,6 +2968,7 @@ impl<
         &mut self,
         mut on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
     ) -> Result<(), MacError<<P::Radio as Radio>::Error>> {
+        self.retire_requested_wake();
         self.drain_tx_queue(&mut on_event).await?;
         if self.post_tx_listen.is_some() {
             self.service_post_tx_listen(&mut on_event).await?;
@@ -2976,11 +2981,37 @@ impl<
         Ok(())
     }
 
+    /// Have the driver complete a wake cycle no later than `deadline_ms`.
+    ///
+    /// The layers above keep deadlines of their own—an unanswered ping, a
+    /// session that lapses—and a quiet radio never wakes them. Asking here
+    /// makes the moment one of the MAC's own wake sources. Requests combine:
+    /// the earliest stands until a cycle completes at or after it.
+    pub fn wake_by(&mut self, deadline_ms: u64) {
+        self.requested_wake_ms = Some(
+            self.requested_wake_ms
+                .map_or(deadline_ms, |at| at.min(deadline_ms)),
+        );
+    }
+
+    /// Forget a [`wake_by`](Self::wake_by) request whose moment has come:
+    /// the cycle now completing is the one it asked for. Kept, it would be a
+    /// deadline in the past that pins every later wait.
+    fn retire_requested_wake(&mut self) {
+        if self
+            .requested_wake_ms
+            .is_some_and(|at| self.clock.now_ms() >= at)
+        {
+            self.requested_wake_ms = None;
+        }
+    }
+
     /// Compute the earliest deadline across all coordinator timers.
     ///
     /// Returns `None` when there are no pending timers.  The returned value
     /// covers pending ACK deadlines (both `ack_deadline_ms` and forwarding
-    /// `confirm_deadline_ms`), the post-transmit listen window, and
+    /// `confirm_deadline_ms`), the post-transmit listen window, a
+    /// [`wake_by`](Self::wake_by) request, and
     /// transmit-queue entries still waiting for their `not_before_ms`. A queue
     /// entry already due is not a deadline but ready work; whether it can
     /// actually go out is a separate question, answered by the wait predicate
@@ -2990,7 +3021,7 @@ impl<
     }
 
     fn earliest_deadline_at(&self, now_ms: u64) -> Option<u64> {
-        let mut earliest: Option<u64> = None;
+        let mut earliest: Option<u64> = self.requested_wake_ms;
 
         if let Some(listen) = &self.post_tx_listen {
             earliest =
@@ -3155,6 +3186,7 @@ impl<
         buf: &mut [u8; FRAME],
         mut on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
     ) -> Result<(), MacError<<P::Radio as Radio>::Error>> {
+        self.retire_requested_wake();
         match reason {
             WakeReason::Received(rx) => {
                 let frame_len = rx.len.min(buf.len());
@@ -3590,7 +3622,13 @@ impl<
                 let verified =
                     verified.is_some_and(|v| v.local_id == local_id && v.peer_id == peer_id);
                 let mut acceptance = None;
-                if !verified {
+                if verified {
+                    // A released frame skips the resync it waited on, not the
+                    // window: taking it there makes a later copy a duplicate.
+                    // Behind the baseline its Frame Verified set, it is
+                    // already spent.
+                    acceptance = self.accept_unicast_replay(peer_id, header, &buf[..frame_len]);
+                } else {
                     match Self::resync_command(payload) {
                         Some((MAC_COMMAND_VERIFY_FRAME_ID, nonce)) => {
                             if self
@@ -4068,7 +4106,12 @@ impl<
                         let verified = verified
                             .is_some_and(|v| v.local_id == local_id && v.peer_id == peer_id);
                         let mut acceptance = None;
-                        if !verified {
+                        if verified {
+                            // As for unicast: a released frame is taken by the
+                            // window, so a later copy is a duplicate.
+                            acceptance =
+                                self.accept_unicast_replay(peer_id, header, &buf[..frame_len]);
+                        } else {
                             match Self::resync_command(payload) {
                                 Some((MAC_COMMAND_VERIFY_FRAME_ID, nonce)) => {
                                     if self

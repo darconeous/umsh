@@ -28,76 +28,80 @@ use umsh::ulcp_wire::ids::prop;
 
 #[tokio::test(flavor = "current_thread")]
 async fn an_administrator_reads_a_property_across_the_mesh() {
-    mesh!("read", mesh);
-    let mut buf = [0u8; 16];
-    let len = frame::prop_get(&mut buf, 0, prop::DEV_NAME).unwrap();
-    let reply = mesh.reply(&buf[..len]).await;
-    assert_eq!(value_of(&reply), b"Simulated Device");
-    assert_eq!(mesh.device.borrow().executed, 1);
-    assert_eq!(mesh.manager.stray(), 0);
+    mesh!("read", mesh, {
+        let mut buf = [0u8; 16];
+        let len = frame::prop_get(&mut buf, 0, prop::DEV_NAME).unwrap();
+        let reply = mesh.reply(&buf[..len]).await;
+        assert_eq!(value_of(&reply), b"Simulated Device");
+        assert_eq!(mesh.device.borrow().executed, 1);
+        assert_eq!(mesh.manager.stray(), 0);
+    });
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn a_write_takes_effect_and_is_echoed_back() {
-    mesh!("write", mesh);
-    let mut buf = [0u8; 64];
-    let len = frame::prop_set(&mut buf, 0, prop::DEV_NAME, b"Ridgeline").unwrap();
-    let reply = mesh.reply(&buf[..len]).await;
-    assert_eq!(value_of(&reply), b"Ridgeline");
-    assert_eq!(
-        mesh.device.borrow_mut().local_get(prop::DEV_NAME),
-        b"Ridgeline"
-    );
+    mesh!("write", mesh, {
+        let mut buf = [0u8; 64];
+        let len = frame::prop_set(&mut buf, 0, prop::DEV_NAME, b"Ridgeline").unwrap();
+        let reply = mesh.reply(&buf[..len]).await;
+        assert_eq!(value_of(&reply), b"Ridgeline");
+        assert_eq!(
+            mesh.device.borrow_mut().local_get(prop::DEV_NAME),
+            b"Ridgeline"
+        );
+    });
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn several_properties_travel_in_one_exchange() {
-    mesh!("multi", mesh);
-    let keys = [prop::PROTOCOL_VERSION, prop::DEV_VERSION, prop::DEV_NAME];
-    let mut buf = [0u8; 32];
-    let len = frame::prop_multi_get(&mut buf, 0, &keys).unwrap();
-    let reply = mesh.reply(&buf[..len]).await;
-    let entries = entries_of(&reply);
-    assert_eq!(
-        entries.iter().map(|(key, _)| *key).collect::<Vec<_>>(),
-        keys.to_vec()
-    );
-    assert_eq!(entries[2].1, b"Simulated Device");
-    assert_eq!(mesh.device.borrow().executed, 1);
+    mesh!("multi", mesh, {
+        let keys = [prop::PROTOCOL_VERSION, prop::DEV_VERSION, prop::DEV_NAME];
+        let mut buf = [0u8; 32];
+        let len = frame::prop_multi_get(&mut buf, 0, &keys).unwrap();
+        let reply = mesh.reply(&buf[..len]).await;
+        let entries = entries_of(&reply);
+        assert_eq!(
+            entries.iter().map(|(key, _)| *key).collect::<Vec<_>>(),
+            keys.to_vec()
+        );
+        assert_eq!(entries[2].1, b"Simulated Device");
+        assert_eq!(mesh.device.borrow().executed, 1);
+    });
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn a_read_larger_than_one_payload_is_continued_across_exchanges() {
-    mesh!("cursor", mesh);
-    // Enough state that the answer cannot fit one payload: each peer is
-    // 32 octets of entry, and the whole table is read at once.
-    for index in 0..6u8 {
-        let mut key = [0x70u8; 32];
-        key[31] = index;
-        mesh.device.borrow_mut().provision_peer(&key);
-    }
+    mesh!("cursor", mesh, {
+        // Enough state that the answer cannot fit one payload: each peer is
+        // 32 octets of entry, and the whole table is read at once.
+        for index in 0..6u8 {
+            let mut key = [0x70u8; 32];
+            key[31] = index;
+            mesh.device.borrow_mut().provision_peer(&key);
+        }
 
-    let keys = [
-        prop::DEV_PEERS,
-        prop::DEV_ADMINS,
-        prop::DEV_NAME,
-        prop::CAPS,
-    ];
-    let mut buf = [0u8; 32];
-    let len = frame::prop_multi_get(&mut buf, 0, &keys).unwrap();
-    let reply = mesh.reply(&buf[..len]).await;
-    let entries = entries_of(&reply);
-    assert_eq!(
-        entries.iter().map(|(key, _)| *key).collect::<Vec<_>>(),
-        keys.to_vec(),
-        "the reassembled entry list covers every slot"
-    );
-    assert_eq!(entries[0].1.len(), 6 * 32);
-    assert_eq!(
-        mesh.device.borrow().executed,
-        1,
-        "every continuation is cut from the first exchange's reply"
-    );
+        let keys = [
+            prop::DEV_PEERS,
+            prop::DEV_ADMINS,
+            prop::DEV_NAME,
+            prop::CAPS,
+        ];
+        let mut buf = [0u8; 32];
+        let len = frame::prop_multi_get(&mut buf, 0, &keys).unwrap();
+        let reply = mesh.reply(&buf[..len]).await;
+        let entries = entries_of(&reply);
+        assert_eq!(
+            entries.iter().map(|(key, _)| *key).collect::<Vec<_>>(),
+            keys.to_vec(),
+            "the reassembled entry list covers every slot"
+        );
+        assert_eq!(entries[0].1.len(), 6 * 32);
+        assert_eq!(
+            mesh.device.borrow().executed,
+            1,
+            "every continuation is cut from the first exchange's reply"
+        );
+    });
 }
 
 /// A raw bus transaction crosses the mesh like any other request, and a
@@ -109,84 +113,88 @@ async fn a_bus_transfer_crosses_the_mesh_and_an_oversize_read_is_refused() {
     use umsh::ulcp_wire::{Cmd, Frame, Status, pui};
     use umsh_ulcp_simdev::SimulatedI2c;
 
-    mesh!("i2c", mesh);
-    let mut buf = [0u8; 64];
-    let len = encode_transfer(
-        &mut buf,
-        0,
-        0,
-        SimulatedI2c::ADDRESS,
-        &[
-            Op::Write(&[0x00, 0x11, 0x22]),
-            Op::Write(&[0x00]),
-            Op::Read(2),
-        ],
-    )
-    .unwrap();
-    let reply = mesh.reply(&buf[..len]).await;
-    let parsed = Frame::parse(&reply).unwrap();
-    assert_eq!(parsed.command(), Some(Cmd::I2cResult));
-    assert_eq!(parsed.payload, &[0x11, 0x22]);
-    assert_eq!(mesh.device.borrow().executed, 1);
-    assert_eq!(mesh.device.borrow().i2c.executed(), 1);
+    mesh!("i2c", mesh, {
+        let mut buf = [0u8; 64];
+        let len = encode_transfer(
+            &mut buf,
+            0,
+            0,
+            SimulatedI2c::ADDRESS,
+            &[
+                Op::Write(&[0x00, 0x11, 0x22]),
+                Op::Write(&[0x00]),
+                Op::Read(2),
+            ],
+        )
+        .unwrap();
+        let reply = mesh.reply(&buf[..len]).await;
+        let parsed = Frame::parse(&reply).unwrap();
+        assert_eq!(parsed.command(), Some(Cmd::I2cResult));
+        assert_eq!(parsed.payload, &[0x11, 0x22]);
+        assert_eq!(mesh.device.borrow().executed, 1);
+        assert_eq!(mesh.device.borrow().i2c.executed(), 1);
 
-    // One octet more than the payload can carry back.
-    let too_many = PAYLOAD - umsh::node_mgmt::envelope::OVERHEAD_MAX - 2 + 1;
-    let len =
-        encode_transfer(&mut buf, 0, 0, SimulatedI2c::ADDRESS, &[Op::Read(too_many)]).unwrap();
-    let reply = mesh.reply(&buf[..len]).await;
-    let status = pui::decode(&value_of(&reply)).unwrap().0;
-    assert_eq!(Status(status), Status::NOMEM);
-    assert_eq!(
-        mesh.device.borrow().i2c.executed(),
-        1,
-        "never reached the bus"
-    );
+        // One octet more than the payload can carry back.
+        let too_many = PAYLOAD - umsh::node_mgmt::envelope::OVERHEAD_MAX - 2 + 1;
+        let len =
+            encode_transfer(&mut buf, 0, 0, SimulatedI2c::ADDRESS, &[Op::Read(too_many)]).unwrap();
+        let reply = mesh.reply(&buf[..len]).await;
+        let status = pui::decode(&value_of(&reply)).unwrap().0;
+        assert_eq!(Status(status), Status::NOMEM);
+        assert_eq!(
+            mesh.device.borrow().i2c.executed(),
+            1,
+            "never reached the bus"
+        );
+    });
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn a_reset_is_answered_by_the_acknowledgment_and_nothing_else() {
-    mesh!("reset", mesh);
-    let mut buf = [0u8; 8];
-    let len = frame::reset(&mut buf, 0).unwrap();
-    assert_eq!(mesh.run(&buf[..len]).await, Outcome::NoResponse);
-    assert_eq!(mesh.device.borrow().executed, 1);
+    mesh!("reset", mesh, {
+        let mut buf = [0u8; 8];
+        let len = frame::reset(&mut buf, 0).unwrap();
+        assert_eq!(mesh.run(&buf[..len]).await, Outcome::NoResponse);
+        assert_eq!(mesh.device.borrow().executed, 1);
+    });
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn an_unlisted_administrator_is_answered_by_silence() {
-    mesh!("unlisted", mesh);
-    // The device forgets who may manage it, without telling anyone.
-    mesh.device.borrow_mut().admins.clear();
-    let mut buf = [0u8; 16];
-    let len = frame::prop_get(&mut buf, 0, prop::DEV_NAME).unwrap();
-    mesh.manager.begin(&buf[..len], mesh.now_ms()).unwrap();
-    // Waiting out the whole attempt budget would take half a minute and
-    // prove nothing further: what matters is that the request arrived,
-    // was refused, and drew no answer.
-    mesh.settle(8).await;
-    assert!(mesh.manager.is_busy(), "still waiting on an answer");
-    assert!(mesh.device.borrow().unauthorized > 0);
-    assert_eq!(mesh.device.borrow().executed, 0);
+    mesh!("unlisted", mesh, {
+        // The device forgets who may manage it, without telling anyone.
+        mesh.device.borrow_mut().admins.clear();
+        let mut buf = [0u8; 16];
+        let len = frame::prop_get(&mut buf, 0, prop::DEV_NAME).unwrap();
+        mesh.manager.begin(&buf[..len], mesh.now_ms()).unwrap();
+        // Waiting out the whole attempt budget would take half a minute and
+        // prove nothing further: what matters is that the request arrived,
+        // was refused, and drew no answer.
+        mesh.settle(8).await;
+        assert!(mesh.manager.is_busy(), "still waiting on an answer");
+        assert!(mesh.device.borrow().unauthorized > 0);
+        assert_eq!(mesh.device.borrow().executed, 0);
+    });
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn an_abandoned_exchange_frees_the_manager_for_the_next() {
-    mesh!("abandon", mesh);
-    let mut buf = [0u8; 16];
-    let len = frame::prop_get(&mut buf, 0, prop::DEV_NAME).unwrap();
-    mesh.manager.begin(&buf[..len], mesh.now_ms()).unwrap();
-    // The request is on the air, and the administrator stops waiting
-    // for it on its own terms.
-    mesh.settle(2).await;
-    let abandoned = mesh.manager.counter();
-    assert!(mesh.manager.is_busy());
-    mesh.manager.abandon().await;
-    assert!(!mesh.manager.is_busy());
+    mesh!("abandon", mesh, {
+        let mut buf = [0u8; 16];
+        let len = frame::prop_get(&mut buf, 0, prop::DEV_NAME).unwrap();
+        mesh.manager.begin(&buf[..len], mesh.now_ms()).unwrap();
+        // The request is on the air, and the administrator stops waiting
+        // for it on its own terms.
+        mesh.settle(2).await;
+        let abandoned = mesh.manager.counter();
+        assert!(mesh.manager.is_busy());
+        mesh.manager.abandon().await;
+        assert!(!mesh.manager.is_busy());
 
-    // The next operation begins at once, on a token the abandoned one
-    // never used, and runs to its end.
-    let reply = mesh.reply(&buf[..len]).await;
-    assert_eq!(value_of(&reply), b"Simulated Device");
-    assert_ne!(mesh.manager.counter(), abandoned);
+        // The next operation begins at once, on a token the abandoned one
+        // never used, and runs to its end.
+        let reply = mesh.reply(&buf[..len]).await;
+        assert_eq!(value_of(&reply), b"Simulated Device");
+        assert_ne!(mesh.manager.counter(), abandoned);
+    });
 }

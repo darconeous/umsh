@@ -114,7 +114,7 @@ impl Rows {
 /// Whether the peer's radio acknowledged every fragment of an outbound
 /// message.
 fn acknowledged(delivery: &record::Delivery) -> bool {
-    delivery.acked != 0 && delivery.sent & !delivery.acked == 0
+    delivery.delivered()
 }
 
 /// How an outbound message came out, once it has: delivered (`true`) or

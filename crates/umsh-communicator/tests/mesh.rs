@@ -44,9 +44,6 @@ type MeshMac = Mac<Platform, 5, 16, 4, 8, 8, 255, 32>;
 /// A test that stops making progress fails rather than hangs.
 const PATIENCE: Duration = Duration::from_secs(20);
 
-/// How long one turn of a device node's pump waits for its radio.
-const TURN: Duration = Duration::from_millis(5);
-
 /// The board's clock, from when the test started.
 struct Since(Instant);
 
@@ -116,15 +113,10 @@ async fn board(radio: SimulatedRadio, secret: [u8; 32]) -> Board {
 
     let inbox: &'static Inbox<NoopRawMutex> = Box::leak(Box::new(Inbox::new()));
     std::mem::forget(task::listen(&mesh, inbox, key, WellKnownChannels::derive()));
-    // The simulated radio wakes no one when a frame reaches it, so the
-    // pump is polled again every few milliseconds.
+    // The device node's data pump, as its own task for the life of the
+    // test: never raced, never timed out.
     spawn_local(async move {
-        loop {
-            if let Ok(pumped) = tokio::time::timeout(TURN, host.pump_once()).await {
-                pumped.unwrap();
-            }
-            handle.service_counter_persistence().await.unwrap();
-        }
+        host.run().await.unwrap();
     });
     let board = Board {
         node,
@@ -176,11 +168,7 @@ async fn repeater(radio: SimulatedRadio, secret: [u8; 32]) -> PublicKey {
     let handle = MacHandle::new(mac);
     handle.add_identity(identity).await.unwrap();
     spawn_local(async move {
-        loop {
-            if let Ok(served) = tokio::time::timeout(TURN, handle.next_event(|_, _| {})).await {
-                served.unwrap();
-            }
-        }
+        handle.run(|_, _| {}).await.unwrap();
     });
     key
 }

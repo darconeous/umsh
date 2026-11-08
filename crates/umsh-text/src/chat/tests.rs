@@ -172,6 +172,7 @@ fn rejecting_fails_frames_and_restores_from_checkpoints() {
         [Delivery {
             handle: lost_handle,
             fragment: None,
+            fragments: 1,
             state: DeliveryState::Failed,
             via_flood: false,
         }]

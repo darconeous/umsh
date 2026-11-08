@@ -690,13 +690,14 @@ impl<D: Durable> MemoryStore<D> {
                 Change::Delivery {
                     handle,
                     fragment,
+                    fragments,
                     state,
                 } => {
                     if let Some(id) = self.resolve(batch, &committed, handle)
                         && let Some(message) = self.disk.messages.get_mut(&id)
                     {
                         self.dirty.mark(RecordKey::Message(id));
-                        message.record.delivery.set(fragment, state);
+                        message.record.delivery.set(fragment, fragments, state);
                         committed.touch_message(MessageId(id));
                     }
                 }

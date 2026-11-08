@@ -1385,6 +1385,23 @@ impl<M: MacBackend> LocalNode<M> {
         self.mac.now_ms().await
     }
 
+    /// Have the host's pump come round by `deadline_ms`; see
+    /// [`MacBackend::wake_by`].
+    pub(crate) async fn wake_by(&self, deadline_ms: u64) {
+        self.mac.wake_by(deadline_ms).await
+    }
+
+    /// The earliest deadline the host's timeout service has to meet for
+    /// this node: a ping awaiting its echo, a forward-secrecy request
+    /// awaiting its answer, or a session's end.
+    pub(crate) fn next_deadline_ms(&self) -> Option<u64> {
+        let state = self.state.borrow();
+        let pings = state.pending_pings.iter().map(|ping| ping.deadline_ms);
+        #[cfg(feature = "software-crypto")]
+        let pings = pings.chain(state.pfs.next_deadline_ms());
+        pings.min()
+    }
+
     pub(crate) async fn fill_random(&self, dest: &mut [u8]) {
         self.mac.fill_random(dest).await
     }

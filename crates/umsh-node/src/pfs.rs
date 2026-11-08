@@ -537,6 +537,17 @@ impl PfsSessionManager {
         true
     }
 
+    /// The earliest moment a session ends or a request is abandoned.
+    pub(crate) fn next_deadline_ms(&self) -> Option<u64> {
+        self.sessions
+            .iter()
+            .map(|session| match session.state {
+                PfsState::Requested => session.expires_ms.min(session.request_deadline_ms),
+                PfsState::Active => session.expires_ms,
+            })
+            .min()
+    }
+
     /// Drop any `Requested` sessions whose response deadline has passed and
     /// return their peers. These hold no MAC resources (no ephemeral identity
     /// is registered until a response arrives), so no `mac` cleanup is needed.
@@ -814,6 +825,7 @@ async fn begin_session<M: MacBackend>(
     secret.zeroize();
     let local_public = *local_ephemeral.public_key();
     let now_ms = mac.now_ms().await;
+    let request_deadline_ms = now_ms.saturating_add(PFS_REQUEST_TIMEOUT_MS);
     let displaced = state.borrow_mut().pfs.install(PfsSession {
         peer_long_term: *peer,
         local_ephemeral_id: LocalIdentityId(u8::MAX),
@@ -821,9 +833,11 @@ async fn begin_session<M: MacBackend>(
         peer_ephemeral: PublicKey([0u8; 32]),
         expires_ms: now_ms.saturating_add(u64::from(duration_minutes) * 60_000),
         state: PfsState::Requested,
-        request_deadline_ms: now_ms.saturating_add(PFS_REQUEST_TIMEOUT_MS),
+        request_deadline_ms,
         pending_local: Some(local_ephemeral),
     })?;
+    // A request nobody answers has to be noticed on a quiet radio.
+    mac.wake_by(request_deadline_ms).await;
     if let Some(displaced) = displaced {
         release(mac, displaced).await;
     }

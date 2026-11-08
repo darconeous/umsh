@@ -7,7 +7,6 @@
 
 use std::cell::{Cell, RefCell};
 use std::future::Future;
-use std::pin::pin;
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -60,25 +59,17 @@ async fn boot(
     handle.load_persisted_counter(id).await.unwrap();
     let mut host = Host::new(handle);
     let node = host.add_node(id);
+    // The data pump, as its own task until the node loses power: never
+    // raced, never timed out. Its frame counters are kept after each cycle,
+    // as a board keeps them.
     let pump = spawn_local(async move {
-        loop {
-            nudged(host.pump_once()).await.unwrap();
+        host.run_with(async || {
             handle.service_counter_persistence().await.unwrap();
-        }
+        })
+        .await
+        .unwrap();
     });
     (node, pump)
-}
-
-/// Runs `future` to completion, polling it again every few milliseconds:
-/// the simulated radio wakes no one when a frame reaches it. The future is
-/// never dropped partway, as a pump cycle must not be.
-async fn nudged<F: Future>(future: F) -> F::Output {
-    let mut future = pin!(future);
-    loop {
-        if let Ok(output) = tokio::time::timeout(Duration::from_millis(5), future.as_mut()).await {
-            return output;
-        }
-    }
 }
 
 async fn until(

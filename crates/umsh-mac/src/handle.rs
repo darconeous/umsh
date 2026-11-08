@@ -556,6 +556,16 @@ impl<
         self.mac.borrow().await.clock().now_ms()
     }
 
+    /// Have the driver complete a wake cycle no later than `deadline_ms`.
+    /// See [`Mac::wake_by`].
+    ///
+    /// The borrow's release re-polls a driver waiting in
+    /// [`next_event`](Self::next_event), so the request takes effect on the
+    /// wait already in progress.
+    pub async fn wake_by(&self, deadline_ms: u64) {
+        self.mac.borrow_mut().await.wake_by(deadline_ms);
+    }
+
     #[cfg(feature = "software-crypto")]
     /// Registers an ephemeral software identity with the shared coordinator.
     pub async fn register_ephemeral(

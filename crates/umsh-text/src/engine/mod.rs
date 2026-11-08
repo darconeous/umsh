@@ -269,6 +269,9 @@ pub enum Event {
     DeliveryStateChanged {
         handle: MessageHandle,
         fragment: Option<u8>,
+        /// How many fragments the message went in: 1 for one that went
+        /// whole, and 0 for a frame sent again where that was not at hand.
+        fragments: u8,
         state: DeliveryState,
     },
     RepairStarted {
@@ -592,6 +595,16 @@ pub struct Engine<P: TextProfile, const SLOTS: usize = 4, const PAGES: usize = 2
     lost_outputs: u32,
 }
 
+/// The message and fragment a frame carries, for word of it to be
+/// reported against.
+#[derive(Clone, Copy, Debug)]
+struct Track {
+    handle: MessageHandle,
+    fragment: Option<u8>,
+    /// See [`Event::DeliveryStateChanged::fragments`].
+    fragments: u8,
+}
+
 /// A tracked outbound frame between `Transmit` emission and its terminal
 /// delivery report.
 #[derive(Clone, Copy, Debug)]
@@ -599,6 +612,8 @@ struct InFlightFrame {
     transmission_id: u32,
     handle: MessageHandle,
     fragment: Option<u8>,
+    /// See [`Event::DeliveryStateChanged::fragments`].
+    fragments: u8,
     /// Archive coordinates, used to coalesce resend requests that arrive
     /// around this frame's own transmission.
     archive: Option<ArchiveKey>,
@@ -1048,6 +1063,7 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
         self.push_output(Output::Event(Event::DeliveryStateChanged {
             handle: frame.handle,
             fragment: frame.fragment,
+            fragments: frame.fragments,
             state,
         }));
         // `Sent` is not terminal for a frame that is still waiting to be
@@ -1109,7 +1125,7 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                 let track = self.outbound_track(
                     &lookup.conversation,
                     lookup.sequence.message_id,
-                    lookup.sequence.fragment.map(|fragment| fragment.index),
+                    lookup.sequence.fragment,
                 );
                 self.queue_transmit(destination, None, frame, track);
             }
@@ -1154,7 +1170,11 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
             destination_for(&key.conversation),
             None,
             frame,
-            Some((handle, key.fragment)),
+            Some(Track {
+                handle,
+                fragment: key.fragment,
+                fragments: if key.fragment.is_some() { 0 } else { 1 },
+            }),
         );
         true
     }
@@ -1207,12 +1227,16 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
         &self,
         conversation: &ConversationKey,
         message_id: u8,
-        fragment: Option<u8>,
-    ) -> Option<(MessageHandle, Option<u8>)> {
+        fragment: Option<Fragment>,
+    ) -> Option<Track> {
         self.outbound
             .get(conversation)
             .and_then(|stream| stream.refs.lookup(message_id))
-            .map(|handle| (handle, fragment))
+            .map(|handle| Track {
+                handle,
+                fragment: fragment.map(|fragment| fragment.index),
+                fragments: fragment.map_or(1, |fragment| fragment.count),
+            })
     }
 
     /// Advance timers: reassembly expiry, notify deadlines, repair scheduling.
@@ -2554,7 +2578,11 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                     fragment: None,
                 }),
                 frame,
-                Some((handle, None)),
+                Some(Track {
+                    handle,
+                    fragment: None,
+                    fragments: 1,
+                }),
             );
             return Ok(());
         };
@@ -2591,7 +2619,11 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                     fragment: Some(index),
                 }),
                 frame,
-                Some((handle, Some(index))),
+                Some(Track {
+                    handle,
+                    fragment: Some(index),
+                    fragments: plan.count,
+                }),
             );
         }
         Ok(())
@@ -2678,18 +2710,19 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
         destination: Destination,
         archive: Option<ArchiveKey>,
         payload: heapless::Vec<u8, MAX_FRAME>,
-        track: Option<(MessageHandle, Option<u8>)>,
+        track: Option<Track>,
     ) -> u32 {
         let transmission_id = self.next_transmission;
         self.next_transmission = self.next_transmission.wrapping_add(1);
-        if let Some((handle, fragment)) = track {
+        if let Some(track) = track {
             if self.in_flight.is_full() {
                 self.in_flight.remove(0);
             }
             let _ = self.in_flight.push(InFlightFrame {
                 transmission_id,
-                handle,
-                fragment,
+                handle: track.handle,
+                fragment: track.fragment,
+                fragments: track.fragments,
                 archive,
                 expects_ack: matches!(destination, Destination::Peer(_)),
             });
@@ -2698,7 +2731,7 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
             transmission_id,
             destination,
             archive,
-            message: track.map(|(handle, _)| handle),
+            message: track.map(|track| track.handle),
             payload,
         }));
         transmission_id
