@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
   "release": {
-    "version": "2026.11.05",
-    "tag": "fw-2026.11.05",
-    "date": "2026-11-05",
-    "commit": "ebe9f933fb4c6ade4044e524777e17e343a52d80",
+    "version": "2026.11.08",
+    "tag": "fw-2026.11.08",
+    "date": "2026-11-08",
+    "commit": "bd00e8a35ae0169c951fd9dee659dbd96baa6778",
     "channel": "preview",
-    "release_url": "https://github.com/darconeous/umsh/releases/tag/fw-2026.11.05"
+    "release_url": "https://github.com/darconeous/umsh/releases/tag/fw-2026.11.08"
   },
   "build": {
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -34,11 +34,11 @@
       "files": [
         {
           "role": "merged-bin",
-          "name": "umsh-tlora-pager-2026.11.05.bin",
-          "size": 6477392,
-          "sha256": "d109ff6700eee4d4e38c565713a7693a6092a1ede76dadd02c0c730c8ae79953",
-          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.11.05/umsh-tlora-pager-2026.11.05.bin",
-          "path": "/firmware/2026.11.05/umsh-tlora-pager-2026.11.05.bin"
+          "name": "umsh-tlora-pager-2026.11.08.bin",
+          "size": 6555200,
+          "sha256": "02038001a84c86b400bb0d8189be5e4384c7ff2b0c413e104c98ecade00eb5ee",
+          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.11.08/umsh-tlora-pager-2026.11.08.bin",
+          "path": "/firmware/2026.11.08/umsh-tlora-pager-2026.11.08.bin"
         }
       ]
     },
@@ -61,20 +61,20 @@
       "files": [
         {
           "role": "uf2",
-          "name": "umsh-techo-2026.11.05.uf2",
-          "size": 1539072,
-          "sha256": "a4bd6fad67e204ba44f7d09dde1f855637b268d6cf51bc15e8d82ee585e5eb63",
-          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.11.05/umsh-techo-2026.11.05.uf2",
+          "name": "umsh-techo-2026.11.08.uf2",
+          "size": 1535488,
+          "sha256": "ca0038c9464e082a35cf85059d65741044f4b18ed7851daef0313cce9bb0e6c5",
+          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.11.08/umsh-techo-2026.11.08.uf2",
           "path": null
         },
         {
           "role": "dfu-zip",
-          "name": "umsh-techo-2026.11.05-dfu.zip",
-          "size": 770282,
-          "sha256": "b517bf225b307afb995ce83ca0103b6ab6c58c8271d16ce8d9fce59ae68fbaf9",
+          "name": "umsh-techo-2026.11.08-dfu.zip",
+          "size": 768363,
+          "sha256": "bec994af21940022db8685b960dcef5b1a90d687bc5d36bf6abc433c9603b892",
           "sd_req": "0x00B6",
-          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.11.05/umsh-techo-2026.11.05-dfu.zip",
-          "path": "/firmware/2026.11.05/umsh-techo-2026.11.05-dfu.zip"
+          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.11.08/umsh-techo-2026.11.08-dfu.zip",
+          "path": "/firmware/2026.11.08/umsh-techo-2026.11.08-dfu.zip"
         }
       ]
     },
@@ -97,20 +97,20 @@
       "files": [
         {
           "role": "uf2",
-          "name": "umsh-t1000e-2026.11.05.uf2",
-          "size": 1449472,
-          "sha256": "c502323e2e66322fe195b9a8f70abdf4cb3764def1a4098008d405dd16f3d2b0",
-          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.11.05/umsh-t1000e-2026.11.05.uf2",
+          "name": "umsh-t1000e-2026.11.08.uf2",
+          "size": 1475584,
+          "sha256": "eb8541be5f20b51037e966b31d62af154ef29ff305bbcc70ac0133fd9fd0b828",
+          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.11.08/umsh-t1000e-2026.11.08.uf2",
           "path": null
         },
         {
           "role": "dfu-zip",
-          "name": "umsh-t1000e-2026.11.05-dfu.zip",
-          "size": 725521,
-          "sha256": "0fb09ad4436b60fd80a7a06d8b5e166800cb2eb532ac2f5e13e7424a7a8427de",
+          "name": "umsh-t1000e-2026.11.08-dfu.zip",
+          "size": 738577,
+          "sha256": "484ddf009a2715b29a79f6814940c2a297f4428090fc37f226256a9ce1cbefce",
           "sd_req": "0x0123",
-          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.11.05/umsh-t1000e-2026.11.05-dfu.zip",
-          "path": "/firmware/2026.11.05/umsh-t1000e-2026.11.05-dfu.zip"
+          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.11.08/umsh-t1000e-2026.11.08-dfu.zip",
+          "path": "/firmware/2026.11.08/umsh-t1000e-2026.11.08-dfu.zip"
         }
       ]
     },
@@ -133,20 +133,20 @@
       "files": [
         {
           "role": "uf2",
-          "name": "umsh-sensecap-solar-2026.11.05.uf2",
-          "size": 1445888,
-          "sha256": "dbd76ffb2d62d1a79cb06b5cbc68cc67b5b52b2ef0aa6b90432b290127edb08d",
-          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.11.05/umsh-sensecap-solar-2026.11.05.uf2",
+          "name": "umsh-sensecap-solar-2026.11.08.uf2",
+          "size": 1451008,
+          "sha256": "cdc63b668fea05658324e0941de3fddeafb72d32d7cfdf48f215520e38420b1f",
+          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.11.08/umsh-sensecap-solar-2026.11.08.uf2",
           "path": null
         },
         {
           "role": "dfu-zip",
-          "name": "umsh-sensecap-solar-2026.11.05-dfu.zip",
-          "size": 723680,
-          "sha256": "5549d4baf1228d2ee9ce182799d1da2e2c565be80db8409219adf3e3a8afba67",
+          "name": "umsh-sensecap-solar-2026.11.08-dfu.zip",
+          "size": 726273,
+          "sha256": "fbfce3ae19252883e30d3c1c753b14e3cf6067b23879c72de2f2063e7a602e12",
           "sd_req": "0x0123",
-          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.11.05/umsh-sensecap-solar-2026.11.05-dfu.zip",
-          "path": "/firmware/2026.11.05/umsh-sensecap-solar-2026.11.05-dfu.zip"
+          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.11.08/umsh-sensecap-solar-2026.11.08-dfu.zip",
+          "path": "/firmware/2026.11.08/umsh-sensecap-solar-2026.11.08-dfu.zip"
         }
       ]
     },
@@ -169,20 +169,20 @@
       "files": [
         {
           "role": "uf2",
-          "name": "umsh-wio-tracker-l1-2026.11.05.uf2",
-          "size": 1530368,
-          "sha256": "4cfb9ab40bdd2d874c2c326de063317d15b5cd8b3c60d9823d4b579c6bcccbbe",
-          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.11.05/umsh-wio-tracker-l1-2026.11.05.uf2",
+          "name": "umsh-wio-tracker-l1-2026.11.08.uf2",
+          "size": 1525248,
+          "sha256": "ec5f449ec9fe214048286f26532c2ff8afbb81dbfea9e01baef8789dcaffb0ad",
+          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.11.08/umsh-wio-tracker-l1-2026.11.08.uf2",
           "path": null
         },
         {
           "role": "dfu-zip",
-          "name": "umsh-wio-tracker-l1-2026.11.05-dfu.zip",
-          "size": 765889,
-          "sha256": "b2610dd08974a8633cc025a49d072bcaf8eeb93c2d05e354abdbb9d2591a5fae",
+          "name": "umsh-wio-tracker-l1-2026.11.08-dfu.zip",
+          "size": 763489,
+          "sha256": "19df5d00965df42675cd25da5439d4a6e9edd54705179cbbd95589573fdf654e",
           "sd_req": "0x0123",
-          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.11.05/umsh-wio-tracker-l1-2026.11.05-dfu.zip",
-          "path": "/firmware/2026.11.05/umsh-wio-tracker-l1-2026.11.05-dfu.zip"
+          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.11.08/umsh-wio-tracker-l1-2026.11.08-dfu.zip",
+          "path": "/firmware/2026.11.08/umsh-wio-tracker-l1-2026.11.08-dfu.zip"
         }
       ]
     },
@@ -205,20 +205,20 @@
       "files": [
         {
           "role": "uf2",
-          "name": "umsh-xiao-nrf52-2026.11.05.uf2",
-          "size": 1420288,
-          "sha256": "b563b5351ef5c6b7cfac18c5191b410f2ab0c43a208415eae111a87f4f3712ac",
-          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.11.05/umsh-xiao-nrf52-2026.11.05.uf2",
+          "name": "umsh-xiao-nrf52-2026.11.08.uf2",
+          "size": 1424384,
+          "sha256": "d7c27b84402d794f3748977fe68ed819aea3ba489c3e926a7503b3a123aa86c5",
+          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.11.08/umsh-xiao-nrf52-2026.11.08.uf2",
           "path": null
         },
         {
           "role": "dfu-zip",
-          "name": "umsh-xiao-nrf52-2026.11.05-dfu.zip",
-          "size": 710921,
-          "sha256": "1f0c9852bc30fdcdf9fae00fd97dbd89ad87df03594a23d76730078131d53039",
+          "name": "umsh-xiao-nrf52-2026.11.08-dfu.zip",
+          "size": 712969,
+          "sha256": "bd659c107ab1b4a8cefc9ebefa3af5ee5ec854e9289bb28ea46fc7de79c035d2",
           "sd_req": "0x0123",
-          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.11.05/umsh-xiao-nrf52-2026.11.05-dfu.zip",
-          "path": "/firmware/2026.11.05/umsh-xiao-nrf52-2026.11.05-dfu.zip"
+          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.11.08/umsh-xiao-nrf52-2026.11.08-dfu.zip",
+          "path": "/firmware/2026.11.08/umsh-xiao-nrf52-2026.11.08-dfu.zip"
         }
       ]
     },
@@ -241,11 +241,11 @@
       "files": [
         {
           "role": "merged-bin",
-          "name": "umsh-heltec-v3-2026.11.05.bin",
-          "size": 1340544,
-          "sha256": "4977824080ca8c0e8ff0fa45f06082bf8027629500995f03120121387a396967",
-          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.11.05/umsh-heltec-v3-2026.11.05.bin",
-          "path": "/firmware/2026.11.05/umsh-heltec-v3-2026.11.05.bin"
+          "name": "umsh-heltec-v3-2026.11.08.bin",
+          "size": 1374432,
+          "sha256": "dd509c76d82711f4a7c0b0b202ded5f548550c2108a82e54fc2dc8b9d06a6950",
+          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.11.08/umsh-heltec-v3-2026.11.08.bin",
+          "path": "/firmware/2026.11.08/umsh-heltec-v3-2026.11.08.bin"
         }
       ]
     },
@@ -268,11 +268,11 @@
       "files": [
         {
           "role": "merged-bin",
-          "name": "umsh-heltec-v3-bridge-2026.11.05.bin",
-          "size": 1414640,
-          "sha256": "47def856833502d68ae57e293da95ee1d026d94301384c9ef414aef398a7d6d3",
-          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.11.05/umsh-heltec-v3-bridge-2026.11.05.bin",
-          "path": "/firmware/2026.11.05/umsh-heltec-v3-bridge-2026.11.05.bin"
+          "name": "umsh-heltec-v3-bridge-2026.11.08.bin",
+          "size": 1460464,
+          "sha256": "fc895acdba8b7378d843601f423e7a815b54069a5781214b31961a31e41dec2b",
+          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.11.08/umsh-heltec-v3-bridge-2026.11.08.bin",
+          "path": "/firmware/2026.11.08/umsh-heltec-v3-bridge-2026.11.08.bin"
         }
       ]
     },
@@ -295,11 +295,11 @@
       "files": [
         {
           "role": "merged-bin",
-          "name": "umsh-tbeam-supreme-2026.11.05.bin",
-          "size": 1907552,
-          "sha256": "bcfe049e7d8360d7b4788aa90cefecb9506e88c3928c931886573434d3af6045",
-          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.11.05/umsh-tbeam-supreme-2026.11.05.bin",
-          "path": "/firmware/2026.11.05/umsh-tbeam-supreme-2026.11.05.bin"
+          "name": "umsh-tbeam-supreme-2026.11.08.bin",
+          "size": 1941136,
+          "sha256": "c97044798ba097d6e28459ee209a9db82578f680baad47844729c76f7b22b6e2",
+          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.11.08/umsh-tbeam-supreme-2026.11.08.bin",
+          "path": "/firmware/2026.11.08/umsh-tbeam-supreme-2026.11.08.bin"
         }
       ]
     },
@@ -322,11 +322,11 @@
       "files": [
         {
           "role": "merged-bin",
-          "name": "umsh-tdeck-2026.11.05.bin",
-          "size": 6273712,
-          "sha256": "2306423b0b3dbcac220df62a4edd95e4896f129dbd04a2ea7419ca1b1b051033",
-          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.11.05/umsh-tdeck-2026.11.05.bin",
-          "path": "/firmware/2026.11.05/umsh-tdeck-2026.11.05.bin"
+          "name": "umsh-tdeck-2026.11.08.bin",
+          "size": 6355904,
+          "sha256": "8bee16248ac6e21806ea410a097cf21012ad5b4a2b1e48d24709c0e62efd088f",
+          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.11.08/umsh-tdeck-2026.11.08.bin",
+          "path": "/firmware/2026.11.08/umsh-tdeck-2026.11.08.bin"
         }
       ]
     },
@@ -349,11 +349,11 @@
       "files": [
         {
           "role": "merged-bin",
-          "name": "umsh-xiao-esp32s3-2026.11.05.bin",
-          "size": 1793056,
-          "sha256": "3135a96a316d1bac091fce41911d98b397b30bcfd847f4a98ebfed37a8ae7064",
-          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.11.05/umsh-xiao-esp32s3-2026.11.05.bin",
-          "path": "/firmware/2026.11.05/umsh-xiao-esp32s3-2026.11.05.bin"
+          "name": "umsh-xiao-esp32s3-2026.11.08.bin",
+          "size": 1825856,
+          "sha256": "6df1c777c1991738e3689ae2e0232a794c69d66bdc8c71dbdd3785c89f723e04",
+          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.11.08/umsh-xiao-esp32s3-2026.11.08.bin",
+          "path": "/firmware/2026.11.08/umsh-xiao-esp32s3-2026.11.08.bin"
         }
       ]
     }
