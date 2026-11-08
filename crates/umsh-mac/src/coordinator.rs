@@ -1417,6 +1417,16 @@ impl<
         &self.counter_store
     }
     /// Borrow the transmit queue.
+    /// Whether a queued frame has yet to air. A wake cycle goes on while
+    /// one has, so it is sent before the caller is let go; a forward that
+    /// aired and only listens for its next hop does not hold the cycle,
+    /// since it stays queued for several frame times and the next cycle
+    /// wakes for it at its deadline.
+    pub(crate) fn has_unaired_tx(&self) -> bool {
+        self.tx_queue
+            .contains_matching(|entry| !entry.forward_watch.has_aired())
+    }
+
     pub fn tx_queue(&self) -> &TxQueue<TX, FRAME> {
         &self.tx_queue
     }
@@ -3482,15 +3492,9 @@ impl<
             let _ = self.service_counter_persistence().await;
             let _ = self.service_rx_counter_persistence().await;
 
-            // If the tx_queue has new work (e.g. retransmits just enqueued),
-            // loop back to drain it before waiting again. A forward that has
-            // aired and is waiting to hear its next hop does not hold the
-            // caller: it stays queued for several frame times, and the next
-            // call wakes for it at its deadline.
-            if self
-                .tx_queue
-                .contains_matching(|entry| !entry.forward_watch.has_aired())
-            {
+            // New transmit work (e.g. a retransmit just enqueued) is drained
+            // before the caller is let go; see `has_unaired_tx`.
+            if self.has_unaired_tx() {
                 continue;
             }
 

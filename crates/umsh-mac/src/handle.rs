@@ -492,11 +492,10 @@ impl<
                 let _ = mac.service_rx_counter_persistence().await;
             }
 
-            // If new transmit work appeared during processing (e.g. a
-            // retransmit was enqueued), loop back to drain it before
-            // waiting again.
-            let tx_empty = self.mac.borrow().await.tx_queue().is_empty();
-            if !tx_empty {
+            // New transmit work (e.g. a retransmit was enqueued) is
+            // drained before the caller is let go, as in `Mac::next_event`;
+            // see `Mac::has_unaired_tx`.
+            if self.mac.borrow().await.has_unaired_tx() {
                 continue;
             }
             return Ok(());

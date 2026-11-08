@@ -410,3 +410,31 @@ fn a_forward_waiting_on_its_next_hop_does_not_hold_next_event() {
     assert!(ended, "the wake ends the call");
     assert_eq!(awaiting(&mac), 1, "with the forward still waiting");
 }
+
+/// The same through `MacHandle`, which is what a node's pump drives.
+#[test]
+fn a_forward_waiting_on_its_next_hop_does_not_hold_the_handle() {
+    let mut mac = make_repeater_mac();
+    let frame = routed_unicast(
+        b"waiting",
+        false,
+        None,
+        &[repeater_hint(&mac), next_hop_hint()],
+    );
+    receive(&mut mac, &frame);
+    transmit(&mut mac).expect("the forward airs");
+    assert_eq!(awaiting(&mac), 1);
+    mac.radio_mut().queue_received_frame(&frame);
+
+    let cell = umsh_sync::AsyncRefCell::new(mac);
+    let handle = MacHandle::new(&cell);
+    let waker = noop_waker();
+    let mut cx = Context::from_waker(&waker);
+    let ended = {
+        let mut wake = core::pin::pin!(handle.next_event(|_, _| {}));
+        (0..8).any(|_| matches!(wake.as_mut().poll(&mut cx), Poll::Ready(Ok(()))))
+    };
+    assert!(ended, "the wake ends the call");
+    let mac = cell.into_inner();
+    assert_eq!(awaiting(&mac), 1, "with the forward still waiting");
+}
