@@ -8629,6 +8629,12 @@ mod tests {
             k_mic: entry.k_mic.try_into().unwrap(),
         };
         let engine = CryptoEngine::new(SoftwareAes, SoftwareSha256);
+        // A session request is answered only from a contact, which the app
+        // makes one by registering it.
+        alice
+            .register_peers(vec![stationary(encode_peer_address(&carol_key))])
+            .await
+            .unwrap();
         let from_carol = |counter: u32, command: &MacCommand<'_>| {
             let mut body = [0u8; 80];
             let length = mac_command::encode(command, &mut body).unwrap();
