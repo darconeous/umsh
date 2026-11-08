@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c88e99cf.js";
+            window.path_to_searchindex_js = "searchindex-2ede3d61.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-517aa7d9.js"></script>
@@ -351,6 +351,13 @@ than a read the device retains, per administrator, the token and the
 complete response of the most recent exchange. A request whose token
 matches the retained token is answered by retransmitting the retained
 response, without executing anything.</p>
+<p>Only a read can be continued, so the response to any other request is
+carried in one payload. When the response a request produces does not
+fit—a <code>CMD_PROP_IS</code> echoing a value nearly a payload long, for
+example—the device answers and retains a <code>CMD_PROP_IS</code> of
+<code>PROP_LAST_STATUS</code> reporting <code>STATUS_OK</code> in its place. The request has
+executed, once, and the administrator reads the value back if it needs
+it.</p>
 <p>A read (<code>CMD_PROP_GET</code> or <code>CMD_PROP_MULTI_GET</code>) changes nothing, so its
 response is not retained: a retransmitted read is executed again and
 answered with current values. The exception is a read whose response

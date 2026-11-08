@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c88e99cf.js";
+            window.path_to_searchindex_js = "searchindex-2ede3d61.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-517aa7d9.js"></script>
@@ -260,8 +260,9 @@ these periods are the advertisement-policy properties.</p>
 <p>Because router hints are only two bytes, different repeaters may share the same hint, which may result in redundant (but harmless) forwarding along a source route.</p>
 <h2 id="route-learning"><a class="header" href="#route-learning">Route Learning</a></h2>
 <p>A destination may overhear a frame while source-route hints remain unconsumed. The way back is then the remaining hints in reverse, followed by the trace: the whole path the sender chose, through the repeaters still to forward it. The trace alone would describe a shortcut past those repeaters, and a repeater being audible at the destination does not establish that it hears the destination. Historical buffered frames do not establish current reachability.</p>
-<p>Copies of one packet, or of one MAC ack, that arrive over different paths each describe a path, and the first to arrive is not necessarily the best. A node MAY weigh them against each other and against the route it holds, using the per-hop signal of their <a href="packet-options.html#trace-option-7">traces</a> where the copies carry it. A copy that arrives long after the first is a replay rather than evidence of a current path.</p>
-<p>When a node successfully processes other live incoming packets, it can update its routing state for the sender:</p>
+<p>Only an authenticated packet teaches a route to its sender: a unicast or blind unicast that opens under the sender’s pairwise keys, a frame whose <a href="security.html#frame-signatures">signature</a> verifies against the sender’s key, or a MAC ack whose <code>ack_tag</code> completes an outstanding request. A multicast’s MIC proves only that its sender holds the channel key, so an unsigned multicast teaches nothing about the source it names.</p>
+<p>Only the first copy teaches. A duplicate of a packet already accepted, or a later copy of a MAC ack that already completed its request, is authenticated as a packet but not as a copy: no MIC covers the options repeaters rewrite, so anyone who heard the packet can send it again with a path of their choosing.</p>
+<p>When a node accepts such a packet live, it can update its routing state for the sender:</p>
 <ul>
 <li>
 <p><strong>Trace</strong>: if the packet contains a complete <a href="packet-options.html#trace-option-7">trace</a>, with signal or hints only, the node caches its router hints as a source route for future packets back to the sender. Because the trace is accumulated most-recent first, it already describes the return path from the receiver back toward the original sender. This is the primary mechanism for learning precise multi-hop paths. A truncated trace is not a complete path, and no route is learned from it.</p>
@@ -286,7 +287,7 @@ these periods are the advertisement-policy properties.</p>
 <p>Trading a source route for flood hops rewrites only fields the <a href="security.html#associated-data">associated data</a> excludes. Adding <code>FHOPS</code> sets the FCF’s <code>H</code> bit, which the AAD clears, so the MIC carries over unchanged.</p>
 <p>Recovery stays within the sender’s original flood ceiling; disabled flooding does not authorize a flooded retry. Once a replacement route is learned, normal routed transmission can resume. An ACK following Route Retry confirms delivery of the logical packet but does not identify which attempt delivered it.</p>
 <p>A sender that held no route and flooded at its whole budget has no route to discard, yet the timeout may still be the destination’s fault: a route back to the sender that no longer works, on which the ACK died. When it has heard from the destination recently, the sender sends one Route Retry anyway, at the same budget and with a trace. A logical packet gets at most one Route Retry.</p>
-<p>The destination learns from that retry. A Route Retry duplicating a packet it already acknowledged shows the ACK was lost, so the destination retires or demotes the route the ACK followed and re-acknowledges by a flood scoped to the retry’s <code>FHOPS_ACC</code> plus one hop, within the retry’s regions, carrying a trace. A path the retry traced may become an ordinary route candidate; the re-acknowledgment does not follow it. See <a href="repeater-operation.html#lost-acknowledgments">Lost Acknowledgments</a>.</p>
+<p>A Route Retry duplicating a packet the destination already acknowledged suggests the ACK was lost, so the destination re-acknowledges by a flood scoped to the retry’s <code>FHOPS_ACC</code> plus one hop, within the retry’s regions, carrying a trace. Being a duplicate, the retry neither teaches a route nor retires one. See <a href="repeater-operation.html#lost-acknowledgments">Lost Acknowledgments</a>.</p>
 <h2 id="scoping-flood-hops-to-a-known-route"><a class="header" href="#scoping-flood-hops-to-a-known-route">Scoping Flood Hops to a Known Route</a></h2>
 <p>A wide flood hop count is a first-contact cost. Once routing state exists for a destination, the sender SHOULD scope <code>FHOPS_REM</code> to what the known path actually costs, plus a margin where the far end of the path is in doubt:</p>
 <ul>

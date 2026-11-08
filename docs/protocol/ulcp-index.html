@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c88e99cf.js";
+            window.path_to_searchindex_js = "searchindex-2ede3d61.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-517aa7d9.js"></script>
@@ -305,6 +305,8 @@
 <tr><td>4849</td><td><a href="ulcp-ip-multicast.html#counters"><code>PROP_STAT_LAN_EXPORT_DROPPED</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_LAN_BEARER</code>, <code>CAP_REPEATER</code></td></tr>
 <tr><td>4850</td><td><a href="ulcp-radio.html#prop-stat-rx-own-hint"><code>PROP_STAT_RX_OWN_HINT</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_REPEATER</code></td></tr>
 <tr><td>4851</td><td><a href="ulcp-radio.html#prop-stat-radio-resets"><code>PROP_STAT_RADIO_RESETS</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code></td></tr>
+<tr><td>4852</td><td><a href="ulcp-radio.html#prop-stat-host-rx-dropped"><code>PROP_STAT_HOST_RX_DROPPED</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code></td></tr>
+<tr><td>4853</td><td><a href="ulcp-radio.html#prop-stat-host-out-dropped"><code>PROP_STAT_HOST_OUT_DROPPED</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code></td></tr>
 <tr><td>4864</td><td><a href="ulcp-ble.html#prop-ble-pairing-pin"><code>PROP_BLE_PAIRING_PIN</code></a></td><td>Set</td><td>BLE transport</td></tr>
 <tr><td>4865</td><td><a href="app-node-management.html#prop-dev-admins"><code>PROP_DEV_ADMINS</code></a></td><td>Get, Set, Insert, Remove</td><td><code>CAP_ADMIN</code></td></tr>
 <tr><td>4866</td><td><a href="ulcp-device.html#prop-time"><code>PROP_TIME</code></a></td><td>Get, Set, Is</td><td><code>CAP_TIME</code></td></tr>
@@ -476,7 +478,7 @@ reserved for them.</p>
 <tr><th>Enumeration</th><th>Values</th><th>Defined in</th></tr>
 </thead>
 <tbody>
-<tr><td><code>PROP_SAVED</code></td><td>0 none, 1 current, 2 fallback, 3 unreadable</td><td><a href="ulcp-saved-state.html#prop-saved"><code>PROP_SAVED</code></a></td></tr>
+<tr><td><code>PROP_SAVED</code></td><td>0 none, 1 current, 2 fallback, 3 unreadable, 4 partial</td><td><a href="ulcp-saved-state.html#prop-saved"><code>PROP_SAVED</code></a></td></tr>
 <tr><td>Filter types</td><td>0 <code>FILTER_DEST_HINT</code>, 1 <code>FILTER_CHANNEL_ID</code>, 2 <code>FILTER_PKT_TYPE</code></td><td><a href="ulcp-host.html#prop-host-rx-filters"><code>PROP_HOST_RX_FILTERS</code></a></td></tr>
 <tr><td>Charge states</td><td>0 discharging, 1 charging, 2 charged, 3 not charging</td><td><a href="ulcp-device.html#prop-battery"><code>PROP_BATTERY</code></a></td></tr>
 <tr><td>Alert states</td><td>0 <code>ALERT_NONE</code>, 1 <code>ALERT_LOCATE</code></td><td><a href="ulcp-device.html#prop-alert"><code>PROP_ALERT</code></a></td></tr>

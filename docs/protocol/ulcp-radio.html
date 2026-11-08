@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c88e99cf.js";
+            window.path_to_searchindex_js = "searchindex-2ede3d61.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-517aa7d9.js"></script>
@@ -227,13 +227,15 @@ survives a change of host.</p>
 <tr><td>4837</td><td><code>PROP_STAT_RX_ACCEPTED</code></td><td>Get, Set</td><td>Received packets accepted by this device’s node</td></tr>
 <tr><td>4838</td><td><code>PROP_STAT_FORWARDED</code></td><td>Get, Set</td><td>Packets this device chose to forward</td></tr>
 <tr><td>4839</td><td><code>PROP_STAT_FORWARD_DROPPED</code></td><td>Get, Set</td><td>Forwarding candidates rejected by policy</td></tr>
-<tr><td>4840</td><td><code>PROP_STAT_FORWARD_CANCELLED</code></td><td>Get, Set</td><td>Queued forwards cancelled after an acknowledgement</td></tr>
+<tr><td>4840</td><td><code>PROP_STAT_FORWARD_CANCELLED</code></td><td>Get, Set</td><td>Queued forwards cut short by an overheard acknowledgement</td></tr>
 <tr><td>4841</td><td><code>PROP_STAT_MESHCORE_SEEN</code></td><td>Get, Set</td><td>MeshCore packets received</td></tr>
 <tr><td>4842</td><td><code>PROP_STAT_MESHCORE_FORWARDED_ROUTED</code></td><td>Get, Set</td><td>MeshCore packets forwarded along their source route</td></tr>
 <tr><td>4843</td><td><code>PROP_STAT_MESHCORE_FORWARDED_FLOOD</code></td><td>Get, Set</td><td>MeshCore packets flooded</td></tr>
 <tr><td>4844</td><td><code>PROP_STAT_MESHCORE_DECLINED</code></td><td>Get, Set</td><td>MeshCore packets neither forwarded nor duplicates</td></tr>
 <tr><td>4850</td><td><code>PROP_STAT_RX_OWN_HINT</code></td><td>Get, Set</td><td>Received packets whose trace names this device as the last hop</td></tr>
 <tr><td>4851</td><td><code>PROP_STAT_RADIO_RESETS</code></td><td>Get, Set</td><td>Times the radio chip was reset after it stopped responding</td></tr>
+<tr><td>4852</td><td><code>PROP_STAT_HOST_RX_DROPPED</code></td><td>Get, Set</td><td>Received packets not delivered live because the host was not reading</td></tr>
+<tr><td>4853</td><td><code>PROP_STAT_HOST_OUT_DROPPED</code></td><td>Get, Set</td><td>Other frames for the host discarded after it stopped reading</td></tr>
 </tbody>
 </table>
 </div>
@@ -465,8 +467,9 @@ administrator policy, and are not included. Duplicates, self-addressed packets,
 and packets received while forwarding is disabled are also excluded. Requires
 <code>CAP_STATS</code> and <code>CAP_REPEATER</code>.</p>
 <h3 id="prop-stat-forward-cancelled"><a class="header" href="#prop-stat-forward-cancelled">PROP 4840: <code>PROP_STAT_FORWARD_CANCELLED</code></a></h3>
-<p>Queued forwards cancelled because the destination’s acknowledgement was
-overheard before transmission. Requires <code>CAP_STATS</code> and <code>CAP_REPEATER</code>.</p>
+<p>Overheard acknowledgements that <a href="repeater-operation.html#ack-cancellation">cut the channel-access
+budget</a> of a queued forward before
+transmission. Requires <code>CAP_STATS</code> and <code>CAP_REPEATER</code>.</p>
 <h3 id="prop-stat-meshcore-seen"><a class="header" href="#prop-stat-meshcore-seen">PROP 4841: <code>PROP_STAT_MESHCORE_SEEN</code></a></h3>
 <p>MeshCore packets received while <a href="ulcp-device.html#meshcore-forwarding">MeshCore
 forwarding</a> is running. Every one is also
@@ -503,6 +506,16 @@ was told: a transmission that did not complete within its time limit, or any
 other radio operation that did not finish. A transmission abandoned this way
 increments neither <code>PROP_STAT_TX_PACKETS</code> nor <code>PROP_STAT_TX_CHANNEL_BUSY</code>.
 Requires <code>CAP_STATS</code>.</p>
+<h3 id="prop-stat-host-rx-dropped"><a class="header" href="#prop-stat-host-rx-dropped">PROP 4852: <code>PROP_STAT_HOST_RX_DROPPED</code></a></h3>
+<p>Packets received over the air that the device discarded instead of delivering
+live as <code>CMD_STR_RECV</code>, because the attached host’s transport could not take
+the frame at once (see <a href="ulcp-core.html#stalled-host">A Host That Stops
+Reading</a>). Requires <code>CAP_STATS</code>.</p>
+<h3 id="prop-stat-host-out-dropped"><a class="header" href="#prop-stat-host-out-dropped">PROP 4853: <code>PROP_STAT_HOST_OUT_DROPPED</code></a></h3>
+<p>Frames for the attached host other than live receptions—answers,
+publications, frames of a queue drain—that the device discarded after the
+host had stopped reading (see <a href="ulcp-core.html#stalled-host">A Host That Stops
+Reading</a>). Requires <code>CAP_STATS</code>.</p>
 
                     </main>
 

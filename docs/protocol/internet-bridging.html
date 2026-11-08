@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c88e99cf.js";
+            window.path_to_searchindex_js = "searchindex-2ede3d61.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-517aa7d9.js"></script>
@@ -289,6 +289,12 @@ future revision fails the handshake instead of misparsing frames.</p>
 octets of plaintext. This bounds the record buffer a constrained
 participant needs; a participant that cannot buffer a larger record
 closes the connection.</p>
+<p>The keepalive below begins only once the handshake completes, so the
+handshake is bounded on its own: a participant closes a connection
+whose handshake has not completed within a handshake timeout, by
+default 10 seconds. A server also bounds how many connections may be
+mid-handshake at once, in total and from any one source address, and
+closes a connection past either bound as soon as it accepts it.</p>
 <h3 id="message-framing"><a class="header" href="#message-framing">Message Framing</a></h3>
 <p>The tunnel is a stream of
 <a href="https://github.com/openthread/openthread/blob/thread-reference-20180926/doc/spinel-protocol-src/spinel-framing.md#hdlc-lite-hdlc-lite">HDLC-Lite</a>

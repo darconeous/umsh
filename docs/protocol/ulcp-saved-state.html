@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c88e99cf.js";
+            window.path_to_searchindex_js = "searchindex-2ede3d61.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-517aa7d9.js"></script>
@@ -316,20 +316,33 @@ for that case.</p>
 <ul>
 <li>A snapshot <strong>MUST</strong> be self-describing enough that a device can
 distinguish a payload it cannot read from an absent one. A device
-<strong>MUST NOT</strong> apply a payload it does not fully understand.</li>
+<strong>MUST NOT</strong> apply a payload whose structure it cannot read: a bad
+format, broken framing, or a failed integrity check rejects the whole
+snapshot.</li>
+<li>A value this device cannot hold—a frequency outside its band, a table
+entry beyond its capacity, a setting it would refuse from a host—costs
+that value, not the snapshot. The device skips it and counts it, as
+though the snapshot had not recorded it: a skipped setting keeps its
+post-reset value, and a skipped table entry is absent. Everything else
+applies, and <code>PROP_SAVED</code> reports the restore as partial. The stored
+snapshot still holds the skipped value until <code>CMD_SAVE</code> replaces it.
+The exception is the recorded identity (see
+<a href="ulcp-saved-state.html#cmd-restore"><code>CMD_RESTORE</code></a>): one the device
+cannot read rejects the snapshot.</li>
 <li>Devices <strong>MUST NOT</strong> silently boot bare after rejecting a snapshot.
 Where the storage retains earlier generations, the device <strong>MUST</strong>
 fall back to the newest generation that does decode, in preference to
 booting with documented defaults. A device <strong>MAY</strong> bound how far back
 it walks.</li>
-<li><code>PROP_SAVED</code> <strong>MUST</strong> report a fallback and an unreadable snapshot
-distinguishably from both “saved” and “nothing saved” (see
-<a href="ulcp-saved-state.html#prop-saved"><code>PROP_SAVED</code></a>). Devices with a local indicator <strong>SHOULD</strong> signal it
-there as well, since the host-visible report reaches nobody on an
-unattended device.</li>
-<li>A device that restored an older generation is otherwise in normal
-operation: nothing is refused, and <code>CMD_SAVE</code> replaces the stored
-snapshot and clears the condition.</li>
+<li><code>PROP_SAVED</code> <strong>MUST</strong> report a fallback, a partial restore, and an
+unreadable snapshot distinguishably from both “saved” and “nothing
+saved” (see
+<a href="ulcp-saved-state.html#prop-saved"><code>PROP_SAVED</code></a>). Devices with a local
+indicator <strong>SHOULD</strong> signal a rejected generation there as well, since
+the host-visible report reaches nobody on an unattended device.</li>
+<li>A device that restored an older generation, or part of one, is
+otherwise in normal operation: nothing is refused, and <code>CMD_SAVE</code>
+replaces the stored snapshot and clears the condition.</li>
 </ul>
 <p>Only forward compatibility is required. Newer firmware <strong>MUST</strong> read
 snapshots written by older firmware, taking the documented default for
@@ -346,9 +359,9 @@ change saved properties with no host asking. Such a change:</p>
 reports 1), so what was set at the device is still set after a reboot;</li>
 <li><strong>never creates one.</strong> A device with nothing saved saves nothing: a
 snapshot made from a button press would persist every other live value
-with it. A device that rejected its newest generation at boot
-(<code>PROP_SAVED</code> reports 2 or 3) writes nothing either, since the write
-would bury the condition <code>PROP_SAVED</code> reports.</li>
+with it. A device that rejected its newest generation at boot, or
+skipped values of it (<code>PROP_SAVED</code> reports 2, 3, or 4), writes nothing
+either, since the write would bury the condition <code>PROP_SAVED</code> reports.</li>
 </ul>
 <p>The change applies live in every case.</p>
 <p>A device with a full settings interface <strong>MAY</strong> save as a host would: a
@@ -558,15 +571,17 @@ and, when the answer is qualified, how:</p>
 <tr><td>1</td><td>The most recently saved snapshot is in effect.</td></tr>
 <tr><td>2</td><td>A saved snapshot is in effect, but a <strong>newer</strong> stored generation was rejected at boot and this is an earlier one. The device is operating on configuration older than what was last saved.</td></tr>
 <tr><td>3</td><td>A snapshot exists but <strong>no</strong> stored generation could be read. The device booted with documented defaults despite having been saved.</td></tr>
+<tr><td>4</td><td>The most recently saved snapshot is in effect, but the device skipped values in it that it cannot hold (see <a href="ulcp-saved-state.html#snapshot-integrity">Snapshot Integrity</a>). Those settings hold their documented defaults.</td></tr>
 </tbody>
 </table>
 </div>
-<p>Values 2 and 3 are conditions to report to the operator, not errors to
+<p>A fallback generation that also skipped values reports 2.</p>
+<p>Values 2, 3 and 4 are conditions to report to the operator, not errors to
 recover from automatically: the configuration the device is running is not
 the configuration that was last written, and only whoever wrote it can
 say what should replace it. A successful <code>CMD_SAVE</code> returns the value to</p>
 <ol>
-<li>Values 2 and 3 persist for the remainder of the power cycle and
+<li>Values 2, 3 and 4 persist for the remainder of the power cycle and
 <strong>MUST NOT</strong> be cleared by <code>CMD_RST</code> or <code>CMD_RESTORE</code>, neither of which
 re-reads storage.</li>
 </ol>

@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c88e99cf.js";
+            window.path_to_searchindex_js = "searchindex-2ede3d61.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-517aa7d9.js"></script>
@@ -474,7 +474,7 @@ A hop taken by a repeater matching a source-route hint is a source-routed hop an
 </code></pre>
 <p>Where:</p>
 <ul>
-<li><code>VER</code> = protocol version (this specification defines version <strong>3</strong>, i.e., both bits set)</li>
+<li><code>VER</code> = protocol version (this specification defines version <strong>3</strong>, i.e., both bits set). The layout after the FCF depends on the version, so a receiver discards a packet of any other version, and a repeater does not forward it</li>
 <li><code>PKT TYPE</code> = packet type</li>
 <li><code>S</code> = full 32-byte source address included (when clear, a compact source hint is used instead; see <a href="#source-address">Source Address</a> for hint size by packet type)</li>
 <li><code>R</code> = reserved; senders MUST set to 0; receivers MUST drop packets where this bit is non-zero</li>
@@ -804,7 +804,7 @@ unicast semantics without encryption.</p>
 <li>A sender MUST NOT include more than one. A packet carrying more than one is handled as carrying an unrecognized forwarding-critical option.</li>
 <li>Semantics: packet must be received with at least this RSSI to be flood-forwarded. This option does not apply to source-routed hops.</li>
 <li>Example: value <code>130</code> means <code>-130 dBm</code></li>
-<li>If present with no value (length 0), default is <code>-100 dBm</code> (THIS VALUE IS SUBJECT TO CHANGE)</li>
+<li>If present with no value (length 0), default is <code>-100 dBm</code></li>
 <li>If a repeater has a locally configured minimum RSSI, it must use the higher of the packet’s minimum RSSI threshold and the repeater’s configured minimum RSSI threshold.</li>
 </ul>
 <h3 id="route-retry-option-6"><a class="header" href="#route-retry-option-6">Route Retry (option 6)</a></h3>
@@ -831,7 +831,7 @@ unicast semantics without encryption.</p>
 <p>The destination does <strong>not</strong> treat this option as creating a new logical packet. Replay acceptance and duplicate application delivery remain governed by the packet’s normal security state, especially its frame counter.</p>
 </li>
 <li>
-<p>A Route Retry that duplicates a packet the destination already acknowledged tells it that acknowledgment was lost. The destination re-acknowledges by a scoped, traced flood instead of along the route the lost acknowledgment took (<a href="#lost-acknowledgments">Lost Acknowledgments</a>).</p>
+<p>A Route Retry that duplicates a packet the destination already acknowledged suggests that acknowledgment was lost. The destination re-acknowledges by a scoped, traced flood instead of along the route the lost acknowledgment took. Because anyone can add the option to a copy, it is no evidence against that route (<a href="#lost-acknowledgments">Lost Acknowledgments</a>).</p>
 </li>
 <li>
 <p>A sender using this option for route recovery typically:</p>
@@ -867,13 +867,13 @@ unicast semantics without encryption.</p>
 </ul>
 <p>The option carries only the correlation handle, not a keyed ack tag: the packet carrying the option is itself authenticated to the original sender, so its own MIC already proves the acknowledgement is genuine. The <code>ack_mic</code> value simply identifies which outstanding request the reply acknowledges. The original sender accepts the option only on a packet authenticated as coming from the destination of the packet it names.</p>
 <p>The option is a courtesy to the original sender. A sender that cannot fit it into a frame omits it.</p>
-<p>Because the option sits in the plaintext options block, forwarders read it under the same terms as a standalone MAC ack, including for <a href="#ack-cancellation">ack cancellation</a>.</p>
-<p>On a <a href="#verify-frame-12">Verify Frame</a> the option names the packet to be verified instead of acknowledging it: the sender holds that packet but has not accepted it, so the original sender MUST NOT treat the option as an acknowledgement (see <a href="#counter-resynchronization">Counter Resynchronization</a>). Forwarders still apply ack cancellation, since the named packet has reached its destination.</p>
+<p>Because the option sits in the plaintext options block, forwarders read it under the same terms as a standalone MAC ack, including as an <a href="#ack-cancellation">overheard acknowledgment</a>.</p>
+<p>On a <a href="#verify-frame-12">Verify Frame</a> the option names the packet to be verified instead of acknowledging it: the sender holds that packet but has not accepted it, so the original sender MUST NOT treat the option as an acknowledgement (see <a href="#counter-resynchronization">Counter Resynchronization</a>). Forwarders still treat it as an <a href="#ack-cancellation">overheard acknowledgment</a>, since the named packet has reached its destination.</p>
 <h3 id="minimum-snr-option-9"><a class="header" href="#minimum-snr-option-9">Minimum SNR (option 9)</a></h3>
 <ul>
 <li>Type: signed 1-byte integer, in dB</li>
 <li>Semantics: packet must be received with at least this SNR to be flood-forwarded. This option does not apply to source-routed hops.</li>
-<li>If present with no value (length 0), default is <code>-3 dB</code>. (THIS VALUE IS SUBJECT TO CHANGE)</li>
+<li>If present with no value (length 0), default is <code>-3 dB</code>.</li>
 <li>A sender MUST NOT include more than one. A packet carrying more than one is handled as carrying an unrecognized forwarding-critical option.</li>
 <li>If a repeater has a locally configured minimum SNR, it must use the higher of the packet’s minimum SNR and the repeater’s configured minimum SNR.</li>
 </ul>
@@ -887,6 +887,7 @@ unicast semantics without encryption.</p>
 <li>Because this option is dynamic, repeaters may insert it while flood-forwarding a packet that currently has no region code.</li>
 <li>A repeater must never rewrite an existing region code and must never add a second region code to a packet that already has one or more region-code options.</li>
 <li>Region insertion is a local policy decision. When no explicit local policy exists, a reasonable default is the IATA code of the closest regional commercial airport.</li>
+<li>Copies that differ only in a region code are duplicates of one another, so when repeaters with different policies hear one untagged packet, its region is whichever the first of them to forward it inserts. A sender that needs its packet confined to a region includes the option itself.</li>
 <li>Region insertion applies only during flood forwarding. An untagged source-routed packet is first tagged by the repeater that flood-forwards it—the one that receives it with an already-empty source route—not by the repeater that emptied the route.</li>
 </ul>
 <h4 id="region-code-encoding"><a class="header" href="#region-code-encoding">Region Code Encoding</a></h4>
@@ -1037,7 +1038,7 @@ These collisions are rarely of practical concern. If a region code in one part o
 <p>Forms only degrade. No repeater adds signal to a hints-only trace, so the forms never mix, and a <code>0xFF</code> trace never returns to <code>0xFE</code>.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="security--cryptography"><a class="header" href="#security--cryptography">Security &amp; Cryptography</a></h1>
-<p>UMSH authenticates and optionally encrypts packets using AES-SIV (RFC 5297) with AES-256. Unicast packets are secured with pairwise keys derived from X25519 ECDH between sender and recipient Ed25519 keys. Multicast packets are secured with keys derived from the shared channel key. In both cases, a monotonic frame counter provides replay protection without requiring synchronized clocks. Any frame other than a MAC ack may also carry an Ed25519 <a href="#frame-signatures">frame signature</a> that attributes it to its sender’s key.</p>
+<p>UMSH authenticates and optionally encrypts packets using AES-SIV (RFC 5297) with AES-256. Unicast packets are secured with pairwise keys derived from X25519 ECDH between sender and recipient Ed25519 keys. Multicast packets are secured with keys derived from the shared channel key. A monotonic frame counter provides replay protection without requiring synchronized clocks, for every frame authenticated as one sender’s; an <a href="#unsigned-multicast">unsigned multicast</a>, which any channel member could have sent, is judged by duplicate suppression instead. Any frame other than a MAC ack may also carry an Ed25519 <a href="#frame-signatures">frame signature</a> that attributes it to its sender’s key.</p>
 <p>Each secured packet carries a Security Information (SECINFO) field containing a Security Control Field, a frame counter, and an optional salt. The sections below describe these fields, the key derivation process, and the cryptographic operations applied to each packet.</p>
 <h2 id="security-information-secinfo"><a class="header" href="#security-information-secinfo">Security Information (SECINFO)</a></h2>
 <h3 id="secinfo-encoding"><a class="header" href="#secinfo-encoding">SECINFO Encoding</a></h3>
@@ -1103,13 +1104,14 @@ These collisions are rarely of practical concern. If a region code in one part o
 </code></pre>
 <p>If <code>delta</code> is zero or exceeds the forward window, the packet is rejected. This modular comparison allows the counter to wrap around <code>2^32</code> without requiring special overflow handling. The suggested default forward window is <strong>172800</strong>. Implementations MAY use a different value, but it should be large enough to accommodate gaps from packets sent to other destinations and small enough to limit the scope of replay attacks.</p>
 <p>Implementations that need to tolerate out-of-order delivery may also define a <strong>backward window</strong>—a small range of counter values <em>behind</em> the highest accepted counter within which late-arriving packets are still considered. The suggested default backward window is <strong>8</strong>. When a packet’s counter falls within the backward window, the receiver checks a small cache of recently accepted packets, keyed by frame counter and MIC (similar to the approach used for <a href="#duplicate-suppression-1">duplicate suppression</a> in repeaters): if the packet is already present, it is a replay and is rejected; if not, the packet is accepted and added to the cache.</p>
+<p>A sender SHOULD NOT have more acknowledgement-requested packets awaiting acknowledgement from one peer than the suggested backward window, so that a retransmission of the earliest still falls inside the receiver’s window when nothing else was sent in between. A retransmission that the sender’s other traffic pushed further behind is recovered by <a href="#counter-resynchronization">counter resynchronization</a>.</p>
 <p>Regardless of window sizes, a packet must not be accepted if it is more than <strong>5 minutes</strong> out of order—that is, if the highest accepted counter was last advanced more than 5 minutes ago and the received counter is behind it. MIC cache entries only need to be retained for the duration of this time bound. Additionally, the first packet accepted from a given node (or after a <a href="#counter-resynchronization">counter resynchronization</a>) establishes that node’s counter baseline—packets with earlier counter values must be rejected, even if they arrive within the backward window.</p>
 <h5 id="duplicate-acknowledgement-window"><a class="header" href="#duplicate-acknowledgement-window">Duplicate Acknowledgement Window</a></h5>
 <p>Rejecting a packet as a duplicate does not prohibit retransmitting its MAC
 acknowledgement. An authenticated packet that requests an acknowledgement and
 whose MIC identifies it as a previously received packet <strong>MAY</strong> be acknowledged
 again if its frame counter is no more than <strong>8</strong> counts behind the highest
-accepted counter for that traffic direction, inclusive. Equivalently:</p>
+accepted counter from that sender, inclusive. Equivalently:</p>
 <pre><code class="language-text">ack_distance = (last_accepted_counter - received_counter) mod 2^32
 </code></pre>
 <p>The duplicate may be acknowledged only when <code>ack_distance &lt;= 8</code>. A receiver
@@ -1139,18 +1141,23 @@ cannot retransmit before its own confirmation window has lapsed.</p>
 <ul>
 <li>An accepted frame advances the baseline, which is <a href="#counter-persistence">persisted</a> as for unicast.</li>
 <li>A replay is dropped.</li>
-<li>A frame behind the baseline or outside the forward window is dropped. When the gap is too large for reordering to explain, the receiver MAY start <a href="#counter-resynchronization">counter resynchronization</a> with an Echo Request, at the usual rate limit.</li>
+<li>A frame behind the baseline or outside the forward window is dropped. Unless the receiver recognizes it as a late copy of a frame it accepted, it MAY start <a href="#counter-resynchronization">counter resynchronization</a> with an Echo Request, at the usual rate limit.</li>
 </ul>
 </li>
 <li><strong>Stranger.</strong> A frame that verifies against a key that is not a known peer’s is first contact: it is accepted at face value, as <a href="#counter-resynchronization">Counter Resynchronization</a> describes for any new peer. Later frames from that key are judged by the same rules, in a window the receiver keeps for that signing key. A frame behind that window’s baseline or outside it is dropped, with no resynchronization, since there is no pairwise relationship to run one over.
 <ul>
 <li>A receiver MAY discard a stranger’s window when it is idle or under memory pressure.</li>
+<li>A key costs nothing to mint, so a burst of first contacts could otherwise discard every stranger’s window on demand. A receiver SHOULD bound how many strangers’ windows new signers displace; the suggested bound is <strong>4</strong> every <strong>10 minutes</strong>. No window is kept for a new signer whose frame arrives once the bound is spent; its frames are judged as an <a href="#unsigned-multicast">unsigned multicast</a> is, by duplicate suppression alone.</li>
 <li>After a discard, or after the receiver restarts, the stranger’s next frame is first contact again, so a replay of one of its earlier frames is accepted once. With no prior knowledge of the sender, a receiver cannot tell that replay from a new frame.</li>
 </ul>
 </li>
 </ul>
+<h5 id="unsigned-multicast"><a class="header" href="#unsigned-multicast">Unsigned Multicast</a></h5>
+<p>A multicast without a frame signature, or whose signature does not verify, is authenticated only as the work of some holder of the channel key: its <code>SRC</code> names a sender any other member could have named. A receiver judges it by duplicate suppression alone, keyed by its MIC and by nothing a forwarder may rewrite: a multicast whose MIC matches one already accepted is a replay, with or without a <a href="#route-retry-option-6">Route Retry option</a>.</p>
+<p>An unsigned multicast MUST NOT advance or otherwise modify any replay state kept for the source it names. A member able to move that state could send one frame under another member’s source, with a counter far ahead of that member’s, and so silence it.</p>
+<p>Once a receiver’s duplicate-suppression entry for a multicast ages out or is displaced, a replay of that multicast is accepted as new. See <a href="#replay-of-unsigned-multicast">Replay of Unsigned Multicast</a>.</p>
 <h4 id="counter-persistence"><a class="header" href="#counter-persistence">Counter Persistence</a></h4>
-<p>How a node persists and recovers its own frame counter across reboots is implementation-specific. Possible strategies include writing the counter to non-volatile storage periodically or advancing the counter by a large margin on startup to avoid replaying previously used values.</p>
+<p>How a node persists and recovers its own frame counter across reboots is implementation-specific. Possible strategies include writing the counter to non-volatile storage periodically or advancing the counter by a large margin on startup to avoid replaying previously used values. A node MUST advance its counter on startup by less than the suggested forward window: a larger jump puts its next frame outside every peer’s window, and each peer must resynchronize before accepting it.</p>
 <p>A node MUST also persist each known peer’s receive baseline and restore it at startup. A node that lost a peer’s baseline would treat that peer’s next frame as first contact and accept a replay of any earlier one.</p>
 <ul>
 <li>The persisted baseline MAY lag the live one, so that writes can be batched. A node SHOULD write a peer’s baseline once it has accepted 16 frames from that peer since the last write, however far those frames moved the counter. The frames accepted since the last successful write are what an unexpected restart leaves replayable.</li>
@@ -1164,7 +1171,7 @@ limited number of writes.</p>
 </blockquote>
 <h4 id="counter-resynchronization"><a class="header" href="#counter-resynchronization">Counter Resynchronization</a></h4>
 <p>On first contact with a new peer, the received frame counter is accepted at face value and recorded as the baseline for future replay detection.</p>
-<p>An authenticated packet from a known peer whose frame counter is far outside the window means the two nodes disagree about that counter—for example, because the peer rebooted and lost its persisted counter. Far outside means past the forward window, or far enough behind the baseline that reordering cannot explain it (the suggested threshold is <strong>1024</strong>). The receiver MAY then re-establish a baseline with one of the two exchanges below. It SHOULD send at most one such probe to a peer every <strong>5 seconds</strong>, and a <a href="#verify-frame-12">Verify Frame</a> or <a href="#frame-verified-13">Frame Verified</a> never prompts one.</p>
+<p>An authenticated packet from a known peer whose frame counter falls outside the window, or is behind it past the 5-minute bound, means the two nodes disagree about that counter, whatever the gap—for example, because the peer rebooted and lost its persisted counter, or because a retransmission fell behind the backward window. A packet the receiver still recognizes by its counter and MIC as one it accepted is only a late copy, and prompts nothing. For any other, the receiver MAY re-establish a baseline with one of the two exchanges below. It SHOULD send at most one such probe to a peer every <strong>5 seconds</strong>, and a <a href="#verify-frame-12">Verify Frame</a> or <a href="#frame-verified-13">Frame Verified</a> never prompts one.</p>
 <p>When the packet requested an acknowledgement, the receiver—the requester—holds it without acknowledging it and sends Verify Frame to the peer, naming the packet in an <a href="#ack-mic-option-8">Ack MIC option</a>. The peer—the responder—proceeds as follows:</p>
 <ol>
 <li>It matches the option against the acknowledgement-requested packets it sent to the requester that are still awaiting acknowledgement. If none matches, it ignores the Verify Frame.</li>
@@ -1172,8 +1179,9 @@ limited number of writes.</p>
 <li>When Frame Verified is acknowledged, it treats the matched packet as acknowledged. If Frame Verified is never acknowledged, the matched packet has failed.</li>
 </ol>
 <p>The responder processes a Verify Frame whose own counter falls outside its window for the requester, since the match with an outstanding packet already shows the request is fresh. When Frame Verified is acknowledged, it adopts that counter as the requester’s new baseline. A Verify Frame whose counter falls within the window is subject to the ordinary replay rules.</p>
-<p>When a Frame Verified arrives echoing the nonce of a Verify Frame for a packet the requester still holds, the requester adopts its frame counter as the peer’s new baseline, whatever the value. It then delivers the held packet and acknowledges Frame Verified; that acknowledgement stands for the held packet too, which is not acknowledged separately. A requester that no longer holds the packet discards Frame Verified without acknowledging it, so the responder reports the packet as failed. The requester MUST choose nonces so that a Frame Verified recorded from an earlier exchange cannot match a later one.</p>
+<p>When a Frame Verified arrives echoing the nonce of a Verify Frame for a packet the requester still holds, the requester adopts its frame counter as the peer’s new baseline, whatever the value. It then delivers the held packet and acknowledges Frame Verified; that acknowledgement stands for the held packet too, which is not acknowledged separately. A requester that no longer holds the packet discards Frame Verified without acknowledging it, so the responder reports the packet as failed. The requester MUST choose nonces so that a Frame Verified recorded from an earlier exchange cannot match a later one. A requester cannot tell a held packet from one it accepted earlier and no longer recognizes, so a packet whose acknowledgement was lost can be delivered a second time this way.</p>
 <p>When the packet did not request an acknowledgement, the peer has nothing outstanding to match, so the receiver MAY instead send an <a href="#echo-request-4">Echo Request</a> carrying a nonce. An Echo Response echoing it establishes the response’s frame counter as the peer’s new baseline. The packet that prompted the probe is dropped.</p>
+<p>When that packet is itself an Echo Request, the receiver answers it with an Echo Response before sending its own probe, and only when it sends the probe, so the answer shares the probe’s rate limit. Two nodes each outside the other’s window would otherwise refuse each other’s probes indefinitely. The Echo Request is accepted no further: it is not delivered, and it moves no baseline.</p>
 <h3 id="salt"><a class="header" href="#salt">Salt</a></h3>
 <p>The optional 2-byte salt is chosen randomly to reduce the likelihood of a nonce collision.</p>
 <h2 id="cryptographic-processing"><a class="header" href="#cryptographic-processing">Cryptographic Processing</a></h2>
@@ -1260,7 +1268,7 @@ K_mic_blind = K_mic_pairwise XOR K_mic_channel
 <li><code>K_mic</code> is the stable pairwise MIC key</li>
 <li>the MIC is computed over the protected packet contents and relevant static fields</li>
 </ul>
-<p>The frame counter must increase monotonically for a given traffic direction. Receivers must not rely on the construction’s resistance to nonce misuse as a substitute for replay detection.</p>
+<p>The frame counter must increase monotonically for a given sending address (see <a href="#frame-counter-1">Frame Counter</a>). Receivers must not rely on the construction’s resistance to nonce misuse as a substitute for replay detection.</p>
 <h3 id="multicast-packet-keys"><a class="header" href="#multicast-packet-keys">Multicast Packet Keys</a></h3>
 <p>For multicast, the configured channel key is the base secret. The encryption and authentication keys are derived once and are stable for a given channel.</p>
 <pre><code class="language-text">ikm  = channel_key
@@ -1378,7 +1386,7 @@ IV[12] = IV[12] &amp; 0x7F
 <p>The three components take the shape of any other packet’s MIC: associated data first, <code>V</code> where a nonce would sit, and <code>ack_mic</code> as the payload. The component count and the acknowledgement’s own FCF keep the result distinct from every packet MIC computed under the same key. Dynamic options and the flood hop count stay outside <code>AAD_ack</code>, so forwarding does not disturb the tag.</p>
 <p>Binding <code>V</code> ties the tag to one exchange in one direction. Both peers hold the same pairwise keys, but an acknowledgement of a packet one peer sent cannot pass for one answering a packet the other sent. <code>V</code> need not be secret for this; a packet sent with a 16-byte MIC carries all of it.</p>
 <p>The standalone <a href="#mac-ack-packet">MAC Ack</a> carries both fields (<code>ack_mic</code> followed by <code>ack_tag</code>, 8 bytes total). The <a href="#ack-mic-option-8">Ack MIC option</a> carries only <code>ack_mic</code>, because the packet carrying the option is itself authenticated to the original sender and therefore needs no separate keyed tag.</p>
-<p>The <code>ack_mic</code> is a prefix of the original packet’s on-wire MIC, so it was already visible to anyone who received that packet. Producing the <code>ack_tag</code> requires <code>K_mic</code>, so an observer who intercepts the original packet can neither forge a standalone ack nor alter the static options of a genuine one. With a 4-byte tag, a blind forgery succeeds with probability <code>2^-32</code> per attempt, and only while the original packet still awaits acknowledgement: no offline check exists, each guess costs a transmission, and a failed guess draws no response. A successful forgery would cause the sender to treat an undelivered packet as delivered and suppress retransmission, or to act on options the destination never sent—a reliability denial-of-service confined to one exchange, not a confidentiality break. A weaker variant needs no forged tag at all: repeaters <a href="#ack-cancellation">cancel queued forwards</a> on the public <code>ack_mic</code> alone, so an observer who saw the original packet can suppress its pending forwards at repeaters within earshot. The exposure is the same reliability class, costs the attacker a transmission per suppression, and is bounded by the sender’s <a href="#route-retry-option-6">Route Retry</a> recovery.</p>
+<p>The <code>ack_mic</code> is a prefix of the original packet’s on-wire MIC, so it was already visible to anyone who received that packet. Producing the <code>ack_tag</code> requires <code>K_mic</code>, so an observer who intercepts the original packet can neither forge a standalone ack nor alter the static options of a genuine one. With a 4-byte tag, a blind forgery succeeds with probability <code>2^-32</code> per attempt, and only while the original packet still awaits acknowledgement: no offline check exists, each guess costs a transmission, and a failed guess draws no response. A successful forgery would cause the sender to treat an undelivered packet as delivered and suppress retransmission, or to act on options the destination never sent—a reliability denial-of-service confined to one exchange, not a confidentiality break. A weaker variant needs no forged tag at all: an observer who saw the original packet can send its public <code>ack_mic</code>, which is all a repeater can read. Repeaters therefore treat an <a href="#ack-cancellation">overheard acknowledgment</a> as a hint that makes a pending forward give way to a busy channel, never as grounds to remove it. Such a forgery costs the attacker a transmission and the sender at most one retry.</p>
 <p>The correlation exposed by <code>ack_mic</code> is deliberate. To an observer who already received the original packet, it confirms that the packet was delivered and links the ack to that packet. Because the MAC ack carries no destination hint, it adds no explicit endpoint identifier of its own—which removes the direct sender-identity leak a destination hint would introduce. This is not a guarantee of unlinkability: a determined adversary may still correlate an ack with its endpoints through timing, RF fingerprinting, return-path analysis, or by tying the <code>ack_mic</code> back to an original packet that itself exposed endpoint hints. For blind unicast, whose forward frame reveals no endpoint identity to a non-channel observer, omitting the destination hint keeps that concealment from being undone by the ack.</p>
 <h3 id="blind-unicast-address-encryption"><a class="header" href="#blind-unicast-address-encryption">Blind Unicast Address Encryption</a></h3>
 <p>Blind unicast packets encrypt both the destination hint and source address together, separately from the payload. The address block is encrypted with the <strong>channel key alone</strong>, so that any channel member can recover both the intended recipient and the sender’s identity. The payload is then encrypted with the <strong>combined blind unicast keys</strong> (see <a href="#blind-unicast-payload-keys">Blind Unicast Payload Keys</a>), which require both the channel key and the pairwise shared secret.</p>
@@ -1453,17 +1461,23 @@ IV[12] = IV[12] &amp; 0x7F
 <p><strong>Responder</strong>: Generates its own fresh ephemeral node address. Sends a <a href="#pfs-session-response-7">PFS Session Response</a> carrying the responder’s ephemeral address and the accepted session duration. The response is authenticated with the responder’s long-term keys.</p>
 </li>
 </ol>
-<p>After this exchange, both sides hold each other’s ephemeral addresses and can independently derive the session keys. No further setup messages are required. The first data packet sent by the initiator using the ephemeral address hints serves as an implicit acknowledgement to the responder that the response was received and the session is active.</p>
+<p>After this exchange, both sides hold each other’s ephemeral addresses and can independently derive the session keys. No further setup messages are required.</p>
+<p>The initiator’s first frame from its ephemeral address, authenticated under the session keys, is the responder’s confirmation that the response arrived. Until it arrives, the responder receives under the session but sends nothing under it, and goes on using the long-term keys: if the response was lost, the initiator does not hold the session.</p>
+<p>Two nodes hold at most one session with each other: a new one replaces any earlier one. When two nodes each send a request to the other before either receives a response, the request whose ephemeral address is lower, compared as a big-endian unsigned integer, stands. The node that sent it ignores the other’s request; the other node abandons its own request and answers.</p>
+<p>A node that receives a response it is no longer waiting for, and holds no session with its sender, answers with <a href="#end-pfs-session-8">End PFS Session</a>, so that the responder drops its half. This covers a request that was abandoned or timed out, and a node that rebooted after sending its request. A response received while a session is held with its sender is dropped: it repeats the response that opened the session, or is older than it.</p>
 <h3 id="session-key-derivation"><a class="header" href="#session-key-derivation">Session Key Derivation</a></h3>
 <p>A PFS session is cryptographically identical to a normal UMSH unicast session in every respect—the only difference is that the participating node addresses are ephemeral rather than long-term. Key derivation follows the exact same process as <a href="#unicast-key-agreement">Unicast Key Agreement</a>.</p>
 <p>The PFS property arises not from any difference in how the keys are derived, but from the fact that the private keys for the ephemeral addresses are never stored durably and are securely erased when the session ends.</p>
 <p>An ephemeral node address is a fully functional temporary UMSH node identity: it has an address hint, can be addressed directly, and its private key is converted to X25519 for ECDH the same way a long-term identity is.</p>
-<p>Because a PFS session is indistinguishable from an ordinary unicast session at the MAC layer, it requires no changes to MAC-layer processing, no changes to any application-layer protocol, and adds zero per-packet overhead. Once the two-message handshake completes, every subsequent packet in the session is exactly the size it would have been without PFS.</p>
+<p>Because a PFS session is processed exactly like an ordinary unicast session at the MAC layer, it requires no changes to MAC-layer processing and no changes to any application-layer protocol.</p>
+<p>Packets sent between the ephemeral addresses SHOULD use a 4-byte MIC (see <a href="#mic-size-selection-guidance">MIC Size Selection Guidance</a>). The session’s keys are erased when it ends, so the shorter tag suffices, and each session packet is 12 bytes smaller than it would be with a 16-byte MIC.</p>
 <h3 id="wire-level-privacy"><a class="header" href="#wire-level-privacy">Wire-Level Privacy</a></h3>
 <p>While a PFS session is active, packet hint fields are derived from the ephemeral node address rather than the long-term address. A passive observer sees packets flowing between two unfamiliar node IDs that appear only for the duration of the session. The only packets that expose the long-term node IDs are the two handshake messages (PFS Session Request and PFS Session Response), which are themselves protected by the long-term pairwise keys.</p>
-<p>Because ephemeral node addresses are structurally identical to long-term node addresses, an observer cannot distinguish PFS session traffic from ordinary unicast traffic, nor associate the ephemeral addresses with the original nodes that created the session.</p>
+<p>Because ephemeral node addresses are structurally identical to long-term node addresses, an observer cannot tell ephemeral addresses from long-term ones, nor associate the ephemeral addresses with the original nodes that created the session.</p>
 <p>This identity separation is not unconditional. The PFS handshake messages are authenticated with the nodes’ long-term keys, so an attacker who later compromises a long-term private key can retroactively identify which long-term identities established the session—even though the session’s content remains protected by the erased ephemeral keys.</p>
+<p>The SCF is sent in the clear, so a session packet’s 4-byte MIC is visible to an observer. It suggests that a packet may be session traffic, but not which long-term identities it belongs to.</p>
 <p>Additionally, implementations that use a single device-wide frame counter expose a correlation opportunity: an observer who can read the frame counter field across packets (e.g. by receiving a packet before and after the PFS handshake) may notice continuity in the counter value and link the ephemeral addresses to the originating nodes. Implementations that wish to preserve wire-level identity unlinkability should use independent frame counters for each node address—including ephemeral ones—so that session traffic is not correlated with long-term traffic through counter continuity.</p>
+<p>A node that keeps records of its <a href="#retired-sessions">retired sessions</a> holds, in its storage, the link between each ephemeral address and the long-term identities that established it. Anyone who can read that storage learns which ephemeral addresses belonged to whom. The same link is usually available to a patient observer anyway: the handshake names the long-term addresses, and the ephemeral addresses appear on the air immediately afterward.</p>
 <p>From the application layer’s perspective, the implementation maps the ephemeral identity back to the originating long-term node ID throughout the session, so applications continue to see communication with the same peer they initiated the session with.</p>
 <h3 id="session-lifetime"><a class="header" href="#session-lifetime">Session Lifetime</a></h3>
 <p>A PFS session ends when any of the following occur:</p>
@@ -1471,12 +1485,19 @@ IV[12] = IV[12] &amp; 0x7F
 <li>The agreed session duration expires.</li>
 <li>Either party sends an <a href="#end-pfs-session-8">End PFS Session</a> command.</li>
 <li>Either device reboots.</li>
+<li>Three consecutive frames a node sends under the session with an acknowledgement requested go unacknowledged, and nothing from the peer under the session arrives in between. The node ends the session and sends End PFS Session.</li>
 </ul>
+<p>A node sends End PFS Session under its long-term keys once it holds no session with the recipient, so a node that has lost a session, by rebooting or otherwise, can still send one. The recipient ends the session it holds with the sender only if the End’s frame counter comes after, in the modular comparison of <a href="#replay-detection">Replay Detection</a>, the counter of the sender’s half of that session’s handshake: the request the recipient answered, or the response it accepted. An End that does not was sent before that session began—delayed, or replayed after the recipient lost its receive window for the sender—and is ignored. A request still waiting for its response is not ended by End PFS Session. An End received under the session’s own ephemeral addresses ends that session.</p>
 <p>Upon session end, both sides <strong>must securely erase/zeroize the private keys for their ephemeral addresses</strong>. Without those private keys, the session’s ECDH shared secret cannot be reconstructed, and the session traffic cannot be decrypted even by an attacker who later obtains the long-term private keys. This erasure is the mechanism that provides forward secrecy.</p>
 <blockquote class="blockquote-tag blockquote-tag-caution">
 <p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M4.47.22A.749.749 0 0 1 5 0h6c.199 0 .389.079.53.22l4.25 4.25c.141.14.22.331.22.53v6a.749.749 0 0 1-.22.53l-4.25 4.25A.749.749 0 0 1 11 16H5a.749.749 0 0 1-.53-.22L.22 11.53A.749.749 0 0 1 0 11V5c0-.199.079-.389.22-.53Zm.84 1.28L1.5 5.31v5.38l3.81 3.81h5.38l3.81-3.81V5.31L10.69 1.5ZM8 4a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0v-3.5A.75.75 0 0 1 8 4Zm0 8a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Caution</p>
 <p>Implementations must ensure that the private keys for ephemeral addresses are not swapped to disk, written to logs, or otherwise persisted in any form. On embedded platforms, this requires explicitly zeroing the key material in RAM before releasing it. Failure to securely erase these keys eliminates the PFS property entirely.</p>
 </blockquote>
+<h3 id="retired-sessions"><a class="header" href="#retired-sessions">Retired Sessions</a></h3>
+<p>A device that reboots loses its ephemeral private keys, and with them every session it held. Its peer has no way to learn this on its own and goes on sending to the lost ephemeral address until the session’s duration runs out.</p>
+<p>To end such a session promptly, a node MAY keep, in durable storage, the <em>public</em> half of each session it holds: its own ephemeral address, the peer’s ephemeral address, the peer’s long-term address, and when the session expires. After a reboot, a session it can no longer use is <em>retired</em>. The node keeps its record until the agreed duration has passed, the session is ended, or a new session with that peer replaces it. A node that cannot tell how much of the duration remains counts the whole agreed duration from when it booted.</p>
+<p>When a node receives a unicast or blind unicast whose destination hint is that of a retired session’s local ephemeral address, and whose source is that session peer’s ephemeral address, it discards the packet. It SHOULD then send an <a href="#end-pfs-session-8">End PFS Session</a> to the peer, and forget the record once that command is acknowledged. A node that does not hear an acknowledgment keeps the record, and the next such packet prompts another End PFS Session.</p>
+<p>Only public keys are kept. The private keys are erased exactly as for any other session end, so a retired session’s traffic stays as irrecoverable as that of a session that simply expired.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="routing-overview"><a class="header" href="#routing-overview">Routing Overview</a></h1>
 <p>UMSH packets can be delivered directly to nodes within radio range, flooded across the mesh, source-routed through a specific sequence of repeaters, or delivered using a hybrid of source routing and flooding. This chapter gives a high-level picture of how these mechanisms fit together; detailed procedures are covered in the sections linked below.</p>
@@ -1601,7 +1622,7 @@ rate-limit each participant and MAY clamp the hop count further.</p>
 <li>Apply the <a href="#replay-detection">replay-detection rules</a>.</li>
 <li>If the packet is accepted as new and requests an ACK, the receiving node (i.e., the final destination) computes the <a href="#ack-tag-construction">ack MIC and ack tag</a>—the first 4 bytes of the original packet’s MIC and a 4-byte MIC under the pairwise <code>K_mic</code> over the ack’s own static options, bound to the original packet’s full 16-byte S2V output—prepares a MAC Ack packet, and adds it to the outbound queue. Repeaters do not generate acks—see <a href="#mac-ack-packet">MAC Ack Packet</a>.</li>
 <li>If the authenticated packet is a previously received packet within the bounded <a href="#duplicate-acknowledgement-window">duplicate-acknowledgement window</a>, the receiver MAY prepare and queue its ACK again. This does not make the packet new or advance its replay state. Unless duplicate suppression is delegated to a host MAC, stop after queueing the ACK and do not process the application payload again.</li>
-<li>A <a href="#verify-frame-12">Verify Frame</a> or <a href="#frame-verified-13">Frame Verified</a> whose counter falls outside the window is processed as <a href="#counter-resynchronization">Counter Resynchronization</a> describes rather than dropped.</li>
+<li>A <a href="#verify-frame-12">Verify Frame</a>, <a href="#frame-verified-13">Frame Verified</a>, or <a href="#echo-request-4">Echo Request</a> whose counter falls outside the window is processed as <a href="#counter-resynchronization">Counter Resynchronization</a> describes rather than dropped.</li>
 <li>Otherwise, if replay detection rejects the packet, drop it without acknowledging it.</li>
 </ul>
 </li>
@@ -1774,7 +1795,7 @@ delay   = D_ack + W + uniform_random(0, W_jitter)
 <p>After computing the delay, the repeater waits. Other packets SHOULD continue to be forwarded while waiting, assuming the channel is clear.</p>
 <p>If the repeater overhears the same packet forwarded by another node (identified by MIC in the duplicate cache) before the delay expires, it SHOULD defer rather than transmit. A safe default is to recalculate a new delay using the same <code>W_min</code>/<code>W_max</code> limits—including <code>D_ack</code> when it applies, since the overheard copy may itself elicit an immediate ACK from the destination—and restart the waiting period. The first two overheard copies each defer the pending forward this way; on overhearing a third copy, the repeater SHOULD abandon the pending forward.</p>
 <p>Only a copy received over the radio defers. A packet received from an <a href="#channel-access-2">IP multicast group</a>, heard by every bridge in the group at once, contends with a window drawn uniformly from <code>[W_min, W_max]</code>.</p>
-<p>If the repeater instead overhears a MAC ack whose <code>ack_mic</code> matches the pending packet’s MIC prefix, it SHOULD <a href="#ack-cancellation">cancel the pending forward outright</a> rather than defer: the destination provably has the packet.</p>
+<p>If the repeater instead overhears a MAC ack whose <code>ack_mic</code> matches the pending packet’s MIC prefix, it SHOULD <a href="#ack-cancellation">let the pending forward give way to a busy channel</a> rather than defer: the destination probably has the packet, though no repeater can verify the ack.</p>
 <p>This deferral behavior is intended only for the first local forwarding decision after reception. Once a repeater has actually transmitted its own copy, any later retransmission behavior is governed by <a href="#forwarding-confirmation">Repeater Operation</a>.</p>
 <p>Nodes waiting for implicit forwarding confirmation MUST size their confirmation timeout to include this full forwarding-delay window. A safe default is to allow:</p>
 <ul>
@@ -1804,8 +1825,8 @@ delay   = D_ack + W + uniform_random(0, W_jitter)
 </li>
 <li>A repeater forwards other nodes’ traffic, never its own and never traffic that has arrived.
 <ul>
-<li>A repeater MUST NOT forward a packet whose source address identifies one of its own identities, by hint or in full-key form. Re-flooding its own transmission wastes airtime, and prepending its record to the trace would fabricate a hop that never happened.</li>
-<li>A repeater MUST NOT forward a packet whose destination address identifies one of its own identities. Such a packet has reached its destination; whether the repeater could actually process it is a separate question.</li>
+<li>A repeater MUST NOT forward a packet it transmitted itself. Re-flooding its own transmission wastes airtime, and prepending its record to the trace would fabricate a hop that never happened. A full-key source address that is one of its own keys identifies such a packet. A <a href="#node-hint">node hint</a> does not, because another node’s key can share it; a repeater recognizes its own packets sent by hint by entering each into its <a href="#duplicate-suppression-1">duplicate cache</a> as it transmits it.</li>
+<li>A repeater MUST NOT forward a unicast or blind unicast that one of its own identities has opened. Such a packet has reached its destination, and so has any later copy of it, whether or not the replay rules accept that copy. A destination hint that matches one of its identities is not enough: the packet may be for another node sharing the hint, and is forwarded like any other unless a key of the repeater’s opens it.</li>
 </ul>
 </li>
 <li>A packet is forwarded as either a source-routed hop or a flood hop, never both.
@@ -1860,6 +1881,7 @@ delay   = D_ack + W + uniform_random(0, W_jitter)
 <li>once the repeater decides the packet is eligible, insert the cache key into the cache</li>
 </ul>
 <p>To avoid racy reforward behavior, the repeater should insert the cache key into the cache as soon as it accepts the packet for forwarding, not after transmission completes.</p>
+<p>A forward the repeater gives up without transmitting—its channel-access budget spent, or the queue unable to hold it—SHOULD release its cache key, so that a retransmission of the packet is forwarded. Left in place, the key would suppress every copy of a packet this repeater never carried. A forward abandoned because <a href="#flood-forwarding-contention-window">other repeaters were overheard carrying the packet</a> keeps its key: the packet went onward without it.</p>
 <p>Shorter cache keys increase the probability of false-positive collisions. Deployments that use 4-byte or 8-byte MICs should account for this when sizing the duplicate cache.</p>
 <h3 id="entry-expiry"><a class="header" href="#entry-expiry">Entry Expiry</a></h3>
 <p>Cache entries MUST also age out. Capacity alone does not bound how long a key is suppressed, and a MIC-less packet’s cache key is derived from its content: a node that repeats an identical packet—a beacon, whose body is empty and whose non-dynamic options do not change—produces the same key every time. On a quiet mesh, capacity-only eviction would suppress that node’s packets for as long as the repeater runs.</p>
@@ -1973,10 +1995,10 @@ delay   = D_ack + W + uniform_random(0, W_jitter)
 <p>Repeaters do not generate MAC acks—acks are generated only by the <a href="#mac-ack-packet">final destination</a>. Instead, a node can passively confirm that a transmitted or forwarded packet was received by listening for a subsequent retransmission of the same packet (or it’s ack).</p>
 <p>This applies to:</p>
 <ul>
-<li><strong>Source-routed packets</strong>: Each forwarding hop listens for the next hop—the node matching the next source-route hint—to retransmit.</li>
+<li><strong>Source-routed packets</strong>: Each forwarding hop listens for the next hop—the node matching the next source-route hint—to retransmit. The hop that consumes the final hint has no such node. It listens only for a packet that requests an ACK, which the destination’s ACK confirms, as does any repeater heard flooding the packet onward; any other packet it transmits once.</li>
 <li><strong>Flood originators</strong>: The originating node listens for any node to retransmit.</li>
 <li><strong>Flood repeaters</strong>: Intermediate flood-forwarding nodes MUST NOT retry. Multiple nodes may forward the same flood packet, and a repeater has no designated next hop to listen for; retrying would increase congestion without improving reliability.</li>
-<li><strong>Routed MAC acks</strong>: An ack that carries a source route or flood budget is a routed send like any other; the destination that produced it listens for the first hop to carry it onward and retries on silence. Retrying the ack first is what spares the sender a full data retransmission when only the ack’s first hop failed. Once the destination sends a packet carrying an <a href="#ack-mic-option-8">Ack MIC option</a> for the same packet, it stops retrying an ack that has already been transmitted: repeaters <a href="#ack-cancellation">drop their forwards of that ack</a> on hearing the option, and the packet carrying it is confirmed and retried in its own right.</li>
+<li><strong>Routed MAC acks</strong>: An ack that carries a source route or flood budget is a routed send like any other; the destination that produced it listens for the first hop to carry it onward and retries on silence. Retrying the ack first is what spares the sender a full data retransmission when only the ack’s first hop failed. Once the destination sends a packet carrying an <a href="#ack-mic-option-8">Ack MIC option</a> for the same packet, it stops retrying an ack that has already been transmitted: repeaters <a href="#ack-cancellation">let their forwards of that ack give way</a> on hearing the option, and the packet carrying it is confirmed and retried in its own right.</li>
 </ul>
 <p>Confirmation, and the retry ladder below, apply whether or not the packet requests an ACK. An ack-requested sender goes on to await the ACK once forwarding is confirmed; a sender that requested no ACK is finished the moment it hears the packet carried onward, and if the retry budget runs out without that, the send simply ends—there is no failure signal to wait for. A point-to-point packet with no flood budget and no source route travels straight to its destination, confirms nothing, and MUST be transmitted exactly once.</p>
 <p>After transmitting, the node listens for the same packet—identified by its <a href="#duplicate-suppression-1">cache key</a>—to be retransmitted. This confirmation timeout MUST be large enough to cover the worst-case forwarding delay allowed by <a href="#flood-forwarding-contention-window">Channel Access</a>, plus the airtime of the forwarded frame itself, plus a guard margin. A safe default is:</p>
@@ -1989,12 +2011,11 @@ delay   = D_ack + W + uniform_random(0, W_jitter)
 </code></pre>
 <p>The delay does not grow with the retry number. Its only job is to decorrelate retries between nodes, and one frame time is enough for that; every additional window would be time the payload spends undelivered. After this delay expires, the retry is transmitted using normal CAD and backoff as described in <a href="#backoff-procedure">Channel Access</a>.</p>
 <p>A node MUST NOT retry more than 3 times.</p>
-<h3 id="ack-cancellation"><a class="header" href="#ack-cancellation">Ack Cancellation</a></h3>
-<p>A MAC ack echoes the acknowledged packet’s <code>ack_mic</code>—the first four bytes of its on-wire MIC—which any forwarder can read without keys, and which survives the mutations repeaters perform. A repeater that overhears a MAC ack (or an <a href="#ack-mic-option-8">Ack MIC option</a>) whose <code>ack_mic</code> matches the MIC prefix of a queued, not-yet-transmitted forward of an ack-eliciting packet (UNAR or BUAR) SHOULD cancel that forward: the destination provably has the packet, and repeating it spends airtime on nothing. The <a href="#ack-protection-interval">ACK protection interval</a> puts the ack on the air ahead of pending forwards precisely so that this observation is available.</p>
-<p>An overheard Ack MIC option also SHOULD cancel a queued, not-yet-transmitted forward of a MAC ack carrying the same <code>ack_mic</code>. The packet carrying the option delivers that acknowledgement to the same node, so the standalone ack has nothing left to deliver. An overheard MAC ack never cancels another ack’s forward: an ack’s trailer opens with the four bytes it echoes, so a second copy would cancel the first.</p>
-<p>Cancellation acts on the queue, not on the future. It removes whatever matching forward is queued at that moment—a <a href="#route-retry-option-6">Route Retry</a> copy included—and records nothing. A Route Retry copy received <em>after</em> a cancellation is a separate forwarding identity under <a href="#duplicate-suppression-1">duplicate suppression</a> and is forwarded normally: the origin resorts to it precisely because the ack never reached it, and carrying the copy prompts the destination to acknowledge again. That copy is in turn cancelable by another overheard ack.</p>
-<p>The duplicate-cache entry for a cancelled forward remains. The packet was handled; a later copy of the same attempt is still a duplicate.</p>
-<p>A repeater holds no key to verify the <code>ack_tag</code> half of the trailer, so cancellation rests on the public <code>ack_mic</code> alone. The <a href="#ack-tag-construction">forgery this exposes</a> suppresses at most one queued forward per overheard ack and is bounded by the Route Retry path.</p>
+<h3 id="ack-cancellation"><a class="header" href="#ack-cancellation">Overheard Acknowledgments</a></h3>
+<p>A MAC ack echoes the acknowledged packet’s <code>ack_mic</code>—the first four bytes of its on-wire MIC—which any forwarder can read without keys, and which survives the mutations repeaters perform. A repeater that overhears a MAC ack (or an <a href="#ack-mic-option-8">Ack MIC option</a>) whose <code>ack_mic</code> matches the MIC prefix of a queued, not-yet-transmitted forward of an ack-eliciting packet (UNAR or BUAR) has good reason to think the destination has the packet. The <a href="#ack-protection-interval">ACK protection interval</a> puts the ack on the air ahead of pending forwards so that this observation is available.</p>
+<p>It is a hint, not proof. A repeater holds no key to verify the <code>ack_tag</code> half of the trailer, and anyone who heard the packet can send its <code>ack_mic</code>. A repeater therefore does not remove the forward. It SHOULD instead cut the forward’s <a href="#backoff-procedure">channel-access budget</a> to a single CAD attempt, leaving its place in the queue and its delay as they were. On a clear channel the forward airs as it would have; on a busy one it gives way at once instead of contending for airtime the destination probably does not need. A forward given up this way never aired, so it no longer suppresses its packet, and a later copy is forwarded. A <a href="#ack-tag-construction">forged ack</a> thus costs the sender at most one retry, and only on a busy channel.</p>
+<p>An overheard Ack MIC option also SHOULD cut the budget of a queued, not-yet-transmitted forward of a MAC ack carrying the same <code>ack_mic</code>. The packet carrying the option delivers that acknowledgement to the same node, so the standalone ack probably has nothing left to deliver. An overheard MAC ack never cuts another ack’s forward: an ack’s trailer opens with the four bytes it echoes, so a second copy would cut the first.</p>
+<p>This acts on the queue, not on the future. It cuts whatever matching forward is queued at that moment—a <a href="#route-retry-option-6">Route Retry</a> copy included—and records nothing. A Route Retry copy received <em>after</em> is a separate forwarding identity under <a href="#duplicate-suppression-1">duplicate suppression</a> and is queued with the full budget: the origin resorts to it precisely because the ack never reached it, and carrying the copy prompts the destination to acknowledge again. Another overheard ack cuts that copy in turn.</p>
 <h3 id="route-failure-recovery"><a class="header" href="#route-failure-recovery">Route Failure Recovery</a></h3>
 <p>When a node sends an ack-requested unicast or blind-unicast packet against a cached route and that attempt fails, it needs a way to re-attempt delivery without causing duplicate application delivery at the final destination.</p>
 <p>Two kinds of cached route can fail this way, and they fail identically from the sender’s point of view:</p>
@@ -2021,13 +2042,9 @@ delay   = D_ack + W + uniform_random(0, W_jitter)
 <p>A sender that assumed nothing—it held no route and flooded at the whole budget it was allowed—has no cached route to discard, but its timeout is no more specific about which leg failed. The destination may hold a route back that no longer works, and its acknowledgment may have died on it. A MAC ack is never itself acknowledged, so the destination cannot discover this on its own. Such a sender SHOULD send one Route Retry of the packet when it has heard from the destination recently—within 10 minutes is a reasonable window—at the same flood budget and with a trace. A sender that has not heard from the destination recently SHOULD NOT: a destination that is unreachable answers a second full flood no more than the first.</p>
 <p>Either way, a sender MUST NOT send a Route Retry of a packet that already carries the Route Retry option. A logical packet gets at most one.</p>
 <h4 id="lost-acknowledgments"><a class="header" href="#lost-acknowledgments">Lost Acknowledgments</a></h4>
-<p>A Route Retry that arrives at the destination as a duplicate of a packet it has already acknowledged, after the <a href="#duplicate-acknowledgement-window">duplicate acknowledgment holdoff</a>, shows that the acknowledgment did not reach the sender: the sender sends a Route Retry only once its whole acknowledgment timeout has run out. The destination SHOULD then:</p>
-<ul>
-<li>retire or demote the route its acknowledgment followed, and not relearn that same path from the retry for a while</li>
-<li>re-acknowledge by a scoped flood rather than along any cached route: <code>FHOPS_REM</code> set to the retry’s <code>FHOPS_ACC</code> plus a one-hop margin, the retry’s region codes, and a <a href="#trace-option-7">trace</a>, so that the sender learns a path back</li>
-</ul>
-<p>A path the retry itself traced MAY still be adopted as an ordinary route candidate, but the re-acknowledgment does not follow it. A route the application has fixed in place MAY stay; the re-acknowledgment floods regardless.</p>
-<p>Only an acknowledged original makes the retry evidence of a lost acknowledgment. A destination may have accepted the original without acknowledging it—overheard before its source route was consumed, for instance—and then the retry is the first copy it acknowledges, along its route as usual. A late duplicate without the Route Retry option may have crossed an acknowledgment still in transit, so it is re-acknowledged along the route without retiring it.</p>
+<p>A Route Retry that arrives at the destination as a duplicate of a packet it has already acknowledged, after the <a href="#duplicate-acknowledgement-window">duplicate acknowledgment holdoff</a>, suggests that the acknowledgment did not reach the sender: the sender sends a Route Retry only once its whole acknowledgment timeout has run out. The destination SHOULD then re-acknowledge by a scoped flood rather than along any cached route, a fixed one included: <code>FHOPS_REM</code> set to the retry’s <code>FHOPS_ACC</code> plus a one-hop margin, the retry’s region codes, and a <a href="#trace-option-7">trace</a>, so that the sender learns a path back.</p>
+<p>The retry does not prove the acknowledgment lost. Route Retry is a dynamic option on a copy of a packet already accepted, and anyone who heard the packet can send that copy again with the option added. The destination therefore SHOULD NOT retire or demote a route on a Route Retry alone, nor <a href="#route-learning">learn a route</a> from the copy. A route back that has failed shows itself when the destination’s own sends along it go unacknowledged. A Route Retry that is the first copy of its packet the destination accepts is an ordinary authenticated packet, and the path it traced MAY replace the route held.</p>
+<p>Only an acknowledged original makes the retry a sign of a lost acknowledgment. A destination may have accepted the original without acknowledging it—overheard before its source route was consumed, for instance—and then the retry is the first copy it acknowledges, along its route as usual. A late duplicate without the Route Retry option may have crossed an acknowledgment still in transit, so it is re-acknowledged along the route.</p>
 <p>This recovery transmission is intentionally the same logical packet, not a new application message. The destination therefore still accepts it at most once according to the normal replay rules. The Route Retry option exists only to let repeaters forward the re-attempted packet even if they already suppressed the original as a duplicate.</p>
 <p>This preserves a useful separation of responsibilities:</p>
 <ul>
@@ -2133,8 +2150,9 @@ these periods are the advertisement-policy properties.</p>
 <p>Because router hints are only two bytes, different repeaters may share the same hint, which may result in redundant (but harmless) forwarding along a source route.</p>
 <h2 id="route-learning"><a class="header" href="#route-learning">Route Learning</a></h2>
 <p>A destination may overhear a frame while source-route hints remain unconsumed. The way back is then the remaining hints in reverse, followed by the trace: the whole path the sender chose, through the repeaters still to forward it. The trace alone would describe a shortcut past those repeaters, and a repeater being audible at the destination does not establish that it hears the destination. Historical buffered frames do not establish current reachability.</p>
-<p>Copies of one packet, or of one MAC ack, that arrive over different paths each describe a path, and the first to arrive is not necessarily the best. A node MAY weigh them against each other and against the route it holds, using the per-hop signal of their <a href="#trace-option-7">traces</a> where the copies carry it. A copy that arrives long after the first is a replay rather than evidence of a current path.</p>
-<p>When a node successfully processes other live incoming packets, it can update its routing state for the sender:</p>
+<p>Only an authenticated packet teaches a route to its sender: a unicast or blind unicast that opens under the sender’s pairwise keys, a frame whose <a href="#frame-signatures">signature</a> verifies against the sender’s key, or a MAC ack whose <code>ack_tag</code> completes an outstanding request. A multicast’s MIC proves only that its sender holds the channel key, so an unsigned multicast teaches nothing about the source it names.</p>
+<p>Only the first copy teaches. A duplicate of a packet already accepted, or a later copy of a MAC ack that already completed its request, is authenticated as a packet but not as a copy: no MIC covers the options repeaters rewrite, so anyone who heard the packet can send it again with a path of their choosing.</p>
+<p>When a node accepts such a packet live, it can update its routing state for the sender:</p>
 <ul>
 <li>
 <p><strong>Trace</strong>: if the packet contains a complete <a href="#trace-option-7">trace</a>, with signal or hints only, the node caches its router hints as a source route for future packets back to the sender. Because the trace is accumulated most-recent first, it already describes the return path from the receiver back toward the original sender. This is the primary mechanism for learning precise multi-hop paths. A truncated trace is not a complete path, and no route is learned from it.</p>
@@ -2159,7 +2177,7 @@ these periods are the advertisement-policy properties.</p>
 <p>Trading a source route for flood hops rewrites only fields the <a href="#associated-data">associated data</a> excludes. Adding <code>FHOPS</code> sets the FCF’s <code>H</code> bit, which the AAD clears, so the MIC carries over unchanged.</p>
 <p>Recovery stays within the sender’s original flood ceiling; disabled flooding does not authorize a flooded retry. Once a replacement route is learned, normal routed transmission can resume. An ACK following Route Retry confirms delivery of the logical packet but does not identify which attempt delivered it.</p>
 <p>A sender that held no route and flooded at its whole budget has no route to discard, yet the timeout may still be the destination’s fault: a route back to the sender that no longer works, on which the ACK died. When it has heard from the destination recently, the sender sends one Route Retry anyway, at the same budget and with a trace. A logical packet gets at most one Route Retry.</p>
-<p>The destination learns from that retry. A Route Retry duplicating a packet it already acknowledged shows the ACK was lost, so the destination retires or demotes the route the ACK followed and re-acknowledges by a flood scoped to the retry’s <code>FHOPS_ACC</code> plus one hop, within the retry’s regions, carrying a trace. A path the retry traced may become an ordinary route candidate; the re-acknowledgment does not follow it. See <a href="#lost-acknowledgments">Lost Acknowledgments</a>.</p>
+<p>A Route Retry duplicating a packet the destination already acknowledged suggests the ACK was lost, so the destination re-acknowledges by a flood scoped to the retry’s <code>FHOPS_ACC</code> plus one hop, within the retry’s regions, carrying a trace. Being a duplicate, the retry neither teaches a route nor retires one. See <a href="#lost-acknowledgments">Lost Acknowledgments</a>.</p>
 <h2 id="scoping-flood-hops-to-a-known-route"><a class="header" href="#scoping-flood-hops-to-a-known-route">Scoping Flood Hops to a Known Route</a></h2>
 <p>A wide flood hop count is a first-contact cost. Once routing state exists for a destination, the sender SHOULD scope <code>FHOPS_REM</code> to what the known path actually costs, plus a margin where the far end of the path is in doubt:</p>
 <ul>
@@ -2344,8 +2362,7 @@ its repeater disabled it forwards nothing, whatever the frame arrived on.</li>
 <li><strong>What the radio transmits goes to the group.</strong> Each frame the node’s
 radio puts on the air is sent to the group, its repeats included. A frame
 the radio does not transmit—a repeat abandoned to a better-placed
-repeater, or canceled by an overheard acknowledgment—does not reach the
-group.</li>
+repeater, or given up to a busy channel—does not reach the group.</li>
 </ul>
 <p>A node whose repeater is disabled is therefore a member of the group and
 nothing more; only a node with its repeater enabled is a bridge.</p>
@@ -2386,9 +2403,9 @@ nothing more.</li>
 radio transmitted, and satisfies
 <a href="#forwarding-confirmation">forwarding confirmation</a> as
 a copy overheard on the air does.</li>
-<li><strong>Ack cancellation is unchanged.</strong> An overheard acknowledgment
-<a href="#ack-cancellation">cancels</a> a matching pending forward
-whatever it arrived on: it proves delivery either way.</li>
+<li><strong>Overheard acknowledgments are unchanged.</strong> An acknowledgment
+<a href="#ack-cancellation">cuts the budget</a> of a matching
+pending forward whatever it arrived on.</li>
 </ul>
 <p>Bridges on one LoRa channel that hear the same group reception draw different
 windows. The first to transmit is overheard by the others, which defer as
@@ -2681,6 +2698,7 @@ are the tools for keeping that local.</li>
 <li>it has no embedded signature, and its frame authenticates the sender: a verified frame signature, or a unicast or blind unicast MIC.</li>
 </ul>
 <p>A multicast MIC alone does not authenticate the sender, since any channel member can produce one under any source address. An identity whose embedded signature does not verify is not believed.</p>
+<p>Believing an identity is not evidence that its node is in range. An embedded signature carries no freshness: a captured identity verifies wherever and whenever it is put back on the air. A receiver therefore treats the sender of an identity as a direct neighbor, one hop away, only when the frame carrying it authenticated the sender and passed <a href="#replay-detection">replay detection</a>—a verified frame signature, or a unicast or blind unicast MIC—and arrived off the sender’s own transmitter. An identity believed on its embedded signature alone describes its node and is kept as such, but places it in no neighbor table.</p>
 <p>A frame signature is checkable only against the sender’s public key. An advertisement meant for receivers that may not yet hold that key MUST therefore carry its source address in full-key form; a hint-only advertisement can be verified only by a receiver that already holds the key.</p>
 <p>An identity authenticated by its frame SHOULD replace stored details only when that frame advanced the sender’s established receive baseline (see <a href="#replay-detection">Replay Detection</a>). A frame accepted as first contact, or one accepted from behind the baseline, MAY fill details that are missing but SHOULD NOT replace stored ones: a late frame can carry details older than those already stored. A baseline restored from storage is established.</p>
 <div style="break-before: page; page-break-before: always;"></div>
@@ -2945,6 +2963,11 @@ request so the peer can reply directly.</p>
 <li>A node MAY decline to respond to a request from an unknown source.</li>
 <li>A repeater MAY decline to forward a broadcast Identity Request, particularly
 when its filters are broad enough to solicit a large number of replies.</li>
+<li>A node SHOULD bound the rate at which it answers requests whose frame does
+not authenticate the sender—a verified <a href="#frame-signatures">frame
+signature</a>, or a unicast or blind unicast MIC.
+Such a request’s source address is only a claim, and the reply goes to
+whatever node it names. A request over the bound goes unanswered.</li>
 </ul>
 <p>In order to manage the potential flood of responses, the following rules MUST be applied for broadcast (always) and (by default) multicast:</p>
 <ul>
@@ -2953,17 +2976,19 @@ when its filters are broad enough to solicit a large number of replies.</li>
 0.5 to 30 seconds, so that the selected nodes do not all answer at once. A
 delayed response that then fails channel-activity assessment follows the
 responder’s normal bounded CCA backoff-and-retry before being dropped.
-A request every <a href="#identity-request-options">FILTER_NODE_HINT</a> of which is 2 or
-3 bytes is exempt and MUST be answered without the delay: such a request names
-a node rather than a share of the mesh, so there is no crowd of replies to
-spread and the hold would only make the answer late. One byte names a 256th of
-what the request reaches, so it is not exempt; filters of the same type combine
-as OR, and the shortest one decides.</li>
+A request carrying exactly one <a href="#identity-request-options">FILTER_NODE_HINT</a>,
+of 2 or 3 bytes, is exempt and MUST be answered without the delay: such a
+request names a node rather than a share of the mesh, so there is no crowd of
+replies to spread and the hold would only make the answer late. One byte names
+a 256th of what the request reaches, so it is not exempt. Nor is a request
+carrying more than one hint filter: filters of the same type combine as OR,
+and each value can be chosen to match a node the requester has heard, so the
+request names as many nodes as it has filters.</li>
 <li>One solicitation is answered at most once. A request reaches a node once per
 path it travels, and a plain broadcast carries no frame counter for a lower
 layer to recognize the repeat by; the <a href="#identity-request-options">NONCE</a> is
 what names the solicitation. A responder suppresses a request matching one it
-has already answered—same sender, same NONCE—for at least as long as it
+has already answered—same sender key, same NONCE—for at least as long as it
 may hold the reply. A request carrying no NONCE cannot be distinguished from a
 repeat of itself; a requester that wants a further answer inside that window
 asks with a fresh NONCE.</li>
@@ -2973,8 +2998,9 @@ request carrying one solicits a single reply however far it travels. A partial
 hint names a small set rather than one node, and the shorter it is the larger
 that set: a requester sends the longest hint it holds. A request with no hint
 filter at all selects by role or capability, and every node it reaches may
-answer; such a request is therefore confined to the requester’s own
-neighborhood:</p>
+answer. A request with several hint filters names one node per filter, and a
+flood of it would draw a flooded reply from each. Both are therefore confined
+to the requester’s own neighborhood:</p>
 <ul>
 <li>The FHOPS byte must either be absent or set to 0x00. A request that is flood
 routed—FHOPS present with either nibble nonzero—MUST NOT be answered.</li>
@@ -3084,6 +3110,7 @@ Non-filter options (such as NONCE) do not participate in this matching.</p>
 </table>
 </div>
 <p>The response SHOULD carry a <a href="#trace-option-7">Trace option</a> when the request carried one. An echo measures a path, and a response traced differently from the request measures a different one; the per-hop signal in the two traces is what makes the measurement per-hop rather than end to end.</p>
+<p>The response SHOULD use the MIC size the request used.</p>
 <h2 id="pfs-session-request-6"><a class="header" href="#pfs-session-request-6">PFS Session Request (6)</a></h2>
 <p>Initiates a PFS session. The sender generates a fresh ephemeral node address and transmits it along with a requested session duration. See <a href="#perfect-forward-secrecy-sessions">Perfect Forward Secrecy Sessions</a> for the session establishment mechanism, key derivation, and wire-level privacy properties.</p>
 <div class="table-wrapper">
@@ -3112,14 +3139,14 @@ Non-filter options (such as NONCE) do not participate in this matching.</p>
 </div>
 <p>The responder MAY accept a shorter lifetime than was requested, and both parties hold the session to the accepted one. A node that receives a duration of 0 treats it as a finite lifetime of its own choosing; a responder answers with that lifetime.</p>
 <h2 id="end-pfs-session-8"><a class="header" href="#end-pfs-session-8">End PFS Session (8)</a></h2>
-<p>Terminates an active PFS session. May be sent by either party. Upon receipt, both sides securely erase the private keys for their ephemeral addresses and revert to using their long-term keys. See <a href="#session-lifetime">Session Lifetime</a> for all conditions under which a session ends.</p>
-<p>No command-specific payload. The sender and recipient are identified by the packet’s addressing fields.</p>
+<p>Terminates the PFS session between the sender and the recipient. May be sent by either party, including one that no longer holds the session. Upon receipt, both sides securely erase the private keys for their ephemeral addresses and revert to using their long-term keys. See <a href="#session-lifetime">Session Lifetime</a> for all conditions under which a session ends, and for when the recipient acts on an End.</p>
+<p>No command-specific payload. Like the handshake, this command travels between the two parties’ long-term addresses under their long-term pairwise keys, and it names the session by its sender: each pair of long-term addresses holds at most one session. A node that has lost its ephemeral keys can therefore still end a session, as it does for a <a href="#retired-sessions">retired session</a>.</p>
 <h2 id="no-op-9"><a class="header" href="#no-op-9">No-Op (9)</a></h2>
 <p>This command does nothing, however it will produce a UACK when sent via a packet
 type that requests an ACK.</p>
 <h2 id="peer-repeaters-request-10"><a class="header" href="#peer-repeaters-request-10">Peer Repeaters Request (10)</a></h2>
 <p>Asks the destination—typically a repeater—for its list of known peer repeaters.</p>
-<p>The list is the responder’s repeater neighborhood: the repeaters it has heard from their own transmitters. A repeater enters it in one of two ways. Forwarding a frame the responder receives is one—a repeater prepends its record to the frame’s <a href="#trace-option-7">Trace</a>, so the first hint names the repeater whose transmission was just heard. Advertising is the other—a <a href="#node-identity">node identity</a> claiming the repeater role or capability, heard directly rather than forwarded. Frames heard from nodes that are not repeaters, and identities that arrived through a repeater, put nothing in the list. Nor does anything naming the responder itself: a trace that begins with its own router hint, or its own identity. A neighbor need not be on the air: a repeater reached over a point-to-point link, such as an attached host, is listed the same way and simply carries no signal measurements.</p>
+<p>The list is the responder’s repeater neighborhood: the repeaters it has heard from their own transmitters. A repeater enters it in one of two ways. Forwarding a frame the responder receives is one—a repeater prepends its record to the frame’s <a href="#trace-option-7">Trace</a>, so the first hint names the repeater whose transmission was just heard. Advertising is the other—a <a href="#node-identity">node identity</a> claiming the repeater role or capability, heard directly rather than forwarded, on a frame that authenticated its sender and passed replay detection (see <a href="#signature-usage">Signature Usage</a>). Frames heard from nodes that are not repeaters, identities that arrived through a repeater, and identities believed only on their embedded signature put nothing in the list. A trace hint is not authenticated, so a repeater the list holds only by trace is unproven until it is heard forwarding a frame the responder itself sent. When the list is full, a repeater heard only by trace takes the place of an unproven entry, never a proven one. Nor does anything naming the responder itself: a trace that begins with its own router hint, or its own identity. A neighbor need not be on the air: a repeater reached over a point-to-point link, such as an attached host, is listed the same way and simply carries no signal measurements.</p>
 <p>The command-specific payload is a CoAP-style option list, using the delta-length encoding defined in <a href="#attribute-encoding">Packet Options</a>:</p>
 <div class="table-wrapper">
 <table>
@@ -3375,6 +3402,13 @@ than a read the device retains, per administrator, the token and the
 complete response of the most recent exchange. A request whose token
 matches the retained token is answered by retransmitting the retained
 response, without executing anything.</p>
+<p>Only a read can be continued, so the response to any other request is
+carried in one payload. When the response a request produces does not
+fit—a <code>CMD_PROP_IS</code> echoing a value nearly a payload long, for
+example—the device answers and retains a <code>CMD_PROP_IS</code> of
+<code>PROP_LAST_STATUS</code> reporting <code>STATUS_OK</code> in its place. The request has
+executed, once, and the administrator reads the value back if it needs
+it.</p>
 <p>A read (<code>CMD_PROP_GET</code> or <code>CMD_PROP_MULTI_GET</code>) changes nothing, so its
 response is not retained: a retransmitted read is executed again and
 answered with current values. The exception is a read whose response
@@ -3531,12 +3565,21 @@ This section is an early work in progress and this protocol may change significa
 <h2 id="message-options"><a class="header" href="#message-options">Message Options</a></h2>
 <p>Every recognized option is a singleton unless a specification explicitly declares otherwise. How a receiver treats a duplicated recognized option depends on the option’s role:</p>
 <ul>
-<li>An option that carries identity, sequencing, or reference semantics—Message Type, Message Sequence, Regarding, Editing, and extension options in the same role such as Sender Sequence—makes the message invalid when repeated, even if the repeated values are identical. The message MUST be dropped.</li>
+<li>An option that carries identity, sequencing, or reference semantics—Message Type, Message Sequence, Regarding, Editing, and extension options in the same role such as Sender Sequence—cannot be trusted when repeated, even if the repeated values are identical. The option is treated as undecodable.</li>
 <li>A presentation option—Sender Handle, Background Color, Text Color—keeps the first occurrence when repeated; later occurrences are ignored and MAY be reported diagnostically.</li>
 <li>Duplicates of a zero-length flag option—Sequence Reset, Channel Group Resend—are idempotent.</li>
 </ul>
 <p>Repeated unrecognized options remain ignorable.</p>
-<p>A recognized option whose value the receiver cannot decode is ignored, with two exceptions. A message whose Message Sequence cannot be decoded is dropped. A message whose Message Type is unrecognized or undecodable, or whose Regarding or Editing is undecodable or of the wrong width for the conversation, is not displayed, but its sequence position is accounted for as with <a href="#message-type">Message Unavailable</a>.</p>
+<p>A sender that sees a message delivered must be able to rely on its body being shown. A receiver MUST display a message that has a body, whatever it could not interpret about the message, unless the message is a reaction. It loses only the meaning of the option it could not interpret:</p>
+<ul>
+<li>An option a receiver cannot decode is otherwise ignored.</li>
+<li>A message whose Message Sequence cannot be decoded is displayed as an unsequenced message.</li>
+<li>A message whose Message Type is unrecognized or undecodable is displayed as a basic text message.</li>
+<li>A basic text message whose Regarding is undecodable, or of the wrong width for the conversation, is displayed as a reply to an unknown message.</li>
+<li>A message whose Editing is undecodable is displayed as a new message, marked as having been received as an edit of an unknown message. So is an edit whose original the receiver does not hold.</li>
+<li>A body that is not valid UTF-8 is displayed with each invalid sequence replaced by U+FFFD.</li>
+</ul>
+<p>A reaction whose Regarding is undecodable or of the wrong width has nothing to attach to and is not displayed, nor is a message with no body whose Message Type or Editing could not be interpreted. Either way, its sequence position is accounted for as with <a href="#message-type">Message Unavailable</a>.</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -3547,7 +3590,7 @@ This section is an early work in progress and this protocol may change significa
 <tr><td style="text-align: right">1</td><td>Sender Handle</td><td>UTF-8 string</td></tr>
 <tr><td style="text-align: right">2</td><td>Message Sequence</td><td>1 or 3 bytes (see below)</td></tr>
 <tr><td style="text-align: right">3</td><td>Sequence Reset</td><td>0 bytes (flag)</td></tr>
-<tr><td style="text-align: right">4</td><td>Regarding</td><td>1 or 4 bytes (see below)</td></tr>
+<tr><td style="text-align: right">4</td><td>Regarding</td><td>1, 2, or 4 bytes (see below)</td></tr>
 <tr><td style="text-align: right">5</td><td>Editing</td><td>1 byte</td></tr>
 <tr><td style="text-align: right">6</td><td>Background Color</td><td>3 bytes, RGB</td></tr>
 <tr><td style="text-align: right">7</td><td>Text Color</td><td>3 bytes, RGB</td></tr>
@@ -3572,6 +3615,7 @@ This section is an early work in progress and this protocol may change significa
 </table>
 </div>
 <p>If absent or empty, the message type defaults to 0 (basic text).</p>
+<p>A client MAY send status text when a user starts a new message with <code>/me </code>, removing that prefix from the body. Replies are not treated this way.</p>
 <p>The presence of the <code>Regarding</code> option changes the semantics a bit: A <strong>reply</strong> is a type 0 message with a <code>Regarding</code> option specifying which message is being replied to. A <strong>reaction</strong> is a type 1 message with a <code>Regarding</code> option specifying which message is being reacted to; the body is a single Unicode emoji or a short text token such as <code>+1</code>, <code>-1</code>, <code>!</code>, or <code>?</code>. Implementations may differentiate reactions from plain status text by the presence of the Regarding option.</p>
 <p>Reaction bodies SHOULD be short text tokens rather than emoji: <code>&lt;3</code>, <code>+1</code>, <code>-1</code>, <code>ha</code>, <code>!</code>, and <code>?</code> cover the common reactions in one or two bytes. Receivers SHOULD accept the equivalent spellings—<code>♥</code> for <code>&lt;3</code>, <code>haha</code> or <code>lol</code> for <code>ha</code>, <code>!!</code> for <code>!</code>, letter case being insignificant—as well as the emoji themselves, and SHOULD render a reaction as a single glyph, taking the first extended grapheme cluster (<a href="https://www.unicode.org/reports/tr29/">UAX #29</a>) when a body carries more, so that a sequence such as 👍🏽 or 🇫🇷 stays whole.</p>
 <p>There are six canonical reactions:</p>
@@ -3664,10 +3708,16 @@ This section is an early work in progress and this protocol may change significa
 <p>References a previously sent message for the purposes of replies and reactions.</p>
 <p>The option length depends on the conversation, not on how the MAC packet is addressed:</p>
 <ul>
-<li><strong>One-to-one conversation</strong> (unicast, or a blind-unicast conversation with a single logical destination): 1 byte—the Message ID of the referenced message.</li>
+<li><strong>One-to-one conversation</strong> (unicast, or a blind-unicast conversation with a single logical destination): the two parties number their messages independently, so the form says whose message is meant.
+<ul>
+<li>1 byte: the Message ID of a message sent by the recipient of this frame.</li>
+<li>2 bytes: the Message ID of a message sent by the sender of this frame, followed by <code>0x00</code>. Any other second byte is undecodable.</li>
+</ul>
+</li>
 <li><strong>Channel-group conversation</strong> (delivered by multicast to the channel): 4 bytes—the 1-byte Message ID followed by the first 3 bytes of the source public key of the original sender.</li>
 </ul>
 <p>The source prefix is necessary in multicast channels to disambiguate messages from different senders that may share the same Message ID. This means a message cannot be referenced if it is more than 255 messages old in that sender’s sequence, or if the user has since reset their sequence ID.</p>
+<p>A receiver MAY accept a 1-byte Regarding that matches none of its own messages as a reference to one of the sender’s.</p>
 <p>In chat rooms, the room assigns canonical Message IDs across all senders (see <a href="#room-update">Chat Rooms</a>), so the 1-byte form is used and no source prefix is needed.</p>
 <h3 id="editing"><a class="header" href="#editing">Editing</a></h3>
 <p>Indicates that this message replaces a previously sent message in the same conversation and sender scope. The option value is 1 byte: the Message ID of the message being edited. No source prefix is needed because the source scope comes from the enclosing packet. For unicast and blind-unicast, pairwise authentication binds that source to a peer key. For multicast, the MIC proves only possession of the channel key; the source is a claimed identity, and one channel member can impersonate another. A multicast whose <a href="#frame-signatures">frame signature</a> verifies is the exception: the signature binds it to the signer’s key.</p>
@@ -5273,6 +5323,27 @@ starting over. A host that receives one runs this procedure again.</p>
 current device- and host-domain state, and begins detached operation:
 accepted frames are queued rather than delivered, and acknowledgement
 delegation (if enabled) becomes active.</p>
+<h3 id="stalled-host"><a class="header" href="#stalled-host">A Host That Stops Reading</a></h3>
+<p>A host asserts flow control by not reading: the transport’s own
+backpressure—notification pacing over BLE, an unread USB endpoint, a full
+TCP window—holds back the device’s output. A device serves more than its
+attached host, so it does not let that hold the rest of it back for long:</p>
+<ul>
+<li>A live <code>CMD_STR_RECV</code> the transport cannot take at once <strong>MAY</strong> be
+discarded. It is lost as though on the air, and a sender that asked for
+an acknowledgement retransmits. The device counts it in
+<a href="#prop-stat-host-rx-dropped"><code>PROP_STAT_HOST_RX_DROPPED</code></a>.</li>
+<li>Any other frame for the host <strong>MAY</strong> be discarded once the host has
+refused output for 5 seconds, and from then on until it takes output
+again. The device counts each in
+<a href="#prop-stat-host-out-dropped"><code>PROP_STAT_HOST_OUT_DROPPED</code></a>.
+A <a href="#cmd-queue-drain"><code>CMD_QUEUE_DRAIN</code></a> cut short this way
+ends without its completion, and the frames it did not deliver stay
+queued.</li>
+</ul>
+<p>A host that stops reading for longer than that cannot rely on having
+received every answer and publication since, and <strong>SHOULD</strong> synchronize
+again, as after an attach, once it resumes.</p>
 <h3 id="local-sockets"><a class="header" href="#local-sockets">Local Sockets</a></h3>
 <p>A device that runs as a process—a virtual radio hosted beside the
 application that attaches to it—may serve ULCP on a local stream socket,
@@ -5658,13 +5729,15 @@ survives a change of host.</p>
 <tr><td>4837</td><td><code>PROP_STAT_RX_ACCEPTED</code></td><td>Get, Set</td><td>Received packets accepted by this device’s node</td></tr>
 <tr><td>4838</td><td><code>PROP_STAT_FORWARDED</code></td><td>Get, Set</td><td>Packets this device chose to forward</td></tr>
 <tr><td>4839</td><td><code>PROP_STAT_FORWARD_DROPPED</code></td><td>Get, Set</td><td>Forwarding candidates rejected by policy</td></tr>
-<tr><td>4840</td><td><code>PROP_STAT_FORWARD_CANCELLED</code></td><td>Get, Set</td><td>Queued forwards cancelled after an acknowledgement</td></tr>
+<tr><td>4840</td><td><code>PROP_STAT_FORWARD_CANCELLED</code></td><td>Get, Set</td><td>Queued forwards cut short by an overheard acknowledgement</td></tr>
 <tr><td>4841</td><td><code>PROP_STAT_MESHCORE_SEEN</code></td><td>Get, Set</td><td>MeshCore packets received</td></tr>
 <tr><td>4842</td><td><code>PROP_STAT_MESHCORE_FORWARDED_ROUTED</code></td><td>Get, Set</td><td>MeshCore packets forwarded along their source route</td></tr>
 <tr><td>4843</td><td><code>PROP_STAT_MESHCORE_FORWARDED_FLOOD</code></td><td>Get, Set</td><td>MeshCore packets flooded</td></tr>
 <tr><td>4844</td><td><code>PROP_STAT_MESHCORE_DECLINED</code></td><td>Get, Set</td><td>MeshCore packets neither forwarded nor duplicates</td></tr>
 <tr><td>4850</td><td><code>PROP_STAT_RX_OWN_HINT</code></td><td>Get, Set</td><td>Received packets whose trace names this device as the last hop</td></tr>
 <tr><td>4851</td><td><code>PROP_STAT_RADIO_RESETS</code></td><td>Get, Set</td><td>Times the radio chip was reset after it stopped responding</td></tr>
+<tr><td>4852</td><td><code>PROP_STAT_HOST_RX_DROPPED</code></td><td>Get, Set</td><td>Received packets not delivered live because the host was not reading</td></tr>
+<tr><td>4853</td><td><code>PROP_STAT_HOST_OUT_DROPPED</code></td><td>Get, Set</td><td>Other frames for the host discarded after it stopped reading</td></tr>
 </tbody>
 </table>
 </div>
@@ -5896,8 +5969,9 @@ administrator policy, and are not included. Duplicates, self-addressed packets,
 and packets received while forwarding is disabled are also excluded. Requires
 <code>CAP_STATS</code> and <code>CAP_REPEATER</code>.</p>
 <h3 id="prop-stat-forward-cancelled"><a class="header" href="#prop-stat-forward-cancelled">PROP 4840: <code>PROP_STAT_FORWARD_CANCELLED</code></a></h3>
-<p>Queued forwards cancelled because the destination’s acknowledgement was
-overheard before transmission. Requires <code>CAP_STATS</code> and <code>CAP_REPEATER</code>.</p>
+<p>Overheard acknowledgements that <a href="#ack-cancellation">cut the channel-access
+budget</a> of a queued forward before
+transmission. Requires <code>CAP_STATS</code> and <code>CAP_REPEATER</code>.</p>
 <h3 id="prop-stat-meshcore-seen"><a class="header" href="#prop-stat-meshcore-seen">PROP 4841: <code>PROP_STAT_MESHCORE_SEEN</code></a></h3>
 <p>MeshCore packets received while <a href="#meshcore-forwarding">MeshCore
 forwarding</a> is running. Every one is also
@@ -5934,6 +6008,16 @@ was told: a transmission that did not complete within its time limit, or any
 other radio operation that did not finish. A transmission abandoned this way
 increments neither <code>PROP_STAT_TX_PACKETS</code> nor <code>PROP_STAT_TX_CHANNEL_BUSY</code>.
 Requires <code>CAP_STATS</code>.</p>
+<h3 id="prop-stat-host-rx-dropped"><a class="header" href="#prop-stat-host-rx-dropped">PROP 4852: <code>PROP_STAT_HOST_RX_DROPPED</code></a></h3>
+<p>Packets received over the air that the device discarded instead of delivering
+live as <code>CMD_STR_RECV</code>, because the attached host’s transport could not take
+the frame at once (see <a href="#stalled-host">A Host That Stops
+Reading</a>). Requires <code>CAP_STATS</code>.</p>
+<h3 id="prop-stat-host-out-dropped"><a class="header" href="#prop-stat-host-out-dropped">PROP 4853: <code>PROP_STAT_HOST_OUT_DROPPED</code></a></h3>
+<p>Frames for the attached host other than live receptions—answers,
+publications, frames of a queue drain—that the device discarded after the
+host had stopped reading (see <a href="#stalled-host">A Host That Stops
+Reading</a>). Requires <code>CAP_STATS</code>.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="ulcp-frame-transport"><a class="header" href="#ulcp-frame-transport">ULCP: Frame Transport</a></h1>
 <p>Frame transport is the data plane: the host transmits and receives raw,
@@ -8361,20 +8445,33 @@ for that case.</p>
 <ul>
 <li>A snapshot <strong>MUST</strong> be self-describing enough that a device can
 distinguish a payload it cannot read from an absent one. A device
-<strong>MUST NOT</strong> apply a payload it does not fully understand.</li>
+<strong>MUST NOT</strong> apply a payload whose structure it cannot read: a bad
+format, broken framing, or a failed integrity check rejects the whole
+snapshot.</li>
+<li>A value this device cannot hold—a frequency outside its band, a table
+entry beyond its capacity, a setting it would refuse from a host—costs
+that value, not the snapshot. The device skips it and counts it, as
+though the snapshot had not recorded it: a skipped setting keeps its
+post-reset value, and a skipped table entry is absent. Everything else
+applies, and <code>PROP_SAVED</code> reports the restore as partial. The stored
+snapshot still holds the skipped value until <code>CMD_SAVE</code> replaces it.
+The exception is the recorded identity (see
+<a href="#cmd-restore"><code>CMD_RESTORE</code></a>): one the device
+cannot read rejects the snapshot.</li>
 <li>Devices <strong>MUST NOT</strong> silently boot bare after rejecting a snapshot.
 Where the storage retains earlier generations, the device <strong>MUST</strong>
 fall back to the newest generation that does decode, in preference to
 booting with documented defaults. A device <strong>MAY</strong> bound how far back
 it walks.</li>
-<li><code>PROP_SAVED</code> <strong>MUST</strong> report a fallback and an unreadable snapshot
-distinguishably from both “saved” and “nothing saved” (see
-<a href="#prop-saved"><code>PROP_SAVED</code></a>). Devices with a local indicator <strong>SHOULD</strong> signal it
-there as well, since the host-visible report reaches nobody on an
-unattended device.</li>
-<li>A device that restored an older generation is otherwise in normal
-operation: nothing is refused, and <code>CMD_SAVE</code> replaces the stored
-snapshot and clears the condition.</li>
+<li><code>PROP_SAVED</code> <strong>MUST</strong> report a fallback, a partial restore, and an
+unreadable snapshot distinguishably from both “saved” and “nothing
+saved” (see
+<a href="#prop-saved"><code>PROP_SAVED</code></a>). Devices with a local
+indicator <strong>SHOULD</strong> signal a rejected generation there as well, since
+the host-visible report reaches nobody on an unattended device.</li>
+<li>A device that restored an older generation, or part of one, is
+otherwise in normal operation: nothing is refused, and <code>CMD_SAVE</code>
+replaces the stored snapshot and clears the condition.</li>
 </ul>
 <p>Only forward compatibility is required. Newer firmware <strong>MUST</strong> read
 snapshots written by older firmware, taking the documented default for
@@ -8391,9 +8488,9 @@ change saved properties with no host asking. Such a change:</p>
 reports 1), so what was set at the device is still set after a reboot;</li>
 <li><strong>never creates one.</strong> A device with nothing saved saves nothing: a
 snapshot made from a button press would persist every other live value
-with it. A device that rejected its newest generation at boot
-(<code>PROP_SAVED</code> reports 2 or 3) writes nothing either, since the write
-would bury the condition <code>PROP_SAVED</code> reports.</li>
+with it. A device that rejected its newest generation at boot, or
+skipped values of it (<code>PROP_SAVED</code> reports 2, 3, or 4), writes nothing
+either, since the write would bury the condition <code>PROP_SAVED</code> reports.</li>
 </ul>
 <p>The change applies live in every case.</p>
 <p>A device with a full settings interface <strong>MAY</strong> save as a host would: a
@@ -8603,15 +8700,17 @@ and, when the answer is qualified, how:</p>
 <tr><td>1</td><td>The most recently saved snapshot is in effect.</td></tr>
 <tr><td>2</td><td>A saved snapshot is in effect, but a <strong>newer</strong> stored generation was rejected at boot and this is an earlier one. The device is operating on configuration older than what was last saved.</td></tr>
 <tr><td>3</td><td>A snapshot exists but <strong>no</strong> stored generation could be read. The device booted with documented defaults despite having been saved.</td></tr>
+<tr><td>4</td><td>The most recently saved snapshot is in effect, but the device skipped values in it that it cannot hold (see <a href="#snapshot-integrity">Snapshot Integrity</a>). Those settings hold their documented defaults.</td></tr>
 </tbody>
 </table>
 </div>
-<p>Values 2 and 3 are conditions to report to the operator, not errors to
+<p>A fallback generation that also skipped values reports 2.</p>
+<p>Values 2, 3 and 4 are conditions to report to the operator, not errors to
 recover from automatically: the configuration the device is running is not
 the configuration that was last written, and only whoever wrote it can
 say what should replace it. A successful <code>CMD_SAVE</code> returns the value to</p>
 <ol>
-<li>Values 2 and 3 persist for the remainder of the power cycle and
+<li>Values 2, 3 and 4 persist for the remainder of the power cycle and
 <strong>MUST NOT</strong> be cleared by <code>CMD_RST</code> or <code>CMD_RESTORE</code>, neither of which
 re-reads storage.</li>
 </ol>
@@ -8965,7 +9064,7 @@ adjustment fail values they cannot honor with <code>STATUS_INVALID_ARGUMENT</cod
 <li>Post-Reset Value: 0</li>
 </ul>
 <p>The cumulative number of frames discarded from the inbound queue—evicted
-by the circular queue-full policy or otherwise not retained (see
+or refused by the queue-full policy, or otherwise not retained (see
 <a href="#inbound-queueing">Inbound Queueing</a>)—since the device last reset. A non-zero increase
 across a detached interval tells the host that its view of that interval
 is incomplete. The counter wraps modulo 2^32.</p>
@@ -9010,9 +9109,10 @@ the board rather than of the protocol.</p>
 <p>An indication of one arrival is reserved for a message the operator
 reads: a frame the device authenticated with a provisioned key whose
 payload is a <a href="#text-messages">text message</a> of type basic or
-status, counted once, at its first fragment. Resend requests, Message
-Unavailable responses, continuation fragments, a message whose Message
-Type, Regarding, or Editing option does not decode, and every other
+status, or any other a receiver would
+<a href="#message-options">display</a>, counted once, at its first
+fragment. Resend requests, Message Unavailable responses, continuation
+fragments, a message a receiver would not display, and every other
 payload type are queued without one, as is any frame the device could
 not authenticate, since its content is unreadable, and any frame carrying
 a <a href="#forwarding-and-delivery-criticality">delivery-critical</a>
@@ -9119,7 +9219,8 @@ delivery only.</p>
 <p>When <code>CAP_HOST_RX_QUEUE</code> is supported and the host is <strong>detached</strong>,
 accepted frames are placed in a FIFO inbound queue instead of being
 discarded. Each queue entry records the frame, its receive metadata (RSSI,
-LQI, SNR), the time of reception, and whether the device acknowledged it (see
+LQI, SNR), the time of reception, whether the device authenticated it, and
+whether the device acknowledged it (see
 <a href="#ack-delegation">Acknowledgement Delegation</a>).</p>
 <p>When the host is <strong>attached</strong>, accepted frames are delivered live over
 <code>STR_PHY_RAW</code> as they always are. Attaching does not flush
@@ -9133,11 +9234,31 @@ its processing of interleaved live deliveries; <code>RX_AGE</code> in the
 buffered-frame metadata gives coarse (one-second) relative timing but is
 not sufficient to reconstruct a strict total order—and UMSH itself does
 not guarantee in-order delivery in any case.</p>
-<p>The queue is <strong>circular</strong>: when a new frame is accepted and the queue is
-full, the oldest queued frame is discarded and the new frame is appended.
-The queue therefore always holds the most recent accepted traffic. Every
-frame discarded by this eviction increments
-<code>PROP_HOST_RX_QUEUE_DROPPED</code>.</p>
+<p>A queued frame is <strong>authenticated</strong> when its MIC verified under keys the
+device holds—a <a href="#prop-host-peer-keys"><code>PROP_HOST_PEER_KEYS</code></a>
+entry for unicast, a
+<a href="#prop-host-channel-keys"><code>PROP_HOST_CHANNEL_KEYS</code></a> entry for
+multicast—it carries no delivery-critical option the device cannot
+interpret, and the device did not suspect it of being a replay. Any other
+frame is <strong>unauthenticated</strong>: a destination hint is public, so anyone can
+send a frame that passes the receive filters. Only an authenticated frame
+can be acknowledged on the host’s behalf.</p>
+<p>When a new frame is accepted and the queue is full, the device makes room as
+follows:</p>
+<ol>
+<li>If the queue holds an unauthenticated entry, the oldest unauthenticated
+entry is discarded.</li>
+<li>Otherwise, if the new frame is authenticated, the oldest entry is
+discarded.</li>
+<li>Otherwise the new frame is discarded. A device <strong>MUST NOT</strong> discard an
+authenticated entry to admit an unauthenticated frame.</li>
+</ol>
+<p>Within each class the queue holds the most recent traffic, and queue order
+stays the order of reception. Every frame discarded under these rules,
+whether queued or arriving, increments <code>PROP_HOST_RX_QUEUE_DROPPED</code>.</p>
+<p>Traffic from a peer the device holds no keys for, including first contact
+from an unprovisioned peer, is unauthenticated: it is the first displaced
+when the queue fills, and it cannot displace authenticated traffic.</p>
 <p>Eviction can discard a frame that was already acknowledged on the host’s
 behalf—the sender believes it delivered, but the host will never
 receive it. This is the same best-effort custody semantic that applies to
@@ -9184,10 +9305,11 @@ it accepts a frame from that peer into the queue; a frame it fails to
 store leaves the baseline unchanged, so its retransmissions remain
 acceptable later.</li>
 <li>The frame was placed in the inbound queue (see <a href="#inbound-queueing">Inbound Queueing</a>).
-Because the queue is circular, placement normally succeeds by evicting
-the oldest entry when full; a frame that nevertheless cannot be stored
-(for example, one exceeding the device’s buffer) is not acknowledged, so
-the sender keeps retrying until the host returns.</li>
+An authenticated frame always finds room when the queue is full (see
+<a href="#inbound-queueing">Inbound Queueing</a>); a frame that
+nevertheless cannot be stored (for example, one exceeding the device’s
+buffer) is not acknowledged, so the sender keeps retrying until the host
+returns.</li>
 </ol>
 <p>A delegated ACK also requires that no unconsumed source-route hints remain. An early overheard copy may be queued without an ACK; the first eligible duplicate can then supply the ACK without another queue entry. <code>RX_FLAG_ACKED</code> requires successful radio transmission.</p>
 <p>Delegated ACKs follow the <a href="#scoping-flood-hops-to-a-known-route">return-path guidance</a>, carry a trace <a href="#when-to-include-a-trace">when one is due</a>, and preserve the request’s region codes on both flooded and source-routed returns.</p>
@@ -11521,6 +11643,8 @@ it can do.</p>
 <tr><td>4849</td><td><a href="#counters"><code>PROP_STAT_LAN_EXPORT_DROPPED</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_LAN_BEARER</code>, <code>CAP_REPEATER</code></td></tr>
 <tr><td>4850</td><td><a href="#prop-stat-rx-own-hint"><code>PROP_STAT_RX_OWN_HINT</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_REPEATER</code></td></tr>
 <tr><td>4851</td><td><a href="#prop-stat-radio-resets"><code>PROP_STAT_RADIO_RESETS</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code></td></tr>
+<tr><td>4852</td><td><a href="#prop-stat-host-rx-dropped"><code>PROP_STAT_HOST_RX_DROPPED</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code></td></tr>
+<tr><td>4853</td><td><a href="#prop-stat-host-out-dropped"><code>PROP_STAT_HOST_OUT_DROPPED</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code></td></tr>
 <tr><td>4864</td><td><a href="#prop-ble-pairing-pin"><code>PROP_BLE_PAIRING_PIN</code></a></td><td>Set</td><td>BLE transport</td></tr>
 <tr><td>4865</td><td><a href="#prop-dev-admins"><code>PROP_DEV_ADMINS</code></a></td><td>Get, Set, Insert, Remove</td><td><code>CAP_ADMIN</code></td></tr>
 <tr><td>4866</td><td><a href="#prop-time"><code>PROP_TIME</code></a></td><td>Get, Set, Is</td><td><code>CAP_TIME</code></td></tr>
@@ -11692,7 +11816,7 @@ reserved for them.</p>
 <tr><th>Enumeration</th><th>Values</th><th>Defined in</th></tr>
 </thead>
 <tbody>
-<tr><td><code>PROP_SAVED</code></td><td>0 none, 1 current, 2 fallback, 3 unreadable</td><td><a href="#prop-saved"><code>PROP_SAVED</code></a></td></tr>
+<tr><td><code>PROP_SAVED</code></td><td>0 none, 1 current, 2 fallback, 3 unreadable, 4 partial</td><td><a href="#prop-saved"><code>PROP_SAVED</code></a></td></tr>
 <tr><td>Filter types</td><td>0 <code>FILTER_DEST_HINT</code>, 1 <code>FILTER_CHANNEL_ID</code>, 2 <code>FILTER_PKT_TYPE</code></td><td><a href="#prop-host-rx-filters"><code>PROP_HOST_RX_FILTERS</code></a></td></tr>
 <tr><td>Charge states</td><td>0 discharging, 1 charging, 2 charged, 3 not charging</td><td><a href="#prop-battery"><code>PROP_BATTERY</code></a></td></tr>
 <tr><td>Alert states</td><td>0 <code>ALERT_NONE</code>, 1 <code>ALERT_LOCATE</code></td><td><a href="#prop-alert"><code>PROP_ALERT</code></a></td></tr>
@@ -11827,6 +11951,12 @@ order but <strong>MAY</strong> stall the bearer while doing so.</p>
 mechanism: the server’s stack paces notifications to the connection,
 and the server <strong>MUST NOT</strong> drop segments of a frame it has begun to
 send.</p>
+<p>A stall in either direction lasts only while the server is making
+progress. A server stalls client writes while it works through frames
+it has accepted, never because the client is not taking notifications:
+output the client does not take is handled as for <a href="#stalled-host">a host that stops
+reading</a>, and never holds back the
+client-to-server direction.</p>
 <h3 id="mtu-considerations"><a class="header" href="#mtu-considerations">MTU Considerations</a></h3>
 <p>The scheme is correct at any ATT_MTU, including the 23-octet minimum.
 Clients <strong>SHOULD</strong> negotiate the largest ATT_MTU they support before
@@ -15174,6 +15304,12 @@ future revision fails the handshake instead of misparsing frames.</p>
 octets of plaintext. This bounds the record buffer a constrained
 participant needs; a participant that cannot buffer a larger record
 closes the connection.</p>
+<p>The keepalive below begins only once the handshake completes, so the
+handshake is bounded on its own: a participant closes a connection
+whose handshake has not completed within a handshake timeout, by
+default 10 seconds. A server also bounds how many connections may be
+mid-handshake at once, in total and from any one source address, and
+closes a connection past either bound as soon as it accepts it.</p>
 <h3 id="message-framing"><a class="header" href="#message-framing">Message Framing</a></h3>
 <p>The tunnel is a stream of
 <a href="https://github.com/openthread/openthread/blob/thread-reference-20180926/doc/spinel-protocol-src/spinel-framing.md#hdlc-lite-hdlc-lite">HDLC-Lite</a>
@@ -15494,7 +15630,7 @@ participant’s node transmits.</p>
 <p><strong>Eavesdropping.</strong> When encryption is enabled, payload content is protected by AES-256-CTR keyed with material derived from ECDH (unicast) or the channel key (multicast). An observer without the relevant key cannot recover plaintext.</p>
 <p><strong>Forgery.</strong> All authenticated packets carry a MIC computed with S2V (AES-CMAC). An attacker who does not possess the encryption and authentication keys cannot produce a valid MIC. The <a href="#security-control-field">MIC size</a> determines the forgery resistance—from 2^-32 (4-byte MIC) to 2^-128 (16-byte MIC).</p>
 <p><strong>Sender impersonation on signed frames.</strong> A <a href="#frame-signatures">frame signature</a> covers the header, frame counter, and payload, and on a channel the channel itself. Only the holder of the signing key can produce one, so a verified signature attributes a broadcast or multicast to its sender, which a channel MIC cannot.</p>
-<p><strong>Replay attacks.</strong> Monotonically increasing <a href="#frame-counter-1">frame counters</a> allow receivers to detect and reject replayed packets. The <a href="#replay-detection">backward window and MIC cache</a> provide tolerance for out-of-order delivery without weakening replay protection.</p>
+<p><strong>Replay attacks.</strong> Monotonically increasing <a href="#frame-counter-1">frame counters</a> allow receivers to detect and reject replayed packets. The <a href="#replay-detection">backward window and MIC cache</a> provide tolerance for out-of-order delivery without weakening replay protection. An unsigned multicast is the exception; see <a href="#replay-of-unsigned-multicast">Replay of Unsigned Multicast</a>.</p>
 <p><strong>Nonce misuse.</strong> The <a href="#encrypted-packets">AES-SIV construction</a> derives the CTR IV from the key, associated data, and plaintext, so accidental nonce reuse (e.g., due to a buggy counter implementation) does not produce the catastrophic plaintext leakage that would occur with AES-GCM or raw AES-CTR. In the worst case, an attacker can detect when two packets carry identical associated data and plaintext—the keys and other traffic remain uncompromised.</p>
 <p><strong>Long-term key compromise (with PFS).</strong> If a <a href="#perfect-forward-secrecy-sessions">PFS session</a> was active and the ephemeral keys were properly erased, traffic from that session cannot be retroactively decrypted even if the long-term private keys are later compromised.</p>
 <h2 id="what-umsh-does-not-protect-against"><a class="header" href="#what-umsh-does-not-protect-against">What UMSH Does Not Protect Against</a></h2>
@@ -15503,7 +15639,7 @@ participant’s node transmits.</p>
 <p><strong>Selective packet dropping.</strong> A compromised or malicious repeater can selectively drop packets without detection. UMSH provides no mechanism to verify that a repeater faithfully forwarded a packet. The flood routing model provides redundancy (multiple paths), but a strategically positioned adversary can still disrupt delivery.</p>
 <p><strong>Denial of service.</strong> An attacker can flood the radio channel with valid-looking packets, forcing receivers to expend computation on cryptographic verification. The 3-byte destination hint reduces this cost (only ~1 in 16,777,216 unicast packets will trigger verification for any given node), but the shared medium provides no isolation. The <code>EMERGENCY</code> channel’s priority forwarding could be abused to amplify DoS traffic, though the frame-signature requirement limits this to attackers who possess a valid Ed25519 keypair.</p>
 <p><strong>Bounded extra forwarding via route recovery.</strong> The <a href="#route-retry-option-6">Route Retry option</a> intentionally allows one extra forwarding wave for an already-seen authenticated packet when the sender is recovering from a stale route. Because the option is dynamic and not MIC-protected, an observer who can copy a packet can also add the option and potentially trigger that extra forwarding attempt. This is a real amplification tradeoff, but it is tightly bounded: the cache key distinguishes only the original packet and the route-retry form, not an unbounded sequence of retries. Implementations should preserve that bound and must not treat arbitrary dynamic-option changes as creating new forwarding identities.</p>
-<p><strong>Peer-registry exhaustion by first-contact senders.</strong> If an implementation automatically learns peers from inbound full-key packets, an attacker can generate many distinct keypairs and send valid first-contact traffic in an attempt to fill the peer table. If successful, this can crowd out legitimate peers or prevent future first contact. Implementations should distinguish between explicitly configured peers and opportunistically learned peers. Explicit peers should be pinned and must not be displaced by auto-learning. Opportunistically learned peers should be bounded separately or recycled with an eviction policy such as least-recently-seen replacement. Multicast traffic should not require persistent peer registration merely to deliver application traffic in large group-chat scenarios; where sender identity is not already known, implementations may need to fall back to best-effort duplicate suppression rather than strict per-peer replay tracking.</p>
+<p><strong>Peer-registry exhaustion by first-contact senders.</strong> If an implementation automatically learns peers from inbound full-key packets, an attacker can generate many distinct keypairs and send valid first-contact traffic in an attempt to fill the peer table. If successful, this can crowd out legitimate peers or prevent future first contact. Implementations should distinguish between explicitly configured peers and opportunistically learned peers. Explicit peers should be pinned and must not be displaced by auto-learning. Opportunistically learned peers should be bounded separately or recycled with an eviction policy such as least-recently-seen replacement. Multicast traffic needs no peer registration to be delivered: an <a href="#unsigned-multicast">unsigned multicast</a> is judged by duplicate suppression alone. A stranger’s signed frame takes a receive window, which first contacts from freshly minted keys could displace on demand; the <a href="#signed-frame-counters">signed-frame counter rules</a> bound how often they may.</p>
 <p><strong>Traffic amplification via broadcast or multicast requests.</strong> An unsigned broadcast packet is unauthenticated, a multicast packet may be attributable only to a shared channel key, and even a <a href="#frame-signatures">signed</a> one may come from an ephemeral source identity. An attacker can exploit this by sending a request that appears to warrant a response or some other follow-on action from every receiving node. If the request does not include a complete <a href="#trace-option-7">trace</a>, recipients do not learn a specific return path. Any per-node reply may therefore fall back to flood routing, using the inbound <code>FHOPS_ACC</code> as a distance estimate or flooding more broadly if no better routing state exists. The result is an amplification attack: one injected request can trigger many independent flood-routed responses, consuming airtime and effectively causing a distributed denial of service. Implementations and application protocols must therefore treat broadcast and multicast requests as fan-out hazards. They should not automatically generate per-node responses unless those responses are explicitly designed to avoid amplification through mechanisms such as route learning, strict rate limits, randomized suppression, aggregation, or making the request one-way only.</p>
 <p><strong>Non-repudiation.</strong> UMSH’s MIC is computed with symmetric pairwise keys that both sender and recipient possess, so a recipient cannot cryptographically prove to a third party who authored a given packet—either party could have constructed it. However, UMSH does not claim to provide deniability. Real-world deniability depends on the entire system: usage patterns, device forensics, metadata, and interactions with other systems. The symmetric MIC is a narrow property, not a deniability guarantee. A <a href="#frame-signatures">frame signature</a> (as required on the <code>EMERGENCY</code> channel) or an EdDSA signature in an identity payload gives up even this narrow property—a signature can only be produced by the private key holder, and anyone holding the signed bytes can check it.</p>
 <p><strong>Forward secrecy without PFS sessions.</strong> Normal unicast traffic uses stable pairwise keys derived from long-term ECDH. If a node’s long-term private key is compromised, all past and future unicast traffic with that node can be decrypted. Forward secrecy requires explicit use of <a href="#perfect-forward-secrecy-sessions">PFS sessions</a>.</p>
@@ -15511,9 +15647,9 @@ participant’s node transmits.</p>
 <h2 id="implementation-requirements"><a class="header" href="#implementation-requirements">Implementation Requirements</a></h2>
 <p>The following requirements are critical for security. Failure to implement any of them correctly can compromise the properties described above.</p>
 <h3 id="frame-counter-monotonicity"><a class="header" href="#frame-counter-monotonicity">Frame Counter Monotonicity</a></h3>
-<p>The frame counter must strictly increase for each packet sent in a given traffic direction. Reusing a counter value with the same key undermines replay protection and, in the worst case, can leak information about plaintext differences (though the AES-SIV construction limits the damage). See <a href="#frame-counter-1">Frame Counters</a>.</p>
+<p>The frame counter must strictly increase for each packet a node address sends. Reusing a counter value with the same key undermines replay protection and, in the worst case, can leak information about plaintext differences (though the AES-SIV construction limits the damage). See <a href="#frame-counter-1">Frame Counters</a>.</p>
 <h3 id="frame-counter-persistence"><a class="header" href="#frame-counter-persistence">Frame Counter Persistence</a></h3>
-<p>A node must not reuse frame counter values across reboots. Implementations must either persist the counter to non-volatile storage or advance it by a large margin on startup. A node must likewise persist each known peer’s receive baseline and restore it at startup; one that loses a peer’s baseline accepts a replay of that peer’s earlier frames as first contact. If writing to non-volatile storage, care must be taken to avoid wearing out the storage medium. See <a href="#counter-persistence">Counter Persistence</a> and <a href="#counter-resynchronization">Counter Resynchronization</a>.</p>
+<p>A node must not reuse frame counter values across reboots. Implementations must either persist the counter to non-volatile storage or advance it on startup by a margin large enough to pass every value used, yet smaller than the forward window. A node must likewise persist each known peer’s receive baseline and restore it at startup; one that loses a peer’s baseline accepts a replay of that peer’s earlier frames as first contact. If writing to non-volatile storage, care must be taken to avoid wearing out the storage medium. See <a href="#counter-persistence">Counter Persistence</a> and <a href="#counter-resynchronization">Counter Resynchronization</a>.</p>
 <h3 id="ephemeral-key-erasure"><a class="header" href="#ephemeral-key-erasure">Ephemeral Key Erasure</a></h3>
 <p>PFS sessions derive their security from the guarantee that ephemeral private keys are erased when the session ends. Implementations must ensure that ephemeral keys are:</p>
 <ul>
@@ -15566,6 +15702,8 @@ participant’s node transmits.</p>
 <h2 id="channel-specific-considerations"><a class="header" href="#channel-specific-considerations">Channel-Specific Considerations</a></h2>
 <h3 id="named-channel-security"><a class="header" href="#named-channel-security">Named Channel Security</a></h3>
 <p>Named channels derive their key from a human-readable name via HKDF-Extract. Anyone who knows (or guesses) the name can derive the key. Named channels should be treated as public—they provide a shared namespace, not confidentiality. Long, high-entropy names offer practical obscurity but should not be relied upon for security.</p>
+<h3 id="replay-of-unsigned-multicast"><a class="header" href="#replay-of-unsigned-multicast">Replay of Unsigned Multicast</a></h3>
+<p>An <a href="#unsigned-multicast">unsigned multicast</a> is judged by duplicate suppression alone. Once a receiver’s duplicate cache forgets a frame, by age or because later traffic displaced it, a replay of that frame is accepted as new. Anyone who recorded it can replay it, including a node without the channel key. A window kept per claimed source would refuse such a replay, but it would buy little: the channel key does not say who sent a frame, so any member could forge a new frame under any source anyway, and could push such a window past the claimed sender’s counter and silence it. Traffic that must not be replayable after the fact should be signed, since a signed multicast is judged by its signer’s receive window.</p>
 <h3 id="emergency-channel-integrity"><a class="header" href="#emergency-channel-integrity">Emergency Channel Integrity</a></h3>
 <p>The <code>EMERGENCY</code> channel requires unencrypted transmission, full source key (<code>S=1</code>), and a <a href="#frame-signatures">frame signature</a>. These requirements ensure that emergency traffic is universally readable and cryptographically attributable. The <a href="#channel-commitment">channel commitment</a> keeps a signed emergency message from being replayed on another channel that shares its identifier, and <a href="#signed-frame-counters">signed-frame counters</a> keep it from being replayed on this one, with one limit: a receiver that has no prior knowledge of the sender, or has discarded or lost it, accepts a replay of that sender’s earlier message once. However, an attacker with a valid Ed25519 keypair can still send fraudulent emergency messages—the signature proves only that the sender possesses the key, not that the emergency is real. Social and operational controls (e.g., reputation, identity verification) are needed to complement the cryptographic guarantees.</p>
 <h3 id="blind-unicast-key-binding"><a class="header" href="#blind-unicast-key-binding">Blind Unicast Key Binding</a></h3>
@@ -15648,6 +15786,7 @@ as amateur-radio traffic.</p>
 </div>
 <h3 id="node-hints-3-bytes"><a class="header" href="#node-hints-3-bytes">Node hints (3 bytes)</a></h3>
 <p>The destination hint is a prefilter: a match causes the receiver to attempt full cryptographic verification. A false positive wastes computation on every packet exchanged between the two colliding nodes, for the lifetime of both identities. The cost is persistent and proportional to traffic volume. The source hint is used for source identification, traffic attribution, and diagnostics.</p>
+<p>A collision costs computation, not reachability. A repeater never takes a hint as proof that a packet is its own: it stops carrying a packet addressed to its hint only once one of its keys opens the packet, and it knows its own transmissions by what it sent, not by their source hint (<a href="#routing-invariants">Routing Invariants</a>). A node whose hint matches a repeater’s identity is carried through that repeater like any other.</p>
 <p>With 3-byte hints the collision probability drops to ~1% even in a 600-node regional network. The only remedy for a collision is for one node to generate a new identity (a new Ed25519 keypair), which for a chat node means all peers must re-learn the new public key. The 3-byte size makes this scenario rare.</p>
 <h3 id="router-hints-2-bytes"><a class="header" href="#router-hints-2-bytes">Router hints (2 bytes)</a></h3>
 <p>Router hints are used in source-route and trace options. A router hint collision causes an unintended repeater to forward the packet; MIC-based duplicate suppression ensures each repeater forwards a given packet at most once, so collisions add traffic but not loops or incorrect delivery.</p>
@@ -15905,7 +16044,7 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 <li><strong>Login sequencing</strong>: Login handling compares the sender’s timestamp with the last accepted value from that sender.</li>
 </ul>
 <p>UMSH is entirely timestamp-free at the MAC layer. Replay protection is based on monotonic 4-byte frame counters (see <a href="#frame-counter-1">Frame Counter</a>), which require no clock synchronization and no access to absolute time. Higher-layer payloads (such as the node identity payload in <a href="#node-identity">Node Identity</a>) may optionally carry timestamps for application-level purposes, but the MAC layer neither requires nor interprets them.</p>
-<p>UMSH’s monotonic frame counter provides cryptographic replay protection that does not depend on a clock and does not degrade as traffic volume increases. MeshCore’s hash-based duplicate cache provides short-term deduplication but has a fixed capacity—in a busy mesh, the 160-entry buffer can wrap quickly, allowing replayed packets to be accepted after the original entry is evicted. MeshCore’s advertisement and login checks require a sender’s timestamp values not to regress relative to previously accepted state. Clock reset or rollback can therefore cause valid traffic to be rejected, but these checks do not require nodes’ clocks to be accurate or synchronized with one another.</p>
+<p>UMSH’s monotonic frame counter provides cryptographic replay protection for unicast and signed traffic that does not depend on a clock and does not degrade as traffic volume increases; an unsigned multicast, which no single sender is accountable for, has duplicate suppression only (<a href="#replay-of-unsigned-multicast">Replay of Unsigned Multicast</a>). MeshCore’s hash-based duplicate cache provides short-term deduplication but has a fixed capacity—in a busy mesh, the 160-entry buffer can wrap quickly, allowing replayed packets to be accepted after the original entry is evicted. MeshCore’s advertisement and login checks require a sender’s timestamp values not to regress relative to previously accepted state. Clock reset or rollback can therefore cause valid traffic to be rejected, but these checks do not require nodes’ clocks to be accurate or synchronized with one another.</p>
 <h2 id="packet-overhead-comparison"><a class="header" href="#packet-overhead-comparison">Packet Overhead Comparison</a></h2>
 <p>Minimum overhead for a typical encrypted unicast message (no options, no flood hop count):</p>
 <div class="table-wrapper">
@@ -15972,7 +16111,7 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 <p><strong>Easier to extend without breaking existing deployments.</strong> UMSH’s composable options and opaque payload model let developers add new routing behaviors, packet options, or application protocols without changing the MAC layer—existing nodes simply ignore options and payload types they do not recognize. MeshCore’s vertically integrated design, where application-layer semantics are defined at the protocol level, means that new features are more likely to require coordinated firmware updates across the network.</p>
 </li>
 <li>
-<p><strong>Stronger security from a coherent cryptographic design.</strong> MeshCore’s cryptographic choices—AES-128-ECB encryption, 2-byte MACs, a 160-entry duplicate cache for replay protection, and no key separation—individually and collectively weaken the security guarantees the protocol can offer. Identical messages produce identical ciphertext, MAC forgery is feasible to brute-force, replayed packets are accepted once the duplicate cache wraps, and the same key material is reused across cryptographic operations. UMSH addresses all of these with AES-CTR encryption using a synthetic IV, configurable MIC sizes up to 16 bytes, monotonic frame counters for replay protection, HKDF-derived domain-separated keys, and optional perfect forward secrecy sessions that protect past traffic if a long-term key is later compromised. Something like this cannot be easily bolted onto MeshCore’s current design.</p>
+<p><strong>Stronger security from a coherent cryptographic design.</strong> MeshCore’s cryptographic choices—AES-128-ECB encryption, 2-byte MACs, a 160-entry duplicate cache for replay protection, and no key separation—individually and collectively weaken the security guarantees the protocol can offer. Identical messages produce identical ciphertext, MAC forgery is feasible to brute-force, replayed packets are accepted once the duplicate cache wraps, and the same key material is reused across cryptographic operations. UMSH addresses all of these with AES-CTR encryption using a synthetic IV, configurable MIC sizes up to 16 bytes, monotonic frame counters for replay protection of unicast and signed traffic, HKDF-derived domain-separated keys, and optional perfect forward secrecy sessions that protect past traffic if a long-term key is later compromised. Something like this cannot be easily bolted onto MeshCore’s current design.</p>
 </li>
 </ul>
 <h2 id="summary-of-design-differences"><a class="header" href="#summary-of-design-differences">Summary of Design Differences</a></h2>
@@ -16174,7 +16313,7 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 </tbody>
 </table>
 </div>
-<p>Neither protocol requires clock synchronization for core operation. Meshtastic records reception timestamps as local metadata but does not use them for routing or duplicate suppression. UMSH provides replay protection with monotonic frame counters and a receive window. Meshtastic suppresses recent duplicates by caching the sender and partially randomized packet ID; because that cache is finite, this should not be described as durable cryptographic replay protection.</p>
+<p>Neither protocol requires clock synchronization for core operation. Meshtastic records reception timestamps as local metadata but does not use them for routing or duplicate suppression. UMSH provides replay protection with monotonic frame counters and a receive window for unicast and signed traffic, and duplicate suppression alone for an <a href="#replay-of-unsigned-multicast">unsigned multicast</a>. Meshtastic suppresses recent duplicates by caching the sender and partially randomized packet ID; because that cache is finite, this should not be described as durable cryptographic replay protection.</p>
 <h2 id="packet-overhead-comparison-1"><a class="header" href="#packet-overhead-comparison-1">Packet Overhead Comparison</a></h2>
 <p>The following compares overhead relative to the application body for a common secured unicast message. The UMSH columns use a compact source, no salt, no FHOPS, and no packet options. The Meshtastic columns assume a common one-byte <code>portnum</code> value and the locally originated <code>Data.bitfield</code>; the protobuf envelope is 6 bytes while the application body is shorter than 128 bytes and normally 7 bytes once its length requires a two-byte varint.</p>
 <div class="table-wrapper">
@@ -16531,7 +16670,7 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 <li><strong>Routing flexibility</strong>: UMSH offers composable source routing, hybrid routing, and signal-quality filtering. Reticulum offers automatic next-hop routing via transport nodes, and on-network interface auto-discovery since v1.1.0.</li>
 <li><strong>Privacy model</strong>: Reticulum provides initiator anonymity by default (no source address), plus a network identity system for administrative trust domains. UMSH provides source addresses by default with opt-in privacy modes.</li>
 <li><strong>Multicast</strong>: UMSH supports multi-hop multicast. Reticulum’s group communication is currently single-hop only (multi-hop planned).</li>
-<li><strong>Replay protection</strong>: UMSH uses per-peer monotonic frame counters, which require a small amount of per-peer state but provide deterministic replay detection regardless of traffic volume. Reticulum uses a global packet hash cache, which requires no per-peer state but must be large enough to cover the replay window—a tradeoff that favors hosts with ample memory.</li>
+<li><strong>Replay protection</strong>: UMSH uses per-peer monotonic frame counters, which require a small amount of per-peer state but provide deterministic replay detection regardless of traffic volume for unicast and signed frames; an unsigned multicast is judged by a duplicate cache, as Reticulum judges everything (<a href="#replay-of-unsigned-multicast">Replay of Unsigned Multicast</a>). Reticulum uses a global packet hash cache, which requires no per-peer state but must be large enough to cover the replay window—a tradeoff that favors hosts with ample memory.</li>
 <li><strong>Scope</strong>: Reticulum is a complete network stack with reliable delivery, sessions, and application APIs. UMSH is a MAC layer with defined-but-separate application protocols, designed to carry arbitrary higher-layer content.</li>
 <li><strong>Implementation complexity</strong>: Reticulum’s richer protocol machinery (path tables, link establishment, announce propagation) raises the minimum implementation complexity. UMSH’s simpler MAC-layer model is more amenable to constrained implementations.</li>
 </ul>

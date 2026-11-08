@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c88e99cf.js";
+            window.path_to_searchindex_js = "searchindex-2ede3d61.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-517aa7d9.js"></script>
@@ -198,6 +198,7 @@
 </div>
 <h3 id="node-hints-3-bytes"><a class="header" href="#node-hints-3-bytes">Node hints (3 bytes)</a></h3>
 <p>The destination hint is a prefilter: a match causes the receiver to attempt full cryptographic verification. A false positive wastes computation on every packet exchanged between the two colliding nodes, for the lifetime of both identities. The cost is persistent and proportional to traffic volume. The source hint is used for source identification, traffic attribution, and diagnostics.</p>
+<p>A collision costs computation, not reachability. A repeater never takes a hint as proof that a packet is its own: it stops carrying a packet addressed to its hint only once one of its keys opens the packet, and it knows its own transmissions by what it sent, not by their source hint (<a href="repeater-operation.html#routing-invariants">Routing Invariants</a>). A node whose hint matches a repeater’s identity is carried through that repeater like any other.</p>
 <p>With 3-byte hints the collision probability drops to ~1% even in a 600-node regional network. The only remedy for a collision is for one node to generate a new identity (a new Ed25519 keypair), which for a chat node means all peers must re-learn the new public key. The 3-byte size makes this scenario rare.</p>
 <h3 id="router-hints-2-bytes"><a class="header" href="#router-hints-2-bytes">Router hints (2 bytes)</a></h3>
 <p>Router hints are used in source-route and trace options. A router hint collision causes an unintended repeater to forward the packet; MIC-based duplicate suppression ensures each repeater forwards a given packet at most once, so collisions add traffic but not loops or incorrect delivery.</p>

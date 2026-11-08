@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c88e99cf.js";
+            window.path_to_searchindex_js = "searchindex-2ede3d61.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-517aa7d9.js"></script>
@@ -184,12 +184,21 @@ This section is an early work in progress and this protocol may change significa
 <h2 id="message-options"><a class="header" href="#message-options">Message Options</a></h2>
 <p>Every recognized option is a singleton unless a specification explicitly declares otherwise. How a receiver treats a duplicated recognized option depends on the option’s role:</p>
 <ul>
-<li>An option that carries identity, sequencing, or reference semantics—Message Type, Message Sequence, Regarding, Editing, and extension options in the same role such as Sender Sequence—makes the message invalid when repeated, even if the repeated values are identical. The message MUST be dropped.</li>
+<li>An option that carries identity, sequencing, or reference semantics—Message Type, Message Sequence, Regarding, Editing, and extension options in the same role such as Sender Sequence—cannot be trusted when repeated, even if the repeated values are identical. The option is treated as undecodable.</li>
 <li>A presentation option—Sender Handle, Background Color, Text Color—keeps the first occurrence when repeated; later occurrences are ignored and MAY be reported diagnostically.</li>
 <li>Duplicates of a zero-length flag option—Sequence Reset, Channel Group Resend—are idempotent.</li>
 </ul>
 <p>Repeated unrecognized options remain ignorable.</p>
-<p>A recognized option whose value the receiver cannot decode is ignored, with two exceptions. A message whose Message Sequence cannot be decoded is dropped. A message whose Message Type is unrecognized or undecodable, or whose Regarding or Editing is undecodable or of the wrong width for the conversation, is not displayed, but its sequence position is accounted for as with <a href="#message-type">Message Unavailable</a>.</p>
+<p>A sender that sees a message delivered must be able to rely on its body being shown. A receiver MUST display a message that has a body, whatever it could not interpret about the message, unless the message is a reaction. It loses only the meaning of the option it could not interpret:</p>
+<ul>
+<li>An option a receiver cannot decode is otherwise ignored.</li>
+<li>A message whose Message Sequence cannot be decoded is displayed as an unsequenced message.</li>
+<li>A message whose Message Type is unrecognized or undecodable is displayed as a basic text message.</li>
+<li>A basic text message whose Regarding is undecodable, or of the wrong width for the conversation, is displayed as a reply to an unknown message.</li>
+<li>A message whose Editing is undecodable is displayed as a new message, marked as having been received as an edit of an unknown message. So is an edit whose original the receiver does not hold.</li>
+<li>A body that is not valid UTF-8 is displayed with each invalid sequence replaced by U+FFFD.</li>
+</ul>
+<p>A reaction whose Regarding is undecodable or of the wrong width has nothing to attach to and is not displayed, nor is a message with no body whose Message Type or Editing could not be interpreted. Either way, its sequence position is accounted for as with <a href="#message-type">Message Unavailable</a>.</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -200,7 +209,7 @@ This section is an early work in progress and this protocol may change significa
 <tr><td style="text-align: right">1</td><td>Sender Handle</td><td>UTF-8 string</td></tr>
 <tr><td style="text-align: right">2</td><td>Message Sequence</td><td>1 or 3 bytes (see below)</td></tr>
 <tr><td style="text-align: right">3</td><td>Sequence Reset</td><td>0 bytes (flag)</td></tr>
-<tr><td style="text-align: right">4</td><td>Regarding</td><td>1 or 4 bytes (see below)</td></tr>
+<tr><td style="text-align: right">4</td><td>Regarding</td><td>1, 2, or 4 bytes (see below)</td></tr>
 <tr><td style="text-align: right">5</td><td>Editing</td><td>1 byte</td></tr>
 <tr><td style="text-align: right">6</td><td>Background Color</td><td>3 bytes, RGB</td></tr>
 <tr><td style="text-align: right">7</td><td>Text Color</td><td>3 bytes, RGB</td></tr>
@@ -225,6 +234,7 @@ This section is an early work in progress and this protocol may change significa
 </table>
 </div>
 <p>If absent or empty, the message type defaults to 0 (basic text).</p>
+<p>A client MAY send status text when a user starts a new message with <code>/me </code>, removing that prefix from the body. Replies are not treated this way.</p>
 <p>The presence of the <code>Regarding</code> option changes the semantics a bit: A <strong>reply</strong> is a type 0 message with a <code>Regarding</code> option specifying which message is being replied to. A <strong>reaction</strong> is a type 1 message with a <code>Regarding</code> option specifying which message is being reacted to; the body is a single Unicode emoji or a short text token such as <code>+1</code>, <code>-1</code>, <code>!</code>, or <code>?</code>. Implementations may differentiate reactions from plain status text by the presence of the Regarding option.</p>
 <p>Reaction bodies SHOULD be short text tokens rather than emoji: <code>&lt;3</code>, <code>+1</code>, <code>-1</code>, <code>ha</code>, <code>!</code>, and <code>?</code> cover the common reactions in one or two bytes. Receivers SHOULD accept the equivalent spellings—<code>♥</code> for <code>&lt;3</code>, <code>haha</code> or <code>lol</code> for <code>ha</code>, <code>!!</code> for <code>!</code>, letter case being insignificant—as well as the emoji themselves, and SHOULD render a reaction as a single glyph, taking the first extended grapheme cluster (<a href="https://www.unicode.org/reports/tr29/">UAX #29</a>) when a body carries more, so that a sequence such as 👍🏽 or 🇫🇷 stays whole.</p>
 <p>There are six canonical reactions:</p>
@@ -317,10 +327,16 @@ This section is an early work in progress and this protocol may change significa
 <p>References a previously sent message for the purposes of replies and reactions.</p>
 <p>The option length depends on the conversation, not on how the MAC packet is addressed:</p>
 <ul>
-<li><strong>One-to-one conversation</strong> (unicast, or a blind-unicast conversation with a single logical destination): 1 byte—the Message ID of the referenced message.</li>
+<li><strong>One-to-one conversation</strong> (unicast, or a blind-unicast conversation with a single logical destination): the two parties number their messages independently, so the form says whose message is meant.
+<ul>
+<li>1 byte: the Message ID of a message sent by the recipient of this frame.</li>
+<li>2 bytes: the Message ID of a message sent by the sender of this frame, followed by <code>0x00</code>. Any other second byte is undecodable.</li>
+</ul>
+</li>
 <li><strong>Channel-group conversation</strong> (delivered by multicast to the channel): 4 bytes—the 1-byte Message ID followed by the first 3 bytes of the source public key of the original sender.</li>
 </ul>
 <p>The source prefix is necessary in multicast channels to disambiguate messages from different senders that may share the same Message ID. This means a message cannot be referenced if it is more than 255 messages old in that sender’s sequence, or if the user has since reset their sequence ID.</p>
+<p>A receiver MAY accept a 1-byte Regarding that matches none of its own messages as a reference to one of the sender’s.</p>
 <p>In chat rooms, the room assigns canonical Message IDs across all senders (see <a href="app-chat-rooms.html#room-update">Chat Rooms</a>), so the 1-byte form is used and no source prefix is needed.</p>
 <h3 id="editing"><a class="header" href="#editing">Editing</a></h3>
 <p>Indicates that this message replaces a previously sent message in the same conversation and sender scope. The option value is 1 byte: the Message ID of the message being edited. No source prefix is needed because the source scope comes from the enclosing packet. For unicast and blind-unicast, pairwise authentication binds that source to a peer key. For multicast, the MIC proves only possession of the channel key; the source is a claimed identity, and one channel member can impersonate another. A multicast whose <a href="security.html#frame-signatures">frame signature</a> verifies is the exception: the signature binds it to the signer’s key.</p>

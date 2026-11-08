@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c88e99cf.js";
+            window.path_to_searchindex_js = "searchindex-2ede3d61.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-517aa7d9.js"></script>
@@ -281,7 +281,7 @@
 <li>A sender MUST NOT include more than one. A packet carrying more than one is handled as carrying an unrecognized forwarding-critical option.</li>
 <li>Semantics: packet must be received with at least this RSSI to be flood-forwarded. This option does not apply to source-routed hops.</li>
 <li>Example: value <code>130</code> means <code>-130 dBm</code></li>
-<li>If present with no value (length 0), default is <code>-100 dBm</code> (THIS VALUE IS SUBJECT TO CHANGE)</li>
+<li>If present with no value (length 0), default is <code>-100 dBm</code></li>
 <li>If a repeater has a locally configured minimum RSSI, it must use the higher of the packet’s minimum RSSI threshold and the repeater’s configured minimum RSSI threshold.</li>
 </ul>
 <h3 id="route-retry-option-6"><a class="header" href="#route-retry-option-6">Route Retry (option 6)</a></h3>
@@ -308,7 +308,7 @@
 <p>The destination does <strong>not</strong> treat this option as creating a new logical packet. Replay acceptance and duplicate application delivery remain governed by the packet’s normal security state, especially its frame counter.</p>
 </li>
 <li>
-<p>A Route Retry that duplicates a packet the destination already acknowledged tells it that acknowledgment was lost. The destination re-acknowledges by a scoped, traced flood instead of along the route the lost acknowledgment took (<a href="repeater-operation.html#lost-acknowledgments">Lost Acknowledgments</a>).</p>
+<p>A Route Retry that duplicates a packet the destination already acknowledged suggests that acknowledgment was lost. The destination re-acknowledges by a scoped, traced flood instead of along the route the lost acknowledgment took. Because anyone can add the option to a copy, it is no evidence against that route (<a href="repeater-operation.html#lost-acknowledgments">Lost Acknowledgments</a>).</p>
 </li>
 <li>
 <p>A sender using this option for route recovery typically:</p>
@@ -344,13 +344,13 @@
 </ul>
 <p>The option carries only the correlation handle, not a keyed ack tag: the packet carrying the option is itself authenticated to the original sender, so its own MIC already proves the acknowledgement is genuine. The <code>ack_mic</code> value simply identifies which outstanding request the reply acknowledges. The original sender accepts the option only on a packet authenticated as coming from the destination of the packet it names.</p>
 <p>The option is a courtesy to the original sender. A sender that cannot fit it into a frame omits it.</p>
-<p>Because the option sits in the plaintext options block, forwarders read it under the same terms as a standalone MAC ack, including for <a href="repeater-operation.html#ack-cancellation">ack cancellation</a>.</p>
-<p>On a <a href="mac-commands.html#verify-frame-12">Verify Frame</a> the option names the packet to be verified instead of acknowledging it: the sender holds that packet but has not accepted it, so the original sender MUST NOT treat the option as an acknowledgement (see <a href="security.html#counter-resynchronization">Counter Resynchronization</a>). Forwarders still apply ack cancellation, since the named packet has reached its destination.</p>
+<p>Because the option sits in the plaintext options block, forwarders read it under the same terms as a standalone MAC ack, including as an <a href="repeater-operation.html#ack-cancellation">overheard acknowledgment</a>.</p>
+<p>On a <a href="mac-commands.html#verify-frame-12">Verify Frame</a> the option names the packet to be verified instead of acknowledging it: the sender holds that packet but has not accepted it, so the original sender MUST NOT treat the option as an acknowledgement (see <a href="security.html#counter-resynchronization">Counter Resynchronization</a>). Forwarders still treat it as an <a href="repeater-operation.html#ack-cancellation">overheard acknowledgment</a>, since the named packet has reached its destination.</p>
 <h3 id="minimum-snr-option-9"><a class="header" href="#minimum-snr-option-9">Minimum SNR (option 9)</a></h3>
 <ul>
 <li>Type: signed 1-byte integer, in dB</li>
 <li>Semantics: packet must be received with at least this SNR to be flood-forwarded. This option does not apply to source-routed hops.</li>
-<li>If present with no value (length 0), default is <code>-3 dB</code>. (THIS VALUE IS SUBJECT TO CHANGE)</li>
+<li>If present with no value (length 0), default is <code>-3 dB</code>.</li>
 <li>A sender MUST NOT include more than one. A packet carrying more than one is handled as carrying an unrecognized forwarding-critical option.</li>
 <li>If a repeater has a locally configured minimum SNR, it must use the higher of the packet’s minimum SNR and the repeater’s configured minimum SNR.</li>
 </ul>
@@ -364,6 +364,7 @@
 <li>Because this option is dynamic, repeaters may insert it while flood-forwarding a packet that currently has no region code.</li>
 <li>A repeater must never rewrite an existing region code and must never add a second region code to a packet that already has one or more region-code options.</li>
 <li>Region insertion is a local policy decision. When no explicit local policy exists, a reasonable default is the IATA code of the closest regional commercial airport.</li>
+<li>Copies that differ only in a region code are duplicates of one another, so when repeaters with different policies hear one untagged packet, its region is whichever the first of them to forward it inserts. A sender that needs its packet confined to a region includes the option itself.</li>
 <li>Region insertion applies only during flood forwarding. An untagged source-routed packet is first tagged by the repeater that flood-forwards it—the one that receives it with an already-empty source route—not by the repeater that emptied the route.</li>
 </ul>
 <h4 id="region-code-encoding"><a class="header" href="#region-code-encoding">Region Code Encoding</a></h4>

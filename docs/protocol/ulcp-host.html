@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c88e99cf.js";
+            window.path_to_searchindex_js = "searchindex-2ede3d61.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-517aa7d9.js"></script>
@@ -521,7 +521,7 @@ adjustment fail values they cannot honor with <code>STATUS_INVALID_ARGUMENT</cod
 <li>Post-Reset Value: 0</li>
 </ul>
 <p>The cumulative number of frames discarded from the inbound queue—evicted
-by the circular queue-full policy or otherwise not retained (see
+or refused by the queue-full policy, or otherwise not retained (see
 <a href="ulcp-host.html#inbound-queueing">Inbound Queueing</a>)—since the device last reset. A non-zero increase
 across a detached interval tells the host that its view of that interval
 is incomplete. The counter wraps modulo 2^32.</p>
@@ -566,9 +566,10 @@ the board rather than of the protocol.</p>
 <p>An indication of one arrival is reserved for a message the operator
 reads: a frame the device authenticated with a provisioned key whose
 payload is a <a href="app-text-messages.html">text message</a> of type basic or
-status, counted once, at its first fragment. Resend requests, Message
-Unavailable responses, continuation fragments, a message whose Message
-Type, Regarding, or Editing option does not decode, and every other
+status, or any other a receiver would
+<a href="app-text-messages.html#message-options">display</a>, counted once, at its first
+fragment. Resend requests, Message Unavailable responses, continuation
+fragments, a message a receiver would not display, and every other
 payload type are queued without one, as is any frame the device could
 not authenticate, since its content is unreadable, and any frame carrying
 a <a href="packet-options.html#forwarding-and-delivery-criticality">delivery-critical</a>
@@ -675,7 +676,8 @@ delivery only.</p>
 <p>When <code>CAP_HOST_RX_QUEUE</code> is supported and the host is <strong>detached</strong>,
 accepted frames are placed in a FIFO inbound queue instead of being
 discarded. Each queue entry records the frame, its receive metadata (RSSI,
-LQI, SNR), the time of reception, and whether the device acknowledged it (see
+LQI, SNR), the time of reception, whether the device authenticated it, and
+whether the device acknowledged it (see
 <a href="ulcp-host.html#ack-delegation">Acknowledgement Delegation</a>).</p>
 <p>When the host is <strong>attached</strong>, accepted frames are delivered live over
 <code>STR_PHY_RAW</code> as they always are. Attaching does not flush
@@ -689,11 +691,31 @@ its processing of interleaved live deliveries; <code>RX_AGE</code> in the
 buffered-frame metadata gives coarse (one-second) relative timing but is
 not sufficient to reconstruct a strict total order—and UMSH itself does
 not guarantee in-order delivery in any case.</p>
-<p>The queue is <strong>circular</strong>: when a new frame is accepted and the queue is
-full, the oldest queued frame is discarded and the new frame is appended.
-The queue therefore always holds the most recent accepted traffic. Every
-frame discarded by this eviction increments
-<code>PROP_HOST_RX_QUEUE_DROPPED</code>.</p>
+<p>A queued frame is <strong>authenticated</strong> when its MIC verified under keys the
+device holds—a <a href="ulcp-host.html#prop-host-peer-keys"><code>PROP_HOST_PEER_KEYS</code></a>
+entry for unicast, a
+<a href="ulcp-host.html#prop-host-channel-keys"><code>PROP_HOST_CHANNEL_KEYS</code></a> entry for
+multicast—it carries no delivery-critical option the device cannot
+interpret, and the device did not suspect it of being a replay. Any other
+frame is <strong>unauthenticated</strong>: a destination hint is public, so anyone can
+send a frame that passes the receive filters. Only an authenticated frame
+can be acknowledged on the host’s behalf.</p>
+<p>When a new frame is accepted and the queue is full, the device makes room as
+follows:</p>
+<ol>
+<li>If the queue holds an unauthenticated entry, the oldest unauthenticated
+entry is discarded.</li>
+<li>Otherwise, if the new frame is authenticated, the oldest entry is
+discarded.</li>
+<li>Otherwise the new frame is discarded. A device <strong>MUST NOT</strong> discard an
+authenticated entry to admit an unauthenticated frame.</li>
+</ol>
+<p>Within each class the queue holds the most recent traffic, and queue order
+stays the order of reception. Every frame discarded under these rules,
+whether queued or arriving, increments <code>PROP_HOST_RX_QUEUE_DROPPED</code>.</p>
+<p>Traffic from a peer the device holds no keys for, including first contact
+from an unprovisioned peer, is unauthenticated: it is the first displaced
+when the queue fills, and it cannot displace authenticated traffic.</p>
 <p>Eviction can discard a frame that was already acknowledged on the host’s
 behalf—the sender believes it delivered, but the host will never
 receive it. This is the same best-effort custody semantic that applies to
@@ -740,10 +762,11 @@ it accepts a frame from that peer into the queue; a frame it fails to
 store leaves the baseline unchanged, so its retransmissions remain
 acceptable later.</li>
 <li>The frame was placed in the inbound queue (see <a href="ulcp-host.html#inbound-queueing">Inbound Queueing</a>).
-Because the queue is circular, placement normally succeeds by evicting
-the oldest entry when full; a frame that nevertheless cannot be stored
-(for example, one exceeding the device’s buffer) is not acknowledged, so
-the sender keeps retrying until the host returns.</li>
+An authenticated frame always finds room when the queue is full (see
+<a href="ulcp-host.html#inbound-queueing">Inbound Queueing</a>); a frame that
+nevertheless cannot be stored (for example, one exceeding the device’s
+buffer) is not acknowledged, so the sender keeps retrying until the host
+returns.</li>
 </ol>
 <p>A delegated ACK also requires that no unconsumed source-route hints remain. An early overheard copy may be queued without an ACK; the first eligible duplicate can then supply the ACK without another queue entry. <code>RX_FLAG_ACKED</code> requires successful radio transmission.</p>
 <p>Delegated ACKs follow the <a href="beacons.html#scoping-flood-hops-to-a-known-route">return-path guidance</a>, carry a trace <a href="beacons.html#when-to-include-a-trace">when one is due</a>, and preserve the request’s region codes on both flooded and source-routed returns.</p>

@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c88e99cf.js";
+            window.path_to_searchindex_js = "searchindex-2ede3d61.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-517aa7d9.js"></script>
@@ -288,6 +288,12 @@ order but <strong>MAY</strong> stall the bearer while doing so.</p>
 mechanism: the server’s stack paces notifications to the connection,
 and the server <strong>MUST NOT</strong> drop segments of a frame it has begun to
 send.</p>
+<p>A stall in either direction lasts only while the server is making
+progress. A server stalls client writes while it works through frames
+it has accepted, never because the client is not taking notifications:
+output the client does not take is handled as for <a href="ulcp-core.html#stalled-host">a host that stops
+reading</a>, and never holds back the
+client-to-server direction.</p>
 <h3 id="mtu-considerations"><a class="header" href="#mtu-considerations">MTU Considerations</a></h3>
 <p>The scheme is correct at any ATT_MTU, including the 23-octet minimum.
 Clients <strong>SHOULD</strong> negotiate the largest ATT_MTU they support before

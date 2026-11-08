@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c88e99cf.js";
+            window.path_to_searchindex_js = "searchindex-2ede3d61.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-517aa7d9.js"></script>
@@ -323,8 +323,7 @@ its repeater disabled it forwards nothing, whatever the frame arrived on.</li>
 <li><strong>What the radio transmits goes to the group.</strong> Each frame the node’s
 radio puts on the air is sent to the group, its repeats included. A frame
 the radio does not transmit—a repeat abandoned to a better-placed
-repeater, or canceled by an overheard acknowledgment—does not reach the
-group.</li>
+repeater, or given up to a busy channel—does not reach the group.</li>
 </ul>
 <p>A node whose repeater is disabled is therefore a member of the group and
 nothing more; only a node with its repeater enabled is a bridge.</p>
@@ -365,9 +364,9 @@ nothing more.</li>
 radio transmitted, and satisfies
 <a href="repeater-operation.html#forwarding-confirmation">forwarding confirmation</a> as
 a copy overheard on the air does.</li>
-<li><strong>Ack cancellation is unchanged.</strong> An overheard acknowledgment
-<a href="repeater-operation.html#ack-cancellation">cancels</a> a matching pending forward
-whatever it arrived on: it proves delivery either way.</li>
+<li><strong>Overheard acknowledgments are unchanged.</strong> An acknowledgment
+<a href="repeater-operation.html#ack-cancellation">cuts the budget</a> of a matching
+pending forward whatever it arrived on.</li>
 </ul>
 <p>Bridges on one LoRa channel that hear the same group reception draw different
 windows. The first to transmit is overheard by the others, which defer as

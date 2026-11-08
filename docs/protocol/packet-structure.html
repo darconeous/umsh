@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c88e99cf.js";
+            window.path_to_searchindex_js = "searchindex-2ede3d61.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-517aa7d9.js"></script>
@@ -204,7 +204,7 @@
 </code></pre>
 <p>Where:</p>
 <ul>
-<li><code>VER</code> = protocol version (this specification defines version <strong>3</strong>, i.e., both bits set)</li>
+<li><code>VER</code> = protocol version (this specification defines version <strong>3</strong>, i.e., both bits set). The layout after the FCF depends on the version, so a receiver discards a packet of any other version, and a repeater does not forward it</li>
 <li><code>PKT TYPE</code> = packet type</li>
 <li><code>S</code> = full 32-byte source address included (when clear, a compact source hint is used instead; see <a href="addressing.html#source-address">Source Address</a> for hint size by packet type)</li>
 <li><code>R</code> = reserved; senders MUST set to 0; receivers MUST drop packets where this bit is non-zero</li>

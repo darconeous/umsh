@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c88e99cf.js";
+            window.path_to_searchindex_js = "searchindex-2ede3d61.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-517aa7d9.js"></script>
@@ -369,7 +369,7 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 </tbody>
 </table>
 </div>
-<p>Neither protocol requires clock synchronization for core operation. Meshtastic records reception timestamps as local metadata but does not use them for routing or duplicate suppression. UMSH provides replay protection with monotonic frame counters and a receive window. Meshtastic suppresses recent duplicates by caching the sender and partially randomized packet ID; because that cache is finite, this should not be described as durable cryptographic replay protection.</p>
+<p>Neither protocol requires clock synchronization for core operation. Meshtastic records reception timestamps as local metadata but does not use them for routing or duplicate suppression. UMSH provides replay protection with monotonic frame counters and a receive window for unicast and signed traffic, and duplicate suppression alone for an <a href="security-considerations.html#replay-of-unsigned-multicast">unsigned multicast</a>. Meshtastic suppresses recent duplicates by caching the sender and partially randomized packet ID; because that cache is finite, this should not be described as durable cryptographic replay protection.</p>
 <h2 id="packet-overhead-comparison"><a class="header" href="#packet-overhead-comparison">Packet Overhead Comparison</a></h2>
 <p>The following compares overhead relative to the application body for a common secured unicast message. The UMSH columns use a compact source, no salt, no FHOPS, and no packet options. The Meshtastic columns assume a common one-byte <code>portnum</code> value and the locally originated <code>Data.bitfield</code>; the protobuf envelope is 6 bytes while the application body is shorter than 128 bytes and normally 7 bytes once its length requires a two-byte varint.</p>
 <div class="table-wrapper">

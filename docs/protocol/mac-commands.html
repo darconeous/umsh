@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c88e99cf.js";
+            window.path_to_searchindex_js = "searchindex-2ede3d61.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-517aa7d9.js"></script>
@@ -222,6 +222,11 @@ request so the peer can reply directly.</p>
 <li>A node MAY decline to respond to a request from an unknown source.</li>
 <li>A repeater MAY decline to forward a broadcast Identity Request, particularly
 when its filters are broad enough to solicit a large number of replies.</li>
+<li>A node SHOULD bound the rate at which it answers requests whose frame does
+not authenticate the sender—a verified <a href="security.html#frame-signatures">frame
+signature</a>, or a unicast or blind unicast MIC.
+Such a request’s source address is only a claim, and the reply goes to
+whatever node it names. A request over the bound goes unanswered.</li>
 </ul>
 <p>In order to manage the potential flood of responses, the following rules MUST be applied for broadcast (always) and (by default) multicast:</p>
 <ul>
@@ -230,17 +235,19 @@ when its filters are broad enough to solicit a large number of replies.</li>
 0.5 to 30 seconds, so that the selected nodes do not all answer at once. A
 delayed response that then fails channel-activity assessment follows the
 responder’s normal bounded CCA backoff-and-retry before being dropped.
-A request every <a href="#identity-request-options">FILTER_NODE_HINT</a> of which is 2 or
-3 bytes is exempt and MUST be answered without the delay: such a request names
-a node rather than a share of the mesh, so there is no crowd of replies to
-spread and the hold would only make the answer late. One byte names a 256th of
-what the request reaches, so it is not exempt; filters of the same type combine
-as OR, and the shortest one decides.</li>
+A request carrying exactly one <a href="#identity-request-options">FILTER_NODE_HINT</a>,
+of 2 or 3 bytes, is exempt and MUST be answered without the delay: such a
+request names a node rather than a share of the mesh, so there is no crowd of
+replies to spread and the hold would only make the answer late. One byte names
+a 256th of what the request reaches, so it is not exempt. Nor is a request
+carrying more than one hint filter: filters of the same type combine as OR,
+and each value can be chosen to match a node the requester has heard, so the
+request names as many nodes as it has filters.</li>
 <li>One solicitation is answered at most once. A request reaches a node once per
 path it travels, and a plain broadcast carries no frame counter for a lower
 layer to recognize the repeat by; the <a href="#identity-request-options">NONCE</a> is
 what names the solicitation. A responder suppresses a request matching one it
-has already answered—same sender, same NONCE—for at least as long as it
+has already answered—same sender key, same NONCE—for at least as long as it
 may hold the reply. A request carrying no NONCE cannot be distinguished from a
 repeat of itself; a requester that wants a further answer inside that window
 asks with a fresh NONCE.</li>
@@ -250,8 +257,9 @@ request carrying one solicits a single reply however far it travels. A partial
 hint names a small set rather than one node, and the shorter it is the larger
 that set: a requester sends the longest hint it holds. A request with no hint
 filter at all selects by role or capability, and every node it reaches may
-answer; such a request is therefore confined to the requester’s own
-neighborhood:</p>
+answer. A request with several hint filters names one node per filter, and a
+flood of it would draw a flooded reply from each. Both are therefore confined
+to the requester’s own neighborhood:</p>
 <ul>
 <li>The FHOPS byte must either be absent or set to 0x00. A request that is flood
 routed—FHOPS present with either nibble nonzero—MUST NOT be answered.</li>
@@ -361,6 +369,7 @@ Non-filter options (such as NONCE) do not participate in this matching.</p>
 </table>
 </div>
 <p>The response SHOULD carry a <a href="packet-options.html#trace-option-7">Trace option</a> when the request carried one. An echo measures a path, and a response traced differently from the request measures a different one; the per-hop signal in the two traces is what makes the measurement per-hop rather than end to end.</p>
+<p>The response SHOULD use the MIC size the request used.</p>
 <h2 id="pfs-session-request-6"><a class="header" href="#pfs-session-request-6">PFS Session Request (6)</a></h2>
 <p>Initiates a PFS session. The sender generates a fresh ephemeral node address and transmits it along with a requested session duration. See <a href="security.html#perfect-forward-secrecy-sessions">Perfect Forward Secrecy Sessions</a> for the session establishment mechanism, key derivation, and wire-level privacy properties.</p>
 <div class="table-wrapper">
@@ -389,14 +398,14 @@ Non-filter options (such as NONCE) do not participate in this matching.</p>
 </div>
 <p>The responder MAY accept a shorter lifetime than was requested, and both parties hold the session to the accepted one. A node that receives a duration of 0 treats it as a finite lifetime of its own choosing; a responder answers with that lifetime.</p>
 <h2 id="end-pfs-session-8"><a class="header" href="#end-pfs-session-8">End PFS Session (8)</a></h2>
-<p>Terminates an active PFS session. May be sent by either party. Upon receipt, both sides securely erase the private keys for their ephemeral addresses and revert to using their long-term keys. See <a href="security.html#session-lifetime">Session Lifetime</a> for all conditions under which a session ends.</p>
-<p>No command-specific payload. The sender and recipient are identified by the packet’s addressing fields.</p>
+<p>Terminates the PFS session between the sender and the recipient. May be sent by either party, including one that no longer holds the session. Upon receipt, both sides securely erase the private keys for their ephemeral addresses and revert to using their long-term keys. See <a href="security.html#session-lifetime">Session Lifetime</a> for all conditions under which a session ends, and for when the recipient acts on an End.</p>
+<p>No command-specific payload. Like the handshake, this command travels between the two parties’ long-term addresses under their long-term pairwise keys, and it names the session by its sender: each pair of long-term addresses holds at most one session. A node that has lost its ephemeral keys can therefore still end a session, as it does for a <a href="security.html#retired-sessions">retired session</a>.</p>
 <h2 id="no-op-9"><a class="header" href="#no-op-9">No-Op (9)</a></h2>
 <p>This command does nothing, however it will produce a UACK when sent via a packet
 type that requests an ACK.</p>
 <h2 id="peer-repeaters-request-10"><a class="header" href="#peer-repeaters-request-10">Peer Repeaters Request (10)</a></h2>
 <p>Asks the destination—typically a repeater—for its list of known peer repeaters.</p>
-<p>The list is the responder’s repeater neighborhood: the repeaters it has heard from their own transmitters. A repeater enters it in one of two ways. Forwarding a frame the responder receives is one—a repeater prepends its record to the frame’s <a href="packet-options.html#trace-option-7">Trace</a>, so the first hint names the repeater whose transmission was just heard. Advertising is the other—a <a href="node-identity.html">node identity</a> claiming the repeater role or capability, heard directly rather than forwarded. Frames heard from nodes that are not repeaters, and identities that arrived through a repeater, put nothing in the list. Nor does anything naming the responder itself: a trace that begins with its own router hint, or its own identity. A neighbor need not be on the air: a repeater reached over a point-to-point link, such as an attached host, is listed the same way and simply carries no signal measurements.</p>
+<p>The list is the responder’s repeater neighborhood: the repeaters it has heard from their own transmitters. A repeater enters it in one of two ways. Forwarding a frame the responder receives is one—a repeater prepends its record to the frame’s <a href="packet-options.html#trace-option-7">Trace</a>, so the first hint names the repeater whose transmission was just heard. Advertising is the other—a <a href="node-identity.html">node identity</a> claiming the repeater role or capability, heard directly rather than forwarded, on a frame that authenticated its sender and passed replay detection (see <a href="node-identity.html#signature-usage">Signature Usage</a>). Frames heard from nodes that are not repeaters, identities that arrived through a repeater, and identities believed only on their embedded signature put nothing in the list. A trace hint is not authenticated, so a repeater the list holds only by trace is unproven until it is heard forwarding a frame the responder itself sent. When the list is full, a repeater heard only by trace takes the place of an unproven entry, never a proven one. Nor does anything naming the responder itself: a trace that begins with its own router hint, or its own identity. A neighbor need not be on the air: a repeater reached over a point-to-point link, such as an attached host, is listed the same way and simply carries no signal measurements.</p>
 <p>The command-specific payload is a CoAP-style option list, using the delta-length encoding defined in <a href="packet-options.html#attribute-encoding">Packet Options</a>:</p>
 <div class="table-wrapper">
 <table>

@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c88e99cf.js";
+            window.path_to_searchindex_js = "searchindex-2ede3d61.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-517aa7d9.js"></script>
@@ -1111,6 +1111,27 @@ starting over. A host that receives one runs this procedure again.</p>
 current device- and host-domain state, and begins detached operation:
 accepted frames are queued rather than delivered, and acknowledgement
 delegation (if enabled) becomes active.</p>
+<h3 id="stalled-host"><a class="header" href="#stalled-host">A Host That Stops Reading</a></h3>
+<p>A host asserts flow control by not reading: the transport’s own
+backpressure—notification pacing over BLE, an unread USB endpoint, a full
+TCP window—holds back the device’s output. A device serves more than its
+attached host, so it does not let that hold the rest of it back for long:</p>
+<ul>
+<li>A live <code>CMD_STR_RECV</code> the transport cannot take at once <strong>MAY</strong> be
+discarded. It is lost as though on the air, and a sender that asked for
+an acknowledgement retransmits. The device counts it in
+<a href="ulcp-radio.html#prop-stat-host-rx-dropped"><code>PROP_STAT_HOST_RX_DROPPED</code></a>.</li>
+<li>Any other frame for the host <strong>MAY</strong> be discarded once the host has
+refused output for 5 seconds, and from then on until it takes output
+again. The device counts each in
+<a href="ulcp-radio.html#prop-stat-host-out-dropped"><code>PROP_STAT_HOST_OUT_DROPPED</code></a>.
+A <a href="ulcp-host.html#cmd-queue-drain"><code>CMD_QUEUE_DRAIN</code></a> cut short this way
+ends without its completion, and the frames it did not deliver stay
+queued.</li>
+</ul>
+<p>A host that stops reading for longer than that cannot rely on having
+received every answer and publication since, and <strong>SHOULD</strong> synchronize
+again, as after an attach, once it resumes.</p>
 <h3 id="local-sockets"><a class="header" href="#local-sockets">Local Sockets</a></h3>
 <p>A device that runs as a process—a virtual radio hosted beside the
 application that attaches to it—may serve ULCP on a local stream socket,
