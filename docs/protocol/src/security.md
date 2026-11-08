@@ -529,7 +529,13 @@ A PFS session is established via a two-message exchange over the existing authen
 
 2. **Responder**: Generates its own fresh ephemeral node address. Sends a [PFS Session Response](mac-commands.md#pfs-session-response-7) carrying the responder's ephemeral address and the accepted session duration. The response is authenticated with the responder's long-term keys.
 
-After this exchange, both sides hold each other's ephemeral addresses and can independently derive the session keys. No further setup messages are required. The first data packet sent by the initiator using the ephemeral address hints serves as an implicit acknowledgement to the responder that the response was received and the session is active.
+After this exchange, both sides hold each other's ephemeral addresses and can independently derive the session keys. No further setup messages are required.
+
+The initiator's first frame from its ephemeral address, authenticated under the session keys, is the responder's confirmation that the response arrived. Until it arrives, the responder receives under the session but sends nothing under it, and goes on using the long-term keys: if the response was lost, the initiator does not hold the session.
+
+Two nodes hold at most one session with each other: a new one replaces any earlier one. When two nodes each send a request to the other before either receives a response, the request whose ephemeral address is lower, compared as a big-endian unsigned integer, stands. The node that sent it ignores the other's request; the other node abandons its own request and answers.
+
+A node that receives a response it is no longer waiting for, and holds no session with its sender, answers with [End PFS Session](mac-commands.md#end-pfs-session-8), so that the responder drops its half. This covers a request that was abandoned or timed out, and a node that rebooted after sending its request. A response received while a session is held with its sender is dropped: it repeats the response that opened the session, or is older than it.
 
 ### Session Key Derivation
 
@@ -560,6 +566,9 @@ A PFS session ends when any of the following occur:
 - The agreed session duration expires.
 - Either party sends an [End PFS Session](mac-commands.md#end-pfs-session-8) command.
 - Either device reboots.
+- Three consecutive frames a node sends under the session with an acknowledgement requested go unacknowledged, and nothing from the peer under the session arrives in between. The node ends the session and sends End PFS Session.
+
+A node sends End PFS Session under its long-term keys once it holds no session with the recipient, so a node that has lost a session, by rebooting or otherwise, can still send one. The recipient ends the session it holds with the sender only if the End's frame counter comes after, in the modular comparison of [Replay Detection](#replay-detection), the counter of the sender's half of that session's handshake: the request the recipient answered, or the response it accepted. An End that does not was sent before that session began—delayed, or replayed after the recipient lost its receive window for the sender—and is ignored. A request still waiting for its response is not ended by End PFS Session. An End received under the session's own ephemeral addresses ends that session.
 
 Upon session end, both sides **must securely erase/zeroize the private keys for their ephemeral addresses**. Without those private keys, the session's ECDH shared secret cannot be reconstructed, and the session traffic cannot be decrypted even by an attacker who later obtains the long-term private keys. This erasure is the mechanism that provides forward secrecy.
 

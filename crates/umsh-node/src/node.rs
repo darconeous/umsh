@@ -334,6 +334,9 @@ pub enum PfsStatus {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PfsLifecycle {
     Established(PublicKey),
+    /// A peer's request was answered; the session is established once the
+    /// peer's first frame under it arrives.
+    Answered(PublicKey),
     Ended(PublicKey),
 }
 
@@ -1611,7 +1614,7 @@ impl<M: MacBackend> LocalNode<M> {
             .find(|session| session.peer_long_term == *peer)
         {
             return Ok(match session.state {
-                PfsState::Requested => PfsStatus::Requested,
+                PfsState::Requested | PfsState::Answered => PfsStatus::Requested,
                 PfsState::Active => PfsStatus::Active {
                     local_ephemeral_id: session.local_ephemeral_id,
                     peer_ephemeral: session.peer_ephemeral,
@@ -1636,7 +1639,7 @@ impl<M: MacBackend> LocalNode<M> {
             .pfs
             .sessions()
             .iter()
-            .filter(|session| session.state == PfsState::Active)
+            .filter(|session| session.state.has_keys())
             .map(|session| session.local_ephemeral)
             .collect()
     }
@@ -1661,6 +1664,34 @@ impl<M: MacBackend> LocalNode<M> {
     #[cfg(feature = "software-crypto")]
     pub fn pfs_rate_limited_requests(&self) -> u32 {
         self.state.borrow().pfs.rate_limited_requests()
+    }
+
+    /// How many session requests this node refused because they crossed
+    /// its own request to the same peer, and its own won.
+    #[cfg(feature = "software-crypto")]
+    pub fn pfs_crossed_requests(&self) -> u32 {
+        self.state.borrow().pfs.crossed_requests()
+    }
+
+    /// How many session responses this node no longer wanted, and answered
+    /// with an End.
+    #[cfg(feature = "software-crypto")]
+    pub fn pfs_unwanted_responses(&self) -> u32 {
+        self.state.borrow().pfs.unwanted_responses()
+    }
+
+    /// How many Ends this node ignored because the session held with their
+    /// sender began after them, or still waits for its response.
+    #[cfg(feature = "software-crypto")]
+    pub fn pfs_stale_ends(&self) -> u32 {
+        self.state.borrow().pfs.stale_ends()
+    }
+
+    /// How many sessions this node ended because sends under them went
+    /// undelivered.
+    #[cfg(feature = "software-crypto")]
+    pub fn pfs_undelivered_sessions(&self) -> u32 {
+        self.state.borrow().pfs.undelivered_sessions()
     }
 
     /// Join a channel. Registers the channel key in the MAC if this is
@@ -1950,7 +1981,7 @@ impl<M: MacBackend> LocalNode<M> {
     pub(crate) async fn handle_pfs_command(
         &self,
         from: &PublicKey,
-        channel: Option<ChannelKey>,
+        carriage: pfs::Carriage,
         command: &OwnedMacCommand,
         options: &SendOptions,
     ) -> Result<Option<PfsLifecycle>, NodeError<M>> {
@@ -1959,18 +1990,18 @@ impl<M: MacBackend> LocalNode<M> {
                 ephemeral_key,
                 duration_minutes,
             } => {
-                let established = pfs::accept_request(
+                let answered = pfs::accept_request(
                     &self.state,
                     &self.mac,
                     self.identity_id,
                     *from,
                     ephemeral_key,
                     duration_minutes,
-                    channel,
+                    carriage,
                     options,
                 )
                 .await?;
-                Ok(established.then_some(PfsLifecycle::Established(*from)))
+                Ok(answered.then_some(PfsLifecycle::Answered(*from)))
             }
             OwnedMacCommand::PfsSessionResponse {
                 ephemeral_key,
@@ -1983,30 +2014,70 @@ impl<M: MacBackend> LocalNode<M> {
                     *from,
                     ephemeral_key,
                     duration_minutes,
+                    carriage,
+                    options,
                 )
                 .await?;
                 Ok(established.then_some(PfsLifecycle::Established(*from)))
             }
             OwnedMacCommand::EndPfsSession => {
-                match pfs::end_session(
-                    &self.state,
-                    &self.mac,
-                    self.identity_id,
-                    from,
-                    false,
-                    options,
-                )
-                .await
-                {
-                    Ok(_) => Ok(Some(PfsLifecycle::Ended(*from))),
-                    // A repeat, or an end that crossed this node's own:
-                    // there is no session left to end.
-                    Err(NodeError::PfsSessionMissing) => Ok(None),
-                    Err(error) => Err(error),
-                }
+                // A repeat, an end that crossed this node's own, or one
+                // older than the session held ends nothing.
+                let ended = pfs::accept_end(&self.state, &self.mac, from, carriage).await;
+                Ok(ended.map(PfsLifecycle::Ended))
             }
             _ => Ok(None),
         }
+    }
+
+    /// Note a frame from `from` heard under the local identity `identity`,
+    /// and return the peer whose session it established, if it was the
+    /// first under a session this node answered.
+    #[cfg(feature = "software-crypto")]
+    pub(crate) fn note_pfs_frame(
+        &self,
+        identity: LocalIdentityId,
+        from: &PublicKey,
+    ) -> Option<PublicKey> {
+        self.state
+            .borrow_mut()
+            .pfs
+            .note_session_frame(identity, from)
+    }
+
+    /// Note whether an acknowledged send from `identity` was delivered, and
+    /// return the local key of a session whose sends have now gone
+    /// undelivered too often, for [`end_undelivered_pfs`](Self::end_undelivered_pfs).
+    #[cfg(feature = "software-crypto")]
+    pub(crate) fn note_pfs_delivery(
+        &self,
+        identity: LocalIdentityId,
+        delivered: bool,
+    ) -> Option<PublicKey> {
+        let mut state = self.state.borrow_mut();
+        if delivered {
+            state.pfs.note_session_delivered(identity);
+            return None;
+        }
+        state.pfs.note_session_undelivered(identity)
+    }
+
+    /// End the session under `local_ephemeral` if its sends are still
+    /// going undelivered, tell the peer, and return the peer.
+    #[cfg(feature = "software-crypto")]
+    pub(crate) async fn end_undelivered_pfs(
+        &self,
+        local_ephemeral: &PublicKey,
+        options: &SendOptions,
+    ) -> Option<PublicKey> {
+        pfs::end_undelivered(
+            &self.state,
+            &self.mac,
+            self.identity_id,
+            local_ephemeral,
+            options,
+        )
+        .await
     }
 
     /// Hands `packet` to the receive handlers, naming as its sender the peer
@@ -2193,7 +2264,7 @@ fn canonical_peer(state: &LocalNodeState, peer: PublicKey) -> PublicKey {
             .pfs
             .sessions()
             .iter()
-            .find(|session| session.state == PfsState::Active && session.peer_ephemeral == peer)
+            .find(|session| session.state.has_keys() && session.peer_ephemeral == peer)
         {
             return session.peer_long_term;
         }

@@ -393,10 +393,12 @@ async fn forward_secrecy_is_held_with_a_peer_who_prefers_it() {
             assert!(!secret(before));
 
             alice.node.set_forward_secrecy(peer, true);
-            until_secrecy(&alice, &bob, true).await;
             until("the chat does not show the session", shown).await;
             let during = say("Meet at the ridge").await;
             assert!(secret(during));
+            // Bob holds the session once Alice's first frame under it
+            // shows him his response arrived.
+            until_secrecy(&alice, &bob, true).await;
 
             alice.node.set_forward_secrecy(peer, false);
             assert!(!shown(), "the chat shows the session ended at once");
@@ -469,7 +471,6 @@ async fn what_is_said_under_forward_secrecy_lands_in_the_same_chat() {
             assert!(alice.node.chat_member(chat.id).unwrap().saved);
 
             alice.node.set_forward_secrecy(peer, true);
-            until_secrecy(&alice, &bob, true).await;
             until("the chat does not show the session", || {
                 alice.node.chat(chat.id).unwrap().forward_secret
             })
@@ -478,6 +479,8 @@ async fn what_is_said_under_forward_secrecy_lands_in_the_same_chat() {
                 say(&alice, &bob, chat.id, "Meet at the ridge").await,
                 bobs_chat
             );
+            // Alice's first frame under the session confirms it to Bob.
+            until_secrecy(&alice, &bob, true).await;
             assert_eq!(say(&bob, &alice, bobs_chat, "On my way").await, chat.id);
 
             // Each side's details say which messages had forward secrecy.

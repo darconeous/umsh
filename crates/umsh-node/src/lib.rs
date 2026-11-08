@@ -830,7 +830,7 @@ mod tests {
 
         block_on_ready(node.handle_pfs_command(
             &peer,
-            None,
+            frame(),
             &OwnedMacCommand::PfsSessionResponse {
                 ephemeral_key: PublicKey([0x44; 32]),
                 duration_minutes: 60,
@@ -882,7 +882,7 @@ mod tests {
         block_on_ready(node.peer(peer)).unwrap();
         block_on_ready(node.handle_pfs_command(
             &peer,
-            None,
+            frame(),
             &OwnedMacCommand::PfsSessionRequest {
                 ephemeral_key: PublicKey([0x44; 32]),
                 duration_minutes: 60,
@@ -899,7 +899,7 @@ mod tests {
 
         block_on_ready(node.handle_pfs_command(
             &peer,
-            None,
+            frame(),
             &OwnedMacCommand::EndPfsSession,
             &options,
         ))
@@ -1005,7 +1005,7 @@ mod tests {
                 PublicKey([0x55; 32]),
                 PublicKey([0x44; 32]),
                 requested,
-                None,
+                frame(),
                 &options,
             ))
             .unwrap();
@@ -1064,6 +1064,8 @@ mod tests {
             peer,
             PublicKey([0x44; 32]),
             0,
+            frame(),
+            &options,
         ))
         .unwrap();
         let expires_ms = state.borrow().pfs.sessions()[0].expires_ms;
@@ -1092,7 +1094,7 @@ mod tests {
             ephemeral_key: PublicKey([0x44; 32]),
             duration_minutes: 60,
         };
-        let mut accepting = pin!(node.handle_pfs_command(&peer, None, &response, &options));
+        let mut accepting = pin!(node.handle_pfs_command(&peer, frame(), &response, &options));
         assert!(parks(accepting.as_mut()));
         block_on_ready(node.end_pfs(&peer, &options)).unwrap();
         mac.state.borrow_mut().hold_add_peer = false;
@@ -1123,7 +1125,7 @@ mod tests {
             ephemeral_key: PublicKey([0x44; 32]),
             duration_minutes: 60,
         };
-        let mut accepting = pin!(node.handle_pfs_command(&peer, None, &request, &options));
+        let mut accepting = pin!(node.handle_pfs_command(&peer, frame(), &request, &options));
         assert!(parks(accepting.as_mut()));
         block_on_ready(node.end_pfs(&peer, &options)).unwrap();
         mac.state.borrow_mut().hold_add_peer = false;
@@ -1159,7 +1161,7 @@ mod tests {
             ephemeral_key: PublicKey([0x45; 32]),
             duration_minutes: 60,
         };
-        let mut accepting = pin!(node.handle_pfs_command(&answered, None, &request, &options));
+        let mut accepting = pin!(node.handle_pfs_command(&answered, frame(), &request, &options));
         assert!(parks(accepting.as_mut()));
 
         let refused = block_on_ready(node.request_pfs(&PublicKey([9; 32]), 60, &options));
@@ -1187,10 +1189,10 @@ mod tests {
 
         block_on_ready(node.peer(peer)).unwrap();
 
-        block_on_ready(node.handle_pfs_command(&peer, None, &request(0x44), &options)).unwrap();
+        block_on_ready(node.handle_pfs_command(&peer, frame(), &request(0x44), &options)).unwrap();
         let first = node.pfs_local_keys();
         mac.state.borrow_mut().now_ms += 60_000;
-        block_on_ready(node.handle_pfs_command(&peer, None, &request(0x45), &options)).unwrap();
+        block_on_ready(node.handle_pfs_command(&peer, frame(), &request(0x45), &options)).unwrap();
 
         assert_eq!(node.pfs_local_keys().len(), 1);
         assert_ne!(node.pfs_local_keys(), first);
@@ -1220,12 +1222,16 @@ mod tests {
         };
         block_on_ready(node.peer(peer)).unwrap();
 
-        block_on_ready(node.handle_pfs_command(&peer, None, &request(45), &options)).unwrap();
+        block_on_ready(node.handle_pfs_command(&peer, frame(), &request(45), &options)).unwrap();
         let first = node.pfs_local_keys();
         let answered = mac.take_unicasts();
         // Inside the rate limit's window, and asking for another lifetime.
-        let repeat =
-            block_on_ready(node.handle_pfs_command(&peer, Some(channel), &request(90), &options));
+        let repeat = block_on_ready(node.handle_pfs_command(
+            &peer,
+            on_channel(channel),
+            &request(90),
+            &options,
+        ));
 
         assert!(repeat.unwrap().is_none());
         let again = mac.take_unicasts();
@@ -1257,7 +1263,7 @@ mod tests {
 
         for requester in [&stranger, &learned] {
             let answered =
-                block_on_ready(node.handle_pfs_command(requester, None, &request, &options));
+                block_on_ready(node.handle_pfs_command(requester, frame(), &request, &options));
             assert!(answered.unwrap().is_none());
         }
 
@@ -1285,13 +1291,15 @@ mod tests {
         block_on_ready(node.peer(peer)).unwrap();
         block_on_ready(node.peer(other)).unwrap();
 
-        let opened = block_on_ready(node.handle_pfs_command(&peer, None, &request(0x44), &options));
+        let opened =
+            block_on_ready(node.handle_pfs_command(&peer, frame(), &request(0x44), &options));
         assert!(opened.unwrap().is_some());
         let first = node.pfs_local_keys();
         mac.take_unicasts();
 
         mac.state.borrow_mut().now_ms += 59_999;
-        let early = block_on_ready(node.handle_pfs_command(&peer, None, &request(0x45), &options));
+        let early =
+            block_on_ready(node.handle_pfs_command(&peer, frame(), &request(0x45), &options));
         assert!(early.unwrap().is_none());
         assert!(mac.take_unicasts().is_empty());
         assert_eq!(node.pfs_local_keys(), first);
@@ -1299,11 +1307,12 @@ mod tests {
 
         // Another peer has its own window.
         let theirs =
-            block_on_ready(node.handle_pfs_command(&other, None, &request(0x46), &options));
+            block_on_ready(node.handle_pfs_command(&other, frame(), &request(0x46), &options));
         assert!(theirs.unwrap().is_some());
 
         mac.state.borrow_mut().now_ms += 1;
-        let later = block_on_ready(node.handle_pfs_command(&peer, None, &request(0x47), &options));
+        let later =
+            block_on_ready(node.handle_pfs_command(&peer, frame(), &request(0x47), &options));
         assert!(later.unwrap().is_some());
         assert_eq!(node.pfs_rate_limited_requests(), 1);
     }
@@ -1331,11 +1340,11 @@ mod tests {
                     duration_minutes: 60,
                 };
                 let opened =
-                    block_on_ready(node.handle_pfs_command(&peer, None, &request, &options));
+                    block_on_ready(node.handle_pfs_command(&peer, frame(), &request, &options));
                 assert!(opened.unwrap().is_some());
                 assert_eq!(mac.state.borrow().peers.len(), registered + 1);
                 let end = OwnedMacCommand::EndPfsSession;
-                block_on_ready(node.handle_pfs_command(&peer, None, &end, &options)).unwrap();
+                block_on_ready(node.handle_pfs_command(&peer, frame(), &end, &options)).unwrap();
             } else {
                 // Requested: this node asks, and later ends it.
                 block_on_ready(node.request_pfs(&peer, 60, &options)).unwrap();
@@ -1344,7 +1353,7 @@ mod tests {
                     duration_minutes: 60,
                 };
                 let opened =
-                    block_on_ready(node.handle_pfs_command(&peer, None, &response, &options));
+                    block_on_ready(node.handle_pfs_command(&peer, frame(), &response, &options));
                 assert!(opened.unwrap().is_some());
                 assert_eq!(mac.state.borrow().peers.len(), registered + 1);
                 block_on_ready(node.end_pfs(&peer, &options)).unwrap();
@@ -1370,12 +1379,12 @@ mod tests {
             ephemeral_key: peer_ephemeral,
             duration_minutes: 60,
         };
-        let opened = block_on_ready(node.handle_pfs_command(&peer, None, &request, &options));
+        let opened = block_on_ready(node.handle_pfs_command(&peer, frame(), &request, &options));
         assert!(opened.unwrap().is_some());
 
         block_on_ready(node.peer(peer_ephemeral)).unwrap();
         let end = OwnedMacCommand::EndPfsSession;
-        block_on_ready(node.handle_pfs_command(&peer, None, &end, &options)).unwrap();
+        block_on_ready(node.handle_pfs_command(&peer, frame(), &end, &options)).unwrap();
 
         assert!(node.state().borrow().pfs.sessions().is_empty());
         assert!(
@@ -1434,7 +1443,8 @@ mod tests {
             ephemeral_key: contact,
             duration_minutes: 60,
         };
-        let answered = block_on_ready(node.handle_pfs_command(&mallory, None, &request, &options));
+        let answered =
+            block_on_ready(node.handle_pfs_command(&mallory, frame(), &request, &options));
 
         assert!(answered.unwrap().is_none());
         assert!(mac.take_unicasts().is_empty());
@@ -1458,7 +1468,7 @@ mod tests {
             ephemeral_key: own,
             duration_minutes: 60,
         };
-        let answered = block_on_ready(node.handle_pfs_command(&peer, None, &request, &options));
+        let answered = block_on_ready(node.handle_pfs_command(&peer, frame(), &request, &options));
 
         assert!(answered.unwrap().is_none());
         assert!(mac.take_unicasts().is_empty());
@@ -1466,34 +1476,422 @@ mod tests {
         assert_eq!(node.pfs_refused_ephemeral_keys(), 1);
     }
 
+    /// A response this node no longer wants, holding no session with its
+    /// sender, is answered with an End so that the sender drops its half:
+    /// one nobody asked for, as after a reboot, or one that arrived after
+    /// the request timed out. A repeat of the response that opened the
+    /// session held, or any response while one is held, is dropped.
     #[cfg(feature = "software-crypto")]
     #[test]
-    fn pfs_late_response_and_unknown_end_are_dropped() {
-        let mac = FakeMac::new(vec![[7u8; 32]]);
+    fn pfs_late_response_is_answered_with_an_end() {
+        let mac = FakeMac::new(vec![[7u8; 32], [8u8; 32]]);
         let node = test_node(mac.clone());
         let peer = PublicKey([0x55; 32]);
         let options = SendOptions::default();
+        let response = |key: u8| OwnedMacCommand::PfsSessionResponse {
+            ephemeral_key: PublicKey([key; 32]),
+            duration_minutes: 60,
+        };
+        let ended_with = |mac: &FakeMac| {
+            let sent = mac.take_unicasts();
+            assert_eq!(sent.len(), 1);
+            assert_eq!((sent[0].from, sent[0].to), (LocalIdentityId(1), peer));
+            assert_eq!(
+                parse_owned_mac_command(&sent[0].payload),
+                OwnedMacCommand::EndPfsSession
+            );
+        };
+
+        // Nothing was asked of this peer.
+        let answered =
+            block_on_ready(node.handle_pfs_command(&peer, frame(), &response(0x44), &options));
+        assert!(answered.unwrap().is_none());
+        ended_with(&mac);
+        // An End for no session is not answered.
+        let end = OwnedMacCommand::EndPfsSession;
+        let ended = block_on_ready(node.handle_pfs_command(&peer, frame(), &end, &options));
+        assert!(ended.unwrap().is_none());
+        assert!(mac.take_unicasts().is_empty());
+
+        // The request gave up before its response came.
+        block_on_ready(node.request_pfs(&peer, 60, &options)).unwrap();
+        mac.take_unicasts();
+        assert_eq!(node.expire_pfs_requests(u64::MAX), vec![peer]);
+        let late =
+            block_on_ready(node.handle_pfs_command(&peer, frame(), &response(0x45), &options));
+        assert!(late.unwrap().is_none());
+        ended_with(&mac);
+        assert_eq!(node.pfs_unwanted_responses(), 2);
+
+        // A repeat of the response that opened a session, and one older.
+        block_on_ready(node.request_pfs(&peer, 60, &options)).unwrap();
+        mac.take_unicasts();
+        let opened =
+            block_on_ready(node.handle_pfs_command(&peer, frame(), &response(0x46), &options));
+        assert!(opened.unwrap().is_some());
+        let local = node.pfs_local_keys();
+        for key in [0x46, 0x45] {
+            let repeat =
+                block_on_ready(node.handle_pfs_command(&peer, frame(), &response(key), &options));
+            assert!(repeat.unwrap().is_none());
+        }
+        assert!(mac.take_unicasts().is_empty());
+        assert_eq!(node.pfs_local_keys(), local);
+        assert_eq!(node.pfs_unwanted_responses(), 2);
+        assert_eq!(node.pfs_refused_ephemeral_keys(), 0);
+    }
+
+    /// Two peers that ask each other for a session at once hold one: the
+    /// request under the lower ephemeral key stands, its sender ignores the
+    /// other, and the other's sender answers it.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn pfs_crossed_requests_open_one_session() {
+        use crate::node::PfsLifecycle;
+        use crate::pfs::PfsState;
+
+        let alice_key = PublicKey([0xA1; 32]);
+        let bob_key = PublicKey([0xB2; 32]);
+        let alice_mac = FakeMac::new(vec![[7u8; 32], [8u8; 32]]);
+        let bob_mac = FakeMac::new(vec![[9u8; 32], [10u8; 32]]);
+        let alice = test_node(alice_mac.clone());
+        let bob = test_node(bob_mac.clone());
+        let options = SendOptions::default();
+        block_on_ready(alice.peer(bob_key)).unwrap();
+        block_on_ready(bob.peer(alice_key)).unwrap();
+
+        block_on_ready(alice.request_pfs(&bob_key, 60, &options)).unwrap();
+        block_on_ready(bob.request_pfs(&alice_key, 60, &options)).unwrap();
+        let alices = parse_owned_mac_command(&alice_mac.take_unicasts()[0].payload);
+        let bobs = parse_owned_mac_command(&bob_mac.take_unicasts()[0].payload);
+        block_on_ready(bob.handle_pfs_command(&alice_key, frame(), &alices, &options)).unwrap();
+        block_on_ready(alice.handle_pfs_command(&bob_key, frame(), &bobs, &options)).unwrap();
+
+        // One of them answered.
+        let (alice_sent, bob_sent) = (alice_mac.take_unicasts(), bob_mac.take_unicasts());
+        assert_eq!(alice_sent.len() + bob_sent.len(), 1);
+        let (winner, winner_key, winner_request, loser, loser_key, loser_request, response) =
+            if bob_sent.is_empty() {
+                (
+                    &bob,
+                    bob_key,
+                    &bobs,
+                    &alice,
+                    alice_key,
+                    &alices,
+                    &alice_sent[0],
+                )
+            } else {
+                (
+                    &alice,
+                    alice_key,
+                    &alices,
+                    &bob,
+                    bob_key,
+                    &bobs,
+                    &bob_sent[0],
+                )
+            };
+        let request_key = |request: &OwnedMacCommand| match request {
+            OwnedMacCommand::PfsSessionRequest { ephemeral_key, .. } => *ephemeral_key,
+            other => panic!("expected a request, got {other:?}"),
+        };
+        assert!(request_key(winner_request).0 < request_key(loser_request).0);
+        assert_eq!(winner.pfs_crossed_requests(), 1);
+        assert_eq!(loser.pfs_crossed_requests(), 0);
+
+        let established = block_on_ready(winner.handle_pfs_command(
+            &loser_key,
+            frame(),
+            &parse_owned_mac_command(&response.payload),
+            &options,
+        ));
+        assert_eq!(
+            established.unwrap(),
+            Some(PfsLifecycle::Established(loser_key))
+        );
+
+        // Each holds one session, made of the other's halves.
+        let held = |node: &crate::node::LocalNode<FakeMac>| {
+            let state = node.state().borrow();
+            let sessions = state.pfs.sessions();
+            assert_eq!(sessions.len(), 1);
+            let session = &sessions[0];
+            (
+                session.local_ephemeral,
+                session.peer_ephemeral,
+                session.state,
+            )
+        };
+        let (winner_local, winner_peer, winner_state) = held(winner);
+        let (loser_local, loser_peer, loser_state) = held(loser);
+        assert_eq!(winner_local, request_key(winner_request));
+        assert_eq!((winner_peer, loser_peer), (loser_local, winner_local));
+        assert_eq!(
+            (winner_state, loser_state),
+            (PfsState::Active, PfsState::Answered)
+        );
+        // Neither is left with a request to time out.
+        assert!(winner.expire_pfs_requests(u64::MAX).is_empty());
+        assert!(loser.expire_pfs_requests(u64::MAX).is_empty());
+
+        // The winner's first frame under the session confirms it.
+        assert_eq!(
+            loser.note_pfs_frame(LocalIdentityId(10), &winner_local),
+            Some(winner_key)
+        );
+        assert_eq!(held(loser).2, PfsState::Active);
+    }
+
+    /// A responder sends nothing under the session it answered until the
+    /// peer's first frame there shows the response arrived. While the
+    /// response may be lost, what it sends goes under the long-term keys.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn pfs_answered_session_waits_for_the_peers_first_frame() {
+        use crate::Transport;
+
+        let mac = FakeMac::new(vec![[7u8; 32]]);
+        let mut host = crate::Host::new(mac.clone());
+        let node = host.add_node(LocalIdentityId(1));
+        let peer = PublicKey([0x55; 32]);
+        let peer_ephemeral = PublicKey([0x44; 32]);
+        let options = SendOptions::default();
+        let established = Rc::new(RefCell::new(Vec::new()));
+        let log = established.clone();
+        let _subscription = node.on_pfs_established(move |peer| log.borrow_mut().push(peer));
+        block_on_ready(node.peer(peer)).unwrap();
+        let request = OwnedMacCommand::PfsSessionRequest {
+            ephemeral_key: peer_ephemeral,
+            duration_minutes: 60,
+        };
+        let answered = block_on_ready(node.handle_pfs_command(&peer, frame(), &request, &options));
+        assert!(answered.unwrap().is_some());
+        mac.take_unicasts();
+
+        let payload = encode_text_payload("on my way");
+        let sent_from = |mac: &FakeMac| {
+            block_on_ready(node.send(&peer, &payload, &options)).unwrap();
+            let sent = mac.take_unicasts().pop().unwrap();
+            (sent.from, sent.to)
+        };
+        assert!(matches!(
+            block_on_ready(node.pfs_status(&peer)).unwrap(),
+            crate::PfsStatus::Requested
+        ));
+        assert!(matches!(
+            block_on_ready(node.send_with_secrecy(&peer, &payload, &options, true)),
+            Err(crate::NodeError::PfsSessionMissing)
+        ));
+        assert_eq!(sent_from(&mac), (LocalIdentityId(1), peer));
+
+        // A frame from anyone else under the session's identity shows nothing.
+        mac.script(LocalIdentityId(10), session_frame(PublicKey([0x66; 32])));
+        block_on_ready(host.pump_once()).unwrap();
+        assert!(established.borrow().is_empty());
+
+        mac.script(LocalIdentityId(10), session_frame(peer_ephemeral));
+        block_on_ready(host.pump_once()).unwrap();
+        assert_eq!(established.borrow().as_slice(), &[peer]);
+        assert!(matches!(
+            block_on_ready(node.pfs_status(&peer)).unwrap(),
+            crate::PfsStatus::Active { .. }
+        ));
+        assert_eq!(sent_from(&mac), (LocalIdentityId(10), peer_ephemeral));
+    }
+
+    /// Three acknowledged sends in a row under a session that go
+    /// undelivered end it, and the peer is told under the long-term keys.
+    /// One delivered in between starts the count again.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn pfs_session_ends_after_three_undelivered_sends() {
+        let mac = FakeMac::new(vec![[7u8; 32]]);
+        let mut host = crate::Host::new(mac.clone());
+        let node = host.add_node(LocalIdentityId(1));
+        let peer = PublicKey([0x55; 32]);
+        let peer_ephemeral = PublicKey([0x44; 32]);
+        let options = SendOptions::default();
+        let ended = Rc::new(RefCell::new(Vec::new()));
+        let log = ended.clone();
+        let _subscription = node.on_pfs_ended(move |peer| log.borrow_mut().push(peer));
+        block_on_ready(node.request_pfs(&peer, 60, &options)).unwrap();
+        let response = OwnedMacCommand::PfsSessionResponse {
+            ephemeral_key: peer_ephemeral,
+            duration_minutes: 60,
+        };
+        block_on_ready(node.handle_pfs_command(&peer, frame(), &response, &options)).unwrap();
+        mac.take_unicasts();
+
+        let session = LocalIdentityId(10);
+        let undelivered = |sends: usize| {
+            for _ in 0..sends {
+                let timeout = MacEventRef::AckTimeout {
+                    peer: peer_ephemeral,
+                    receipt: SendReceipt(42),
+                };
+                mac.script(session, timeout);
+            }
+        };
+        undelivered(2);
+        let delivered = MacEventRef::AckReceived {
+            peer: peer_ephemeral,
+            receipt: SendReceipt(43),
+            via_route_retry: false,
+        };
+        mac.script(session, delivered);
+        undelivered(2);
+        block_on_ready(host.pump_once()).unwrap();
+        assert!(matches!(
+            block_on_ready(node.pfs_status(&peer)).unwrap(),
+            crate::PfsStatus::Active { .. }
+        ));
+        assert!(mac.take_unicasts().is_empty());
+
+        undelivered(1);
+        block_on_ready(host.pump_once()).unwrap();
+        assert!(matches!(
+            block_on_ready(node.pfs_status(&peer)).unwrap(),
+            crate::PfsStatus::Inactive
+        ));
+        assert_eq!(ended.borrow().as_slice(), &[peer]);
+        assert_eq!(node.pfs_undelivered_sessions(), 1);
+        assert_eq!(mac.state.borrow().removed_ephemerals, vec![session]);
+        let sent = mac.take_unicasts();
+        assert_eq!(sent.len(), 1);
+        assert_eq!((sent[0].from, sent[0].to), (LocalIdentityId(1), peer));
+        assert_eq!(
+            parse_owned_mac_command(&sent[0].payload),
+            OwnedMacCommand::EndPfsSession
+        );
+    }
+
+    /// A peer that rebooted holds no session, and its End under the
+    /// long-term keys clears the stale one held with it, whichever side
+    /// asked for it.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn pfs_end_from_a_rebooted_peer_clears_a_stale_session() {
+        use crate::node::PfsLifecycle;
+
+        for asked in [true, false] {
+            let mac = FakeMac::new(vec![[7u8; 32]]);
+            let node = test_node(mac.clone());
+            let peer = PublicKey([0x55; 32]);
+            let peer_ephemeral = PublicKey([0x44; 32]);
+            let options = SendOptions::default();
+            block_on_ready(node.peer(peer)).unwrap();
+            let handshake = if asked {
+                block_on_ready(node.request_pfs(&peer, 60, &options)).unwrap();
+                OwnedMacCommand::PfsSessionResponse {
+                    ephemeral_key: peer_ephemeral,
+                    duration_minutes: 60,
+                }
+            } else {
+                OwnedMacCommand::PfsSessionRequest {
+                    ephemeral_key: peer_ephemeral,
+                    duration_minutes: 60,
+                }
+            };
+            block_on_ready(node.handle_pfs_command(&peer, frame(), &handshake, &options)).unwrap();
+            assert_eq!(node.pfs_local_keys().len(), 1);
+
+            // Sent after the reboot, under a counter past the handshake's.
+            let end = OwnedMacCommand::EndPfsSession;
+            let ended = block_on_ready(node.handle_pfs_command(&peer, frame(), &end, &options));
+            assert_eq!(
+                ended.unwrap(),
+                Some(PfsLifecycle::Ended(peer)),
+                "asked {asked}"
+            );
+            assert!(node.state().borrow().pfs.sessions().is_empty());
+            assert_eq!(
+                mac.state.borrow().removed_ephemerals,
+                vec![LocalIdentityId(10)]
+            );
+            assert_eq!(node.pfs_stale_ends(), 0);
+        }
+    }
+
+    /// An End under the session's own keys ends that session.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn pfs_end_under_the_session_keys_ends_it() {
+        use crate::node::PfsLifecycle;
+
+        let mac = FakeMac::new(vec![[7u8; 32]]);
+        let node = test_node(mac.clone());
+        let peer = PublicKey([0x55; 32]);
+        let peer_ephemeral = PublicKey([0x44; 32]);
+        let options = SendOptions::default();
+        block_on_ready(node.request_pfs(&peer, 60, &options)).unwrap();
+        let response = OwnedMacCommand::PfsSessionResponse {
+            ephemeral_key: peer_ephemeral,
+            duration_minutes: 60,
+        };
+        block_on_ready(node.handle_pfs_command(&peer, frame(), &response, &options)).unwrap();
+
+        let end = OwnedMacCommand::EndPfsSession;
+        let carriage = crate::pfs::Carriage::default();
+        let ended =
+            block_on_ready(node.handle_pfs_command(&peer_ephemeral, carriage, &end, &options));
+        assert_eq!(ended.unwrap(), Some(PfsLifecycle::Ended(peer)));
+        assert!(node.state().borrow().pfs.sessions().is_empty());
+    }
+
+    /// An End is about the session held when it was sent. One delayed or
+    /// replayed past a newer session's handshake ends nothing, and neither
+    /// does one that reaches a request still waiting for its response.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn pfs_old_end_does_not_end_a_newer_session() {
+        use crate::node::PfsLifecycle;
+
+        let mac = FakeMac::new(vec![[7u8; 32], [8u8; 32]]);
+        let node = test_node(mac.clone());
+        let peer = PublicKey([0x55; 32]);
+        let options = SendOptions::default();
+        let end = OwnedMacCommand::EndPfsSession;
+        block_on_ready(node.peer(peer)).unwrap();
+
+        // An End from before the request reaches it while it waits, and
+        // again once the response has come.
+        block_on_ready(node.request_pfs(&peer, 60, &options)).unwrap();
+        let stray = frame();
+        let ended = block_on_ready(node.handle_pfs_command(&peer, stray, &end, &options));
+        assert!(ended.unwrap().is_none());
         let response = OwnedMacCommand::PfsSessionResponse {
             ephemeral_key: PublicKey([0x44; 32]),
             duration_minutes: 60,
         };
-        let end = OwnedMacCommand::EndPfsSession;
-
-        // Nothing was asked of this peer.
-        let answered = block_on_ready(node.handle_pfs_command(&peer, None, &response, &options));
-        assert!(answered.unwrap().is_none());
-        let ended = block_on_ready(node.handle_pfs_command(&peer, None, &end, &options));
+        block_on_ready(node.handle_pfs_command(&peer, frame(), &response, &options)).unwrap();
+        let ended = block_on_ready(node.handle_pfs_command(&peer, stray, &end, &options));
         assert!(ended.unwrap().is_none());
+        assert_eq!(node.pfs_local_keys().len(), 1);
 
-        // A repeat of the response that opened a session.
-        block_on_ready(node.request_pfs(&peer, 60, &options)).unwrap();
-        let opened = block_on_ready(node.handle_pfs_command(&peer, None, &response, &options));
-        assert!(opened.unwrap().is_some());
-        let local = node.pfs_local_keys();
-        let repeat = block_on_ready(node.handle_pfs_command(&peer, None, &response, &options));
-        assert!(repeat.unwrap().is_none());
-        assert_eq!(node.pfs_local_keys(), local);
-        assert_eq!(node.pfs_refused_ephemeral_keys(), 0);
+        // The peer ends that session, then asks for another.
+        let first_end = frame();
+        let ended = block_on_ready(node.handle_pfs_command(&peer, first_end, &end, &options));
+        assert_eq!(ended.unwrap(), Some(PfsLifecycle::Ended(peer)));
+        let request = OwnedMacCommand::PfsSessionRequest {
+            ephemeral_key: PublicKey([0x45; 32]),
+            duration_minutes: 60,
+        };
+        block_on_ready(node.handle_pfs_command(&peer, frame(), &request, &options)).unwrap();
+        let second = node.pfs_local_keys();
+        assert_eq!(second.len(), 1);
+
+        // The first End again, as a replay or a late copy, and one whose
+        // counter is unknown.
+        for carriage in [first_end, crate::pfs::Carriage::default()] {
+            let ended = block_on_ready(node.handle_pfs_command(&peer, carriage, &end, &options));
+            assert!(ended.unwrap().is_none());
+        }
+        assert_eq!(node.pfs_local_keys(), second);
+        assert_eq!(node.pfs_stale_ends(), 4);
+
+        let ended = block_on_ready(node.handle_pfs_command(&peer, frame(), &end, &options));
+        assert_eq!(ended.unwrap(), Some(PfsLifecycle::Ended(peer)));
     }
 
     #[cfg(feature = "software-crypto")]
@@ -1510,7 +1908,8 @@ mod tests {
             ephemeral_key: PublicKey([key; 32]),
             duration_minutes: 60,
         };
-        let failed = block_on_ready(node.handle_pfs_command(&peer, None, &request(0x44), &options));
+        let failed =
+            block_on_ready(node.handle_pfs_command(&peer, frame(), &request(0x44), &options));
         assert!(failed.is_err());
 
         assert!(node.state().borrow().pfs.sessions().is_empty());
@@ -1522,7 +1921,8 @@ mod tests {
         // Nothing was answered, so the peer's retry is not held to the
         // rate limit.
         mac.state.borrow_mut().refuse_sends = false;
-        let retry = block_on_ready(node.handle_pfs_command(&peer, None, &request(0x45), &options));
+        let retry =
+            block_on_ready(node.handle_pfs_command(&peer, frame(), &request(0x45), &options));
         assert!(retry.unwrap().is_some());
         assert_eq!(node.pfs_rate_limited_requests(), 0);
     }
@@ -1538,6 +1938,42 @@ mod tests {
         assert!(block_on_ready(node.request_pfs(&peer, 60, &SendOptions::default())).is_err());
 
         assert!(node.state().borrow().pfs.sessions().is_empty());
+    }
+
+    /// How the next PFS command from a peer arrives in these tests: under
+    /// a frame counter past every earlier one's, as a sender's counter runs.
+    #[cfg(feature = "software-crypto")]
+    fn frame() -> crate::pfs::Carriage {
+        std::thread_local! {
+            static COUNTER: core::cell::Cell<u32> = const { core::cell::Cell::new(100) };
+        }
+        let counter = COUNTER.with(|counter| {
+            counter.set(counter.get() + 1);
+            counter.get()
+        });
+        crate::pfs::Carriage {
+            channel: None,
+            counter: Some(counter),
+        }
+    }
+
+    /// A frame heard from `from` under some local identity.
+    #[cfg(feature = "software-crypto")]
+    fn session_frame(from: PublicKey) -> MacEventRef<'static> {
+        let payload = encode_text_payload("under the session");
+        MacEventRef::Received(test_unicast_packet(
+            from,
+            Box::leak(payload.into_boxed_slice()),
+        ))
+    }
+
+    /// The next PFS command, as a blind unicast on `channel`.
+    #[cfg(feature = "software-crypto")]
+    fn on_channel(channel: ChannelKey) -> crate::pfs::Carriage {
+        crate::pfs::Carriage {
+            channel: Some(channel),
+            ..frame()
+        }
     }
 
     #[cfg(feature = "software-crypto")]
@@ -1734,6 +2170,8 @@ mod tests {
         hold_add_peer: bool,
         /// Fails every unicast.
         refuse_sends: bool,
+        /// What the next `next_event` reports, in order.
+        events: VecDeque<(LocalIdentityId, MacEventRef<'static>)>,
     }
 
     #[cfg(feature = "software-crypto")]
@@ -1786,6 +2224,11 @@ mod tests {
         fn set_own_key(&self, key: PublicKey) {
             self.state.borrow_mut().own_key = Some(key);
         }
+
+        /// Have the next pump cycle report `event` under `identity`.
+        fn script(&self, identity: LocalIdentityId, event: MacEventRef<'static>) {
+            self.state.borrow_mut().events.push_back((identity, event));
+        }
     }
 
     #[cfg(feature = "software-crypto")]
@@ -1796,10 +2239,14 @@ mod tests {
 
         async fn next_event(
             &self,
-            _on_event: impl FnMut(LocalIdentityId, umsh_mac::MacEventRef<'_>),
+            mut on_event: impl FnMut(LocalIdentityId, umsh_mac::MacEventRef<'_>),
         ) -> Result<(), Self::RunError> {
-            // FakeMac is used to drive LocalNode directly in tests, never as a
-            // Host run loop, so this stub is never invoked.
+            // The events a test scripted, taken before any is reported so
+            // that a callback may script more for the next cycle.
+            let events: Vec<_> = self.state.borrow_mut().events.drain(..).collect();
+            for (identity, event) in events {
+                on_event(identity, event);
+            }
             Ok(())
         }
 

@@ -205,7 +205,7 @@ The responder MAY accept a shorter lifetime than was requested, and both parties
 
 ## End PFS Session (8)
 
-Terminates an active PFS session. May be sent by either party. Upon receipt, both sides securely erase the private keys for their ephemeral addresses and revert to using their long-term keys. See [Session Lifetime](security.md#session-lifetime) for all conditions under which a session ends.
+Terminates the PFS session between the sender and the recipient. May be sent by either party, including one that no longer holds the session. Upon receipt, both sides securely erase the private keys for their ephemeral addresses and revert to using their long-term keys. See [Session Lifetime](security.md#session-lifetime) for all conditions under which a session ends, and for when the recipient acts on an End.
 
 No command-specific payload. The sender and recipient are identified by the packet's addressing fields.
 
