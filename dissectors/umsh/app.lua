@@ -534,7 +534,7 @@ local function dissect_mac_command(payload, subtree, tvb, ctx, pinfo)
     pcall(function() opts_module = require("options") end)
 
     local n_filters = 0
-    local saw_hint_filter = false
+    local n_hint_filters = 0
     if opts_module and rest > 0 then
       pcall(function()
         local pos = 1  -- offset within the option block, 1-indexed
@@ -548,7 +548,7 @@ local function dissect_mac_command(payload, subtree, tvb, ctx, pinfo)
             subtree:add(f.mac_nonce, val_tvb)
           elseif num == 3 then
             n_filters = n_filters + 1
-            saw_hint_filter = true
+            n_hint_filters = n_hint_filters + 1
             -- The filter matches a leading part of the node hint, so the
             -- value may be shorter than one: two bytes is a router hint,
             -- which is all a route reveals about the repeaters it names.
@@ -593,14 +593,15 @@ local function dissect_mac_command(payload, subtree, tvb, ctx, pinfo)
         ctx.flag(subtree, tvb(0, 1),
           "Broadcast or multicast Identity Request must carry at least one filter option")
       end
-      -- The hop limit is confined only for a request that selects by role
-      -- or capability, since every node it reaches may answer. One naming
-      -- a node by hint draws a single reply however far it travels—a few
-      -- at most, where the hint is partial—so its hop count is its own
+      -- The hop limit is confined for a request that selects by role or
+      -- capability, since every node it reaches may answer, and for one
+      -- naming several nodes by hint, one reply per filter. One naming a
+      -- single node by hint draws a single reply however far it travels—a
+      -- few at most, where the hint is partial—so its hop count is its own
       -- business.
-      if not saw_hint_filter and ctx.fhops ~= nil and ctx.fhops ~= 0 then
+      if n_hint_filters ~= 1 and ctx.fhops ~= nil and ctx.fhops ~= 0 then
         ctx.flag(subtree, tvb(0, 1), string.format(
-          "Identity Request without a node-hint filter must have FHOPS absent or 0x00 (is 0x%02X)",
+          "Identity Request without exactly one node-hint filter must have FHOPS absent or 0x00 (is 0x%02X)",
           ctx.fhops))
       end
     end

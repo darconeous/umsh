@@ -464,6 +464,30 @@ pub fn identity_is_trustworthy(
     identity.signature.is_none() && packet.sender_authenticated()
 }
 
+/// Whether the frame carrying an identity shows that its owner is a direct
+/// neighbor of this node, one hop away, on the air now.
+///
+/// Only an identity heard from its owner directly places the owner in this
+/// node's repeater neighborhood: one that arrived forwarded says nothing
+/// about whether the owner is a neighbor, one replayed from a device's
+/// queue was heard minutes ago, and a copy of what this stack's own antenna
+/// just sent came from nobody else. A host attached over a point-to-point
+/// link is a neighbor with no radio between it and this node, so its
+/// advertisement counts and carries no measurement.
+///
+/// The frame must also authenticate its sender, which for every such
+/// frame means it passed replay detection: a verified frame signature, or
+/// a unicast MIC. An embedded identity signature is not enough. It carries
+/// no freshness, so an identity captured anywhere verifies wherever and
+/// whenever it is put back on the air; it says who the node is, and is
+/// believed as that, but not that the node is in range.
+pub fn identity_heard_directly(packet: &ReceivedPacketRef<'_>) -> bool {
+    packet.sender_authenticated()
+        && packet.hop_count() == Some(1)
+        && packet.rx().buffered_age_s() == 0
+        && packet.rx().origin() != umsh_hal::RxOrigin::LocalTx
+}
+
 /// What a trusted identity that a frame carried may do to the details
 /// already kept of its node.
 ///
@@ -538,21 +562,9 @@ fn dispatch_payload_callbacks<M: MacBackend>(
             if trusted && (mobile || update == IdentityUpdate::Replace) {
                 pending_mobility.borrow_mut().push((from, mobile));
             }
-            // Only an advertisement heard from its owner directly places
-            // the owner in this node's repeater neighborhood: one that
-            // arrived forwarded says nothing about whether the owner is a
-            // neighbor, one replayed from a device's queue was heard
-            // minutes ago, and a copy of what this stack's own antenna
-            // just sent came from nobody else. A host attached over a
-            // point-to-point link is a neighbor with no radio between it
-            // and this node, so its advertisement counts and carries no
-            // measurement. Recorded before the callback so an observer
-            // that asks for the peer-repeater listing from inside it sees
-            // this identity in it.
-            let heard_directly = packet.hop_count() == Some(1)
-                && packet.rx().buffered_age_s() == 0
-                && packet.rx().origin() != umsh_hal::RxOrigin::LocalTx;
-            if trusted && heard_directly {
+            // Recorded before the callback so an observer that asks for the
+            // peer-repeater listing from inside it sees this identity in it.
+            if trusted && identity_heard_directly(packet) {
                 node.observe_peer_identity(
                     from,
                     &identity,
@@ -644,7 +656,7 @@ mod tests {
         ChannelId, ChannelKey, Fcf, PacketHeader, PacketType, ParsedOptions, PayloadType, PublicKey,
     };
 
-    use super::{IdentityUpdate, identity_is_trustworthy};
+    use super::{IdentityUpdate, identity_heard_directly, identity_is_trustworthy};
     use crate::identity::tests::signed_payload;
     use crate::location::NodeLocation;
     use crate::receive::{ChannelInfoRef, ReceivedPacketRef, RxAcceptance, SignatureStatus};
@@ -718,12 +730,12 @@ mod tests {
         identity_is_trustworthy(packet, from, &identity)
     }
 
-    /// What the receive path does with an identity heard directly: drop it
-    /// unless trusted, then keep it as its frame allows.
+    /// What the receive path does with an identity off the air: drop it
+    /// unless trusted and heard directly, then keep it as its frame allows.
     fn hear(table: &mut PeerRepeaterTable, packet: &ReceivedPacketRef<'_>, now_ms: u64) {
         let from = packet.from_key().unwrap();
         let identity = NodeIdentityPayload::from_bytes(packet.payload()).unwrap();
-        if identity_is_trustworthy(packet, &from, &identity) {
+        if identity_is_trustworthy(packet, &from, &identity) && identity_heard_directly(packet) {
             table.observe_identity(&from, &identity, IdentityUpdate::of(packet), None, now_ms);
         }
     }
@@ -992,6 +1004,47 @@ mod tests {
             2,
         );
         assert_eq!(kept(&table), (Some(String::from("Summit")), None));
+    }
+
+    /// A standalone-signed identity says who its node is wherever it is
+    /// presented, and is believed as that. Put back on the air in a frame
+    /// that authenticates nobody—a replay, for all a receiver can tell—it
+    /// is no evidence that its node is in range, and lists no neighbor.
+    #[test]
+    fn a_replayed_signed_identity_does_not_make_its_signer_a_neighbor() {
+        let (key, payload) = signed_payload(0x31, NodeCapabilities::REPEATER);
+        let mut table = PeerRepeaterTable::new();
+        for replayed in [
+            identity_frame(
+                PacketType::Broadcast,
+                key,
+                &payload,
+                SignatureStatus::Unsigned,
+                None,
+            ),
+            // A channel MIC says only that the sender holds the channel key.
+            identity_frame(
+                PacketType::Multicast,
+                key,
+                &payload,
+                SignatureStatus::Unsigned,
+                None,
+            ),
+        ] {
+            assert!(trusted(&replayed, &key), "the identity itself is believed");
+            assert!(!identity_heard_directly(&replayed));
+            hear(&mut table, &replayed, 1);
+        }
+        assert!(table.is_empty());
+
+        // The node's own advertisement, whose frame signature passed replay
+        // detection, does place it.
+        hear(
+            &mut table,
+            &signed_advert(key, &payload, RxAcceptance::Advanced),
+            2,
+        );
+        assert_eq!(table.len(), 1);
     }
 
     /// An untrusted identity changes nothing, not even what is missing.

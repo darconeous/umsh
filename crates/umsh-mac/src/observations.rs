@@ -15,6 +15,12 @@
 //! A neighbor need not be on the air at all: a host attached over a
 //! point-to-point link forwards like any other repeater and is recorded like
 //! one, with no measurement, since no radio was between it and this node.
+//!
+//! A trace hint is not authenticated: anyone on the air can put any router
+//! hint at the front of a frame. So an entry is *unproven* until the
+//! repeater it names is heard forwarding one of this node's own frames,
+//! which no one can produce on demand, and a full table never lets an
+//! unproven reception displace a proven entry.
 
 use umsh_core::RouterHint;
 use umsh_hal::Snr;
@@ -44,12 +50,20 @@ pub struct TransmitterObservation {
 #[derive(Clone, Debug, Default)]
 pub struct TransmitterObservations {
     entries: heapless::Vec<TransmitterObservation, MAX_TRANSMITTER_OBSERVATIONS>,
+    /// One bit per slot of `entries`: set for a repeater heard forwarding
+    /// one of this node's own frames. Slots are overwritten in place and
+    /// never removed, so an index names the same entry for as long as it
+    /// holds it.
+    proven: u16,
 }
+
+const _: () = assert!(MAX_TRANSMITTER_OBSERVATIONS <= u16::BITS as usize);
 
 impl TransmitterObservations {
     pub const fn new() -> Self {
         Self {
             entries: heapless::Vec::new(),
+            proven: 0,
         }
     }
 
@@ -58,30 +72,89 @@ impl TransmitterObservations {
     /// Only the latest reception is kept: a peer-repeater entry reports the
     /// most recent measurement, and an average across a moving neighbor
     /// would describe a link that no longer exists.
-    pub fn observe(&mut self, hint: RouterHint, rssi_snr: Option<(i16, Snr)>, now_ms: u64) {
-        if let Some(entry) = self.entries.iter_mut().find(|entry| entry.hint == hint) {
-            entry.rssi_snr = rssi_snr;
-            entry.last_seen_ms = now_ms;
-            return;
-        }
+    ///
+    /// The reception proves nothing about `hint`, so a full table makes room
+    /// for it only by displacing an unproven entry. Returns `false` when it
+    /// was left out because every entry is proven.
+    pub fn observe(&mut self, hint: RouterHint, rssi_snr: Option<(i16, Snr)>, now_ms: u64) -> bool {
+        self.record(hint, rssi_snr, now_ms, false)
+    }
+
+    /// Record a reception from `hint` that showed it forwarding one of this
+    /// node's own frames, and mark its entry proven.
+    ///
+    /// A full table makes room by displacing the least recently heard
+    /// unproven entry, or, when every entry is proven, the least recently
+    /// heard of those.
+    pub fn vouch(&mut self, hint: RouterHint, rssi_snr: Option<(i16, Snr)>, now_ms: u64) {
+        self.record(hint, rssi_snr, now_ms, true);
+    }
+
+    /// Whether the entry for `hint` is held and proven.
+    pub fn is_proven(&self, hint: &RouterHint) -> bool {
+        self.position(hint)
+            .is_some_and(|index| self.proven & (1 << index) != 0)
+    }
+
+    fn position(&self, hint: &RouterHint) -> Option<usize> {
+        self.entries.iter().position(|entry| &entry.hint == hint)
+    }
+
+    fn record(
+        &mut self,
+        hint: RouterHint,
+        rssi_snr: Option<(i16, Snr)>,
+        now_ms: u64,
+        proven: bool,
+    ) -> bool {
         let observation = TransmitterObservation {
             hint,
             rssi_snr,
             last_seen_ms: now_ms,
         };
-        if self.entries.push(observation).is_ok() {
-            return;
-        }
-        // Full: the least recently heard transmitter is the one whose
-        // absence says the least.
-        let Some(oldest) = self
-            .entries
-            .iter_mut()
-            .min_by_key(|entry| entry.last_seen_ms)
-        else {
-            return;
+        let index = match self.position(&hint) {
+            Some(index) => index,
+            None => {
+                let index = self.entries.len();
+                if self.entries.push(observation).is_err() {
+                    let Some(index) = self.displaceable(proven) else {
+                        return false;
+                    };
+                    // An unproven newcomer only ever takes an unproven
+                    // slot, so the slot's bit is already what it should be
+                    // unless the newcomer is proven.
+                    self.entries[index] = observation;
+                    if proven {
+                        self.proven |= 1 << index;
+                    }
+                    return true;
+                }
+                index
+            }
         };
-        *oldest = observation;
+        // An unproven reception of a proven repeater is still news of it,
+        // so it refreshes the entry, but proof is never withdrawn by one.
+        self.entries[index] = observation;
+        if proven {
+            self.proven |= 1 << index;
+        }
+        true
+    }
+
+    /// The slot a new entry may take in a full table: the least recently
+    /// heard transmitter is the one whose absence says the least, and an
+    /// unproven entry goes before any proven one. Only a proven newcomer
+    /// may take a proven entry's slot.
+    fn displaceable(&self, newcomer_proven: bool) -> Option<usize> {
+        let oldest = |want_proven: bool| {
+            self.entries
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| (self.proven & (1 << index) != 0) == want_proven)
+                .min_by_key(|(_, entry)| entry.last_seen_ms)
+                .map(|(index, _)| index)
+        };
+        oldest(false).or_else(|| oldest(true).filter(|_| newcomer_proven))
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &TransmitterObservation> {
@@ -150,5 +223,45 @@ mod tests {
             "refreshed, so not the oldest"
         );
         assert!(table.get(&hint(1)).is_none(), "least recently heard");
+    }
+
+    /// A flood of frames naming made-up repeaters takes only unproven
+    /// slots; the repeaters proven by carrying this node's frames stay.
+    #[test]
+    fn an_unproven_reception_never_displaces_a_proven_entry() {
+        let mut table = TransmitterObservations::new();
+        table.vouch(hint(0), measured(-80, 2), 1_000);
+        for seed in 1..MAX_TRANSMITTER_OBSERVATIONS as u8 {
+            assert!(table.observe(hint(seed), measured(-90, 0), 1_000 + u64::from(seed)));
+        }
+        assert!(table.is_proven(&hint(0)));
+        assert!(!table.is_proven(&hint(1)));
+
+        // The proven entry is the oldest, and still survives the flood.
+        for seed in 100..140 {
+            assert!(table.observe(hint(seed), measured(-95, -2), 5_000 + u64::from(seed)));
+        }
+        assert!(table.get(&hint(0)).is_some());
+        assert!(table.is_proven(&hint(0)));
+
+        // A table that is all proven turns an unproven newcomer away.
+        let mut proven = TransmitterObservations::new();
+        for seed in 0..MAX_TRANSMITTER_OBSERVATIONS as u8 {
+            proven.vouch(hint(seed), measured(-90, 0), 1_000 + u64::from(seed));
+        }
+        assert!(!proven.observe(hint(200), measured(-60, 9), 9_000));
+        assert!(proven.get(&hint(200)).is_none());
+
+        // An unproven reception of a proven repeater refreshes it and
+        // leaves it proven.
+        assert!(proven.observe(hint(3), measured(-70, 4), 9_500));
+        assert_eq!(proven.get(&hint(3)).unwrap().last_seen_ms, 9_500);
+        assert!(proven.is_proven(&hint(3)));
+
+        // A proven newcomer takes the least recently heard proven slot.
+        proven.vouch(hint(201), measured(-85, 1), 10_000);
+        assert!(proven.is_proven(&hint(201)));
+        assert!(proven.get(&hint(0)).is_none(), "least recently heard");
+        assert_eq!(proven.len(), MAX_TRANSMITTER_OBSERVATIONS);
     }
 }

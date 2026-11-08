@@ -1195,6 +1195,11 @@ pub struct MacCounters {
     /// ([`VERIFY_BUDGET_PER_SECOND`](umsh_crypto::budget::VERIFY_BUDGET_PER_SECOND)).
     /// A forward one was due still went out.
     pub rx_verify_over_budget: u32,
+    /// Receptions whose trace named a repeater the transmitter table did
+    /// not hold, left unrecorded because every entry it held was proven:
+    /// heard forwarding one of this node's own frames. A trace hint is
+    /// not authenticated, so it displaces only an unproven entry.
+    pub transmitter_unproven_refused: u32,
 }
 
 impl MacCounters {
@@ -3468,14 +3473,19 @@ impl<
             .observe_forwarding_confirmation(&buf[..frame_len], &mut mismatched)
             .is_some();
         match self.echo_watches.heard(&buf[..frame_len], received_at_ms) {
-            crate::echo_watch::Heard::Echo(echo) => on_event(
-                echo.identity_id,
-                crate::MacEventRef::Forwarded {
-                    identity_id: echo.identity_id,
-                    receipt: echo.receipt,
-                    repeater: echo.repeater,
-                },
-            ),
+            crate::echo_watch::Heard::Echo(echo) => {
+                if let Some(repeater) = echo.repeater {
+                    self.vouch_for_transmitter(repeater, rx);
+                }
+                on_event(
+                    echo.identity_id,
+                    crate::MacEventRef::Forwarded {
+                        identity_id: echo.identity_id,
+                        receipt: echo.receipt,
+                        repeater: echo.repeater,
+                    },
+                )
+            }
             crate::echo_watch::Heard::Mismatched => mismatched = true,
             crate::echo_watch::Heard::Unwatched => {}
         }
@@ -6765,8 +6775,32 @@ impl<
         }
         let now_ms = self.clock.now_ms();
         let rssi_snr = rx.origin.is_measured().then_some((rx.rssi, rx.snr));
-        self.transmitter_observations
-            .observe(hint, rssi_snr, now_ms);
+        if !self
+            .transmitter_observations
+            .observe(hint, rssi_snr, now_ms)
+        {
+            MacCounters::bump(&mut self.counters.transmitter_unproven_refused);
+        }
+    }
+
+    /// Record that the repeater `hint` was just heard forwarding one of this
+    /// node's own frames, which proves its entry in the transmitter table.
+    ///
+    /// A trace hint is not authenticated, so a reception naming one proves
+    /// nothing by itself. A forward of this node's own frame is a frame no
+    /// one else can produce on demand: it has to be heard first. The same
+    /// receptions [`note_transmitter_observation`](Self::note_transmitter_observation)
+    /// passes over prove nothing either.
+    fn vouch_for_transmitter(&mut self, hint: RouterHint, rx: &RxInfo) {
+        if rx.origin == RxOrigin::LocalTx
+            || rx.buffered.is_some()
+            || Some(hint) == self.repeater_router_hint()
+        {
+            return;
+        }
+        let now_ms = self.clock.now_ms();
+        let rssi_snr = rx.origin.is_measured().then_some((rx.rssi, rx.snr));
+        self.transmitter_observations.vouch(hint, rssi_snr, now_ms);
     }
 
     fn learn_route_for_peer(

@@ -235,6 +235,8 @@ A receiver believes an identity only when one of these holds:
 
 A multicast MIC alone does not authenticate the sender, since any channel member can produce one under any source address. An identity whose embedded signature does not verify is not believed.
 
+Believing an identity is not evidence that its node is in range. An embedded signature carries no freshness: a captured identity verifies wherever and whenever it is put back on the air. A receiver therefore treats the sender of an identity as a direct neighbor, one hop away, only when the frame carrying it authenticated the sender and passed [replay detection](security.md#replay-detection)—a verified frame signature, or a unicast or blind unicast MIC—and arrived off the sender's own transmitter. An identity believed on its embedded signature alone describes its node and is kept as such, but places it in no neighbor table.
+
 A frame signature is checkable only against the sender's public key. An advertisement meant for receivers that may not yet hold that key MUST therefore carry its source address in full-key form; a hint-only advertisement can be verified only by a receiver that already holds the key.
 
 An identity authenticated by its frame SHOULD replace stored details only when that frame advanced the sender's established receive baseline (see [Replay Detection](security.md#replay-detection)). A frame accepted as first contact, or one accepted from behind the baseline, MAY fill details that are missing but SHOULD NOT replace stored ones: a late frame can carry details older than those already stored. A baseline restored from storage is established.

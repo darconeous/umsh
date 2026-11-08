@@ -16,7 +16,7 @@ fn mac_command(input: &[u8]) {
         MacCommand::IdentityRequest { options, .. } => {
             let filters = IdentityRequestFilters::new(options);
             let _ = filters.nonce();
-            let _ = filters.hint_filtered();
+            let _ = filters.narrowed_by_hint();
             let _ = filters.hint_names_one_node();
         }
         MacCommand::PeerRepeatersRequest { options } => {

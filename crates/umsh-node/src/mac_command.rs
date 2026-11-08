@@ -434,53 +434,63 @@ impl<'a> IdentityRequestFilters<'a> {
         Ok(None)
     }
 
-    /// Whether the request carries at least one `FILTER_NODE_HINT` filter.
+    /// The request's one `FILTER_NODE_HINT` value, or `None` when it carries
+    /// none, more than one, or an option block that will not decode.
     ///
-    /// A hint filter names one node, or with a partial hint a handful, so such
-    /// a request solicits few replies however far it travels. Without one the
-    /// request selects by role or capability and every node it reaches may
-    /// answer, which is what confines a broadcast or multicast solicitation—
-    /// and its replies—to the requester's own neighborhood.
-    ///
-    /// A malformed option block reads as unfiltered, which is the conservative
-    /// answer: it keeps the strict rules in force.
-    pub fn hint_filtered(&self) -> bool {
-        OptionDecoder::new(self.options)
-            .map_while(Result::ok)
-            .any(|(number, _)| number == identity_filter::FILTER_NODE_HINT)
+    /// Filters of the same type combine as OR, so a request with several hint
+    /// filters selects their union. Each value can be chosen to match a node
+    /// the requester has heard, so the union is as many nodes as there are
+    /// filters however long each one is, and a request carrying more than one
+    /// is judged as if it carried none.
+    fn sole_hint_filter(&self) -> Option<&'a [u8]> {
+        let mut sole = None;
+        for item in OptionDecoder::new(self.options) {
+            let (number, value) = item.ok()?;
+            if number == identity_filter::FILTER_NODE_HINT {
+                if sole.is_some() {
+                    return None;
+                }
+                sole = Some(value);
+            }
+        }
+        sole
     }
 
-    /// Whether this request's hint filters name a node rather than a share of
-    /// the mesh: at least one `FILTER_NODE_HINT` is present and every one of
-    /// them is at least [`UNIQUE_HINT_PREFIX_LEN`] bytes.
+    /// Whether the request is narrowed by a `FILTER_NODE_HINT`: it carries
+    /// exactly one.
+    ///
+    /// One hint filter names one node, or with a partial hint a share of the
+    /// mesh no larger than a 256th, so such a request solicits few replies
+    /// however far it travels. Without one the request selects by role or
+    /// capability and every node it reaches may answer, which is what confines
+    /// a broadcast or multicast solicitation—and its replies—to the
+    /// requester's own neighborhood. A request carrying several hint filters
+    /// selects their union, one node per filter, so it is confined the same
+    /// way: otherwise one flooded request could draw a flooded reply from
+    /// every node it names.
+    ///
+    /// A malformed option block reads as unnarrowed, which is the
+    /// conservative answer: it keeps the strict rules in force.
+    pub fn narrowed_by_hint(&self) -> bool {
+        self.sole_hint_filter().is_some()
+    }
+
+    /// Whether this request names a node rather than a share of the mesh: it
+    /// is [narrowed by a hint](Self::narrowed_by_hint), and that hint is at
+    /// least [`UNIQUE_HINT_PREFIX_LEN`] bytes.
     ///
     /// This is the question the reply's random hold turns on. The hold exists
     /// to keep many selected nodes from answering the same frame at once, so a
     /// request only one node can satisfy has nothing to spread and is answered
     /// straight away. A one-byte prefix selects a 256th of everything it
-    /// reaches, which is a crowd, so it keeps the hold.
-    ///
-    /// Stricter than [`hint_filtered`](Self::hint_filtered), which asks only
-    /// whether the request is aimed at all. Filters of the same type combine as
-    /// OR, so one short filter widens the whole request and the shortest is
-    /// what decides.
+    /// reaches, which is a crowd, so it keeps the hold; so does a request with
+    /// several hint filters, which names one node per filter.
     ///
     /// A malformed option block reads as unnarrowed—the conservative answer,
     /// since it keeps the hold in force.
     pub fn hint_names_one_node(&self) -> bool {
-        let mut named = false;
-        for item in OptionDecoder::new(self.options) {
-            let Ok((number, value)) = item else {
-                return false;
-            };
-            if number == identity_filter::FILTER_NODE_HINT {
-                if value.len() < UNIQUE_HINT_PREFIX_LEN {
-                    return false;
-                }
-                named = true;
-            }
-        }
-        named
+        self.sole_hint_filter()
+            .is_some_and(|hint| hint.len() >= UNIQUE_HINT_PREFIX_LEN)
     }
 
     /// Whether a node with the given identity is selected by this request.
@@ -514,7 +524,7 @@ impl<'a> IdentityRequestFilters<'a> {
                     // is what lets a two-byte router hint—the only name a
                     // route gives an intermediate hop—ask that hop to
                     // identify itself. An empty value matches nothing: it would
-                    // otherwise select every node while `hint_filtered` reported
+                    // otherwise select every node while `narrowed_by_hint` reported
                     // the request narrowed to one.
                     hint_match |=
                         (1..=hint.0.len()).contains(&value.len()) && hint.0.starts_with(value);
@@ -1227,7 +1237,7 @@ mod tests {
 
     #[test]
     fn identity_filters_reject_unusable_hint_lengths() {
-        // An empty prefix would select every node while `hint_filtered` said
+        // An empty prefix would select every node while `narrowed_by_hint` said
         // the request was narrowed, and an over-long one can select nobody.
         assert!(
             IdentityRequestBuilder::new()
@@ -1252,7 +1262,7 @@ mod tests {
             let n = enc.finish();
             options.extend_from_slice(&scratch[..n]);
             let filters = IdentityRequestFilters::new(&options);
-            assert!(filters.hint_filtered());
+            assert!(filters.narrowed_by_hint());
             assert!(!filters.selects(NodeRole::Chat, caps, &hint).unwrap());
         }
     }
@@ -1273,8 +1283,10 @@ mod tests {
         // One byte is a 256th of the mesh, which is a crowd, not a name.
         assert!(!named(&[&[0xAA]]));
 
-        // Same-type filters are OR, so the shortest one decides.
-        assert!(named(&[&[0xAA, 0xBB], &[0xCC, 0xDD]]));
+        // Same-type filters are OR, and each can be chosen to match a node,
+        // so two hints name two nodes however long they are.
+        assert!(!named(&[&[0xAA, 0xBB], &[0xCC, 0xDD]]));
+        assert!(!named(&[&[0xAA, 0xBB, 0xCC], &[0xDD, 0xEE, 0xFF]]));
         assert!(!named(&[&[0xAA, 0xBB], &[0xCC]]));
 
         // A request with no hint filter at all is narrowed by nothing, however
@@ -1309,17 +1321,27 @@ mod tests {
             .filter_hint(&NodeHint([0xAA, 0xBB, 0xCC]))
             .unwrap()
             .build();
-        assert!(IdentityRequestFilters::new(&hinted).hint_filtered());
+        assert!(IdentityRequestFilters::new(&hinted).narrowed_by_hint());
+
+        // Several hint filters select their union, which is judged as if no
+        // hint narrowed the request at all.
+        let union = IdentityRequestBuilder::new()
+            .filter_hint(&NodeHint([0xAA, 0xBB, 0xCC]))
+            .unwrap()
+            .filter_hint(&NodeHint([0xDD, 0xEE, 0xFF]))
+            .unwrap()
+            .build();
+        assert!(!IdentityRequestFilters::new(&union).narrowed_by_hint());
 
         let by_role = IdentityRequestBuilder::new()
             .filter_role(NodeRole::Repeater)
             .unwrap()
             .build();
-        assert!(!IdentityRequestFilters::new(&by_role).hint_filtered());
+        assert!(!IdentityRequestFilters::new(&by_role).narrowed_by_hint());
 
         // No filters at all, and a truncated block, both read as unfiltered.
-        assert!(!IdentityRequestFilters::new(&[]).hint_filtered());
-        assert!(!IdentityRequestFilters::new(&[0x33, 0xAA]).hint_filtered());
+        assert!(!IdentityRequestFilters::new(&[]).narrowed_by_hint());
+        assert!(!IdentityRequestFilters::new(&[0x33, 0xAA]).narrowed_by_hint());
     }
 
     #[test]
