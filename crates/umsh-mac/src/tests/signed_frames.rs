@@ -553,6 +553,45 @@ fn new_signers_past_the_quota_leave_strangers_windows_alone() {
     assert_eq!(after, held);
 }
 
+/// A signer that gets no window is judged by the duplicate cache, as an
+/// unsigned frame is: its first frame is a first contact, and a copy or
+/// replay of it is dropped, multicast and broadcast alike.
+#[test]
+fn a_signer_with_no_window_is_accepted_once_per_frame() {
+    let mut mac = receiver();
+    let strangers = crate::DEFAULT_RX_STRANGERS as u8;
+    let quota = crate::rx_windows::STRANGER_DISPLACEMENT_QUOTA as u8;
+    for index in 0..strangers + quota {
+        mac.clock().advance_ms(1_000);
+        let frame = multicast_from([0x80 + index; 32], &CHANNEL, 1, false, false);
+        assert!(receive(&mut mac, &frame).is_some());
+    }
+
+    for (seed, frame) in [
+        (SEED, multicast_from(SEED, &CHANNEL, 1, false, false)),
+        (OTHER_SEED, broadcast_from(OTHER_SEED, 1, false)),
+    ] {
+        mac.clock().advance_ms(1_000);
+        assert_eq!(
+            receive(&mut mac, &frame),
+            verified(RxAcceptance::FirstContact, key_of(seed))
+        );
+        for _ in 0..3 {
+            mac.clock().advance_ms(1_000);
+            assert_eq!(receive(&mut mac, &frame), None);
+        }
+        let next = match seed {
+            SEED => multicast_from(SEED, &CHANNEL, 2, false, false),
+            _ => broadcast_from(OTHER_SEED, 2, false),
+        };
+        assert_eq!(
+            receive(&mut mac, &next),
+            verified(RxAcceptance::FirstContact, key_of(seed))
+        );
+    }
+    assert_eq!(mac.counters().rx_stranger_window_over_quota, 10);
+}
+
 /// Counter occupancy never drops a frame before its signature is checked:
 /// a forgery reusing a counter the named peer already spent is judged on
 /// the unsigned path, not refused by the peer's window.

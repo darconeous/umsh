@@ -7025,17 +7025,23 @@ impl<
     /// The key leaves out the Route Retry flag the forwarding cache keys
     /// on: it is not covered by the MIC, so anyone could add it to a copy.
     fn accept_unsigned_multicast(&mut self, header: &PacketHeader, frame: &[u8]) -> bool {
-        let Some(mic) = frame.get(header.mic_range.clone()) else {
-            return false;
-        };
-        if mic.is_empty() || mic.len() > 16 {
+        frame
+            .get(header.mic_range.clone())
+            .is_some_and(|mic| self.accept_first_copy(mic))
+    }
+
+    /// Whether `tag` (a MIC, or a signature's first bytes) is new to the
+    /// duplicate cache, noting it if so: a frame no window judges is
+    /// accepted once while the cache still holds it.
+    fn accept_first_copy(&mut self, tag: &[u8]) -> bool {
+        if tag.is_empty() || tag.len() > 16 {
             return false;
         }
         let mut bytes = [0u8; 16];
-        bytes[..mic.len()].copy_from_slice(mic);
+        bytes[..tag.len()].copy_from_slice(tag);
         let cache_key = DupCacheKey::Mic {
             bytes,
-            len: mic.len() as u8,
+            len: tag.len() as u8,
             route_retry: false,
         };
         let now_ms = self.clock.now_ms();
@@ -7546,10 +7552,16 @@ impl<
                 Some(entry) => entry,
                 // A table that keeps no strangers, or whose new signers
                 // have displaced as many strangers as they may for now,
-                // takes the first contact at face value and keeps nothing.
+                // keeps no window for this signer. Its frame is judged as
+                // an unsigned one is, by the duplicate cache: a first
+                // contact once, and a copy or replay dropped while the
+                // cache holds it.
                 None => {
                     if RX_STRANGERS > 0 {
                         MacCounters::bump(&mut self.counters.rx_stranger_window_over_quota);
+                    }
+                    if !self.accept_first_copy(tag) {
+                        return None;
                     }
                     return Some((SignatureStatus::Verified, Some(RxAcceptance::FirstContact)));
                 }
