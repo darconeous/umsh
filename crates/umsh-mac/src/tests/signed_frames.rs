@@ -424,8 +424,8 @@ fn a_hint_only_signed_broadcast_from_a_stranger_is_not_verified() {
 }
 
 /// A badly signed multicast naming a known peer takes the unsigned path:
-/// delivered unverified, a copy dropped by the per-channel window, and the
-/// peer's signed-frame window untouched.
+/// delivered unverified, a copy dropped as a duplicate, and the peer's
+/// signed-frame window untouched.
 #[test]
 fn a_badly_signed_multicast_takes_the_unsigned_path() {
     let mut mac = receiver();
@@ -444,7 +444,7 @@ fn a_badly_signed_multicast_takes_the_unsigned_path() {
             .is_established()
     );
 
-    // An unresolved hint goes through the unknown-source duplicate cache.
+    // An unresolved hint goes the same way.
     let stranger = multicast_from(OTHER_SEED, &CHANNEL, 7, true, true);
     assert_eq!(
         receive(&mut mac, &stranger).unwrap().signature,
@@ -452,6 +452,158 @@ fn a_badly_signed_multicast_takes_the_unsigned_path() {
     );
     assert_eq!(receive(&mut mac, &stranger), None);
     assert!(mac.rx_windows().get(&key_of(OTHER_SEED)).is_none());
+}
+
+/// An unsigned multicast naming `seed`'s full key on `channel`, with
+/// `counter`. Anyone holding the channel key can build one.
+fn unsigned_multicast_from(
+    seed: [u8; 32],
+    channel: &ChannelKey,
+    counter: u32,
+    payload: &[u8],
+) -> std::vec::Vec<u8> {
+    let engine = engine();
+    let derived = engine.derive_channel_keys(channel);
+    let key = key_of(seed);
+    let mut buf = [0u8; 256];
+    let mut packet = PacketBuilder::new(&mut buf)
+        .multicast(derived.channel_id)
+        .source_full(&key)
+        .frame_counter(counter)
+        .encrypted()
+        .payload(payload)
+        .build()
+        .unwrap();
+    let keys = PairwiseKeys {
+        k_enc: derived.k_enc,
+        k_mic: derived.k_mic,
+    };
+    engine.seal_packet(&mut packet, &keys).unwrap();
+    packet.as_bytes().to_vec()
+}
+
+/// A channel member forging an unsigned multicast under a peer's source,
+/// with a counter far ahead of the peer's, moves nothing kept for that
+/// peer: the peer's own frames are still delivered, unsigned and signed.
+#[test]
+fn a_forged_unsigned_multicast_cannot_silence_its_claimed_sender() {
+    let mut mac = receiver();
+    let victim = key_of(SEED);
+    mac.add_peer(victim).unwrap();
+
+    let forged = unsigned_multicast_from(SEED, &CHANNEL, 172_000, b"forged");
+    let delivery = receive(&mut mac, &forged).unwrap();
+    assert_eq!(delivery.signature, SignatureStatus::Unsigned);
+    assert!(!delivery.sender_authenticated);
+    assert!(
+        !mac.rx_windows()
+            .get(&victim)
+            .unwrap()
+            .replay_window
+            .is_established()
+    );
+
+    let genuine = unsigned_multicast_from(SEED, &CHANNEL, 11, b"genuine");
+    assert!(receive(&mut mac, &genuine).is_some());
+    // Each is still judged as a duplicate of itself.
+    assert_eq!(receive(&mut mac, &genuine), None);
+    assert_eq!(receive(&mut mac, &forged), None);
+    let next = unsigned_multicast_from(SEED, &CHANNEL, 12, b"genuine");
+    assert!(receive(&mut mac, &next).is_some());
+
+    // The victim's signed frames continue its sequence undisturbed.
+    let signed = multicast_from(SEED, &CHANNEL, 13, true, false);
+    assert_eq!(
+        receive(&mut mac, &signed),
+        verified(RxAcceptance::FirstContact, victim)
+    );
+}
+
+/// A signed multicast on `EMERGENCY` from `seed`, with `counter`.
+fn emergency_from(mac: &CryptoMac, seed: [u8; 32], counter: u32) -> std::vec::Vec<u8> {
+    let channel = mac
+        .crypto()
+        .derive_named_channel_key(umsh_core::EMERGENCY_CHANNEL_NAME)
+        .unwrap();
+    multicast_from(seed, &channel, counter, false, false)
+}
+
+/// A burst of first contacts from freshly minted keys can displace a real
+/// sender's window, but not the record of its `EMERGENCY` frame: a replay
+/// is still dropped. The burst cannot push that record out, only fill what
+/// is left of it.
+#[test]
+fn strangers_cannot_flush_the_emergency_record() {
+    let mut mac = receiver();
+    mac.add_named_channel(umsh_core::EMERGENCY_CHANNEL_NAME)
+        .unwrap();
+    let sender = key_of(SEED);
+    let alert = emergency_from(&mac, SEED, 100);
+    assert_eq!(
+        receive(&mut mac, &alert),
+        verified(RxAcceptance::FirstContact, sender)
+    );
+    assert_eq!(receive(&mut mac, &alert), None, "its window drops a replay");
+
+    // Every remaining stranger slot, and then one more, which displaces the
+    // least recently used window: the real sender's.
+    let strangers = crate::DEFAULT_RX_STRANGERS as u8;
+    for index in 0..strangers {
+        mac.clock().advance_ms(1_000);
+        let forger = emergency_from(&mac, [0x80 + index; 32], 1);
+        assert!(receive(&mut mac, &forger).is_some());
+    }
+    assert!(mac.rx_windows().get(&sender).is_none());
+    assert_eq!(
+        mac.counters().rx_emergency_digests_full,
+        u32::from(strangers) + 1 - crate::EMERGENCY_DIGESTS as u32
+    );
+
+    mac.clock().advance_ms(1_000);
+    assert_eq!(receive(&mut mac, &alert), None);
+    assert_eq!(mac.counters().rx_emergency_replays, 1);
+
+    // A frame the record does not hold is still taken.
+    mac.clock().advance_ms(1_000);
+    let next = emergency_from(&mac, SEED, 101);
+    assert_eq!(
+        receive(&mut mac, &next),
+        verified(RxAcceptance::Advanced, sender)
+    );
+}
+
+/// Past the displacement quota a new signer is accepted with no window
+/// kept, and the strangers' windows stay where they are.
+#[test]
+fn new_signers_past_the_quota_leave_strangers_windows_alone() {
+    let mut mac = receiver();
+    let strangers = crate::DEFAULT_RX_STRANGERS as u8;
+    let quota = crate::rx_windows::STRANGER_DISPLACEMENT_QUOTA as u8;
+    for index in 0..strangers + quota {
+        mac.clock().advance_ms(1_000);
+        let frame = multicast_from([0x80 + index; 32], &CHANNEL, 1, false, false);
+        assert!(receive(&mut mac, &frame).is_some());
+    }
+    assert_eq!(mac.counters().rx_stranger_window_over_quota, 0);
+    let held: std::vec::Vec<PublicKey> = mac
+        .rx_windows()
+        .strangers()
+        .map(|entry| *entry.key())
+        .collect();
+
+    mac.clock().advance_ms(1_000);
+    let late = multicast_from(SEED, &CHANNEL, 1, false, false);
+    assert_eq!(
+        receive(&mut mac, &late),
+        verified(RxAcceptance::FirstContact, key_of(SEED))
+    );
+    assert_eq!(mac.counters().rx_stranger_window_over_quota, 1);
+    let after: std::vec::Vec<PublicKey> = mac
+        .rx_windows()
+        .strangers()
+        .map(|entry| *entry.key())
+        .collect();
+    assert_eq!(after, held);
 }
 
 /// Counter occupancy never drops a frame before its signature is checked:

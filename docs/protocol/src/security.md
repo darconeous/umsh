@@ -1,6 +1,6 @@
 # Security & Cryptography
 
-UMSH authenticates and optionally encrypts packets using AES-SIV (RFC 5297) with AES-256. Unicast packets are secured with pairwise keys derived from X25519 ECDH between sender and recipient Ed25519 keys. Multicast packets are secured with keys derived from the shared channel key. In both cases, a monotonic frame counter provides replay protection without requiring synchronized clocks. Any frame other than a MAC ack may also carry an Ed25519 [frame signature](#frame-signatures) that attributes it to its sender's key.
+UMSH authenticates and optionally encrypts packets using AES-SIV (RFC 5297) with AES-256. Unicast packets are secured with pairwise keys derived from X25519 ECDH between sender and recipient Ed25519 keys. Multicast packets are secured with keys derived from the shared channel key. A monotonic frame counter provides replay protection without requiring synchronized clocks, for every frame authenticated as one sender's; an [unsigned multicast](#unsigned-multicast), which any channel member could have sent, is judged by duplicate suppression instead. Any frame other than a MAC ack may also carry an Ed25519 [frame signature](#frame-signatures) that attributes it to its sender's key.
 
 Each secured packet carries a Security Information (SECINFO) field containing a Security Control Field, a frame counter, and an optional salt. The sections below describe these fields, the key derivation process, and the cryptographic operations applied to each packet.
 
@@ -126,7 +126,16 @@ A frame whose [frame signature](#frame-signatures) verifies is judged by the rul
   - A frame behind the baseline or outside the forward window is dropped. When the gap is too large for reordering to explain, the receiver MAY start [counter resynchronization](#counter-resynchronization) with an Echo Request, at the usual rate limit.
 - **Stranger.** A frame that verifies against a key that is not a known peer's is first contact: it is accepted at face value, as [Counter Resynchronization](#counter-resynchronization) describes for any new peer. Later frames from that key are judged by the same rules, in a window the receiver keeps for that signing key. A frame behind that window's baseline or outside it is dropped, with no resynchronization, since there is no pairwise relationship to run one over.
   - A receiver MAY discard a stranger's window when it is idle or under memory pressure.
-  - After a discard, or after the receiver restarts, the stranger's next frame is first contact again, so a replay of one of its earlier frames is accepted once. With no prior knowledge of the sender, a receiver cannot tell that replay from a new frame.
+  - A key costs nothing to mint, so a burst of first contacts could otherwise discard every stranger's window on demand. A receiver SHOULD bound how many strangers' windows new signers displace; the suggested bound is **4** every **10 minutes**. A new signer's frame arriving once the bound is spent is accepted at face value, and no window is kept for its key.
+  - After a discard, or after the receiver restarts, the stranger's next frame is first contact again, so a replay of one of its earlier frames is accepted once. With no prior knowledge of the sender, a receiver cannot tell that replay from a new frame. The [`EMERGENCY`](multicast-channels.md#emergency) channel keeps a further record for this reason.
+
+##### Unsigned Multicast {#unsigned-multicast}
+
+A multicast without a frame signature, or whose signature does not verify, is authenticated only as the work of some holder of the channel key: its `SRC` names a sender any other member could have named. A receiver judges it by duplicate suppression alone, keyed by its MIC and by nothing a forwarder may rewrite: a multicast whose MIC matches one already accepted is a replay, with or without a [Route Retry option](packet-options.md#route-retry-option-6).
+
+An unsigned multicast MUST NOT advance or otherwise modify any replay state kept for the source it names. A member able to move that state could send one frame under another member's source, with a counter far ahead of that member's, and so silence it.
+
+Once a receiver's duplicate-suppression entry for a multicast ages out or is displaced, a replay of that multicast is accepted as new. See [Replay of Unsigned Multicast](security-considerations.md#replay-of-unsigned-multicast).
 
 #### Counter Persistence
 

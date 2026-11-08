@@ -21,13 +21,13 @@ pub use shape::SendDestination;
 use shape::{PreparedSend, SendTarget, ShapedFrame, build_shaped, route_retry_eligible};
 
 use crate::{
-    AddPeerError, CapacityError, DEFAULT_ACKS, DEFAULT_CHANNEL_WINDOWS, DEFAULT_CHANNELS,
-    DEFAULT_DUP, DEFAULT_IDENTITIES, DEFAULT_PEERS, DEFAULT_ROUTE_HOLDS, DEFAULT_RX_STRANGERS,
-    DEFAULT_TX, MAX_ACK_FORWARD_RETRIES, MAX_CAD_ATTEMPTS, MAX_FLOOD_HOPS, MAX_FORWARD_RETRIES,
-    MAX_RESEND_FRAME_LEN, MAX_SOURCE_ROUTE_HINTS, Platform, ReplayVerdict, ReplayWindow,
-    RxAcceptance, TRACE_ROUTE_REFRESH_MS, VERIFY_HELD_FRAMES,
+    AddPeerError, CapacityError, DEFAULT_ACKS, DEFAULT_CHANNELS, DEFAULT_DUP, DEFAULT_IDENTITIES,
+    DEFAULT_PEERS, DEFAULT_ROUTE_HOLDS, DEFAULT_RX_STRANGERS, DEFAULT_TX, MAX_ACK_FORWARD_RETRIES,
+    MAX_CAD_ATTEMPTS, MAX_FLOOD_HOPS, MAX_FORWARD_RETRIES, MAX_RESEND_FRAME_LEN,
+    MAX_SOURCE_ROUTE_HINTS, Platform, ReplayVerdict, ReplayWindow, RxAcceptance,
+    TRACE_ROUTE_REFRESH_MS, VERIFY_HELD_FRAMES,
     admission::Recalled,
-    cache::{DupCacheKey, DuplicateCache},
+    cache::{DupCacheKey, DuplicateCache, EmergencyDigests, FrameDigest},
     peers::CachedRoute,
     peers::{
         ChannelTable, FarHop, HeldRouteOutcome, HoldRelease, PeerCryptoMap, PeerHolder, PeerId,
@@ -1195,6 +1195,18 @@ pub struct MacCounters {
     /// ([`VERIFY_BUDGET_PER_SECOND`](umsh_crypto::budget::VERIFY_BUDGET_PER_SECOND)).
     /// A forward one was due still went out.
     pub rx_verify_over_budget: u32,
+    /// Verified frames from a stranger accepted as first contact with no
+    /// window kept for their signer: the stranger class was full, and new
+    /// signers had already displaced
+    /// [`STRANGER_DISPLACEMENT_QUOTA`](crate::rx_windows::STRANGER_DISPLACEMENT_QUOTA)
+    /// strangers' windows within the window.
+    pub rx_stranger_window_over_quota: u32,
+    /// Signed frames on `EMERGENCY` dropped as a replay of one remembered
+    /// past its signer's window.
+    pub rx_emergency_replays: u32,
+    /// Signed frames on `EMERGENCY` accepted but not remembered, every
+    /// [`EMERGENCY_DIGESTS`](crate::EMERGENCY_DIGESTS) entry being live.
+    pub rx_emergency_digests_full: u32,
 }
 
 impl MacCounters {
@@ -1212,7 +1224,6 @@ pub struct Mac<
     const TX: usize = DEFAULT_TX,
     const FRAME: usize = MAX_RESEND_FRAME_LEN,
     const DUP: usize = DEFAULT_DUP,
-    const WINDOWS: usize = DEFAULT_CHANNEL_WINDOWS,
     const HOLDS: usize = DEFAULT_ROUTE_HOLDS,
     const RX_STRANGERS: usize = DEFAULT_RX_STRANGERS,
 > {
@@ -1229,9 +1240,12 @@ pub struct Mac<
     uplinks: crate::uplinks::UplinkObservations,
     echo_watches: crate::echo_watch::EchoWatches,
     recent_acks: Deque<CompletedAck, RECENT_ACKS>,
-    channels: ChannelTable<CHANNELS, WINDOWS>,
+    channels: ChannelTable<CHANNELS>,
     dup_cache: DuplicateCache<DUP>,
-    multicast_unknown_dup_cache: DuplicateCache<DUP>,
+    /// Unsigned multicasts accepted, by MIC: all that judges one.
+    multicast_dup_cache: DuplicateCache<DUP>,
+    /// Signed frames accepted on `EMERGENCY`.
+    emergency_digests: EmergencyDigests,
     tx_queue: TxQueue<TX, FRAME>,
     post_tx_listen: Option<PostTxListen>,
     repeater: RepeaterConfig,
@@ -1259,10 +1273,9 @@ impl<
     const TX: usize,
     const FRAME: usize,
     const DUP: usize,
-    const WINDOWS: usize,
     const HOLDS: usize,
     const RX_STRANGERS: usize,
-> Mac<P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP, WINDOWS, HOLDS, RX_STRANGERS>
+> Mac<P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP, HOLDS, RX_STRANGERS>
 {
     /// Creates a MAC coordinator with the supplied radio, crypto, timing, and policy state.
     ///
@@ -1294,7 +1307,8 @@ impl<
             recent_acks: Deque::new(),
             channels: ChannelTable::new(),
             dup_cache: DuplicateCache::new(),
-            multicast_unknown_dup_cache: DuplicateCache::new(),
+            multicast_dup_cache: DuplicateCache::new(),
+            emergency_digests: EmergencyDigests::new(),
             tx_queue: TxQueue::new(),
             post_tx_listen: None,
             repeater,
@@ -1384,11 +1398,11 @@ impl<
         &mut self.peer_registry
     }
     /// Borrow the channel table.
-    pub fn channels(&self) -> &ChannelTable<CHANNELS, WINDOWS> {
+    pub fn channels(&self) -> &ChannelTable<CHANNELS> {
         &self.channels
     }
     /// Mutably borrow the channel table.
-    pub fn channels_mut(&mut self) -> &mut ChannelTable<CHANNELS, WINDOWS> {
+    pub fn channels_mut(&mut self) -> &mut ChannelTable<CHANNELS> {
         &mut self.channels
     }
     /// Borrow repeater configuration.
@@ -1862,12 +1876,15 @@ impl<
     /// Adds or updates a shared channel and derives its multicast keys.
     pub fn add_channel(&mut self, key: ChannelKey) -> Result<(), CapacityError> {
         let derived = self.crypto.derive_channel_keys(&key);
-        self.channels.try_add(key, derived)
+        let emergency = self
+            .crypto
+            .derive_named_channel_key(umsh_core::EMERGENCY_CHANNEL_NAME)
+            .is_ok_and(|emergency| emergency == key);
+        self.channels.try_add(key, derived, emergency)
     }
 
-    /// Removes a previously added channel by its exact key, discarding
-    /// the channel's replay state with it (re-adding the key later
-    /// starts at first contact). Returns whether a channel was removed.
+    /// Removes a previously added channel by its exact key. Returns whether
+    /// a channel was removed.
     pub fn remove_channel(&mut self, key: &ChannelKey) -> bool {
         self.channels.remove_by_key(key)
     }
@@ -4011,8 +4028,11 @@ impl<
     /// Open a multicast, judge it, and deliver it to every identity.
     ///
     /// Which replay check applies follows from the signature, not from `D`:
-    /// a verified frame was judged by its signer's window, and any other
-    /// takes the path an unsigned frame from the same source would.
+    /// a verified frame was judged by its signer's window, and any other is
+    /// judged as an unsigned frame is, by duplicate suppression alone. A
+    /// channel key proves membership, not who sent the frame, so nothing
+    /// kept for the source an unsigned frame names is judged against it or
+    /// moved by it.
     async fn deliver_multicast(
         &mut self,
         buf: &mut [u8; FRAME],
@@ -4037,9 +4057,16 @@ impl<
             self.crypto
                 .open_packet(&mut buf[..frame_len], header, &keys, None)
                 .ok()
-                .map(|body_range| (channel.channel_key, channel.derived.commitment, body_range))
+                .map(|body_range| {
+                    (
+                        channel.channel_key,
+                        channel.derived.commitment,
+                        channel.emergency,
+                        body_range,
+                    )
+                })
         });
-        let Some((channel_key, commitment, body_range)) = opened else {
+        let Some((channel_key, commitment, emergency, body_range)) = opened else {
             return false;
         };
         if !Self::payload_is_allowed(header.packet_type(), &buf[body_range.clone()])
@@ -4063,12 +4090,11 @@ impl<
         else {
             return false;
         };
-        let accepted = match (signature, source.peer_id) {
-            (SignatureStatus::Verified, _) => true,
-            (_, Some(peer_id)) => {
-                self.accept_multicast_replay(&channel_key, peer_id, header, &buf[..frame_len])
+        let accepted = match signature {
+            SignatureStatus::Verified => {
+                !emergency || self.remember_emergency_frame(header, &buf[..frame_len])
             }
-            (_, None) => self.accept_unknown_multicast_replay(header, &buf[..frame_len]),
+            _ => self.accept_unsigned_multicast(header, &buf[..frame_len]),
         };
         if !accepted {
             return false;
@@ -6211,39 +6237,11 @@ impl<
         }
     }
 
-    /// Judge a multicast from a known peer against the window kept for it
-    /// on the channel whose key opened the frame. Channels that share an
-    /// identifier keep separate windows.
-    fn accept_multicast_replay(
-        &mut self,
-        channel_key: &ChannelKey,
-        peer_id: PeerId,
-        header: &PacketHeader,
-        frame: &[u8],
-    ) -> bool {
-        let Some((counter, mic)) = Self::replay_metadata(header, frame) else {
-            return false;
-        };
-        let now_ms = self.clock.now_ms();
-        let Some(window) = self
-            .channels
-            .window_or_insert(channel_key, peer_id, ReplayWindow::new)
-        else {
-            return false;
-        };
-        if window.check(counter, mic, now_ms) != ReplayVerdict::Accept {
-            return false;
-        }
-        window.accept(counter, mic, now_ms);
-        true
-    }
-
     fn clear_peer_slot_state(&mut self, peer_id: PeerId) {
         for slot in self.identities.iter_mut().filter_map(|slot| slot.as_mut()) {
             let _ = slot.peer_crypto_mut().remove(&peer_id);
             let _ = slot.pending_counter_resync_mut().remove(&peer_id);
         }
-        self.channels.forget_peer(peer_id);
         self.held_frames.retain(|held| held.peer_id != peer_id);
     }
 
@@ -6260,7 +6258,6 @@ impl<
                 let _ = slot.pending_counter_resync_mut().insert(new_id, pending);
             }
         }
-        self.channels.rekey_peer(old_id, new_id);
         for held in self.held_frames.iter_mut() {
             if held.peer_id == old_id {
                 held.peer_id = new_id;
@@ -6664,18 +6661,54 @@ impl<
         }
     }
 
-    fn accept_unknown_multicast_replay(&mut self, header: &PacketHeader, frame: &[u8]) -> bool {
-        let Some(cache_key) = Self::forward_dup_key(header, frame) else {
+    /// Judge a multicast that no verified signature attributes, by its MIC
+    /// alone: accepted unless a frame with the same MIC was accepted while
+    /// the duplicate cache still holds it.
+    ///
+    /// The key leaves out the Route Retry flag the forwarding cache keys
+    /// on: it is not covered by the MIC, so anyone could add it to a copy.
+    fn accept_unsigned_multicast(&mut self, header: &PacketHeader, frame: &[u8]) -> bool {
+        let Some(mic) = frame.get(header.mic_range.clone()) else {
+            return false;
+        };
+        if mic.is_empty() || mic.len() > 16 {
+            return false;
+        }
+        let mut bytes = [0u8; 16];
+        bytes[..mic.len()].copy_from_slice(mic);
+        let cache_key = DupCacheKey::Mic {
+            bytes,
+            len: mic.len() as u8,
+            route_retry: false,
+        };
+        let now_ms = self.clock.now_ms();
+        if self.multicast_dup_cache.contains(&cache_key, now_ms) {
+            return false;
+        }
+        self.multicast_dup_cache.insert(cache_key, now_ms);
+        true
+    }
+
+    /// Judge a verified frame on `EMERGENCY` against the frames remembered
+    /// there, and remember it. A remembered one is a replay, dropped and
+    /// counted, whatever its signer's window made of it.
+    fn remember_emergency_frame(&mut self, header: &PacketHeader, frame: &[u8]) -> bool {
+        let Some(digest) = header
+            .signature()
+            .and_then(|signature| frame.get(signature.range.clone()))
+            .and_then(|signature| signature.get(..8))
+            .and_then(|prefix| FrameDigest::try_from(prefix).ok())
+        else {
             return false;
         };
         let now_ms = self.clock.now_ms();
-        if self
-            .multicast_unknown_dup_cache
-            .contains(&cache_key, now_ms)
-        {
+        if self.emergency_digests.contains(&digest, now_ms) {
+            MacCounters::bump(&mut self.counters.rx_emergency_replays);
             return false;
         }
-        self.multicast_unknown_dup_cache.insert(cache_key, now_ms);
+        if !self.emergency_digests.insert(digest, now_ms) {
+            MacCounters::bump(&mut self.counters.rx_emergency_digests_full);
+        }
         true
     }
 
@@ -7201,9 +7234,15 @@ impl<
             }
             None => match self.rx_windows.get_or_insert_stranger(signer, now_ms) {
                 Some(entry) => entry,
-                // A table that keeps no strangers takes every first
-                // contact at face value.
-                None => return Some((SignatureStatus::Verified, Some(RxAcceptance::FirstContact))),
+                // A table that keeps no strangers, or whose new signers
+                // have displaced as many strangers as they may for now,
+                // takes the first contact at face value and keeps nothing.
+                None => {
+                    if RX_STRANGERS > 0 {
+                        MacCounters::bump(&mut self.counters.rx_stranger_window_over_quota);
+                    }
+                    return Some((SignatureStatus::Verified, Some(RxAcceptance::FirstContact)));
+                }
             },
         };
         let gap = entry.replay_window.last_accepted.wrapping_sub(counter);

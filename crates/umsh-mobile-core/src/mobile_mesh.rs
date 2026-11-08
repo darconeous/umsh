@@ -1689,7 +1689,6 @@ type MobileMac = Mac<
     { umsh_mac::DEFAULT_TX },
     { umsh_mac::DEFAULT_FRAME },
     { umsh_mac::DEFAULT_DUP },
-    { umsh_mac::DEFAULT_CHANNEL_WINDOWS },
     MOBILE_MAC_ROUTE_HOLDS,
 >;
 const MOBILE_CHAT_TRANSMIT_WINDOW: usize = 8;

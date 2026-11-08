@@ -28,8 +28,7 @@ impl Platform for CryptoPlatform {
 }
 
 #[cfg(feature = "software-crypto")]
-type CryptoMac =
-    Mac<CryptoPlatform, 4, 16, 8, 16, 16, 256, 64, { crate::DEFAULT_CHANNEL_WINDOWS }, 4>;
+type CryptoMac = Mac<CryptoPlatform, 4, 16, 8, 16, 16, 256, 64, 4>;
 
 #[cfg(feature = "software-crypto")]
 fn make_crypto_mac() -> CryptoMac {
@@ -748,8 +747,8 @@ fn channel_table_keeps_colliding_keys_apart() {
         commitment: umsh_core::ChannelCommitment([0; 32]),
     };
 
-    table.try_add(key_a, derived_a.clone()).unwrap();
-    table.try_add(key_b, derived_b.clone()).unwrap();
+    table.try_add(key_a, derived_a.clone(), false).unwrap();
+    table.try_add(key_b, derived_b.clone(), false).unwrap();
 
     // A colliding key leaves the first in place.
     let stored: std::vec::Vec<_> = table
@@ -763,7 +762,7 @@ fn channel_table_keeps_colliding_keys_apart() {
         k_enc: [5; 32],
         ..derived_a
     };
-    table.try_add(key_a, refreshed).unwrap();
+    table.try_add(key_a, refreshed, false).unwrap();
     assert_eq!(table.len(), 2);
     assert_eq!(table.lookup_by_key(&key_a).unwrap().derived.k_enc, [5; 32]);
 }
@@ -13760,7 +13759,7 @@ fn duplicate_key_for_secure_frame(frame: &[u8]) -> DupCacheKey {
     }
 }
 
-type TestMac = Mac<DummyPlatform, 4, 16, 8, 16, 16, 256, 64, { crate::DEFAULT_CHANNEL_WINDOWS }, 4>;
+type TestMac = Mac<DummyPlatform, 4, 16, 8, 16, 16, 256, 64, 4>;
 
 #[test]
 fn dfu_reply_receipts_track_unicast_transmission_without_wire_acknowledgments() {

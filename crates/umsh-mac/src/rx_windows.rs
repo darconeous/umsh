@@ -12,7 +12,13 @@
 //!   has not yet been merged in, and it must be before any frame is judged
 //!   against it ([`RxWindows::window_for_judging`]).
 //! - **Strangers.** Kept only in RAM, evicted least recently used when the
-//!   table is full, and dropped once idle for [`STRANGER_IDLE_MS`].
+//!   table is full, and dropped once idle for [`STRANGER_IDLE_MS`]. A new
+//!   signer displaces another stranger's window at most
+//!   [`STRANGER_DISPLACEMENT_QUOTA`] times within
+//!   [`STRANGER_DISPLACEMENT_WINDOW_MS`]: a key costs nothing to mint, and
+//!   without the bound a burst of first contacts would discard every
+//!   stranger's window on demand, so that a replay of any of their frames is
+//!   first contact again. Past the quota a new signer gets no window.
 //!
 //! Registering a key moves its entry to the registered class with its window
 //! intact; unregistering moves it back. Nothing about the window is
@@ -25,7 +31,7 @@ use heapless::Vec;
 use umsh_core::PublicKey;
 use umsh_crypto::replay::{ReplayWindow, RxAcceptance};
 
-use crate::CapacityError;
+use crate::{CapacityError, admission::Quota};
 
 /// Accepted frames from a registered peer between baseline writes.
 ///
@@ -37,6 +43,11 @@ pub const RX_COUNTER_PERSIST_INTERVAL: u16 = 16;
 
 /// How long a stranger's window is kept without traffic.
 pub const STRANGER_IDLE_MS: u64 = 60 * 60 * 1000;
+/// Strangers' windows that new signers may displace within
+/// [`STRANGER_DISPLACEMENT_WINDOW_MS`].
+pub const STRANGER_DISPLACEMENT_QUOTA: usize = 4;
+/// The span [`STRANGER_DISPLACEMENT_QUOTA`] covers.
+pub const STRANGER_DISPLACEMENT_WINDOW_MS: u64 = 10 * 60 * 1000;
 
 /// Replay state for traffic from one remote key.
 #[derive(Clone, Debug)]
@@ -185,6 +196,8 @@ pub struct NeedsRestore(pub PublicKey);
 pub struct RxWindows<const PEERS: usize, const STRANGERS: usize> {
     registered: Vec<RxWindow, PEERS>,
     strangers: Vec<RxWindow, STRANGERS>,
+    /// New signers' windows that displaced another stranger's.
+    displacements: Quota<STRANGER_DISPLACEMENT_QUOTA>,
 }
 
 impl<const PEERS: usize, const STRANGERS: usize> Default for RxWindows<PEERS, STRANGERS> {
@@ -199,6 +212,7 @@ impl<const PEERS: usize, const STRANGERS: usize> RxWindows<PEERS, STRANGERS> {
         Self {
             registered: Vec::new(),
             strangers: Vec::new(),
+            displacements: Quota::new(),
         }
     }
 
@@ -290,7 +304,9 @@ impl<const PEERS: usize, const STRANGERS: usize> RxWindows<PEERS, STRANGERS> {
 
     /// The window for `key` if it has one in either class, or else a new
     /// stranger window. A full stranger class gives up its least recently
-    /// used entry. `None` only when the table keeps no strangers at all.
+    /// used entry, within [`STRANGER_DISPLACEMENT_QUOTA`]. `None` when the
+    /// table keeps no strangers at all, or when the class is full and the
+    /// quota spent.
     pub fn get_or_insert_stranger(&mut self, key: PublicKey, now_ms: u64) -> Option<&mut RxWindow> {
         if let Some(index) = self.registered.iter().position(|entry| entry.key == key) {
             let entry = &mut self.registered[index];
@@ -298,6 +314,16 @@ impl<const PEERS: usize, const STRANGERS: usize> RxWindows<PEERS, STRANGERS> {
             return Some(entry);
         }
         if !self.strangers.iter().any(|entry| entry.key == key) {
+            self.expire_strangers(now_ms);
+            if STRANGERS > 0 && self.strangers.is_full() {
+                if !self
+                    .displacements
+                    .allows(now_ms, STRANGER_DISPLACEMENT_WINDOW_MS)
+                {
+                    return None;
+                }
+                self.displacements.note(now_ms);
+            }
             self.insert_stranger(RxWindow::new(key, now_ms), now_ms);
         }
         let entry = self.strangers.iter_mut().find(|entry| entry.key == key)?;
@@ -369,6 +395,32 @@ mod tests {
         assert!(windows.get(&key(1)).is_some());
         assert!(windows.get(&key(2)).is_none());
         assert!(windows.get(&key(3)).is_some());
+    }
+
+    /// New signers displace strangers' windows only within the quota, and
+    /// past it get none; the quota slides with its window.
+    #[test]
+    fn new_signers_displace_strangers_only_within_the_quota() {
+        let mut windows = RxWindows::<1, 2>::new();
+        windows.get_or_insert_stranger(key(1), 0).unwrap();
+        windows.get_or_insert_stranger(key(2), 0).unwrap();
+        for byte in 0..STRANGER_DISPLACEMENT_QUOTA as u8 {
+            assert!(windows.get_or_insert_stranger(key(10 + byte), 1).is_some());
+        }
+        let held = |windows: &RxWindows<1, 2>| -> std::vec::Vec<PublicKey> {
+            windows.strangers().map(|entry| *entry.key()).collect()
+        };
+        let survivors = held(&windows);
+        assert!(windows.get_or_insert_stranger(key(99), 2).is_none());
+        assert_eq!(held(&windows), survivors);
+        // A window already held is still found.
+        assert!(windows.get_or_insert_stranger(survivors[0], 3).is_some());
+
+        assert!(
+            windows
+                .get_or_insert_stranger(key(99), STRANGER_DISPLACEMENT_WINDOW_MS + 1)
+                .is_some()
+        );
     }
 
     #[test]

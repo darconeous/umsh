@@ -6,9 +6,9 @@ use umsh_hal::{Clock, CounterStore};
 use umsh_sync::AsyncRefCell;
 
 use crate::{
-    AddPeerError, CapacityError, DEFAULT_ACKS, DEFAULT_CHANNEL_WINDOWS, DEFAULT_CHANNELS,
-    DEFAULT_DUP, DEFAULT_FRAME, DEFAULT_IDENTITIES, DEFAULT_PEERS, DEFAULT_ROUTE_HOLDS,
-    DEFAULT_RX_STRANGERS, DEFAULT_TX, Platform,
+    AddPeerError, CapacityError, DEFAULT_ACKS, DEFAULT_CHANNELS, DEFAULT_DUP, DEFAULT_FRAME,
+    DEFAULT_IDENTITIES, DEFAULT_PEERS, DEFAULT_ROUTE_HOLDS, DEFAULT_RX_STRANGERS, DEFAULT_TX,
+    Platform,
     coordinator::{CounterPersistenceError, LocalIdentityId, Mac, MacError, SendError},
     peers::{PeerHolder, PeerId},
     send::{SendOptions, SendReceipt},
@@ -30,12 +30,11 @@ pub struct MacHandle<
     const TX: usize = DEFAULT_TX,
     const FRAME: usize = DEFAULT_FRAME,
     const DUP: usize = DEFAULT_DUP,
-    const WINDOWS: usize = DEFAULT_CHANNEL_WINDOWS,
     const HOLDS: usize = DEFAULT_ROUTE_HOLDS,
     const RX_STRANGERS: usize = DEFAULT_RX_STRANGERS,
 > {
     mac: &'a AsyncRefCell<
-        Mac<P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP, WINDOWS, HOLDS, RX_STRANGERS>,
+        Mac<P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP, HOLDS, RX_STRANGERS>,
     >,
 }
 
@@ -49,24 +48,10 @@ impl<
     const TX: usize,
     const FRAME: usize,
     const DUP: usize,
-    const WINDOWS: usize,
     const HOLDS: usize,
     const RX_STRANGERS: usize,
 > Copy
-    for MacHandle<
-        'a,
-        P,
-        IDENTITIES,
-        PEERS,
-        CHANNELS,
-        ACKS,
-        TX,
-        FRAME,
-        DUP,
-        WINDOWS,
-        HOLDS,
-        RX_STRANGERS,
-    >
+    for MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP, HOLDS, RX_STRANGERS>
 {
 }
 
@@ -80,24 +65,10 @@ impl<
     const TX: usize,
     const FRAME: usize,
     const DUP: usize,
-    const WINDOWS: usize,
     const HOLDS: usize,
     const RX_STRANGERS: usize,
 > Clone
-    for MacHandle<
-        'a,
-        P,
-        IDENTITIES,
-        PEERS,
-        CHANNELS,
-        ACKS,
-        TX,
-        FRAME,
-        DUP,
-        WINDOWS,
-        HOLDS,
-        RX_STRANGERS,
-    >
+    for MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP, HOLDS, RX_STRANGERS>
 {
     fn clone(&self) -> Self {
         *self
@@ -114,29 +85,14 @@ impl<
     const TX: usize,
     const FRAME: usize,
     const DUP: usize,
-    const WINDOWS: usize,
     const HOLDS: usize,
     const RX_STRANGERS: usize,
->
-    MacHandle<
-        'a,
-        P,
-        IDENTITIES,
-        PEERS,
-        CHANNELS,
-        ACKS,
-        TX,
-        FRAME,
-        DUP,
-        WINDOWS,
-        HOLDS,
-        RX_STRANGERS,
-    >
+> MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP, HOLDS, RX_STRANGERS>
 {
     /// Creates a cloneable handle backed by shared coordinator state.
     pub fn new(
         mac: &'a AsyncRefCell<
-            Mac<P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP, WINDOWS, HOLDS, RX_STRANGERS>,
+            Mac<P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP, HOLDS, RX_STRANGERS>,
         >,
     ) -> Self {
         Self { mac }
