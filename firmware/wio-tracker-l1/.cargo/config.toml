@@ -14,4 +14,10 @@ runner = "probe-rs run --chip nRF52840_xxAA"
 
 rustflags = [
   "-C", "link-arg=-Tlink.x",
+  # Fold byte-identical functions: many generic instantiations compile to
+  # the same code. Rust gives function addresses no identity, and lld
+  # leaves read-only data alone without --ignore-data-address-equality,
+  # so statics stay distinct. `--icf=safe` folds nothing here: rustc
+  # emits no address-significance table for this target.
+  "-C", "link-arg=--icf=all",
 ]
