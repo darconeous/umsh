@@ -1744,7 +1744,8 @@ fn airtime_line(m: &'static Metrics, wait: u16) -> impl View<Rgb565, State> + us
 }
 
 /// The composer, or the line it folds to while you read.
-/// `tone` is the field's fill and ring while it is edited.
+/// `tone` is the field's fill while it is edited, and its ring while it is
+/// focused or edited.
 fn composer(
     m: &'static Metrics,
     chat: ChatId,
@@ -1794,10 +1795,8 @@ fn field_look(
     } else {
         (theme::FIELD, 1)
     };
-    let ring = if status.is_active() {
+    let ring = if status.is_active() || status.is_focused() {
         active_ring
-    } else if status.is_focused() {
-        theme::ACCENT
     } else {
         theme::MENU_LINE
     };
