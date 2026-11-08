@@ -100,6 +100,17 @@ pub trait ChatStore {
     /// Keeps `record` as the recent picks, or forgets them with `None`.
     fn keep_recent_picks(&mut self, record: Option<&[u8]>) -> Result<(), StoreError>;
 
+    /// The record the device node keeps here of its sessions with forward
+    /// secrecy: their public keys alone, so that a session lost to a
+    /// reboot is recognized when its peer goes on using it. Gone with
+    /// everything else on [`ChatStore::erase`].
+    fn forward_secrecy_records<'b>(
+        &self,
+        out: &'b mut [u8],
+    ) -> Result<Option<&'b [u8]>, StoreError>;
+    /// Keeps `record` as those records, or forgets them with `None`.
+    fn keep_forward_secrecy_records(&mut self, record: Option<&[u8]>) -> Result<(), StoreError>;
+
     /// Fails what each outbound message still awaited (see
     /// [`Delivery::interrupt`]), as a new session starts: no word on the
     /// last one's frames will be taken.

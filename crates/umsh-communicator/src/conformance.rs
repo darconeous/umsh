@@ -64,6 +64,7 @@ pub fn run<H: Harness>(harness: &mut H) {
     power_cuts(harness);
     device_lists(harness);
     recent_picks(harness);
+    forward_secrecy_records(harness);
     erase(harness);
 }
 
@@ -1457,6 +1458,31 @@ fn lost_edit<H: Harness>(harness: &mut H, step: CommitStep) {
             );
         }
     }
+}
+
+/// The device node's sessions with forward secrecy are kept beside the
+/// chats until replaced or forgotten, and erasing forgets them.
+pub fn forward_secrecy_records<H: Harness>(harness: &mut H) {
+    let mut store = harness.fresh();
+    let mut out = [0u8; 64];
+    assert_eq!(store.forward_secrecy_records(&mut out).unwrap(), None);
+    store.keep_forward_secrecy_records(Some(b"keys")).unwrap();
+    harness.power_on(&mut store);
+    assert_eq!(
+        store.forward_secrecy_records(&mut out).unwrap(),
+        Some(&b"keys"[..])
+    );
+    assert_eq!(
+        store.forward_secrecy_records(&mut [0u8; 2]),
+        Err(StoreError::BufferTooSmall)
+    );
+    store.keep_forward_secrecy_records(None).unwrap();
+    harness.power_on(&mut store);
+    assert_eq!(store.forward_secrecy_records(&mut out).unwrap(), None);
+    store.keep_forward_secrecy_records(Some(b"more")).unwrap();
+    store.erase().unwrap();
+    harness.power_on(&mut store);
+    assert_eq!(store.forward_secrecy_records(&mut out).unwrap(), None);
 }
 
 /// The recent picks are kept beside the chats until replaced or forgotten,

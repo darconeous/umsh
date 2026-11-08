@@ -13,7 +13,8 @@ use umsh::crypto::{CryptoEngine, NodeIdentity};
 use umsh::mac::test_support::{SimulatedNetwork, SimulatedRadio};
 use umsh::mac::{Mac, MacHandle, OperatingPolicy, RepeaterConfig};
 use umsh::node::{
-    Host, IdentityUpdate, LocalNode, NodeCapabilities, NodeIdentityPayload, NodeRole, PfsStatus,
+    Host, IdentityUpdate, LocalNode, NodeCapabilities, NodeIdentityPayload, NodeRole,
+    PfsSessionRecord, PfsStatus,
 };
 use umsh::tokio_support::{MemoryCounterStore, MemoryKeyValueStore, StdClock, TokioPlatform};
 use umsh_communicator::task::{self, Inbox};
@@ -392,12 +393,26 @@ async fn forward_secrecy_is_held_with_a_peer_who_prefers_it() {
             alice.node.set_forward_secrecy(peer, true);
             until_secrecy(&alice, &bob, true).await;
             until("the chat does not show the session", shown).await;
+            // Each board keeps the public half of the session, to know it
+            // again should a reboot lose the rest.
+            let kept =
+                |board: &Board| PfsSessionRecord::decode_all(&board.node.forward_secrecy_records());
+            until("the session was not kept", || {
+                kept(&alice).len() == 1 && kept(&bob).len() == 1
+            })
+            .await;
+            assert_eq!(kept(&alice)[0].peer, bob.key);
+            assert_eq!(kept(&bob)[0].peer, alice.key);
             let during = say("Meet at the ridge").await;
             assert!(secret(during));
 
             alice.node.set_forward_secrecy(peer, false);
             assert!(!shown(), "the chat shows the session ended at once");
             until_secrecy(&alice, &bob, false).await;
+            until("the ended session was still kept", || {
+                kept(&alice).is_empty() && kept(&bob).is_empty()
+            })
+            .await;
             let after = say("Almost there").await;
             assert!(!secret(after));
             assert!(!secret(before) && secret(during), "each keeps its own");

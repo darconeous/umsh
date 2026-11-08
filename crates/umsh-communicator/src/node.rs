@@ -108,6 +108,19 @@ impl<P: LocalPort, S: ChatStore> CommunicatorNode<P, S> {
         self.clock
     }
 
+    /// What the device node keeps here of its sessions with forward
+    /// secrecy, as [`umsh_node::PfsSessionRecord::encode_all`] wrote it.
+    pub fn forward_secrecy_records(&self) -> alloc::vec::Vec<u8> {
+        self.chats.borrow().forward_secrecy_records()
+    }
+
+    /// Keeps `records` as the device node's sessions with forward secrecy.
+    pub(crate) fn keep_forward_secrecy_records(&self, records: &[u8]) {
+        self.chats
+            .borrow_mut()
+            .keep_forward_secrecy_records(records);
+    }
+
     /// Sets this board's model id (`boards.json`), which a contact exchange
     /// shows the devices nearby.
     pub fn set_model(&self, model: u16) {

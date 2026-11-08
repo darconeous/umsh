@@ -34,6 +34,7 @@ const PEER_RECORD: u8 = 5;
 const CHANNEL: u8 = 6;
 const DEVICE_LISTS: u8 = 7;
 const RECENT_PICKS: u8 = 8;
+const FORWARD_SECRECY: u8 = 9;
 
 /// A reactor's reaction that is not one of the emotes, its cluster after.
 /// The emotes are their place in [`Reaction::ALL`].
@@ -74,6 +75,7 @@ pub(super) fn key(key: &RecordKey, out: &mut heapless::Vec<u8, KEY_MAX>) {
         }
         RecordKey::DeviceLists => put(&[DEVICE_LISTS]),
         RecordKey::RecentPicks => put(&[RECENT_PICKS]),
+        RecordKey::ForwardSecrecy => put(&[FORWARD_SECRECY]),
     }
 }
 
@@ -237,6 +239,12 @@ pub(super) fn record(disk: &Disk, key: &RecordKey, out: &mut Vec<u8>) -> bool {
             };
             out.bytes(picks);
         }
+        RecordKey::ForwardSecrecy => {
+            let Some(records) = &disk.forward_secrecy else {
+                return false;
+            };
+            out.bytes(records);
+        }
     }
     true
 }
@@ -258,6 +266,7 @@ fn restore_one(disk: &mut Disk, key: &[u8], record: &[u8]) -> Option<()> {
         }
         DEVICE_LISTS => disk.device_lists = Some(record.to_vec()),
         RECENT_PICKS => disk.recent_picks = Some(record.to_vec()),
+        FORWARD_SECRECY => disk.forward_secrecy = Some(record.to_vec()),
         CHECKPOINT => {
             let conversation = input.conversation()?;
             let checkpoint = StreamCheckpoint {

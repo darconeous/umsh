@@ -4,7 +4,7 @@ use std::{
     fmt,
     fs::{self, File, OpenOptions},
     io::{Read, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 
@@ -108,9 +108,63 @@ impl MobileCounterStore {
         failpoint: Option<CommitStage>,
     ) -> Result<(), CounterStoreError> {
         let destination = self.record_path(context)?;
+        self.write_atomically(&destination, &encode_record(boundary), failpoint)
+    }
+
+    /// The records `node` keeps of its sessions with forward secrecy, as
+    /// [`umsh_node::PfsSessionRecord::encode_all`] wrote them: empty when
+    /// it keeps none.
+    pub(crate) fn load_forward_secrecy_records(
+        &self,
+        node: &umsh_core::PublicKey,
+    ) -> Result<Vec<u8>, CounterStoreError> {
+        let _guard = self
+            .operation_lock
+            .lock()
+            .map_err(|_| CounterStoreError::IoFailure)?;
+        match fs::read(self.forward_secrecy_path(node)) {
+            Ok(records) => Ok(records),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+            Err(_) => Err(CounterStoreError::IoFailure),
+        }
+    }
+
+    /// Keep `records` as everything `node` holds of its sessions with
+    /// forward secrecy, as durably as a counter boundary.
+    pub(crate) fn keep_forward_secrecy_records(
+        &self,
+        node: &umsh_core::PublicKey,
+        records: &[u8],
+    ) -> Result<(), CounterStoreError> {
+        let _guard = self
+            .operation_lock
+            .lock()
+            .map_err(|_| CounterStoreError::IoFailure)?;
+        self.write_atomically(&self.forward_secrecy_path(node), records, None)
+    }
+
+    /// Beside the counter boundaries, named for the node: only public keys
+    /// go in it, never a session's private key.
+    fn forward_secrecy_path(&self, node: &umsh_core::PublicKey) -> PathBuf {
+        let mut filename = String::with_capacity(node.0.len() * 2 + 4);
+        for byte in node.0 {
+            use fmt::Write as _;
+            write!(&mut filename, "{byte:02x}").expect("writing to String cannot fail");
+        }
+        filename.push_str(".pfs");
+        self.root.join(filename)
+    }
+
+    /// Write `record` to a temporary file, synchronize it, rename it over
+    /// `destination`, then synchronize the directory.
+    fn write_atomically(
+        &self,
+        destination: &Path,
+        record: &[u8],
+        failpoint: Option<CommitStage>,
+    ) -> Result<(), CounterStoreError> {
         fs::create_dir_all(&self.root).map_err(|_| CounterStoreError::IoFailure)?;
         let temporary = destination.with_extension("pending");
-        let record = encode_record(boundary);
 
         let result = (|| {
             let mut file = OpenOptions::new()
@@ -119,14 +173,14 @@ impl MobileCounterStore {
                 .write(true)
                 .open(&temporary)
                 .map_err(|_| CounterStoreError::IoFailure)?;
-            file.write_all(&record)
+            file.write_all(record)
                 .map_err(|_| CounterStoreError::IoFailure)?;
             fail_at(failpoint, CommitStage::Written)?;
             file.sync_all().map_err(|_| CounterStoreError::IoFailure)?;
             fail_at(failpoint, CommitStage::FileSynced)?;
             drop(file);
 
-            fs::rename(&temporary, &destination).map_err(|_| CounterStoreError::IoFailure)?;
+            fs::rename(&temporary, destination).map_err(|_| CounterStoreError::IoFailure)?;
             fail_at(failpoint, CommitStage::Renamed)?;
             File::open(&self.root)
                 .and_then(|directory| directory.sync_all())
