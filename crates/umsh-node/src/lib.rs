@@ -1298,6 +1298,8 @@ mod tests {
             Some(9_990),
         ));
         assert_eq!(mac.state.borrow().retired.len(), 2);
+        // The pump is asked round for the first of them to end.
+        assert_eq!(node.next_deadline_ms(), Some(1_000 + 10_000));
 
         // Ten seconds on, the session whose end was known is over; the
         // other is held to the whole of what was left of it.

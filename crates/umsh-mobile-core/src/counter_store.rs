@@ -140,7 +140,19 @@ impl MobileCounterStore {
             .operation_lock
             .lock()
             .map_err(|_| CounterStoreError::IoFailure)?;
-        self.write_atomically(&self.forward_secrecy_path(node), records, None)
+        let path = self.forward_secrecy_path(node);
+        if !records.is_empty() {
+            return self.write_atomically(&path, records, None);
+        }
+        // Keeping nothing is having no file: nothing is written, and the
+        // directory is not made, for a node that never held a session.
+        match fs::remove_file(&path) {
+            Ok(()) => File::open(&self.root)
+                .and_then(|directory| directory.sync_all())
+                .map_err(|_| CounterStoreError::IoFailure),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(_) => Err(CounterStoreError::IoFailure),
+        }
     }
 
     /// Beside the counter boundaries, named for the node: only public keys

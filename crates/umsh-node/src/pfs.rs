@@ -539,13 +539,13 @@ impl PfsSessionManager {
 
     /// The earliest moment a session ends or a request is abandoned.
     pub(crate) fn next_deadline_ms(&self) -> Option<u64> {
-        self.sessions
-            .iter()
-            .map(|session| match session.state {
-                PfsState::Requested => session.expires_ms.min(session.request_deadline_ms),
-                PfsState::Active => session.expires_ms,
-            })
-            .min()
+        let sessions = self.sessions.iter().map(|session| match session.state {
+            PfsState::Requested => session.expires_ms.min(session.request_deadline_ms),
+            PfsState::Active => session.expires_ms,
+        });
+        // A retired session goes at the end of the lifetime it was held to.
+        let retired = self.retired.iter().map(|retired| retired.expires_ms);
+        sessions.chain(retired).min()
     }
 
     /// Drop any `Requested` sessions whose response deadline has passed and
@@ -751,7 +751,15 @@ pub(crate) async fn restore_records<M: MacBackend>(
         }
     }
     // Whatever was dropped is gone from the records too.
-    state.borrow_mut().pfs.records_changed = true;
+    let next = {
+        let mut state = state.borrow_mut();
+        state.pfs.records_changed = true;
+        state.pfs.next_deadline_ms()
+    };
+    // A retired session has to lapse on a quiet radio too.
+    if let Some(deadline_ms) = next {
+        mac.wake_by(deadline_ms).await;
+    }
 }
 
 /// Ask the peer of the retired session under `address` to end it, unless
