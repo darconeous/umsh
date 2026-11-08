@@ -1252,12 +1252,13 @@ fn queue_unicast_enqueues_frame_and_pending_ack() {
     );
 }
 
-/// A session identity's sends go with it: nothing it queued airs once it is
-/// removed, under keys about to be erased or into a slot a later identity
-/// takes. Other identities' frames stay queued.
+/// A removed session identity's queued frames still air, once each, as
+/// frames no identity owns: a parting word goes, and a later identity
+/// given the slot, whose receipts start over, never hears of them. Other
+/// identities' frames are untouched.
 #[cfg(feature = "software-crypto")]
 #[test]
-fn removing_an_ephemeral_identity_drops_its_queued_frames() {
+fn removing_an_ephemeral_identity_lets_go_of_its_queued_frames() {
     let mut mac = make_mac();
     let parent_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let ephemeral = umsh_crypto::software::SoftwareIdentity::from_secret_bytes(&[0x55; 32]);
@@ -1281,11 +1282,72 @@ fn removing_an_ephemeral_identity_drops_its_queued_frames() {
 
     assert!(mac.remove_ephemeral(ephemeral_id));
 
-    assert_eq!(mac.tx_queue().len(), 1);
+    assert_eq!(mac.tx_queue().len(), 2);
     assert!(
         !mac.tx_queue()
             .contains_matching(|entry| entry.identity_id == Some(ephemeral_id))
     );
+    assert!(mac.tx_queue().contains_matching(|entry| {
+        entry.identity_id.is_none() && entry.receipt.is_none() && entry.frame_counter.is_none()
+    }));
+    assert!(
+        mac.tx_queue().contains_matching(
+            |entry| entry.identity_id == Some(parent_id) && entry.receipt.is_some()
+        )
+    );
+}
+
+/// Receipts are numbered per identity, so a session identity's first send
+/// shares its receipt with one of its parent's. Each still starts its own
+/// wait for an acknowledgment when it airs: neither is left queued, to be
+/// reclaimed as lost and failed.
+#[cfg(feature = "software-crypto")]
+#[test]
+fn sends_sharing_a_receipt_across_identities_each_await_their_ack() {
+    let mut mac = make_mac();
+    let parent_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let ephemeral = umsh_crypto::software::SoftwareIdentity::from_secret_bytes(&[0x55; 32]);
+    let ephemeral_id = mac.register_ephemeral(parent_id, ephemeral).unwrap();
+    let peer_key = test_pubkey(0xAB);
+    let peer_id = mac.add_peer(peer_key).unwrap();
+    let keys = PairwiseKeys {
+        k_enc: [1; 32],
+        k_mic: [2; 32],
+    };
+    mac.install_pairwise_keys(parent_id, peer_id, keys.clone())
+        .unwrap();
+    mac.install_pairwise_keys(ephemeral_id, peer_id, keys)
+        .unwrap();
+    let options = SendOptions::default().with_ack_requested(true).no_flood();
+    let parent_receipt = mac
+        .queue_unicast(parent_id, &peer_key, b"long-term", &options)
+        .unwrap()
+        .unwrap();
+    let session_receipt = mac
+        .queue_unicast(ephemeral_id, &peer_key, b"session", &options)
+        .unwrap()
+        .unwrap();
+    assert_eq!(parent_receipt, session_receipt);
+
+    let t_frame = u64::from(mac.radio_mut().t_frame_ms());
+    block_on(mac.transmit_next(&mut |_, _| {})).unwrap();
+    mac.clock().advance_ms(t_frame + 1);
+    block_on(mac.transmit_next(&mut |_, _| {})).unwrap();
+    assert_eq!(mac.radio().transmitted.len(), 2);
+
+    for id in [parent_id, ephemeral_id] {
+        let state = mac
+            .identity(id)
+            .unwrap()
+            .pending_ack(&parent_receipt)
+            .map(|pending| pending.state);
+        assert_eq!(state, Some(AckState::AwaitingAck), "{id:?}");
+    }
+    let mut abandoned = false;
+    mac.service_pending_ack_timeouts(|_, event| {
+        abandoned |= matches!(event, crate::MacEventRef::TxAbandoned { .. });
+    });
+    assert!(!abandoned);
 }
 
 /// A host that outlives its MAC can put back a route it learned through

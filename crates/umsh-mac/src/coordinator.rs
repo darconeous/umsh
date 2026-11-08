@@ -1809,10 +1809,11 @@ impl<
     #[cfg(feature = "software-crypto")]
     /// Remove an ephemeral identity slot if one exists at `id`.
     ///
-    /// Its sends go with it, and no event reports them: frames still queued
-    /// are dropped rather than aired under keys about to be erased, and a
-    /// later identity given the slot, whose receipts start over, must not
-    /// hear of them. The owner finishes their tickets itself.
+    /// Its sends are no longer tracked, and no event reports them: a frame
+    /// still queued airs once as it stands, owned by no identity, so a
+    /// parting word the owner queued last still goes, and a later identity
+    /// given the slot, whose receipts start over, never hears of it. The
+    /// owner finishes their tickets itself.
     pub fn remove_ephemeral(&mut self, id: LocalIdentityId) -> bool {
         if let Some(slot) = self.identities.get_mut(id.0 as usize) {
             let should_remove = slot
@@ -1822,8 +1823,13 @@ impl<
             if should_remove {
                 *slot = None;
                 self.held_frames.retain(|held| held.local_id != id);
-                self.tx_queue
-                    .remove_all_matching(|entry| entry.identity_id == Some(id));
+                for entry in self.tx_queue.iter_mut() {
+                    if entry.identity_id == Some(id) {
+                        entry.identity_id = None;
+                        entry.receipt = None;
+                        entry.frame_counter = None;
+                    }
+                }
                 if self
                     .post_tx_listen
                     .as_ref()
@@ -3115,11 +3121,9 @@ impl<
                 },
             );
         }
-        if let Some(receipt) = receipt {
-            self.note_transmitted_tracked(receipt, queued.frame.as_slice());
-            if let Some(identity_id) = identity_id
-                && Self::frame_solicits_repeat(queued.frame.as_slice())
-            {
+        if let (Some(identity_id), Some(receipt)) = (identity_id, receipt) {
+            self.note_transmitted_tracked(identity_id, receipt, queued.frame.as_slice());
+            if Self::frame_solicits_repeat(queued.frame.as_slice()) {
                 let now_ms = self.clock.now_ms();
                 self.echo_watches
                     .arm(identity_id, receipt, queued.frame.as_slice(), now_ms);
@@ -8822,8 +8826,16 @@ impl<
         }
     }
 
-    /// Start the completion timers for a tracked send that just went on the air.
-    fn note_transmitted_tracked(&mut self, receipt: SendReceipt, frame: &[u8]) {
+    /// Start the completion timers for a tracked send that just went on the
+    /// air. Receipts are numbered per identity, so the send is found by
+    /// both: a session identity's receipts restart where its parent's
+    /// already run.
+    fn note_transmitted_tracked(
+        &mut self,
+        identity_id: LocalIdentityId,
+        receipt: SendReceipt,
+        frame: &[u8],
+    ) {
         let sent_ms = self.clock.now_ms();
         let direct_ack_deadline_ms = sent_ms.saturating_add(self.direct_ack_timeout_ms());
         let forwarded_ack_deadline_ms = sent_ms
@@ -8833,7 +8845,10 @@ impl<
         let confirm_key = Self::confirmation_key(frame);
 
         let post_tx_listen = {
-            let Some((identity_id, pending)) = self.pending_ack_mut(receipt) else {
+            let Some(pending) = self
+                .identity_mut(identity_id)
+                .and_then(|slot| slot.pending_ack_mut(&receipt))
+            else {
                 return;
             };
 
@@ -9076,21 +9091,6 @@ impl<
     fn forward_retry_period_ms(&self) -> u64 {
         u64::from(self.forward_retry_backoff_cap_ms())
             .saturating_add(self.forward_confirm_timeout_ms())
-    }
-
-    fn pending_ack_mut(
-        &mut self,
-        receipt: SendReceipt,
-    ) -> Option<(LocalIdentityId, &mut PendingAck<FRAME>)> {
-        for (index, slot) in self.identities.iter_mut().enumerate() {
-            let Some(slot) = slot.as_mut() else {
-                continue;
-            };
-            if let Some(pending) = slot.pending_ack_mut(&receipt) {
-                return Some((LocalIdentityId(index as u8), pending));
-            }
-        }
-        None
     }
 
     pub(crate) fn confirmation_key(frame: &[u8]) -> Option<DupCacheKey> {
