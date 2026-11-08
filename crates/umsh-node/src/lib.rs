@@ -2253,7 +2253,7 @@ mod tests {
     /// be flood routed and the reply keeps its normal flood budget.
     #[cfg(feature = "software-crypto")]
     #[test]
-    fn responder_answers_flood_routed_hint_filtered_solicitation() {
+    fn responder_answers_flood_routed_narrowed_by_hint_solicitation() {
         let mac = FakeMac::new(vec![[0x12; 32]]);
         let node = responder_node(&mac);
         let our_key = PublicKey([0x11; 32]);
@@ -2399,7 +2399,7 @@ mod tests {
             panic!("an identity request");
         };
         let filters = crate::mac_command::IdentityRequestFilters::new(body);
-        assert!(filters.hint_filtered());
+        assert!(filters.narrowed_by_hint());
         assert!(filters.nonce().unwrap().is_some());
         assert!(options.full_source);
         assert_eq!(options.flood_hops, None);
@@ -2506,6 +2506,120 @@ mod tests {
             block_on_ready(node.send_identity_response(plan));
         }
         assert_eq!(mac.take_unicasts().len(), 2);
+    }
+
+    /// Two requesters whose keys share a hint are still two requesters. A
+    /// hint is cheap to grind a key to match, and suppression keyed on one
+    /// would let a stranger silence the answers owed to the node it copied.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn responder_does_not_merge_requesters_that_share_a_hint() {
+        let mac = FakeMac::new(Vec::new());
+        let node = responder_node(&mac);
+        let our_key = PublicKey([0x11; 32]);
+        node.enable_identity_responder_default(test_profile(our_key));
+
+        let options = crate::mac_command::IdentityRequestBuilder::new()
+            .nonce(0x0000_BEEF)
+            .unwrap()
+            .filter_hint(&our_key.hint())
+            .unwrap()
+            .build();
+        let genuine = PublicKey([0x41; 32]);
+        let mut grinder = [0x99; 32];
+        grinder[..3].copy_from_slice(&genuine.0[..3]);
+        let grinder = PublicKey(grinder);
+        assert_eq!(genuine.hint(), grinder.hint());
+
+        for requester in [grinder, genuine] {
+            let packet = test_broadcast_packet(requester, None, None);
+            assert!(
+                node.evaluate_identity_request(&packet, requester, &options, 1_000)
+                    .is_some(),
+                "each key is owed its own answer"
+            );
+        }
+    }
+
+    /// Several hint filters select their union, one node per filter, so the
+    /// request is held to the rules for one that no hint narrows: answered
+    /// only unrepeated, after the scatter delay, and not flooded back.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn responder_treats_a_request_naming_several_hints_as_unnarrowed() {
+        let mac = FakeMac::new(Vec::new());
+        let node = responder_node(&mac);
+        let our_key = PublicKey([0x11; 32]);
+        let requester = PublicKey([0x41; 32]);
+        node.enable_identity_responder_default(test_profile(our_key));
+
+        let options = crate::mac_command::IdentityRequestBuilder::new()
+            .filter_hint(&our_key.hint())
+            .unwrap()
+            .filter_hint(&umsh_core::NodeHint([0x22, 0x33, 0x44]))
+            .unwrap()
+            .build();
+
+        let direct = test_broadcast_packet(requester, None, None);
+        let plan = node
+            .evaluate_identity_request(&direct, requester, &options, 0)
+            .expect("the request still selects this node");
+        assert!(plan.delayed, "a union of hints is a crowd, so it is held");
+        assert!(plan.no_flood, "and its reply stays in the neighborhood");
+
+        let repeated = test_broadcast_packet(PublicKey([0x42; 32]), Some(0x21), None);
+        assert!(
+            node.evaluate_identity_request(&repeated, PublicKey([0x42; 32]), &options, 0)
+                .is_none(),
+            "a flooded request naming several nodes is not answered"
+        );
+    }
+
+    /// A broadcast request authenticates nobody, and its reply goes to
+    /// whoever its source names. Replies to such requesters come out of a
+    /// small bucket; an authenticated requester is not charged.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn responder_rate_limits_replies_to_unauthenticated_requesters() {
+        let mac = FakeMac::new(Vec::new());
+        let node = responder_node(&mac);
+        let our_key = PublicKey([0x11; 32]);
+        node.enable_identity_responder_default(test_profile(our_key));
+
+        let options = crate::mac_command::IdentityRequestBuilder::new()
+            .nonce(0x0000_BEEF)
+            .unwrap()
+            .filter_hint(&our_key.hint())
+            .unwrap()
+            .build();
+        let ask = |seed: u8, now_ms: u64| {
+            let requester = PublicKey([seed; 32]);
+            let packet = test_broadcast_packet(requester, None, None);
+            node.evaluate_identity_request(&packet, requester, &options, now_ms)
+                .is_some()
+        };
+
+        // A flood of requests, each from a different claimed source.
+        let answered = (0..32u8).filter(|seed| ask(0x40 + seed, 1_000)).count();
+        assert_eq!(answered, 4, "the burst, and no more");
+        assert_eq!(node.identity_requests_rate_limited(), 28);
+
+        // A requester whose frame authenticated it is answered regardless.
+        let known = PublicKey([0x77; 32]);
+        let unicast = test_unicast_packet(known, &[]);
+        assert!(
+            node.evaluate_identity_request(&unicast, known, &options, 1_000)
+                .is_some()
+        );
+
+        // The bucket earns replies back over time, not all at once.
+        assert!(ask(0x80, 16_000), "one reply earned after 15 s");
+        assert!(!ask(0x81, 16_000));
+        assert_eq!(node.identity_requests_rate_limited(), 29);
+
+        // Re-enabling with a new profile keeps the budget it had spent.
+        node.enable_identity_responder_default(test_profile(our_key));
+        assert!(!ask(0x82, 16_000));
     }
 
     #[cfg(feature = "software-crypto")]
@@ -2795,6 +2909,7 @@ mod tests {
             from_key: PublicKey([0x41; 32]),
             from_hint: None,
             source_authenticated,
+            sender_authenticated: source_authenticated,
             has_full_source: false,
             channel: None,
             family: crate::PacketFamily::Unicast,

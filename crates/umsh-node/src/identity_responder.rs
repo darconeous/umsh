@@ -61,12 +61,88 @@ const SOLICITATION_SUPPRESSION_MS: u64 = RESPONSE_MAX_DELAY_MS as u64 * 2;
 /// rather than a new failure.
 const ANSWERED_CAPACITY: usize = 8;
 
+/// How many replies this node may send at once to requesters whose frames
+/// did not authenticate them.
+///
+/// An unauthenticated request's source address is only a claim, and the
+/// reply goes to whoever it names: without a bound, a stream of requests
+/// naming someone else turns this node into a source of unicast traffic
+/// aimed at them. A neighborhood asking who is around asks a few times,
+/// not continuously, so a small burst covers it.
+const UNAUTHENTICATED_REPLY_BURST: u8 = 4;
+
+/// How long the bucket takes to earn back one reply to an unauthenticated
+/// requester once spent: a sustained four a minute.
+const UNAUTHENTICATED_REPLY_REFILL_MS: u64 = 15_000;
+
+/// A token bucket over replies to requesters that did not authenticate.
+struct ReplyBucket {
+    tokens: u8,
+    /// When the bucket last earned a token, or was last found full.
+    refilled_at_ms: u64,
+}
+
+impl ReplyBucket {
+    const fn full() -> Self {
+        Self {
+            tokens: UNAUTHENTICATED_REPLY_BURST,
+            refilled_at_ms: 0,
+        }
+    }
+
+    /// Spend one reply at `now_ms`, or report that none is left.
+    ///
+    /// A clock that has gone backwards earns nothing until it passes the
+    /// last refill again, which errs toward fewer replies.
+    fn take(&mut self, now_ms: u64) -> bool {
+        if self.tokens >= UNAUTHENTICATED_REPLY_BURST {
+            // A full bucket earns nothing, so earning starts at this spend.
+            self.refilled_at_ms = now_ms;
+        } else {
+            let earned =
+                now_ms.saturating_sub(self.refilled_at_ms) / UNAUTHENTICATED_REPLY_REFILL_MS;
+            if earned > 0 {
+                let room = u64::from(UNAUTHENTICATED_REPLY_BURST - self.tokens);
+                if earned >= room {
+                    self.tokens = UNAUTHENTICATED_REPLY_BURST;
+                    self.refilled_at_ms = now_ms;
+                } else {
+                    // `earned` is below the burst, so it fits a `u8`.
+                    self.tokens += earned as u8;
+                    self.refilled_at_ms += earned * UNAUTHENTICATED_REPLY_REFILL_MS;
+                }
+            }
+        }
+        let Some(left) = self.tokens.checked_sub(1) else {
+            return false;
+        };
+        self.tokens = left;
+        true
+    }
+}
+
+/// How much of a requester's key an answered solicitation remembers it by.
+///
+/// A hint's three bytes are cheap to grind a key to match, and an entry
+/// keyed on one would let a stranger who did so suppress the real
+/// requester's answers. Eight bytes cannot be ground, and fit the entry's
+/// existing padding where the whole key would not.
+const REQUESTER_KEY_PREFIX_LEN: usize = 8;
+
+/// A requester, as an answered solicitation remembers it.
+type RequesterId = [u8; REQUESTER_KEY_PREFIX_LEN];
+
+fn requester_id(key: &PublicKey) -> RequesterId {
+    let mut id = [0u8; REQUESTER_KEY_PREFIX_LEN];
+    id.copy_from_slice(&key.0[..REQUESTER_KEY_PREFIX_LEN]);
+    id
+}
+
 /// One solicitation this node has already answered.
 struct AnsweredSolicitation {
-    /// The requester, by hint rather than full key: enough to tell two
-    /// askers apart, and a collision costs one suppressed reply rather than
-    /// anything worse.
-    requester: NodeHint,
+    /// The requester, by the leading [`REQUESTER_KEY_PREFIX_LEN`] bytes of
+    /// its key.
+    requester: RequesterId,
     /// The request's `NONCE`, when it carried one. This is what makes the
     /// entry name a *solicitation* and not merely a peer—a requester that
     /// wants another answer inside the window asks with a fresh nonce, which
@@ -200,6 +276,10 @@ pub struct IdentityRequestContext<'a> {
     pub from_hint: Option<NodeHint>,
     /// Whether the request frame was authenticated (pairwise or channel MIC).
     pub source_authenticated: bool,
+    /// Whether the request frame authenticated its sender as the key it
+    /// names: a verified frame signature, or a unicast or blind-unicast MIC.
+    /// A channel MIC alone does not, since any member can claim any source.
+    pub sender_authenticated: bool,
     /// Whether the request carried the sender's full 32-byte key.
     pub has_full_source: bool,
     /// The channel the request arrived on, if any (`None` for plain
@@ -278,6 +358,10 @@ pub(crate) struct IdentityResponder {
     /// Insertion-ordered, so the oldest entry is always at the front and
     /// expiry prunes from that end without a scan.
     answered: Deque<AnsweredSolicitation, ANSWERED_CAPACITY>,
+    /// Replies left for requesters that did not authenticate.
+    unauthenticated_replies: ReplyBucket,
+    /// Requests left unanswered because that bucket was empty.
+    rate_limited: u32,
 }
 
 impl IdentityResponder {
@@ -286,7 +370,15 @@ impl IdentityResponder {
             profile,
             policy,
             answered: Deque::new(),
+            unauthenticated_replies: ReplyBucket::full(),
+            rate_limited: 0,
         }
+    }
+
+    /// How many requests went unanswered because their sender did not
+    /// authenticate and the replies allowed such senders were spent.
+    pub(crate) fn rate_limited(&self) -> u32 {
+        self.rate_limited
     }
 }
 
@@ -350,9 +442,10 @@ impl IdentityResponder {
     ///
     /// Returns `Some(plan)` when the node should answer: the request's filters
     /// select this node, the solicitation has not already been answered,
-    /// **and** the policy returns `Respond`. Returns `None` otherwise (not
-    /// selected, already answered, policy said `Ignore`, or the reply could
-    /// not be encoded).
+    /// the policy returns `Respond`, **and**, for a sender the request did
+    /// not authenticate, a reply is left in the bucket. Returns `None`
+    /// otherwise (not selected, already answered, policy said `Ignore`, rate
+    /// limited, or the reply could not be encoded).
     pub(crate) fn evaluate(
         &mut self,
         ctx: &IdentityRequestContext<'_>,
@@ -373,7 +466,7 @@ impl IdentityResponder {
         // nothing below the node layer can recognize a second copy of one;
         // the echoed nonce is the only thing that names the question.
         let nonce = ctx.filters.nonce().ok().flatten();
-        let requester = ctx.from_key.hint();
+        let requester = requester_id(&ctx.from_key);
         self.expire_answered(now_ms);
         if self.already_answered(&requester, nonce) {
             return None;
@@ -390,6 +483,13 @@ impl IdentityResponder {
         let mut buf = [0u8; 192];
         buf[0] = PayloadType::NodeIdentity as u8;
         let len = 1 + payload.encode_fitting(&mut buf[1..]).ok()?;
+        // Rate gate: a sender the request did not authenticate may be anyone
+        // the requester chose to name, and the reply goes to them. Checked
+        // last, so only a reply that would otherwise go out spends a token.
+        if !ctx.sender_authenticated && !self.unauthenticated_replies.take(now_ms) {
+            self.rate_limited = self.rate_limited.saturating_add(1);
+            return None;
+        }
         let solicitation = matches!(
             ctx.family,
             crate::PacketFamily::Broadcast | crate::PacketFamily::Multicast
@@ -408,7 +508,7 @@ impl IdentityResponder {
             to: ctx.from_key,
             full_source,
             delayed: solicitation && !ctx.filters.hint_names_one_node(),
-            no_flood: solicitation && !ctx.filters.hint_filtered(),
+            no_flood: solicitation && !ctx.filters.narrowed_by_hint(),
             route,
             // A response mirrors the trace options its request carried,
             // whatever form the response takes; the MAC does the same for a
@@ -422,7 +522,7 @@ impl IdentityResponder {
         })
     }
 
-    fn already_answered(&self, requester: &NodeHint, nonce: Option<u32>) -> bool {
+    fn already_answered(&self, requester: &RequesterId, nonce: Option<u32>) -> bool {
         self.answered
             .iter()
             .any(|entry| entry.requester == *requester && entry.nonce == nonce)
@@ -443,7 +543,7 @@ impl IdentityResponder {
         }
     }
 
-    fn record_answered(&mut self, requester: NodeHint, nonce: Option<u32>, now_ms: u64) {
+    fn record_answered(&mut self, requester: RequesterId, nonce: Option<u32>, now_ms: u64) {
         if self.answered.is_full() {
             let _ = self.answered.pop_front();
         }

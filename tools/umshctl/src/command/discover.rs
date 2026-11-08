@@ -510,7 +510,7 @@ mod tests {
         // the far end, so an ask that names nobody asks for no
         // capabilities in particular—which every node has.
         let filters = IdentityRequestFilters::new(&options);
-        assert!(!filters.hint_filtered());
+        assert!(!filters.narrowed_by_hint());
         for role in [NodeRole::Repeater, NodeRole::Chat, NodeRole::Sensor] {
             assert!(
                 filters
@@ -537,7 +537,7 @@ mod tests {
         let (nonce, options) = filters_of(&frame);
         assert_eq!(nonce, Some(7));
         let filters = IdentityRequestFilters::new(&options);
-        assert!(filters.hint_filtered());
+        assert!(filters.narrowed_by_hint());
 
         let matching = NodeHint([0xa1, 0x22, 0x33]);
         let elsewhere = NodeHint([0xb0, 0x22, 0x33]);

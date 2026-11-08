@@ -49,6 +49,11 @@ Because a broadcast Identity Request can solicit many replies:
 - A node MAY decline to respond to a request from an unknown source.
 - A repeater MAY decline to forward a broadcast Identity Request, particularly
   when its filters are broad enough to solicit a large number of replies.
+- A node SHOULD bound the rate at which it answers requests whose frame does
+  not authenticate the sender—a verified [frame
+  signature](security.md#frame-signatures), or a unicast or blind unicast MIC.
+  Such a request's source address is only a claim, and the reply goes to
+  whatever node it names. A request over the bound goes unanswered.
 
 In order to manage the potential flood of responses, the following rules MUST be applied for broadcast (always) and (by default) multicast:
 
@@ -57,17 +62,19 @@ In order to manage the potential flood of responses, the following rules MUST be
   0.5 to 30 seconds, so that the selected nodes do not all answer at once. A
   delayed response that then fails channel-activity assessment follows the
   responder's normal bounded CCA backoff-and-retry before being dropped.
-  A request every [FILTER_NODE_HINT](#identity-request-options) of which is 2 or
-  3 bytes is exempt and MUST be answered without the delay: such a request names
-  a node rather than a share of the mesh, so there is no crowd of replies to
-  spread and the hold would only make the answer late. One byte names a 256th of
-  what the request reaches, so it is not exempt; filters of the same type combine
-  as OR, and the shortest one decides.
+  A request carrying exactly one [FILTER_NODE_HINT](#identity-request-options),
+  of 2 or 3 bytes, is exempt and MUST be answered without the delay: such a
+  request names a node rather than a share of the mesh, so there is no crowd of
+  replies to spread and the hold would only make the answer late. One byte names
+  a 256th of what the request reaches, so it is not exempt. Nor is a request
+  carrying more than one hint filter: filters of the same type combine as OR,
+  and each value can be chosen to match a node the requester has heard, so the
+  request names as many nodes as it has filters.
 - One solicitation is answered at most once. A request reaches a node once per
   path it travels, and a plain broadcast carries no frame counter for a lower
   layer to recognize the repeat by; the [NONCE](#identity-request-options) is
   what names the solicitation. A responder suppresses a request matching one it
-  has already answered—same sender, same NONCE—for at least as long as it
+  has already answered—same sender key, same NONCE—for at least as long as it
   may hold the reply. A request carrying no NONCE cannot be distinguished from a
   repeat of itself; a requester that wants a further answer inside that window
   asks with a fresh NONCE.
@@ -77,8 +84,9 @@ request carrying one solicits a single reply however far it travels. A partial
 hint names a small set rather than one node, and the shorter it is the larger
 that set: a requester sends the longest hint it holds. A request with no hint
 filter at all selects by role or capability, and every node it reaches may
-answer; such a request is therefore confined to the requester's own
-neighborhood:
+answer. A request with several hint filters names one node per filter, and a
+flood of it would draw a flooded reply from each. Both are therefore confined
+to the requester's own neighborhood:
 
 - The FHOPS byte must either be absent or set to 0x00. A request that is flood
   routed—FHOPS present with either nibble nonzero—MUST NOT be answered.

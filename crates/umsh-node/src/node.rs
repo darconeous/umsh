@@ -792,8 +792,30 @@ impl<M: MacBackend> LocalNode<M> {
     where
         P: FnMut(&IdentityRequestContext<'_>) -> RespondDecision + 'static,
     {
-        self.state.borrow_mut().identity_responder =
-            Some(IdentityResponder::new(profile, Box::new(policy)));
+        // A device re-enables on every configuration change. What has been
+        // answered, and the reply budget left, describe the requests heard,
+        // not the profile, so a responder already installed keeps them.
+        let mut state = self.state.borrow_mut();
+        match state.identity_responder.as_mut() {
+            Some(responder) => {
+                responder.profile = profile;
+                responder.policy = Box::new(policy);
+            }
+            None => {
+                state.identity_responder = Some(IdentityResponder::new(profile, Box::new(policy)));
+            }
+        }
+    }
+
+    /// How many Identity Requests went unanswered because their frame did
+    /// not authenticate the sender and the replies allowed such senders
+    /// were spent. Zero while no responder is enabled.
+    pub fn identity_requests_rate_limited(&self) -> u32 {
+        self.state
+            .borrow()
+            .identity_responder
+            .as_ref()
+            .map_or(0, IdentityResponder::rate_limited)
     }
 
     /// Enable the Identity Request responder with the
@@ -848,11 +870,13 @@ impl<M: MacBackend> LocalNode<M> {
         // constraint (a Route option is fine only when empty)—a steered
         // request is still on its way to the neighborhood it meant to ask.
         //
-        // A request that no FILTER_NODE_HINT narrows may additionally be
-        // answered by every node it reaches, so it must also arrive
+        // A request that no single FILTER_NODE_HINT narrows may additionally
+        // be answered by every node it reaches, so it must also arrive
         // unrepeated, FHOPS absent or fully zero; flood routing such a request
-        // multiplies replies across the mesh. A hint-filtered request names
-        // one answering node and so may travel as far as it likes.
+        // multiplies replies across the mesh. A request with one hint filter
+        // names one answering node and so may travel as far as it likes; one
+        // with several names one node per filter, and is held to the same
+        // rule as one with none.
         let filters = crate::mac_command::IdentityRequestFilters::new(options);
         if matches!(
             packet.packet_family(),
@@ -861,7 +885,7 @@ impl<M: MacBackend> LocalNode<M> {
             if packet.source_route().is_some_and(|route| !route.is_empty()) {
                 return None;
             }
-            if !filters.hint_filtered() && packet.flood_hops().is_some_and(|hops| hops.0 != 0) {
+            if !filters.narrowed_by_hint() && packet.flood_hops().is_some_and(|hops| hops.0 != 0) {
                 return None;
             }
         }
@@ -869,6 +893,7 @@ impl<M: MacBackend> LocalNode<M> {
             from_key: from,
             from_hint: packet.from_hint(),
             source_authenticated: packet.source_authenticated(),
+            sender_authenticated: packet.sender_authenticated(),
             has_full_source: packet.has_full_source(),
             channel: packet.channel().map(|c| *c.key),
             family: packet.packet_family(),
