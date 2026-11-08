@@ -4293,7 +4293,19 @@ fn receive_one_reacks_duplicate_unicast_within_eight_counter_window() {
         true,
         10,
     );
-    assert!(!block_on(mac.receive_one(|_, _| {})).unwrap());
+    let late = last_queued_received(&mac);
+    // Nine behind and no longer remembered: never acknowledged, but held
+    // while its sender is asked to vouch for it.
+    let mut delivered = false;
+    assert!(
+        block_on(mac.receive_one(|_, event| {
+            delivered |= matches!(event, MacEventRef::Received(_));
+        }))
+        .unwrap()
+    );
+    assert!(!delivered);
+    let (_, named) = pop_verify_frame(&mut mac, &keys);
+    assert_eq!(named, ack_mic_of(&late));
     assert!(mac.tx_queue().is_empty());
 }
 
@@ -4772,8 +4784,19 @@ fn resync_commands_never_prompt_a_probe() {
     assert!(queued.is_empty());
 }
 
+/// Whether `frame`, sealed under `keys`, is an Echo Request.
+fn is_echo_request(frame: &[u8], keys: &PairwiseKeys) -> bool {
+    matches!(
+        decrypt_unicast_payload(frame, keys).as_slice(),
+        [payload_type, 4, _, _, _, _] if *payload_type == PayloadType::MacCommand as u8
+    )
+}
+
+/// A counter just past the backward window is as much a disagreement as
+/// one far outside it: held and verified when it asks for an ack, probed
+/// with an Echo Request when not, on blind unicast as on unicast.
 #[test]
-fn near_gap_frame_is_dropped_without_a_probe() {
+fn a_near_gap_is_resynchronized_like_a_far_one() {
     let (mut mac, _local_id, remote, peer_id, keys, dst_hint) = desynchronized_peer();
     mac.radio_mut().queue_received_unicast_with_counter(
         &remote,
@@ -4783,10 +4806,26 @@ fn near_gap_frame_is_dropped_without_a_probe() {
         true,
         10_000 - 100,
     );
+    let held = last_queued_received(&mac);
+    let _ = block_on(mac.receive_one(|_, _| {})).unwrap();
+    let (_, named) = pop_verify_frame(&mut mac, &keys);
+    assert_eq!(named, ack_mic_of(&held));
+
+    mac.radio_mut().queue_received_unicast_with_counter(
+        &remote,
+        &keys,
+        &dst_hint,
+        b"late, unacked",
+        false,
+        10_000 - 50,
+    );
     let (delivered, queued) = receive_and_collect(&mut mac);
     assert!(delivered.is_empty());
-    assert!(queued.is_empty(), "reordering is dropped, not probed");
+    assert_eq!(queued.len(), 1);
+    assert!(is_echo_request(&queued[0], &keys));
 
+    // Past the hold's retry interval, so the blind frame may take its place.
+    mac.clock().advance_ms(5_000);
     let channel_key = ChannelKey([0x5A; 32]);
     let channel_keys = mac.crypto().derive_channel_keys(&channel_key);
     mac.add_channel(channel_key).unwrap();
@@ -4806,10 +4845,156 @@ fn near_gap_frame_is_dropped_without_a_probe() {
     );
     let (delivered, queued) = receive_and_collect(&mut mac);
     assert!(delivered.is_empty());
-    assert!(
-        queued.is_empty(),
-        "blind unicast follows the same threshold"
+    assert_eq!(queued.len(), 1, "a Verify Frame over the channel");
+    let payload = decrypt_blind_payload(&queued[0], &keys, &channel_keys);
+    assert!(matches!(
+        resync_command_of(payload.as_slice()),
+        Some((12, _))
+    ));
+}
+
+/// A late copy of a frame the window still remembers is only late: it is
+/// dropped without a probe, however far behind.
+#[test]
+fn a_remembered_late_copy_is_dropped_without_a_probe() {
+    let (mut mac, _local_id, remote, _peer_id, keys, dst_hint) = desynchronized_peer();
+    mac.radio_mut()
+        .queue_received_unicast_with_counter(&remote, &keys, &dst_hint, b"first", true, 10_001);
+    let first = last_queued_received(&mac);
+    let (delivered, _) = receive_and_collect(&mut mac);
+    assert_eq!(delivered, [b"first".to_vec()]);
+    mac.radio_mut()
+        .queue_received_unicast_with_counter(&remote, &keys, &dst_hint, b"later", false, 10_100);
+    let (delivered, _) = receive_and_collect(&mut mac);
+    assert_eq!(delivered, [b"later".to_vec()]);
+
+    mac.radio_mut().queue_received_frame(&first);
+    let (delivered, queued) = receive_and_collect(&mut mac);
+    assert!(delivered.is_empty());
+    assert!(queued.is_empty());
+}
+
+/// Two nodes each outside the other's window, each probing the other: an
+/// Echo Request the window refuses is still answered, ahead of the probe it
+/// prompts, so both ends adopt a baseline and traffic flows again.
+#[test]
+fn mutually_desynchronized_peers_resynchronize() {
+    let (mut mac, _, remote, _, keys, dst_hint) = desynchronized_peer();
+    let peer_key = *remote.public_key();
+    // The peer probes us with a counter our window refuses.
+    let peer_nonce = 0x5EED_0001u32;
+    mac.radio_mut().queue_received_unicast_with_counter(
+        &remote,
+        &keys,
+        &dst_hint,
+        &encode_echo_command_payload(4, &peer_nonce.to_be_bytes()),
+        false,
+        7,
     );
+    let (delivered, queued) = receive_and_collect(&mut mac);
+    assert!(
+        delivered.is_empty(),
+        "a refused Echo Request is not delivered"
+    );
+    assert_eq!(queued.len(), 2, "the answer, then our own probe");
+
+    // First our answer, echoing the peer's nonce...
+    assert_eq!(
+        decrypt_unicast_payload(&queued[0], &keys).as_slice(),
+        encode_echo_command_payload(5, &peer_nonce.to_be_bytes()).as_slice()
+    );
+    let answer_counter = PacketHeader::parse(&queued[0])
+        .unwrap()
+        .sec_info
+        .unwrap()
+        .frame_counter;
+    // ...then our probe, with the next counter, so it falls inside the
+    // window the peer adopts from the answer.
+    assert!(is_echo_request(&queued[1], &keys));
+    let probe = PacketHeader::parse(&queued[1]).unwrap();
+    assert_eq!(probe.sec_info.unwrap().frame_counter, answer_counter + 1);
+    let our_nonce = match decrypt_unicast_payload(&queued[1], &keys).as_slice() {
+        [_, 4, a, b, c, d] => u32::from_be_bytes([*a, *b, *c, *d]),
+        other => panic!("unexpected probe payload: {other:?}"),
+    };
+    // The refused request moved nothing.
+    assert_eq!(
+        mac.rx_windows()
+            .get(&peer_key)
+            .unwrap()
+            .replay_window
+            .last_accepted,
+        10_000
+    );
+
+    // The peer, now holding our baseline, answers our probe; its counter is
+    // still outside our window, and the answer is what resets it.
+    mac.radio_mut().queue_received_unicast_with_counter(
+        &remote,
+        &keys,
+        &dst_hint,
+        &encode_echo_command_payload(5, &our_nonce.to_be_bytes()),
+        false,
+        8,
+    );
+    let _ = receive_and_collect(&mut mac);
+    assert_eq!(
+        mac.rx_windows()
+            .get(&peer_key)
+            .unwrap()
+            .replay_window
+            .last_accepted,
+        8
+    );
+
+    mac.radio_mut().queue_received_unicast_with_counter(
+        &remote,
+        &keys,
+        &dst_hint,
+        b"works again",
+        false,
+        9,
+    );
+    let (delivered, _) = receive_and_collect(&mut mac);
+    assert_eq!(delivered, [b"works again".to_vec()]);
+}
+
+/// A sender keeps no more acknowledgment-requested sends awaiting one peer
+/// than the receiver's backward window, refusing the next before it spends
+/// a counter; other peers are unaffected.
+#[test]
+fn acked_sends_to_one_peer_stay_within_the_backward_window() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let keys = PairwiseKeys {
+        k_enc: [1; 32],
+        k_mic: [2; 32],
+    };
+    let mut peers = std::vec::Vec::new();
+    for seed in [0xAB, 0xAC] {
+        let key = *DummyIdentity::new([seed; 32]).public_key();
+        let peer_id = mac.add_peer(key).unwrap();
+        mac.install_pairwise_keys(local_id, peer_id, keys.clone())
+            .unwrap();
+        peers.push(key);
+    }
+    let acked = SendOptions::default().with_ack_requested(true);
+    for _ in 0..crate::MAX_ACKED_IN_FLIGHT_PER_PEER {
+        mac.queue_unicast(local_id, &peers[0], b"x", &acked)
+            .unwrap();
+    }
+    let counter = mac.identity(local_id).unwrap().frame_counter();
+    assert_eq!(
+        mac.queue_unicast(local_id, &peers[0], b"x", &acked),
+        Err(SendError::PendingAckFull)
+    );
+    assert_eq!(mac.counters().tx_peer_in_flight_full, 1);
+    assert_eq!(mac.identity(local_id).unwrap().frame_counter(), counter);
+    assert!(
+        mac.queue_unicast(local_id, &peers[0], b"x", &SendOptions::default())
+            .is_ok()
+    );
+    assert!(mac.queue_unicast(local_id, &peers[1], b"x", &acked).is_ok());
 }
 
 #[test]

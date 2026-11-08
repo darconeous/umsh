@@ -58,7 +58,7 @@ The frame counter must strictly increase for each packet sent in a given traffic
 
 ### Frame Counter Persistence
 
-A node must not reuse frame counter values across reboots. Implementations must either persist the counter to non-volatile storage or advance it by a large margin on startup. A node must likewise persist each known peer's receive baseline and restore it at startup; one that loses a peer's baseline accepts a replay of that peer's earlier frames as first contact. If writing to non-volatile storage, care must be taken to avoid wearing out the storage medium. See [Counter Persistence](security.md#counter-persistence) and [Counter Resynchronization](security.md#counter-resynchronization).
+A node must not reuse frame counter values across reboots. Implementations must either persist the counter to non-volatile storage or advance it on startup by a margin large enough to pass every value used, yet smaller than the forward window. A node must likewise persist each known peer's receive baseline and restore it at startup; one that loses a peer's baseline accepts a replay of that peer's earlier frames as first contact. If writing to non-volatile storage, care must be taken to avoid wearing out the storage medium. See [Counter Persistence](security.md#counter-persistence) and [Counter Resynchronization](security.md#counter-resynchronization).
 
 ### Ephemeral Key Erasure
 

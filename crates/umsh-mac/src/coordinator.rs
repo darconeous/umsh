@@ -81,6 +81,11 @@ pub enum WakeReason {
 
 /// Transmit counter values reserved by each write of the boundary.
 pub(crate) const TX_COUNTER_PERSIST_BLOCK_SIZE: u32 = 128;
+// A restart resumes at the committed boundary, at most two blocks past the
+// last counter used. That jump must stay inside every peer's forward
+// window, or a node's first frame after a restart is refused everywhere.
+const _: () =
+    assert!(2 * TX_COUNTER_PERSIST_BLOCK_SIZE < umsh_crypto::replay::REPLAY_FORWARD_WINDOW);
 const TX_COUNTER_PERSIST_BLOCK_MASK: u32 = TX_COUNTER_PERSIST_BLOCK_SIZE - 1;
 const COUNTER_PERSIST_SCHEDULE_OFFSET: u32 = 100;
 /// How long a retransmission that found the transmit queue full waits
@@ -106,13 +111,6 @@ const MAC_COMMAND_ECHO_REQUEST_ID: u8 = 4;
 const MAC_COMMAND_ECHO_RESPONSE_ID: u8 = 5;
 const COUNTER_RESYNC_NONCE_LEN: usize = 4;
 const COUNTER_RESYNC_REQUEST_RETRY_MS: u64 = 5_000;
-/// Minimum backward gap (peer's `last_accepted` minus received counter) that
-/// will trigger a counter-resync exchange. Gaps smaller than this are silently
-/// dropped: they're indistinguishable from ordinary mesh reordering and would
-/// otherwise cause resync churn whenever a slightly-late packet arrives. A
-/// real desync (peer reboot, lost persistence boundary) typically produces a
-/// jump much larger than this.
-const COUNTER_RESYNC_GAP_THRESHOLD: u32 = 1024;
 const MAC_COMMAND_VERIFY_FRAME_ID: u8 = 12;
 const MAC_COMMAND_FRAME_VERIFIED_ID: u8 = 13;
 /// Domain separation for [`Mac::verify_nonce`].
@@ -139,6 +137,18 @@ pub(crate) enum ReplyCarriage<'a> {
     Unicast,
     /// Blind unicast under the exact key that opened the request.
     Blind(&'a ChannelKey),
+}
+
+/// What [`Mac::refused_frame_action`] makes of a frame its sender's window
+/// refused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RefusedFrame {
+    /// Drop it: a late copy, or a probe went out too recently.
+    Drop,
+    /// Hold it while its sender vouches for it with Frame Verified.
+    Hold,
+    /// Drop it behind an Echo Request, answering it first if it is one.
+    Probe,
 }
 
 /// What a frame along a peer's route is, as far as the flood slack past the
@@ -172,7 +182,7 @@ struct PendingCounterResync {
     requested_ms: u64,
 }
 
-/// An acknowledgment-requested frame whose counter fell far outside the
+/// An acknowledgment-requested frame whose counter fell outside the
 /// window, held while its sender is asked to vouch for it with a Verify
 /// Frame ([Counter Resynchronization][spec]).
 ///
@@ -958,8 +968,10 @@ pub enum SendError {
     /// The transmit queue is at the configured `TX` capacity. Back off and retry after
     /// the event loop has drained some entries.
     QueueFull,
-    /// The in-flight ACK table for this identity is at the configured `ACKS` capacity.
-    /// Wait for an existing ACK-requested send to complete or time out before sending another.
+    /// The in-flight ACK table for this identity is at the configured `ACKS` capacity, or
+    /// already holds [`MAX_ACKED_IN_FLIGHT_PER_PEER`](crate::MAX_ACKED_IN_FLIGHT_PER_PEER)
+    /// sends to this peer. Wait for an existing ACK-requested send to complete or time out
+    /// before sending another.
     PendingAckFull,
     /// Secure sends are blocked because the live frame counter has reached the persisted
     /// reservation boundary. Call [`Mac::service_counter_persistence`] to flush a new
@@ -1207,6 +1219,10 @@ pub struct MacCounters {
     /// Signed frames on `EMERGENCY` accepted but not remembered, every
     /// [`EMERGENCY_DIGESTS`](crate::EMERGENCY_DIGESTS) entry being live.
     pub rx_emergency_digests_full: u32,
+    /// Acknowledgment-requested sends refused because
+    /// [`MAX_ACKED_IN_FLIGHT_PER_PEER`](crate::MAX_ACKED_IN_FLIGHT_PER_PEER)
+    /// sends to the same peer already awaited their acknowledgments.
+    pub tx_peer_in_flight_full: u32,
 }
 
 impl MacCounters {
@@ -2559,6 +2575,9 @@ impl<
             options.flood_hops,
         )?;
 
+        if options.ack_requested {
+            self.ensure_acked_room(from, peer)?;
+        }
         let (source_key, frame_counter) = self.identity_and_advance(from)?;
         let salt = self.take_salt(options);
         let mut buf = [0u8; FRAME];
@@ -2709,6 +2728,9 @@ impl<
             options.flood_hops,
         )?;
 
+        if options.ack_requested {
+            self.ensure_acked_room(from, peer)?;
+        }
         let (source_key, frame_counter) = self.identity_and_advance(from)?;
         let salt = self.take_salt(options);
         let mut buf = [0u8; FRAME];
@@ -3853,15 +3875,17 @@ impl<
                                 payload,
                                 true,
                             ) {
-                                // Only a gap that reordering can't explain
-                                // starts a resync (see
-                                // `COUNTER_RESYNC_GAP_THRESHOLD`); a nearer
-                                // one is dropped. A frame asking for an ack
-                                // is held while its sender vouches for it.
-                                // Any other is dropped behind the probe: it
-                                // falls behind the baseline the resync sets.
-                                if self.is_counter_discontinuity(peer_id, header) {
-                                    if header.ack_requested() {
+                                // A frame asking for an ack is held while its
+                                // sender vouches for it. Any other is dropped
+                                // behind the probe: it falls behind the
+                                // baseline the resync sets.
+                                match self.refused_frame_action(
+                                    local_id,
+                                    peer_id,
+                                    header,
+                                    &buf[..frame_len],
+                                ) {
+                                    RefusedFrame::Hold => {
                                         let ack_v = self.received_ack_v(
                                             &buf[..frame_len],
                                             header,
@@ -3884,7 +3908,17 @@ impl<
                                             handled = true;
                                             break;
                                         }
-                                    } else {
+                                    }
+                                    RefusedFrame::Probe => {
+                                        self.answer_refused_echo_request(
+                                            local_id,
+                                            peer_key,
+                                            ReplyCarriage::Unicast,
+                                            header,
+                                            &original[..frame_len],
+                                            payload,
+                                        )
+                                        .await;
                                         self.maybe_request_counter_resync(
                                             local_id,
                                             peer_id,
@@ -3893,6 +3927,7 @@ impl<
                                         )
                                         .await;
                                     }
+                                    RefusedFrame::Drop => {}
                                 }
                                 continue;
                             }
@@ -4345,10 +4380,16 @@ impl<
                                         true,
                                     ) {
                                         // As on the unicast path, and the
-                                        // probe rides the channel the frame
+                                        // answers ride the channel the frame
                                         // came on.
-                                        if self.is_counter_discontinuity(peer_id, header) {
-                                            if header.ack_requested() {
+                                        let carriage = ReplyCarriage::Blind(&resolved_channel_key);
+                                        match self.refused_frame_action(
+                                            local_id,
+                                            peer_id,
+                                            header,
+                                            &buf[..frame_len],
+                                        ) {
+                                            RefusedFrame::Hold => {
                                                 let ack_v = self.received_ack_v(
                                                     &buf[..frame_len],
                                                     header,
@@ -4360,7 +4401,7 @@ impl<
                                                         local_id,
                                                         peer_id,
                                                         peer_key,
-                                                        ReplyCarriage::Blind(&resolved_channel_key),
+                                                        carriage,
                                                         &original[..frame_len],
                                                         ack_v,
                                                         rx,
@@ -4371,15 +4412,23 @@ impl<
                                                     handled = true;
                                                     break;
                                                 }
-                                            } else {
-                                                self.maybe_request_counter_resync(
+                                            }
+                                            RefusedFrame::Probe => {
+                                                self.answer_refused_echo_request(
                                                     local_id,
-                                                    peer_id,
                                                     peer_key,
-                                                    ReplyCarriage::Blind(&resolved_channel_key),
+                                                    carriage,
+                                                    header,
+                                                    &original[..frame_len],
+                                                    payload,
+                                                )
+                                                .await;
+                                                self.maybe_request_counter_resync(
+                                                    local_id, peer_id, peer_key, carriage,
                                                 )
                                                 .await;
                                             }
+                                            RefusedFrame::Drop => {}
                                         }
                                         continue;
                                     }
@@ -5315,6 +5364,29 @@ impl<
         Ok(receipt)
     }
 
+    /// Refuse an acknowledgment-requested send to `peer` while
+    /// [`MAX_ACKED_IN_FLIGHT_PER_PEER`](crate::MAX_ACKED_IN_FLIGHT_PER_PEER)
+    /// already await its acknowledgment. Checked before the send spends a
+    /// counter.
+    fn ensure_acked_room(
+        &mut self,
+        from: LocalIdentityId,
+        peer: &PublicKey,
+    ) -> Result<(), SendError> {
+        let in_flight = self
+            .identity(from)
+            .ok_or(SendError::IdentityMissing)?
+            .pending_acks
+            .values()
+            .filter(|pending| pending.expects_ack() && pending.peer == *peer)
+            .count();
+        if in_flight < crate::MAX_ACKED_IN_FLIGHT_PER_PEER {
+            return Ok(());
+        }
+        MacCounters::bump(&mut self.counters.tx_peer_in_flight_full);
+        Err(SendError::PendingAckFull)
+    }
+
     fn prepare_pending_ack(
         &mut self,
         from: LocalIdentityId,
@@ -5895,18 +5967,76 @@ impl<
         true
     }
 
-    /// Whether a counter the window refused is so far out that the two
-    /// ends must disagree about it: past the forward window, or
-    /// [`COUNTER_RESYNC_GAP_THRESHOLD`] or more behind the baseline.
-    /// Anything nearer is ordinary mesh reordering and is dropped without
-    /// a probe.
-    fn is_counter_discontinuity(&self, peer_id: PeerId, header: &PacketHeader) -> bool {
-        let Some(counter) = header.sec_info.map(|sec_info| sec_info.frame_counter) else {
-            return false;
-        };
-        self.rx_window(peer_id).is_some_and(|entry| {
-            entry.replay_window.last_accepted.wrapping_sub(counter) >= COUNTER_RESYNC_GAP_THRESHOLD
+    /// What to do with an authenticated frame from a known peer whose
+    /// counter the window refused, outside it or stale.
+    ///
+    /// A copy of a frame the window still holds, same counter and MIC, is
+    /// only late, and is dropped. Any other means the two ends disagree
+    /// about the peer's counter, whatever the gap: one asking for an ack is
+    /// held while its sender vouches for it, and any other prompts an Echo
+    /// Request, at most one every [`COUNTER_RESYNC_REQUEST_RETRY_MS`].
+    fn refused_frame_action(
+        &self,
+        local_id: LocalIdentityId,
+        peer_id: PeerId,
+        header: &PacketHeader,
+        frame: &[u8],
+    ) -> RefusedFrame {
+        let now_ms = self.clock.now_ms();
+        let held = Self::replay_metadata(header, frame).is_some_and(|(counter, mic)| {
+            self.rx_window(peer_id).is_some_and(|entry| {
+                entry
+                    .replay_window
+                    .duplicate_age_ms(counter, mic, now_ms)
+                    .is_some()
+            })
+        });
+        if held {
+            RefusedFrame::Drop
+        } else if header.ack_requested() {
+            RefusedFrame::Hold
+        } else if self.counter_resync_due(local_id, peer_id, now_ms) {
+            RefusedFrame::Probe
+        } else {
+            RefusedFrame::Drop
+        }
+    }
+
+    /// Whether a counter-resynchronization probe to `peer_id` may go out
+    /// at `now_ms`.
+    fn counter_resync_due(&self, local_id: LocalIdentityId, peer_id: PeerId, now_ms: u64) -> bool {
+        self.identity(local_id).is_some_and(|slot| {
+            slot.pending_counter_resync()
+                .get(&peer_id)
+                .is_none_or(|pending| {
+                    now_ms.saturating_sub(pending.requested_ms) >= COUNTER_RESYNC_REQUEST_RETRY_MS
+                })
         })
+    }
+
+    /// Answer an Echo Request whose counter the window refused, ahead of
+    /// the probe it prompted. When each end is outside the other's window,
+    /// each refuses the other's probe; answering is what lets the asker
+    /// adopt a baseline, and its answer to our own probe then lands inside
+    /// the window this sets. Nothing else of the frame is taken: it is not
+    /// delivered and moves no baseline.
+    async fn answer_refused_echo_request(
+        &mut self,
+        local_id: LocalIdentityId,
+        peer_key: PublicKey,
+        carriage: ReplyCarriage<'_>,
+        header: &PacketHeader,
+        original: &[u8],
+        payload: &[u8],
+    ) {
+        let Some(data) = Self::echo_request_data(payload) else {
+            return;
+        };
+        let response = Self::build_mac_command_payload(MAC_COMMAND_ECHO_RESPONSE_ID, data);
+        let options = Self::echo_response_options(original, header);
+        let _ = self
+            .send_response(local_id, &peer_key, carriage, response.as_slice(), &options)
+            .await;
     }
 
     /// The nonce a Verify Frame for a held frame carries, and that its
@@ -5946,7 +6076,7 @@ impl<
             .retain(|held| held.released || now_ms < held.expires_ms);
     }
 
-    /// Hold an acknowledgment-requested frame whose counter fell far outside
+    /// Hold an acknowledgment-requested frame whose counter fell outside
     /// the window, and ask its sender to vouch for it with a Verify Frame.
     ///
     /// Returns whether the frame is held. A later copy of a held frame asks
@@ -6202,18 +6332,7 @@ impl<
         carriage: ReplyCarriage<'_>,
     ) {
         let now_ms = self.clock.now_ms();
-        let should_send = {
-            let Some(slot) = self.identity(local_id) else {
-                return;
-            };
-            match slot.pending_counter_resync().get(&peer_id).copied() {
-                Some(pending) => {
-                    now_ms.saturating_sub(pending.requested_ms) >= COUNTER_RESYNC_REQUEST_RETRY_MS
-                }
-                None => true,
-            }
-        };
-        if !should_send {
+        if !self.counter_resync_due(local_id, peer_id, now_ms) {
             return;
         }
 
@@ -7183,8 +7302,8 @@ impl<
     ///    [`NotVerified`](SignatureStatus::NotVerified). It never touches a
     ///    signer's window; the caller takes it down the unsigned path.
     /// 4. A verified frame is judged by the signer's window: accepted, or
-    ///    dropped as a replay or stale. A stale frame from a known peer far
-    ///    behind its baseline starts a counter resynchronization.
+    ///    dropped as a replay or stale. A stale frame from a known peer starts
+    ///    a counter resynchronization, whatever the gap.
     ///
     /// `None` means drop the frame.
     async fn classify_signed_frame(
@@ -7245,7 +7364,6 @@ impl<
                 }
             },
         };
-        let gap = entry.replay_window.last_accepted.wrapping_sub(counter);
         match entry.replay_window.check(counter, tag, now_ms) {
             ReplayVerdict::Accept => Some((
                 SignatureStatus::Verified,
@@ -7253,11 +7371,11 @@ impl<
             )),
             ReplayVerdict::Replay => None,
             ReplayVerdict::OutOfWindow | ReplayVerdict::Stale => {
-                // Only a gap reordering cannot explain starts a resync, over
+                // An exact copy was dropped above, so whatever the gap, the
+                // two ends disagree about the counter. A resync runs over
                 // the pairwise relationship only a known peer has. The
                 // frame is dropped behind the probe either way.
                 if let Some(peer_id) = peer_id
-                    && gap >= COUNTER_RESYNC_GAP_THRESHOLD
                     && let Some(local_id) = self.long_term_identity()
                 {
                     self.maybe_request_counter_resync(

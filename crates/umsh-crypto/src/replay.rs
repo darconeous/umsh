@@ -16,7 +16,9 @@ use heapless::Deque;
 
 /// Retained accepted-MIC entries per window (backward window + 1).
 pub const RECENT_MIC_CAPACITY: usize = 9;
-/// Backward-window size in counter slots (spec suggested default).
+/// Backward-window size in counter slots (spec suggested default). A sender
+/// keeps no more acknowledgment-requested sends awaiting one peer than
+/// this, so a retransmission of the earliest can still land inside it.
 pub const REPLAY_BACKTRACK_SLOTS: u32 = 8;
 /// Forward-window size: the furthest past the highest accepted counter a
 /// received counter may be (spec suggested default).

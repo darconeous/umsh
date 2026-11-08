@@ -230,6 +230,15 @@ pub(crate) const VERIFY_HELD_FRAMES: usize = 2;
 /// [spec]: https://darconeous.github.io/umsh/docs/protocol/channel-access.html#backoff-procedure
 pub const MAX_CAD_ATTEMPTS: u8 = 16;
 
+/// Acknowledgment-requested sends one identity keeps awaiting acknowledgment
+/// from one peer at once: the receiver's backward window
+/// ([Replay Detection][spec]), so that a retransmission of the earliest still
+/// falls inside the window when nothing else was sent in between.
+///
+/// [spec]: https://darconeous.github.io/umsh/docs/protocol/security.html#replay-detection
+pub const MAX_ACKED_IN_FLIGHT_PER_PEER: usize =
+    umsh_crypto::replay::REPLAY_BACKTRACK_SLOTS as usize;
+
 /// Default identity-slot capacity for the common `Mac<P>` configuration.
 pub const DEFAULT_IDENTITIES: usize = 4;
 /// Default remote-peer capacity for the common `Mac<P>` configuration.
