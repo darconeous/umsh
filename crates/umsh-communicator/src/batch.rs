@@ -52,10 +52,12 @@ pub enum Change<'b> {
         /// a received frame produced.
         link: Option<LinkInfo>,
     },
-    /// Word on one fragment of an outbound message.
+    /// Word on one fragment of an outbound message, and how many
+    /// fragments it went in (0 when the word did not say).
     Delivery {
         handle: MessageHandle,
         fragment: Option<u8>,
+        fragments: u8,
         state: DeliveryState,
     },
     /// That an outbound message goes under a session with forward
@@ -85,6 +87,7 @@ enum Entry {
     Delivery {
         handle: MessageHandle,
         fragment: Option<u8>,
+        fragments: u8,
         state: DeliveryState,
     },
     Secrecy {
@@ -174,8 +177,9 @@ impl<'a> Batch<'a> {
             Output::Event(Event::DeliveryStateChanged {
                 handle,
                 fragment,
+                fragments,
                 state,
-            }) => self.delivery(*handle, *fragment, *state),
+            }) => self.delivery(*handle, *fragment, *fragments, *state),
             Output::Event(_) | Output::LookupOutbound { .. } | Output::Diagnostic(_) => {
                 return false;
             }
@@ -194,7 +198,12 @@ impl<'a> Batch<'a> {
                 self.message(mutation.clone(), link);
             }
             ChatOutput::Delivery(delivery) => {
-                self.delivery(delivery.handle, delivery.fragment, delivery.state);
+                self.delivery(
+                    delivery.handle,
+                    delivery.fragment,
+                    delivery.fragments,
+                    delivery.state,
+                );
             }
             ChatOutput::StoreArchive(archive) => {
                 let Ok(payload) = heapless::Vec::from_slice(&archive.payload) else {
@@ -235,7 +244,12 @@ impl<'a> Batch<'a> {
         }
         for output in &composed.outputs {
             if let ChatOutput::Delivery(delivery) = output {
-                self.delivery(delivery.handle, delivery.fragment, delivery.state);
+                self.delivery(
+                    delivery.handle,
+                    delivery.fragment,
+                    delivery.fragments,
+                    delivery.state,
+                );
             }
         }
     }
@@ -276,10 +290,17 @@ impl<'a> Batch<'a> {
         });
     }
 
-    fn delivery(&mut self, handle: MessageHandle, fragment: Option<u8>, state: DeliveryState) {
+    fn delivery(
+        &mut self,
+        handle: MessageHandle,
+        fragment: Option<u8>,
+        fragments: u8,
+        state: DeliveryState,
+    ) {
         self.entries.push(Entry::Delivery {
             handle,
             fragment,
+            fragments,
             state,
         });
     }
@@ -319,10 +340,12 @@ impl<'a> Batch<'a> {
             Entry::Delivery {
                 handle,
                 fragment,
+                fragments,
                 state,
             } => Change::Delivery {
                 handle: *handle,
                 fragment: *fragment,
+                fragments: *fragments,
                 state: *state,
             },
             Entry::Secrecy {

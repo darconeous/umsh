@@ -350,6 +350,9 @@ pub struct Insert {
 pub struct Delivery {
     pub handle: MessageHandle,
     pub fragment: Option<u8>,
+    /// How many fragments the message went in; see
+    /// [`Event::DeliveryStateChanged`].
+    pub fragments: u8,
     pub state: DeliveryState,
     /// The acknowledgment answered the flood that followed a miss on the
     /// peer's route, not the routed send itself.
@@ -1054,10 +1057,12 @@ impl<P: TextProfile + Clone, const SLOTS: usize, const PAGES: usize> ChatFacade<
                 Output::Event(Event::DeliveryStateChanged {
                     handle,
                     fragment,
+                    fragments,
                     state,
                 }) => collected.outputs.push(ChatOutput::Delivery(Delivery {
                     handle,
                     fragment,
+                    fragments,
                     state,
                     via_flood: state == DeliveryState::Acked
                         && self.flooded.remove(&(handle.0, fragment)),
