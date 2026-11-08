@@ -228,6 +228,14 @@ pub(crate) const VERIFY_HELD_FRAMES: usize = 2;
 /// [spec]: https://darconeous.github.io/umsh/docs/protocol/channel-access.html#backoff-procedure
 pub const MAX_CAD_ATTEMPTS: u8 = 16;
 
+/// CAD attempts a queued forward has left once an overheard acknowledgment
+/// names its packet ([Ack Cancellation][spec]). The acknowledgment can be
+/// forged, so the forward is not dropped; it only stops contending for a
+/// busy channel.
+///
+/// [spec]: https://darconeous.github.io/umsh/docs/protocol/repeater-operation.html#ack-cancellation
+pub(crate) const ACK_HINTED_CAD_ATTEMPTS: u8 = 1;
+
 /// Default identity-slot capacity for the common `Mac<P>` configuration.
 pub const DEFAULT_IDENTITIES: usize = 4;
 /// Default remote-peer capacity for the common `Mac<P>` configuration.

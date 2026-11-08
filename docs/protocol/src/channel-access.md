@@ -83,7 +83,7 @@ If the repeater overhears the same packet forwarded by another node (identified 
 
 Only a copy received over the radio defers. A packet received from an [IP multicast group](ip-multicast.md#channel-access), heard by every bridge in the group at once, contends with a window drawn uniformly from `[W_min, W_max]`.
 
-If the repeater instead overhears a MAC ack whose `ack_mic` matches the pending packet's MIC prefix, it SHOULD [cancel the pending forward outright](repeater-operation.md#ack-cancellation) rather than defer: the destination provably has the packet.
+If the repeater instead overhears a MAC ack whose `ack_mic` matches the pending packet's MIC prefix, it SHOULD [let the pending forward give way to a busy channel](repeater-operation.md#ack-cancellation) rather than defer: the destination probably has the packet, though no repeater can verify the ack.
 
 This deferral behavior is intended only for the first local forwarding decision after reception. Once a repeater has actually transmitted its own copy, any later retransmission behavior is governed by [Repeater Operation](repeater-operation.md#forwarding-confirmation).
 

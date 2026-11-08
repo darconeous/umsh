@@ -314,10 +314,9 @@ pub mod prop {
     /// and traffic addressed to this device are also excluded. Requires
     /// `CAP_STATS` and `CAP_REPEATER`.
     pub const STAT_FORWARD_DROPPED: u32 = 4839;
-    /// Queued repeats dropped after the destination's acknowledgement was
-    /// overheard (`PROP_STAT_FORWARD_CANCELLED`)—`UINT32_LE`. Airtime
-    /// this node did not have to spend. Requires `CAP_STATS` and
-    /// `CAP_REPEATER`.
+    /// Overheard acknowledgements that cut a queued repeat's channel-access
+    /// budget (`PROP_STAT_FORWARD_CANCELLED`)—`UINT32_LE`. Requires
+    /// `CAP_STATS` and `CAP_REPEATER`.
     pub const STAT_FORWARD_CANCELLED: u32 = 4840;
     /// MeshCore v1 packets received (`PROP_STAT_MESHCORE_SEEN`)—
     /// `UINT32_LE`. Every one is also counted in exactly one of

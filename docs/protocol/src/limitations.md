@@ -28,6 +28,8 @@ As a concrete example, consider a regional network of approximately 600 active n
 
 The destination hint is a prefilter: a match causes the receiver to attempt full cryptographic verification. A false positive wastes computation on every packet exchanged between the two colliding nodes, for the lifetime of both identities. The cost is persistent and proportional to traffic volume. The source hint is used for source identification, traffic attribution, and diagnostics.
 
+A collision costs computation, not reachability. A repeater never takes a hint as proof that a packet is its own: it stops carrying a packet addressed to its hint only once one of its keys opens the packet, and it knows its own transmissions by what it sent, not by their source hint ([Routing Invariants](repeater-operation.md#routing-invariants)). A node whose hint matches a repeater's identity is carried through that repeater like any other.
+
 With 3-byte hints the collision probability drops to ~1% even in a 600-node regional network. The only remedy for a collision is for one node to generate a new identity (a new Ed25519 keypair), which for a chat node means all peers must re-learn the new public key. The 3-byte size makes this scenario rare.
 
 ### Router hints (2 bytes)

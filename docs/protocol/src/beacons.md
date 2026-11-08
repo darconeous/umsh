@@ -101,9 +101,11 @@ Because router hints are only two bytes, different repeaters may share the same 
 
 A destination may overhear a frame while source-route hints remain unconsumed. The way back is then the remaining hints in reverse, followed by the trace: the whole path the sender chose, through the repeaters still to forward it. The trace alone would describe a shortcut past those repeaters, and a repeater being audible at the destination does not establish that it hears the destination. Historical buffered frames do not establish current reachability.
 
-Copies of one packet, or of one MAC ack, that arrive over different paths each describe a path, and the first to arrive is not necessarily the best. A node MAY weigh them against each other and against the route it holds, using the per-hop signal of their [traces](packet-options.md#trace-option-7) where the copies carry it. A copy that arrives long after the first is a replay rather than evidence of a current path.
+Only an authenticated packet teaches a route to its sender: a unicast or blind unicast that opens under the sender's pairwise keys, a frame whose [signature](security.md#frame-signatures) verifies against the sender's key, or a MAC ack whose `ack_tag` completes an outstanding request. A multicast's MIC proves only that its sender holds the channel key, so an unsigned multicast teaches nothing about the source it names.
 
-When a node successfully processes other live incoming packets, it can update its routing state for the sender:
+Only the first copy teaches. A duplicate of a packet already accepted, or a later copy of a MAC ack that already completed its request, is authenticated as a packet but not as a copy: no MIC covers the options repeaters rewrite, so anyone who heard the packet can send it again with a path of their choosing.
+
+When a node accepts such a packet live, it can update its routing state for the sender:
 
 - **Trace**: if the packet contains a complete [trace](packet-options.md#trace-option-7), with signal or hints only, the node caches its router hints as a source route for future packets back to the sender. Because the trace is accumulated most-recent first, it already describes the return path from the receiver back toward the original sender. This is the primary mechanism for learning precise multi-hop paths. A truncated trace is not a complete path, and no route is learned from it.
 - **Flood hop count**: if the packet contains a flood hop count, the node caches the sender's `FHOPS_ACC` value together with any region-code options that arrived on the packet. When no source route is available, these cached flood parameters can be reused for flood responses—scoping the flood to approximately the right radius and regional domain rather than flooding the entire network.
@@ -129,7 +131,7 @@ Recovery stays within the sender's original flood ceiling; disabled flooding doe
 
 A sender that held no route and flooded at its whole budget has no route to discard, yet the timeout may still be the destination's fault: a route back to the sender that no longer works, on which the ACK died. When it has heard from the destination recently, the sender sends one Route Retry anyway, at the same budget and with a trace. A logical packet gets at most one Route Retry.
 
-The destination learns from that retry. A Route Retry duplicating a packet it already acknowledged shows the ACK was lost, so the destination retires or demotes the route the ACK followed and re-acknowledges by a flood scoped to the retry's `FHOPS_ACC` plus one hop, within the retry's regions, carrying a trace. A path the retry traced may become an ordinary route candidate; the re-acknowledgment does not follow it. See [Lost Acknowledgments](repeater-operation.md#lost-acknowledgments).
+A Route Retry duplicating a packet the destination already acknowledged suggests the ACK was lost, so the destination re-acknowledges by a flood scoped to the retry's `FHOPS_ACC` plus one hop, within the retry's regions, carrying a trace. Being a duplicate, the retry neither teaches a route nor retires one. See [Lost Acknowledgments](repeater-operation.md#lost-acknowledgments).
 
 ## Scoping Flood Hops to a Known Route
 

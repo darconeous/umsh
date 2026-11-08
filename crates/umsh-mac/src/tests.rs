@@ -7292,13 +7292,12 @@ fn mac_ack_traces_when_the_frame_it_acknowledges_traced_or_flooded() {
     }
 }
 
-/// A retransmission is the one frame carrying route information the original
-/// did not, because reaching the retry ladder is itself the evidence that the
-/// first ack never landed. Composing the re-ack from the stale cache instead
-/// re-sends the same unroutable frame the sender is retrying against, and the
-/// exchange never converges.
+/// A copy of a frame already taken authenticates its sender but not itself:
+/// anyone who heard the original can send it again with a path of their
+/// choosing, since no MIC covers what repeaters rewrite. It earns a re-ack,
+/// and teaches no route.
 #[test]
-fn a_retried_frame_teaches_its_route_before_the_re_ack_is_composed() {
+fn a_replayed_frame_teaches_no_route() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let remote = DummyIdentity::new([0xAB; 32]);
@@ -7346,9 +7345,10 @@ fn a_retried_frame_teaches_its_route_before_the_re_ack_is_composed() {
     );
     assert_eq!(mac.peer_registry().get(peer_id).unwrap().route, None);
 
-    // Past the re-ack holdoff, the sender retries—this time flooding, with a
-    // trace to collect a replacement route. Same counter, same MIC: the
-    // rewritten options are dynamic and excluded from the associated data.
+    // Past the re-ack holdoff, the frame comes again—flooding, with a trace
+    // naming repeaters of an observer's choosing. Same counter, same MIC:
+    // the rewritten options are dynamic and excluded from the associated
+    // data, so nothing tells this copy from a retry of the sender's.
     mac.clock().advance_ms(60_000);
     let trace = [RouterHint([0x01, 0x02]), RouterHint([0x03, 0x04])];
     mac.radio_mut().queue_received_unicast_with_route(
@@ -7366,20 +7366,16 @@ fn a_retried_frame_teaches_its_route_before_the_re_ack_is_composed() {
 
     assert_eq!(
         mac.peer_registry().get(peer_id).unwrap().route,
-        Some(CachedRoute::Source(
-            heapless::Vec::from_slice(&trace).unwrap()
-        )),
-        "the retry's trace is the route the sender asked us to learn",
+        None,
+        "a duplicate's trace is anyone's to write",
     );
     let queued = mac.tx_queue_mut().pop_next().expect("queued re-ack");
     let header = PacketHeader::parse(queued.frame.as_slice()).unwrap();
     assert_eq!(header.fcf.packet_type(), PacketType::MacAck);
     let options = ParsedOptions::extract(queued.frame.as_slice(), header.options_range).unwrap();
-    assert_eq!(
-        queued.frame.as_slice()[options
-            .source_route
-            .expect("re-ack carries the learned route")],
-        [0x01, 0x02, 0x03, 0x04],
+    assert!(
+        options.source_route.is_none(),
+        "the re-ack follows no path the duplicate offered",
     );
 }
 
@@ -7840,89 +7836,36 @@ fn a_source_route_chosen_for_one_send_carries_no_slack() {
     assert_eq!(hops, None);
 }
 
+/// The channel key proves only membership: any member can name a peer as an
+/// unsigned multicast's source. Such a frame is delivered, but teaches no
+/// route to the peer it names—neither a flood distance nor, with no flood
+/// budget at all, a direct neighbor.
 #[test]
-fn receive_one_learns_flood_hops_for_multicast_sender() {
-    let mut mac = make_mac();
-    let _local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
-    let remote = DummyIdentity::new([0xAB; 32]);
-    let peer_key = *remote.public_key();
-    let peer_id = mac.add_peer(peer_key).unwrap();
-    let channel_key = ChannelKey([0x5A; 32]);
-    let channel_id = mac.crypto().derive_channel_id(&channel_key);
-    mac.add_channel(channel_key).unwrap();
+fn an_unsigned_multicast_teaches_no_route() {
+    for flood in [Some((4, 2)), None] {
+        let mut mac = make_mac();
+        let _local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+        let remote = DummyIdentity::new([0xAB; 32]);
+        let peer_key = *remote.public_key();
+        let peer_id = mac.add_peer(peer_key).unwrap();
+        let channel_key = ChannelKey([0x5A; 32]);
+        let channel_id = mac.crypto().derive_channel_id(&channel_key);
+        mac.add_channel(channel_key).unwrap();
 
-    let derived = mac.crypto().derive_channel_keys(&channel_key);
-    let keys = PairwiseKeys {
-        k_enc: derived.k_enc,
-        k_mic: derived.k_mic,
-    };
-    mac.radio_mut().queue_received_multicast_with_flood(
-        &remote,
-        channel_id,
-        &keys,
-        b"group",
-        Some((4, 2)),
-    );
+        let derived = mac.crypto().derive_channel_keys(&channel_key);
+        let keys = PairwiseKeys {
+            k_enc: derived.k_enc,
+            k_mic: derived.k_mic,
+        };
+        mac.radio_mut()
+            .queue_received_multicast_with_flood(&remote, channel_id, &keys, b"group", flood);
 
-    let handled = block_on(mac.receive_one(|_, _| {})).unwrap();
+        let handled = block_on(mac.receive_one(|_, _| {})).unwrap();
 
-    assert!(handled);
-    assert_eq!(
-        mac.peer_registry().get(peer_id).unwrap().route,
-        Some(CachedRoute::Flood {
-            flood_hops: 2,
-            regions: heapless::Vec::new(),
-        })
-    );
-}
-
-#[test]
-fn receive_one_learns_flood_hops_and_regions_for_multicast_sender() {
-    let mut mac = make_mac();
-    let _local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
-    let remote = DummyIdentity::new([0xAB; 32]);
-    let peer_key = *remote.public_key();
-    let peer_id = mac.add_peer(peer_key).unwrap();
-    let channel_key = ChannelKey([0x5A; 32]);
-    let channel_id = mac.crypto().derive_channel_id(&channel_key);
-    mac.add_channel(channel_key).unwrap();
-
-    let derived = mac.crypto().derive_channel_keys(&channel_key);
-    let keys = PairwiseKeys {
-        k_enc: derived.k_enc,
-        k_mic: derived.k_mic,
-    };
-    let mut buf = [0u8; 256];
-    let mut packet = PacketBuilder::new(&mut buf)
-        .multicast(channel_id)
-        .source_full(remote.public_key())
-        .frame_counter(11)
-        .encrypted()
-        .option(OptionNumber::RegionCode, &[0x31, 0xD9])
-        .option(OptionNumber::RegionCode, &[0x78, 0x53])
-        .flood_hops(4)
-        .payload(b"group")
-        .build()
-        .unwrap();
-    {
-        packet.header().unwrap();
-        packet.as_bytes_mut()[1] = FloodHops::new(4, 2).unwrap().0;
+        assert!(handled);
+        let peer = mac.peer_registry().get(peer_id).unwrap();
+        assert_eq!(peer.route, None, "flood={flood:?}");
     }
-    CryptoEngine::new(DummyAes, DummySha)
-        .seal_packet(&mut packet, &keys)
-        .unwrap();
-    mac.radio_mut().queue_received_frame(packet.as_bytes());
-
-    let handled = block_on(mac.receive_one(|_, _| {})).unwrap();
-
-    assert!(handled);
-    assert_eq!(
-        mac.peer_registry().get(peer_id).unwrap().route,
-        Some(CachedRoute::Flood {
-            flood_hops: 2,
-            regions: heapless::Vec::from_slice(&[[0x31, 0xD9], [0x78, 0x53]]).unwrap(),
-        })
-    );
 }
 
 #[test]
@@ -9125,10 +9068,44 @@ fn repeater_does_not_forward_a_broadcast_it_originated() {
     );
 }
 
-/// The 3-byte hint form hides nothing useful here: it is derived from the
-/// public key, so our own hint identifies us just as well as our own key.
+/// Whether `mac` has a forward queued.
+fn has_queued_forward(mac: &TestMac) -> bool {
+    mac.tx_queue()
+        .iter()
+        .any(|entry| entry.priority == TxPriority::Forward)
+}
+
+/// A frame this node sent by hint is known again by what it sent, not by
+/// the hint: a neighbor's repeat of it is not repeated here.
 #[test]
 fn repeater_does_not_forward_its_own_broadcast_sent_by_hint() {
+    let mut mac = make_mac();
+    mac.repeater_config_mut().enabled = true;
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    mac.queue_broadcast(
+        local_id,
+        b"hello",
+        &SendOptions::default().with_flood_hops(3),
+    )
+    .unwrap();
+    block_on(mac.transmit_next(&mut |_, _| {})).unwrap();
+    let sent = mac.radio().transmitted[0].clone();
+    let header = PacketHeader::parse(sent.as_slice()).unwrap();
+    assert!(matches!(header.source, umsh_core::SourceAddrRef::Hint(_)));
+
+    mac.radio_mut().queue_received_frame(sent.as_slice());
+    let _ = block_on(mac.receive_one(|_, _| {})).unwrap();
+    assert!(
+        !has_queued_forward(&mac),
+        "a repeater must not relay its own transmission"
+    );
+}
+
+/// A hint is a three-byte prefix of a key, and another node's key can share
+/// ours. A frame sent by hint that this node never sent is that node's, and
+/// is carried like anyone else's.
+#[test]
+fn repeater_forwards_a_broadcast_from_a_node_sharing_its_hint() {
     let local = DummyIdentity::new([0x10; 32]);
     let local_hint = local.public_key().hint();
     let mut mac = make_mac();
@@ -9146,16 +9123,14 @@ fn repeater_does_not_forward_its_own_broadcast_sent_by_hint() {
 
     mac.radio_mut().queue_received_frame(beacon.as_slice());
     let _ = block_on(mac.receive_one(|_, _| {})).unwrap();
-    assert!(
-        mac.tx_queue_mut().pop_next().is_none(),
-        "a repeater must not relay its own transmission"
-    );
+    assert!(has_queued_forward(&mac));
 }
 
-/// A packet addressed to us has arrived. Failing to decrypt it does not turn it
-/// back into transit traffic.
+/// A destination hint matching one of ours decides nothing on its own: a
+/// packet no key of ours opens is for another node sharing the hint, and is
+/// carried.
 #[test]
-fn repeater_does_not_forward_a_unicast_addressed_to_itself() {
+fn repeater_forwards_a_unicast_for_a_node_sharing_its_hint() {
     let local = DummyIdentity::new([0x10; 32]);
     let local_hint = local.public_key().hint();
     let mut mac = make_mac();
@@ -9181,10 +9156,46 @@ fn repeater_does_not_forward_a_unicast_addressed_to_itself() {
 
     mac.radio_mut().queue_received_frame(frame.as_slice());
     let _ = block_on(mac.receive_one(|_, _| {})).unwrap();
-    assert!(
-        mac.tx_queue_mut().pop_next().is_none(),
-        "a packet naming us as its destination has already arrived"
-    );
+    assert!(has_queued_forward(&mac));
+}
+
+/// A packet one of our keys opens has arrived, and a later copy of it—a
+/// replay the window turns away—has nowhere further to go either.
+#[test]
+fn repeater_does_not_forward_a_unicast_it_opened_or_its_replay() {
+    let mut mac = make_mac();
+    mac.repeater_config_mut().enabled = true;
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let peer_id = mac.add_peer(*remote.public_key()).unwrap();
+    let keys = PairwiseKeys {
+        k_enc: [1; 32],
+        k_mic: [2; 32],
+    };
+    mac.install_pairwise_keys(local_id, peer_id, keys.clone())
+        .unwrap();
+    let dst_hint = mac
+        .identity(local_id)
+        .unwrap()
+        .identity()
+        .public_key()
+        .hint();
+
+    for _ in 0..2 {
+        mac.radio_mut().queue_received_unicast_with_route(
+            &remote,
+            &keys,
+            &dst_hint,
+            b"hello",
+            false,
+            7,
+            Some((3, 0)),
+            None,
+            None,
+        );
+        let _ = block_on(mac.receive_one(|_, _| {})).unwrap();
+        assert!(!has_queued_forward(&mac));
+    }
 }
 
 #[test]
@@ -12643,8 +12654,24 @@ fn make_repeater_mac() -> TestMac {
     mac
 }
 
+/// Whether an overheard ack has cut `entry`'s channel-access budget.
+fn ack_hinted(entry: &crate::QueuedTx<{ crate::MAX_RESEND_FRAME_LEN }>) -> bool {
+    entry.cad_attempts == crate::MAX_CAD_ATTEMPTS - crate::ACK_HINTED_CAD_ATTEMPTS
+}
+
+/// An ack trailer naming `frame`, with a tag no repeater can check.
+fn overheard_trailer(frame: &[u8]) -> [u8; 8] {
+    let mut trailer = [0u8; 8];
+    trailer[..4].copy_from_slice(&mic_prefix(frame));
+    trailer[4..].copy_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
+    trailer
+}
+
+/// Anyone who heard a packet can send an ack naming its `ack_mic`, and a
+/// repeater cannot check the tag. So an overheard ack does not take the
+/// forward out of the queue: on a clear channel it airs as it would have.
 #[test]
-fn overheard_mac_ack_cancels_matching_queued_forward() {
+fn a_forged_ack_does_not_remove_a_queued_forward() {
     let mut mac = make_repeater_mac();
     let unar = build_passing_unar(false);
 
@@ -12652,29 +12679,53 @@ fn overheard_mac_ack_cancels_matching_queued_forward() {
     assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
     assert_eq!(mac.tx_queue().len(), 1);
 
-    // The destination's ack: the public MIC prefix, an unverifiable tag.
-    let prefix = mic_prefix(unar.as_slice());
-    let mut trailer = [0u8; 8];
-    trailer[..4].copy_from_slice(&prefix);
-    trailer[4..].copy_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
-    mac.radio_mut().queue_received_mac_ack(trailer);
+    mac.radio_mut()
+        .queue_received_mac_ack(overheard_trailer(unar.as_slice()));
     let _ = block_on(mac.receive_one(|_, _| {})).unwrap();
 
-    assert!(
-        mac.tx_queue().is_empty(),
-        "the acknowledged forward is withdrawn"
-    );
+    assert_eq!(mac.tx_queue().len(), 1, "the forward stays queued");
+    assert!(mac.tx_queue().iter().all(ack_hinted));
     assert_eq!(mac.counters().forward_cancelled, 1);
 
-    // The cancellation leaves the duplicate entry in place: another copy of
-    // the same attempt arriving later is not re-queued.
-    mac.radio_mut().queue_received_frame(unar.as_slice());
-    let _ = block_on(mac.receive_one(|_, _| {})).unwrap();
+    mac.clock().advance_ms(60_000);
+    block_on(mac.transmit_next(&mut |_, _| {})).unwrap();
+    assert_eq!(
+        mac.radio().transmitted.len(),
+        1,
+        "a clear channel carries it"
+    );
     assert!(mac.tx_queue().is_empty());
 }
 
+/// On a busy channel the hinted forward gives way at once. A forward that
+/// never aired stops suppressing its packet, so if the ack was forged the
+/// sender's next copy is carried.
 #[test]
-fn overheard_mac_ack_cancels_a_route_retry_copy_too() {
+fn an_ack_hinted_forward_yields_to_a_busy_channel_and_releases_its_packet() {
+    let mut mac = make_repeater_mac();
+    let unar = build_passing_unar(false);
+    mac.radio_mut().queue_received_frame(unar.as_slice());
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+    mac.radio_mut()
+        .queue_received_mac_ack(overheard_trailer(unar.as_slice()));
+    let _ = block_on(mac.receive_one(|_, _| {})).unwrap();
+
+    mac.clock().advance_ms(60_000);
+    mac.radio_mut().cad_responses.push_back(true).unwrap();
+    block_on(mac.transmit_next(&mut |_, _| {})).unwrap();
+    assert_eq!(mac.radio().cad_calls, 1);
+    assert!(mac.radio().transmitted.is_empty());
+    assert!(mac.tx_queue().is_empty(), "one busy channel ends it");
+    assert_eq!(mac.counters().tx_abandoned, 1);
+
+    mac.radio_mut().queue_received_frame(unar.as_slice());
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+    assert_eq!(mac.tx_queue().len(), 1, "the next copy is carried");
+    assert!(!mac.tx_queue().iter().any(ack_hinted));
+}
+
+#[test]
+fn overheard_mac_ack_hints_a_route_retry_copy_too() {
     let mut mac = make_repeater_mac();
     let retry_copy = build_passing_unar(true);
 
@@ -12682,45 +12733,45 @@ fn overheard_mac_ack_cancels_a_route_retry_copy_too() {
     assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
     assert_eq!(mac.tx_queue().len(), 1);
 
-    let prefix = mic_prefix(retry_copy.as_slice());
-    let mut trailer = [0u8; 8];
-    trailer[..4].copy_from_slice(&prefix);
-    mac.radio_mut().queue_received_mac_ack(trailer);
+    mac.radio_mut()
+        .queue_received_mac_ack(overheard_trailer(retry_copy.as_slice()));
     let _ = block_on(mac.receive_one(|_, _| {})).unwrap();
 
-    assert!(mac.tx_queue().is_empty());
+    assert_eq!(mac.tx_queue().len(), 1);
+    assert!(mac.tx_queue().iter().all(ack_hinted));
 }
 
-/// Cancellation is an event on the queue, not a standing verdict: a
-/// route-retry copy arriving *after* the original was cancelled is a fresh
-/// forwarding identity—the origin resorted to it because the ack never
-/// reached it—and must be carried, and is in turn cancelable.
+/// A hint acts on the queue, not on the future: a route-retry copy arriving
+/// *after* the original was hinted is a fresh forwarding identity—the
+/// origin resorted to it because the ack never reached it—and is queued
+/// with the full budget, until another overheard ack hints it in turn.
 #[test]
-fn cancellation_does_not_suppress_a_later_route_retry_copy() {
+fn a_later_route_retry_copy_gets_the_full_budget() {
     let mut mac = make_repeater_mac();
     let original = build_passing_unar(false);
     let retry_copy = build_passing_unar(true);
 
     mac.radio_mut().queue_received_frame(original.as_slice());
     assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
-    assert_eq!(mac.tx_queue().len(), 1);
-
-    let prefix = mic_prefix(original.as_slice());
-    let mut trailer = [0u8; 8];
-    trailer[..4].copy_from_slice(&prefix);
+    let trailer = overheard_trailer(original.as_slice());
     mac.radio_mut().queue_received_mac_ack(trailer);
     let _ = block_on(mac.receive_one(|_, _| {})).unwrap();
-    assert!(mac.tx_queue().is_empty());
 
-    // Same MIC, distinct forwarding identity: queued and forwarded.
+    // Same MIC, distinct forwarding identity: queued in full.
     mac.radio_mut().queue_received_frame(retry_copy.as_slice());
     assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
-    assert_eq!(mac.tx_queue().len(), 1);
+    assert_eq!(mac.tx_queue().len(), 2);
+    assert_eq!(
+        mac.tx_queue()
+            .iter()
+            .filter(|entry| ack_hinted(entry))
+            .count(),
+        1
+    );
 
-    // And another overheard ack takes it back out.
     mac.radio_mut().queue_received_mac_ack(trailer);
     let _ = block_on(mac.receive_one(|_, _| {})).unwrap();
-    assert!(mac.tx_queue().is_empty());
+    assert!(mac.tx_queue().iter().all(ack_hinted));
     assert_eq!(mac.counters().forward_cancelled, 2);
 }
 
@@ -12772,9 +12823,10 @@ fn duplicate_mac_ack_does_not_cancel_the_queued_ack_forward() {
 
 /// The Ack MIC option is the piggy-backed form of the same evidence: a data
 /// packet travelling the other way names the acknowledged packet's MIC
-/// prefix, and a forwarder holding that packet reads it without any keys.
+/// prefix, and a forwarder holding that packet reads it without any keys,
+/// and with no more reason to trust it.
 #[test]
-fn ack_mic_option_cancels_matching_queued_forward() {
+fn ack_mic_option_hints_matching_queued_forward() {
     let mut mac = make_repeater_mac();
     let unar = build_passing_unar(false);
 
@@ -12806,15 +12858,20 @@ fn ack_mic_option_cancels_matching_queued_forward() {
     mac.radio_mut().queue_received_frame(reply.as_bytes());
     let _ = block_on(mac.receive_one(|_, _| {})).unwrap();
 
-    assert!(mac.tx_queue().is_empty());
+    let unar_forward = mac
+        .tx_queue()
+        .iter()
+        .find(|entry| mic_prefix(entry.frame.as_slice()) == prefix)
+        .expect("the forward stays queued");
+    assert!(ack_hinted(unar_forward));
     assert_eq!(mac.counters().forward_cancelled, 1);
 }
 
-/// The reply that carries an acknowledgment onward also retires the
-/// standalone ack it duplicates: a forwarder holding that ack drops it
-/// rather than spend airtime delivering what the reply already carries.
+/// The reply that carries an acknowledgment onward also hints the standalone
+/// ack it duplicates: a forwarder holding that ack lets it give way to a
+/// busy channel rather than contend to deliver what the reply carries.
 #[test]
-fn ack_mic_option_cancels_a_queued_forward_of_the_ack_it_carries() {
+fn ack_mic_option_hints_a_queued_forward_of_the_ack_it_carries() {
     let mut mac = make_repeater_mac();
     let trailer = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88];
     let mut buf = [0u8; 256];
@@ -12849,20 +12906,22 @@ fn ack_mic_option_cancels_a_queued_forward_of_the_ack_it_carries() {
     mac.radio_mut().queue_received_frame(reply.as_bytes());
     let _ = block_on(mac.receive_one(|_, _| {})).unwrap();
 
-    let ack_forwards = core::iter::from_fn(|| mac.tx_queue_mut().pop_next())
+    let ack_forwards: std::vec::Vec<_> = core::iter::from_fn(|| mac.tx_queue_mut().pop_next())
         .filter(|queued| {
             PacketHeader::parse(queued.frame.as_slice())
                 .is_ok_and(|header| header.packet_type() == PacketType::MacAck)
         })
-        .count();
-    assert_eq!(ack_forwards, 0, "the standalone ack is withdrawn");
+        .collect();
+    assert_eq!(ack_forwards.len(), 1, "the standalone ack stays queued");
+    assert!(ack_hinted(&ack_forwards[0]));
     assert_eq!(mac.counters().forward_cancelled, 1);
 }
 
 /// The destination's own half of the same rule. A routed ack retries until
-/// it hears a repeater carry it, and repeaters now drop it once the reply
-/// carrying the option goes by—so sending that reply ends the ack's
-/// ladder. An ack that has not aired yet still goes out.
+/// it hears a repeater carry it, but once the reply carrying the option
+/// goes by the reply carries the acknowledgment, and repeaters let the
+/// standalone ack give way—so sending that reply ends the ack's ladder. An
+/// ack that has not aired yet still goes out.
 #[test]
 fn sending_the_ack_mic_ends_the_standalone_acks_retries() {
     for ack_aired in [true, false] {
