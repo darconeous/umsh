@@ -593,7 +593,7 @@ const ULCP_TX_QUEUE_CAPACITY: usize = 4;
 type Session = umsh_ulcp_device::Session<SoftwareAes, SoftwareSha256, ULCP_TX_QUEUE_CAPACITY>;
 
 /// The CSPRNG behind everything seeded from the entropy pool at boot:
-/// ChaCha20, rekeyed whenever `entropy.rs` has a fresh harvest for it.
+/// ChaCha12, rekeyed whenever `entropy.rs` has a fresh harvest for it.
 type IdentityRng = umsh_ulcp_runtime::reseed::ReseedingRng;
 
 // ─── Static shared state ─────────────────────────────────────────────────
@@ -1713,7 +1713,7 @@ impl DeviceEnv for BoardDeviceEnv {
     }
 
     fn fill_secret(&mut self, secret: &mut [u8; 32]) -> Result<(), ()> {
-        // TRNG-seeded ChaCha20 CSPRNG (seeded while the RF subsystem
+        // TRNG-seeded ChaCha12 CSPRNG (seeded while the RF subsystem
         // was known-live at boot); infallible once seeded.
         rand_core::RngCore::fill_bytes(&mut self.identity_rng, secret);
         Ok(())

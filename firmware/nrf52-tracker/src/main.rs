@@ -299,7 +299,7 @@ mod firmware {
     /// Deterministic CSPRNG for device-identity generation, seeded from
     /// the hardware TRNG at boot: the RNG peripheral itself is owned by
     /// the SoftDevice Controller for the lifetime of the BLE stack.
-    type IdentityRng = rand_chacha::ChaCha20Rng;
+    type IdentityRng = rand_chacha::ChaCha12Rng;
     use umsh_radio_loraphy::{DeviceControl, MAX_PAYLOAD};
     use umsh_ulcp_runtime::driver::{
         self, DeviceEnv, DeviceRuntime, InEvent, InputChannel, OutFrame, TransportChannels,
@@ -1983,7 +1983,7 @@ mod firmware {
         }
 
         fn fill_secret(&mut self, secret: &mut [u8; 32]) -> Result<(), ()> {
-            // TRNG-seeded ChaCha20 CSPRNG (the RNG peripheral belongs to
+            // TRNG-seeded ChaCha12 CSPRNG (the RNG peripheral belongs to
             // the SDC at runtime); infallible once seeded.
             rand_core::RngCore::fill_bytes(&mut self.identity_rng, secret);
             Ok(())
@@ -6829,7 +6829,7 @@ mod firmware {
         // The secret comes straight from the hardware TRNG, which
         // blocks until the peripheral has produced each byte and is
         // bias-corrected above. It is deliberately not drawn from the
-        // ChaCha20 stream seeded below: that stream is fine, but there
+        // ChaCha12 stream seeded below: that stream is fine, but there
         // is no reason to put a derivation between the noise source and
         // a key that outlives the device's configuration.
         //

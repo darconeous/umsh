@@ -313,7 +313,7 @@ esp-phy = { version = "0.3", features = ["esp32"], optional = true }
 esp-rtos = { version = "0.4", features = ["esp32", "embassy", "esp-radio", "esp-alloc"] }
 # Resolves to the darconeous/lora-rs fork via the workspace [patch].
 lora-phy = { version = "3.0.2-alpha", default-features = false }
-# Device-identity generation and the device node's CSPRNG: ChaCha20
+# Device-identity generation and the device node's CSPRNG: ChaCha12
 # seeded from the RF-gated hardware TRNG at boot.
 rand = { version = "0.10", default-features = false }
 rand_chacha = { version = "0.3", default-features = false }

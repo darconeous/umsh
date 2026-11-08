@@ -14,7 +14,7 @@
 //!   own, the Wi-Fi task through its running one. They ask
 //!   [`harvest_due`] and [`overdue`] when, and hand over 32 octets with
 //!   [`offer`].
-//! - **Generators** are the ChaCha20 instances seeded at boot. Each
+//! - **Generators** are the ChaCha12 instances seeded at boot. Each
 //!   reads a [`ReseedSlot`]; every harvest puts a fresh pool draw in
 //!   each.
 //! - **The seed journal** is written by [`task`], which owns the pool

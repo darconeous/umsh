@@ -1,4 +1,4 @@
-//! A ChaCha20 generator that takes entropy gathered after it was built.
+//! A ChaCha12 generator that takes entropy gathered after it was built.
 //!
 //! A generator seeded once at boot knows only what the device knew at
 //! boot. On a board that stays up for months, entropy harvested later
@@ -9,7 +9,7 @@
 //!
 //! The slot is a `static`, so the harvester needs no handle to a
 //! generator that lives inside a MAC or a task. A generator nobody
-//! offers a seed to produces exactly the `ChaCha20Rng` stream for its
+//! offers a seed to produces exactly the `ChaCha12Rng` stream for its
 //! boot seed.
 
 use core::cell::Cell;
@@ -17,7 +17,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use rand_chacha::ChaCha20Rng;
+use rand_chacha::ChaCha12Rng;
 use rand_core::{CryptoRng, RngCore, SeedableRng};
 use umsh_crypto::hkdf_sha256;
 use umsh_crypto::software::SoftwareSha256;
@@ -71,7 +71,11 @@ impl Default for ReseedSlot {
     }
 }
 
-/// ChaCha20, rekeyed whenever its [`ReseedSlot`] holds a fresh seed.
+/// ChaCha12, rekeyed whenever its [`ReseedSlot`] holds a fresh seed.
+///
+/// Twelve rounds, as `rand`'s `StdRng` and trouble's security manager
+/// use: one generator algorithm in the image, with a wide margin over the
+/// best published attacks, which reach seven.
 ///
 /// Keyed on the first draw, not when built. A generator lives inside a
 /// MAC that is built in place in a static arena, and that only happens
@@ -79,12 +83,12 @@ impl Default for ReseedSlot {
 /// from a call the compiler did not inline is copied into the MAC
 /// instead, and that copy cannot be split out of the whole-MAC moves,
 /// so the MAC itself is copied through the stack—twice its size, more
-/// than the main stack holds. `ChaCha20Rng::from_seed` is such a call
+/// than the main stack holds. `ChaCha12Rng::from_seed` is such a call
 /// at `opt-level = "s"`, so it runs on the first use, through `&mut
 /// self`, where its result lands in the arena directly.
 pub struct ReseedingRng {
     /// `None` until the first draw keys it from `seed`.
-    rng: Option<ChaCha20Rng>,
+    rng: Option<ChaCha12Rng>,
     /// The boot seed, zeroed once the generator is keyed.
     seed: [u8; 32],
     slot: &'static ReseedSlot,
@@ -106,16 +110,16 @@ impl ReseedingRng {
     /// running generator, so it is at least as strong as either: a weak
     /// harvest cannot displace what the generator already had, and a
     /// compromised generator is healed by a good harvest.
-    fn refresh(&mut self) -> &mut ChaCha20Rng {
+    fn refresh(&mut self) -> &mut ChaCha12Rng {
         let rng = self
             .rng
-            .get_or_insert_with(|| ChaCha20Rng::from_seed(core::mem::take(&mut self.seed)));
+            .get_or_insert_with(|| ChaCha12Rng::from_seed(core::mem::take(&mut self.seed)));
         if let Some(mut fresh) = self.slot.take() {
             let mut current = [0u8; 32];
             rng.fill_bytes(&mut current);
             let mut next = [0u8; 32];
             hkdf_sha256(&SoftwareSha256, &fresh, &current, INFO_RESEED, &mut next);
-            *rng = ChaCha20Rng::from_seed(next);
+            *rng = ChaCha12Rng::from_seed(next);
             fresh.zeroize();
             current.zeroize();
             next.zeroize();
@@ -143,7 +147,7 @@ impl RngCore for ReseedingRng {
     }
 }
 
-// ChaCha20 keyed from a cryptographic seed, rekeyed only through HKDF.
+// ChaCha12 keyed from a cryptographic seed, rekeyed only through HKDF.
 impl CryptoRng for ReseedingRng {}
 
 #[cfg(test)]
@@ -161,9 +165,9 @@ mod tests {
     }
 
     #[test]
-    fn an_unreseeded_stream_is_plain_chacha20() {
+    fn an_unreseeded_stream_is_plain_chacha12() {
         let mut reseeding = ReseedingRng::new([7; 32], slot());
-        let mut plain = ChaCha20Rng::from_seed([7; 32]);
+        let mut plain = ChaCha12Rng::from_seed([7; 32]);
         assert_eq!(draw(&mut reseeding), draw(&mut plain));
         assert_eq!(reseeding.next_u32(), plain.next_u32());
         assert_eq!(reseeding.next_u64(), plain.next_u64());
@@ -174,7 +178,7 @@ mod tests {
     fn a_reseed_takes_effect_at_the_next_use_and_only_once() {
         let slot = slot();
         let mut reseeding = ReseedingRng::new([7; 32], slot);
-        let mut plain = ChaCha20Rng::from_seed([7; 32]);
+        let mut plain = ChaCha12Rng::from_seed([7; 32]);
         assert_eq!(draw(&mut reseeding), draw(&mut plain));
 
         slot.offer([9; 32]);

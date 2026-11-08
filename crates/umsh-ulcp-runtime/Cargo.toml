@@ -88,7 +88,7 @@ lan-bearer = ["radio", "dep:umsh-lan-bearer"]
 # The MeshCore forwarder: a third mux client that forwards MeshCore v1
 # traffic beside the device node, under the same duty ledger and CAD gate.
 meshcore-forwarder = ["device-node", "dep:umsh-meshcore-forwarder"]
-# A ChaCha20 generator that folds in seeds offered after it was built, so
+# A ChaCha12 generator that folds in seeds offered after it was built, so
 # entropy a board harvests during a long uptime reaches what is running.
 reseed = ["dep:rand_core", "dep:rand_chacha", "dep:umsh-crypto", "dep:zeroize"]
 # `ThreadModeRawMutex` for the device node's statics. For boards on a

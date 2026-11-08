@@ -12,7 +12,7 @@
 //!   and draw from one combined `PROP_PHY_DUTY_LIMIT` budget. A refused
 //!   transmit is shed via the MAC's CAD-backoff path rather than killing
 //!   the pump.
-//! - **Rng** is a ChaCha20 CSPRNG seeded from the board's hardware TRNG
+//! - **Rng** is a ChaCha12 CSPRNG seeded from the board's hardware TRNG
 //!   at boot ([`NodeRng`]): project policy forbids non-crypto RNGs, and
 //!   under BLE builds the RNG peripheral is not ours to read at runtime.
 //!   A board that harvests entropy later offers it through
@@ -100,10 +100,10 @@ pub type NodeMutex = CriticalSectionRawMutex;
 
 /// Fresh seeds for the node's generator, from a board that harvests
 /// entropy after boot. A board that never offers one runs on its boot
-/// seed, and its stream is the plain ChaCha20 one.
+/// seed, and its stream is the plain ChaCha12 one.
 pub static NODE_RESEED: ReseedSlot = ReseedSlot::new();
 
-/// ChaCha20 CSPRNG adapter implementing the `rand 0.10` traits the MAC
+/// ChaCha12 CSPRNG adapter implementing the `rand 0.10` traits the MAC
 /// requires (`Platform::Rng: rand::CryptoRng`). Seeded at boot from the
 /// board's hardware TRNG, exactly like the session's `IdentityRng`,
 /// while that source is still ours to read, and rekeyed from
@@ -133,7 +133,7 @@ impl rand::TryRng for NodeRng {
     }
 }
 
-// ChaCha20 is a cryptographically secure generator; the seed comes from
+// ChaCha12 is a cryptographically secure generator; the seed comes from
 // the board's hardware TRNG.
 impl rand::TryCryptoRng for NodeRng {}
 
@@ -1237,7 +1237,7 @@ const ANNOUNCE_JITTER_SHIFT: u32 = 2;
 /// and no draw can put an unsolicited announcement on the air sooner than
 /// the interval a host asked for.
 ///
-/// The randomness is the MAC's ChaCha20 generator, seeded at boot from the
+/// The randomness is the MAC's ChaCha12 generator, seeded at boot from the
 /// board's hardware TRNG. The node has one generator and this borrows it
 /// rather than growing a second—a scheduling scatter does not need
 /// unpredictability, but a node that keeps a weak generator around for the

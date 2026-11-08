@@ -312,7 +312,7 @@ associated types, not methods:
 
 Route randomness through `Rng` even where the chip RNG could be called
 directly: on nRF52840 the RNG peripheral belongs to the SoftDevice controller
-at runtime, so the BSP seeds a ChaCha20 CSPRNG from the hardware TRNG at boot.
+at runtime, so the BSP seeds a ChaCha12 CSPRNG from the hardware TRNG at boot.
 There is no non-cryptographic RNG anywhere in the tree.
 
 A BSP's `Board::init()` returns a struct implementing `Platform` and typically
