@@ -100,6 +100,7 @@ impl EventDispatcher {
                 let mut state = rc.borrow_mut();
                 if !state.finished {
                     state.failed = true;
+                    state.session_ended = true;
                     state.finished = true;
                 }
             }

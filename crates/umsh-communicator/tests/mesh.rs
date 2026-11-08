@@ -507,6 +507,93 @@ async fn what_is_said_under_forward_secrecy_lands_in_the_same_chat() {
         .await;
 }
 
+/// A message on its way under a session with forward secrecy when the peer
+/// ends the session goes again under a new one, asked for at once, and
+/// is delivered as it was sent: under forward secrecy, and once.
+#[tokio::test(flavor = "current_thread")]
+async fn a_message_caught_by_the_peer_ending_the_session_goes_under_a_new_one() {
+    LocalSet::new()
+        .run_until(async {
+            let network = SimulatedNetwork::new();
+            let near = network.add_radio_with_config(255, 20);
+            let far = network.add_radio_with_config(255, 20);
+            let (near_id, far_id) = (near.id(), far.id());
+            network.connect_bidirectional(near_id, far_id);
+            let alice = board(near, [0x11; 32]).await;
+            let bob = board(far, [0x22; 32]).await;
+
+            bob.mesh.peer(alice.key).await.unwrap();
+            phone_inserts(&alice.sim, prop::DEV_PEERS, &bob.key.0);
+            alice.node.pump();
+            let peer = alice.node.peers()[0].id;
+            let chat = alice
+                .node
+                .direct_chat(&address(&bob.key), "Bob", &alice.node.avatar())
+                .unwrap();
+            let shown = || alice.node.chat(chat.id).unwrap().forward_secret;
+            alice.node.set_forward_secrecy(peer, true);
+            until("the chat does not show the session", shown).await;
+            let first = alice.node.send(chat.id, "Leaving now", None, true).unwrap();
+            until("the first message was not delivered", || {
+                alice.node.message(chat.id, first.id).unwrap().delivery == Delivery::Delivered
+            })
+            .await;
+            until_secrecy(&alice, &bob, true).await;
+            while bob.node.next_event().is_some() {}
+
+            // Bob misses Alice's next message, which stays on its way, and
+            // ends the session; Alice hears him again as he does.
+            network.disconnect(near_id, far_id);
+            let caught = alice
+                .node
+                .send(chat.id, "Meet at the ridge", None, true)
+                .unwrap();
+            until("the message never went out", || {
+                alice.node.message(chat.id, caught.id).unwrap().delivery != Delivery::Sending
+            })
+            .await;
+            let session = || async {
+                match alice.mesh.pfs_status(&bob.key).await.unwrap() {
+                    PfsStatus::Active { peer_ephemeral, .. } => Some(peer_ephemeral),
+                    _ => None,
+                }
+            };
+            let ended = session().await.unwrap();
+            let options = umsh::mac::SendOptions::default().with_ack_requested(true);
+            bob.mesh.end_pfs(&alice.key, &options).await.unwrap();
+            network.connect(near_id, far_id);
+
+            let mut arrivals = 0;
+            let mut failed = false;
+            until("the message was not delivered", || {
+                while let Some(event) = bob.node.next_event() {
+                    if let NodeEvent::Arrived { chat, message } = event
+                        && &*bob.node.message(chat, message).unwrap().text == "Meet at the ridge"
+                    {
+                        arrivals += 1;
+                    }
+                }
+                let delivery = alice.node.message(chat.id, caught.id).unwrap().delivery;
+                failed |= delivery == Delivery::Unconfirmed;
+                arrivals > 0 && delivery == Delivery::Delivered
+            })
+            .await;
+            assert!(!failed, "it waited for a new session rather than failing");
+            let new = session().await.expect("a session is held again");
+            assert_ne!(new, ended, "under a new session");
+            assert!(shown(), "the chat shows the new session");
+            assert!(
+                alice
+                    .node
+                    .message(chat.id, caught.id)
+                    .unwrap()
+                    .forward_secret
+            );
+            assert_eq!(arrivals, 1);
+        })
+        .await;
+}
+
 /// A message I delete is gone for everyone: a stand-in takes its place on
 /// both sides.
 #[tokio::test(flavor = "current_thread")]

@@ -160,6 +160,13 @@ pub struct Stall {
 /// the window waits here rather than in the MAC's own queue. A frame leaves
 /// the window when nothing more can happen to it: acknowledged or failed, or
 /// transmitted when no acknowledgment will follow.
+///
+/// A frame whose session with forward secrecy ended while it was in flight
+/// goes again, once: at once when it was free to go without one, or once
+/// a session is held again when it was bound to go under one. A frame bound
+/// to a session that is not held waits for one rather than failing; the
+/// owner of that binding releases or fails what waits (see
+/// [`TransmitQueue::awaiting_secrecy`]).
 pub struct TransmitQueue {
     window: usize,
     pending: VecDeque<Queued>,
@@ -167,6 +174,9 @@ pub struct TransmitQueue {
     /// Sent frames that will never be acknowledged, still listened to for
     /// repeaters carrying them. They take no room in the window.
     watching: Vec<Watching>,
+    /// Frames to peers that must go under a session with forward secrecy,
+    /// waiting for one. They take no room in the window.
+    awaiting_secrecy: Vec<Queued>,
     /// Peers that have acknowledged a frame since the last one failed:
     /// they know our key.
     pipeline_ready: BTreeSet<[u8; 32]>,
@@ -175,11 +185,27 @@ pub struct TransmitQueue {
 struct Queued {
     session_id: u64,
     transmission: Transmission,
+    /// It already went again because its session ended under it.
+    resent: bool,
+}
+
+impl Queued {
+    /// The peer the frame goes to, when it goes to one alone.
+    fn peer(&self) -> Option<PublicKey> {
+        match self.transmission.destination {
+            Destination::Peer(peer) => Some(peer),
+            Destination::Channel(_) | Destination::ChannelPeer { .. } => None,
+        }
+    }
 }
 
 struct InFlight {
     session_id: u64,
     transmission_id: u32,
+    /// The frame, for going again if its session ends under it, and what
+    /// it was held to: under a session with forward secrecy or never.
+    queued: Queued,
+    forward_secret: Option<bool>,
     /// The peer whose first-contact pipeline this send gates on. Channel
     /// sends have no such peer: multicast is unaddressed and blind unicast
     /// carries no acknowledgment to confirm with.
@@ -249,6 +275,7 @@ impl TransmitQueue {
             pending: VecDeque::new(),
             in_flight: Vec::new(),
             watching: Vec::new(),
+            awaiting_secrecy: Vec::new(),
             pipeline_ready: BTreeSet::new(),
         }
     }
@@ -262,8 +289,52 @@ impl TransmitQueue {
                 .map(|transmission| Queued {
                     session_id,
                     transmission,
+                    resent: false,
                 }),
         );
+    }
+
+    /// The peers frames wait on a session with forward secrecy with. Each
+    /// is to be released once a session is held with them, or failed once
+    /// none will be.
+    pub fn awaiting_secrecy(&self) -> BTreeSet<[u8; 32]> {
+        self.awaiting_secrecy
+            .iter()
+            .filter_map(|queued| queued.peer())
+            .map(|peer| peer.0)
+            .collect()
+    }
+
+    /// Sends what waits on a session with `peer` next, now that one is
+    /// held.
+    pub fn release_secrecy_waits(&mut self, peer: &PublicKey) {
+        let waits = self.take_secrecy_waits(peer);
+        for queued in waits.into_iter().rev() {
+            self.pending.push_front(queued);
+        }
+    }
+
+    /// Fails what waits on a session with `peer`, now that none will be
+    /// held.
+    pub fn fail_secrecy_waits<P, const SLOTS: usize, const PAGES: usize>(
+        &mut self,
+        peer: &PublicKey,
+        chat: &mut ChatFacade<P, SLOTS, PAGES>,
+        now_ms: u64,
+    ) where
+        P: TextProfile + Clone,
+    {
+        for queued in self.take_secrecy_waits(peer) {
+            Undeliverable::of(&queued).fail(chat, now_ms);
+        }
+    }
+
+    fn take_secrecy_waits(&mut self, peer: &PublicKey) -> Vec<Queued> {
+        let (waits, others) = core::mem::take(&mut self.awaiting_secrecy)
+            .into_iter()
+            .partition(|queued| queued.peer() == Some(*peer));
+        self.awaiting_secrecy = others;
+        waits
     }
 
     pub fn has_pending(&self) -> bool {
@@ -307,6 +378,7 @@ impl TransmitQueue {
             match self.departed(departure, sent, now_ms) {
                 Departed::Sent => sent_count += 1,
                 Departed::Failed(undeliverable) => undeliverable.fail(chat, now_ms),
+                Departed::AwaitsSecrecy => {}
                 Departed::Busy => break,
             }
         }
@@ -374,11 +446,17 @@ impl TransmitQueue {
     /// What became of a departure's send. A frame the node refused for
     /// now—with a registered peer and an engine-bounded payload, its queues
     /// are full—goes back to the head of the queue, to wait for tickets to
-    /// advance.
+    /// advance. One bound to a session with forward secrecy that is not
+    /// held waits for one.
     pub fn departed(&mut self, departure: Departure, sent: Sent, now_ms: u64) -> Departed {
         let ticket = match sent {
             Sent::Ticket(ticket) => ticket,
             Sent::Unsendable => return Departed::Failed(Undeliverable::of(&departure.queued)),
+            Sent::NoSession if departure.queued.peer().is_some() => {
+                self.awaiting_secrecy.push(departure.queued);
+                return Departed::AwaitsSecrecy;
+            }
+            Sent::NoSession => return Departed::Failed(Undeliverable::of(&departure.queued)),
             Sent::Busy => {
                 self.pending.push_front(departure.queued);
                 return Departed::Busy;
@@ -395,6 +473,8 @@ impl TransmitQueue {
         self.in_flight.push(InFlight {
             session_id: departure.queued.session_id,
             transmission_id: transmission.transmission_id,
+            queued: departure.queued,
+            forward_secret: departure.forward_secret,
             gate_peer: departure.gate_peer,
             ticket,
             sent_reported: false,
@@ -421,6 +501,8 @@ impl TransmitQueue {
         let occupied = self.in_flight.len();
         let pending = self.pending.len();
         let mut stalls = Vec::new();
+        // Frames whose session ended under them, to go again first.
+        let mut resent = Vec::new();
         let mut index = 0;
         while index < self.in_flight.len() {
             let entry = &mut self.in_flight[index];
@@ -489,6 +571,21 @@ impl TransmitQueue {
                     now_ms,
                 );
                 self.in_flight.swap_remove(index);
+            } else if entry.ticket.session_ended() && !entry.queued.resent {
+                // Its session ended under it, so it may never have arrived:
+                // it goes again, once, as it was bound to go. The peer
+                // still knows us.
+                let InFlight {
+                    mut queued,
+                    forward_secret,
+                    ..
+                } = self.in_flight.swap_remove(index);
+                queued.resent = true;
+                if forward_secret == Some(true) {
+                    self.awaiting_secrecy.push(queued);
+                } else {
+                    resent.push(queued);
+                }
             } else if entry.ticket.has_failed() {
                 // Perhaps it no longer knows us: the next frame introduces
                 // us again.
@@ -505,6 +602,10 @@ impl TransmitQueue {
             } else {
                 index += 1;
             }
+        }
+        resent.sort_by_key(|queued: &Queued| queued.transmission.transmission_id);
+        for queued in resent.into_iter().rev() {
+            self.pending.push_front(queued);
         }
         self.watching.retain_mut(|watching| {
             report_repeats(
@@ -530,13 +631,12 @@ impl TransmitQueue {
     where
         P: TextProfile + Clone,
     {
-        for queued in self.pending.drain(..) {
-            chat.transmit_update(
-                queued.session_id,
-                queued.transmission.transmission_id,
-                TransmitUpdate::Failed,
-                now_ms,
-            );
+        let waiting = self
+            .pending
+            .drain(..)
+            .chain(self.awaiting_secrecy.drain(..));
+        for queued in waiting {
+            Undeliverable::of(&queued).fail(chat, now_ms);
         }
         self.watching.clear();
         let mut receipts = Vec::new();
@@ -654,6 +754,8 @@ pub enum Sent {
     Ticket(SendProgressTicket),
     /// Nothing will make this frame sendable; fail it.
     Unsendable,
+    /// It must go under a session with forward secrecy, and none is held.
+    NoSession,
     /// The node refused it for now; try again later.
     Busy,
 }
@@ -665,6 +767,8 @@ pub enum Departed {
     Sent,
     /// It will never go: fail it.
     Failed(Undeliverable),
+    /// It waits for a session with forward secrecy with its peer.
+    AwaitsSecrecy,
     /// The node is full for now: send nothing more until a ticket
     /// advances.
     Busy,
@@ -727,8 +831,8 @@ pub async fn transmit<M: MacBackend>(node: &LocalNode<M>, departure: &Departure)
 }
 
 /// A unicast to `peer` under a session with forward secrecy, or never
-/// under one. One meant to go under a session that is no longer held
-/// cannot go: it never goes without.
+/// under one. One meant to go under a session that is not held waits for
+/// one: it never goes without.
 #[cfg(feature = "software-crypto")]
 async fn send_with_secrecy<M: MacBackend>(
     node: &LocalNode<M>,
@@ -742,7 +846,7 @@ async fn send_with_secrecy<M: MacBackend>(
         .await
     {
         Ok(ticket) => Sent::Ticket(ticket),
-        Err(umsh_node::NodeError::PfsSessionMissing) => Sent::Unsendable,
+        Err(umsh_node::NodeError::PfsSessionMissing) => Sent::NoSession,
         Err(_) => Sent::Busy,
     }
 }

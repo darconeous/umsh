@@ -213,7 +213,7 @@ impl<P: LocalPort, S: ChatStore> CommunicatorNode<P, S> {
                 route,
                 confirmed_age_ms,
             } => chats.route_read(peer, route, confirmed_age_ms, now_ms, events),
-            Arrival::Secrecy { peer, change } => chats.secrecy(peer, change, events),
+            Arrival::Secrecy { peer, change } => chats.secrecy(peer, change, now_ms, time, events),
             #[cfg(feature = "software-crypto")]
             Arrival::Meet { .. } | Arrival::MeetOpened(_) => {}
         });

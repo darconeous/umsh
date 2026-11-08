@@ -43,7 +43,8 @@ pub const PFS_MIC_SIZE: umsh_core::MicSize = umsh_core::MicSize::Mic4;
 const PFS_REQUEST_TIMEOUT_MS: u64 = 30_000;
 
 /// How often one peer may open a session here: a further request inside
-/// this window is refused, unless it repeats the one already answered.
+/// this window is refused, unless it repeats the one already answered or
+/// this node ended that session itself.
 #[cfg(feature = "software-crypto")]
 const PFS_REQUEST_INTERVAL_MS: u64 = 60_000;
 
@@ -709,6 +710,13 @@ impl PfsSessionManager {
         true
     }
 
+    /// Close `peer`'s window early: this node ended the session itself, so
+    /// asking again for one is no churn of the peer's making.
+    pub(crate) fn reopen_requests(&mut self, peer: &PublicKey) {
+        self.recent_requests
+            .retain(|(requester, _)| requester != peer);
+    }
+
     /// Start `peer`'s window: this node answered its request at `now_ms`.
     fn note_answered(&mut self, peer: &PublicKey, now_ms: u64) {
         if self.recent_requests.len() >= MAX_RECENT_REQUESTERS {
@@ -1141,6 +1149,7 @@ pub(crate) async fn end_session<M: MacBackend>(
     let session = state.borrow_mut().pfs.take_peer(peer);
     if let Some(session) = session {
         release(state, mac, session).await;
+        state.borrow_mut().pfs.reopen_requests(peer);
     } else {
         // A session lost to a reboot ends the same way, and the peer's
         // End is what tells a node its retired session is over.
@@ -1169,6 +1178,7 @@ pub(crate) async fn end_undelivered<M: MacBackend>(
     let session = state.borrow_mut().pfs.take_undelivered(local_ephemeral)?;
     let peer = session.peer_long_term;
     release(state, mac, session).await;
+    state.borrow_mut().pfs.reopen_requests(&peer);
     // Best effort: a peer that still holds its half hears it under the
     // long-term keys, if the trouble was the session's alone.
     let _ = send_pfs_command(

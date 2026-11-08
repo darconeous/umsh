@@ -554,8 +554,16 @@ impl<S: ChatStore> Chats<S> {
 
     /// Takes word of a session with forward secrecy with `peer`. One that
     /// was held and ended is asked for again while they prefer it; one
-    /// that could not be had is asked for again when next needed.
-    pub fn secrecy(&mut self, peer: PublicKey, change: Secrecy, events: &mut dyn FnMut(NodeEvent)) {
+    /// that could not be had is asked for again when next needed, and
+    /// what waited on it fails.
+    pub fn secrecy(
+        &mut self,
+        peer: PublicKey,
+        change: Secrecy,
+        now_ms: u64,
+        time: Option<u32>,
+        events: &mut dyn FnMut(NodeEvent),
+    ) {
         let was = match change {
             Secrecy::Established => self.secrecy.insert(peer.0, Session::Held),
             Secrecy::Ended | Secrecy::Failed => self.secrecy.remove(&peer.0),
@@ -566,6 +574,32 @@ impl<S: ChatStore> Chats<S> {
         }
         if change == Secrecy::Ended && was == Some(Session::Held) {
             self.keep_secrecy(peer);
+        }
+        if change == Secrecy::Failed
+            && let Some(facade) = &mut self.facade
+        {
+            self.outbox.fail_secrecy_waits(&peer, facade, now_ms);
+        }
+        self.settle_secrecy_waits(now_ms);
+        self.settle(None, now_ms, time, events);
+    }
+
+    /// Settles the frames waiting on a session with forward secrecy: those
+    /// to a peer one is held with go next, and the rest wait on one asked
+    /// for, or fail when the peer no longer prefers one.
+    pub(super) fn settle_secrecy_waits(&mut self, now_ms: u64) {
+        for peer in self.outbox.awaiting_secrecy() {
+            let peer = PublicKey(peer);
+            if self.secrecy.get(&peer.0) == Some(&Session::Held) {
+                self.outbox.release_secrecy_waits(&peer);
+                continue;
+            }
+            self.keep_secrecy(peer);
+            if !self.secrecy.contains_key(&peer.0)
+                && let Some(facade) = &mut self.facade
+            {
+                self.outbox.fail_secrecy_waits(&peer, facade, now_ms);
+            }
         }
     }
 

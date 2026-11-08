@@ -93,6 +93,8 @@ pub(crate) struct TicketState {
     pub acked_via_route_retry: bool,
     /// ACK timeout—all retransmits exhausted without ACK.
     pub failed: bool,
+    /// Failed because the session it went under ended first.
+    pub session_ended: bool,
     /// MAC is completely done with this send (no more events will fire).
     pub finished: bool,
     /// True for sends that don't request ACK (broadcast/multicast).
@@ -182,6 +184,14 @@ impl SendProgressTicket {
     /// True when the ACK timed out—all retransmits exhausted without ACK.
     pub fn has_failed(&self) -> bool {
         self.state.borrow().failed
+    }
+
+    /// True when the send failed because the session with forward secrecy
+    /// it went under ended before it was acknowledged. The frame may never
+    /// have reached the peer, and nothing sealed under that session can
+    /// go again.
+    pub fn session_ended(&self) -> bool {
+        self.state.borrow().session_ended
     }
 
     /// True when the MAC is completely done—no more retransmissions,

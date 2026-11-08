@@ -867,7 +867,7 @@ mod tests {
         block_on_ready(node.end_pfs(&peer, &options)).unwrap();
 
         assert_eq!(mac.state.borrow().removed_ephemerals, vec![session_id]);
-        assert!(ticket.has_failed());
+        assert!(ticket.has_failed() && ticket.session_ended());
         assert!(ticket.is_finished());
     }
 
@@ -897,8 +897,8 @@ mod tests {
 
         dispatcher.fail_identity(LocalIdentityId(10));
 
-        assert!(acked.was_acked() && !acked.has_failed());
-        assert!(open.has_failed() && open.is_finished());
+        assert!(acked.was_acked() && !acked.has_failed() && !acked.session_ended());
+        assert!(open.has_failed() && open.session_ended() && open.is_finished());
         assert!(!other.is_finished());
         dispatcher.dispatch_ticket_state(LocalIdentityId(10), &ack(2));
         assert!(!open.was_acked());
@@ -1358,6 +1358,38 @@ mod tests {
         let later =
             block_on_ready(node.handle_pfs_command(&peer, frame(), &request(0x47), &options));
         assert!(later.unwrap().is_some());
+        assert_eq!(node.pfs_rate_limited_requests(), 1);
+    }
+
+    /// A peer whose session this node ended may ask for another at once:
+    /// the churn is not theirs. One that ended its session itself still
+    /// waits out the minute.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn pfs_a_session_this_node_ended_may_be_asked_for_again_at_once() {
+        let mac = FakeMac::new(vec![[7u8; 32], [8u8; 32], [9u8; 32]]);
+        let node = test_node(mac.clone());
+        let peer = PublicKey([0x55; 32]);
+        let options = SendOptions::default();
+        let request = |key: u8| OwnedMacCommand::PfsSessionRequest {
+            ephemeral_key: PublicKey([key; 32]),
+            duration_minutes: 60,
+        };
+        block_on_ready(node.peer(peer)).unwrap();
+        let ask = |key| {
+            block_on_ready(node.handle_pfs_command(&peer, frame(), &request(key), &options))
+                .unwrap()
+                .is_some()
+        };
+
+        assert!(ask(0x44));
+        block_on_ready(node.end_pfs(&peer, &options)).unwrap();
+        assert!(ask(0x45), "this node ended it");
+
+        let end = OwnedMacCommand::EndPfsSession;
+        block_on_ready(node.handle_pfs_command(&peer, frame(), &end, &options)).unwrap();
+        assert!(node.pfs_local_keys().is_empty());
+        assert!(!ask(0x46), "the peer ended it");
         assert_eq!(node.pfs_rate_limited_requests(), 1);
     }
 

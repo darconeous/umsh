@@ -1162,6 +1162,9 @@ impl<S: ChatStore> Chats<S> {
                 self.settle(None, now_ms, time, events);
                 true
             }
+            // Settled at the next service, by which time word of the
+            // session it found missing has arrived.
+            Departed::AwaitsSecrecy => true,
             Departed::Busy => false,
         }
     }
@@ -1175,6 +1178,7 @@ impl<S: ChatStore> Chats<S> {
         // A frame that never resolves keeps its slot in the window; there
         // is nothing to do about one here.
         _ = self.outbox.service(facade, now_ms);
+        self.settle_secrecy_waits(now_ms);
         self.settle(None, now_ms, time, events);
     }
 
