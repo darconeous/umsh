@@ -609,6 +609,36 @@ impl TxPriority {
     }
 }
 
+/// Whether a repeater listens to hear a queued forward carried onward, and
+/// where that stands ([Forwarding Confirmation][spec]).
+///
+/// The queue entry is the whole of the state: a forward that aired goes
+/// back into the queue with the same bytes, due again when its next hop has
+/// had its chance, and leaves it when that hop is heard.
+///
+/// [spec]: https://darconeous.github.io/umsh/docs/protocol/repeater-operation.html#forwarding-confirmation
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum ForwardWatch {
+    /// Airs once, and nothing is listened for.
+    #[default]
+    None,
+    /// Not yet aired. Once it airs it is listened for, and may air
+    /// `retries` more times.
+    Armed { retries: u8 },
+    /// Aired and not yet heard carried onward. The entry's `not_before_ms`
+    /// is when it airs again, with `retries` left counting that one; with
+    /// none left, it is when the wait ends.
+    Awaiting { retries: u8 },
+}
+
+impl ForwardWatch {
+    /// Whether the forward has aired and is waiting to be heard carried
+    /// onward.
+    pub(crate) const fn has_aired(self) -> bool {
+        matches!(self, Self::Awaiting { .. })
+    }
+}
+
 /// One entry in the [`TxQueue`] waiting to be transmitted by the [`Mac`](crate::Mac) coordinator.
 ///
 /// Each `QueuedTx` holds a complete, already-sealed frame ready to hand directly to the
@@ -666,6 +696,8 @@ pub struct QueuedTx<const FRAME: usize = MAX_RESEND_FRAME_LEN> {
     /// Times this frame was held back because no committed reservation
     /// covered its counter yet.
     pub counter_holds: u8,
+    /// For a forward, whether it is listened for once it airs.
+    pub(crate) forward_watch: ForwardWatch,
 }
 
 impl<const FRAME: usize> QueuedTx<FRAME> {
@@ -712,6 +744,7 @@ impl<const FRAME: usize> QueuedTx<FRAME> {
             power_dbm: None,
             frame_counter: identity_id.and_then(|_| sealed_frame_counter(frame)),
             counter_holds: 0,
+            forward_watch: ForwardWatch::None,
         })
     }
 
@@ -885,6 +918,28 @@ impl<const N: usize, const FRAME: usize> TxQueue<N, FRAME> {
     /// Remove and return the entry queued under `sequence`.
     pub fn take(&mut self, sequence: u32) -> Option<QueuedTx<FRAME>> {
         self.remove_first_matching(|entry| entry.sequence == sequence)
+    }
+
+    /// The entry queued under `sequence`, to adjust in place.
+    pub(crate) fn get_mut(&mut self, sequence: u32) -> Option<&mut QueuedTx<FRAME>> {
+        self.entries
+            .iter_mut()
+            .find(|entry| entry.sequence == sequence)
+    }
+
+    /// Remove and return the longest-queued entry matching `predicate`.
+    pub(crate) fn remove_oldest_matching(
+        &mut self,
+        mut predicate: impl FnMut(&QueuedTx<FRAME>) -> bool,
+    ) -> Option<QueuedTx<FRAME>> {
+        let index = self
+            .entries
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| predicate(entry))
+            .min_by_key(|(_, entry)| entry.sequence)
+            .map(|(index, _)| index)?;
+        Some(self.entries.swap_remove(index))
     }
 
     fn pop_best_matching(

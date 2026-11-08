@@ -36,8 +36,8 @@ use crate::{
     route_score::{Hop, path_score},
     rx_windows::{RxWindow, RxWindows},
     send::{
-        CompletionSignal, PendingAck, PendingAckError, QueuedTx, ResendRecord, RxBaselineAdoption,
-        SendOptions, SendReceipt, SignatureStatus, TxPriority, TxQueue,
+        CompletionSignal, ForwardWatch, PendingAck, PendingAckError, QueuedTx, ResendRecord,
+        RxBaselineAdoption, SendOptions, SendReceipt, SignatureStatus, TxPriority, TxQueue,
     },
     uplinks::Uplink,
 };
@@ -106,6 +106,20 @@ pub(crate) const MAX_COUNTER_HOLDS: u8 = 30;
 pub(crate) const fn forward_slots(tx: usize) -> usize {
     let forward = tx - tx / 4;
     if forward == 0 { 1 } else { forward }
+}
+/// Most forwards that aired a repeater listens for at once.
+const MAX_TRACKED_FORWARDS: usize = 4;
+/// How many of a `tx`-slot queue's forwards may wait, after airing, to be
+/// heard carried onward: [`MAX_TRACKED_FORWARDS`], but never more than half
+/// the forwards' share, so that retries of old forwards always leave room
+/// for new ones.
+pub(crate) const fn tracked_forward_slots(tx: usize) -> usize {
+    let half = forward_slots(tx) / 2;
+    if half < MAX_TRACKED_FORWARDS {
+        half
+    } else {
+        MAX_TRACKED_FORWARDS
+    }
 }
 const MAC_COMMAND_ECHO_REQUEST_ID: u8 = 4;
 const MAC_COMMAND_ECHO_RESPONSE_ID: u8 = 5;
@@ -1118,6 +1132,13 @@ pub struct MacCounters {
     /// that then finds the channel busy is counted in
     /// [`Self::tx_abandoned`] too.
     pub forward_cancelled: u32,
+    /// Source-routed forwards transmitted again because the next hop was
+    /// not heard carrying them onward.
+    pub forward_retried: u32,
+    /// Source-routed forwards this repeater stopped listening for without
+    /// hearing them carried onward: their retries spent, a retry the
+    /// channel never let out, or the oldest pushed out by newer ones.
+    pub forward_unconfirmed: u32,
     /// Receptions this node would have repeated and declined under the
     /// operator's forwarding policy: a signal under this repeater's
     /// configured minimum RSSI or SNR, or a region this repeater does not
@@ -2870,6 +2891,7 @@ impl<
     ) -> Result<Option<SendReceipt>, MacError<<P::Radio as Radio>::Error>> {
         self.expire_post_tx_listen_if_needed();
         let now_ms = self.clock.now_ms();
+        self.retire_unconfirmed_forwards(now_ms);
         // A frame that aired on an unreserved counter would be sent again
         // under the same counter after a power loss, and every peer that
         // heard the first would refuse the second as a replay. So the
@@ -3004,6 +3026,9 @@ impl<
                     .arm(identity_id, receipt, queued.frame.as_slice(), now_ms);
             }
         }
+        if queued.forward_watch != ForwardWatch::None {
+            self.rearm_tracked_forward(queued);
+        }
         Ok(receipt)
     }
 
@@ -3049,13 +3074,89 @@ impl<
     /// acknowledgement withdraws nothing: it only shortens the forward's
     /// channel-access budget, and a forward it gives up releases its key
     /// here like any other.
+    ///
+    /// A retry of a forward that already aired keeps its key: this repeater
+    /// carried the packet once, and a later copy is a duplicate. It is
+    /// counted as a forward never heard carried onward.
     fn forget_unaired_forward(&mut self, queued: &crate::QueuedTx<FRAME>) {
         if queued.priority != TxPriority::Forward || queued.receipt.is_some() {
+            return;
+        }
+        if queued.forward_watch.has_aired() {
+            MacCounters::bump(&mut self.counters.forward_unconfirmed);
             return;
         }
         if let Some(key) = Self::confirmation_key(queued.frame.as_slice()) {
             self.dup_cache.remove(&key);
         }
+    }
+
+    /// Stop listening for every aired forward whose last wait has run out
+    /// without its next hop being heard carrying it onward.
+    fn retire_unconfirmed_forwards(&mut self, now_ms: u64) {
+        let retired = self.tx_queue.remove_all_matching(|entry| {
+            entry.forward_watch == ForwardWatch::Awaiting { retries: 0 } && entry.is_ready(now_ms)
+        });
+        self.counters.forward_unconfirmed = self
+            .counters
+            .forward_unconfirmed
+            .saturating_add(u32::try_from(retired).unwrap_or(u32::MAX));
+    }
+
+    /// Put a source-routed forward that just aired back in the queue, to be
+    /// withdrawn when its next hop is heard carrying it onward
+    /// ([`Mac::confirm_forwards_carried_onward`]) and otherwise to air again
+    /// once that hop has had its chance (repeater-operation.md § Forwarding
+    /// Confirmation).
+    ///
+    /// The bytes stay where they are: a retry is the same rewritten frame,
+    /// which every receiver that heard the first takes as a duplicate. It
+    /// costs no queue room the forward did not already hold, so retries
+    /// stay inside the forwards' share of the queue, and only
+    /// [`tracked_forward_slots`] of them wait at once: when that many
+    /// already do, the one that aired longest ago is given up.
+    ///
+    /// Kept out of line, off the transmit path's frame.
+    #[inline(never)]
+    fn rearm_tracked_forward(&mut self, mut queued: QueuedTx<FRAME>) {
+        let retries = match queued.forward_watch {
+            ForwardWatch::None => return,
+            ForwardWatch::Armed { retries } => retries,
+            ForwardWatch::Awaiting { retries } => {
+                MacCounters::bump(&mut self.counters.forward_retried);
+                retries.saturating_sub(1)
+            }
+        };
+        if tracked_forward_slots(TX) == 0 {
+            return;
+        }
+        if self
+            .tx_queue
+            .count_matching(|entry| entry.forward_watch.has_aired())
+            >= tracked_forward_slots(TX)
+            && self
+                .tx_queue
+                .remove_oldest_matching(|entry| entry.forward_watch.has_aired())
+                .is_some()
+        {
+            MacCounters::bump(&mut self.counters.forward_unconfirmed);
+        }
+        let mut due_ms = self
+            .clock
+            .now_ms()
+            .saturating_add(self.forward_confirm_timeout_ms());
+        // The jittered pause before a retry; after the last airing there
+        // is only the wait.
+        if retries > 0 {
+            let cap_ms = self.forward_retry_backoff_cap_ms();
+            due_ms =
+                due_ms.saturating_add(u64::from(self.rng.random_range(..cap_ms.saturating_add(1))));
+        }
+        queued.forward_watch = ForwardWatch::Awaiting { retries };
+        queued.not_before_ms = due_ms;
+        queued.cad_attempts = 0;
+        // The entry has just left the queue, so its room is still there.
+        let _ = self.tx_queue.enqueue_entry(queued);
     }
 
     /// Whether `entry` may go on the air as far as its counter goes: it
@@ -7548,20 +7649,26 @@ impl<
         }
 
         let now_ms = self.clock.now_ms();
-        if self
-            .tx_queue
-            .enqueue_with_state(
-                TxPriority::Forward,
-                &rewritten[..total_len],
-                None,
-                None,
-                now_ms.saturating_add(plan.delay_ms),
-                0,
-                0,
-            )
-            .is_err()
-        {
+        let Ok(sequence) = self.tx_queue.enqueue_with_state(
+            TxPriority::Forward,
+            &rewritten[..total_len],
+            None,
+            None,
+            now_ms.saturating_add(plan.delay_ms),
+            0,
+            0,
+        ) else {
             return false;
+        };
+        if plan.consume_source_route {
+            let hints_left = options
+                .source_route
+                .as_ref()
+                .map_or(0, |range| range.len() / 2)
+                .saturating_sub(1);
+            if let Some(entry) = self.tx_queue.get_mut(sequence) {
+                entry.forward_watch = Self::source_routed_forward_watch(header, hints_left);
+            }
         }
         self.dup_cache.insert(cache_key, now_ms);
         // Counted at the decision to repeat rather than at the eventual
@@ -7571,6 +7678,35 @@ impl<
         // abandons shows up here and not there.
         MacCounters::bump(&mut self.counters.forwarded);
         true
+    }
+
+    /// Whether a source-routed forward of `header`'s packet, leaving with
+    /// `hints_left` hints in its route, is listened for once it airs
+    /// (repeater-operation.md § Forwarding Confirmation).
+    ///
+    /// Something has to answer it. With hints left, that is the next hop
+    /// named, carrying it onward. The hop that consumes the last hint has no
+    /// named hop to hear: it hands the packet to its destination, which
+    /// repeats nothing, or to a flood that may never reach a repeater. There
+    /// the destination's acknowledgment is the one answer to wait for, so
+    /// that hop listens only for a packet that asked for one; any repeater
+    /// heard flooding the packet on answers it as well. A routed MAC ack
+    /// gets the ack's single retry, for the reason
+    /// [`MAX_ACK_FORWARD_RETRIES`] gives.
+    fn source_routed_forward_watch(header: &PacketHeader, hints_left: usize) -> ForwardWatch {
+        let acknowledged = matches!(
+            header.packet_type(),
+            PacketType::UnicastAckReq | PacketType::BlindUnicastAckReq
+        );
+        if hints_left == 0 && !acknowledged {
+            return ForwardWatch::None;
+        }
+        let retries = if header.packet_type() == PacketType::MacAck {
+            MAX_ACK_FORWARD_RETRIES
+        } else {
+            MAX_FORWARD_RETRIES
+        };
+        ForwardWatch::Armed { retries }
     }
 
     fn plan_forwarding(
@@ -8322,8 +8458,12 @@ impl<
         if rx.origin != RxOrigin::Air {
             return;
         }
-        let Some(queued) = self.tx_queue.remove_first_matching(|entry| {
+        // Deferral governs only the first decision to forward. A forward
+        // that already aired is waiting on its next hop, and a copy that
+        // did not confirm it is one from behind: the previous hop's retry.
+        let Some(mut queued) = self.tx_queue.remove_first_matching(|entry| {
             entry.priority == TxPriority::Forward
+                && !entry.forward_watch.has_aired()
                 && Self::confirmation_key(entry.frame.as_slice())
                     .map(|entry_key| &entry_key == key)
                     .unwrap_or(false)
@@ -8351,15 +8491,9 @@ impl<
         if header.ack_requested() && !overheard_has_route_hints {
             delay_ms = delay_ms.saturating_add(self.ack_guard_delay_ms());
         }
-        let _ = self.tx_queue.enqueue_with_state(
-            queued.priority,
-            queued.frame.as_slice(),
-            queued.receipt,
-            queued.identity_id,
-            now_ms.saturating_add(delay_ms),
-            queued.cad_attempts,
-            queued.forward_deferrals.saturating_add(1),
-        );
+        queued.not_before_ms = now_ms.saturating_add(delay_ms);
+        queued.forward_deferrals = queued.forward_deferrals.saturating_add(1);
+        let _ = self.tx_queue.enqueue_entry(queued);
     }
 
     /// Let any queued forward the destination may already have acknowledged
@@ -8400,6 +8534,13 @@ impl<
     /// opens with the four bytes it echoes, so a second copy would hint the
     /// first.
     ///
+    /// A forward that already aired and is waiting on its next hop is
+    /// answered instead: the acknowledgment is the evidence it was waiting
+    /// for, and it is withdrawn. A forged one costs that forward its
+    /// retries, which leaves it no worse off than a forward never listened
+    /// for. A forward hinted before it aired is, for the same reason, not
+    /// listened for once it does.
+    ///
     /// [ACK protection interval]: https://darconeous.github.io/umsh/docs/protocol/channel-access.html#ack-protection-interval
     /// [route-retry]: https://darconeous.github.io/umsh/docs/protocol/packet-options.html#route-retry-option-6
     /// [Ack MIC option]: https://darconeous.github.io/umsh/docs/protocol/packet-options.html#ack-mic-option-8
@@ -8407,35 +8548,18 @@ impl<
         if ack_mic.len() != 4 {
             return 0;
         }
+        self.tx_queue.remove_all_matching(|entry| {
+            entry.forward_watch.has_aired()
+                && Self::forward_named_by_ack_mic(entry, ack_mic, acks_too)
+        });
         const HINTED: u8 = MAX_CAD_ATTEMPTS - ACK_HINTED_CAD_ATTEMPTS;
         let mut hinted = 0;
         for entry in self.tx_queue.iter_mut() {
-            if entry.priority != TxPriority::Forward
-                || entry.receipt.is_some()
-                || entry.cad_attempts >= HINTED
-            {
-                continue;
-            }
-            let frame = entry.frame.as_slice();
-            let Ok(header) = PacketHeader::parse(frame) else {
-                continue;
-            };
-            // Only the packet types whose destination emits a MAC ack can be
-            // the subject of one. Without this, a forwarded ack awaiting
-            // transmission would be hinted by a second copy of itself: a
-            // MAC ack's own trailer opens with the same four bytes it echoes.
-            let eligible = match header.packet_type() {
-                PacketType::UnicastAckReq | PacketType::BlindUnicastAckReq => true,
-                PacketType::MacAck => acks_too,
-                _ => false,
-            };
-            if eligible
-                && frame
-                    .get(header.mic_range.clone())
-                    .and_then(|mic| mic.get(..4))
-                    .is_some_and(|prefix| prefix == ack_mic)
+            if entry.cad_attempts < HINTED
+                && Self::forward_named_by_ack_mic(entry, ack_mic, acks_too)
             {
                 entry.cad_attempts = HINTED;
+                entry.forward_watch = ForwardWatch::None;
                 hinted += 1;
             }
         }
@@ -8443,6 +8567,32 @@ impl<
             MacCounters::bump(&mut self.counters.forward_cancelled);
         }
         hinted
+    }
+
+    /// Whether `entry` is a forward of the packet an acknowledgment echoing
+    /// `ack_mic` answers.
+    fn forward_named_by_ack_mic(entry: &QueuedTx<FRAME>, ack_mic: &[u8], acks_too: bool) -> bool {
+        if entry.priority != TxPriority::Forward || entry.receipt.is_some() {
+            return false;
+        }
+        let frame = entry.frame.as_slice();
+        let Ok(header) = PacketHeader::parse(frame) else {
+            return false;
+        };
+        // Only the packet types whose destination emits a MAC ack can be
+        // the subject of one. Without this, a forwarded ack awaiting
+        // transmission would be hinted by a second copy of itself: a MAC
+        // ack's own trailer opens with the same four bytes it echoes.
+        let eligible = match header.packet_type() {
+            PacketType::UnicastAckReq | PacketType::BlindUnicastAckReq => true,
+            PacketType::MacAck => acks_too,
+            _ => false,
+        };
+        eligible
+            && frame
+                .get(header.mic_range.clone())
+                .and_then(|mic| mic.get(..4))
+                .is_some_and(|prefix| prefix == ack_mic)
     }
 
     /// Hint the queued forwards named by a piggy-backed [Ack MIC option]
@@ -8842,6 +8992,38 @@ impl<
         }
     }
 
+    /// Withdraw every aired forward that `frame`, keyed `key`, shows carried
+    /// onward: the same packet ([`forward_id::same_packet`]) from further
+    /// along its path ([`forward_id::carried_onward`]). A copy from behind
+    /// is the same packet but answers nothing; a frame that shares the key
+    /// but not the packet sets `mismatched`.
+    ///
+    /// Kept out of line so that what it parses stays off the receive
+    /// path's frame.
+    ///
+    /// [`forward_id::same_packet`]: crate::forward_id::same_packet
+    /// [`forward_id::carried_onward`]: crate::forward_id::carried_onward
+    #[inline(never)]
+    fn confirm_forwards_carried_onward(
+        &mut self,
+        key: &DupCacheKey,
+        frame: &[u8],
+        mismatched: &mut bool,
+    ) {
+        self.tx_queue.remove_all_matching(|entry| {
+            if !entry.forward_watch.has_aired()
+                || Self::confirmation_key(entry.frame.as_slice()).as_ref() != Some(key)
+            {
+                return false;
+            }
+            if !crate::forward_id::same_packet(entry.frame.as_slice(), frame) {
+                *mismatched = true;
+                return false;
+            }
+            crate::forward_id::carried_onward(entry.frame.as_slice(), frame)
+        });
+    }
+
     /// Check if a received frame confirms forwarding of a pending send.
     ///
     /// Confirmation is not tied to the post-transmit listen window. That
@@ -8867,6 +9049,7 @@ impl<
     ) -> Option<(LocalIdentityId, SendReceipt)> {
         self.expire_post_tx_listen_if_needed();
         let received_key = Self::confirmation_key(frame)?;
+        self.confirm_forwards_carried_onward(&received_key, frame, mismatched);
 
         // Whatever the pending table decides below, the wait itself is over
         // once its frame is heard carried onward.

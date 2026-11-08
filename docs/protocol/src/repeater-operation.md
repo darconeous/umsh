@@ -134,7 +134,7 @@ Repeaters do not generate MAC acks—acks are generated only by the [final desti
 
 This applies to:
 
-- **Source-routed packets**: Each forwarding hop listens for the next hop—the node matching the next source-route hint—to retransmit.
+- **Source-routed packets**: Each forwarding hop listens for the next hop—the node matching the next source-route hint—to retransmit. The hop that consumes the final hint has no such node. It listens only for a packet that requests an ACK, which the destination's ACK confirms, as does any repeater heard flooding the packet onward; any other packet it transmits once.
 - **Flood originators**: The originating node listens for any node to retransmit.
 - **Flood repeaters**: Intermediate flood-forwarding nodes MUST NOT retry. Multiple nodes may forward the same flood packet, and a repeater has no designated next hop to listen for; retrying would increase congestion without improving reliability.
 - **Routed MAC acks**: An ack that carries a source route or flood budget is a routed send like any other; the destination that produced it listens for the first hop to carry it onward and retries on silence. Retrying the ack first is what spares the sender a full data retransmission when only the ack's first hop failed. Once the destination sends a packet carrying an [Ack MIC option](packet-options.md#ack-mic-option-8) for the same packet, it stops retrying an ack that has already been transmitted: repeaters [let their forwards of that ack give way](#ack-cancellation) on hearing the option, and the packet carrying it is confirmed and retried in its own right.
