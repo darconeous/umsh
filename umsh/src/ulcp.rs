@@ -378,6 +378,10 @@ pub enum SavedSnapshot {
     /// A snapshot exists but no generation could be read; the device
     /// booted with post-reset defaults.
     Unreadable,
+    /// The newest generation is in effect, less values this firmware
+    /// cannot hold, which kept their post-reset values. Re-save to clear
+    /// it.
+    Partial,
     /// A code this host does not assign, kept as reported.
     Other(u8),
 }
@@ -391,14 +395,15 @@ impl SavedSnapshot {
             ids::saved::CURRENT => Self::Current,
             ids::saved::FALLBACK => Self::Fallback,
             ids::saved::UNREADABLE => Self::Unreadable,
+            ids::saved::PARTIAL => Self::Partial,
             other => Self::Other(other),
         })
     }
 
-    /// Whether a saved snapshot is known to be in effect, in either
-    /// generation. An unassigned code does not say so.
+    /// Whether a saved snapshot is known to be in effect, wholly or in
+    /// part. An unassigned code does not say so.
     pub fn is_saved(self) -> bool {
-        matches!(self, Self::Current | Self::Fallback)
+        matches!(self, Self::Current | Self::Fallback | Self::Partial)
     }
 }
 

@@ -136,20 +136,33 @@ for that case.
 
 * A snapshot **MUST** be self-describing enough that a device can
   distinguish a payload it cannot read from an absent one. A device
-  **MUST NOT** apply a payload it does not fully understand.
+  **MUST NOT** apply a payload whose structure it cannot read: a bad
+  format, broken framing, or a failed integrity check rejects the whole
+  snapshot.
+* A value this device cannot hold—a frequency outside its band, a table
+  entry beyond its capacity, a setting it would refuse from a host—costs
+  that value, not the snapshot. The device skips it and counts it, as
+  though the snapshot had not recorded it: a skipped setting keeps its
+  post-reset value, and a skipped table entry is absent. Everything else
+  applies, and `PROP_SAVED` reports the restore as partial. The stored
+  snapshot still holds the skipped value until `CMD_SAVE` replaces it.
+  The exception is the recorded identity (see
+  [`CMD_RESTORE`](ulcp-saved-state.md#cmd-restore)): one the device
+  cannot read rejects the snapshot.
 * Devices **MUST NOT** silently boot bare after rejecting a snapshot.
   Where the storage retains earlier generations, the device **MUST**
   fall back to the newest generation that does decode, in preference to
   booting with documented defaults. A device **MAY** bound how far back
   it walks.
-* `PROP_SAVED` **MUST** report a fallback and an unreadable snapshot
-  distinguishably from both "saved" and "nothing saved" (see
-  [`PROP_SAVED`](ulcp-saved-state.md#prop-saved)). Devices with a local indicator **SHOULD** signal it
-  there as well, since the host-visible report reaches nobody on an
-  unattended device.
-* A device that restored an older generation is otherwise in normal
-  operation: nothing is refused, and `CMD_SAVE` replaces the stored
-  snapshot and clears the condition.
+* `PROP_SAVED` **MUST** report a fallback, a partial restore, and an
+  unreadable snapshot distinguishably from both "saved" and "nothing
+  saved" (see
+  [`PROP_SAVED`](ulcp-saved-state.md#prop-saved)). Devices with a local
+  indicator **SHOULD** signal a rejected generation there as well, since
+  the host-visible report reaches nobody on an unattended device.
+* A device that restored an older generation, or part of one, is
+  otherwise in normal operation: nothing is refused, and `CMD_SAVE`
+  replaces the stored snapshot and clears the condition.
 
 Only forward compatibility is required. Newer firmware **MUST** read
 snapshots written by older firmware, taking the documented default for
@@ -168,9 +181,9 @@ change saved properties with no host asking. Such a change:
   reports 1), so what was set at the device is still set after a reboot;
 * **never creates one.** A device with nothing saved saves nothing: a
   snapshot made from a button press would persist every other live value
-  with it. A device that rejected its newest generation at boot
-  (`PROP_SAVED` reports 2 or 3) writes nothing either, since the write
-  would bury the condition `PROP_SAVED` reports.
+  with it. A device that rejected its newest generation at boot, or
+  skipped values of it (`PROP_SAVED` reports 2, 3, or 4), writes nothing
+  either, since the write would bury the condition `PROP_SAVED` reports.
 
 The change applies live in every case.
 
@@ -396,12 +409,15 @@ Value | Meaning
 1 | The most recently saved snapshot is in effect.
 2 | A saved snapshot is in effect, but a **newer** stored generation was rejected at boot and this is an earlier one. The device is operating on configuration older than what was last saved.
 3 | A snapshot exists but **no** stored generation could be read. The device booted with documented defaults despite having been saved.
+4 | The most recently saved snapshot is in effect, but the device skipped values in it that it cannot hold (see [Snapshot Integrity](ulcp-saved-state.md#snapshot-integrity)). Those settings hold their documented defaults.
 
-Values 2 and 3 are conditions to report to the operator, not errors to
+A fallback generation that also skipped values reports 2.
+
+Values 2, 3 and 4 are conditions to report to the operator, not errors to
 recover from automatically: the configuration the device is running is not
 the configuration that was last written, and only whoever wrote it can
 say what should replace it. A successful `CMD_SAVE` returns the value to
-1. Values 2 and 3 persist for the remainder of the power cycle and
+1. Values 2, 3 and 4 persist for the remainder of the power cycle and
 **MUST NOT** be cleared by `CMD_RST` or `CMD_RESTORE`, neither of which
 re-reads storage.
 

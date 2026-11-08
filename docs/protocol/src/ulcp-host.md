@@ -372,7 +372,7 @@ adjustment fail values they cannot honor with `STATUS_INVALID_ARGUMENT`.
 * Post-Reset Value: 0
 
 The cumulative number of frames discarded from the inbound queue—evicted
-by the circular queue-full policy or otherwise not retained (see
+or refused by the queue-full policy, or otherwise not retained (see
 [Inbound Queueing](ulcp-host.md#inbound-queueing))—since the device last reset. A non-zero increase
 across a detached interval tells the host that its view of that interval
 is incomplete. The counter wraps modulo 2^32.
@@ -550,7 +550,8 @@ delivery only.
 When `CAP_HOST_RX_QUEUE` is supported and the host is **detached**,
 accepted frames are placed in a FIFO inbound queue instead of being
 discarded. Each queue entry records the frame, its receive metadata (RSSI,
-LQI, SNR), the time of reception, and whether the device acknowledged it (see
+LQI, SNR), the time of reception, whether the device authenticated it, and
+whether the device acknowledged it (see
 [Acknowledgement Delegation](ulcp-host.md#ack-delegation)).
 
 When the host is **attached**, accepted frames are delivered live over
@@ -566,11 +567,33 @@ buffered-frame metadata gives coarse (one-second) relative timing but is
 not sufficient to reconstruct a strict total order—and UMSH itself does
 not guarantee in-order delivery in any case.
 
-The queue is **circular**: when a new frame is accepted and the queue is
-full, the oldest queued frame is discarded and the new frame is appended.
-The queue therefore always holds the most recent accepted traffic. Every
-frame discarded by this eviction increments
-`PROP_HOST_RX_QUEUE_DROPPED`.
+A queued frame is **authenticated** when its MIC verified under keys the
+device holds—a [`PROP_HOST_PEER_KEYS`](ulcp-host.md#prop-host-peer-keys)
+entry for unicast, a
+[`PROP_HOST_CHANNEL_KEYS`](ulcp-host.md#prop-host-channel-keys) entry for
+multicast—it carries no delivery-critical option the device cannot
+interpret, and the device did not suspect it of being a replay. Any other
+frame is **unauthenticated**: a destination hint is public, so anyone can
+send a frame that passes the receive filters. Only an authenticated frame
+can be acknowledged on the host's behalf.
+
+When a new frame is accepted and the queue is full, the device makes room as
+follows:
+
+1. If the queue holds an unauthenticated entry, the oldest unauthenticated
+   entry is discarded.
+2. Otherwise, if the new frame is authenticated, the oldest entry is
+   discarded.
+3. Otherwise the new frame is discarded. A device **MUST NOT** discard an
+   authenticated entry to admit an unauthenticated frame.
+
+Within each class the queue holds the most recent traffic, and queue order
+stays the order of reception. Every frame discarded under these rules,
+whether queued or arriving, increments `PROP_HOST_RX_QUEUE_DROPPED`.
+
+Traffic from a peer the device holds no keys for, including first contact
+from an unprovisioned peer, is unauthenticated: it is the first displaced
+when the queue fills, and it cannot displace authenticated traffic.
 
 Eviction can discard a frame that was already acknowledged on the host's
 behalf—the sender believes it delivered, but the host will never
@@ -621,10 +644,11 @@ if all of the following hold:
    store leaves the baseline unchanged, so its retransmissions remain
    acceptable later.
 7. The frame was placed in the inbound queue (see [Inbound Queueing](ulcp-host.md#inbound-queueing)).
-   Because the queue is circular, placement normally succeeds by evicting
-   the oldest entry when full; a frame that nevertheless cannot be stored
-   (for example, one exceeding the device's buffer) is not acknowledged, so
-   the sender keeps retrying until the host returns.
+   An authenticated frame always finds room when the queue is full (see
+   [Inbound Queueing](ulcp-host.md#inbound-queueing)); a frame that
+   nevertheless cannot be stored (for example, one exceeding the device's
+   buffer) is not acknowledged, so the sender keeps retrying until the host
+   returns.
 
 A delegated ACK also requires that no unconsumed source-route hints remain. An early overheard copy may be queued without an ACK; the first eligible duplicate can then supply the ACK without another queue entry. `RX_FLAG_ACKED` requires successful radio transmission.
 

@@ -1485,6 +1485,9 @@ struct QueueEntry {
     lqi: Option<core::num::NonZeroU8>,
     rx_time_ms: u64,
     acked: bool,
+    /// Whether the device authenticated the frame against a provisioned
+    /// key when it queued it. Only an authenticated frame can be acked.
+    authenticated: bool,
     /// Monotonic (wrapping) sequence number: a stable handle that a
     /// pending ack transmission can use to mark this exact entry
     /// later, immune to queue rotation and eviction.
@@ -1501,6 +1504,7 @@ impl QueueEntry {
         lqi: None,
         rx_time_ms: 0,
         acked: false,
+        authenticated: false,
         seq: 0,
         identity: None,
     };
@@ -1510,10 +1514,12 @@ impl QueueEntry {
     }
 }
 
-/// The circular FIFO inbound queue (spec §Inbound Queueing). When full,
-/// accepting a new frame evicts the oldest entry and counts it in
-/// `PROP_HOST_RX_QUEUE_DROPPED`, so the queue always holds the most
-/// recent accepted traffic.
+/// The FIFO inbound queue (spec §Inbound Queueing). When full, a new
+/// frame displaces the oldest unauthenticated entry, or failing that—
+/// and only for an authenticated arrival—the oldest entry. An
+/// unauthenticated arrival never displaces an authenticated entry; it
+/// is refused instead. Either loss counts in
+/// `PROP_HOST_RX_QUEUE_DROPPED`.
 struct RxQueue {
     entries: [QueueEntry; RX_QUEUE_CAPACITY],
     /// Index of the oldest entry.
@@ -1550,19 +1556,30 @@ impl RxQueue {
         }
     }
 
-    /// Append an entry (evicting the oldest when full) and return its
-    /// sequence handle.
+    /// Append an entry and return its sequence handle, making room when
+    /// full by the eviction order above. `None` means the queue holds
+    /// only authenticated entries and the unauthenticated arrival was
+    /// refused (and counted).
     fn push(
         &mut self,
         data: &[u8],
         info: &RadioRxInfo,
         rx_time_ms: u64,
+        authenticated: bool,
         identity: Option<RxIdentity>,
-    ) -> u16 {
+    ) -> Option<u16> {
         debug_assert!(data.len() <= MAX_MTU);
         if self.len == RX_QUEUE_CAPACITY {
-            self.head = (self.head + 1) % RX_QUEUE_CAPACITY;
-            self.len -= 1;
+            let unauthenticated = self.iter().position(|entry| !entry.authenticated);
+            let victim = match unauthenticated {
+                Some(offset) => offset,
+                None if authenticated => 0,
+                None => {
+                    self.dropped = self.dropped.wrapping_add(1);
+                    return None;
+                }
+            };
+            self.remove_at(victim);
             self.dropped = self.dropped.wrapping_add(1);
         }
         let seq = self.next_seq;
@@ -1576,10 +1593,28 @@ impl RxQueue {
         entry.lqi = info.lqi;
         entry.rx_time_ms = rx_time_ms;
         entry.acked = false;
+        entry.authenticated = authenticated;
         entry.seq = seq;
         entry.identity = identity;
         self.len += 1;
-        seq
+        Some(seq)
+    }
+
+    /// Remove the entry `offset` places from the oldest, closing the gap
+    /// by moving the newer entries back one slot so FIFO order holds.
+    fn remove_at(&mut self, offset: usize) {
+        debug_assert!(offset < self.len);
+        if offset == 0 {
+            self.head = (self.head + 1) % RX_QUEUE_CAPACITY;
+            self.len -= 1;
+            return;
+        }
+        for index in offset..self.len - 1 {
+            let to = (self.head + index) % RX_QUEUE_CAPACITY;
+            let from = (self.head + index + 1) % RX_QUEUE_CAPACITY;
+            self.entries[to] = self.entries[from];
+        }
+        self.len -= 1;
     }
 
     fn front(&self) -> Option<&QueueEntry> {
@@ -2679,8 +2714,9 @@ pub enum SnapshotError {
     /// The option block is truncated, out of order, or repeats a
     /// single-valued property.
     Malformed,
-    /// A known option carried a value this firmware refuses: out of
-    /// range, wrong length, or a table over capacity.
+    /// The recorded device identity is not a public key. Any other value
+    /// this firmware cannot hold is skipped rather than rejected, and
+    /// `PROP_SAVED` reports [`SavedStatus::Partial`].
     InvalidValue,
 }
 
@@ -2698,6 +2734,9 @@ pub enum SavedStatus {
     /// A snapshot exists but no generation could be read; the device
     /// booted bare.
     Unreadable,
+    /// The newest saved generation is in effect, less values this build
+    /// cannot hold, which kept their post-reset values.
+    Partial,
 }
 
 impl SavedStatus {
@@ -2708,6 +2747,7 @@ impl SavedStatus {
             Self::Current => ids::saved::CURRENT,
             Self::Fallback => ids::saved::FALLBACK,
             Self::Unreadable => ids::saved::UNREADABLE,
+            Self::Partial => ids::saved::PARTIAL,
         }
     }
 }
@@ -2781,6 +2821,10 @@ struct SavedState {
     ipv4_config: ip::V4Config,
     ipv6_config: ip::V6Config,
     ip_dns: net::Resolvers,
+    /// Options the decode skipped because this build cannot hold their
+    /// values: not saved data, but what the restore lost of it. Zero for
+    /// a capture.
+    skipped: u32,
 }
 
 impl SavedState {
@@ -2840,6 +2884,7 @@ impl SavedState {
             ipv4_config: device.ipv4_config,
             ipv6_config: device.ipv6_config,
             ip_dns: device.ip_dns,
+            skipped: 0,
         }
     }
 
@@ -2909,6 +2954,7 @@ impl SavedState {
             ipv4_config: ip::V4Config::default(),
             ipv6_config: ip::V6Config::default(),
             ip_dns: net::Resolvers::default(),
+            skipped: 0,
         }
     }
 
@@ -3122,10 +3168,14 @@ impl SavedState {
     /// without building one.
     ///
     /// Unknown options are skipped (a newer writer's property, or a
-    /// retired one). Everything else—a bad format byte, a malformed
-    /// option block, a repeated single-valued property, an out-of-range
-    /// value, a table over capacity—rejects the whole payload, leaving
-    /// the caller to fall back to an older generation.
+    /// retired one). So is a known option whose value this build cannot
+    /// hold—an out-of-range value, a table entry over capacity—which
+    /// keeps its post-reset value and counts in [`SavedState::skipped`].
+    /// Structural faults—a bad format byte, a malformed option block, a
+    /// repeated single-valued property—reject the whole payload, leaving
+    /// the caller to fall back to an older generation; so does a recorded
+    /// identity that is not a public key, since a snapshot that records
+    /// none is permitted under any identity.
     fn decode(config: &SessionConfig, bytes: &[u8]) -> Result<Self, SnapshotError> {
         let (format, options) = bytes.split_first().ok_or(SnapshotError::Malformed)?;
         if *format != SNAPSHOT_FORMAT {
@@ -3145,19 +3195,25 @@ impl SavedState {
                 }
                 seen |= bit;
             }
-            state.absorb_option(config, number, value)?;
+            if state.absorb_option(config, number, value).is_err() {
+                if u32::from(number) == prop::DEV_KEY {
+                    return Err(SnapshotError::InvalidValue);
+                }
+                state.skipped = state.skipped.saturating_add(1);
+            }
         }
         Ok(state)
     }
 
-    /// Validate and store one decoded option.
+    /// Validate and store one decoded option. `Err` leaves the property
+    /// as it was.
     fn absorb_option(
         &mut self,
         config: &SessionConfig,
         number: u16,
         value: &[u8],
-    ) -> Result<(), SnapshotError> {
-        let invalid = |_| SnapshotError::InvalidValue;
+    ) -> Result<(), Unheld> {
+        let invalid = |_| Unheld;
         match u32::from(number) {
             prop::PHY_ENABLED => self.settings.enabled = parse_bool(value).map_err(invalid)?,
             prop::PHY_FREQ => {
@@ -3173,25 +3229,23 @@ impl SavedState {
             prop::PHY_LORA_SF => self.settings.sf = validate_sf(value).map_err(invalid)?,
             prop::PHY_LORA_CR => self.settings.cr_denom = validate_cr(value).map_err(invalid)?,
             prop::DEV_KEY => {
-                self.dev_key = Some(value.try_into().map_err(|_| SnapshotError::InvalidValue)?);
+                self.dev_key = Some(value.try_into().map_err(|_| Unheld)?);
             }
             prop::DEV_CHANNEL_KEYS => {
-                let key = channel_key_item(value)?;
-                self.dev_channel_keys
-                    .insert(ChannelKeyEntry {
-                        key,
-                        id: [0; items::CHANNEL_IDENTIFIER_LEN],
-                    })
-                    .map_err(invalid)?;
+                let key = value.try_into().map_err(|_| Unheld)?;
+                held(self.dev_channel_keys.insert(ChannelKeyEntry {
+                    key,
+                    id: [0; items::CHANNEL_IDENTIFIER_LEN],
+                }))?;
             }
             prop::DEV_PEERS => {
                 let public_key: [u8; items::PUBLIC_KEY_LEN] =
-                    value.try_into().map_err(|_| SnapshotError::InvalidValue)?;
-                self.dev_peers.insert(public_key).map_err(invalid)?;
+                    value.try_into().map_err(|_| Unheld)?;
+                held(self.dev_peers.insert(public_key))?;
             }
             prop::DEV_NAME => {
                 if !valid_device_name(value) {
-                    return Err(SnapshotError::InvalidValue);
+                    return Err(Unheld);
                 }
                 self.name = [0; MAX_DEVICE_NAME_LEN];
                 self.name[..value.len()].copy_from_slice(value);
@@ -3203,12 +3257,9 @@ impl SavedState {
             prop::IDENT_ROLE => self.ident_role = Some(parse_u8(value).map_err(invalid)?),
             prop::IDENT_MOBILE => self.ident_mobile = parse_bool(value).map_err(invalid)?,
             prop::MAC_REPEATER_REGIONS => {
-                // One option per entry, re-validated and re-derived: a
-                // stored region that no longer parses is dropped rather
-                // than allowed to fail the whole restore.
-                if let Ok(entry) = region_entry(value) {
-                    let _ = self.repeater_regions.push(entry);
-                }
+                // One option per entry, re-validated and re-derived.
+                let entry = region_entry(value).map_err(invalid)?;
+                held(self.repeater_regions.push(entry))?;
             }
             prop::MAC_REPEATER_DEFAULT_REGION => {
                 self.repeater_default_region = parse_region_code(value).map_err(invalid)?
@@ -3226,12 +3277,9 @@ impl SavedState {
                 self.meshcore_region_policy =
                     validate_meshcore_region_policy(value).map_err(invalid)?
             }
-            // As for the UMSH regions: a stored name that no longer
-            // validates is dropped rather than failing the whole restore.
             prop::MESHCORE_REGIONS => {
-                if let Ok(name) = meshcore_region_name(value) {
-                    let _ = self.meshcore_regions.push(name);
-                }
+                let name = meshcore_region_name(value).map_err(invalid)?;
+                held(self.meshcore_regions.push(name))?;
             }
             prop::LAN_BEARER_ENABLED | prop::LAN_BEARER_GROUP | prop::LAN_BEARER_INGRESS_LIMIT => {
                 self.lan_bearer
@@ -3276,8 +3324,8 @@ impl SavedState {
             prop::PHY_DUTY_LIMIT => self.duty_limit = parse_u16(value).map_err(invalid)?,
             prop::DEV_ADMINS => {
                 let public_key: [u8; items::PUBLIC_KEY_LEN] =
-                    value.try_into().map_err(|_| SnapshotError::InvalidValue)?;
-                self.dev_admins.insert(public_key).map_err(invalid)?;
+                    value.try_into().map_err(|_| Unheld)?;
+                held(self.dev_admins.insert(public_key))?;
             }
             prop::TZ_RULE => self.tz_rule = ZoneRule::parse(value).map_err(invalid)?,
             prop::TIME_24H => self.time_24h = parse_bool(value).map_err(invalid)?,
@@ -3291,16 +3339,15 @@ impl SavedState {
             prop::BLE_ENABLED => self.ble_enabled = parse_bool(value).map_err(invalid)?,
             #[cfg(feature = "wifi")]
             prop::WIFI_NETWORKS => {
-                let entry =
-                    wifi::NetworkEntry::decode(value).map_err(|_| SnapshotError::InvalidValue)?;
+                let entry = wifi::NetworkEntry::decode(value).map_err(|_| Unheld)?;
                 if self.wifi_networks.get(entry.ssid).is_some() {
-                    return Err(SnapshotError::InvalidValue);
+                    return Err(Unheld);
                 }
                 // Preserve valid saved credentials across changes in driver
                 // capabilities. New writes still check hardware support;
                 // the platform must refuse unsupported profiles at use time.
-                config.wifi.ok_or(SnapshotError::InvalidValue)?;
-                entry.validate().map_err(|_| SnapshotError::InvalidValue)?;
+                config.wifi.ok_or(Unheld)?;
+                entry.validate().map_err(|_| Unheld)?;
                 self.wifi_networks.insert(value).map_err(invalid)?;
             }
             #[cfg(feature = "bridge-client")]
@@ -3312,23 +3359,17 @@ impl SavedState {
             }
             prop::WIFI_ENABLED => self.wifi_enabled = parse_bool(value).map_err(invalid)?,
             prop::IPV4_CONFIG => {
-                let config =
-                    ip::V4Config::decode(value).map_err(|_| SnapshotError::InvalidValue)?;
-                config.validate().map_err(|_| SnapshotError::InvalidValue)?;
+                let config = ip::V4Config::decode(value).map_err(|_| Unheld)?;
+                config.validate().map_err(|_| Unheld)?;
                 self.ipv4_config = config;
             }
             prop::IPV6_CONFIG => {
-                let config =
-                    ip::V6Config::decode(value).map_err(|_| SnapshotError::InvalidValue)?;
-                config.validate().map_err(|_| SnapshotError::InvalidValue)?;
+                let config = ip::V6Config::decode(value).map_err(|_| Unheld)?;
+                config.validate().map_err(|_| Unheld)?;
                 self.ipv6_config = config;
             }
-            // One option per resolver, and a stored one that no longer
-            // passes is dropped rather than allowed to fail the whole
-            // restore—the same treatment a saved region gets.
-            prop::IP_DNS => {
-                let _ = self.ip_dns.push(value);
-            }
+            // One option per resolver.
+            prop::IP_DNS => self.ip_dns.push(value).map_err(|_| Unheld)?,
             _ => unreachable!("SAVED_SCHEMA row without a decoder arm"),
         }
         Ok(())
@@ -3399,9 +3440,17 @@ fn readable_message(payload: &[u8]) -> Option<Readable> {
     })
 }
 
-/// A channel-key option value: the raw symmetric key.
-fn channel_key_item(value: &[u8]) -> Result<[u8; items::CHANNEL_KEY_LEN], SnapshotError> {
-    value.try_into().map_err(|_| SnapshotError::InvalidValue)
+/// A saved option this build cannot hold: skipped and counted, never a
+/// reason to reject the snapshot.
+struct Unheld;
+
+/// A saved table entry's insert, where a repeat of an entry already held
+/// loses nothing and so is not skipped.
+fn held(result: Result<(), Status>) -> Result<(), Unheld> {
+    match result {
+        Err(status) if status != Status::ALREADY => Err(Unheld),
+        _ => Ok(()),
+    }
 }
 
 /// State that exists only while a host is attached (spec §State
@@ -4834,21 +4883,29 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     // An unauthenticated frame reaches the queue on the
                     // strength of a receive filter alone: its content
                     // is unreadable, so nothing says it is a message.
-                    let (ack, identity, cue, silent) = match verdict {
+                    let (ack, identity, cue, silent, authenticated) = match verdict {
                         SecureRx::New {
                             ack,
                             identity,
                             cue,
                             silent,
-                        } => (ack, identity, cue, silent),
-                        _ => (None, None, false, false),
+                        } => (ack, identity, cue, silent, true),
+                        _ => (None, None, false, false, false),
                     };
                     // Entries start unacknowledged: RX_FLAG_ACKED is
                     // earned only when the ack transmission actually
                     // completes (on_tx_result). A refused or failed ack
                     // leaves the frame queued unacked and the sender's
                     // retransmission hits the re-ack window later.
-                    let seq = self.host.queue.push(data, info, now_ms, identity);
+                    //
+                    // A full queue of authenticated entries refuses an
+                    // unauthenticated arrival (counted as dropped): a
+                    // forged frame costs nothing to send, and must not
+                    // push out a message the device vouched for.
+                    let seq = self
+                        .host
+                        .queue
+                        .push(data, info, now_ms, authenticated, identity)?;
                     self.queued_notice = Some(QueuedNotice {
                         class: queued_class(data),
                         cue,
@@ -6591,13 +6648,25 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     }
 
     /// What `PROP_SAVED` reports (spec §Saved State).
+    ///
+    /// A fallback generation that also skipped values reports
+    /// [`SavedStatus::Fallback`]: running on older configuration is the
+    /// larger difference from what was last saved.
     pub fn saved_status(&self) -> SavedStatus {
-        match (self.saved.is_some(), self.snapshot_rejected) {
-            (true, false) => SavedStatus::Current,
-            (true, true) => SavedStatus::Fallback,
-            (false, true) => SavedStatus::Unreadable,
-            (false, false) => SavedStatus::None,
+        match (&self.saved, self.snapshot_rejected) {
+            (Some(_), true) => SavedStatus::Fallback,
+            (Some(saved), false) if saved.skipped > 0 => SavedStatus::Partial,
+            (Some(_), false) => SavedStatus::Current,
+            (None, true) => SavedStatus::Unreadable,
+            (None, false) => SavedStatus::None,
         }
+    }
+
+    /// How many options of the snapshot in effect the boot restore
+    /// skipped, because this build cannot hold their values. Zero once a
+    /// save replaces it.
+    pub fn snapshot_skipped(&self) -> u32 {
+        self.saved.as_ref().map_or(0, |saved| saved.skipped)
     }
 
     /// Complete the durable write requested via
@@ -6647,10 +6716,11 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// with nothing saved gets nothing saved: manufacturing a snapshot
     /// from a button press would persist every other live-only value with
     /// it. A device that rejected its newest generation at boot
-    /// (`Fallback` or `Unreadable`) must not write one either: the write
-    /// would become the newest generation, bury the rejected record under
+    /// (`Fallback` or `Unreadable`), or skipped values of it (`Partial`),
+    /// must not write one either: the write would become the newest
+    /// generation, bury the rejected record or skipped values under
     /// defaults or stale values, and clear the fault `PROP_SAVED` exists
-    /// to report. The change still applies live in both cases; only a
+    /// to report. The change still applies live in every case; only a
     /// host's `CMD_SAVE` writes over a fault.
     pub fn note_device_change(&mut self) -> bool {
         if self.saved_status() != SavedStatus::Current {
@@ -12535,7 +12605,12 @@ mod tests {
         let len = 1 + encoder.finish();
         let mut booted: TestSession =
             Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
-        assert!(booted.restore_at_boot(&bad[..len]).is_err());
+        booted.restore_at_boot(&bad[..len]).unwrap();
+        assert_eq!(booted.saved_status(), SavedStatus::Partial);
+        assert_eq!(
+            booted.meshcore_region_policy(),
+            meshcore_region_policy::OPEN
+        );
     }
 
     /// MeshCore reserves the identity hashes 0x00 and 0xFF, so the
@@ -16882,9 +16957,10 @@ mod tests {
 
     /// Snapshot values pass the same validators a host write does, so a
     /// corrupted or foreign snapshot cannot install a setting the
-    /// property surface would refuse.
+    /// property surface would refuse. Such a value is skipped: the
+    /// property keeps its post-reset value and `PROP_SAVED` says so.
     #[test]
-    fn out_of_range_snapshot_values_are_rejected() {
+    fn out_of_range_snapshot_values_are_skipped() {
         for (number, value) in [
             (prop::PHY_LORA_SF, &[13u8][..]),
             (prop::PHY_LORA_CR, &[4][..]),
@@ -16900,12 +16976,108 @@ mod tests {
 
             let mut booted: TestSession =
                 Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
+            booted.restore_at_boot(&bytes[..len]).unwrap();
+            assert_eq!(booted.snapshot_skipped(), 1);
+            booted.attach(true);
+            assert_eq!(get(&mut booted, prop::SAVED), [ids::saved::PARTIAL]);
+            let mut fresh = test_session();
             assert_eq!(
-                booted.restore_at_boot(&bytes[..len]),
-                Err(SnapshotError::InvalidValue),
+                get(&mut booted, number),
+                get(&mut fresh, number),
                 "property {number} accepted an out-of-range value"
             );
         }
+    }
+
+    /// A frequency outside a narrowed band costs that one setting, not
+    /// the snapshot: everything else restores, the frequency keeps its
+    /// post-reset value, and `PROP_SAVED` reports the difference until a
+    /// host saves over it. A change at the device must not write over it
+    /// either, since that would bury the stored frequency.
+    #[test]
+    fn a_snapshot_with_an_out_of_band_frequency_restores_the_rest_as_partial() {
+        let session = provisioned_session();
+        let mut bytes = [0u8; SNAPSHOT_MAX];
+        let len = session.encode_snapshot(&mut bytes).unwrap();
+
+        let mut narrowed = test_config();
+        narrowed.freq_khz_min = 920_000;
+        narrowed.defaults.freq_khz = 923_000;
+        let mut booted: TestSession = Session::new(narrowed, Status::RESET_POWER_ON, test_engine());
+        let effect = booted.restore_at_boot(&bytes[..len]).unwrap();
+        assert!(matches!(effect, Effect::ApplyRadio(s) if s.enabled && s.freq_khz == 923_000));
+        assert_eq!(booted.device_name(), "saved name");
+        assert_eq!(booted.snapshot_skipped(), 1);
+        assert_eq!(booted.saved_status(), SavedStatus::Partial);
+        assert!(!booted.note_device_change());
+
+        // A reset re-applies the partial snapshot and leaves the report.
+        booted.reset(Status::RESET_SOFTWARE, &mut |_: &[u8]| {});
+        assert_eq!(booted.device_name(), "saved name");
+        booted.attach(true);
+        assert_eq!(get(&mut booted, prop::SAVED), [ids::saved::PARTIAL]);
+
+        booted.respond_save(1, Ok(()), &mut |_| {});
+        assert_eq!(get(&mut booted, prop::SAVED), [ids::saved::CURRENT]);
+        assert_eq!(booted.snapshot_skipped(), 0);
+    }
+
+    /// A table longer than this build holds keeps the entries that fit
+    /// and skips the rest; a repeat of an entry already held loses
+    /// nothing and is not counted.
+    #[test]
+    fn a_table_over_capacity_keeps_what_fits() {
+        let mut bytes = [0u8; SNAPSHOT_MAX];
+        bytes[0] = SNAPSHOT_FORMAT;
+        let mut encoder = OptionEncoder::new(&mut bytes[1..]);
+        for seed in 0..=MAX_DEV_PEERS as u8 {
+            encoder
+                .put(prop::DEV_PEERS as u16, &[seed; items::PUBLIC_KEY_LEN])
+                .unwrap();
+        }
+        encoder
+            .put(prop::DEV_PEERS as u16, &[0; items::PUBLIC_KEY_LEN])
+            .unwrap();
+        let len = 1 + encoder.finish();
+
+        let mut booted: TestSession =
+            Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
+        booted.restore_at_boot(&bytes[..len]).unwrap();
+        assert_eq!(booted.device.peers.len, MAX_DEV_PEERS);
+        assert_eq!(booted.snapshot_skipped(), 1);
+        assert_eq!(booted.saved_status(), SavedStatus::Partial);
+    }
+
+    /// Skipping is for values this build cannot hold. A snapshot whose
+    /// framing is corrupt is still rejected whole, as is one whose
+    /// recorded identity is not a public key: a snapshot recording none
+    /// would be permitted to enable the PHY under any identity.
+    #[test]
+    fn a_structurally_corrupt_snapshot_is_still_rejected() {
+        let session = provisioned_session();
+        let mut bytes = [0u8; SNAPSHOT_MAX];
+        let len = session.encode_snapshot(&mut bytes).unwrap();
+        let mut booted: TestSession =
+            Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
+        // An option header promising more than the payload holds.
+        let mut truncated = bytes;
+        truncated[len] = 0x0D;
+        assert_eq!(
+            booted.restore_at_boot(&truncated[..len + 1]),
+            Err(SnapshotError::Malformed)
+        );
+
+        let mut identity = [0u8; SNAPSHOT_MAX];
+        identity[0] = SNAPSHOT_FORMAT;
+        let mut encoder = OptionEncoder::new(&mut identity[1..]);
+        encoder.put(prop::DEV_KEY as u16, &[0xAA; 31]).unwrap();
+        let identity_len = 1 + encoder.finish();
+        assert_eq!(
+            booted.restore_at_boot(&identity[..identity_len]),
+            Err(SnapshotError::InvalidValue)
+        );
+        booted.attach(true);
+        assert_eq!(get(&mut booted, prop::SAVED), [ids::saved::NONE]);
     }
 
     /// The buffer every caller sizes from `SNAPSHOT_MAX` has to hold a
@@ -17264,6 +17436,100 @@ mod tests {
             flags[1..].iter().all(|flags| *flags == RX_FLAG_BUFFERED),
             "no other entry may borrow the confirmation"
         );
+    }
+
+    #[test]
+    fn a_full_queue_evicts_an_unauthenticated_entry_for_an_authenticated_arrival() {
+        let mut session = auto_ack_session();
+        let keys = test_pairwise();
+        // One genuine message, then forgeries to the host's public hint
+        // until the queue is full.
+        let genuine = sealed_unar(1, &keys, false);
+        assert_eq!(
+            rx_effect(&mut session, &genuine, 0),
+            Some(Effect::StartTransmit)
+        );
+        session.on_tx_result(TxOutcome::Sent, 0, &mut |_: &[u8]| {});
+        let forged = unicast_ack_req_to([0xC4, 0xC4, 0xC4]);
+        for _ in 1..RX_QUEUE_CAPACITY {
+            assert!(rx_effect(&mut session, &forged, 0).is_none());
+        }
+
+        // A second genuine message displaces the oldest forgery, not the
+        // older genuine one.
+        let second = sealed_unar(2, &keys, false);
+        assert_eq!(
+            rx_effect(&mut session, &second, 0),
+            Some(Effect::StartTransmit)
+        );
+        session.on_tx_result(TxOutcome::Sent, 0, &mut |_: &[u8]| {});
+
+        session.attach(true);
+        assert_eq!(
+            get(&mut session, prop::HOST_RX_QUEUE_DROPPED),
+            1u32.to_le_bytes()
+        );
+        let drained = drain(&mut session, 0);
+        assert_eq!(drained.len(), RX_QUEUE_CAPACITY);
+        assert_eq!(drained[0].0, genuine);
+        assert_eq!(drained[0].1.flags, RX_FLAG_BUFFERED | RX_FLAG_ACKED);
+        assert!(
+            drained[1..RX_QUEUE_CAPACITY - 1]
+                .iter()
+                .all(|(frame, _)| *frame == forged)
+        );
+        assert_eq!(drained.last().unwrap().0, second);
+        assert_eq!(
+            drained.last().unwrap().1.flags,
+            RX_FLAG_BUFFERED | RX_FLAG_ACKED
+        );
+    }
+
+    #[test]
+    fn a_full_queue_of_authenticated_entries_refuses_an_unauthenticated_arrival() {
+        let mut session = auto_ack_session();
+        let keys = test_pairwise();
+        for counter in 1..=RX_QUEUE_CAPACITY as u32 {
+            assert_eq!(
+                rx_effect(&mut session, &sealed_unar(counter, &keys, false), 0),
+                Some(Effect::StartTransmit)
+            );
+            session.on_tx_result(TxOutcome::Sent, 0, &mut |_: &[u8]| {});
+        }
+        // Forgeries to the host's public hint are dropped on arrival.
+        let forged = unicast_ack_req_to([0xC4, 0xC4, 0xC4]);
+        for _ in 0..3 {
+            assert!(rx_effect(&mut session, &forged, 0).is_none());
+        }
+
+        session.attach(true);
+        assert_eq!(
+            get(&mut session, prop::HOST_RX_QUEUE_DROPPED),
+            3u32.to_le_bytes()
+        );
+        let drained = drain(&mut session, 0);
+        assert_eq!(drained.len(), RX_QUEUE_CAPACITY);
+        for (counter, (frame, meta)) in (1..).zip(&drained) {
+            assert_eq!(*frame, sealed_unar(counter, &keys, false));
+            assert_eq!(meta.flags, RX_FLAG_BUFFERED | RX_FLAG_ACKED);
+        }
+
+        // An authenticated arrival still gets in, displacing the oldest.
+        session.detach();
+        for counter in 17..=(16 + RX_QUEUE_CAPACITY as u32) {
+            rx_effect(&mut session, &sealed_unar(counter, &keys, false), 0);
+            session.on_tx_result(TxOutcome::Sent, 0, &mut |_: &[u8]| {});
+        }
+        let newest = sealed_unar(99, &keys, false);
+        assert_eq!(
+            rx_effect(&mut session, &newest, 0),
+            Some(Effect::StartTransmit)
+        );
+        session.on_tx_result(TxOutcome::Sent, 0, &mut |_: &[u8]| {});
+        session.attach(true);
+        let drained = drain(&mut session, 0);
+        assert_eq!(drained[0].0, sealed_unar(18, &keys, false));
+        assert_eq!(drained.last().unwrap().0, newest);
     }
 
     /// Build a sealed UNAR carrying flood-hop state with the given

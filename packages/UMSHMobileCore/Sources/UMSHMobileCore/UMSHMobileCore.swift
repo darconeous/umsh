@@ -17342,9 +17342,9 @@ public func FfiConverterTypeRouterHintInputProblem_lower(_ value: RouterHintInpu
 /**
  * `PROP_SAVED`: what the radio reports about its stored snapshot.
  *
- * `Fallback` and `Unreadable` are the values worth surfacing: the radio
- * is running on configuration older than the one last saved, or on none
- * at all, and looks healthy otherwise.
+ * `Fallback`, `Unreadable` and `Partial` are the values worth surfacing:
+ * the radio is running on configuration older than the one last saved,
+ * on none at all, or on part of it, and looks healthy otherwise.
  */
 
 public enum SavedSnapshotRecord: Equatable, Hashable {
@@ -17367,6 +17367,12 @@ public enum SavedSnapshotRecord: Equatable, Hashable {
      * factory defaults.
      */
     case unreadable
+    /**
+     * The newest saved generation is in effect, less values the radio's
+     * firmware cannot hold, which kept their defaults. Saving again
+     * clears it.
+     */
+    case partial
 
 
 
@@ -17396,6 +17402,8 @@ public struct FfiConverterTypeSavedSnapshotRecord: FfiConverterRustBuffer {
 
         case 4: return .unreadable
 
+        case 5: return .partial
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
@@ -17418,6 +17426,10 @@ public struct FfiConverterTypeSavedSnapshotRecord: FfiConverterRustBuffer {
 
         case .unreadable:
             writeInt(&buf, Int32(4))
+
+
+        case .partial:
+            writeInt(&buf, Int32(5))
 
         }
     }

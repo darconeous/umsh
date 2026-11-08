@@ -667,23 +667,26 @@ extension SavedSnapshotRecord {
     /// One-line answer to "is this radio armed for restart?".
     var summary: String {
         switch self {
-        case .none: "No"
-        case .current: "Yes"
-        case .fallback: "Yes, out of date"
-        case .unreadable: "No—save failed to load"
+        case .none: String(localized: "No", comment: "Whether the radio has saved settings")
+        case .current: String(localized: "Yes", comment: "Whether the radio has saved settings")
+        case .fallback: String(localized: "Yes, out of date", comment: "Saved settings: an older save is in effect")
+        case .unreadable: String(localized: "No—save failed to load", comment: "Saved settings: none could be read")
+        case .partial: String(localized: "Yes, in part", comment: "Saved settings: some could not be used")
         }
     }
 
     /// What the operator has to do about it, when there is something.
-    /// A radio in either failure state works normally and looks normal;
+    /// A radio in any of these states works normally and looks normal;
     /// this text is the only place it surfaces.
     var warning: String? {
         switch self {
         case .none, .current: nil
         case .fallback:
-            "The radio recovered older settings after its last save could not be read. Save again to store the current configuration."
+            String(localized: "The radio recovered older settings after its last save could not be read. Save again to store the current configuration.")
         case .unreadable:
-            "The radio's saved settings could not be read and it started with factory defaults. Save again to restore autonomous operation."
+            String(localized: "The radio's saved settings could not be read and it started with factory defaults. Save again to restore autonomous operation.")
+        case .partial:
+            String(localized: "The radio could not use some of its saved settings and started those with defaults. Check its settings, then save again.")
         }
     }
 }

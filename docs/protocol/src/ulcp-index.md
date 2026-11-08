@@ -282,7 +282,7 @@ The value enumerations carried inside properties and stream metadata.
 
 Enumeration | Values | Defined in
 ---|---|---
-`PROP_SAVED` | 0 none, 1 current, 2 fallback, 3 unreadable | [`PROP_SAVED`](ulcp-saved-state.md#prop-saved)
+`PROP_SAVED` | 0 none, 1 current, 2 fallback, 3 unreadable, 4 partial | [`PROP_SAVED`](ulcp-saved-state.md#prop-saved)
 Filter types | 0 `FILTER_DEST_HINT`, 1 `FILTER_CHANNEL_ID`, 2 `FILTER_PKT_TYPE` | [`PROP_HOST_RX_FILTERS`](ulcp-host.md#prop-host-rx-filters)
 Charge states | 0 discharging, 1 charging, 2 charged, 3 not charging | [`PROP_BATTERY`](ulcp-device.md#prop-battery)
 Alert states | 0 `ALERT_NONE`, 1 `ALERT_LOCATE` | [`PROP_ALERT`](ulcp-device.md#prop-alert)

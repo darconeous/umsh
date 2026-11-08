@@ -775,6 +775,9 @@ pub mod saved {
     pub const FALLBACK: u8 = 2;
     /// A snapshot exists but no generation could be read.
     pub const UNREADABLE: u8 = 3;
+    /// The newest saved generation is in effect, less values this build
+    /// cannot hold.
+    pub const PARTIAL: u8 = 4;
 }
 
 /// Stream identifiers.

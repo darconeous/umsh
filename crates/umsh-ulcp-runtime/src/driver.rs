@@ -2252,7 +2252,10 @@ where
                     ));
                     env.report_snapshot_rejected(true);
                 } else {
-                    env.trace(format_args!("proto-store boot-restore=ok"));
+                    env.trace(format_args!(
+                        "proto-store boot-restore=ok skipped={}",
+                        session.snapshot_skipped()
+                    ));
                 }
                 apply_effect(session, Some(effect), &rt, &mut env).await;
             }

@@ -337,6 +337,7 @@ fn render_device(set: &PropSet, ctx: &Context) -> Vec<Line> {
                 saved::CURRENT => "yes".to_string(),
                 saved::FALLBACK => "yes, but running on an older generation (re-save)".to_string(),
                 saved::UNREADABLE => "unreadable—booted with defaults".to_string(),
+                saved::PARTIAL => "yes, but some values did not restore (re-save)".to_string(),
                 other => format!("unknown state {other}"),
             },
         ));
