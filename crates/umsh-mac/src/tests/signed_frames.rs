@@ -519,59 +519,6 @@ fn a_forged_unsigned_multicast_cannot_silence_its_claimed_sender() {
     );
 }
 
-/// A signed multicast on `EMERGENCY` from `seed`, with `counter`.
-fn emergency_from(mac: &CryptoMac, seed: [u8; 32], counter: u32) -> std::vec::Vec<u8> {
-    let channel = mac
-        .crypto()
-        .derive_named_channel_key(umsh_core::EMERGENCY_CHANNEL_NAME)
-        .unwrap();
-    multicast_from(seed, &channel, counter, false, false)
-}
-
-/// A burst of first contacts from freshly minted keys can displace a real
-/// sender's window, but not the record of its `EMERGENCY` frame: a replay
-/// is still dropped. The burst cannot push that record out, only fill what
-/// is left of it.
-#[test]
-fn strangers_cannot_flush_the_emergency_record() {
-    let mut mac = receiver();
-    mac.add_named_channel(umsh_core::EMERGENCY_CHANNEL_NAME)
-        .unwrap();
-    let sender = key_of(SEED);
-    let alert = emergency_from(&mac, SEED, 100);
-    assert_eq!(
-        receive(&mut mac, &alert),
-        verified(RxAcceptance::FirstContact, sender)
-    );
-    assert_eq!(receive(&mut mac, &alert), None, "its window drops a replay");
-
-    // Every remaining stranger slot, and then one more, which displaces the
-    // least recently used window: the real sender's.
-    let strangers = crate::DEFAULT_RX_STRANGERS as u8;
-    for index in 0..strangers {
-        mac.clock().advance_ms(1_000);
-        let forger = emergency_from(&mac, [0x80 + index; 32], 1);
-        assert!(receive(&mut mac, &forger).is_some());
-    }
-    assert!(mac.rx_windows().get(&sender).is_none());
-    assert_eq!(
-        mac.counters().rx_emergency_digests_full,
-        u32::from(strangers) + 1 - crate::EMERGENCY_DIGESTS as u32
-    );
-
-    mac.clock().advance_ms(1_000);
-    assert_eq!(receive(&mut mac, &alert), None);
-    assert_eq!(mac.counters().rx_emergency_replays, 1);
-
-    // A frame the record does not hold is still taken.
-    mac.clock().advance_ms(1_000);
-    let next = emergency_from(&mac, SEED, 101);
-    assert_eq!(
-        receive(&mut mac, &next),
-        verified(RxAcceptance::Advanced, sender)
-    );
-}
-
 /// Past the displacement quota a new signer is accepted with no window
 /// kept, and the strangers' windows stay where they are.
 #[test]

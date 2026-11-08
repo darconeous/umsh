@@ -72,10 +72,6 @@ pub use route_slack::{
     WEAK_LAST_HOP_RSSI_DBM, established_route_slack,
 };
 
-/// The canonical name of the `EMERGENCY` channel, after case folding
-/// (`multicast-channels.md` §`EMERGENCY`).
-pub const EMERGENCY_CHANNEL_NAME: &str = "emergency";
-
 #[cfg(test)]
 mod tests {
     use crate::{

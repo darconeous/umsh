@@ -129,7 +129,7 @@ A frame whose [frame signature](#frame-signatures) verifies is judged by the rul
 - **Stranger.** A frame that verifies against a key that is not a known peer's is first contact: it is accepted at face value, as [Counter Resynchronization](#counter-resynchronization) describes for any new peer. Later frames from that key are judged by the same rules, in a window the receiver keeps for that signing key. A frame behind that window's baseline or outside it is dropped, with no resynchronization, since there is no pairwise relationship to run one over.
   - A receiver MAY discard a stranger's window when it is idle or under memory pressure.
   - A key costs nothing to mint, so a burst of first contacts could otherwise discard every stranger's window on demand. A receiver SHOULD bound how many strangers' windows new signers displace; the suggested bound is **4** every **10 minutes**. A new signer's frame arriving once the bound is spent is accepted at face value, and no window is kept for its key.
-  - After a discard, or after the receiver restarts, the stranger's next frame is first contact again, so a replay of one of its earlier frames is accepted once. With no prior knowledge of the sender, a receiver cannot tell that replay from a new frame. The [`EMERGENCY`](multicast-channels.md#emergency) channel keeps a further record for this reason.
+  - After a discard, or after the receiver restarts, the stranger's next frame is first contact again, so a replay of one of its earlier frames is accepted once. With no prior knowledge of the sender, a receiver cannot tell that replay from a new frame.
 
 ##### Unsigned Multicast {#unsigned-multicast}
 

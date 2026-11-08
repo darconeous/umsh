@@ -7,8 +7,8 @@
 //! growth; capacity choices stay visible at the instantiation site.
 
 use umsh_mac::{
-    ChannelState, ChannelTable, DuplicateCache, EmergencyDigests, PeerCryptoMap, PeerRegistry,
-    QueuedTx, ReplayWindow, RxWindow, RxWindows, TxQueue,
+    ChannelState, ChannelTable, DuplicateCache, PeerCryptoMap, PeerRegistry, QueuedTx,
+    ReplayWindow, RxWindow, RxWindows, TxQueue,
 };
 
 #[test]
@@ -18,7 +18,6 @@ fn component_sizes() {
     let channel_table_8 = core::mem::size_of::<ChannelTable<8>>();
     let peer_registry_8 = core::mem::size_of::<PeerRegistry<8>>();
     let dup_32 = core::mem::size_of::<DuplicateCache<32>>();
-    let emergency = core::mem::size_of::<EmergencyDigests>();
     let queued = core::mem::size_of::<QueuedTx<255>>();
     let tx_4 = core::mem::size_of::<TxQueue<4, 255>>();
     println!("ReplayWindow          = {replay}");
@@ -26,7 +25,6 @@ fn component_sizes() {
     println!("ChannelTable<8>       = {channel_table_8}");
     println!("PeerRegistry<8>       = {peer_registry_8}");
     println!("DuplicateCache<32>    = {dup_32}");
-    println!("EmergencyDigests      = {emergency}");
     println!("QueuedTx<255>         = {queued}");
     println!("TxQueue<4,255>        = {tx_4}");
 
@@ -39,7 +37,6 @@ fn component_sizes() {
         channel_table_8 <= 8 * channel_state + 16,
         "ChannelTable<8> grew: {channel_table_8}"
     );
-    assert!(emergency <= 192, "EmergencyDigests grew: {emergency}");
     // A forward's confirmation state rides in the entry's padding: the
     // queue entry is the whole of it.
     assert!(queued <= 304, "QueuedTx grew: {queued}");

@@ -748,8 +748,8 @@ fn channel_table_keeps_colliding_keys_apart() {
         commitment: umsh_core::ChannelCommitment([0; 32]),
     };
 
-    table.try_add(key_a, derived_a.clone(), false).unwrap();
-    table.try_add(key_b, derived_b.clone(), false).unwrap();
+    table.try_add(key_a, derived_a.clone()).unwrap();
+    table.try_add(key_b, derived_b.clone()).unwrap();
 
     // A colliding key leaves the first in place.
     let stored: std::vec::Vec<_> = table
@@ -763,7 +763,7 @@ fn channel_table_keeps_colliding_keys_apart() {
         k_enc: [5; 32],
         ..derived_a
     };
-    table.try_add(key_a, refreshed, false).unwrap();
+    table.try_add(key_a, refreshed).unwrap();
     assert_eq!(table.len(), 2);
     assert_eq!(table.lookup_by_key(&key_a).unwrap().derived.k_enc, [5; 32]);
 }

@@ -2,7 +2,7 @@
 //! channel (`app-text-messages.md` §Test Messages).
 
 /// The canonical name of the `EMERGENCY` channel, after case folding.
-pub const CHANNEL_NAME: &str = umsh_core::EMERGENCY_CHANNEL_NAME;
+pub const CHANNEL_NAME: &str = "emergency";
 
 /// What a test message's body begins with, in any letter case.
 const TEST_PREFIX: &[u8] = b"test:";

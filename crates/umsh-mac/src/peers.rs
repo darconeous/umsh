@@ -1188,9 +1188,6 @@ pub struct ChannelState {
     pub channel_key: ChannelKey,
     /// Derived transport keys and identifier.
     pub derived: DerivedChannelKeys,
-    /// Whether this is the `EMERGENCY` channel, whose signed frames are
-    /// remembered past their signers' windows.
-    pub emergency: bool,
 }
 
 /// Fixed-capacity channel table shared by the MAC coordinator.
@@ -1280,24 +1277,20 @@ impl<const N: usize> ChannelTable<N> {
 
     /// Add a channel, or refresh the entry already holding this key. A
     /// different key that derives the same identifier gets an entry of its
-    /// own: identifiers are two bytes and collide. `emergency` says whether
-    /// `key` is the `EMERGENCY` channel's.
+    /// own: identifiers are two bytes and collide.
     pub fn try_add(
         &mut self,
         key: ChannelKey,
         derived: DerivedChannelKeys,
-        emergency: bool,
     ) -> Result<(), CapacityError> {
         if let Some(channel) = self.lookup_by_key_mut(&key) {
             channel.derived = derived;
-            channel.emergency = emergency;
             return Ok(());
         }
         self.channels
             .push(ChannelState {
                 channel_key: key,
                 derived,
-                emergency,
             })
             .map_err(|_| CapacityError)
     }

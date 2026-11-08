@@ -1,4 +1,4 @@
-use heapless::{Deque, Vec};
+use heapless::Deque;
 
 // Replay detection is a Security-chapter concept and lives in
 // umsh-crypto so the device can share it without depending on
@@ -148,90 +148,5 @@ impl<const N: usize> DuplicateCache<N> {
     /// Return whether the cache is empty.
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
-    }
-}
-
-/// Signed frames on `EMERGENCY` remembered at once.
-pub const EMERGENCY_DIGESTS: usize = 8;
-/// How long a signed frame on `EMERGENCY` is remembered.
-pub const EMERGENCY_DIGEST_TTL_MS: u64 = 24 * 60 * 60 * 1000;
-
-/// What a signed frame is remembered by: the first bytes of its
-/// signature, which no other frame shares.
-pub type FrameDigest = [u8; 8];
-
-/// Signed frames accepted on `EMERGENCY`, remembered past their signers'
-/// receive windows.
-///
-/// A stranger's window can be given up, and its next frame is then first
-/// contact, so a replay of a real alert would raise it again. This record
-/// is what refuses that replay. New frames never displace what it holds:
-/// entries leave only by age, and a full record takes nothing more until
-/// one does. A burst of frames from freshly minted keys can therefore keep
-/// later frames out, but never release one already held.
-#[derive(Clone, Debug)]
-pub struct EmergencyDigests<const N: usize = EMERGENCY_DIGESTS> {
-    entries: Vec<(FrameDigest, u64), N>,
-}
-
-impl<const N: usize> Default for EmergencyDigests<N> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<const N: usize> EmergencyDigests<N> {
-    /// An empty record.
-    pub const fn new() -> Self {
-        Self {
-            entries: Vec::new(),
-        }
-    }
-
-    /// Whether `digest` is held and has not aged out.
-    pub fn contains(&self, digest: &FrameDigest, now_ms: u64) -> bool {
-        self.entries
-            .iter()
-            .any(|(held, at_ms)| held == digest && !Self::is_expired(*at_ms, now_ms))
-    }
-
-    /// Remember `digest`, dropping aged-out entries first. Returns `false`
-    /// when every entry is still live, and so nothing was recorded.
-    pub fn insert(&mut self, digest: FrameDigest, now_ms: u64) -> bool {
-        self.entries
-            .retain(|(_, at_ms)| !Self::is_expired(*at_ms, now_ms));
-        if self.contains(&digest, now_ms) {
-            return true;
-        }
-        self.entries.push((digest, now_ms)).is_ok()
-    }
-
-    /// As for [`DuplicateCache`], a clock that went backwards holds an
-    /// entry longer, never shorter.
-    fn is_expired(at_ms: u64, now_ms: u64) -> bool {
-        now_ms.saturating_sub(at_ms) >= EMERGENCY_DIGEST_TTL_MS
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// A full record refuses new digests rather than give up a held one,
-    /// and makes room only as entries age out.
-    #[test]
-    fn emergency_digests_are_never_displaced_by_new_ones() {
-        let mut digests = EmergencyDigests::<2>::new();
-        assert!(digests.insert([1; 8], 0));
-        assert!(digests.insert([2; 8], 10));
-        assert!(!digests.insert([3; 8], 20));
-        assert!(digests.contains(&[1; 8], 20));
-        assert!(digests.contains(&[2; 8], 20));
-        assert!(!digests.contains(&[3; 8], 20));
-
-        assert!(digests.insert([3; 8], EMERGENCY_DIGEST_TTL_MS));
-        assert!(!digests.contains(&[1; 8], EMERGENCY_DIGEST_TTL_MS));
-        assert!(digests.contains(&[2; 8], EMERGENCY_DIGEST_TTL_MS));
-        assert!(digests.contains(&[3; 8], EMERGENCY_DIGEST_TTL_MS));
     }
 }

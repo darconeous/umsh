@@ -108,8 +108,6 @@
 //!   a small amount of out-of-order delivery. Backed by a [`RecentMic`] ring for
 //!   backward-window disambiguation.
 //! - [`ReplayVerdict`]—outcome of a replay check: `Accept`, `Duplicate`, or `Replay`.
-//! - [`EmergencyDigests`]—signed frames accepted on `EMERGENCY`, remembered past
-//!   their signers' windows and never displaced by newer ones.
 //!
 //! ## [`peers`]—remote peer and channel registries
 //!
@@ -360,8 +358,8 @@ pub use admission::{
     AUTO_REGISTER_QUOTA, AUTO_REGISTER_WINDOW_MS, REFUSED_KEY_TTL_MS, REFUSED_KEYS,
 };
 pub use cache::{
-    DUP_CACHE_TTL_MS, DupCacheKey, DuplicateCache, EMERGENCY_DIGEST_TTL_MS, EMERGENCY_DIGESTS,
-    EmergencyDigests, FrameDigest, RecentMic, ReplayVerdict, ReplayWindow, RxAcceptance,
+    DUP_CACHE_TTL_MS, DupCacheKey, DuplicateCache, RecentMic, ReplayVerdict, ReplayWindow,
+    RxAcceptance,
 };
 pub use coordinator::{
     AmateurRadioMode, ChannelPolicy, CounterPersistenceError, IdentitySlot, LocalIdentity,
