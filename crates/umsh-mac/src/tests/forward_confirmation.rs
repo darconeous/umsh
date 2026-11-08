@@ -381,3 +381,32 @@ fn a_frame_that_only_shares_the_key_confirms_nothing() {
     assert_eq!(awaiting(&mac), 1);
     assert_eq!(mac.counters().forward_echo_mismatched, 1);
 }
+
+/// A forward waiting to hear its next hop stays queued for several frame
+/// times. It must not keep `next_event` from returning: the caller handles
+/// what each wake delivered only once the call ends, and until then holds
+/// the MAC from everyone else.
+#[test]
+fn a_forward_waiting_on_its_next_hop_does_not_hold_next_event() {
+    let mut mac = make_repeater_mac();
+    let frame = routed_unicast(
+        b"waiting",
+        false,
+        None,
+        &[repeater_hint(&mac), next_hop_hint()],
+    );
+    receive(&mut mac, &frame);
+    transmit(&mut mac).expect("the forward airs");
+    assert_eq!(awaiting(&mac), 1);
+
+    // Any wake will do; a copy from behind settles nothing.
+    mac.radio_mut().queue_received_frame(&frame);
+    let waker = noop_waker();
+    let mut cx = Context::from_waker(&waker);
+    let ended = {
+        let mut wake = core::pin::pin!(mac.next_event(|_, _| {}));
+        matches!(wake.as_mut().poll(&mut cx), Poll::Ready(Ok(())))
+    };
+    assert!(ended, "the wake ends the call");
+    assert_eq!(awaiting(&mac), 1, "with the forward still waiting");
+}

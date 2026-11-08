@@ -3381,8 +3381,14 @@ impl<
             let _ = self.service_rx_counter_persistence().await;
 
             // If the tx_queue has new work (e.g. retransmits just enqueued),
-            // loop back to drain it before waiting again.
-            if !self.tx_queue.is_empty() {
+            // loop back to drain it before waiting again. A forward that has
+            // aired and is waiting to hear its next hop does not hold the
+            // caller: it stays queued for several frame times, and the next
+            // call wakes for it at its deadline.
+            if self
+                .tx_queue
+                .contains_matching(|entry| !entry.forward_watch.has_aired())
+            {
                 continue;
             }
 
