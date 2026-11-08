@@ -90,6 +90,7 @@ struct MessageComposer: View {
             ZStack(alignment: .topLeading) {
                 HardwareAwareMessageEditor(
                     text: $draft,
+                    tint: security.tint,
                     trailingTextInset: 34,
                     focusRequest: focusRequest,
                     onHardwareReturn: { Task { await send() } }
@@ -171,6 +172,9 @@ struct HardwareAwareMessageEditor: UIViewRepresentable {
     static let verticalTextInset: CGFloat = 7
 
     @Binding var text: String
+    /// The cursor and selection color. SwiftUI's `.tint` does not reach a
+    /// representable's `tintColor`, so it is handed over explicitly.
+    var tint: Color = .accentColor
     /// Room kept clear at the trailing edge for the send button, which sits
     /// inside the field rather than beside it.
     var trailingTextInset: CGFloat = 4
@@ -186,6 +190,7 @@ struct HardwareAwareMessageEditor: UIViewRepresentable {
         let textView = HardwareAwareTextView()
         textView.delegate = context.coordinator
         textView.backgroundColor = .clear
+        textView.tintColor = UIColor(tint)
         textView.font = .preferredFont(forTextStyle: .body)
         textView.adjustsFontForContentSizeCategory = true
         textView.textContainerInset = textInsets
@@ -210,6 +215,7 @@ struct HardwareAwareMessageEditor: UIViewRepresentable {
         if textView.textContainerInset != textInsets {
             textView.textContainerInset = textInsets
         }
+        textView.tintColor = UIColor(tint)
         textView.onHardwareReturn = onHardwareReturn
         if context.coordinator.focusRequest != focusRequest {
             context.coordinator.focusRequest = focusRequest
