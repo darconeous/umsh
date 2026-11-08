@@ -1829,9 +1829,6 @@ pub(crate) async fn run(
             }
             continue;
         }
-        // Before the controller exists: held across this wait, it would be
-        // kept in every state of the stack's future after it.
-        save_local_irk(&store).await;
         let connector = {
             // V2: exclude a mid-flight battery sample while esp-radio
             // claims ADC2 (see [`super::ADC2_ARBITER`]).
