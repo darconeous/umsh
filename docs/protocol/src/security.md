@@ -88,7 +88,7 @@ Rejecting a packet as a duplicate does not prohibit retransmitting its MAC
 acknowledgement. An authenticated packet that requests an acknowledgement and
 whose MIC identifies it as a previously received packet **MAY** be acknowledged
 again if its frame counter is no more than **8** counts behind the highest
-accepted counter for that traffic direction, inclusive. Equivalently:
+accepted counter from that sender, inclusive. Equivalently:
 
 ```text
 ack_distance = (last_accepted_counter - received_counter) mod 2^32
@@ -300,7 +300,7 @@ For authenticated but unencrypted packets:
 - `K_mic` is the stable pairwise MIC key
 - the MIC is computed over the protected packet contents and relevant static fields
 
-The frame counter must increase monotonically for a given traffic direction. Receivers must not rely on the construction's resistance to nonce misuse as a substitute for replay detection.
+The frame counter must increase monotonically for a given sending address (see [Frame Counter](#frame-counter)). Receivers must not rely on the construction's resistance to nonce misuse as a substitute for replay detection.
 
 ### Multicast Packet Keys
 

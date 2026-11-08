@@ -54,7 +54,7 @@ The following requirements are critical for security. Failure to implement any o
 
 ### Frame Counter Monotonicity
 
-The frame counter must strictly increase for each packet sent in a given traffic direction. Reusing a counter value with the same key undermines replay protection and, in the worst case, can leak information about plaintext differences (though the AES-SIV construction limits the damage). See [Frame Counters](security.md#frame-counter).
+The frame counter must strictly increase for each packet a node address sends. Reusing a counter value with the same key undermines replay protection and, in the worst case, can leak information about plaintext differences (though the AES-SIV construction limits the damage). See [Frame Counters](security.md#frame-counter).
 
 ### Frame Counter Persistence
 
