@@ -10,9 +10,10 @@ use crate::mac::MacBackend;
 #[cfg(feature = "software-crypto")]
 use crate::node::PfsLifecycle;
 use crate::node::{ChannelJoins, LocalNode, LocalNodeState, NodeMembership};
+use crate::pfs::Carriage as PfsCarriage;
 use crate::receive::ReceivedPacketRef;
 use crate::{NodeIdentityPayload, OwnedMacCommand, mac_command};
-use umsh_core::PayloadType;
+use umsh_core::{PayloadType, PublicKey};
 
 /// Error returned when a [`Host`] cannot make progress.
 ///
@@ -148,6 +149,10 @@ impl<M: MacBackend> Host<M> {
         let pending_peer_repeaters_ref = pending_peer_repeaters.clone();
         let pending_mobility = Rc::new(RefCell::new(Vec::<(umsh_core::PublicKey, bool)>::new()));
         let pending_mobility_ref = pending_mobility.clone();
+        #[cfg(feature = "software-crypto")]
+        let undelivered_pfs = Rc::new(RefCell::new(Vec::<(LocalNode<M>, PublicKey)>::new()));
+        #[cfg(feature = "software-crypto")]
+        let undelivered_pfs_ref = undelivered_pfs.clone();
         let dispatcher = self.dispatcher.clone();
         let nodes = self.nodes.clone();
         self.mac
@@ -162,6 +167,15 @@ impl<M: MacBackend> Host<M> {
                     umsh_mac::MacEventRef::Received(packet) => {
                         if !meet_admits(&node, identity_id, &packet) {
                             return;
+                        }
+                        // A frame under a session this node answered is the
+                        // peer's word that it holds the session too.
+                        #[cfg(feature = "software-crypto")]
+                        if packet.sender_authenticated()
+                            && let Some(from) = packet.from_key()
+                            && let Some(peer) = node.note_pfs_frame(identity_id, &from)
+                        {
+                            node.dispatch_pfs_established(peer);
                         }
                         let _ = node.dispatch_received_packet(&packet);
                         if packet.payload_type() == umsh_core::PayloadType::Meet {
@@ -187,12 +201,20 @@ impl<M: MacBackend> Host<M> {
                         }
                     }
                     umsh_mac::MacEventRef::AckReceived { peer, receipt, .. } => {
+                        #[cfg(feature = "software-crypto")]
+                        node.note_pfs_delivery(identity_id, true);
                         node.dispatch_ack_received(
                             peer,
                             crate::SendToken::new(identity_id, receipt),
                         );
                     }
                     umsh_mac::MacEventRef::AckTimeout { peer, receipt } => {
+                        #[cfg(feature = "software-crypto")]
+                        if let Some(session) = node.note_pfs_delivery(identity_id, false) {
+                            undelivered_pfs_ref
+                                .borrow_mut()
+                                .push((node.clone(), session));
+                        }
                         node.dispatch_ack_timeout(
                             peer,
                             crate::SendToken::new(identity_id, receipt),
@@ -215,12 +237,28 @@ impl<M: MacBackend> Host<M> {
         // Forward secrecy needs the software crypto back end; without it, a
         // peer's request goes unanswered.
         #[cfg(feature = "software-crypto")]
-        for (identity_id, from, channel, command) in queued {
-            self.handle_pfs_command(identity_id, from, channel, command)
+        for (identity_id, from, carriage, command) in queued {
+            self.handle_pfs_command(identity_id, from, carriage, command)
                 .await;
         }
         #[cfg(not(feature = "software-crypto"))]
         drop(queued);
+
+        // Sessions whose sends kept going undelivered: the peer most
+        // likely no longer holds its half.
+        #[cfg(feature = "software-crypto")]
+        {
+            let undelivered: Vec<(LocalNode<M>, PublicKey)> =
+                undelivered_pfs.borrow_mut().drain(..).collect();
+            for (node, session) in undelivered {
+                if let Some(peer) = node
+                    .end_undelivered_pfs(&session, &self.pfs_control_options)
+                    .await
+                {
+                    node.dispatch_pfs_ended(peer);
+                }
+            }
+        }
 
         let identity_replies: Vec<(LocalNode<M>, IdentityResponsePlan)> =
             pending_identity.borrow_mut().drain(..).collect();
@@ -290,8 +328,8 @@ impl<M: MacBackend> Host<M> {
     async fn handle_pfs_command(
         &mut self,
         identity_id: LocalIdentityId,
-        from: umsh_core::PublicKey,
-        channel: Option<umsh_core::ChannelKey>,
+        from: PublicKey,
+        carriage: PfsCarriage,
         command: OwnedMacCommand,
     ) {
         let Some(node) = self.route_node(identity_id) else {
@@ -299,12 +337,12 @@ impl<M: MacBackend> Host<M> {
         };
 
         match node
-            .handle_pfs_command(&from, channel, &command, &self.pfs_control_options)
+            .handle_pfs_command(&from, carriage, &command, &self.pfs_control_options)
             .await
         {
             Ok(Some(PfsLifecycle::Established(peer))) => node.dispatch_pfs_established(peer),
             Ok(Some(PfsLifecycle::Ended(peer))) => node.dispatch_pfs_ended(peer),
-            Ok(None) => {}
+            Ok(Some(PfsLifecycle::Answered(_)) | None) => {}
             // Previously the error was dropped here, so a failed negotiation
             // (e.g. no ephemeral identity slot) left both sides silently stuck.
             // Surface it so applications can report the failure.
@@ -459,14 +497,9 @@ impl IdentityUpdate {
 
 /// Work a pump cycle's synchronous dispatch leaves for after it returns.
 type Deferred<T> = Rc<RefCell<Vec<T>>>;
-/// A MAC command answered by the PFS machinery: identity, sender, the channel
-/// it arrived on, and the command.
-type PfsCommand = (
-    LocalIdentityId,
-    umsh_core::PublicKey,
-    Option<umsh_core::ChannelKey>,
-    OwnedMacCommand,
-);
+/// A MAC command answered by the PFS machinery: identity, sender, how it
+/// arrived, and the command.
+type PfsCommand = (LocalIdentityId, PublicKey, PfsCarriage, OwnedMacCommand);
 /// A Peer Repeaters Request to answer: the node asked, who asked, the channel
 /// it arrived on, and the request's body.
 type PeerRepeaterRequest<M> = (
@@ -591,9 +624,13 @@ fn dispatch_payload_callbacks<M: MacBackend>(
                 | OwnedMacCommand::PfsSessionResponse { .. }
                 | OwnedMacCommand::EndPfsSession
         ) {
+            let carriage = PfsCarriage {
+                channel: reply_channel,
+                counter: packet.header().sec_info.map(|info| info.frame_counter),
+            };
             pending_pfs
                 .borrow_mut()
-                .push((node.identity_id(), from, reply_channel, owned));
+                .push((node.identity_id(), from, carriage, owned));
         }
     }
 }
