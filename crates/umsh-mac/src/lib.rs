@@ -108,6 +108,8 @@
 //!   a small amount of out-of-order delivery. Backed by a [`RecentMic`] ring for
 //!   backward-window disambiguation.
 //! - [`ReplayVerdict`]—outcome of a replay check: `Accept`, `Duplicate`, or `Replay`.
+//! - [`EmergencyDigests`]—signed frames accepted on `EMERGENCY`, remembered past
+//!   their signers' windows and never displaced by newer ones.
 //!
 //! ## [`peers`]—remote peer and channel registries
 //!
@@ -129,8 +131,8 @@
 //! - [`ChannelTable`]—flat list of registered multicast channels. Each entry stores the
 //!   raw channel key, the derived `k_enc`/`k_mic` keys (precomputed at registration time),
 //!   and the 2-byte channel ID (also precomputed). Looked up by channel ID when
-//!   authenticating inbound multicast and blind-unicast frames. Registered peers' replay
-//!   windows for unsigned multicast come from a pool the channels share.
+//!   authenticating inbound multicast and blind-unicast frames. It keeps no replay
+//!   state: an unsigned multicast is judged by duplicate suppression alone.
 //!
 //! ## [`handle`]—shared-ownership coordinator access
 //!
@@ -236,6 +238,15 @@ pub const MAX_CAD_ATTEMPTS: u8 = 16;
 /// [spec]: https://darconeous.github.io/umsh/docs/protocol/repeater-operation.html#ack-cancellation
 pub(crate) const ACK_HINTED_CAD_ATTEMPTS: u8 = 1;
 
+/// Acknowledgment-requested sends one identity keeps awaiting acknowledgment
+/// from one peer at once: the receiver's backward window
+/// ([Replay Detection][spec]), so that a retransmission of the earliest still
+/// falls inside the window when nothing else was sent in between.
+///
+/// [spec]: https://darconeous.github.io/umsh/docs/protocol/security.html#replay-detection
+pub const MAX_ACKED_IN_FLIGHT_PER_PEER: usize =
+    umsh_crypto::replay::REPLAY_BACKTRACK_SLOTS as usize;
+
 /// Default identity-slot capacity for the common `Mac<P>` configuration.
 pub const DEFAULT_IDENTITIES: usize = 4;
 /// Default remote-peer capacity for the common `Mac<P>` configuration.
@@ -250,13 +261,6 @@ pub const DEFAULT_TX: usize = 16;
 pub const DEFAULT_FRAME: usize = MAX_RESEND_FRAME_LEN;
 /// Default duplicate-cache capacity for the common `Mac<P>` configuration.
 pub const DEFAULT_DUP: usize = DEFAULT_DUP_CACHE_SIZE;
-/// Default replay-window capacity among all channels: one for each
-/// registered peer on each channel, so that none is ever turned away. Each
-/// window retains up to nine MICs, so this capacity dominates the MAC's
-/// channel-table footprint; small targets shrink it. A full table
-/// fail-closes: frames from additional senders are dropped, never accepted
-/// unchecked.
-pub const DEFAULT_CHANNEL_WINDOWS: usize = DEFAULT_CHANNELS * DEFAULT_PEERS;
 /// Default capacity for routes held against learning (see
 /// [`PeerRegistry::hold_route`]). None: holding a route is something an
 /// application with a person choosing paths opts into.
@@ -356,8 +360,8 @@ pub use admission::{
     AUTO_REGISTER_QUOTA, AUTO_REGISTER_WINDOW_MS, REFUSED_KEY_TTL_MS, REFUSED_KEYS,
 };
 pub use cache::{
-    DUP_CACHE_TTL_MS, DupCacheKey, DuplicateCache, RecentMic, ReplayVerdict, ReplayWindow,
-    RxAcceptance,
+    DUP_CACHE_TTL_MS, DupCacheKey, DuplicateCache, EMERGENCY_DIGEST_TTL_MS, EMERGENCY_DIGESTS,
+    EmergencyDigests, FrameDigest, RecentMic, ReplayVerdict, ReplayWindow, RxAcceptance,
 };
 pub use coordinator::{
     AmateurRadioMode, ChannelPolicy, CounterPersistenceError, IdentitySlot, LocalIdentity,

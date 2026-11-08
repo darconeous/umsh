@@ -46,10 +46,39 @@ struct Refusal {
     until_ms: u64,
 }
 
+/// At most `N` events within any span of a window's length: when the latest
+/// `N` happened, oldest first.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Quota<const N: usize> {
+    at: Deque<u64, N>,
+}
+
+impl<const N: usize> Quota<N> {
+    pub(crate) const fn new() -> Self {
+        Self { at: Deque::new() }
+    }
+
+    /// Whether another event at `now_ms` fits the quota over `window_ms`.
+    pub(crate) fn allows(&self, now_ms: u64, window_ms: u64) -> bool {
+        !self.at.is_full()
+            || self
+                .at
+                .front()
+                .is_some_and(|&at| now_ms.saturating_sub(at) >= window_ms)
+    }
+
+    pub(crate) fn note(&mut self, now_ms: u64) {
+        if self.at.is_full() {
+            self.at.pop_front();
+        }
+        let _ = self.at.push_back(now_ms);
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct Admissions {
-    /// When the latest displacing registrations happened, oldest first.
-    registered: Deque<u64, AUTO_REGISTER_QUOTA>,
+    /// Registrations that displaced an entry.
+    registered: Quota<AUTO_REGISTER_QUOTA>,
     refused: Vec<Refusal, REFUSED_KEYS>,
 }
 
@@ -60,18 +89,11 @@ impl Admissions {
 
     /// Whether another displacing registration fits the quota at `now_ms`.
     pub(crate) fn quota_allows(&self, now_ms: u64) -> bool {
-        !self.registered.is_full()
-            || self
-                .registered
-                .front()
-                .is_some_and(|&at| now_ms.saturating_sub(at) >= AUTO_REGISTER_WINDOW_MS)
+        self.registered.allows(now_ms, AUTO_REGISTER_WINDOW_MS)
     }
 
     pub(crate) fn note_displacing(&mut self, now_ms: u64) {
-        if self.registered.is_full() {
-            self.registered.pop_front();
-        }
-        let _ = self.registered.push_back(now_ms);
+        self.registered.note(now_ms);
     }
 
     pub(crate) fn recall(&self, local: &PublicKey, key: &PublicKey, now_ms: u64) -> Recalled {

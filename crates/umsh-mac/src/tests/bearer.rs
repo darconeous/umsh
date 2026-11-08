@@ -6,8 +6,7 @@
 use super::*;
 use umsh_hal::BearerId;
 
-type BearerMac =
-    Mac<DummyPlatform, 4, 16, 8, 16, 16, 256, 64, { crate::DEFAULT_CHANNEL_WINDOWS }, 0>;
+type BearerMac = Mac<DummyPlatform, 4, 16, 8, 16, 16, 256, 64, 0>;
 
 const LAN: BearerId = BearerId::LAN;
 

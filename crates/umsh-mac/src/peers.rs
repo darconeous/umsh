@@ -4,7 +4,7 @@ use heapless::{LinearMap, Vec};
 use umsh_core::{ChannelId, ChannelKey, NodeHint, PublicKey, RouterHint, options::HopSignal};
 use umsh_crypto::{DerivedChannelKeys, PairwiseKeys};
 
-use crate::{CapacityError, cache::ReplayWindow};
+use crate::CapacityError;
 
 const FAILED_ROUTE_HOLDOFF_MS: u64 = 30_000;
 
@@ -1188,50 +1188,36 @@ pub struct ChannelState {
     pub channel_key: ChannelKey,
     /// Derived transport keys and identifier.
     pub derived: DerivedChannelKeys,
-    /// What names this channel in [`ChannelTable`]'s windows. A channel
-    /// keeps it while it is in the table, wherever it moves there.
-    slot: u8,
-}
-
-impl ChannelState {
-    fn new(channel_key: ChannelKey, derived: DerivedChannelKeys, slot: u8) -> Self {
-        Self {
-            channel_key,
-            derived,
-            slot,
-        }
-    }
+    /// Whether this is the `EMERGENCY` channel, whose signed frames are
+    /// remembered past their signers' windows.
+    pub emergency: bool,
 }
 
 /// Fixed-capacity channel table shared by the MAC coordinator.
 ///
-/// An unsigned multicast proves only that its sender holds the channel's
-/// key, so its claimed source cannot be judged against that peer's own
-/// receive window, which any other member could then push forward. The
-/// table keeps a window per channel and registered peer instead, `WINDOWS`
-/// among all its channels: a peer takes one only on a channel it is heard
-/// on, and gives it up when it leaves the peer registry. With no window
-/// free, a new sender's frames are dropped, never accepted unchecked; a
-/// table of `N` times the registry's capacity never gets there.
+/// It keeps no replay state. An unsigned multicast proves only that its
+/// sender holds the channel's key, so nothing kept for the source it claims
+/// may be judged against or moved by it: any other member could push that
+/// state forward and silence the claimed sender. Such a frame is judged by
+/// duplicate suppression alone, and a signed one by its signer's receive
+/// window.
 #[derive(Clone)]
-pub struct ChannelTable<const N: usize, const WINDOWS: usize = { crate::DEFAULT_CHANNEL_WINDOWS }> {
+pub struct ChannelTable<const N: usize> {
     channels: Vec<ChannelState, N>,
-    windows: LinearMap<(u8, PeerId), ReplayWindow, WINDOWS>,
 }
 
-impl<const N: usize, const WINDOWS: usize> Default for ChannelTable<N, WINDOWS> {
+impl<const N: usize> Default for ChannelTable<N> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<const N: usize, const WINDOWS: usize> ChannelTable<N, WINDOWS> {
+impl<const N: usize> ChannelTable<N> {
     /// Create an empty channel table.
     #[inline(always)]
     pub const fn new() -> Self {
         Self {
             channels: Vec::new(),
-            windows: LinearMap::new(),
         }
     }
 
@@ -1278,42 +1264,8 @@ impl<const N: usize, const WINDOWS: usize> ChannelTable<N, WINDOWS> {
         self.channels.iter_mut()
     }
 
-    /// The window kept for `peer` on the channel holding `key`, taking a
-    /// free one, as `first` makes it, if the peer has none there yet.
-    /// `None` without such a channel or a free window.
-    pub fn window_or_insert(
-        &mut self,
-        key: &ChannelKey,
-        peer: PeerId,
-        first: impl FnOnce() -> ReplayWindow,
-    ) -> Option<&mut ReplayWindow> {
-        let slot = self.lookup_by_key(key)?.slot;
-        if !self.windows.contains_key(&(slot, peer)) {
-            self.windows.insert((slot, peer), first()).ok()?;
-        }
-        self.windows.get_mut(&(slot, peer))
-    }
-
-    /// Let go of the windows `peer` holds, on every channel.
-    pub fn forget_peer(&mut self, peer: PeerId) {
-        for channel in &self.channels {
-            let _ = self.windows.remove(&(channel.slot, peer));
-        }
-    }
-
-    /// Move the windows `old` holds to `new`, after a registry swap-remove
-    /// relocated that peer. `new` holds none, so this needs no free window.
-    pub fn rekey_peer(&mut self, old: PeerId, new: PeerId) {
-        for channel in &self.channels {
-            if let Some(window) = self.windows.remove(&(channel.slot, old)) {
-                let _ = self.windows.insert((channel.slot, new), window);
-            }
-        }
-    }
-
-    /// Remove the channel holding this exact key, discarding its replay
-    /// state with it (re-adding the key later starts at first contact).
-    /// Returns whether a channel was removed.
+    /// Remove the channel holding this exact key. Returns whether a channel
+    /// was removed.
     pub fn remove_by_key(&mut self, key: &ChannelKey) -> bool {
         let Some(index) = self
             .channels
@@ -1322,35 +1274,31 @@ impl<const N: usize, const WINDOWS: usize> ChannelTable<N, WINDOWS> {
         else {
             return false;
         };
-        let slot = self.channels.swap_remove(index).slot;
-        loop {
-            let Some(held) = self.windows.keys().find(|held| held.0 == slot).copied() else {
-                return true;
-            };
-            let _ = self.windows.remove(&held);
-        }
+        self.channels.swap_remove(index);
+        true
     }
 
     /// Add a channel, or refresh the entry already holding this key. A
     /// different key that derives the same identifier gets an entry of its
-    /// own: identifiers are two bytes and collide.
+    /// own: identifiers are two bytes and collide. `emergency` says whether
+    /// `key` is the `EMERGENCY` channel's.
     pub fn try_add(
         &mut self,
         key: ChannelKey,
         derived: DerivedChannelKeys,
+        emergency: bool,
     ) -> Result<(), CapacityError> {
         if let Some(channel) = self.lookup_by_key_mut(&key) {
             channel.derived = derived;
+            channel.emergency = emergency;
             return Ok(());
         }
-
-        // At most `N` slots are in use, so with `N` this small one is free.
-        const { assert!(N <= u8::MAX as usize) };
-        let slot = (0..=u8::MAX)
-            .find(|&slot| !self.channels.iter().any(|channel| channel.slot == slot))
-            .ok_or(CapacityError)?;
         self.channels
-            .push(ChannelState::new(key, derived, slot))
+            .push(ChannelState {
+                channel_key: key,
+                derived,
+                emergency,
+            })
             .map_err(|_| CapacityError)
     }
 }
@@ -1365,103 +1313,6 @@ fn arrival_seconds(now_ms: u64) -> NonZeroU32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ReplayVerdict;
-
-    fn channel(table: &mut ChannelTable<4, 3>, byte: u8) -> ChannelKey {
-        let key = ChannelKey([byte; 32]);
-        let derived = DerivedChannelKeys {
-            k_enc: [byte; 32],
-            k_mic: [byte; 32],
-            channel_id: ChannelId([byte, 0]),
-            commitment: umsh_core::ChannelCommitment([byte; 32]),
-        };
-        table.try_add(key, derived).unwrap();
-        key
-    }
-
-    fn take(table: &mut ChannelTable<4, 3>, key: &ChannelKey, peer: u8) -> bool {
-        table
-            .window_or_insert(key, PeerId(peer), ReplayWindow::new)
-            .is_some()
-    }
-
-    /// One busy channel may use every window, and a sender beyond them is
-    /// refused rather than let through.
-    #[test]
-    fn windows_are_shared_among_channels_and_fail_closed() {
-        let mut table = ChannelTable::<4, 3>::new();
-        let (a, b) = (channel(&mut table, 1), channel(&mut table, 2));
-        assert!(take(&mut table, &a, 1));
-        assert!(take(&mut table, &a, 2));
-        assert!(take(&mut table, &b, 1));
-        assert!(!take(&mut table, &b, 2));
-        assert!(!take(&mut table, &ChannelKey([9; 32]), 1));
-        assert!(take(&mut table, &a, 1), "a held window stays available");
-    }
-
-    #[test]
-    fn a_window_belongs_to_one_peer_on_one_channel() {
-        let mut table = ChannelTable::<4, 3>::new();
-        let (a, b) = (channel(&mut table, 1), channel(&mut table, 2));
-        table
-            .window_or_insert(&a, PeerId(1), ReplayWindow::new)
-            .unwrap()
-            .accept(7, &[0xAA; 16], 0);
-        let check = |table: &mut ChannelTable<4, 3>, key: &ChannelKey| {
-            table
-                .window_or_insert(key, PeerId(1), ReplayWindow::new)
-                .unwrap()
-                .check(7, &[0xAA; 16], 0)
-        };
-        assert_ne!(check(&mut table, &a), ReplayVerdict::Accept);
-        assert_eq!(check(&mut table, &b), ReplayVerdict::Accept);
-    }
-
-    /// Removing a channel frees its windows, and one added later starts
-    /// clean even in the slot that channel left.
-    #[test]
-    fn removing_a_channel_frees_its_windows_for_a_clean_start() {
-        let mut table = ChannelTable::<4, 3>::new();
-        let (a, b) = (channel(&mut table, 1), channel(&mut table, 2));
-        table
-            .window_or_insert(&a, PeerId(1), ReplayWindow::new)
-            .unwrap()
-            .accept(7, &[0xAA; 16], 0);
-        assert!(take(&mut table, &a, 2));
-        assert!(take(&mut table, &b, 1));
-        assert!(table.remove_by_key(&a));
-
-        let c = channel(&mut table, 3);
-        let window = table
-            .window_or_insert(&c, PeerId(1), ReplayWindow::new)
-            .unwrap();
-        assert_eq!(window.check(7, &[0xAA; 16], 0), ReplayVerdict::Accept);
-        assert!(take(&mut table, &c, 2));
-        assert!(!take(&mut table, &c, 3), "b's window is still held");
-    }
-
-    #[test]
-    fn peers_give_up_and_move_their_windows() {
-        let mut table = ChannelTable::<4, 3>::new();
-        let (a, b) = (channel(&mut table, 1), channel(&mut table, 2));
-        table
-            .window_or_insert(&a, PeerId(1), ReplayWindow::new)
-            .unwrap()
-            .accept(7, &[0xAA; 16], 0);
-        assert!(take(&mut table, &b, 1));
-        assert!(take(&mut table, &b, 2));
-
-        table.rekey_peer(PeerId(1), PeerId(5));
-        let moved = table
-            .window_or_insert(&a, PeerId(5), ReplayWindow::new)
-            .unwrap();
-        assert_ne!(moved.check(7, &[0xAA; 16], 0), ReplayVerdict::Accept);
-
-        table.forget_peer(PeerId(5));
-        assert!(take(&mut table, &a, 3));
-        assert!(take(&mut table, &a, 4));
-        assert!(!take(&mut table, &a, 6));
-    }
 
     /// The distance a cached route reports agrees with what a received
     /// frame reports for the same path: a direct peer is one hop, and each

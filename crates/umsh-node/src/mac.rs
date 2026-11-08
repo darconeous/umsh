@@ -312,24 +312,10 @@ impl<
     const TX: usize,
     const FRAME: usize,
     const DUP: usize,
-    const WINDOWS: usize,
     const HOLDS: usize,
     const RX_STRANGERS: usize,
 > MacBackend
-    for MacHandle<
-        'a,
-        P,
-        IDENTITIES,
-        PEERS,
-        CHANNELS,
-        ACKS,
-        TX,
-        FRAME,
-        DUP,
-        WINDOWS,
-        HOLDS,
-        RX_STRANGERS,
-    >
+    for MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP, HOLDS, RX_STRANGERS>
 {
     type SendError = SendError;
     type CapacityError = CapacityError;

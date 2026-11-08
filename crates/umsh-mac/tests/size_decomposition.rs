@@ -1,50 +1,43 @@
 //! Size decomposition of the MAC's fixed-capacity components. Run with
 //! `--nocapture` to see the numbers.
 //!
-//! The channel table dominates any Mac instantiation because every
-//! tracked sender costs one ~330-byte replay window on each channel it is
-//! heard on (`WINDOWS` among all channels). The assertions guard the per-entry costs against
-//! accidental structural growth; capacity choices stay visible at the
-//! instantiation site.
+//! The receive windows dominate any Mac instantiation: one ~380-byte
+//! window for every registered peer and every stranger kept. The
+//! assertions guard the per-entry costs against accidental structural
+//! growth; capacity choices stay visible at the instantiation site.
 
 use umsh_mac::{
-    ChannelState, ChannelTable, DuplicateCache, PeerCryptoMap, PeerRegistry, ReplayWindow,
-    RxWindow, RxWindows, TxQueue,
+    ChannelState, ChannelTable, DuplicateCache, EmergencyDigests, PeerCryptoMap, PeerRegistry,
+    ReplayWindow, RxWindow, RxWindows, TxQueue,
 };
 
 #[test]
 fn component_sizes() {
     let replay = core::mem::size_of::<ReplayWindow>();
     let channel_state = core::mem::size_of::<ChannelState>();
-    let channel_table_default = core::mem::size_of::<ChannelTable<8>>();
+    let channel_table_8 = core::mem::size_of::<ChannelTable<8>>();
     let peer_registry_8 = core::mem::size_of::<PeerRegistry<8>>();
     let dup_32 = core::mem::size_of::<DuplicateCache<32>>();
+    let emergency = core::mem::size_of::<EmergencyDigests>();
     let tx_4 = core::mem::size_of::<TxQueue<4, 255>>();
     println!("ReplayWindow          = {replay}");
     println!("ChannelState          = {channel_state}");
-    println!("ChannelTable<8>       = {channel_table_default}");
+    println!("ChannelTable<8>       = {channel_table_8}");
     println!("PeerRegistry<8>       = {peer_registry_8}");
     println!("DuplicateCache<32>    = {dup_32}");
+    println!("EmergencyDigests      = {emergency}");
     println!("TxQueue<4,255>        = {tx_4}");
 
     // Includes one ACK enqueue offset per retained MIC, so the first eligible
     // copy can be ACKed independently of when its payload was accepted.
     assert!(replay <= 384, "ReplayWindow grew: {replay}");
     assert!(channel_state <= 256, "ChannelState grew: {channel_state}");
-}
-
-/// The ULCP device node's channel table
-/// (`umsh-ulcp-runtime/src/device_node.rs`, 8 channels sharing 32
-/// windows). The 20 KiB ceiling is a growth guard, not a hardware limit;
-/// raise it consciously, not by drift.
-#[test]
-fn device_node_channel_table_within_budget() {
-    let channel_table = core::mem::size_of::<ChannelTable<8, 32>>();
-    println!("ChannelTable<8,32>    = {channel_table}");
+    // Channels keep no replay state; a table is its keys and nothing more.
     assert!(
-        channel_table <= 20 * 1024,
-        "device node channel table grew past 20 KiB: {channel_table}"
+        channel_table_8 <= 8 * channel_state + 16,
+        "ChannelTable<8> grew: {channel_table_8}"
     );
+    assert!(emergency <= 192, "EmergencyDigests grew: {emergency}");
 }
 
 /// Receive windows: one per remote key, shared by every identity, beside

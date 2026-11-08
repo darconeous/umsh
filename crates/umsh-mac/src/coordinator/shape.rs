@@ -261,10 +261,9 @@ impl<
     const TX: usize,
     const FRAME: usize,
     const DUP: usize,
-    const WINDOWS: usize,
     const HOLDS: usize,
     const RX_STRANGERS: usize,
-> Mac<P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP, WINDOWS, HOLDS, RX_STRANGERS>
+> Mac<P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP, HOLDS, RX_STRANGERS>
 {
     /// The most payload a send from `from` to `destination` with `options`
     /// can carry.

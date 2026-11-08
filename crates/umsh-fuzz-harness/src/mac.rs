@@ -165,7 +165,7 @@ impl Platform for FuzzPlatform {
 }
 
 pub type FuzzMac<const PEERS: usize, const HOLDS: usize> =
-    Mac<FuzzPlatform, 4, PEERS, 8, 16, 8, FRAME, 32, 64, HOLDS, 16>;
+    Mac<FuzzPlatform, 4, PEERS, 8, 16, 8, FRAME, 32, HOLDS, 16>;
 
 /// What a script may do.
 #[derive(Clone, Copy, PartialEq, Eq)]

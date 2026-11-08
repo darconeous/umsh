@@ -179,7 +179,7 @@ Neither protocol defines generic fragmentation at the mesh/MAC layer. UMSH expli
 | Timestamps in packets | None at MAC layer | `rx_time` metadata (not transmitted in the LoRa header and not used for routing decisions) |
 | Clock synchronization required | No | No |
 
-Neither protocol requires clock synchronization for core operation. Meshtastic records reception timestamps as local metadata but does not use them for routing or duplicate suppression. UMSH provides replay protection with monotonic frame counters and a receive window. Meshtastic suppresses recent duplicates by caching the sender and partially randomized packet ID; because that cache is finite, this should not be described as durable cryptographic replay protection.
+Neither protocol requires clock synchronization for core operation. Meshtastic records reception timestamps as local metadata but does not use them for routing or duplicate suppression. UMSH provides replay protection with monotonic frame counters and a receive window for unicast and signed traffic, and duplicate suppression alone for an [unsigned multicast](security-considerations.md#replay-of-unsigned-multicast). Meshtastic suppresses recent duplicates by caching the sender and partially randomized packet ID; because that cache is finite, this should not be described as durable cryptographic replay protection.
 
 ## Packet Overhead Comparison
 

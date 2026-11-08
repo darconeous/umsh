@@ -1,6 +1,6 @@
 # Security & Cryptography
 
-UMSH authenticates and optionally encrypts packets using AES-SIV (RFC 5297) with AES-256. Unicast packets are secured with pairwise keys derived from X25519 ECDH between sender and recipient Ed25519 keys. Multicast packets are secured with keys derived from the shared channel key. In both cases, a monotonic frame counter provides replay protection without requiring synchronized clocks. Any frame other than a MAC ack may also carry an Ed25519 [frame signature](#frame-signatures) that attributes it to its sender's key.
+UMSH authenticates and optionally encrypts packets using AES-SIV (RFC 5297) with AES-256. Unicast packets are secured with pairwise keys derived from X25519 ECDH between sender and recipient Ed25519 keys. Multicast packets are secured with keys derived from the shared channel key. A monotonic frame counter provides replay protection without requiring synchronized clocks, for every frame authenticated as one sender's; an [unsigned multicast](#unsigned-multicast), which any channel member could have sent, is judged by duplicate suppression instead. Any frame other than a MAC ack may also carry an Ed25519 [frame signature](#frame-signatures) that attributes it to its sender's key.
 
 Each secured packet carries a Security Information (SECINFO) field containing a Security Control Field, a frame counter, and an optional salt. The sections below describe these fields, the key derivation process, and the cryptographic operations applied to each packet.
 
@@ -78,6 +78,8 @@ If `delta` is zero or exceeds the forward window, the packet is rejected. This m
 
 Implementations that need to tolerate out-of-order delivery may also define a **backward window**—a small range of counter values *behind* the highest accepted counter within which late-arriving packets are still considered. The suggested default backward window is **8**. When a packet's counter falls within the backward window, the receiver checks a small cache of recently accepted packets, keyed by frame counter and MIC (similar to the approach used for [duplicate suppression](repeater-operation.md#duplicate-suppression) in repeaters): if the packet is already present, it is a replay and is rejected; if not, the packet is accepted and added to the cache.
 
+A sender SHOULD NOT have more acknowledgement-requested packets awaiting acknowledgement from one peer than the suggested backward window, so that a retransmission of the earliest still falls inside the receiver's window when nothing else was sent in between. A retransmission that the sender's other traffic pushed further behind is recovered by [counter resynchronization](#counter-resynchronization).
+
 Regardless of window sizes, a packet must not be accepted if it is more than **5 minutes** out of order—that is, if the highest accepted counter was last advanced more than 5 minutes ago and the received counter is behind it. MIC cache entries only need to be retained for the duration of this time bound. Additionally, the first packet accepted from a given node (or after a [counter resynchronization](#counter-resynchronization)) establishes that node's counter baseline—packets with earlier counter values must be rejected, even if they arrive within the backward window.
 
 ##### Duplicate Acknowledgement Window {#duplicate-acknowledgement-window}
@@ -123,14 +125,23 @@ A frame whose [frame signature](#frame-signatures) verifies is judged by the rul
 - **Known peer.** A frame signed by a known peer is checked against that peer's receive baseline, the one its unicast traffic is checked against. Because the peer draws every counter from [one sequence](#frame-counter), its signed multicast and broadcast frames continue the sequence its unicast frames follow.
   - An accepted frame advances the baseline, which is [persisted](#counter-persistence) as for unicast.
   - A replay is dropped.
-  - A frame behind the baseline or outside the forward window is dropped. When the gap is too large for reordering to explain, the receiver MAY start [counter resynchronization](#counter-resynchronization) with an Echo Request, at the usual rate limit.
+  - A frame behind the baseline or outside the forward window is dropped. Unless the receiver recognizes it as a late copy of a frame it accepted, it MAY start [counter resynchronization](#counter-resynchronization) with an Echo Request, at the usual rate limit.
 - **Stranger.** A frame that verifies against a key that is not a known peer's is first contact: it is accepted at face value, as [Counter Resynchronization](#counter-resynchronization) describes for any new peer. Later frames from that key are judged by the same rules, in a window the receiver keeps for that signing key. A frame behind that window's baseline or outside it is dropped, with no resynchronization, since there is no pairwise relationship to run one over.
   - A receiver MAY discard a stranger's window when it is idle or under memory pressure.
-  - After a discard, or after the receiver restarts, the stranger's next frame is first contact again, so a replay of one of its earlier frames is accepted once. With no prior knowledge of the sender, a receiver cannot tell that replay from a new frame.
+  - A key costs nothing to mint, so a burst of first contacts could otherwise discard every stranger's window on demand. A receiver SHOULD bound how many strangers' windows new signers displace; the suggested bound is **4** every **10 minutes**. A new signer's frame arriving once the bound is spent is accepted at face value, and no window is kept for its key.
+  - After a discard, or after the receiver restarts, the stranger's next frame is first contact again, so a replay of one of its earlier frames is accepted once. With no prior knowledge of the sender, a receiver cannot tell that replay from a new frame. The [`EMERGENCY`](multicast-channels.md#emergency) channel keeps a further record for this reason.
+
+##### Unsigned Multicast {#unsigned-multicast}
+
+A multicast without a frame signature, or whose signature does not verify, is authenticated only as the work of some holder of the channel key: its `SRC` names a sender any other member could have named. A receiver judges it by duplicate suppression alone, keyed by its MIC and by nothing a forwarder may rewrite: a multicast whose MIC matches one already accepted is a replay, with or without a [Route Retry option](packet-options.md#route-retry-option-6).
+
+An unsigned multicast MUST NOT advance or otherwise modify any replay state kept for the source it names. A member able to move that state could send one frame under another member's source, with a counter far ahead of that member's, and so silence it.
+
+Once a receiver's duplicate-suppression entry for a multicast ages out or is displaced, a replay of that multicast is accepted as new. See [Replay of Unsigned Multicast](security-considerations.md#replay-of-unsigned-multicast).
 
 #### Counter Persistence
 
-How a node persists and recovers its own frame counter across reboots is implementation-specific. Possible strategies include writing the counter to non-volatile storage periodically or advancing the counter by a large margin on startup to avoid replaying previously used values.
+How a node persists and recovers its own frame counter across reboots is implementation-specific. Possible strategies include writing the counter to non-volatile storage periodically or advancing the counter by a large margin on startup to avoid replaying previously used values. A node MUST advance its counter on startup by less than the suggested forward window: a larger jump puts its next frame outside every peer's window, and each peer must resynchronize before accepting it.
 
 A node MUST also persist each known peer's receive baseline and restore it at startup. A node that lost a peer's baseline would treat that peer's next frame as first contact and accept a replay of any earlier one.
 
@@ -146,7 +157,7 @@ A node MUST also persist each known peer's receive baseline and restore it at st
 
 On first contact with a new peer, the received frame counter is accepted at face value and recorded as the baseline for future replay detection.
 
-An authenticated packet from a known peer whose frame counter is far outside the window means the two nodes disagree about that counter—for example, because the peer rebooted and lost its persisted counter. Far outside means past the forward window, or far enough behind the baseline that reordering cannot explain it (the suggested threshold is **1024**). The receiver MAY then re-establish a baseline with one of the two exchanges below. It SHOULD send at most one such probe to a peer every **5 seconds**, and a [Verify Frame](mac-commands.md#verify-frame-12) or [Frame Verified](mac-commands.md#frame-verified-13) never prompts one.
+An authenticated packet from a known peer whose frame counter falls outside the window, or is behind it past the 5-minute bound, means the two nodes disagree about that counter, whatever the gap—for example, because the peer rebooted and lost its persisted counter, or because a retransmission fell behind the backward window. A packet the receiver still recognizes by its counter and MIC as one it accepted is only a late copy, and prompts nothing. For any other, the receiver MAY re-establish a baseline with one of the two exchanges below. It SHOULD send at most one such probe to a peer every **5 seconds**, and a [Verify Frame](mac-commands.md#verify-frame-12) or [Frame Verified](mac-commands.md#frame-verified-13) never prompts one.
 
 When the packet requested an acknowledgement, the receiver—the requester—holds it without acknowledging it and sends Verify Frame to the peer, naming the packet in an [Ack MIC option](packet-options.md#ack-mic-option-8). The peer—the responder—proceeds as follows:
 
@@ -156,9 +167,11 @@ When the packet requested an acknowledgement, the receiver—the requester—hol
 
 The responder processes a Verify Frame whose own counter falls outside its window for the requester, since the match with an outstanding packet already shows the request is fresh. When Frame Verified is acknowledged, it adopts that counter as the requester's new baseline. A Verify Frame whose counter falls within the window is subject to the ordinary replay rules.
 
-When a Frame Verified arrives echoing the nonce of a Verify Frame for a packet the requester still holds, the requester adopts its frame counter as the peer's new baseline, whatever the value. It then delivers the held packet and acknowledges Frame Verified; that acknowledgement stands for the held packet too, which is not acknowledged separately. A requester that no longer holds the packet discards Frame Verified without acknowledging it, so the responder reports the packet as failed. The requester MUST choose nonces so that a Frame Verified recorded from an earlier exchange cannot match a later one.
+When a Frame Verified arrives echoing the nonce of a Verify Frame for a packet the requester still holds, the requester adopts its frame counter as the peer's new baseline, whatever the value. It then delivers the held packet and acknowledges Frame Verified; that acknowledgement stands for the held packet too, which is not acknowledged separately. A requester that no longer holds the packet discards Frame Verified without acknowledging it, so the responder reports the packet as failed. The requester MUST choose nonces so that a Frame Verified recorded from an earlier exchange cannot match a later one. A requester cannot tell a held packet from one it accepted earlier and no longer recognizes, so a packet whose acknowledgement was lost can be delivered a second time this way.
 
 When the packet did not request an acknowledgement, the peer has nothing outstanding to match, so the receiver MAY instead send an [Echo Request](mac-commands.md#echo-request-4) carrying a nonce. An Echo Response echoing it establishes the response's frame counter as the peer's new baseline. The packet that prompted the probe is dropped.
+
+When that packet is itself an Echo Request, the receiver answers it with an Echo Response before sending its own probe, and only when it sends the probe, so the answer shares the probe's rate limit. Two nodes each outside the other's window would otherwise refuse each other's probes indefinitely. The Echo Request is accepted no further: it is not delivered, and it moves no baseline.
 
 
 ### Salt

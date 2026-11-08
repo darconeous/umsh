@@ -114,6 +114,8 @@ The emergency channel (written `EMERGENCY` here for emphasis, but derived from `
 
 These requirements ensure that emergency traffic is universally readable, attributable to a specific node, and cryptographically authenticated against impersonation.
 
+A receiver SHOULD remember each signed frame it accepts on this channel for **24 hours**, and drop a frame it remembers as a replay, whatever its signer's [receive window](security.md#signed-frame-counters) makes of it. A stranger's window can be discarded, and its next frame is then first contact; this record is what keeps a replay of a real emergency from raising it again. Newer frames never displace a remembered one: a full record takes no more until an entry ages out.
+
 Text messages beginning with `TEST:` are [test messages](app-text-messages.md#test-messages), which raise no alert by default.
 
 ## Payload Reuse
