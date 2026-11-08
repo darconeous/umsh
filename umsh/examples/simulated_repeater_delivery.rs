@@ -649,5 +649,8 @@ fn summarize_mac_event(event: &MacEventRef<'_>) -> String {
             identity_id,
             receipt,
         } => format!("tx-abandoned id={identity_id:?} receipt={receipt:?}"),
+        MacEventRef::RetiredAddressHeard { address } => {
+            format!("retired-address-heard address={}", full_key(address))
+        }
     }
 }

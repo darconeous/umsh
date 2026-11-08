@@ -19,7 +19,7 @@ use crate::mac::MacBackend;
 use crate::peer::PeerConnection;
 use crate::peer_repeaters::{self, PeerRepeaterTable};
 #[cfg(feature = "software-crypto")]
-use crate::pfs::{self, PfsSessionManager, PfsState};
+use crate::pfs::{self, PfsSessionManager, PfsSessionRecord, PfsState};
 use crate::receive::ReceivedPacketRef;
 use crate::ticket::{SendProgressTicket, SendToken};
 use crate::transport::Transport;
@@ -225,6 +225,8 @@ pub(crate) struct LocalNodeState {
     pfs_established_handlers: Handlers<dyn FnMut(PublicKey)>,
     pfs_ended_handlers: Handlers<dyn FnMut(PublicKey)>,
     pfs_failed_handlers: Handlers<dyn FnMut(PublicKey, PfsFailure)>,
+    #[cfg(feature = "software-crypto")]
+    pfs_records_changed_handlers: Handlers<dyn FnMut()>,
     pong_handlers: Handlers<dyn FnMut(PublicKey, u64)>,
     pong_metadata_handlers: Handlers<PongMetadataHandler>,
     ping_timeout_handlers: Handlers<dyn FnMut(PublicKey)>,
@@ -263,6 +265,8 @@ impl LocalNodeState {
             pfs_established_handlers: HandlerTable::default(),
             pfs_ended_handlers: HandlerTable::default(),
             pfs_failed_handlers: HandlerTable::default(),
+            #[cfg(feature = "software-crypto")]
+            pfs_records_changed_handlers: HandlerTable::default(),
             pong_handlers: HandlerTable::default(),
             pong_metadata_handlers: HandlerTable::default(),
             ping_timeout_handlers: HandlerTable::default(),
@@ -1280,6 +1284,32 @@ impl<M: MacBackend> LocalNode<M> {
         Subscription::new(move || state.borrow_mut().pfs_failed_handlers.remove(handle))
     }
 
+    /// Subscribe to changes in what [`Self::pfs_session_records`] returns:
+    /// a session established, ended or replaced, or a retired one restored,
+    /// closed or past its end. A node that keeps its records keeps them
+    /// again on each.
+    ///
+    /// Like every callback, this runs inside the pump and must not await;
+    /// note the change and take the records once the pump returns.
+    #[cfg(feature = "software-crypto")]
+    pub fn on_pfs_records_changed<F>(&self, handler: F) -> Subscription
+    where
+        F: FnMut() + 'static,
+    {
+        let handle = self
+            .state
+            .borrow_mut()
+            .pfs_records_changed_handlers
+            .insert(Box::new(handler));
+        let state = self.state.clone();
+        Subscription::new(move || {
+            state
+                .borrow_mut()
+                .pfs_records_changed_handlers
+                .remove(handle)
+        })
+    }
+
     fn add_pong_handler<F>(&self, handler: F) -> SubscriptionHandle
     where
         F: FnMut(PublicKey, u64) + 'static,
@@ -1445,17 +1475,20 @@ impl<M: MacBackend> LocalNode<M> {
             duration_minutes,
             options,
         )
-        .await?;
-        Ok(self.register_ack_send(self.identity_id, receipt))
+        .await;
+        self.dispatch_pfs_records_changed();
+        Ok(self.register_ack_send(self.identity_id, receipt?))
     }
 
+    /// End the session with forward secrecy held with `peer`, or the
+    /// retired one this node lost to a reboot, and tell them.
     #[cfg(feature = "software-crypto")]
     pub async fn end_pfs(
         &self,
         peer: &PublicKey,
         options: &SendOptions,
     ) -> Result<(), NodeError<M>> {
-        let _ = pfs::end_session(
+        let ended = pfs::end_session(
             &self.state,
             &self.mac,
             self.identity_id,
@@ -1463,8 +1496,75 @@ impl<M: MacBackend> LocalNode<M> {
             true,
             options,
         )
-        .await?;
-        Ok(())
+        .await;
+        self.dispatch_pfs_records_changed();
+        ended.map(|_| ())
+    }
+
+    /// The record of every session with forward secrecy this node holds or
+    /// has retired, for keeping in durable storage; see
+    /// [`PfsSessionRecord`]. `now_unix` is the wall-clock time, in seconds
+    /// since the Unix epoch, if known.
+    ///
+    /// Only active sessions are recorded: one still being negotiated has
+    /// no address yet for the peer to send to.
+    #[cfg(feature = "software-crypto")]
+    pub async fn pfs_session_records(&self, now_unix: Option<u32>) -> Vec<PfsSessionRecord> {
+        let now_ms = self.mac.now_ms().await;
+        self.state.borrow().pfs.records(now_ms, now_unix)
+    }
+
+    /// Retire the sessions `records` describe, as kept by a previous run:
+    /// their keys are gone, but traffic their peers go on sending under
+    /// them is recognized, and answered with an End PFS Session from this
+    /// node's long-term address. Once the peer acknowledges it, the session
+    /// is over at both ends and [`Self::on_pfs_ended`] fires.
+    ///
+    /// Call this before the first pump, so no such traffic is missed.
+    /// `now_unix` is the wall-clock time, in seconds since the Unix epoch,
+    /// if known; without it, each session is held to everything that was
+    /// left of it when its record was taken.
+    #[cfg(feature = "software-crypto")]
+    pub async fn restore_pfs_session_records(
+        &self,
+        records: &[PfsSessionRecord],
+        now_unix: Option<u32>,
+    ) {
+        pfs::restore_records(&self.state, &self.mac, self.identity_id, records, now_unix).await;
+        self.dispatch_pfs_records_changed();
+    }
+
+    /// Answer traffic to the retired `address` by asking its peer to end
+    /// the session.
+    #[cfg(feature = "software-crypto")]
+    pub(crate) async fn close_retired_pfs(&self, address: &PublicKey, options: &SendOptions) {
+        pfs::close_retired(&self.state, &self.mac, self.identity_id, address, options).await;
+    }
+
+    /// Settle the close of a retired session sent as `token`, if it was
+    /// one.
+    #[cfg(feature = "software-crypto")]
+    pub(crate) fn settle_pfs_close(&self, token: SendToken, acked: bool) {
+        self.state.borrow_mut().pfs.close_settled(token, acked);
+    }
+
+    /// Drop the retired sessions that are over, and return the peers of
+    /// those that ended by the peer acknowledging their close.
+    #[cfg(feature = "software-crypto")]
+    pub(crate) async fn settle_retired_pfs(&self) -> Vec<PublicKey> {
+        let now_ms = self.mac.now_ms().await;
+        pfs::settle_retired(&self.state, &self.mac, now_ms).await
+    }
+
+    /// Tell the records-changed subscribers, if the records changed.
+    #[cfg(feature = "software-crypto")]
+    pub(crate) fn dispatch_pfs_records_changed(&self) {
+        let mut state = self.state.borrow_mut();
+        if state.pfs.take_records_changed() {
+            state
+                .pfs_records_changed_handlers
+                .for_each_mut(|handler| handler());
+        }
     }
 
     /// Sends `payload` to `to` under the session with forward secrecy held

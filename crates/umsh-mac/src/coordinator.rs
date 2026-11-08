@@ -1165,6 +1165,22 @@ pub struct Mac<
     /// A frame's signature input, assembled here rather than on the stack or
     /// in a send's future.
     sig_input: [u8; SIGNATURE_INPUT_MAX],
+    /// Addresses of sessions this MAC can no longer use but still
+    /// recognizes; see [`Self::watch_retired_address`].
+    retired_addresses: Vec<RetiredAddress, IDENTITIES>,
+}
+
+/// An address a MAC holds no key for but still recognizes: the ephemeral
+/// address of a forward-secrecy session lost to a reboot, and the peer
+/// still using it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RetiredAddress {
+    /// The long-term identity the address belonged to.
+    pub parent: LocalIdentityId,
+    /// The retired address itself.
+    pub address: PublicKey,
+    /// The address its traffic comes from.
+    pub peer: PublicKey,
 }
 
 impl<
@@ -1221,6 +1237,7 @@ impl<
             held_frames: Vec::new(),
             verify_key: None,
             sig_input: [0; SIGNATURE_INPUT_MAX],
+            retired_addresses: Vec::new(),
         }
     }
 
@@ -1692,6 +1709,73 @@ impl<
             .map(IdentitySlot::identity)
             .filter(|identity| identity.is_ephemeral())
             .map(|identity| *identity.public_key())
+    }
+
+    /// Recognize `address` as one of `parent`'s retired addresses: one this
+    /// MAC holds no key for, but whose traffic from `peer` it still reports
+    /// with [`MacEventRef::RetiredAddressHeard`](crate::MacEventRef::RetiredAddressHeard).
+    ///
+    /// Watching an address already watched replaces its entry.
+    pub fn watch_retired_address(
+        &mut self,
+        parent: LocalIdentityId,
+        address: PublicKey,
+        peer: PublicKey,
+    ) -> Result<(), CapacityError> {
+        let retired = RetiredAddress {
+            parent,
+            address,
+            peer,
+        };
+        if let Some(entry) = self
+            .retired_addresses
+            .iter_mut()
+            .find(|entry| entry.address == address)
+        {
+            *entry = retired;
+            return Ok(());
+        }
+        self.retired_addresses
+            .push(retired)
+            .map_err(|_| CapacityError)
+    }
+
+    /// Stop recognizing `address`, reporting whether it was watched.
+    pub fn forget_retired_address(&mut self, address: &PublicKey) -> bool {
+        let before = self.retired_addresses.len();
+        self.retired_addresses
+            .retain(|entry| entry.address != *address);
+        self.retired_addresses.len() != before
+    }
+
+    /// Every retired address watched.
+    pub fn retired_addresses(&self) -> impl Iterator<Item = &RetiredAddress> + '_ {
+        self.retired_addresses.iter()
+    }
+
+    /// The retired address a frame for `dst` from `source` was sent to,
+    /// if any. Both ends have to match: the destination by hint, and the
+    /// source by hint or full key.
+    fn retired_address_for(
+        &self,
+        frame: &[u8],
+        dst: Option<umsh_core::NodeHint>,
+        source: SourceAddrRef,
+    ) -> Option<RetiredAddress> {
+        let dst = dst?;
+        self.retired_addresses
+            .iter()
+            .find(|entry| {
+                entry.address.hint() == dst
+                    && match source {
+                        SourceAddrRef::Hint(hint) => hint == entry.peer.hint(),
+                        SourceAddrRef::FullKeyAt { offset } => {
+                            Self::full_key_at(frame, offset) == Some(entry.peer)
+                        }
+                        SourceAddrRef::Encrypted { .. } | SourceAddrRef::None => false,
+                    }
+            })
+            .copied()
     }
 
     /// Mutably borrow an identity slot by identifier.
@@ -3715,6 +3799,16 @@ impl<
                 break;
             }
             handled
+        } else if let Some(retired) =
+            self.retired_address_for(&buf[..frame_len], header.dst, header.source)
+        {
+            on_event(
+                retired.parent,
+                crate::MacEventRef::RetiredAddressHeard {
+                    address: retired.address,
+                },
+            );
+            true
         } else {
             false
         };
@@ -3886,6 +3980,18 @@ impl<
                     };
                     let (dst, source_addr) = (blind_addr.dst, blind_addr.source);
                     let Some(local_id) = self.find_local_identity_for_dst(Some(dst)) else {
+                        if let Some(retired) =
+                            self.retired_address_for(&buf[..frame_len], Some(dst), source_addr)
+                        {
+                            on_event(
+                                retired.parent,
+                                crate::MacEventRef::RetiredAddressHeard {
+                                    address: retired.address,
+                                },
+                            );
+                            handled = true;
+                            break;
+                        }
                         continue;
                     };
                     self.admit_full_key_source(

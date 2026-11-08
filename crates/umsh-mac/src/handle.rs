@@ -654,6 +654,35 @@ impl<
         self.mac.borrow().await.ephemeral_keys().collect()
     }
 
+    /// See [`Mac::watch_retired_address`](crate::Mac::watch_retired_address).
+    pub async fn watch_retired_address(
+        &self,
+        parent: LocalIdentityId,
+        address: PublicKey,
+        peer: PublicKey,
+    ) -> Result<(), crate::CapacityError> {
+        self.mac
+            .borrow_mut()
+            .await
+            .watch_retired_address(parent, address, peer)
+    }
+
+    /// See [`Mac::forget_retired_address`](crate::Mac::forget_retired_address).
+    pub async fn forget_retired_address(&self, address: &PublicKey) -> bool {
+        self.mac.borrow_mut().await.forget_retired_address(address)
+    }
+
+    /// The retired addresses watched: addresses this MAC holds no key
+    /// for, but whose traffic it still recognizes.
+    pub async fn retired_addresses(&self) -> heapless::Vec<crate::RetiredAddress, IDENTITIES> {
+        self.mac
+            .borrow()
+            .await
+            .retired_addresses()
+            .copied()
+            .collect()
+    }
+
     /// Return the public key of a local identity, if that slot is occupied.
     pub async fn identity_public_key(&self, id: LocalIdentityId) -> Option<PublicKey> {
         let mac = self.mac.borrow().await;

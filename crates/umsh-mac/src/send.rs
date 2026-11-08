@@ -1534,4 +1534,14 @@ pub enum MacEventRef<'a> {
         identity_id: LocalIdentityId,
         receipt: Option<SendReceipt>,
     },
+    /// A unicast or blind unicast arrived for one of this identity's
+    /// retired addresses, from the peer that address was shared with; see
+    /// [`Mac::watch_retired_address`](crate::Mac::watch_retired_address).
+    ///
+    /// The frame itself is gone: without the address's key it cannot be
+    /// opened, so it is neither delivered nor acknowledged.
+    RetiredAddressHeard {
+        /// The retired address the frame was sent to.
+        address: PublicKey,
+    },
 }

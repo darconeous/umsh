@@ -183,6 +183,8 @@ pub use peer::{PING_MIC_SIZE, PeerConnection};
 pub use peer_repeaters::{
     MAX_PEER_REPEATERS, MergedPeerRepeater, PeerRepeaterRecord, PeerRepeaterTable,
 };
+#[cfg(feature = "software-crypto")]
+pub use pfs::PfsSessionRecord;
 pub use receive::{
     ChannelInfoRef, PacketFamily, ReceivedPacketRef, RepeaterHints, RxAcceptance, RxMetadata,
     SignatureStatus, Snr,
@@ -218,7 +220,7 @@ mod tests {
     #[cfg(feature = "software-crypto")]
     use crate::ReceivedPacketRef;
     #[cfg(feature = "software-crypto")]
-    use crate::{MacBackend, MacBackendError, OwnedMacCommand, SendToken};
+    use crate::{MacBackend, MacBackendError, OwnedMacCommand, PfsSessionRecord, SendToken};
     #[cfg(feature = "software-crypto")]
     use umsh_core::ChannelKey;
     #[cfg(feature = "software-crypto")]
@@ -1088,6 +1090,241 @@ mod tests {
     }
 
     #[cfg(feature = "software-crypto")]
+    fn retired_record(lifetime_s: u32, expires_at: Option<u32>) -> PfsSessionRecord {
+        PfsSessionRecord {
+            peer: PublicKey([0x55; 32]),
+            local_ephemeral: PublicKey([0x66; 32]),
+            peer_ephemeral: PublicKey([0x77; 32]),
+            expires_at,
+            lifetime_s,
+        }
+    }
+
+    /// A node that lost its session with `retired_record`'s peer to a
+    /// reboot, counting how often its records change.
+    #[cfg(feature = "software-crypto")]
+    fn rebooted_node(
+        mac: &FakeMac,
+        record: PfsSessionRecord,
+    ) -> (crate::node::LocalNode<FakeMac>, Rc<core::cell::Cell<u32>>) {
+        let node = test_node(mac.clone());
+        let changes = Rc::new(core::cell::Cell::new(0));
+        let counted = changes.clone();
+        core::mem::forget(node.on_pfs_records_changed(move || counted.set(counted.get() + 1)));
+        block_on_ready(node.restore_pfs_session_records(&[record], None));
+        (node, changes)
+    }
+
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn pfs_record_encoding_round_trips() {
+        let records = [
+            retired_record(3_600, Some(1_800_000_000)),
+            retired_record(60, None),
+        ];
+        let encoded = PfsSessionRecord::encode_all(&records);
+        assert_eq!(encoded.len(), 2 * PfsSessionRecord::ENCODED_LEN);
+        assert_eq!(PfsSessionRecord::decode_all(&encoded), records);
+
+        let mut unknown = encoded.clone();
+        unknown[0] = 0xEE;
+        assert_eq!(PfsSessionRecord::decode_all(&unknown), records[1..]);
+        assert_eq!(PfsSessionRecord::decode(&encoded[..10]), None);
+    }
+
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn pfs_record_is_never_held_past_its_lifetime() {
+        let record = retired_record(600, Some(10_000));
+        assert_eq!(record.remaining_ms(Some(9_900)), 100_000);
+        assert_eq!(record.remaining_ms(Some(10_000)), 0);
+        // A clock that has gone backward does not stretch the session.
+        assert_eq!(record.remaining_ms(Some(1_000)), 600_000);
+        assert_eq!(record.remaining_ms(None), 600_000);
+    }
+
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn pfs_records_name_active_sessions_only() {
+        let mac = FakeMac::new(vec![[7u8; 32], [8u8; 32]]);
+        let node = test_node(mac.clone());
+        let options = SendOptions::default();
+
+        block_on_ready(node.request_pfs(&PublicKey([0x11; 32]), 60, &options)).unwrap();
+        assert!(block_on_ready(node.pfs_session_records(Some(5_000))).is_empty());
+
+        let peer = PublicKey([0x55; 32]);
+        let request = OwnedMacCommand::PfsSessionRequest {
+            ephemeral_key: PublicKey([0x44; 32]),
+            duration_minutes: 60,
+        };
+        block_on_ready(node.handle_pfs_command(&peer, None, &request, &options)).unwrap();
+
+        let records = block_on_ready(node.pfs_session_records(Some(5_000)));
+        assert_eq!(
+            records,
+            [PfsSessionRecord {
+                peer,
+                local_ephemeral: node.pfs_local_keys()[0],
+                peer_ephemeral: PublicKey([0x44; 32]),
+                expires_at: Some(5_000 + 3_600),
+                lifetime_s: 3_600,
+            }]
+        );
+    }
+
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn pfs_retired_session_is_closed_from_the_long_term_address() {
+        let mac = FakeMac::new(vec![]);
+        let record = retired_record(3_600, None);
+        let (node, changes) = rebooted_node(&mac, record);
+        assert_eq!(
+            mac.state.borrow().retired,
+            [(
+                LocalIdentityId(1),
+                record.local_ephemeral,
+                record.peer_ephemeral
+            )]
+        );
+        assert_eq!(changes.get(), 1);
+        let options = SendOptions::default().with_ack_requested(true);
+
+        block_on_ready(node.close_retired_pfs(&record.local_ephemeral, &options));
+        let sent = mac.take_unicasts();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0].from, LocalIdentityId(1));
+        assert_eq!(sent[0].to, record.peer);
+        assert_eq!(
+            parse_owned_mac_command(&sent[0].payload),
+            OwnedMacCommand::EndPfsSession
+        );
+
+        // More stale traffic while the close is out sends nothing more.
+        block_on_ready(node.close_retired_pfs(&record.local_ephemeral, &options));
+        assert!(mac.take_unicasts().is_empty());
+
+        node.settle_pfs_close(SendToken::new(LocalIdentityId(1), SendReceipt(42)), true);
+        assert_eq!(block_on_ready(node.settle_retired_pfs()), [record.peer]);
+        assert!(mac.state.borrow().retired.is_empty());
+        assert!(block_on_ready(node.pfs_session_records(None)).is_empty());
+        node.dispatch_pfs_records_changed();
+        assert_eq!(changes.get(), 2);
+    }
+
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn pfs_retired_close_that_goes_unanswered_is_tried_again() {
+        let mac = FakeMac::new(vec![]);
+        let record = retired_record(3_600, None);
+        let (node, _) = rebooted_node(&mac, record);
+        let options = SendOptions::default().with_ack_requested(true);
+
+        block_on_ready(node.close_retired_pfs(&record.local_ephemeral, &options));
+        node.settle_pfs_close(SendToken::new(LocalIdentityId(1), SendReceipt(42)), false);
+        assert!(block_on_ready(node.settle_retired_pfs()).is_empty());
+        assert_eq!(mac.take_unicasts().len(), 1);
+
+        block_on_ready(node.close_retired_pfs(&record.local_ephemeral, &options));
+        assert_eq!(mac.take_unicasts().len(), 1);
+    }
+
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn pfs_retired_session_gives_way_to_a_new_one() {
+        let mac = FakeMac::new(vec![[7u8; 32]]);
+        let record = retired_record(3_600, None);
+        let (node, _) = rebooted_node(&mac, record);
+        let request = OwnedMacCommand::PfsSessionRequest {
+            ephemeral_key: PublicKey([0x44; 32]),
+            duration_minutes: 60,
+        };
+
+        block_on_ready(node.handle_pfs_command(
+            &record.peer,
+            None,
+            &request,
+            &SendOptions::default(),
+        ))
+        .unwrap();
+
+        assert!(mac.state.borrow().retired.is_empty());
+        let records = block_on_ready(node.pfs_session_records(None));
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].peer_ephemeral, PublicKey([0x44; 32]));
+    }
+
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn pfs_retired_session_ends_when_the_peer_ends_it() {
+        let mac = FakeMac::new(vec![]);
+        let record = retired_record(3_600, None);
+        let (node, _) = rebooted_node(&mac, record);
+
+        let ended = block_on_ready(node.handle_pfs_command(
+            &record.peer,
+            None,
+            &OwnedMacCommand::EndPfsSession,
+            &SendOptions::default(),
+        ))
+        .unwrap();
+
+        assert_eq!(ended, Some(crate::node::PfsLifecycle::Ended(record.peer)));
+        assert!(mac.state.borrow().retired.is_empty());
+        assert!(mac.take_unicasts().is_empty());
+    }
+
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn pfs_retired_session_goes_quietly_at_its_end() {
+        let mac = FakeMac::new(vec![]);
+        let node = test_node(mac.clone());
+        block_on_ready(node.restore_pfs_session_records(
+            &[
+                retired_record(600, Some(10_000)),
+                PfsSessionRecord {
+                    peer: PublicKey([0x56; 32]),
+                    local_ephemeral: PublicKey([0x67; 32]),
+                    ..retired_record(600, None)
+                },
+            ],
+            Some(9_990),
+        ));
+        assert_eq!(mac.state.borrow().retired.len(), 2);
+
+        // Ten seconds on, the session whose end was known is over; the
+        // other is held to the whole of what was left of it.
+        mac.state.borrow_mut().now_ms += 10_000;
+        assert!(block_on_ready(node.settle_retired_pfs()).is_empty());
+        assert_eq!(
+            mac.state.borrow().retired,
+            [(
+                LocalIdentityId(1),
+                PublicKey([0x67; 32]),
+                PublicKey([0x77; 32])
+            )]
+        );
+
+        mac.state.borrow_mut().now_ms += 590_000;
+        assert!(block_on_ready(node.settle_retired_pfs()).is_empty());
+        assert!(mac.state.borrow().retired.is_empty());
+    }
+
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn pfs_record_with_nothing_left_is_not_restored() {
+        let mac = FakeMac::new(vec![]);
+        let node = test_node(mac.clone());
+
+        block_on_ready(
+            node.restore_pfs_session_records(&[retired_record(600, Some(10_000))], Some(10_000)),
+        );
+
+        assert!(mac.state.borrow().retired.is_empty());
+        assert!(block_on_ready(node.pfs_session_records(Some(10_000))).is_empty());
+    }
+
+    #[cfg(feature = "software-crypto")]
     fn encode_text_payload(text: &str) -> Vec<u8> {
         let message = OwnedTextMessage::basic(text);
         let mut body = [0u8; 512];
@@ -1277,6 +1514,8 @@ mod tests {
         hold_add_peer: bool,
         /// Fails every unicast.
         refuse_sends: bool,
+        /// Retired addresses watched, with their parent and peer.
+        retired: Vec<(LocalIdentityId, PublicKey, PublicKey)>,
     }
 
     #[cfg(feature = "software-crypto")]
@@ -1494,6 +1733,25 @@ mod tests {
         async fn remove_ephemeral(&self, id: LocalIdentityId) -> bool {
             self.state.borrow_mut().removed_ephemerals.push(id);
             true
+        }
+
+        async fn watch_retired_address(
+            &self,
+            parent: LocalIdentityId,
+            address: PublicKey,
+            peer: PublicKey,
+        ) -> bool {
+            let mut state = self.state.borrow_mut();
+            state.retired.retain(|(_, watched, _)| *watched != address);
+            state.retired.push((parent, address, peer));
+            true
+        }
+
+        async fn forget_retired_address(&self, address: &PublicKey) -> bool {
+            let mut state = self.state.borrow_mut();
+            let before = state.retired.len();
+            state.retired.retain(|(_, watched, _)| watched != address);
+            state.retired.len() != before
         }
 
         async fn for_each_transmitter_observation(

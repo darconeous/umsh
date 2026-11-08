@@ -2,6 +2,7 @@ mod ack_authentication;
 mod bearer;
 #[cfg(feature = "software-crypto")]
 mod colliding_channels;
+mod retired_addresses;
 mod routing_reliability;
 mod send_shapes;
 #[cfg(feature = "software-crypto")]

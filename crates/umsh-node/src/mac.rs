@@ -129,6 +129,27 @@ pub trait MacBackend: Clone {
     #[cfg(feature = "software-crypto")]
     async fn remove_ephemeral(&self, id: LocalIdentityId) -> bool;
 
+    /// Recognize `address`, one of `parent`'s retired addresses, in traffic
+    /// from `peer`, returning whether it is watched; see
+    /// [`umsh_mac::Mac::watch_retired_address`]. A backend that cannot
+    /// watch one watches nothing.
+    async fn watch_retired_address(
+        &self,
+        parent: LocalIdentityId,
+        address: PublicKey,
+        peer: PublicKey,
+    ) -> bool {
+        let _ = (parent, address, peer);
+        false
+    }
+
+    /// Stop recognizing the retired `address`, returning whether it was
+    /// watched.
+    async fn forget_retired_address(&self, address: &PublicKey) -> bool {
+        let _ = address;
+        false
+    }
+
     /// Send everything from `id`, and the acks it returns, at `power_dbm`
     /// in dBm; `None` sends at the configured power.
     async fn set_tx_power_dbm(&self, id: LocalIdentityId, power_dbm: Option<i8>) {
@@ -444,6 +465,21 @@ impl<
     #[cfg(feature = "software-crypto")]
     async fn remove_ephemeral(&self, id: LocalIdentityId) -> bool {
         self.remove_ephemeral(id).await
+    }
+
+    async fn watch_retired_address(
+        &self,
+        parent: LocalIdentityId,
+        address: PublicKey,
+        peer: PublicKey,
+    ) -> bool {
+        self.watch_retired_address(parent, address, peer)
+            .await
+            .is_ok()
+    }
+
+    async fn forget_retired_address(&self, address: &PublicKey) -> bool {
+        self.forget_retired_address(address).await
     }
 
     async fn set_tx_power_dbm(&self, id: LocalIdentityId, power_dbm: Option<i8>) {

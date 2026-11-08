@@ -137,6 +137,11 @@ impl<M: MacBackend> Host<M> {
         let pending_peer_repeaters_ref = pending_peer_repeaters.clone();
         let pending_mobility = Rc::new(RefCell::new(Vec::<(umsh_core::PublicKey, bool)>::new()));
         let pending_mobility_ref = pending_mobility.clone();
+        // Traffic for a retired session, answered once the event is done.
+        let retired_heard = Rc::new(RefCell::new(
+            Vec::<(LocalNode<M>, umsh_core::PublicKey)>::new(),
+        ));
+        let retired_heard_ref = retired_heard.clone();
         let dispatcher = self.dispatcher.clone();
         let nodes = self.nodes.clone();
         self.mac
@@ -176,16 +181,16 @@ impl<M: MacBackend> Host<M> {
                         }
                     }
                     umsh_mac::MacEventRef::AckReceived { peer, receipt, .. } => {
-                        node.dispatch_ack_received(
-                            peer,
-                            crate::SendToken::new(identity_id, receipt),
-                        );
+                        let token = crate::SendToken::new(identity_id, receipt);
+                        #[cfg(feature = "software-crypto")]
+                        node.settle_pfs_close(token, true);
+                        node.dispatch_ack_received(peer, token);
                     }
                     umsh_mac::MacEventRef::AckTimeout { peer, receipt } => {
-                        node.dispatch_ack_timeout(
-                            peer,
-                            crate::SendToken::new(identity_id, receipt),
-                        );
+                        let token = crate::SendToken::new(identity_id, receipt);
+                        #[cfg(feature = "software-crypto")]
+                        node.settle_pfs_close(token, false);
+                        node.dispatch_ack_timeout(peer, token);
                     }
                     umsh_mac::MacEventRef::Transmitted { wire_bytes, .. } => {
                         node.dispatch_transmitted(wire_bytes);
@@ -194,7 +199,23 @@ impl<M: MacBackend> Host<M> {
                     // Ticket resolution (failed + finished) is handled by
                     // dispatch_ticket_state above; there is no peer to
                     // notify since the frame never aired.
-                    umsh_mac::MacEventRef::TxAbandoned { .. } => {}
+                    #[cfg_attr(not(feature = "software-crypto"), allow(unused_variables))]
+                    umsh_mac::MacEventRef::TxAbandoned {
+                        identity_id,
+                        receipt,
+                    } =>
+                    {
+                        #[cfg(feature = "software-crypto")]
+                        if let Some(receipt) = receipt {
+                            node.settle_pfs_close(
+                                crate::SendToken::new(identity_id, receipt),
+                                false,
+                            );
+                        }
+                    }
+                    umsh_mac::MacEventRef::RetiredAddressHeard { address } => {
+                        retired_heard_ref.borrow_mut().push((node, address));
+                    }
                 }
             })
             .await
@@ -210,6 +231,16 @@ impl<M: MacBackend> Host<M> {
         }
         #[cfg(not(feature = "software-crypto"))]
         drop(queued);
+
+        let heard: Vec<(LocalNode<M>, umsh_core::PublicKey)> =
+            retired_heard.borrow_mut().drain(..).collect();
+        #[cfg(feature = "software-crypto")]
+        for (node, address) in heard {
+            node.close_retired_pfs(&address, &self.pfs_control_options)
+                .await;
+        }
+        #[cfg(not(feature = "software-crypto"))]
+        drop(heard);
 
         let identity_replies: Vec<(LocalNode<M>, IdentityResponsePlan)> =
             pending_identity.borrow_mut().drain(..).collect();
@@ -299,6 +330,7 @@ impl<M: MacBackend> Host<M> {
             // Surface it so applications can report the failure.
             Err(err) => node.dispatch_pfs_failed(from, err.pfs_failure()),
         }
+        node.dispatch_pfs_records_changed();
     }
 }
 
@@ -328,11 +360,17 @@ async fn service_node_timeouts<M: MacBackend>(
                 node.dispatch_pfs_ended(peer);
             }
         }
+        // A retired session whose peer acknowledged its close has ended at
+        // both ends; one past its lifetime just goes.
+        for peer in node.settle_retired_pfs().await {
+            node.dispatch_pfs_ended(peer);
+        }
         // Abandon sent PFS requests that were never answered, so the
         // requester reports a timeout instead of sitting in `Requested`.
         for peer in node.expire_pfs_requests(now_ms) {
             node.dispatch_pfs_failed(peer, crate::node::PfsFailure::Timeout);
         }
+        node.dispatch_pfs_records_changed();
     }
 
     for (_, node) in nodes {
