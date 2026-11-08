@@ -38,7 +38,7 @@ repository = "https://github.com/darconeous/umsh"
 [patch.crates-io]
 lora-phy        = { git = "https://github.com/darconeous/lora-rs.git", rev = "0a97a66d2c634f43db07cc6b045d51497204e772" }
 lora-modulation = { git = "https://github.com/darconeous/lora-rs.git", rev = "0a97a66d2c634f43db07cc6b045d51497204e772" }
-trouble-host    = { git = "https://github.com/darconeous/trouble.git", rev = "675edc8a373b58ccdeaf1821653b41e19e595bab" }
+trouble-host    = { git = "https://github.com/darconeous/trouble.git", rev = "9c4f8c0fbfd14e23101e1ce71b124c9542259ad1" }
 
 # The whole esp-hal family is pinned to a single repo rev instead of the
 # crates.io releases. This revision includes BLE modem sleep (#6376),

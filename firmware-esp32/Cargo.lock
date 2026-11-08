@@ -3710,7 +3710,7 @@ dependencies = [
 [[package]]
 name = "trouble-host"
 version = "0.7.0"
-source = "git+https://github.com/darconeous/trouble.git?rev=675edc8a373b58ccdeaf1821653b41e19e595bab#675edc8a373b58ccdeaf1821653b41e19e595bab"
+source = "git+https://github.com/darconeous/trouble.git?rev=9c4f8c0fbfd14e23101e1ce71b124c9542259ad1#9c4f8c0fbfd14e23101e1ce71b124c9542259ad1"
 dependencies = [
  "aes",
  "bt-hci",
@@ -3733,7 +3733,7 @@ dependencies = [
 [[package]]
 name = "trouble-host-macros"
 version = "0.5.0"
-source = "git+https://github.com/darconeous/trouble.git?rev=675edc8a373b58ccdeaf1821653b41e19e595bab#675edc8a373b58ccdeaf1821653b41e19e595bab"
+source = "git+https://github.com/darconeous/trouble.git?rev=9c4f8c0fbfd14e23101e1ce71b124c9542259ad1#9c4f8c0fbfd14e23101e1ce71b124c9542259ad1"
 dependencies = [
  "convert_case",
  "darling 0.20.11",
