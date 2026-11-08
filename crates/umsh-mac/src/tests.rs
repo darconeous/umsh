@@ -13381,6 +13381,49 @@ fn every_overheard_forward_names_its_repeater() {
     );
 }
 
+/// A trace hint is anyone's to write, so hearing one proves nothing. A
+/// repeater heard forwarding this node's own frame is proven, and no run
+/// of receptions naming other repeaters pushes it out of the table.
+#[test]
+fn a_repeater_that_carried_our_frame_outlasts_a_flood_of_trace_hints() {
+    let (mut sender, local_id, peer_key) = make_sender_mac();
+    let _ = sender
+        .queue_unicast(
+            local_id,
+            &peer_key,
+            b"hello",
+            &SendOptions::default().with_ack_requested(true).with_trace(),
+        )
+        .unwrap();
+    let _ = block_on(sender.transmit_next(&mut |_, _| {})).unwrap();
+    let original = sender.radio().transmitted[0].clone();
+
+    let (carried, carrier) = forward_through(0x30, original.as_slice());
+    assert_eq!(
+        heard_forwards(&mut sender, carried.as_slice()).len(),
+        1,
+        "heard as a forward of this node's own frame"
+    );
+    assert!(sender.transmitter_observations().is_proven(&carrier));
+
+    // Past the watch, the same frame through other repeaters is just
+    // somebody's traffic: it names its repeater and proves nothing.
+    sender.clock().advance_ms(crate::ECHO_WATCH_MS);
+    for seed in 0..2 * crate::MAX_TRANSMITTER_OBSERVATIONS as u8 {
+        let (frame, hint) = forward_through(0x50 + seed, original.as_slice());
+        assert!(heard_forwards(&mut sender, frame.as_slice()).is_empty());
+        assert!(!sender.transmitter_observations().is_proven(&hint));
+    }
+
+    let table = sender.transmitter_observations();
+    assert_eq!(table.len(), crate::MAX_TRANSMITTER_OBSERVATIONS);
+    assert!(
+        table.is_proven(&carrier),
+        "the oldest entry, and still held"
+    );
+    assert_eq!(sender.counters().transmitter_unproven_refused, 0);
+}
+
 /// A channel message has no acknowledgment to wait for, but its forwards
 /// are reported all the same.
 #[test]

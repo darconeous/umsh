@@ -7,12 +7,19 @@
 //! - **Identities.** A repeater that advertises tells its neighbors its name,
 //!   its position, and the regions it forwards for. None of that can be
 //!   recovered from a hint. Only an identity heard directly counts—one that
-//!   arrived forwarded says nothing about whether its owner is in range.
+//!   arrived forwarded says nothing about whether its owner is in range—
+//!   and only on a frame that authenticated its owner and passed replay
+//!   detection. An identity's own signature carries no freshness, so one
+//!   captured anywhere would otherwise list its owner wherever it was
+//!   played back ([`identity_heard_directly`](crate::identity_heard_directly)).
 //! - **Transmitter observations** ([`umsh_mac::TransmitterObservations`]).
 //!   A repeater prepends its router hint to the trace route of every frame
-//!   it forwards, so every traced frame off the air proves which repeater
-//!   just transmitted it and how well it was heard—including repeaters that
-//!   never send this node anything of their own.
+//!   it forwards, so every traced frame off the air names the repeater
+//!   that just transmitted it and how well it was heard—including
+//!   repeaters that never send this node anything of their own. The hint
+//!   is not authenticated, so the MAC keeps the repeaters it has heard
+//!   carrying this node's own frames from being displaced by those it has
+//!   only heard named.
 //!
 //! A [`RouterHint`] is the first two bytes of a public key and a [`NodeHint`]
 //! the first three, so the observation's key is a prefix of the identity's.
@@ -90,8 +97,9 @@ impl PeerRepeaterTable {
     /// Record what an identity heard directly said.
     ///
     /// The caller vouches that the identity came off its owner's own
-    /// transmitter; `rssi_snr` is that reception's measurement, when the
-    /// radio made one. Returns whether the table changed.
+    /// transmitter, on a frame that authenticated its owner and passed
+    /// replay detection; `rssi_snr` is that reception's measurement, when
+    /// the radio made one. Returns whether the table changed.
     ///
     /// Under [`IdentityUpdate::Replace`] a repeat identity replaces the
     /// record rather than merging with it: the newest advertisement is the
