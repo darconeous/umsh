@@ -193,26 +193,20 @@ pub async fn power_up(
         .expect("Pager XL9555 power initialization");
     let mut battery = Battery::new(I2cDevice::new(bus));
     println!("pager: configuring battery telemetry");
-    let unknown = board_battery::Reading {
+    // Not optional: its first write reconnects the battery, which a
+    // USB-powered restart out of shipping mode can leave disconnected.
+    // Rebooting retries it; booting without it leaves a board that cannot
+    // charge and dies when USB is pulled.
+    battery
+        .start_telemetry()
+        .await
+        .expect("Pager battery telemetry initialization");
+    let reading = battery.read().await.unwrap_or(board_battery::Reading {
         voltage_mv: None,
         percent: None,
         charge: None,
         vbus: USB_PRESENT.load(Ordering::Acquire),
-    };
-    // A charger that did not take the telemetry setup costs the boot
-    // readout, not the boot: the board comes up showing no battery level,
-    // and the battery task's own sampling fills it in if the gauge answers.
-    let telemetry = match battery.start_telemetry().await {
-        Ok(()) => Some(()),
-        Err(error) => {
-            println!("pager: battery telemetry init FAILED: {error:?}");
-            None
-        }
-    };
-    let reading = match telemetry {
-        Some(()) => battery.read().await.unwrap_or(unknown),
-        None => unknown,
-    };
+    });
     publish_battery_reading(&reading);
     println!("pager: I2C power domains and battery telemetry ready");
     (bus, EXPANDER.init(Mutex::new(expander)), reading)
