@@ -9068,10 +9068,44 @@ fn repeater_does_not_forward_a_broadcast_it_originated() {
     );
 }
 
-/// The 3-byte hint form hides nothing useful here: it is derived from the
-/// public key, so our own hint identifies us just as well as our own key.
+/// Whether `mac` has a forward queued.
+fn has_queued_forward(mac: &TestMac) -> bool {
+    mac.tx_queue()
+        .iter()
+        .any(|entry| entry.priority == TxPriority::Forward)
+}
+
+/// A frame this node sent by hint is known again by what it sent, not by
+/// the hint: a neighbor's repeat of it is not repeated here.
 #[test]
 fn repeater_does_not_forward_its_own_broadcast_sent_by_hint() {
+    let mut mac = make_mac();
+    mac.repeater_config_mut().enabled = true;
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    mac.queue_broadcast(
+        local_id,
+        b"hello",
+        &SendOptions::default().with_flood_hops(3),
+    )
+    .unwrap();
+    block_on(mac.transmit_next(&mut |_, _| {})).unwrap();
+    let sent = mac.radio().transmitted[0].clone();
+    let header = PacketHeader::parse(sent.as_slice()).unwrap();
+    assert!(matches!(header.source, umsh_core::SourceAddrRef::Hint(_)));
+
+    mac.radio_mut().queue_received_frame(sent.as_slice());
+    let _ = block_on(mac.receive_one(|_, _| {})).unwrap();
+    assert!(
+        !has_queued_forward(&mac),
+        "a repeater must not relay its own transmission"
+    );
+}
+
+/// A hint is a three-byte prefix of a key, and another node's key can share
+/// ours. A frame sent by hint that this node never sent is that node's, and
+/// is carried like anyone else's.
+#[test]
+fn repeater_forwards_a_broadcast_from_a_node_sharing_its_hint() {
     let local = DummyIdentity::new([0x10; 32]);
     let local_hint = local.public_key().hint();
     let mut mac = make_mac();
@@ -9089,16 +9123,14 @@ fn repeater_does_not_forward_its_own_broadcast_sent_by_hint() {
 
     mac.radio_mut().queue_received_frame(beacon.as_slice());
     let _ = block_on(mac.receive_one(|_, _| {})).unwrap();
-    assert!(
-        mac.tx_queue_mut().pop_next().is_none(),
-        "a repeater must not relay its own transmission"
-    );
+    assert!(has_queued_forward(&mac));
 }
 
-/// A packet addressed to us has arrived. Failing to decrypt it does not turn it
-/// back into transit traffic.
+/// A destination hint matching one of ours decides nothing on its own: a
+/// packet no key of ours opens is for another node sharing the hint, and is
+/// carried.
 #[test]
-fn repeater_does_not_forward_a_unicast_addressed_to_itself() {
+fn repeater_forwards_a_unicast_for_a_node_sharing_its_hint() {
     let local = DummyIdentity::new([0x10; 32]);
     let local_hint = local.public_key().hint();
     let mut mac = make_mac();
@@ -9124,10 +9156,46 @@ fn repeater_does_not_forward_a_unicast_addressed_to_itself() {
 
     mac.radio_mut().queue_received_frame(frame.as_slice());
     let _ = block_on(mac.receive_one(|_, _| {})).unwrap();
-    assert!(
-        mac.tx_queue_mut().pop_next().is_none(),
-        "a packet naming us as its destination has already arrived"
-    );
+    assert!(has_queued_forward(&mac));
+}
+
+/// A packet one of our keys opens has arrived, and a later copy of it—a
+/// replay the window turns away—has nowhere further to go either.
+#[test]
+fn repeater_does_not_forward_a_unicast_it_opened_or_its_replay() {
+    let mut mac = make_mac();
+    mac.repeater_config_mut().enabled = true;
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let peer_id = mac.add_peer(*remote.public_key()).unwrap();
+    let keys = PairwiseKeys {
+        k_enc: [1; 32],
+        k_mic: [2; 32],
+    };
+    mac.install_pairwise_keys(local_id, peer_id, keys.clone())
+        .unwrap();
+    let dst_hint = mac
+        .identity(local_id)
+        .unwrap()
+        .identity()
+        .public_key()
+        .hint();
+
+    for _ in 0..2 {
+        mac.radio_mut().queue_received_unicast_with_route(
+            &remote,
+            &keys,
+            &dst_hint,
+            b"hello",
+            false,
+            7,
+            Some((3, 0)),
+            None,
+            None,
+        );
+        let _ = block_on(mac.receive_one(|_, _| {})).unwrap();
+        assert!(!has_queued_forward(&mac));
+    }
 }
 
 #[test]

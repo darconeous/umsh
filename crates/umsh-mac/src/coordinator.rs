@@ -2939,6 +2939,7 @@ impl<
         // Counted before the event, which only locally-originated frames
         // get: a repeater's whole output would otherwise be invisible.
         MacCounters::bump(&mut self.counters.tx_frames);
+        self.remember_transmitted(&queued);
         if let Some(identity_id) = identity_id {
             on_event(
                 identity_id,
@@ -2960,6 +2961,25 @@ impl<
             }
         }
         Ok(receipt)
+    }
+
+    /// Mark a frame that just aired as one this repeater has carried, so a
+    /// neighbor's repeat of it is not repeated again.
+    ///
+    /// A forward's key was recorded when it was queued. Every other frame
+    /// this radio sends is this node's own, and for one sent by hint this
+    /// is the only way to know it again: a hint can be another node's too
+    /// ([`Mac::is_locally_originated`]).
+    fn remember_transmitted(&mut self, queued: &crate::QueuedTx<FRAME>) {
+        if !self.repeater.enabled || queued.priority == TxPriority::Forward {
+            return;
+        }
+        if let Some(key) = Self::confirmation_key(queued.frame.as_slice()) {
+            let now_ms = self.clock.now_ms();
+            if !self.dup_cache.contains(&key, now_ms) {
+                self.dup_cache.insert(key, now_ms);
+            }
+        }
     }
 
     /// Give up on a frame that will never air.
@@ -3671,6 +3691,9 @@ impl<
     ) -> bool {
         let mut original = [0u8; FRAME];
         original[..frame_len].copy_from_slice(&buf[..frame_len]);
+        // Whether a key of ours opened it, which is what makes it ours
+        // rather than another node's whose hint matches.
+        let mut opened = false;
         let handled = if let Some(local_id) = self.find_local_identity_for_dst(header.dst) {
             let mut handled = false;
             self.admit_full_key_source(local_id, &buf[..frame_len], header, header.source, None)
@@ -3687,6 +3710,7 @@ impl<
                 else {
                     continue;
                 };
+                opened = true;
                 self.peer_registry.mark_proven(peer_id);
                 let payload = &buf[body_range.clone()];
                 if !Self::payload_is_allowed(header.packet_type(), payload) {
@@ -3945,7 +3969,8 @@ impl<
         } else {
             false
         };
-        let forwarded = self.maybe_forward_received(&original[..frame_len], header, rx, handled);
+        let forwarded =
+            self.maybe_forward_received(&original[..frame_len], header, rx, handled || opened);
         handled || forwarding_confirmed || forwarded
     }
 
@@ -4097,6 +4122,8 @@ impl<
     ) -> bool {
         let mut original = [0u8; FRAME];
         original[..frame_len].copy_from_slice(&buf[..frame_len]);
+        // As on the unicast path.
+        let mut opened = false;
         let handled = if let Some(channel_id) = header.channel {
             let channel_candidates: Vec<(ChannelKey, DerivedChannelKeys), CHANNELS> = self
                 .channels
@@ -4146,6 +4173,7 @@ impl<
                             Ok(range) => range,
                             Err(_) => continue,
                         };
+                        opened = true;
                         self.peer_registry.mark_proven(peer_id);
                         let payload = &buf[body_range.clone()];
                         if !Self::payload_is_allowed(header.packet_type(), payload) {
@@ -4430,7 +4458,8 @@ impl<
         } else {
             false
         };
-        let forwarded = self.maybe_forward_received(&original[..frame_len], header, rx, handled);
+        let forwarded =
+            self.maybe_forward_received(&original[..frame_len], header, rx, handled || opened);
         handled || forwarding_confirmed || forwarded
     }
 
@@ -6513,7 +6542,8 @@ impl<
             .map(|(index, _)| LocalIdentityId(index as u8))
     }
 
-    /// True when this frame names one of our own identities as its source.
+    /// True when this frame names one of our own identities' full keys as
+    /// its source.
     ///
     /// A repeater is not a relay for itself. Re-flooding a packet we sent
     /// wastes airtime, and because the forwarding rewrite prepends our router
@@ -6523,16 +6553,18 @@ impl<
     fn is_locally_originated(&self, frame: &[u8], header: &PacketHeader) -> bool {
         let mut locals = self.identities.iter().filter_map(|slot| slot.as_ref());
         match header.source {
-            SourceAddrRef::Hint(hint) => {
-                locals.any(|slot| slot.identity().public_key().hint() == hint)
-            }
             SourceAddrRef::FullKeyAt { offset } => match Self::full_key_at(frame, offset) {
                 Some(key) => locals.any(|slot| *slot.identity().public_key() == key),
                 None => false,
             },
-            // An encrypted blind-unicast source is unreadable, and a packet
-            // with no source field names nobody.
-            SourceAddrRef::Encrypted { .. } | SourceAddrRef::None => false,
+            // A hint is a three-byte prefix another node's key can share, so
+            // it names nobody for certain: a node whose hint matches ours
+            // would never be carried here. Our own frames sent by hint are
+            // caught instead by the duplicate key recorded as they aired
+            // ([`Mac::remember_transmitted`]). An encrypted blind-unicast
+            // source is unreadable, and a packet with no source field names
+            // nobody.
+            SourceAddrRef::Hint(_) | SourceAddrRef::Encrypted { .. } | SourceAddrRef::None => false,
         }
     }
 
@@ -7235,7 +7267,7 @@ impl<
         frame: &[u8],
         header: &PacketHeader,
         rx: &RxInfo,
-        locally_handled_unicast: bool,
+        opened_here: bool,
     ) -> bool {
         if !self.repeater.enabled {
             return false;
@@ -7259,19 +7291,14 @@ impl<
         if self.is_locally_originated(frame, header) {
             return false;
         }
-        // A packet that names one of our identities as its destination has
-        // arrived. Whether we could actually process it—we may lack the key,
-        // or it may be a replay—is a separate question from whether it still
-        // needs carrying, and it does not.
-        if self.find_local_identity_for_dst(header.dst).is_some() {
-            return false;
-        }
-        // Once a point-to-point packet is handled by its actual destination, it
-        // should not also be repeated by that same node. This still matters for
-        // encrypted blind unicast, whose destination hint is not on the wire.
-        // Other packet classes, including broadcast and MAC ACK, remain
-        // routable.
-        if locally_handled_unicast
+        // A point-to-point packet one of our identities opened has arrived,
+        // whether or not it was then accepted: a replay, or a frame from
+        // outside its sender's window, needs no more carrying than the
+        // original did. The destination hint alone decides nothing. It is a
+        // three-byte prefix another node's key can share, and a packet for
+        // that node is transit traffic here like any other. Other packet
+        // classes, including broadcast and MAC ACK, remain routable.
+        if opened_here
             && matches!(
                 header.packet_type(),
                 PacketType::Unicast

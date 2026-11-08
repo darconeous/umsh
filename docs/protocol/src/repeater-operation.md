@@ -10,8 +10,8 @@ The routing model is governed by a few simple rules:
   - In the current protocol this includes broadcast, MAC ack, unicast, multicast, and blind unicast packets.
   - Reserved or opaque packet types are not routable until the protocol defines their forwarding semantics (there is only one at the moment, type 5).
 - A repeater forwards other nodes' traffic, never its own and never traffic that has arrived.
-  - A repeater MUST NOT forward a packet whose source address identifies one of its own identities, by hint or in full-key form. Re-flooding its own transmission wastes airtime, and prepending its record to the trace would fabricate a hop that never happened.
-  - A repeater MUST NOT forward a packet whose destination address identifies one of its own identities. Such a packet has reached its destination; whether the repeater could actually process it is a separate question.
+  - A repeater MUST NOT forward a packet it transmitted itself. Re-flooding its own transmission wastes airtime, and prepending its record to the trace would fabricate a hop that never happened. A full-key source address that is one of its own keys identifies such a packet. A [node hint](addressing.md#node-hint) does not, because another node's key can share it; a repeater recognizes its own packets sent by hint by entering each into its [duplicate cache](#duplicate-suppression) as it transmits it.
+  - A repeater MUST NOT forward a unicast or blind unicast that one of its own identities has opened. Such a packet has reached its destination, and so has any later copy of it, whether or not the replay rules accept that copy. A destination hint that matches one of its identities is not enough: the packet may be for another node sharing the hint, and is forwarded like any other unless a key of the repeater's opens it.
 - A packet is forwarded as either a source-routed hop or a flood hop, never both.
   - A hop named in the source route is a source-routed hop, including the hop that consumes the final hint.
   - Every other forwarded hop is a flood hop.
