@@ -9,6 +9,7 @@ use umsh_core::{
     PacketHeader, PacketType, ParsedOptions, PayloadType, PublicKey, RegionCode, RouteEvidence,
     SourceAddrRef, established_route_slack,
 };
+use umsh_crypto::budget::VerifyBudget;
 use umsh_crypto::replay::{ReplayVerdict, ReplayWindow};
 use umsh_crypto::{AesProvider, CryptoEngine, PairwiseKeys, Sha256Provider};
 use umsh_hal::tz::Rule;
@@ -974,6 +975,10 @@ enum SecureRx {
 struct SignatureScratch {
     #[cfg(feature = "software-crypto")]
     input: [u8; umsh_core::SIGNATURE_INPUT_MAX],
+    /// What the detached receive path may spend on verification.
+    budget: VerifyBudget,
+    /// Signature checks skipped because `budget` was spent.
+    over_budget: u32,
 }
 
 impl SignatureScratch {
@@ -981,7 +986,19 @@ impl SignatureScratch {
         Self {
             #[cfg(feature = "software-crypto")]
             input: [0; umsh_core::SIGNATURE_INPUT_MAX],
+            budget: VerifyBudget::new(),
+            over_budget: 0,
         }
+    }
+
+    /// Spend one verification from the budget at `now_ms`, counting the
+    /// check skipped if there is none to spend.
+    fn spend(&mut self, now_ms: u64) -> bool {
+        let spent = self.budget.try_spend(now_ms);
+        if !spent {
+            self.over_budget = self.over_budget.saturating_add(1);
+        }
+        spent
     }
 
     /// Whether the opened multicast `frame` carries a signature by `key`
@@ -3898,6 +3915,14 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         self.host.queue.len
     }
 
+    /// Signature checks the detached receive path skipped because it had
+    /// spent its verification budget
+    /// ([`VERIFY_BUDGET_PER_SECOND`](umsh_crypto::budget::VERIFY_BUDGET_PER_SECOND)).
+    /// Each frame was still queued, without its receipt cue.
+    pub fn signature_checks_over_budget(&self) -> u32 {
+        self.signatures.over_budget
+    }
+
     /// Take the pending report of a frame having entered the inbound
     /// queue, if there is one.
     ///
@@ -5152,8 +5177,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// window, which the frame then advances, so a replay cues no more
     /// after its original has left the queue. A signer that is not
     /// provisioned has only the queue's coalescing; the device keeps no
-    /// table of strangers. Nothing here decides whether the frame is
-    /// queued, and the host MAC judges it again.
+    /// table of strangers. With the verification budget spent the frame
+    /// does not cue and its window is untouched. Nothing here decides
+    /// whether the frame is queued, and the host MAC judges it again.
     fn signed_multicast_cues(
         &mut self,
         header: &PacketHeader,
@@ -5166,9 +5192,10 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         let Some((peer, key)) = self.host.peer_keys.resolve_signer(&header.source, frame) else {
             return false;
         };
-        if !self
-            .signatures
-            .verifies(header, frame, &PublicKey(key), channel)
+        if !self.signatures.spend(now_ms)
+            || !self
+                .signatures
+                .verifies(header, frame, &PublicKey(key), channel)
         {
             return false;
         }
@@ -18176,6 +18203,31 @@ mod tests {
         let notice = queued_notice(&mut session, &frame, 1_000);
         assert!(!notice.cue, "replayed after its eviction");
         assert!(queued_notice(&mut session, &newer, 2_000).cue);
+    }
+
+    /// Past the verification budget an `EMERGENCY` message is still queued
+    /// for the host but does not cue; once the budget refills, the next
+    /// one does.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn an_emergency_message_past_the_verify_budget_queues_without_a_cue() {
+        let emergency = emergency_key();
+        let mut session = signer_session(&[emergency]);
+        let per_second = umsh_crypto::budget::VERIFY_BUDGET_PER_SECOND;
+        for counter in 1..=per_second {
+            let frame = SignedMulticast::new(counter, FIRE).sealed_on(&emergency);
+            assert!(queued_notice(&mut session, &frame, 0).cue);
+        }
+        assert_eq!(session.signature_checks_over_budget(), 0);
+
+        let late = SignedMulticast::new(per_second + 1, FIRE).sealed_on(&emergency);
+        let notice = queued_notice(&mut session, &late, 0);
+        assert!(!notice.cue);
+        assert_eq!(notice.depth, session.queued_frame_count());
+        assert_eq!(session.signature_checks_over_budget(), 1);
+
+        let next = SignedMulticast::new(per_second + 2, FIRE).sealed_on(&emergency);
+        assert!(queued_notice(&mut session, &next, 1_000).cue);
     }
 
     /// A signature names the channel it was made for. One made for a

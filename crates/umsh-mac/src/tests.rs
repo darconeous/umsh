@@ -5589,6 +5589,194 @@ fn an_unproven_peer_never_displaces_a_proven_one() {
     assert!(mac.peer_registry().lookup_by_key(&first).is_some());
 }
 
+/// Receive a unicast to `local_id` from `source`'s full key, sealed under
+/// `keys` or else the pairwise keys the two derive. Whether it was delivered.
+fn receive_full_key_unicast<const PEERS: usize>(
+    mac: &mut Mac<DummyPlatform, 4, PEERS, 8, 16, 16, 256, 64>,
+    local_id: LocalIdentityId,
+    source: &DummyIdentity,
+    keys: Option<&PairwiseKeys>,
+) -> bool {
+    let local_key = *mac.identity(local_id).unwrap().identity().public_key();
+    let derived = mac.crypto().derive_pairwise_keys(
+        &SharedSecret([0u8; 32]),
+        &local_key,
+        source.public_key(),
+    );
+    mac.radio_mut().queue_received_unicast(
+        source,
+        keys.unwrap_or(&derived),
+        &local_key.hint(),
+        b"hello",
+        false,
+    );
+    let mut delivered = false;
+    block_on(mac.receive_one(|_, event| {
+        delivered |= received_of_type(&event, PacketType::Unicast).is_some();
+    }))
+    .unwrap();
+    delivered
+}
+
+/// Strangers displacing one another on their own frames are held to a quota
+/// per window; a free slot is outside it. Past the quota a stranger's frame
+/// registers nothing and is not delivered, until the window moves on.
+#[test]
+fn stranger_registrations_are_held_to_a_quota() {
+    let mut mac = make_small_peer_mac::<2>();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    mac.set_auto_register_full_key_peers(true);
+    // Two fill the table, then the quota's worth displace.
+    let strangers: std::vec::Vec<DummyIdentity> = (0..=crate::AUTO_REGISTER_QUOTA as u8 + 2)
+        .map(|index| DummyIdentity::new([0x40 + index; 32]))
+        .collect();
+    let (late, admitted) = strangers.split_last().unwrap();
+    for stranger in admitted {
+        assert!(receive_full_key_unicast(&mut mac, local_id, stranger, None));
+    }
+    assert_eq!(mac.counters().auto_register_over_quota, 0);
+
+    assert!(!receive_full_key_unicast(&mut mac, local_id, late, None));
+    assert!(
+        mac.peer_registry()
+            .lookup_by_key(late.public_key())
+            .is_none()
+    );
+    assert_eq!(mac.counters().auto_register_over_quota, 1);
+
+    mac.clock().advance_ms(crate::AUTO_REGISTER_WINDOW_MS);
+    assert!(receive_full_key_unicast(&mut mac, local_id, late, None));
+    assert!(
+        mac.peer_registry()
+            .lookup_by_key(late.public_key())
+            .is_some()
+    );
+}
+
+/// A peer that has acknowledged a send of ours is never displaced by a
+/// stranger registering on its own frame, however full the table.
+#[test]
+fn a_stranger_never_displaces_a_peer_that_acknowledged_us() {
+    let mut mac = make_small_peer_mac::<1>();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    mac.set_auto_register_full_key_peers(true);
+    let first = DummyIdentity::new([0xAB; 32]);
+    let first_key = *first.public_key();
+    assert!(receive_full_key_unicast(&mut mac, local_id, &first, None));
+    assert!(
+        !mac.peer_registry()
+            .lookup_by_key(&first_key)
+            .unwrap()
+            .1
+            .acknowledged
+    );
+
+    let receipt = mac
+        .queue_unicast(
+            local_id,
+            &first_key,
+            b"reply",
+            &SendOptions::default().with_ack_requested(true).no_flood(),
+        )
+        .unwrap()
+        .unwrap();
+    let ack_v = mac
+        .identity(local_id)
+        .unwrap()
+        .pending_ack(&receipt)
+        .unwrap()
+        .ack_v;
+    assert!(mac.complete_ack(&first_key, &ack_v).is_some());
+    assert!(
+        mac.peer_registry()
+            .lookup_by_key(&first_key)
+            .unwrap()
+            .1
+            .acknowledged
+    );
+
+    let second = DummyIdentity::new([0xBC; 32]);
+    assert!(!receive_full_key_unicast(&mut mac, local_id, &second, None));
+    assert!(mac.peer_registry().lookup_by_key(&first_key).is_some());
+    assert!(
+        mac.peer_registry()
+            .lookup_by_key(second.public_key())
+            .is_none()
+    );
+    assert_eq!(mac.counters().auto_register_no_slot, 1);
+}
+
+/// A full-key frame that fails to open is remembered with the keys its
+/// source derived: the next frame from that key costs no ECDH, and the key's
+/// real holder still registers.
+#[test]
+fn a_failed_open_is_remembered_without_refusing_the_key() {
+    let mut mac = make_small_peer_mac::<4>();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    mac.set_auto_register_full_key_peers(true);
+    let stranger = DummyIdentity::new([0xBC; 32]);
+    let wrong = PairwiseKeys {
+        k_enc: [0xEE; 32],
+        k_mic: [0xEF; 32],
+    };
+
+    assert!(!receive_full_key_unicast(
+        &mut mac,
+        local_id,
+        &stranger,
+        Some(&wrong)
+    ));
+    assert_eq!(mac.counters().auto_register_failed_opens, 1);
+    assert_eq!(mac.counters().auto_register_recalled, 0);
+    assert!(!receive_full_key_unicast(
+        &mut mac,
+        local_id,
+        &stranger,
+        Some(&wrong)
+    ));
+    assert_eq!(mac.counters().auto_register_failed_opens, 2);
+    assert_eq!(mac.counters().auto_register_recalled, 1);
+    assert!(
+        mac.peer_registry()
+            .lookup_by_key(stranger.public_key())
+            .is_none()
+    );
+
+    assert!(receive_full_key_unicast(
+        &mut mac, local_id, &stranger, None
+    ));
+    assert_eq!(mac.counters().auto_register_recalled, 2);
+    assert!(
+        mac.peer_registry()
+            .lookup_by_key(stranger.public_key())
+            .is_some()
+    );
+}
+
+/// A key that is not a curve point can never open a frame, so after its
+/// first frame the next is passed over without being opened.
+#[cfg(feature = "software-crypto")]
+#[test]
+fn a_key_that_is_not_a_point_is_passed_over() {
+    let mut mac = make_small_peer_mac::<4>();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    mac.set_auto_register_full_key_peers(true);
+    let public_key = (0u8..=255)
+        .map(|byte| PublicKey([byte; 32]))
+        .find(|key| !umsh_crypto::is_valid_ed25519_public_key(key))
+        .unwrap();
+    let bad = DummyIdentity {
+        public_key,
+        seed: [0; 32],
+    };
+
+    assert!(!receive_full_key_unicast(&mut mac, local_id, &bad, None));
+    assert_eq!(mac.counters().auto_register_failed_opens, 1);
+    assert!(!receive_full_key_unicast(&mut mac, local_id, &bad, None));
+    assert_eq!(mac.counters().auto_register_failed_opens, 1);
+    assert_eq!(mac.counters().auto_register_recalled, 1);
+}
+
 #[test]
 fn receive_one_hint_only_unicast_never_auto_registers_unknown_peer() {
     let mut mac = make_mac();

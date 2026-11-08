@@ -331,6 +331,7 @@ pub trait Platform {
     type KeyValueStore: umsh_hal::KeyValueStore;
 }
 
+mod admission;
 mod cache;
 mod coordinator;
 mod echo_watch;
@@ -343,6 +344,9 @@ pub mod rx_windows;
 mod send;
 mod uplinks;
 
+pub use admission::{
+    AUTO_REGISTER_QUOTA, AUTO_REGISTER_WINDOW_MS, REFUSED_KEY_TTL_MS, REFUSED_KEYS,
+};
 pub use cache::{
     DUP_CACHE_TTL_MS, DupCacheKey, DuplicateCache, RecentMic, ReplayVerdict, ReplayWindow,
     RxAcceptance,
@@ -360,7 +364,7 @@ pub use observations::{
 pub use peers::{
     CachedRoute, ChannelState, ChannelTable, HoldRelease, PeerCryptoMap, PeerCryptoState,
     PeerHolder, PeerHolds, PeerId, PeerInfo, PeerRegistry, PeerRemoval, PeerRouteStatus,
-    RouteCandidate, RouteHold,
+    RouteCandidate, RouteHold, Vacancy,
 };
 pub use rx_windows::{NeedsRestore, RX_COUNTER_PERSIST_INTERVAL, RxWindow, RxWindows};
 pub use send::{

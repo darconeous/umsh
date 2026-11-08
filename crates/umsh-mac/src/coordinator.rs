@@ -12,7 +12,7 @@ use umsh_core::{
 };
 use umsh_crypto::{
     AesProvider, CryptoEngine, CryptoError, DerivedChannelKeys, NodeIdentity, PairwiseKeys,
-    Sha256Provider,
+    Sha256Provider, budget::VerifyBudget,
 };
 use umsh_hal::{Clock, CounterStore, Radio, RxInfo, RxOrigin, Snr, TxError, TxOptions};
 
@@ -26,11 +26,12 @@ use crate::{
     DEFAULT_TX, MAX_ACK_FORWARD_RETRIES, MAX_CAD_ATTEMPTS, MAX_FLOOD_HOPS, MAX_FORWARD_RETRIES,
     MAX_RESEND_FRAME_LEN, MAX_SOURCE_ROUTE_HINTS, Platform, ReplayVerdict, ReplayWindow,
     RxAcceptance, TRACE_ROUTE_REFRESH_MS, VERIFY_HELD_FRAMES,
+    admission::Recalled,
     cache::{DupCacheKey, DuplicateCache},
     peers::CachedRoute,
     peers::{
         ChannelTable, FarHop, HeldRouteOutcome, HoldRelease, PeerCryptoMap, PeerHolder, PeerId,
-        PeerRegistry, RouteFailure, RouteOffer,
+        PeerRegistry, RouteFailure, RouteOffer, Vacancy,
     },
     route_score::{Hop, path_score},
     rx_windows::{RxWindow, RxWindows},
@@ -1173,6 +1174,27 @@ pub struct MacCounters {
     /// sent but differed from it where no forwarder may rewrite. They
     /// confirm nothing and are not reported as forwards.
     pub forward_echo_mismatched: u32,
+    /// Frames from an unknown full-key source left unregistered, and so
+    /// undelivered, at a full table where
+    /// [`AUTO_REGISTER_QUOTA`](crate::AUTO_REGISTER_QUOTA) strangers had
+    /// already displaced an entry within the window.
+    pub auto_register_over_quota: u32,
+    /// Frames from an unknown full-key source left unregistered, and so
+    /// undelivered, at a full table whose every entry was held, its route
+    /// held, or a peer that has acknowledged a send of ours.
+    pub auto_register_no_slot: u32,
+    /// Frames from an unknown full-key source that failed to open under the
+    /// key they name: a point that is not one, a failed ECDH, or a MIC.
+    pub auto_register_failed_opens: u32,
+    /// Frames judged without a fresh ECDH because their key had failed to
+    /// open within [`REFUSED_KEY_TTL_MS`](crate::REFUSED_KEY_TTL_MS): passed
+    /// over if the key is unusable, else opened under the keys it derived.
+    pub auto_register_recalled: u32,
+    /// Signed frames dropped undelivered because the receive path had spent
+    /// its verification budget
+    /// ([`VERIFY_BUDGET_PER_SECOND`](umsh_crypto::budget::VERIFY_BUDGET_PER_SECOND)).
+    /// A forward one was due still went out.
+    pub rx_verify_over_budget: u32,
 }
 
 impl MacCounters {
@@ -1215,6 +1237,9 @@ pub struct Mac<
     repeater: RepeaterConfig,
     operating_policy: OperatingPolicy,
     auto_register_full_key_peers: bool,
+    admissions: crate::admission::Admissions,
+    /// What the receive path may spend on Ed25519 verification.
+    verify_budget: VerifyBudget,
     counters: MacCounters,
     held_frames: Vec<HeldFrame<FRAME>, VERIFY_HELD_FRAMES>,
     /// Keys [`Self::verify_nonce`]. Drawn the first time a frame is held,
@@ -1275,6 +1300,8 @@ impl<
             repeater,
             operating_policy,
             auto_register_full_key_peers: false,
+            admissions: crate::admission::Admissions::new(),
+            verify_budget: VerifyBudget::new(),
             counters: MacCounters::default(),
             held_frames: Vec::new(),
             verify_key: None,
@@ -3726,6 +3753,12 @@ impl<
                 }
                 let verified =
                     verified.is_some_and(|v| v.local_id == local_id && v.peer_id == peer_id);
+                // A held frame its sender vouched for was acknowledged
+                // already, so it is never dropped here.
+                if !verified && self.unicast_over_verify_budget(header) {
+                    handled = true;
+                    break;
+                }
                 let mut acceptance = None;
                 if !verified {
                     match Self::resync_command(payload) {
@@ -3908,8 +3941,13 @@ impl<
                 // The pairwise window judged the counter; the signature,
                 // checked against the key that opened the frame, only says
                 // whether it verified.
-                let signature =
-                    self.signature_status(header, &buf[..frame_len], Some(&peer_key), None, None);
+                let signature = self.charged_signature_status(
+                    header,
+                    &buf[..frame_len],
+                    Some(&peer_key),
+                    None,
+                    None,
+                );
                 on_event(
                     local_id,
                     crate::MacEventRef::Received(
@@ -4182,6 +4220,11 @@ impl<
                         }
                         let verified = verified
                             .is_some_and(|v| v.local_id == local_id && v.peer_id == peer_id);
+                        // As on the unicast path.
+                        if !verified && self.unicast_over_verify_budget(header) {
+                            handled = true;
+                            break;
+                        }
                         let mut acceptance = None;
                         if !verified {
                             match Self::resync_command(payload) {
@@ -4382,7 +4425,7 @@ impl<
                             .channels
                             .lookup_by_key(&resolved_channel_key)
                             .map(|channel| channel.derived.commitment);
-                        let signature = self.signature_status(
+                        let signature = self.charged_signature_status(
                             header,
                             &buf[..frame_len],
                             Some(&peer_key),
@@ -4606,6 +4649,9 @@ impl<
         }
         self.peer_registry
             .confirm_route(peer, pending.cached_route_revision, now_ms);
+        if let Some((peer_id, _)) = self.peer_registry.lookup_by_key(peer) {
+            self.peer_registry.mark_acknowledged(peer_id);
+        }
         if pending.held_route_missed {
             self.peer_registry
                 .note_held_outcome(peer, HeldRouteOutcome::FallbackAcked, now_ms);
@@ -6296,6 +6342,12 @@ impl<
     /// The frame is opened on a copy, under keys derived for the claimed
     /// source, and the ordinary receive path then opens it again as it would
     /// a known peer's. That second pass falls only on a stranger's first frame.
+    ///
+    /// A minted key passes all of that, so registrations that displace an
+    /// entry are held to a quota
+    /// ([`AUTO_REGISTER_QUOTA`](crate::AUTO_REGISTER_QUOTA)), a key
+    /// whose frame failed to open costs no second ECDH for a while, and a
+    /// stranger never displaces a peer that has acknowledged a send of ours.
     async fn admit_full_key_source(
         &mut self,
         local_id: LocalIdentityId,
@@ -6313,13 +6365,52 @@ impl<
         let Some(key) = Self::full_key_at(frame, offset) else {
             return;
         };
-        if self.peer_registry.lookup_by_key(&key).is_some()
-            || Self::check_auto_peer_key(&key).is_err()
-        {
+        if self.peer_registry.lookup_by_key(&key).is_some() {
             return;
         }
-        let Ok(pairwise_keys) = self.derive_pairwise_keys_for_peer(local_id, &key).await else {
+        // Both settled before any crypto: neither depends on the frame.
+        let now_ms = self.clock.now_ms();
+        match self.peer_registry.vacancy_for_self_proven(now_ms) {
+            None => {
+                MacCounters::bump(&mut self.counters.auto_register_no_slot);
+                return;
+            }
+            Some(Vacancy::Displacing) if !self.admissions.quota_allows(now_ms) => {
+                MacCounters::bump(&mut self.counters.auto_register_over_quota);
+                return;
+            }
+            Some(_) => {}
+        }
+        let Some(local) = self
+            .identity(local_id)
+            .map(|slot| *slot.identity().public_key())
+        else {
             return;
+        };
+        let pairwise_keys = match self.admissions.recall(&local, &key, now_ms) {
+            Recalled::Unusable => {
+                MacCounters::bump(&mut self.counters.auto_register_recalled);
+                return;
+            }
+            Recalled::Derived(keys) => {
+                MacCounters::bump(&mut self.counters.auto_register_recalled);
+                keys
+            }
+            Recalled::Unknown => {
+                let derived = match Self::check_auto_peer_key(&key) {
+                    Ok(()) => self
+                        .derive_pairwise_keys_for_peer(local_id, &key)
+                        .await
+                        .ok(),
+                    Err(_) => None,
+                };
+                let Some(derived) = derived else {
+                    MacCounters::bump(&mut self.counters.auto_register_failed_opens);
+                    self.admissions.note_refused(&local, key, None, now_ms);
+                    return;
+                };
+                derived
+            }
         };
 
         let mut scratch = [0u8; FRAME];
@@ -6336,11 +6427,24 @@ impl<
                 .open_packet(scratch, header, &pairwise_keys, None),
         };
         if opened.is_err() {
+            MacCounters::bump(&mut self.counters.auto_register_failed_opens);
+            self.admissions
+                .note_refused(&local, key, Some(pairwise_keys), now_ms);
             return;
         }
-        if let Ok(peer_id) = self.try_auto_register_peer(key) {
-            let _ = self.cache_peer_crypto(local_id, peer_id, pairwise_keys);
+        self.admissions.forget(&local, &key);
+        let Ok(outcome) = self
+            .peer_registry
+            .try_insert_or_update_self_proven(key, now_ms)
+        else {
+            MacCounters::bump(&mut self.counters.auto_register_no_slot);
+            return;
+        };
+        if outcome.evicted_key.is_some() {
+            self.admissions.note_displacing(now_ms);
         }
+        let peer_id = self.settle_auto_peer(key, outcome, now_ms);
+        let _ = self.cache_peer_crypto(local_id, peer_id, pairwise_keys);
     }
 
     fn replay_metadata<'a>(header: &PacketHeader, frame: &'a [u8]) -> Option<(u32, &'a [u8])> {
@@ -6952,6 +7056,39 @@ impl<
         }
     }
 
+    /// Whether a signed unicast finds the receive path's verification budget
+    /// spent, counted if it does.
+    ///
+    /// Asked before the frame spends its counter or earns an ack, so one
+    /// dropped here is one its sender sends again. Spends nothing: its
+    /// verification is charged where it runs
+    /// ([`Self::charged_signature_status`]).
+    fn unicast_over_verify_budget(&mut self, header: &PacketHeader) -> bool {
+        if header.signature().is_none() || self.verify_budget.ready(self.clock.now_ms()) {
+            return false;
+        }
+        MacCounters::bump(&mut self.counters.rx_verify_over_budget);
+        true
+    }
+
+    /// [`Self::signature_status`], charged to the receive path's
+    /// verification budget. The caller has already asked
+    /// [`Self::unicast_over_verify_budget`], so the charge lands; one that
+    /// does not, as for a held frame its sender vouched for, still verifies.
+    fn charged_signature_status(
+        &mut self,
+        header: &PacketHeader,
+        frame: &[u8],
+        key: Option<&PublicKey>,
+        blind_addr: Option<&BlindAddr>,
+        channel: Option<&ChannelCommitment>,
+    ) -> SignatureStatus {
+        if header.signature().is_some() {
+            let _ = self.verify_budget.try_spend(self.clock.now_ms());
+        }
+        self.signature_status(header, frame, key, blind_addr, channel)
+    }
+
     /// Whether `frame`'s signature verifies against `key`, as a
     /// [`SignatureStatus`]. The frame must already be open. `channel` is the
     /// commitment of the channel whose key opened it, for the frames that
@@ -7006,10 +7143,13 @@ impl<
     ///    dropped without any Ed25519 work: the MIC covers the signature, so
     ///    the bytes match a frame that already verified. Counter occupancy
     ///    alone never drops a frame before it is verified.
-    /// 2. A signature that does not verify makes the frame
+    /// 2. With the receive path's verification budget spent, the frame is
+    ///    dropped and counted. It is not passed on as unverified: what its
+    ///    signature would have decided is left undecided, not decided against.
+    /// 3. A signature that does not verify makes the frame
     ///    [`NotVerified`](SignatureStatus::NotVerified). It never touches a
     ///    signer's window; the caller takes it down the unsigned path.
-    /// 3. A verified frame is judged by the signer's window: accepted, or
+    /// 4. A verified frame is judged by the signer's window: accepted, or
     ///    dropped as a replay or stale. A stale frame from a known peer far
     ///    behind its baseline starts a counter resynchronization.
     ///
@@ -7036,6 +7176,10 @@ impl<
                 .duplicate_age_ms(counter, tag, now_ms)
                 .is_some()
         }) {
+            return None;
+        }
+        if !self.verify_budget.try_spend(now_ms) {
+            MacCounters::bump(&mut self.counters.rx_verify_over_budget);
             return None;
         }
         if self.signature_status(header, frame, Some(&signer), None, channel)

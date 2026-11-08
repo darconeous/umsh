@@ -244,6 +244,16 @@ fn multicast_from(
 
 /// A signed broadcast from `seed`'s key with `counter`.
 fn broadcast_from(seed: [u8; 32], counter: u32, hint_only: bool) -> std::vec::Vec<u8> {
+    signed_broadcast(seed, counter, hint_only, None)
+}
+
+/// [`broadcast_from`], allowed `flood_hops` if given.
+fn signed_broadcast(
+    seed: [u8; 32],
+    counter: u32,
+    hint_only: bool,
+    flood_hops: Option<u8>,
+) -> std::vec::Vec<u8> {
     let key = key_of(seed);
     let mut buf = [0u8; 256];
     let builder = PacketBuilder::new(&mut buf).broadcast();
@@ -251,6 +261,10 @@ fn broadcast_from(seed: [u8; 32], counter: u32, hint_only: bool) -> std::vec::Ve
         builder.source_hint(key.hint())
     } else {
         builder.source_full(&key)
+    };
+    let builder = match flood_hops {
+        Some(hops) => builder.flood_hops(hops),
+        None => builder,
     };
     let mut frame = builder
         .signed(counter)
@@ -671,4 +685,112 @@ fn a_signed_unicast_is_verified_against_its_pairwise_sender() {
     let delivery = receive(&mut mac2, &build(true)).unwrap();
     assert_eq!(delivery.signature, SignatureStatus::NotVerified);
     assert!(delivery.sender_authenticated);
+}
+
+// ── Verification budget ──────────────────────────────────────────────────
+
+const PER_SECOND: u32 = umsh_crypto::budget::VERIFY_BUDGET_PER_SECOND;
+
+/// Spend the receiver's whole verification budget on `OTHER_SEED`'s
+/// broadcasts.
+fn spend_verify_budget(mac: &mut CryptoMac) {
+    for counter in 1..=PER_SECOND {
+        assert!(receive(mac, &broadcast_from(OTHER_SEED, counter, false)).is_some());
+    }
+    assert_eq!(mac.counters().rx_verify_over_budget, 0);
+}
+
+/// Past the verification budget a signed frame is dropped and counted, never
+/// delivered as unverified, and spends nothing of its signer's window. The
+/// budget refills with time.
+#[test]
+fn a_signed_frame_past_the_verify_budget_is_dropped_not_unverified() {
+    let mut mac = receiver();
+    spend_verify_budget(&mut mac);
+    let from = key_of(SEED);
+    let late = broadcast_from(SEED, 10, false);
+    assert_eq!(receive(&mut mac, &late), None);
+    let multicast = multicast_from(SEED, &CHANNEL, 11, false, false);
+    assert_eq!(receive(&mut mac, &multicast), None);
+    assert_eq!(mac.counters().rx_verify_over_budget, 2);
+
+    mac.clock().advance_ms(1_000);
+    assert_eq!(
+        receive(&mut mac, &late),
+        verified(RxAcceptance::FirstContact, from)
+    );
+    assert_eq!(
+        receive(&mut mac, &multicast),
+        verified(RxAcceptance::Advanced, from)
+    );
+}
+
+/// A flood past the verification budget is still repeated: forwarding never
+/// waited on the signature.
+#[test]
+fn a_flood_past_the_verify_budget_is_still_forwarded() {
+    let mut mac = receiver();
+    mac.repeater_config_mut().enabled = true;
+    spend_verify_budget(&mut mac);
+    let forwarded = mac.counters().forwarded;
+    let flood = signed_broadcast(SEED, 10, false, Some(3));
+    assert_eq!(receive(&mut mac, &flood), None);
+    assert_eq!(mac.counters().rx_verify_over_budget, 1);
+    assert_eq!(mac.counters().forwarded, forwarded + 1);
+}
+
+/// A signed unicast past the budget is dropped before it spends its counter
+/// or earns an ack, so its sender's retry is taken once the budget refills.
+#[test]
+fn a_signed_unicast_past_the_verify_budget_waits_for_its_retry() {
+    let mut mac = receiver();
+    let local = *mac
+        .identity(LocalIdentityId(0))
+        .unwrap()
+        .identity()
+        .public_key();
+    let from = key_of(SEED);
+    let peer_id = mac.add_peer(from).unwrap();
+    let keys = PairwiseKeys {
+        k_enc: [1; 32],
+        k_mic: [2; 32],
+    };
+    mac.install_pairwise_keys(LocalIdentityId(0), peer_id, keys.clone())
+        .unwrap();
+    let mut buf = [0u8; 256];
+    let mut packet = PacketBuilder::new(&mut buf)
+        .unicast(local.hint())
+        .source_full(&from)
+        .frame_counter(9)
+        .encrypted()
+        .ack_requested()
+        .signed()
+        .payload(b"hello")
+        .build()
+        .unwrap();
+    let header = packet.header().unwrap();
+    let mut input = [0u8; SIGNATURE_INPUT_MAX];
+    let len =
+        umsh_core::signature_input(&header, packet.as_bytes(), None, None, &mut input).unwrap();
+    packet
+        .signature_slot_mut()
+        .unwrap()
+        .copy_from_slice(&sign_with(SEED, &input[..len]));
+    engine().seal_packet(&mut packet, &keys).unwrap();
+    let frame = packet.as_bytes().to_vec();
+
+    spend_verify_budget(&mut mac);
+    while mac.tx_queue_mut().pop_next().is_some() {}
+    assert_eq!(receive(&mut mac, &frame), None);
+    assert!(mac.tx_queue_mut().pop_next().is_none(), "nothing acks it");
+    assert_eq!(mac.counters().rx_verify_over_budget, 1);
+
+    mac.clock().advance_ms(1_000);
+    let delivery = receive(&mut mac, &frame).unwrap();
+    assert_eq!(delivery.signature, SignatureStatus::Verified);
+    assert_eq!(delivery.acceptance, Some(RxAcceptance::FirstContact));
+    assert!(
+        mac.tx_queue_mut().pop_next().is_some(),
+        "its retry is acked"
+    );
 }

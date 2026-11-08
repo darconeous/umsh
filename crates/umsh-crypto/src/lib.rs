@@ -32,6 +32,7 @@ use umsh_core::{
 };
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
+pub mod budget;
 pub mod pool;
 pub mod replay;
 
