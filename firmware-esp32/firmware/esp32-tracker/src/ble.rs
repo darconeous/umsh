@@ -6,13 +6,14 @@
 //! in the first section below. Everything after it is the transport's
 //! own business.
 
+use core::future::poll_fn;
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
 use bt_hci::controller::ExternalController;
 use embassy_futures::join::join;
 use embassy_futures::select::{Either, Either3, select, select3};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::channel::Channel;
+use embassy_sync::channel::{Channel, TrySendError};
 use embassy_sync::mutex::Mutex;
 use embassy_sync::signal::Signal;
 use embassy_sync::watch::Watch;
@@ -1110,10 +1111,13 @@ fn utf8_prefix_len(bytes: &[u8], maximum: usize) -> usize {
     ble_privacy::utf8_prefix_len(bytes, maximum)
 }
 
+/// `outbound` is borrowed rather than moved: its caller holds it across
+/// this await either way, and a second copy in this future would sit on
+/// the main stack under every connection.
 async fn send_ble_frame(
     server: &UlcpServer<'_>,
     conn: &GattConnection<'_, '_, DefaultPacketPool>,
-    outbound: OutFrame,
+    outbound: &OutFrame,
 ) -> Result<(), trouble_host::Error> {
     // A frame with a completion is one the driver waits on: it learns
     // whether the frame went out, and a frame whose completion has already
@@ -1207,7 +1211,7 @@ async fn send_ble_frame(
 async fn deliver_outbound(
     server: &UlcpServer<'_>,
     conn: &GattConnection<'_, '_, DefaultPacketPool>,
-    outbound: OutFrame,
+    outbound: &OutFrame,
     attached: bool,
 ) -> Result<(), trouble_host::Error> {
     if attached
@@ -1230,21 +1234,32 @@ async fn deliver_outbound(
 /// while this task waits on the driver; serving its output is what lets
 /// both move. Nothing the host wrote is dropped: over BLE a host does not
 /// resend a request, it gives the link up.
+///
+/// The event stays in the caller's `Option`, and an output frame stays in
+/// the wake that delivered it: this future runs on the main stack under
+/// every connection, and an argument moved in, or a frame moved out, would
+/// be a second copy held across every await.
 async fn queue_input(
     server: &UlcpServer<'_>,
     conn: &GattConnection<'_, '_, DefaultPacketPool>,
     attached: bool,
-    event: InEvent,
+    event: &mut Option<InEvent>,
 ) -> Result<(), trouble_host::Error> {
-    let mut queued = core::pin::pin!(INPUT_CH.send(event));
-    loop {
-        match select(queued.as_mut(), OUT_CH.ble.receive()).await {
-            Either::First(()) => return Ok(()),
-            Either::Second(outbound) => {
-                deliver_outbound(server, conn, outbound, attached).await?;
-            }
+    while let Some(pending) = event.take() {
+        match INPUT_CH.try_send(pending) {
+            Ok(()) => return Ok(()),
+            Err(TrySendError::Full(pending)) => *event = Some(pending),
+        }
+        let woke = select(
+            poll_fn(|cx| INPUT_CH.poll_ready_to_send(cx)),
+            OUT_CH.ble.receive(),
+        )
+        .await;
+        if let Either::Second(outbound) = &woke {
+            deliver_outbound(server, conn, outbound, attached).await?;
         }
     }
+    Ok(())
 }
 
 async fn gatt_connection<C: Controller, P: PacketPool>(
@@ -1303,7 +1318,13 @@ async fn gatt_connection<C: Controller, P: PacketPool>(
                 }
             };
             match select(
-                select3(conn.next(), OUT_CH.ble.receive(), link_signal),
+                // Output is waited for, not received, here: a wake carrying
+                // an output frame would make every wake that large.
+                select3(
+                    conn.next(),
+                    poll_fn(|cx| OUT_CH.ble.poll_ready_to_receive(cx)),
+                    link_signal,
+                ),
                 grace_guard,
             )
             .await
@@ -1541,9 +1562,11 @@ async fn gatt_connection<C: Controller, P: PacketPool>(
                 if frame_in && bonded {
                     match reassembler.push(&inbound) {
                         Some(Ok(frame)) => {
-                            let mut value: FrameBuf = heapless::Vec::new();
-                            match value.extend_from_slice(frame) {
-                                Ok(()) => {
+                            // Built whole rather than filled in place: a
+                            // buffer borrowed here would keep a second copy
+                            // of the frame on the stack while it waits.
+                            match FrameBuf::from_slice(frame) {
+                                Ok(value) => {
                                     // Waits for room, but keeps carrying the
                                     // driver's BLE output meanwhile: this task
                                     // is the only one that drains it, and the
@@ -1552,7 +1575,7 @@ async fn gatt_connection<C: Controller, P: PacketPool>(
                                         server,
                                         conn,
                                         attached,
-                                        InEvent::Frame(Transport::Ble, value),
+                                        &mut Some(InEvent::Frame(Transport::Ble, value)),
                                     )
                                     .await?;
                                 }
@@ -1575,8 +1598,13 @@ async fn gatt_connection<C: Controller, P: PacketPool>(
                         (false, true) => {
                             debug_log(format_args!("cccd subscribed=true"));
                             attached = true;
-                            queue_input(server, conn, attached, InEvent::Attached(Transport::Ble))
-                                .await?;
+                            queue_input(
+                                server,
+                                conn,
+                                attached,
+                                &mut Some(InEvent::Attached(Transport::Ble)),
+                            )
+                            .await?;
                             // Publish only after enqueueing, so teardown knows
                             // whether the protocol session needs a detach.
                             set_ble_link(BleLinkState::Attached);
@@ -1585,8 +1613,13 @@ async fn gatt_connection<C: Controller, P: PacketPool>(
                             debug_log(format_args!("cccd subscribed=false"));
                             attached = false;
                             reassembler.reset();
-                            queue_input(server, conn, attached, InEvent::Detached(Transport::Ble))
-                                .await?;
+                            queue_input(
+                                server,
+                                conn,
+                                attached,
+                                &mut Some(InEvent::Detached(Transport::Ble)),
+                            )
+                            .await?;
                             set_ble_link(BleLinkState::Connected);
                         }
                         _ => {}
@@ -1606,8 +1639,11 @@ async fn gatt_connection<C: Controller, P: PacketPool>(
                 }
             }
             Either3::First(_) => {}
-            Either3::Second(outbound) => {
-                deliver_outbound(server, conn, outbound, attached).await?;
+            Either3::Second(()) => {
+                // This task is the only one that receives from it.
+                if let Ok(outbound) = OUT_CH.ble.try_receive() {
+                    deliver_outbound(server, conn, &outbound, attached).await?;
+                }
             }
             Either3::Third(LinkSignal::AdvertisingPolicy) => {
                 if !advertising_permitted()
@@ -1863,6 +1899,9 @@ pub(crate) async fn run(
             }
             continue;
         }
+        // Before the controller exists: held across this wait, it would be
+        // kept in every state of the stack's future after it.
+        save_local_irk(&store).await;
         let connector = {
             // V2: exclude a mid-flight battery sample while esp-radio
             // claims ADC2 (see [`super::ADC2_ARBITER`]).
@@ -1952,7 +1991,6 @@ async fn run_ble_stack(
     store: &BleStoreMutex,
     server: &UlcpServer<'_>,
 ) {
-    save_local_irk(store).await;
     let initial = store.lock().await.snapshot().clone();
     if initial.privacy_migration_pending {
         debug_log(format_args!("BLE blocked: privacy migration not committed"));
