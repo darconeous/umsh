@@ -457,9 +457,9 @@ pub struct UlcpSyncRecord {
 
 /// `PROP_SAVED`: what the radio reports about its stored snapshot.
 ///
-/// `Fallback` and `Unreadable` are the values worth surfacing: the radio
-/// is running on configuration older than the one last saved, or on none
-/// at all, and looks healthy otherwise.
+/// `Fallback`, `Unreadable` and `Partial` are the values worth surfacing:
+/// the radio is running on configuration older than the one last saved,
+/// on none at all, or on part of it, and looks healthy otherwise.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
 pub enum SavedSnapshotRecord {
     /// Nothing is saved.
@@ -472,6 +472,10 @@ pub enum SavedSnapshotRecord {
     /// A snapshot exists but could not be read; the radio booted with
     /// factory defaults.
     Unreadable,
+    /// The newest saved generation is in effect, less values the radio's
+    /// firmware cannot hold, which kept their defaults. Saving again
+    /// clears it.
+    Partial,
 }
 
 /// Long-lived host-session phase. Swift maps this value to UI link state but
@@ -6491,6 +6495,7 @@ fn decode_saved(value: &[u8]) -> Result<SavedSnapshotRecord, MobileError> {
         [saved::CURRENT] => Ok(SavedSnapshotRecord::Current),
         [saved::FALLBACK] => Ok(SavedSnapshotRecord::Fallback),
         [saved::UNREADABLE] => Ok(SavedSnapshotRecord::Unreadable),
+        [saved::PARTIAL] => Ok(SavedSnapshotRecord::Partial),
         _ => Err(MobileError::InvalidUlcpFrame),
     }
 }

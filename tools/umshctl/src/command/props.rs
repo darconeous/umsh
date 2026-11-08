@@ -267,6 +267,7 @@ fn scalar(key: u32, value: u32) -> String {
             saved::CURRENT => "1 (current)".to_string(),
             saved::FALLBACK => "2 (running an older generation)".to_string(),
             saved::UNREADABLE => "3 (unreadable)".to_string(),
+            saved::PARTIAL => "4 (partial)".to_string(),
             _ => value.to_string(),
         },
         _ => value.to_string(),

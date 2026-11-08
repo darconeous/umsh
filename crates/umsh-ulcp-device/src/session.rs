@@ -2714,8 +2714,9 @@ pub enum SnapshotError {
     /// The option block is truncated, out of order, or repeats a
     /// single-valued property.
     Malformed,
-    /// A known option carried a value this firmware refuses: out of
-    /// range, wrong length, or a table over capacity.
+    /// The recorded device identity is not a public key. Any other value
+    /// this firmware cannot hold is skipped rather than rejected, and
+    /// `PROP_SAVED` reports [`SavedStatus::Partial`].
     InvalidValue,
 }
 
@@ -2733,6 +2734,9 @@ pub enum SavedStatus {
     /// A snapshot exists but no generation could be read; the device
     /// booted bare.
     Unreadable,
+    /// The newest saved generation is in effect, less values this build
+    /// cannot hold, which kept their post-reset values.
+    Partial,
 }
 
 impl SavedStatus {
@@ -2743,6 +2747,7 @@ impl SavedStatus {
             Self::Current => ids::saved::CURRENT,
             Self::Fallback => ids::saved::FALLBACK,
             Self::Unreadable => ids::saved::UNREADABLE,
+            Self::Partial => ids::saved::PARTIAL,
         }
     }
 }
@@ -2816,6 +2821,10 @@ struct SavedState {
     ipv4_config: ip::V4Config,
     ipv6_config: ip::V6Config,
     ip_dns: net::Resolvers,
+    /// Options the decode skipped because this build cannot hold their
+    /// values: not saved data, but what the restore lost of it. Zero for
+    /// a capture.
+    skipped: u32,
 }
 
 impl SavedState {
@@ -2875,6 +2884,7 @@ impl SavedState {
             ipv4_config: device.ipv4_config,
             ipv6_config: device.ipv6_config,
             ip_dns: device.ip_dns,
+            skipped: 0,
         }
     }
 
@@ -2944,6 +2954,7 @@ impl SavedState {
             ipv4_config: ip::V4Config::default(),
             ipv6_config: ip::V6Config::default(),
             ip_dns: net::Resolvers::default(),
+            skipped: 0,
         }
     }
 
@@ -3157,10 +3168,14 @@ impl SavedState {
     /// without building one.
     ///
     /// Unknown options are skipped (a newer writer's property, or a
-    /// retired one). Everything else—a bad format byte, a malformed
-    /// option block, a repeated single-valued property, an out-of-range
-    /// value, a table over capacity—rejects the whole payload, leaving
-    /// the caller to fall back to an older generation.
+    /// retired one). So is a known option whose value this build cannot
+    /// hold—an out-of-range value, a table entry over capacity—which
+    /// keeps its post-reset value and counts in [`SavedState::skipped`].
+    /// Structural faults—a bad format byte, a malformed option block, a
+    /// repeated single-valued property—reject the whole payload, leaving
+    /// the caller to fall back to an older generation; so does a recorded
+    /// identity that is not a public key, since a snapshot that records
+    /// none is permitted under any identity.
     fn decode(config: &SessionConfig, bytes: &[u8]) -> Result<Self, SnapshotError> {
         let (format, options) = bytes.split_first().ok_or(SnapshotError::Malformed)?;
         if *format != SNAPSHOT_FORMAT {
@@ -3180,19 +3195,25 @@ impl SavedState {
                 }
                 seen |= bit;
             }
-            state.absorb_option(config, number, value)?;
+            if state.absorb_option(config, number, value).is_err() {
+                if u32::from(number) == prop::DEV_KEY {
+                    return Err(SnapshotError::InvalidValue);
+                }
+                state.skipped = state.skipped.saturating_add(1);
+            }
         }
         Ok(state)
     }
 
-    /// Validate and store one decoded option.
+    /// Validate and store one decoded option. `Err` leaves the property
+    /// as it was.
     fn absorb_option(
         &mut self,
         config: &SessionConfig,
         number: u16,
         value: &[u8],
-    ) -> Result<(), SnapshotError> {
-        let invalid = |_| SnapshotError::InvalidValue;
+    ) -> Result<(), Unheld> {
+        let invalid = |_| Unheld;
         match u32::from(number) {
             prop::PHY_ENABLED => self.settings.enabled = parse_bool(value).map_err(invalid)?,
             prop::PHY_FREQ => {
@@ -3208,25 +3229,23 @@ impl SavedState {
             prop::PHY_LORA_SF => self.settings.sf = validate_sf(value).map_err(invalid)?,
             prop::PHY_LORA_CR => self.settings.cr_denom = validate_cr(value).map_err(invalid)?,
             prop::DEV_KEY => {
-                self.dev_key = Some(value.try_into().map_err(|_| SnapshotError::InvalidValue)?);
+                self.dev_key = Some(value.try_into().map_err(|_| Unheld)?);
             }
             prop::DEV_CHANNEL_KEYS => {
-                let key = channel_key_item(value)?;
-                self.dev_channel_keys
-                    .insert(ChannelKeyEntry {
-                        key,
-                        id: [0; items::CHANNEL_IDENTIFIER_LEN],
-                    })
-                    .map_err(invalid)?;
+                let key = value.try_into().map_err(|_| Unheld)?;
+                held(self.dev_channel_keys.insert(ChannelKeyEntry {
+                    key,
+                    id: [0; items::CHANNEL_IDENTIFIER_LEN],
+                }))?;
             }
             prop::DEV_PEERS => {
                 let public_key: [u8; items::PUBLIC_KEY_LEN] =
-                    value.try_into().map_err(|_| SnapshotError::InvalidValue)?;
-                self.dev_peers.insert(public_key).map_err(invalid)?;
+                    value.try_into().map_err(|_| Unheld)?;
+                held(self.dev_peers.insert(public_key))?;
             }
             prop::DEV_NAME => {
                 if !valid_device_name(value) {
-                    return Err(SnapshotError::InvalidValue);
+                    return Err(Unheld);
                 }
                 self.name = [0; MAX_DEVICE_NAME_LEN];
                 self.name[..value.len()].copy_from_slice(value);
@@ -3238,12 +3257,9 @@ impl SavedState {
             prop::IDENT_ROLE => self.ident_role = Some(parse_u8(value).map_err(invalid)?),
             prop::IDENT_MOBILE => self.ident_mobile = parse_bool(value).map_err(invalid)?,
             prop::MAC_REPEATER_REGIONS => {
-                // One option per entry, re-validated and re-derived: a
-                // stored region that no longer parses is dropped rather
-                // than allowed to fail the whole restore.
-                if let Ok(entry) = region_entry(value) {
-                    let _ = self.repeater_regions.push(entry);
-                }
+                // One option per entry, re-validated and re-derived.
+                let entry = region_entry(value).map_err(invalid)?;
+                held(self.repeater_regions.push(entry))?;
             }
             prop::MAC_REPEATER_DEFAULT_REGION => {
                 self.repeater_default_region = parse_region_code(value).map_err(invalid)?
@@ -3261,12 +3277,9 @@ impl SavedState {
                 self.meshcore_region_policy =
                     validate_meshcore_region_policy(value).map_err(invalid)?
             }
-            // As for the UMSH regions: a stored name that no longer
-            // validates is dropped rather than failing the whole restore.
             prop::MESHCORE_REGIONS => {
-                if let Ok(name) = meshcore_region_name(value) {
-                    let _ = self.meshcore_regions.push(name);
-                }
+                let name = meshcore_region_name(value).map_err(invalid)?;
+                held(self.meshcore_regions.push(name))?;
             }
             prop::LAN_BEARER_ENABLED | prop::LAN_BEARER_GROUP | prop::LAN_BEARER_INGRESS_LIMIT => {
                 self.lan_bearer
@@ -3311,8 +3324,8 @@ impl SavedState {
             prop::PHY_DUTY_LIMIT => self.duty_limit = parse_u16(value).map_err(invalid)?,
             prop::DEV_ADMINS => {
                 let public_key: [u8; items::PUBLIC_KEY_LEN] =
-                    value.try_into().map_err(|_| SnapshotError::InvalidValue)?;
-                self.dev_admins.insert(public_key).map_err(invalid)?;
+                    value.try_into().map_err(|_| Unheld)?;
+                held(self.dev_admins.insert(public_key))?;
             }
             prop::TZ_RULE => self.tz_rule = ZoneRule::parse(value).map_err(invalid)?,
             prop::TIME_24H => self.time_24h = parse_bool(value).map_err(invalid)?,
@@ -3326,16 +3339,15 @@ impl SavedState {
             prop::BLE_ENABLED => self.ble_enabled = parse_bool(value).map_err(invalid)?,
             #[cfg(feature = "wifi")]
             prop::WIFI_NETWORKS => {
-                let entry =
-                    wifi::NetworkEntry::decode(value).map_err(|_| SnapshotError::InvalidValue)?;
+                let entry = wifi::NetworkEntry::decode(value).map_err(|_| Unheld)?;
                 if self.wifi_networks.get(entry.ssid).is_some() {
-                    return Err(SnapshotError::InvalidValue);
+                    return Err(Unheld);
                 }
                 // Preserve valid saved credentials across changes in driver
                 // capabilities. New writes still check hardware support;
                 // the platform must refuse unsupported profiles at use time.
-                config.wifi.ok_or(SnapshotError::InvalidValue)?;
-                entry.validate().map_err(|_| SnapshotError::InvalidValue)?;
+                config.wifi.ok_or(Unheld)?;
+                entry.validate().map_err(|_| Unheld)?;
                 self.wifi_networks.insert(value).map_err(invalid)?;
             }
             #[cfg(feature = "bridge-client")]
@@ -3347,23 +3359,17 @@ impl SavedState {
             }
             prop::WIFI_ENABLED => self.wifi_enabled = parse_bool(value).map_err(invalid)?,
             prop::IPV4_CONFIG => {
-                let config =
-                    ip::V4Config::decode(value).map_err(|_| SnapshotError::InvalidValue)?;
-                config.validate().map_err(|_| SnapshotError::InvalidValue)?;
+                let config = ip::V4Config::decode(value).map_err(|_| Unheld)?;
+                config.validate().map_err(|_| Unheld)?;
                 self.ipv4_config = config;
             }
             prop::IPV6_CONFIG => {
-                let config =
-                    ip::V6Config::decode(value).map_err(|_| SnapshotError::InvalidValue)?;
-                config.validate().map_err(|_| SnapshotError::InvalidValue)?;
+                let config = ip::V6Config::decode(value).map_err(|_| Unheld)?;
+                config.validate().map_err(|_| Unheld)?;
                 self.ipv6_config = config;
             }
-            // One option per resolver, and a stored one that no longer
-            // passes is dropped rather than allowed to fail the whole
-            // restore—the same treatment a saved region gets.
-            prop::IP_DNS => {
-                let _ = self.ip_dns.push(value);
-            }
+            // One option per resolver.
+            prop::IP_DNS => self.ip_dns.push(value).map_err(|_| Unheld)?,
             _ => unreachable!("SAVED_SCHEMA row without a decoder arm"),
         }
         Ok(())
@@ -3434,9 +3440,17 @@ fn readable_message(payload: &[u8]) -> Option<Readable> {
     })
 }
 
-/// A channel-key option value: the raw symmetric key.
-fn channel_key_item(value: &[u8]) -> Result<[u8; items::CHANNEL_KEY_LEN], SnapshotError> {
-    value.try_into().map_err(|_| SnapshotError::InvalidValue)
+/// A saved option this build cannot hold: skipped and counted, never a
+/// reason to reject the snapshot.
+struct Unheld;
+
+/// A saved table entry's insert, where a repeat of an entry already held
+/// loses nothing and so is not skipped.
+fn held(result: Result<(), Status>) -> Result<(), Unheld> {
+    match result {
+        Err(status) if status != Status::ALREADY => Err(Unheld),
+        _ => Ok(()),
+    }
 }
 
 /// State that exists only while a host is attached (spec §State
@@ -6634,13 +6648,25 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     }
 
     /// What `PROP_SAVED` reports (spec §Saved State).
+    ///
+    /// A fallback generation that also skipped values reports
+    /// [`SavedStatus::Fallback`]: running on older configuration is the
+    /// larger difference from what was last saved.
     pub fn saved_status(&self) -> SavedStatus {
-        match (self.saved.is_some(), self.snapshot_rejected) {
-            (true, false) => SavedStatus::Current,
-            (true, true) => SavedStatus::Fallback,
-            (false, true) => SavedStatus::Unreadable,
-            (false, false) => SavedStatus::None,
+        match (&self.saved, self.snapshot_rejected) {
+            (Some(_), true) => SavedStatus::Fallback,
+            (Some(saved), false) if saved.skipped > 0 => SavedStatus::Partial,
+            (Some(_), false) => SavedStatus::Current,
+            (None, true) => SavedStatus::Unreadable,
+            (None, false) => SavedStatus::None,
         }
+    }
+
+    /// How many options of the snapshot in effect the boot restore
+    /// skipped, because this build cannot hold their values. Zero once a
+    /// save replaces it.
+    pub fn snapshot_skipped(&self) -> u32 {
+        self.saved.as_ref().map_or(0, |saved| saved.skipped)
     }
 
     /// Complete the durable write requested via
@@ -6690,10 +6716,11 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// with nothing saved gets nothing saved: manufacturing a snapshot
     /// from a button press would persist every other live-only value with
     /// it. A device that rejected its newest generation at boot
-    /// (`Fallback` or `Unreadable`) must not write one either: the write
-    /// would become the newest generation, bury the rejected record under
+    /// (`Fallback` or `Unreadable`), or skipped values of it (`Partial`),
+    /// must not write one either: the write would become the newest
+    /// generation, bury the rejected record or skipped values under
     /// defaults or stale values, and clear the fault `PROP_SAVED` exists
-    /// to report. The change still applies live in both cases; only a
+    /// to report. The change still applies live in every case; only a
     /// host's `CMD_SAVE` writes over a fault.
     pub fn note_device_change(&mut self) -> bool {
         if self.saved_status() != SavedStatus::Current {
@@ -12578,7 +12605,12 @@ mod tests {
         let len = 1 + encoder.finish();
         let mut booted: TestSession =
             Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
-        assert!(booted.restore_at_boot(&bad[..len]).is_err());
+        booted.restore_at_boot(&bad[..len]).unwrap();
+        assert_eq!(booted.saved_status(), SavedStatus::Partial);
+        assert_eq!(
+            booted.meshcore_region_policy(),
+            meshcore_region_policy::OPEN
+        );
     }
 
     /// MeshCore reserves the identity hashes 0x00 and 0xFF, so the
@@ -16925,9 +16957,10 @@ mod tests {
 
     /// Snapshot values pass the same validators a host write does, so a
     /// corrupted or foreign snapshot cannot install a setting the
-    /// property surface would refuse.
+    /// property surface would refuse. Such a value is skipped: the
+    /// property keeps its post-reset value and `PROP_SAVED` says so.
     #[test]
-    fn out_of_range_snapshot_values_are_rejected() {
+    fn out_of_range_snapshot_values_are_skipped() {
         for (number, value) in [
             (prop::PHY_LORA_SF, &[13u8][..]),
             (prop::PHY_LORA_CR, &[4][..]),
@@ -16943,12 +16976,108 @@ mod tests {
 
             let mut booted: TestSession =
                 Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
+            booted.restore_at_boot(&bytes[..len]).unwrap();
+            assert_eq!(booted.snapshot_skipped(), 1);
+            booted.attach(true);
+            assert_eq!(get(&mut booted, prop::SAVED), [ids::saved::PARTIAL]);
+            let mut fresh = test_session();
             assert_eq!(
-                booted.restore_at_boot(&bytes[..len]),
-                Err(SnapshotError::InvalidValue),
+                get(&mut booted, number),
+                get(&mut fresh, number),
                 "property {number} accepted an out-of-range value"
             );
         }
+    }
+
+    /// A frequency outside a narrowed band costs that one setting, not
+    /// the snapshot: everything else restores, the frequency keeps its
+    /// post-reset value, and `PROP_SAVED` reports the difference until a
+    /// host saves over it. A change at the device must not write over it
+    /// either, since that would bury the stored frequency.
+    #[test]
+    fn a_snapshot_with_an_out_of_band_frequency_restores_the_rest_as_partial() {
+        let session = provisioned_session();
+        let mut bytes = [0u8; SNAPSHOT_MAX];
+        let len = session.encode_snapshot(&mut bytes).unwrap();
+
+        let mut narrowed = test_config();
+        narrowed.freq_khz_min = 920_000;
+        narrowed.defaults.freq_khz = 923_000;
+        let mut booted: TestSession = Session::new(narrowed, Status::RESET_POWER_ON, test_engine());
+        let effect = booted.restore_at_boot(&bytes[..len]).unwrap();
+        assert!(matches!(effect, Effect::ApplyRadio(s) if s.enabled && s.freq_khz == 923_000));
+        assert_eq!(booted.device_name(), "saved name");
+        assert_eq!(booted.snapshot_skipped(), 1);
+        assert_eq!(booted.saved_status(), SavedStatus::Partial);
+        assert!(!booted.note_device_change());
+
+        // A reset re-applies the partial snapshot and leaves the report.
+        booted.reset(Status::RESET_SOFTWARE, &mut |_: &[u8]| {});
+        assert_eq!(booted.device_name(), "saved name");
+        booted.attach(true);
+        assert_eq!(get(&mut booted, prop::SAVED), [ids::saved::PARTIAL]);
+
+        booted.respond_save(1, Ok(()), &mut |_| {});
+        assert_eq!(get(&mut booted, prop::SAVED), [ids::saved::CURRENT]);
+        assert_eq!(booted.snapshot_skipped(), 0);
+    }
+
+    /// A table longer than this build holds keeps the entries that fit
+    /// and skips the rest; a repeat of an entry already held loses
+    /// nothing and is not counted.
+    #[test]
+    fn a_table_over_capacity_keeps_what_fits() {
+        let mut bytes = [0u8; SNAPSHOT_MAX];
+        bytes[0] = SNAPSHOT_FORMAT;
+        let mut encoder = OptionEncoder::new(&mut bytes[1..]);
+        for seed in 0..=MAX_DEV_PEERS as u8 {
+            encoder
+                .put(prop::DEV_PEERS as u16, &[seed; items::PUBLIC_KEY_LEN])
+                .unwrap();
+        }
+        encoder
+            .put(prop::DEV_PEERS as u16, &[0; items::PUBLIC_KEY_LEN])
+            .unwrap();
+        let len = 1 + encoder.finish();
+
+        let mut booted: TestSession =
+            Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
+        booted.restore_at_boot(&bytes[..len]).unwrap();
+        assert_eq!(booted.device.peers.len, MAX_DEV_PEERS);
+        assert_eq!(booted.snapshot_skipped(), 1);
+        assert_eq!(booted.saved_status(), SavedStatus::Partial);
+    }
+
+    /// Skipping is for values this build cannot hold. A snapshot whose
+    /// framing is corrupt is still rejected whole, as is one whose
+    /// recorded identity is not a public key: a snapshot recording none
+    /// would be permitted to enable the PHY under any identity.
+    #[test]
+    fn a_structurally_corrupt_snapshot_is_still_rejected() {
+        let session = provisioned_session();
+        let mut bytes = [0u8; SNAPSHOT_MAX];
+        let len = session.encode_snapshot(&mut bytes).unwrap();
+        let mut booted: TestSession =
+            Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
+        // An option header promising more than the payload holds.
+        let mut truncated = bytes;
+        truncated[len] = 0x0D;
+        assert_eq!(
+            booted.restore_at_boot(&truncated[..len + 1]),
+            Err(SnapshotError::Malformed)
+        );
+
+        let mut identity = [0u8; SNAPSHOT_MAX];
+        identity[0] = SNAPSHOT_FORMAT;
+        let mut encoder = OptionEncoder::new(&mut identity[1..]);
+        encoder.put(prop::DEV_KEY as u16, &[0xAA; 31]).unwrap();
+        let identity_len = 1 + encoder.finish();
+        assert_eq!(
+            booted.restore_at_boot(&identity[..identity_len]),
+            Err(SnapshotError::InvalidValue)
+        );
+        booted.attach(true);
+        assert_eq!(get(&mut booted, prop::SAVED), [ids::saved::NONE]);
     }
 
     /// The buffer every caller sizes from `SNAPSHOT_MAX` has to hold a
