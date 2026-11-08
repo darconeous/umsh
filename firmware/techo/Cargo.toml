@@ -10,10 +10,10 @@ repository.workspace = true
 ulcp-i2c = ["umsh-ulcp-runtime/i2c", "umsh-bsp-techo/ulcp-i2c"]
 # ─── Board identity (irreducibly per-board: concrete pins, BSP module,
 #     USB/identity strings, peripheral-init blocks). Exactly one is on. ───
-board-techo = ["ulcp-i2c", "umsh-bsp-nrf52840/i2c", "display-epd", "button-nav", "system-off-techo", "led-active-low", "led-rgb", "cap-battery-saadc", "cap-gnss"]
+board-techo = ["umsh-bsp-nrf52840/i2c", "display-epd", "button-nav", "system-off-techo", "led-active-low", "led-rgb", "cap-battery-saadc", "cap-gnss"]
 board-t1000e = ["ulcp-i2c", "t1000e", "cap-battery-saadc", "cap-gnss", "gnss-holds-the-clock", "cap-illuminance"]
 board-sensecap-solar = ["ulcp-i2c", "cap-battery-saadc", "power-button", "cap-gnss"]
-board-wio-tracker-l1 = ["ulcp-i2c", "display-oled", "dpad-nav", "system-off-wio", "cap-battery-saadc", "cap-buzzer", "cap-gnss", "gnss-holds-the-clock"]
+board-wio-tracker-l1 = ["display-oled", "dpad-nav", "system-off-wio", "cap-battery-saadc", "cap-buzzer", "cap-gnss", "gnss-holds-the-clock"]
 board-xiao-nrf52 = ["ulcp-i2c", "cap-battery-saadc", "led-active-low", "led-rgb", "dcdc-reg1"]
 
 # ─── Capability features (shared code shape, board-portable) ───
