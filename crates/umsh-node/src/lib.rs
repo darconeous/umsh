@@ -101,16 +101,23 @@
 //! host.run().await?;
 //! ```
 //!
-//! If you need to multiplex UMSH progress with another async source such as user input, use
-//! [`Host::pump_once`] as a single wake-driven step. It already waits on radio activity and
-//! protocol deadlines; you should not add a manual poll/sleep loop around it.
+//! `run()` is the node's data pump, and it is never cancelled. To do other work alongside
+//! it, such as reading user input, run the pump as its own task or as a sibling future, and
+//! let the other side talk to the node through its handles. The pump already waits on radio
+//! activity and protocol deadlines, and a send from the other side wakes it; it needs no
+//! poll/sleep loop around it, and no timeout.
 //!
 //! ```rust,ignore
-//! loop {
-//!     tokio::select! {
-//!         line = stdin.next_line() => { /* handle input */ }
-//!         result = host.pump_once() => result?,
+//! let input = async {
+//!     while let Some(line) = stdin.next_line().await? {
+//!         chat.send_text(&line, &SendOptions::default()).await?;
 //!     }
+//!     Ok(())
+//! };
+//! // The pump is dropped only when the input ends: the node stops with it.
+//! tokio::select! {
+//!     result = host.run() => result?,
+//!     result = input => result?,
 //! }
 //! ```
 //!
@@ -1478,6 +1485,8 @@ mod tests {
         async fn now_ms(&self) -> u64 {
             self.state.borrow().now_ms
         }
+
+        async fn wake_by(&self, _deadline_ms: u64) {}
 
         async fn register_ephemeral(
             &self,

@@ -301,12 +301,12 @@ where
 
         // Record the pending ping BEFORE sending (avoid race if response is very fast).
         let sent_at_ms = self.transport.local_node().now_ms().await;
-        self.transport.local_node().record_ping(
-            nonce,
-            self.peer,
-            sent_at_ms,
-            sent_at_ms + timeout_ms,
-        );
+        let deadline_ms = sent_at_ms + timeout_ms;
+        self.transport
+            .local_node()
+            .record_ping(nonce, self.peer, sent_at_ms, deadline_ms);
+        // An echo that never comes has to be noticed on a quiet radio.
+        self.transport.local_node().wake_by(deadline_ms).await;
 
         // The caller's options carry through unchanged: a ping that is
         // secured, sized or routed differently from real traffic measures a

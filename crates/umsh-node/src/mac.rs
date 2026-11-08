@@ -25,8 +25,8 @@ pub trait MacBackend: Clone {
     /// Drive the MAC until one wake cycle completes, invoking `on_event` for
     /// each emitted event.
     ///
-    /// This is the single wake-driven step the node layer builds `pump_once` /
-    /// `run` on top of; it waits for radio activity or a protocol deadline
+    /// This is the single wake-driven step [`Host::run`](crate::Host::run)
+    /// is built on; it waits for radio activity or a protocol deadline
     /// rather than busy-polling.
     async fn next_event(
         &self,
@@ -118,6 +118,11 @@ pub trait MacBackend: Clone {
     async fn fill_random(&self, dest: &mut [u8]);
     /// Return the current MAC clock time.
     async fn now_ms(&self) -> u64;
+    /// Have [`next_event`](Self::next_event) complete a wake cycle no later
+    /// than `deadline_ms` on the MAC clock, so a deadline the node layer
+    /// keeps is reached even on a quiet radio. Requests combine: the
+    /// earliest stands until a cycle completes at or after it.
+    async fn wake_by(&self, deadline_ms: u64);
 
     #[cfg(feature = "software-crypto")]
     async fn register_ephemeral(
@@ -428,6 +433,10 @@ impl<
 
     async fn now_ms(&self) -> u64 {
         self.now_ms().await
+    }
+
+    async fn wake_by(&self, deadline_ms: u64) {
+        self.wake_by(deadline_ms).await
     }
 
     #[cfg(feature = "software-crypto")]

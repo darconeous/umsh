@@ -853,20 +853,20 @@ pub async fn pump_loop<CS: CounterStore + 'static>(
     // the ledger's cells belong to it, and a host's clear must not be
     // overwritten by the next pass through this loop.
     let mut mirrors = MacMirrors::new();
-    // `Host::run` is this loop without the republish. Spelling it out here
-    // is what lets the counters be refreshed on a schedule that already
-    // exists: one wake cycle has just completed, the coordinator's borrow
-    // is released, and nothing else had to be woken to notice.
-    loop {
-        if let Err(error) = host.pump_once().await {
-            debug_log(format_args!("node pump: EXITED error={error:?}"));
-            break;
-        }
-        let counters = mac.counters().await;
-        publish_mac_counters(counters);
-        if let Some(stats) = stats {
-            mirrors.advance(stats, counters);
-        }
+    // The counters are refreshed on a schedule that already exists: one
+    // wake cycle has just completed, the coordinator's borrow is released,
+    // and nothing else had to be woken to notice.
+    let result = host
+        .run_with(async || {
+            let counters = mac.counters().await;
+            publish_mac_counters(counters);
+            if let Some(stats) = stats {
+                mirrors.advance(stats, counters);
+            }
+        })
+        .await;
+    if let Err(error) = result {
+        debug_log(format_args!("node pump: EXITED error={error:?}"));
     }
     panic!("device node host exited");
 }

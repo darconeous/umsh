@@ -9,10 +9,14 @@
 //!
 //! ```text
 //! tokio::select! {
-//!     r = host.run()  => { r?; }   // existing loop over pump_once()
+//!     r = host.run()  => { r?; }   // the node's data pump
 //!     r = cli.run()   => { r?; }   // loops read_line + service_events
 //! }
 //! ```
+//!
+//! The pump is never cancelled while the session lasts: it is dropped only
+//! when the CLI ends, and the node stops with it. The CLI talks to the node
+//! through its `LocalNode` clone, and a send through it wakes the pump.
 //!
 //! Inside `cli.run()`:
 //! ```text

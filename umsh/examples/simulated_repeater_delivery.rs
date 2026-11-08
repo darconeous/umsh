@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::future::{Future, poll_fn};
 use std::rc::Rc;
 use std::task::Poll;
@@ -20,7 +20,7 @@ use umsh::{
     text::{TextReceiveIssue, UnicastTextChatWrapper},
     uri::encode_public_key_base58,
 };
-use umsh_sync::AsyncRefCell;
+use umsh_sync::{AsyncCondition, AsyncRefCell};
 
 const IDENTITIES: usize = 4;
 const PEERS: usize = 16;
@@ -141,139 +141,175 @@ async fn async_main() {
         })
     });
 
-    println!("== step 1: alice floods a trace-routed hello toward bob ==");
-    let hello_options = default_chat_options().with_trace();
-    alice_chat
-        .send_text("hello through the repeater", &hello_options)
-        .await
-        .expect("alice send should queue successfully");
-    let alice_first = inspect_next_queued_frame(&alice_mac, "alice queued hello")
-        .await
-        .expect("alice hello should be queued");
-    assert_eq!(alice_first.source_route_hints, 0);
-    assert_eq!(alice_first.trace_route_hints, 0);
-    pump_until(
-        &mut alice_host,
-        &repeater_handle,
-        &mut bob_host,
-        || *bob_received.borrow() >= 1,
-        96,
-        "bob to receive alice hello",
-    )
-    .await;
-
-    println!(
-        "[bob:route] learned route to alice: {}",
-        cached_route_summary(&bob_mac, alice_key).await
-    );
-
-    println!("== step 2: bob replies and should now use a cached source route ==");
-    let reply_options = default_chat_options().with_trace();
-    bob_chat
-        .send_text("reply from bob over learned route", &reply_options)
-        .await
-        .expect("bob reply should queue successfully");
-    let bob_reply = inspect_next_queued_frame(&bob_mac, "bob queued reply")
-        .await
-        .expect("bob reply should be queued");
-    assert!(
-        bob_reply.source_route_hints > 0,
-        "bob reply should use a learned source route instead of pure flooding"
-    );
-    pump_until(
-        &mut alice_host,
-        &repeater_handle,
-        &mut bob_host,
-        || *alice_received.borrow() >= 1,
-        96,
-        "alice to receive bob reply",
-    )
-    .await;
-
-    println!(
-        "[alice:route] learned route to bob: {}",
-        cached_route_summary(&alice_mac, bob_key).await
-    );
-
-    println!(
-        "== step 3: alice sends a follow-up and should now use the learned source route too =="
-    );
-    let follow_up_options = default_chat_options().with_trace();
-    alice_chat
-        .send_text("alice follow-up over learned route", &follow_up_options)
-        .await
-        .expect("alice follow-up should queue successfully");
-    let alice_follow_up = inspect_next_queued_frame(&alice_mac, "alice queued follow-up")
-        .await
-        .expect("alice follow-up should be queued");
-    assert!(
-        alice_follow_up.source_route_hints > 0,
-        "alice follow-up should use a learned source route instead of flooding again"
-    );
-    pump_until(
-        &mut alice_host,
-        &repeater_handle,
-        &mut bob_host,
-        || *bob_received.borrow() >= 2,
-        32,
-        "bob to receive alice follow-up",
-    )
-    .await;
-
-    println!("== step 4: alice requests PFS over the learned route ==");
-    let pfs_options = default_chat_options();
-    alice
-        .request_pfs(60, &pfs_options)
-        .await
-        .expect("alice pfs request should queue successfully");
-    let pfs_request = inspect_next_queued_frame(&alice_mac, "alice queued pfs request")
-        .await
-        .expect("pfs request should be queued");
-    assert!(
-        pfs_request.source_route_hints > 0,
-        "pfs request should also use the learned source route"
-    );
-    let alice_raw_before = *alice_raw_received.borrow();
-    let bob_raw_before = *bob_raw_received.borrow();
-    pump_until(
-        &mut alice_host,
-        &repeater_handle,
-        &mut bob_host,
-        || *alice_pfs.borrow() && *bob_pfs.borrow(),
-        128,
-        "both peers to establish pfs",
-    )
-    .await;
-    println!(
-        "[pfs] raw packets observed after request: alice={} bob={}",
-        *alice_raw_received.borrow() - alice_raw_before,
-        *bob_raw_received.borrow() - bob_raw_before,
-    );
-
-    println!(
-        "[alice:pfs] status = {}",
-        format_pfs_status(
-            alice
-                .pfs_status()
+    // All three pumps run beside the steps below for as long as the demo
+    // lasts. Each completed wake cycle is counted, and wakes a step
+    // waiting on its outcome.
+    let cycles = Cell::new(0usize);
+    let cycled = AsyncCondition::new();
+    let cycle = async || {
+        cycles.set(cycles.get() + 1);
+        cycled.trigger();
+    };
+    let alice_pump = async {
+        alice_host
+            .run_with(cycle)
+            .await
+            .expect("alice pump should succeed");
+    };
+    let bob_pump = async {
+        bob_host
+            .run_with(cycle)
+            .await
+            .expect("bob pump should succeed");
+    };
+    let repeater_pump = async {
+        loop {
+            repeater_handle
+                .next_event(|identity, event| {
+                    println!(
+                        "[repeater:mac] id={identity:?} {}",
+                        summarize_mac_event(&event)
+                    );
+                })
                 .await
-                .expect("alice pfs status should be readable")
+                .expect("repeater wake should succeed");
+            cycle().await;
+        }
+    };
+    let pumps = beside(alice_pump, beside(bob_pump, repeater_pump));
+
+    beside(pumps, async {
+        println!("== step 1: alice floods a trace-routed hello toward bob ==");
+        let hello_options = default_chat_options().with_trace();
+        alice_chat
+            .send_text("hello through the repeater", &hello_options)
+            .await
+            .expect("alice send should queue successfully");
+        let alice_first = inspect_next_queued_frame(&alice_mac, "alice queued hello")
+            .await
+            .expect("alice hello should be queued");
+        assert_eq!(alice_first.source_route_hints, 0);
+        assert_eq!(alice_first.trace_route_hints, 0);
+        wait_until(
+            &cycles,
+            &cycled,
+            || *bob_received.borrow() >= 1,
+            96,
+            "bob to receive alice hello",
         )
-    );
-    println!(
-        "[bob:pfs] status = {}",
-        format_pfs_status(
-            bob.pfs_status()
-                .await
-                .expect("bob pfs status should be readable")
-        )
-    );
-    if *alice_pfs.borrow() && *bob_pfs.borrow() {
-        println!("[pfs] established on both sides during the simulated exchange");
-    } else {
+        .await;
+
         println!(
-            "[pfs] not yet established by the end of the simulated exchange; this demo still verified the route transition to source routing"
+            "[bob:route] learned route to alice: {}",
+            cached_route_summary(&bob_mac, alice_key).await
         );
-    }
+
+        println!("== step 2: bob replies and should now use a cached source route ==");
+        let reply_options = default_chat_options().with_trace();
+        bob_chat
+            .send_text("reply from bob over learned route", &reply_options)
+            .await
+            .expect("bob reply should queue successfully");
+        let bob_reply = inspect_next_queued_frame(&bob_mac, "bob queued reply")
+            .await
+            .expect("bob reply should be queued");
+        assert!(
+            bob_reply.source_route_hints > 0,
+            "bob reply should use a learned source route instead of pure flooding"
+        );
+        wait_until(
+            &cycles,
+            &cycled,
+            || *alice_received.borrow() >= 1,
+            96,
+            "alice to receive bob reply",
+        )
+        .await;
+
+        println!(
+            "[alice:route] learned route to bob: {}",
+            cached_route_summary(&alice_mac, bob_key).await
+        );
+
+        println!(
+            "== step 3: alice sends a follow-up and should now use the learned source route too =="
+        );
+        let follow_up_options = default_chat_options().with_trace();
+        alice_chat
+            .send_text("alice follow-up over learned route", &follow_up_options)
+            .await
+            .expect("alice follow-up should queue successfully");
+        let alice_follow_up = inspect_next_queued_frame(&alice_mac, "alice queued follow-up")
+            .await
+            .expect("alice follow-up should be queued");
+        assert!(
+            alice_follow_up.source_route_hints > 0,
+            "alice follow-up should use a learned source route instead of flooding again"
+        );
+        wait_until(
+            &cycles,
+            &cycled,
+            || *bob_received.borrow() >= 2,
+            32,
+            "bob to receive alice follow-up",
+        )
+        .await;
+
+        println!("== step 4: alice requests PFS over the learned route ==");
+        let pfs_options = default_chat_options();
+        alice
+            .request_pfs(60, &pfs_options)
+            .await
+            .expect("alice pfs request should queue successfully");
+        let pfs_request = inspect_next_queued_frame(&alice_mac, "alice queued pfs request")
+            .await
+            .expect("pfs request should be queued");
+        assert!(
+            pfs_request.source_route_hints > 0,
+            "pfs request should also use the learned source route"
+        );
+        let alice_raw_before = *alice_raw_received.borrow();
+        let bob_raw_before = *bob_raw_received.borrow();
+        wait_until(
+            &cycles,
+            &cycled,
+            || *alice_pfs.borrow() && *bob_pfs.borrow(),
+            128,
+            "both peers to establish pfs",
+        )
+        .await;
+        println!(
+            "[pfs] raw packets observed after request: alice={} bob={}",
+            *alice_raw_received.borrow() - alice_raw_before,
+            *bob_raw_received.borrow() - bob_raw_before,
+        );
+
+        println!(
+            "[alice:pfs] status = {}",
+            format_pfs_status(
+                alice
+                    .pfs_status()
+                    .await
+                    .expect("alice pfs status should be readable")
+            )
+        );
+        println!(
+            "[bob:pfs] status = {}",
+            format_pfs_status(
+                bob.pfs_status()
+                    .await
+                    .expect("bob pfs status should be readable")
+            )
+        );
+        if *alice_pfs.borrow() && *bob_pfs.borrow() {
+            println!("[pfs] established on both sides during the simulated exchange");
+        } else {
+            println!(
+                "[pfs] not yet established by the end of the simulated exchange; this demo still verified the route transition to source routing"
+            );
+        }
+    })
+    .await
 }
 
 fn build_mac(radio: umsh::mac::test_support::SimulatedRadio, repeater: bool) -> RepeaterMac {
@@ -537,77 +573,39 @@ async fn cached_route_summary(mac: &AsyncRefCell<RepeaterMac>, peer: PublicKey) 
     }
 }
 
-async fn pump_until(
-    alice_host: &mut RepeaterHost<'_>,
-    repeater_handle: &MacHandle<
-        '_,
-        RepeaterPlatform,
-        IDENTITIES,
-        PEERS,
-        CHANNELS,
-        ACKS,
-        TX,
-        FRAME,
-        DUP,
-    >,
-    bob_host: &mut RepeaterHost<'_>,
+/// Wait until `done` holds, failing the demo if the pumps between them
+/// complete `max_cycles` wake cycles first.
+async fn wait_until(
+    cycles: &Cell<usize>,
+    cycled: &AsyncCondition,
     done: impl Fn() -> bool,
-    max_steps: usize,
+    max_cycles: usize,
     label: &str,
 ) {
-    for _ in 0..max_steps {
+    let start = cycles.get();
+    loop {
+        let wait = cycled.wait();
         if done() {
             return;
         }
-        match wait_for_any_activity(
-            alice_host.pump_once(),
-            repeater_handle.next_event(|identity, event| {
-                println!(
-                    "[repeater:mac] id={identity:?} {}",
-                    summarize_mac_event(&event)
-                );
-            }),
-            bob_host.pump_once(),
-        )
-        .await
-        {
-            WakeResult::Alice(result) => result.expect("alice pump should succeed"),
-            WakeResult::Repeater(result) => result.expect("repeater wake should succeed"),
-            WakeResult::Bob(result) => result.expect("bob pump should succeed"),
+        if cycles.get() - start >= max_cycles {
+            panic!("timed out waiting for {label}");
         }
+        wait.await;
     }
-    panic!("timed out waiting for {label}");
 }
 
-enum WakeResult<A, B, C> {
-    Alice(A),
-    Repeater(B),
-    Bob(C),
-}
-
-async fn wait_for_any_activity<A, B, C>(
-    alice: A,
-    repeater: B,
-    bob: C,
-) -> WakeResult<A::Output, B::Output, C::Output>
-where
-    A: Future,
-    B: Future,
-    C: Future,
-{
-    let mut alice = core::pin::pin!(alice);
-    let mut repeater = core::pin::pin!(repeater);
-    let mut bob = core::pin::pin!(bob);
-
+/// Run `work` with `pump` beside it until the work is done. The pump is
+/// never cancelled before then; one that stops first fails the demo.
+async fn beside<W: Future>(pump: impl Future<Output = ()>, work: W) -> W::Output {
+    let mut pump = core::pin::pin!(pump);
+    let mut work = core::pin::pin!(work);
     poll_fn(|cx| {
-        if let Poll::Ready(output) = alice.as_mut().poll(cx) {
-            return Poll::Ready(WakeResult::Alice(output));
+        if let Poll::Ready(output) = work.as_mut().poll(cx) {
+            return Poll::Ready(output);
         }
-        if let Poll::Ready(output) = repeater.as_mut().poll(cx) {
-            return Poll::Ready(WakeResult::Repeater(output));
-        }
-        if let Poll::Ready(output) = bob.as_mut().poll(cx) {
-            return Poll::Ready(WakeResult::Bob(output));
+        if pump.as_mut().poll(cx).is_ready() {
+            panic!("a pump stopped");
         }
         Poll::Pending
     })

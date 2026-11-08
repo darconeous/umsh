@@ -3,9 +3,9 @@
 //! Shared by the tests that need a whole mesh between an administrator and
 //! a device rather than the binding's engines face to face: the device is
 //! a real ULCP session behind a real device engine, the transport is a
-//! real MAC doing real secure unicast, and both hosts are pumped by hand
-//! because the node layer is `!Send` and a test that owns its own
-//! scheduling cannot race itself.
+//! real MAC doing real secure unicast, and both hosts' pumps run beside
+//! the test for as long as it lasts, as sibling futures in its own task:
+//! the node layer is `!Send`.
 //!
 //! Included with `#[path]` rather than compiled as its own test binary.
 //! The [`mesh!`] macro names its helpers through `crate::fixture`, so the
@@ -20,6 +20,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use rand::rng;
 
+use tokio::sync::Notify;
 use umsh::core::{PayloadType, PublicKey};
 use umsh::crypto::software::{SoftwareAes, SoftwareIdentity, SoftwareSha256};
 use umsh::crypto::{CryptoEngine, NodeIdentity};
@@ -305,13 +306,11 @@ impl DeviceSide {
 /// and the `ack_mic` its response carries back.
 pub type Arrivals = Rc<RefCell<Vec<(PublicKey, Option<[u8; 4]>, Vec<u8>)>>>;
 
-/// Both nodes, wired to a simulated link and ready to be driven.
-///
-/// The hosts are pumped by hand rather than spawned: the node layer is
-/// `!Send`, and a test that owns its own scheduling cannot race itself.
+/// Both nodes, wired to a simulated link, with their [`Pumps`] running
+/// beside.
 pub struct Mesh<'a, R: Radio> {
-    admin_host: Host<SimHandle<'a, R>>,
-    device_host: Host<SimHandle<'a, R>>,
+    /// Signaled each time either pump completes a wake cycle.
+    cycled: Rc<Notify>,
     pub manager: NodeManager<SimHandle<'a, R>>,
     device_peer: PeerConnection<LocalNode<SimHandle<'a, R>>>,
     pub device: Rc<RefCell<DeviceSide>>,
@@ -351,12 +350,12 @@ where
         }
     }
 
-    /// One turn of both hosts, plus whatever the device owes an answer to.
+    /// Wait for either pump to complete a cycle, or a moment if neither
+    /// does, then send whatever the device owes an answer to.
     pub async fn turn(&mut self) {
         tokio::select! {
-            result = self.admin_host.pump_once() => result.expect("administrator host"),
-            result = self.device_host.pump_once() => result.expect("device host"),
-            _ = tokio::time::sleep(Duration::from_millis(50)) => {}
+            () = self.cycled.notified() => {}
+            () = tokio::time::sleep(Duration::from_millis(50)) => {}
         }
         let arrivals: Vec<_> = self.arrivals.borrow_mut().drain(..).collect();
         for (from, ack_mic, payload) in arrivals {
@@ -393,6 +392,34 @@ where
         for _ in 0..turns {
             let _ = self.manager.service(self.now_ms()).await;
             self.turn().await;
+        }
+    }
+}
+
+/// Both hosts' data pumps, which run beside the test and are never
+/// cancelled while it lasts.
+pub struct Pumps<'a, R: Radio> {
+    admin_host: Host<SimHandle<'a, R>>,
+    device_host: Host<SimHandle<'a, R>>,
+    cycled: Rc<Notify>,
+}
+
+impl<R: Radio> Pumps<'_, R>
+where
+    R::Error: core::fmt::Debug,
+{
+    /// Do `work` with both pumps running beside it.
+    pub async fn beside<T>(self, work: impl Future<Output = T>) -> T {
+        let Self {
+            mut admin_host,
+            mut device_host,
+            cycled,
+        } = self;
+        let cycle = async || cycled.notify_one();
+        tokio::select! {
+            result = admin_host.run_with(cycle) => panic!("administrator host stopped: {result:?}"),
+            result = device_host.run_with(cycle) => panic!("device host stopped: {result:?}"),
+            output = work => output,
         }
     }
 }
@@ -469,7 +496,7 @@ pub fn link() -> (SimulatedRadio, SimulatedRadio) {
 pub async fn stand_up<'a, R: Radio>(
     admin_mac: &'a AsyncRefCell<SimMac<R>>,
     device_mac: &'a AsyncRefCell<SimMac<R>>,
-) -> Mesh<'a, R> {
+) -> (Mesh<'a, R>, Pumps<'a, R>) {
     let admin_identity = SoftwareIdentity::from_secret_bytes(&[0x11; 32]);
     let device_identity = SoftwareIdentity::from_secret_bytes(&[0x22; 32]);
     let admin_key = *admin_identity.public_key();
@@ -517,21 +544,28 @@ pub async fn stand_up<'a, R: Radio>(
         })
     };
 
-    Mesh {
-        admin_host,
-        device_host,
+    let cycled = Rc::new(Notify::new());
+    let mesh = Mesh {
+        cycled: cycled.clone(),
         manager: NodeManager::new(target, 0x2A),
         device_peer,
         device,
         arrivals,
         _subscription: subscription,
         started: Instant::now(),
-    }
+    };
+    let pumps = Pumps {
+        admin_host,
+        device_host,
+        cycled,
+    };
+    (mesh, pumps)
 }
 
-/// `mesh!(name, binding)`—two nodes on a link, bound to `binding`.
+/// `mesh!(name, binding, { body })`—two nodes on a link, bound to
+/// `binding` for `body`, which runs with both pumps beside it.
 macro_rules! mesh {
-    ($name:literal, $mesh:ident) => {
+    ($name:literal, $mesh:ident, $body:block) => {{
         let scratch = crate::fixture::Scratch::new($name);
         let (admin_radio, device_radio) = crate::fixture::link();
         let admin_mac = umsh_sync::AsyncRefCell::new(crate::fixture::build_mac(
@@ -542,7 +576,9 @@ macro_rules! mesh {
             device_radio,
             scratch.join("device"),
         ));
+        let (mesh, pumps) = crate::fixture::stand_up(&admin_mac, &device_mac).await;
         #[allow(unused_mut)]
-        let mut $mesh = crate::fixture::stand_up(&admin_mac, &device_mac).await;
-    };
+        let mut $mesh = mesh;
+        pumps.beside(async $body).await
+    }};
 }

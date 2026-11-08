@@ -3822,8 +3822,10 @@ async fn run_worker(
         peer_repeaters_subscription,
     );
     let _ = ready.send(Ok(()));
-    let mut protocol_timeout_tick = tokio::time::interval(Duration::from_millis(50));
-    protocol_timeout_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // The worker's own deadlines: the contact exchange, management lanes,
+    // the chat engine. The node layer's are the pump's.
+    let mut service_tick = tokio::time::interval(Duration::from_millis(50));
+    service_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     // The worker runs as two sibling loops polled by one outer select.
     //
@@ -3833,15 +3835,15 @@ async fn run_worker(
     // whose arm bodies suspend the task would deadlock: the arm waits on
     // the borrow, and the pump future that owns it is never re-polled to
     // release it. As sibling futures of the outer select, the pump makes
-    // progress whenever the command loop is waiting.
+    // progress whenever the command loop is waiting. The pump is never
+    // cancelled: it ends only with the session.
     let inbound_ready = tokio::sync::Notify::new();
     let meet_ready = tokio::sync::Notify::new();
-    let timeout_servicer = host.protocol_timeout_servicer();
 
     // What the phone answers to besides its own key is every ephemeral
-    // identity the MAC holds: sessions with forward secrecy, which begin
-    // and end in the pump and lapse in the timeout service, and the
-    // contact exchange's session key. Each of those checks after running.
+    // identity the MAC holds: sessions with forward secrecy, which begin,
+    // end, and lapse in the pump, and the contact exchange's session key.
+    // Each of those checks after running.
     // Reported only on change: a session starts with none.
     let reported_hints = RefCell::new(Vec::<Vec<u8>>::new());
     let report_local_hints = || async {
@@ -3858,20 +3860,15 @@ async fn run_worker(
         }
     };
 
-    let pump_loop = async {
-        loop {
-            if host.pump_once().await.is_err() {
-                return;
-            }
-            report_local_hints().await;
-            if !inbound_text.borrow().is_empty() {
-                inbound_ready.notify_one();
-            }
-            if !heard_meet.borrow().is_empty() {
-                meet_ready.notify_one();
-            }
+    let pump_loop = host.run_with(async || {
+        report_local_hints().await;
+        if !inbound_text.borrow().is_empty() {
+            inbound_ready.notify_one();
         }
-    };
+        if !heard_meet.borrow().is_empty() {
+            meet_ready.notify_one();
+        }
+    });
 
     let command_loop = async {
         loop {
@@ -4676,8 +4673,7 @@ async fn run_worker(
                         }
                     }
                 }
-                _ = protocol_timeout_tick.tick() => {
-                    timeout_servicer.service().await;
+                _ = service_tick.tick() => {
                     report_local_hints().await;
                     let now_ms = handle.now_ms().await;
                     if meeting.borrow().meeting.is_open() {

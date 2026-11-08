@@ -171,39 +171,16 @@ async fn run_udp_chat(
     if skip_counter_load {
         println!("counter load: skipped (--skip-counter-load)");
     }
-    let mut stdin = BufReader::new(io::stdin()).lines();
     println!("Type a message and press enter, or /quit to exit.");
     println!("Use /pfs, /pfs <minutes>, /pfs status, or /pfs end.");
 
-    loop {
-        // `pump_once()` already waits on real MAC wake conditions. We use it here only because
-        // the example also needs to await stdin; a background UMSH task would just call
-        // `host.run().await`.
-        tokio::select! {
-            line = stdin.next_line() => {
-                match line {
-                    Ok(Some(line)) => {
-                        match handle_user_input(&chat, &peer, &line).await? {
-                            UserInputOutcome::Continue(Some(message)) => println!("{message}"),
-                            UserInputOutcome::Continue(None) => {}
-                            UserInputOutcome::Quit => break,
-                        }
-                    }
-                    Ok(None) => break,
-                    Err(error) => return Err(Box::new(error)),
-                }
-            }
-            result = host.pump_once() => {
-                result.map_err(|error| std::io::Error::other(format!("host pump failed: {error:?}")))?;
-            }
+    // The pump runs beside the input until the user quits, and the node
+    // stops with it. What it reports is printed as each cycle completes.
+    tokio::select! {
+        result = host.run_with(async || outputs.flush()) => {
+            result.map_err(|error| std::io::Error::other(format!("host pump failed: {error:?}")))?;
         }
-        let _ = local_handle
-            .service_counter_persistence()
-            .await
-            .map_err(|error| {
-                std::io::Error::other(format!("counter persistence failed: {error:?}"))
-            })?;
-        outputs.flush();
+        result = chat_input(&chat, &peer, &outputs) => result?,
     }
 
     Ok(())
@@ -267,53 +244,28 @@ async fn run_simulated_chat(config: CliConfig) -> Result<(), Box<dyn std::error:
     };
 
     print_banner("simulated", local_key, Some(remote_key));
-    let mut stdin = BufReader::new(io::stdin()).lines();
     println!("Type a message and press enter, or /quit to exit.");
     println!("Use /pfs, /pfs <minutes>, /pfs status, or /pfs end.");
 
-    loop {
-        // Each host is wake-driven; we select across both hosts and stdin instead of spinning.
-        tokio::select! {
-            line = stdin.next_line() => {
-                match line {
-                    Ok(Some(line)) => {
-                        match handle_user_input(&local_chat, &local_peer, &line).await? {
-                            UserInputOutcome::Continue(Some(message)) => println!("{message}"),
-                            UserInputOutcome::Continue(None) => {}
-                            UserInputOutcome::Quit => break,
-                        }
-                    }
-                    Ok(None) => break,
-                    Err(error) => return Err(Box::new(error)),
-                }
-            }
-            result = local_host.pump_once() => {
-                result.map_err(|error| std::io::Error::other(format!("local host pump failed: {error:?}")))?;
-            }
-            result = remote_host.pump_once() => {
-                result.map_err(|error| std::io::Error::other(format!("remote host pump failed: {error:?}")))?;
-            }
-        }
-
+    // Each host's pump is wake-driven, and both run beside the input until
+    // the user quits. The remote side answers what it heard once the cycle
+    // that heard it completes.
+    let echo = async || {
         let pending_echoes: Vec<_> = remote_echoes.borrow_mut().drain(..).collect();
         for body in pending_echoes {
             let _ = remote_chat
                 .send_text(&format!("echo: {body}"), &default_chat_options())
                 .await;
         }
-        let _ = local_handle
-            .service_counter_persistence()
-            .await
-            .map_err(|error| {
-                std::io::Error::other(format!("local counter persistence failed: {error:?}"))
-            })?;
-        let _ = remote_handle
-            .service_counter_persistence()
-            .await
-            .map_err(|error| {
-                std::io::Error::other(format!("remote counter persistence failed: {error:?}"))
-            })?;
-        outputs.flush();
+    };
+    tokio::select! {
+        result = local_host.run_with(async || outputs.flush()) => {
+            result.map_err(|error| std::io::Error::other(format!("local host pump failed: {error:?}")))?;
+        }
+        result = remote_host.run_with(echo) => {
+            result.map_err(|error| std::io::Error::other(format!("remote host pump failed: {error:?}")))?;
+        }
+        result = chat_input(&local_chat, &local_peer, &outputs) => result?,
     }
 
     Ok(())
@@ -436,33 +388,32 @@ async fn run_radio_chat<L: FrameLink>(
     if skip_counter_load {
         println!("counter load: skipped (--skip-counter-load)");
     }
-    let mut stdin = BufReader::new(io::stdin()).lines();
     println!("Type a message and press enter, or /quit to exit.");
     println!("Use /pfs, /pfs <minutes>, /pfs status, or /pfs end.");
 
-    loop {
-        tokio::select! {
-            line = stdin.next_line() => {
-                match line {
-                    Ok(Some(line)) => match handle_user_input(&chat, &peer, &line).await? {
-                        UserInputOutcome::Continue(Some(message)) => println!("{message}"),
-                        UserInputOutcome::Continue(None) => {}
-                        UserInputOutcome::Quit => break,
-                    },
-                    Ok(None) => break,
-                    Err(error) => return Err(Box::new(error)),
-                }
-            }
-            result = host.pump_once() => {
-                result.map_err(|error| std::io::Error::other(format!("host pump failed: {error:?}")))?;
-            }
+    tokio::select! {
+        result = host.run_with(async || outputs.flush()) => {
+            result.map_err(|error| std::io::Error::other(format!("host pump failed: {error:?}")))?;
         }
-        let _ = local_handle
-            .service_counter_persistence()
-            .await
-            .map_err(|error| {
-                std::io::Error::other(format!("counter persistence failed: {error:?}"))
-            })?;
+        result = chat_input(&chat, &peer, &outputs) => result?,
+    }
+    Ok(())
+}
+
+/// Act on each line typed until the user quits or input ends, printing
+/// what the node reported along the way.
+async fn chat_input<'a, R: Radio>(
+    chat: &ChatText<'a, R>,
+    peer: &ChatPeer<'a, R>,
+    outputs: &OutputQueue,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut stdin = BufReader::new(io::stdin()).lines();
+    while let Some(line) = stdin.next_line().await? {
+        match handle_user_input(chat, peer, &line).await? {
+            UserInputOutcome::Continue(Some(message)) => println!("{message}"),
+            UserInputOutcome::Continue(None) => {}
+            UserInputOutcome::Quit => break,
+        }
         outputs.flush();
     }
     Ok(())
