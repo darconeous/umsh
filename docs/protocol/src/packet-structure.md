@@ -39,7 +39,7 @@ The Frame Control Field is one byte:
 
 Where:
 
-- `VER` = protocol version (this specification defines version **3**, i.e., both bits set)
+- `VER` = protocol version (this specification defines version **3**, i.e., both bits set). The layout after the FCF depends on the version, so a receiver discards a packet of any other version, and a repeater does not forward it
 - `PKT TYPE` = packet type
 - `S` = full 32-byte source address included (when clear, a compact source hint is used instead; see [Source Address](addressing.md#source-address) for hint size by packet type)
 - `R` = reserved; senders MUST set to 0; receivers MUST drop packets where this bit is non-zero

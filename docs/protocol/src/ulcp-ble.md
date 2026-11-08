@@ -127,6 +127,13 @@ mechanism: the server's stack paces notifications to the connection,
 and the server **MUST NOT** drop segments of a frame it has begun to
 send.
 
+A stall in either direction lasts only while the server is making
+progress. A server stalls client writes while it works through frames
+it has accepted, never because the client is not taking notifications:
+output the client does not take is handled as for [a host that stops
+reading](ulcp-core.md#stalled-host), and never holds back the
+client-to-server direction.
+
 ### MTU Considerations
 
 The scheme is correct at any ATT_MTU, including the 23-octet minimum.

@@ -130,6 +130,13 @@ octets of plaintext. This bounds the record buffer a constrained
 participant needs; a participant that cannot buffer a larger record
 closes the connection.
 
+The keepalive below begins only once the handshake completes, so the
+handshake is bounded on its own: a participant closes a connection
+whose handshake has not completed within a handshake timeout, by
+default 10 seconds. A server also bounds how many connections may be
+mid-handshake at once, in total and from any one source address, and
+closes a connection past either bound as soon as it accepts it.
+
 ### Message Framing
 
 The tunnel is a stream of
