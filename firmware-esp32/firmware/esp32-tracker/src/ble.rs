@@ -1119,24 +1119,12 @@ async fn send_ble_frame(
     conn: &GattConnection<'_, '_, DefaultPacketPool>,
     outbound: &OutFrame,
 ) -> Result<(), trouble_host::Error> {
-    // A frame with a completion is one the driver waits on: it learns
-    // whether the frame went out, and a frame whose completion has already
-    // settled goes nowhere.
-    if outbound
-        .completion
-        .is_some_and(|completion| !completion.is_pending())
-    {
-        return Ok(());
-    }
     if SESSION_GEN.load(Ordering::Acquire) != outbound.generation {
         debug_log(format_args!(
             "ble outbound dropped stale-generation frame-gen={} active-gen={}",
             outbound.generation,
             SESSION_GEN.load(Ordering::Acquire),
         ));
-        if let Some(completion) = outbound.completion {
-            completion.complete(false);
-        }
         return Ok(());
     }
     let segment_payload = usize::from(conn.raw().att_mtu())
@@ -1149,12 +1137,6 @@ async fn send_ble_frame(
     );
     let mut segments = segments.peekable();
     while let Some(segment) = segments.next() {
-        if outbound
-            .completion
-            .is_some_and(|completion| !completion.is_pending())
-        {
-            return Ok(());
-        }
         let mut value: heapless09::Vec<u8, BLE_VALUE_MAX> = heapless09::Vec::new();
         value
             .push(segment.header())
@@ -1164,8 +1146,7 @@ async fn send_ble_frame(
             .map_err(|_| trouble_host::Error::InsufficientSpace)?;
         BLE_CONTROLLER_STATE.notification(
             server.ulcp.frame_out.handle,
-            (outbound.finish_ble_wipe || outbound.completion.is_some())
-                && segments.peek().is_none(),
+            outbound.finish_ble_wipe && segments.peek().is_none(),
         );
         server.ulcp.frame_out.notify(conn, &value, false).await?;
     }
@@ -1173,20 +1154,6 @@ async fn send_ble_frame(
         debug_log(format_args!(
             "ble outbound segmentation stopped generation-changed"
         ));
-    }
-    // Sent means the controller transmitted the last segment, not that
-    // the stack queued it.
-    if let Some(completion) = outbound.completion {
-        while completion.is_pending()
-            && !BLE_CONTROLLER_STATE.fence_done()
-            && !BLE_CONTROLLER_STATE.link_failed()
-        {
-            Timer::after_millis(5).await;
-        }
-        completion.complete(
-            BLE_CONTROLLER_STATE.fence_done()
-                && SESSION_GEN.load(Ordering::Acquire) == outbound.generation,
-        );
     }
     if outbound.finish_ble_wipe {
         let deadline = Instant::now() + Duration::from_secs(10);

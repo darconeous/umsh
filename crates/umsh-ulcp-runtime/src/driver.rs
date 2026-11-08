@@ -1126,13 +1126,9 @@ impl Emitter {
         };
         for index in 0..self.count {
             let frame = &self.bufs[index][..self.lens[index]];
-            let last = index + 1 == self.count;
             let to_host = HostFrame {
-                // On the last frame only. A transport writes in order, so
-                // the last frame written means all of them were, and a
-                // writer skips any frame whose completion has settled.
-                completion: self.completion.filter(|_| last),
-                finish_ble_wipe: self.finish_ble_wipe && last,
+                completion: self.completion,
+                finish_ble_wipe: self.finish_ble_wipe && index + 1 == self.count,
                 live: self.live,
                 stats: self.stats,
             };
@@ -1198,7 +1194,7 @@ impl Emitter {
                         }
                         // Queued is delivered: the interface is in process.
                         link.answer(frame).await;
-                        if let Some(completion) = self.completion.filter(|_| last) {
+                        if let Some(completion) = self.completion {
                             completion.complete(true);
                         }
                     }
@@ -1870,31 +1866,12 @@ where
                 // host that stopped reading ends the
                 // drain where it is: the frame it did not
                 // take stays queued for the next one.
-                //
-                // A frame leaves the queue only once its
-                // transport has written it, not when it is
-                // queued for the transport: a host
-                // displaced mid-drain would otherwise lose
-                // the frames still waiting for its writer,
-                // which drops them as stale.
                 let finished = loop {
-                    let completion = crate::reply_completion::ReplyCompletion::begin(
-                        Instant::now() + HOST_STALL_LIMIT,
-                    );
-                    emitter.completion = Some(completion);
                     let more = session
                         .drain_step(Instant::now().as_millis(), &mut |frame: &[u8]| {
                             emitter.push(frame)
                         });
-                    let staged = emitter.count > 0;
-                    let handed = emitter.flush(sink).await;
-                    let written = if staged {
-                        completion.wait().await
-                    } else {
-                        completion.complete(false);
-                        true
-                    };
-                    if !handed || !written {
+                    if !emitter.flush(sink).await {
                         session.abandon_drain();
                         break false;
                     }
@@ -2832,27 +2809,6 @@ mod stalled_host_tests {
             assert_eq!(stats.get(Counter::HostOutDropped), 0);
             // A dropped reception says nothing about the host's replies.
             assert!(!out.stalled(Transport::Usb).load(Ordering::Relaxed));
-        });
-    }
-
-    #[test]
-    fn a_completion_rides_on_the_last_frame_only() {
-        embassy_futures::block_on(async {
-            let out = TransportChannels::<NoopRawMutex>::new();
-            let mut emitter = Emitter::new();
-            emitter.completion = Some(crate::reply_completion::ReplyCompletion::begin(
-                Instant::now() + Duration::from_secs(1),
-            ));
-            emitter.push(b"last covered frame");
-            emitter.push(b"drain status");
-            assert!(emitter.flush(&mut usb(&out)).await);
-            let first = out.wired.try_receive().unwrap();
-            let last = out.wired.try_receive().unwrap();
-            assert!(first.completion.is_none());
-            let completion = last.completion.expect("the last frame carries it");
-            assert!(completion.is_pending());
-            completion.complete(true);
-            assert!(completion.wait().await);
         });
     }
 
