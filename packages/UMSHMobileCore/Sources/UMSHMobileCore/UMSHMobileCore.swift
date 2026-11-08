@@ -710,6 +710,12 @@ fileprivate struct FfiConverterData: FfiConverterRustBuffer {
  * it over the previous boundary, then synchronizes the containing directory.
  * An error at any stage is treated as ambiguous by the caller and therefore
  * cannot release a prepared authenticated frame for transmission.
+ *
+ * Every operation runs on one thread of the store's own, in the order it
+ * was asked for: the fsyncs never hold the thread that drives the MAC, and
+ * a commit whose caller stopped waiting still lands before any asked for
+ * after it, so a newer boundary is never overwritten by an older one. The
+ * caller learns that a boundary is durable only from the thread's reply.
  */
 public protocol MobileCounterStoreProtocol: AnyObject, Sendable {
 
@@ -725,6 +731,12 @@ public protocol MobileCounterStoreProtocol: AnyObject, Sendable {
  * it over the previous boundary, then synchronizes the containing directory.
  * An error at any stage is treated as ambiguous by the caller and therefore
  * cannot release a prepared authenticated frame for transmission.
+ *
+ * Every operation runs on one thread of the store's own, in the order it
+ * was asked for: the fsyncs never hold the thread that drives the MAC, and
+ * a commit whose caller stopped waiting still lands before any asked for
+ * after it, so a newer boundary is never overwritten by an older one. The
+ * caller learns that a boundary is durable only from the thread's reply.
  */
 open class MobileCounterStore: MobileCounterStoreProtocol, @unchecked Sendable {
     fileprivate let handle: UInt64
@@ -8790,7 +8802,10 @@ public struct MobileMeshSessionUpdateRecord: Equatable, Hashable {
     public var peerHeardEvents: [MobileMeshPeerHeardRecord]
     /**
      * Chat effects remain in the facade until Swift durably applies them and
-     * acknowledges this batch. Repeated polls may return the same batch.
+     * acknowledges this batch. Until then the batch is handed out again
+     * by a poll at least a second after the last that carried it, or by
+     * the first poll after a new wake listener; a poll in between carries
+     * no batch.
      */
     public var chatBatchId: UInt64?
     public var chatMutations: [MobileChatMutationRecord]
@@ -8834,7 +8849,10 @@ public struct MobileMeshSessionUpdateRecord: Equatable, Hashable {
          */managementEvents: [MobileMeshManagementEventRecord], advertisementEvents: [MobileMeshAdvertisementRecord], peerHeardEvents: [MobileMeshPeerHeardRecord],
         /**
          * Chat effects remain in the facade until Swift durably applies them and
-         * acknowledges this batch. Repeated polls may return the same batch.
+         * acknowledges this batch. Until then the batch is handed out again
+         * by a poll at least a second after the last that carried it, or by
+         * the first poll after a new wake listener; a poll in between carries
+         * no batch.
          */chatBatchId: UInt64?, chatMutations: [MobileChatMutationRecord], chatDeliveries: [MobileChatDeliveryRecord],
         /**
          * Repeaters overheard carrying our messages, a whole tally per
