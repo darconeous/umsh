@@ -132,3 +132,51 @@ async fn sends_under_a_session_are_acknowledged_both_ways() {
         })
         .await;
 }
+
+/// A ping under a session with forward secrecy is answered from the
+/// peer's session key, and the answer reaches the ping as its long-term
+/// peer's.
+#[tokio::test]
+async fn a_ping_under_a_session_is_answered() {
+    LocalSet::new()
+        .run_until(async {
+            let network = SimulatedNetwork::new();
+            let alice_radio = network.add_radio_with_config(255, 20);
+            let bob_radio = network.add_radio_with_config(255, 20);
+            network.connect_bidirectional(alice_radio.id(), bob_radio.id());
+
+            let (alice, _alice_pump) = boot(alice_radio, ALICE).await;
+            let (bob, _bob_pump) = boot(bob_radio, BOB).await;
+            alice.peer(key(&BOB)).await.unwrap();
+            bob.peer(key(&ALICE)).await.unwrap();
+
+            let options = SendOptions::default().with_ack_requested(true);
+            alice.request_pfs(&key(&BOB), 60, &options).await.unwrap();
+            until("Alice holds the session", || active(&alice, key(&BOB))).await;
+            let ticket = alice
+                .send_with_secrecy(&key(&BOB), b"first", &options, true)
+                .await
+                .unwrap();
+            acked("Bob acknowledges Alice's first frame", &ticket).await;
+            until("Bob holds the session", || active(&bob, key(&ALICE))).await;
+
+            let pongs = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+            let heard = pongs.clone();
+            let _subscription =
+                alice.on_pong_with_metadata(move |peer, _| heard.borrow_mut().push(peer));
+            alice
+                .peer(key(&BOB))
+                .await
+                .unwrap()
+                .ping(4, &SendOptions::default(), 10_000)
+                .await
+                .unwrap();
+            until("Bob answers the ping", || {
+                let answered = !pongs.borrow().is_empty();
+                Box::pin(async move { answered })
+            })
+            .await;
+            assert_eq!(*pongs.borrow(), vec![key(&BOB)]);
+        })
+        .await;
+}

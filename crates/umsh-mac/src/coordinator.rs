@@ -6841,20 +6841,26 @@ impl<
         Some(data)
     }
 
-    /// Mirror the requester's trace options onto the echo response.
+    /// Mirror the requester's trace options and MIC size onto the echo
+    /// response.
     ///
-    /// Both are mirrored rather than just the route: a ping measures a link,
-    /// and the signal entries are what make that measurement per-hop instead
-    /// of end-to-end. Mirroring also keeps the reply the same shape as the
-    /// request, which is the point of a ping—a response routed or sized
-    /// differently from the traffic it stands in for measures a path that
-    /// traffic will not take.
+    /// Both trace options are mirrored rather than just the route: a ping
+    /// measures a link, and the signal entries are what make that
+    /// measurement per-hop instead of end-to-end. Mirroring also keeps the
+    /// reply the same shape as the request, which is the point of a ping—a
+    /// response routed or sized differently from the traffic it stands in
+    /// for measures a path that traffic will not take. A request under a
+    /// session with forward secrecy carries the session's short MIC, and so
+    /// does its answer.
     ///
-    /// Both are requests, not guarantees. A response that ends up with no
-    /// flood budget and no source route drops them again on the way out; see
-    /// [`Mac::frame_is_repeatable`].
+    /// The trace options are requests, not guarantees. A response that ends
+    /// up with no flood budget and no source route drops them again on the
+    /// way out; see [`Mac::frame_is_repeatable`].
     fn echo_response_options(frame: &[u8], header: &PacketHeader) -> SendOptions {
         let mut options = SendOptions::default();
+        if let Some(mic_size) = header.sec_info.and_then(|info| info.scf.mic_size().ok()) {
+            options = options.with_mic_size(mic_size);
+        }
         let Ok(parsed) = ParsedOptions::extract(frame, header.options_range.clone()) else {
             return options;
         };

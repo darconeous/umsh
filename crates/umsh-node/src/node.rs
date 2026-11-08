@@ -1505,6 +1505,9 @@ impl<M: MacBackend> LocalNode<M> {
             return;
         }
         let nonce = u16::from_be_bytes([data[0], data[1]]);
+        // Under a session with forward secrecy, the peer answers from its
+        // session key; the ping waits under its long-term one.
+        let from = canonical_peer(&self.state.borrow(), from);
         let ping = {
             let mut state = self.state.borrow_mut();
             let idx = state

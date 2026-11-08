@@ -708,6 +708,51 @@ fn echo_response_mirrors_a_signal_trace_request() {
     );
 }
 
+/// An echo response takes the MIC size of its request: a ping under a
+/// session with forward secrecy carries the session's short MIC, and so
+/// does its answer.
+#[test]
+fn echo_response_mirrors_the_request_mic_size() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let peer_id = mac.add_peer(*remote.public_key()).unwrap();
+    let keys = PairwiseKeys {
+        k_enc: [1; 32],
+        k_mic: [2; 32],
+    };
+    mac.install_pairwise_keys(local_id, peer_id, keys.clone())
+        .unwrap();
+    let dst_hint = mac
+        .identity(local_id)
+        .unwrap()
+        .identity()
+        .public_key()
+        .hint();
+    let request = encode_echo_command_payload(4, &[9, 8, 7, 6]);
+    let mut buf = [0u8; 256];
+    let mut packet = PacketBuilder::new(&mut buf)
+        .unicast(dst_hint)
+        .source_full(remote.public_key())
+        .frame_counter(7)
+        .encrypted()
+        .mic_size(umsh_core::MicSize::Mic4)
+        .payload(&request)
+        .build()
+        .unwrap();
+    CryptoEngine::new(DummyAes, DummySha)
+        .seal_packet(&mut packet, &keys)
+        .unwrap();
+    mac.radio_mut().queue_received_frame(packet.as_bytes());
+
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+
+    let response = mac.tx_queue_mut().pop_next().expect("echo response queued");
+    let header = PacketHeader::parse(response.frame.as_slice()).unwrap();
+    let mic_size = header.sec_info.unwrap().scf.mic_size().unwrap();
+    assert_eq!(mic_size, umsh_core::MicSize::Mic4);
+}
+
 #[test]
 fn peer_registry_looks_up_by_hint_and_updates_route() {
     let mut registry = PeerRegistry::<4>::new();
