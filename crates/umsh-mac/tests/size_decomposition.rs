@@ -8,7 +8,7 @@
 
 use umsh_mac::{
     ChannelState, ChannelTable, DuplicateCache, EmergencyDigests, PeerCryptoMap, PeerRegistry,
-    ReplayWindow, RxWindow, RxWindows, TxQueue,
+    QueuedTx, ReplayWindow, RxWindow, RxWindows, TxQueue,
 };
 
 #[test]
@@ -19,6 +19,7 @@ fn component_sizes() {
     let peer_registry_8 = core::mem::size_of::<PeerRegistry<8>>();
     let dup_32 = core::mem::size_of::<DuplicateCache<32>>();
     let emergency = core::mem::size_of::<EmergencyDigests>();
+    let queued = core::mem::size_of::<QueuedTx<255>>();
     let tx_4 = core::mem::size_of::<TxQueue<4, 255>>();
     println!("ReplayWindow          = {replay}");
     println!("ChannelState          = {channel_state}");
@@ -26,6 +27,7 @@ fn component_sizes() {
     println!("PeerRegistry<8>       = {peer_registry_8}");
     println!("DuplicateCache<32>    = {dup_32}");
     println!("EmergencyDigests      = {emergency}");
+    println!("QueuedTx<255>         = {queued}");
     println!("TxQueue<4,255>        = {tx_4}");
 
     // Includes one ACK enqueue offset per retained MIC, so the first eligible
@@ -38,6 +40,9 @@ fn component_sizes() {
         "ChannelTable<8> grew: {channel_table_8}"
     );
     assert!(emergency <= 192, "EmergencyDigests grew: {emergency}");
+    // A forward's confirmation state rides in the entry's padding: the
+    // queue entry is the whole of it.
+    assert!(queued <= 304, "QueuedTx grew: {queued}");
 }
 
 /// Receive windows: one per remote key, shared by every identity, beside

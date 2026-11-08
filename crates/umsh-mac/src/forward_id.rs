@@ -84,6 +84,29 @@ pub(crate) fn same_packet(sent: &[u8], heard: &[u8]) -> bool {
     }
 }
 
+/// Whether `heard`, a copy of `sent` ([`same_packet`]), is further along
+/// the packet's path: it has spent more of the source route, or with as
+/// much route left, more flood hops.
+///
+/// That is a copy some later hop transmitted, which a copy from behind—the
+/// previous hop's retry, or `sent` itself handed back over a link—is not.
+pub(crate) fn carried_onward(sent: &[u8], heard: &[u8]) -> bool {
+    match (path_progress(sent), path_progress(heard)) {
+        (Some(sent), Some(heard)) => heard > sent,
+        _ => false,
+    }
+}
+
+/// How far along its path `frame` is, ordered so that later is greater:
+/// source-route hints left, fewer first, then flood hops spent.
+fn path_progress(frame: &[u8]) -> Option<(core::cmp::Reverse<usize>, u8)> {
+    let header = PacketHeader::parse(frame).ok()?;
+    let options = ParsedOptions::extract(frame, header.options_range.clone()).ok()?;
+    let hints_left = options.source_route.map_or(0, |range| range.len() / 2);
+    let spent = header.flood_hops.map_or(0, |hops| hops.accumulated());
+    Some((core::cmp::Reverse(hints_left), spent))
+}
+
 /// A 64-bit digest of the bytes of `frame` a forwarder may not rewrite, for
 /// telling a forward of `frame` apart from a frame that merely shares its
 /// routing identity without keeping the whole frame.

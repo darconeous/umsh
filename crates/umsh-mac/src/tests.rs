@@ -2,6 +2,7 @@ mod ack_authentication;
 mod bearer;
 #[cfg(feature = "software-crypto")]
 mod colliding_channels;
+mod forward_confirmation;
 mod queue_resilience;
 mod routing_reliability;
 mod send_shapes;
@@ -11594,6 +11595,7 @@ fn modeled_mixed_packet_classes_coexist_on_the_same_mesh() {
         },
         "the unicast phase should complete normally",
     );
+    settle_modeled(&scenario.network, &scenario.macs);
 
     let bob_multicast = Cell::new(0usize);
     {
@@ -11668,6 +11670,7 @@ fn modeled_mixed_packet_classes_coexist_on_the_same_mesh() {
         },
         "the blind-unicast phase should also complete on the same mesh",
     );
+    settle_modeled(&scenario.network, &scenario.macs);
 
     let alice_broadcast = Cell::new(0usize);
     let bob_broadcast = Cell::new(0usize);
@@ -14492,6 +14495,25 @@ fn pump_modeled_until(
         network.advance_ms(step_ms);
     }
     panic!("timed out waiting for {waiting_for}");
+}
+
+/// Pump until nothing is queued or on the air anywhere. A phase can finish
+/// with a repeater still waiting to hear a forward carried onward, and a
+/// retry it sends then can collide, at a node the next phase's sender
+/// cannot hear, with that sender's first frame.
+fn settle_modeled(network: &crate::test_support::ModeledNetwork, macs: &[RefCell<DeepModeledMac>]) {
+    pump_modeled_until(
+        network,
+        macs,
+        25,
+        900,
+        |_, _, _| {},
+        || {
+            !network.has_pending_deliveries()
+                && macs.iter().all(|mac| mac.borrow().tx_queue().is_empty())
+        },
+        "the mesh to fall quiet",
+    );
 }
 
 fn install_channel_on_all(scenario: &mut ModeledScenario, channel_key: ChannelKey) -> ChannelKey {
