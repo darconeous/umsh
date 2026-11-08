@@ -794,3 +794,24 @@ fn a_signed_unicast_past_the_verify_budget_waits_for_its_retry() {
         "its retry is acked"
     );
 }
+
+/// A multicast teaches a route to the peer it names only when that peer's
+/// signature verifies: the channel key proves membership, not who sent it.
+/// Off the peer's own transmitter, with no flood budget, a genuine one
+/// makes it a direct neighbor; a forgery naming it makes it nothing.
+#[test]
+fn only_a_verified_multicast_teaches_a_route() {
+    let from = key_of(SEED);
+    for forge in [true, false] {
+        let mut mac = receiver();
+        let peer_id = mac.add_peer(from).unwrap();
+        let frame = multicast_from(SEED, &CHANNEL, 40, false, forge);
+        assert!(receive(&mut mac, &frame).is_some());
+        let expected = (!forge).then_some(CachedRoute::Direct);
+        assert_eq!(
+            mac.peer_registry().get(peer_id).unwrap().route,
+            expected,
+            "forge={forge}"
+        );
+    }
+}

@@ -1,7 +1,7 @@
 use core::{future::poll_fn, task::Poll};
 
 use hamaddr::HamAddr;
-use heapless::{Deque, LinearMap, Vec};
+use heapless::{LinearMap, Vec};
 use rand::{Rng, RngExt as _};
 use umsh_core::{
     BlindAddr, BuildError, ChannelCommitment, ChannelId, ChannelKey, FloodHops, NodeHint,
@@ -21,11 +21,11 @@ pub use shape::SendDestination;
 use shape::{PreparedSend, SendTarget, ShapedFrame, build_shaped, route_retry_eligible};
 
 use crate::{
-    AddPeerError, CapacityError, DEFAULT_ACKS, DEFAULT_CHANNEL_WINDOWS, DEFAULT_CHANNELS,
-    DEFAULT_DUP, DEFAULT_IDENTITIES, DEFAULT_PEERS, DEFAULT_ROUTE_HOLDS, DEFAULT_RX_STRANGERS,
-    DEFAULT_TX, MAX_ACK_FORWARD_RETRIES, MAX_CAD_ATTEMPTS, MAX_FLOOD_HOPS, MAX_FORWARD_RETRIES,
-    MAX_RESEND_FRAME_LEN, MAX_SOURCE_ROUTE_HINTS, Platform, ReplayVerdict, ReplayWindow,
-    RxAcceptance, TRACE_ROUTE_REFRESH_MS, VERIFY_HELD_FRAMES,
+    ACK_HINTED_CAD_ATTEMPTS, AddPeerError, CapacityError, DEFAULT_ACKS, DEFAULT_CHANNEL_WINDOWS,
+    DEFAULT_CHANNELS, DEFAULT_DUP, DEFAULT_IDENTITIES, DEFAULT_PEERS, DEFAULT_ROUTE_HOLDS,
+    DEFAULT_RX_STRANGERS, DEFAULT_TX, MAX_ACK_FORWARD_RETRIES, MAX_CAD_ATTEMPTS, MAX_FLOOD_HOPS,
+    MAX_FORWARD_RETRIES, MAX_RESEND_FRAME_LEN, MAX_SOURCE_ROUTE_HINTS, Platform, ReplayVerdict,
+    ReplayWindow, RxAcceptance, TRACE_ROUTE_REFRESH_MS, VERIFY_HELD_FRAMES,
     admission::Recalled,
     cache::{DupCacheKey, DuplicateCache},
     peers::CachedRoute,
@@ -217,10 +217,6 @@ struct VerifiedFrame {
     peer_id: PeerId,
 }
 
-/// How many acknowledgments are remembered after they complete, so later
-/// copies of the same ack can still teach a route.
-const RECENT_ACKS: usize = 4;
-
 /// What an outgoing MAC ack's trailer is made from.
 #[derive(Clone, Copy)]
 enum AckTrailer<'a> {
@@ -229,18 +225,6 @@ enum AckTrailer<'a> {
     Sealed { v: [u8; 16], keys: &'a PairwiseKeys },
     /// Carried as given.
     Verbatim([u8; 8]),
-}
-
-/// An acknowledgment that completed a send, kept for its later copies.
-///
-/// The first copy of an ack to arrive completes the send and is gone from
-/// the pending table; the rest still carry route evidence, and the trailer
-/// is what authenticates them as the same ack.
-#[derive(Clone, Copy, Debug)]
-struct CompletedAck {
-    trailer: [u8; 8],
-    peer: PublicKey,
-    at_ms: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1116,8 +1100,11 @@ pub struct MacCounters {
     pub rx_accepted: u32,
     /// Receptions this node repeated onward.
     pub forwarded: u32,
-    /// Queued forwards dropped because the destination's ack was overheard
-    /// before they went out. Airtime this node did not have to spend.
+    /// Overheard acks that named a queued forward before it went out, and
+    /// cut its channel-access budget to
+    /// [`ACK_HINTED_CAD_ATTEMPTS`](crate::ACK_HINTED_CAD_ATTEMPTS). One
+    /// that then finds the channel busy is counted in
+    /// [`Self::tx_abandoned`] too.
     pub forward_cancelled: u32,
     /// Receptions this node would have repeated and declined under the
     /// operator's forwarding policy: a signal under this repeater's
@@ -1228,7 +1215,6 @@ pub struct Mac<
     transmitter_observations: crate::TransmitterObservations,
     uplinks: crate::uplinks::UplinkObservations,
     echo_watches: crate::echo_watch::EchoWatches,
-    recent_acks: Deque<CompletedAck, RECENT_ACKS>,
     channels: ChannelTable<CHANNELS, WINDOWS>,
     dup_cache: DuplicateCache<DUP>,
     multicast_unknown_dup_cache: DuplicateCache<DUP>,
@@ -1291,7 +1277,6 @@ impl<
             transmitter_observations: crate::TransmitterObservations::new(),
             uplinks: crate::uplinks::UplinkObservations::new(),
             echo_watches: crate::echo_watch::EchoWatches::new(),
-            recent_acks: Deque::new(),
             channels: ChannelTable::new(),
             dup_cache: DuplicateCache::new(),
             multicast_unknown_dup_cache: DuplicateCache::new(),
@@ -2325,8 +2310,8 @@ impl<
     /// Enqueue the re-ack of a request whose earlier ack was lost
     /// ([`AckOccasion::LostReply`]) as a scoped flood with a trace.
     ///
-    /// The route the lost ack followed is the one thing known not to work,
-    /// so no cached route is consulted, held or not. The flood reaches as
+    /// The route the lost ack followed may be what failed, so no cached
+    /// route is consulted, held or not. The flood reaches as
     /// far as the request traveled (`request_accumulated`, its `FHOPS_ACC`)
     /// plus the slack a retransmission earns, within the request's regions,
     /// and its trace gives the sender a path back here.
@@ -2995,9 +2980,11 @@ impl<
     /// make this repeater ignore every identical retransmission from the
     /// sender for the key's whole lifetime: a black hole for that packet.
     /// Forwards withdrawn because enough other repeaters were heard
-    /// carrying the packet, or because its acknowledgement was overheard,
-    /// keep their key: the packet got through, and later copies of it are
-    /// not worth the airtime.
+    /// carrying the packet keep their key: the packet got through, and
+    /// later copies of it are not worth the airtime. An overheard
+    /// acknowledgement withdraws nothing: it only shortens the forward's
+    /// channel-access budget, and a forward it gives up releases its key
+    /// here like any other.
     fn forget_unaired_forward(&mut self, queued: &crate::QueuedTx<FRAME>) {
         if queued.priority != TxPriority::Forward || queued.receipt.is_some() {
             return;
@@ -3459,7 +3446,7 @@ impl<
         // decryption, because it is aimed at whoever happens to be
         // carrying the acknowledged packet—not at this frame's
         // addressee.
-        self.cancel_forwards_for_ack_mic_option(&buf[..frame_len], &header);
+        self.hint_forwards_for_ack_mic_option(&buf[..frame_len], &header);
         // The pending table decides what the repeat means for a retry; the
         // watch, which also covers sends with no retry to call off, decides
         // whom to tell.
@@ -3641,14 +3628,11 @@ impl<
         // be the origin of one exchange and a repeater for another, and the
         // queued forward it may be holding is not this ack's business to
         // match against.
-        self.cancel_forwards_for_ack_mic(&ack_trailer[..4], false);
+        self.hint_forwards_for_ack_mic(&ack_trailer[..4], false);
         if let Some((index, receipt, target_peer)) = self.pending_answered_by(&buf[..frame_len])
             && let Some((identity_id, receipt, via_route_retry)) =
                 self.complete_pending_ack(index, receipt)
         {
-            // Every copy of one ack carries the same trailer: its tag covers
-            // only what no repeater may change.
-            self.remember_completed_ack(ack_trailer, target_peer);
             // The path the ack came back by is evidence like any other
             // frame's. Scoring is what keeps an asymmetric return path from
             // displacing a better route, helped by the confirmation the
@@ -3666,14 +3650,10 @@ impl<
             );
             return true;
         }
-        // A later copy of an ack that already completed its send—the copy
-        // overheard before its source route ran out often arrives first.
-        // It completes nothing, but the path it came by still counts.
-        if let Some(peer) = self.recent_ack_peer(&ack_trailer)
-            && let Some((peer_id, _)) = self.peer_registry.lookup_by_key(&peer)
-        {
-            self.learn_route_for_peer(peer_id, &buf[..frame_len], header, rx);
-        }
+        // A later copy of an ack that already completed its send teaches
+        // nothing: every copy carries the same trailer, since its tag
+        // covers only what no repeater may change, so the path a copy
+        // claims is anyone's to rewrite.
         forwarding_confirmed || self.maybe_forward_received(&buf[..frame_len], header, rx, false)
     }
 
@@ -3724,18 +3704,11 @@ impl<
                     && self.should_emit_destination_ack(&buf[..frame_len], header, rx)
                     && self.can_acknowledge_unicast_duplicate(peer_id, header, &buf[..frame_len])
                 {
-                    // Settled first: a lost reply retires the route the
-                    // earlier ack took, before this copy can offer it again.
+                    // A duplicate teaches no route and retires none: the
+                    // frame authenticates its sender, but not the copy, and
+                    // anyone who heard the original can send it again with
+                    // another path or a Route Retry. It earns a re-ack only.
                     let occasion = self.duplicate_ack_occasion(peer_id, header, &buf[..frame_len]);
-                    // Before the ack is composed, because a routed ack is
-                    // built from whatever route this teaches. A
-                    // retransmission is the one frame carrying route
-                    // information we did not already have: the sender
-                    // reached the retry ladder precisely because its first
-                    // attempt went unanswered. Composing the re-ack from the
-                    // stale cache instead throws that away. A lost reply's
-                    // re-ack floods whatever this installs.
-                    self.learn_route_for_peer(peer_id, &buf[..frame_len], header, rx);
                     let ack_v = self.received_ack_v(&buf[..frame_len], header, None, &keys);
                     self.queue_received_mac_ack(
                         local_id,
@@ -3880,16 +3853,11 @@ impl<
                                 continue;
                             }
                         }
-                        Some(ReplayVerdict::Replay) => {
-                            // A later copy of a frame already taken. It carries
-                            // the path it came by, which may be better than the
-                            // first copy's—and the first may have been
-                            // overheard before its source route ran out.
-                            if self.is_fresh_duplicate(peer_id, header, &buf[..frame_len]) {
-                                self.learn_route_for_peer(peer_id, &buf[..frame_len], header, rx);
-                            }
-                            continue;
-                        }
+                        // A later copy of a frame already taken teaches no
+                        // route: anyone who heard the frame can send it
+                        // again with whatever path they like, since no MIC
+                        // covers the options a repeater rewrites.
+                        Some(ReplayVerdict::Replay) => continue,
                         None => continue,
                     }
                 }
@@ -4073,7 +4041,12 @@ impl<
         if !accepted {
             return false;
         }
-        if let Some(peer_id) = source.peer_id {
+        // The channel key proves only membership, so an unsigned frame's
+        // source is a claim any member can make. Only a verified signature
+        // says the peer sent it, and only then does it teach a route.
+        if signature == SignatureStatus::Verified
+            && let Some(peer_id) = source.peer_id
+        {
             self.learn_route_for_peer(peer_id, &buf[..frame_len], header, rx);
         }
         let mut delivered = false;
@@ -4194,10 +4167,9 @@ impl<
                                 &buf[..frame_len],
                             )
                         {
-                            // Same order and reasons as the unicast path.
+                            // As on the unicast path.
                             let occasion =
                                 self.duplicate_ack_occasion(peer_id, header, &buf[..frame_len]);
-                            self.learn_route_for_peer(peer_id, &buf[..frame_len], header, rx);
                             let ack_v = self.received_ack_v(
                                 &buf[..frame_len],
                                 header,
@@ -4358,19 +4330,8 @@ impl<
                                         continue;
                                     }
                                 }
-                                Some(ReplayVerdict::Replay) => {
-                                    // As on the unicast path: a later copy
-                                    // still carries the path it came by.
-                                    if self.is_fresh_duplicate(peer_id, header, &buf[..frame_len]) {
-                                        self.learn_route_for_peer(
-                                            peer_id,
-                                            &buf[..frame_len],
-                                            header,
-                                            rx,
-                                        );
-                                    }
-                                    continue;
-                                }
+                                // As on the unicast path.
+                                Some(ReplayVerdict::Replay) => continue,
                                 None => continue,
                             }
                         }
@@ -5692,17 +5653,17 @@ impl<
         })
     }
 
-    /// Which copy an eligible duplicate is ([`AckOccasion`]), and what it
-    /// means for the route back.
+    /// Which copy an eligible duplicate is ([`AckOccasion`]).
     ///
     /// A copy whose original was accepted but never acknowledged gets its
-    /// first ack. A Route Retry of one already acknowledged proves that ack
-    /// lost, since the sender sends one only after its whole ack timeout:
-    /// the route the ack took is retired, so the re-ack and whatever the
-    /// retry teaches do not follow it again. Any other late copy may cross
-    /// an ack still on its way, and proves nothing about the route.
+    /// first ack. A Route Retry of one already acknowledged says that ack
+    /// was lost, since the sender sends one only after its whole ack
+    /// timeout, so the re-ack floods rather than follow the route the lost
+    /// one took. The route itself stays: Route Retry is a dynamic option on
+    /// a copy anyone can resend, so it is no evidence against a route. Any
+    /// other late copy may cross an ack still on its way.
     fn duplicate_ack_occasion(
-        &mut self,
+        &self,
         peer_id: PeerId,
         header: &PacketHeader,
         frame: &[u8],
@@ -5724,7 +5685,6 @@ impl<
         if !route_retry {
             return AckOccasion::Repeat;
         }
-        self.peer_registry.retire_route(peer_id, now_ms);
         AckOccasion::LostReply
     }
 
@@ -6970,54 +6930,6 @@ impl<
         }
     }
 
-    /// How long after the first copy of a frame a later copy still counts
-    /// as the same transmission making its way through the mesh, rather
-    /// than the frame replayed.
-    ///
-    /// The copies a node hears differ by a hop or two of forwarding, and a
-    /// forwarding-confirmation timeout is sized to one hop's worst case.
-    /// The floor covers radios that report no frame time.
-    fn duplicate_route_window_ms(&self) -> u64 {
-        self.forward_confirm_timeout_ms()
-            .saturating_mul(2)
-            .max(5_000)
-    }
-
-    /// Whether a frame the replay window turned away is a copy of one it
-    /// accepted moments ago—same counter, same MIC—and so still worth
-    /// learning a route from.
-    fn is_fresh_duplicate(&self, peer_id: PeerId, header: &PacketHeader, frame: &[u8]) -> bool {
-        let Some((counter, mic)) = Self::replay_metadata(header, frame) else {
-            return false;
-        };
-        let now_ms = self.clock.now_ms();
-        self.rx_window(peer_id)
-            .and_then(|entry| entry.replay_window.duplicate_age_ms(counter, mic, now_ms))
-            .is_some_and(|age_ms| age_ms <= self.duplicate_route_window_ms())
-    }
-
-    fn remember_completed_ack(&mut self, trailer: [u8; 8], peer: PublicKey) {
-        if self.recent_acks.is_full() {
-            let _ = self.recent_acks.pop_front();
-        }
-        let _ = self.recent_acks.push_back(CompletedAck {
-            trailer,
-            peer,
-            at_ms: self.clock.now_ms(),
-        });
-    }
-
-    /// The peer whose ack carried `trailer`, if that ack completed a send
-    /// moments ago.
-    fn recent_ack_peer(&self, trailer: &[u8; 8]) -> Option<PublicKey> {
-        let now_ms = self.clock.now_ms();
-        let window_ms = self.duplicate_route_window_ms();
-        self.recent_acks
-            .iter()
-            .find(|ack| &ack.trailer == trailer && now_ms.saturating_sub(ack.at_ms) <= window_ms)
-            .map(|ack| ack.peer)
-    }
-
     fn region_codes_from_options(
         frame: &[u8],
         options_range: core::ops::Range<usize>,
@@ -8232,22 +8144,30 @@ impl<
         );
     }
 
-    /// Drop any queued forward the destination has already acknowledged.
+    /// Let any queued forward the destination may already have acknowledged
+    /// yield to a busy channel.
     ///
     /// A MAC ack echoes `ack_mic`—the first four bytes of the acknowledged
     /// packet's on-wire MIC—which every forwarder can read without keys, and
-    /// which survives the rewrites a repeater performs. A forward still sitting
-    /// in the transmit queue when that ack is overheard has been overtaken by
-    /// events: the destination has the packet, so repeating it buys nothing but
-    /// airtime. The [ACK protection interval] exists to put the ack on the air
-    /// first, which is precisely what makes this observation available.
+    /// which survives the rewrites a repeater performs. A forward still
+    /// sitting in the transmit queue when that ack is overheard has probably
+    /// been overtaken by events. The [ACK protection interval] exists to put
+    /// the ack on the air first, which is what makes this observation
+    /// available.
     ///
-    /// This cancels what is queued at this instant and leaves nothing behind. A
-    /// [route-retry] copy that arrives later carries a distinct forwarding
-    /// identity, is queued and forwarded normally—the origin resorted to it
-    /// because the ack never reached it, and carrying it prompts the
-    /// destination to acknowledge again—and is in turn cancelable by another
-    /// overheard ack.
+    /// Probably, not provably: a repeater holds no key for the `ack_tag`,
+    /// and anyone who heard the packet can send its `ack_mic`. So the forward
+    /// is not removed. It keeps its place and its delay, and only its
+    /// channel-access budget shrinks to [`ACK_HINTED_CAD_ATTEMPTS`]: on a
+    /// clear channel it airs as it would have, and on a busy one it gives
+    /// way at once instead of contending for airtime the destination
+    /// probably does not need. A forward given up that way releases its
+    /// duplicate key like any forward that never aired, so a forged ack
+    /// costs the sender one retry at most.
+    ///
+    /// This acts on what is queued at this instant and leaves nothing
+    /// behind. A [route-retry] copy that arrives later carries a distinct
+    /// forwarding identity and is queued with the full budget.
     ///
     /// Only unattributed forwards are eligible. A queued frame carrying a
     /// receipt is this node's own send, whose completion is decided by the
@@ -8257,62 +8177,71 @@ impl<
     /// `acks_too` widens this to queued forwards of MAC acks carrying the
     /// same `ack_mic`, for an acknowledgment that arrived as an [Ack MIC
     /// option]: the packet carrying the option takes the acknowledgment the
-    /// rest of the way, so the standalone ack has nothing left to deliver. A
-    /// standalone ack never passes it—a MAC ack's own trailer opens with the
-    /// four bytes it echoes, so a second copy would cancel the first.
+    /// rest of the way, so the standalone ack probably has nothing left to
+    /// deliver. A standalone ack never passes it—a MAC ack's own trailer
+    /// opens with the four bytes it echoes, so a second copy would hint the
+    /// first.
     ///
     /// [ACK protection interval]: https://darconeous.github.io/umsh/docs/protocol/channel-access.html#ack-protection-interval
     /// [route-retry]: https://darconeous.github.io/umsh/docs/protocol/packet-options.html#route-retry-option-6
     /// [Ack MIC option]: https://darconeous.github.io/umsh/docs/protocol/packet-options.html#ack-mic-option-8
-    fn cancel_forwards_for_ack_mic(&mut self, ack_mic: &[u8], acks_too: bool) -> usize {
+    fn hint_forwards_for_ack_mic(&mut self, ack_mic: &[u8], acks_too: bool) -> usize {
         if ack_mic.len() != 4 {
             return 0;
         }
-        let removed = self.tx_queue.remove_all_matching(|entry| {
-            if entry.priority != TxPriority::Forward || entry.receipt.is_some() {
-                return false;
+        const HINTED: u8 = MAX_CAD_ATTEMPTS - ACK_HINTED_CAD_ATTEMPTS;
+        let mut hinted = 0;
+        for entry in self.tx_queue.iter_mut() {
+            if entry.priority != TxPriority::Forward
+                || entry.receipt.is_some()
+                || entry.cad_attempts >= HINTED
+            {
+                continue;
             }
             let frame = entry.frame.as_slice();
             let Ok(header) = PacketHeader::parse(frame) else {
-                return false;
+                continue;
             };
             // Only the packet types whose destination emits a MAC ack can be
             // the subject of one. Without this, a forwarded ack awaiting
-            // transmission would be cancelled by a second copy of itself: a
+            // transmission would be hinted by a second copy of itself: a
             // MAC ack's own trailer opens with the same four bytes it echoes.
             let eligible = match header.packet_type() {
                 PacketType::UnicastAckReq | PacketType::BlindUnicastAckReq => true,
                 PacketType::MacAck => acks_too,
                 _ => false,
             };
-            if !eligible {
-                return false;
+            if eligible
+                && frame
+                    .get(header.mic_range.clone())
+                    .and_then(|mic| mic.get(..4))
+                    .is_some_and(|prefix| prefix == ack_mic)
+            {
+                entry.cad_attempts = HINTED;
+                hinted += 1;
             }
-            frame
-                .get(header.mic_range.clone())
-                .and_then(|mic| mic.get(..4))
-                .map(|prefix| prefix == ack_mic)
-                .unwrap_or(false)
-        });
-        if removed > 0 {
+        }
+        if hinted > 0 {
             MacCounters::bump(&mut self.counters.forward_cancelled);
         }
-        removed
+        hinted
     }
 
-    /// Cancel queued forwards named by a piggy-backed [Ack MIC option].
+    /// Hint the queued forwards named by a piggy-backed [Ack MIC option]
+    /// ([`Mac::hint_forwards_for_ack_mic`]).
     ///
     /// The option carries the same correlation handle as a standalone ack, on
     /// an ordinary authenticated packet travelling the other way. It sits in
     /// the options block, which is not encrypted, so a forwarder reads it
-    /// under the same terms as the standalone form. Because it carries the
-    /// acknowledgment onward itself, it also retires any queued forward of
-    /// the standalone ack it duplicates.
+    /// under the same terms as the standalone form, and no better: the
+    /// packet's MIC is not the forwarder's to check. Because it carries the
+    /// acknowledgment onward itself, it also hints any queued forward of the
+    /// standalone ack it duplicates.
     ///
     /// [Ack MIC option]: https://darconeous.github.io/umsh/docs/protocol/packet-options.html#ack-mic-option-8
-    fn cancel_forwards_for_ack_mic_option(&mut self, frame: &[u8], header: &PacketHeader) {
+    fn hint_forwards_for_ack_mic_option(&mut self, frame: &[u8], header: &PacketHeader) {
         if let Some(ack_mic) = Self::ack_mic_option(frame, header) {
-            self.cancel_forwards_for_ack_mic(&ack_mic, true);
+            self.hint_forwards_for_ack_mic(&ack_mic, true);
         }
     }
 

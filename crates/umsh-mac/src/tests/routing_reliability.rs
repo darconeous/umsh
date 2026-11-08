@@ -798,10 +798,11 @@ fn route_to(mac: &TestMac, peer_id: PeerId) -> Option<CachedRoute> {
 }
 
 /// Copies of one reply arrive over several paths. The first teaches a route
-/// at once; a later copy over a clearly better path replaces it, and a
-/// flood-tail copy over a worse one does not.
+/// at once. A later copy teaches nothing, however good the path it claims:
+/// anyone who heard the reply can send it again with a trace of their own,
+/// and nothing authenticates one copy over another.
 #[test]
-fn a_better_copy_of_a_reply_replaces_the_route_and_a_worse_one_does_not() {
+fn a_later_copy_of_a_reply_teaches_no_route() {
     let (mut mac, local_id, _, peer_id) = mac_with_keyed_peer();
     let remote = DummyIdentity::new([0xAB; 32]);
     let dst = mac
@@ -829,11 +830,10 @@ fn a_better_copy_of_a_reply_replaces_the_route_and_a_worse_one_does_not() {
     mac.radio_mut()
         .queue_received_traced_unicast(&remote, &reply_keys(), &dst, 7, &[b], &[50]);
     block_on(mac.receive_one(|_, _| {})).unwrap();
-    assert_eq!(route_to(&mac, peer_id), CachedRoute::source(&[b]));
+    assert_eq!(route_to(&mac, peer_id), CachedRoute::source(&[a]));
 
-    // A flood-tail copy through B and then C, its last hop marginal.
+    // A flood-tail copy through B and then C.
     mac.clock().advance_ms(50);
-    mac.radio_mut().rx_snr = Snr::from_decibels(-10);
     mac.radio_mut().queue_received_traced_unicast(
         &remote,
         &reply_keys(),
@@ -843,7 +843,7 @@ fn a_better_copy_of_a_reply_replaces_the_route_and_a_worse_one_does_not() {
         &[0, 50],
     );
     block_on(mac.receive_one(|_, _| {})).unwrap();
-    assert_eq!(route_to(&mac, peer_id), CachedRoute::source(&[b]));
+    assert_eq!(route_to(&mac, peer_id), CachedRoute::source(&[a]));
 }
 
 /// A copy that turns up long after the reply it duplicates is a replay, not
@@ -920,10 +920,11 @@ fn an_acknowledged_route_takes_a_larger_margin_to_displace() {
     assert_eq!(registry.get(peer_id).unwrap().route, Some(better));
 }
 
-/// The first copy of an ack completes the send; a later copy over a better
-/// path still teaches that path.
+/// The first copy of an ack completes the send and teaches its path. A later
+/// copy carries the same trailer, so it authenticates nothing about the path
+/// it claims, and teaches nothing.
 #[test]
-fn a_later_copy_of_a_completed_ack_still_teaches_its_route() {
+fn a_later_copy_of_a_completed_ack_teaches_no_route() {
     let (mut mac, local_id, key, peer_id) = mac_with_keyed_peer();
     let receipt = mac
         .queue_unicast(
@@ -961,7 +962,7 @@ fn a_later_copy_of_a_completed_ack_still_teaches_its_route() {
     }))
     .unwrap();
     assert_eq!(acknowledged, 1, "only the first copy completes the send");
-    assert_eq!(route_to(&mac, peer_id), CachedRoute::source(&[b]));
+    assert_eq!(route_to(&mac, peer_id), CachedRoute::source(&[a]));
 }
 
 #[test]
@@ -1731,8 +1732,12 @@ fn queued_ack_shape(mac: &mut TestMac) -> AckShape {
 /// Past the duplicate-ack holdoff, and then some.
 const LATE_MS: u64 = 60_000;
 
+/// Route Retry is a dynamic option, and the copy it rides on duplicates a
+/// frame already taken: anyone who heard the request can send it again with
+/// the option added. It earns the scoped-flood re-ack the lost-reply case
+/// needs, but it is no evidence against the route, which stays.
 #[test]
-fn a_route_retry_of_an_acked_request_reacks_by_scoped_flood_and_retires_the_route() {
+fn a_route_retry_of_an_acked_request_reacks_by_scoped_flood_and_keeps_the_route() {
     let dead = [RouterHint([4, 5])];
     let fresh = [RouterHint([6, 7])];
     // The retry may trace the dead route's own path (a link that works only
@@ -1768,11 +1773,31 @@ fn a_route_retry_of_an_acked_request_reacks_by_scoped_flood_and_retires_the_rout
             }
         );
         assert!(mac.tx_queue().is_empty());
-        // The dead route is retired and not taught straight back; a
-        // different path the retry traced is an ordinary candidate.
-        let expected = (retry_trace != dead).then(|| CachedRoute::source(&fresh).unwrap());
-        assert_eq!(mac.peer_registry().get(peer_id).unwrap().route, expected);
+        // Neither retired nor replaced by whatever the copy traced.
+        assert_eq!(
+            mac.peer_registry().get(peer_id).unwrap().route,
+            CachedRoute::source(&dead)
+        );
     }
+}
+
+/// A Route Retry that is the first copy of its frame to arrive is as
+/// authenticated as any new frame from the peer, and the path it traced
+/// replaces the route held.
+#[test]
+fn a_route_retry_on_a_new_frame_replaces_the_route() {
+    let held = [RouterHint([4, 5])];
+    let fresh = [RouterHint([6, 7])];
+    let (mut mac, _, _, peer_id) = mac_with_keyed_peer();
+    let remote = DummyIdentity::new([0xAB; 32]);
+    mac.peer_registry_mut()
+        .update_route(peer_id, CachedRoute::source(&held).unwrap());
+    queue_request_copy(&mut mac, &remote, 3, Some(&fresh), None, true);
+    assert_eq!(receive_counting(&mut mac), 1);
+    assert_eq!(
+        mac.peer_registry().get(peer_id).unwrap().route,
+        CachedRoute::source(&fresh)
+    );
 }
 
 #[test]
@@ -1851,11 +1876,10 @@ fn a_lost_reply_floods_the_reack_but_leaves_a_held_route_held() {
     assert!(shape.traced);
     let now = mac.clock().now_ms();
     assert_eq!(mac.peer_registry().get(peer_id).unwrap().route, Some(held));
-    assert_eq!(
+    // A duplicate offers no candidate either.
+    assert!(
         mac.peer_registry()
             .route_hold(peer_id, now)
-            .and_then(|hold| hold.candidate.as_ref())
-            .map(|candidate| candidate.route.clone()),
-        CachedRoute::source(&fresh)
+            .is_some_and(|hold| hold.candidate.is_none())
     );
 }

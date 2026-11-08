@@ -105,7 +105,7 @@ This distinction allows forwarding-related metadata (source routes, traces, stat
 - The failed assumption need not be a source route. A sender that narrowed `FHOPS` because it believed the destination was directly reachable, or reachable within a known flood distance, has made the same kind of assumption; nothing on the wire distinguishes that packet from an ordinary short-radius flood, and the recovery is the same.
 - When present, repeaters treat the packet as a distinct forwarding attempt for duplicate-suppression purposes even though the MIC and frame counter are unchanged.
 - The destination does **not** treat this option as creating a new logical packet. Replay acceptance and duplicate application delivery remain governed by the packet's normal security state, especially its frame counter.
-- A Route Retry that duplicates a packet the destination already acknowledged tells it that acknowledgment was lost. The destination re-acknowledges by a scoped, traced flood instead of along the route the lost acknowledgment took ([Lost Acknowledgments](repeater-operation.md#lost-acknowledgments)).
+- A Route Retry that duplicates a packet the destination already acknowledged suggests that acknowledgment was lost. The destination re-acknowledges by a scoped, traced flood instead of along the route the lost acknowledgment took. Because anyone can add the option to a copy, it is no evidence against that route ([Lost Acknowledgments](repeater-operation.md#lost-acknowledgments)).
 - A sender using this option for route recovery typically:
   - removes the stale source-route option, if one was present
   - adds or refreshes flood hops, up to but not beyond the budget the sending application was willing to spend; a packet that already flooded at that budget keeps it
@@ -140,9 +140,9 @@ The option carries only the correlation handle, not a keyed ack tag: the packet 
 
 The option is a courtesy to the original sender. A sender that cannot fit it into a frame omits it.
 
-Because the option sits in the plaintext options block, forwarders read it under the same terms as a standalone MAC ack, including for [ack cancellation](repeater-operation.md#ack-cancellation).
+Because the option sits in the plaintext options block, forwarders read it under the same terms as a standalone MAC ack, including as an [overheard acknowledgment](repeater-operation.md#ack-cancellation).
 
-On a [Verify Frame](mac-commands.md#verify-frame-12) the option names the packet to be verified instead of acknowledging it: the sender holds that packet but has not accepted it, so the original sender MUST NOT treat the option as an acknowledgement (see [Counter Resynchronization](security.md#counter-resynchronization)). Forwarders still apply ack cancellation, since the named packet has reached its destination.
+On a [Verify Frame](mac-commands.md#verify-frame-12) the option names the packet to be verified instead of acknowledging it: the sender holds that packet but has not accepted it, so the original sender MUST NOT treat the option as an acknowledgement (see [Counter Resynchronization](security.md#counter-resynchronization)). Forwarders still treat it as an [overheard acknowledgment](repeater-operation.md#ack-cancellation), since the named packet has reached its destination.
 
 ### Minimum SNR (option 9)
 - Type: signed 1-byte integer, in dB

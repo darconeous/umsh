@@ -47,7 +47,7 @@ Id   | Mnemonic              | Commands | Description
 4837 | `PROP_STAT_RX_ACCEPTED` | Get, Set | Received packets accepted by this device's node
 4838 | `PROP_STAT_FORWARDED` | Get, Set | Packets this device chose to forward
 4839 | `PROP_STAT_FORWARD_DROPPED` | Get, Set | Forwarding candidates rejected by policy
-4840 | `PROP_STAT_FORWARD_CANCELLED` | Get, Set | Queued forwards cancelled after an acknowledgement
+4840 | `PROP_STAT_FORWARD_CANCELLED` | Get, Set | Queued forwards cut short by an overheard acknowledgement
 4841 | `PROP_STAT_MESHCORE_SEEN` | Get, Set | MeshCore packets received
 4842 | `PROP_STAT_MESHCORE_FORWARDED_ROUTED` | Get, Set | MeshCore packets forwarded along their source route
 4843 | `PROP_STAT_MESHCORE_FORWARDED_FLOOD` | Get, Set | MeshCore packets flooded
@@ -318,8 +318,9 @@ and packets received while forwarding is disabled are also excluded. Requires
 
 ### PROP 4840: `PROP_STAT_FORWARD_CANCELLED` {#prop-stat-forward-cancelled}
 
-Queued forwards cancelled because the destination's acknowledgement was
-overheard before transmission. Requires `CAP_STATS` and `CAP_REPEATER`.
+Overheard acknowledgements that [cut the channel-access
+budget](repeater-operation.md#ack-cancellation) of a queued forward before
+transmission. Requires `CAP_STATS` and `CAP_REPEATER`.
 
 ### PROP 4841: `PROP_STAT_MESHCORE_SEEN` {#prop-stat-meshcore-seen}
 

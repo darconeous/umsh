@@ -167,8 +167,7 @@ channel, called *the air* below, and the group:
 - **What the radio transmits goes to the group.** Each frame the node's
   radio puts on the air is sent to the group, its repeats included. A frame
   the radio does not transmit—a repeat abandoned to a better-placed
-  repeater, or canceled by an overheard acknowledgment—does not reach the
-  group.
+  repeater, or given up to a busy channel—does not reach the group.
 
 A node whose repeater is disabled is therefore a member of the group and
 nothing more; only a node with its repeater enabled is a bridge.
@@ -216,9 +215,9 @@ the air.
   radio transmitted, and satisfies
   [forwarding confirmation](repeater-operation.md#forwarding-confirmation) as
   a copy overheard on the air does.
-- **Ack cancellation is unchanged.** An overheard acknowledgment
-  [cancels](repeater-operation.md#ack-cancellation) a matching pending forward
-  whatever it arrived on: it proves delivery either way.
+- **Overheard acknowledgments are unchanged.** An acknowledgment
+  [cuts the budget](repeater-operation.md#ack-cancellation) of a matching
+  pending forward whatever it arrived on.
 
 Bridges on one LoRa channel that hear the same group reception draw different
 windows. The first to transmit is overheard by the others, which defer as
