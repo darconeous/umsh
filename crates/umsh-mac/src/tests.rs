@@ -402,9 +402,15 @@ fn replay_window_detects_replay_and_window_expiry() {
     window.accept(10, &mic, 1);
     assert_eq!(window.check(10, &mic, 2), ReplayVerdict::Replay);
     assert_eq!(window.check(1, &mic, 2), ReplayVerdict::OutOfWindow);
+    window.accept(12, &[0x22; 8], 1);
+    // Past the time bound an unspent slot goes stale; a spent one stays spent.
+    assert_eq!(
+        window.check(11, &mic, crate::REPLAY_STALE_MS + 2),
+        ReplayVerdict::Stale
+    );
     assert_eq!(
         window.check(10, &mic, crate::REPLAY_STALE_MS + 2),
-        ReplayVerdict::Stale
+        ReplayVerdict::Replay
     );
 }
 
@@ -5052,6 +5058,25 @@ fn a_remembered_late_copy_is_dropped_without_a_probe() {
     let (delivered, queued) = receive_and_collect(&mut mac);
     assert!(delivered.is_empty());
     assert!(queued.is_empty());
+}
+
+/// A copy of an accepted frame stays a replay once its MIC has aged out:
+/// the backward window still records its counter as spent, so it is not
+/// held for its sender to vouch for, which would deliver it again.
+#[test]
+fn a_spent_counter_stays_spent_past_the_time_bound() {
+    let (mut mac, _local_id, remote, _peer_id, keys, dst_hint) = desynchronized_peer();
+    mac.radio_mut()
+        .queue_received_unicast_with_counter(&remote, &keys, &dst_hint, b"first", true, 10_001);
+    let first = last_queued_received(&mac);
+    let (delivered, _) = receive_and_collect(&mut mac);
+    assert_eq!(delivered, [b"first".to_vec()]);
+
+    mac.clock().advance_ms(crate::REPLAY_STALE_MS + 1_000);
+    mac.radio_mut().queue_received_frame(&first);
+    let (delivered, queued) = receive_and_collect(&mut mac);
+    assert!(delivered.is_empty());
+    assert!(queued.is_empty(), "no Verify Frame for a spent counter");
 }
 
 /// Two nodes each outside the other's window, each probing the other: an

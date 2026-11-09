@@ -13,6 +13,7 @@ use umsh_core::{
 };
 use umsh_core::{PublicKey, RouterHint};
 use umsh_crypto::NodeIdentity;
+use umsh_crypto::replay::REPLAY_BACKTRACK_SLOTS;
 use umsh_crypto::software::{SoftwareAes, SoftwareIdentity, SoftwareSha256};
 use umsh_hal::{CounterStore, Radio, RxInfo, RxOrigin, Snr, TxError, TxOptions};
 use umsh_mac::forward_id::forwarding_dup_key;
@@ -203,6 +204,8 @@ struct Log {
     received: Vec<Delivered>,
     /// `(from, counter, mic)` of every authenticated delivery.
     authenticated: BTreeSet<([u8; 32], u32, Vec<u8>)>,
+    /// Repeats a Frame Verified released, until the window can judge them.
+    released_repeats: Vec<([u8; 32], u32, Vec<u8>)>,
     terminal: BTreeSet<u32>,
     acked: BTreeSet<u32>,
 }
@@ -240,7 +243,12 @@ impl Log {
                     && let Some(mic) = packet.wire_bytes().get(header.mic_range.clone())
                 {
                     let replay = (from, sec_info.frame_counter, mic.to_vec());
-                    assert!(self.authenticated.insert(replay), "a replay was delivered");
+                    if !self.authenticated.insert(replay.clone()) {
+                        // Only a frame its sender vouched for can come again,
+                        // and the window refused it: delivered on the vouch.
+                        assert!(packet.acceptance().is_none(), "a replay was delivered");
+                        self.released_repeats.push(replay);
+                    }
                 }
                 self.received.push(Delivered {
                     packet_type: packet.packet_type() as u8,
@@ -398,6 +406,20 @@ impl<const PEERS: usize, const HOLDS: usize> Harness<PEERS, HOLDS> {
         mac.radio_mut().refill();
         for _ in 0..WAKE_BOUND {
             let woke = block_on::poll_once(mac.next_event(|_, event| log.record(event)));
+            let now_ms = umsh_hal::Clock::now_ms(&self.clock);
+            for (from, counter, mic) in log.released_repeats.drain(..) {
+                // A requester cannot tell a held packet from one it accepted
+                // and no longer recognizes (security.md, Counter
+                // Resynchronization). One it still could—its counter in the
+                // backward window, or its MIC retained—is a replay.
+                let window = mac.rx_windows().get(&PublicKey(from));
+                let forgotten = window.is_some_and(|window| {
+                    let window = &window.replay_window;
+                    window.last_accepted.wrapping_sub(counter) > REPLAY_BACKTRACK_SLOTS
+                        && window.duplicate_age_ms(counter, &mic, now_ms).is_none()
+                });
+                assert!(forgotten, "a replay was delivered");
+            }
             match woke {
                 Some(result) => {
                     let _ = result;
@@ -465,8 +487,10 @@ impl<const PEERS: usize, const HOLDS: usize> Harness<PEERS, HOLDS> {
         };
         let frame = fields.rest();
         if omit_raw && selector == RAW && !is_unauthenticated_kind(frame) {
-            // The time still passed, and the node still woke for it.
-            self.settle();
+            // Something still arrived: noise anyone could have sent at that
+            // instant, so the node wakes for a frame in both runs, and only
+            // what it made of the left-out frame's content can differ.
+            self.deliver(vec![0; frame.len()], rssi, snr, origin);
             return;
         }
         let frame = fixup::apply(frame, selector);
@@ -797,7 +821,7 @@ impl<const PEERS: usize, const HOLDS: usize> Harness<PEERS, HOLDS> {
 fn is_unauthenticated_kind(frame: &[u8]) -> bool {
     matches!(
         PacketHeader::parse(frame).map(|header| header.packet_type()),
-        Ok(PacketType::Broadcast)
+        Ok(PacketType::Broadcast) | Err(_)
     )
 }
 

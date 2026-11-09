@@ -142,22 +142,23 @@ impl ReplayWindow {
             return ReplayVerdict::OutOfWindow;
         }
 
-        if now_ms.wrapping_sub(self.last_accepted_time_ms) > REPLAY_STALE_MS {
-            return ReplayVerdict::Stale;
-        }
-
+        // A spent slot stays spent however long ago it was spent: the
+        // time bound limits what may still be accepted, not what is known
+        // to have been.
         let slot_occupied = if delta == 0 {
             true
         } else {
             self.backward_bitmap & (1u8 << (delta - 1)) != 0
         };
-
-        if !slot_occupied {
-            return ReplayVerdict::Accept;
+        if slot_occupied {
+            let _ = self.has_matching_recent_mic(counter, mic, now_ms);
+            return ReplayVerdict::Replay;
         }
 
-        let _ = self.has_matching_recent_mic(counter, mic, now_ms);
-        ReplayVerdict::Replay
+        if now_ms.wrapping_sub(self.last_accepted_time_ms) > REPLAY_STALE_MS {
+            return ReplayVerdict::Stale;
+        }
+        ReplayVerdict::Accept
     }
 
     /// Whether an exact retained duplicate may be acknowledged. An accepted
@@ -540,14 +541,21 @@ mod tests {
                     window.recent_mics.front().unwrap().ack_queued_offset,
                     last_offset
                 );
-                // Per-entry expiry can be early; the baseline still has exact timing.
+                // Per-entry expiry can be early; the baseline still has exact
+                // timing, which an unspent slot behind it shows.
+                window.accept(12, &[9; 8], accepted_ms);
                 assert_eq!(
-                    window.check(10, &[7; 8], accepted_ms + REPLAY_STALE_MS),
-                    ReplayVerdict::Replay
+                    window.check(11, &[8; 8], accepted_ms + REPLAY_STALE_MS),
+                    ReplayVerdict::Accept
                 );
                 assert_eq!(
-                    window.check(10, &[7; 8], accepted_ms + REPLAY_STALE_MS + 1),
+                    window.check(11, &[8; 8], accepted_ms + REPLAY_STALE_MS + 1),
                     ReplayVerdict::Stale
+                );
+                // A spent slot stays spent past the bound.
+                assert_eq!(
+                    window.check(10, &[7; 8], accepted_ms + REPLAY_STALE_MS + 1),
+                    ReplayVerdict::Replay
                 );
                 window.accept(11, &[8; 8], last_retained_ms + 1);
                 assert_eq!(window.recent_mics.len(), 1);
