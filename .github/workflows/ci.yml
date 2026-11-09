@@ -239,13 +239,21 @@ jobs:
           key: ${{ matrix.board }}
 
       # nrf-sdc-sys / nrf-mpsl-sys run bindgen at build time (cross-targeting
-      # ARM via clang args), so libclang must be present. It's normally in the
-      # runner image already; installing it explicitly removes a whole class
-      # of confusing build.rs failures.
+      # ARM via clang args), so libclang must be present. bindgen also asks a
+      # `clang` executable, found separately, for its include paths and adds
+      # them as -isystem. The runner image carries several LLVM versions, and
+      # when that `clang` is not the libclang's version, two Clang resource
+      # directories land on the path: the first stdint.h takes the shared
+      # include guard and include_nexts the second, which the guard empties,
+      # and uint32_t is never defined. Both come from one LLVM here.
       - name: Install libclang (bindgen)
+        env:
+          LLVM_VERSION: "21"
         run: |
           sudo apt-get update
-          sudo apt-get install -y libclang-dev
+          sudo apt-get install -y "libclang-$LLVM_VERSION-dev" "clang-$LLVM_VERSION"
+          echo "LIBCLANG_PATH=/usr/lib/llvm-$LLVM_VERSION/lib" >> "$GITHUB_ENV"
+          echo "CLANG_PATH=/usr/lib/llvm-$LLVM_VERSION/bin/clang" >> "$GITHUB_ENV"
 
       # nRF52840 firmware only links in --release (dev overflows flash).
       - name: Build (release)
