@@ -491,6 +491,9 @@
     "Center on This Phone" : {
 
     },
+    "Certify" : {
+      "comment" : "Button: certify that an action on the EMERGENCY channel, such as a reaction or a request for a missing message, concerns a genuine emergency, and go on with it."
+    },
     "Certify and Send" : {
       "comment" : "Button: certify that a message on the EMERGENCY channel is about a genuine emergency, and send it."
     },
@@ -1864,6 +1867,29 @@
     "Reported precision" : {
 
     },
+    "Request %lld missing messages" : {
+      "comment" : "Button standing in for messages that never arrived: asks their senders for them. Has plural variants.",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Request the missing message"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Request %lld missing messages"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "Request Identity" : {
 
     },
@@ -2577,10 +2603,27 @@
 
     },
     "Waiting for %lld missing messages" : {
-
-    },
-    "Waiting for a missing message" : {
-
+      "comment" : "Spinner standing in for messages that never arrived, while they are asked for. Has plural variants.",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Waiting for a missing message"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Waiting for %lld missing messages"
+                }
+              }
+            }
+          }
+        }
+      }
     },
     "Waiting for a reply" : {
       "comment" : "VoiceOver label for a request in flight."

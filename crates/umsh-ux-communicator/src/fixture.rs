@@ -320,6 +320,8 @@ fn messages(chat: ChatId) -> &'static [(From, &'static str)] {
             (From::Me, "How is the trail past the creek?"),
             (From::Peer, "Washed out past the second crossing"),
             (From::Peer, "Snow starts above the hut, so bring boots"),
+            // Missing, to be asked for.
+            (From::Peer, ""),
         ],
         _ => &[],
     }
@@ -467,6 +469,7 @@ fn condition(chat: ChatId, index: usize) -> Condition {
             4 => condition.presence = Presence::PendingRepair,
             5 => condition.late = true,
             6 => condition.presence = Presence::Unavailable,
+            10 => condition.presence = Presence::Missing,
             7 => condition.forward_secret = true,
             8 => condition.reply = Some(7),
             9 => {
@@ -719,6 +722,8 @@ pub struct Store {
     /// Unconfirmed messages sent again, and those of them sent again
     /// without forward secrecy.
     retried: RefCell<Vec<MessageId, KEPT>>,
+    /// Missing messages asked for again, which show as on their way.
+    repairs: RefCell<Vec<MessageId, KEPT>>,
     without_secrecy: RefCell<Vec<MessageId, KEPT>>,
     /// Mine, deleted for everyone.
     deleted: RefCell<Vec<MessageId, KEPT>>,
@@ -971,6 +976,7 @@ impl Store {
             mine: RefCell::new(Vec::new()),
             theirs: RefCell::new(Vec::new()),
             retried: RefCell::new(Vec::new()),
+            repairs: RefCell::new(Vec::new()),
             without_secrecy: RefCell::new(Vec::new()),
             deleted: RefCell::new(Vec::new()),
             next: Cell::new(FIRST_KEPT),
@@ -2103,6 +2109,9 @@ impl Store {
         if self.retried.borrow().contains(&message.id) {
             message.delivery = Delivery::Sending;
         }
+        if message.presence == Presence::Missing && self.repairs.borrow().contains(&message.id) {
+            message.presence = Presence::PendingRepair;
+        }
         if self.without_secrecy.borrow().contains(&message.id) {
             message.forward_secret = false;
         }
@@ -2386,6 +2395,19 @@ impl Node for Store {
             _ = retried.push(message);
         }
         drop(retried);
+        self.queue(NodeEvent::MessageChanged { chat, message });
+        true
+    }
+
+    fn request_repair(&self, chat: ChatId, message: MessageId) -> bool {
+        let mut repairs = self.repairs.borrow_mut();
+        if !repairs.contains(&message) {
+            if repairs.is_full() {
+                repairs.remove(0);
+            }
+            _ = repairs.push(message);
+        }
+        drop(repairs);
         self.queue(NodeEvent::MessageChanged { chat, message });
         true
     }

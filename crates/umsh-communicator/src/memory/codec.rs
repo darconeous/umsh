@@ -184,6 +184,7 @@ pub(super) fn record(disk: &Disk, key: &RecordKey, out: &mut Vec<u8>) -> bool {
                 Presence::Present => 0,
                 Presence::GapPending => 1,
                 Presence::Unavailable => 2,
+                Presence::GapIdle => 3,
             });
             let flags = &record.flags;
             out.u8(u8::from(flags.late)
@@ -460,6 +461,7 @@ fn message(id: u32, input: &mut In<'_>) -> Option<MessageEntry> {
         0 => Presence::Present,
         1 => Presence::GapPending,
         2 => Presence::Unavailable,
+        3 => Presence::GapIdle,
         _ => return None,
     };
     let flags = input.u8()?;

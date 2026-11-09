@@ -432,6 +432,9 @@ protocol RadioConnection: AnyObject, Sendable {
         clientToken: UInt32,
         original: MobileChatOriginalRef
     ) async throws -> MobileChatComposeBatchRecord
+    /// Ask for a missing message the engine is holding for the user. False
+    /// when it no longer holds that gap.
+    func requestChatRepair(sessionID: UInt64, handle: UInt32) async throws -> Bool
     /// React to a message, or withdraw a reaction with an empty body. The
     /// target may be either party's message, usually one stored before this
     /// launch, so it is named by wire coordinates rather than a live handle.

@@ -438,10 +438,6 @@ local function check_channel_rules(tree, tvbr, ch_entry, opts)
     flag_violation(tree, tvbr,
       "Emergency channel traffic must not be encrypted—it must be " ..
       "readable by every node in range" .. caveat)
-
-  elseif ch_entry.builtin == "public" and opts.blind then
-    flag_violation(tree, tvbr,
-      "Blind unicast on the public channel is forbidden" .. caveat)
   end
 end
 
@@ -1416,30 +1412,39 @@ local function dissect_blind_unicast(buf, pinfo, tree, off, full_src, fcf_byte, 
     local ok2, payload, dst_hint, dec_src, status, dec_keys, full_cmac =
       pcall(crypto.try_decrypt_blind_unicast, pkt_info, privkeys,
             keystore.get_all_channels(), full_src, keystore.peer_keys)
-    -- The address block decrypts with the channel key alone, so its SRC is
-    -- readable even when no seed here can open the payload.
+    -- The address block decrypts with the channel key alone, so both
+    -- addresses are readable even when no seed here can open the payload.
+    -- Until the payload's MIC verifies they are unauthenticated: a channel
+    -- ID can collide, and the wrong key yields addresses that look as real.
+    local opened = ok2 and payload
+    local unverified = opened and "" or " (unverified)"
+    local d_name, s_name
     if ok2 then learn_src_key(pinfo, dec_src) end
-    if ok2 and payload then
+    if ok2 and dst_hint then
+      d_name = keystore.lookup_node(dst_hint)
+      tree:add(f.dec_dst, buf(addr_start, 3)):set_text(
+        "Decrypted DST: " .. (d_name or hint_label(dst_hint)) .. unverified)
+      tree:add(f.dst_addr, buf(addr_start, 3),
+               hint_short(dst_hint)):set_hidden()
+    end
+    if ok2 and dec_src then
+      local src_disp_len = full_src and 32 or 3
+      s_name = full_src and keystore.lookup_node_by_key(dec_src)
+                          or keystore.lookup_node(dec_src)
+      note_sender(dec_src, s_name)
+      tree:add(f.dec_src, buf(addr_start + 3, src_disp_len)):set_text(
+        "Decrypted SRC: " .. (s_name or base58.addr(dec_src)) .. unverified)
+      tree:add(f.src_addr, buf(addr_start + 3, src_disp_len),
+               addr_short(dec_src)):set_hidden()
+    end
+    if ok2 and (dst_hint or dec_src) then
+      set_endpoints(pinfo,
+        dec_src and (s_name or addr_short(dec_src)),
+        dst_hint and (d_name or hint_short(dst_hint)))
+    end
+    if opened then
       tree:add_proto_expert_info(ef.mic_ok)
-      local d_name, s_name
-      if dst_hint then
-        d_name = keystore.lookup_node(dst_hint)
-        tree:add(f.dec_dst, buf(addr_start, 3)):set_text(
-          "Decrypted DST: " .. (d_name or hint_label(dst_hint)))
-        tree:add(f.dst_addr, buf(addr_start, 3),
-                 hint_short(dst_hint)):set_hidden()
-      end
-      if dec_src then
-        local src_disp_len = full_src and 32 or 3
-        s_name = full_src and keystore.lookup_node_by_key(dec_src)
-                            or keystore.lookup_node(dec_src)
-        note_sender(dec_src, s_name)
-        tree:add(f.dec_src, buf(addr_start + 3, src_disp_len)):set_text(
-          "Decrypted SRC: " .. (s_name or base58.addr(dec_src)))
-        tree:add(f.src_addr, buf(addr_start + 3, src_disp_len),
-                 addr_short(dec_src)):set_hidden()
-        set_endpoints(pinfo, s_name or addr_short(dec_src), nil)
-      end
+      _ctx.mic_verified = true
       local sig
       payload, sig = split_signature(payload, sig_len)
       if #payload > 0 then
@@ -1690,7 +1695,6 @@ function umsh.dissector(buf, pinfo, tree)
   if _ctx.channel then
     check_channel_rules(root, _ctx.chan_tvbr or buf(0, 1), _ctx.channel, {
       is_enc       = _ctx.is_enc,
-      blind        = (pkt_type == 6 or pkt_type == 7),
       mic_verified = _ctx.mic_verified,
     })
   end

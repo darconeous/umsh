@@ -14,7 +14,7 @@
 
 use std::collections::{HashMap, VecDeque};
 
-use umsh_core::PublicKey;
+use umsh_core::{ChannelTag, NodeHint, PublicKey};
 use umsh_text::codec;
 use umsh_text::engine::sequence::MessageHandle;
 use umsh_text::engine::{
@@ -73,6 +73,18 @@ struct QueuedFrame {
     payload: Vec<u8>,
     /// `None` broadcasts to every other node (channel delivery).
     to: Option<usize>,
+    /// How the frame travels, which decides how a receiver files it.
+    path: Path,
+}
+
+#[derive(Clone, Copy)]
+enum Path {
+    /// Unicast in a direct conversation.
+    Direct,
+    /// Multicast to the channel's group conversation.
+    Channel(ChannelTag),
+    /// Blind unicast on the channel.
+    ChannelPeer(ChannelTag),
 }
 
 struct Node {
@@ -177,16 +189,18 @@ impl Sim {
                                 tx.payload.to_vec(),
                             );
                         }
-                        let to = match tx.destination {
-                            Destination::Peer(peer) | Destination::ChannelPeer { peer, .. } => {
-                                self.node_by_key(&peer)
+                        let (to, path) = match tx.destination {
+                            Destination::Peer(peer) => (self.node_by_key(&peer), Path::Direct),
+                            Destination::ChannelPeer { channel, peer } => {
+                                (self.node_by_key(&peer), Path::ChannelPeer(channel))
                             }
-                            Destination::Channel(_) => None,
+                            Destination::Channel(channel) => (None, Path::Channel(channel)),
                         };
                         self.nodes[index].tx_queue.push_back(QueuedFrame {
                             transmission_id: tx.transmission_id,
                             payload: tx.payload.to_vec(),
                             to,
+                            path,
                         });
                     }
                     Output::StoreCheckpoint { .. } => {}
@@ -260,12 +274,31 @@ impl Sim {
         }
     }
 
-    fn deliver(&mut self, to: usize, from: usize, payload: &[u8]) {
+    fn deliver(&mut self, to: usize, from: usize, payload: &[u8], path: Path) {
         let sender_key = self.nodes[from].key;
-        let envelope = Envelope {
-            path: DeliveryPath::Unicast,
-            conversation: ConversationKey::Direct { peer: sender_key },
-            sender: SenderScope::Peer(sender_key),
+        let envelope = match path {
+            Path::Direct => Envelope {
+                path: DeliveryPath::Unicast,
+                conversation: ConversationKey::Direct { peer: sender_key },
+                sender: SenderScope::Peer(sender_key),
+            },
+            Path::Channel(channel) => Envelope {
+                path: DeliveryPath::Multicast,
+                conversation: ConversationKey::ChannelGroup { channel },
+                sender: SenderScope::ClaimedMember(NodeHint([
+                    sender_key.0[0],
+                    sender_key.0[1],
+                    sender_key.0[2],
+                ])),
+            },
+            Path::ChannelPeer(channel) => Envelope {
+                path: DeliveryPath::BlindUnicast,
+                conversation: ConversationKey::ChannelDirect {
+                    channel,
+                    peer: sender_key,
+                },
+                sender: SenderScope::Peer(sender_key),
+            },
         };
         let now = self.now;
         let _ = self.nodes[to]
@@ -311,11 +344,11 @@ impl Sim {
             self.process_outputs(index);
             if !dropped {
                 match frame.to {
-                    Some(to) => self.deliver(to, index, &frame.payload),
+                    Some(to) => self.deliver(to, index, &frame.payload, frame.path),
                     None => {
                         for to in 0..self.nodes.len() {
                             if to != index {
-                                self.deliver(to, index, &frame.payload);
+                                self.deliver(to, index, &frame.payload, frame.path);
                             }
                         }
                     }
@@ -364,7 +397,12 @@ impl Sim {
     }
 
     fn run(&mut self) {
-        while self.now <= self.config.run_ms {
+        self.run_until(self.config.run_ms + 1);
+    }
+
+    /// Run the simulation up to, not including, `until_ms`.
+    fn run_until(&mut self, until_ms: u64) {
+        while self.now < until_ms {
             self.step();
             self.now += STEP_MS;
         }
@@ -513,6 +551,52 @@ fn message_burst_on_slow_link_stays_storm_free() {
     assert_eq!(requests, 0, "burst delivery must not trigger repair");
     assert_eq!(content, 12, "each fragment goes on air exactly once");
     assert_eq!(sim.nodes[1].duplicate_frames, 0);
+}
+
+const KEY_C: PublicKey = PublicKey([0x22; 32]);
+const KEY_D: PublicKey = PublicKey([0x44; 32]);
+const CHANNEL: ChannelTag = ChannelTag([0x5A; 16]);
+
+/// The capture that prompted participation-gated repair: one member's
+/// message is lost on a channel of four. Every member sees the gap, but only
+/// the one that spoke lately asks for it; the answer comes back to the whole
+/// channel, and fills the others' gaps before they would ask.
+#[test]
+fn a_lost_group_message_is_asked_for_once_by_the_member_that_spoke_lately() {
+    let mut sim = Sim::new(
+        &[KEY_A, KEY_B, KEY_C, KEY_D],
+        EngineConfig::default(),
+        SimConfig {
+            airtime_ms: 400,
+            ack_turnaround_ms: 0,
+            // Ordinals: B's message (0), A's first (1), A's second (2).
+            drop_frames: vec![2],
+            run_ms: 300_000,
+        },
+    );
+    let group = ConversationKey::ChannelGroup { channel: CHANNEL };
+    sim.compose(1, group, "anyone around?");
+    sim.run_until(1_000);
+    sim.compose(0, group, "here");
+    sim.run_until(5_000);
+    sim.compose(0, group, "lost on the way");
+    sim.run_until(10_000);
+    sim.compose(0, group, "and again");
+    sim.run();
+
+    let requests: Vec<usize> = sim
+        .air
+        .iter()
+        .filter(|frame| frame.kind == FrameKind::ResendRequest)
+        .map(|frame| frame.from)
+        .collect();
+    assert_eq!(requests, vec![1], "only the member that spoke asks");
+    for node in 1..4 {
+        assert!(
+            sim.completed_body(node, "lost on the way"),
+            "member {node} did not get the repair"
+        );
+    }
 }
 
 /// Frames from the sniffer log grouped for debugging when assertions fail.

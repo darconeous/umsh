@@ -27,7 +27,7 @@ use crate::model::{
     ChannelAccess, ChatId, ChatKind, Delivery, Direction, Draft, Message, MessageId, Neighbor,
     Node, Parts, Presence, Quote, REACTIONS, Reacted, Reaction, Reactions, Rule, State, hops_text,
 };
-use crate::nav::{Screen, Unsent, keys};
+use crate::nav::{Certified, Screen, Unsent, keys};
 use crate::text::{DraftText, SharedText};
 use crate::typeface::Typeface;
 use crate::{font, icon, theme};
@@ -150,7 +150,9 @@ pub fn view(state: &State, chat: ChatId) -> impl View<Rgb565, State> + use<> {
         .or(unsent.map(|unsent| match unsent {
             Unsent::Resend(_) => Over::Resend,
             Unsent::ConfirmDelete(_) => Over::ConfirmDelete,
-            Unsent::CertifyEmergency { .. } => Over::CertifyEmergency,
+            Unsent::CertifyEmergency { then } => Over::CertifyEmergency {
+                sends: matches!(then, Certified::Draft | Certified::Contact(_)),
+            },
         }));
     let quoted = find(reply).map(|message| quote(m, &message, summary.map_or("", |s| &s.name)));
     let kind = summary.map(|s| s.kind);
@@ -220,7 +222,7 @@ pub fn view(state: &State, chat: ChatId) -> impl View<Rgb565, State> + use<> {
             Over::Unconfirmed => unconfirmed_menu(m),
             Over::Resend => resend_choices(m),
             Over::ConfirmDelete => delete_choices(m),
-            Over::CertifyEmergency => emergency_warning(m),
+            Over::CertifyEmergency { sends } => emergency_warning(m, *sends),
         })
     })
     // A tap outside closes either, as Backspace does, choosing nothing; the
@@ -256,8 +258,9 @@ enum Over {
     Resend,
     /// Deleting an unconfirmed message, asking to be confirmed.
     ConfirmDelete,
-    /// The warning before the first message sent on `EMERGENCY`.
-    CertifyEmergency,
+    /// The warning before the first transmission on `EMERGENCY`, and
+    /// whether agreeing to it sends something composed.
+    CertifyEmergency { sends: bool },
 }
 
 /// What `EMERGENCY` is for, and what sending there gives away.
@@ -272,7 +275,7 @@ const WARNING_RADIUS: u16 = 12;
 /// device started, in red so that it reads as no ordinary confirmation.
 /// Cancel is focused, so that pressing twice in one place sends nothing.
 #[inline(never)]
-fn emergency_warning(m: &'static Metrics) -> impl View<Rgb565, State> + use<> {
+fn emergency_warning(m: &'static Metrics, sends: bool) -> impl View<Rgb565, State> + use<> {
     let text = |text: &str| heapless::String::try_from(text).unwrap_or_default();
     let paragraph = |body: &'static str| {
         Text::new(body, &font::REGULAR)
@@ -323,7 +326,7 @@ fn emergency_warning(m: &'static Metrics) -> impl View<Rgb565, State> + use<> {
             .with_width(m.width / 3),
             choice(
                 m,
-                text("Certify and Send"),
+                text(if sends { "Certify and Send" } else { "Certify" }),
                 keys::EMERGENCY_CERTIFY,
                 State::certify_emergency,
                 theme::EMERGENCY,
@@ -620,6 +623,8 @@ fn item(row: &Row, message: &Message, i: usize) -> impl View<Rgb565, State> + us
         );
     // What stands in the place of a message that is not there. A run of
     // messages on their way again is one row.
+    // A missing message waiting to be asked for is drawn as a bubble of its
+    // own, which pressing asks for.
     let stand_in = if message.presence == Presence::PendingRepair {
         Some(StandIn::Coming)
     } else if message.presence == Presence::Unavailable {
@@ -814,15 +819,21 @@ fn bubble(
         outbound,
         open,
         forward_secret: message.forward_secret,
+        missing: message.presence == Presence::Missing,
         ringed: acting_on,
     };
     let reactions = message.reactions.clone();
-    // Pressing a message opens its actions. A tap only selects it: holding
-    // it does what a press does.
+    // Pressing a message opens its actions, and pressing a missing one asks
+    // for it. A tap only selects it: holding it does what a press does.
+    let missing = look.missing;
     Button::new(
         move |s: &mut State| {
             if !s.touching {
-                s.open_actions(id);
+                if missing {
+                    s.ask_for_missing(id);
+                } else {
+                    s.open_actions(id);
+                }
             }
         },
         move |button: ButtonState| {
@@ -883,6 +894,8 @@ struct Look {
     open: bool,
     /// Mine, sent under a session with forward secrecy.
     forward_secret: bool,
+    /// Missing here, and waiting to be asked for.
+    missing: bool,
     /// Focused, or its actions are open.
     ringed: bool,
 }
@@ -1025,12 +1038,36 @@ fn bubble_look(m: &'static Metrics, look: &Look) -> impl View<Rgb565, ()> + use<
 /// dots for parts still to come; or an invitation, which is its card
 /// alone: its text is only the channel's link.
 fn body_view(m: &'static Metrics, look: &Look) -> impl View<Rgb565, ()> + use<> {
+    let missing = look.missing.then(|| missing_body(m, look.outbound));
     let status = look
         .status
         .as_ref()
+        .filter(|_| !look.missing)
         .map(|status| status_view(m, status, look));
-    let bubble = status.is_none().then(|| bubble_body(m, look));
-    VStack::new((status, bubble))
+    let bubble = (status.is_none() && !look.missing).then(|| bubble_body(m, look));
+    VStack::new((missing, status, bubble))
+}
+
+/// A missing message waiting to be asked for: a glyph in an empty bubble.
+fn missing_body(m: &'static Metrics, outbound: bool) -> impl View<Rgb565, ()> + use<> {
+    let mut corners = CornerRadii::equal(BUBBLE_RADIUS);
+    if outbound {
+        corners.bottom_right = TAIL_RADIUS;
+    } else {
+        corners.bottom_left = TAIL_RADIUS;
+    }
+    Image::new(&icon::DOWN)
+        .as_template()
+        .foreground_color(theme::TEXT_SECONDARY)
+        .frame_sized(COMING_WIDTH, body_line(m) + 2 * BUBBLE_PAD_Y)
+        .background_color(
+            if outbound {
+                theme::OUTBOUND
+            } else {
+                theme::INBOUND
+            },
+            RoundedRectangle::with_radii(corners),
+        )
 }
 
 /// A status message, on its sender's side.

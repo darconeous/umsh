@@ -520,10 +520,27 @@ pub enum Unsent {
     Resend(MessageId),
     /// Its Delete, or its channel's Leave, asking to be confirmed.
     ConfirmDelete(MessageId),
-    /// The warning before the first message sent on `EMERGENCY` since
-    /// the device started, asking to be certified. What waits on it is the
-    /// draft, or the contact of a peer.
-    CertifyEmergency { contact: Option<PeerId> },
+    /// The warning before the first thing sent on `EMERGENCY` since the
+    /// device started, asking to be certified, with what waits on it.
+    CertifyEmergency { then: Certified },
+}
+
+/// What waits on `EMERGENCY`'s warning: anything that would go on the air
+/// there.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Certified {
+    /// The draft.
+    Draft,
+    /// The contact of a peer.
+    Contact(PeerId),
+    /// A reaction to a message.
+    React(MessageId, Reaction),
+    /// An unconfirmed message of mine, sent again.
+    Retry(MessageId),
+    /// A message of mine, deleted for everyone.
+    Delete(MessageId),
+    /// A message missing here, asked for again.
+    Repair(MessageId),
 }
 
 impl Unsent {
@@ -1141,7 +1158,7 @@ impl State {
         if self.must_certify(chat) {
             // Asked where it would go, as a message typed there would be.
             self.go_to_chat(chat);
-            self.ask_certify(Some(peer));
+            self.ask_certify(Certified::Contact(peer));
             return;
         }
         if self.send_contact_to(chat, peer) {
@@ -1170,9 +1187,9 @@ impl State {
         true
     }
 
-    /// Whether sending to `chat` waits on the warning first: it is
-    /// `EMERGENCY`, and nothing has been sent there since the device
-    /// started.
+    /// Whether anything going on the air in `chat` waits on the warning
+    /// first: it is `EMERGENCY`, and the warning has not been certified
+    /// since the device started.
     pub(crate) fn must_certify(&self, chat: ChatId) -> bool {
         !self.emergency_certified
             && self.chat(chat).is_some_and(|summary| {
@@ -1186,15 +1203,15 @@ impl State {
     }
 
     /// Opens the warning over the conversation shown, Cancel focused, with
-    /// the contact of `contact` waiting on it, or else the draft.
-    pub(crate) fn ask_certify(&mut self, contact: Option<PeerId>) {
+    /// `then` waiting on it.
+    pub(crate) fn ask_certify(&mut self, then: Certified) {
         if let Some(Screen::Conversation { unsent, focus, .. }) = self.screens.last_mut() {
-            *unsent = Some(Unsent::CertifyEmergency { contact });
+            *unsent = Some(Unsent::CertifyEmergency { then });
             focus.request(keys::EMERGENCY_CANCEL);
         }
     }
 
-    /// Certifies the warning, and sends what waited on it. Nothing asks
+    /// Certifies the warning, and does what waited on it. Nothing asks
     /// again until the device restarts.
     pub fn certify_emergency(&mut self) {
         let Some(Screen::Conversation {
@@ -1206,31 +1223,51 @@ impl State {
         else {
             return;
         };
-        let Some(Unsent::CertifyEmergency { contact }) = *unsent else {
+        let Some(Unsent::CertifyEmergency { then }) = *unsent else {
             return;
         };
         let chat = *chat;
         *unsent = None;
-        focus.request(keys::COMPOSER);
+        focus.request(match then {
+            Certified::Draft | Certified::Contact(_) => keys::COMPOSER,
+            Certified::React(message, _)
+            | Certified::Retry(message)
+            | Certified::Delete(message)
+            | Certified::Repair(message) => keys::message(message),
+        });
         self.emergency_certified = true;
-        match contact {
-            Some(peer) => _ = self.send_contact_to(chat, peer),
-            None => self.send(chat),
+        match then {
+            Certified::Draft => self.send(chat),
+            Certified::Contact(peer) => _ = self.send_contact_to(chat, peer),
+            Certified::React(message, reaction) => self.react(message, reaction),
+            Certified::Retry(message) => self.retry(message),
+            Certified::Delete(message) => self.node.delete_message(chat, message),
+            Certified::Repair(message) => self.ask_for_missing(message),
         }
     }
 
-    /// Turns the warning down: closes it, and leaves the conversation with
-    /// its draft kept. Returns `false`, doing nothing, when the warning is
-    /// not open.
+    /// Turns the warning down: closes it. One over a draft or a contact
+    /// leaves the conversation, the draft kept; one over a message goes
+    /// back to the message. Returns `false`, doing nothing, when the
+    /// warning is not open.
     pub fn decline_emergency(&mut self) -> bool {
-        let Some(Screen::Conversation { unsent, .. }) = self.screens.last_mut() else {
+        let Some(Screen::Conversation { unsent, focus, .. }) = self.screens.last_mut() else {
             return false;
         };
-        if !matches!(unsent, Some(Unsent::CertifyEmergency { .. })) {
+        let Some(Unsent::CertifyEmergency { then }) = *unsent else {
             return false;
-        }
+        };
         *unsent = None;
-        self.back()
+        match then {
+            Certified::Draft | Certified::Contact(_) => self.back(),
+            Certified::React(message, _)
+            | Certified::Retry(message)
+            | Certified::Delete(message)
+            | Certified::Repair(message) => {
+                focus.request(keys::message(message));
+                true
+            }
+        }
     }
 
     /// Shows the channel the message whose actions menu is open invites to,
@@ -2773,9 +2810,14 @@ impl State {
         };
         *unsent = None;
         focus.request(keys::message(message));
-        if let Some(chat) = chat {
-            self.node.delete_message(chat, message);
+        let Some(chat) = chat else {
+            return;
+        };
+        if self.must_certify(chat) {
+            self.ask_certify(Certified::Delete(message));
+            return;
         }
+        self.node.delete_message(chat, message);
     }
 
     /// Reacts to the message whose actions menu is open, and closes it.

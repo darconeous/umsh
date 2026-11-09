@@ -65,13 +65,15 @@ struct MessagePresentation: Equatable, Sendable {
 
 /// A transcript row: a message and how it sits among its neighbours, the date
 /// a lull gave way to, or a collapsed run of one-or-more consecutive gap
-/// placeholders shown as a single spinner.
+/// placeholders shown as a single bubble.
 enum TranscriptItem: Identifiable, Equatable {
     case message(ChatMessageSummary, MessagePresentation)
     /// Identified by the message it introduces, so that a page landing above
     /// it inserts or removes a separator rather than renaming this one.
     case dateSeparator(id: String, date: Date)
-    case gap(id: String, count: Int)
+    /// A run of gaps that are all in the same state: every one under repair,
+    /// or every one waiting for the user to ask for it.
+    case gap(id: String, messages: [ChatMessageSummary])
 
     var id: String {
         switch self {
@@ -222,8 +224,7 @@ struct TranscriptWindow: Equatable {
     ) -> [TranscriptItem] {
         var items: [TranscriptItem] = []
         items.reserveCapacity(messages.count)
-        var runEnd: String?
-        var runCount = 0
+        var run: [ChatMessageSummary] = []
         /// When the last bubble was written, for measuring the lull before the
         /// next one.
         var previousDate: Date?
@@ -232,12 +233,11 @@ struct TranscriptWindow: Equatable {
         var previousRunKey: String?
 
         func flushGap() {
-            if let end = runEnd, runCount > 0 {
-                items.append(.gap(id: end, count: runCount))
+            if let end = run.last {
+                items.append(.gap(id: end.id, messages: run))
                 previousRunKey = nil
             }
-            runEnd = nil
-            runCount = 0
+            run = []
         }
 
         for message in messages {
@@ -247,8 +247,8 @@ struct TranscriptWindow: Equatable {
                 // longer holds a slot, so drop it. Any still-pending neighbors
                 // stay contiguous and keep the collapsed spinner.
                 if message.isDeleted { continue }
-                runEnd = message.id
-                runCount += 1
+                if let last = run.last, last.isGapIdle != message.isGapIdle { flushGap() }
+                run.append(message)
                 continue
             }
             flushGap()

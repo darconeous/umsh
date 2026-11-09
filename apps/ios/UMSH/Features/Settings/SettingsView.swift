@@ -59,6 +59,8 @@ struct SettingsView: View {
     /// notifications end to end—arrival, styling, and the inline reply.
     /// Debug builds only, and meaningful only in staging mode.
     var stagedPeerSendsMessage: ((Bool) -> Void)? = nil
+    /// Has a staged peer send three channel messages, the middle one lost.
+    var stagedPeerLosesChannelMessage: (() -> Void)? = nil
     var stagedPeerReacts: (() -> Void)? = nil
     var stagedPeerReplies: (() -> Void)? = nil
     var stagedPeerMeets: ((Bool) -> Void)? = nil
@@ -233,6 +235,11 @@ struct SettingsView: View {
                     }
                     Button("Staged Channel Message in 5 Seconds") {
                         stagedPeerSendsMessage(true)
+                    }
+                }
+                if stagingEnabled, let stagedPeerLosesChannelMessage {
+                    Button("Staged Lost Channel Message") {
+                        stagedPeerLosesChannelMessage()
                     }
                 }
                 if stagingEnabled, let stagedPeerReacts {

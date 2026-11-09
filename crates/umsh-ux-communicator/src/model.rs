@@ -12,7 +12,7 @@ use crate::board::{Board, Metrics};
 use crate::clock::Local;
 use crate::keyboard::{Aids, Keyboard};
 use crate::lock::Lock;
-use crate::nav::{DevicePage, Screen, Unsent, keys};
+use crate::nav::{Certified, DevicePage, Screen, Unsent, keys};
 use crate::picker::{Picker, RecentText, Recents};
 use crate::text::{DraftText, SharedText, TextHeap};
 
@@ -976,6 +976,8 @@ pub enum Presence {
     Present,
     /// A message is missing here, and has been asked for again.
     PendingRepair,
+    /// A message is missing here, and waits for the user to ask for it.
+    Missing,
     /// A message is missing here, and will not come.
     Unavailable,
 }
@@ -1801,6 +1803,12 @@ pub trait Node {
     /// it is on its way.
     fn retry(&self, chat: ChatId, message: MessageId) -> bool;
 
+    /// Asks again for `message` in `chat`, which is missing here and waits
+    /// for the user to ask for it ([`Presence::Missing`]). Returns whether
+    /// the request is on its way. What becomes of it comes as
+    /// [`NodeEvent::MessageChanged`].
+    fn request_repair(&self, chat: ChatId, message: MessageId) -> bool;
+
     /// Deletes my `message` in `chat` for everyone. What becomes of it
     /// comes as [`NodeEvent::MessageChanged`].
     fn delete_message(&self, chat: ChatId, message: MessageId);
@@ -2361,7 +2369,7 @@ impl State {
             return;
         };
         if self.must_certify(chat) {
-            self.ask_certify(None);
+            self.ask_certify(Certified::Draft);
             return;
         }
         let reply_to = match self.screens.last() {
@@ -2629,8 +2637,31 @@ impl State {
         let Some(target) = self.node.message(chat, message) else {
             return;
         };
+        if self.must_certify(chat) {
+            self.ask_certify(Certified::React(message, reaction));
+            return;
+        }
         let mine = (target.my_reaction() != Some(reaction)).then_some(reaction);
         self.node.react(chat, message, mine);
+    }
+
+    /// Asks again for `message` of the open chat, missing here and waiting
+    /// for the user to ask for it.
+    pub fn ask_for_missing(&mut self, message: MessageId) {
+        let Some(chat) = self.conversation.as_ref().map(|c| c.chat) else {
+            return;
+        };
+        if !self
+            .open_message(message)
+            .is_some_and(|m| m.presence == Presence::Missing)
+        {
+            return;
+        }
+        if self.must_certify(chat) {
+            self.ask_certify(Certified::Repair(message));
+            return;
+        }
+        self.node.request_repair(chat, message);
     }
 
     /// Sends `message` in the open chat again, if it is unconfirmed and
@@ -2695,6 +2726,10 @@ impl State {
             return;
         };
         if self.unconfirmed(message).is_none() {
+            return;
+        }
+        if self.must_certify(chat) {
+            self.ask_certify(Certified::Retry(message));
             return;
         }
         // The node shows it on its way again as soon as it is queued.

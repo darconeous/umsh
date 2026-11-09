@@ -1768,6 +1768,15 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
     func removePeers(peerAddresses: [String]) async throws
 
     /**
+     * Ask again for a message missing from a conversation, or the missing
+     * part of one, as the user chose to: `handle`, from a record of
+     * `session_id`, is the gap's placeholder (presence `GapIdle`) or the
+     * partial message. Returns whether a request is on its way; a gap from
+     * an earlier session is no longer held and cannot be asked for.
+     */
+    func requestChatRepair(sessionId: UInt64, handle: UInt32) async throws  -> Bool
+
+    /**
      * Solicit a specific peer's current node identity by sending a targeted
      * MAC Identity Request (command 1). This resolves once the request has
      * been handed to the transport; the peer's identity response arrives
@@ -2980,6 +2989,29 @@ open func removePeers(peerAddresses: [String])async throws   {
             completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
             freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
             liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileMeshError_lift
+        )
+}
+
+    /**
+     * Ask again for a message missing from a conversation, or the missing
+     * part of one, as the user chose to: `handle`, from a record of
+     * `session_id`, is the gap's placeholder (presence `GapIdle`) or the
+     * partial message. Returns whether a request is on its way; a gap from
+     * an earlier session is no longer held and cannot be asked for.
+     */
+open func requestChatRepair(sessionId: UInt64, handle: UInt32)async throws  -> Bool  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemeshsession_request_chat_repair(
+                        self.uniffiCloneHandle(),FfiConverterUInt64.lower(sessionId),FfiConverterUInt32.lower(handle)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_i8,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_i8,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_i8,
+            liftFunc: FfiConverterBool.lift,
             errorHandler: FfiConverterTypeMobileMeshError_lift
         )
 }
@@ -15581,14 +15613,17 @@ public func FfiConverterTypeMobileChatMutationKind_lower(_ value: MobileChatMuta
 
 /**
  * Ordered-slot presence of a transcript row (mirrors the engine's
- * [`Presence`]). A `GapPending` row is a reserved spinner placeholder; an
- * `Unavailable` row is a permanent loss marker.
+ * [`Presence`]). A `GapPending` row is a reserved spinner placeholder; a
+ * `GapIdle` row is a missing message waiting for the user to ask for it
+ * (`MobileMeshSession::request_chat_repair`); an `Unavailable` row is a
+ * permanent loss marker.
  */
 
 public enum MobileChatPresence: Equatable, Hashable {
 
     case present
     case gapPending
+    case gapIdle
     case unavailable
 
 
@@ -15615,7 +15650,9 @@ public struct FfiConverterTypeMobileChatPresence: FfiConverterRustBuffer {
 
         case 2: return .gapPending
 
-        case 3: return .unavailable
+        case 3: return .gapIdle
+
+        case 4: return .unavailable
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -15633,8 +15670,12 @@ public struct FfiConverterTypeMobileChatPresence: FfiConverterRustBuffer {
             writeInt(&buf, Int32(2))
 
 
-        case .unavailable:
+        case .gapIdle:
             writeInt(&buf, Int32(3))
+
+
+        case .unavailable:
+            writeInt(&buf, Int32(4))
 
         }
     }
@@ -22269,6 +22310,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_remove_peers() != 28644) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_request_chat_repair() != 6131) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_request_identity() != 54447) {

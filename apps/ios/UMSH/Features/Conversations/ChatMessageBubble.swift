@@ -142,33 +142,57 @@ struct BubbleShape: Shape {
     }
 }
 
-/// A placeholder bubble for a known sequence gap: an indeterminate spinner in
-/// an inbound-styled bubble, holding the missing message's ordered position
-/// until a repair fills or resolves it. One bubble stands for a whole run of
-/// adjacent gaps.
+/// A placeholder bubble for a known sequence gap, holding the missing
+/// message's ordered position in an inbound-styled bubble: a spinner while a
+/// repair is under way, and a button that asks for it when none is. One
+/// bubble stands for a whole run of adjacent gaps in the same state.
 struct GapPlaceholderBubble: View {
     let count: Int
     /// Reserve the avatar column a channel's inbound bubbles keep, so the
     /// spinner lines up with the messages around it instead of sitting a
     /// gutter's width to their left.
     var reservesAvatarGutter = false
+    /// Ask for the run, when no repair is under way for it.
+    var onRequest: (() -> Void)?
 
     var body: some View {
         HStack(alignment: .bottom, spacing: ChatMessageBubble.gutterSpacing) {
             if reservesAvatarGutter {
                 Color.clear.frame(width: ChatMessageBubble.avatarGutter, height: 1)
             }
-            ProgressView()
-                .controlSize(.small)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(
-                    Color(uiColor: .systemGray5),
-                    in: BubbleShape(isOutbound: false, showsTail: true)
-                )
-                .accessibilityLabel(
-                    count > 1 ? "Waiting for \(count) missing messages" : "Waiting for a missing message"
-                )
+            if let onRequest {
+                Button(action: onRequest) {
+                    Image(systemName: "arrow.down")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(.tint)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(
+                            Color(uiColor: .systemGray5),
+                            in: BubbleShape(isOutbound: false, showsTail: true)
+                        )
+                        .contentShape(BubbleShape(isOutbound: false, showsTail: true))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(String(
+                    localized: "Request \(count) missing messages",
+                    comment: "Button standing in for messages that never arrived: asks their senders for them. Has plural variants."
+                ))
+                .accessibilityIdentifier("gap-request")
+            } else {
+                ProgressView()
+                    .controlSize(.small)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(
+                        Color(uiColor: .systemGray5),
+                        in: BubbleShape(isOutbound: false, showsTail: true)
+                    )
+                    .accessibilityLabel(String(
+                        localized: "Waiting for \(count) missing messages",
+                        comment: "Spinner standing in for messages that never arrived, while they are asked for. Has plural variants."
+                    ))
+            }
             Spacer(minLength: ChatMessageBubble.oppositeMargin)
         }
     }

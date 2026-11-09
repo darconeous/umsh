@@ -1705,6 +1705,11 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
         )
     }
 
+    func requestChatRepair(sessionID: UInt64, handle: UInt32) async throws -> Bool {
+        let session = try await currentMeshSession()
+        return try await session.requestChatRepair(sessionId: sessionID, handle: handle)
+    }
+
     func composeReaction(
         conversationAddress: String,
         clientToken: UInt32,

@@ -61,6 +61,16 @@ pub struct EngineConfig {
     pub max_requests_per_tick: u8,
     /// Maximum automatic request attempts per missing frame.
     pub max_repair_attempts: u8,
+    /// How recently this node must have sent in a channel group to repair
+    /// that group's gaps on its own (spec: 60 s). Past that, a gap waits
+    /// for the user to ask for it.
+    pub group_active_window_ms: u64,
+    /// Automatic request attempts per missing frame in a channel group,
+    /// where every member saw the same loss.
+    pub max_group_repair_attempts: u8,
+    /// How long after assigning an ID this node still answers resend
+    /// requests for it (spec: 15 minutes).
+    pub resend_window_ms: u64,
     /// Reassembly lifetime before a partial message is finalized.
     pub reassembly_ttl_ms: u64,
     /// Interval between repair attempts for the same frame.
@@ -83,6 +93,9 @@ impl Default for EngineConfig {
             min_request_interval_ms: 2_000,
             max_requests_per_tick: 4,
             max_repair_attempts: 4,
+            group_active_window_ms: 60_000,
+            max_group_repair_attempts: 2,
+            resend_window_ms: 15 * 60_000,
             reassembly_ttl_ms: 90_000,
             request_retry_ms: 8_000,
             coalesce_window_ms: 10_000,
@@ -164,6 +177,9 @@ pub enum Presence {
     Present,
     /// A gap was detected; the slot is reserved and a repair is outstanding.
     GapPending,
+    /// A gap was detected; the slot is reserved, and the repair waits for
+    /// the user to ask for it ([`Engine::request_repair`]).
+    GapIdle,
     /// The gap could not be repaired (exhausted, expired, or disclaimed by
     /// the sender); the slot is a permanent loss marker.
     Unavailable,
@@ -252,6 +268,14 @@ pub enum DeliveryState {
     Sent,
     Acked,
     Failed,
+}
+
+/// Why [`Engine::request_repair`] sent nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RepairRefused {
+    /// The engine holds no repair for that message: it arrived, was
+    /// disclaimed, or the gap is from before the engine started.
+    NotPending,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -370,6 +394,12 @@ pub enum Diagnostic {
     /// A resend request was ignored because an equivalent one was answered
     /// within the coalescing window.
     CoalescedResend {
+        message_id: u8,
+    },
+    /// A resend request was ignored because this node did not assign that
+    /// ID lately: it never sent it, sent it before the resend window, or
+    /// sent it before it started.
+    UnsentResend {
         message_id: u8,
     },
     /// A resend request arrived in a form the engine could not attribute.
@@ -851,7 +881,7 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
 
         let stream = self.outbound.get_mut(&conversation).expect("just ensured");
         stream.last_active_ms = now_ms;
-        let message_id = stream.allocate();
+        let message_id = stream.allocate(now_ms);
         let announce_reset = core::mem::take(&mut stream.announce_reset);
         let next_id = stream.next_id;
         let epoch = stream.epoch;
@@ -1397,6 +1427,15 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                     if can_repair {
                         let group =
                             matches!(envelope.conversation, ConversationKey::ChannelGroup { .. });
+                        // A group gap is repaired on its own only by a member
+                        // that spoke lately, and later the longer ago that
+                        // was; anyone else holds it for the user.
+                        let delay = if group {
+                            self.group_repair_delay(&envelope.conversation, now_ms)
+                        } else {
+                            Some(0)
+                        };
+                        let budget = self.repair_budget(&envelope.conversation);
                         let base_deadline = now_ms.saturating_add(self.config.reorder_grace_ms);
                         for step in 1..=gap {
                             // A placeholder is only shown for a gap the
@@ -1406,23 +1445,33 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                                 break;
                             }
                             let missing = baseline.wrapping_add(step);
-                            let jitter = if group {
-                                self.jitter.jitter_ms(self.config.group_jitter_ms)
+                            let deadline = delay.map(|delay| {
+                                let jitter = if group {
+                                    self.jitter.jitter_ms(self.config.group_jitter_ms)
+                                } else {
+                                    0
+                                };
+                                base_deadline + delay + jitter
+                            });
+                            let presence = if deadline.is_some() {
+                                Presence::GapPending
                             } else {
-                                0
+                                Presence::GapIdle
                             };
                             // Reserve the ordered slot now, at the live edge:
                             // the backfilled frame fills this same handle in
                             // place instead of landing at the transcript
                             // bottom. Emitted *before* the triggering
                             // message's Insert so its rowid sorts above.
-                            let placeholder = self.emit_gap_placeholder(key, missing, epoch);
+                            let placeholder =
+                                self.emit_gap_placeholder(key, missing, epoch, presence);
                             let stream = self.inbound.get_mut(&key).expect("present");
                             let _ = stream.pending.push(PendingRepair {
                                 message_id: missing,
                                 fragment: None,
-                                deadline_ms: base_deadline + jitter,
+                                deadline_ms: deadline,
                                 attempts: 0,
+                                budget,
                                 handle: Some(placeholder),
                             });
                         }
@@ -2154,6 +2203,21 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
             envelope.conversation
         };
 
+        // Only an ID this node assigned lately is answered, with its frame
+        // or with Message Unavailable. Nobody can make a node transmit by
+        // asking after messages it never sent, or sent long ago.
+        let window = self.config.resend_window_ms;
+        if !self
+            .outbound
+            .get(&conversation)
+            .is_some_and(|stream| stream.sent_recently(sequence.message_id, now_ms, window))
+        {
+            self.push_output(Output::Diagnostic(Diagnostic::UnsentResend {
+                message_id: sequence.message_id,
+            }));
+            return;
+        }
+
         if self.coalesce.recently_answered(
             &conversation,
             &sequence,
@@ -2351,6 +2415,13 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
             }
             let key = slot.stream;
             let id = slot.message_id;
+            let deadline = match key.conversation {
+                ConversationKey::ChannelGroup { .. } => self
+                    .group_repair_delay(&key.conversation, now_ms)
+                    .map(|delay| now_ms + delay),
+                _ => Some(now_ms),
+            };
+            let budget = self.repair_budget(&key.conversation);
             if let Some(stream) = self.inbound.get_mut(&key) {
                 if stream.collided {
                     continue;
@@ -2373,8 +2444,9 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                     let _ = stream.pending.push(PendingRepair {
                         message_id: id,
                         fragment: Some(fragment),
-                        deadline_ms: now_ms,
+                        deadline_ms: deadline,
                         attempts: 0,
+                        budget,
                         handle: None,
                     });
                     if let Some(slot) = self.pool.slots[index].as_mut() {
@@ -2404,11 +2476,20 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
             let Some(position) = stream
                 .pending
                 .iter()
-                .position(|pending| now_ms >= pending.deadline_ms)
+                .position(|pending| pending.deadline_ms.is_some_and(|due| now_ms >= due))
             else {
                 continue;
             };
             let pending = stream.pending[position];
+            let group = matches!(key.conversation, ConversationKey::ChannelGroup { .. });
+
+            // A group repair whose requests went unanswered goes back to
+            // waiting for the user, a retry interval after the last one so
+            // that its answer had time to come.
+            if group && pending.attempts >= pending.budget {
+                self.idle_repair(key, position);
+                continue;
+            }
 
             // Resolve the request destination.
             let destination = match key.conversation {
@@ -2439,7 +2520,7 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                     }
                 },
             };
-            let channel_group = matches!(key.conversation, ConversationKey::ChannelGroup { .. });
+            let channel_group = group;
 
             // A fragment request needs the slot's fragment count.
             let sequence = match pending.fragment {
@@ -2487,13 +2568,17 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                 }));
             }
 
-            let max_attempts = self.config.max_repair_attempts;
             let retry_ms = self.config.request_retry_ms;
+            let retry_jitter = if group {
+                self.jitter.jitter_ms(self.config.group_jitter_ms)
+            } else {
+                0
+            };
             let stream = self.inbound.get_mut(&key).expect("present");
             stream.last_request_ms = now_ms;
             let entry = &mut stream.pending[position];
             entry.attempts += 1;
-            if entry.attempts >= max_attempts {
+            if !group && entry.attempts >= entry.budget {
                 let message_id = entry.message_id;
                 let fragment = entry.fragment;
                 let placeholder = entry.handle;
@@ -2518,8 +2603,103 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                     self.flip_placeholder_unavailable(key, message_id, handle);
                 }
             } else {
-                entry.deadline_ms = now_ms + retry_ms;
+                entry.deadline_ms = Some(now_ms + retry_ms + retry_jitter);
             }
+        }
+    }
+
+    /// Return a group repair to waiting for the user: its automatic
+    /// requests, or the one the user asked for, went unanswered. The gap
+    /// stays a placeholder the user can ask for again, rather than a loss.
+    fn idle_repair(&mut self, key: StreamKey, position: usize) {
+        let budget = self.config.max_group_repair_attempts;
+        let Some(stream) = self.inbound.get_mut(&key) else {
+            return;
+        };
+        let entry = &mut stream.pending[position];
+        entry.deadline_ms = None;
+        entry.attempts = 0;
+        entry.budget = budget;
+        let (message_id, fragment, placeholder) = (entry.message_id, entry.fragment, entry.handle);
+        self.push_output(Output::Event(Event::RepairFinished {
+            conversation: key.conversation,
+            sender: key.sender,
+            message_id,
+            outcome: RepairOutcome::Exhausted,
+        }));
+        if fragment.is_none()
+            && let Some(handle) = placeholder
+        {
+            self.set_placeholder(key, message_id, handle, Presence::GapIdle);
+        }
+    }
+
+    /// The user asked for a missing message, or for the missing part of one.
+    /// `handle` is the gap's placeholder or the partial message. The request
+    /// goes out on a coming tick, paced like any other; a run of gaps asked
+    /// for at once is sent one request at a time.
+    pub fn request_repair(
+        &mut self,
+        handle: MessageHandle,
+        now_ms: u64,
+    ) -> Result<(), RepairRefused> {
+        // A partial message names its stream and ID through its slot; a
+        // placeholder through its repair entry.
+        let slot = self
+            .pool
+            .slots
+            .iter()
+            .flatten()
+            .find(|slot| slot.handle == handle)
+            .map(|slot| (slot.stream, slot.message_id));
+        let found = self.inbound.iter().find_map(|(key, stream)| {
+            stream
+                .pending
+                .iter()
+                .position(|pending| match slot {
+                    Some((slot_key, id)) => {
+                        slot_key == *key && pending.message_id == id && pending.fragment.is_some()
+                    }
+                    None => pending.handle == Some(handle),
+                })
+                .map(|position| (*key, position))
+        });
+        let Some((key, position)) = found else {
+            return Err(RepairRefused::NotPending);
+        };
+        let stream = self.inbound.get_mut(&key).expect("present");
+        let entry = &mut stream.pending[position];
+        if entry.deadline_ms.is_some() {
+            // Already on its way.
+            return Ok(());
+        }
+        entry.deadline_ms = Some(now_ms);
+        entry.attempts = 0;
+        entry.budget = 1;
+        let (message_id, fragment, placeholder) = (entry.message_id, entry.fragment, entry.handle);
+        if fragment.is_none()
+            && let Some(handle) = placeholder
+        {
+            self.set_placeholder(key, message_id, handle, Presence::GapPending);
+        }
+        Ok(())
+    }
+
+    /// When a channel-group repair may go out without the user: the time
+    /// since this node last sent in the conversation, to be added to the
+    /// usual grace, or `None` when that was too long ago (or never) and the
+    /// gap waits for the user.
+    fn group_repair_delay(&self, conversation: &ConversationKey, now_ms: u64) -> Option<u64> {
+        let sent = self.outbound.get(conversation)?.last_sent_ms()?;
+        let since = now_ms.saturating_sub(sent);
+        (since <= self.config.group_active_window_ms).then_some(since)
+    }
+
+    /// Automatic request attempts for one missing frame of `conversation`.
+    fn repair_budget(&self, conversation: &ConversationKey) -> u8 {
+        match conversation {
+            ConversationKey::ChannelGroup { .. } => self.config.max_group_repair_attempts,
+            _ => self.config.max_repair_attempts,
         }
     }
 
@@ -3107,6 +3287,7 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                     refs: Default::default(),
                     edit_refs: Default::default(),
                     last_active_ms: now_ms,
+                    recent: heapless::Deque::new(),
                 }
             }
             None => OutboundStream::fresh(now_ms),
@@ -3152,7 +3333,13 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
     /// Reserve an ordered transcript slot for a detected sequence gap: emit a
     /// `GapPending` placeholder (empty body, spinner on the host) and register
     /// its handle so the backfilled frame fills the same slot in place.
-    fn emit_gap_placeholder(&mut self, key: StreamKey, id: u8, epoch: u16) -> MessageHandle {
+    fn emit_gap_placeholder(
+        &mut self,
+        key: StreamKey,
+        id: u8,
+        epoch: u16,
+        presence: Presence,
+    ) -> MessageHandle {
         let handle = self.alloc_handle();
         self.emit_mutation(
             handle,
@@ -3170,7 +3357,7 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                 text_color: None,
                 body: BodyRef { offset: 0, len: 0 },
                 status: CompletionStatus::Complete,
-                presence: Presence::GapPending,
+                presence,
                 late: false,
                 notify: false,
                 unknown_original: false,
@@ -3275,6 +3462,18 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
     /// was exhausted, expired, disclaimed, or abandoned. The row stays in
     /// place as a visible loss marker rather than silently vanishing.
     fn flip_placeholder_unavailable(&mut self, key: StreamKey, id: u8, handle: MessageHandle) {
+        self.set_placeholder(key, id, handle, Presence::Unavailable);
+    }
+
+    /// Redraw a gap placeholder with `presence`. Only `Unavailable` gives up
+    /// the ID's mapping; a gap still waiting can still be filled.
+    fn set_placeholder(
+        &mut self,
+        key: StreamKey,
+        id: u8,
+        handle: MessageHandle,
+        presence: Presence,
+    ) {
         let epoch = self
             .inbound
             .get(&key)
@@ -3296,13 +3495,15 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                 text_color: None,
                 body: BodyRef { offset: 0, len: 0 },
                 status: CompletionStatus::Complete,
-                presence: Presence::Unavailable,
+                presence,
                 late: false,
                 notify: false,
                 unknown_original: false,
             },
         );
-        if let Some(stream) = self.inbound.get_mut(&key) {
+        if presence == Presence::Unavailable
+            && let Some(stream) = self.inbound.get_mut(&key)
+        {
             stream.refs.retire(id);
         }
     }

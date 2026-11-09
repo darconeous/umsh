@@ -1101,11 +1101,12 @@ impl<D: Durable> MemoryStore<D> {
                 else {
                     return;
                 };
-                let held = self
-                    .disk
-                    .messages
-                    .get(&id)
-                    .is_some_and(|message| message.record.presence == Presence::GapPending);
+                let held = self.disk.messages.get(&id).is_some_and(|message| {
+                    matches!(
+                        message.record.presence,
+                        Presence::GapPending | Presence::GapIdle
+                    )
+                });
                 if held {
                     // A slot held for a message that never came, and never
                     // will: nothing was shown, so nothing stays.

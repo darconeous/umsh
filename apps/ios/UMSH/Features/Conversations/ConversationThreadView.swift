@@ -75,9 +75,11 @@ struct ConversationThreadView: View {
     @State private var editDraft = ""
     @State private var deletingMessage: ChatMessageSummary?
     @State private var resendingMessage: ChatMessageSummary?
-    /// The warning before the first message sent on `EMERGENCY` since
+    /// The warning before the first transmission on `EMERGENCY` since
     /// launch is open.
     @State private var showsEmergencyWarning = false
+    /// What waits on that warning, when it is not the draft.
+    @State private var certifiedAction: (() -> Void)?
     @State private var inspectedMember: InspectedMember?
     @State private var inspectedMessage: ChatMessageSummary?
     /// The message the draft replies to. Held here, like the communicator's
@@ -242,16 +244,18 @@ struct ConversationThreadView: View {
                                         onEdit: message.isOutbound && !message.isDeleted
                                             && message.isWithinReviseWindow
                                             ? {
-                                                editDraft = message.body
-                                                editingMessage = message
+                                                afterEmergencyCertified {
+                                                    editDraft = message.body
+                                                    editingMessage = message
+                                                }
                                             }
                                             : nil,
                                         onDelete: message.isOutbound && !message.isDeleted
-                                            ? { deletingMessage = message }
+                                            ? { afterEmergencyCertified { deletingMessage = message } }
                                             : nil,
                                         onResend: message.isOutbound && !message.isDeleted
                                             && message.deliveryState?.lowercased() == "failed"
-                                            ? { resendingMessage = message }
+                                            ? { afterEmergencyCertified { resendingMessage = message } }
                                             : nil,
                                         onShowDetails: { inspectedMessage = message },
                                         onShowSender: isChannel && !message.isOutbound
@@ -268,7 +272,9 @@ struct ConversationThreadView: View {
                                             || (message.isOutbound
                                                 && message.deliveryState?.lowercased() == "failed")
                                             ? nil
-                                            : { glyph in react(to: message, with: glyph) },
+                                            : { glyph in
+                                                afterEmergencyCertified { react(to: message, with: glyph) }
+                                            },
                                         onReply: canReply(to: message)
                                             ? { startReply(to: message) }
                                             : nil,
@@ -305,10 +311,13 @@ struct ConversationThreadView: View {
                                 case let .dateSeparator(_, date):
                                     TranscriptDateSeparator(date: date)
                                         .id(item.id)
-                                case let .gap(_, count):
+                                case let .gap(_, messages):
                                     GapPlaceholderBubble(
-                                        count: count,
-                                        reservesAvatarGutter: isChannel
+                                        count: messages.count,
+                                        reservesAvatarGutter: isChannel,
+                                        onRequest: messages.first?.isGapIdle == true
+                                            ? { afterEmergencyCertified { requestMissing(messages) } }
+                                            : nil
                                     )
                                     .padding(.top, MessagePresentation.looseSpacing)
                                     .id(item.id)
@@ -583,15 +592,23 @@ struct ConversationThreadView: View {
                 cancel: { editingMessage = nil }
             )
         }
-        // Turning the warning down, by Cancel or a swipe, leaves EMERGENCY
-        // too. The draft stays.
+        // Turning the warning down before a send, by Cancel or a swipe,
+        // leaves EMERGENCY too. The draft stays. Turned down before anything
+        // else, it just drops what was waiting.
         .sheet(isPresented: $showsEmergencyWarning, onDismiss: {
-            if !channelActions.emergencyCertified() { dismiss() }
+            let wasSend = certifiedAction == nil
+            certifiedAction = nil
+            if wasSend, !channelActions.emergencyCertified() { dismiss() }
         }) {
-            EmergencyWarningSheet {
+            EmergencyWarningSheet(sends: certifiedAction == nil) {
                 channelActions.certifyEmergency()
                 showsEmergencyWarning = false
-                Task { await send() }
+                if let action = certifiedAction {
+                    certifiedAction = nil
+                    action()
+                } else {
+                    Task { await send() }
+                }
             } cancel: {
                 showsEmergencyWarning = false
             }
@@ -815,6 +832,32 @@ struct ConversationThreadView: View {
                     scroll.followsLatestMessage = true
                     scrollToBottomRequest += 1
                 }
+            case .cancelled: break
+            case let .failed(reason):
+                sendFailureMessage = reason
+                showsBlockedReason = true
+            }
+        }
+    }
+
+    /// Run `action` now, or once the user agrees to the `EMERGENCY` warning.
+    private func afterEmergencyCertified(_ action: @escaping () -> Void) {
+        guard channelConversation?.channel.isEmergency == true,
+              !channelActions.emergencyCertified()
+        else {
+            action()
+            return
+        }
+        certifiedAction = action
+        showsEmergencyWarning = true
+    }
+
+    /// Fire-and-forget: the engine flips the gap to a spinner while it asks.
+    private func requestMissing(_ messages: [ChatMessageSummary]) {
+        Task {
+            switch await messageActions.requestMissing(conversation, messages) {
+            case let .sent(updated, _):
+                conversation = updated
             case .cancelled: break
             case let .failed(reason):
                 sendFailureMessage = reason
@@ -1680,6 +1723,9 @@ private struct EmergencyWarningSheet: View {
     /// The channel's name, which is never translated.
     private static let channelName = "EMERGENCY"
 
+    /// Whether agreeing sends the draft, rather than going on with
+    /// something else the user did.
+    var sends = true
     let certify: () -> Void
     let cancel: () -> Void
 
@@ -1708,7 +1754,13 @@ private struct EmergencyWarningSheet: View {
             }
             VStack(spacing: 12) {
                 Button(action: certify) {
-                    Text("Certify and Send", comment: "Button: certify that a message on the EMERGENCY channel is about a genuine emergency, and send it.")
+                    Group {
+                        if sends {
+                            Text("Certify and Send", comment: "Button: certify that a message on the EMERGENCY channel is about a genuine emergency, and send it.")
+                        } else {
+                            Text("Certify", comment: "Button: certify that an action on the EMERGENCY channel, such as a reaction or a request for a missing message, concerns a genuine emergency, and go on with it.")
+                        }
+                    }
                         .font(.headline.bold())
                         .foregroundStyle(.red)
                         .frame(maxWidth: .infinity)

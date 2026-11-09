@@ -42,6 +42,7 @@ use umsh_node::{
 };
 use umsh_sync::AsyncRefCell;
 use umsh_text::chat::{ChannelRegistry, Seeds, TextSource};
+use umsh_text::engine::sequence::MessageHandle;
 use umsh_text::engine::{ArchiveResult, MAX_FRAME};
 use umsh_text::model::ConversationKey;
 use umsh_text::node_adapter::{
@@ -1069,6 +1070,11 @@ enum WorkerCommand {
         request_id: u32,
         kind: MobileChatArchiveResultKind,
         payload: Vec<u8>,
+    },
+    RequestChatRepair {
+        session_id: u64,
+        message: u32,
+        response: oneshot::Sender<bool>,
     },
     Advertise {
         name: Option<String>,
@@ -2895,6 +2901,30 @@ impl MobileMeshSession {
         result
             .await
             .map_err(|_| MobileMeshError::SessionUnavailable)?
+    }
+
+    /// Ask again for a message missing from a conversation, or the missing
+    /// part of one, as the user chose to: `handle`, from a record of
+    /// `session_id`, is the gap's placeholder (presence `GapIdle`) or the
+    /// partial message. Returns whether a request is on its way; a gap from
+    /// an earlier session is no longer held and cannot be asked for.
+    pub async fn request_chat_repair(
+        &self,
+        session_id: u64,
+        handle: u32,
+    ) -> Result<bool, MobileMeshError> {
+        let (response, result) = oneshot::channel();
+        self.commands
+            .send(WorkerCommand::RequestChatRepair {
+                session_id,
+                message: handle,
+                response,
+            })
+            .await
+            .map_err(|_| MobileMeshError::SessionUnavailable)?;
+        result
+            .await
+            .map_err(|_| MobileMeshError::SessionUnavailable)
     }
 
     pub fn apply_chat_archive_result(
@@ -4923,6 +4953,33 @@ async fn run_worker(
                             if sent > 0 {
                                 persist_counters().await;
                             }
+                        }
+                        Some(WorkerCommand::RequestChatRepair {
+                            session_id,
+                            message,
+                            response,
+                        }) => {
+                            let now_ms = handle.now_ms().await;
+                            let asked = chat
+                                .facade
+                                .request_repair(session_id, MessageHandle(message), now_ms)
+                                .is_ok();
+                            // Sent now rather than on the next timer.
+                            chat.facade.tick(now_ms);
+                            publish_chat_drain(chat.drain(), &mut chat_queue, &chat_events);
+                            let sent = pump_chat(
+                                &node,
+                                &mut chat,
+                                &mut chat_queue,
+                                &chat_policy(flood_hops, well_known),
+                                &chat_events,
+                                now_ms,
+                            )
+                            .await;
+                            if sent > 0 {
+                                persist_counters().await;
+                            }
+                            let _ = response.send(asked);
                         }
                         Some(WorkerCommand::Receive(record)) => {
                             // A radio that cannot keep up loses frames, as
@@ -9035,6 +9092,8 @@ mod tests {
     ///
     /// It also covers group repair as such, which nothing else does: it is
     /// the only test where a member has to ask for a fragment and get it.
+    /// Bob has not spoken on the channel, so the gap waits for him to ask,
+    /// which he does as soon as it may be asked for.
     /// Two separate faults used to stop that dead—the requester could not
     /// address a channel member it had never registered as a peer, and the
     /// sender refused to serve any frame still sitting in `in_flight`, which
@@ -9101,6 +9160,8 @@ mod tests {
         let mut sent = 0;
         let mut repairs = 0;
         let mut assembled: Option<String> = None;
+        let mut partial: Option<(u64, u32)> = None;
+        let mut asked = false;
         let deadline = Instant::now() + Duration::from_secs(40);
         while assembled.as_deref() != Some(body.as_str()) {
             let alice_update = alice.poll_update();
@@ -9162,12 +9223,17 @@ mod tests {
                     .unwrap();
             }
             for mutation in &bob_update.chat_mutations {
+                partial.get_or_insert((mutation.session_id, mutation.handle));
                 if let Some(text) = mutation.body.as_deref() {
                     assembled = Some(text.to_owned());
                 }
             }
             if let Some(batch_id) = bob_update.chat_batch_id {
                 bob.acknowledge_chat_batch(batch_id).unwrap();
+            }
+            // Asking is refused until the stalled fragment is up for repair.
+            if !asked && let Some((session_id, handle)) = partial {
+                asked = bob.request_chat_repair(session_id, handle).await.unwrap();
             }
             assert!(
                 Instant::now() < deadline,

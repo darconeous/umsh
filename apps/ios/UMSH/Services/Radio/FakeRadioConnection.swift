@@ -78,6 +78,14 @@ actor FakeRadioConnection: RadioConnection {
         #endif
     }
 
+    /// Ask the staging air to have a staged peer send three channel messages,
+    /// the middle one lost on the way.
+    func stagedPeerLosesChannelMessage(bodies: (String, String, String)) async {
+        #if DEBUG
+        await (air as? StagingMeshAir)?.sendFromPeerLosingOne(bodies: bodies)
+        #endif
+    }
+
     /// Ask the staging air to have a staged peer react to the phone's last
     /// message to it.
     func stagedPeerReacts(body: String) async {
@@ -1154,6 +1162,11 @@ actor FakeRadioConnection: RadioConnection {
             clientToken: clientToken,
             original: original
         )
+    }
+
+    func requestChatRepair(sessionID: UInt64, handle: UInt32) async throws -> Bool {
+        guard let meshSession else { throw RadioConnectionError.incompatibleProtocol }
+        return try await meshSession.requestChatRepair(sessionId: sessionID, handle: handle)
     }
 
     func composeReaction(

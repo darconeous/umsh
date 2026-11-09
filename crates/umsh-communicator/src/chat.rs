@@ -556,6 +556,37 @@ impl<S: ChatStore> Chats<S> {
         self.lapse_repeats(now_ms, events);
     }
 
+    /// Asks again for `message` in `chat`, a message missing here or one
+    /// that came in part, as the user chose to. Returns whether a request
+    /// is on its way: a gap from before the device started is no longer
+    /// held, and cannot be asked for.
+    pub fn request_repair(
+        &mut self,
+        chat: model::ChatId,
+        message: model::MessageId,
+        now_ms: u64,
+        time: Option<u32>,
+        events: &mut dyn FnMut(NodeEvent),
+    ) -> bool {
+        let Ok(Some(record)) = self.store.message(MessageId(message)) else {
+            return false;
+        };
+        if record.chat.0 != chat || record.direction != engine::Direction::Inbound {
+            return false;
+        }
+        let Some(handle) = self.handle_of(record.id) else {
+            return false;
+        };
+        let Some(facade) = &mut self.facade else {
+            return false;
+        };
+        let asked = facade
+            .request_repair(facade.session_id(), handle, now_ms)
+            .is_ok();
+        self.settle(None, now_ms, time, events);
+        asked
+    }
+
     /// Commits what the facade produced and answers what it asked. `link`
     /// describes the frame behind the first round's outputs.
     fn settle(
@@ -1968,6 +1999,7 @@ fn presence(presence: engine::Presence) -> Presence {
     match presence {
         engine::Presence::Present => Presence::Present,
         engine::Presence::GapPending => Presence::PendingRepair,
+        engine::Presence::GapIdle => Presence::Missing,
         engine::Presence::Unavailable => Presence::Unavailable,
     }
 }

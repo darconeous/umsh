@@ -31,7 +31,8 @@ use crate::engine::sequence::MessageHandle;
 use crate::engine::{
     ArchiveKey, ArchiveResult, BodyRef, CompletionStatus, ComposeError, ComposeIntent,
     DeliveryState, Diagnostic, Direction, Engine, EngineConfig, Event, MessageMutation,
-    MutationKind, Output, Presence, ReceiveError, ResolvedRef, StreamCheckpoint, Transmission,
+    MutationKind, Output, Presence, ReceiveError, RepairRefused, ResolvedRef, StreamCheckpoint,
+    Transmission,
 };
 use crate::model::{ConversationKey, MessageType, SenderScope};
 use crate::validate::{DeliveryPath, DirectChannelProfile, Envelope, TextProfile};
@@ -878,6 +879,24 @@ impl<P: TextProfile + Clone, const SLOTS: usize, const PAGES: usize> ChatFacade<
         let handle = self.engine.adopt(conversation, message_id, epoch, now_ms);
         self.stage();
         handle
+    }
+
+    /// The user asked for a missing message, or the missing part of one:
+    /// `handle`, a gap placeholder or a partial message of `session_id`.
+    /// The request goes out on a coming [`tick`](Self::tick). A gap from an
+    /// earlier session is no longer held.
+    pub fn request_repair(
+        &mut self,
+        session_id: u64,
+        handle: MessageHandle,
+        now_ms: u64,
+    ) -> Result<(), RepairRefused> {
+        if session_id != self.session_id {
+            return Err(RepairRefused::NotPending);
+        }
+        let result = self.engine.request_repair(handle, now_ms);
+        self.stage();
+        result
     }
 
     /// Advance timers: reassembly expiry, notify deadlines, repair.

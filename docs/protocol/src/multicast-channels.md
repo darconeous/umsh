@@ -99,7 +99,7 @@ The `public` channel (derived from `umsh:cs:public`) is the default flooded grou
 
 - Maximum flood hops: **10**.
 - Traffic **may** be encrypted (E=1), but the key is known so this doesn't really offer privacy.
-- Blind unicast on this channel is forbidden.
+- Blind unicast on this channel carries only channel-group repair: a sender **MUST NOT** send any blind unicast on it other than a [resend request](app-text-messages.md#message-type) carrying the [Channel Group Resend](app-text-messages.md#channel-group-resend) flag. The channel key conceals nothing, so one-to-one traffic uses unicast.
 - Chat messages that do not include the full source key (`S=1`) **MUST NOT** be displayed in the user interface. This ensures that users can always verify sender identity on the public channel, even though the channel key itself is public knowledge.
 
 ### `EMERGENCY`
@@ -111,6 +111,7 @@ The emergency channel (written `EMERGENCY` here for emphasis, but derived from `
 - Chat messages **must** include the full source key (`S=1`).
 - Every multicast carrying [text-message](app-text-messages.md) traffic on this channel **must** be signed (the SCF's `D` bit, see [Frame Signatures](security.md#frame-signatures)). This includes resend responses to the channel and Message Unavailable responses. Resend requests and one-to-one repairs travel by blind unicast, which already authenticates the sender pairwise, and are not signed.
 - Messages that do not meet all three requirements (unencrypted, full source key, signed) **must not** be accepted or displayed by the user interface. A multicast whose signature does not verify does not meet them.
+- A node **MUST NOT** participate in this channel unless its user has agreed to the emergency-use dialog—an explicit prompt affirming that the traffic concerns an emergency—and has taken part in the conversation. Every transmission a user initiates on the channel, including reactions, edits, deletions, resends, and repair requests, waits on that agreement. Traffic a node sends without a user action comes only from a node that has itself sent in the conversation: [automatic repair](app-text-messages.md#ordering-gaps-and-automatic-repair) requires a recent message of its own, and a [resend request](app-text-messages.md#message-type) is answered only for an ID the node assigned.
 
 These requirements ensure that emergency traffic is universally readable, attributable to a specific node, and cryptographically authenticated against impersonation.
 

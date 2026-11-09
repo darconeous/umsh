@@ -128,6 +128,7 @@ struct AppRootView: View {
                         reply: runtime.replyToMessage,
                         resend: runtime.resendMessage,
                         resendAsNew: runtime.resendMessageAsNew,
+                        requestMissing: runtime.requestMissingMessages,
                         clearMessages: runtime.clearConversationMessages,
                         countMessages: runtime.countConversationMessages
                     ),
@@ -183,6 +184,7 @@ struct AppRootView: View {
                         reply: runtime.replyToMessage,
                         resend: runtime.resendMessage,
                         resendAsNew: runtime.resendMessageAsNew,
+                        requestMissing: runtime.requestMissingMessages,
                         clearMessages: runtime.clearConversationMessages,
                         countMessages: runtime.countConversationMessages
                     ),
@@ -217,6 +219,7 @@ struct AppRootView: View {
                         reply: runtime.replyToMessage,
                         resend: runtime.resendMessage,
                         resendAsNew: runtime.resendMessageAsNew,
+                        requestMissing: runtime.requestMissingMessages,
                         clearMessages: runtime.clearConversationMessages,
                         countMessages: runtime.countConversationMessages
                     ),
@@ -284,6 +287,7 @@ struct AppRootView: View {
                         reply: runtime.replyToMessage,
                         resend: runtime.resendMessage,
                         resendAsNew: runtime.resendMessageAsNew,
+                        requestMissing: runtime.requestMissingMessages,
                         clearMessages: runtime.clearConversationMessages,
                         countMessages: runtime.countConversationMessages
                     ),
@@ -292,6 +296,7 @@ struct AppRootView: View {
                     channelActions: channelManagementActions,
                     seedMessages: runtime.seedGeneratedMessages,
                     stagedPeerSendsMessage: runtime.stagedPeerSendsMessage,
+                    stagedPeerLosesChannelMessage: runtime.stagedPeerLosesChannelMessage,
                     stagedPeerReacts: runtime.stagedPeerReacts,
                     stagedPeerReplies: runtime.stagedPeerReplies,
                     stagedPeerMeets: runtime.stagedPeerMeets,
@@ -345,6 +350,7 @@ struct AppRootView: View {
                         reply: runtime.replyToMessage,
                         resend: runtime.resendMessage,
                         resendAsNew: runtime.resendMessageAsNew,
+                        requestMissing: runtime.requestMissingMessages,
                         clearMessages: runtime.clearConversationMessages,
                         countMessages: runtime.countConversationMessages
                     )
@@ -410,6 +416,7 @@ struct AppRootView: View {
                         reply: runtime.replyToMessage,
                         resend: runtime.resendMessage,
                         resendAsNew: runtime.resendMessageAsNew,
+                        requestMissing: runtime.requestMissingMessages,
                         clearMessages: runtime.clearConversationMessages,
                         countMessages: runtime.countConversationMessages
                     )
@@ -435,6 +442,7 @@ struct AppRootView: View {
                     react: runtime.reactToMessage,
                     resend: runtime.resendMessage,
                     resendAsNew: runtime.resendMessageAsNew,
+                    requestMissing: runtime.requestMissingMessages,
                     clearMessages: runtime.clearConversationMessages,
                     countMessages: runtime.countConversationMessages
                 ),

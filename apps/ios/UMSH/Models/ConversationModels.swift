@@ -450,6 +450,8 @@ struct ChatMessageSummary: Identifiable, Hashable, Sendable {
     /// A reserved gap slot awaiting repair—rendered as a spinner placeholder,
     /// not a real bubble.
     var isGapPlaceholder: Bool = false
+    /// A gap no repair is under way for: the user can ask for it.
+    var isGapIdle: Bool = false
     /// A gap whose repair failed—rendered as a subtle "message unavailable"
     /// marker.
     var isUnavailable: Bool = false
@@ -655,6 +657,10 @@ struct ChatMessageActions: Sendable {
     /// failures too old to revise in place: the old row is removed and the
     /// text goes out (and lands in the transcript) as the newest message.
     var resendAsNew: @Sendable (ConversationListItem, ChatMessageSummary) async
+        -> MessageSendResult = { _, _ in .failed("Messaging is unavailable.") }
+    /// Ask for a run of missing messages no repair is under way for
+    /// (``ChatMessageSummary/isGapIdle``).
+    var requestMissing: @Sendable (ConversationListItem, [ChatMessageSummary]) async
         -> MessageSendResult = { _, _ in .failed("Messaging is unavailable.") }
     /// Erase every message in the conversation at this address. Local only:
     /// nothing is sent, and everyone else keeps their copy. The conversation

@@ -39,9 +39,8 @@ FRAME_SIG = (
     " AA 55 84 68 F7 01 2F E0 91 24 4E 6B 89 52 BE 0C"
 )
 
-# Channel IDs of the two well-known channels, derived from their names.
+# Channel ID of the emergency channel, derived from its name.
 # See docs/protocol/src/multicast-channels.md.
-CHAN_PUBLIC = "0A D6"
 CHAN_EMERGENCY = "26 C7"
 
 
@@ -135,13 +134,6 @@ VECTORS = [
         h("E4", CHAN_EMERGENCY, "60" "00 00 00 01", "FF", SRC_A_FULL,
           "03 FF 48 65 6C 70",      # Text Message, no options, "Help"
           "E6 6A 13 C3 E6 E0 75 18 FB 1B 03 0C 66 74 56 F2"),
-    ),
-    (
-        "Blind unicast on the public channel",
-        h("F0", CHAN_PUBLIC, "E0" "00 00 00 02", "FF",
-          "11 22 33 44 55 66",      # ENC_DST_SRC
-          "77 88 99 AA",            # body
-          "00" * 16),
     ),
 
     # ─── Options the spec defines but the test vectors never carry ───────

@@ -320,7 +320,8 @@ struct StoredChatMessage: Equatable, Sendable, Identifiable {
     let wireID: UInt8?
     let epoch: UInt16?
     let isEdited: Bool
-    /// Ordered-repair presence: 0 = present, 1 = gap placeholder, 2 = unavailable.
+    /// Ordered-repair presence: 0 = present, 1 = gap under repair, 2 =
+    /// unavailable, 3 = gap waiting for the user.
     let presence: Int
     /// The message filled a reserved gap slot out of order.
     let receivedLate: Bool
@@ -365,7 +366,9 @@ struct StoredChatMessage: Equatable, Sendable, Identifiable {
     /// been sent.
     var repeats: StoredMessageRepeats?
 
-    var isGapPlaceholder: Bool { presence == 1 }
+    var isGapPlaceholder: Bool { presence == 1 || presence == 3 }
+    /// A gap no repair is under way for, which waits for the user to ask.
+    var isGapIdle: Bool { presence == 3 }
     var isUnavailable: Bool { presence == 2 }
 
     var cursor: ChatMessageCursor {
@@ -536,6 +539,7 @@ private func presenceCode(_ presence: MobileChatPresence) -> Int32 {
     case .present: return 0
     case .gapPending: return 1
     case .unavailable: return 2
+    case .gapIdle: return 3
     }
 }
 
@@ -3036,6 +3040,44 @@ actor SQLiteApplicationStore {
         defer { sqlite3_finalize(statement) }
         try bind(ownerIdentityID, to: statement, at: 1)
         try stepDone(statement)
+    }
+
+    /// Resolve gap placeholders as unavailable: the named rows, or every gap
+    /// when `rows` is nil. A gap belongs to the mesh session that saw it, so
+    /// once that session is gone no repair will ever fill it.
+    func resolveGapsUnavailable(
+        ownerIdentityID: String,
+        rows: [(sessionID: String, handle: UInt32)]? = nil
+    ) throws {
+        guard let rows else {
+            let statement = try prepare(
+                """
+                UPDATE chat_message SET presence = 2
+                WHERE owner_identity_id = ? AND presence IN (1, 3)
+                """
+            )
+            defer { sqlite3_finalize(statement) }
+            try bind(ownerIdentityID, to: statement, at: 1)
+            try stepDone(statement)
+            return
+        }
+        try transaction {
+            let statement = try prepare(
+                """
+                UPDATE chat_message SET presence = 2
+                WHERE owner_identity_id = ? AND session_id = ? AND handle = ?
+                    AND presence IN (1, 3)
+                """
+            )
+            defer { sqlite3_finalize(statement) }
+            for row in rows {
+                try check(sqlite3_reset(statement))
+                try bind(ownerIdentityID, to: statement, at: 1)
+                try bind(row.sessionID, to: statement, at: 2)
+                try check(sqlite3_bind_int64(statement, 3, Int64(row.handle)))
+                try stepDone(statement)
+            }
+        }
     }
 
     func chatArchive(

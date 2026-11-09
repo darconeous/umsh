@@ -29,12 +29,14 @@ Maintenance actions should not compete visually with messaging.
   can prove it), and failed. Never invent a stronger delivery claim.
 - Provide an explicit cancel path for queued work when technically possible.
 
-The first send on `EMERGENCY` after each boot opens a warning instead: the
-channel is for genuine emergencies only, and it is unencrypted and names the
-sender. It is drawn in the channel's red, unlike any other confirmation, and
-starts on **Cancel**, which leaves the channel with the draft kept. **Certify
-and Send** sends the message, and the channel asks no more until the next
-boot. Nothing about it is saved.
+The first transmission on `EMERGENCY` after each boot opens a warning
+instead, whether it is a message, a reaction, a resend, a deletion, or a
+request for a missing message: the channel is for genuine emergencies only,
+and it is unencrypted and names the sender. It is drawn in the channel's red,
+unlike any other confirmation, and starts on **Cancel**. Before a message,
+Cancel leaves the channel with the draft kept; before anything else, it
+drops the action. **Certify and Send** (or **Certify**) goes ahead, and the
+channel asks no more until the next boot. Nothing about it is saved.
 
 ## Adding peers
 

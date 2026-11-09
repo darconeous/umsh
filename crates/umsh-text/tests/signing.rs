@@ -407,6 +407,22 @@ fn emergency_repairs_go_to_the_channel_signed() {
         assert!(frame.len() <= MAX_RADIO_FRAME);
     }
 
+    // The receiver spoke here lately, so it repairs the gap on its own.
+    let spoken = receiver
+        .chat
+        .compose_within(
+            conversation,
+            2,
+            text("copy"),
+            None,
+            receiver.budget(conversation),
+            0,
+        )
+        .unwrap();
+    let outbound = receiver.chat.commit(spoken).unwrap();
+    receiver.queue.enqueue(outbound);
+    receiver.pump(0);
+
     // Two fragments go missing on the way.
     for (index, frame) in fragments.iter().enumerate() {
         if index != 1 && index != 2 {

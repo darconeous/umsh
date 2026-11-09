@@ -1770,6 +1770,8 @@ fn a_channel_joined_can_be_called_something_else_here() {
 }
 
 const EMERGENCY: u32 = 6;
+/// The fixture's chat of messages in every state.
+const STATES_CHAT: u32 = 7;
 
 #[test]
 fn emergency_is_open_and_its_sends_end_at_sent() {
@@ -1854,6 +1856,58 @@ fn the_first_message_on_emergency_waits_on_the_warning() {
     run(&mut app, &[Input::Enter]);
     assert!(!warned(app.state()));
     assert_eq!(messages(app.state()).len(), before + 2);
+}
+
+/// A reaction goes on the air too, so on `EMERGENCY` it waits on the
+/// warning as a message does; turning the warning down stays with the
+/// message.
+#[test]
+fn a_reaction_on_emergency_waits_on_the_warning() {
+    let mut app = app!();
+    open_chat(&mut app, EMERGENCY);
+    let message = messages(app.state())[1].id;
+    let heart = |app: &mut _| {
+        turn_to(app, keys::message(message));
+        run(app, &[Input::Press]);
+        turn_to(app, keys::reaction(Reaction::Heart));
+        run(app, &[Input::Press]);
+    };
+    heart(&mut app);
+    assert!(warned(app.state()));
+    assert_eq!(reactions(app.state(), message), vec![], "nothing went");
+
+    // Turned down, it goes back to the message.
+    run(&mut app, &[Input::Press]);
+    assert!(!warned(app.state()));
+    assert!(matches!(app.state().screen(), Screen::Conversation { .. }));
+    assert_eq!(focus(app.state()), Some(keys::message(message)));
+
+    heart(&mut app);
+    certify(&mut app);
+    assert_eq!(
+        reactions(app.state(), message),
+        vec![(Reaction::Heart, 1, true)]
+    );
+}
+
+/// A message missed while the node was quiet stands in its place until
+/// it is pressed, which asks for it.
+#[test]
+fn pressing_a_missing_message_asks_for_it() {
+    let mut app = app!();
+    open_chat(&mut app, STATES_CHAT);
+    let missing = messages(app.state())
+        .into_iter()
+        .find(|m| m.presence == Presence::Missing)
+        .expect("the fixture's missing message")
+        .id;
+    turn_to(&mut app, keys::message(missing));
+    run(&mut app, &[Input::Press]);
+    let asked = app
+        .state()
+        .open_message(missing)
+        .expect("still in its place");
+    assert_eq!(asked.presence, Presence::PendingRepair);
 }
 
 #[test]

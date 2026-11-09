@@ -155,6 +155,7 @@ f.txt_regarding= ProtoField.bytes  ("umsh.app.txt.re",      "Regarding")
 f.txt_edit     = ProtoField.uint8  ("umsh.app.txt.edit",    "Editing Msg ID", base.DEC)
 f.txt_bg_color = ProtoField.bytes  ("umsh.app.txt.bg",      "Background Color")
 f.txt_fg_color = ProtoField.bytes  ("umsh.app.txt.fg",      "Text Color")
+f.txt_group_resend = ProtoField.none("umsh.app.txt.group_resend", "Channel Group Resend")
 f.txt_unknown  = ProtoField.bytes  ("umsh.app.txt.unk",     "Unknown Option")
 f.txt_body     = ProtoField.string ("umsh.app.txt.body",    "Message Body")
 
@@ -197,7 +198,7 @@ proto.fields = {
   f.pr_unknown,
   f.txt_opts, f.txt_opt_type, f.txt_handle, f.txt_seq,
   f.txt_regarding, f.txt_edit, f.txt_bg_color, f.txt_fg_color,
-  f.txt_unknown, f.txt_body,
+  f.txt_group_resend, f.txt_unknown, f.txt_body,
   f.cr_action, f.cr_opts, f.cr_opt_str, f.cr_opt_uint, f.cr_opt_bytes,
   f.cr_desc, f.cr_timestamp, f.cr_max_count, f.cr_body,
   f.nm_token, f.nm_opts, f.nm_cursor, f.nm_remaining, f.nm_unknown,
@@ -763,13 +764,27 @@ end
 -- Text Message dissector
 -- Text option numbers (separate namespace from MAC options):
 --   0=Message Type, 1=Sender Handle, 2=Message Sequence, 3=Sequence Reset,
---   4=Regarding, 5=Editing, 6=Background Color, 7=Text Color
+--   4=Regarding, 5=Editing, 6=Background Color, 7=Text Color,
+--   8=Channel Group Resend
 -- ──────────────────────────────────────────────────────────────────────────
 local TXT_OPT_NAMES = {
   [0]="Message Type", [1]="Sender Handle", [2]="Message Sequence",
   [3]="Sequence Reset", [4]="Regarding", [5]="Editing",
-  [6]="Background Color", [7]="Text Color",
+  [6]="Background Color", [7]="Text Color", [8]="Channel Group Resend",
 }
+
+-- The public channel's key is known to all, so a blind unicast on it
+-- conceals nothing; the only payload it may carry is a channel-group resend
+-- request, which needs the channel envelope to name the archive it asks for.
+local function is_public_blind(ctx)
+  return ctx and ctx.flag and ctx.channel and ctx.channel.builtin == "public" and
+         (ctx.pkt_type == 6 or ctx.pkt_type == 7)
+end
+
+local function flag_public_blind(ctx, subtree, tvbr)
+  ctx.flag(subtree, tvbr,
+    "Blind unicast on the public channel may carry only a channel-group resend request")
+end
 
 local function dissect_text_message(payload, subtree, tvb, pinfo, ctx)
   local len  = #payload
@@ -825,6 +840,7 @@ local function dissect_text_message(payload, subtree, tvb, pinfo, ctx)
   end
 
   -- Decode individual options
+  local msg_type, group_resend = 0, false
   if opts_module and opts_tree and opts_len > 0 then
     pcall(function()
       local raw_pos = 1
@@ -833,7 +849,7 @@ local function dissect_text_message(payload, subtree, tvb, pinfo, ctx)
         local opt_tvb = tvb(off - 1 + raw_pos - 1, consumed)
 
         if num == 0 then
-          local msg_type = (v_len >= 1) and byte_at(val, 1) or 0
+          msg_type = (v_len >= 1) and byte_at(val, 1) or 0
           opts_tree:add(f.txt_opt_type, opt_tvb, msg_type)
         elseif num == 1 then
           opts_tree:add(f.txt_handle, opt_tvb, val)
@@ -853,6 +869,9 @@ local function dissect_text_message(payload, subtree, tvb, pinfo, ctx)
           opts_tree:add(f.txt_bg_color, opt_tvb)
         elseif num == 7 then
           opts_tree:add(f.txt_fg_color, opt_tvb)
+        elseif num == 8 then
+          group_resend = (v_len == 0)
+          opts_tree:add(f.txt_group_resend, opt_tvb)
         else
           opts_tree:add(f.txt_unknown, opt_tvb)
             :set_text(string.format("Unknown Option %d (%d bytes)", num, v_len))
@@ -860,6 +879,11 @@ local function dissect_text_message(payload, subtree, tvb, pinfo, ctx)
         raw_pos = raw_pos + consumed
       end
     end)
+  end
+
+  -- Blind unicast on the public channel carries only channel-group repair.
+  if is_public_blind(ctx) and not (msg_type == 2 and group_resend) then
+    flag_public_blind(ctx, subtree, tvb(0, math.min(1, len)))
   end
 
   -- Message body (UTF-8 text after 0xFF terminator)
@@ -1238,6 +1262,8 @@ function M.dissect(payload_bytes, parent_tree, pinfo, ks, crypto_mod, ctx)
       ctx.flag(subtree, tvb(0, 1), string.format(
         "%s payload must not be carried in a %s packet",
         type_name, PKT_TYPE_NAME[ctx.pkt_type] or "?"))
+    elseif ptype ~= 0x03 and is_public_blind(ctx) then
+      flag_public_blind(ctx, subtree, tvb(0, 1))
     end
   end
 

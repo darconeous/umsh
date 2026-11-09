@@ -1113,9 +1113,49 @@ fn a_channel_reads_by_row() {
 }
 
 /// Messages missed and asked for again are one row while they are on
-/// their way, and their own rows as each comes.
+/// their way, and their own rows as each comes. Having spoken in the
+/// channel lately, the node asks for them on its own.
 #[test]
 fn a_run_on_its_way_again_is_one_row_until_it_comes() {
+    let sim = device();
+    let (node, _) = started(&sim);
+    let public = WellKnownChannels::derive().public;
+    let key = PublicKey([0x37; 32]);
+    let (mut robin, conversation) = member_session(key, public, "Robin");
+    let payloads: Vec<Vec<u8>> = ["one", "two", "three", "four"]
+        .into_iter()
+        .map(|body| spoken(&mut robin, conversation, text(body)).1)
+        .collect();
+    let hear = |payload: &[u8]| node.arrive(Arrival::Text(received(&public, key, payload)));
+    let chat = public_chat(&node);
+    node.send(chat, "Here", None, false).unwrap();
+    hear(&payloads[0]);
+    hear(&payloads[3]);
+    assert_eq!(node.rows(chat), 4, "{:?}", row_ids(&node, chat));
+    let pending = node.neighbor(chat, 2).unwrap();
+    assert_eq!(pending.presence, Presence::PendingRepair);
+    assert_eq!(node.neighbor(chat, 3).unwrap().presence, Presence::Present);
+
+    hear(&payloads[1]);
+    assert_eq!(node.rows(chat), 5);
+    assert_eq!(node.neighbor(chat, 2).unwrap().presence, Presence::Present);
+    assert_eq!(
+        node.neighbor(chat, 3).unwrap().presence,
+        Presence::PendingRepair
+    );
+
+    hear(&payloads[2]);
+    assert_eq!(
+        row_texts(&node, chat),
+        ["Here", "one", "two", "three", "four"]
+    );
+}
+
+/// A node that has not spoken in a channel lately leaves a message it
+/// missed there for the user to ask for: each one its own row, asked for
+/// by itself.
+#[test]
+fn a_message_missed_while_quiet_waits_to_be_asked_for() {
     let sim = device();
     let (node, _) = started(&sim);
     let public = WellKnownChannels::derive().public;
@@ -1129,21 +1169,26 @@ fn a_run_on_its_way_again_is_one_row_until_it_comes() {
     hear(&payloads[0]);
     hear(&payloads[3]);
     let chat = public_chat(&node);
-    assert_eq!(node.rows(chat), 3, "{:?}", row_ids(&node, chat));
-    let pending = node.neighbor(chat, 1).unwrap();
-    assert_eq!(pending.presence, Presence::PendingRepair);
-    assert_eq!(node.neighbor(chat, 2).unwrap().presence, Presence::Present);
+    assert_eq!(node.rows(chat), 4, "{:?}", row_ids(&node, chat));
+    for row in 1..3 {
+        assert_eq!(
+            node.neighbor(chat, row).unwrap().presence,
+            Presence::Missing
+        );
+    }
 
-    hear(&payloads[1]);
-    assert_eq!(node.rows(chat), 4);
-    assert_eq!(node.neighbor(chat, 1).unwrap().presence, Presence::Present);
+    let missing = node.row_id(chat, 1).unwrap();
+    assert!(node.request_repair(chat, missing));
     assert_eq!(
-        node.neighbor(chat, 2).unwrap().presence,
+        node.neighbor(chat, 1).unwrap().presence,
         Presence::PendingRepair
     );
+    assert_eq!(node.neighbor(chat, 2).unwrap().presence, Presence::Missing);
+    // Not one this node received.
+    assert!(!node.request_repair(chat, node.row_id(chat, 0).unwrap()));
 
-    hear(&payloads[2]);
-    assert_eq!(row_texts(&node, chat), ["one", "two", "three", "four"]);
+    hear(&payloads[1]);
+    assert_eq!(node.neighbor(chat, 1).unwrap().presence, Presence::Present);
 }
 
 /// The heap, counted while one thread asks it to be.

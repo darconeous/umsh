@@ -607,6 +607,14 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
         queued
     }
 
+    fn request_repair(&self, chat: ChatId, message: MessageId) -> bool {
+        let asked = self.with_chats(|chats, now_ms, time, events| {
+            chats.request_repair(chat, message, now_ms, time, events)
+        });
+        self.wake();
+        asked
+    }
+
     fn retry_without_secrecy(&self, chat: ChatId, message: MessageId) -> bool {
         let queued = self.with_chats(|chats, now_ms, time, events| {
             chats.retry_without_secrecy(chat, message, now_ms, time, events)

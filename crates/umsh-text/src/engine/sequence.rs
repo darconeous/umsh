@@ -167,15 +167,21 @@ impl SeenWindow {
     }
 }
 
-/// A pending automatic repair request for one missing frame.
+/// A repair request for one missing frame, sent on a timer or held for the
+/// user to ask for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PendingRepair {
     pub message_id: u8,
     /// Missing fragment index, or `None` for the whole-message 1-byte form.
     pub fragment: Option<u8>,
-    /// Earliest time the request may be transmitted (grace plus jitter).
-    pub deadline_ms: u64,
+    /// Earliest time the request may be transmitted (grace plus jitter), or
+    /// `None` while it waits for the user: a member that has not spoken in
+    /// a channel group lately leaves the asking to someone who has.
+    pub deadline_ms: Option<u64>,
     pub attempts: u8,
+    /// Requests this entry may send before it gives up or goes back to
+    /// waiting for the user.
+    pub budget: u8,
     /// Ordered-slot placeholder reserved for this missing whole message, so a
     /// terminal repair outcome can flip the same slot to `Unavailable`.
     /// `None` for fragment repairs (their slot already exists).
@@ -264,7 +270,15 @@ pub struct OutboundStream {
     /// peer that references an edit of ours still lands on the original.
     pub edit_refs: EditRing,
     pub last_active_ms: u64,
+    /// The IDs this node assigned lately, with when, newest last. A resend
+    /// request is answered only for one of these; one older than the ring
+    /// or the resend window goes unanswered. Kept only in memory: anything
+    /// from before a restart counts as long ago.
+    pub recent: heapless::Deque<(u8, u64), RECENT_SENDS>,
 }
+
+/// Assigned IDs remembered per outbound stream, for the resend service.
+pub const RECENT_SENDS: usize = 16;
 
 impl OutboundStream {
     pub fn fresh(now_ms: u64) -> Self {
@@ -275,15 +289,36 @@ impl OutboundStream {
             refs: RefRing::default(),
             edit_refs: EditRing::default(),
             last_active_ms: now_ms,
+            recent: heapless::Deque::new(),
         }
     }
 
+    /// When this node last assigned an ID here, if since it started.
+    pub fn last_sent_ms(&self) -> Option<u64> {
+        self.recent.back().map(|&(_, at)| at)
+    }
+
+    /// Whether `message_id` was assigned here within `window_ms` of
+    /// `now_ms`. A wrapped ID that was assigned again counts from its
+    /// newest assignment.
+    pub fn sent_recently(&self, message_id: u8, now_ms: u64, window_ms: u64) -> bool {
+        self.recent
+            .iter()
+            .rev()
+            .find(|&&(id, _)| id == message_id)
+            .is_some_and(|&(_, at)| now_ms.saturating_sub(at) <= window_ms)
+    }
+
     /// Allocate the next wire ID, retiring any wrapped mapping.
-    pub fn allocate(&mut self) -> u8 {
+    pub fn allocate(&mut self, now_ms: u64) -> u8 {
         let id = self.next_id;
         self.next_id = self.next_id.wrapping_add(1);
         self.refs.retire(id);
         self.edit_refs.retire(id);
+        if self.recent.is_full() {
+            self.recent.pop_front();
+        }
+        let _ = self.recent.push_back((id, now_ms));
         id
     }
 }

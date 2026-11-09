@@ -9,7 +9,8 @@ use umsh_text::engine::sequence::MessageHandle;
 use umsh_text::engine::{
     ArchiveResult, CompletionStatus, ComposeError, ComposeIntent, ComposeRef, DeliveryState,
     Destination, Diagnostic, Direction, Engine, EngineConfig, Event, MutationKind, Output,
-    Presence, RegardingRef, RepairOutcome, ResolvedRef, StreamCheckpoint, destination_for,
+    Presence, RegardingRef, RepairOutcome, RepairRefused, ResolvedRef, StreamCheckpoint,
+    destination_for,
 };
 use umsh_text::model::option;
 use umsh_text::validate::{DeliveryPath, DirectChannelProfile, Envelope, ValidateError};
@@ -3016,6 +3017,7 @@ fn group_repair_needs_full_key_and_uses_flagged_blind_unicast() {
     let member_key = PublicKey([0x33; 32]);
 
     // Without the full key: unaddressable, no request ever.
+    speak(&mut engine, 0);
     feed(&mut engine, &group_envelope(), None, &sequenced(0, "a"), 0);
     feed(&mut engine, &group_envelope(), None, &sequenced(2, "c"), 50);
     drain(&mut engine);
@@ -3036,6 +3038,7 @@ fn group_repair_needs_full_key_and_uses_flagged_blind_unicast() {
 
     // With the full key: blind-unicast request carrying the group flag.
     let mut engine = engine2();
+    speak(&mut engine, 0);
     feed(
         &mut engine,
         &group_envelope(),
@@ -3051,7 +3054,7 @@ fn group_repair_needs_full_key_and_uses_flagged_blind_unicast() {
         50,
     );
     drain(&mut engine);
-    engine.tick(50 + 2_000 + 4_000 + 1); // grace + max jitter
+    engine.tick(50 + 2_000 + 50 + 4_000 + 1); // grace + quiet time + max jitter
     let outputs = drain(&mut engine);
     let (destination, request) = outputs
         .iter()
@@ -3074,6 +3077,239 @@ fn group_repair_needs_full_key_and_uses_flagged_blind_unicast() {
     assert_eq!(request.sequence, Some(MessageSequence::unfragmented(1)));
 }
 
+// ---------------------------------------------------------------------
+// Group repair: who asks on their own, and asking for the user
+// ---------------------------------------------------------------------
+
+const MEMBER_KEY: PublicKey = PublicKey([0x33; 32]);
+
+/// The member's messages `0` and `2` arrive at `now_ms`; `1` is missing.
+/// Returns the placeholder reserved for it, and the presence it got.
+fn member_gap(engine: &mut TestEngine, now_ms: u64) -> (MessageHandle, Presence) {
+    feed(
+        engine,
+        &group_envelope(),
+        Some(MEMBER_KEY),
+        &sequenced(0, "a"),
+        now_ms,
+    );
+    feed(
+        engine,
+        &group_envelope(),
+        Some(MEMBER_KEY),
+        &sequenced(2, "c"),
+        now_ms,
+    );
+    drain(engine)
+        .iter()
+        .find_map(|output| match output {
+            Drained::Insert {
+                handle,
+                wire_id: Some(1),
+                presence,
+                ..
+            } => Some((*handle, *presence)),
+            _ => None,
+        })
+        .expect("a placeholder for the missing message")
+}
+
+fn requests(outputs: &[Drained]) -> usize {
+    outputs
+        .iter()
+        .filter(|output| matches!(output, Drained::Transmit { .. }))
+        .count()
+}
+
+/// The presence a placeholder was last redrawn with, if it was.
+fn redrawn(outputs: &[Drained], placeholder: MessageHandle) -> Option<Presence> {
+    outputs.iter().rev().find_map(|output| match output {
+        Drained::Insert {
+            handle, presence, ..
+        } if *handle == placeholder => Some(*presence),
+        _ => None,
+    })
+}
+
+#[test]
+fn a_member_that_spoke_lately_repairs_after_its_quiet_time_and_twice_at_most() {
+    let mut engine = engine();
+    speak(&mut engine, 0);
+    let (placeholder, presence) = member_gap(&mut engine, 10_000);
+    assert_eq!(presence, Presence::GapPending);
+
+    // Grace plus the 10 s since it spoke: not yet.
+    engine.tick(10_000 + 2_000 + 10_000 - 1);
+    assert_eq!(requests(&drain(&mut engine)), 0);
+    // Within the jitter after that: the first request.
+    engine.tick(10_000 + 2_000 + 10_000 + 4_000);
+    assert_eq!(requests(&drain(&mut engine)), 1);
+    // One retry, a jittered retry interval later.
+    engine.tick(40_000);
+    assert_eq!(requests(&drain(&mut engine)), 1);
+    // Then no more: the gap waits for the user, not lost.
+    engine.tick(60_000);
+    let outputs = drain(&mut engine);
+    assert_eq!(requests(&outputs), 0);
+    assert_eq!(redrawn(&outputs, placeholder), Some(Presence::GapIdle));
+    assert!(outputs.iter().any(|output| matches!(
+        output,
+        Drained::Event(Event::RepairFinished {
+            outcome: RepairOutcome::Exhausted,
+            ..
+        })
+    )));
+    engine.tick(600_000);
+    assert_eq!(requests(&drain(&mut engine)), 0);
+}
+
+#[test]
+fn a_quiet_member_holds_group_gaps_for_the_user() {
+    // Never spoke here.
+    let mut engine = engine();
+    let (placeholder, presence) = member_gap(&mut engine, 0);
+    assert_eq!(presence, Presence::GapIdle);
+    engine.tick(600_000);
+    assert_eq!(requests(&drain(&mut engine)), 0);
+
+    // Asked for: one flagged request, on the next tick.
+    assert_eq!(engine.request_repair(placeholder, 600_000), Ok(()));
+    assert_eq!(
+        redrawn(&drain(&mut engine), placeholder),
+        Some(Presence::GapPending)
+    );
+    engine.tick(600_000);
+    let outputs = drain(&mut engine);
+    let request = outputs
+        .iter()
+        .find_map(|output| match output {
+            Drained::Transmit { payload, .. } => Some(parse_payload(payload)),
+            _ => None,
+        })
+        .expect("the request the user asked for");
+    assert!(request.channel_group_resend);
+    assert_eq!(request.sequence, Some(MessageSequence::unfragmented(1)));
+
+    // Unanswered, it goes back to waiting rather than trying again.
+    engine.tick(620_000);
+    let outputs = drain(&mut engine);
+    assert_eq!(requests(&outputs), 0);
+    assert_eq!(redrawn(&outputs, placeholder), Some(Presence::GapIdle));
+    engine.tick(700_000);
+    assert_eq!(requests(&drain(&mut engine)), 0);
+}
+
+#[test]
+fn a_member_that_spoke_over_a_minute_ago_holds_gaps_for_the_user() {
+    let mut engine = engine();
+    speak(&mut engine, 0);
+    let (_, presence) = member_gap(&mut engine, 60_001);
+    assert_eq!(presence, Presence::GapIdle);
+    engine.tick(600_000);
+    assert_eq!(requests(&drain(&mut engine)), 0);
+}
+
+#[test]
+fn a_run_of_gaps_asked_for_at_once_goes_one_request_at_a_time() {
+    let mut engine = engine();
+    feed(
+        &mut engine,
+        &group_envelope(),
+        Some(MEMBER_KEY),
+        &sequenced(0, "a"),
+        0,
+    );
+    feed(
+        &mut engine,
+        &group_envelope(),
+        Some(MEMBER_KEY),
+        &sequenced(4, "e"),
+        0,
+    );
+    let placeholders: Vec<MessageHandle> = drain(&mut engine)
+        .iter()
+        .filter_map(|output| match output {
+            Drained::Insert {
+                handle,
+                presence: Presence::GapIdle,
+                ..
+            } => Some(*handle),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(placeholders.len(), 3);
+    for placeholder in &placeholders {
+        assert_eq!(engine.request_repair(*placeholder, 10_000), Ok(()));
+    }
+    drain(&mut engine);
+    engine.tick(10_000);
+    assert_eq!(requests(&drain(&mut engine)), 1);
+    engine.tick(11_000);
+    assert_eq!(requests(&drain(&mut engine)), 0);
+    engine.tick(12_000);
+    assert_eq!(requests(&drain(&mut engine)), 1);
+    engine.tick(14_000);
+    assert_eq!(requests(&drain(&mut engine)), 1);
+}
+
+#[test]
+fn a_gap_filled_before_it_is_asked_for_is_no_longer_pending() {
+    let mut engine = engine();
+    let (placeholder, _) = member_gap(&mut engine, 0);
+    feed(
+        &mut engine,
+        &group_envelope(),
+        Some(MEMBER_KEY),
+        &sequenced(1, "b"),
+        100,
+    );
+    drain(&mut engine);
+    assert_eq!(
+        engine.request_repair(placeholder, 200),
+        Err(RepairRefused::NotPending)
+    );
+}
+
+#[test]
+fn a_group_resend_request_for_an_id_never_sent_goes_unanswered() {
+    let mut engine = engine();
+    let blind = Envelope {
+        path: DeliveryPath::BlindUnicast,
+        conversation: ConversationKey::ChannelDirect {
+            channel: CHANNEL,
+            peer: PEER,
+        },
+        sender: SenderScope::Peer(PEER),
+    };
+    feed(&mut engine, &blind, None, &resend_request(0, true), 1_000);
+    let outputs = drain(&mut engine);
+    assert!(outputs.iter().any(|output| matches!(
+        output,
+        Drained::Diagnostic(Diagnostic::UnsentResend { message_id: 0 })
+    )));
+    assert!(!outputs.iter().any(|output| matches!(
+        output,
+        Drained::LookupOutbound { .. } | Drained::Transmit { .. }
+    )));
+}
+
+/// Send one message in the group at `now_ms`, which makes this node a
+/// member that repairs the group's gaps on its own for a while.
+fn speak(engine: &mut TestEngine, now_ms: u64) {
+    engine
+        .compose(
+            group_conv(),
+            900,
+            ComposeIntent::Text {
+                body: "hi",
+                status: false,
+            },
+            now_ms,
+        )
+        .unwrap();
+    drain(engine);
+}
+
 fn engine2() -> TestEngine {
     Engine::new(DirectChannelProfile, LOCAL, EngineConfig::default(), 43)
 }
@@ -3082,6 +3318,7 @@ fn engine2() -> TestEngine {
 fn multicast_arrival_cancels_jittered_group_request() {
     let mut engine = engine();
     let member_key = PublicKey([0x33; 32]);
+    speak(&mut engine, 0);
     feed(
         &mut engine,
         &group_envelope(),
@@ -3244,13 +3481,33 @@ fn resend_service_answers_found_and_unavailable() {
             .any(|output| matches!(output, Drained::LookupOutbound { .. }))
     );
 
-    // Unknown ID: Message Unavailable response.
+    // An ID this node never assigned goes unanswered: no lookup, nothing
+    // sent.
     feed(
         &mut engine,
         &direct_envelope(),
         None,
         &resend_request(9, false),
         3_000,
+    );
+    let outputs = drain(&mut engine);
+    assert!(outputs.iter().any(|output| matches!(
+        output,
+        Drained::Diagnostic(Diagnostic::UnsentResend { message_id: 9 })
+    )));
+    assert!(!outputs.iter().any(|output| matches!(
+        output,
+        Drained::LookupOutbound { .. } | Drained::Transmit { .. }
+    )));
+
+    // An ID it did assign, which the archive no longer knows: Message
+    // Unavailable, closing the requester's gap.
+    feed(
+        &mut engine,
+        &direct_envelope(),
+        None,
+        &resend_request(0, false),
+        20_000,
     );
     let outputs = drain(&mut engine);
     let Drained::LookupOutbound { request_id, .. } = outputs
@@ -3260,7 +3517,7 @@ fn resend_service_answers_found_and_unavailable() {
     else {
         unreachable!()
     };
-    engine.archive_result(*request_id, ArchiveResult::Unknown, 3_010);
+    engine.archive_result(*request_id, ArchiveResult::Unknown, 20_010);
     let outputs = drain(&mut engine);
     let response = outputs
         .iter()
@@ -3270,7 +3527,26 @@ fn resend_service_answers_found_and_unavailable() {
         })
         .expect("unavailable response");
     assert_eq!(response.message_type, MessageType::MessageUnavailable);
-    assert_eq!(response.sequence, Some(MessageSequence::unfragmented(9)));
+    assert_eq!(response.sequence, Some(MessageSequence::unfragmented(0)));
+
+    // Past the resend window, the same ID goes unanswered.
+    let late = EngineConfig::default().resend_window_ms + 1;
+    feed(
+        &mut engine,
+        &direct_envelope(),
+        None,
+        &resend_request(0, false),
+        late,
+    );
+    let outputs = drain(&mut engine);
+    assert!(outputs.iter().any(|output| matches!(
+        output,
+        Drained::Diagnostic(Diagnostic::UnsentResend { message_id: 0 })
+    )));
+    assert!(!outputs.iter().any(|output| matches!(
+        output,
+        Drained::LookupOutbound { .. } | Drained::Transmit { .. }
+    )));
 }
 
 #[test]
@@ -3344,6 +3620,18 @@ fn wrong_stream_request_is_kept_separate() {
             1,
             ComposeIntent::Text {
                 body: "cd",
+                status: false,
+            },
+            0,
+        )
+        .unwrap();
+    // And in the group, so that the group stream has an ID 0 to serve.
+    engine
+        .compose(
+            group_conv(),
+            2,
+            ComposeIntent::Text {
+                body: "grp",
                 status: false,
             },
             0,

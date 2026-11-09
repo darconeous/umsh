@@ -1712,6 +1712,30 @@ check("the flag names the missing signature",
 check("signed emergency chat is not flagged", #emergency(true).violations, 0)
 -- Repairs ride blind unicast, which authenticates the sender pairwise.
 check("unsigned emergency blind unicast is not flagged", #emergency(false, 6).violations, 0)
+
+-- Blind unicast on the public channel carries only channel-group repair: a
+-- resend request (Message Type 2) with the Channel Group Resend flag.
+local function on_public(payload_hex, pkt_type)
+  return dissect_payload(payload_hex, pkt_type, nil,
+                         {channel = {builtin = "public"}, mic_verified = true})
+end
+local function public_blind_flagged(r)
+  return r.violations[1] and
+    r.violations[1]:find("public channel may carry only", 1, true) ~= nil or false
+end
+local group_resend = on_public("03 01 02 21 24 60", 6)  -- id 36, group flag
+check("a public group resend request is not flagged", #group_resend.violations, 0)
+check("the group resend flag is decoded", has(group_resend, "Channel Group Resend"), true)
+check("a public group resend request with an ack is not flagged",
+      #on_public("03 01 02 21 24 60", 7).violations, 0)
+check("a public one-to-one resend request is flagged",
+      public_blind_flagged(on_public("03 01 02 21 24", 6)), true)
+check("public blind unicast chat is flagged",
+      public_blind_flagged(on_public("03 FF 48656C70", 6)), true)
+check("a public blind unicast MAC command is flagged",
+      public_blind_flagged(on_public("02 0C 0A0B0C0D", 7)), true)
+check("public multicast chat is not flagged by the blind rule",
+      #on_public("03 FF 48656C70", 4).violations, 0)
 check("unsigned chat on another channel is not flagged",
       #dissect_payload("03 FF 48656C70", 4, nil,
                        {channel = {}, mic_verified = true}).violations, 0)

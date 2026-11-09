@@ -69,12 +69,15 @@ pub enum MobileChatDirection {
 }
 
 /// Ordered-slot presence of a transcript row (mirrors the engine's
-/// [`Presence`]). A `GapPending` row is a reserved spinner placeholder; an
-/// `Unavailable` row is a permanent loss marker.
+/// [`Presence`]). A `GapPending` row is a reserved spinner placeholder; a
+/// `GapIdle` row is a missing message waiting for the user to ask for it
+/// (`MobileMeshSession::request_chat_repair`); an `Unavailable` row is a
+/// permanent loss marker.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
 pub enum MobileChatPresence {
     Present,
     GapPending,
+    GapIdle,
     Unavailable,
 }
 
@@ -933,6 +936,7 @@ fn mobile_presence(presence: Presence) -> MobileChatPresence {
     match presence {
         Presence::Present => MobileChatPresence::Present,
         Presence::GapPending => MobileChatPresence::GapPending,
+        Presence::GapIdle => MobileChatPresence::GapIdle,
         Presence::Unavailable => MobileChatPresence::Unavailable,
     }
 }

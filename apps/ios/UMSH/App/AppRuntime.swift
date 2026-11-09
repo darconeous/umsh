@@ -2545,8 +2545,7 @@ final class AppRuntime {
         _ conversation: ConversationListItem,
         _ body: String
     ) async -> MessageSendResult {
-        if let refusal = uncertifiedEmergencyRefusal(conversation) { return refusal }
-        return await performChatCompose(conversation, clearsDraft: true) { clientToken in
+        await performChatCompose(conversation, clearsDraft: true) { clientToken in
             try await radioConnection.composeTyped(
                 conversationAddress: conversation.conversationAddress,
                 clientToken: clientToken,
@@ -2792,8 +2791,7 @@ final class AppRuntime {
         _ message: ChatMessageSummary,
         _ body: String
     ) async -> MessageSendResult {
-        if let refusal = uncertifiedEmergencyRefusal(conversation) { return refusal }
-        return await performChatCompose(conversation, clearsDraft: true) { clientToken in
+        await performChatCompose(conversation, clearsDraft: true) { clientToken in
             try await radioConnection.composeReply(
                 conversationAddress: conversation.conversationAddress,
                 clientToken: clientToken,
@@ -2803,7 +2801,50 @@ final class AppRuntime {
         }
     }
 
-    /// A send to `EMERGENCY` refused because its warning has not been
+    /// Ask for missing messages no repair is under way for, one request
+    /// each; the engine paces them. A gap the engine no longer holds, one
+    /// left by an earlier mesh session, can never be asked for, so it is
+    /// resolved as unavailable rather than left to be tapped again.
+    func requestMissingMessages(
+        _ conversation: ConversationListItem,
+        _ messages: [ChatMessageSummary]
+    ) async -> MessageSendResult {
+        if let refusal = uncertifiedEmergencyRefusal(conversation) { return refusal }
+        guard let applicationStore, let localIdentity else {
+            return .failed("The local identity or message database is unavailable.")
+        }
+        guard radioSnapshot.linkState == .attached || radioSnapshot.linkState == .ready,
+              radioSnapshot.hostState == .matchesCurrentIdentity
+        else { return .failed("Connect a companion radio configured for this phone before sending.") }
+        var lost: [ChatMessageSummary] = []
+        for message in messages where message.isGapIdle {
+            do {
+                let held = try await radioConnection.requestChatRepair(
+                    sessionID: UInt64(message.sessionID) ?? 0,
+                    handle: message.handle
+                )
+                if !held { lost.append(message) }
+            } catch {
+                return .failed(error.localizedDescription)
+            }
+        }
+        if !lost.isEmpty {
+            do {
+                try await applicationStore.resolveGapsUnavailable(
+                    ownerIdentityID: localIdentity.id,
+                    rows: lost.map { ($0.sessionID, $0.handle) }
+                )
+            } catch {
+                return .failed(error.localizedDescription)
+            }
+            coordinator.bumpChatRevisions([conversation.conversationAddress])
+        }
+        await reloadConversationState()
+        let updated = conversationItems.first(where: { $0.id == conversation.id }) ?? conversation
+        return .sent(updated)
+    }
+
+    /// A transmission on `EMERGENCY` refused because its warning has not been
     /// certified since launch. The thread view asks first; this catches
     /// what has no screen to ask on, such as a reply from a notification.
     private func uncertifiedEmergencyRefusal(_ conversation: ConversationListItem) -> MessageSendResult? {
@@ -2859,6 +2900,7 @@ final class AppRuntime {
         clearsDraft: Bool,
         compose: (UInt32) async throws -> MobileChatComposeBatchRecord
     ) async -> MessageSendResult {
+        if let refusal = uncertifiedEmergencyRefusal(conversation) { return refusal }
         guard let applicationStore, let localIdentity else {
             return .failed("The local identity or message database is unavailable.")
         }
@@ -3321,6 +3363,14 @@ final class AppRuntime {
     /// two are worth testing separately: a group message names a channel and
     /// a speaker where a direct one names only a peer, and that difference is
     /// exactly what a notification has to carry.
+    /// Staging only: have a staged peer say three things on the staged channel
+    /// with the middle one lost on the air, leaving a gap in the transcript.
+    func stagedPeerLosesChannelMessage() {
+        guard let staging = radioConnection as? FakeRadioConnection else { return }
+        let lines = Self.stagedPeerLines.shuffled()
+        Task { await staging.stagedPeerLosesChannelMessage(bodies: (lines[0], lines[1], lines[2])) }
+    }
+
     func stagedPeerSendsMessage(onChannel: Bool) {
         guard let staging = radioConnection as? FakeRadioConnection else { return }
         let line = Self.stagedPeerLines[
@@ -3343,6 +3393,7 @@ final class AppRuntime {
     }
     #else
     var stagedPeerSendsMessage: ((Bool) -> Void)? { nil }
+    var stagedPeerLosesChannelMessage: (() -> Void)? { nil }
     var stagedPeerReacts: (() -> Void)? { nil }
     var stagedPeerReplies: (() -> Void)? { nil }
     var stagedPeerMeets: ((Bool) -> Void)? { nil }
@@ -4339,6 +4390,11 @@ final class AppRuntime {
             try await applicationStore.failStalePendingMessages(
                 ownerIdentityID: localIdentity.id
             )
+            // Gaps are held by the mesh session that saw them, and that
+            // session ended with the previous launch: nothing will fill them.
+            try await applicationStore.resolveGapsUnavailable(
+                ownerIdentityID: localIdentity.id
+            )
             await ensureBuiltinChannels()
             await seedStagedContentIfNeeded()
             await synchronizeRadioPeer(from: radioSnapshot)
@@ -4506,6 +4562,7 @@ final class AppRuntime {
             epoch: stored.epoch,
             cursor: stored.cursor,
             isGapPlaceholder: stored.isGapPlaceholder,
+            isGapIdle: stored.isGapIdle,
             isUnavailable: stored.isUnavailable,
             isReceivedLate: stored.receivedLate,
             isEditOfUnknown: stored.isEditOfUnknown,

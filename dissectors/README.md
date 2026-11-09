@@ -328,8 +328,8 @@ LUA_CPATH="/path/to/luagcrypt/?.so;;" lua5.4 dissectors/tests/run_tests.lua
 | 2 | UNIC (Unicast) | Private key required |
 | 3 | UNAR (Unicast Ack-Req) | Private key required |
 | 4 | MCST (Multicast) | Channel key required |
-| 6 | BUNI (Blind Unicast) | Channel key + private key required |
-| 7 | BUAR (Blind Unicast Ack-Req) | Channel key + private key required |
+| 6 | BUNI (Blind Unicast) | Channel key for the addresses; + private key for the payload |
+| 7 | BUAR (Blind Unicast Ack-Req) | Channel key for the addresses; + private key for the payload |
 
 ## Supported Payload Types
 

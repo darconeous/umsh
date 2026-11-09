@@ -177,6 +177,13 @@ When fragments are missing, render a localized missing-content marker in the
 message rather than silently concatenating the remaining text. An automatic
 resend request is transport behavior and should not appear as a chat message.
 
+A message known to be missing holds its place in the transcript. While a
+request for it is under way, the placeholder shows progress. In a channel, a
+node that has not sent there lately does not ask on its own, so the
+placeholder waits instead and asking for it is one tap. A missing message
+nobody can ask for any more, because the sender said it is gone or because
+the session that saw the gap has ended, shows as unavailable.
+
 ## Incoming requests and unknown senders
 
 An authenticated direct message from a node that is not a contact belongs in a

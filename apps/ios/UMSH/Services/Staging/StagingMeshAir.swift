@@ -39,6 +39,17 @@ actor StagingMeshAir: FakeRadioAir {
     private var asksWhenListed = false
     /// That peer has pressed Same on the code now showing.
     private var pressedSame = false
+    /// The next frames a staged peer transmits never reach the phone.
+    private var losesNextTransmission = false
+    /// What each staged peer has sent, kept the way the app's store keeps the
+    /// phone's, so the peer can answer a request to send it again.
+    private var archives: [Int: [ArchiveKey: Data]] = [:]
+
+    private struct ArchiveKey: Hashable {
+        let conversationAddress: String
+        let messageID: UInt8
+        let fragmentIndex: UInt8?
+    }
 
     func attach(onAir: @escaping @Sendable ([MobileMeshRxRecord]) -> Void) {
         self.onAir = onAir
@@ -120,6 +131,18 @@ actor StagingMeshAir: FakeRadioAir {
         guard let peers, peers.indices.contains(index) else { return }
         let peer = peers[index]
         let update = peer.session.pollUpdate()
+        for lookup in update.chatArchiveLookups {
+            let payload = archives[index]?[ArchiveKey(
+                conversationAddress: lookup.conversationAddress,
+                messageID: lookup.messageId,
+                fragmentIndex: lookup.fragmentIndex
+            )]
+            try? peer.session.applyChatArchiveResult(
+                requestId: lookup.requestId,
+                kind: payload == nil ? .unknown : .found,
+                payload: payload ?? Data()
+            )
+        }
         for mutation in update.chatMutations
         where mutation.kind == .insert && mutation.direction == .inbound
             && mutation.messageType == 0 {
@@ -141,6 +164,12 @@ actor StagingMeshAir: FakeRadioAir {
         if index == 0, let meet = update.meet {
             followMeet(meet, session: peer.session)
         }
+        if losesNextTransmission, !update.outboundFrames.isEmpty {
+            losesNextTransmission = false
+            return
+        }
+        // An answered lookup puts its resend on the air in the next update.
+        defer { if !update.chatArchiveLookups.isEmpty { pumpPeer(index) } }
         guard !update.outboundFrames.isEmpty, let onAir else { return }
         onAir(
             update.outboundFrames.map {
@@ -191,6 +220,13 @@ actor StagingMeshAir: FakeRadioAir {
                 clientToken: UInt32.random(in: 1...UInt32.max),
                 body: body
             )
+            for archive in batch.archives {
+                archives[index, default: [:]][ArchiveKey(
+                    conversationAddress: archive.conversationAddress,
+                    messageID: archive.messageId,
+                    fragmentIndex: archive.fragmentIndex
+                )] = archive.payload
+            }
             try await peers[index].session.commitChatBatch(batchId: batch.batchId)
             logger.notice("Staged peer \(peers[index].name, privacy: .public) sent a message")
         } catch {
@@ -199,6 +235,19 @@ actor StagingMeshAir: FakeRadioAir {
             )
         }
         pumpPeer(index)
+    }
+
+    /// Have a staged peer say three things on the staged channel, the second
+    /// of which the phone never hears: the third opens a gap for it, which a
+    /// resend request from the phone fills. The first is what lets the phone
+    /// know where the peer's messages stand, since a gap only shows against
+    /// a message heard before it.
+    func sendFromPeerLosingOne(bodies: (String, String, String)) async {
+        await sendFromPeer(body: bodies.0, onChannel: true)
+        losesNextTransmission = true
+        await sendFromPeer(body: bodies.1, onChannel: true)
+        losesNextTransmission = false
+        await sendFromPeer(body: bodies.2, onChannel: true)
     }
 
     /// Have a staged peer react to the last thing the phone said to it.
