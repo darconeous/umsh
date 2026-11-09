@@ -1,5 +1,12 @@
 [
   {
+    "version": "2026.11.09",
+    "tag": "fw-2026.11.09",
+    "date": "2026-11-09",
+    "channel": "preview",
+    "manifest": "/firmware/2026.11.09/manifest.json"
+  },
+  {
     "version": "2026.11.08",
     "tag": "fw-2026.11.08",
     "date": "2026-11-08",
@@ -12,12 +19,5 @@
     "date": "2026-11-05",
     "channel": "preview",
     "manifest": "/firmware/2026.11.05/manifest.json"
-  },
-  {
-    "version": "2026.11.01",
-    "tag": "fw-2026.11.01",
-    "date": "2026-11-01",
-    "channel": "preview",
-    "manifest": "/firmware/2026.11.01/manifest.json"
   }
 ]
