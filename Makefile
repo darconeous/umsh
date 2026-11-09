@@ -19,7 +19,7 @@
 	build-xiao-esp32s3 flash-xiao-esp32s3 \
 	build-tdeck flash-tdeck crate-notices crate-notices-check \
 	build-tdeck-keyboard flash-tdeck-keyboard backup-tdeck-keyboard test-tdeck-keyboard \
-	esp-toolchain-check espflash-check \
+	esp-toolchain-check espflash-check build-all-firmware \
 	dfu-zip-techo dfu-zip-t1000e dfu-zip-sensecap-solar \
 	dfu-zip-wio-tracker-l1 dfu-zip-xiao-nrf52 \
 	merged-bin-heltec-v3 merged-bin-heltec-v3-bridge \
@@ -521,6 +521,13 @@ $(addprefix merged-bin-,$(RELEASE_BOARDS_ESP32)): merged-bin-%: espflash-check b
 	espflash save-image --chip esp32s3 --merge --skip-padding $(call esp32_layout,$*) \
 		$(ESP32S3_TARGET_DIR)/firmware-$* \
 		$(FW_DIR)/umsh-$*-$(FW_VERSION).bin
+
+# Every device image: the release boards plus the two that build but do not
+# ship—the Heltec V2 and the T-Deck keyboard's C3. `make -k
+# build-all-firmware` reports every image that fails instead of stopping at
+# the first.
+build-all-firmware: $(addprefix build-,$(RELEASE_BOARDS_NRF52) \
+	$(RELEASE_BOARDS_ESP32) heltec-v2 tdeck-keyboard)
 
 # ─── Firmware releases ───────────────────────────────────────────────────────
 #
