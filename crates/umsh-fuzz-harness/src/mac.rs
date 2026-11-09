@@ -436,13 +436,15 @@ impl<const PEERS: usize, const HOLDS: usize> Harness<PEERS, HOLDS> {
     }
 
     fn deliver(&mut self, frame: Vec<u8>, rssi: i16, snr: i8, origin: RxOrigin) {
-        if frame.len() > FRAME {
-            return;
+        // A radio hands over no more than a frame, but the node still wakes
+        // at this instant, as it does for a frame a filtered run leaves out.
+        // When it wakes decides which of two sends due together goes first.
+        if frame.len() <= FRAME {
+            if let (Some(key), Some(heard)) = (dup_key(&frame), aad(&frame)) {
+                self.heard.push((key, heard));
+            }
+            self.mac.radio_mut().inject(frame, rssi, snr, origin);
         }
-        if let (Some(key), Some(heard)) = (dup_key(&frame), aad(&frame)) {
-            self.heard.push((key, heard));
-        }
-        self.mac.radio_mut().inject(frame, rssi, snr, origin);
         self.settle();
     }
 
