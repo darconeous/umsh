@@ -36,8 +36,6 @@ static TEMPERATURE_REQUEST: Signal<CriticalSectionRawMutex, u32> = Signal::new()
 static TEMPERATURE_REPLY: Signal<CriticalSectionRawMutex, (u32, [Option<u16>; 2])> = Signal::new();
 static GROUP_LOCK: Mutex<CriticalSectionRawMutex, ()> = Mutex::new(());
 static GROUP_GENERATION: AtomicU32 = AtomicU32::new(0);
-static GAUGE_REPORT: critical_section::Mutex<RefCell<Option<heapless::String<192>>>> =
-    critical_section::Mutex::new(RefCell::new(None));
 // Shutdown must not remove power halfway through the startup security procedure.
 static BATTERY_STARTUP_DONE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
@@ -46,10 +44,6 @@ impl embedded_hal_async::delay::DelayNs for SampleDelay {
     async fn delay_ns(&mut self, ns: u32) {
         Timer::after(Duration::from_nanos(ns.into())).await;
     }
-}
-
-pub fn take_gauge_report() -> Option<heapless::String<192>> {
-    critical_section::with(|cs| GAUGE_REPORT.borrow(cs).borrow_mut().take())
 }
 
 pub async fn sample_battery_group(fields: BatteryFieldsRequested) -> BatterySample {
@@ -249,7 +243,6 @@ async fn check_termination(battery: &mut Battery<board::I2cHandle>) {
             Err(error) => Err(error),
         }
     };
-    let mut report = heapless::String::new();
     match config {
         Ok(config) => {
             SEPARATE_GAUGE_TEMPERATURE.store(
@@ -258,27 +251,15 @@ async fn check_termination(battery: &mut Battery<board::I2cHandle>) {
             );
             let taper = config.taper_current_ma();
             match battery.limit_termination(taper).await {
-                Ok(limit) => {
-                    let _ = write!(
-                        report,
-                        "pager termination: taper={taper} mA cutoff={}->{} mA watchdog_disabled={}\r\n",
-                        limit.before_ma, limit.after_ma, limit.watchdog_disabled
-                    );
-                }
-                Err(error) => {
-                    let _ = write!(
-                        report,
-                        "pager termination: FAILED taper={taper} mA {error:?}\r\n"
-                    );
-                }
+                Ok(limit) => println!(
+                    "pager termination: taper={taper} mA cutoff={}->{} mA watchdog_disabled={}",
+                    limit.before_ma, limit.after_ma, limit.watchdog_disabled
+                ),
+                Err(error) => println!("pager termination: FAILED taper={taper} mA {error:?}"),
             }
         }
-        Err(error) => {
-            let _ = write!(report, "pager termination: FAILED gauge read {error:?}\r\n");
-        }
+        Err(error) => println!("pager termination: FAILED gauge read {error:?}"),
     }
-    println!("{}", report.trim_end());
-    critical_section::with(|cs| *GAUGE_REPORT.borrow(cs).borrow_mut() = Some(report));
 }
 
 pub fn spi_bus(
@@ -490,12 +471,7 @@ pub async fn battery_task(bus: &'static board::I2cBus, initial: board_battery::R
                 let _held = board::i2c::GAUGE_PROCEDURE.hold(0x55);
                 battery.inspect_configuration(&mut SampleDelay).await
             };
-            sample.gauge_config = inspected.map_err(|error| {
-                let mut report = heapless::String::new();
-                let _ = write!(report, "pager gauge-config: {error:?}\r\n");
-                critical_section::with(|cs| *GAUGE_REPORT.borrow(cs).borrow_mut() = Some(report));
-                umsh_ulcp::Status::FAILURE
-            });
+            sample.gauge_config = inspected.map_err(|_| umsh_ulcp::Status::FAILURE);
         }
         if periodic {
             crate::input_gate::power_sample(

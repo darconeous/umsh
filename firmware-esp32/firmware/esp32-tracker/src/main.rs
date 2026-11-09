@@ -2558,10 +2558,6 @@ async fn output_pump(tx: &mut WiredTx, panic_report: Option<heapless::String<128
         if SESSION_GEN.load(Ordering::Acquire) != outbound.generation {
             continue;
         }
-        #[cfg(feature = "board-tlora-pager")]
-        if let Some(report) = pager::take_gauge_report() {
-            let _ = wired_write_all(tx, report.as_bytes()).await;
-        }
         #[cfg(feature = "input-gate")]
         if let Some(report) = input_gate::power_report() {
             if wired_write_all(tx, report.as_bytes()).await {
