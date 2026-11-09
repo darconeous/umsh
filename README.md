@@ -7,7 +7,11 @@
 
 **UMSH** is an experimental, LoRa-oriented mesh protocol designed from the ground up with strong cryptography, clean layer separation, and strict bandwidth discipline. The primary use case it enables is decentralized, wide-area text chat and location/sensor reporting.
 
-Originally intended as a proposal for a "[MeshCore](https://github.com/meshcore-dev/MeshCore) 2.0", UMSH grew out of a simple question: what would a cryptographically addressed LoRa mesh protocol look like with proper security and clean architecture as primary design goals? Inspired by [MeshCore](https://github.com/meshcore-dev/MeshCore), it started as a thought experiment addressing the [critical shortcomings](https://darconeous.github.io/umsh/docs/protocol/meshcore-comparison.html#cryptography) in that protocol that would practically require backward-incompatible changes to fix. What began as a toy protocol has since been developed into a [comprehensive specification](https://darconeous.github.io/umsh/docs/protocol/), reference implementation, firmware for seven boards, and an iOS app.
+![An animation of the T-Deck's interface: scrolling down the chat list to open a conversation, replying to an earlier message with text and an emoji from the character picker, sending it, and a heart reaction arriving on it.](site/static/images/blog/so-much-for-taking-a-break/tdeck-send.gif)
+
+*Replying to a message on a T-Deck communicator.*
+
+Originally intended as a proposal for a "[MeshCore](https://github.com/meshcore-dev/MeshCore) 2.0", UMSH grew out of a simple question: what would a cryptographically addressed LoRa mesh protocol look like with proper security and clean architecture as primary design goals? Inspired by [MeshCore](https://github.com/meshcore-dev/MeshCore), it started as a thought experiment addressing the [critical shortcomings](https://darconeous.github.io/umsh/docs/protocol/meshcore-comparison.html#cryptography) in that protocol that would practically require backward-incompatible changes to fix. What began as a toy protocol has since been developed into a [comprehensive specification](https://darconeous.github.io/umsh/docs/protocol/), a reference implementation, firmware for a range of nRF52840 and ESP32-S3 boards (including handheld communicators that need no phone), and an iOS app.
 
 > [!NOTE]
 > Practically all of the content in this repository was written with the assistance of an LLM.
@@ -15,8 +19,8 @@ Originally intended as a proposal for a "[MeshCore](https://github.com/meshcore-
 > LLM coding assistance, as the amount of work required to write this by hand would be too much
 > for me to dedicate to unpaid work.
 >
-> It has taken considerable effort to get it to this point. If you'd like tag along
-> for the ride and see where this ends up going, follow the project on github to see
+> It has taken considerable effort to get it to this point. If you'd like to tag along
+> for the ride and see where this ends up going, follow the project on GitHub to see
 > updates. I'd also love to hear your feedback!
 
 ---
@@ -39,6 +43,12 @@ and authenticity are otherwise preserved. Replay protection uses a monotonic cou
 than timestamps. Keys are derived via HKDF with domain separation, producing independent
 encryption and authentication keys from each ECDH shared secret.
 
+For forward secrecy, two nodes can open a
+[PFS session](https://darconeous.github.io/umsh/docs/protocol/security.html#perfect-forward-secrecy-sessions):
+a two-message handshake exchanges ephemeral node addresses, whose private keys are erased
+when the session ends. Session packets are smaller than ordinary unicast, since keys that
+will be erased justify a 4-byte MIC.
+
 ### Channel keys serve two roles
 
 A shared channel key enables symmetric-key multicast. It also enables *blind unicast*: a
@@ -57,15 +67,16 @@ exchange when the trace-route option is present.
 
 Basic operation requires only a node's own keypair and configured channel keys—no path
 tables, no clock synchronization. The Rust implementation is `no_std` (although `alloc` is
-still required at this point), and every packet fits in a single LoRa frame. Perfect forward
-secrecy is available via ephemeral node identities.
+still required at this point), and every packet fits in a single LoRa frame.
 
 ### Built to be inspected
 
 The wire format was designed alongside its tooling. A Wireshark dissector decodes and
 decrypts UMSH frames, `umshctl` installs as a Wireshark capture interface so a radio in the
-mesh is a double-click away, and the host/device control protocol is captured and dissected
-on the same footing as the radio traffic.
+mesh is a double-click away, and
+[ULCP](https://darconeous.github.io/umsh/docs/protocol/ulcp.html), the control protocol
+between a radio and its host, is captured and dissected on the same footing as the radio
+traffic.
 
 ---
 
@@ -75,14 +86,17 @@ on the same footing as the radio traffic.
 |---|---|
 | [`docs/protocol/`](docs/protocol/) | Full mdBook specification for the protocol, including comparisons and test vectors |
 | [`docs/hardware/`](docs/hardware/) | Per-board hardware references—pin maps, power, radio and display wiring |
-| [`crates/`](crates/) | Layered `no_std` Rust library crates implementing the protocol stack |
+| [`crates/`](crates/) | Layered `no_std` Rust library crates implementing the protocol stack, plus board support and device interfaces |
 | [`umsh/`](umsh/) | Integration crate with runtime adapters and runnable examples |
-| [`firmware/`](firmware/) | nRF52840 device firmware—one shipping image per board |
+| [`firmware/`](firmware/) | nRF52840 device firmware—one shipping image per board—and the simulator communicator |
 | [`firmware-esp32/`](firmware-esp32/) | Separate workspace for Espressif boards, which need the Xtensa toolchain |
 | [`apps/ios/`](apps/ios/) | SwiftUI iOS application |
 | [`packages/UMSHMobileCore`](packages/) | UniFFI Swift package wrapping the Rust core for the app |
-| [`tools/`](tools/) | Host binaries—the `umshctl` radio tool and the `umsh-bridge` internet bridge—plus the browser-based ULCP debugger and the UniFFI binding generator |
+| [`tools/`](tools/) | Host tools—the `umshctl` radio tool, the browser-based ULCP debugger, the region-database compiler, and the UniFFI binding generator |
+| [`regions/`](regions/) | Source data for the geographic region database |
 | [`dissectors/`](dissectors/) | Wireshark Lua dissector, fixtures, and dissector-specific tests |
+| [`fuzz/`](fuzz/) | Coverage-guided fuzzers for UMSH and ULCP |
+| [`scripts/`](scripts/) | Firmware image, flashing, and release scripts |
 | [`site/`](site/) | Sources for [umsh.dev](https://umsh.dev) |
 
 The [`docs/protocol/`](docs/protocol/) directory holds the specification as an
@@ -99,11 +113,27 @@ runtime adapters. Rendered copies of both are published at
 
 ## Getting started
 
-### What you need
+### Try it
 
-A Rust toolchain, plus `arm-none-eabi-objcopy` from the GNU Arm Embedded toolchain if you
-intend to flash an nRF52840 board. Espressif boards need their own compiler:
-`cargo install espup espflash && espup install`.
+You don't need to build anything to try UMSH:
+
+- **Flash a radio from your browser.** The [web flasher](https://umsh.dev/flasher/) installs
+  the latest [firmware release](https://github.com/darconeous/umsh/releases) over USB.
+  [umsh.dev/hardware](https://umsh.dev/hardware/) lists the supported boards and what each is
+  good for.
+- **Pair it with the iOS app.** The public beta is on
+  [TestFlight](https://testflight.apple.com/join/4xsdZ8pg).
+- **Or skip the phone.** The LilyGO T-Deck and T-LoRa Pager are communicators: keyboard
+  handhelds that send and receive messages on their own.
+
+### What you need to build
+
+A Rust toolchain and Python 3. Espressif boards also need their own compiler, since Xtensa
+chips need a Rust fork rustup does not carry. Install it once per machine:
+
+```sh
+cargo install espup espflash && espup install
+```
 
 Host builds and tests come from the workspace root and deliberately skip `firmware/*`:
 
@@ -131,14 +161,13 @@ The Wireshark integration has its own targets, covered below.
 | Seeed XIAO nRF52840 + Wio-SX1262 | nRF52840 | `make flash-xiao-nrf52` |
 | Heltec WiFi LoRa 32 V3 | ESP32-S3 | `make flash-heltec-v3` |
 | LilyGO T-Beam Supreme (SX1262) | ESP32-S3 | `make flash-tbeam-supreme` |
-| LilyGO T-LoRa Pager (SX1262, bring-up) | ESP32-S3 | `make flash-tlora-pager` |
-| Seeed XIAO ESP32S3 + Wio-SX1262 (bring-up) | ESP32-S3 | `make flash-xiao-esp32s3` |
+| Seeed XIAO ESP32S3 + Wio-SX1262 | ESP32-S3 | `make flash-xiao-esp32s3` |
+| LilyGO T-LoRa Pager (SX1262 or LR1121) | ESP32-S3 | `make flash-tlora-pager` |
+| LilyGO T-Deck / T-Deck Plus | ESP32-S3 | `make flash-tdeck` |
 
-The Espressif boards are the odd ones out: Xtensa chips need a Rust fork rustup does
-not carry, installed once per machine with `cargo install espup espflash && espup install`
-([firmware-esp32/README.md](firmware-esp32/README.md)). Their `make` targets check for that
-first and say what to run, so a machine without it fails before the build rather than
-inside it.
+The Espressif `make` targets check for the Xtensa toolchain first and say what to run, so a
+machine without it fails before the build rather than inside it
+([firmware-esp32/README.md](firmware-esp32/README.md)).
 
 There is **one shipping image per board**: a repeater and a phone companion are the same
 firmware holding different configuration, applied afterwards over BLE or USB. Flash through
@@ -150,6 +179,11 @@ The board must be in DFU mode first, and how you get there differs per board; th
 [flashing page on umsh.dev](https://umsh.dev/flasher/) and
 [`docs/hardware/`](docs/hardware/) cover each one. Board architecture and the recipe for
 adding a new board are in [docs/firmware-architecture.md](docs/firmware-architecture.md).
+
+The T-Deck's keyboard has an ESP32-C3 of its own. Its stock firmware works, and UMSH's
+replacement more than doubles the T-Deck's standby time; flashing it takes a 3.3 V USB-UART
+adapter. See [docs/tdeck-keyboard-firmware.md](docs/tdeck-keyboard-firmware.md) and
+`make flash-tdeck-keyboard`.
 
 ### Talk to a radio with `umshctl`
 
@@ -166,13 +200,6 @@ Given a command it runs that command and exits:
 umshctl --ble="UMSH T-Echo" info
 umshctl --port /dev/cu.usbmodem101 phy on
 ```
-
-Devices advertising temperature support can be sampled with `umshctl temperatures`.
-`umshctl info sensors` includes light and temperature readings; `info --env sensors`
-also exposes indexed `SENSORS_TEMPERATURE_<index>_NAME` and
-`SENSORS_TEMPERATURE_<index>_DECIKELVIN` values (`unknown` for unavailable readings).
-Temperature labels are fetched freshly after sampling; duplicate labels retain
-their distinct indices.
 
 Given none, it opens a shell against a single attachment—worth a great deal over BLE, where
 every fresh attach costs a discovery pass plus a handshake:
@@ -210,8 +237,8 @@ Mutations persist automatically (`CMD_SAVE`) unless you pass `--no-save`. Tab co
 `help <command>`, and persistent history come from the same command tree the one-shot grammar
 uses.
 
-Before connecting a computer to a board for the first time, put that board into pairing mode—
-on boards with a display, from its BLE menu. Pairing is mediated by the operating system;
+Before connecting a computer to a board for the first time, put that board into pairing mode—on
+boards with a display, from its BLE menu. Pairing is mediated by the operating system;
 enter the device's six-digit BLE PIN if prompted. On Linux, enable a `bluetoothctl` agent and
 pair/trust the device beforehand if the automatic subscription is rejected. Only one host
 session can own a radio at a time, so stop any serial tool and disconnect other BLE centrals
@@ -225,50 +252,24 @@ make install-colorfilters
 ```
 
 `install-extcap` installs `umshctl` as a Wireshark
-[extcap](https://www.wireshark.org/docs/man-pages/extcap.html) interface, and pulls in the
-tool and the Lua dissector along with it, since a capture is useless without both. A radio
-then shows up in Wireshark's interface list as **UMSH radio** and a capture is a double-click;
-from a terminal it is `tshark -i umsh`. The interface's gear icon chooses which radio to
-attach to, a serial port to use instead, and live-only RF overrides—filling in an override
-changes the PHY for the duration of the capture and is never saved to the device. Frames
-arrive as [LoRaTap](https://github.com/eriknl/LoRaTap) (`LINKTYPE` 270), carrying the
-frequency, bandwidth, spreading factor, sync word, RSSI, and SNR the radio reported.
+[extcap](https://www.wireshark.org/docs/man-pages/extcap.html) interface, along with the Lua
+dissector. A radio then shows up in Wireshark's interface list as **UMSH radio** and a
+capture is a double-click; from a terminal it is `tshark -i umsh`. Beside it, **UMSH LAN**
+(`tshark -i umsh-lan`) captures
+[UMSH over IP multicast](https://darconeous.github.io/umsh/docs/protocol/ip-multicast.html).
+`install-colorfilters` adds a rule that highlights protocol violations in the packet list.
 
-Beside it, **UMSH LAN** (`tshark -i umsh-lan`) joins the LAN bearer group and records every
-datagram sent to it, with the sender's real address. Its gear icon picks the group and the
-network interface to join on.
-
-`install-colorfilters` adds the rule that inverts protocol violations in the packet list; it
-seeds from Wireshark's stock rules rather than replacing them. The dissector decodes and
-annotates UMSH packets from a live capture or a pcap file, and when keys are provided it
-verifies MICs and decrypts unicast, multicast, and blind unicast payloads. Full setup,
-including the key preferences, is in [dissectors/README.md](dissectors/README.md).
+With keys configured, the dissector verifies MICs and decrypts unicast, multicast, and blind
+unicast payloads. Key preferences, capture options, and the pcap formats are in
+[dissectors/README.md](dissectors/README.md).
 
 > On macOS, Wireshark.app declares no Bluetooth usage description, so a BLE capture started
 > from the Wireshark GUI may be denied by the OS with no prompt. Name a serial port in the
 > capture options to sidestep it, or run `tshark -i umsh` from a terminal.
 
-`umshctl capture` is the same capture as a terminal dump: every frame the radio receives with
-elapsed time, RSSI, SNR, raw bytes, and an attempted UMSH header decode. Traffic from another
-protocol is retained and labeled rather than discarded, and `--umsh-only` suppresses it.
-During RF silence the tool probes channel RSSI every 10 seconds and prints an
-`idle ... link=ok` line, so a quiet mesh is distinguishable from a dead link.
-
-Write a file with `--pcap=PATH`. The default records over-the-air radio frames; `--layers=ulcp`
-instead records the complete Spinel-inspired host/device frame exchange, and `--layers=both`
-records both:
-
-```sh
-umshctl capture --pcap=techo.pcap --layers=both
-```
-
-These captures use synthetic Ethernet/IPv4/UDP encapsulation: radio packets on UDP port 15056,
-and ULCP frames on directional ports 15057/15058 for the ULCP dissector in the same plugin,
-which exposes transaction IDs, commands, properties, stream envelopes, radio metadata, and
-nested UMSH packets. ULCP captures are diagnostic artifacts and may contain sensitive property
-values or application traffic; handle them accordingly before sharing. For a byte-for-byte
-payload capture under a private pcap link type, add `--pcap-raw` with `--layers=radio` and a
-numeric `--pcap-linktype`.
+`umshctl capture` is the same capture as a terminal dump, and `--pcap=PATH` writes it to a
+file. `--layers=ulcp` or `--layers=both` records the ULCP exchange with the radio as well;
+those captures can hold sensitive property values, so check them before sharing.
 
 ### Run the iOS app
 
@@ -289,40 +290,30 @@ make rust-docs   # cargo doc for the whole workspace
 
 ## Developing without hardware
 
-The [`umsh/`](umsh/) crate ships examples that run the real stack over a UDP multicast
-pseudo-radio, so a mesh can be exercised on one machine with no boards involved.
-
-`cli_udp` is a REPL covering the operations a developer wants to poke at—unicast messaging,
-pings, PFS sessions, channel join/send/leave, statistics, and live log-level changes. Start
-two nodes with their own identity files, which are created on first run; each prints its
-public key in the banner:
+The simulator communicator is a UMSH device in a window: the T-Deck's or T-LoRa Pager's
+interface, running the same device code as the firmware, with an IP multicast group for its
+radio. It needs SDL2 (`brew install sdl2`, or `libsdl2-dev` on Debian and Ubuntu).
 
 ```sh
-cargo run --example cli_udp --features cli -- --identity .umsh/alice.identity
-cargo run --example cli_udp --features cli -- --identity .umsh/bob.identity
+make run-simulator-communicator NAME=alice
+make run-simulator-communicator NAME=bob SIMULATOR_ARGS="--board pager"
 ```
 
-Both join the same multicast group (`239.255.134.121:15056` by default) and hear each other
-automatically. Register the other side's key and send a message:
-
-```
-/peer add <ALICE_HEX_KEY> alice
-/msg alice hello from Bob
-```
-
-`/help` lists the rest. Peers can be pre-registered with `--peer <key>[:alias]`, and
-`--group`/`--port` isolate concurrent sessions on one machine. `desktop_chat` is the smaller,
-two-node version of the same idea, and `simulated_repeater_delivery` runs a multi-hop mesh
-under the Embassy adapter.
-
-Because the transport is plain UDP, Wireshark can watch it directly: capture on loopback with
-the display filter `udp.port == 15056` and the dissector's UDP heuristic will find the frames.
-To decrypt, add both identity files to the UMSH **Private keys** preference
-(**Edit > Preferences > Protocols > UMSH**):
+Each name is its own device, with its own identity and chats, and the two hear each other.
+`umshctl --lan` joins the same group with a virtual radio of its own, and Wireshark's
+**UMSH LAN** interface captures it:
 
 ```sh
-xxd -p -c 32 .umsh/alice.identity
+umshctl --lan discover
+umshctl --lan capture
 ```
+
+> [!CAUTION]
+> Where a radio on your network carries the group onto the air, so does everything the
+> simulator sends. Add `--host-local` to `SIMULATOR_ARGS` to keep a test to this computer.
+
+The rest, including the demo mode and headless screenshot scripts, is in
+[firmware/host-communicator/README.md](firmware/host-communicator/README.md).
 
 The dissector has its own test suite, which needs no Wireshark:
 
@@ -332,12 +323,32 @@ lua dissectors/tests/run_tests.lua
 
 ---
 
+## Region database
+
+A repeater can be told which regions it accepts traffic for. The region database turns a
+latitude and longitude into that list, so the iOS app can configure a repeater from where it
+stands. Its sources live in [`regions/`](regions/) (see [regions/README.md](regions/README.md)),
+and [umsh.dev/regions](https://umsh.dev/regions/) shows the compiled database on a map.
+
+---
+
 ## Protocol comparisons
 
 The specification includes detailed point-by-point comparisons with
 [MeshCore](https://darconeous.github.io/umsh/docs/protocol/meshcore-comparison.html),
 [Meshtastic](https://darconeous.github.io/umsh/docs/protocol/meshtastic-comparison.html),
 and [Reticulum](https://darconeous.github.io/umsh/docs/protocol/reticulum-comparison.html).
+
+---
+
+## Contributing
+
+Feedback and issues are welcome on GitHub. Before your first commit, enable the checked-in
+pre-commit hook, which rejects commits that aren't rustfmt-clean in either workspace:
+
+```sh
+git config core.hooksPath .githooks
+```
 
 ---
 
