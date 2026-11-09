@@ -237,7 +237,7 @@ struct PersistenceSmokeTest {
                 originalHandle: nil, originalWireId: nil, originalDirection: nil,
                 originalSenderHint: nil, body: "Anyone on the ridge?", complete: true,
                 presentFragments: 2, fragmentCount: 2, finalized: true, presence: .present,
-                receivedLate: false, notify: false, rx: nil
+                receivedLate: false, notify: false, rx: nil, forwardSecret: nil
             ),
         ])
         func stored() async throws -> StoredChatMessage {
@@ -307,7 +307,7 @@ struct PersistenceSmokeTest {
                 originalHandle: originalHandle, originalWireId: nil, originalDirection: nil,
                 originalSenderHint: nil, body: body, complete: true, presentFragments: 1,
                 fragmentCount: 1, finalized: true, presence: presence, receivedLate: false,
-                notify: false, rx: nil
+                notify: false, rx: nil, forwardSecret: nil
             )
         }
         func page() async throws -> [String: StoredChatMessage] {
