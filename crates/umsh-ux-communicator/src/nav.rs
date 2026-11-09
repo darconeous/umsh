@@ -163,9 +163,10 @@ pub mod keys {
     pub const JOIN_CHANNEL: FocusKey = FocusKey(0x0800_0001);
     /// A code that shares this node or a channel, which the wheel rests on.
     pub const SHARE_CODE: FocusKey = FocusKey(SHARE);
-    /// The Identity screen's Name and View QR code.
+    /// The Identity screen's Name, View QR code, and Share location.
     pub const IDENTITY_NAME: FocusKey = FocusKey(0x2800_0000);
     pub const IDENTITY_CODE: FocusKey = FocusKey(0x2800_0001);
+    pub const SHARE_LOCATION: FocusKey = FocusKey(0x2800_0002);
     /// A channel's screen: its actions and settings, in order, and Leave's
     /// confirmation.
     pub const CHANNEL_MESSAGE: FocusKey = FocusKey(0x2900_0000);
@@ -316,11 +317,10 @@ pub mod keys {
     /// Restart's confirmation.
     pub const RESTART_CONFIRM: FocusKey = FocusKey(0x1600_0006);
     pub const RESTART_CANCEL: FocusKey = FocusKey(0x1600_0007);
-    /// The Radio screen's switch, its Profile, and its other switches.
+    /// The Radio screen's switch, its Profile, and Forwarding.
     pub const RADIO_ENABLED: FocusKey = FocusKey(0x0E00_0005);
     pub const PROFILE: FocusKey = FocusKey(0x0E00_0000);
     pub const FORWARDING: FocusKey = FocusKey(0x0E00_0002);
-    pub const SHARE_LOCATION: FocusKey = FocusKey(0x0E00_0003);
 
     /// A reaction in the actions menu's palette: any but the emotes is
     /// on More.
@@ -1665,6 +1665,12 @@ impl State {
         self.open_share(Shareable::Identity);
     }
 
+    pub fn toggle_share_location(&mut self) {
+        if let Some(on) = self.node.share_location() {
+            self.node.set_share_location(!on);
+        }
+    }
+
     /// Shows the code that shares `what`: this node's dated afresh.
     fn open_share(&mut self, what: Shareable) {
         if what == Shareable::Identity {
@@ -2041,13 +2047,6 @@ impl State {
     pub fn set_keyboard_light(&mut self, lit: bool) {
         if self.node.keyboard().light != lit {
             self.change_keyboard(|s| s.light = lit);
-        }
-    }
-
-    pub fn toggle_share_location(&mut self) {
-        if let Some(settings) = self.shown_radio() {
-            self.node.set_share_location(!settings.share_location);
-            self.refresh_settings();
         }
     }
 

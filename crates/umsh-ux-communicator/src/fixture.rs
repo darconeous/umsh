@@ -2835,6 +2835,17 @@ impl Node for Store {
         });
     }
 
+    fn share_location(&self) -> Option<bool> {
+        Some(self.share_location.get())
+    }
+
+    fn set_share_location(&self, on: bool) {
+        self.setting(Setting::ShareLocation, || {
+            self.share_location.set(on);
+            true
+        });
+    }
+
     fn profile_count(&self) -> usize {
         VETTED.len()
     }
@@ -2858,9 +2869,8 @@ impl Node for Store {
             enabled: self.radio_enabled.get(),
             profile: self.profile.get(),
             forwarding: self.forwarding.get(),
-            share_location: self.share_location.get(),
             transmit_power: self.transmit_power.get(),
-            airtime: 3,
+            airtime: 34,
         }
     }
 
@@ -2874,13 +2884,6 @@ impl Node for Store {
     fn set_forwarding(&self, on: bool) {
         self.setting(Setting::Forwarding, || {
             self.forwarding.set(on);
-            true
-        });
-    }
-
-    fn set_share_location(&self, on: bool) {
-        self.setting(Setting::ShareLocation, || {
-            self.share_location.set(on);
             true
         });
     }

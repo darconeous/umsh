@@ -4312,7 +4312,8 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     // A position the operator placed is not a claim about
                     // hardware, so it survives a restore under any
                     // identity—the same reasoning as the receiver
-                    // switch below.
+                    // switch below. One auto-update maintained does not;
+                    // see the foot of this function.
                     prop::IDENT_LOCATION => {
                         self.device.ident_location = saved.ident_location.clone()
                     }
@@ -4373,6 +4374,13 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     _ => unreachable!("SAVED_SCHEMA row without an apply arm"),
                 }
             }
+        }
+        // Under auto-update the position is the receiver's, and the one a
+        // snapshot holds is where the device was when it was saved: a
+        // restore never puts it back on the air. The next fix fills it.
+        if self.gnss_ident_update() {
+            self.device.ident_location.clear();
+            self.device.ident_altitude_m = None;
         }
         self.bump_dev_domain();
     }
@@ -5722,15 +5730,17 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// Offer a fix to the advertised position.
     ///
     /// A no-op unless the device is set to update its identity from
-    /// fixes, so the platform can hand over every fix without first
-    /// asking whether this one counts. The location is clamped to
-    /// `PROP_GNSS_IDENT_PRECISION` before it is stored.
+    /// fixes and its receiver is on, so the platform can hand over every
+    /// fix without first asking whether this one counts. The location is
+    /// clamped to `PROP_GNSS_IDENT_PRECISION` before it is stored.
     ///
     /// Returns whether anything changed. A stationary node's fixes all
     /// clamp into the same cell, and re-signing an identity that says
     /// what the last one said would spend airtime to no purpose.
     pub fn absorb_ident_fix(&mut self, location: &[u8], altitude_m: Option<i32>) -> bool {
-        if !self.gnss_ident_update() {
+        // A fix that arrives after the receiver was switched off is one
+        // it took before: the position it carries is already withdrawn.
+        if !self.gnss_ident_update() || !self.gnss_enabled() {
             return false;
         }
         let clamped = &location[..location.len().min(self.gnss_ident_precision() as usize)];
@@ -5741,6 +5751,24 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         self.device.ident_altitude_m = altitude_m;
         self.bump_dev_domain();
         true
+    }
+
+    /// Withdraw the advertised position while fixes are to maintain it and
+    /// the receiver is off.
+    ///
+    /// Under auto-update the position is the device's claim about where it
+    /// is now, and a receiver that is off cannot back it: the last fix is a
+    /// place the device may have left. A position placed by a write, or
+    /// frozen by switching auto-update off, is the operator's and is kept.
+    ///
+    /// Called wherever a write or the device's own control moves either
+    /// switch, so the two never stand off and on with a position still
+    /// advertised. A restore goes further; see `apply_saved_device`.
+    fn withdraw_unmaintained_position(&mut self) {
+        if self.gnss_ident_update() && !self.gnss_enabled() {
+            self.device.ident_location.clear();
+            self.device.ident_altitude_m = None;
+        }
     }
 
     /// `PROP_DEV_DISCOVERABLE`: whether the device identity answers
@@ -5961,12 +5989,14 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// Returns the new state, or `None` on a device without `CAP_GNSS`
     /// (so a board can report a press unconditionally).
     pub fn toggle_gnss(&mut self, emit: &mut impl FnMut(&[u8])) -> Option<bool> {
-        self.toggle_device_flag(
+        let enabled = self.toggle_device_flag(
             self.config.gnss.is_some(),
             prop::GNSS_ENABLED,
             |device| &mut device.gnss_enabled,
             emit,
-        )
+        );
+        self.withdraw_unmaintained_position();
+        enabled
     }
 
     /// Flip `PROP_GNSS_IDENT_UPDATE` from the device itself.
@@ -5976,12 +6006,14 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// the user the second: nothing else on the device distinguishes a
     /// position kept for the screen from one put on the air.
     pub fn toggle_gnss_ident_update(&mut self, emit: &mut impl FnMut(&[u8])) -> Option<bool> {
-        self.toggle_device_flag(
+        let enabled = self.toggle_device_flag(
             self.config.gnss.is_some(),
             prop::GNSS_IDENT_UPDATE,
             |device| &mut device.gnss_ident_update,
             emit,
-        )
+        );
+        self.withdraw_unmaintained_position();
+        enabled
     }
 
     /// Flip `PROP_MAC_REPEATER_ENABLED` from the device itself.
@@ -8064,11 +8096,13 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             }
             prop::GNSS_ENABLED if self.config.gnss.is_some() => {
                 self.device.gnss_enabled = parse_bool(value)?;
+                self.withdraw_unmaintained_position();
                 self.bump_dev_domain();
                 Ok(false)
             }
             prop::GNSS_IDENT_UPDATE if self.config.gnss.is_some() => {
                 self.device.gnss_ident_update = parse_bool(value)?;
+                self.withdraw_unmaintained_position();
                 self.bump_dev_domain();
                 Ok(false)
             }
@@ -12228,6 +12262,7 @@ mod tests {
     #[test]
     fn auto_update_owns_the_position_until_it_is_switched_off() {
         let mut session = test_session();
+        set(&mut session, prop::GNSS_ENABLED, &[1]);
         set(&mut session, prop::GNSS_IDENT_UPDATE, &[1]);
 
         let (emitted, _) = set(&mut session, prop::IDENT_LOCATION, &[1, 2, 3]);
@@ -12254,6 +12289,117 @@ mod tests {
         assert!(!session.absorb_ident_fix(&[7, 7, 7], Some(0)));
         set(&mut session, prop::IDENT_LOCATION, &[5, 5]);
         assert_eq!(get(&mut session, prop::IDENT_LOCATION), [5, 5]);
+    }
+
+    /// Under auto-update the position is the receiver's to back, so a
+    /// receiver switched off takes it off the air rather than leaving its
+    /// last fix advertised as if it were current. The next fix after the
+    /// receiver comes back puts one there again.
+    #[test]
+    fn a_receiver_switched_off_withdraws_the_position_it_maintained() {
+        let mut session = test_session();
+        set(&mut session, prop::GNSS_ENABLED, &[1]);
+        set(&mut session, prop::GNSS_IDENT_UPDATE, &[1]);
+        assert!(session.absorb_ident_fix(&[1, 2, 3, 4, 5, 6, 7], Some(120)));
+        assert_eq!(session.ident_location(), [1, 2, 3, 4, 5]);
+
+        let version = session.dev_domain_version();
+        set(&mut session, prop::GNSS_ENABLED, &[0]);
+        assert_eq!(get(&mut session, prop::IDENT_LOCATION), Vec::<u8>::new());
+        assert_eq!(get(&mut session, prop::IDENT_ALTITUDE), Vec::<u8>::new());
+        assert_ne!(session.dev_domain_version(), version);
+        // A fix taken before the switch and handed over after it does not
+        // bring the position back.
+        assert!(!session.absorb_ident_fix(&[1, 2, 3, 4, 5, 6, 7], Some(120)));
+        assert!(session.ident_location().is_empty());
+        // Auto-update stays on, and the receiver's return resumes it.
+        assert_eq!(get(&mut session, prop::GNSS_IDENT_UPDATE), [1]);
+        set(&mut session, prop::GNSS_ENABLED, &[1]);
+        assert!(session.ident_location().is_empty());
+        assert!(session.absorb_ident_fix(&[1, 2, 4, 0, 0, 0, 0], None));
+        assert_eq!(session.ident_location(), [1, 2, 4, 0, 0]);
+
+        // The device's own switch does the same.
+        let mut emitted = Vec::new();
+        assert_eq!(
+            session.toggle_gnss(&mut |frame: &[u8]| emitted.push(frame.to_vec())),
+            Some(false)
+        );
+        assert!(session.ident_location().is_empty());
+    }
+
+    /// A position the operator placed is theirs, not the receiver's: one
+    /// frozen by switching auto-update off, or written by a host, survives
+    /// the receiver going off. Switching auto-update on while the receiver
+    /// is off withdraws it, since there is then nothing to maintain it
+    /// from.
+    #[test]
+    fn a_placed_position_outlasts_the_receiver_until_auto_update_takes_it() {
+        let mut session = test_session();
+        set(&mut session, prop::GNSS_ENABLED, &[1]);
+        set(&mut session, prop::GNSS_IDENT_UPDATE, &[1]);
+        assert!(session.absorb_ident_fix(&[1, 2, 3, 4, 5], Some(120)));
+        set(&mut session, prop::GNSS_IDENT_UPDATE, &[0]);
+        set(&mut session, prop::GNSS_ENABLED, &[0]);
+        assert_eq!(session.ident_location(), [1, 2, 3, 4, 5]);
+        assert_eq!(session.ident_altitude_m(), Some(120));
+
+        set(&mut session, prop::GNSS_IDENT_UPDATE, &[1]);
+        assert!(session.ident_location().is_empty());
+        assert_eq!(session.ident_altitude_m(), None);
+
+        // With auto-update off, a host places the node by hand, receiver
+        // off or not.
+        set(&mut session, prop::GNSS_IDENT_UPDATE, &[0]);
+        set(&mut session, prop::IDENT_LOCATION, &[9, 9, 9]);
+        set(&mut session, prop::IDENT_ALTITUDE, &[40]);
+        assert_eq!(get(&mut session, prop::IDENT_LOCATION), [9, 9, 9]);
+        set(&mut session, prop::GNSS_ENABLED, &[1]);
+        set(&mut session, prop::GNSS_ENABLED, &[0]);
+        assert_eq!(get(&mut session, prop::IDENT_LOCATION), [9, 9, 9]);
+        assert_eq!(get(&mut session, prop::IDENT_ALTITUDE), [40]);
+
+        // The device's own switch takes it as a host write does.
+        let mut emitted = Vec::new();
+        assert_eq!(
+            session.toggle_gnss_ident_update(&mut |frame: &[u8]| emitted.push(frame.to_vec())),
+            Some(true)
+        );
+        assert!(session.ident_location().is_empty());
+    }
+
+    /// Under auto-update the position a snapshot holds is where the device
+    /// was when it was saved, so no restore puts it back on the air—not at
+    /// boot, not on `CMD_RESTORE`, not on `CMD_RST`. The next fix does.
+    #[test]
+    fn a_restore_never_brings_back_a_maintained_position() {
+        let mut session = test_session();
+        set(&mut session, prop::GNSS_ENABLED, &[1]);
+        set(&mut session, prop::GNSS_IDENT_UPDATE, &[1]);
+        assert!(session.absorb_ident_fix(&[1, 2, 3, 4, 5], Some(120)));
+        save(&mut session);
+        let mut bytes = [0u8; SNAPSHOT_MAX];
+        let len = session.encode_snapshot(&mut bytes).unwrap();
+
+        let mut booted: TestSession =
+            Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
+        booted.restore_at_boot(&bytes[..len]).unwrap();
+        assert!(booted.gnss_enabled());
+        assert!(booted.gnss_ident_update());
+        assert!(booted.ident_location().is_empty());
+        assert_eq!(booted.ident_altitude_m(), None);
+        assert!(booted.absorb_ident_fix(&[1, 2, 3, 4, 5], Some(120)));
+        assert_eq!(booted.ident_location(), [1, 2, 3, 4, 5]);
+
+        booted.attach(true);
+        restore(&mut booted);
+        assert!(booted.ident_location().is_empty());
+        assert_eq!(booted.ident_altitude_m(), None);
+
+        assert!(booted.absorb_ident_fix(&[1, 2, 3, 4, 5], Some(120)));
+        booted.reset(Status::RESET_SOFTWARE, &mut |_: &[u8]| {});
+        assert!(booted.ident_location().is_empty());
+        assert_eq!(booted.ident_altitude_m(), None);
     }
 
     /// Discoverability defaults on—a deployed device being askable is

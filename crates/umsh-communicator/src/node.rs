@@ -813,6 +813,16 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
         self.change(Setting::Name, |settings| settings.set_name(name));
     }
 
+    fn share_location(&self) -> Option<bool> {
+        self.settings.borrow().share_location()
+    }
+
+    fn set_share_location(&self, on: bool) {
+        self.change(Setting::ShareLocation, |settings| {
+            settings.set_share_location(on)
+        });
+    }
+
     fn read_contact(&self) {
         self.settings.borrow_mut().read_contact();
     }
@@ -846,12 +856,6 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
 
     fn set_forwarding(&self, on: bool) {
         self.change(Setting::Forwarding, |settings| settings.set_forwarding(on));
-    }
-
-    fn set_share_location(&self, on: bool) {
-        self.change(Setting::ShareLocation, |settings| {
-            settings.set_share_location(on)
-        });
     }
 
     fn set_transmit_power(&self, dbm: i8) {

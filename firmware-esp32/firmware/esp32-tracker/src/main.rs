@@ -1919,6 +1919,7 @@ impl DeviceEnv for BoardDeviceEnv {
                 update_identity: snapshot.gnss_ident_update,
                 identity_precision: snapshot.gnss_ident_precision,
             },
+            !snapshot.ident_location.is_empty(),
         );
         #[cfg(all(feature = "board-tlora-pager", not(feature = "motion-qualification")))]
         pager::motion::SERVICE.request(

@@ -176,7 +176,8 @@ impl Pending {
 /// produces a fix a second and a stationary node's fixes all clamp into
 /// one cell, so without this the driver would wake every second to be
 /// told nothing moved. Reset by [`configure`], since a policy change can
-/// make an already-offered cell worth offering again.
+/// make an already-offered cell worth offering again, and so can the
+/// session emptying the position behind it.
 static OFFERED: CriticalSectionMutex<Cell<Option<NodeLocation>>> =
     CriticalSectionMutex::new(Cell::new(None));
 
@@ -255,9 +256,9 @@ pub fn announcer() -> Option<Announcer> {
 /// was the last one seen is how a tracker ends up insisting it is
 /// somewhere it left hours ago.
 ///
-/// The *advertised* position is not the receiver's to forget: it is a
-/// claim the operator made, or one they froze by switching auto-update
-/// off, and it lives on the session either way.
+/// The *advertised* position lives on the session, which withdraws it
+/// itself when the receiver goes off under auto-update and keeps one the
+/// operator placed.
 pub fn clear() {
     store(GnssSnapshot::SEARCHING);
     offer(None);
@@ -407,13 +408,19 @@ pub fn absorb(fix: &Fix, policy: Policy) -> Outcome {
 /// makes a host write, a boot restore and a `CMD_RST` all reach the
 /// receiver by one path. Switching the receiver off also forgets its last
 /// position: a fix from before is a place the device may have left.
-pub fn configure(enabled: bool, policy: Policy) {
+///
+/// `advertising` is whether the identity carries a position at all
+/// (`PROP_IDENT_LOCATION` is not empty).
+pub fn configure(enabled: bool, policy: Policy, advertising: bool) {
     let previous = POLICY.lock(|cell| cell.replace(policy));
     // A policy change can make an already-offered cell worth offering
     // again—a finer precision asks a different question of the same
     // fix, and auto-update coming back on has to re-establish a position
-    // the operator may have edited in the meantime.
-    if previous != policy {
+    // the operator may have edited in the meantime. So does a session
+    // that emptied the position itself, as a restore does: the cell
+    // offered last is no longer the one advertised, and a node that has
+    // not moved would otherwise never offer it again.
+    if previous != policy || !advertising {
         offer(None);
     }
     if ENABLED.swap(enabled, Ordering::AcqRel) != enabled {
@@ -655,7 +662,7 @@ mod tests {
 
         // The first fix under the switch is offered; a second in the same
         // cell is not.
-        configure(true, updating);
+        configure(true, updating, false);
         let here = untimed(481_173_000, 115_166_666);
         assert!(absorb(&here, updating).identity_moved);
         assert!(!absorb(&here, updating).identity_moved);
@@ -664,20 +671,28 @@ mod tests {
         assert!(absorb(&untimed(490_000_000, 120_000_000), updating).identity_moved);
 
         // A fix arriving while the switch is off is not offered at all.
-        configure(true, policy());
+        configure(true, policy(), true);
         assert!(!absorb(&here, policy()).identity_moved);
 
         // Switching back on re-arms it: the operator may have edited the
         // advertised position while the device was not maintaining it,
         // and the same cell is now worth offering again.
-        configure(true, updating);
+        configure(true, updating, true);
         assert!(absorb(&here, updating).identity_moved);
 
         // So does switching the receiver off and back on—the position
         // it comes back with has to reach the identity even if the
         // device never left.
-        configure(false, updating);
-        configure(true, updating);
+        configure(false, updating, false);
+        configure(true, updating, false);
+        assert!(absorb(&here, updating).identity_moved);
+
+        // While the session advertises the cell, the same cell is not
+        // offered again; once it has emptied the position, as a restore
+        // does, it is.
+        configure(true, updating, true);
+        assert!(!absorb(&here, updating).identity_moved);
+        configure(true, updating, false);
         assert!(absorb(&here, updating).identity_moved);
     }
 }

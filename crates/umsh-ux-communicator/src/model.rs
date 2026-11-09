@@ -598,11 +598,10 @@ pub struct RadioSettings {
     pub profile: Profile,
     /// Repeats what it hears for others.
     pub forwarding: bool,
-    pub share_location: bool,
     /// The radio's transmit power, in dBm.
     pub transmit_power: i8,
-    /// How much of this hour's airtime is spent, in percent.
-    pub airtime: u8,
+    /// How much of this hour's airtime is spent, in tenths of a percent.
+    pub airtime: u16,
 }
 
 /// The transmit powers the radio can be set to, in dBm.
@@ -1852,6 +1851,12 @@ pub trait Node {
     /// Calls this node `name`, which may be empty.
     fn set_name(&self, name: &str);
 
+    /// Whether this node's identity carries its position, as the GNSS
+    /// receiver finds it. `None` where the board has no receiver.
+    fn share_location(&self) -> Option<bool>;
+
+    fn set_share_location(&self, on: bool);
+
     /// Asks the device afresh for this node's contact, which
     /// [`Node::share_uri`] carries for [`Shareable::Identity`] once it
     /// comes, as [`NodeEvent::SettingsChanged`].
@@ -1877,8 +1882,6 @@ pub trait Node {
     fn set_radio_enabled(&self, on: bool);
 
     fn set_forwarding(&self, on: bool);
-
-    fn set_share_location(&self, on: bool);
 
     /// Sets the radio's transmit power, within [`TRANSMIT_POWER`].
     fn set_transmit_power(&self, dbm: i8);

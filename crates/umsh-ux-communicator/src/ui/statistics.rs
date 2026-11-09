@@ -59,14 +59,12 @@ pub fn view(state: &State) -> impl View<Rgb565, State> + use<> {
 }
 
 /// The readouts to show, each with its place in [`NAMES`]: Uptime always,
-/// empty until it is known, and the airtime, as `airtime` percent of the
-/// hour; then each counter the device keeps.
-fn readouts(stats: &Statistics, airtime: u8) -> Vec<(usize, Value), { NAMES.len() }> {
+/// empty until it is known, and the airtime, `airtime` tenths of a percent
+/// of the hour; then each counter the device keeps.
+fn readouts(stats: &Statistics, airtime: u16) -> Vec<(usize, Value), { NAMES.len() }> {
     let mut shown = Vec::new();
     _ = shown.push((0, stats.uptime.map(uptime).unwrap_or_default()));
-    let mut spent = Value::new();
-    _ = core::fmt::write(&mut spent, format_args!("{airtime}% this hour"));
-    _ = shown.push((1, spent));
+    _ = shown.push((1, airtime_text(airtime)));
     let counters = [
         stats.sent,
         stats.channel_busy,
@@ -88,6 +86,17 @@ fn readouts(stats: &Statistics, airtime: u8) -> Vec<(usize, Value), { NAMES.len(
         }
     }
     shown
+}
+
+/// The hour's airtime spent, from `tenths` of a percent, to one decimal
+/// place.
+pub(super) fn airtime_text(tenths: u16) -> Value {
+    let mut text = Value::new();
+    _ = core::fmt::write(
+        &mut text,
+        format_args!("{}.{}% this hour", tenths / 10, tenths % 10),
+    );
+    text
 }
 
 /// `count`, its thousands set apart by commas.
@@ -139,6 +148,14 @@ mod tests {
         assert_eq!(uptime(125), "2m 5s");
         assert_eq!(uptime(3 * 3_600 + 12 * 60), "3h 12m");
         assert_eq!(uptime(93_784), "1d 2h");
+    }
+
+    #[test]
+    fn airtime_reads_to_one_decimal_place() {
+        assert_eq!(airtime_text(0), "0.0% this hour");
+        assert_eq!(airtime_text(3), "0.3% this hour");
+        assert_eq!(airtime_text(127), "12.7% this hour");
+        assert_eq!(airtime_text(1_000), "100.0% this hour");
     }
 
     #[test]

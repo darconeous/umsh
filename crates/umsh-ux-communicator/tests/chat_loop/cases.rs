@@ -2411,13 +2411,24 @@ fn settings_no_profile_has_read_as_custom() {
 fn a_switch_flips_on_press() {
     let mut app = app!();
     open_radio(&mut app);
-    turn_to(&mut app, keys::SHARE_LOCATION);
-    assert!(!radio(app.state()).share_location);
-    run(&mut app, &[Input::Press]);
-    assert!(radio(app.state()).share_location);
     turn_to(&mut app, keys::FORWARDING);
+    assert!(radio(app.state()).forwarding);
     run(&mut app, &[Input::Press]);
     assert!(!radio(app.state()).forwarding);
+    run(&mut app, &[Input::Press]);
+    assert!(radio(app.state()).forwarding);
+}
+
+#[test]
+fn location_is_shared_from_the_identity() {
+    let mut app = app!();
+    open_category(&mut app, keys::IDENTITY);
+    turn_to(&mut app, keys::SHARE_LOCATION);
+    assert_eq!(app.state().node.share_location(), Some(false));
+    run(&mut app, &[Input::Press]);
+    assert_eq!(app.state().node.share_location(), Some(true));
+    run(&mut app, &[Input::Press]);
+    assert_eq!(app.state().node.share_location(), Some(false));
 }
 
 #[test]
@@ -3699,15 +3710,15 @@ fn rolling_left_from_a_list_reaches_the_rail_and_right_enters_a_section() {
 fn rolling_across_a_switch_sets_it() {
     let mut app = app!();
     open_radio(&mut app);
-    turn_to(&mut app, keys::SHARE_LOCATION);
+    turn_to(&mut app, keys::FORWARDING);
     run(&mut app, &[Input::Move(Arrow::Left)]);
-    assert!(!radio(app.state()).share_location);
+    assert!(!radio(app.state()).forwarding);
     run(&mut app, &[Input::Move(Arrow::Right)]);
-    assert!(radio(app.state()).share_location);
+    assert!(radio(app.state()).forwarding);
     run(&mut app, &[Input::Move(Arrow::Right)]);
-    assert!(radio(app.state()).share_location);
+    assert!(radio(app.state()).forwarding);
     run(&mut app, &[Input::Move(Arrow::Left)]);
-    assert!(!radio(app.state()).share_location);
+    assert!(!radio(app.state()).forwarding);
 }
 
 #[test]

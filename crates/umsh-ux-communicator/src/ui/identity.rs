@@ -1,6 +1,7 @@
 //! This node: its title, as a chat's header shows a peer, over its whole
-//! address, its name, which pressing edits in place, and its code. The
-//! title stays as the rest scrolls under it. Backspace goes back.
+//! address, its name, which pressing edits in place, its code, and, on a
+//! board with a GNSS receiver, whether it shares its location. The title
+//! stays as the rest scrolls under it. Backspace goes back.
 
 use buoyant::event::{Key, KeyResponse};
 use buoyant::focus::BoundaryBehavior;
@@ -60,6 +61,17 @@ pub fn view(state: &State, name: &NameText) -> impl View<Rgb565, State> + use<> 
                     false,
                     ROW,
                 ),
+                state.node.share_location().map(|on| {
+                    row(
+                        m,
+                        "Share location",
+                        keys::SHARE_LOCATION,
+                        State::toggle_share_location,
+                        End::Switch(on),
+                        false,
+                        ROW,
+                    )
+                }),
             ))
             .with_spacing(0),
         )

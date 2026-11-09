@@ -1507,7 +1507,8 @@ staggered it.
 * Asynchronous Updates: Yes
 * Required: `CAP_IDENT`
 * Value Type: 0–7 octets
-* Post-Reset Value: Empty, or restored from saved state
+* Post-Reset Value: Empty, or restored from saved state while
+  `PROP_GNSS_IDENT_UPDATE` is clear
 
 The position the device identity carries in its
 [node identity](node-identity.md), in the [variable-precision
@@ -1519,6 +1520,15 @@ it there. A fix writes it when
 [`PROP_GNSS_IDENT_UPDATE`](ulcp-device.md#prop-gnss-ident-update) is set;
 a host or administrator writes it when that is clear. There is one
 advertised position and one place to read it.
+
+While `PROP_GNSS_IDENT_UPDATE` is set, the device advertises no position
+its receiver cannot vouch for. The value is empty while
+[`PROP_GNSS_ENABLED`](ulcp-device.md#prop-gnss-enabled) is clear, and a
+restore—at boot, by [`CMD_RST`](ulcp-core.md#cmd-reset), or by
+[`CMD_RESTORE`](ulcp-saved-state.md#cmd-restore)—leaves it empty rather
+than bringing back where the device was when it was saved. A position
+written while `PROP_GNSS_IDENT_UPDATE` is clear is restored like any
+saved value.
 
 Required by `CAP_IDENT` rather than `CAP_GNSS`, because where a node is
 and whether it can determine that itself are different questions. A fixed
@@ -1551,12 +1561,13 @@ clamping precision, so announcing it costs what it is worth.
 * Asynchronous Updates: Yes
 * Required: `CAP_IDENT`
 * Value Type: 1–4 octets, or empty
-* Post-Reset Value: Empty, or restored from saved state
+* Post-Reset Value: Empty, or restored from saved state while
+  `PROP_GNSS_IDENT_UPDATE` is clear
 
 The altitude the device identity carries, in meters above the WGS-84
 ellipsoid—the same units and reference as the node identity's altitude
-option. Writable and refused under exactly the conditions described for
-[`PROP_IDENT_LOCATION`](ulcp-device.md#prop-ident-location).
+option. Writable, refused, and emptied under exactly the conditions
+described for [`PROP_IDENT_LOCATION`](ulcp-device.md#prop-ident-location).
 
 The value is a two's-complement signed integer, little-endian, in the
 fewest octets that hold it: an altitude of 100 m occupies one octet, 200 m
@@ -1618,6 +1629,14 @@ False means the lowest power state the board can put the receiver in, not
 merely an idle one: on a battery-powered node the receiver is typically
 the largest continuous load there is, and a property that only stopped
 *reporting* would be a property that solved nothing.
+
+Clearing it while
+[`PROP_GNSS_IDENT_UPDATE`](ulcp-device.md#prop-gnss-ident-update) is set
+empties [`PROP_IDENT_LOCATION`](ulcp-device.md#prop-ident-location) and
+[`PROP_IDENT_ALTITUDE`](ulcp-device.md#prop-ident-altitude). The last fix
+is a place the device may have left, and with the receiver off nothing
+will replace it; the advertised identity carries no position until the
+receiver is on again and finds one.
 
 The post-reset value is the device's to choose, and it **SHOULD** be
 false: a device that has never been told to care where it is should not
@@ -2009,7 +2028,13 @@ last position written to them, which becomes an ordinary written value
 that a host may then change or clear. This is how a fixed node is
 placed without anyone reading coordinates off a screen: switch the
 receiver on, let it find where it is, switch auto-update off, and what
-it found stays.
+it found stays, whether or not the receiver is then switched off.
+
+While it is set, a position is advertised only while
+[`PROP_GNSS_ENABLED`](ulcp-device.md#prop-gnss-enabled) is: switching the
+receiver off, or switching this on while the receiver is off, empties
+`PROP_IDENT_LOCATION` and `PROP_IDENT_ALTITUDE`. A restore empties them
+too; the first fix afterward fills them.
 
 The value is therefore a claim the operator is making rather than one
 the device is maintaining, and a node that moves afterward advertises

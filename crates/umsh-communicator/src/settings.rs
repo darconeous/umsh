@@ -827,14 +827,15 @@ impl<P: LocalPort> Settings<P> {
                 .map_or(Profile::Custom, Profile::Vetted),
             _ => Profile::Custom,
         };
+        // In tenths of a percent, to the nearest.
         let airtime = self.model.duty_now().map_or(0, |duty| {
-            (u32::from(duty) * 100 / u32::from(u16::MAX)) as u8
+            let max = u32::from(u16::MAX);
+            ((u32::from(duty) * 1_000 + max / 2) / max) as u16
         });
         RadioSettings {
             enabled: self.bool(prop::PHY_ENABLED).unwrap_or(false),
             profile,
             forwarding: self.bool(prop::MAC_REPEATER_ENABLED).unwrap_or(false),
-            share_location: self.bool(prop::GNSS_IDENT_UPDATE).unwrap_or(false),
             transmit_power: match self.model.intended(prop::PHY_TX_POWER) {
                 Some(Value::I8(dbm)) => dbm,
                 _ => 0,
@@ -882,6 +883,14 @@ impl<P: LocalPort> Settings<P> {
         self.model
             .has_cap(cap::GNSS)?
             .then(|| self.bool(prop::GNSS_ENABLED).unwrap_or(false))
+    }
+
+    /// Whether fixes refresh the identity's advertised position, where the
+    /// device has a receiver.
+    pub fn share_location(&self) -> Option<bool> {
+        self.model
+            .has_cap(cap::GNSS)?
+            .then(|| self.bool(prop::GNSS_IDENT_UPDATE).unwrap_or(false))
     }
 
     pub fn keyboard(&self) -> KeyboardSettings {

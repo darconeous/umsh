@@ -287,11 +287,7 @@ fn radio(
     settings: &RadioSettings,
     profile: &str,
 ) -> impl View<Rgb565, State> + use<> {
-    let mut airtime: String<24> = String::new();
-    _ = core::fmt::write(
-        &mut airtime,
-        format_args!("{}% this hour", settings.airtime),
-    );
+    let airtime = super::statistics::airtime_text(settings.airtime);
     let mut power: String<24> = String::new();
     _ = core::fmt::write(&mut power, format_args!("{} dBm", settings.transmit_power));
     VStack::new((
@@ -331,15 +327,6 @@ fn radio(
                     keys::FORWARDING,
                     State::toggle_forwarding,
                     End::Switch(settings.forwarding),
-                    false,
-                    ROW,
-                ),
-                row(
-                    m,
-                    "Share location",
-                    keys::SHARE_LOCATION,
-                    State::toggle_share_location,
-                    End::Switch(settings.share_location),
                     false,
                     ROW,
                 ),

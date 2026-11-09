@@ -2243,6 +2243,7 @@ mod firmware {
                     update_identity: snapshot.gnss_ident_update,
                     identity_precision: snapshot.gnss_ident_precision,
                 },
+                !snapshot.ident_location.is_empty(),
             );
             super::device_node::publish_snapshot(snapshot);
             // Every switch the settings menu shows is read back out of the
