@@ -1054,6 +1054,8 @@ pub struct Reacted {
     pub count: u8,
     /// One of them is me.
     pub mine: bool,
+    /// Mine went under a session with forward secrecy.
+    pub forward_secret: bool,
 }
 
 /// The most kinds of reaction a message shows.
@@ -1215,11 +1217,13 @@ impl Message {
         self.reactions.iter().find(|r| r.mine).map(|r| r.reaction)
     }
 
-    /// Makes `reaction` mine, in place of any I had.
-    pub fn set_my_reaction(&mut self, reaction: Option<Reaction>) {
+    /// Makes `reaction` mine, in place of any I had, sent under a session
+    /// with forward secrecy or not.
+    pub fn set_my_reaction(&mut self, reaction: Option<Reaction>, forward_secret: bool) {
         if let Some(index) = self.reactions.iter().position(|r| r.mine) {
             let old = &mut self.reactions[index];
             old.mine = false;
+            old.forward_secret = false;
             old.count -= 1;
             if old.count == 0 {
                 self.reactions.remove(index);
@@ -1232,12 +1236,14 @@ impl Message {
             Some(same) => {
                 same.count = same.count.saturating_add(1);
                 same.mine = true;
+                same.forward_secret = forward_secret;
             }
             None => {
                 _ = self.reactions.push(Reacted {
                     reaction,
                     count: 1,
                     mine: true,
+                    forward_secret,
                 });
             }
         }

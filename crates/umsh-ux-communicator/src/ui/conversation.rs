@@ -1352,8 +1352,10 @@ fn chips(
     outbound: bool,
     open: bool,
 ) -> impl View<Rgb565, ()> + use<> {
-    // Mine takes the color of my bubbles.
-    let mine_fill = if open {
+    // Mine takes the color a bubble of mine sent the same way would.
+    let mine_fill = if reactions.iter().any(|r| r.mine && r.forward_secret) {
+        theme::OUTBOUND_SECRET
+    } else if open {
         theme::OUTBOUND_OPEN
     } else {
         theme::OUTBOUND

@@ -147,6 +147,8 @@ pub struct Reacted {
     pub count: u16,
     /// One of them is this node.
     pub mine: bool,
+    /// This node's went under a session with forward secrecy.
+    pub forward_secret: bool,
 }
 
 /// A message's reactions, one entry per reaction, in the order each first

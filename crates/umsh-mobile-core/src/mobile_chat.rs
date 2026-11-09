@@ -8,7 +8,10 @@
 //! are still outside this facade, and are dropped rather than exported in a
 //! form Swift would have to interpret.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use umsh_core::{ChannelTag, NodeHint, PublicKey};
+use umsh_node::{LocalNode, MacBackend, PfsStatus};
 use umsh_text::chat::{
     ArchiveLookup, Change, ChannelRegistry, ChatComposeError, ChatFacade, ChatOutput, Delivery,
     Drain, Mutation, Outbound, PendingBatch, Repeats, Seeds, SenderResolution,
@@ -19,6 +22,7 @@ use umsh_text::engine::{
     RegardingRef, ResolvedRef, StreamCheckpoint,
 };
 use umsh_text::model::{ConversationKey, SenderScope, WireRef};
+use umsh_text::node_adapter::{TransmitPolicy, TransmitQueue};
 use umsh_text::validate::DirectChannelProfile;
 
 pub(crate) type MobileChatFacade = ChatFacade<DirectChannelProfile>;
@@ -27,6 +31,11 @@ pub(crate) type MobileChatFacade = ChatFacade<DirectChannelProfile>;
 const CHANNEL_ADDRESS_PREFIX: &str = "ch:";
 /// Prefix marking a blind-unicast conversation over a channel key.
 const CHANNEL_DIRECT_ADDRESS_PREFIX: &str = "chd:";
+
+/// How long frames held to forward secrecy wait on a session their peer is
+/// still setting up before they fail: as long as a node waits for its own
+/// request for one to be answered.
+const SECRECY_WAIT_MS: u64 = 30_000;
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct MobileChatCheckpointRecord {
@@ -194,6 +203,11 @@ pub struct MobileChatMutationRecord {
     pub notify: bool,
     /// Radio metadata for the frame that produced this record, when one did.
     pub rx: Option<MobileChatRxMetadataRecord>,
+    /// Whether a message of ours goes under a session with forward secrecy,
+    /// as decided when it was composed: then it never goes without one, and
+    /// otherwise never under one. Set on the records a compose makes; absent
+    /// on every other.
+    pub forward_secret: Option<bool>,
 }
 
 /// Platform-persisted identity of a previously composed outbound message,
@@ -311,10 +325,20 @@ pub(crate) struct ChatDrain {
     pub diagnostics: Vec<String>,
 }
 
-/// The worker's chat state: the facade, and the batch Swift is storing.
+/// The worker's chat state: the facade, the batch Swift is storing, and what
+/// goes under a session with forward secrecy.
 pub(crate) struct MobileChatState {
     pub facade: MobileChatFacade,
     pending: Option<PendingBatch>,
+    /// The peers a session with forward secrecy is held with: what a direct
+    /// conversation's next message goes under.
+    held: BTreeSet<[u8; 32]>,
+    /// Whether each message of ours to a peer goes under such a session, as
+    /// decided when it was composed, by the facade session and handle that
+    /// name it. Its frames are held to that each time they go.
+    forward_secret: BTreeMap<(u64, u32), bool>,
+    /// The peers frames wait on a session with, and since when.
+    secrecy_waits: BTreeMap<[u8; 32], u64>,
 }
 
 impl MobileChatState {
@@ -327,6 +351,81 @@ impl MobileChatState {
                 seeds,
             ),
             pending: None,
+            held: BTreeSet::new(),
+            forward_secret: BTreeMap::new(),
+            secrecy_waits: BTreeMap::new(),
+        }
+    }
+
+    /// Takes `peers` as those a session with forward secrecy is held with.
+    /// Returns whether that changed.
+    pub fn hold_secrecy(&mut self, peers: BTreeSet<[u8; 32]>) -> bool {
+        if self.held == peers {
+            return false;
+        }
+        self.held = peers;
+        true
+    }
+
+    /// The addresses of the direct conversations whose next message goes
+    /// under a session with forward secrecy.
+    pub fn forward_secret_conversations(&self) -> Vec<String> {
+        self.held
+            .iter()
+            .filter_map(|&peer| {
+                conversation_address(ConversationKey::Direct {
+                    peer: PublicKey(peer),
+                })
+            })
+            .collect()
+    }
+
+    /// Hands what `queue` holds to `node` while its window has room, each
+    /// frame of a message of ours held to what was decided for it when it
+    /// was composed. Returns how many were sent.
+    pub async fn pump<M: MacBackend>(
+        &mut self,
+        queue: &mut TransmitQueue,
+        node: &LocalNode<M>,
+        policy: &TransmitPolicy,
+        now_ms: u64,
+    ) -> usize {
+        let forward_secret = &self.forward_secret;
+        queue
+            .pump(node, &mut self.facade, policy, now_ms, |departure| {
+                let decided = departure
+                    .message()
+                    .and_then(|message| forward_secret.get(&(departure.session_id(), message.0)));
+                if let Some(&decided) = decided {
+                    departure.require_forward_secrecy(decided);
+                }
+            })
+            .await
+    }
+
+    /// Settles the frames in `queue` waiting on a session with forward
+    /// secrecy: those to a peer one is held with go next, those to a peer
+    /// still setting one up wait for at most [`SECRECY_WAIT_MS`], and the
+    /// rest fail. This phone never asks for a session itself.
+    pub async fn settle_secrecy_waits<M: MacBackend>(
+        &mut self,
+        queue: &mut TransmitQueue,
+        node: &LocalNode<M>,
+        now_ms: u64,
+    ) {
+        let awaiting = queue.awaiting_secrecy();
+        self.secrecy_waits.retain(|peer, _| awaiting.contains(peer));
+        for peer in awaiting {
+            let since = *self.secrecy_waits.entry(peer).or_insert(now_ms);
+            let key = PublicKey(peer);
+            match node.pfs_status(&key).await {
+                Ok(PfsStatus::Active { .. }) => queue.release_secrecy_waits(&key),
+                Ok(PfsStatus::Requested) if now_ms.saturating_sub(since) < SECRECY_WAIT_MS => {
+                    continue;
+                }
+                _ => queue.fail_secrecy_waits(&key, &mut self.facade, now_ms),
+            }
+            self.secrecy_waits.remove(&peer);
         }
     }
 
@@ -662,12 +761,26 @@ impl MobileChatState {
         let session_id = batch.session_id();
         let fragment_count = u8::try_from(batch.archives.len()).unwrap_or(u8::MAX);
         let transmission_count = u8::try_from(batch.transmission_count()).unwrap_or(u8::MAX);
+        // A message to a peer goes under a session with forward secrecy when
+        // one is held as it is composed, and its frames are held to that.
+        let forward_secret = match conversation {
+            ConversationKey::Direct { peer } => {
+                let held = self.held.contains(&peer.0);
+                for mutation in &batch.mutations {
+                    self.forward_secret
+                        .insert((session_id, mutation.handle.0), held);
+                }
+                held
+            }
+            _ => false,
+        };
         let mut mutations: Vec<_> = batch
             .mutations
             .iter()
             .map(|mutation| mutation_record(session_id, mutation))
             .collect();
         for mutation in &mut mutations {
+            mutation.forward_secret = Some(forward_secret);
             match mutation.kind {
                 MobileChatMutationKind::Insert
                     if mutation.direction == Some(MobileChatDirection::Outbound) =>
@@ -866,6 +979,7 @@ fn mutation_record(session_id: u64, mutation: &Mutation) -> MobileChatMutationRe
         received_late: false,
         notify: false,
         rx: None,
+        forward_secret: None,
     };
     match &mutation.change {
         Change::Insert(insert) => {

@@ -2246,6 +2246,65 @@ fn a_message_shown_under_forward_secrecy_never_goes_without() {
     assert_eq!(held.forward_secrecy(), Some(false), "though one is held");
 }
 
+/// A reaction sent while the chat shows forward secrecy says so, and goes
+/// under a session or not at all; one sent otherwise never goes under one.
+#[test]
+fn a_reaction_under_forward_secrecy_says_so_and_never_goes_without() {
+    let sim = device();
+    let (node, clock) = started(&sim);
+    let robin = PublicKey([0x37; 32]);
+    phone_inserts(&sim, prop::DEV_PEERS, &robin.0);
+    clock.set(2_000);
+    node.pump();
+    let peer = peers(&node)[0].id;
+    let avatar = node.avatar();
+    let chat = node
+        .direct_chat(&address_of(&robin), "Robin", &avatar)
+        .unwrap();
+    let message = node.send(chat.id, "Ridge at noon", None, false).unwrap();
+    let plain = node.depart().expect("the message leaves");
+    assert!(node.departed(plain, Sent::Unsendable));
+
+    node.set_forward_secrecy(peer, true);
+    node.react(chat.id, message.id, Some(Reaction::Heart));
+    let reacted = node.message(chat.id, message.id).unwrap();
+    assert!(
+        reacted
+            .reactions
+            .iter()
+            .any(|r| r.reaction == Reaction::Heart && r.mine && r.forward_secret)
+    );
+    let departure = node.depart().expect("the reaction leaves");
+    assert_eq!(departure.forward_secrecy(), Some(true));
+    assert!(node.departed(departure, Sent::NoSession));
+    node.service();
+    assert!(node.depart().is_none(), "it waits for the session");
+    node.arrive(Arrival::Secrecy {
+        peer: robin,
+        change: Secrecy::Established,
+    });
+    let departure = node.depart().expect("it leaves under the session");
+    assert_eq!(departure.forward_secrecy(), Some(true));
+    assert!(node.departed(departure, Sent::Unsendable));
+
+    node.set_forward_secrecy(peer, false);
+    node.arrive(Arrival::Secrecy {
+        peer: robin,
+        change: Secrecy::Ended,
+    });
+    while node.command().is_some() {}
+    node.react(chat.id, message.id, Some(Reaction::ThumbsUp));
+    let reacted = node.message(chat.id, message.id).unwrap();
+    assert!(
+        reacted
+            .reactions
+            .iter()
+            .any(|r| r.reaction == Reaction::ThumbsUp && r.mine && !r.forward_secret)
+    );
+    let departure = node.depart().expect("the next leaves");
+    assert_eq!(departure.forward_secrecy(), Some(false));
+}
+
 /// A member known only by their hint is asked about on their channel,
 /// and known by name and address once they answer.
 #[test]

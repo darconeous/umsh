@@ -198,6 +198,10 @@ pub(crate) struct Chats<S> {
     /// The store's IDs for the engine's handles, for the engine's
     /// lifetime.
     handles: BTreeMap<MessageHandle, MessageId>,
+    /// Whether each message to a peer composed in the engine's lifetime
+    /// that the store keeps no record of, a reaction or a deletion, goes
+    /// under a session with forward secrecy: what its frames are held to.
+    unkept_secrecy: BTreeMap<MessageHandle, bool>,
     /// The device's channels, by tag.
     held: Vec<ChannelTag>,
     /// The frames the facade released, on their way to the device node.
@@ -251,6 +255,7 @@ impl<S: ChatStore> Chats<S> {
                 jitter_seed: 0,
             },
             handles: BTreeMap::new(),
+            unkept_secrecy: BTreeMap::new(),
             held: Vec::new(),
             outbox: TransmitQueue::new(TRANSMIT_WINDOW),
             policy: TransmitPolicy {
@@ -1098,6 +1103,13 @@ impl<S: ChatStore> Chats<S> {
             return None;
         };
         self.handles.extend(committed.inserted.iter().copied());
+        if matches!(conversation, ConversationKey::Direct { .. }) {
+            for mutation in &composed.mutations {
+                if !self.handles.contains_key(&mutation.handle) {
+                    self.unkept_secrecy.insert(mutation.handle, forward_secret);
+                }
+            }
+        }
         if let Some(facade) = &mut self.facade
             && let Ok(outbound) = facade.commit(composed)
         {
@@ -1133,6 +1145,7 @@ impl<S: ChatStore> Chats<S> {
         };
         self.commit(&drain.outputs, None, time, events);
         self.handles.clear();
+        self.unkept_secrecy.clear();
         self.retrying.clear();
     }
 
@@ -1164,14 +1177,21 @@ impl<S: ChatStore> Chats<S> {
         if departure.peer().is_none() {
             return;
         }
-        let Some(record) = departure
-            .message()
-            .and_then(|handle| self.handles.get(&handle))
-            .and_then(|&id| self.store.message(id).ok().flatten())
-        else {
+        let Some(handle) = departure.message() else {
             return;
         };
-        departure.require_forward_secrecy(record.flags.forward_secret);
+        let decided = match self.handles.get(&handle) {
+            Some(&id) => self
+                .store
+                .message(id)
+                .ok()
+                .flatten()
+                .map(|record| record.flags.forward_secret),
+            None => self.unkept_secrecy.get(&handle).copied(),
+        };
+        if let Some(decided) = decided {
+            departure.require_forward_secrecy(decided);
+        }
     }
 
     /// Takes how the device node took `departure`. Returns whether it has
@@ -1785,6 +1805,7 @@ impl<S: ChatStore> Chats<S> {
                 reaction: reaction(reacted.reaction),
                 count: u8::try_from(reacted.count).unwrap_or(u8::MAX),
                 mine: reacted.mine,
+                forward_secret: reacted.forward_secret,
             })
             .collect();
         let presence = presence(record.presence);

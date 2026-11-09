@@ -10,6 +10,10 @@ enum ConversationSecurity: Hashable, Sendable {
     /// Sealed to a key only the participants hold: a direct chat, or a private
     /// channel whose key was distributed out of band.
     case encrypted
+    /// Sealed under a session with forward secrecy, whose keys are gone once
+    /// it ends: a later loss of either side's long-term key does not open
+    /// it. What a direct chat's messages go under while a session is held.
+    case forwardSecret
     /// Readable by anyone within earshot. A named channel derives its key from
     /// something that is not a secret, and `EMERGENCY` carries its traffic in
     /// the clear.
@@ -24,9 +28,13 @@ enum ConversationSecurity: Hashable, Sendable {
     var tint: Color {
         switch self {
         case .encrypted: .accentColor
+        case .forwardSecret: Self.violet
         case .open: .green
         }
     }
+
+    /// The violet the communicator gives what goes under forward secrecy.
+    static let violet = Color(red: 0x70 / 255, green: 0x45 / 255, blue: 0xCC / 255)
 }
 
 extension ConversationListItem {

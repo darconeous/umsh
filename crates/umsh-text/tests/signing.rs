@@ -251,7 +251,7 @@ impl Station {
         self.queue.enqueue(drain.outbound);
         block_on(
             self.queue
-                .pump(&self.node, &mut self.chat, &policy(), now_ms),
+                .pump(&self.node, &mut self.chat, &policy(), now_ms, |_| {}),
         );
         self.sent()
     }

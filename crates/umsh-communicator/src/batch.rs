@@ -290,6 +290,19 @@ impl<'a> Batch<'a> {
         });
     }
 
+    /// Whether the batch says the message the engine knows as `handle` goes
+    /// under a session with forward secrecy: what a store that keeps no
+    /// record of it, as of a reaction, keeps with what it folds it into.
+    pub fn forward_secret(&self, handle: MessageHandle) -> bool {
+        self.entries.iter().rev().find_map(|entry| match entry {
+            Entry::Secrecy {
+                message: Subject::Handle(subject),
+                forward_secret,
+            } if *subject == handle => Some(*forward_secret),
+            _ => None,
+        }) == Some(true)
+    }
+
     fn delivery(
         &mut self,
         handle: MessageHandle,

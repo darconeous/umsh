@@ -523,6 +523,9 @@ extension EnvironmentValues {
     /// What status text of mine opens with: the name I go by, or "You" while
     /// I have none.
     @Entry var ownChatName = String(localized: "You")
+    /// The addresses of the direct conversations whose next message goes
+    /// under a session with forward secrecy.
+    @Entry var forwardSecretConversations: Set<String> = []
     /// Reads a bounded slice of whichever transcript is open. In the
     /// environment rather than passed down, because a transcript is reached
     /// from several places—the conversations list, a peer's profile, a

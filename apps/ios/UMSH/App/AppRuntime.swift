@@ -84,6 +84,10 @@ final class AppRuntime {
     /// Add Peer's contact exchange, as the mesh session reports it; nil
     /// while none is open.
     var meet: MobileMeetStateRecord?
+    /// The addresses of the direct conversations whose next message goes
+    /// under a session with forward secrecy, as the mesh session reports
+    /// them.
+    var forwardSecretConversations: Set<String> = []
     /// The peer the last exchange produced, recorded unsaved, for Add Peer
     /// to open. Add Peer clears it once it has.
     var exchangedPeer: PeerSummary?
@@ -201,6 +205,7 @@ final class AppRuntime {
         tasks.append(Task { await self.consumeAdvertisementEvents() })
         tasks.append(Task { await self.consumePeerHeardEvents() })
         tasks.append(Task { await self.consumeLocalDestinationHints() })
+        tasks.append(Task { await self.consumeForwardSecretConversations() })
         tasks.append(Task { await self.consumeMeetStates() })
         tasks.append(Task { await self.regionService.load() })
         installObservers()
@@ -400,6 +405,13 @@ final class AppRuntime {
             guard !Task.isCancelled else { break }
             coordinator.localDestinationHints = hints
             await reconcileHostDestinations()
+        }
+    }
+
+    func consumeForwardSecretConversations() async {
+        for await addresses in await radioConnection.forwardSecretConversations() {
+            guard !Task.isCancelled else { break }
+            forwardSecretConversations = addresses
         }
     }
 
@@ -4567,6 +4579,7 @@ final class AppRuntime {
             isReceivedLate: stored.receivedLate,
             isEditOfUnknown: stored.isEditOfUnknown,
             isStatus: stored.isStatus,
+            isForwardSecret: stored.isForwardSecret,
             isDeliveredLate: stored.deliveredLate,
             isDeliveredFlooded: stored.deliveredFlooded,
             originalBody: stored.originalBody,
@@ -4625,7 +4638,8 @@ final class AppRuntime {
             // Only our own reactions have delivery to report, and only an
             // outright failure is worth showing: in flight looks like any
             // other reaction, the same way an unacknowledged bubble does.
-            isFailed: stored.outbound && stored.deliveryState?.lowercased() == "failed"
+            isFailed: stored.outbound && stored.deliveryState?.lowercased() == "failed",
+            isForwardSecret: stored.forwardSecret
         )
     }
 

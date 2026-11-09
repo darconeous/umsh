@@ -39,7 +39,8 @@ struct ReactionBadgeView: View {
     /// outer top corner, so everything mirrors with it.
     let isOutbound: Bool
     /// The conversation's protection, which colors our own chips the same as
-    /// the bubbles we send here.
+    /// the bubbles we send here—violet for one that went under a session
+    /// with forward secrecy.
     let security: ConversationSecurity
 
     /// Identical reactions share a chip and carry a count—except one of ours
@@ -50,25 +51,39 @@ struct ReactionBadgeView: View {
         let glyph: String
         let count: Int
         let style: ChipStyle
+        /// Ours in it went under a session with forward secrecy.
+        var forwardSecret = false
     }
 
     private static func chips(for reactions: [MessageReaction]) -> [Chip] {
-        var grouped: [(glyph: String, count: Int, mine: Bool)] = []
+        var grouped: [(glyph: String, count: Int, mine: Bool, forwardSecret: Bool)] = []
         var failed: [Chip] = []
         for reaction in reactions {
+            let forwardSecret = reaction.isMine && reaction.isForwardSecret
             if reaction.isFailed {
-                failed.append(
-                    Chip(id: reaction.id, glyph: reaction.glyph, count: 1, style: .failed)
-                )
+                failed.append(Chip(
+                    id: reaction.id,
+                    glyph: reaction.glyph,
+                    count: 1,
+                    style: .failed,
+                    forwardSecret: forwardSecret
+                ))
             } else if let index = grouped.firstIndex(where: { $0.glyph == reaction.glyph }) {
                 grouped[index].count += 1
                 grouped[index].mine = grouped[index].mine || reaction.isMine
+                grouped[index].forwardSecret = grouped[index].forwardSecret || forwardSecret
             } else {
-                grouped.append((reaction.glyph, 1, reaction.isMine))
+                grouped.append((reaction.glyph, 1, reaction.isMine, forwardSecret))
             }
         }
         return grouped.map {
-            Chip(id: $0.glyph, glyph: $0.glyph, count: $0.count, style: $0.mine ? .mine : .theirs)
+            Chip(
+                id: $0.glyph,
+                glyph: $0.glyph,
+                count: $0.count,
+                style: $0.mine ? .mine : .theirs,
+                forwardSecret: $0.forwardSecret
+            )
         } + failed
     }
 
@@ -86,7 +101,7 @@ struct ReactionBadgeView: View {
                     glyph: chip.glyph,
                     count: chip.count,
                     style: chip.style,
-                    security: security,
+                    security: chip.forwardSecret ? .forwardSecret : security,
                     // The dots trail off the message's outer side, away from
                     // the text they belong to.
                     mirrored: !isOutbound,

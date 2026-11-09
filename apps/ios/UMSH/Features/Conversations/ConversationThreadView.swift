@@ -38,6 +38,7 @@ struct ConversationThreadView: View {
     }
 
     @Environment(\.ownChatName) private var ownChatName
+    @Environment(\.forwardSecretConversations) private var forwardSecretConversations
     @Binding var conversation: ConversationListItem
     let radioSnapshot: RadioSnapshot
     let updateDraft: (Int64, String) async -> AppOperationResult
@@ -463,7 +464,9 @@ struct ConversationThreadView: View {
             MessageComposer(
                 draft: $draft,
                 placeholder: "Message \(conversation.title)",
-                security: conversation.security,
+                security: forwardSecretConversations.contains(conversation.conversationAddress)
+                    ? .forwardSecret
+                    : conversation.security,
                 blocked: composerBlock,
                 canSend: canSendNow,
                 reply: replyTarget.map { target in

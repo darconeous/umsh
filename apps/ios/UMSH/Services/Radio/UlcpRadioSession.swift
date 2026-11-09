@@ -221,6 +221,11 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     /// The mesh session's latest report of the addresses it answers to
     /// besides its own. A session starts with none.
     var latestLocalDestinationHints: [Data] = []
+    var forwardSecretContinuations: [UUID: AsyncStream<Set<String>>.Continuation] = [:]
+    /// The mesh session's latest report of the conversations whose next
+    /// message goes under a session with forward secrecy. A session starts
+    /// with none.
+    var latestForwardSecretConversations: Set<String> = []
     var meetContinuations: [UUID: AsyncStream<MobileMeetStateRecord?>.Continuation] = [:]
     var latestMeetState: MobileMeetStateRecord?
     /// The radio's `PROP_PHY_T_FRAME`, kept for a mesh session installed
@@ -439,6 +444,35 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
         }
     }
 
+    func forwardSecretConversations() async -> AsyncStream<Set<String>> {
+        await withCheckedContinuation { result in
+            sessionQueue.async { [self] in
+                // Each value is the whole set, so only the newest matters.
+                let stream = AsyncStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
+                    let id = UUID()
+                    forwardSecretContinuations[id] = continuation
+                    continuation.yield(latestForwardSecretConversations)
+                    continuation.onTermination = { [weak self] _ in
+                        self?.sessionQueue.async { [weak self] in
+                            self?.forwardSecretContinuations[id] = nil
+                        }
+                    }
+                }
+                result.resume(returning: stream)
+            }
+        }
+    }
+
+    /// Record and announce the conversations whose next message goes under
+    /// a session with forward secrecy. Runs on `sessionQueue`.
+    func publishForwardSecretConversations(_ addresses: Set<String>) {
+        guard addresses != latestForwardSecretConversations else { return }
+        latestForwardSecretConversations = addresses
+        for continuation in forwardSecretContinuations.values {
+            continuation.yield(addresses)
+        }
+    }
+
     func peerHeardEvents() async -> AsyncStream<RadioPeerHeardEvent> {
         await withCheckedContinuation { result in
             sessionQueue.async { [self] in
@@ -632,8 +666,9 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
                 lastYieldedChatBatchID = nil
                 lastChatBatchYield = .distantFuture
                 // Addresses belong to the session that answers to them, and
-                // so does an exchange.
+                // so do an exchange and sessions with forward secrecy.
                 publishLocalDestinationHints([])
+                publishForwardSecretConversations([])
                 publishMeetState(nil)
                 if let session, let latestFrameTimeMs {
                     session.setFrameTimeMs(frameMs: latestFrameTimeMs)
@@ -2604,6 +2639,9 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
             }
             if let hints = update.localDestinationHints {
                 publishLocalDestinationHints(hints)
+            }
+            if let addresses = update.forwardSecretConversations {
+                publishForwardSecretConversations(Set(addresses))
             }
             if let meet = update.meet {
                 publishMeetState(meet)

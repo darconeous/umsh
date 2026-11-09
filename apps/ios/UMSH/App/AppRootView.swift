@@ -506,6 +506,7 @@ struct AppRootView: View {
             \.ownChatName,
             runtime.advertisedName.isEmpty ? String(localized: "You") : runtime.advertisedName
         )
+        .environment(\.forwardSecretConversations, runtime.forwardSecretConversations)
         .environment(
             \.visibleConversationReporter,
             VisibleConversationReporter(

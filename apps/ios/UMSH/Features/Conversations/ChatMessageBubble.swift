@@ -210,7 +210,8 @@ struct ChatMessageBubble: View, @MainActor Equatable {
 
     let message: ChatMessageSummary
     /// How well the conversation this bubble belongs to is protected, which is
-    /// what an outbound bubble is colored by.
+    /// what an outbound bubble is colored by—unless it went under a session
+    /// with forward secrecy.
     let security: ConversationSecurity
     /// Where this message sits in its run, which decides the tail, the sender
     /// header, the avatar, and the space above it.
@@ -677,7 +678,9 @@ struct ChatMessageBubble: View, @MainActor Equatable {
             }
         }
             .background(
-                message.isOutbound ? security.tint : Color(uiColor: .systemGray5),
+                message.isOutbound
+                    ? (message.isForwardSecret ? ConversationSecurity.forwardSecret : security).tint
+                    : Color(uiColor: .systemGray5),
                 in: shape
             )
     }

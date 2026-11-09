@@ -14,6 +14,10 @@ protocol RadioConnection: AnyObject, Sendable {
     /// one per session with forward secrecy: the current set first, then
     /// each change.
     func localDestinationHints() async -> AsyncStream<[Data]>
+    /// The addresses of the direct conversations whose next message goes
+    /// under a session with forward secrecy: the current set first, then
+    /// each change.
+    func forwardSecretConversations() async -> AsyncStream<Set<String>>
     /// Add Peer's contact exchange: the current state first, then each
     /// change. Nil while no mesh session is installed.
     func meetStates() async -> AsyncStream<MobileMeetStateRecord?>

@@ -216,7 +216,7 @@ pub(super) fn record(disk: &Disk, key: &RecordKey, out: &mut Vec<u8>) -> bool {
             out.u8(u8::try_from(reactors.len()).unwrap_or(u8::MAX));
             for reactor in reactors {
                 out.sender(&reactor.who.scope());
-                out.flag(reactor.mine);
+                out.u8(u8::from(reactor.mine) | u8::from(reactor.forward_secret) << 1);
                 match reactor.reaction {
                     Reaction::Other(cluster) => {
                         out.u8(OTHER_REACTION);
@@ -502,7 +502,12 @@ fn message(id: u32, input: &mut In<'_>) -> Option<MessageEntry> {
     let mut reactors = Vec::with_capacity(usize::from(count));
     for _ in 0..count {
         let who = SenderCode::from(&input.sender()?);
-        let mine = input.flag()?;
+        // Kept before reactions could go under forward secrecy, a record
+        // has no bit for it here and reads as without.
+        let flags = input.u8()?;
+        if flags > 3 {
+            return None;
+        }
         let reaction = match input.u8()? {
             OTHER_REACTION => {
                 Reaction::Other(Cluster::new(core::str::from_utf8(input.short()?).ok()?)?)
@@ -511,7 +516,8 @@ fn message(id: u32, input: &mut In<'_>) -> Option<MessageEntry> {
         };
         reactors.push(Reactor {
             who,
-            mine,
+            mine: flags & 1 != 0,
+            forward_secret: flags & 2 != 0,
             reaction,
         });
     }

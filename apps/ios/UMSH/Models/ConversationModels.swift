@@ -461,6 +461,8 @@ struct ChatMessageSummary: Identifiable, Hashable, Sendable {
     var isEditOfUnknown: Bool = false
     /// Status text: its sender's name followed by its body, with no bubble.
     var isStatus: Bool = false
+    /// Outbound, and what it reads went under a session with forward secrecy.
+    var isForwardSecret: Bool = false
     /// Outbound message delivered on a resend after a transport failure—
     /// annotated "Delivered Late".
     var isDeliveredLate: Bool = false
@@ -559,6 +561,8 @@ struct MessageReaction: Identifiable, Hashable, Sendable {
     ///—including a reaction still in flight—looks normal, because being
     /// in flight is the ordinary case and not worth alarming anyone about.
     let isFailed: Bool
+    /// Ours, and it went under a session with forward secrecy.
+    var isForwardSecret = false
 
     /// The single glyph this reaction renders as.
     var glyph: String { ReactionEmoji.displayGlyph(for: body) }

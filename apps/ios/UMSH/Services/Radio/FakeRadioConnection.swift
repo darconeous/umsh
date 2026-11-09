@@ -59,6 +59,8 @@ actor FakeRadioConnection: RadioConnection {
     private var transmissionsFail = false
     private var meetContinuations: [UUID: AsyncStream<MobileMeetStateRecord?>.Continuation] = [:]
     private var latestMeetState: MobileMeetStateRecord?
+    private var forwardSecretContinuations: [UUID: AsyncStream<Set<String>>.Continuation] = [:]
+    private var latestForwardSecretConversations: Set<String> = []
 
     init(
         snapshot: RadioSnapshot = .previewReady,
@@ -163,6 +165,29 @@ actor FakeRadioConnection: RadioConnection {
 
     func localDestinationHints() -> AsyncStream<[Data]> {
         AsyncStream { _ in }
+    }
+
+    func forwardSecretConversations() -> AsyncStream<Set<String>> {
+        AsyncStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
+            let id = UUID()
+            forwardSecretContinuations[id] = continuation
+            continuation.yield(latestForwardSecretConversations)
+            continuation.onTermination = { [weak self] _ in
+                Task { await self?.removeForwardSecretContinuation(id) }
+            }
+        }
+    }
+
+    private func removeForwardSecretContinuation(_ id: UUID) {
+        forwardSecretContinuations[id] = nil
+    }
+
+    private func publishForwardSecretConversations(_ addresses: Set<String>) {
+        guard addresses != latestForwardSecretConversations else { return }
+        latestForwardSecretConversations = addresses
+        for continuation in forwardSecretContinuations.values {
+            continuation.yield(addresses)
+        }
     }
 
     func meetStates() -> AsyncStream<MobileMeetStateRecord?> {
@@ -289,6 +314,7 @@ actor FakeRadioConnection: RadioConnection {
     func useMeshSession(_ session: MobileMeshSession?) async {
         meshSession = session
         publishMeetState(nil)
+        publishForwardSecretConversations([])
         guard let session else {
             wakeListener = nil
             return
@@ -1329,6 +1355,9 @@ actor FakeRadioConnection: RadioConnection {
         }
         if let meet = update.meet {
             publishMeetState(meet)
+        }
+        if let addresses = update.forwardSecretConversations {
+            publishForwardSecretConversations(Set(addresses))
         }
         yieldChatUpdate(from: update)
     }

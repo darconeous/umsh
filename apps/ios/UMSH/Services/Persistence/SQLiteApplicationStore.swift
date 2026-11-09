@@ -357,6 +357,8 @@ struct StoredChatMessage: Equatable, Sendable, Identifiable {
     /// Status text, which reads as its sender's name followed by its body,
     /// with no bubble.
     var isStatus = false
+    /// Mine, and what it reads went under a session with forward secrecy.
+    var isForwardSecret = false
     /// The stored row it replies to, once that has been found.
     var replyTarget: StoredMessageRef?
     /// What it replies to, as it reads now: read with the page, so an edit
@@ -471,6 +473,8 @@ struct StoredMessageReaction: Hashable, Sendable {
     let epoch: UInt16?
     let createdAtMilliseconds: Int64
     let deliveryState: String?
+    /// Mine, and it went under a session with forward secrecy.
+    var forwardSecret = false
 }
 
 /// The radio's view of one received message, for the message-details sheet.
@@ -575,7 +579,7 @@ actor SQLiteApplicationStore {
     /// store refuses to open any database above this constant, so a stale value
     /// lets the new schema apply once and then locks the user out of their own
     /// data on the next launch. ``migrate(_:)`` checks the two agree.
-    static let currentSchemaVersion: Int32 = 29
+    static let currentSchemaVersion: Int32 = 30
 
     nonisolated(unsafe) private let database: OpaquePointer
 
@@ -3123,7 +3127,8 @@ actor SQLiteApplicationStore {
                 AND f.session_id = chat_message.delivery_session_id
                 AND f.handle = chat_message.delivery_handle),
         unknown_original,
-        message_type = 1
+        message_type = 1,
+        COALESCE(forward_secret, 0)
         """
 
     /// How many messages a transcript read will accept in one page, whatever
@@ -3741,7 +3746,8 @@ actor SQLiteApplicationStore {
                 """
                 SELECT regarding_target_session_id, regarding_target_handle,
                     body, direction, sender_address, sender_hint,
-                    session_id, handle, wire_id, epoch, created_at_ms, delivery_state
+                    session_id, handle, wire_id, epoch, created_at_ms, delivery_state,
+                    COALESCE(forward_secret, 0)
                 FROM chat_message
                 WHERE owner_identity_id = ? AND is_reaction = 1 AND deleted = 0
                     AND (regarding_target_session_id, regarding_target_handle) IN (\(tuples))
@@ -3781,7 +3787,8 @@ actor SQLiteApplicationStore {
                         wireID: Self.optionalIntColumn(statement, at: 8).map { UInt8($0) },
                         epoch: Self.optionalIntColumn(statement, at: 9).map { UInt16($0) },
                         createdAtMilliseconds: sqlite3_column_int64(statement, 10),
-                        deliveryState: Self.optionalStringColumn(statement, at: 11)
+                        deliveryState: Self.optionalStringColumn(statement, at: 11),
+                        forwardSecret: outbound && sqlite3_column_int(statement, 12) != 0
                     )
                     if newest[key]?[sender] == nil {
                         order[key, default: []].append(sender)
@@ -3830,6 +3837,7 @@ actor SQLiteApplicationStore {
             isReply: sqlite3_column_int(statement, 25) != 0,
             isEditOfUnknown: sqlite3_column_int(statement, 31) != 0,
             isStatus: sqlite3_column_int(statement, 32) != 0,
+            isForwardSecret: sqlite3_column_int(statement, 33) != 0,
             replyTarget: optionalStringColumn(statement, at: 26).map { session in
                 StoredMessageRef(
                     sessionID: session,
@@ -4067,9 +4075,9 @@ actor SQLiteApplicationStore {
                     is_reaction, regarding_wire_id, regarding_direction, regarding_sender_hint,
                     regarding_target_session_id, regarding_target_handle,
                     delivery_session_id, delivery_handle, silent,
-                    regarding_unknown, unknown_original
+                    regarding_unknown, unknown_original, forward_secret
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?,
-                          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(owner_identity_id, session_id, handle) DO UPDATE SET
                     body = excluded.body,
                     complete = excluded.complete,
@@ -4117,7 +4125,8 @@ actor SQLiteApplicationStore {
                     regarding_target_handle = COALESCE(
                         excluded.regarding_target_handle, chat_message.regarding_target_handle
                     ),
-                    silent = MAX(chat_message.silent, excluded.silent)
+                    silent = MAX(chat_message.silent, excluded.silent),
+                    forward_secret = COALESCE(excluded.forward_secret, chat_message.forward_secret)
                 """
             )
             defer { sqlite3_finalize(statement) }
@@ -4178,6 +4187,7 @@ actor SQLiteApplicationStore {
             try check(sqlite3_bind_int(statement, 39, silent ? 1 : 0))
             try check(sqlite3_bind_int(statement, 40, mutation.regardingUnknown ? 1 : 0))
             try check(sqlite3_bind_int(statement, 41, mutation.unknownOriginal ? 1 : 0))
+            try bindOptionalBool(mutation.forwardSecret, to: statement, at: 42)
             try stepDone(statement)
             // A reaction or a reply can outrun the message it is about—
             // repaired gaps and channel-group reordering both do it. Whenever
@@ -4270,6 +4280,9 @@ actor SQLiteApplicationStore {
             // nothing, and is not annotated as an edit: that is the shape
             // a resend takes on the wire, and there is no earlier version
             // of the message for anyone to go back to.
+            //
+            // An edit of mine says whether what the message now reads went
+            // under a session with forward secrecy.
             let statement = try prepare(
                 """
                 UPDATE chat_message SET
@@ -4277,7 +4290,8 @@ actor SQLiteApplicationStore {
                         THEN COALESCE(original_body, body)
                         ELSE original_body END,
                     body = ?, deleted = ?,
-                    edited = MAX(edited, CASE WHEN ? = 1 AND body <> ? THEN 1 ELSE 0 END)
+                    edited = MAX(edited, CASE WHEN ? = 1 AND body <> ? THEN 1 ELSE 0 END),
+                    forward_secret = COALESCE(?, forward_secret)
                 WHERE rowid = ?
                 """
             )
@@ -4288,7 +4302,8 @@ actor SQLiteApplicationStore {
             try check(sqlite3_bind_int(statement, 4, deleted))
             try check(sqlite3_bind_int(statement, 5, markEdited))
             try bind(body, to: statement, at: 6)
-            try check(sqlite3_bind_int64(statement, 7, target))
+            try bindOptionalBool(mutation.forwardSecret, to: statement, at: 7)
+            try check(sqlite3_bind_int64(statement, 8, target))
             try stepDone(statement)
             if mutation.kind == .edit {
                 try adoptEditDelivery(
@@ -5628,6 +5643,26 @@ actor SQLiteApplicationStore {
                         ADD COLUMN unknown_original INTEGER NOT NULL DEFAULT 0;
 
                     PRAGMA user_version = 29;
+                    """
+                )
+                try execute(database, sql: "COMMIT")
+            } catch {
+                try? execute(database, sql: "ROLLBACK")
+                throw error
+            }
+        }
+
+        if version < 30 {
+            try execute(database, sql: "BEGIN IMMEDIATE")
+            do {
+                // Whether a message of mine went under a session with forward
+                // secrecy. Null where nothing says: inbound, and older rows.
+                try execute(
+                    database,
+                    sql: """
+                    ALTER TABLE chat_message ADD COLUMN forward_secret INTEGER;
+
+                    PRAGMA user_version = 30;
                     """
                 )
                 try execute(database, sql: "COMMIT")

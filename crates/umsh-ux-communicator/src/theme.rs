@@ -78,8 +78,9 @@ pub const EMERGENCY: Rgb565 = rgb(0xFF453A);
 pub const EMERGENCY_FIELD: Rgb565 = rgb(0x3A1412);
 /// Behind each reaction in the actions menu's palette.
 pub const REACTION_PAD: Rgb565 = rgb(0x2A313B);
-/// A reaction chip of someone else's; mine is in [`OUTBOUND`], or
-/// [`OUTBOUND_OPEN`] in an open channel.
+/// A reaction chip of someone else's; mine is in [`OUTBOUND`],
+/// [`OUTBOUND_OPEN`] in an open channel, or [`OUTBOUND_SECRET`] when it
+/// went under a session with forward secrecy.
 pub const CHIP_THEIRS: Rgb565 = rgb(0x323A45);
 /// A banner for a message that arrived elsewhere, and its edge.
 pub const BANNER: Rgb565 = rgb(0x1E2631);

@@ -351,15 +351,17 @@ impl TransmitQueue {
 
     /// Hand waiting frames to the node while the window has room. Returns
     /// how many were sent: each is an authenticated send that advanced the
-    /// frame counter. It is [`TransmitQueue::depart`], [`transmit`], and
-    /// [`TransmitQueue::departed`] in a loop, for a caller that holds the
-    /// facade across the sends.
+    /// frame counter. It is [`TransmitQueue::depart`], `bind`, [`transmit`],
+    /// and [`TransmitQueue::departed`] in a loop, for a caller that holds
+    /// the facade across the sends. `bind` holds each frame to what was
+    /// decided for it, as [`Departure::require_forward_secrecy`] does.
     pub async fn pump<M, P, const SLOTS: usize, const PAGES: usize>(
         &mut self,
         node: &LocalNode<M>,
         chat: &mut ChatFacade<P, SLOTS, PAGES>,
         policy: &TransmitPolicy,
         now_ms: u64,
+        mut bind: impl FnMut(&mut Departure),
     ) -> usize
     where
         M: MacBackend,
@@ -367,13 +369,14 @@ impl TransmitQueue {
     {
         let mut sent_count = 0;
         while let Some(next) = self.depart(chat.channels(), policy) {
-            let departure = match next {
+            let mut departure = match next {
                 Ok(departure) => departure,
                 Err(undeliverable) => {
                     undeliverable.fail(chat, now_ms);
                     continue;
                 }
             };
+            bind(&mut departure);
             let sent = transmit(node, &departure).await;
             match self.departed(departure, sent, now_ms) {
                 Departed::Sent => sent_count += 1,
@@ -678,6 +681,12 @@ impl Departure {
     /// tracked.
     pub fn message(&self) -> Option<MessageHandle> {
         self.queued.transmission.message
+    }
+
+    /// The facade session [`Departure::message`] is a handle of. A facade
+    /// rebuilt since begins a new session, whose handles start over.
+    pub fn session_id(&self) -> u64 {
+        self.queued.session_id
     }
 
     /// Sends the frame, when it goes to a peer, under the session with

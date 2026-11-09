@@ -145,6 +145,17 @@ impl Rig {
 
     /// Drain this node's engine into one batch and commit it.
     fn drain<S: ChatStore>(&mut self, store: &mut S, link: Option<LinkInfo>) -> Drained {
+        self.drain_marking(store, link, None)
+    }
+
+    /// [`Self::drain`], taking that `secret` goes under a session with
+    /// forward secrecy, as the chat layer marks one composed under it.
+    fn drain_marking<S: ChatStore>(
+        &mut self,
+        store: &mut S,
+        link: Option<LinkInfo>,
+        secret: Option<MessageHandle>,
+    ) -> Drained {
         let handles = &self.handles;
         let resolve = |handle: MessageHandle| handles.get(&handle).copied();
         let mut batch = Batch::new(Some(self.time), &resolve);
@@ -166,6 +177,9 @@ impl Rig {
             }
             let engine = &self.engine;
             batch.push(&output, |body| engine.body(body), link);
+        }
+        if let Some(handle) = secret {
+            batch.secrecy(Subject::Handle(handle), true);
         }
         let result = store.commit(&batch);
         drop(batch);
@@ -192,6 +206,22 @@ impl Rig {
             .compose(conversation, self.token, intent, self.now_ms)
             .expect("the engine composes it");
         (handle, self.drain(store, None))
+    }
+
+    /// Compose on this node under a session with forward secrecy, and
+    /// commit it.
+    fn send_secret<S: ChatStore>(
+        &mut self,
+        store: &mut S,
+        conversation: ConversationKey,
+        intent: ComposeIntent<'_>,
+    ) -> (MessageHandle, Drained) {
+        self.tick();
+        let handle = self
+            .engine
+            .compose(conversation, self.token, intent, self.now_ms)
+            .expect("the engine composes it");
+        (handle, self.drain_marking(store, None, Some(handle)))
     }
 
     /// The committed transmissions went out and were acknowledged.
@@ -691,7 +721,8 @@ pub fn reactions<H: Harness>(harness: &mut H) {
         [Reacted {
             reaction: Reaction::Heart,
             count: 1,
-            mine: false
+            mine: false,
+            forward_secret: false
         }]
     );
     assert_eq!(
@@ -699,7 +730,8 @@ pub fn reactions<H: Harness>(harness: &mut H) {
         [Reacted {
             reaction: Reaction::ThumbsUp,
             count: 1,
-            mine: true
+            mine: true,
+            forward_secret: false
         }]
     );
     // Each is kept with who sent it.
@@ -712,6 +744,27 @@ pub fn reactions<H: Harness>(harness: &mut H) {
     assert_eq!(ours.len(), 1);
     assert_eq!(ours[0].reaction, Reaction::ThumbsUp);
     assert!(ours[0].mine);
+
+    // Mine says whether it went under a session with forward secrecy,
+    // across a restart, until a later one of mine replaces it.
+    let my_reaction = |body| ComposeIntent::Reply {
+        body,
+        regarding: RegardingRef::Handle(heard_handle),
+        status: true,
+    };
+    rig.send_secret(&mut store, direct(), my_reaction("<3"));
+    harness.power_on(&mut store);
+    assert_eq!(
+        record(&store, heard).reactions.as_slice(),
+        [Reacted {
+            reaction: Reaction::Heart,
+            count: 1,
+            mine: true,
+            forward_secret: true
+        }]
+    );
+    rig.send(&mut store, direct(), my_reaction("+1"));
+    assert!(!record(&store, heard).reactions[0].forward_secret);
 
     // The latest from a sender replaces their earlier one, and an empty
     // one withdraws it.

@@ -11,7 +11,7 @@ use core::{
     task::{Context, Poll},
 };
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     fmt,
     rc::Rc,
     sync::{
@@ -37,7 +37,7 @@ use umsh_mac::{Mac, MacHandle, OperatingPolicy, RepeaterConfig, SendDestination,
 use umsh_node::meet::MeetCommand;
 use umsh_node::{
     Host, LocalNode, MacBackend, NodeCapabilities, NodeIdentityPayload, NodeIdentityProfile,
-    NodeRole, PfsSessionRecord, PongMetadata, Transport,
+    NodeRole, PfsSessionRecord, PfsStatus, PongMetadata, Transport,
     location::{MAX_PRECISION, NodeLocation},
 };
 use umsh_sync::AsyncRefCell;
@@ -931,6 +931,10 @@ pub struct MobileMeshSessionUpdateRecord {
     /// (see `MobileUlcpSession::reconcile_host_destination_hints`), or it
     /// passes nothing those sessions carry.
     pub local_destination_hints: Option<Vec<Vec<u8>>>,
+    /// The addresses of the direct conversations whose next message goes
+    /// under a session with forward secrecy, when they changed since the
+    /// last poll. A session starts with none.
+    pub forward_secret_conversations: Option<Vec<String>>,
     /// Add Peer's contact exchange, when it changed since the last poll.
     pub meet: Option<MobileMeetStateRecord>,
 }
@@ -1718,6 +1722,7 @@ pub struct MobileMeshSession {
     advertisements: Mutex<std_mpsc::Receiver<MobileMeshAdvertisementRecord>>,
     peer_heard: Arc<HeardSlot>,
     local_hints: Arc<Slot<Vec<Vec<u8>>>>,
+    forward_secret_conversations: Arc<Slot<Vec<String>>>,
     meet_states: Arc<Slot<MobileMeetStateRecord>>,
     /// The longest frame's airtime at the radio's settings, in ms; 0 until
     /// the platform reports it.
@@ -3031,6 +3036,7 @@ impl MobileMeshSession {
         let peer_heard_events = self.peer_heard.take();
         // Each report is whole, so only the latest matters.
         let local_destination_hints = self.local_hints.take();
+        let forward_secret_conversations = self.forward_secret_conversations.take();
         let meet = self.meet_states.take();
         let mut update_chat = None;
         {
@@ -3104,6 +3110,7 @@ impl MobileMeshSession {
             chat_sender_resolutions,
             chat_diagnostics,
             local_destination_hints,
+            forward_secret_conversations,
             meet,
         }
     }
@@ -3222,12 +3229,14 @@ impl MobileMeshSession {
             notifying_channel(CHAT_EVENT_DEPTH, &wake, &dropped, Dropped::CHAT);
         let peer_heard = Arc::new(HeardSlot::new(&wake, &dropped));
         let local_hints = Arc::new(Slot::new(&wake));
+        let forward_secret_conversations = Arc::new(Slot::new(&wake));
         let meet_states = Arc::new(Slot::new(&wake));
         let frame_ms = Arc::new(AtomicU32::new(0));
         let worker_frame_ms = frame_ms.clone();
         let worker_dropped = dropped.clone();
         let worker_peer_heard = peer_heard.clone();
         let worker_local_hints = local_hints.clone();
+        let worker_forward_secret_conversations = forward_secret_conversations.clone();
         let worker_meet_states = meet_states.clone();
         let (ready_tx, ready_rx) = oneshot::channel();
         let worker_identity = identity.take_for_session()?;
@@ -3276,6 +3285,7 @@ impl MobileMeshSession {
                         advertisement_tx,
                         worker_peer_heard,
                         worker_local_hints,
+                        worker_forward_secret_conversations,
                         worker_meet_states,
                         worker_frame_ms,
                         chat_event_tx,
@@ -3298,6 +3308,7 @@ impl MobileMeshSession {
             advertisements,
             peer_heard,
             local_hints,
+            forward_secret_conversations,
             meet_states,
             frame_ms,
             chat_events,
@@ -3967,6 +3978,7 @@ async fn run_worker(
     advertisements: NotifyingSender<MobileMeshAdvertisementRecord>,
     peer_heard: Arc<HeardSlot>,
     local_hints: Arc<Slot<Vec<Vec<u8>>>>,
+    forward_secret_conversations: Arc<Slot<Vec<String>>>,
     meet_states: Arc<Slot<MobileMeetStateRecord>>,
     frame_ms: Arc<AtomicU32>,
     chat_events: NotifyingSender<MobileChatWorkerEvent>,
@@ -4032,8 +4044,21 @@ async fn run_worker(
     // Restoring dropped whatever had run out, so the records are kept again
     // once the pump starts.
     let pfs_records_changed = Rc::new(Cell::new(true));
+    // Which peers a session with forward secrecy is held with is taken again
+    // whenever one begins, ends, is replaced, or fails to begin.
+    let secrecy_changed = Rc::new(Cell::new(true));
     let changed = pfs_records_changed.clone();
-    let pfs_records_subscription = node.on_pfs_records_changed(move || changed.set(true));
+    let secrecy = secrecy_changed.clone();
+    let pfs_records_subscription = node.on_pfs_records_changed(move || {
+        changed.set(true);
+        secrecy.set(true);
+    });
+    let secrecy = secrecy_changed.clone();
+    let pfs_established_subscription = node.on_pfs_established(move |_| secrecy.set(true));
+    let secrecy = secrecy_changed.clone();
+    let pfs_ended_subscription = node.on_pfs_ended(move |_| secrecy.set(true));
+    let secrecy = secrecy_changed.clone();
+    let pfs_failed_subscription = node.on_pfs_failed(move |_, _| secrecy.set(true));
     // What this phone currently says about itself. The session starts
     // discoverable with no name and no location; the app pushes the
     // stored preferences via `set_discoverable` and
@@ -4220,6 +4245,9 @@ async fn run_worker(
         meet_subscription,
         peer_repeaters_subscription,
         pfs_records_subscription,
+        pfs_established_subscription,
+        pfs_ended_subscription,
+        pfs_failed_subscription,
     );
     let _ = ready.send(Ok(()));
     // The worker's own deadlines: the contact exchange, management lanes,
@@ -4786,6 +4814,15 @@ async fn run_worker(
                                     Some(conversation),
                                 )
                                 .await;
+                                // What the message goes under is decided as
+                                // it is composed.
+                                refresh_secrecy(
+                                    &node,
+                                    &mut chat,
+                                    &secrecy_changed,
+                                    &forward_secret_conversations,
+                                )
+                                .await;
                                 let now_ms = handle.now_ms().await;
                                 let composed = match &request {
                                     ChatComposeRequest::Typed { text } => chat.compose_typed(
@@ -5131,6 +5168,13 @@ async fn run_worker(
                 _ = service_tick.tick() => {
                     keep_pfs_records().await;
                     report_local_hints().await;
+                    refresh_secrecy(
+                        &node,
+                        &mut chat,
+                        &secrecy_changed,
+                        &forward_secret_conversations,
+                    )
+                    .await;
                     let now_ms = handle.now_ms().await;
                     if meeting.borrow().meeting.is_open() {
                         meeting.borrow_mut().with(|meeting, changed| meeting.tick(now_ms, changed));
@@ -5435,12 +5479,43 @@ async fn pump_chat<M: MacBackend>(
     events: &NotifyingSender<MobileChatWorkerEvent>,
     now_ms: u64,
 ) -> usize {
+    let waited = queue.awaiting_secrecy();
+    chat.settle_secrecy_waits(queue, node, now_ms).await;
     if !queue.has_pending() {
+        // Frames that stopped waiting on a session failed.
+        if waited != queue.awaiting_secrecy() {
+            publish_chat_drain(chat.drain(), queue, events);
+        }
         return 0;
     }
-    let sent = queue.pump(node, &mut chat.facade, policy, now_ms).await;
+    let sent = chat.pump(queue, node, policy, now_ms).await;
     publish_chat_drain(chat.drain(), queue, events);
     sent
+}
+
+/// The peers `node` holds a session with forward secrecy with now.
+async fn held_secrecy<M: MacBackend>(node: &LocalNode<M>) -> BTreeSet<[u8; 32]> {
+    let mut held = BTreeSet::new();
+    for record in node.pfs_session_records(None).await {
+        if let Ok(PfsStatus::Active { .. }) = node.pfs_status(&record.peer).await {
+            held.insert(record.peer.0);
+        }
+    }
+    held
+}
+
+/// Takes again which peers a session with forward secrecy is held with, once
+/// `changed` says that may have changed, and reports the conversations whose
+/// next message goes under one when they changed.
+async fn refresh_secrecy<M: MacBackend>(
+    node: &LocalNode<M>,
+    chat: &mut MobileChatState,
+    changed: &Cell<bool>,
+    report: &Slot<Vec<String>>,
+) {
+    if changed.replace(false) && chat.hold_secrecy(held_secrecy(node).await) {
+        report.set(chat.forward_secret_conversations());
+    }
 }
 
 /// Publish a drain's records, and queue its frames for the radio.
@@ -8816,6 +8891,208 @@ mod tests {
             );
             std::thread::sleep(Duration::from_millis(5));
         }
+    }
+
+    /// While a session with forward secrecy is held with a peer, their
+    /// conversation is reported as one whose next message goes under it,
+    /// and a message composed then says so and goes under it. One composed
+    /// for a session that ends before it leaves fails rather than going
+    /// without it; and with none held, a message goes without one.
+    #[tokio::test]
+    async fn a_message_composed_under_a_held_session_goes_under_it_or_not_at_all() {
+        use umsh_core::{MicSize, PacketBuilder, PacketHeader, PayloadType};
+        use umsh_crypto::{
+            CryptoEngine, PairwiseKeys,
+            software::{SoftwareAes, SoftwareSha256},
+        };
+        use umsh_node::{MacCommand, mac_command};
+
+        let directory = tempfile::tempdir().unwrap();
+        let alice_identity = identity(82);
+        let alice = MobileMeshSession::new(
+            alice_identity.clone(),
+            MobileCounterStore::new(directory.path().join("pfs-sends").display().to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+        let alice_key = decode_peer(&address(&alice_identity)).unwrap();
+        let carol_key = *SoftwareIdentity::from_secret_bytes(&[83; 32]).public_key();
+        let carol_session = SoftwareIdentity::from_secret_bytes(&[84; 32]);
+        let carol = encode_peer_address(&carol_key);
+        let entry = alice
+            .host_peer_key_entries(vec![carol.clone()])
+            .await
+            .unwrap()
+            .remove(0);
+        let long_term = PairwiseKeys {
+            k_enc: entry.k_enc.try_into().unwrap(),
+            k_mic: entry.k_mic.try_into().unwrap(),
+        };
+        let engine = CryptoEngine::new(SoftwareAes, SoftwareSha256);
+        alice
+            .register_peers(vec![stationary(carol.clone())])
+            .await
+            .unwrap();
+        let heard = |data: &[u8]| MobileMeshRxRecord {
+            data: data.to_vec(),
+            rssi_dbm: Some(-70),
+            lqi: None,
+            snr_cb: Some(60),
+            was_buffered: false,
+            was_acknowledged: false,
+            age_seconds: 0,
+        };
+        let from_carol = |counter: u32, command: &MacCommand<'_>| {
+            let mut body = [0u8; 80];
+            let length = mac_command::encode(command, &mut body).unwrap();
+            let mut payload = vec![PayloadType::MacCommand as u8];
+            payload.extend_from_slice(&body[..length]);
+            let mut buf = [0u8; 256];
+            let mut frame = PacketBuilder::new(&mut buf)
+                .unicast(alice_key.hint())
+                .source_full(&carol_key)
+                .frame_counter(counter)
+                .encrypted()
+                .mic_size(MicSize::Mic16)
+                .payload(&payload)
+                .build()
+                .unwrap();
+            engine.seal_packet(&mut frame, &long_term).unwrap();
+            heard(frame.as_bytes())
+        };
+        // What a frame of Alice's carries, when `keys` open it.
+        let opened = |data: &[u8], keys: &PairwiseKeys| {
+            let mut data = data.to_vec();
+            let header = PacketHeader::parse(&data).ok()?;
+            let range = engine.open_packet(&mut data, &header, keys, None).ok()?;
+            Some(data[range].to_vec())
+        };
+        let is_text = |body: &[u8]| body.first() == Some(&(PayloadType::TextMessage as u8));
+        let poll = || {
+            let update = alice.poll_update();
+            for outbound in &update.outbound_frames {
+                alice.complete_outbound_frame(outbound.id, true).unwrap();
+            }
+            if let Some(batch_id) = update.chat_batch_id {
+                alice.acknowledge_chat_batch(batch_id).unwrap();
+            }
+            update
+        };
+        let reported = |expected: Vec<String>| {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                if poll().forward_secret_conversations.as_ref() == Some(&expected) {
+                    return;
+                }
+                assert!(Instant::now() < deadline, "never reported {expected:?}");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        };
+
+        // Carol opens a session, and confirms it with a frame under it.
+        alice
+            .receive(from_carol(
+                1,
+                &MacCommand::PfsSessionRequest {
+                    ephemeral_key: *carol_session.public_key(),
+                    duration_minutes: 60,
+                },
+            ))
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let alice_session = 'answered: loop {
+            for outbound in poll().outbound_frames {
+                if let Some(body) = opened(&outbound.data, &long_term)
+                    && body.first() == Some(&(PayloadType::MacCommand as u8))
+                    && let Ok(MacCommand::PfsSessionResponse { ephemeral_key, .. }) =
+                        mac_command::parse(&body[1..])
+                {
+                    break 'answered ephemeral_key;
+                }
+            }
+            assert!(Instant::now() < deadline, "the session was not answered");
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        let session_keys = engine.derive_pairwise_keys(
+            &carol_session.shared_secret_with(&alice_session).unwrap(),
+            carol_session.public_key(),
+            &alice_session,
+        );
+        let mut buf = [0u8; 256];
+        let mut frame = PacketBuilder::new(&mut buf)
+            .unicast(alice_session.hint())
+            .source_full(carol_session.public_key())
+            .frame_counter(1)
+            .encrypted()
+            .mic_size(MicSize::Mic4)
+            .payload(&[PayloadType::TextMessage as u8, 0])
+            .build()
+            .unwrap();
+        engine.seal_packet(&mut frame, &session_keys).unwrap();
+        alice.receive(heard(frame.as_bytes())).unwrap();
+        reported(vec![carol.clone()]);
+
+        // Composed now, a message goes under the session, and never without
+        // it.
+        let batch = alice
+            .compose_typed(carol.clone(), 1, "under the session".to_owned())
+            .await
+            .unwrap();
+        assert_eq!(batch.mutations[0].forward_secret, Some(true));
+        alice.commit_chat_batch(batch.batch_id).await.unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        'sent: loop {
+            for outbound in poll().outbound_frames {
+                assert!(
+                    !opened(&outbound.data, &long_term).is_some_and(|body| is_text(&body)),
+                    "the message went without the session"
+                );
+                if opened(&outbound.data, &session_keys).is_some_and(|body| is_text(&body)) {
+                    break 'sent;
+                }
+            }
+            assert!(Instant::now() < deadline, "the message never went");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        // Composed for the session, a message that finds it over by the
+        // time it leaves fails rather than going without it.
+        let batch = alice
+            .compose_typed(carol.clone(), 2, "meant for the session".to_owned())
+            .await
+            .unwrap();
+        assert_eq!(batch.mutations[0].forward_secret, Some(true));
+        let handle = batch.mutations[0].handle;
+        alice
+            .receive(from_carol(2, &MacCommand::EndPfsSession))
+            .unwrap();
+        reported(Vec::new());
+        alice.commit_chat_batch(batch.batch_id).await.unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        'failed: loop {
+            let update = poll();
+            for outbound in &update.outbound_frames {
+                assert!(
+                    !opened(&outbound.data, &long_term).is_some_and(|body| is_text(&body)),
+                    "the message went without the session"
+                );
+            }
+            if update.chat_deliveries.iter().any(|delivery| {
+                delivery.handle == handle && delivery.state == MobileChatDeliveryState::Failed
+            }) {
+                break 'failed;
+            }
+            assert!(Instant::now() < deadline, "the message never failed");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        // With none held, a message goes without one.
+        let batch = alice
+            .compose_typed(carol.clone(), 3, "in the open".to_owned())
+            .await
+            .unwrap();
+        assert_eq!(batch.mutations[0].forward_secret, Some(false));
     }
 
     /// A session with forward secrecy that a previous run held is listened

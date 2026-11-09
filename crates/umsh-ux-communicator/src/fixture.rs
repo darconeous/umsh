@@ -560,6 +560,7 @@ fn mockup_message(
                 reaction,
                 count: 1,
                 mine: false,
+                forward_secret: false,
             })
             .collect::<Reactions>(),
         card: invite.map(Card::Channel),
@@ -2092,7 +2093,7 @@ impl Store {
             message.via = self.via(chat, message.id);
         }
         if let Some(&(_, reaction)) = self.mine.borrow().iter().find(|(id, _)| *id == message.id) {
-            message.set_my_reaction(Some(reaction));
+            message.set_my_reaction(Some(reaction), chat == STATES);
         }
         for &(_, reaction) in self
             .theirs
@@ -2104,6 +2105,7 @@ impl Store {
                 reaction,
                 count: 1,
                 mine: false,
+                forward_secret: false,
             });
         }
         if self.retried.borrow().contains(&message.id) {

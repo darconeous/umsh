@@ -6739,6 +6739,13 @@ public struct MobileChatMutationRecord: Equatable, Hashable {
      * Radio metadata for the frame that produced this record, when one did.
      */
     public var rx: MobileChatRxMetadataRecord?
+    /**
+     * Whether a message of ours goes under a session with forward secrecy,
+     * as decided when it was composed: then it never goes without one, and
+     * otherwise never under one. Set on the records a compose makes; absent
+     * on every other.
+     */
+    public var forwardSecret: Bool?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -6798,7 +6805,13 @@ public struct MobileChatMutationRecord: Equatable, Hashable {
          */notify: Bool,
         /**
          * Radio metadata for the frame that produced this record, when one did.
-         */rx: MobileChatRxMetadataRecord?) {
+         */rx: MobileChatRxMetadataRecord?,
+        /**
+         * Whether a message of ours goes under a session with forward secrecy,
+         * as decided when it was composed: then it never goes without one, and
+         * otherwise never under one. Set on the records a compose makes; absent
+         * on every other.
+         */forwardSecret: Bool?) {
         self.sessionId = sessionId
         self.handle = handle
         self.revision = revision
@@ -6833,6 +6846,7 @@ public struct MobileChatMutationRecord: Equatable, Hashable {
         self.receivedLate = receivedLate
         self.notify = notify
         self.rx = rx
+        self.forwardSecret = forwardSecret
     }
 
 
@@ -6884,7 +6898,8 @@ public struct FfiConverterTypeMobileChatMutationRecord: FfiConverterRustBuffer {
                 presence: FfiConverterTypeMobileChatPresence.read(from: &buf),
                 receivedLate: FfiConverterBool.read(from: &buf),
                 notify: FfiConverterBool.read(from: &buf),
-                rx: FfiConverterOptionTypeMobileChatRxMetadataRecord.read(from: &buf)
+                rx: FfiConverterOptionTypeMobileChatRxMetadataRecord.read(from: &buf),
+                forwardSecret: FfiConverterOptionBool.read(from: &buf)
         )
     }
 
@@ -6923,6 +6938,7 @@ public struct FfiConverterTypeMobileChatMutationRecord: FfiConverterRustBuffer {
         FfiConverterBool.write(value.receivedLate, into: &buf)
         FfiConverterBool.write(value.notify, into: &buf)
         FfiConverterOptionTypeMobileChatRxMetadataRecord.write(value.rx, into: &buf)
+        FfiConverterOptionBool.write(value.forwardSecret, into: &buf)
     }
 }
 
@@ -8863,6 +8879,12 @@ public struct MobileMeshSessionUpdateRecord: Equatable, Hashable {
      */
     public var localDestinationHints: [Data]?
     /**
+     * The addresses of the direct conversations whose next message goes
+     * under a session with forward secrecy, when they changed since the
+     * last poll. A session starts with none.
+     */
+    public var forwardSecretConversations: [String]?
+    /**
      * Add Peer's contact exchange, when it changed since the last poll.
      */
     public var meet: MobileMeetStateRecord?
@@ -8902,6 +8924,11 @@ public struct MobileMeshSessionUpdateRecord: Equatable, Hashable {
          * passes nothing those sessions carry.
          */localDestinationHints: [Data]?,
         /**
+         * The addresses of the direct conversations whose next message goes
+         * under a session with forward secrecy, when they changed since the
+         * last poll. A session starts with none.
+         */forwardSecretConversations: [String]?,
+        /**
          * Add Peer's contact exchange, when it changed since the last poll.
          */meet: MobileMeetStateRecord?) {
         self.outboundFrames = outboundFrames
@@ -8917,6 +8944,7 @@ public struct MobileMeshSessionUpdateRecord: Equatable, Hashable {
         self.chatSenderResolutions = chatSenderResolutions
         self.chatDiagnostics = chatDiagnostics
         self.localDestinationHints = localDestinationHints
+        self.forwardSecretConversations = forwardSecretConversations
         self.meet = meet
     }
 
@@ -8949,6 +8977,7 @@ public struct FfiConverterTypeMobileMeshSessionUpdateRecord: FfiConverterRustBuf
                 chatSenderResolutions: FfiConverterSequenceTypeMobileChatSenderResolutionRecord.read(from: &buf),
                 chatDiagnostics: FfiConverterSequenceString.read(from: &buf),
                 localDestinationHints: FfiConverterOptionSequenceData.read(from: &buf),
+                forwardSecretConversations: FfiConverterOptionSequenceString.read(from: &buf),
                 meet: FfiConverterOptionTypeMobileMeetStateRecord.read(from: &buf)
         )
     }
@@ -8967,6 +8996,7 @@ public struct FfiConverterTypeMobileMeshSessionUpdateRecord: FfiConverterRustBuf
         FfiConverterSequenceTypeMobileChatSenderResolutionRecord.write(value.chatSenderResolutions, into: &buf)
         FfiConverterSequenceString.write(value.chatDiagnostics, into: &buf)
         FfiConverterOptionSequenceData.write(value.localDestinationHints, into: &buf)
+        FfiConverterOptionSequenceString.write(value.forwardSecretConversations, into: &buf)
         FfiConverterOptionTypeMobileMeetStateRecord.write(value.meet, into: &buf)
     }
 }

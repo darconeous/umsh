@@ -4,11 +4,18 @@ import UIKit
 extension ConversationSecurity {
     /// The tint as text on a light quote: who a quote names, and whom a
     /// reply is being written to. The open channels' green is too pale to
-    /// read at that size, so it darkens in light mode.
+    /// read at that size, so it darkens in light mode; the violet is too
+    /// dark, so it lightens in dark mode.
     var quoteNameColor: Color {
         switch self {
         case .encrypted:
             .accentColor
+        case .forwardSecret:
+            Color(uiColor: UIColor { traits in
+                traits.userInterfaceStyle == .dark
+                    ? UIColor(red: 0xA5 / 255, green: 0x85 / 255, blue: 0xFF / 255, alpha: 1)
+                    : UIColor(Self.violet)
+            })
         case .open:
             Color(uiColor: UIColor { traits in
                 traits.userInterfaceStyle == .dark

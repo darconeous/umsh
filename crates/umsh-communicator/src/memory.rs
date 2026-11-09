@@ -93,6 +93,8 @@ struct ChatEntry {
 struct Reactor {
     who: SenderCode,
     mine: bool,
+    /// Mine, and it went under a session with forward secrecy.
+    forward_secret: bool,
     reaction: Reaction,
 }
 
@@ -360,11 +362,13 @@ fn reactions(reactors: &[Reactor]) -> Reactions {
         {
             reacted.count += 1;
             reacted.mine |= reactor.mine;
+            reacted.forward_secret |= reactor.forward_secret;
         } else if counted.len() < REACTIONS {
             counted.push(Reacted {
                 reaction: reactor.reaction,
                 count: 1,
                 mine: reactor.mine,
+                forward_secret: reactor.forward_secret,
             });
         }
     }
@@ -972,13 +976,16 @@ impl<D: Durable> MemoryStore<D> {
                         // (app-text-messages.md), including one this node
                         // cannot render: that sender then shows none.
                         let reaction = Reaction::from_body(body);
+                        let mine = direction == Direction::Outbound;
+                        let forward_secret = mine && batch.forward_secret(mutation.handle);
                         self.update_message(target, |message| {
                             message.reactors.retain(|reactor| reactor.who != who);
                             if let Some(reaction) = reaction {
                                 trim_reactors(&mut message.reactors, MAX_REACTORS - 1);
                                 message.reactors.push(Reactor {
                                     who,
-                                    mine: direction == Direction::Outbound,
+                                    mine,
+                                    forward_secret,
                                     reaction,
                                 });
                             }
@@ -1815,6 +1822,7 @@ pub(crate) fn longest_message() -> (Vec<u8>, Vec<u8>) {
         .map(|n| Reactor {
             who: SenderCode::from(&SenderScope::Peer(PublicKey([n; 32]))),
             mine: false,
+            forward_secret: false,
             reaction: Reaction::Other(Cluster::new(&cluster).unwrap()),
         })
         .collect();
@@ -1951,6 +1959,7 @@ mod tests {
         Reactor {
             who: SenderCode::from(&SenderScope::Peer(PublicKey([n; 32]))),
             mine: false,
+            forward_secret: false,
             reaction: Reaction::ALL[0],
         }
     }
