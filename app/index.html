@@ -107,6 +107,10 @@ with it, though for now one member could claim to be another; per-sender
 authentication for group chats is planned, and will be something you enable per
 channel. Reactions are supported, and delivery status tells you whether a
 message actually made it across the mesh rather than just leaving your phone.</p>
+<p><strong>Forward secrecy.</strong> When a contact opens a
+<a href="/docs/protocol/security.html#perfect-forward-secrecy-sessions">PFS session</a>
+with you, your messages to each other go under it, and the app shows them in
+violet.</p>
 <p><strong>Contacts.</strong> Every contact is a public key. You add someone by scanning a QR
 code or opening a <code>umsh:</code> link they sent you, and from that moment on your
 messages to them are encrypted to that key alone. There is no directory and no
@@ -115,10 +119,13 @@ account, so there is nothing to look anyone up in—which is the point.</p>
 role, its channels, and how often it beacons. Battery, signal, and position
 are visible when the hardware provides them, and a map shows the nodes you
 have heard from.</p>
-<p><strong>Location, if you want it.</strong> A radio with a GNSS receiver can share its
-position on a channel, and the app can share the phone’s own location instead.
-Both are off unless you turn them on, and neither is ever attached to an
-identity you hand out.</p>
+<p><strong>Other devices.</strong> The app can manage a device over the mesh, once that device
+lists you as an administrator. For a repeater, it can suggest which regions to
+forward for, based on where the repeater is.</p>
+<p><strong>Location, if you want it.</strong> A radio with a GNSS receiver can include its
+position in its identity, and the app can include the phone’s own location
+instead. Both are off unless you turn them on. You choose how precise the
+shared area is.</p>
 <p>Your identity lives on your phone, in the app. If you switch over to a different
 companion radio, you don’t need to backup your identity from the old radio
 and install it on the new radio in order to not start over from scratch.</p>

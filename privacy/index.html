@@ -79,7 +79,7 @@
   <div class="section">
     <div class="container">
       <div class="prose prose--center">
-        <p><em>Last updated 7 August 2026.</em></p>
+        <p><em>Last updated 9 November 2026.</em></p>
 <h2 id="this-website">This website</h2>
 <p>This site collects nothing about you.</p>
 <p>There are no analytics, no tracking pixels, no advertising, and no cookies. No
@@ -93,14 +93,13 @@ GitHub, and it is covered by
 <a rel="external" href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement">GitHub’s privacy statement</a>.
 We do not have access to those logs and do not receive any report derived from
 them.</p>
-<p>Pages that link outward—to Seeed Studio, to Heltec, to GitHub Sponsors —
+<p>Pages that link outward—to Seeed Studio, to Heltec, to GitHub Sponsors—
 take you to sites with their own practices, which are their own business and
 not covered here.</p>
 <h2 id="the-firmware-flasher">The firmware flasher</h2>
-<p>The flasher, once it exists, will run entirely inside your browser. It will
-download firmware images from this site and from the project’s GitHub
-releases, and it will talk to the radio you plug in through your browser’s
-serial interface. Your browser will ask your permission before it can see any
+<p>The flasher runs entirely inside your browser. It downloads firmware images
+from this site, and it talks to the radio you plug in through your browser’s
+serial interface. Your browser asks your permission before it can see any
 device at all, and that permission covers only the one device you pick.</p>
 <p>Nothing about your device is uploaded anywhere. There is no server side to
 this—the page has nowhere to send anything even if it wanted to.</p>
@@ -117,8 +116,8 @@ is gone, and a new one takes its place.</p>
 recipient’s key. They do not pass through any server we operate, because there
 is no server we operate.</p>
 <p>Location sharing is off until you switch it on. When you do turn it on, your
-position goes out over the radio to the channel or contact you chose, exactly
-like any other message.</p>
+identity announcements carry the area you are in, at the precision you choose,
+and anyone who receives an announcement can read it.</p>
 <h2 id="the-protocol-itself">The protocol itself</h2>
 <p>Radio is a shared medium, and anyone nearby with a receiver can hear that
 <em>something</em> was transmitted. UMSH is designed to give away as little as
