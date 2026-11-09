@@ -251,9 +251,10 @@ impl PfsSessionRecord {
     /// Decode what [`Self::encode_all`] wrote, skipping any record that
     /// does not decode.
     pub fn decode_all(bytes: &[u8]) -> Vec<Self> {
-        bytes
-            .chunks_exact(Self::ENCODED_LEN)
-            .filter_map(Self::decode)
+        let (records, _) = bytes.as_chunks::<{ Self::ENCODED_LEN }>();
+        records
+            .iter()
+            .filter_map(|record| Self::decode(record))
             .collect()
     }
 
