@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-2ede3d61.js";
+            window.path_to_searchindex_js = "searchindex-3b734d1e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-517aa7d9.js"></script>
@@ -1462,7 +1462,7 @@ IV[12] = IV[12] &amp; 0x7F
 </li>
 </ol>
 <p>After this exchange, both sides hold each other’s ephemeral addresses and can independently derive the session keys. No further setup messages are required.</p>
-<p>The initiator’s first frame from its ephemeral address, authenticated under the session keys, is the responder’s confirmation that the response arrived. Until it arrives, the responder receives under the session but sends nothing under it, and goes on using the long-term keys: if the response was lost, the initiator does not hold the session.</p>
+<p>The responder’s confirmation that the response arrived is the MAC ack of the response, when the response requested one, or the initiator’s first frame from its ephemeral address, authenticated under the session keys, whichever comes first. Until one arrives, the responder receives under the session but sends nothing under it, and goes on using the long-term keys: if the response was lost, the initiator does not hold the session.</p>
 <p>Two nodes hold at most one session with each other: a new one replaces any earlier one. When two nodes each send a request to the other before either receives a response, the request whose ephemeral address is lower, compared as a big-endian unsigned integer, stands. The node that sent it ignores the other’s request; the other node abandons its own request and answers.</p>
 <p>A node that receives a response it is no longer waiting for, and holds no session with its sender, answers with <a href="#end-pfs-session-8">End PFS Session</a>, so that the responder drops its half. This covers a request that was abandoned or timed out, and a node that rebooted after sending its request. A response received while a session is held with its sender is dropped: it repeats the response that opened the session, or is older than it.</p>
 <h3 id="session-key-derivation"><a class="header" href="#session-key-derivation">Session Key Derivation</a></h3>
@@ -1703,7 +1703,7 @@ rate-limit each participant and MAY clamp the hop count further.</p>
 <ul>
 <li>Maximum flood hops: <strong>10</strong>.</li>
 <li>Traffic <strong>may</strong> be encrypted (E=1), but the key is known so this doesn’t really offer privacy.</li>
-<li>Blind unicast on this channel is forbidden.</li>
+<li>Blind unicast on this channel carries only channel-group repair: a sender <strong>MUST NOT</strong> send any blind unicast on it other than a <a href="#message-type">resend request</a> carrying the <a href="#channel-group-resend">Channel Group Resend</a> flag. The channel key conceals nothing, so one-to-one traffic uses unicast.</li>
 <li>Chat messages that do not include the full source key (<code>S=1</code>) <strong>MUST NOT</strong> be displayed in the user interface. This ensures that users can always verify sender identity on the public channel, even though the channel key itself is public knowledge.</li>
 </ul>
 <h3 id="emergency"><a class="header" href="#emergency"><code>EMERGENCY</code></a></h3>
@@ -1714,6 +1714,7 @@ rate-limit each participant and MAY clamp the hop count further.</p>
 <li>Chat messages <strong>must</strong> include the full source key (<code>S=1</code>).</li>
 <li>Every multicast carrying <a href="#text-messages">text-message</a> traffic on this channel <strong>must</strong> be signed (the SCF’s <code>D</code> bit, see <a href="#frame-signatures">Frame Signatures</a>). This includes resend responses to the channel and Message Unavailable responses. Resend requests and one-to-one repairs travel by blind unicast, which already authenticates the sender pairwise, and are not signed.</li>
 <li>Messages that do not meet all three requirements (unencrypted, full source key, signed) <strong>must not</strong> be accepted or displayed by the user interface. A multicast whose signature does not verify does not meet them.</li>
+<li>A node <strong>MUST NOT</strong> participate in this channel unless its user has agreed to the emergency-use dialog—an explicit prompt affirming that the traffic concerns an emergency—and has taken part in the conversation. Every transmission a user initiates on the channel, including reactions, edits, deletions, resends, and repair requests, waits on that agreement. Traffic a node sends without a user action comes only from a node that has itself sent in the conversation: <a href="#ordering-gaps-and-automatic-repair">automatic repair</a> requires a recent message of its own, and a <a href="#message-type">resend request</a> is answered only for an ID the node assigned.</li>
 </ul>
 <p>These requirements ensure that emergency traffic is universally readable, attributable to a specific node, and cryptographically authenticated against impersonation.</p>
 <p>Text messages beginning with <code>TEST:</code> are <a href="#test-messages">test messages</a>, which raise no alert by default.</p>
@@ -3643,7 +3644,7 @@ This section is an early work in progress and this protocol may change significa
 <p>Message Unavailable follows the delivery path appropriate to the requested conversation, just like a successful resend of the original message: direct-conversation responses use unicast, blind-unicast one-to-one channel responses use blind-unicast, and channel-group responses use multicast to the channel.</p>
 <p>Once a receiver has unambiguously recognized Message Unavailable and its single Message Sequence option, it MUST ignore all other options and the entire body. The indicated sequence position is treated as accounted for, so it no longer remains a gap in that sender’s sequence history. The receiver is not required to render a whole-message unavailable response in the UI.</p>
 <p>When the three-byte Message Sequence form identifies a fragment, only that requested fragment is reported unavailable, even if the sender no longer has any part of the message. Other fragments remain independently repairable. The receiver SHOULD render the unavailable portion of the partial message as unavailable rather than continuing to show it as pending.</p>
-<p>Message Unavailable is also the standard response to a request for an unknown Message Sequence ID, including an ID that has not been sent.</p>
+<p>A node answers a resend request, with the message or with Message Unavailable, only for a Message ID it assigned recently in that conversation. It MUST NOT answer a request for an ID it has not assigned, and SHOULD NOT answer one for an ID assigned more than 15 minutes earlier; such requests go unanswered. An ID assigned but never transmitted is answered with Message Unavailable, which closes the gap it left.</p>
 <h3 id="channel-group-resend"><a class="header" href="#channel-group-resend">Channel Group Resend</a></h3>
 <p>A zero-length flag used only on a Message Resend Request received by blind-unicast. Both a request for a message missed from a multicast channel conversation and a request for a message missed from a blind-unicast one-to-one conversation arrive by blind-unicast. The presence of this flag selects the sender’s archive for the multicast channel conversation. Its absence selects the sender’s archive for the blind-unicast one-to-one conversation with the requester.</p>
 <p>A receiver MUST drop a request containing this flag if the request was not received by blind-unicast or if the option has a non-zero length. The flag has no meaning on other message types and MUST be ignored there.</p>
@@ -3695,7 +3696,8 @@ This section is an early work in progress and this protocol may change significa
 <li>Automatic repair is bounded: a receiver SHOULD NOT automatically request more than 8 missing messages from a single observed gap, and SHOULD apply per-peer and overall rate limits to all generated resend requests.</li>
 <li>A forward delta greater than the receiver’s automatic-repair bound, an ambiguous delta, the first message observed from a sender, and the first message after a Sequence Reset all establish a new baseline. Receivers MUST NOT generate automatic resend requests to backfill across a baseline.</li>
 <li>Repair of a channel-group conversation requires addressing a blind unicast to the original sender, which requires that sender’s full public key. A member holding only the source hint cannot construct the request and simply renders the loss.</li>
-<li>In a channel-group conversation every member observes the same loss at nearly the same moment. Receivers MUST delay each automatic group repair request by an independently randomized interval, and MUST cancel a pending request when the missing message—or a Message Unavailable naming it—arrives on the channel before the request is sent.</li>
+<li>In a channel-group conversation every member observes the same loss at nearly the same moment, and one repair answered by multicast serves them all. A receiver MUST NOT automatically request repair of a channel-group conversation unless it has itself sent a message in that conversation within the last 60 seconds. It MUST delay the first request by at least the time elapsed since that message plus an independently randomized interval, MUST cancel a pending request when the missing message—or a Message Unavailable naming it—arrives on the channel before the request is sent, and SHOULD NOT send more than two automatic requests for any one missing message or fragment.</li>
+<li>A receiver that does not repair a channel-group gap automatically SHOULD let the user request the missing message or fragment from its placeholder. Each such request is one resend request, sent only in response to that user action.</li>
 <li>Room conversations are unicast; room repair requests are sent directly to the room without group jitter, and responses repair only the requester.</li>
 </ul>
 <p>A repaired message occupies its position in <strong>sequence order</strong> within the sender’s stream, not the position at which it happened to arrive. A receiver MAY reserve that ordered position when the gap is first observed—rendering a pending-gap placeholder there while a repair is outstanding—and fill the same position in place when the message arrives, rather than appending it at the end of the transcript. A message that fills a reserved position after later messages are already displayed MAY be marked as having arrived late. A gap whose repair is ultimately exhausted, expired, or disclaimed by the sender MAY be presented as an unavailable position rather than silently removed.</p>
@@ -7609,7 +7611,8 @@ staggered it.</p>
 <li>Asynchronous Updates: Yes</li>
 <li>Required: <code>CAP_IDENT</code></li>
 <li>Value Type: 0–7 octets</li>
-<li>Post-Reset Value: Empty, or restored from saved state</li>
+<li>Post-Reset Value: Empty, or restored from saved state while
+<code>PROP_GNSS_IDENT_UPDATE</code> is clear</li>
 </ul>
 <p>The position the device identity carries in its
 <a href="#node-identity">node identity</a>, in the <a href="#variable-precision-location-format">variable-precision
@@ -7620,6 +7623,14 @@ it there. A fix writes it when
 <a href="#prop-gnss-ident-update"><code>PROP_GNSS_IDENT_UPDATE</code></a> is set;
 a host or administrator writes it when that is clear. There is one
 advertised position and one place to read it.</p>
+<p>While <code>PROP_GNSS_IDENT_UPDATE</code> is set, the device advertises no position
+its receiver cannot vouch for. The value is empty while
+<a href="#prop-gnss-enabled"><code>PROP_GNSS_ENABLED</code></a> is clear, and a
+restore—at boot, by <a href="#cmd-reset"><code>CMD_RST</code></a>, or by
+<a href="#cmd-restore"><code>CMD_RESTORE</code></a>—leaves it empty rather
+than bringing back where the device was when it was saved. A position
+written while <code>PROP_GNSS_IDENT_UPDATE</code> is clear is restored like any
+saved value.</p>
 <p>Required by <code>CAP_IDENT</code> rather than <code>CAP_GNSS</code>, because where a node is
 and whether it can determine that itself are different questions. A fixed
 repeater on a hilltop has a position worth advertising and no receiver to
@@ -7647,12 +7658,13 @@ clamping precision, so announcing it costs what it is worth.</p>
 <li>Asynchronous Updates: Yes</li>
 <li>Required: <code>CAP_IDENT</code></li>
 <li>Value Type: 1–4 octets, or empty</li>
-<li>Post-Reset Value: Empty, or restored from saved state</li>
+<li>Post-Reset Value: Empty, or restored from saved state while
+<code>PROP_GNSS_IDENT_UPDATE</code> is clear</li>
 </ul>
 <p>The altitude the device identity carries, in meters above the WGS-84
 ellipsoid—the same units and reference as the node identity’s altitude
-option. Writable and refused under exactly the conditions described for
-<a href="#prop-ident-location"><code>PROP_IDENT_LOCATION</code></a>.</p>
+option. Writable, refused, and emptied under exactly the conditions
+described for <a href="#prop-ident-location"><code>PROP_IDENT_LOCATION</code></a>.</p>
 <p>The value is a two’s-complement signed integer, little-endian, in the
 fewest octets that hold it: an altitude of 100 m occupies one octet, 200 m
 two, and the range extends to four. Most nodes are within a byte of sea
@@ -7707,6 +7719,13 @@ host did not command.</p>
 merely an idle one: on a battery-powered node the receiver is typically
 the largest continuous load there is, and a property that only stopped
 <em>reporting</em> would be a property that solved nothing.</p>
+<p>Clearing it while
+<a href="#prop-gnss-ident-update"><code>PROP_GNSS_IDENT_UPDATE</code></a> is set
+empties <a href="#prop-ident-location"><code>PROP_IDENT_LOCATION</code></a> and
+<a href="#prop-ident-altitude"><code>PROP_IDENT_ALTITUDE</code></a>. The last fix
+is a place the device may have left, and with the receiver off nothing
+will replace it; the advertised identity carries no position until the
+receiver is on again and finds one.</p>
 <p>The post-reset value is the device’s to choose, and it <strong>SHOULD</strong> be
 false: a device that has never been told to care where it is should not
 be spending a battery finding out. A device whose purpose is to know
@@ -8050,7 +8069,12 @@ last position written to them, which becomes an ordinary written value
 that a host may then change or clear. This is how a fixed node is
 placed without anyone reading coordinates off a screen: switch the
 receiver on, let it find where it is, switch auto-update off, and what
-it found stays.</p>
+it found stays, whether or not the receiver is then switched off.</p>
+<p>While it is set, a position is advertised only while
+<a href="#prop-gnss-enabled"><code>PROP_GNSS_ENABLED</code></a> is: switching the
+receiver off, or switching this on while the receiver is off, empties
+<code>PROP_IDENT_LOCATION</code> and <code>PROP_IDENT_ALTITUDE</code>. A restore empties them
+too; the first fix afterward fills them.</p>
 <p>The value is therefore a claim the operator is making rather than one
 the device is maintaining, and a node that moves afterward advertises
 where it was. Clearing the location is the way to stop advertising a

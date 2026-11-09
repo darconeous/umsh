@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-2ede3d61.js";
+            window.path_to_searchindex_js = "searchindex-3b734d1e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-517aa7d9.js"></script>
@@ -599,7 +599,7 @@ IV[12] = IV[12] &amp; 0x7F
 </li>
 </ol>
 <p>After this exchange, both sides hold each other’s ephemeral addresses and can independently derive the session keys. No further setup messages are required.</p>
-<p>The initiator’s first frame from its ephemeral address, authenticated under the session keys, is the responder’s confirmation that the response arrived. Until it arrives, the responder receives under the session but sends nothing under it, and goes on using the long-term keys: if the response was lost, the initiator does not hold the session.</p>
+<p>The responder’s confirmation that the response arrived is the MAC ack of the response, when the response requested one, or the initiator’s first frame from its ephemeral address, authenticated under the session keys, whichever comes first. Until one arrives, the responder receives under the session but sends nothing under it, and goes on using the long-term keys: if the response was lost, the initiator does not hold the session.</p>
 <p>Two nodes hold at most one session with each other: a new one replaces any earlier one. When two nodes each send a request to the other before either receives a response, the request whose ephemeral address is lower, compared as a big-endian unsigned integer, stands. The node that sent it ignores the other’s request; the other node abandons its own request and answers.</p>
 <p>A node that receives a response it is no longer waiting for, and holds no session with its sender, answers with <a href="mac-commands.html#end-pfs-session-8">End PFS Session</a>, so that the responder drops its half. This covers a request that was abandoned or timed out, and a node that rebooted after sending its request. A response received while a session is held with its sender is dropped: it repeats the response that opened the session, or is older than it.</p>
 <h3 id="session-key-derivation"><a class="header" href="#session-key-derivation">Session Key Derivation</a></h3>

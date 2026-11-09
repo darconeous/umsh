@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-2ede3d61.js";
+            window.path_to_searchindex_js = "searchindex-3b734d1e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-517aa7d9.js"></script>
@@ -243,7 +243,7 @@
 <ul>
 <li>Maximum flood hops: <strong>10</strong>.</li>
 <li>Traffic <strong>may</strong> be encrypted (E=1), but the key is known so this doesn’t really offer privacy.</li>
-<li>Blind unicast on this channel is forbidden.</li>
+<li>Blind unicast on this channel carries only channel-group repair: a sender <strong>MUST NOT</strong> send any blind unicast on it other than a <a href="app-text-messages.html#message-type">resend request</a> carrying the <a href="app-text-messages.html#channel-group-resend">Channel Group Resend</a> flag. The channel key conceals nothing, so one-to-one traffic uses unicast.</li>
 <li>Chat messages that do not include the full source key (<code>S=1</code>) <strong>MUST NOT</strong> be displayed in the user interface. This ensures that users can always verify sender identity on the public channel, even though the channel key itself is public knowledge.</li>
 </ul>
 <h3 id="emergency"><a class="header" href="#emergency"><code>EMERGENCY</code></a></h3>
@@ -254,6 +254,7 @@
 <li>Chat messages <strong>must</strong> include the full source key (<code>S=1</code>).</li>
 <li>Every multicast carrying <a href="app-text-messages.html">text-message</a> traffic on this channel <strong>must</strong> be signed (the SCF’s <code>D</code> bit, see <a href="security.html#frame-signatures">Frame Signatures</a>). This includes resend responses to the channel and Message Unavailable responses. Resend requests and one-to-one repairs travel by blind unicast, which already authenticates the sender pairwise, and are not signed.</li>
 <li>Messages that do not meet all three requirements (unencrypted, full source key, signed) <strong>must not</strong> be accepted or displayed by the user interface. A multicast whose signature does not verify does not meet them.</li>
+<li>A node <strong>MUST NOT</strong> participate in this channel unless its user has agreed to the emergency-use dialog—an explicit prompt affirming that the traffic concerns an emergency—and has taken part in the conversation. Every transmission a user initiates on the channel, including reactions, edits, deletions, resends, and repair requests, waits on that agreement. Traffic a node sends without a user action comes only from a node that has itself sent in the conversation: <a href="app-text-messages.html#ordering-gaps-and-automatic-repair">automatic repair</a> requires a recent message of its own, and a <a href="app-text-messages.html#message-type">resend request</a> is answered only for an ID the node assigned.</li>
 </ul>
 <p>These requirements ensure that emergency traffic is universally readable, attributable to a specific node, and cryptographically authenticated against impersonation.</p>
 <p>Text messages beginning with <code>TEST:</code> are <a href="app-text-messages.html#test-messages">test messages</a>, which raise no alert by default.</p>

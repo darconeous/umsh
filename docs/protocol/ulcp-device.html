@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-2ede3d61.js";
+            window.path_to_searchindex_js = "searchindex-3b734d1e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-517aa7d9.js"></script>
@@ -1580,7 +1580,8 @@ staggered it.</p>
 <li>Asynchronous Updates: Yes</li>
 <li>Required: <code>CAP_IDENT</code></li>
 <li>Value Type: 0–7 octets</li>
-<li>Post-Reset Value: Empty, or restored from saved state</li>
+<li>Post-Reset Value: Empty, or restored from saved state while
+<code>PROP_GNSS_IDENT_UPDATE</code> is clear</li>
 </ul>
 <p>The position the device identity carries in its
 <a href="node-identity.html">node identity</a>, in the <a href="node-identity.html#variable-precision-location-format">variable-precision
@@ -1591,6 +1592,14 @@ it there. A fix writes it when
 <a href="ulcp-device.html#prop-gnss-ident-update"><code>PROP_GNSS_IDENT_UPDATE</code></a> is set;
 a host or administrator writes it when that is clear. There is one
 advertised position and one place to read it.</p>
+<p>While <code>PROP_GNSS_IDENT_UPDATE</code> is set, the device advertises no position
+its receiver cannot vouch for. The value is empty while
+<a href="ulcp-device.html#prop-gnss-enabled"><code>PROP_GNSS_ENABLED</code></a> is clear, and a
+restore—at boot, by <a href="ulcp-core.html#cmd-reset"><code>CMD_RST</code></a>, or by
+<a href="ulcp-saved-state.html#cmd-restore"><code>CMD_RESTORE</code></a>—leaves it empty rather
+than bringing back where the device was when it was saved. A position
+written while <code>PROP_GNSS_IDENT_UPDATE</code> is clear is restored like any
+saved value.</p>
 <p>Required by <code>CAP_IDENT</code> rather than <code>CAP_GNSS</code>, because where a node is
 and whether it can determine that itself are different questions. A fixed
 repeater on a hilltop has a position worth advertising and no receiver to
@@ -1618,12 +1627,13 @@ clamping precision, so announcing it costs what it is worth.</p>
 <li>Asynchronous Updates: Yes</li>
 <li>Required: <code>CAP_IDENT</code></li>
 <li>Value Type: 1–4 octets, or empty</li>
-<li>Post-Reset Value: Empty, or restored from saved state</li>
+<li>Post-Reset Value: Empty, or restored from saved state while
+<code>PROP_GNSS_IDENT_UPDATE</code> is clear</li>
 </ul>
 <p>The altitude the device identity carries, in meters above the WGS-84
 ellipsoid—the same units and reference as the node identity’s altitude
-option. Writable and refused under exactly the conditions described for
-<a href="ulcp-device.html#prop-ident-location"><code>PROP_IDENT_LOCATION</code></a>.</p>
+option. Writable, refused, and emptied under exactly the conditions
+described for <a href="ulcp-device.html#prop-ident-location"><code>PROP_IDENT_LOCATION</code></a>.</p>
 <p>The value is a two’s-complement signed integer, little-endian, in the
 fewest octets that hold it: an altitude of 100 m occupies one octet, 200 m
 two, and the range extends to four. Most nodes are within a byte of sea
@@ -1678,6 +1688,13 @@ host did not command.</p>
 merely an idle one: on a battery-powered node the receiver is typically
 the largest continuous load there is, and a property that only stopped
 <em>reporting</em> would be a property that solved nothing.</p>
+<p>Clearing it while
+<a href="ulcp-device.html#prop-gnss-ident-update"><code>PROP_GNSS_IDENT_UPDATE</code></a> is set
+empties <a href="ulcp-device.html#prop-ident-location"><code>PROP_IDENT_LOCATION</code></a> and
+<a href="ulcp-device.html#prop-ident-altitude"><code>PROP_IDENT_ALTITUDE</code></a>. The last fix
+is a place the device may have left, and with the receiver off nothing
+will replace it; the advertised identity carries no position until the
+receiver is on again and finds one.</p>
 <p>The post-reset value is the device’s to choose, and it <strong>SHOULD</strong> be
 false: a device that has never been told to care where it is should not
 be spending a battery finding out. A device whose purpose is to know
@@ -2021,7 +2038,12 @@ last position written to them, which becomes an ordinary written value
 that a host may then change or clear. This is how a fixed node is
 placed without anyone reading coordinates off a screen: switch the
 receiver on, let it find where it is, switch auto-update off, and what
-it found stays.</p>
+it found stays, whether or not the receiver is then switched off.</p>
+<p>While it is set, a position is advertised only while
+<a href="ulcp-device.html#prop-gnss-enabled"><code>PROP_GNSS_ENABLED</code></a> is: switching the
+receiver off, or switching this on while the receiver is off, empties
+<code>PROP_IDENT_LOCATION</code> and <code>PROP_IDENT_ALTITUDE</code>. A restore empties them
+too; the first fix afterward fills them.</p>
 <p>The value is therefore a claim the operator is making rather than one
 the device is maintaining, and a node that moves afterward advertises
 where it was. Clearing the location is the way to stop advertising a
