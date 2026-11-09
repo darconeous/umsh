@@ -11,6 +11,7 @@
 use buoyant::event::{Event, EventContext, EventResult, TouchResult};
 use buoyant::focus::{Seek, SeekResult};
 use buoyant::layout::ResolvedLayout;
+use buoyant::place::{Built, Place};
 use buoyant::primitives::geometry::Rectangle;
 use buoyant::primitives::{Interpolate as _, Point, ProposedDimensions, Size};
 use buoyant::render::{
@@ -120,18 +121,19 @@ impl<Captures: ?Sized> ViewLayout<Captures> for Indicators {
         }
     }
 
-    fn render_tree(
+    fn render_tree_in<'p>(
         &self,
         _layout: &Self::Sublayout,
         origin: Point,
         _env: &impl buoyant::environment::LayoutEnvironment,
         _captures: &mut Captures,
         _state: &mut Self::State,
-    ) -> Self::Renderables {
-        Row {
+        place: Place<'p, Self::Renderables>,
+    ) -> Built<'p> {
+        place.write(Row {
             origin,
             indicators: self.clone(),
-        }
+        })
     }
 
     fn handle_event(
