@@ -47,6 +47,9 @@ use crate::settings::SessionSettings;
 use crate::stats::Stats;
 use umsh_sync::AsyncCondition;
 
+/// The lifetime `/pfs start` asks for when none is given, in minutes.
+const DEFAULT_PFS_MINUTES: u16 = 8 * 60;
+
 /// Errors surfaced from `CliSession::run`.
 ///
 /// `Node` flattens any `NodeError<…>` to a `String` via `format!("{:?}", e)`
@@ -539,7 +542,7 @@ where
             "  /counters                   show frame-counter state (local TX + per-peer RX)",
             "",
             "pfs (perfect forward secrecy):",
-            "  /pfs start <peer-ref> [min] request a PFS session (default 60 min)",
+            "  /pfs start <peer-ref> [min] request a PFS session (default 8 h)",
             "  /pfs end <peer-ref>         end a PFS session",
             "  /pfs status [peer-ref]      show PFS session state",
             "",
@@ -609,7 +612,7 @@ where
             ],
             "pfs" => &[
                 "/pfs start <peer-ref> [minutes]—request a PFS session.",
-                "  [minutes] is the requested lifetime (default 60).",
+                "  [minutes] is the requested lifetime (default 480).",
                 "/pfs end <peer-ref>—tear down an active PFS session.",
                 "/pfs status [peer-ref]—show PFS state for one peer or all.",
             ],
@@ -970,7 +973,7 @@ where
         let Some(key) = self.resolve_peer(peer) else {
             return self.write_err("unknown peer").await;
         };
-        let minutes = minutes.unwrap_or(60);
+        let minutes = minutes.unwrap_or(DEFAULT_PFS_MINUTES);
         let opts = self.send_opts();
         match self.node.request_pfs(&key, minutes, &opts).await {
             Ok(_) => self.out.write_line("pfs request sent").await?,

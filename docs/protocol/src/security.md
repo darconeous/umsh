@@ -544,7 +544,7 @@ A PFS session is established via a two-message exchange over the existing authen
 
 After this exchange, both sides hold each other's ephemeral addresses and can independently derive the session keys. No further setup messages are required.
 
-The initiator's first frame from its ephemeral address, authenticated under the session keys, is the responder's confirmation that the response arrived. Until it arrives, the responder receives under the session but sends nothing under it, and goes on using the long-term keys: if the response was lost, the initiator does not hold the session.
+The responder's confirmation that the response arrived is the MAC ack of the response, when the response requested one, or the initiator's first frame from its ephemeral address, authenticated under the session keys, whichever comes first. Until one arrives, the responder receives under the session but sends nothing under it, and goes on using the long-term keys: if the response was lost, the initiator does not hold the session.
 
 Two nodes hold at most one session with each other: a new one replaces any earlier one. When two nodes each send a request to the other before either receives a response, the request whose ephemeral address is lower, compared as a big-endian unsigned integer, stands. The node that sent it ignores the other's request; the other node abandons its own request and answers.
 

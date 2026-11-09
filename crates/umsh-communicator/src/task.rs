@@ -108,7 +108,7 @@ pub enum Secrecy {
 }
 
 /// How long a session with forward secrecy is asked to last, in minutes.
-pub const SECRECY_MINUTES: u16 = 60;
+pub const SECRECY_MINUTES: u16 = 8 * 60;
 
 /// What the chats ask of the device node besides sending their frames.
 pub enum Command {

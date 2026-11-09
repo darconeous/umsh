@@ -363,7 +363,7 @@ pub enum PfsStatus {
 pub(crate) enum PfsLifecycle {
     Established(PublicKey),
     /// A peer's request was answered; the session is established once the
-    /// peer's first frame under it arrives.
+    /// peer acknowledges the response or sends its first frame under it.
     Answered(PublicKey),
     Ended(PublicKey),
 }
@@ -2165,6 +2165,14 @@ impl<M: MacBackend> LocalNode<M> {
             .borrow_mut()
             .pfs
             .note_session_frame(identity, from)
+    }
+
+    /// Note the acknowledgment of the send `token`. Returns the peer when
+    /// it acknowledges this node's response to a session request: the
+    /// peer holds the session, which is then established.
+    #[cfg(feature = "software-crypto")]
+    pub(crate) fn note_pfs_response_acked(&self, token: SendToken) -> Option<PublicKey> {
+        self.state.borrow_mut().pfs.note_response_acked(token)
     }
 
     /// Note whether an acknowledged send from `identity` was delivered, and

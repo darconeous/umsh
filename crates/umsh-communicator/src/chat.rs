@@ -858,7 +858,7 @@ impl<S: ChatStore> Chats<S> {
             regarding,
             status: true,
         };
-        let forward_secret = self.holds_secrecy(&conversation);
+        let forward_secret = self.sends_secret(&conversation);
         _ = self.compose(conversation, intent, forward_secret, now_ms, time, events);
     }
 
@@ -890,7 +890,7 @@ impl<S: ChatStore> Chats<S> {
             (None, None) => return false,
         };
         self.retrying.remove(&record.id);
-        let forward_secret = self.holds_secrecy(&conversation);
+        let forward_secret = self.sends_secret(&conversation);
         self.compose(
             conversation,
             ComposeIntent::Delete { original },
@@ -1632,7 +1632,7 @@ impl<S: ChatStore> Chats<S> {
         summary.unread = record.unread > 0;
         summary.muted = record.muted;
         summary.last_activity = record.last_activity;
-        summary.forward_secret = self.holds_secrecy(&record.conversation);
+        summary.forward_secret = self.sends_secret(&record.conversation);
         let last = self.store.messages(record.id, None).flatten().next();
         if let Some(last) = last.and_then(|last| self.message_of(&last, &record.conversation)) {
             summary.preview(&last);

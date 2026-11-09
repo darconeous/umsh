@@ -216,6 +216,11 @@ impl<M: MacBackend> Host<M> {
                         {
                             node.settle_pfs_close(token, true);
                             node.note_pfs_delivery(identity_id, true);
+                            // An acknowledged response is the peer's word
+                            // that it holds the session too.
+                            if let Some(peer) = node.note_pfs_response_acked(token) {
+                                node.dispatch_pfs_established(peer);
+                            }
                         }
                         node.dispatch_ack_received(peer, token);
                     }

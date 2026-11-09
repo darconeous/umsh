@@ -341,10 +341,11 @@ async fn until_secrecy(alice: &Board, bob: &Board, held: bool) {
     }
 }
 
-/// A saved peer who prefers forward secrecy is asked for a session, which
-/// both boards then hold, the chat shows, and what is said goes through
-/// under; it ends when they no longer prefer one. Only what was sent while
-/// the chat showed the session says it went under one.
+/// The chat with a saved peer who prefers forward secrecy shows it at once,
+/// but a session is asked for only once something is said to them, which
+/// waits for it and goes under it; both boards then hold it. It ends when
+/// they no longer prefer one. Only what was sent while the chat showed
+/// forward secrecy says it went under it.
 #[tokio::test(flavor = "current_thread")]
 async fn forward_secrecy_is_held_with_a_peer_who_prefers_it() {
     LocalSet::new()
@@ -382,7 +383,17 @@ async fn forward_secrecy_is_held_with_a_peer_who_prefers_it() {
             assert!(!secret(before));
 
             alice.node.set_forward_secrecy(peer, true);
-            until("the chat does not show the session", shown).await;
+            assert!(shown(), "the chat shows it at once");
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            assert!(
+                matches!(
+                    alice.mesh.pfs_status(&bob.key).await.unwrap(),
+                    PfsStatus::Inactive
+                ),
+                "preferring one asks for nothing"
+            );
+            let opening = say("On the trail").await;
+            assert!(secret(opening), "it waited for the session");
             // Each board keeps the public half of the session, to know it
             // again should a reboot lose the rest.
             let kept =
@@ -395,8 +406,8 @@ async fn forward_secrecy_is_held_with_a_peer_who_prefers_it() {
             assert_eq!(kept(&bob)[0].peer, alice.key);
             let during = say("Meet at the ridge").await;
             assert!(secret(during));
-            // Bob holds the session once Alice's first frame under it
-            // shows him his response arrived.
+            // Bob holds the session once Alice acknowledges his response
+            // or sends her first frame under it.
             until_secrecy(&alice, &bob, true).await;
 
             alice.node.set_forward_secrecy(peer, false);
@@ -474,6 +485,7 @@ async fn what_is_said_under_forward_secrecy_lands_in_the_same_chat() {
             assert!(alice.node.chat_member(chat.id).unwrap().saved);
 
             alice.node.set_forward_secrecy(peer, true);
+            assert_eq!(say(&alice, &bob, chat.id, "On the trail").await, bobs_chat);
             until("the chat does not show the session", || {
                 alice.node.chat(chat.id).unwrap().forward_secret
             })
@@ -482,7 +494,7 @@ async fn what_is_said_under_forward_secrecy_lands_in_the_same_chat() {
                 say(&alice, &bob, chat.id, "Meet at the ridge").await,
                 bobs_chat
             );
-            // Alice's first frame under the session confirms it to Bob.
+            // Alice confirms the session to Bob.
             until_secrecy(&alice, &bob, true).await;
             assert_eq!(say(&bob, &alice, bobs_chat, "On my way").await, chat.id);
 
@@ -498,6 +510,7 @@ async fn what_is_said_under_forward_secrecy_lands_in_the_same_chat() {
             };
             let expected = [
                 ("Leaving now".to_string(), false),
+                ("On the trail".to_string(), true),
                 ("Meet at the ridge".to_string(), true),
                 ("On my way".to_string(), true),
             ];
@@ -532,12 +545,15 @@ async fn a_message_caught_by_the_peer_ending_the_session_goes_under_a_new_one() 
                 .unwrap();
             let shown = || alice.node.chat(chat.id).unwrap().forward_secret;
             alice.node.set_forward_secrecy(peer, true);
-            until("the chat does not show the session", shown).await;
-            let first = alice.node.send(chat.id, "Leaving now", None, true).unwrap();
+            let first = alice
+                .node
+                .send(chat.id, "Leaving now", None, shown())
+                .unwrap();
             until("the first message was not delivered", || {
                 alice.node.message(chat.id, first.id).unwrap().delivery == Delivery::Delivered
             })
             .await;
+            until("the chat does not show the session", shown).await;
             until_secrecy(&alice, &bob, true).await;
             while bob.node.next_event().is_some() {}
 
@@ -590,6 +606,83 @@ async fn a_message_caught_by_the_peer_ending_the_session_goes_under_a_new_one() 
                     .forward_secret
             );
             assert_eq!(arrivals, 1);
+        })
+        .await;
+}
+
+/// When the peer asks for a new session in place of the one held, as it
+/// does once its half of the old one lapses, what is said next still goes
+/// under forward secrecy and is delivered, though the peer has nothing to
+/// say.
+#[tokio::test(flavor = "current_thread")]
+async fn a_message_after_the_peer_replaces_the_session_is_delivered() {
+    LocalSet::new()
+        .run_until(async {
+            let network = SimulatedNetwork::new();
+            let near = network.add_radio_with_config(255, 20);
+            let far = network.add_radio_with_config(255, 20);
+            network.connect_bidirectional(near.id(), far.id());
+            let alice = board(near, [0x11; 32]).await;
+            let bob = board(far, [0x22; 32]).await;
+
+            bob.mesh.peer(alice.key).await.unwrap();
+            phone_inserts(&alice.sim, prop::DEV_PEERS, &bob.key.0);
+            alice.node.pump();
+            let peer = alice.node.peers()[0].id;
+            let chat = alice
+                .node
+                .direct_chat(&address(&bob.key), "Bob", &alice.node.avatar())
+                .unwrap();
+            let shown = || alice.node.chat(chat.id).unwrap().forward_secret;
+            alice.node.set_forward_secrecy(peer, true);
+            let first = alice
+                .node
+                .send(chat.id, "Leaving now", None, shown())
+                .unwrap();
+            until("the first message was not delivered", || {
+                alice.node.message(chat.id, first.id).unwrap().delivery == Delivery::Delivered
+            })
+            .await;
+            until("the chat does not show the session", shown).await;
+            until_secrecy(&alice, &bob, true).await;
+            let session = |board: &Board, peer: PublicKey| {
+                let mesh = board.mesh.clone();
+                async move {
+                    match mesh.pfs_status(&peer).await.unwrap() {
+                        PfsStatus::Active { peer_ephemeral, .. } => Some(peer_ephemeral),
+                        _ => None,
+                    }
+                }
+            };
+            let old = session(&bob, alice.key).await.unwrap();
+
+            let options = umsh::mac::SendOptions::default().with_ack_requested(true);
+            bob.mesh
+                .request_pfs(&alice.key, 60, &options)
+                .await
+                .unwrap();
+            let deadline = Instant::now() + PATIENCE;
+            while session(&bob, alice.key).await.is_none_or(|key| key == old) {
+                assert!(Instant::now() < deadline, "Bob never held the new session");
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+
+            let secret = shown();
+            let next = alice
+                .node
+                .send(chat.id, "Meet at the ridge", None, secret)
+                .unwrap();
+            until(
+                "the message after the new session was not delivered",
+                || alice.node.message(chat.id, next.id).unwrap().delivery == Delivery::Delivered,
+            )
+            .await;
+            assert!(
+                alice.node.message(chat.id, next.id).unwrap().forward_secret,
+                "it went under the new session"
+            );
+            until_secrecy(&alice, &bob, true).await;
+            assert!(shown(), "the chat shows the new session");
         })
         .await;
 }

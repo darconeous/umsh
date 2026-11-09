@@ -483,17 +483,15 @@ impl<S: ChatStore> Chats<S> {
         {
             events(NodeEvent::PeerChanged(peer));
         }
-        if on {
-            self.keep_secrecy(kept.key);
-        } else if let Some(was) = self.secrecy.remove(&kept.key.0) {
+        // A session is asked for only when something is said that needs
+        // one.
+        if !on && self.secrecy.remove(&kept.key.0).is_some() {
             self.commands.push_back(Command::EndSecrecy {
                 peer: kept.key,
                 options: secrecy_options(),
             });
-            if was == Session::Held {
-                self.shown_changed(&kept.key, events);
-            }
         }
+        self.shown_changed(&kept.key, events);
     }
 
     /// Calls the saved peer `peer` `alias` here, or by its own name again
@@ -526,24 +524,30 @@ impl<S: ChatStore> Chats<S> {
     }
 
     /// Whether what is sent in `conversation` now goes under a session
-    /// with forward secrecy.
-    pub fn holds_secrecy(&self, conversation: &ConversationKey) -> bool {
+    /// with forward secrecy: one is held, or the peer prefers one and what
+    /// is sent waits for it.
+    pub fn sends_secret(&self, conversation: &ConversationKey) -> bool {
         match conversation {
-            ConversationKey::Direct { peer } => self.secrecy.get(&peer.0) == Some(&Session::Held),
+            ConversationKey::Direct { peer } => {
+                self.secrecy.get(&peer.0) == Some(&Session::Held) || self.prefers_secrecy(peer)
+            }
             _ => false,
         }
+    }
+
+    /// Whether `peer` is a saved peer who prefers forward secrecy.
+    fn prefers_secrecy(&self, peer: &PublicKey) -> bool {
+        self.store
+            .peer(peer)
+            .ok()
+            .flatten()
+            .is_some_and(|kept| kept.saved && kept.forward_secrecy)
     }
 
     /// Asks `peer` for a session with forward secrecy when they prefer one
     /// and none is asked for or held.
     pub(super) fn keep_secrecy(&mut self, peer: PublicKey) {
-        let prefers = self
-            .store
-            .peer(&peer)
-            .ok()
-            .flatten()
-            .is_some_and(|kept| kept.saved && kept.forward_secrecy);
-        if prefers && !self.secrecy.contains_key(&peer.0) {
+        if self.prefers_secrecy(&peer) && !self.secrecy.contains_key(&peer.0) {
             self.secrecy.insert(peer.0, Session::Asked);
             self.commands.push_back(Command::StartSecrecy {
                 peer,
@@ -553,9 +557,8 @@ impl<S: ChatStore> Chats<S> {
     }
 
     /// Takes word of a session with forward secrecy with `peer`. One that
-    /// was held and ended is asked for again while they prefer it; one
-    /// that could not be had is asked for again when next needed, and
-    /// what waited on it fails.
+    /// ended or could not be had is asked for again only when something is
+    /// said that needs it; what waited on one that could not be had fails.
     pub fn secrecy(
         &mut self,
         peer: PublicKey,
@@ -571,9 +574,6 @@ impl<S: ChatStore> Chats<S> {
         let held = change == Secrecy::Established;
         if held != (was == Some(Session::Held)) {
             self.shown_changed(&peer, events);
-        }
-        if change == Secrecy::Ended && was == Some(Session::Held) {
-            self.keep_secrecy(peer);
         }
         if change == Secrecy::Failed
             && let Some(facade) = &mut self.facade

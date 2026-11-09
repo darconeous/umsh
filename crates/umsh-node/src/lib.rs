@@ -1776,6 +1776,53 @@ mod tests {
         assert_eq!(sent_from(&mac), (LocalIdentityId(10), peer_ephemeral));
     }
 
+    /// The acknowledgment of the response a responder sent shows it
+    /// arrived, as the peer's first frame under the session would: the
+    /// session is established, and what the responder sends goes under it.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn pfs_answered_session_is_confirmed_by_the_responses_ack() {
+        let mac = FakeMac::new(vec![[7u8; 32]]);
+        let mut host = crate::Host::new(mac.clone());
+        let node = host.add_node(LocalIdentityId(1));
+        let peer = PublicKey([0x55; 32]);
+        let peer_ephemeral = PublicKey([0x44; 32]);
+        let options = SendOptions::default();
+        let established = Rc::new(RefCell::new(Vec::new()));
+        let log = established.clone();
+        let _subscription = node.on_pfs_established(move |peer| log.borrow_mut().push(peer));
+        block_on_ready(node.peer(peer)).unwrap();
+        let request = OwnedMacCommand::PfsSessionRequest {
+            ephemeral_key: peer_ephemeral,
+            duration_minutes: 60,
+        };
+        block_on_ready(node.handle_pfs_command(&peer, frame(), &request, &options)).unwrap();
+        mac.take_unicasts();
+
+        // Another send's acknowledgment shows nothing.
+        let ack = |receipt| MacEventRef::AckReceived {
+            peer,
+            receipt: SendReceipt(receipt),
+            via_route_retry: false,
+        };
+        mac.script(LocalIdentityId(1), ack(41));
+        block_on_ready(host.step()).unwrap();
+        assert!(established.borrow().is_empty());
+
+        // The fake MAC gives every send receipt 42.
+        mac.script(LocalIdentityId(1), ack(42));
+        block_on_ready(host.step()).unwrap();
+        assert_eq!(established.borrow().as_slice(), &[peer]);
+        assert!(matches!(
+            block_on_ready(node.pfs_status(&peer)).unwrap(),
+            crate::PfsStatus::Active { .. }
+        ));
+        let payload = encode_text_payload("on my way");
+        block_on_ready(node.send_with_secrecy(&peer, &payload, &options, true)).unwrap();
+        let sent = mac.take_unicasts().pop().unwrap();
+        assert_eq!((sent.from, sent.to), (LocalIdentityId(10), peer_ephemeral));
+    }
+
     /// Three acknowledged sends in a row under a session that go
     /// undelivered end it, and the peer is told under the long-term keys.
     /// One delivered in between starts the count again.

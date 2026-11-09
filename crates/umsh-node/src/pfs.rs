@@ -153,6 +153,10 @@ pub(crate) struct PfsSession {
     /// Acknowledged sends under the session that went undelivered since
     /// the last one delivered or the last frame heard under it.
     undelivered: u8,
+    /// The latest response this node sent to open the session, while it
+    /// waits for the peer to confirm it: that response's acknowledgment
+    /// does.
+    response: Option<SendToken>,
     pending_local: Option<SoftwareIdentity>,
 }
 
@@ -170,7 +174,22 @@ impl core::fmt::Debug for PfsSession {
             .field("answered_minutes", &self.answered_minutes)
             .field("handshake_counter", &self.handshake_counter)
             .field("undelivered", &self.undelivered)
+            .field("response", &self.response)
             .finish()
+    }
+}
+
+#[cfg(feature = "software-crypto")]
+impl PfsSession {
+    /// Take the peer's word that it holds this session. Returns the peer
+    /// when that establishes a session this node answered.
+    fn confirm(&mut self) -> Option<PublicKey> {
+        self.response = None;
+        if self.state != PfsState::Answered {
+            return None;
+        }
+        self.state = PfsState::Active;
+        Some(self.peer_long_term)
     }
 }
 
@@ -625,11 +644,29 @@ impl PfsSessionManager {
                 && session.peer_ephemeral == *from
         })?;
         session.undelivered = 0;
-        if session.state != PfsState::Answered {
-            return None;
+        session.confirm()
+    }
+
+    /// Note the response that opens the session under `local_ephemeral`,
+    /// sent as `token`.
+    fn note_response(&mut self, local_ephemeral: &PublicKey, token: SendToken) {
+        if let Some(session) = self
+            .sessions
+            .iter_mut()
+            .find(|session| session.local_ephemeral == *local_ephemeral)
+        {
+            session.response = Some(token);
         }
-        session.state = PfsState::Active;
-        Some(session.peer_long_term)
+    }
+
+    /// Note the acknowledgment of the send `token`. Returns the peer when
+    /// it acknowledges the response to a session this node answered, which
+    /// the peer then holds too, and which is then established.
+    pub(crate) fn note_response_acked(&mut self, token: SendToken) -> Option<PublicKey> {
+        self.sessions
+            .iter_mut()
+            .find(|session| session.response == Some(token))?
+            .confirm()
     }
 
     /// Note that a send under the local identity `identity` was delivered.
@@ -932,8 +969,9 @@ pub(crate) async fn request_session<M: MacBackend>(
 }
 
 /// Accept an inbound PFS request, and report whether it was answered with a
-/// session that stood when that was done. The session waits for the peer's
-/// first frame under it before anything is sent there.
+/// session that stood when that was done. The session waits for the peer to
+/// confirm it, by acknowledging the response or by its first frame under
+/// it, before anything is sent there.
 ///
 /// Only a contact may open a session, and once a minute at most. A request
 /// that repeats the one that opened the standing session, under the same
@@ -978,7 +1016,7 @@ pub(crate) async fn accept_request<M: MacBackend>(
         .answer_to(&peer_long_term, &peer_ephemeral, now_ms);
     if let Some((local_public, duration_minutes)) = answer {
         // The response was lost, or the peer asked again before it arrived.
-        send_pfs_command(
+        let sent = send_pfs_command(
             mac,
             parent,
             &peer_long_term,
@@ -990,6 +1028,12 @@ pub(crate) async fn accept_request<M: MacBackend>(
             options,
         )
         .await?;
+        if let Some(receipt) = sent {
+            state
+                .borrow_mut()
+                .pfs
+                .note_response(&local_public, SendToken::new(parent, receipt));
+        }
         return Ok(false);
     }
     if !state
@@ -1039,14 +1083,20 @@ pub(crate) async fn accept_request<M: MacBackend>(
         options,
     )
     .await;
-    if let Err(error) = sent {
-        abandon(state, mac, &local_public).await;
-        return Err(error);
+    let sent = match sent {
+        Ok(sent) => sent,
+        Err(error) => {
+            abandon(state, mac, &local_public).await;
+            return Err(error);
+        }
+    };
+    let mut state = state.borrow_mut();
+    if let Some(receipt) = sent {
+        state
+            .pfs
+            .note_response(&local_public, SendToken::new(parent, receipt));
     }
-    state
-        .borrow_mut()
-        .pfs
-        .note_answered(&peer_long_term, now_ms);
+    state.pfs.note_answered(&peer_long_term, now_ms);
     Ok(true)
 }
 
@@ -1340,6 +1390,7 @@ async fn begin_session<M: MacBackend>(
         answered_minutes: answering.then_some(duration_minutes),
         handshake_counter,
         undelivered: 0,
+        response: None,
         pending_local: Some(local_ephemeral),
     })?;
     // A request nobody answers has to be noticed on a quiet radio.
