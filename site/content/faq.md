@@ -17,6 +17,9 @@ text messages, much how you would using any other messaging app; the difference
 being that the messages are not sent across the internet but are instead routed
 over the UMSH mesh network.
 
+Some UMSH devices, called communicators, have their own keyboard and screen and
+don't need a phone at all.
+
 </div>
 <div class="faq-item">
 
@@ -91,7 +94,8 @@ lists everything supported.
 
 ### Does it need internet access or a cell signal?
 
-No, but you do need some [hardware](/hardware/) in addition to your phone.
+No, but you do need some [hardware](/hardware/): a radio to pair with your phone,
+or a communicator that works on its own.
 
 </div>
 <div class="faq-item">

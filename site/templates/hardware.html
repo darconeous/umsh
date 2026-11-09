@@ -65,7 +65,9 @@
                     <li><span>Power</span><span>{{ board.battery }}</span></li>
                   </ul>
 
-                  <p class="board__blurb">{{ board.status_note }}</p>
+                  {% if board.status_note %}
+                    <p class="board__blurb">{{ board.status_note }}</p>
+                  {% endif %}
 
                   <div class="board__actions">
                     {% if board.flash %}

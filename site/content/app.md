@@ -36,6 +36,11 @@ authentication for group chats is planned, and will be something you enable per
 channel. Reactions are supported, and delivery status tells you whether a
 message actually made it across the mesh rather than just leaving your phone.
 
+**Forward secrecy.** When a contact opens a
+[PFS session](/docs/protocol/security.html#perfect-forward-secrecy-sessions)
+with you, your messages to each other go under it, and the app shows them in
+violet.
+
 **Contacts.** Every contact is a public key. You add someone by scanning a QR
 code or opening a `umsh:` link they sent you, and from that moment on your
 messages to them are encrypted to that key alone. There is no directory and no
@@ -46,10 +51,14 @@ role, its channels, and how often it beacons. Battery, signal, and position
 are visible when the hardware provides them, and a map shows the nodes you
 have heard from.
 
-**Location, if you want it.** A radio with a GNSS receiver can share its
-position on a channel, and the app can share the phone's own location instead.
-Both are off unless you turn them on, and neither is ever attached to an
-identity you hand out.
+**Other devices.** The app can manage a device over the mesh, once that device
+lists you as an administrator. For a repeater, it can suggest which regions to
+forward for, based on where the repeater is.
+
+**Location, if you want it.** A radio with a GNSS receiver can include its
+position in its identity, and the app can include the phone's own location
+instead. Both are off unless you turn them on. You choose how precise the
+shared area is.
 
 Your identity lives on your phone, in the app. If you switch over to a different
 companion radio, you don't need to backup your identity from the old radio

@@ -104,12 +104,14 @@ on the section switches it on, and `templates/blog.html` then has to loop over
 
 Edit `data/hardware.toml`. A board's `id` matches the preset in
 `scripts/flash.py` and the `make flash-<id>` target suffix—keep all three in
-step, because the web flasher will key off the same identifier. Flash
+step, because the web flasher keys off the same identifier. Flash
 constants (UF2 family, application base, bootloader volume) are mirrored from
 that script, which stays authoritative.
 
 Set `status` to `proven`, `partial`, `untested`, or `planned`; the badge on the
-card follows from it. A board with no `[boards.flash]` table has no downloadable
+card follows from it. `status_note` is optional, and only for something
+exceptional a buyer needs to know—not a list of what has been tested. A board
+with no `[boards.flash]` table has no downloadable
 firmware release: its flash button is disabled and it is left off the flashing
 page. Put the photo in `static/images/boards/`, name it in the
 `photo` field, and record its source in that directory's `CREDITS.md`. A board

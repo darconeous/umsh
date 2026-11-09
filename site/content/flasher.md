@@ -8,8 +8,8 @@ weight = 4
 ## Building from source
 
 The flasher installs published releases. To build the firmware yourself you
-need a Rust toolchain and nothing else—Rust cross-compiles for the nRF52840
-on its own:
+need a Rust toolchain and Python 3—Rust cross-compiles for the nRF52840 on
+its own:
 
 ```bash
 git clone https://github.com/darconeous/umsh.git

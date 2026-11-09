@@ -17,8 +17,6 @@ build_search_index = false
 generate_feeds = false
 taxonomies = []
 
-# Trailing slashes keep the published URLs stable across the eventual move
-# from the stub flasher page to the real one.
 [markdown]
 smart_punctuation = true
 # Code blocks are styled by site.scss rather than syntax-highlighted; there is

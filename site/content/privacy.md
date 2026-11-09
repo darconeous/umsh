@@ -4,7 +4,7 @@ description = "What this website and the UMSH software collect about you. The sh
 weight = 8
 +++
 
-*Last updated 7 August 2026.*
+*Last updated 9 November 2026.*
 
 ## This website
 
@@ -23,16 +23,15 @@ GitHub, and it is covered by
 We do not have access to those logs and do not receive any report derived from
 them.
 
-Pages that link outward—to Seeed Studio, to Heltec, to GitHub Sponsors —
+Pages that link outward—to Seeed Studio, to Heltec, to GitHub Sponsors—
 take you to sites with their own practices, which are their own business and
 not covered here.
 
 ## The firmware flasher
 
-The flasher, once it exists, will run entirely inside your browser. It will
-download firmware images from this site and from the project's GitHub
-releases, and it will talk to the radio you plug in through your browser's
-serial interface. Your browser will ask your permission before it can see any
+The flasher runs entirely inside your browser. It downloads firmware images
+from this site, and it talks to the radio you plug in through your browser's
+serial interface. Your browser asks your permission before it can see any
 device at all, and that permission covers only the one device you pick.
 
 Nothing about your device is uploaded anywhere. There is no server side to
@@ -55,8 +54,8 @@ recipient's key. They do not pass through any server we operate, because there
 is no server we operate.
 
 Location sharing is off until you switch it on. When you do turn it on, your
-position goes out over the radio to the channel or contact you chose, exactly
-like any other message.
+identity announcements carry the area you are in, at the precision you choose,
+and anyone who receives an announcement can read it.
 
 ## The protocol itself
 

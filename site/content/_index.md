@@ -211,7 +211,7 @@ rows = [
   ["Header privacy", "Compact hints; Channel-based source/destination concealment", "16-byte cleartext header on every packet"],
   ["Typical overhead", "16 to 28 bytes, authentication included", "About 22 bytes for channel traffic, about 42 for direct messages"],
   ["Forward secrecy", "Available", "Not available"],
-  ["Maturity", "Experimental, one app, six boards", "Mature, huge community, dozens of devices, a rich application layer"],
+  ["Maturity", "Experimental, one app, ten boards", "Mature, huge community, dozens of devices, a rich application layer"],
 ]
 link = "meshtastic-comparison.html"
 link_text = "Read the full comparison"
@@ -225,7 +225,7 @@ intro = "You need one radio to listen, and two to have a conversation."
 [[extra.steps]]
 title = "Get a radio"
 body = """
-Six boards are supported, from a sealed pocket tracker to a solar-powered node \
+Supported boards range from a sealed pocket tracker to a solar-powered node \
 you can bolt to a roof. The T1000-E is the one most of this was developed \
 against."""
 link = "@/hardware.md"
@@ -234,16 +234,17 @@ link_text = "Supported hardware"
 [[extra.steps]]
 title = "Flash it"
 body = """
-One command builds and installs the firmware for your board. A browser-based \
-flasher that needs no toolchain at all is on the way."""
+The web flasher installs the latest release from your browser, with nothing \
+else to install. Building it yourself is one command."""
 link = "@/flasher.md"
-link_text = "Flashing instructions"
+link_text = "Open the flasher"
 
 [[extra.steps]]
 title = "Pair your phone"
 body = """
 The iPhone app connects to your radio over Bluetooth and gives you \
-conversations, contacts, and a map. It is in beta."""
+conversations, contacts, and a map. It is in beta. A \
+[communicator](/hardware/#communicator) needs no phone at all."""
 link = "@/app.md"
 link_text = "About the app"
 +++

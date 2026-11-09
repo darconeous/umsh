@@ -1,7 +1,7 @@
 # Supported hardware.
 #
 # This file drives both the hardware page and the flashing instructions, and
-# it is the data the web flasher will read once it exists. Board `id` values
+# it is the data the web flasher reads. Board `id` values
 # match the presets in `scripts/flash.py` and the `make` target suffixes, so
 # keep the three in step. Flash constants (family id, app base, volume) are
 # mirrored from that script's BOARDS dict—it stays authoritative; if they
@@ -18,6 +18,9 @@
 #   untested  — code complete, never run on the board
 #   planned   — documented, not implemented; no [boards.flash] table and no
 #               downloadable firmware
+#
+# `status_note` is optional, and only for something exceptional a buyer needs
+# to know. Leave it out otherwise; it is not a list of what has been tested.
 
 # Categories render in this order on the hardware page.
 [[categories]]
@@ -46,7 +49,6 @@ name = "SenseCAP T1000-E"
 vendor = "Seeed Studio"
 category = "companion"
 status = "proven"
-status_note = "The radio, Bluetooth, and GNSS have all been exercised."
 blurb = """
 A sealed, pocket-sized card tracker with a magnetic charging cable. No screen \
 and one button, so it pairs with the phone app rather than standing alone. \
@@ -79,7 +81,6 @@ name = "T-Echo"
 vendor = "LilyGO"
 category = "companion"
 status = "proven"
-status_note = "The radio, e-paper display, and GNSS have all been exercised."
 blurb = """
 A handheld tracker with a 1.54-inch e-paper display, so it can show status on its own while still working as a companion radio. Readable in direct sun. A built-in backlight makes \
 it readable at night. Battery life is sub-par, not recommended."""
@@ -109,7 +110,6 @@ name = "Wio Tracker L1"
 vendor = "Seeed Studio"
 category = "companion"
 status = "proven"
-status_note = "The radio, display, and GNSS have all been exercised."
 blurb = """
 A tracker with a small OLED display, a navigation button, and a mechanical \
 power switch—the switch cuts the battery, so it survives a long spell in a \
@@ -141,7 +141,6 @@ name = "T-Beam Supreme"
 vendor = "LilyGO"
 category = "devkit"
 status = "proven"
-status_note = "The radio, display, and GNSS have all been exercised."
 blurb = """
 Features an OLED display, a GNSS receiver, a \
 real-time clock, an 18650 holder, and a power management chip that owns \
@@ -164,7 +163,7 @@ chip = "ESP32-S3"
 dfu_entry = "None needed—the board enters its ROM bootloader on its own when the flashing tool asserts the USB serial control lines. If that fails, hold BOOT, tap RESET, then release BOOT."
 quirks = [
   "Building this board needs Espressif's Xtensa Rust toolchain, installed with <code>espup</code>.",
-  "Only the SX1262 version is supported; the LR1121 version needs a radio driver UMSH does not have.",
+  "Only the SX1262 version is supported.",
 ]
 
 [[boards]]
@@ -173,7 +172,6 @@ name = "SenseCAP Solar Node P1"
 vendor = "Seeed Studio"
 category = "repeater"
 status = "proven"
-status_note = "The radio, Bluetooth, GNSS, and power path have all been exercised."
 blurb = """
 An outdoor, solar-powered node built to be mounted somewhere and left alone. \
 A 5 W panel and four 18650 cells carry it through bad weather and freezing temperatures. When fully charged, it can easily last over a month without sunlight."""
@@ -205,7 +203,6 @@ name = "WiFi LoRa 32 V3"
 vendor = "Heltec"
 category = "devkit"
 status = "proven"
-status_note = "The radio and Bluetooth have both been exercised."
 blurb = """
 An inexpensive, widely available development board with an OLED display and exposed \
 pins."""
@@ -237,7 +234,7 @@ name = "Standard"
 
 [[boards.flash.images]]
 id = "heltec-v3-bridge"
-name = "Internet bridge"
+name = "Wi-Fi"
 
 [[boards]]
 id = "xiao-nrf52"
@@ -245,7 +242,6 @@ name = "XIAO nRF52840 + Wio-SX1262 Kit"
 vendor = "Seeed Studio"
 category = "devkit"
 status = "proven"
-status_note = "The radio and Bluetooth have both been exercised."
 blurb = """
 A small nRF52 module on a radio carrier board. Only a reset button is populated, \
 so it is a starting point for a build of your own rather than a finished \
@@ -276,11 +272,10 @@ name = "XIAO ESP32S3 + Wio-SX1262 Kit"
 vendor = "Seeed Studio"
 category = "devkit"
 status = "proven"
-status_note = ""
 blurb = """
 The ESP32-S3 version of the XIAO kit, with 8 MB of PSRAM—enough to run \
-Bluetooth and Wi-Fi at once. One image is a companion radio, a repeater, or \
-an internet bridge, depending only on how it is set up."""
+Bluetooth and Wi-Fi at once. One image is a companion radio or a repeater, \
+depending only on how it is set up."""
 mcu = "Espressif ESP32-S3"
 radio = "Semtech SX1262"
 gnss = "None"
@@ -306,7 +301,7 @@ name = "T-LoRa Pager"
 vendor = "LilyGO"
 category = "communicator"
 status = "proven"
-status_note = "The radio, Bluetooth, screen, keyboard, rotary encoder, GNSS, and fuel gauge have all been exercised. Battery gauge needs to be programmed to read accurately."
+status_note = "Battery gauge needs to be programmed to read accurately."
 blurb = """
 A keyboard handheld with a wide landscape screen and a rotary encoder. \
 It sends and receives messages on its own, no phone needed. \
@@ -339,7 +334,6 @@ name = "T-Deck"
 vendor = "LilyGO"
 category = "communicator"
 status = "proven"
-status_note = "The radio, Bluetooth, touchscreen, keyboard, trackball, and GNSS have all been exercised."
 blurb = """
 A keyboard handheld with a touchscreen and a trackball. It sends and \
 receives messages on its own, no phone needed. The T-Deck Plus runs the \
