@@ -117,6 +117,16 @@ impl DateTime {
         Some(seconds as u32)
     }
 
+    /// This instant, if a receiver reporting it is believed: a real moment
+    /// no earlier than [`MIN_PLAUSIBLE_EPOCH`]. Every way a receiver
+    /// reports the time passes through here.
+    #[must_use]
+    pub fn plausible(self) -> Option<Self> {
+        self.to_unix()
+            .is_some_and(|epoch| epoch >= MIN_PLAUSIBLE_EPOCH)
+            .then_some(self)
+    }
+
     /// Break a Unix second count down into civil fields.
     ///
     /// Total: every `u32` names a real UTC instant, so unlike

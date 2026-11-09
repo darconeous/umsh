@@ -34,6 +34,7 @@ use embedded_hal_async::delay::DelayNs;
 use embedded_io_async::Read;
 
 use crate::driver::{Driver, Fix};
+use crate::ubx;
 
 /// The exact `embedded-io-async` [`run`] is generic over.
 ///
@@ -48,15 +49,18 @@ pub use embedded_io_async;
 /// reason.
 pub use embedded_hal_async;
 
-/// How long [`rtc_read_once`] waits for a dated sentence before giving
-/// up, in milliseconds.
+/// How long [`rtc_read_once`] waits for the time before giving up, in
+/// milliseconds.
 ///
-/// A receiver whose backup domain stayed powered emits a dated `RMC`
-/// within a second or two of its main domain coming up—it is reading
-/// its own clock, not searching for satellites. Thirty seconds covers a
-/// receiver slow to wake from its own standby; what waits on it is only
-/// the receiver's task, and positioning, which starts after.
-pub const RTC_READ_TIMEOUT_MS: u32 = 30_000;
+/// A receiver whose RTC kept running answers a time query, or emits a
+/// dated `RMC`, within a second or two of its main domain coming up—it is
+/// reading its own clock, not searching for satellites. One whose RTC did
+/// not—the T-Deck's MIA-M10Q has no RTC crystal—can still take the time
+/// from the sky while it is up, and with positioning off this is its only
+/// chance to; GPS sends the week number once every 30 s. Ninety seconds
+/// leaves room for that. What waits on it is only the receiver's task, and
+/// positioning, which starts after.
+pub const RTC_READ_TIMEOUT_MS: u32 = 90_000;
 
 /// How long the pump lets the board sleep through the receiver's output
 /// before staying awake to hear a cycle, in milliseconds.
@@ -144,6 +148,23 @@ pub trait Awake {
 impl Awake for () {
     fn hold(&self) {}
     fn release(&self) {}
+}
+
+/// A way to ask the receiver for the time.
+///
+/// [`rtc_read_once`] asks a u-blox for UBX-NAV-TIMEUTC rather than wait
+/// for it to report the time on its own, and learns with the answer
+/// whether the receiver vouches for it. A board whose receiver is never a
+/// u-blox passes `()`, which asks nothing.
+#[allow(async_fn_in_trait)]
+pub trait Ask {
+    /// Send `query` to the receiver. A failed write is dropped, as a lost
+    /// answer would be: the read asks again.
+    async fn ask(&mut self, query: &[u8]);
+}
+
+impl Ask for () {
+    async fn ask(&mut self, _query: &[u8]) {}
 }
 
 /// Whether the receiver should be running, and a way to wait for that to
@@ -281,53 +302,85 @@ where
 /// up—but what is being read is a clock, and everything positional seen
 /// along the way is discarded.
 ///
-/// Returns the first instant the receiver reports, or `None` if it
-/// reports none within [`RTC_READ_TIMEOUT_MS`]—which is what a receiver
-/// that lost its backup power looks like.
+/// Takes the time from whichever comes first: a UBX-NAV-TIMEUTC answer
+/// the receiver vouches for, or a dated `RMC`. The receiver is asked once
+/// it is up, and again after each cycle that passes without the time, in
+/// case the question or its answer was lost. A u-blox leaves an `RMC`'s
+/// time empty while it holds the time invalid, so the answer trusts
+/// nothing the sentence would not; it comes without waiting out a cycle,
+/// and carries the receiver's own account of its clock.
+///
+/// Gives up after [`RTC_READ_TIMEOUT_MS`], which is what a receiver that
+/// lost its backup power looks like.
 ///
 /// The caller decides whether to believe the answer: this is governed by
 /// `PROP_GNSS_TIME_TRUST`, not by `PROP_GNSS_ENABLED`.
-pub async fn rtc_read_once<R, P, D>(
+pub async fn rtc_read_once<R, A, P, D>(
     mut uart: R,
+    mut ask: A,
     power: &mut P,
     mut delay: D,
-) -> Option<crate::DateTime>
+) -> RtcReading
 where
     R: Read,
+    A: Ask,
     P: Power,
-    D: DelayNs,
+    D: DelayNs + Clone,
 {
     let mut driver = Driver::new();
+    let mut answers = ubx::TimeUtcReader::new();
+    let mut answer = None;
     let mut buf = [0u8; 64];
+    let mut idle = delay.clone();
 
     power.power_on().await;
-    match select(
-        async {
-            loop {
-                let Ok(len) = uart.read(&mut buf).await else {
-                    // Nothing to recover to: this is a bounded one-shot,
-                    // and the deadline below ends it either way.
-                    core::future::pending::<()>().await;
-                    unreachable!()
-                };
-                for &byte in &buf[..len] {
-                    // A cycle's position is nobody's business here; only
-                    // the instant leaves this function.
-                    if let Some(fix) = driver.push(byte)
-                        && let Some(at) = fix.time
-                    {
-                        return at;
+    ask.ask(&ubx::POLL_TIME_UTC).await;
+    let reading = async {
+        loop {
+            match uart.read(&mut buf).await {
+                Ok(0) => idle.delay_ms(IDLE_BACKOFF_MS).await,
+                Ok(len) => {
+                    for &byte in &buf[..len] {
+                        if let Some(said) = answers.push(byte) {
+                            answer = Some(said);
+                            if let Some(at) = said.time {
+                                return at;
+                            }
+                        }
+                        // A cycle's position is nobody's business here;
+                        // only the instant leaves this function.
+                        if let Some(fix) = driver.push(byte) {
+                            match fix.time {
+                                Some(at) => return at,
+                                None => ask.ask(&ubx::POLL_TIME_UTC).await,
+                            }
+                        }
                     }
                 }
+                // Lost bytes cost what they fell in, as in `run`.
+                Err(_) => {
+                    driver.resync();
+                    answers.reset();
+                    idle.delay_ms(ERROR_BACKOFF_MS).await;
+                }
             }
-        },
-        delay.delay_ms(RTC_READ_TIMEOUT_MS),
-    )
-    .await
-    {
+        }
+    };
+    let time = match select(reading, delay.delay_ms(RTC_READ_TIMEOUT_MS)).await {
         Either::First(at) => Some(at),
         Either::Second(()) => None,
-    }
+    };
+    RtcReading { time, answer }
+}
+
+/// What [`rtc_read_once`] heard.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RtcReading {
+    /// The time, if the receiver gave one in time.
+    pub time: Option<crate::DateTime>,
+    /// The receiver's last answer to UBX-NAV-TIMEUTC, if it gave one:
+    /// what a u-blox said of its own clock.
+    pub answer: Option<ubx::TimeUtc>,
 }
 
 #[cfg(test)]
@@ -510,10 +563,32 @@ mod tests {
 
     impl MockUart {
         fn new(text: &str) -> Self {
+            Self::bytes(text.as_bytes())
+        }
+
+        fn bytes(script: &[u8]) -> Self {
             Self {
-                script: text.bytes().collect(),
+                script: script.to_vec(),
                 offset: 0,
             }
+        }
+    }
+
+    /// Records every query asked.
+    #[derive(Clone, Default)]
+    struct MockAsk(Rc<RefCell<Vec<Vec<u8>>>>);
+
+    impl MockAsk {
+        fn asked(&self) -> usize {
+            let queries = self.0.borrow();
+            assert!(queries.iter().all(|query| *query == ubx::POLL_TIME_UTC));
+            queries.len()
+        }
+    }
+
+    impl Ask for MockAsk {
+        async fn ask(&mut self, query: &[u8]) {
+            self.0.borrow_mut().push(query.to_vec());
         }
     }
 
@@ -827,16 +902,108 @@ mod tests {
         poll_until_stalled(async {
             found = rtc_read_once(
                 MockUart::new(&line("GPRMC,081836.00,V,,,,,,,130926,,")),
+                (),
                 &mut power,
                 StalledDelay,
             )
-            .await;
+            .await
+            .time;
         });
         assert_eq!(
             found.map(|at| (at.year, at.month, at.day, at.hour, at.minute)),
             Some((2026, 9, 13, 8, 18))
         );
         assert_eq!(log.events(), [Event::On], "the read took a power decision");
+    }
+
+    /// A u-blox answers the question before its next cycle comes round.
+    #[test]
+    fn a_receiver_that_vouches_for_its_time_is_taken_at_its_word() {
+        let log = Log::default();
+        let mut power = MockPower(log.clone());
+        let ask = MockAsk::default();
+        let mut stream = line("GPRMC,,V,,,,,,,,,,N").into_bytes();
+        stream.extend(ubx::tests::time_utc(ubx::tests::AT, 0x07));
+        stream.extend(line("GPRMC,081836.00,V,,,,,,,130926,,").bytes());
+        let mut reading = None;
+        poll_until_stalled(async {
+            reading = Some(
+                rtc_read_once(
+                    MockUart::bytes(&stream),
+                    ask.clone(),
+                    &mut power,
+                    StalledDelay,
+                )
+                .await,
+            );
+        });
+        let reading = reading.expect("the read did not finish");
+        assert_eq!(reading.time, Some(ubx::tests::AT));
+        assert_eq!(reading.answer.map(|answer| answer.valid), Some(0x07));
+        // Once when the receiver came up, and again after the cycle that
+        // passed with no time.
+        assert_eq!(ask.asked(), 2);
+    }
+
+    /// An answer without the time is the receiver's account of its clock,
+    /// not the end of the read: a dated `RMC` still counts.
+    #[test]
+    fn a_receiver_that_does_not_vouch_for_its_time_is_still_listened_to() {
+        let log = Log::default();
+        let mut power = MockPower(log.clone());
+        let mut stream = ubx::tests::time_utc(ubx::tests::AT, 0x00);
+        stream.extend(line("GPRMC,081836.00,V,,,,,,,130926,,").bytes());
+        let mut reading = None;
+        poll_until_stalled(async {
+            reading = Some(
+                rtc_read_once(
+                    MockUart::bytes(&stream),
+                    MockAsk::default(),
+                    &mut power,
+                    StalledDelay,
+                )
+                .await,
+            );
+        });
+        let reading = reading.expect("the read did not finish");
+        assert_eq!(
+            reading.time.map(|at| at.day),
+            Some(13),
+            "the RMC was ignored"
+        );
+        assert_eq!(
+            reading.answer.map(|answer| (answer.time, answer.valid)),
+            Some((None, 0))
+        );
+    }
+
+    /// Bytes lost to the line cost the cycle they fell in, not the read.
+    #[test]
+    fn a_read_error_does_not_end_the_rtc_read() {
+        let log = Log::default();
+        let mut power = MockPower(log.clone());
+        let mut found = None;
+        let script = std::format!(
+            "{}{}",
+            line("GPRMC,081835.00,V,,,,,,,130926,,"),
+            line("GPRMC,081836.00,V,,,,,,,130926,,"),
+        );
+        poll_until_stalled(async {
+            found = rtc_read_once(
+                GarbledUart {
+                    failed: false,
+                    then: MockUart::new(&script),
+                },
+                (),
+                &mut power,
+                // The pause after the error elapses; the deadline does not.
+                CountedDelay::new(1),
+            )
+            .await
+            .time;
+        });
+        // The first cycle goes with the lost bytes; the second is read.
+        assert_eq!(found.map(|at| at.second), Some(36));
     }
 
     /// What a board runs at boot with positioning on: no park between the
@@ -848,6 +1015,7 @@ mod tests {
         poll_until_stalled(async {
             rtc_read_once(
                 MockUart::new(&line("GPRMC,081836.00,V,,,,,,,130926,,")),
+                (),
                 &mut power,
                 StalledDelay,
             )
@@ -874,6 +1042,7 @@ mod tests {
         poll_until_stalled(async {
             rtc_read_once(
                 MockUart::new(&line("GPRMC,081836.00,V,,,,,,,130926,,")),
+                (),
                 &mut power,
                 StalledDelay,
             )
@@ -901,10 +1070,12 @@ mod tests {
         poll_until_stalled(async {
             found = rtc_read_once(
                 MockUart::new(&line("GPRMC,,V,,,,,,,,,,N")),
+                (),
                 &mut power,
                 InstantDelay,
             )
-            .await;
+            .await
+            .time;
         });
         assert_eq!(found, None, "the read invented a time");
         assert_eq!(log.events(), [Event::On]);

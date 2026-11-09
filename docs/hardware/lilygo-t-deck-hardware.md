@@ -689,9 +689,22 @@ line and keep its backup domain on a rechargeable MS412FE coin cell through a
 GPIO. With no enable line, the module draws power whenever the slide switch is
 on; only its own backup or standby commands reduce that.
 
-The coin cell keeps the module's RTC running with the switch off, and nothing
-else on the board keeps time. The firmware reads that clock back at boot,
-waking the module briefly if it is parked.
+The MIA-M10Q sheet fits no 32.768 kHz crystal: `RTC_O` is tied to ground and
+`RTC_I` is left open. The coin cell keeps the module's backup RAM (ephemeris,
+almanac, UTC parameters) but not the time, and parking the module loses the
+time too: a module parked for five seconds answered UBX-NAV-TIMEUTC with no
+validity flags and no accuracy estimate. Nothing else on the board keeps
+time.
+
+At boot, with the clock unset, the firmware asks the module for the time,
+waking it if it is parked. It polls UBX-NAV-TIMEUTC
+(`B5 62 01 21 00 00 22 67`) once the module is up and again after each cycle
+that passes without the time, and takes the time from whichever comes first
+within 90 s: an answer with `validTOW` and `validWKN` set, or a dated `RMC`.
+With no RTC crystal, any time it finds is one the module took from the sky
+in that window. The M10 leaves NMEA time and date fields empty while it
+holds them invalid (`CFG-NMEA-OUT_INVTIME` and `OUT_INVDATE` default off),
+so the two agree; the L76K ignores the poll and is read from `RMC` alone.
 
 | Module | UART standby | Wake |
 |---|---|---|

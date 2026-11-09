@@ -11,6 +11,8 @@
 //!   only CASIC receiver on UMSH's boards, so that answer is taken as one;
 //!   Meshtastic identifies it the same way.
 
+use crate::ubx::{Framer, Step};
+
 /// UBX-MON-VER, polled (an empty payload), then `$PCAS06,0`.
 pub const QUERIES: [&[u8]; 2] = [
     &[0xB5, 0x62, 0x0A, 0x04, 0x00, 0x00, 0x0E, 0x34],
@@ -58,25 +60,10 @@ const EXTENSION_LEN: usize = 30;
 const MON_VER_MAX: usize = VERSIONS_LEN + 12 * EXTENSION_LEN;
 const MODULE_TAG: &[u8] = b"MOD=";
 
-/// Where a UBX frame being read has got to.
-#[derive(Clone, Copy)]
-enum Ubx {
-    /// Not in a frame; `true` once the first sync byte is seen.
-    Idle(bool),
-    /// The class, the ID, and the payload length, `at` bytes in.
-    Header { at: u8, header: [u8; 4] },
-    /// The payload, `at` of `len` bytes read.
-    Payload { at: u16, len: u16 },
-    /// The checksum's first byte, then its second.
-    Checksum(Option<u8>),
-}
-
 /// Reads a receiver's answers to [`QUERIES`] out of whatever else it
 /// sends.
 pub struct Identifier {
-    ubx: Ubx,
-    /// The Fletcher sums over the frame being read.
-    sums: (u8, u8),
+    ubx: Framer,
     /// The frame is a MON-VER, so its payload is looked through.
     mon_ver: bool,
     /// The extension being read, then the module it names, if it names
@@ -98,8 +85,7 @@ impl Identifier {
     #[must_use]
     pub const fn new() -> Self {
         Self {
-            ubx: Ubx::Idle(false),
-            sums: (0, 0),
+            ubx: Framer::new(),
             mon_ver: false,
             extension: [0; EXTENSION_LEN],
             module: None,
@@ -114,62 +100,28 @@ impl Identifier {
         self.push_ubx(byte).or_else(|| self.push_line(byte))
     }
 
-    fn sum(&mut self, byte: u8) {
-        self.sums.0 = self.sums.0.wrapping_add(byte);
-        self.sums.1 = self.sums.1.wrapping_add(self.sums.0);
-    }
-
     fn push_ubx(&mut self, byte: u8) -> Option<Name> {
-        self.ubx = match self.ubx {
-            Ubx::Idle(false) => Ubx::Idle(byte == 0xB5),
-            Ubx::Idle(true) if byte == 0x62 => {
-                self.sums = (0, 0);
-                Ubx::Header {
-                    at: 0,
-                    header: [0; 4],
-                }
+        match self.ubx.push(byte)? {
+            Step::Header { class, id, len } => {
+                self.mon_ver = (class, id) == (0x0A, 0x04)
+                    && usize::from(len) >= VERSIONS_LEN
+                    && usize::from(len) <= MON_VER_MAX;
+                self.module = None;
             }
-            Ubx::Idle(true) => Ubx::Idle(byte == 0xB5),
-            Ubx::Header { at, mut header } => {
-                self.sum(byte);
-                header[usize::from(at)] = byte;
-                if at < 3 {
-                    Ubx::Header { at: at + 1, header }
-                } else {
-                    let len = u16::from_le_bytes([header[2], header[3]]);
-                    self.mon_ver = header[..2] == [0x0A, 0x04]
-                        && usize::from(len) >= VERSIONS_LEN
-                        && usize::from(len) <= MON_VER_MAX;
-                    self.module = None;
-                    if len == 0 {
-                        Ubx::Checksum(None)
-                    } else {
-                        Ubx::Payload { at: 0, len }
-                    }
-                }
-            }
-            Ubx::Payload { at, len } => {
-                self.sum(byte);
+            Step::Payload { at, byte } => {
                 if self.mon_ver {
                     self.look_through(usize::from(at), byte);
                 }
-                if at + 1 < len {
-                    Ubx::Payload { at: at + 1, len }
-                } else {
-                    Ubx::Checksum(None)
-                }
             }
-            Ubx::Checksum(None) => Ubx::Checksum(Some(byte)),
-            Ubx::Checksum(Some(first)) => {
-                self.ubx = Ubx::Idle(false);
-                let named = self.mon_ver && (first, byte) == self.sums;
-                self.mon_ver = false;
-                return named.then(|| match self.module.take() {
-                    Some(module) => module,
-                    None => Name::new(&[b"u-blox"]),
+            Step::End(intact) => {
+                let named = core::mem::take(&mut self.mon_ver) && intact;
+                return named.then(|| {
+                    self.module
+                        .take()
+                        .unwrap_or_else(|| Name::new(&[b"u-blox"]))
                 });
             }
-        };
+        }
         None
     }
 
@@ -258,16 +210,7 @@ mod tests {
             field[..extension.len()].copy_from_slice(extension.as_bytes());
             payload.extend_from_slice(&field);
         }
-        let len = (payload.len() as u16).to_le_bytes();
-        let mut frame = std::vec![0xB5, 0x62, 0x0A, 0x04, len[0], len[1]];
-        frame.extend_from_slice(&payload);
-        let (mut a, mut b) = (0u8, 0u8);
-        for &byte in &frame[2..] {
-            a = a.wrapping_add(byte);
-            b = b.wrapping_add(a);
-        }
-        frame.extend_from_slice(&[a, b]);
-        frame
+        crate::ubx::tests::frame(0x0A, 0x04, &payload)
     }
 
     #[test]

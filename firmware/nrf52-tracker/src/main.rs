@@ -4303,9 +4303,17 @@ mod firmware {
         {
             umsh_ulcp_runtime::gnss::wait_configured().await;
             if !umsh_hal::wall_clock::is_set() && umsh_ulcp_runtime::gnss::policy().trust_time {
-                match umsh_gnss::pump::rtc_read_once(&mut uart, &mut control, embassy_time::Delay)
-                    .await
-                    .and_then(|at| at.to_unix())
+                // These boards' receivers (AG3335, L76K) are never a
+                // u-blox: nothing is asked, and a dated RMC is waited for.
+                match umsh_gnss::pump::rtc_read_once(
+                    &mut uart,
+                    (),
+                    &mut control,
+                    embassy_time::Delay,
+                )
+                .await
+                .time
+                .and_then(|at| at.to_unix())
                 {
                     Some(epoch) => {
                         umsh_hal::wall_clock::apply(

@@ -2133,10 +2133,21 @@ async fn gnss_task(
         if !umsh_hal::wall_clock::is_set() && umsh_ulcp_runtime::gnss::policy().trust_time {
             // Light sleep stops the UART, and the read is bounded.
             let _awake = esp_hal::rtc_cntl::WakeLock::new();
-            match umsh_gnss::pump::rtc_read_once(GnssPort { slot: &slot }, &mut power, Delay)
-                .await
-                .and_then(|at| at.to_unix())
-            {
+            // A u-blox is asked for the time on the port it answers on.
+            let reading = umsh_gnss::pump::rtc_read_once(
+                GnssPort { slot: &slot },
+                GnssPort { slot: &slot },
+                &mut power,
+                Delay,
+            )
+            .await;
+            if let Some(answer) = reading.answer {
+                debug_log(format_args!(
+                    "gnss: NAV-TIMEUTC valid {:#04x}, tAcc {} ns",
+                    answer.valid, answer.accuracy_ns
+                ));
+            }
+            match reading.time.and_then(|at| at.to_unix()) {
                 Some(epoch) => {
                     umsh_hal::wall_clock::apply(
                         epoch,
@@ -2294,6 +2305,14 @@ impl embedded_io_async::Read for GnssPort<'_> {
     }
 }
 
+/// The boot read's questions, asked between its reads.
+#[cfg(feature = "gnss-holds-the-clock")]
+impl umsh_gnss::pump::Ask for GnssPort<'_> {
+    async fn ask(&mut self, query: &[u8]) {
+        gnss_send(self.slot, query).await;
+    }
+}
+
 /// The pump's `Power` half: the board's rail/wake sequencing wrapped
 /// with the UART's lifecycle.
 #[cfg(feature = "gnss")]
@@ -2352,11 +2371,12 @@ impl GnssPower<'_> {
 
 /// Writes `bytes` to the receiver and waits until the last has left the
 /// line, so the port can close straight after. A failed write is dropped:
-/// the receiver keeps running, as one with no standby would.
+/// a receiver left unparked keeps running, as one with no standby would,
+/// and an unasked question goes unanswered.
 ///
 /// The `RefMut` is held across the writes, sound for the reason
 /// [`GnssPort`] gives.
-#[cfg(feature = "gnss-uart-standby")]
+#[cfg(any(feature = "gnss-uart-standby", feature = "gnss-holds-the-clock"))]
 #[allow(clippy::await_holding_refcell_ref)]
 async fn gnss_send(slot: &core::cell::RefCell<GnssUartSlot>, bytes: &[u8]) {
     // Light sleep stops the UART mid-frame.

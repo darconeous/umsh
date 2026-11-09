@@ -432,23 +432,17 @@ fn parse_instant(date: &[u8], time: &[u8]) -> Option<crate::DateTime> {
         2000 + i32::from(year)
     };
 
-    let at = crate::DateTime {
+    // A well-formed instant from before this software existed is a
+    // receiver telling us it has no clock. See [`MIN_PLAUSIBLE_EPOCH`].
+    crate::DateTime {
         year,
         month,
         day,
         hour,
         minute,
         second,
-    };
-    if !at.is_valid() {
-        return None;
     }
-    // A well-formed instant from before this software existed is a
-    // receiver telling us it has no clock. See [`MIN_PLAUSIBLE_EPOCH`].
-    match at.to_unix() {
-        Some(epoch) if epoch >= crate::epoch::MIN_PLAUSIBLE_EPOCH => Some(at),
-        _ => None,
-    }
+    .plausible()
 }
 
 /// Parse a `ddmm.mmmm` / `dddmm.mmmm` coordinate into 1e-7 degrees.
