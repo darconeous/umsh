@@ -1177,6 +1177,38 @@ actor FakeRadioConnection: RadioConnection {
         )
     }
 
+    func composeAgain(
+        conversationAddress: String,
+        clientToken: UInt32,
+        body: String,
+        status: Bool,
+        forwardSecret: Bool
+    ) async throws -> MobileChatComposeBatchRecord {
+        guard let meshSession else { throw RadioConnectionError.incompatibleProtocol }
+        return try await meshSession.composeAgain(
+            conversationAddress: conversationAddress,
+            clientToken: clientToken,
+            body: body,
+            status: status,
+            forwardSecret: forwardSecret
+        )
+    }
+
+    func resendChat(
+        conversationAddress: String,
+        original: MobileChatOriginalRef,
+        frames: [MobileChatArchiveRecord],
+        forwardSecret: Bool
+    ) async throws {
+        guard let meshSession else { throw RadioConnectionError.incompatibleProtocol }
+        try await meshSession.resendChat(
+            conversationAddress: conversationAddress,
+            original: original,
+            frames: frames,
+            forwardSecret: forwardSecret
+        )
+    }
+
     func composeDelete(
         conversationAddress: String,
         clientToken: UInt32,
@@ -1411,6 +1443,7 @@ actor FakeRadioConnection: RadioConnection {
         let chatUpdate = RadioChatUpdate(
             batchID: batchID,
             mutations: update.chatMutations,
+            resends: update.chatResends,
             deliveries: update.chatDeliveries,
             repeats: update.chatRepeats,
             archiveLookups: update.chatArchiveLookups,

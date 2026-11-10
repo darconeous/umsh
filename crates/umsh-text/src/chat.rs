@@ -543,12 +543,16 @@ pub struct BatchMismatch;
 /// Transport progress for a released frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TransmitUpdate {
+    /// It went on the air, or the session setup it waits on did.
     Sent,
     Acked {
         /// The acknowledgment answered a route-retry flood.
         via_flood: bool,
     },
+    /// It went on the air and was not acknowledged.
     Failed,
+    /// It never went out where its peer could read it.
+    Undelivered,
 }
 
 /// The chat facade.
@@ -770,7 +774,7 @@ impl<P: TextProfile + Clone, const SLOTS: usize, const PAGES: usize> ChatFacade<
         for transmission in &batch.transmissions {
             self.engine.transmit_update(
                 transmission.transmission_id,
-                DeliveryState::Failed,
+                DeliveryState::Undelivered,
                 now_ms,
             );
         }
@@ -928,6 +932,7 @@ impl<P: TextProfile + Clone, const SLOTS: usize, const PAGES: usize> ChatFacade<
                 DeliveryState::Acked
             }
             TransmitUpdate::Failed => DeliveryState::Failed,
+            TransmitUpdate::Undelivered => DeliveryState::Undelivered,
         };
         self.engine.transmit_update(transmission_id, state, now_ms);
         self.stage();
@@ -1001,7 +1006,7 @@ impl<P: TextProfile + Clone, const SLOTS: usize, const PAGES: usize> ChatFacade<
         for transmission in transmissions {
             self.engine.transmit_update(
                 transmission.transmission_id,
-                DeliveryState::Failed,
+                DeliveryState::Undelivered,
                 now_ms,
             );
         }

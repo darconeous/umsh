@@ -71,7 +71,8 @@ struct ChatSubmissionCoordinator {
             .unavailable("The radio is busy. Try again when its current operation finishes.")
         case .CounterPersistenceFailed:
             .persistence("The message could not be prepared safely because its counter could not be saved.")
-        case .SendFailed, .ChatComposeFailed, .ChatBatchMissing, .ChannelCapacity, .NoAnswer:
+        case .SendFailed, .ChatComposeFailed, .ChatBatchMissing, .ChannelCapacity, .NoAnswer,
+             .ChatResendNotInPlace:
             .operation("The message could not be prepared by the radio session. Check the connection and try again.")
         }
     }

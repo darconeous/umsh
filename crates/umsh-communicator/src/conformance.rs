@@ -598,8 +598,8 @@ pub fn delivery<H: Harness>(harness: &mut H) {
 }
 
 /// A new session fails what the last one left awaited: a direct message
-/// sent but unacknowledged, and messages never sent. A channel message
-/// once sent, and a direct one acknowledged, are settled.
+/// sent but unacknowledged, and, undelivered, messages never sent. A
+/// channel message once sent, and a direct one acknowledged, are settled.
 pub fn interruption<H: Harness>(harness: &mut H) {
     let mut store = harness.fresh();
     let mut rig = Rig::new();
@@ -639,7 +639,7 @@ pub fn interruption<H: Harness>(harness: &mut H) {
     assert_eq!(state(delivered), Some(DeliveryState::Acked));
     assert_eq!(state(awaiting), Some(DeliveryState::Failed));
     assert_eq!(state(broadcast), Some(DeliveryState::Sent));
-    assert_eq!(state(unsent), Some(DeliveryState::Failed));
+    assert_eq!(state(unsent), Some(DeliveryState::Undelivered));
 }
 
 /// A reference that outlives the engine's handles finds the newest

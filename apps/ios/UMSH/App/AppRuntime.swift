@@ -2671,42 +2671,74 @@ final class AppRuntime {
         }
     }
 
-    /// Put a message that was never delivered back on the air.
+    /// Put a message delivery gave up on back on the air, as itself.
     ///
-    /// It goes out as an edit of itself, carrying the same text under the
-    /// original's wire ID. That is what keeps a resend from reading as a
-    /// second message: a peer who received the original and lost only the
-    /// acknowledgment applies the edit to the copy they already have, and one
-    /// who never received it at all fills the gap the missing ID left with
-    /// this content. Either way they end up with the message once. (The store
-    /// recognizes an edit that changes nothing and does not annotate the
-    /// message "Edited" for it.) The edit hands the row its own delivery
-    /// tracking as any edit does, so the badge clears—or comes back—on
-    /// the resend's real fate.
+    /// Its unacknowledged fragments go again from the archive, under its
+    /// original wire ID: a peer who received it and lost only the
+    /// acknowledgment drops the duplicate, and one who never received it gets
+    /// an ordinary message, notification and all. Never an edit, which a peer
+    /// without the original could only show as an edit of something unknown.
+    /// The core reports the frames ahead of any word of them, and the store
+    /// re-aims the row's delivery tracking at them, so the badge clears—or
+    /// comes back—on the resend's real fate.
+    ///
+    /// `forwardSecret` is the user's choice for a message that went under
+    /// forward secrecy: under it, the core uses the session held or asks the
+    /// peer for a new one and the frames wait on it; without it, they go now
+    /// and the row says so.
     func resendMessage(
         _ conversation: ConversationListItem,
-        _ message: ChatMessageSummary
+        _ message: ChatMessageSummary,
+        _ forwardSecret: Bool
     ) async -> MessageSendResult {
-        // Past the revise window the edit could not land anywhere; give the
-        // caller the behavior that is right for the message's age instead of
-        // an error.
-        guard message.isWithinReviseWindow else {
-            return await resendMessageAsNew(conversation, message)
+        // Past the revise window the original's wire ID could not land
+        // anywhere; give the caller the behavior that is right for the
+        // message's age instead of an error.
+        guard message.isWithinReviseWindow, let wireID = message.wireID else {
+            return await resendMessageAsNew(conversation, message, forwardSecret)
         }
-        return await performChatCompose(conversation, clearsDraft: false) { clientToken in
-            try await radioConnection.composeEdit(
+        guard message.isDeliveryFailed else {
+            return .failed("Only a message that was not delivered can be resent.")
+        }
+        if let refusal = chatSendRefusal(conversation) { return refusal }
+        guard let applicationStore, let localIdentity else {
+            return .failed("The local identity or message database is unavailable.")
+        }
+        do {
+            let frames = try await applicationStore.chatResendFrames(
+                ownerIdentityID: localIdentity.id,
                 conversationAddress: conversation.conversationAddress,
-                clientToken: clientToken,
-                original: originalRef(message),
-                body: message.body
+                sessionID: message.sessionID,
+                handle: message.handle,
+                wireID: wireID
             )
+            guard !frames.isEmpty else {
+                return await resendMessageAsNew(conversation, message, forwardSecret)
+            }
+            try await radioConnection.resendChat(
+                conversationAddress: conversation.conversationAddress,
+                original: originalRef(message),
+                frames: frames,
+                forwardSecret: forwardSecret
+            )
+        } catch MobileMeshError.ChatResendNotInPlace {
+            // The stream has moved on past it: only new words can still land.
+            return await resendMessageAsNew(conversation, message, forwardSecret)
+        } catch let error as MobileMeshError {
+            return .failed(ChatSubmissionCoordinator.composeError(error).localizedDescription)
+        } catch {
+            return .failed(error.localizedDescription)
         }
+        coordinator.bumpChatRevisions([conversation.conversationAddress])
+        await reloadConversationState()
+        let updated = conversationItems.first(where: { $0.id == conversation.id }) ?? conversation
+        return .sent(updated, warning: nil)
     }
 
     /// Send a failed message's text again as a genuinely new message—the
-    /// path for failures too old to resend as an edit of themselves: their
-    /// wire ID has slid out of the reference window peers keep, so an
-    /// in-place revision could no longer land anywhere.
+    /// path for failures that can no longer go as themselves: their wire ID
+    /// has slid out of the reference window peers keep, or nothing of them
+    /// is archived under it.
     ///
     /// The old row is removed only after the new compose is durable and
     /// released; a compose that fails leaves the transcript exactly as it
@@ -2717,25 +2749,20 @@ final class AppRuntime {
     /// literally "send these words again."
     func resendMessageAsNew(
         _ conversation: ConversationListItem,
-        _ message: ChatMessageSummary
+        _ message: ChatMessageSummary,
+        _ forwardSecret: Bool
     ) async -> MessageSendResult {
-        guard message.deliveryState?.lowercased() == "failed", message.isOutbound else {
+        guard message.isDeliveryFailed else {
             return .failed("Only a message that was not delivered can be resent.")
         }
         let result = await performChatCompose(conversation, clearsDraft: false) { clientToken in
-            if message.isStatus {
-                try await radioConnection.composeStatus(
-                    conversationAddress: conversation.conversationAddress,
-                    clientToken: clientToken,
-                    body: message.body
-                )
-            } else {
-                try await radioConnection.composeText(
-                    conversationAddress: conversation.conversationAddress,
-                    clientToken: clientToken,
-                    body: message.body
-                )
-            }
+            try await radioConnection.composeAgain(
+                conversationAddress: conversation.conversationAddress,
+                clientToken: clientToken,
+                body: message.body,
+                status: message.isStatus,
+                forwardSecret: forwardSecret
+            )
         }
         guard case .sent = result else { return result }
         if let applicationStore, let localIdentity {
@@ -2780,7 +2807,7 @@ final class AppRuntime {
         _ message: ChatMessageSummary,
         _ glyph: String
     ) async -> MessageSendResult {
-        guard !(message.isOutbound && message.deliveryState?.lowercased() == "failed") else {
+        guard !message.isDeliveryFailed else {
             return .failed("This message was not delivered, so there is nothing to react to.")
         }
         let withdrawing = message.myReaction?.glyph == glyph
@@ -2907,18 +2934,25 @@ final class AppRuntime {
         }
     }
 
+    /// Why nothing can go on the air in this conversation right now, or
+    /// `nil` when something can.
+    private func chatSendRefusal(_ conversation: ConversationListItem) -> MessageSendResult? {
+        if let refusal = uncertifiedEmergencyRefusal(conversation) { return refusal }
+        guard radioSnapshot.linkState == .attached || radioSnapshot.linkState == .ready,
+              radioSnapshot.hostState == .matchesCurrentIdentity
+        else { return .failed("Connect a companion radio configured for this phone before sending.") }
+        return nil
+    }
+
     private func performChatCompose(
         _ conversation: ConversationListItem,
         clearsDraft: Bool,
         compose: (UInt32) async throws -> MobileChatComposeBatchRecord
     ) async -> MessageSendResult {
-        if let refusal = uncertifiedEmergencyRefusal(conversation) { return refusal }
+        if let refusal = chatSendRefusal(conversation) { return refusal }
         guard let applicationStore, let localIdentity else {
             return .failed("The local identity or message database is unavailable.")
         }
-        guard radioSnapshot.linkState == .attached || radioSnapshot.linkState == .ready,
-              radioSnapshot.hostState == .matchesCurrentIdentity
-        else { return .failed("Connect a companion radio configured for this phone before sending.") }
         let owner = localIdentity.id
         let draftKey: ConversationDraftKey
         switch conversation {
@@ -3225,6 +3259,12 @@ final class AppRuntime {
         var unresolved: Set<ChatMessageKey> = []
         for mutation in update.mutations where mutation.conversationAddress == nil {
             unresolved.insert(ChatMessageKey(sessionID: mutation.sessionId, handle: mutation.handle))
+        }
+        for resend in update.resends {
+            unresolved.insert(ChatMessageKey(
+                sessionID: resend.message.sessionId,
+                handle: resend.message.handle
+            ))
         }
         for delivery in update.deliveries {
             unresolved.insert(ChatMessageKey(sessionID: delivery.sessionId, handle: delivery.handle))
@@ -3961,9 +4001,8 @@ final class AppRuntime {
         }
         do {
             // Edits whose originals this phone never stored come back from the
-            // store as materialized message rows—the shape a resend takes
-            // when the original never arrived. The engine could not flag them
-            // `notify`, so they join the notification pass by hand.
+            // store as materialized message rows. The engine could not flag
+            // them `notify`, so they join the notification pass by hand.
             var materialized: [MobileChatMutationRecord] = []
             if !update.mutations.isEmpty {
                 materialized = try await applicationStore.applyChatMutations(
@@ -4000,6 +4039,13 @@ final class AppRuntime {
                     senderAddress: resolution.senderAddress
                 )
             }
+            // Ahead of the deliveries: a resend's frames are reported under
+            // the handle it names, and what was last said of them before no
+            // longer holds.
+            try await applicationStore.applyChatResends(
+                ownerIdentityID: localIdentity.id,
+                resends: update.resends
+            )
             if !update.deliveries.isEmpty {
                 let failures = try await applicationStore.applyChatDeliveries(
                     ownerIdentityID: localIdentity.id,
@@ -4269,7 +4315,8 @@ final class AppRuntime {
             notificationService.postDeliveryFailure(
                 conversationAddress: failure.conversationAddress,
                 displayName: name,
-                quotedBody: Self.quotedBody(failure.body, limit: Self.failureQuoteLimit)
+                quotedBody: Self.quotedBody(failure.body, limit: Self.failureQuoteLimit),
+                undelivered: failure.undelivered
             )
         }
     }
@@ -4395,11 +4442,11 @@ final class AppRuntime {
                 id: localIdentity.id,
                 publicAddress: localIdentity.publicIdentity.canonicalAddress
             )
-            // Runs before any compose in this process, so every 'pending'
-            // outbound row is an orphan from a previous launch. No transcript
-            // can be open this early, so the rows it rewrites need no revision
-            // bump—the first reload below publishes them.
-            try await applicationStore.failStalePendingMessages(
+            // Runs before any compose in this process, so every outbound row
+            // still awaiting word is an orphan from a previous launch. No
+            // transcript can be open this early, so the rows it rewrites need
+            // no revision bump—the first reload below publishes them.
+            try await applicationStore.settleInterruptedDeliveries(
                 ownerIdentityID: localIdentity.id
             )
             // Gaps are held by the mesh session that saw them, and that
@@ -4638,7 +4685,7 @@ final class AppRuntime {
             // Only our own reactions have delivery to report, and only an
             // outright failure is worth showing: in flight looks like any
             // other reaction, the same way an unacknowledged bubble does.
-            isFailed: stored.outbound && stored.deliveryState?.lowercased() == "failed",
+            isFailed: stored.outbound && ChatMessageSummary.isDeliveryFailure(stored.deliveryState),
             isForwardSecret: stored.forwardSecret
         )
     }

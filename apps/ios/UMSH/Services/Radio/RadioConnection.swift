@@ -431,6 +431,26 @@ protocol RadioConnection: AnyObject, Sendable {
         original: MobileChatOriginalRef,
         body: String
     ) async throws -> MobileChatComposeBatchRecord
+    /// A failed message's words as a new message, under forward secrecy or
+    /// never under it, as the user chose; a session is asked for when one
+    /// is to be had and none is.
+    func composeAgain(
+        conversationAddress: String,
+        clientToken: UInt32,
+        body: String,
+        status: Bool,
+        forwardSecret: Bool
+    ) async throws -> MobileChatComposeBatchRecord
+    /// Send a message that was not delivered again as itself, from the
+    /// frames archived for its unacknowledged fragments. A resend record in
+    /// the next chat batch, ahead of any word of them, says where that word
+    /// comes. Throws `ChatResendNotInPlace` when its stream has moved past it.
+    func resendChat(
+        conversationAddress: String,
+        original: MobileChatOriginalRef,
+        frames: [MobileChatArchiveRecord],
+        forwardSecret: Bool
+    ) async throws
     func composeDelete(
         conversationAddress: String,
         clientToken: UInt32,
@@ -538,6 +558,8 @@ struct RadioPeerHeardEvent: Equatable, Sendable {
 struct RadioChatUpdate: Sendable {
     let batchID: UInt64
     let mutations: [MobileChatMutationRecord]
+    /// Messages of ours sent again in place, applied before `deliveries`.
+    let resends: [MobileChatResendRecord]
     let deliveries: [MobileChatDeliveryRecord]
     /// Repeaters overheard carrying our messages, a whole tally per fragment.
     let repeats: [MobileChatRepeatRecord]

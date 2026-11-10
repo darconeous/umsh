@@ -967,6 +967,18 @@ pub enum Delivery {
     Delivered,
     /// A fragment was not acknowledged: it may not have arrived.
     Unconfirmed,
+    /// A fragment never went where the peer could read it, as when the
+    /// session with forward secrecy it was to go under could not be had: it
+    /// did not arrive.
+    Undelivered,
+}
+
+impl Delivery {
+    /// Whether it came out short of delivered, to be sent again or
+    /// deleted.
+    pub fn failed(self) -> bool {
+        matches!(self, Self::Unconfirmed | Self::Undelivered)
+    }
 }
 
 /// Whether a message's place in its conversation holds the message.
@@ -1454,8 +1466,8 @@ pub enum NodeEvent {
         chat: ChatId,
         message: MessageId,
     },
-    /// My `message` in `chat` became [`Delivery::Delivered`] or
-    /// [`Delivery::Unconfirmed`]: it changed, as
+    /// My `message` in `chat` became [`Delivery::Delivered`],
+    /// [`Delivery::Unconfirmed`], or [`Delivery::Undelivered`]: it changed, as
     /// [`NodeEvent::MessageChanged`] says, and that is how it came out.
     Settled {
         chat: ChatId,
@@ -2693,11 +2705,11 @@ impl State {
         self.resend_now(message, false);
     }
 
-    /// The unconfirmed `message` of the open chat. One deleted is gone,
-    /// confirmed or not.
+    /// The unconfirmed or undelivered `message` of the open chat. One
+    /// deleted is gone, confirmed or not.
     pub(crate) fn unconfirmed(&self, message: MessageId) -> Option<Message> {
         self.open_message(message)
-            .filter(|m| m.delivery == Delivery::Unconfirmed && !m.deleted)
+            .filter(|m| m.delivery.failed() && !m.deleted)
     }
 
     /// Closes what is open over an unconfirmed message: the choices of how
@@ -2756,7 +2768,7 @@ impl State {
     fn settled(&mut self, chat: ChatId, message: MessageId) {
         match self.node.message(chat, message).map(|m| m.delivery) {
             Some(Delivery::Delivered) => self.chime(Cue::Delivered),
-            Some(Delivery::Unconfirmed) => self.chime(Cue::Unconfirmed),
+            Some(delivery) if delivery.failed() => self.chime(Cue::Unconfirmed),
             _ => {}
         }
     }

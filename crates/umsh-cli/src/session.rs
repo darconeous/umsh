@@ -47,9 +47,6 @@ use crate::settings::SessionSettings;
 use crate::stats::Stats;
 use umsh_sync::AsyncCondition;
 
-/// The lifetime `/pfs start` asks for when none is given, in minutes.
-const DEFAULT_PFS_MINUTES: u16 = 8 * 60;
-
 /// Errors surfaced from `CliSession::run`.
 ///
 /// `Node` flattens any `NodeError<…>` to a `String` via `format!("{:?}", e)`
@@ -973,7 +970,7 @@ where
         let Some(key) = self.resolve_peer(peer) else {
             return self.write_err("unknown peer").await;
         };
-        let minutes = minutes.unwrap_or(DEFAULT_PFS_MINUTES);
+        let minutes = minutes.unwrap_or(umsh_node::DEFAULT_PFS_SESSION_MINUTES);
         let opts = self.send_opts();
         match self.node.request_pfs(&key, minutes, &opts).await {
             Ok(_) => self.out.write_line("pfs request sent").await?,

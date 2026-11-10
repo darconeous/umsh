@@ -21,7 +21,7 @@ use umsh_core::options::HopSignal;
 use umsh_core::{ChannelKey, NodeHint, PayloadType, PublicKey, RouterHint};
 use umsh_mac::{CachedRoute, SendOptions};
 use umsh_node::{
-    IdentityUpdate, LocalNode, MacBackend, NodeIdentityPayload, Subscription,
+    IdentityUpdate, LocalNode, MacBackend, NodeIdentityPayload, SendProgressTicket, Subscription,
     identity_is_trustworthy,
 };
 use umsh_text::node_adapter::{
@@ -106,9 +106,6 @@ pub enum Secrecy {
     Ended,
     Failed,
 }
-
-/// How long a session with forward secrecy is asked to last, in minutes.
-pub const SECRECY_MINUTES: u16 = 8 * 60;
 
 /// What the chats ask of the device node besides sending their frames.
 pub enum Command {
@@ -417,7 +414,7 @@ where
             notify();
         }
         while let Some(command) = node.command() {
-            if let Some(arrival) = execute(mesh, command).await {
+            if let Some(arrival) = execute(node, mesh, command).await {
                 node.arrive(arrival);
             }
         }
@@ -440,7 +437,11 @@ where
 /// each is asked for again as easily as it was asked for. A session with
 /// forward secrecy that cannot be asked for is reported, as one refused
 /// later would be.
-async fn execute<M: MacBackend>(mesh: &LocalNode<M>, command: Command) -> Option<Arrival> {
+async fn execute<P: LocalPort, S: ChatStore, M: MacBackend>(
+    node: &CommunicatorNode<P, S>,
+    mesh: &LocalNode<M>,
+    command: Command,
+) -> Option<Arrival> {
     match command {
         Command::Ping { peer, options } => {
             let sent = match mesh.peer(peer).await {
@@ -455,14 +456,18 @@ async fn execute<M: MacBackend>(mesh: &LocalNode<M>, command: Command) -> Option
                 return Some(Arrival::PingTimeout { peer });
             }
         }
-        Command::StartSecrecy { peer, options } => {
-            if !start_secrecy(mesh, &peer, &options).await {
+        Command::StartSecrecy { peer, options } => match start_secrecy(mesh, &peer, &options).await
+        {
+            // Straight to the chats, never as an arrival: a ticket stays on
+            // the task that sent its frame.
+            Some(ticket) => node.secrecy_asked(peer, ticket),
+            None => {
                 return Some(Arrival::Secrecy {
                     peer,
                     change: Secrecy::Failed,
                 });
             }
-        }
+        },
         Command::EndSecrecy { peer, options } => end_secrecy(mesh, &peer, &options).await,
         Command::AskPeer { peer, options } => {
             if let Ok(connection) = mesh.peer(peer).await {
@@ -508,21 +513,19 @@ async fn read_route<M: MacBackend>(mesh: &LocalNode<M>, peer: PublicKey) -> Arri
     }
 }
 
-/// Asks `peer` for a session with forward secrecy. Returns whether the
-/// request went.
+/// Asks `peer` for a session with forward secrecy. Returns the request's
+/// ticket, or `None` when it did not go.
 #[cfg(feature = "software-crypto")]
 async fn start_secrecy<M: MacBackend>(
     mesh: &LocalNode<M>,
     peer: &PublicKey,
     options: &SendOptions,
-) -> bool {
-    let Ok(connection) = mesh.peer(*peer).await else {
-        return false;
-    };
+) -> Option<SendProgressTicket> {
+    let connection = mesh.peer(*peer).await.ok()?;
     connection
-        .request_pfs(SECRECY_MINUTES, options)
+        .request_pfs(umsh_node::DEFAULT_PFS_SESSION_MINUTES, options)
         .await
-        .is_ok()
+        .ok()
 }
 
 #[cfg(feature = "software-crypto")]
@@ -538,8 +541,8 @@ async fn start_secrecy<M: MacBackend>(
     _mesh: &LocalNode<M>,
     _peer: &PublicKey,
     _options: &SendOptions,
-) -> bool {
-    false
+) -> Option<SendProgressTicket> {
+    None
 }
 
 #[cfg(not(feature = "software-crypto"))]

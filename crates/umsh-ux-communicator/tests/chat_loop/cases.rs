@@ -997,7 +997,8 @@ fn deleting_an_unconfirmed_message_asks_first() {
 }
 
 /// The fixture's chat of message states, which holds a session with
-/// forward secrecy, and my message in it that went unconfirmed under one.
+/// forward secrecy, and my message in it that went undelivered for want of
+/// one.
 const STATES: u32 = 7;
 const SECRET: u32 = (STATES << 8) | 7;
 
@@ -1013,7 +1014,7 @@ fn forward_secret(state: &State, message: u32) -> bool {
 }
 
 #[test]
-fn an_unconfirmed_message_under_forward_secrecy_asks_before_going_without() {
+fn an_undelivered_message_under_forward_secrecy_asks_before_going_without() {
     let mut app = app!();
     app.state_mut().open_chat(STATES);
     app.finalize_view();
@@ -1023,13 +1024,13 @@ fn an_unconfirmed_message_under_forward_secrecy_asks_before_going_without() {
     app.finalize_view();
     assert_eq!(unsent(app.state()), Some(SECRET));
     assert_eq!(focus(app.state()), Some(keys::RESEND));
-    assert_eq!(delivery(app.state(), SECRET), Delivery::Unconfirmed);
+    assert_eq!(delivery(app.state(), SECRET), Delivery::Undelivered);
 
     // Back leaves it as it was.
     run(&mut app, &[Input::Backspace]);
     assert_eq!(unsent(app.state()), None);
     assert_eq!(focus(app.state()), Some(keys::message(SECRET)));
-    assert_eq!(delivery(app.state(), SECRET), Delivery::Unconfirmed);
+    assert_eq!(delivery(app.state(), SECRET), Delivery::Undelivered);
 
     // Going without, it is mine like any other.
     run(&mut app, &[Input::Press, Input::Press]);

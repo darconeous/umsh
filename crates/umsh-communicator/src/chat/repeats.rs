@@ -76,7 +76,7 @@ impl<S: ChatStore> Chats<S> {
                     heard.confirming = false;
                 }
             }
-            DeliveryState::Acked | DeliveryState::Failed => {
+            DeliveryState::Acked | DeliveryState::Failed | DeliveryState::Undelivered => {
                 if let Some(heard) = self.heard.get_mut(&id) {
                     heard.answered = true;
                 }

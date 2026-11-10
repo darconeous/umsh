@@ -263,11 +263,18 @@ pub enum MutationKind {
     },
 }
 
+/// What became of one of our frames.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeliveryState {
+    /// It went on the air, or a session setup it waits on did.
     Sent,
+    /// The peer's radio acknowledged it.
     Acked,
+    /// It went on the air and no acknowledgment came back: it may have
+    /// arrived.
     Failed,
+    /// It never went out where the peer could read it: it did not arrive.
+    Undelivered,
 }
 
 /// Why [`Engine::request_repair`] sent nothing.
@@ -1103,7 +1110,7 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
         // every resend request for it—the one thing a group member has no
         // other way to recover from.
         let terminal = match state {
-            DeliveryState::Acked | DeliveryState::Failed => true,
+            DeliveryState::Acked | DeliveryState::Failed | DeliveryState::Undelivered => true,
             DeliveryState::Sent => !frame.expects_ack,
         };
         if terminal {

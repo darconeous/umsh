@@ -117,8 +117,8 @@ fn acknowledged(delivery: &record::Delivery) -> bool {
     delivery.delivered()
 }
 
-/// How an outbound message came out, once it has: delivered (`true`) or
-/// unconfirmed (`false`), as [`model::Delivery`] reads it.
+/// How an outbound message came out, once it has: delivered (`true`), or
+/// unconfirmed or undelivered (`false`), as [`model::Delivery`] reads it.
 fn outcome(delivery: &record::Delivery) -> Option<bool> {
     if delivery.failed != 0 {
         Some(false)
@@ -990,11 +990,12 @@ impl<S: ChatStore> Chats<S> {
         if record.chat.0 != chat || record.direction != engine::Direction::Outbound {
             return false;
         }
-        // One to go under forward secrecy asks for a session, if none is.
+        // One to go under forward secrecy asks for a session, if none is:
+        // the user is sending it again, under one.
         if let ConversationKey::Direct { peer } = conversation
             && record.flags.forward_secret
         {
-            self.keep_secrecy(peer);
+            self.ask_secrecy(peer);
         }
         let known = self.handle_of(record.id);
         let Some(facade) = &mut self.facade else {
@@ -1784,6 +1785,8 @@ impl<S: ChatStore> Chats<S> {
                 let delivery = record.delivery;
                 if self.retrying.contains(&record.id) {
                     model::Delivery::Sending
+                } else if delivery.undelivered() {
+                    model::Delivery::Undelivered
                 } else if delivery.failed != 0 {
                     model::Delivery::Unconfirmed
                 } else if acknowledged(&delivery) {

@@ -74,6 +74,11 @@ pub(crate) const PFS_MAX_UNDELIVERED_SENDS: u8 = 3;
 #[cfg(feature = "software-crypto")]
 pub(crate) const MAX_PFS_SESSION_MINUTES: u16 = 24 * 60;
 
+/// The lifetime a session with forward secrecy is asked for with, in
+/// minutes, when nothing narrower applies.
+#[cfg(feature = "software-crypto")]
+pub const DEFAULT_PFS_SESSION_MINUTES: u16 = 8 * 60;
+
 /// The lifetime this node holds a session to, given the duration a request
 /// or response named.
 #[cfg(feature = "software-crypto")]

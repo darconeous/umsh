@@ -18,8 +18,8 @@ use umsh_text::chat::{
 };
 use umsh_text::engine::sequence::MessageHandle;
 use umsh_text::engine::{
-    CompletionStatus, ComposeIntent, ComposeRef, DeliveryState, Direction, EngineConfig, Presence,
-    RegardingRef, ResolvedRef, StreamCheckpoint,
+    ArchiveKey, CompletionStatus, ComposeIntent, ComposeRef, DeliveryState, Direction,
+    EngineConfig, Presence, RegardingRef, ResolvedRef, StreamCheckpoint,
 };
 use umsh_text::model::{ConversationKey, SenderScope, WireRef};
 use umsh_text::node_adapter::{TransmitPolicy, TransmitQueue};
@@ -241,9 +241,30 @@ pub struct MobileChatRegardingRef {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
 pub enum MobileChatDeliveryState {
+    /// It went on the air, or the session setup it waits on did.
     Sent,
     Acknowledged,
+    /// It went on the air and was not acknowledged: it may have arrived.
     Failed,
+    /// It never went out where the peer could read it: it did not arrive.
+    Undelivered,
+}
+
+/// A message of ours sent again in place: the frames it had unacknowledged
+/// go again under its wire ID, and word of them is reported under
+/// `delivery_session_id`/`delivery_handle`, which differ from the message's
+/// own once the app has restarted since it was composed. Comes ahead of
+/// any word of those frames: the platform forgets what it last heard of
+/// every fragment not yet acknowledged, and points the message's delivery
+/// at the new handle.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct MobileChatResendRecord {
+    /// The message, as the platform named it to send again.
+    pub message: MobileChatOriginalRef,
+    pub delivery_session_id: u64,
+    pub delivery_handle: u32,
+    /// Whether it now goes under a session with forward secrecy.
+    pub forward_secret: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
@@ -314,6 +335,11 @@ pub(crate) enum ComposeFailure {
     /// The engine refused it, or a reference did not resolve.
     Refused,
 }
+
+/// A message of ours could not be sent again under its wire ID: its stream
+/// has moved past it, or the frames given are not its.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct NotInPlace;
 
 pub(crate) struct ChatDrain {
     pub outbound: Outbound,
@@ -406,7 +432,8 @@ impl MobileChatState {
     /// Settles the frames in `queue` waiting on a session with forward
     /// secrecy: those to a peer one is held with go next, those to a peer
     /// still setting one up wait for at most [`SECRECY_WAIT_MS`], and the
-    /// rest fail. This phone never asks for a session itself.
+    /// rest fail, undelivered. This phone asks for a session itself only
+    /// when the user sends a message again under one.
     pub async fn settle_secrecy_waits<M: MacBackend>(
         &mut self,
         queue: &mut TransmitQueue,
@@ -488,6 +515,90 @@ impl MobileChatState {
             budget,
             now_ms,
         )
+    }
+
+    /// Compose `body` again as a new message, as text or status text, under
+    /// a session with forward secrecy or never under one, as the user chose
+    /// in sending it again. The caller asks for a session when one is to be
+    /// had and none is.
+    #[allow(clippy::too_many_arguments)]
+    pub fn compose_again(
+        &mut self,
+        conversation: ConversationKey,
+        client_token: u32,
+        body: &str,
+        status: bool,
+        forward_secret: bool,
+        budget: usize,
+        now_ms: u64,
+    ) -> Result<ComposedChatBatch, ComposeFailure> {
+        self.compose_batch_under(
+            conversation,
+            client_token,
+            ComposeIntent::Text { body, status },
+            Some(forward_secret),
+            budget,
+            now_ms,
+        )
+    }
+
+    /// Send again, under its wire ID, the message of ours `original` names in
+    /// `conversation`: `frames` are those of its fragments not yet
+    /// acknowledged, as the platform archived them. A message composed before
+    /// this facade session is taken back first. Its frames go under a
+    /// session with forward secrecy or never under one, as `forward_secret`
+    /// says; the caller asks for a session when one is to be had and none
+    /// is. Returns what the platform is told ahead of any word of them.
+    pub fn resend(
+        &mut self,
+        conversation: ConversationKey,
+        original: &MobileChatOriginalRef,
+        frames: &[MobileChatArchiveRecord],
+        forward_secret: bool,
+        now_ms: u64,
+    ) -> Result<MobileChatResendRecord, NotInPlace> {
+        let message_id = original.wire_id.ok_or(NotInPlace)?;
+        let address = conversation_address(conversation).ok_or(NotInPlace)?;
+        if frames.is_empty()
+            || frames.iter().any(|frame| {
+                frame.conversation_address != address || frame.message_id != message_id
+            })
+        {
+            return Err(NotInPlace);
+        }
+        let handle = if original.session_id == self.session_id() {
+            MessageHandle(original.handle)
+        } else {
+            // The facade holds every stream's checkpoint since it was
+            // restored.
+            let epoch = original.epoch.ok_or(NotInPlace)?;
+            self.facade
+                .adopt(conversation, message_id, epoch, None, now_ms)
+                .ok_or(NotInPlace)?
+        };
+        let mut queued = false;
+        for frame in frames {
+            let key = ArchiveKey {
+                conversation,
+                message_id,
+                fragment: frame.fragment_index,
+            };
+            queued |= self.facade.retransmit(&key, handle, &frame.payload);
+        }
+        if !queued {
+            return Err(NotInPlace);
+        }
+        let session_id = self.session_id();
+        if matches!(conversation, ConversationKey::Direct { .. }) {
+            self.forward_secret
+                .insert((session_id, handle.0), forward_secret);
+        }
+        Ok(MobileChatResendRecord {
+            message: original.clone(),
+            delivery_session_id: session_id,
+            delivery_handle: handle.0,
+            forward_secret,
+        })
     }
 
     /// Compose `body` as basic text, as it stands.
@@ -744,6 +855,20 @@ impl MobileChatState {
         budget: usize,
         now_ms: u64,
     ) -> Result<ComposedChatBatch, ComposeFailure> {
+        self.compose_batch_under(conversation, client_token, intent, None, budget, now_ms)
+    }
+
+    /// [`Self::compose_batch`], under a session with forward secrecy or
+    /// never under one as `secrecy` says, or, without, as one is held.
+    fn compose_batch_under(
+        &mut self,
+        conversation: ConversationKey,
+        client_token: u32,
+        intent: ComposeIntent<'_>,
+        secrecy: Option<bool>,
+        budget: usize,
+        now_ms: u64,
+    ) -> Result<ComposedChatBatch, ComposeFailure> {
         // Rooms have no address in this facade, so nothing composed to one
         // could be stored.
         let Some(checkpoint_address) = conversation_address(conversation) else {
@@ -762,15 +887,16 @@ impl MobileChatState {
         let fragment_count = u8::try_from(batch.archives.len()).unwrap_or(u8::MAX);
         let transmission_count = u8::try_from(batch.transmission_count()).unwrap_or(u8::MAX);
         // A message to a peer goes under a session with forward secrecy when
-        // one is held as it is composed, and its frames are held to that.
+        // one is held as it is composed, or as it was asked to, and its
+        // frames are held to that.
         let forward_secret = match conversation {
             ConversationKey::Direct { peer } => {
-                let held = self.held.contains(&peer.0);
+                let secret = secrecy.unwrap_or_else(|| self.held.contains(&peer.0));
                 for mutation in &batch.mutations {
                     self.forward_secret
-                        .insert((session_id, mutation.handle.0), held);
+                        .insert((session_id, mutation.handle.0), secret);
                 }
-                held
+                secret
             }
             _ => false,
         };
@@ -904,6 +1030,7 @@ fn delivery_record(session_id: u64, delivery: &Delivery) -> MobileChatDeliveryRe
             DeliveryState::Sent => MobileChatDeliveryState::Sent,
             DeliveryState::Acked => MobileChatDeliveryState::Acknowledged,
             DeliveryState::Failed => MobileChatDeliveryState::Failed,
+            DeliveryState::Undelivered => MobileChatDeliveryState::Undelivered,
         },
         via_flood: delivery.via_flood,
     }
@@ -1714,7 +1841,11 @@ mod tests {
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
         assert_eq!(drain.deliveries.len(), 1);
         assert_eq!(drain.deliveries[0].session_id, old_session);
-        assert_eq!(drain.deliveries[0].state, MobileChatDeliveryState::Failed);
+        // Nothing of it went.
+        assert_eq!(
+            drain.deliveries[0].state,
+            MobileChatDeliveryState::Undelivered
+        );
         assert_ne!(state.session_id(), old_session);
 
         let next = state

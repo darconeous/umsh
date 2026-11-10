@@ -300,6 +300,13 @@ impl<P: LocalPort, S: ChatStore> CommunicatorNode<P, S> {
         })
     }
 
+    /// Takes `ticket` as the request for a session with forward secrecy
+    /// the device node just sent `peer`: what waits on that session shows
+    /// how it goes.
+    pub fn secrecy_asked(&self, peer: PublicKey, ticket: umsh_node::SendProgressTicket) {
+        self.chats.borrow_mut().secrecy_asked(peer, ticket);
+    }
+
     /// Waits until the interface has given the chats something to send.
     pub async fn work(&self) {
         poll_fn(|cx| {

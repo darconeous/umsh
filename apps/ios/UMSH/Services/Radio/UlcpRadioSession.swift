@@ -1727,6 +1727,38 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
         )
     }
 
+    func composeAgain(
+        conversationAddress: String,
+        clientToken: UInt32,
+        body: String,
+        status: Bool,
+        forwardSecret: Bool
+    ) async throws -> MobileChatComposeBatchRecord {
+        let session = try await currentMeshSession()
+        return try await session.composeAgain(
+            conversationAddress: conversationAddress,
+            clientToken: clientToken,
+            body: body,
+            status: status,
+            forwardSecret: forwardSecret
+        )
+    }
+
+    func resendChat(
+        conversationAddress: String,
+        original: MobileChatOriginalRef,
+        frames: [MobileChatArchiveRecord],
+        forwardSecret: Bool
+    ) async throws {
+        let session = try await currentMeshSession()
+        try await session.resendChat(
+            conversationAddress: conversationAddress,
+            original: original,
+            frames: frames,
+            forwardSecret: forwardSecret
+        )
+    }
+
     func composeDelete(
         conversationAddress: String,
         clientToken: UInt32,
@@ -2677,6 +2709,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
                     let chatUpdate = RadioChatUpdate(
                         batchID: chatBatchID,
                         mutations: update.chatMutations,
+                        resends: update.chatResends,
                         deliveries: update.chatDeliveries,
                         repeats: update.chatRepeats,
                         archiveLookups: update.chatArchiveLookups,

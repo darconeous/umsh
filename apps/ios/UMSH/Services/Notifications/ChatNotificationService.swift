@@ -308,7 +308,8 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
         )
     }
 
-    /// Tell the user a message that had been sent is not going to arrive.
+    /// Tell the user delivery gave up on a message: it did not arrive
+    /// (`undelivered`), or it went out and no acknowledgment came back.
     ///
     /// The transcript marks it failed either way; this is for when nobody is
     /// looking at the transcript, which over a mesh is most of the time.
@@ -317,11 +318,20 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
     func postDeliveryFailure(
         conversationAddress: String,
         displayName: String,
-        quotedBody: String
+        quotedBody: String,
+        undelivered: Bool
     ) {
         postNotice(
             conversationAddress: conversationAddress,
-            title: "Unable to deliver message to \(displayName)",
+            title: undelivered
+                ? String(
+                    localized: "Unable to deliver message to \(displayName)",
+                    comment: "Notification title: a message of ours did not reach this peer or channel."
+                )
+                : String(
+                    localized: "Message to \(displayName) unconfirmed",
+                    comment: "Notification title: a message of ours went out, but no acknowledgment came back."
+                ),
             body: quotedBody
         )
     }

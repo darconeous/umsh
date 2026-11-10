@@ -547,13 +547,28 @@ impl<S: ChatStore> Chats<S> {
     /// Asks `peer` for a session with forward secrecy when they prefer one
     /// and none is asked for or held.
     pub(super) fn keep_secrecy(&mut self, peer: PublicKey) {
-        if self.prefers_secrecy(&peer) && !self.secrecy.contains_key(&peer.0) {
-            self.secrecy.insert(peer.0, Session::Asked);
+        if self.prefers_secrecy(&peer) {
+            self.ask_secrecy(peer);
+        }
+    }
+
+    /// Asks `peer` for a session with forward secrecy when none is asked for
+    /// or held, whether or not they prefer one: something the user is
+    /// sending again waits for it.
+    pub(super) fn ask_secrecy(&mut self, peer: PublicKey) {
+        if let alloc::collections::btree_map::Entry::Vacant(entry) = self.secrecy.entry(peer.0) {
+            entry.insert(Session::Asked);
             self.commands.push_back(Command::StartSecrecy {
                 peer,
-                options: secrecy_options(),
+                options: secrecy_options().with_ack_requested(true),
             });
         }
+    }
+
+    /// Takes `ticket` as the request for a session with forward secrecy
+    /// just sent to `peer`: what waits on that session shows how it goes.
+    pub fn secrecy_asked(&mut self, peer: PublicKey, ticket: umsh_node::SendProgressTicket) {
+        self.outbox.secrecy_asked(&peer, ticket);
     }
 
     /// Takes word of a session with forward secrecy with `peer`. One that
@@ -1057,7 +1072,9 @@ pub(super) fn long_age(seconds: u32) -> String<12> {
 }
 
 /// How a session with forward secrecy is asked for and ended: by full key,
-/// in case the peer has not registered us.
+/// in case the peer has not registered us. A request also asks for an
+/// acknowledgment, as a message does, so it is retried and what waits on
+/// it can show who carried it.
 fn secrecy_options() -> SendOptions {
     with_flood_reach(SendOptions::default(), FLOOD_HOPS).with_full_source()
 }

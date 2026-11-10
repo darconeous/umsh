@@ -191,7 +191,7 @@ pub use peer_repeaters::{
     MAX_PEER_REPEATERS, MergedPeerRepeater, PeerRepeaterRecord, PeerRepeaterTable,
 };
 #[cfg(feature = "software-crypto")]
-pub use pfs::{PFS_MIC_SIZE, PfsSessionRecord};
+pub use pfs::{DEFAULT_PFS_SESSION_MINUTES, PFS_MIC_SIZE, PfsSessionRecord};
 pub use receive::{
     ChannelInfoRef, PacketFamily, ReceivedPacketRef, RepeaterHints, RxAcceptance, RxMetadata,
     SignatureStatus, Snr,

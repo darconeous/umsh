@@ -432,10 +432,11 @@ const ARRIVALS: [(ChatId, From, &str); 3] = [
 
 /// How far a message of the fixture's got.
 fn delivery(chat: ChatId, index: usize) -> Delivery {
-    if (chat, index) == (3, 2) || (chat, index) == (STATES, 7) {
-        Delivery::Unconfirmed
-    } else {
-        Delivery::Delivered
+    match (chat, index) {
+        (3, 2) => Delivery::Unconfirmed,
+        // Its session with forward secrecy could not be had again.
+        (STATES, 7) => Delivery::Undelivered,
+        _ => Delivery::Delivered,
     }
 }
 

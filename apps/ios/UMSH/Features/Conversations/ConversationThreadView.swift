@@ -255,7 +255,7 @@ struct ConversationThreadView: View {
                                             ? { afterEmergencyCertified { deletingMessage = message } }
                                             : nil,
                                         onResend: message.isOutbound && !message.isDeleted
-                                            && message.deliveryState?.lowercased() == "failed"
+                                            && message.isDeliveryFailed
                                             ? { afterEmergencyCertified { resendingMessage = message } }
                                             : nil,
                                         onShowDetails: { inspectedMessage = message },
@@ -269,9 +269,7 @@ struct ConversationThreadView: View {
                                         // No reacting to one's own failed
                                         // message: nobody received the thing
                                         // the reaction would decorate.
-                                        onReact: message.isDeleted
-                                            || (message.isOutbound
-                                                && message.deliveryState?.lowercased() == "failed")
+                                        onReact: message.isDeleted || message.isDeliveryFailed
                                             ? nil
                                             : { glyph in
                                                 afterEmergencyCertified { react(to: message, with: glyph) }
@@ -636,9 +634,11 @@ struct ConversationThreadView: View {
         // Confirmed rather than fired on the tap: the badge sits right where
         // a finger rests while scrolling, and a resend puts frames on the
         // air—never something a stray touch should do. What the tap means
-        // depends on the failure's age. A recent one goes out as an edit of
+        // depends on the failure's age. A recent one goes out again as
         // itself, invisible to anyone who already has it; an old one can
-        // only go out as a genuinely new message.
+        // only go out as a genuinely new message. One that went under forward
+        // secrecy never quietly goes without it: going without is its own
+        // choice.
         .confirmationDialog(
             resendingMessage?.isWithinReviseWindow == false
                 ? "Resend this message?" : "Retry sending message?",
@@ -648,18 +648,16 @@ struct ConversationThreadView: View {
             ),
             titleVisibility: .visible
         ) {
-            if resendingMessage?.isWithinReviseWindow == false {
-                Button("Resend") {
-                    if let message = resendingMessage {
-                        resendingMessage = nil
-                        resendAsNew(message)
-                    }
+            if let message = resendingMessage {
+                let again = message.isWithinReviseWindow ? resend : resendAsNew
+                Button(message.isWithinReviseWindow ? "Try Again" : "Resend") {
+                    resendingMessage = nil
+                    again(message, message.isForwardSecret)
                 }
-            } else {
-                Button("Retry") {
-                    if let message = resendingMessage {
+                if message.isForwardSecret {
+                    Button("Send Without Forward Secrecy") {
                         resendingMessage = nil
-                        resend(message)
+                        again(message, false)
                     }
                 }
             }
@@ -798,9 +796,9 @@ struct ConversationThreadView: View {
     /// Fire-and-forget like a reaction: the message is already in the
     /// transcript, so nothing new appears and the reader stays put—the
     /// row's own delivery caption is the progress report.
-    private func resend(_ message: ChatMessageSummary) {
+    private func resend(_ message: ChatMessageSummary, forwardSecret: Bool) {
         Task {
-            switch await messageActions.resend(conversation, message) {
+            switch await messageActions.resend(conversation, message, forwardSecret) {
             case let .sent(updated, warning):
                 conversation = updated
                 if let warning {
@@ -819,9 +817,9 @@ struct ConversationThreadView: View {
     /// Unlike an in-place resend, this one adds a row: the failed bubble goes
     /// and the same words arrive as the newest message, so the transcript
     /// follows them to the bottom the way it follows any send.
-    private func resendAsNew(_ message: ChatMessageSummary) {
+    private func resendAsNew(_ message: ChatMessageSummary, forwardSecret: Bool) {
         Task {
-            switch await messageActions.resendAsNew(conversation, message) {
+            switch await messageActions.resendAsNew(conversation, message, forwardSecret) {
             case let .sent(updated, warning):
                 conversation = updated
                 if let warning {
@@ -1161,7 +1159,7 @@ struct ConversationThreadView: View {
     /// out cannot be named to anyone.
     private func canReply(to message: ChatMessageSummary) -> Bool {
         !message.isDeleted && !message.isGapPlaceholder && !message.isUnavailable
-            && !(message.isOutbound && message.deliveryState?.lowercased() == "failed")
+            && !message.isDeliveryFailed
     }
 
     private func startReply(to message: ChatMessageSummary) {

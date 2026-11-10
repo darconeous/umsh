@@ -509,7 +509,7 @@ struct ChatMessageSummary: Identifiable, Hashable, Sendable {
     }
 
     /// How long a message stays revisable in place—editable, or resendable
-    /// as an edit of itself. Wire references only reach the recent past:
+    /// under its own wire ID. Wire references only reach the recent past:
     /// peers keep a bounded window of recent IDs, and the stream may have
     /// reset since. Four hours is comfortably inside what survives.
     static let reviseWindow: TimeInterval = 4 * 60 * 60
@@ -520,6 +520,24 @@ struct ChatMessageSummary: Identifiable, Hashable, Sendable {
     var isWithinReviseWindow: Bool {
         guard let sentDate else { return false }
         return Date.now.timeIntervalSince(sentDate) <= Self.reviseWindow
+    }
+
+    /// One of ours that delivery gave up on, either way
+    /// (``isDeliveryFailure(_:)``). It may be sent again or deleted, and
+    /// nothing can be said about it.
+    var isDeliveryFailed: Bool { isOutbound && Self.isDeliveryFailure(deliveryState) }
+
+    /// One of ours that never went out where its peer could read it, as
+    /// opposed to one that went out and drew no acknowledgment.
+    var isUndelivered: Bool { isOutbound && deliveryState?.lowercased() == "undelivered" }
+
+    /// Whether a stored delivery state is a failure: 'undelivered' (it did
+    /// not arrive) or 'failed' (it went out unacknowledged and may have).
+    static func isDeliveryFailure(_ state: String?) -> Bool {
+        switch state?.lowercased() {
+        case "failed", "undelivered": true
+        default: false
+        }
     }
 }
 
@@ -652,16 +670,18 @@ struct ChatMessageActions: Sendable {
     /// Send text in reply to a message, quoting it.
     var reply: @Sendable (ConversationListItem, ChatMessageSummary, String) async
         -> MessageSendResult = { _, _, _ in .failed("Messaging is unavailable.") }
-    /// Put a failed message back on the air—an edit of itself carrying the
-    /// same text, so a peer who already has it never sees it twice. Recent
+    /// Put a failed message back on the air as itself—its unacknowledged
+    /// frames under its own wire ID, so a peer who already has it never sees
+    /// it twice—under forward secrecy or not, as the flag says. Recent
     /// failures only (``ChatMessageSummary/isWithinReviseWindow``).
-    var resend: @Sendable (ConversationListItem, ChatMessageSummary) async
-        -> MessageSendResult = { _, _ in .failed("Messaging is unavailable.") }
+    var resend: @Sendable (ConversationListItem, ChatMessageSummary, Bool) async
+        -> MessageSendResult = { _, _, _ in .failed("Messaging is unavailable.") }
     /// Send a failed message's text again as a genuinely new message, for
-    /// failures too old to revise in place: the old row is removed and the
-    /// text goes out (and lands in the transcript) as the newest message.
-    var resendAsNew: @Sendable (ConversationListItem, ChatMessageSummary) async
-        -> MessageSendResult = { _, _ in .failed("Messaging is unavailable.") }
+    /// failures too old to resend in place: the old row is removed and the
+    /// text goes out (and lands in the transcript) as the newest message,
+    /// under forward secrecy or not, as the flag says.
+    var resendAsNew: @Sendable (ConversationListItem, ChatMessageSummary, Bool) async
+        -> MessageSendResult = { _, _, _ in .failed("Messaging is unavailable.") }
     /// Ask for a run of missing messages no repair is under way for
     /// (``ChatMessageSummary/isGapIdle``).
     var requestMissing: @Sendable (ConversationListItem, [ChatMessageSummary]) async

@@ -259,6 +259,9 @@ struct ChatReactionNotificationTarget: Equatable, Sendable {
 struct ChatDeliveryFailure: Equatable, Sendable {
     let conversationAddress: String
     let body: String
+    /// It never went out where the peer could read it, rather than going
+    /// out and drawing no acknowledgment.
+    let undelivered: Bool
 }
 
 /// How a channel's key was established, which decides what may be shared.
@@ -2614,8 +2617,8 @@ actor SQLiteApplicationStore {
     /// gave up on.
     ///
     /// Only a crossing counts. `delivery_state` is recomputed from the whole
-    /// fragment table on every record, so a message already resolved to
-    /// 'failed' recomputes to 'failed' again on the next fragment, and a
+    /// fragment table on every record, so a message already resolved to a
+    /// failure recomputes to one again on the next fragment, and a
     /// redelivered batch replays the same records; announcing the state rather
     /// than the transition would announce one failure many times.
     @discardableResult
@@ -2640,14 +2643,14 @@ actor SQLiteApplicationStore {
                     DO UPDATE SET
                     via_flood = MAX(chat_delivery_fragment.via_flood, excluded.via_flood),
                     state = CASE
-                        -- A positive ack is definitive proof the frame landed;
-                        -- it supersedes an earlier transport failure so a
-                        -- resent-and-acked fragment can recover from 'failed'.
+                        -- A positive ack is definitive proof the frame landed,
+                        -- whatever was said of it before or after.
                         WHEN chat_delivery_fragment.state = 'acknowledged'
                             OR excluded.state = 'acknowledged' THEN 'acknowledged'
-                        WHEN chat_delivery_fragment.state = 'failed'
-                            OR excluded.state = 'failed' THEN 'failed'
-                        ELSE 'sent'
+                        -- Otherwise the latest word stands: a fragment sent
+                        -- again is in flight again, whatever became of it
+                        -- the last time.
+                        ELSE excluded.state
                     END
                     """
                 )
@@ -2674,12 +2677,12 @@ actor SQLiteApplicationStore {
                     deliveryHandle: delivery.handle
                 )
 
-                guard before != "failed",
-                      try deliveryState(
+                guard !ChatMessageSummary.isDeliveryFailure(before),
+                      ChatMessageSummary.isDeliveryFailure(try deliveryState(
                           ownerIdentityID: ownerIdentityID,
                           sessionID: delivery.sessionId,
                           handle: delivery.handle
-                      ) == "failed",
+                      )),
                       let failure = try failedMessage(
                           ownerIdentityID: ownerIdentityID,
                           sessionID: delivery.sessionId,
@@ -2699,8 +2702,11 @@ actor SQLiteApplicationStore {
     /// transmission keys, never assumed to be a row's primary key.
     ///
     /// Every fragment acknowledged wins over any earlier failure, so a
-    /// resent-and-acked message recovers to 'acknowledged'. When that recovery
-    /// crosses from a previously 'failed' row, flag it "delivered late".
+    /// late-acknowledged message recovers to 'acknowledged'. When that
+    /// recovery crosses from a failed row, flag it "delivered late". Short of
+    /// that, one fragment that never went out where the peer could read it
+    /// ('undelivered') means the message did not arrive, which outranks one
+    /// that went out unacknowledged ('failed') and may have.
     /// SQLite evaluates every SET right-hand side against the pre-update row,
     /// so `delivery_state` below reads the old value while the counts read the
     /// fragments as they now stand.
@@ -2727,7 +2733,7 @@ actor SQLiteApplicationStore {
                         AND f.via_flood = 1
                 ),
                 delivered_late = CASE
-                    WHEN chat_message.delivery_state = 'failed'
+                    WHEN chat_message.delivery_state IN ('failed', 'undelivered')
                         AND (
                             SELECT COUNT(*) FROM chat_delivery_fragment f
                             WHERE f.owner_identity_id = chat_message.owner_identity_id
@@ -2745,6 +2751,13 @@ actor SQLiteApplicationStore {
                         AND f.handle = chat_message.delivery_handle
                         AND f.state = 'acknowledged'
                 ) >= COALESCE(chat_message.fragment_count, 1) THEN 'acknowledged'
+                WHEN EXISTS (
+                    SELECT 1 FROM chat_delivery_fragment f
+                    WHERE f.owner_identity_id = chat_message.owner_identity_id
+                        AND f.session_id = chat_message.delivery_session_id
+                        AND f.handle = chat_message.delivery_handle
+                        AND f.state = 'undelivered'
+                ) THEN 'undelivered'
                 WHEN EXISTS (
                     SELECT 1 FROM chat_delivery_fragment f
                     WHERE f.owner_identity_id = chat_message.owner_identity_id
@@ -2904,7 +2917,7 @@ actor SQLiteApplicationStore {
     ) throws -> ChatDeliveryFailure? {
         let statement = try prepare(
             """
-            SELECT conversation_address, body FROM chat_message
+            SELECT conversation_address, body, delivery_state = 'undelivered' FROM chat_message
             WHERE owner_identity_id = ? AND delivery_session_id = ? AND delivery_handle = ?
                 AND direction = 1 AND deleted = 0 AND is_reaction = 0 AND body <> ''
             """
@@ -2916,7 +2929,8 @@ actor SQLiteApplicationStore {
         guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
         return ChatDeliveryFailure(
             conversationAddress: Self.stringColumn(statement, at: 0),
-            body: Self.stringColumn(statement, at: 1)
+            body: Self.stringColumn(statement, at: 1),
+            undelivered: sqlite3_column_int(statement, 2) != 0
         )
     }
 
@@ -2943,7 +2957,7 @@ actor SQLiteApplicationStore {
                 }
                 let statement = try prepare(
                     """
-                    UPDATE chat_message SET delivery_state = 'failed'
+                    UPDATE chat_message SET delivery_state = 'undelivered'
                     WHERE owner_identity_id = ? AND delivery_session_id = ?
                         AND delivery_handle = ? AND direction = 1
                     """
@@ -2978,7 +2992,7 @@ actor SQLiteApplicationStore {
                 WHERE owner_identity_id = ? AND (session_id, handle) = (
                     SELECT delivery_session_id, delivery_handle FROM chat_message
                     WHERE owner_identity_id = ? AND session_id = ? AND handle = ?
-                        AND direction = 1 AND delivery_state = 'failed'
+                        AND direction = 1 AND delivery_state IN ('failed', 'undelivered')
                 )
                 """
             )
@@ -2999,7 +3013,7 @@ actor SQLiteApplicationStore {
                         WHERE target.owner_identity_id = ?
                             AND target.session_id = ? AND target.handle = ?
                             AND target.direction = 1
-                            AND target.delivery_state = 'failed'
+                            AND target.delivery_state IN ('failed', 'undelivered')
                     )
                 """
             )
@@ -3016,7 +3030,7 @@ actor SQLiteApplicationStore {
                 """
                 DELETE FROM chat_message
                 WHERE owner_identity_id = ? AND session_id = ? AND handle = ?
-                    AND direction = 1 AND delivery_state = 'failed'
+                    AND direction = 1 AND delivery_state IN ('failed', 'undelivered')
                 """
             )
             defer { sqlite3_finalize(message) }
@@ -3027,18 +3041,25 @@ actor SQLiteApplicationStore {
         }
     }
 
-    /// Outbound messages still marked 'pending' at launch were composed by a
-    /// previous process. Their in-flight transmissions died with that process
-    /// and the replacement Rust session issues new session IDs, so no delivery
-    /// evidence can ever arrive for them. Resolve them to 'failed' instead of
-    /// promising a send that is no longer happening. Messages that reached
-    /// 'sent' keep that state: they went on the air and may well have arrived.
-    func failStalePendingMessages(ownerIdentityID: String) throws {
+    /// Outbound messages still awaiting word at launch were sent by a previous
+    /// process. Their in-flight transmissions died with that process and the
+    /// replacement Rust session issues new session IDs, so no delivery
+    /// evidence can ever arrive for them. One still 'pending' never went out:
+    /// 'undelivered'. A direct one that reached 'sent' went on the air and may
+    /// well have arrived, but its acknowledgment can no longer be heard:
+    /// 'failed'. A channel message's 'sent' is already its last word.
+    func settleInterruptedDeliveries(ownerIdentityID: String) throws {
         let statement = try prepare(
             """
-            UPDATE chat_message SET delivery_state = 'failed'
+            UPDATE chat_message SET delivery_state = CASE delivery_state
+                WHEN 'pending' THEN 'undelivered'
+                ELSE 'failed'
+            END
             WHERE owner_identity_id = ? AND direction = 1
-                AND delivery_state = 'pending'
+                AND (
+                    delivery_state = 'pending'
+                    OR (delivery_state = 'sent' AND conversation_address NOT LIKE 'ch:%')
+                )
             """
         )
         defer { sqlite3_finalize(statement) }
@@ -3102,6 +3123,106 @@ actor SQLiteApplicationStore {
         try check(sqlite3_bind_int(statement, 4, lookup.fragmentIndex.map(Int32.init) ?? -1))
         guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
         return Self.dataColumn(statement, at: 0)
+    }
+
+    /// What a resend of one of our messages puts back on the air: its
+    /// archived fragments, less those already acknowledged under its current
+    /// delivery pointer. Empty when nothing is archived under the wire ID the
+    /// row carries—an edit's content lives under the edit's own ID, which the
+    /// row does not keep—so the caller sends it as a new message instead.
+    func chatResendFrames(
+        ownerIdentityID: String,
+        conversationAddress: String,
+        sessionID: String,
+        handle: UInt32,
+        wireID: UInt8
+    ) throws -> [MobileChatArchiveRecord] {
+        let statement = try prepare(
+            """
+            SELECT a.fragment_index, a.payload FROM chat_outbound_archive a
+            WHERE a.owner_identity_id = ?1 AND a.conversation_address = ?2
+                AND a.message_id = ?5
+                AND NOT EXISTS (
+                    SELECT 1 FROM chat_message m
+                    JOIN chat_delivery_fragment f
+                        ON f.owner_identity_id = m.owner_identity_id
+                        AND f.session_id = m.delivery_session_id
+                        AND f.handle = m.delivery_handle
+                    WHERE m.owner_identity_id = ?1 AND m.session_id = ?3 AND m.handle = ?4
+                        AND f.fragment_index = a.fragment_index
+                        AND f.state = 'acknowledged'
+                )
+            ORDER BY a.fragment_index
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind(ownerIdentityID, to: statement, at: 1)
+        try bind(conversationAddress, to: statement, at: 2)
+        try bind(sessionID, to: statement, at: 3)
+        try check(sqlite3_bind_int64(statement, 4, Int64(handle)))
+        try check(sqlite3_bind_int(statement, 5, Int32(wireID)))
+        var frames: [MobileChatArchiveRecord] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            let fragment = sqlite3_column_int(statement, 0)
+            frames.append(MobileChatArchiveRecord(
+                conversationAddress: conversationAddress,
+                messageId: wireID,
+                fragmentIndex: fragment < 0 ? nil : UInt8(truncatingIfNeeded: fragment),
+                payload: Self.dataColumn(statement, at: 1)
+            ))
+        }
+        return frames
+    }
+
+    /// Point each resent message's delivery at the transmission its frames
+    /// went out under again, ahead of any word of them, and record whether
+    /// they go under forward secrecy. What was acknowledged stays so; what
+    /// was last said of the rest no longer holds.
+    func applyChatResends(
+        ownerIdentityID: String,
+        resends: [MobileChatResendRecord]
+    ) throws {
+        guard !resends.isEmpty else { return }
+        try transaction {
+            for resend in resends {
+                let row = try prepare(
+                    """
+                    SELECT rowid FROM chat_message
+                    WHERE owner_identity_id = ? AND session_id = ? AND handle = ?
+                        AND direction = 1
+                    """
+                )
+                defer { sqlite3_finalize(row) }
+                try bind(ownerIdentityID, to: row, at: 1)
+                try bind(String(resend.message.sessionId), to: row, at: 2)
+                try check(sqlite3_bind_int64(row, 3, Int64(resend.message.handle)))
+                guard sqlite3_step(row) == SQLITE_ROW else { continue }
+                let target = sqlite3_column_int64(row, 0)
+
+                let secrecy = try prepare(
+                    "UPDATE chat_message SET forward_secret = ? WHERE rowid = ?"
+                )
+                defer { sqlite3_finalize(secrecy) }
+                try check(sqlite3_bind_int(secrecy, 1, resend.forwardSecret ? 1 : 0))
+                try check(sqlite3_bind_int64(secrecy, 2, target))
+                try stepDone(secrecy)
+
+                let deliverySessionID = String(resend.deliverySessionId)
+                try adoptDelivery(
+                    ownerIdentityID: ownerIdentityID,
+                    targetRowid: target,
+                    sessionID: deliverySessionID,
+                    handle: resend.deliveryHandle,
+                    fragmentCount: nil,
+                    keepingAcknowledged: true
+                )
+                try recomputeDeliveryState(
+                    ownerIdentityID: ownerIdentityID,
+                    deliverySessionID: deliverySessionID,
+                    deliveryHandle: resend.deliveryHandle
+                )
+            }
+        }
     }
 
     /// The columns every transcript read selects, in the order
@@ -4306,12 +4427,13 @@ actor SQLiteApplicationStore {
             try check(sqlite3_bind_int64(statement, 8, target))
             try stepDone(statement)
             if mutation.kind == .edit {
-                try adoptEditDelivery(
+                try adoptDelivery(
                     ownerIdentityID: ownerIdentityID,
                     targetRowid: target,
-                    editSessionID: sessionID,
-                    editHandle: mutation.handle,
-                    fragmentCount: mutation.fragmentCount
+                    sessionID: sessionID,
+                    handle: mutation.handle,
+                    fragmentCount: mutation.fragmentCount,
+                    keepingAcknowledged: false
                 )
             }
         }
@@ -4321,8 +4443,7 @@ actor SQLiteApplicationStore {
     /// Store an inbound edit whose original this phone never had, as the
     /// message itself.
     ///
-    /// A resend goes on the air as an edit of the failed message carrying its
-    /// same text, and the receiver may hold nothing for it to revise—the
+    /// An edit can reach a receiver holding nothing for it to revise—the
     /// original never arrived, and no gap placeholder was reserved when the
     /// edit's own sequence advance established a fresh baseline. The row is
     /// keyed by the edit mutation's session and handle (its only durable
@@ -4429,45 +4550,79 @@ actor SQLiteApplicationStore {
         return sqlite3_column_int64(statement, 0)
     }
 
-    /// Aim an edited outbound message's delivery pointer at the edit's own
-    /// transmission—the frames now carrying the row's content.
+    /// Aim an outbound message's delivery pointer at a new transmission of
+    /// it: an edit's frames, now carrying the row's content, or the frames a
+    /// resend put back on the air.
     ///
     /// An edit inserts no row: its mutation revises the original's stored
     /// body. Its frames, though, are tracked under the edit's own engine
     /// handle, so without this the row would keep waiting on evidence for a
-    /// transmission nobody is making any more—an edit that failed could
-    /// never say so, and a resent message (a resend airs as an edit of
-    /// itself) would stay "Not Delivered" however well the resend went. Only
-    /// the pointer moves: the row's primary key is its compose identity,
-    /// which further edits and reactions still reference. The fragments of
-    /// the superseded attempt go with it.
+    /// transmission nobody is making any more, and an edit that failed could
+    /// never say so. A resend after a restart is tracked under the handle the
+    /// engine took the message back as. Only the pointer moves: the row's
+    /// primary key is its compose identity, which further edits and reactions
+    /// still reference.
+    ///
+    /// An edit's superseded attempt goes with it whole. A resend sends only
+    /// what was not acknowledged, so with `keepingAcknowledged` the fragments
+    /// already acknowledged move to the new pointer and only the rest are
+    /// forgotten, under either pointer: replaying the move lands in the same
+    /// place.
     ///
     /// Scoped to outbound rows in SQL rather than checked here: an inbound
     /// edit only ever revises its own sender's inbound rows, which carry no
     /// delivery state, and this keeps that invariant local to one statement.
     ///
-    /// `fragmentCount` is how many frames the edit put in flight—its
+    /// `fragmentCount` is how many frames an edit put in flight—its
     /// content fragments under its own encoding overhead, so the count the
     /// original compose stamped no longer describes what is on the air.
-    private func adoptEditDelivery(
+    private func adoptDelivery(
         ownerIdentityID: String,
         targetRowid: Int64,
-        editSessionID: String,
-        editHandle: UInt32,
-        fragmentCount: UInt8?
+        sessionID: String,
+        handle: UInt32,
+        fragmentCount: UInt8?,
+        keepingAcknowledged: Bool
     ) throws {
+        if keepingAcknowledged {
+            let carried = try prepare(
+                """
+                UPDATE OR REPLACE chat_delivery_fragment SET session_id = ?, handle = ?
+                WHERE owner_identity_id = ? AND state = 'acknowledged'
+                    AND (session_id, handle) = (
+                        SELECT delivery_session_id, delivery_handle FROM chat_message
+                        WHERE rowid = ? AND direction = 1
+                    )
+                """
+            )
+            defer { sqlite3_finalize(carried) }
+            try bind(sessionID, to: carried, at: 1)
+            try check(sqlite3_bind_int64(carried, 2, Int64(handle)))
+            try bind(ownerIdentityID, to: carried, at: 3)
+            try check(sqlite3_bind_int64(carried, 4, targetRowid))
+            try stepDone(carried)
+        }
+
         let stale = try prepare(
             """
             DELETE FROM chat_delivery_fragment
-            WHERE owner_identity_id = ? AND (session_id, handle) = (
-                SELECT delivery_session_id, delivery_handle FROM chat_message
-                WHERE rowid = ? AND direction = 1
-            )
+            WHERE owner_identity_id = ?1
+                AND (?3 = 0 OR state <> 'acknowledged')
+                AND (
+                    (session_id, handle) = (
+                        SELECT delivery_session_id, delivery_handle FROM chat_message
+                        WHERE rowid = ?2 AND direction = 1
+                    )
+                    OR (?3 = 1 AND session_id = ?4 AND handle = ?5)
+                )
             """
         )
         defer { sqlite3_finalize(stale) }
         try bind(ownerIdentityID, to: stale, at: 1)
         try check(sqlite3_bind_int64(stale, 2, targetRowid))
+        try check(sqlite3_bind_int(stale, 3, keepingAcknowledged ? 1 : 0))
+        try bind(sessionID, to: stale, at: 4)
+        try check(sqlite3_bind_int64(stale, 5, Int64(handle)))
         try stepDone(stale)
 
         let message = try prepare(
@@ -4480,8 +4635,8 @@ actor SQLiteApplicationStore {
             """
         )
         defer { sqlite3_finalize(message) }
-        try bind(editSessionID, to: message, at: 1)
-        try check(sqlite3_bind_int64(message, 2, Int64(editHandle)))
+        try bind(sessionID, to: message, at: 1)
+        try check(sqlite3_bind_int64(message, 2, Int64(handle)))
         try bindOptionalInt(fragmentCount.map(Int64.init), to: message, at: 3)
         try check(sqlite3_bind_int64(message, 4, targetRowid))
         try stepDone(message)

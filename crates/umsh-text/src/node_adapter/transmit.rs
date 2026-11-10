@@ -1,7 +1,7 @@
 //! Engine transmissions to `LocalNode` sends, and their delivery back to the
 //! engine.
 
-use alloc::collections::{BTreeSet, VecDeque};
+use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::vec::Vec;
 
 use umsh_core::{ChannelKey, ChannelTag, PacketType, PayloadType, PublicKey};
@@ -166,7 +166,14 @@ pub struct Stall {
 /// a session is held again when it was bound to go under one. A frame bound
 /// to a session that is not held waits for one rather than failing; the
 /// owner of that binding releases or fails what waits (see
-/// [`TransmitQueue::awaiting_secrecy`]).
+/// [`TransmitQueue::awaiting_secrecy`]). While it waits, the request for
+/// that session stands in for it: its message reads as sent once the
+/// request has gone, and the repeaters heard carrying the request are its
+/// (see [`TransmitQueue::secrecy_asked`]).
+///
+/// A frame that fails having never gone out where its peer could read it
+/// is reported [`TransmitUpdate::Undelivered`]; one that went and was not
+/// acknowledged, [`TransmitUpdate::Failed`].
 pub struct TransmitQueue {
     window: usize,
     pending: VecDeque<Queued>,
@@ -176,7 +183,10 @@ pub struct TransmitQueue {
     watching: Vec<Watching>,
     /// Frames to peers that must go under a session with forward secrecy,
     /// waiting for one. They take no room in the window.
-    awaiting_secrecy: Vec<Queued>,
+    awaiting_secrecy: Vec<Waiting>,
+    /// The request for a session with forward secrecy last sent to each
+    /// peer, until that session is held or will not be.
+    setups: BTreeMap<[u8; 32], SendProgressTicket>,
     /// Peers that have acknowledged a frame since the last one failed:
     /// they know our key.
     pipeline_ready: BTreeSet<[u8; 32]>,
@@ -195,6 +205,26 @@ impl Queued {
         match self.transmission.destination {
             Destination::Peer(peer) => Some(peer),
             Destination::Channel(_) | Destination::ChannelPeer { .. } => None,
+        }
+    }
+}
+
+/// A frame waiting on a session with forward secrecy with its peer, and
+/// what of that session's request has been reported for it.
+struct Waiting {
+    queued: Queued,
+    /// The request was reported as the frame's sending.
+    setup_sent: bool,
+    /// The request's tally revision last reported.
+    setup_repeats: u32,
+}
+
+impl Waiting {
+    fn new(queued: Queued) -> Self {
+        Self {
+            queued,
+            setup_sent: false,
+            setup_repeats: 0,
         }
     }
 }
@@ -276,6 +306,7 @@ impl TransmitQueue {
             in_flight: Vec::new(),
             watching: Vec::new(),
             awaiting_secrecy: Vec::new(),
+            setups: BTreeMap::new(),
             pipeline_ready: BTreeSet::new(),
         }
     }
@@ -300,22 +331,37 @@ impl TransmitQueue {
     pub fn awaiting_secrecy(&self) -> BTreeSet<[u8; 32]> {
         self.awaiting_secrecy
             .iter()
-            .filter_map(|queued| queued.peer())
+            .filter_map(|waiting| waiting.queued.peer())
             .map(|peer| peer.0)
             .collect()
+    }
+
+    /// Takes `ticket` as the request just sent to `peer` for a session
+    /// with forward secrecy. What waits on that session, now or later,
+    /// reports the request's progress as its own until the session is
+    /// held or will not be.
+    pub fn secrecy_asked(&mut self, peer: &PublicKey, ticket: SendProgressTicket) {
+        self.setups.insert(peer.0, ticket);
+        // A new request starts its own tally.
+        for waiting in &mut self.awaiting_secrecy {
+            if waiting.queued.peer() == Some(*peer) {
+                waiting.setup_sent = false;
+                waiting.setup_repeats = 0;
+            }
+        }
     }
 
     /// Sends what waits on a session with `peer` next, now that one is
     /// held.
     pub fn release_secrecy_waits(&mut self, peer: &PublicKey) {
         let waits = self.take_secrecy_waits(peer);
-        for queued in waits.into_iter().rev() {
-            self.pending.push_front(queued);
+        for waiting in waits.into_iter().rev() {
+            self.pending.push_front(waiting.queued);
         }
     }
 
     /// Fails what waits on a session with `peer`, now that none will be
-    /// held.
+    /// held: none of it went where `peer` could read it.
     pub fn fail_secrecy_waits<P, const SLOTS: usize, const PAGES: usize>(
         &mut self,
         peer: &PublicKey,
@@ -324,17 +370,54 @@ impl TransmitQueue {
     ) where
         P: TextProfile + Clone,
     {
-        for queued in self.take_secrecy_waits(peer) {
-            Undeliverable::of(&queued).fail(chat, now_ms);
+        for waiting in self.take_secrecy_waits(peer) {
+            Undeliverable::of(&waiting.queued).fail(chat, now_ms);
         }
     }
 
-    fn take_secrecy_waits(&mut self, peer: &PublicKey) -> Vec<Queued> {
+    /// Takes what waits on a session with `peer`, whose request is done
+    /// with either way.
+    fn take_secrecy_waits(&mut self, peer: &PublicKey) -> Vec<Waiting> {
+        self.setups.remove(&peer.0);
         let (waits, others) = core::mem::take(&mut self.awaiting_secrecy)
             .into_iter()
-            .partition(|queued| queued.peer() == Some(*peer));
+            .partition(|waiting| waiting.queued.peer() == Some(*peer));
         self.awaiting_secrecy = others;
         waits
+    }
+
+    /// Reports, for each frame waiting on a session, how that session's
+    /// request is going: sent once it has gone, and the repeaters heard
+    /// carrying it.
+    fn report_setups<P, const SLOTS: usize, const PAGES: usize>(
+        &mut self,
+        chat: &mut ChatFacade<P, SLOTS, PAGES>,
+        now_ms: u64,
+    ) where
+        P: TextProfile + Clone,
+    {
+        for waiting in &mut self.awaiting_secrecy {
+            let Some(peer) = waiting.queued.peer() else {
+                continue;
+            };
+            let Some(setup) = self.setups.get(&peer.0) else {
+                continue;
+            };
+            if !setup.was_transmitted() {
+                continue;
+            }
+            let session_id = waiting.queued.session_id;
+            let transmission_id = waiting.queued.transmission.transmission_id;
+            if !waiting.setup_sent {
+                waiting.setup_sent = true;
+                chat.transmit_update(session_id, transmission_id, TransmitUpdate::Sent, now_ms);
+            }
+            if waiting.queued.transmission.message.is_some()
+                && let Some(frame) = chat.in_flight_frame(session_id, transmission_id)
+            {
+                report_repeats(chat, session_id, frame, setup, &mut waiting.setup_repeats);
+            }
+        }
     }
 
     pub fn has_pending(&self) -> bool {
@@ -456,7 +539,7 @@ impl TransmitQueue {
             Sent::Ticket(ticket) => ticket,
             Sent::Unsendable => return Departed::Failed(Undeliverable::of(&departure.queued)),
             Sent::NoSession if departure.queued.peer().is_some() => {
-                self.awaiting_secrecy.push(departure.queued);
+                self.awaiting_secrecy.push(Waiting::new(departure.queued));
                 return Departed::AwaitsSecrecy;
             }
             Sent::NoSession => return Departed::Failed(Undeliverable::of(&departure.queued)),
@@ -465,6 +548,13 @@ impl TransmitQueue {
                 return Departed::Busy;
             }
         };
+        // A frame that went under a session holds it: whatever request
+        // opened it is done with.
+        if departure.forward_secret == Some(true)
+            && let Some(peer) = departure.queued.peer()
+        {
+            self.setups.remove(&peer.0);
+        }
         let transmission = &departure.queued.transmission;
         // A repair goes to one member, and the multicast it repairs has
         // already had its repeaters counted.
@@ -585,7 +675,7 @@ impl TransmitQueue {
                 } = self.in_flight.swap_remove(index);
                 queued.resent = true;
                 if forward_secret == Some(true) {
-                    self.awaiting_secrecy.push(queued);
+                    self.awaiting_secrecy.push(Waiting::new(queued));
                 } else {
                     resent.push(queued);
                 }
@@ -598,7 +688,7 @@ impl TransmitQueue {
                 chat.transmit_update(
                     entry.session_id,
                     entry.transmission_id,
-                    TransmitUpdate::Failed,
+                    failure(&entry.ticket),
                     now_ms,
                 );
                 self.in_flight.swap_remove(index);
@@ -610,6 +700,7 @@ impl TransmitQueue {
         for queued in resent.into_iter().rev() {
             self.pending.push_front(queued);
         }
+        self.report_setups(chat, now_ms);
         self.watching.retain_mut(|watching| {
             report_repeats(
                 chat,
@@ -634,13 +725,15 @@ impl TransmitQueue {
     where
         P: TextProfile + Clone,
     {
-        let waiting = self
-            .pending
-            .drain(..)
-            .chain(self.awaiting_secrecy.drain(..));
+        let waiting = self.pending.drain(..).chain(
+            self.awaiting_secrecy
+                .drain(..)
+                .map(|waiting| waiting.queued),
+        );
         for queued in waiting {
             Undeliverable::of(&queued).fail(chat, now_ms);
         }
+        self.setups.clear();
         self.watching.clear();
         let mut receipts = Vec::new();
         for entry in self.in_flight.drain(..) {
@@ -650,11 +743,21 @@ impl TransmitQueue {
             chat.transmit_update(
                 entry.session_id,
                 entry.transmission_id,
-                TransmitUpdate::Failed,
+                failure(&entry.ticket),
                 now_ms,
             );
         }
         receipts
+    }
+}
+
+/// How a frame whose send came to nothing failed: undelivered when it never
+/// went on the air, unacknowledged when it did.
+fn failure(ticket: &SendProgressTicket) -> TransmitUpdate {
+    if ticket.was_transmitted() {
+        TransmitUpdate::Failed
+    } else {
+        TransmitUpdate::Undelivered
     }
 }
 
@@ -784,7 +887,7 @@ pub enum Departed {
 }
 
 /// A frame that will not go out: an unregistrable peer, a channel no
-/// longer held.
+/// longer held, a session with forward secrecy that will not be held.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Undeliverable {
     pub session_id: u64,
@@ -799,7 +902,7 @@ impl Undeliverable {
         }
     }
 
-    /// Tells the facade the frame failed.
+    /// Tells the facade the frame was not delivered.
     pub fn fail<P, const SLOTS: usize, const PAGES: usize>(
         self,
         chat: &mut ChatFacade<P, SLOTS, PAGES>,
@@ -810,7 +913,7 @@ impl Undeliverable {
         chat.transmit_update(
             self.session_id,
             self.transmission_id,
-            TransmitUpdate::Failed,
+            TransmitUpdate::Undelivered,
             now_ms,
         );
     }

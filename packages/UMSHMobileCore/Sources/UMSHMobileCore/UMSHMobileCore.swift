@@ -1576,6 +1576,16 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
     func completeOutboundFrame(frameId: UInt64, transmitted: Bool) throws
 
     /**
+     * Compose a failed message's words again as a new message, as status
+     * text or not, under a session with forward secrecy or never under one,
+     * as the user chose: for a message that can no longer be sent again in
+     * place ([`Self::resend_chat`]). With `forward_secret` and no session
+     * held with the conversation's peer, one is asked for, and the message
+     * waits for it.
+     */
+    func composeAgain(conversationAddress: String, clientToken: UInt32, body: String, status: Bool, forwardSecret: Bool) async throws  -> MobileChatComposeBatchRecord
+
+    /**
      * Compose a deletion (empty edit on the wire) of a previously sent
      * message. Same original-reference rules as [`Self::compose_edit`].
      */
@@ -1816,6 +1826,22 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
      * order, which is how a path still being built reaches its last hop.
      */
     func requestPeerRepeatersPage(peerAddress: String, cursor: Data?, sourceRoute: [Data]) async throws  -> MobileMeshPeerRepeatersPageRecord
+
+    /**
+     * Send a message of ours that was not delivered again, as itself: the
+     * frames the platform archived for those of its fragments not yet
+     * acknowledged go again under its wire ID, so a peer that had it keeps
+     * one copy and one that did not gets it as any message. The message may
+     * come from an earlier app launch, by its persisted `(wire_id, epoch)`.
+     * Its frames go under a session with forward secrecy or never under
+     * one, as `forward_secret` says; with it and no session held, one is
+     * asked for, and the frames wait for it.
+     *
+     * A [`MobileChatResendRecord`] in the next chat batch, ahead of any
+     * word of the frames, says where that word comes. Fails with
+     * `ChatResendNotInPlace` when the message's stream has moved past it.
+     */
+    func resendChat(conversationAddress: String, original: MobileChatOriginalRef, frames: [MobileChatArchiveRecord], forwardSecret: Bool) async throws
 
     func restoreChat(checkpoints: [MobileChatCheckpointRecord]) async throws
 
@@ -2513,6 +2539,30 @@ open func completeOutboundFrame(frameId: UInt64, transmitted: Bool)throws   {try
 }
 
     /**
+     * Compose a failed message's words again as a new message, as status
+     * text or not, under a session with forward secrecy or never under one,
+     * as the user chose: for a message that can no longer be sent again in
+     * place ([`Self::resend_chat`]). With `forward_secret` and no session
+     * held with the conversation's peer, one is asked for, and the message
+     * waits for it.
+     */
+open func composeAgain(conversationAddress: String, clientToken: UInt32, body: String, status: Bool, forwardSecret: Bool)async throws  -> MobileChatComposeBatchRecord  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemeshsession_compose_again(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(conversationAddress),FfiConverterUInt32.lower(clientToken),FfiConverterString.lower(body),FfiConverterBool.lower(status),FfiConverterBool.lower(forwardSecret)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeMobileChatComposeBatchRecord_lift,
+            errorHandler: FfiConverterTypeMobileMeshError_lift
+        )
+}
+
+    /**
      * Compose a deletion (empty edit on the wire) of a previously sent
      * message. Same original-reference rules as [`Self::compose_edit`].
      */
@@ -3095,6 +3145,36 @@ open func requestPeerRepeatersPage(peerAddress: String, cursor: Data?, sourceRou
             completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeMobileMeshPeerRepeatersPageRecord_lift,
+            errorHandler: FfiConverterTypeMobileMeshError_lift
+        )
+}
+
+    /**
+     * Send a message of ours that was not delivered again, as itself: the
+     * frames the platform archived for those of its fragments not yet
+     * acknowledged go again under its wire ID, so a peer that had it keeps
+     * one copy and one that did not gets it as any message. The message may
+     * come from an earlier app launch, by its persisted `(wire_id, epoch)`.
+     * Its frames go under a session with forward secrecy or never under
+     * one, as `forward_secret` says; with it and no session held, one is
+     * asked for, and the frames wait for it.
+     *
+     * A [`MobileChatResendRecord`] in the next chat batch, ahead of any
+     * word of the frames, says where that word comes. Fails with
+     * `ChatResendNotInPlace` when the message's stream has moved past it.
+     */
+open func resendChat(conversationAddress: String, original: MobileChatOriginalRef, frames: [MobileChatArchiveRecord], forwardSecret: Bool)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemeshsession_resend_chat(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(conversationAddress),FfiConverterTypeMobileChatOriginalRef_lower(original),FfiConverterSequenceTypeMobileChatArchiveRecord.lower(frames),FfiConverterBool.lower(forwardSecret)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
             errorHandler: FfiConverterTypeMobileMeshError_lift
         )
 }
@@ -7189,6 +7269,89 @@ public func FfiConverterTypeMobileChatRepeatRecord_lower(_ value: MobileChatRepe
 
 
 /**
+ * A message of ours sent again in place: the frames it had unacknowledged
+ * go again under its wire ID, and word of them is reported under
+ * `delivery_session_id`/`delivery_handle`, which differ from the message's
+ * own once the app has restarted since it was composed. Comes ahead of
+ * any word of those frames: the platform forgets what it last heard of
+ * every fragment not yet acknowledged, and points the message's delivery
+ * at the new handle.
+ */
+public struct MobileChatResendRecord: Equatable, Hashable {
+    /**
+     * The message, as the platform named it to send again.
+     */
+    public var message: MobileChatOriginalRef
+    public var deliverySessionId: UInt64
+    public var deliveryHandle: UInt32
+    /**
+     * Whether it now goes under a session with forward secrecy.
+     */
+    public var forwardSecret: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The message, as the platform named it to send again.
+         */message: MobileChatOriginalRef, deliverySessionId: UInt64, deliveryHandle: UInt32,
+        /**
+         * Whether it now goes under a session with forward secrecy.
+         */forwardSecret: Bool) {
+        self.message = message
+        self.deliverySessionId = deliverySessionId
+        self.deliveryHandle = deliveryHandle
+        self.forwardSecret = forwardSecret
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileChatResendRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileChatResendRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileChatResendRecord {
+        return
+            try MobileChatResendRecord(
+                message: FfiConverterTypeMobileChatOriginalRef.read(from: &buf),
+                deliverySessionId: FfiConverterUInt64.read(from: &buf),
+                deliveryHandle: FfiConverterUInt32.read(from: &buf),
+                forwardSecret: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileChatResendRecord, into buf: inout [UInt8]) {
+        FfiConverterTypeMobileChatOriginalRef.write(value.message, into: &buf)
+        FfiConverterUInt64.write(value.deliverySessionId, into: &buf)
+        FfiConverterUInt32.write(value.deliveryHandle, into: &buf)
+        FfiConverterBool.write(value.forwardSecret, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileChatResendRecord_lift(_ buf: RustBuffer) throws -> MobileChatResendRecord {
+    return try FfiConverterTypeMobileChatResendRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileChatResendRecord_lower(_ value: MobileChatResendRecord) -> RustBuffer {
+    return FfiConverterTypeMobileChatResendRecord.lower(value)
+}
+
+
+/**
  * Physical-layer metadata for a record produced by a live received frame.
  *
  * The engine is transport-agnostic and carries none of this, so the facade
@@ -8857,6 +9020,11 @@ public struct MobileMeshSessionUpdateRecord: Equatable, Hashable {
      */
     public var chatBatchId: UInt64?
     public var chatMutations: [MobileChatMutationRecord]
+    /**
+     * Messages of ours sent again in place, applied before
+     * `chat_deliveries`: word of their frames comes after.
+     */
+    public var chatResends: [MobileChatResendRecord]
     public var chatDeliveries: [MobileChatDeliveryRecord]
     /**
      * Repeaters overheard carrying our messages, a whole tally per
@@ -8907,7 +9075,11 @@ public struct MobileMeshSessionUpdateRecord: Equatable, Hashable {
          * by a poll at least a second after the last that carried it, or by
          * the first poll after a new wake listener; a poll in between carries
          * no batch.
-         */chatBatchId: UInt64?, chatMutations: [MobileChatMutationRecord], chatDeliveries: [MobileChatDeliveryRecord],
+         */chatBatchId: UInt64?, chatMutations: [MobileChatMutationRecord],
+        /**
+         * Messages of ours sent again in place, applied before
+         * `chat_deliveries`: word of their frames comes after.
+         */chatResends: [MobileChatResendRecord], chatDeliveries: [MobileChatDeliveryRecord],
         /**
          * Repeaters overheard carrying our messages, a whole tally per
          * fragment each time it grows.
@@ -8938,6 +9110,7 @@ public struct MobileMeshSessionUpdateRecord: Equatable, Hashable {
         self.peerHeardEvents = peerHeardEvents
         self.chatBatchId = chatBatchId
         self.chatMutations = chatMutations
+        self.chatResends = chatResends
         self.chatDeliveries = chatDeliveries
         self.chatRepeats = chatRepeats
         self.chatArchiveLookups = chatArchiveLookups
@@ -8971,6 +9144,7 @@ public struct FfiConverterTypeMobileMeshSessionUpdateRecord: FfiConverterRustBuf
                 peerHeardEvents: FfiConverterSequenceTypeMobileMeshPeerHeardRecord.read(from: &buf),
                 chatBatchId: FfiConverterOptionUInt64.read(from: &buf),
                 chatMutations: FfiConverterSequenceTypeMobileChatMutationRecord.read(from: &buf),
+                chatResends: FfiConverterSequenceTypeMobileChatResendRecord.read(from: &buf),
                 chatDeliveries: FfiConverterSequenceTypeMobileChatDeliveryRecord.read(from: &buf),
                 chatRepeats: FfiConverterSequenceTypeMobileChatRepeatRecord.read(from: &buf),
                 chatArchiveLookups: FfiConverterSequenceTypeMobileChatArchiveLookupRecord.read(from: &buf),
@@ -8990,6 +9164,7 @@ public struct FfiConverterTypeMobileMeshSessionUpdateRecord: FfiConverterRustBuf
         FfiConverterSequenceTypeMobileMeshPeerHeardRecord.write(value.peerHeardEvents, into: &buf)
         FfiConverterOptionUInt64.write(value.chatBatchId, into: &buf)
         FfiConverterSequenceTypeMobileChatMutationRecord.write(value.chatMutations, into: &buf)
+        FfiConverterSequenceTypeMobileChatResendRecord.write(value.chatResends, into: &buf)
         FfiConverterSequenceTypeMobileChatDeliveryRecord.write(value.chatDeliveries, into: &buf)
         FfiConverterSequenceTypeMobileChatRepeatRecord.write(value.chatRepeats, into: &buf)
         FfiConverterSequenceTypeMobileChatArchiveLookupRecord.write(value.chatArchiveLookups, into: &buf)
@@ -15425,9 +15600,19 @@ public func FfiConverterTypeMobileChatArchiveResultKind_lower(_ value: MobileCha
 
 public enum MobileChatDeliveryState: Equatable, Hashable {
 
+    /**
+     * It went on the air, or the session setup it waits on did.
+     */
     case sent
     case acknowledged
+    /**
+     * It went on the air and was not acknowledged: it may have arrived.
+     */
     case failed
+    /**
+     * It never went out where the peer could read it: it did not arrive.
+     */
+    case undelivered
 
 
 
@@ -15455,6 +15640,8 @@ public struct FfiConverterTypeMobileChatDeliveryState: FfiConverterRustBuffer {
 
         case 3: return .failed
 
+        case 4: return .undelivered
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
@@ -15473,6 +15660,10 @@ public struct FfiConverterTypeMobileChatDeliveryState: FfiConverterRustBuffer {
 
         case .failed:
             writeInt(&buf, Int32(3))
+
+
+        case .undelivered:
+            writeInt(&buf, Int32(4))
 
         }
     }
@@ -16326,6 +16517,11 @@ enum MobileMeshError: Swift.Error, Equatable, Hashable, Foundation.LocalizedErro
      * of them than a frame carries.
      */
     case InvalidRoute
+    /**
+     * A message could not be sent again under its wire ID: its stream has
+     * moved past it. It can only go again as a new message.
+     */
+    case ChatResendNotInPlace
 
 
 
@@ -16369,6 +16565,7 @@ public struct FfiConverterTypeMobileMeshError: FfiConverterRustBuffer {
         case 12: return .InvalidRequest
         case 13: return .NoAnswer
         case 14: return .InvalidRoute
+        case 15: return .ChatResendNotInPlace
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -16435,6 +16632,10 @@ public struct FfiConverterTypeMobileMeshError: FfiConverterRustBuffer {
 
         case .InvalidRoute:
             writeInt(&buf, Int32(14))
+
+
+        case .ChatResendNotInPlace:
+            writeInt(&buf, Int32(15))
 
         }
     }
@@ -20294,6 +20495,31 @@ fileprivate struct FfiConverterSequenceTypeMobileChatRepeatRecord: FfiConverterR
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeMobileChatResendRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileChatResendRecord]
+
+    public static func write(_ value: [MobileChatResendRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileChatResendRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileChatResendRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileChatResendRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileChatResendRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeMobileChatSenderResolutionRecord: FfiConverterRustBuffer {
     typealias SwiftType = [MobileChatSenderResolutionRecord]
 
@@ -22273,6 +22499,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_complete_outbound_frame() != 46063) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_compose_again() != 37464) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_compose_delete() != 4404) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -22352,6 +22581,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_request_peer_repeaters_page() != 20119) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_resend_chat() != 32216) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_restore_chat() != 28606) {

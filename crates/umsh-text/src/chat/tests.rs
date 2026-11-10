@@ -164,7 +164,8 @@ fn rejecting_fails_frames_and_restores_from_checkpoints() {
     let lost_wire = insert(&lost.mutations).wire_id;
     let drain = chat.reject(lost, &[checkpoint], seeds(2), 2).unwrap();
 
-    // The failure is reported under the session that composed it.
+    // The failure is reported under the session that composed it, as
+    // undelivered: nothing of it went out.
     assert_eq!(drain.session_id, 1);
     assert!(drain.outbound.is_empty());
     assert_eq!(
@@ -173,7 +174,7 @@ fn rejecting_fails_frames_and_restores_from_checkpoints() {
             handle: lost_handle,
             fragment: None,
             fragments: 1,
-            state: DeliveryState::Failed,
+            state: DeliveryState::Undelivered,
             via_flood: false,
         }]
     );

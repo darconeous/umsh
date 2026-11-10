@@ -239,8 +239,8 @@ struct ChatMessageBubble: View, @MainActor Equatable {
     var onEdit: (() -> Void)?
     var onDelete: (() -> Void)?
     /// Put a failed message back on the air. Present only while the message
-    /// reads "Not Delivered"; both the red badge and the menu's Try Again
-    /// invoke it.
+    /// reads "Not Delivered" or "Unconfirmed"; both the red badge and the
+    /// menu's Try Again invoke it.
     var onResend: (() -> Void)?
     var onShowDetails: (() -> Void)?
     var onShowSender: (() -> Void)?
@@ -286,9 +286,7 @@ struct ChatMessageBubble: View, @MainActor Equatable {
             && (lhs.onOpenQuote == nil) == (rhs.onOpenQuote == nil)
     }
 
-    private var isFailed: Bool {
-        message.deliveryState?.lowercased() == "failed"
-    }
+    private var isFailed: Bool { message.isDeliveryFailed }
 
     /// Room kept clear beside a failed bubble for the failure badge: the
     /// glyph plus the gap that separates them. Scaled with the badge's own
@@ -495,7 +493,9 @@ struct ChatMessageBubble: View, @MainActor Equatable {
                     }
                     .buttonStyle(.plain)
                     .disabled(onResend == nil)
-                    .accessibilityLabel("Message not delivered")
+                    .accessibilityLabel(
+                        message.isUndelivered ? Text("Message not delivered") : Text("Message unconfirmed")
+                    )
                     .accessibilityHint(onResend == nil ? "" : "Sends the message again")
                 }
             }
@@ -714,7 +714,16 @@ struct ChatMessageBubble: View, @MainActor Equatable {
     private func deliveryLabel(at now: Date) -> String? {
         guard let state = message.deliveryState else { return nil }
         switch state.lowercased() {
-        case "failed": return "Not Delivered"
+        case "undelivered":
+            return String(
+                localized: "Not Delivered",
+                comment: "Delivery caption: our message never went out where its recipient could read it."
+            )
+        case "failed":
+            return String(
+                localized: "Unconfirmed",
+                comment: "Delivery caption: our message went out, but no acknowledgment came back."
+            )
         case "acknowledged":
             // A recovery from failure is noteworthy on its own row, unlike a
             // routine "Delivered" which only annotates the newest message.

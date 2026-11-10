@@ -1369,7 +1369,7 @@ fn a_draft_grows_only_to_what_its_chat_takes() {
 }
 
 /// A direct message is kept as Sending and handed to the device node; a
-/// frame that cannot go makes it Unconfirmed, and a retry sends it again.
+/// frame that cannot go makes it Undelivered, and a retry sends it again.
 #[test]
 fn a_direct_message_goes_out_and_can_be_retried() {
     let sim = device();
@@ -1397,7 +1397,7 @@ fn a_direct_message_goes_out_and_can_be_retried() {
     };
     assert!(events(&node).contains(&settled));
     let failed = node.message(chat.id, message.id).unwrap();
-    assert_eq!(failed.delivery, Delivery::Unconfirmed);
+    assert_eq!(failed.delivery, Delivery::Undelivered);
 
     assert!(node.retry(chat.id, message.id));
     assert_eq!(
@@ -1415,7 +1415,7 @@ fn a_direct_message_goes_out_and_can_be_retried() {
     assert!(node.departed(again, Sent::Unsendable));
     assert_eq!(
         node.message(chat.id, message.id).unwrap().delivery,
-        Delivery::Unconfirmed
+        Delivery::Undelivered
     );
     // Failing again comes out again.
     assert!(events(&node).contains(&settled));
@@ -1485,9 +1485,9 @@ fn a_restarted_node_keeps_its_chats_and_its_sequence() {
     assert_eq!(after.sequence.unwrap().message_id, before.wrapping_add(1));
 }
 
-/// A message on its way when the node stopped reads Unconfirmed once it
-/// starts again, and a retry sends it under its wire ID, with word of it
-/// reaching the message.
+/// A message on its way, but not yet sent, when the node stopped reads
+/// Undelivered once it starts again, and a retry sends it under its wire
+/// ID, with word of it reaching the message.
 #[test]
 fn a_message_cut_off_by_a_restart_can_be_retried() {
     let sim = device();
@@ -1508,7 +1508,7 @@ fn a_message_cut_off_by_a_restart_can_be_retried() {
     let second = node_on(&sim, &flash);
     assert_eq!(
         second.message(chat.id, said.id).unwrap().delivery,
-        Delivery::Unconfirmed
+        Delivery::Undelivered
     );
     assert!(second.retry(chat.id, said.id));
     assert_eq!(
@@ -1521,7 +1521,7 @@ fn a_message_cut_off_by_a_restart_can_be_retried() {
     assert!(second.departed(again, Sent::Unsendable));
     assert_eq!(
         second.message(chat.id, said.id).unwrap().delivery,
-        Delivery::Unconfirmed
+        Delivery::Undelivered
     );
 }
 
@@ -2194,7 +2194,7 @@ fn a_message_shown_under_forward_secrecy_never_goes_without() {
     ));
     assert!(node.depart().is_none(), "it waits for the session");
     let waiting = node.message(chat.id, message.id).unwrap();
-    assert_ne!(waiting.delivery, Delivery::Unconfirmed);
+    assert!(!waiting.delivery.failed());
     node.arrive(Arrival::Secrecy {
         peer: robin,
         change: Secrecy::Established,
@@ -2215,7 +2215,7 @@ fn a_message_shown_under_forward_secrecy_never_goes_without() {
         change: Secrecy::Failed,
     });
     let failed = node.message(chat.id, message.id).unwrap();
-    assert_eq!(failed.delivery, Delivery::Unconfirmed);
+    assert_eq!(failed.delivery, Delivery::Undelivered, "it never went");
     assert!(failed.forward_secret);
 
     assert!(node.retry(chat.id, message.id));
@@ -2244,6 +2244,66 @@ fn a_message_shown_under_forward_secrecy_never_goes_without() {
     node.send(chat.id, "Here", None, false).unwrap();
     let held = node.depart().expect("the next leaves");
     assert_eq!(held.forward_secrecy(), Some(false), "though one is held");
+}
+
+/// A message that went under a session the peer opened, caught by its
+/// end, is not delivered; sent again as it was, it asks for a session of
+/// its own, though the peer is not one who prefers one, and waits for it.
+#[test]
+fn trying_again_under_forward_secrecy_asks_for_a_session() {
+    let sim = device();
+    let (node, clock) = started(&sim);
+    let robin = PublicKey([0x37; 32]);
+    clock.set(2_000);
+    node.pump();
+    let avatar = node.avatar();
+    let chat = node
+        .direct_chat(&address_of(&robin), "Robin", &avatar)
+        .unwrap();
+    // Robin opened a session.
+    node.arrive(Arrival::Secrecy {
+        peer: robin,
+        change: Secrecy::Established,
+    });
+    assert!(node.chat(chat.id).unwrap().forward_secret);
+    let message = node.send(chat.id, "Meet at the ridge", None, true).unwrap();
+    assert!(node.command().is_none(), "one is held");
+    let departure = node.depart().expect("the message leaves");
+    assert_eq!(departure.forward_secrecy(), Some(true));
+    // Robin ended it before it went, and asks for no other.
+    node.arrive(Arrival::Secrecy {
+        peer: robin,
+        change: Secrecy::Ended,
+    });
+    assert!(node.departed(departure, Sent::NoSession));
+    node.service();
+    assert!(node.command().is_none(), "nothing is asked for unprompted");
+    let failed = node.message(chat.id, message.id).unwrap();
+    assert_eq!(failed.delivery, Delivery::Undelivered);
+
+    assert!(node.retry(chat.id, message.id));
+    assert!(
+        matches!(
+            node.command(),
+            Some(Command::StartSecrecy { peer, .. }) if peer == robin
+        ),
+        "trying again asks for a session"
+    );
+    let again = node.depart().expect("it leaves again");
+    assert_eq!(again.forward_secrecy(), Some(true), "as it was");
+    assert!(node.departed(again, Sent::NoSession));
+    node.service();
+    assert!(node.depart().is_none(), "it waits for the session");
+    assert_eq!(
+        node.message(chat.id, message.id).unwrap().delivery,
+        Delivery::Sending
+    );
+    node.arrive(Arrival::Secrecy {
+        peer: robin,
+        change: Secrecy::Established,
+    });
+    let resumed = node.depart().expect("it leaves under the session");
+    assert_eq!(resumed.forward_secrecy(), Some(true));
 }
 
 /// A reaction sent while the chat shows forward secrecy says so, and goes

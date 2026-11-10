@@ -128,7 +128,7 @@ pub fn view(state: &State, chat: ChatId) -> impl View<Rgb565, State> + use<> {
     // member's message offers its sender.
     let over = find(actions)
         .map(|m| {
-            if m.delivery == Delivery::Unconfirmed && !m.deleted {
+            if m.delivery.failed() && !m.deleted {
                 return Over::Unconfirmed;
             }
             let item = |verb: &str, name: &SharedText| {
@@ -252,7 +252,7 @@ enum Over {
     /// A message's actions: my reaction, whether a member sent it, and what
     /// its card offers.
     Actions(Option<Reaction>, bool, Option<CardItem>),
-    /// An unconfirmed message's actions.
+    /// An unconfirmed or undelivered message's actions.
     Unconfirmed,
     /// How to send again a message that was to go under forward secrecy.
     Resend,
@@ -1482,7 +1482,10 @@ fn delivery_shows(delivery: Delivery, newest: bool, channel: bool) -> bool {
     let settled = match delivery {
         Delivery::Delivered => true,
         Delivery::Sent => channel,
-        Delivery::Sending | Delivery::Confirming | Delivery::Unconfirmed => false,
+        Delivery::Sending
+        | Delivery::Confirming
+        | Delivery::Unconfirmed
+        | Delivery::Undelivered => false,
     };
     newest || !settled
 }
@@ -1506,6 +1509,10 @@ fn caption(message: &Message, delivery: bool) -> Option<Caption> {
             Delivery::Unconfirmed => {
                 color = theme::AMBER;
                 Status::Said("Unconfirmed")
+            }
+            Delivery::Undelivered => {
+                color = theme::AMBER;
+                Status::Said("Not delivered")
             }
         }),
         _ => None,
@@ -2064,7 +2071,8 @@ fn actions_menu(
     menu_frame(m, content)
 }
 
-/// What pressing an unconfirmed message gives: Retry, Details, and Delete.
+/// What pressing an unconfirmed or undelivered message gives: Retry,
+/// Details, and Delete.
 #[inline(never)]
 fn unconfirmed_menu(m: &'static Metrics) -> impl View<Rgb565, State> + use<> {
     menu_frame(
@@ -2254,6 +2262,7 @@ mod tests {
             Delivery::Sent,
             Delivery::Confirming,
             Delivery::Unconfirmed,
+            Delivery::Undelivered,
         ] {
             assert!(delivery_shows(delivery, false, false));
         }

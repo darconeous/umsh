@@ -590,7 +590,7 @@ async fn a_message_caught_by_the_peer_ending_the_session_goes_under_a_new_one() 
                     }
                 }
                 let delivery = alice.node.message(chat.id, caught.id).unwrap().delivery;
-                failed |= delivery == Delivery::Unconfirmed;
+                failed |= delivery.failed();
                 arrivals > 0 && delivery == Delivery::Delivered
             })
             .await;
@@ -1130,6 +1130,57 @@ async fn a_direct_message_waits_on_its_acknowledgment_once_its_repeaters_go_quie
                 how_sent(&alice, chat.id, sent.id).0 == Delivery::Confirming
             })
             .await;
+        })
+        .await;
+}
+
+/// A message that waits on a session with forward secrecy reads as the
+/// request for that session goes: sent, naming the repeater that carried
+/// the request, then waiting. The message itself never leaves, as no
+/// session is had.
+#[tokio::test(flavor = "current_thread")]
+async fn a_message_waiting_on_its_session_shows_the_request_going() {
+    LocalSet::new()
+        .run_until(async {
+            let network = SimulatedNetwork::new();
+            let near = network.add_radio_with_config(255, 400);
+            let middle = network.add_radio_with_config(255, 400);
+            network.connect_bidirectional(near.id(), middle.id());
+            let alice = board(near, [0x11; 32]).await;
+            repeater(middle, [0x33; 32]).await;
+            let nowhere = *SoftwareIdentity::from_secret_bytes(&[0x44; 32]).public_key();
+            phone_inserts(&alice.sim, prop::DEV_PEERS, &nowhere.0);
+            alice.node.pump();
+            let peer = alice.node.peers()[0].id;
+            alice.node.set_forward_secrecy(peer, true);
+
+            let chat = alice
+                .node
+                .direct_chat(&address(&nowhere), "Nowhere", &alice.node.avatar())
+                .unwrap();
+            assert!(alice.node.chat(chat.id).unwrap().forward_secret);
+            let sent = alice
+                .node
+                .send(chat.id, "Anyone out there?", None, true)
+                .unwrap();
+            until("the repeater was not heard carrying the request", || {
+                matches!(
+                    how_sent(&alice, chat.id, sent.id),
+                    (Delivery::Sent, Some(_))
+                )
+            })
+            .await;
+            until("it never settled into waiting", || {
+                how_sent(&alice, chat.id, sent.id).0 == Delivery::Confirming
+            })
+            .await;
+            assert!(
+                matches!(
+                    alice.mesh.pfs_status(&nowhere).await.unwrap(),
+                    PfsStatus::Requested
+                ),
+                "the message waits on the session"
+            );
         })
         .await;
 }

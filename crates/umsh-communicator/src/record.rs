@@ -92,6 +92,9 @@ pub struct Delivery {
     pub sent: u16,
     pub acked: u16,
     pub failed: u16,
+    /// The failed fragments known not to have arrived: they never went
+    /// where the peer could read them. A subset of `failed`.
+    pub undelivered: u16,
     /// How many fragments the message went in, once word of one has said;
     /// 0 until then.
     pub fragments: u8,
@@ -102,19 +105,31 @@ impl Delivery {
     /// `fragments` (0 when the word does not say). A failed fragment that
     /// is sent again, or acknowledged after all, has not failed. An
     /// acknowledged one was delivered, so a resend of it that goes
-    /// unanswered does not fail it.
+    /// unanswered, or never goes, does not fail it.
     pub fn set(&mut self, fragment: Option<u8>, fragments: u8, state: DeliveryState) {
         self.fragments = self.fragments.max(fragments);
         let bit = 1u16 << fragment.unwrap_or(0).min(15);
         match state {
             DeliveryState::Sent => self.sent |= bit,
             DeliveryState::Acked => self.acked |= bit,
-            DeliveryState::Failed if self.acked & bit != 0 => {}
+            DeliveryState::Failed | DeliveryState::Undelivered if self.acked & bit != 0 => {}
             DeliveryState::Failed => self.failed |= bit,
+            DeliveryState::Undelivered => {
+                self.failed |= bit;
+                self.undelivered |= bit;
+            }
         }
-        if state != DeliveryState::Failed {
+        if !matches!(state, DeliveryState::Failed | DeliveryState::Undelivered) {
             self.failed &= !bit;
         }
+        if state != DeliveryState::Undelivered {
+            self.undelivered &= !bit;
+        }
+    }
+
+    /// Whether some of the message is known not to have arrived.
+    pub fn undelivered(&self) -> bool {
+        self.undelivered != 0
     }
 
     /// Whether all of the message was acknowledged: every fragment it went
@@ -137,14 +152,20 @@ impl Delivery {
     }
 
     /// Fails what was awaited of a message whose frames went with a
-    /// session that is gone: each fragment sent but unacknowledged, or the
-    /// first when none was sent. Returns whether anything was awaited.
+    /// session that is gone: each fragment sent but unacknowledged, or,
+    /// undelivered, the first when none was sent. Returns whether anything
+    /// was awaited.
     pub fn interrupt(&mut self, multicast: bool) -> bool {
         if !self.awaited(multicast) {
             return false;
         }
         let open = self.sent & !self.acked;
-        self.failed |= if open == 0 { 1 } else { open };
+        if open == 0 {
+            self.failed |= 1;
+            self.undelivered |= 1;
+        } else {
+            self.failed |= open;
+        }
         true
     }
 
@@ -153,6 +174,8 @@ impl Delivery {
         let bit = 1u16 << fragment.unwrap_or(0).min(15);
         if self.acked & bit != 0 {
             Some(DeliveryState::Acked)
+        } else if self.undelivered & bit != 0 {
+            Some(DeliveryState::Undelivered)
         } else if self.failed & bit != 0 {
             Some(DeliveryState::Failed)
         } else if self.sent & bit != 0 {
@@ -466,6 +489,23 @@ mod tests {
         delivery.set(Some(1), 2, DeliveryState::Failed);
         assert_eq!(delivery.state(Some(0)), Some(DeliveryState::Acked));
         assert_eq!(delivery.state(Some(1)), Some(DeliveryState::Failed));
+        assert!(!delivery.undelivered());
+    }
+
+    /// A fragment that never went did not arrive; sent again, it is on its
+    /// way, and once it goes unanswered it may have arrived.
+    #[test]
+    fn an_undelivered_fragment_is_told_from_an_unacknowledged_one() {
+        let mut delivery = Delivery::default();
+        delivery.set(None, 1, DeliveryState::Undelivered);
+        assert_eq!(delivery.state(None), Some(DeliveryState::Undelivered));
+        assert!(delivery.undelivered());
+        assert_ne!(delivery.failed, 0);
+        delivery.set(None, 1, DeliveryState::Sent);
+        assert_eq!((delivery.failed, delivery.undelivered), (0, 0));
+        delivery.set(None, 1, DeliveryState::Failed);
+        assert_eq!(delivery.state(None), Some(DeliveryState::Failed));
+        assert!(!delivery.undelivered());
     }
 
     /// The first frame to a peer goes alone until it is acknowledged, so a

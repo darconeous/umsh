@@ -53,11 +53,12 @@ use umsh_ulcp::{frame, ids::prop, items};
 
 use crate::meet::{MeetRequest, MobileMeetStateRecord, PhoneMeeting};
 use crate::mobile_chat::{
-    ChatDrain, ComposeFailure, MobileChatArchiveLookupRecord, MobileChatArchiveResultKind,
-    MobileChatCheckpointRecord, MobileChatComposeBatchRecord, MobileChatDeliveryRecord,
-    MobileChatDirection, MobileChatMutationKind, MobileChatMutationRecord, MobileChatOriginalRef,
-    MobileChatPresence, MobileChatRegardingRef, MobileChatRepeatRecord, MobileChatRxMetadataRecord,
-    MobileChatSenderResolutionRecord, MobileChatState,
+    ChatDrain, ComposeFailure, MobileChatArchiveLookupRecord, MobileChatArchiveRecord,
+    MobileChatArchiveResultKind, MobileChatCheckpointRecord, MobileChatComposeBatchRecord,
+    MobileChatDeliveryRecord, MobileChatDirection, MobileChatMutationKind,
+    MobileChatMutationRecord, MobileChatOriginalRef, MobileChatPresence, MobileChatRegardingRef,
+    MobileChatRepeatRecord, MobileChatResendRecord, MobileChatRxMetadataRecord,
+    MobileChatSenderResolutionRecord, MobileChatState, NotInPlace,
 };
 use crate::ulcp::{MobileAnnouncementRecord, UlcpPropertyFrameRecord, UlcpSyncRecord};
 use crate::{MobileCounterStore, MobileError, MobileIdentity};
@@ -137,6 +138,9 @@ pub enum MobileMeshError {
     /// A route named something other than two-octet router hints, or more
     /// of them than a frame carries.
     InvalidRoute,
+    /// A message could not be sent again under its wire ID: its stream has
+    /// moved past it. It can only go again as a new message.
+    ChatResendNotInPlace,
 }
 
 impl fmt::Display for MobileMeshError {
@@ -156,6 +160,7 @@ impl fmt::Display for MobileMeshError {
             Self::InvalidRequest => "MESH_INVALID_REQUEST",
             Self::NoAnswer => "MESH_NO_ANSWER",
             Self::InvalidRoute => "MESH_INVALID_ROUTE",
+            Self::ChatResendNotInPlace => "MESH_CHAT_RESEND_NOT_IN_PLACE",
         })
     }
 }
@@ -916,6 +921,9 @@ pub struct MobileMeshSessionUpdateRecord {
     /// no batch.
     pub chat_batch_id: Option<u64>,
     pub chat_mutations: Vec<MobileChatMutationRecord>,
+    /// Messages of ours sent again in place, applied before
+    /// `chat_deliveries`: word of their frames comes after.
+    pub chat_resends: Vec<MobileChatResendRecord>,
     pub chat_deliveries: Vec<MobileChatDeliveryRecord>,
     /// Repeaters overheard carrying our messages, a whole tally per
     /// fragment each time it grows.
@@ -1065,6 +1073,13 @@ enum WorkerCommand {
         batch_id: u64,
         response: oneshot::Sender<Result<(), MobileMeshError>>,
     },
+    ResendChat {
+        conversation_address: String,
+        original: MobileChatOriginalRef,
+        frames: Vec<MobileChatArchiveRecord>,
+        forward_secret: bool,
+        response: oneshot::Sender<Result<(), MobileMeshError>>,
+    },
     RejectChatBatch {
         batch_id: u64,
         checkpoints: Vec<MobileChatCheckpointRecord>,
@@ -1207,6 +1222,13 @@ enum ChatComposeRequest {
     Text {
         body: String,
     },
+    /// A message's words sent again as a new message, under a session with
+    /// forward secrecy or never under one, as the user chose.
+    Again {
+        body: String,
+        status: bool,
+        forward_secret: bool,
+    },
     Edit {
         original: MobileChatOriginalRef,
         body: String,
@@ -1235,6 +1257,7 @@ struct InboundFrame {
 )]
 enum MobileChatWorkerEvent {
     Mutation(MobileChatMutationRecord),
+    Resent(MobileChatResendRecord),
     SenderResolution(MobileChatSenderResolutionRecord),
     Delivery(MobileChatDeliveryRecord),
     Repeats(MobileChatRepeatRecord),
@@ -1252,6 +1275,7 @@ const CHAT_REDELIVERY: Duration = Duration::from_secs(1);
 struct PendingChatEventBatch {
     id: u64,
     mutations: Vec<MobileChatMutationRecord>,
+    resends: Vec<MobileChatResendRecord>,
     deliveries: Vec<MobileChatDeliveryRecord>,
     repeats: Vec<MobileChatRepeatRecord>,
     archive_lookups: Vec<MobileChatArchiveLookupRecord>,
@@ -1267,6 +1291,7 @@ impl PendingChatEventBatch {
         let mut batch = Self {
             id,
             mutations: Vec::new(),
+            resends: Vec::new(),
             deliveries: Vec::new(),
             repeats: Vec::new(),
             archive_lookups: Vec::new(),
@@ -1277,6 +1302,7 @@ impl PendingChatEventBatch {
         for event in events {
             match event {
                 MobileChatWorkerEvent::Mutation(record) => batch.mutations.push(record),
+                MobileChatWorkerEvent::Resent(record) => batch.resends.push(record),
                 MobileChatWorkerEvent::Delivery(record) => batch.deliveries.push(record),
                 MobileChatWorkerEvent::Repeats(record) => batch.repeats.push(record),
                 MobileChatWorkerEvent::ArchiveLookup(record) => batch.archive_lookups.push(record),
@@ -2801,6 +2827,67 @@ impl MobileMeshSession {
         .await
     }
 
+    /// Compose a failed message's words again as a new message, as status
+    /// text or not, under a session with forward secrecy or never under one,
+    /// as the user chose: for a message that can no longer be sent again in
+    /// place ([`Self::resend_chat`]). With `forward_secret` and no session
+    /// held with the conversation's peer, one is asked for, and the message
+    /// waits for it.
+    pub async fn compose_again(
+        &self,
+        conversation_address: String,
+        client_token: u32,
+        body: String,
+        status: bool,
+        forward_secret: bool,
+    ) -> Result<MobileChatComposeBatchRecord, MobileMeshError> {
+        self.compose_chat(
+            conversation_address,
+            client_token,
+            ChatComposeRequest::Again {
+                body,
+                status,
+                forward_secret,
+            },
+        )
+        .await
+    }
+
+    /// Send a message of ours that was not delivered again, as itself: the
+    /// frames the platform archived for those of its fragments not yet
+    /// acknowledged go again under its wire ID, so a peer that had it keeps
+    /// one copy and one that did not gets it as any message. The message may
+    /// come from an earlier app launch, by its persisted `(wire_id, epoch)`.
+    /// Its frames go under a session with forward secrecy or never under
+    /// one, as `forward_secret` says; with it and no session held, one is
+    /// asked for, and the frames wait for it.
+    ///
+    /// A [`MobileChatResendRecord`] in the next chat batch, ahead of any
+    /// word of the frames, says where that word comes. Fails with
+    /// `ChatResendNotInPlace` when the message's stream has moved past it.
+    pub async fn resend_chat(
+        &self,
+        conversation_address: String,
+        original: MobileChatOriginalRef,
+        frames: Vec<MobileChatArchiveRecord>,
+        forward_secret: bool,
+    ) -> Result<(), MobileMeshError> {
+        let (response, result) = oneshot::channel();
+        self.commands
+            .send(WorkerCommand::ResendChat {
+                conversation_address,
+                original,
+                frames,
+                forward_secret,
+                response,
+            })
+            .await
+            .map_err(|_| MobileMeshError::SessionUnavailable)?;
+        result
+            .await
+            .map_err(|_| MobileMeshError::SessionUnavailable)?
+    }
+
     /// Compose an edit of a previously sent message. The original may come
     /// from an earlier app launch: its persisted `(wire_id, epoch)` is used
     /// when the facade session no longer holds a live handle, and the engine
@@ -3068,6 +3155,7 @@ impl MobileMeshSession {
                 update_chat = Some((
                     batch.id,
                     batch.mutations.clone(),
+                    batch.resends.clone(),
                     batch.deliveries.clone(),
                     batch.repeats.clone(),
                     batch.archive_lookups.clone(),
@@ -3079,15 +3167,26 @@ impl MobileMeshSession {
         let (
             chat_batch_id,
             chat_mutations,
+            chat_resends,
             chat_deliveries,
             chat_repeats,
             chat_archive_lookups,
             chat_sender_resolutions,
             chat_diagnostics,
         ) = match update_chat {
-            Some((id, mutations, deliveries, repeats, lookups, resolutions, diagnostics)) => (
+            Some((
+                id,
+                mutations,
+                resends,
+                deliveries,
+                repeats,
+                lookups,
+                resolutions,
+                diagnostics,
+            )) => (
                 Some(id),
                 mutations,
+                resends,
                 deliveries,
                 repeats,
                 lookups,
@@ -3104,6 +3203,7 @@ impl MobileMeshSession {
             peer_heard_events,
             chat_batch_id,
             chat_mutations,
+            chat_resends,
             chat_deliveries,
             chat_repeats,
             chat_archive_lookups,
@@ -4846,6 +4946,19 @@ async fn run_worker(
                                         budget,
                                         now_ms,
                                     ),
+                                    ChatComposeRequest::Again {
+                                        body,
+                                        status,
+                                        forward_secret,
+                                    } => chat.compose_again(
+                                        conversation,
+                                        client_token,
+                                        body,
+                                        *status,
+                                        *forward_secret,
+                                        budget,
+                                        now_ms,
+                                    ),
                                     ChatComposeRequest::Edit { original, body } => chat.compose_edit(
                                         conversation,
                                         client_token,
@@ -4880,6 +4993,18 @@ async fn run_worker(
                                             now_ms,
                                         ),
                                 };
+                                // Sent again under forward secrecy, it waits
+                                // for a session, asked for now if none is.
+                                if composed.is_ok()
+                                    && let ChatComposeRequest::Again {
+                                        forward_secret: true,
+                                        ..
+                                    } = request
+                                    && let ConversationKey::Direct { peer } = conversation
+                                    && ask_secrecy(&node, &mut chat_queue, peer, flood_hops.default_hops).await
+                                {
+                                    persist_counters().await;
+                                }
                                 match composed {
                                     Ok(composed) => {
                                         for delivery in composed.deliveries {
@@ -4906,6 +5031,72 @@ async fn run_worker(
                                 // a channel this session does not hold a key
                                 // for—from here those are the same thing.
                                 Err(MobileMeshError::UnknownConversation)
+                            };
+                            let _ = response.send(result);
+                        }
+                        Some(WorkerCommand::ResendChat {
+                            conversation_address,
+                            original,
+                            frames,
+                            forward_secret,
+                            response,
+                        }) => {
+                            let result = match chat
+                                .parse_conversation_address(&conversation_address)
+                            {
+                                None => Err(MobileMeshError::UnknownConversation),
+                                Some(conversation) => {
+                                    let now_ms = handle.now_ms().await;
+                                    match chat.resend(
+                                        conversation,
+                                        &original,
+                                        &frames,
+                                        forward_secret,
+                                        now_ms,
+                                    ) {
+                                        Err(NotInPlace) => {
+                                            Err(MobileMeshError::ChatResendNotInPlace)
+                                        }
+                                        Ok(resent) => {
+                                            // Ahead of any word of its frames.
+                                            let _ = chat_events
+                                                .send(MobileChatWorkerEvent::Resent(resent));
+                                            let mut sent = 0;
+                                            if forward_secret
+                                                && let ConversationKey::Direct { peer } =
+                                                    conversation
+                                                && ask_secrecy(
+                                                    &node,
+                                                    &mut chat_queue,
+                                                    peer,
+                                                    flood_hops.default_hops,
+                                                )
+                                                .await
+                                            {
+                                                sent += 1;
+                                            }
+                                            publish_chat_drain(
+                                                chat.drain(),
+                                                &mut chat_queue,
+                                                &chat_events,
+                                            );
+                                            sent += pump_chat(
+                                                &node,
+                                                &mut chat,
+                                                &mut chat_queue,
+                                                &chat_policy(flood_hops, well_known),
+                                                &chat_events,
+                                                now_ms,
+                                            )
+                                            .await;
+                                            if sent > 0 && !persist_counters().await {
+                                                Err(MobileMeshError::CounterPersistenceFailed)
+                                            } else {
+                                                Ok(())
+                                            }
+                                        }
+                                    }
+                                }
                             };
                             let _ = response.send(result);
                         }
@@ -5491,6 +5682,39 @@ async fn pump_chat<M: MacBackend>(
     let sent = chat.pump(queue, node, policy, now_ms).await;
     publish_chat_drain(chat.drain(), queue, events);
     sent
+}
+
+/// Asks `peer` for a session with forward secrecy when none is held or
+/// asked for, as the user sends something again under one; what waits on
+/// it follows the request (see [`TransmitQueue::secrecy_asked`]). By full
+/// key, in case the peer has not registered us, and acknowledged, as a
+/// message is, so it is retried and who carried it can be shown. Returns
+/// whether a request went.
+async fn ask_secrecy<M: MacBackend>(
+    node: &LocalNode<M>,
+    queue: &mut TransmitQueue,
+    peer: PublicKey,
+    flood_hops: u8,
+) -> bool {
+    if !matches!(node.pfs_status(&peer).await, Ok(PfsStatus::Inactive)) {
+        return false;
+    }
+    let Ok(connection) = node.peer(peer).await else {
+        return false;
+    };
+    let options = with_flood_reach(SendOptions::default(), flood_hops)
+        .with_full_source()
+        .with_ack_requested(true);
+    match connection
+        .request_pfs(umsh_node::DEFAULT_PFS_SESSION_MINUTES, &options)
+        .await
+    {
+        Ok(ticket) => {
+            queue.secrecy_asked(&peer, ticket);
+            true
+        }
+        Err(_) => false,
+    }
 }
 
 /// The peers `node` holds a session with forward secrecy with now.
@@ -8244,11 +8468,13 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(2);
         loop {
             let update = session.poll_update();
-            if update
-                .chat_deliveries
-                .iter()
-                .any(|delivery| delivery.state == MobileChatDeliveryState::Failed)
-            {
+            // Unconfirmed, or undelivered if it never left for the radio.
+            if update.chat_deliveries.iter().any(|delivery| {
+                matches!(
+                    delivery.state,
+                    MobileChatDeliveryState::Failed | MobileChatDeliveryState::Undelivered
+                )
+            }) {
                 break;
             }
             if let Some(batch_id) = update.chat_batch_id {
@@ -9057,7 +9283,8 @@ mod tests {
         }
 
         // Composed for the session, a message that finds it over by the
-        // time it leaves fails rather than going without it.
+        // time it leaves fails rather than going without it: undelivered,
+        // as it never went.
         let batch = alice
             .compose_typed(carol.clone(), 2, "meant for the session".to_owned())
             .await
@@ -9079,7 +9306,7 @@ mod tests {
                 );
             }
             if update.chat_deliveries.iter().any(|delivery| {
-                delivery.handle == handle && delivery.state == MobileChatDeliveryState::Failed
+                delivery.handle == handle && delivery.state == MobileChatDeliveryState::Undelivered
             }) {
                 break 'failed;
             }
@@ -9093,6 +9320,202 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(batch.mutations[0].forward_secret, Some(false));
+    }
+
+    /// A phone that composed a message to Carol whose radio link failed
+    /// under it: the session, Carol's address and long-term keys, the
+    /// message as the platform names it, and its archived frames.
+    async fn undelivered_to_carol(
+        seed: u8,
+        directory: &std::path::Path,
+    ) -> (
+        Arc<MobileMeshSession>,
+        String,
+        umsh_crypto::PairwiseKeys,
+        MobileChatOriginalRef,
+        Vec<MobileChatArchiveRecord>,
+    ) {
+        let alice = MobileMeshSession::new(
+            identity(seed),
+            MobileCounterStore::new(directory.join("resend").display().to_string()).unwrap(),
+        )
+        .await
+        .unwrap();
+        let carol_key = *SoftwareIdentity::from_secret_bytes(&[seed + 1; 32]).public_key();
+        let carol = encode_peer_address(&carol_key);
+        let entry = alice
+            .host_peer_key_entries(vec![carol.clone()])
+            .await
+            .unwrap()
+            .remove(0);
+        let long_term = umsh_crypto::PairwiseKeys {
+            k_enc: entry.k_enc.try_into().unwrap(),
+            k_mic: entry.k_mic.try_into().unwrap(),
+        };
+        alice
+            .register_peers(vec![stationary(carol.clone())])
+            .await
+            .unwrap();
+        let batch = alice
+            .compose_text(carol.clone(), 1, "meet at the ridge".to_owned())
+            .await
+            .unwrap();
+        let mutation = &batch.mutations[0];
+        let original = MobileChatOriginalRef {
+            session_id: mutation.session_id,
+            handle: mutation.handle,
+            wire_id: mutation.wire_id,
+            epoch: mutation.epoch,
+        };
+        alice.commit_chat_batch(batch.batch_id).await.unwrap();
+        alice.fail_outbound_transmissions().unwrap();
+        let handle = original.handle;
+        // Unconfirmed, or undelivered if it never left for the radio.
+        poll_until(&alice, "the message never failed", |update| {
+            update.chat_deliveries.iter().any(|delivery| {
+                delivery.handle == handle
+                    && matches!(
+                        delivery.state,
+                        MobileChatDeliveryState::Failed | MobileChatDeliveryState::Undelivered
+                    )
+            })
+        });
+        (alice, carol, long_term, original, batch.archives)
+    }
+
+    /// Polls `alice` until `done` holds of an update, airing what goes out
+    /// and taking each chat batch.
+    fn poll_until(
+        alice: &MobileMeshSession,
+        what: &str,
+        mut done: impl FnMut(&MobileMeshSessionUpdateRecord) -> bool,
+    ) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let update = alice.poll_update();
+            for outbound in &update.outbound_frames {
+                // One the link failure already retired has nothing to
+                // complete.
+                let _ = alice.complete_outbound_frame(outbound.id, true);
+            }
+            if let Some(batch_id) = update.chat_batch_id {
+                alice.acknowledge_chat_batch(batch_id).unwrap();
+            }
+            if done(&update) {
+                return;
+            }
+            assert!(Instant::now() < deadline, "{what}");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// What a frame of Alice's carries under `keys`, after its payload type.
+    fn opened_with(data: &[u8], keys: &umsh_crypto::PairwiseKeys) -> Option<(u8, Vec<u8>)> {
+        use umsh_crypto::{
+            CryptoEngine,
+            software::{SoftwareAes, SoftwareSha256},
+        };
+        let engine = CryptoEngine::new(SoftwareAes, SoftwareSha256);
+        let mut data = data.to_vec();
+        let header = umsh_core::PacketHeader::parse(&data).ok()?;
+        let range = engine.open_packet(&mut data, &header, keys, None).ok()?;
+        let body = &data[range];
+        Some((*body.first()?, body[1..].to_vec()))
+    }
+
+    /// A text frame's message ID and what it edits, if it edits anything.
+    fn text_of((kind, body): &(u8, Vec<u8>)) -> Option<(u8, Option<u8>)> {
+        (*kind == umsh_core::PayloadType::TextMessage as u8).then(|| {
+            let message = umsh_text::codec::parse(body).unwrap();
+            (message.sequence.unwrap().message_id, message.editing)
+        })
+    }
+
+    /// A message that was not delivered goes again as itself: under its
+    /// own wire ID, never as an edit, with word of it to come where the
+    /// platform is told first.
+    #[tokio::test]
+    async fn a_message_not_delivered_goes_again_as_itself() {
+        let directory = tempfile::tempdir().unwrap();
+        let (alice, carol, long_term, original, archives) =
+            undelivered_to_carol(85, directory.path()).await;
+        let handle = original.handle;
+
+        alice
+            .resend_chat(carol, original.clone(), archives, false)
+            .await
+            .unwrap();
+        let mut told = false;
+        let mut resent = None;
+        poll_until(&alice, "the message never went again", |update| {
+            if let Some(record) = update.chat_resends.first() {
+                assert_eq!(record.message, original);
+                assert_eq!(record.delivery_handle, handle, "this session's handle");
+                assert!(!record.forward_secret);
+                told = true;
+            }
+            assert!(
+                told || !update.chat_deliveries.iter().any(|d| d.handle == handle),
+                "word of it came before the platform was told"
+            );
+            for outbound in &update.outbound_frames {
+                if let Some(sent) = opened_with(&outbound.data, &long_term)
+                    .as_ref()
+                    .and_then(text_of)
+                {
+                    resent = Some(sent);
+                }
+            }
+            told && resent.is_some()
+        });
+        assert_eq!(
+            resent,
+            Some((original.wire_id.unwrap(), None)),
+            "itself, not an edit"
+        );
+    }
+
+    /// Sent again under forward secrecy with none held, a message asks for
+    /// a session and waits for it, reading as sent once the request has
+    /// gone; nothing of it goes without one.
+    #[tokio::test]
+    async fn a_message_sent_again_under_forward_secrecy_asks_for_a_session() {
+        use umsh_node::{MacCommand, mac_command};
+
+        let directory = tempfile::tempdir().unwrap();
+        let (alice, carol, long_term, original, archives) =
+            undelivered_to_carol(87, directory.path()).await;
+        let handle = original.handle;
+
+        alice
+            .resend_chat(carol, original, archives, true)
+            .await
+            .unwrap();
+        let mut asked = false;
+        let mut sent = false;
+        poll_until(&alice, "no session was asked for", |update| {
+            for record in &update.chat_resends {
+                assert!(record.forward_secret);
+            }
+            for outbound in &update.outbound_frames {
+                let body = opened_with(&outbound.data, &long_term);
+                assert!(
+                    body.as_ref().and_then(text_of).is_none(),
+                    "it went without a session"
+                );
+                asked |= body.is_some_and(|(kind, body)| {
+                    kind == umsh_core::PayloadType::MacCommand as u8
+                        && matches!(
+                            mac_command::parse(&body),
+                            Ok(MacCommand::PfsSessionRequest { .. })
+                        )
+                });
+            }
+            sent |= update.chat_deliveries.iter().any(|delivery| {
+                delivery.handle == handle && delivery.state == MobileChatDeliveryState::Sent
+            });
+            asked && sent
+        });
     }
 
     /// A session with forward secrecy that a previous run held is listened
