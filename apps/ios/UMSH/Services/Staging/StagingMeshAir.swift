@@ -298,7 +298,8 @@ actor StagingMeshAir: FakeRadioAir {
                 conversationAddress: phoneAddress,
                 clientToken: UInt32.random(in: 1...UInt32.max),
                 target: target,
-                body: body
+                body: body,
+                forwardSecret: nil
             )
             try await peers[index].session.commitChatBatch(batchId: batch.batchId)
             logger.notice("Staged peer \(peers[index].name, privacy: .public) replied")

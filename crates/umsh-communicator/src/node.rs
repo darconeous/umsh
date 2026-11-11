@@ -675,7 +675,9 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
     }
 
     fn set_forward_secrecy(&self, peer: PeerId, on: bool) {
-        self.with_chats(|chats, _, _, events| chats.set_forward_secrecy(peer, on, events));
+        self.with_chats(|chats, now_ms, time, events| {
+            chats.set_forward_secrecy(peer, on, now_ms, time, events);
+        });
         self.wake();
     }
 

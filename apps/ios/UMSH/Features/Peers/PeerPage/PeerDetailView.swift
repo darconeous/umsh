@@ -29,7 +29,7 @@ struct PeerDetailView: View {
     /// same wherever it is opened from.
     let actions: PeerActions
     let updateDraft: ((Int64, String) async -> AppOperationResult)?
-    let sendMessage: ((DirectConversationSummary, String) async -> MessageSendResult)?
+    let sendMessage: ((DirectConversationSummary, String, Bool) async -> MessageSendResult)?
     let messageActions: ChatMessageActions
     /// Set when the page is opened from the conversation it would otherwise
     /// open: Message goes back there instead of pushing a second copy.
@@ -77,7 +77,7 @@ struct PeerDetailView: View {
         conversations: Binding<[DirectConversationSummary]> = .constant([]),
         actions: PeerActions = .unavailable,
         updateDraft: ((Int64, String) async -> AppOperationResult)? = nil,
-        sendMessage: ((DirectConversationSummary, String) async -> MessageSendResult)? = nil,
+        sendMessage: ((DirectConversationSummary, String, Bool) async -> MessageSendResult)? = nil,
         messageActions: ChatMessageActions = .unavailable,
         returnToConversation: (() -> Void)? = nil
     ) {
@@ -589,11 +589,11 @@ struct PeerDetailView: View {
                     updateDraft: updateDraft ?? { _, _ in
                         .failure(.unavailable(String(localized: "Saving is unavailable.", comment: "Error when a draft cannot be stored.")))
                     },
-                    sendMessage: { item, body in
+                    sendMessage: { item, body, forwardSecret in
                         guard case let .direct(conversation) = item, let sendMessage else {
                             return .failed(String(localized: "Messaging is unavailable.", comment: "Error when a message cannot be sent at all."))
                         }
-                        return await sendMessage(conversation, body)
+                        return await sendMessage(conversation, body, forwardSecret)
                     },
                     messageActions: messageActions,
                     peerActions: actions,

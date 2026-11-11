@@ -1126,13 +1126,15 @@ actor FakeRadioConnection: RadioConnection {
     func composeTyped(
         conversationAddress: String,
         clientToken: UInt32,
-        text: String
+        text: String,
+        forwardSecret: Bool?
     ) async throws -> MobileChatComposeBatchRecord {
         guard let meshSession else { throw RadioConnectionError.incompatibleProtocol }
         return try await meshSession.composeTyped(
             conversationAddress: conversationAddress,
             clientToken: clientToken,
-            text: text
+            text: text,
+            forwardSecret: forwardSecret
         )
     }
 
@@ -1246,14 +1248,16 @@ actor FakeRadioConnection: RadioConnection {
         conversationAddress: String,
         clientToken: UInt32,
         target: MobileChatRegardingRef,
-        body: String
+        body: String,
+        forwardSecret: Bool?
     ) async throws -> MobileChatComposeBatchRecord {
         guard let meshSession else { throw RadioConnectionError.incompatibleProtocol }
         return try await meshSession.composeReply(
             conversationAddress: conversationAddress,
             clientToken: clientToken,
             target: target,
-            body: body
+            body: body,
+            forwardSecret: forwardSecret
         )
     }
 

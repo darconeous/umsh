@@ -667,9 +667,10 @@ struct ChatMessageActions: Sendable {
     /// reaction by passing the one already chosen.
     var react: @Sendable (ConversationListItem, ChatMessageSummary, String) async
         -> MessageSendResult = { _, _, _ in .failed("Messaging is unavailable.") }
-    /// Send text in reply to a message, quoting it.
-    var reply: @Sendable (ConversationListItem, ChatMessageSummary, String) async
-        -> MessageSendResult = { _, _, _ in .failed("Messaging is unavailable.") }
+    /// Send text in reply to a message, quoting it, under forward secrecy as
+    /// the flag says the composer showed it.
+    var reply: @Sendable (ConversationListItem, ChatMessageSummary, String, Bool) async
+        -> MessageSendResult = { _, _, _, _ in .failed("Messaging is unavailable.") }
     /// Put a failed message back on the air as itself—its unacknowledged
     /// frames under its own wire ID, so a peer who already has it never sees
     /// it twice—under forward secrecy or not, as the flag says. Recent

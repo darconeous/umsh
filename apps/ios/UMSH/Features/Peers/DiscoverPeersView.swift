@@ -26,7 +26,7 @@ struct DiscoverPeersView: View {
     let peers: [PeerSummary]
     var peerActions: PeerActions = .unavailable
     let updateDraft: ((Int64, String) async -> AppOperationResult)?
-    let sendMessage: ((DirectConversationSummary, String) async -> MessageSendResult)?
+    let sendMessage: ((DirectConversationSummary, String, Bool) async -> MessageSendResult)?
     var messageActions: ChatMessageActions = .unavailable
     /// Broadcast this phone's signed identity; returns a failure message or
     /// nil. Offered behind a confirmation that previews what is sent.

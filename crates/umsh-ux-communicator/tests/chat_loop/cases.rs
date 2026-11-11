@@ -1055,6 +1055,32 @@ fn trying_again_keeps_forward_secrecy() {
     assert!(forward_secret(app.state(), SECRET));
 }
 
+/// A draft begun under forward secrecy keeps it when the session ends
+/// before it is sent, and goes under it; one begun after shows what is
+/// sent now.
+#[test]
+fn a_draft_begun_under_forward_secrecy_keeps_it() {
+    let store = store();
+    let mut app = app!(store);
+    open_chat(&mut app, STATES);
+    run(&mut app, &typed("On my way"));
+    assert!(app.state().chat(STATES).unwrap().composes_secret());
+    store.end_secrecy();
+    input::events(&mut app, tick(0));
+    let summary = app.state().chat(STATES).unwrap();
+    assert!(!summary.forward_secret);
+    assert!(summary.composes_secret(), "the draft keeps it");
+
+    run(&mut app, &[Input::Enter]);
+    let sent = messages(app.state())
+        .into_iter()
+        .find(|m| m.text.as_str() == "On my way")
+        .expect("it was sent");
+    assert!(sent.forward_secret, "and went under it");
+    run(&mut app, &typed("Here"));
+    assert!(!app.state().chat(STATES).unwrap().composes_secret());
+}
+
 #[test]
 fn spent_airtime_keeps_the_draft_and_holds_a_retry() {
     let mut app = app!();

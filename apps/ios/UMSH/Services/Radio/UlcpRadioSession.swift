@@ -1676,13 +1676,15 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     func composeTyped(
         conversationAddress: String,
         clientToken: UInt32,
-        text: String
+        text: String,
+        forwardSecret: Bool?
     ) async throws -> MobileChatComposeBatchRecord {
         let session = try await currentMeshSession()
         return try await session.composeTyped(
             conversationAddress: conversationAddress,
             clientToken: clientToken,
-            text: text
+            text: text,
+            forwardSecret: forwardSecret
         )
     }
 
@@ -1796,14 +1798,16 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
         conversationAddress: String,
         clientToken: UInt32,
         target: MobileChatRegardingRef,
-        body: String
+        body: String,
+        forwardSecret: Bool?
     ) async throws -> MobileChatComposeBatchRecord {
         let session = try await currentMeshSession()
         return try await session.composeReply(
             conversationAddress: conversationAddress,
             clientToken: clientToken,
             target: target,
-            body: body
+            body: body,
+            forwardSecret: forwardSecret
         )
     }
 

@@ -43,7 +43,7 @@ struct ConversationThreadView: View {
     let radioSnapshot: RadioSnapshot
     let updateDraft: (Int64, String) async -> AppOperationResult
     let updateChannelDraft: (Int64, String) async -> AppOperationResult
-    let sendMessage: (ConversationListItem, String) async -> MessageSendResult
+    let sendMessage: (ConversationListItem, String, Bool) async -> MessageSendResult
     let messageActions: ChatMessageActions
     let peerActions: PeerActions
     let channelActions: ChannelConversationActions
@@ -65,6 +65,10 @@ struct ConversationThreadView: View {
     let unreadElsewhere: Int
 
     @State private var draft: String
+    /// The draft was written under forward secrecy, so it goes under it
+    /// whatever is held when it is sent, until it is erased: what was
+    /// written in violet never turns plain just before it is sent.
+    @State private var secretDraft = false
     @State private var showsConversationInfo = false
     @State private var showsBlockedReason = false
     @State private var sendFailureMessage: String?
@@ -124,7 +128,7 @@ struct ConversationThreadView: View {
         radioSnapshot: RadioSnapshot,
         updateDraft: @escaping (Int64, String) async -> AppOperationResult,
         updateChannelDraft: @escaping (Int64, String) async -> AppOperationResult = { _, _ in .failure(.unavailable("Saving is unavailable.")) },
-        sendMessage: @escaping (ConversationListItem, String) async -> MessageSendResult,
+        sendMessage: @escaping (ConversationListItem, String, Bool) async -> MessageSendResult,
         messageActions: ChatMessageActions = .unavailable,
         peerActions: PeerActions = .unavailable,
         channelActions: ChannelConversationActions = .unavailable,
@@ -462,9 +466,7 @@ struct ConversationThreadView: View {
             MessageComposer(
                 draft: $draft,
                 placeholder: "Message \(conversation.title)",
-                security: forwardSecretConversations.contains(conversation.conversationAddress)
-                    ? .forwardSecret
-                    : conversation.security,
+                security: composesSecret ? .forwardSecret : conversation.security,
                 blocked: composerBlock,
                 canSend: canSendNow,
                 reply: replyTarget.map { target in
@@ -486,6 +488,8 @@ struct ConversationThreadView: View {
                 await persistDraft()
 
             }
+            .onChange(of: draft, initial: true) { settleSecretDraft() }
+            .onChange(of: holdsSecret) { settleSecretDraft() }
         }
         // A conversation is a place, not a tab: Messages gives the transcript
         // the whole screen, and the way back is the navigation bar.
@@ -551,8 +555,8 @@ struct ConversationThreadView: View {
                     peerActions: peerActions,
                     messageActions: messageActions,
                     updateDraft: updateDraft,
-                    sendMessage: { conversation, body in
-                        await sendMessage(.direct(conversation), body)
+                    sendMessage: { conversation, body, forwardSecret in
+                        await sendMessage(.direct(conversation), body, forwardSecret)
                     }
                 )
             }
@@ -679,8 +683,8 @@ struct ConversationThreadView: View {
                         conversations: $conversations,
                         actions: peerActions,
                         updateDraft: updateDraft,
-                        sendMessage: { conversation, body in
-                            await sendMessage(.direct(conversation), body)
+                        sendMessage: { conversation, body, forwardSecret in
+                            await sendMessage(.direct(conversation), body, forwardSecret)
                         },
                         messageActions: messageActions,
                         returnToConversation: { showsConversationInfo = false }
@@ -1291,10 +1295,12 @@ struct ConversationThreadView: View {
             return
         }
         let replying = replyTarget
+        // As the composer shows it as the button is pressed.
+        let forwardSecret = composesSecret
         let result = if let replying {
-            await messageActions.reply(conversation, replying, body)
+            await messageActions.reply(conversation, replying, body, forwardSecret)
         } else {
-            await sendMessage(conversation, body)
+            await sendMessage(conversation, body, forwardSecret)
         }
         switch result {
         case let .sent(updatedConversation, warning):
@@ -1447,8 +1453,8 @@ struct ConversationThreadView: View {
                     conversations: $conversations,
                     actions: peerActions,
                     updateDraft: updateDraft,
-                    sendMessage: { conversation, body in
-                        await sendMessage(.direct(conversation), body)
+                    sendMessage: { conversation, body, forwardSecret in
+                        await sendMessage(.direct(conversation), body, forwardSecret)
                     },
                     messageActions: messageActions
                 )
@@ -1499,6 +1505,23 @@ struct ConversationThreadView: View {
             )
         }
         return nil
+    }
+
+    /// A session with forward secrecy is held with this conversation's peer.
+    private var holdsSecret: Bool {
+        forwardSecretConversations.contains(conversation.conversationAddress)
+    }
+
+    /// What is sent from the composer goes under forward secrecy: a session
+    /// is held, or the draft was written under one.
+    private var composesSecret: Bool {
+        holdsSecret || secretDraft
+    }
+
+    /// A draft begun, or still being written, while a session is held keeps
+    /// forward secrecy until it is erased; an empty one takes what is held.
+    private func settleSecretDraft() {
+        secretDraft = !draft.isEmpty && (secretDraft || holdsSecret)
     }
 
     /// Whether a message sent this instant can actually go somewhere. False

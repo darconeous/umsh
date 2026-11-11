@@ -22,7 +22,7 @@ struct PeersView: View {
     var openConversation: (DirectConversationSummary) -> Void = { _ in }
     var peerActions: PeerActions = .unavailable
     let updateDraft: ((Int64, String) async -> AppOperationResult)?
-    let sendMessage: ((DirectConversationSummary, String) async -> MessageSendResult)?
+    let sendMessage: ((DirectConversationSummary, String, Bool) async -> MessageSendResult)?
     var messageActions: ChatMessageActions = .unavailable
     /// Open the Discover Peers sheet, which the app root owns and presents.
     var discoverPeers: () -> Void = {}

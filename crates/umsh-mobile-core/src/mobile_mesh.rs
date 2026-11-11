@@ -1213,8 +1213,12 @@ enum ManagementRequest {
 }
 
 enum ChatComposeRequest {
+    /// Typed text, to a peer under a session with forward secrecy or never
+    /// under one as `forward_secret` says the composer showed it, or,
+    /// without, as one is held.
     Typed {
         text: String,
+        forward_secret: Option<bool>,
     },
     Status {
         body: String,
@@ -1240,9 +1244,11 @@ enum ChatComposeRequest {
         target: MobileChatRegardingRef,
         body: String,
     },
+    /// A reply, under forward secrecy as [`Self::Typed`] goes.
     Reply {
         target: MobileChatRegardingRef,
         body: String,
+        forward_secret: Option<bool>,
     },
 }
 
@@ -2781,16 +2787,24 @@ impl MobileMeshSession {
 
     /// Compose a new message as the user typed it into a conversation: a
     /// `/me ` prefix makes it status text. A reply does not come this way.
+    /// To a peer it goes under a session with forward secrecy or never
+    /// under one, as `forward_secret` says the composer showed it; with
+    /// none held, it asks for one and waits for it. Without
+    /// `forward_secret`, it goes under one only when one is held.
     pub async fn compose_typed(
         &self,
         conversation_address: String,
         client_token: u32,
         text: String,
+        forward_secret: Option<bool>,
     ) -> Result<MobileChatComposeBatchRecord, MobileMeshError> {
         self.compose_chat(
             conversation_address,
             client_token,
-            ChatComposeRequest::Typed { text },
+            ChatComposeRequest::Typed {
+                text,
+                forward_secret,
+            },
         )
         .await
     }
@@ -2949,18 +2963,24 @@ impl MobileMeshSession {
     /// Send a text message in reply to `target`, which, as for a reaction,
     /// may be either party's message and one persisted before this launch.
     /// Where the original can no longer be named, the text goes as a plain
-    /// message.
+    /// message. It goes under forward secrecy as
+    /// [`Self::compose_typed`] says.
     pub async fn compose_reply(
         &self,
         conversation_address: String,
         client_token: u32,
         target: MobileChatRegardingRef,
         body: String,
+        forward_secret: Option<bool>,
     ) -> Result<MobileChatComposeBatchRecord, MobileMeshError> {
         self.compose_chat(
             conversation_address,
             client_token,
-            ChatComposeRequest::Reply { target, body },
+            ChatComposeRequest::Reply {
+                target,
+                body,
+                forward_secret,
+            },
         )
         .await
     }
@@ -4925,10 +4945,14 @@ async fn run_worker(
                                 .await;
                                 let now_ms = handle.now_ms().await;
                                 let composed = match &request {
-                                    ChatComposeRequest::Typed { text } => chat.compose_typed(
+                                    ChatComposeRequest::Typed {
+                                        text,
+                                        forward_secret,
+                                    } => chat.compose_typed(
                                         conversation,
                                         client_token,
                                         text,
+                                        *forward_secret,
                                         budget,
                                         now_ms,
                                     ),
@@ -4983,28 +5007,20 @@ async fn run_worker(
                                             budget,
                                             now_ms,
                                         ),
-                                    ChatComposeRequest::Reply { target, body } => chat
-                                        .compose_reply(
-                                            conversation,
-                                            client_token,
-                                            target,
-                                            body,
-                                            budget,
-                                            now_ms,
-                                        ),
+                                    ChatComposeRequest::Reply {
+                                        target,
+                                        body,
+                                        forward_secret,
+                                    } => chat.compose_reply(
+                                        conversation,
+                                        client_token,
+                                        target,
+                                        body,
+                                        *forward_secret,
+                                        budget,
+                                        now_ms,
+                                    ),
                                 };
-                                // Sent again under forward secrecy, it waits
-                                // for a session, asked for now if none is.
-                                if composed.is_ok()
-                                    && let ChatComposeRequest::Again {
-                                        forward_secret: true,
-                                        ..
-                                    } = request
-                                    && let ConversationKey::Direct { peer } = conversation
-                                    && ask_secrecy(&node, &mut chat_queue, peer, flood_hops.default_hops).await
-                                {
-                                    persist_counters().await;
-                                }
                                 match composed {
                                     Ok(composed) => {
                                         for delivery in composed.deliveries {
@@ -5061,26 +5077,12 @@ async fn run_worker(
                                             // Ahead of any word of its frames.
                                             let _ = chat_events
                                                 .send(MobileChatWorkerEvent::Resent(resent));
-                                            let mut sent = 0;
-                                            if forward_secret
-                                                && let ConversationKey::Direct { peer } =
-                                                    conversation
-                                                && ask_secrecy(
-                                                    &node,
-                                                    &mut chat_queue,
-                                                    peer,
-                                                    flood_hops.default_hops,
-                                                )
-                                                .await
-                                            {
-                                                sent += 1;
-                                            }
                                             publish_chat_drain(
                                                 chat.drain(),
                                                 &mut chat_queue,
                                                 &chat_events,
                                             );
-                                            sent += pump_chat(
+                                            let sent = pump_chat(
                                                 &node,
                                                 &mut chat,
                                                 &mut chat_queue,
@@ -5671,50 +5673,21 @@ async fn pump_chat<M: MacBackend>(
     now_ms: u64,
 ) -> usize {
     let waited = queue.awaiting_secrecy();
-    chat.settle_secrecy_waits(queue, node, now_ms).await;
+    // A request for a session spends a frame counter, as a frame does.
+    let asked = usize::from(
+        chat.settle_secrecy_waits(queue, node, policy.default_flood_hops, now_ms)
+            .await,
+    );
     if !queue.has_pending() {
         // Frames that stopped waiting on a session failed.
         if waited != queue.awaiting_secrecy() {
             publish_chat_drain(chat.drain(), queue, events);
         }
-        return 0;
+        return asked;
     }
     let sent = chat.pump(queue, node, policy, now_ms).await;
     publish_chat_drain(chat.drain(), queue, events);
-    sent
-}
-
-/// Asks `peer` for a session with forward secrecy when none is held or
-/// asked for, as the user sends something again under one; what waits on
-/// it follows the request (see [`TransmitQueue::secrecy_asked`]). By full
-/// key, in case the peer has not registered us, and acknowledged, as a
-/// message is, so it is retried and who carried it can be shown. Returns
-/// whether a request went.
-async fn ask_secrecy<M: MacBackend>(
-    node: &LocalNode<M>,
-    queue: &mut TransmitQueue,
-    peer: PublicKey,
-    flood_hops: u8,
-) -> bool {
-    if !matches!(node.pfs_status(&peer).await, Ok(PfsStatus::Inactive)) {
-        return false;
-    }
-    let Ok(connection) = node.peer(peer).await else {
-        return false;
-    };
-    let options = with_flood_reach(SendOptions::default(), flood_hops)
-        .with_full_source()
-        .with_ack_requested(true);
-    match connection
-        .request_pfs(umsh_node::DEFAULT_PFS_SESSION_MINUTES, &options)
-        .await
-    {
-        Ok(ticket) => {
-            queue.secrecy_asked(&peer, ticket);
-            true
-        }
-        Err(_) => false,
-    }
+    sent + asked
 }
 
 /// The peers `node` holds a session with forward secrecy with now.
@@ -9122,8 +9095,9 @@ mod tests {
     /// While a session with forward secrecy is held with a peer, their
     /// conversation is reported as one whose next message goes under it,
     /// and a message composed then says so and goes under it. One composed
-    /// for a session that ends before it leaves fails rather than going
-    /// without it; and with none held, a message goes without one.
+    /// for a session that ends before it leaves asks for another and waits
+    /// for it rather than going without; and with none held, a message
+    /// goes without one.
     #[tokio::test]
     async fn a_message_composed_under_a_held_session_goes_under_it_or_not_at_all() {
         use umsh_core::{MicSize, PacketBuilder, PacketHeader, PayloadType};
@@ -9262,7 +9236,7 @@ mod tests {
         // Composed now, a message goes under the session, and never without
         // it.
         let batch = alice
-            .compose_typed(carol.clone(), 1, "under the session".to_owned())
+            .compose_typed(carol.clone(), 1, "under the session".to_owned(), None)
             .await
             .unwrap();
         assert_eq!(batch.mutations[0].forward_secret, Some(true));
@@ -9282,11 +9256,12 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
 
-        // Composed for the session, a message that finds it over by the
-        // time it leaves fails rather than going without it: undelivered,
-        // as it never went.
+        // Carol ends the session. A message composed for it that finds it
+        // over by the time it leaves asks Carol for another and waits for
+        // it, showing the request go, rather than going without one. (The
+        // first message, if still unacknowledged, asks the same.)
         let batch = alice
-            .compose_typed(carol.clone(), 2, "meant for the session".to_owned())
+            .compose_typed(carol.clone(), 2, "meant for the session".to_owned(), None)
             .await
             .unwrap();
         assert_eq!(batch.mutations[0].forward_secret, Some(true));
@@ -9294,29 +9269,39 @@ mod tests {
         alice
             .receive(from_carol(2, &MacCommand::EndPfsSession))
             .unwrap();
-        reported(Vec::new());
-        alice.commit_chat_batch(batch.batch_id).await.unwrap();
+        let (mut committed, mut asked, mut sent) = (false, false, false);
         let deadline = Instant::now() + Duration::from_secs(10);
-        'failed: loop {
+        while !(asked && sent) {
             let update = poll();
+            if !committed && update.forward_secret_conversations == Some(Vec::new()) {
+                alice.commit_chat_batch(batch.batch_id).await.unwrap();
+                committed = true;
+            }
             for outbound in &update.outbound_frames {
+                let body = opened(&outbound.data, &long_term);
                 assert!(
-                    !opened(&outbound.data, &long_term).is_some_and(|body| is_text(&body)),
+                    !body.as_ref().is_some_and(|body| is_text(body)),
                     "the message went without the session"
                 );
+                asked |= body.is_some_and(|body| {
+                    body.first() == Some(&(PayloadType::MacCommand as u8))
+                        && matches!(
+                            mac_command::parse(&body[1..]),
+                            Ok(MacCommand::PfsSessionRequest { .. })
+                        )
+                });
             }
-            if update.chat_deliveries.iter().any(|delivery| {
-                delivery.handle == handle && delivery.state == MobileChatDeliveryState::Undelivered
-            }) {
-                break 'failed;
+            for delivery in update.chat_deliveries.iter().filter(|d| d.handle == handle) {
+                assert_ne!(delivery.state, MobileChatDeliveryState::Undelivered);
+                sent |= delivery.state == MobileChatDeliveryState::Sent;
             }
-            assert!(Instant::now() < deadline, "the message never failed");
+            assert!(Instant::now() < deadline, "no session was asked for");
             std::thread::sleep(Duration::from_millis(5));
         }
 
         // With none held, a message goes without one.
         let batch = alice
-            .compose_typed(carol.clone(), 3, "in the open".to_owned())
+            .compose_typed(carol.clone(), 3, "in the open".to_owned(), None)
             .await
             .unwrap();
         assert_eq!(batch.mutations[0].forward_secret, Some(false));

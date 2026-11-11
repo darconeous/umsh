@@ -44,7 +44,7 @@ struct SettingsView: View {
     /// transcript instead of a blank destination.
     var conversations: Binding<[DirectConversationSummary]> = .constant([])
     var updateDraft: ((Int64, String) async -> AppOperationResult)? = nil
-    var sendMessage: ((DirectConversationSummary, String) async -> MessageSendResult)? = nil
+    var sendMessage: ((DirectConversationSummary, String, Bool) async -> MessageSendResult)? = nil
     var messageActions: ChatMessageActions = .unavailable
     var channels: [ChannelSummary] = []
     var unknownDeviceChannels: [UnknownDeviceChannel] = []
@@ -699,7 +699,7 @@ struct RadioDetailView: View {
     /// "Message" there opens a working transcript.
     var conversations: Binding<[DirectConversationSummary]> = .constant([])
     var updateDraft: ((Int64, String) async -> AppOperationResult)? = nil
-    var sendMessage: ((DirectConversationSummary, String) async -> MessageSendResult)? = nil
+    var sendMessage: ((DirectConversationSummary, String, Bool) async -> MessageSendResult)? = nil
     var messageActions: ChatMessageActions = .unavailable
     @Environment(\.dismiss) private var dismiss
     @State private var confirmsHostReplacement = false

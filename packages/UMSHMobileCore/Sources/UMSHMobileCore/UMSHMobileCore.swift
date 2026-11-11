@@ -1615,9 +1615,10 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
      * Send a text message in reply to `target`, which, as for a reaction,
      * may be either party's message and one persisted before this launch.
      * Where the original can no longer be named, the text goes as a plain
-     * message.
+     * message. It goes under forward secrecy as
+     * [`Self::compose_typed`] says.
      */
-    func composeReply(conversationAddress: String, clientToken: UInt32, target: MobileChatRegardingRef, body: String) async throws  -> MobileChatComposeBatchRecord
+    func composeReply(conversationAddress: String, clientToken: UInt32, target: MobileChatRegardingRef, body: String, forwardSecret: Bool?) async throws  -> MobileChatComposeBatchRecord
 
     /**
      * Compose status text into a conversation, its body taken as it stands.
@@ -1634,8 +1635,12 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
     /**
      * Compose a new message as the user typed it into a conversation: a
      * `/me ` prefix makes it status text. A reply does not come this way.
+     * To a peer it goes under a session with forward secrecy or never
+     * under one, as `forward_secret` says the composer showed it; with
+     * none held, it asks for one and waits for it. Without
+     * `forward_secret`, it goes under one only when one is held.
      */
-    func composeTyped(conversationAddress: String, clientToken: UInt32, text: String) async throws  -> MobileChatComposeBatchRecord
+    func composeTyped(conversationAddress: String, clientToken: UInt32, text: String, forwardSecret: Bool?) async throws  -> MobileChatComposeBatchRecord
 
     /**
      * The holder found the codes the same, sending this phone's identity,
@@ -2634,14 +2639,15 @@ open func composeReaction(conversationAddress: String, clientToken: UInt32, targ
      * Send a text message in reply to `target`, which, as for a reaction,
      * may be either party's message and one persisted before this launch.
      * Where the original can no longer be named, the text goes as a plain
-     * message.
+     * message. It goes under forward secrecy as
+     * [`Self::compose_typed`] says.
      */
-open func composeReply(conversationAddress: String, clientToken: UInt32, target: MobileChatRegardingRef, body: String)async throws  -> MobileChatComposeBatchRecord  {
+open func composeReply(conversationAddress: String, clientToken: UInt32, target: MobileChatRegardingRef, body: String, forwardSecret: Bool?)async throws  -> MobileChatComposeBatchRecord  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_umsh_mobile_core_fn_method_mobilemeshsession_compose_reply(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(conversationAddress),FfiConverterUInt32.lower(clientToken),FfiConverterTypeMobileChatRegardingRef_lower(target),FfiConverterString.lower(body)
+                        self.uniffiCloneHandle(),FfiConverterString.lower(conversationAddress),FfiConverterUInt32.lower(clientToken),FfiConverterTypeMobileChatRegardingRef_lower(target),FfiConverterString.lower(body),FfiConverterOptionBool.lower(forwardSecret)
                 )
             },
             pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
@@ -2695,13 +2701,17 @@ open func composeText(conversationAddress: String, clientToken: UInt32, body: St
     /**
      * Compose a new message as the user typed it into a conversation: a
      * `/me ` prefix makes it status text. A reply does not come this way.
+     * To a peer it goes under a session with forward secrecy or never
+     * under one, as `forward_secret` says the composer showed it; with
+     * none held, it asks for one and waits for it. Without
+     * `forward_secret`, it goes under one only when one is held.
      */
-open func composeTyped(conversationAddress: String, clientToken: UInt32, text: String)async throws  -> MobileChatComposeBatchRecord  {
+open func composeTyped(conversationAddress: String, clientToken: UInt32, text: String, forwardSecret: Bool?)async throws  -> MobileChatComposeBatchRecord  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_umsh_mobile_core_fn_method_mobilemeshsession_compose_typed(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(conversationAddress),FfiConverterUInt32.lower(clientToken),FfiConverterString.lower(text)
+                        self.uniffiCloneHandle(),FfiConverterString.lower(conversationAddress),FfiConverterUInt32.lower(clientToken),FfiConverterString.lower(text),FfiConverterOptionBool.lower(forwardSecret)
                 )
             },
             pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
@@ -22511,7 +22521,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_compose_reaction() != 47417) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_compose_reply() != 30432) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_compose_reply() != 29348) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_compose_status() != 65105) {
@@ -22520,7 +22530,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_compose_text() != 21994) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_compose_typed() != 28844) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_compose_typed() != 35031) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_confirm_code() != 49925) {

@@ -105,7 +105,7 @@ struct ChannelMemberSheet: View {
     var peerActions: PeerActions = .unavailable
     var messageActions: ChatMessageActions = .unavailable
     var updateDraft: ((Int64, String) async -> AppOperationResult)? = nil
-    var sendMessage: ((DirectConversationSummary, String) async -> MessageSendResult)? = nil
+    var sendMessage: ((DirectConversationSummary, String, Bool) async -> MessageSendResult)? = nil
 
     @State private var requested = false
 

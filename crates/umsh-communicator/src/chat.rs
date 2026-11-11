@@ -856,11 +856,6 @@ impl<S: ChatStore> Chats<S> {
             },
             None => ComposeIntent::typed(text),
         };
-        // A peer who prefers forward secrecy has a session asked for
-        // before anything is said, when none is.
-        if let ConversationKey::Direct { peer } = conversation {
-            self.keep_secrecy(peer);
-        }
         let committed = self.compose(conversation, intent, forward_secret, now_ms, time, events)?;
         let &(_, id) = committed.inserted.first()?;
         _ = self
@@ -989,13 +984,6 @@ impl<S: ChatStore> Chats<S> {
         };
         if record.chat.0 != chat || record.direction != engine::Direction::Outbound {
             return false;
-        }
-        // One to go under forward secrecy asks for a session, if none is:
-        // the user is sending it again, under one.
-        if let ConversationKey::Direct { peer } = conversation
-            && record.flags.forward_secret
-        {
-            self.ask_secrecy(peer);
         }
         let known = self.handle_of(record.id);
         let Some(facade) = &mut self.facade else {
@@ -1230,7 +1218,7 @@ impl<S: ChatStore> Chats<S> {
         // A frame that never resolves keeps its slot in the window; there
         // is nothing to do about one here.
         _ = self.outbox.service(facade, now_ms);
-        self.settle_secrecy_waits(now_ms);
+        self.settle_secrecy_waits();
         self.settle(None, now_ms, time, events);
     }
 

@@ -410,10 +410,14 @@ protocol RadioConnection: AnyObject, Sendable {
     /// unknown peers are ignored). Best-effort: the store is the authority
     /// and `prepareChat` rebuilds the registry on the next attach.
     func removeChatPeers(_ peerAddresses: [String]) async throws
+    /// Typed text, to a peer under forward secrecy or never under it as
+    /// `forwardSecret` says the composer showed it, or, when nil, as a
+    /// session is held.
     func composeTyped(
         conversationAddress: String,
         clientToken: UInt32,
-        text: String
+        text: String,
+        forwardSecret: Bool?
     ) async throws -> MobileChatComposeBatchRecord
     func composeStatus(
         conversationAddress: String,
@@ -470,11 +474,13 @@ protocol RadioConnection: AnyObject, Sendable {
     ) async throws -> MobileChatComposeBatchRecord
     /// Send text in reply to a message, named the same way a reaction's
     /// target is. Where it can no longer be named, the text goes plain.
+    /// Forward secrecy as for ``composeTyped(conversationAddress:clientToken:text:forwardSecret:)``.
     func composeReply(
         conversationAddress: String,
         clientToken: UInt32,
         target: MobileChatRegardingRef,
-        body: String
+        body: String,
+        forwardSecret: Bool?
     ) async throws -> MobileChatComposeBatchRecord
     func commitChatBatch(_ batchID: UInt64) async throws
     func rejectChatBatch(

@@ -11,6 +11,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use umsh_core::{ChannelTag, NodeHint, PublicKey};
+use umsh_mac::SendOptions;
 use umsh_node::{LocalNode, MacBackend, PfsStatus};
 use umsh_text::chat::{
     ArchiveLookup, Change, ChannelRegistry, ChatComposeError, ChatFacade, ChatOutput, Delivery,
@@ -22,7 +23,7 @@ use umsh_text::engine::{
     EngineConfig, Presence, RegardingRef, ResolvedRef, StreamCheckpoint,
 };
 use umsh_text::model::{ConversationKey, SenderScope, WireRef};
-use umsh_text::node_adapter::{TransmitPolicy, TransmitQueue};
+use umsh_text::node_adapter::{TransmitPolicy, TransmitQueue, with_flood_reach};
 use umsh_text::validate::DirectChannelProfile;
 
 pub(crate) type MobileChatFacade = ChatFacade<DirectChannelProfile>;
@@ -363,8 +364,48 @@ pub(crate) struct MobileChatState {
     /// decided when it was composed, by the facade session and handle that
     /// name it. Its frames are held to that each time they go.
     forward_secret: BTreeMap<(u64, u32), bool>,
-    /// The peers frames wait on a session with, and since when.
-    secrecy_waits: BTreeMap<[u8; 32], u64>,
+    /// The peers frames wait on a session with, and how that wait stands.
+    secrecy_waits: BTreeMap<[u8; 32], SecrecyWait>,
+}
+
+/// Asks `peer` for a session with forward secrecy when none is held or
+/// asked for; what waits on it follows the request (see
+/// [`TransmitQueue::secrecy_asked`]). By full key, in case the peer has not
+/// registered us, and acknowledged, as a message is, so it is retried and
+/// who carried it can be shown. Returns whether a request went.
+async fn ask_secrecy<M: MacBackend>(
+    node: &LocalNode<M>,
+    queue: &mut TransmitQueue,
+    peer: PublicKey,
+    flood_hops: u8,
+) -> bool {
+    if !matches!(node.pfs_status(&peer).await, Ok(PfsStatus::Inactive)) {
+        return false;
+    }
+    let Ok(connection) = node.peer(peer).await else {
+        return false;
+    };
+    let options = with_flood_reach(SendOptions::default(), flood_hops)
+        .with_full_source()
+        .with_ack_requested(true);
+    match connection
+        .request_pfs(umsh_node::DEFAULT_PFS_SESSION_MINUTES, &options)
+        .await
+    {
+        Ok(ticket) => {
+            queue.secrecy_asked(&peer, ticket);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+/// Frames waiting on a session with forward secrecy with one peer.
+struct SecrecyWait {
+    /// When the wait began, or when this phone asked for the session.
+    since: u64,
+    /// This phone asked for the session they wait on.
+    asked: bool,
 }
 
 impl MobileChatState {
@@ -432,28 +473,46 @@ impl MobileChatState {
     /// Settles the frames in `queue` waiting on a session with forward
     /// secrecy: those to a peer one is held with go next, those to a peer
     /// still setting one up wait for at most [`SECRECY_WAIT_MS`], and the
-    /// rest fail, undelivered. This phone asks for a session itself only
-    /// when the user sends a message again under one.
+    /// rest ask for one, once, flooding at most `flood_hops`. Each was sent
+    /// under forward secrecy as the composer showed it, so a session that
+    /// ended under it, or before it went, is no reason for it to go
+    /// without; when none can be had, they fail, undelivered. Returns
+    /// whether a request went.
     pub async fn settle_secrecy_waits<M: MacBackend>(
         &mut self,
         queue: &mut TransmitQueue,
         node: &LocalNode<M>,
+        flood_hops: u8,
         now_ms: u64,
-    ) {
+    ) -> bool {
         let awaiting = queue.awaiting_secrecy();
         self.secrecy_waits.retain(|peer, _| awaiting.contains(peer));
+        let mut asked = false;
         for peer in awaiting {
-            let since = *self.secrecy_waits.entry(peer).or_insert(now_ms);
+            let wait = self.secrecy_waits.entry(peer).or_insert(SecrecyWait {
+                since: now_ms,
+                asked: false,
+            });
             let key = PublicKey(peer);
             match node.pfs_status(&key).await {
                 Ok(PfsStatus::Active { .. }) => queue.release_secrecy_waits(&key),
-                Ok(PfsStatus::Requested) if now_ms.saturating_sub(since) < SECRECY_WAIT_MS => {
+                Ok(PfsStatus::Requested) if now_ms.saturating_sub(wait.since) < SECRECY_WAIT_MS => {
                     continue;
+                }
+                Ok(PfsStatus::Inactive) if !wait.asked => {
+                    wait.asked = true;
+                    wait.since = now_ms;
+                    if ask_secrecy(node, queue, key, flood_hops).await {
+                        asked = true;
+                        continue;
+                    }
+                    queue.fail_secrecy_waits(&key, &mut self.facade, now_ms);
                 }
                 _ => queue.fail_secrecy_waits(&key, &mut self.facade, now_ms),
             }
             self.secrecy_waits.remove(&peer);
         }
+        asked
     }
 
     /// The facade-session namespace stamped on records, so the engine's
@@ -481,19 +540,23 @@ impl MobileChatState {
     }
 
     /// Compose a new message as the user typed it, which may make it status
-    /// text; see [`ComposeIntent::typed`].
+    /// text; see [`ComposeIntent::typed`]. To a peer it goes under a
+    /// session with forward secrecy or never under one, as `forward_secret`
+    /// says the composer showed it, or, without, as one is held.
     pub fn compose_typed(
         &mut self,
         conversation: ConversationKey,
         client_token: u32,
         text: &str,
+        forward_secret: Option<bool>,
         budget: usize,
         now_ms: u64,
     ) -> Result<ComposedChatBatch, ComposeFailure> {
-        self.compose_batch(
+        self.compose_batch_under(
             conversation,
             client_token,
             ComposeIntent::typed(text),
+            forward_secret,
             budget,
             now_ms,
         )
@@ -678,6 +741,7 @@ impl MobileChatState {
             target,
             body,
             true,
+            None,
             budget,
             now_ms,
         )
@@ -686,12 +750,14 @@ impl MobileChatState {
     /// A text message in reply to another. A reply whose original can no
     /// longer be named goes as a plain message: what was written still
     /// goes, without the quote.
+    #[allow(clippy::too_many_arguments)]
     pub fn compose_reply(
         &mut self,
         conversation: ConversationKey,
         client_token: u32,
         target: &MobileChatRegardingRef,
         body: &str,
+        forward_secret: Option<bool>,
         budget: usize,
         now_ms: u64,
     ) -> Result<ComposedChatBatch, ComposeFailure> {
@@ -701,22 +767,32 @@ impl MobileChatState {
             target,
             body,
             false,
+            forward_secret,
             budget,
             now_ms,
         );
         // Anything else the engine refuses a reply for, it refuses the
         // plain message for too.
         match reply {
-            Err(ComposeFailure::Refused) => {
-                self.compose_text(conversation, client_token, body, budget, now_ms)
-            }
+            Err(ComposeFailure::Refused) => self.compose_batch_under(
+                conversation,
+                client_token,
+                ComposeIntent::Text {
+                    body,
+                    status: false,
+                },
+                forward_secret,
+                budget,
+                now_ms,
+            ),
             composed => composed,
         }
     }
 
-    /// Compose about `target`. A row this session stored can still be one
-    /// the engine holds no handle for, as with an edit of a message never
-    /// received, so a refused handle falls back on the target's wire
+    /// Compose about `target`, under forward secrecy as `secrecy` says (see
+    /// [`Self::compose_batch_under`]). A row this session stored can still
+    /// be one the engine holds no handle for, as with an edit of a message
+    /// never received, so a refused handle falls back on the target's wire
     /// coordinates.
     #[allow(clippy::too_many_arguments)]
     fn compose_regarding(
@@ -726,6 +802,7 @@ impl MobileChatState {
         target: &MobileChatRegardingRef,
         body: &str,
         status: bool,
+        secrecy: Option<bool>,
         budget: usize,
         now_ms: u64,
     ) -> Result<ComposedChatBatch, ComposeFailure> {
@@ -735,17 +812,24 @@ impl MobileChatState {
             status,
         };
         let regarding = self.regarding_ref(target).ok_or(ComposeFailure::Refused)?;
-        let composed = self.compose_batch(
+        let composed = self.compose_batch_under(
             conversation,
             client_token,
             intent(regarding),
+            secrecy,
             budget,
             now_ms,
         );
         match (composed, Self::wire_regarding_ref(target)) {
-            (Err(ComposeFailure::Refused), Some(wire)) if wire != regarding => {
-                self.compose_batch(conversation, client_token, intent(wire), budget, now_ms)
-            }
+            (Err(ComposeFailure::Refused), Some(wire)) if wire != regarding => self
+                .compose_batch_under(
+                    conversation,
+                    client_token,
+                    intent(wire),
+                    secrecy,
+                    budget,
+                    now_ms,
+                ),
             (composed, _) => composed,
         }
     }
@@ -1689,7 +1773,7 @@ mod tests {
     fn only_what_is_typed_as_new_reads_a_me_prefix() {
         let mut state = empty_state();
         let typed = state
-            .compose_typed(direct(), 1, "/me waves", MAX_FRAME, 0)
+            .compose_typed(direct(), 1, "/me waves", None, MAX_FRAME, 0)
             .expect("typed status");
         let insert = &typed.record.mutations[0];
         assert_eq!(insert.message_type, Some(1));
@@ -1706,6 +1790,39 @@ mod tests {
             .compose_status(direct(), 3, "waves", MAX_FRAME, 2)
             .expect("status again");
         assert_eq!(status.record.mutations[0].message_type, Some(1));
+    }
+
+    /// What the composer showed decides whether a typed message or a reply
+    /// goes under forward secrecy, whatever is held as it is composed;
+    /// without word of it, what is held decides.
+    #[test]
+    fn a_message_goes_under_forward_secrecy_as_the_composer_showed_it() {
+        let secret = |state: &mut MobileChatState, token, forward_secret| {
+            let composed = state
+                .compose_typed(direct(), token, "On my way", forward_secret, MAX_FRAME, 0)
+                .expect("composes");
+            state.commit(composed.record.batch_id).expect("commits");
+            composed.record.mutations[0].forward_secret
+        };
+        let mut state = empty_state();
+        assert_eq!(secret(&mut state, 1, None), Some(false));
+        assert_eq!(secret(&mut state, 2, Some(true)), Some(true), "none held");
+        state.hold_secrecy(BTreeSet::from([PEER.0]));
+        assert_eq!(secret(&mut state, 3, None), Some(true));
+        assert_eq!(secret(&mut state, 4, Some(false)), Some(false), "one held");
+
+        let target = MobileChatRegardingRef {
+            session_id: state.session_id(),
+            handle: 0,
+            wire_id: None,
+            direction: None,
+            sender_hint: None,
+            epoch: None,
+        };
+        let reply = state
+            .compose_reply(direct(), 5, &target, "Same", Some(false), MAX_FRAME, 0)
+            .expect("composes");
+        assert_eq!(reply.record.mutations[0].forward_secret, Some(false));
     }
 
     #[test]
@@ -1727,6 +1844,7 @@ mod tests {
                 1,
                 &target,
                 "Spikes were plenty.",
+                None,
                 MAX_FRAME,
                 0,
             )
@@ -1773,7 +1891,7 @@ mod tests {
         // No continuity: the engine refuses the reference.
         let mut cold = empty_state();
         let plain = cold
-            .compose_reply(direct(), 8, &target, "still going", MAX_FRAME, 0)
+            .compose_reply(direct(), 8, &target, "still going", None, MAX_FRAME, 0)
             .expect("the text still composes");
         let insert = plain
             .record
@@ -1794,7 +1912,7 @@ mod tests {
             ..target
         };
         let plain = cold
-            .compose_reply(direct(), 9, &unnamed, "again", MAX_FRAME, 1)
+            .compose_reply(direct(), 9, &unnamed, "again", None, MAX_FRAME, 1)
             .expect("the text still composes");
         assert!(
             plain

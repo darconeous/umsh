@@ -2553,15 +2553,20 @@ final class AppRuntime {
         return result
     }
 
+    /// Send what was typed in `conversation`, under forward secrecy as
+    /// `forwardSecret` says the composer showed it; where nothing showed
+    /// it, as a notification's reply, under it as a session is held.
     func sendMessage(
         _ conversation: ConversationListItem,
-        _ body: String
+        _ body: String,
+        forwardSecret: Bool? = nil
     ) async -> MessageSendResult {
         await performChatCompose(conversation, clearsDraft: true) { clientToken in
             try await radioConnection.composeTyped(
                 conversationAddress: conversation.conversationAddress,
                 clientToken: clientToken,
-                text: body
+                text: body,
+                forwardSecret: forwardSecret
             )
         }
     }
@@ -2824,18 +2829,21 @@ final class AppRuntime {
 
     /// Send `body` in reply to `message`. Where the original can no longer
     /// be named the text goes as a plain message, as it does from a
-    /// communicator.
+    /// communicator. It goes under forward secrecy as `forwardSecret` says
+    /// the composer showed it.
     func replyToMessage(
         _ conversation: ConversationListItem,
         _ message: ChatMessageSummary,
-        _ body: String
+        _ body: String,
+        _ forwardSecret: Bool
     ) async -> MessageSendResult {
         await performChatCompose(conversation, clearsDraft: true) { clientToken in
             try await radioConnection.composeReply(
                 conversationAddress: conversation.conversationAddress,
                 clientToken: clientToken,
                 target: regardingRef(message),
-                body: body
+                body: body,
+                forwardSecret: forwardSecret
             )
         }
     }

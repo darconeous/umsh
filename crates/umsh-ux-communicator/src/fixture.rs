@@ -748,6 +748,8 @@ pub struct Store {
     reset: RefCell<Vec<PeerId, KEPT>>,
     aliases: RefCell<Vec<(PeerId, String<32>), KEPT>>,
     forgotten: RefCell<Vec<PeerId, KEPT>>,
+    /// The chat of message states' session with forward secrecy ended.
+    secrecy_ended: Cell<bool>,
     /// The saved peers in list order, as of the last [`Node::sort_peers`].
     peer_order: RefCell<Vec<PeerId, SAVED_PEERS>>,
     /// This node's name, once it is given one.
@@ -992,6 +994,7 @@ impl Store {
             reset: RefCell::new(Vec::new()),
             aliases: RefCell::new(Vec::new()),
             forgotten: RefCell::new(Vec::new()),
+            secrecy_ended: Cell::new(false),
             peer_order: RefCell::new(Vec::new()),
             name: RefCell::new(None),
             radio_enabled: Cell::new(true),
@@ -1405,6 +1408,13 @@ impl Store {
             row.limit = Some(limit);
         }
         self.queue(NodeEvent::ChatChanged(chat));
+    }
+
+    /// Ends the chat of message states' session with forward secrecy, as
+    /// its peer would.
+    pub fn end_secrecy(&self) {
+        self.secrecy_ended.set(true);
+        self.queue(NodeEvent::ChatChanged(STATES));
     }
 
     /// Says that my `message` in `chat` came out as it is kept, as the
@@ -1883,7 +1893,7 @@ impl Store {
         summary.muted = row.muted;
         summary.last_activity = Some(row.activity);
         // The chat of message states holds a session with forward secrecy.
-        summary.forward_secret = row.id == STATES;
+        summary.forward_secret = row.id == STATES && !self.secrecy_ended.get();
         if let Some(last) = self.last_message(row.id) {
             summary.preview(&last);
         }

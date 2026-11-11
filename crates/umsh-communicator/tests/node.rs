@@ -2072,8 +2072,8 @@ fn a_saved_peer_follows_their_identity_until_given_an_alias() {
 }
 
 /// A session with forward secrecy with a saved peer who prefers one is
-/// asked for only when something is said to them, and once; it is ended
-/// when they no longer prefer one.
+/// asked for only when something sent under it finds none, and once; it
+/// is ended when they no longer prefer one, and what waited on it fails.
 #[test]
 fn forward_secrecy_is_asked_for_and_kept() {
     let sim = device();
@@ -2088,6 +2088,14 @@ fn forward_secrecy_is_asked_for_and_kept() {
         Some(Command::StartSecrecy { peer, .. }) => peer == robin,
         _ => false,
     };
+    // Sends `text` as the composer shows it, which finds no session.
+    let say = |node: &CommunicatorNode<Port>, chat, text| {
+        let message = node.send(chat, text, None, true).unwrap();
+        let departure = node.depart().expect("the message leaves");
+        assert!(node.departed(departure, Sent::NoSession));
+        node.service();
+        message
+    };
 
     node.set_forward_secrecy(peer, true);
     assert!(events(&node).contains(&NodeEvent::PeerChanged(peer)));
@@ -2097,10 +2105,10 @@ fn forward_secrecy_is_asked_for_and_kept() {
     let chat = node
         .direct_chat(&address_of(&robin), "Robin", &avatar)
         .unwrap();
-    node.send(chat.id, "Heading out", None, false).unwrap();
+    assert!(node.chat(chat.id).unwrap().forward_secret);
+    say(&node, chat.id, "Heading out");
     assert!(asked(&node), "asked when needed");
-    assert!(node.depart().is_some(), "the message does not wait");
-    node.send(chat.id, "Almost ready", None, false).unwrap();
+    say(&node, chat.id, "Almost ready");
     assert!(node.command().is_none(), "asked once");
 
     node.arrive(Arrival::Secrecy {
@@ -2108,23 +2116,26 @@ fn forward_secrecy_is_asked_for_and_kept() {
         change: Secrecy::Established,
     });
     assert!(node.command().is_none());
+    while let Some(departure) = node.depart() {
+        assert!(node.departed(departure, Sent::Unsendable));
+    }
     node.arrive(Arrival::Secrecy {
         peer: robin,
         change: Secrecy::Ended,
     });
+    node.service();
     assert!(node.command().is_none(), "not asked again when it ends");
-    node.send(chat.id, "Leaving now", None, false).unwrap();
+    say(&node, chat.id, "Leaving now");
     assert!(asked(&node), "asked again when next needed");
-    assert!(node.depart().is_some(), "the message does not wait");
 
     node.arrive(Arrival::Secrecy {
         peer: robin,
         change: Secrecy::Failed,
     });
+    node.service();
     assert!(node.command().is_none(), "not asked again at once");
-    node.send(chat.id, "On my way", None, false).unwrap();
+    let waiting = say(&node, chat.id, "On my way");
     assert!(asked(&node), "asked again when next needed");
-    assert!(node.depart().is_some(), "the message does not wait");
 
     node.set_forward_secrecy(peer, false);
     assert!(!node.peer_detail(peer).unwrap().forward_secrecy);
@@ -2132,15 +2143,25 @@ fn forward_secrecy_is_asked_for_and_kept() {
         node.command(),
         Some(Command::EndSecrecy { peer, .. }) if peer == robin
     ));
+    assert_eq!(
+        node.message(chat.id, waiting.id).unwrap().delivery,
+        Delivery::Undelivered,
+        "what waited fails"
+    );
+    node.service();
+    assert!(node.command().is_none(), "nor asks for another");
+    assert!(!node.chat(chat.id).unwrap().forward_secret);
     node.send(chat.id, "Here", None, false).unwrap();
+    let plain = node.depart().expect("the next leaves");
+    assert_eq!(plain.forward_secrecy(), Some(false));
     assert!(node.command().is_none(), "no longer asked");
 }
 
 /// The chat with a peer who prefers forward secrecy shows it at once, and
 /// what is sent while it does goes under a session or not at all. Finding
-/// none, it waits for one, asked for as it is sent; when none can be had,
-/// it waits to be sent again as it was, or without, as I choose. What is
-/// sent otherwise never goes under one.
+/// none, it asks for one and waits for it; when none can be had, it waits
+/// to be sent again as it was, or without, as I choose. What is sent
+/// otherwise never goes under one.
 #[test]
 fn a_message_shown_under_forward_secrecy_never_goes_without() {
     let sim = device();
@@ -2162,18 +2183,18 @@ fn a_message_shown_under_forward_secrecy_never_goes_without() {
 
     let message = node.send(chat.id, "Meet at the ridge", None, true).unwrap();
     assert!(message.forward_secret);
+    let departure = node.depart().expect("the message leaves");
+    assert_eq!(departure.forward_secrecy(), Some(true));
+    // No session is held yet: it asks for one and waits for it.
+    assert!(node.departed(departure, Sent::NoSession));
+    node.service();
     assert!(
         matches!(
             node.command(),
             Some(Command::StartSecrecy { peer, .. }) if peer == robin
         ),
-        "asked for as it is sent"
+        "asked for as it waits"
     );
-    let departure = node.depart().expect("the message leaves");
-    assert_eq!(departure.forward_secrecy(), Some(true));
-    // No session is held yet: it waits for one.
-    assert!(node.departed(departure, Sent::NoSession));
-    node.service();
     assert!(node.depart().is_none(), "it waits for the session");
     node.arrive(Arrival::Secrecy {
         peer: robin,
@@ -2222,7 +2243,11 @@ fn a_message_shown_under_forward_secrecy_never_goes_without() {
     let again = node.depart().expect("it leaves again");
     assert_eq!(again.forward_secrecy(), Some(true), "as it was");
     assert!(node.departed(again, Sent::NoSession));
-    while node.command().is_some() {}
+    node.service();
+    assert!(matches!(
+        node.command(),
+        Some(Command::StartSecrecy { peer, .. }) if peer == robin
+    ));
     node.arrive(Arrival::Secrecy {
         peer: robin,
         change: Secrecy::Failed,
@@ -2246,11 +2271,12 @@ fn a_message_shown_under_forward_secrecy_never_goes_without() {
     assert_eq!(held.forward_secrecy(), Some(false), "though one is held");
 }
 
-/// A message that went under a session the peer opened, caught by its
-/// end, is not delivered; sent again as it was, it asks for a session of
-/// its own, though the peer is not one who prefers one, and waits for it.
+/// A message sent under a session the peer opened, caught by its end,
+/// asks for a session of its own, though the peer is not one who prefers
+/// one, and waits for it. When none can be had it is not delivered, and
+/// sent again as it was, it asks again.
 #[test]
-fn trying_again_under_forward_secrecy_asks_for_a_session() {
+fn a_message_caught_by_its_session_ending_asks_for_another() {
     let sim = device();
     let (node, clock) = started(&sim);
     let robin = PublicKey([0x37; 32]);
@@ -2260,6 +2286,12 @@ fn trying_again_under_forward_secrecy_asks_for_a_session() {
     let chat = node
         .direct_chat(&address_of(&robin), "Robin", &avatar)
         .unwrap();
+    let asked = |node: &CommunicatorNode<Port>| {
+        matches!(
+            node.command(),
+            Some(Command::StartSecrecy { peer, .. }) if peer == robin
+        )
+    };
     // Robin opened a session.
     node.arrive(Arrival::Secrecy {
         peer: robin,
@@ -2270,34 +2302,53 @@ fn trying_again_under_forward_secrecy_asks_for_a_session() {
     assert!(node.command().is_none(), "one is held");
     let departure = node.depart().expect("the message leaves");
     assert_eq!(departure.forward_secrecy(), Some(true));
-    // Robin ended it before it went, and asks for no other.
+    // Robin ended it before it went.
     node.arrive(Arrival::Secrecy {
         peer: robin,
         change: Secrecy::Ended,
     });
+    assert!(!node.chat(chat.id).unwrap().forward_secret);
     assert!(node.departed(departure, Sent::NoSession));
     node.service();
-    assert!(node.command().is_none(), "nothing is asked for unprompted");
-    let failed = node.message(chat.id, message.id).unwrap();
-    assert_eq!(failed.delivery, Delivery::Undelivered);
-
-    assert!(node.retry(chat.id, message.id));
-    assert!(
-        matches!(
-            node.command(),
-            Some(Command::StartSecrecy { peer, .. }) if peer == robin
-        ),
-        "trying again asks for a session"
-    );
-    let again = node.depart().expect("it leaves again");
-    assert_eq!(again.forward_secrecy(), Some(true), "as it was");
-    assert!(node.departed(again, Sent::NoSession));
-    node.service();
-    assert!(node.depart().is_none(), "it waits for the session");
+    assert!(asked(&node), "it asks for another");
+    assert!(node.depart().is_none(), "it waits for it");
     assert_eq!(
         node.message(chat.id, message.id).unwrap().delivery,
         Delivery::Sending
     );
+    node.arrive(Arrival::Secrecy {
+        peer: robin,
+        change: Secrecy::Established,
+    });
+    let resumed = node.depart().expect("it leaves under the new one");
+    assert_eq!(resumed.forward_secrecy(), Some(true));
+
+    // That one ends too, and no other can be had.
+    assert!(node.departed(resumed, Sent::NoSession));
+    node.arrive(Arrival::Secrecy {
+        peer: robin,
+        change: Secrecy::Ended,
+    });
+    node.service();
+    assert!(asked(&node));
+    node.arrive(Arrival::Secrecy {
+        peer: robin,
+        change: Secrecy::Failed,
+    });
+    node.service();
+    assert!(node.command().is_none(), "asked once");
+    assert_eq!(
+        node.message(chat.id, message.id).unwrap().delivery,
+        Delivery::Undelivered
+    );
+
+    assert!(node.retry(chat.id, message.id));
+    let again = node.depart().expect("it leaves again");
+    assert_eq!(again.forward_secrecy(), Some(true), "as it was");
+    assert!(node.departed(again, Sent::NoSession));
+    node.service();
+    assert!(asked(&node), "trying again asks for a session");
+    assert!(node.depart().is_none(), "it waits for the session");
     node.arrive(Arrival::Secrecy {
         peer: robin,
         change: Secrecy::Established,

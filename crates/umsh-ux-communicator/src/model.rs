@@ -397,6 +397,9 @@ pub struct ChatSummary {
     pub kind: ChatKind,
     /// What is sent now goes under a session with forward secrecy.
     pub forward_secret: bool,
+    /// The draft was written under forward secrecy, so it goes under it
+    /// whatever is held when it is sent, until it is erased.
+    pub secret_draft: bool,
     /// The unsent message, kept until it is sent or erased.
     pub draft: Draft,
 }
@@ -415,6 +418,7 @@ impl ChatSummary {
             muted: false,
             kind: ChatKind::Peer { hops: None },
             forward_secret: false,
+            secret_draft: false,
             draft: EditBuffer::with_text(DraftText::new(heap)),
         };
         push_cut(&mut summary.name, name);
@@ -430,6 +434,23 @@ impl ChatSummary {
         let cursor = self.draft.cursor();
         self.draft = EditBuffer::with_text(self.draft.storage().clone().with_limit(limit));
         self.draft.set_cursor(cursor);
+    }
+
+    /// The draft goes under a session with forward secrecy: one is held,
+    /// or it was written under one. Once begun under forward secrecy, a
+    /// draft keeps it until it is erased, so what was written in violet
+    /// never turns plain just before it is sent.
+    #[must_use]
+    pub fn composes_secret(&self) -> bool {
+        self.forward_secret || (self.secret_draft && !self.draft.is_empty())
+    }
+
+    /// Notes the composer is about to be typed into: a draft begun now is
+    /// written under forward secrecy when what is sent now goes under it.
+    fn begin_draft(&mut self) {
+        if self.draft.is_empty() {
+            self.secret_draft = self.forward_secret;
+        }
     }
 
     /// What is shown to the right of the chat's avatar: a channel as
@@ -2363,7 +2384,10 @@ impl State {
 
     /// The draft of `chat`, which its composer edits.
     pub fn draft_mut(&mut self, chat: ChatId) -> Option<&mut Draft> {
-        self.chat_mut(chat).map(|c| &mut c.draft)
+        self.chat_mut(chat).map(|c| {
+            c.begin_draft();
+            &mut c.draft
+        })
     }
 
     /// Opens `chat` as the open chat.
@@ -2400,10 +2424,12 @@ impl State {
             _ => None,
         };
         let summary = &self.chats[index];
-        let Some(message) =
-            self.node
-                .send(chat, summary.draft.text(), reply_to, summary.forward_secret)
-        else {
+        let Some(message) = self.node.send(
+            chat,
+            summary.draft.text(),
+            reply_to,
+            summary.composes_secret(),
+        ) else {
             return;
         };
         if let Some(Screen::Conversation { reply, .. }) = self.screens.last_mut() {
@@ -2452,13 +2478,14 @@ impl State {
         let open = self.conversation.as_ref().map(|c| c.chat);
         let writing = open
             .and_then(|chat| self.chat(chat))
-            .map(|c| c.draft.clone());
+            .map(|c| (c.draft.clone(), c.composes_secret()));
         self.chats.clear();
         self.node.chats(&mut self.chats);
-        if let Some((chat, draft)) = open.zip(writing)
+        if let Some((chat, (draft, secret))) = open.zip(writing)
             && let Some(summary) = self.chat_mut(chat)
         {
             let limit = summary.draft.storage().limit();
+            summary.secret_draft = secret && !draft.is_empty();
             summary.draft = draft;
             summary.limit_draft(limit);
         }
@@ -2538,6 +2565,9 @@ impl State {
         match self.chats.iter_mut().position(|c| c.id == fresh.id) {
             Some(index) => {
                 let old = &mut self.chats[index];
+                // A draft written under forward secrecy keeps it, whatever
+                // became of the session.
+                fresh.secret_draft = !old.draft.is_empty() && old.composes_secret();
                 let limit = fresh.draft.storage().limit();
                 core::mem::swap(&mut fresh.draft, &mut old.draft);
                 *old = fresh;

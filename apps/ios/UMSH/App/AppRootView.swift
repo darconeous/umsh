@@ -120,7 +120,7 @@ struct AppRootView: View {
                     savePeer: runtime.savePeer,
                     updateDraft: runtime.updateDraft,
                     updateChannelDraft: runtime.updateChannelDraft,
-                    sendMessage: runtime.sendMessage,
+                    sendMessage: { await runtime.sendMessage($0, $1, forwardSecret: $2) },
                     messageActions: ChatMessageActions(
                         edit: runtime.editMessage,
                         delete: runtime.deleteMessage,
@@ -174,8 +174,8 @@ struct AppRootView: View {
                     },
                     peerActions: runtime.peerActions,
                     updateDraft: runtime.updateDraft,
-                    sendMessage: { conversation, body in
-                        await runtime.sendMessage(.direct(conversation), body)
+                    sendMessage: { conversation, body, forwardSecret in
+                        await runtime.sendMessage(.direct(conversation), body, forwardSecret: forwardSecret)
                     },
                     messageActions: ChatMessageActions(
                         edit: runtime.editMessage,
@@ -209,8 +209,8 @@ struct AppRootView: View {
                     isLoading: isBootstrapping,
                     peerActions: runtime.peerActions,
                     updateDraft: runtime.updateDraft,
-                    sendMessage: { conversation, body in
-                        await runtime.sendMessage(.direct(conversation), body)
+                    sendMessage: { conversation, body, forwardSecret in
+                        await runtime.sendMessage(.direct(conversation), body, forwardSecret: forwardSecret)
                     },
                     messageActions: ChatMessageActions(
                         edit: runtime.editMessage,
@@ -277,8 +277,8 @@ struct AppRootView: View {
                     peerActions: runtime.peerActions,
                     conversations: $runtime.conversations,
                     updateDraft: runtime.updateDraft,
-                    sendMessage: { conversation, body in
-                        await runtime.sendMessage(.direct(conversation), body)
+                    sendMessage: { conversation, body, forwardSecret in
+                        await runtime.sendMessage(.direct(conversation), body, forwardSecret: forwardSecret)
                     },
                     messageActions: ChatMessageActions(
                         edit: runtime.editMessage,
@@ -340,8 +340,8 @@ struct AppRootView: View {
                     conversations: $runtime.conversations,
                     actions: runtime.peerActions,
                     updateDraft: runtime.updateDraft,
-                    sendMessage: { conversation, body in
-                        await runtime.sendMessage(.direct(conversation), body)
+                    sendMessage: { conversation, body, forwardSecret in
+                        await runtime.sendMessage(.direct(conversation), body, forwardSecret: forwardSecret)
                     },
                     messageActions: ChatMessageActions(
                         edit: runtime.editMessage,
@@ -406,8 +406,8 @@ struct AppRootView: View {
                     peerActions: runtime.peerActions,
                     conversations: $runtime.conversations,
                     updateDraft: runtime.updateDraft,
-                    sendMessage: { conversation, body in
-                        await runtime.sendMessage(.direct(conversation), body)
+                    sendMessage: { conversation, body, forwardSecret in
+                        await runtime.sendMessage(.direct(conversation), body, forwardSecret: forwardSecret)
                     },
                     messageActions: ChatMessageActions(
                         edit: runtime.editMessage,
@@ -433,8 +433,8 @@ struct AppRootView: View {
                 peers: runtime.peers,
                 peerActions: runtime.peerActions,
                 updateDraft: runtime.updateDraft,
-                sendMessage: { conversation, body in
-                    await runtime.sendMessage(.direct(conversation), body)
+                sendMessage: { conversation, body, forwardSecret in
+                    await runtime.sendMessage(.direct(conversation), body, forwardSecret: forwardSecret)
                 },
                 messageActions: ChatMessageActions(
                     edit: runtime.editMessage,

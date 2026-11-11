@@ -162,7 +162,7 @@ pub fn view(state: &State, chat: ChatId) -> impl View<Rgb565, State> + use<> {
     // where anyone can read it, violet under forward secrecy.
     let tone = if open {
         (theme::ACTIVE_FIELD_OPEN, theme::ACCENT_OPEN)
-    } else if summary.is_some_and(|s| s.forward_secret) {
+    } else if summary.is_some_and(model::ChatSummary::composes_secret) {
         (theme::ACTIVE_FIELD_SECRET, theme::ACCENT_SECRET)
     } else {
         (theme::ACTIVE_FIELD, theme::ACCENT)

@@ -466,11 +466,15 @@ impl<S: ChatStore> Chats<S> {
         kept.saved.then_some(kept.id.0)
     }
 
-    /// Keeps whether `peer` prefers forward secrecy.
+    /// Keeps whether `peer` prefers forward secrecy. Turned off, any
+    /// session with them ends, and what waits on one fails rather than ask
+    /// for another: the user can send it again, with or without.
     pub fn set_forward_secrecy(
         &mut self,
         peer: model::PeerId,
         on: bool,
+        now_ms: u64,
+        time: Option<u32>,
         events: &mut dyn FnMut(NodeEvent),
     ) {
         let Some(kept) = self.saved_peer(peer) else {
@@ -485,11 +489,17 @@ impl<S: ChatStore> Chats<S> {
         }
         // A session is asked for only when something is said that needs
         // one.
-        if !on && self.secrecy.remove(&kept.key.0).is_some() {
-            self.commands.push_back(Command::EndSecrecy {
-                peer: kept.key,
-                options: secrecy_options(),
-            });
+        if !on {
+            if self.secrecy.remove(&kept.key.0).is_some() {
+                self.commands.push_back(Command::EndSecrecy {
+                    peer: kept.key,
+                    options: secrecy_options(),
+                });
+            }
+            if let Some(facade) = &mut self.facade {
+                self.outbox.fail_secrecy_waits(&kept.key, facade, now_ms);
+            }
+            self.settle(None, now_ms, time, events);
         }
         self.shown_changed(&kept.key, events);
     }
@@ -544,18 +554,9 @@ impl<S: ChatStore> Chats<S> {
             .is_some_and(|kept| kept.saved && kept.forward_secrecy)
     }
 
-    /// Asks `peer` for a session with forward secrecy when they prefer one
-    /// and none is asked for or held.
-    pub(super) fn keep_secrecy(&mut self, peer: PublicKey) {
-        if self.prefers_secrecy(&peer) {
-            self.ask_secrecy(peer);
-        }
-    }
-
     /// Asks `peer` for a session with forward secrecy when none is asked for
-    /// or held, whether or not they prefer one: something the user is
-    /// sending again waits for it.
-    pub(super) fn ask_secrecy(&mut self, peer: PublicKey) {
+    /// or held.
+    fn ask_secrecy(&mut self, peer: PublicKey) {
         if let alloc::collections::btree_map::Entry::Vacant(entry) = self.secrecy.entry(peer.0) {
             entry.insert(Session::Asked);
             self.commands.push_back(Command::StartSecrecy {
@@ -572,8 +573,8 @@ impl<S: ChatStore> Chats<S> {
     }
 
     /// Takes word of a session with forward secrecy with `peer`. One that
-    /// ended or could not be had is asked for again only when something is
-    /// said that needs it; what waited on one that could not be had fails.
+    /// ended or could not be had is asked for again only when something
+    /// waits on it; what waited on one that could not be had fails.
     pub fn secrecy(
         &mut self,
         peer: PublicKey,
@@ -595,25 +596,23 @@ impl<S: ChatStore> Chats<S> {
         {
             self.outbox.fail_secrecy_waits(&peer, facade, now_ms);
         }
-        self.settle_secrecy_waits(now_ms);
+        self.settle_secrecy_waits();
         self.settle(None, now_ms, time, events);
     }
 
     /// Settles the frames waiting on a session with forward secrecy: those
     /// to a peer one is held with go next, and the rest wait on one asked
-    /// for, or fail when the peer no longer prefers one.
-    pub(super) fn settle_secrecy_waits(&mut self, now_ms: u64) {
+    /// for until it is held or cannot be had. Each was sent under forward
+    /// secrecy as the composer showed it, so it asks for one whatever the
+    /// peer prefers: a session that ended under it, or before it went, is
+    /// no reason for it to go without.
+    pub(super) fn settle_secrecy_waits(&mut self) {
         for peer in self.outbox.awaiting_secrecy() {
             let peer = PublicKey(peer);
             if self.secrecy.get(&peer.0) == Some(&Session::Held) {
                 self.outbox.release_secrecy_waits(&peer);
-                continue;
-            }
-            self.keep_secrecy(peer);
-            if !self.secrecy.contains_key(&peer.0)
-                && let Some(facade) = &mut self.facade
-            {
-                self.outbox.fail_secrecy_waits(&peer, facade, now_ms);
+            } else {
+                self.ask_secrecy(peer);
             }
         }
     }
