@@ -523,22 +523,15 @@ struct ChatMessageSummary: Identifiable, Hashable, Sendable {
     }
 
     /// One of ours that delivery gave up on, either way
-    /// (``isDeliveryFailure(_:)``). It may be sent again or deleted, and
-    /// nothing can be said about it.
-    var isDeliveryFailed: Bool { isOutbound && Self.isDeliveryFailure(deliveryState) }
+    /// (``StoredChatMessage/isDeliveryFailure(_:)``). It may be sent again or
+    /// deleted, and nothing can be said about it.
+    var isDeliveryFailed: Bool {
+        isOutbound && StoredChatMessage.isDeliveryFailure(deliveryState)
+    }
 
     /// One of ours that never went out where its peer could read it, as
     /// opposed to one that went out and drew no acknowledgment.
     var isUndelivered: Bool { isOutbound && deliveryState?.lowercased() == "undelivered" }
-
-    /// Whether a stored delivery state is a failure: 'undelivered' (it did
-    /// not arrive) or 'failed' (it went out unacknowledged and may have).
-    static func isDeliveryFailure(_ state: String?) -> Bool {
-        switch state?.lowercased() {
-        case "failed", "undelivered": true
-        default: false
-        }
-    }
 }
 
 /// A reply's quote of the message it answers, as that message reads now.

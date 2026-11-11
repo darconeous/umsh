@@ -379,6 +379,15 @@ struct StoredChatMessage: Equatable, Sendable, Identifiable {
     var cursor: ChatMessageCursor {
         ChatMessageCursor(createdAtMilliseconds: createdAtMilliseconds, rowID: rowID)
     }
+
+    /// Whether a stored delivery state is a failure: 'undelivered' (it did
+    /// not arrive) or 'failed' (it went out unacknowledged and may have).
+    static func isDeliveryFailure(_ state: String?) -> Bool {
+        switch state?.lowercased() {
+        case "failed", "undelivered": true
+        default: false
+        }
+    }
 }
 
 /// Where one message sits in its conversation's storage order.
@@ -2677,8 +2686,8 @@ actor SQLiteApplicationStore {
                     deliveryHandle: delivery.handle
                 )
 
-                guard !ChatMessageSummary.isDeliveryFailure(before),
-                      ChatMessageSummary.isDeliveryFailure(try deliveryState(
+                guard !StoredChatMessage.isDeliveryFailure(before),
+                      StoredChatMessage.isDeliveryFailure(try deliveryState(
                           ownerIdentityID: ownerIdentityID,
                           sessionID: delivery.sessionId,
                           handle: delivery.handle

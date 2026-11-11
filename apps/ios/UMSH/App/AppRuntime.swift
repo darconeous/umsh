@@ -4693,7 +4693,7 @@ final class AppRuntime {
             // Only our own reactions have delivery to report, and only an
             // outright failure is worth showing: in flight looks like any
             // other reaction, the same way an unacknowledged bubble does.
-            isFailed: stored.outbound && ChatMessageSummary.isDeliveryFailure(stored.deliveryState),
+            isFailed: stored.outbound && StoredChatMessage.isDeliveryFailure(stored.deliveryState),
             isForwardSecret: stored.forwardSecret
         )
     }
