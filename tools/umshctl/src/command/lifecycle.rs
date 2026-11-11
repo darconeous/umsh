@@ -169,10 +169,7 @@ pub async fn reset<L: FrameLink>(device: &mut UlcpDevice<L>) -> Result<()> {
 /// device comes back as itself. The handle is worthless afterward either
 /// way, so detach for the same reason `factory_reset` does.
 pub async fn reboot(app: &mut App) -> Result<()> {
-    let device = app.device()?;
-    if !device.reboot().await? {
-        bail!("this device does not advertise CAP_REBOOT; it cannot restart on command");
-    }
+    app.device()?.reboot().await?;
     println!("reboot sent; the radio is restarting and the link will drop");
     app.detach().await;
     Ok(())
@@ -236,9 +233,7 @@ pub async fn ble(app: &mut App, op: BleOp) -> Result<()> {
         }
         BleOp::Pair { state } => {
             let open = state == PairState::On;
-            if app.device()?.set_ble_pairing(open).await?.is_none() {
-                bail!("this device does not advertise CAP_BLE; it has no Bluetooth transport");
-            }
+            app.device()?.set_ble_pairing(open).await?;
             if open {
                 println!("pairing window open; pair from the other host now");
             } else {
@@ -257,9 +252,7 @@ pub async fn ble(app: &mut App, op: BleOp) -> Result<()> {
                     return Ok(());
                 }
             }
-            let Some(count) = app.device()?.clear_ble_bonds().await? else {
-                bail!("this device does not advertise CAP_BLE; it has no Bluetooth transport");
-            };
+            let count = app.device()?.clear_ble_bonds().await?;
             field("paired hosts", count);
             println!("bonds cleared; the device is in a pairing window");
             app.detach().await;

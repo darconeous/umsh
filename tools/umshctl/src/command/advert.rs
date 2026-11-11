@@ -166,9 +166,7 @@ pub async fn run(app: &mut App, op: Option<AdvertOp>) -> Result<()> {
                 request.full_source = false;
             }
             request.channel = channel.map(|channel| channel.0);
-            if !device.announce(&request).await? {
-                bail!("device does not advertise CAP_ADVERT");
-            }
+            device.announce(&request).await?;
             println!("{} queued ({})", noun(kind), reach(&request));
             // Nothing here is configuration, so there is nothing to save.
             return Ok(());

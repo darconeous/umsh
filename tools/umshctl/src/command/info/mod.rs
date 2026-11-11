@@ -262,11 +262,13 @@ pub fn battery_display(status: &BatteryStatus) -> String {
 
 /// Read all temperatures, then their current labels, without batching the values.
 pub async fn temperatures<L: FrameLink>(device: &mut UlcpDevice<L>) -> Result<()> {
-    if !device.capabilities().await?.contains(&cap::TEMPERATURE) {
-        field("temperatures", "unsupported (no CAP_TEMPERATURE)");
+    let mut set = props::fetch_alone(device, prop::TEMPERATURES).await?;
+    // A device with no sensors refuses the read, and would refuse their
+    // names too.
+    if let Some(status) = set.refusal(prop::TEMPERATURES) {
+        field("temperatures", format!("read failed: {status:?}"));
         return Ok(());
     }
-    let mut set = props::fetch_alone(device, prop::TEMPERATURES).await?;
     // Preserve measurements even if the metadata exchange fails.
     match props::fetch_alone(device, prop::TEMPERATURE_NAMES).await {
         Ok(names) => set.merge(names),

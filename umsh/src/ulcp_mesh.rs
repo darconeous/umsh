@@ -100,7 +100,7 @@ impl MeshRequest {
     pub fn is_reset_class(&self) -> bool {
         matches!(
             self.cmd,
-            Some(Cmd::Reset | Cmd::Restore | Cmd::FactoryReset)
+            Some(Cmd::Reset | Cmd::Restore | Cmd::FactoryReset | Cmd::Reboot)
         )
     }
 }
@@ -263,11 +263,11 @@ impl MeshEndpoint {
         let status = match request.cmd {
             Some(Cmd::Reset) => Status::RESET_SOFTWARE,
             Some(Cmd::Restore) => Status::RESET_RESTORED,
-            // A factory reset is not waited on at all: the device wipes
-            // itself and reboots, and the link dropping is the report.
-            Some(Cmd::FactoryReset) => return,
+            // Neither is waited on at all: the device restarts, and the
+            // link dropping is the report.
+            Some(Cmd::FactoryReset | Cmd::Reboot) => return,
             // Unreachable in practice—the exchange engine only reports
-            // `NoResponse` for the three above—but silence here would
+            // `NoResponse` for the four above—but silence here would
             // hang the caller until its own timeout, which is a worse
             // way to learn about a bug.
             _ => {
@@ -407,6 +407,20 @@ mod tests {
 
         // The device wipes itself and reboots; there is nothing to wait
         // for, and nothing is sent.
+        assert!(
+            tokio::time::timeout(core::time::Duration::from_millis(50), link.recv_frame())
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_reboot_is_never_carried_twice_and_answered_by_nothing() {
+        let mut buf = [0u8; 8];
+        let len = frame::reboot(&mut buf, TID_UNSOLICITED).unwrap();
+        let (mut link, carried) = round_trip(buf[..len].to_vec(), |_| None).await;
+
+        assert!(carried.unwrap().is_reset_class());
         assert!(
             tokio::time::timeout(core::time::Duration::from_millis(50), link.recv_frame())
                 .await

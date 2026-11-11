@@ -2899,20 +2899,15 @@ where
     /// cycle that keeps every persisted journal, so the device comes back
     /// as itself with its saved configuration.
     ///
-    /// `Ok(false)` means the device does not advertise `CAP_REBOOT` and
-    /// nothing was sent—asked rather than sent-and-timed-out, because a
-    /// device that *will* reboot answers nothing at all and waiting for
-    /// silence cannot tell the two apart. When it does reboot, the link
-    /// drops; treat the ensuing disconnect as completion.
-    pub async fn reboot(&mut self) -> Result<bool, UlcpError> {
-        if !self.capabilities().await?.contains(&cap::REBOOT) {
-            return Ok(false);
-        }
+    /// The command is sent without first asking whether the device can
+    /// carry it out; whoever asked for a reboot already knows. A device
+    /// that reboots answers nothing, and the link drops: treat the
+    /// ensuing disconnect as completion.
+    pub async fn reboot(&mut self) -> Result<(), UlcpError> {
         let mut buf = [0u8; 2];
         let len = frame::reboot(&mut buf, TID_UNSOLICITED)
             .map_err(|_| UlcpError::Protocol("frame encode"))?;
-        self.send(&buf[..len]).await?;
-        Ok(true)
+        self.send(&buf[..len]).await
     }
 
     /// Enter bootloader DFU after receiving its successful status response.
@@ -2934,15 +2929,11 @@ where
     /// send an advertisement or a beacon, as a broadcast or on one of the
     /// device's own channels.
     ///
-    /// `Ok(false)` means the device does not advertise `CAP_ADVERT` and
-    /// nothing was sent. Otherwise the device answers once the
-    /// announcement is queued for transmission—channel access and the
-    /// duty limit decide later whether it reaches the air, exactly as for
-    /// a scheduled announcement.
-    pub async fn announce(&mut self, request: &Announcement) -> Result<bool, UlcpError> {
-        if !self.capabilities().await?.contains(&cap::ADVERT) {
-            return Ok(false);
-        }
+    /// The device answers once the announcement is queued for
+    /// transmission—channel access and the duty limit decide later
+    /// whether it reaches the air, exactly as for a scheduled
+    /// announcement. One without `CAP_ADVERT` refuses the command.
+    pub async fn announce(&mut self, request: &Announcement) -> Result<(), UlcpError> {
         let tid = self.alloc_tid();
         let mut buf = [0u8; 48];
         let len = frame::announce(&mut buf, tid, request)
@@ -2950,7 +2941,7 @@ where
         self.send(&buf[..len]).await?;
         self.finish_prop_transaction(tid, prop::LAST_STATUS, PropResponsePolicy::StatusOnly)
             .await?;
-        Ok(true)
+        Ok(())
     }
 
     /// The I2C buses a host may drive directly (`PROP_I2C_BUSES`;
@@ -3075,22 +3066,16 @@ where
     /// lockout, then leave the device in a pairing window—the bond
     /// count written to zero (`PROP_BLE_BOND_COUNT`; requires `CAP_BLE`).
     ///
-    /// `Ok(None)` means the device has no Bluetooth transport at all and
-    /// nothing was sent; `Ok(Some(count))` quotes the count the device
-    /// now holds. One that has a transport but does not manage its own
-    /// bonds answers `STATUS_PROP_NOT_FOUND`, which surfaces as an error—
-    /// the caps list stops at "has Bluetooth", so the refusal is where the
-    /// rest of the answer lives.
+    /// Returns the count the device now holds. One that does not manage
+    /// its own bonds answers `STATUS_PROP_NOT_FOUND`, which surfaces as
+    /// an error.
     ///
     /// Over Bluetooth this severs the caller's own link—the bond that
     /// carried it is one of the bonds deleted—but the answer arrives
     /// first; over a cable and over the mesh nothing is disturbed.
-    pub async fn clear_ble_bonds(&mut self) -> Result<Option<u8>, UlcpError> {
-        if !self.capabilities().await?.contains(&cap::BLE) {
-            return Ok(None);
-        }
+    pub async fn clear_ble_bonds(&mut self) -> Result<u8, UlcpError> {
         let value = self.set_prop(prop::BLE_BOND_COUNT, &[0]).await?;
-        Ok(Some(value.first().copied().unwrap_or(0)))
+        Ok(value.first().copied().unwrap_or(0))
     }
 
     /// Open or close the pairing window (`PROP_BLE_PAIRING`; requires
@@ -3099,19 +3084,14 @@ where
     /// timeout, which is why it is a property a caller can read back
     /// rather than a command.
     ///
-    /// `Ok(None)` means the device has no Bluetooth transport at all;
-    /// `Ok(Some(state))` quotes the state the device settled on. A
-    /// device that does not manage its own bonds answers
-    /// `STATUS_PROP_NOT_FOUND`, and one that could not open a window
-    /// right now—locked out, or with Bluetooth disabled—answers
-    /// `STATUS_INVALID_STATE`; both surface as errors rather than a
-    /// quiet success.
-    pub async fn set_ble_pairing(&mut self, open: bool) -> Result<Option<bool>, UlcpError> {
-        if !self.capabilities().await?.contains(&cap::BLE) {
-            return Ok(None);
-        }
+    /// Returns the state the device settled on. A device that does not
+    /// manage its own bonds answers `STATUS_PROP_NOT_FOUND`, and one that
+    /// could not open a window right now—locked out, or with Bluetooth
+    /// disabled—answers `STATUS_INVALID_STATE`; both surface as errors
+    /// rather than a quiet success.
+    pub async fn set_ble_pairing(&mut self, open: bool) -> Result<bool, UlcpError> {
         let value = self.set_prop(prop::BLE_PAIRING, &[open as u8]).await?;
-        Ok(Some(decode_bool(&value).unwrap_or(false)))
+        Ok(decode_bool(&value).unwrap_or(false))
     }
 
     /// Revert the device to its saved snapshot (`CMD_RESTORE`; requires

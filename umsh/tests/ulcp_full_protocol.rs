@@ -977,13 +977,13 @@ async fn an_on_demand_announcement_carries_the_options_the_host_chose() {
     let mut radio = attached_host(&sim).await;
 
     // The bare request is an advertisement to the device's neighbors.
-    assert!(radio.announce(&Announcement::default()).await.unwrap());
+    radio.announce(&Announcement::default()).await.unwrap();
     // A beacon across the mesh, with the source form the host wants
     // rather than the kind's default.
     let mut beacon = Announcement::new(AnnouncementKind::Beacon);
     beacon.flood_hops = 5;
     beacon.full_source = true;
-    assert!(radio.announce(&beacon).await.unwrap());
+    radio.announce(&beacon).await.unwrap();
 
     // A channel the device does not hold is refused by name, not by
     // shape: the identifier is well-formed, the channel is simply not
@@ -1005,7 +1005,7 @@ async fn an_on_demand_announcement_carries_the_options_the_host_chose() {
         .unwrap();
     assert_eq!(identifier.len(), 16, "channel keys report the identifier");
     multicast.channel = Some(identifier.clone().try_into().unwrap());
-    assert!(radio.announce(&multicast).await.unwrap());
+    radio.announce(&multicast).await.unwrap();
 
     let queued = std::mem::take(&mut sim.lock().unwrap().announcements);
     assert_eq!(queued.len(), 3, "only the refused request queued nothing");
@@ -1297,10 +1297,9 @@ async fn bonds_are_cleared_and_the_count_follows() {
         "the simulator starts with hosts to forget"
     );
 
-    assert_eq!(
+    assert!(
         radio.set_ble_pairing(true).await.unwrap(),
-        Some(true),
-        "the simulator advertises CAP_BLE, and the window opens as a toggle"
+        "the window opens as a toggle"
     );
 
     // The simulator's host is attached over its simulated serial link,
@@ -1316,7 +1315,7 @@ async fn bonds_are_cleared_and_the_count_follows() {
 
     assert_eq!(
         radio.clear_ble_bonds().await.unwrap(),
-        Some(0),
+        0,
         "the write is answered with the count the device now holds"
     );
     assert_eq!(
@@ -1377,10 +1376,7 @@ async fn a_reboot_restarts_the_device_and_keeps_what_was_saved() {
         .unwrap();
     radio.save().await.unwrap();
 
-    assert!(
-        radio.reboot().await.unwrap(),
-        "the simulator advertises CAP_REBOOT"
-    );
+    radio.reboot().await.unwrap();
     // Nothing came back, and the session on the other side is a new one:
     // the handle the host is holding belongs to a device that no longer
     // exists.
