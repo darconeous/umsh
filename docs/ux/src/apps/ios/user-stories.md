@@ -389,10 +389,10 @@ offline verdict.
 
 Acceptance criteria:
 
-- Ping opens a sheet that sends one Echo Request and counts the time
+- Ping opens a sheet that sends one acknowledged No-Op and counts the time
   waiting.
-- A matching Echo Response reports round-trip time, hops, and the path, with a
-  signal reading for each leg.
+- Its MAC ack reports round-trip time, hops, and the path, with a signal
+  reading for each leg.
 - Timeout reports **No reply**, not **Offline**, and crosses out the line.
 - Opening Peer Detail does not automatically or repeatedly ping.
 

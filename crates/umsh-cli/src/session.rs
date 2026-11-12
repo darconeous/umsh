@@ -533,7 +533,7 @@ where
             "  /raw <peer-ref> <hex>       send raw hex payload bytes",
             "",
             "diagnostics:",
-            "  /ping <peer-ref> [bytes]    send an EchoRequest (default 8 bytes)",
+            "  /ping <peer-ref> [bytes]    ping a peer (default 8 bytes of filler)",
             "  /beacon                     broadcast a beacon",
             "  /stats                      show TX/RX counters, RSSI, queue depth",
             "  /counters                   show frame-counter state (local TX + per-peer RX)",
@@ -594,10 +594,9 @@ where
                 "  <hex> is an even-length hex string (no 0x prefix, no spaces).",
             ],
             "ping" => &[
-                "/ping <peer-ref> [bytes]—send a MAC-level EchoRequest.",
-                "  [bytes] is the total payload size (2..=60, default 8).",
-                "  The first 2 bytes are a nonce used to match the response.",
-                "  Prints \"pong <peer> rtt=<ms>\" when the reply arrives.",
+                "/ping <peer-ref> [bytes]—send a No-Op that asks for an acknowledgment.",
+                "  [bytes] is the filler after the command (0..=60, default 8).",
+                "  Prints \"pong <peer> rtt=<ms>\" when the acknowledgment arrives.",
             ],
             "beacon" => &["/beacon—broadcast a beacon frame announcing this node."],
             "stats" => &[
@@ -938,8 +937,7 @@ where
             Ok(p) => p,
             Err(e) => return self.write_err(&node_err_str(&e)).await,
         };
-        let total = bytes.unwrap_or(8).min(60) as usize;
-        let extra_bytes = total.saturating_sub(2);
+        let padding = bytes.unwrap_or(8).min(60) as usize;
         // A trace records the path and what each hop of it cost. A ping that
         // reports only a round-trip time says a link is bad without saying
         // where.
@@ -947,12 +945,12 @@ where
             .send_opts()
             .with_mic_size(umsh_node::PING_MIC_SIZE)
             .with_trace();
-        match pc.ping(extra_bytes, &opts, 30_000).await {
+        match pc.ping(padding, &opts).await {
             Ok(_) => {
                 self.stats.borrow_mut().packets_tx += 1;
                 let alias_str = self.peer_alias_display(&key);
                 let mut line = String::new();
-                let _ = write!(&mut line, "ping {} ({} bytes)", alias_str, total.max(2));
+                let _ = write!(&mut line, "ping {} ({} bytes)", alias_str, padding);
                 self.out.write_line(&line).await?;
             }
             Err(e) => {
@@ -1315,16 +1313,18 @@ where
         }));
     }
 
-    // on_mac_command—EchoRequest and EchoResponse are both silently ignored
-    // here. EchoRequest is auto-replied by the MAC coordinator. EchoResponse
-    // is handled by on_pong below (match_pong is called in host.rs before
-    // dispatch_mac_command fires).
+    // on_mac_command—a No-Op and both Echo commands are silently ignored
+    // here. The MAC coordinator acknowledges a No-Op and answers an
+    // EchoRequest on its own, and nothing in this session sends an
+    // EchoRequest for an EchoResponse to answer.
     {
         let ev = events.clone();
         let wk = wake.clone();
         subs.push(node.on_mac_command(move |peer, cmd| {
             let event = match cmd {
-                OwnedMacCommand::EchoRequest { .. } | OwnedMacCommand::EchoResponse { .. } => {
+                OwnedMacCommand::Noop
+                | OwnedMacCommand::EchoRequest { .. }
+                | OwnedMacCommand::EchoResponse { .. } => {
                     return;
                 }
                 other => {
@@ -1336,7 +1336,7 @@ where
         }));
     }
 
-    // on_pong—fired by node-layer ping tracking when an EchoResponse matches.
+    // on_pong—fired by node-layer ping tracking when a ping is acknowledged.
     {
         let ev = events.clone();
         let wk = wake.clone();
@@ -1345,7 +1345,7 @@ where
         }));
     }
 
-    // on_ping_timeout—fired when a pending ping exceeds its deadline.
+    // on_ping_timeout—fired when the MAC gives up on a ping.
     {
         let ev = events.clone();
         let wk = wake.clone();

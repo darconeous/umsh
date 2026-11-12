@@ -1,8 +1,10 @@
 //! `ping`: reachability and path quality, measured over the mesh.
 //!
 //! Like `manage` and `peer-repeaters` this borrows the attached radio and
-//! becomes a node, but it needs no authorization from the far end: an Echo
-//! Request is a plain MAC command that every node's MAC answers on its own.
+//! becomes a node, but it needs no authorization from the far end: a ping
+//! is a No-Op that asks for an acknowledgment, and every node's MAC
+//! acknowledges it on its own. `--echo` sends an Echo Request instead and
+//! times the Echo Response.
 //! What a ping is for is measuring the path that real traffic will take, so
 //! the flags here are the frame's own shape—MIC size, source form, flood
 //! budget, an explicit route, the channel it rides—and they carry through
@@ -14,21 +16,29 @@ use std::time::Duration;
 
 use anyhow::{Result, anyhow, bail};
 
+use rand::{Rng as _, rng};
 use tokio::time::Instant;
 use umsh::core::PayloadType;
 use umsh::mac::{MAX_FLOOD_HOPS, SendOptions};
-use umsh::node::PongMetadata;
+use umsh::node::{CommandId, MacCommand, PongMetadata, ReceivedPacketRef, mac_command};
 
 use super::manage::Ctl;
 use super::values::{ChannelArg, KeyArg, MicArg, RegionCodeArg, RouteArg};
 use crate::output::{field, note};
 
-/// The default echo size, in bytes of echo data.
+/// The default ping size: the bytes that follow the command.
 ///
-/// Two of them are the nonce that matches a reply to its request, so this
-/// is a small ping with six bytes of filler—enough to be a real frame
-/// without paying for airtime nobody asked about.
+/// Enough to be a real frame without paying for airtime nobody asked
+/// about. With `--echo`, two of them are the nonce that matches a reply to
+/// its request.
 const DEFAULT_SIZE: u16 = 8;
+
+/// The nonce an echo carries ahead of its filler.
+const ECHO_NONCE_LEN: u16 = 2;
+
+/// How long an echo is waited on when the caller names no wait. Nothing
+/// acknowledges an Echo Request, so the MAC never says it has given up.
+const ECHO_WAIT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, clap::Args)]
 pub struct PingArgs {
@@ -45,16 +55,17 @@ pub struct PingArgs {
     #[arg(short = 'i', long, value_name = "SECONDS", default_value_t = 3)]
     pub interval: u64,
 
-    /// Seconds to wait for each reply.
-    #[arg(short = 'W', long, value_name = "SECONDS", default_value_t = 30,
+    /// Seconds to wait for each reply. Without it a ping waits until the
+    /// MAC gives up on it, which is after its retries and its Route Retry,
+    /// and an `--echo` waits 30 seconds.
+    #[arg(short = 'W', long, value_name = "SECONDS",
           value_parser = clap::value_parser!(u64).range(1..))]
-    pub timeout: u64,
+    pub timeout: Option<u64>,
 
-    /// Bytes of echo data, including the 2-byte nonce. The frame's own
-    /// budget is the real ceiling, and an oversize ping is refused rather
-    /// than shortened.
-    #[arg(short = 's', long, value_name = "BYTES", default_value_t = DEFAULT_SIZE,
-          conflicts_with = "ack_only", value_parser = clap::value_parser!(u16).range(2..))]
+    /// Bytes of filler after the command; with `--echo`, bytes of echo
+    /// data, including the 2-byte nonce. The frame's own budget is the real
+    /// ceiling, and an oversize ping is refused rather than shortened.
+    #[arg(short = 's', long, value_name = "BYTES", default_value_t = DEFAULT_SIZE)]
     pub size: u16,
 
     /// Flood-hop ceiling (`FHOPS_REM`): repeater forwards the ping may spend,
@@ -80,11 +91,12 @@ pub struct PingArgs {
     #[arg(long, value_name = "CHANNEL")]
     pub channel: Option<ChannelArg>,
 
-    /// Send a No-op MAC command asking for an acknowledgment, and time the
-    /// ack instead of an echo. Measures the MAC's own round trip, with no
-    /// application frame coming back.
+    /// Send an Echo Request and time its Echo Response, instead of timing
+    /// the acknowledgment of a No-Op. The echo data comes back whole, so
+    /// the return leg is as large as the outbound one, and nothing retries
+    /// an echo that goes unanswered.
     #[arg(long)]
-    pub ack_only: bool,
+    pub echo: bool,
 
     /// MIC size in bytes.
     #[arg(long, value_name = "BYTES", default_value = "8")]
@@ -110,6 +122,14 @@ pub struct PingArgs {
     /// on stderr.
     #[arg(long)]
     pub untraced: bool,
+}
+
+/// An echo sent and not yet answered: the nonce its response has to carry,
+/// and when it was handed to the MAC.
+#[derive(Clone, Copy)]
+struct AwaitedEcho {
+    nonce: [u8; ECHO_NONCE_LEN as usize],
+    sent: Instant,
 }
 
 impl PingArgs {
@@ -153,21 +173,20 @@ impl PingArgs {
 
 /// What one ping came back as.
 enum Reply {
-    Echo(PongMetadata),
-    /// An ack-only ping, and how long the acknowledgment took.
-    Acked(u64),
+    /// It was answered, and this is how the answer arrived.
+    Answer(PongMetadata),
     /// Nothing came back.
     Silence {
-        /// What the MAC saw of the frame on its way out, where it kept a
-        /// receipt to see it by—which separates "nobody answered" from
-        /// "it never left the antenna". An echo ping asks for no
-        /// acknowledgment, so the MAC tracks nothing and there is nothing
-        /// here to report.
-        progress: Option<SendProgress>,
+        /// How long the ping was waited on: until the MAC gave up on it,
+        /// or the caller's own wait ran out first.
+        after_ms: u64,
+        /// What the MAC saw of the frame on its way out, which separates
+        /// "nobody answered" from "it never left the antenna".
+        progress: SendProgress,
     },
 }
 
-/// What the MAC observed of an ack-tracked frame it sent.
+/// What the MAC observed of a frame it sent.
 struct SendProgress {
     transmitted: bool,
     repeated: bool,
@@ -176,6 +195,9 @@ struct SendProgress {
 pub async fn run(ctl: &mut Ctl<'_>, args: PingArgs) -> Result<()> {
     let target = ctl.target;
     let options = args.send_options()?;
+    if args.echo && args.size < ECHO_NONCE_LEN {
+        bail!("an echo carries a {ECHO_NONCE_LEN}-byte nonce, so `--size` cannot be smaller");
+    }
 
     // A blind unicast still needs the destination registered as a peer—
     // the channel conceals the pair, it does not stand in for knowing who
@@ -205,7 +227,7 @@ pub async fn run(ctl: &mut Ctl<'_>, args: PingArgs) -> Result<()> {
     }
     field("shape", describe_shape(&args, &options));
 
-    // Replies arrive asynchronously on the receive path, so a subscription
+    // Answers arrive asynchronously on the receive path, so a subscription
     // collects them and the loop below waits for one to land.
     let pong: Rc<RefCell<Option<PongMetadata>>> = Rc::new(RefCell::new(None));
     let sink = pong.clone();
@@ -221,6 +243,30 @@ pub async fn run(ctl: &mut Ctl<'_>, args: PingArgs) -> Result<()> {
             *expiry.borrow_mut() = true;
         }
     });
+    // An Echo Response is an ordinary packet to the node, so `--echo`
+    // picks its own answer out of what is received, by the nonce it echoes.
+    let awaited: Rc<RefCell<Option<AwaitedEcho>>> = Rc::new(RefCell::new(None));
+    let _echo_subscription = args.echo.then(|| {
+        let sink = pong.clone();
+        let awaited = awaited.clone();
+        ctl.stack.node.on_receive(move |packet| {
+            let Some(echo) = *awaited.borrow() else {
+                return false;
+            };
+            if packet.from_key() == Some(target) && echoes(packet, &echo.nonce) {
+                awaited.borrow_mut().take();
+                *sink.borrow_mut() = Some(PongMetadata::from_path(
+                    echo.sent.elapsed().as_millis() as u64,
+                    packet.rx(),
+                    packet.hop_count(),
+                    packet.trace(),
+                    false,
+                ));
+            }
+            // Seen, not claimed: the node handles the packet as it would.
+            false
+        })
+    });
 
     let mut sent = 0u32;
     let mut rtts: Vec<u64> = Vec::new();
@@ -230,27 +276,27 @@ pub async fn run(ctl: &mut Ctl<'_>, args: PingArgs) -> Result<()> {
         pong.borrow_mut().take();
         *expired.borrow_mut() = false;
 
-        let reply =
-            match one_ping(ctl, &peer, bound.as_ref(), &args, &options, &pong, &expired).await {
-                Ok(reply) => reply,
-                Err(error) => {
-                    result = Err(error);
-                    break;
-                }
-            };
+        let waits = Waits {
+            pong: &pong,
+            expired: &expired,
+            awaited: &awaited,
+        };
+        let reply = match one_ping(ctl, &peer, bound.as_ref(), &args, &options, waits).await {
+            Ok(reply) => reply,
+            Err(error) => {
+                result = Err(error);
+                break;
+            }
+        };
         sent += 1;
-        report(seq, &args, &reply);
-        if let Some(rtt) = match &reply {
-            Reply::Echo(metadata) => Some(metadata.round_trip_ms),
-            Reply::Acked(rtt_ms) => Some(*rtt_ms),
-            Reply::Silence { .. } => None,
-        } {
-            rtts.push(rtt);
+        report(seq, &reply);
+        if let Reply::Answer(metadata) = &reply {
+            rtts.push(metadata.round_trip_ms);
         }
 
         if seq < args.count {
             let until = Instant::now() + Duration::from_secs(args.interval);
-            wait_until(ctl, until, || false).await;
+            wait_until(ctl, Some(until), || false).await;
         }
     }
 
@@ -272,77 +318,107 @@ pub async fn run(ctl: &mut Ctl<'_>, args: PingArgs) -> Result<()> {
     Ok(())
 }
 
-/// Send one ping and wait out its deadline.
-#[allow(clippy::too_many_arguments)]
+/// Where the answer to a ping shows up.
+#[derive(Clone, Copy)]
+struct Waits<'a> {
+    /// The answer, once it lands.
+    pong: &'a Rc<RefCell<Option<PongMetadata>>>,
+    /// Set when the node gives up on a ping.
+    expired: &'a Rc<RefCell<bool>>,
+    /// The echo being waited on, for `--echo`.
+    awaited: &'a Rc<RefCell<Option<AwaitedEcho>>>,
+}
+
+/// Send one ping and wait for how it ends.
 async fn one_ping(
     ctl: &mut Ctl<'_>,
     peer: &umsh::node::PeerConnection<umsh::node::LocalNode<crate::mesh::CtlHandle<'_>>>,
     bound: Option<&umsh::node::BoundChannel<crate::mesh::CtlHandle<'_>>>,
     args: &PingArgs,
     options: &SendOptions,
-    pong: &Rc<RefCell<Option<PongMetadata>>>,
-    expired: &Rc<RefCell<bool>>,
+    waits: Waits<'_>,
 ) -> Result<Reply> {
-    let timeout = Duration::from_secs(args.timeout);
     let started = Instant::now();
-    let deadline = started + timeout;
+    // The MAC ends a ping, acknowledged or given up on, so only a wait the
+    // caller asked for cuts one short.
+    let wait = args
+        .timeout
+        .map(Duration::from_secs)
+        .or(args.echo.then_some(ECHO_WAIT));
+    let deadline = wait.map(|wait| started + wait);
 
-    if args.ack_only {
-        // A No-op is one command byte and produces no reply frame; what is
-        // being timed is the MAC acknowledgment it asks for.
-        let payload = [
-            PayloadType::MacCommand as u8,
-            umsh::node::mac_command::CommandId::Noop as u8,
-        ];
-        let options = options.clone().with_ack_requested(true);
-        let ticket = match bound {
+    let ticket = if args.echo {
+        // The Echo Request asks for no acknowledgment: its Echo Response is
+        // what comes back, and the MAC retries nothing.
+        let mut nonce = [0u8; ECHO_NONCE_LEN as usize];
+        rng().fill_bytes(&mut nonce);
+        let mut payload = vec![0xA5u8; 2 + usize::from(args.size)];
+        payload[0] = PayloadType::MacCommand as u8;
+        payload[1] = CommandId::EchoRequest as u8;
+        payload[2..2 + nonce.len()].copy_from_slice(&nonce);
+        *waits.awaited.borrow_mut() = Some(AwaitedEcho {
+            nonce,
+            sent: started,
+        });
+        let options = options.clone().with_ack_requested(false);
+        let sent = match bound {
             Some(bound) => bound.peer(ctl.target).send(&payload, &options).await,
             None => peer.send(&payload, &options).await,
+        };
+        if sent.is_err() {
+            waits.awaited.borrow_mut().take();
         }
-        .map_err(describe_send)?;
-        wait_until(ctl, deadline, || ticket.is_finished()).await;
-        return Ok(if ticket.was_acked() {
-            Reply::Acked(started.elapsed().as_millis() as u64)
-        } else {
-            Reply::Silence {
-                progress: Some(SendProgress {
-                    transmitted: ticket.was_transmitted(),
-                    repeated: ticket.was_repeated(),
-                }),
-            }
-        });
-    }
-
-    let extra = usize::from(args.size - 2);
-    // The echo response is the acknowledgment, so `ping` asks for no MAC
-    // ack and the MAC keeps no receipt to track the frame by; the ticket
-    // exists only so the send's own failures surface.
-    match bound {
-        Some(bound) => {
-            bound
-                .peer(ctl.target)
-                .ping(extra, options, timeout.as_millis() as u64)
-                .await
+        sent.map_err(describe_send)?
+    } else {
+        // The acknowledgment is the answer, so the ticket follows the ping
+        // out the way any acknowledged send's does.
+        let padding = usize::from(args.size);
+        match bound {
+            Some(bound) => bound.peer(ctl.target).ping(padding, options).await,
+            None => peer.ping(padding, options).await,
         }
-        None => peer.ping(extra, options, timeout.as_millis() as u64).await,
-    }
-    .map_err(describe_send)?;
+        .map_err(describe_send)?
+    };
 
     wait_until(ctl, deadline, || {
-        pong.borrow().is_some() || *expired.borrow()
+        waits.pong.borrow().is_some() || *waits.expired.borrow()
     })
     .await;
+    waits.awaited.borrow_mut().take();
 
-    Ok(match pong.borrow_mut().take() {
-        Some(metadata) => Reply::Echo(metadata),
-        None => Reply::Silence { progress: None },
+    Ok(match waits.pong.borrow_mut().take() {
+        Some(metadata) => Reply::Answer(metadata),
+        None => Reply::Silence {
+            after_ms: started.elapsed().as_millis() as u64,
+            progress: SendProgress {
+                transmitted: ticket.was_transmitted(),
+                repeated: ticket.was_repeated(),
+            },
+        },
     })
 }
 
-/// Wait until `done` or the deadline, whichever comes first.
-async fn wait_until(ctl: &Ctl<'_>, deadline: Instant, mut done: impl FnMut() -> bool) {
-    while !done() && Instant::now() < deadline {
-        ctl.stack.wait_until(deadline).await;
+/// Whether `packet` is an Echo Response whose data begins with `nonce`.
+fn echoes(packet: &ReceivedPacketRef<'_>, nonce: &[u8]) -> bool {
+    packet.payload_type() == PayloadType::MacCommand
+        && matches!(
+            mac_command::parse(packet.payload()),
+            Ok(MacCommand::EchoResponse { data }) if data.starts_with(nonce)
+        )
+}
+
+/// Wait until `done`, or until `deadline` when there is one.
+async fn wait_until(ctl: &Ctl<'_>, deadline: Option<Instant>, mut done: impl FnMut() -> bool) {
+    while !done() {
+        let now = Instant::now();
+        if deadline.is_some_and(|deadline| now >= deadline) {
+            break;
+        }
+        // With no deadline it is the pump's cycles that say when to look
+        // again; the second only bounds a cycle that completed unnoticed.
+        ctl.stack
+            .wait_until(deadline.unwrap_or(now + Duration::from_secs(1)))
+            .await;
     }
 }
 
@@ -363,10 +439,10 @@ fn describe_send(error: impl core::fmt::Debug) -> anyhow::Error {
 /// below it can be read back later without the command line.
 fn describe_shape(args: &PingArgs, options: &SendOptions) -> String {
     let mut parts = Vec::new();
-    if args.ack_only {
-        parts.push(String::from("no-op, ack requested"));
-    } else {
+    if args.echo {
         parts.push(format!("{} bytes echo", args.size));
+    } else {
+        parts.push(format!("{} bytes no-op, ack requested", args.size));
     }
     parts.push(format!("mic {}", options.mic_size.byte_len()));
     match &options.source_route {
@@ -395,9 +471,9 @@ fn describe_shape(args: &PingArgs, options: &SendOptions) -> String {
 }
 
 /// One line per ping, in the order they were sent.
-fn report(seq: u32, args: &PingArgs, reply: &Reply) {
+fn report(seq: u32, reply: &Reply) {
     match reply {
-        Reply::Echo(metadata) => {
+        Reply::Answer(metadata) => {
             let mut line = format!("seq {seq}: reply in {}", seconds(metadata.round_trip_ms));
             if let Some(hops) = metadata.hop_count {
                 line.push_str(&format!(", {hops} hop{}", if hops == 1 { "" } else { "s" }));
@@ -421,23 +497,22 @@ fn report(seq: u32, args: &PingArgs, reply: &Reply) {
             if let Some(snr) = metadata.snr_centibels {
                 line.push_str(&format!(", snr {:.1} dB", f32::from(snr) / 10.0));
             }
+            if metadata.via_route_retry {
+                line.push_str(", after route retry");
+            }
             println!("{line}");
         }
-        Reply::Acked(rtt_ms) => println!("seq {seq}: acked in {}", seconds(*rtt_ms)),
-        Reply::Silence { progress } => {
-            let what = if args.ack_only { "no ack" } else { "timeout" };
-            let mut line = format!("seq {seq}: {what} after {} s", args.timeout);
-            if let Some(progress) = progress {
-                let mut seen = Vec::new();
-                if progress.transmitted {
-                    seen.push("transmitted");
-                }
-                if progress.repeated {
-                    seen.push("repeated");
-                }
-                if !seen.is_empty() {
-                    line.push_str(&format!(" ({})", seen.join(", ")));
-                }
+        Reply::Silence { after_ms, progress } => {
+            let mut line = format!("seq {seq}: no reply after {}", seconds(*after_ms));
+            let mut seen = Vec::new();
+            if progress.transmitted {
+                seen.push("transmitted");
+            }
+            if progress.repeated {
+                seen.push("repeated");
+            }
+            if !seen.is_empty() {
+                line.push_str(&format!(" ({})", seen.join(", ")));
             }
             println!("{line}");
         }

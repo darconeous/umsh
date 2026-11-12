@@ -220,9 +220,9 @@ protocol RadioConnection: AnyObject, Sendable {
     /// metadata; completion leaves the radio's queue empty. Callers drain
     /// once per attach, after the host tables are reconciled.
     func drainOfflineQueue() async throws
-    /// Send one traced Echo Request. Without a `path` it pings the usual
-    /// way; with one it goes down exactly that path, to test it without
-    /// installing it.
+    /// Send one traced ping. Without a `path` it pings the usual way; with
+    /// one it goes down exactly that path, to test it without installing
+    /// it.
     func ping(peerAddress: String, path: MobileMeshExplicitPath?) async throws -> RadioPingResult
     /// This phone's own node public key—what a device lists to let this
     /// phone manage it from a distance. Nil before a mesh session exists.

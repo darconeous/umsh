@@ -152,10 +152,6 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
         super.init()
     }
 
-    /// Long enough for a reply to a long flood: twelve or more hops each way,
-    /// each with its own channel-activity backoff. A ping sent again cancels
-    /// the one still waiting and waits this long itself.
-    static let peerPingTimeoutMilliseconds: UInt64 = 30_000
     static let logger = Logger(subsystem: "com.voria.umsh.ios", category: "UlcpDevice")
     static let maximumRawTransmitBusyRetries = 20
     /// Reconnects a fatal protocol fault is worth before the failure sticks.
@@ -1162,7 +1158,6 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
                 do {
                     let operation = try meshSession.ping(
                         peerAddress: peerAddress,
-                        timeoutMs: Self.peerPingTimeoutMilliseconds,
                         path: path
                     )
                     pingWaiters[operation] = result

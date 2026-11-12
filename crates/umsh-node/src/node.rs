@@ -6,7 +6,7 @@ use alloc::vec::Vec;
 use core::cell::RefCell;
 use core::num::NonZeroU32;
 
-use umsh_core::options::HopSignal;
+use umsh_core::options::{HopSignal, TraceRef};
 use umsh_core::{ChannelKey, NodeHint, PublicKey, RouterHint};
 #[cfg(feature = "software-crypto")]
 use umsh_mac::PeerHolder;
@@ -24,7 +24,7 @@ use crate::peer::PeerConnection;
 use crate::peer_repeaters::{self, PeerRepeaterTable};
 #[cfg(feature = "software-crypto")]
 use crate::pfs::{self, PfsSessionManager, PfsSessionRecord, PfsState};
-use crate::receive::ReceivedPacketRef;
+use crate::receive::{ReceivedPacketRef, RxMetadata};
 use crate::ticket::{SendProgressTicket, SendToken};
 use crate::transport::Transport;
 use crate::{AppEncodeError, NodeCapabilities, NodeRole, OwnedMacCommand};
@@ -152,28 +152,34 @@ impl<F: ?Sized> HandlerTable<Rc<RefCell<F>>> {
     }
 }
 
+/// A ping awaiting its answer. It has no deadline of its own: the MAC ends
+/// the send that carries it, acknowledged or given up on, and the MAC's
+/// patience covers the retries and the Route Retry a fixed wait would cut
+/// short.
 pub(crate) struct PendingPing {
-    pub nonce: u16,
     pub peer: PublicKey,
-    pub sent_at_ms: u64,
-    pub deadline_ms: u64,
+    /// The send carrying the ping, whose acknowledgment is its answer.
+    pub token: SendToken,
+    /// When the ping last began to air, or was handed to the MAC until it
+    /// first does: the round trip runs from the copy sent last.
+    pub aired_ms: u64,
 }
 
-/// Measurements attached to an authenticated echo response.
+/// Measurements of the answer to a ping: the acknowledgment that came back.
 ///
 /// RSSI, SNR, and LQI describe the final radio hop into this node. Route
-/// hints are the authenticated trace-route entries accumulated by repeaters;
-/// endpoints are not included in that list.
+/// hints are the trace entries accumulated by repeaters; endpoints are not
+/// included in that list.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PongMetadata {
     pub round_trip_ms: u64,
-    /// Radio links the response crossed, counting the final one into this
-    /// node: a direct reply is one hop. `None` when the reply was
+    /// Radio links the answer crossed, counting the final one into this
+    /// node: a direct answer is one hop. `None` when the answer was
     /// source-routed without a complete trace, which crosses hops nobody
     /// recorded. See
     /// [`ReceivedPacketRef::hop_count`](umsh_mac::ReceivedPacketRef::hop_count).
     pub hop_count: Option<u8>,
-    /// The repeaters the response's trace names, nearest this node first.
+    /// The repeaters the answer's trace names, nearest this node first.
     /// When the trace was truncated in transit, only the nearest ones.
     pub route_hints: Vec<RouterHint>,
     /// How each repeater in `route_hints` heard the node beyond it, entry
@@ -186,6 +192,41 @@ pub struct PongMetadata {
     pub rssi_dbm: Option<i16>,
     pub snr_centibels: Option<i16>,
     pub lqi: Option<u8>,
+    /// Whether the ping got through only as a Route Retry, once the route
+    /// it was first sent along had failed.
+    pub via_route_retry: bool,
+}
+
+impl PongMetadata {
+    /// The measurements of an answer that came back `round_trip_ms` after
+    /// what it answers, on a frame heard as `rx` that took `hop_count` hops
+    /// and recorded `trace` on the way.
+    pub fn from_path(
+        round_trip_ms: u64,
+        rx: &RxMetadata,
+        hop_count: Option<u8>,
+        trace: Option<TraceRef<'_>>,
+        via_route_retry: bool,
+    ) -> Self {
+        Self {
+            round_trip_ms,
+            hop_count,
+            route_hints: trace
+                .iter()
+                .flat_map(|trace| trace.entries().map(|entry| entry.hint))
+                .collect(),
+            trace_signal: trace
+                .filter(|trace| trace.has_signal())
+                .iter()
+                .flat_map(|trace| trace.entries().filter_map(|entry| entry.signal))
+                .collect(),
+            trace_truncated: trace.is_some_and(|trace| !trace.is_complete()),
+            rssi_dbm: rx.rssi(),
+            snr_centibels: rx.snr().map(|snr| snr.as_centibels()),
+            lqi: rx.lqi().map(core::num::NonZeroU8::get),
+            via_route_retry,
+        }
+    }
 }
 
 /// Callbacks of one kind, kept in a [`HandlerTable`].
@@ -1439,139 +1480,123 @@ impl<M: MacBackend> LocalNode<M> {
         Subscription::new(move || state.borrow_mut().ping_timeout_handlers.remove(handle))
     }
 
-    /// Wait for `peer` to answer the ping with `nonce`. A ping still waiting
-    /// on the same peer is canceled: neither its echo nor its deadline is
-    /// reported, because the newer ping asks the same question afresh.
-    pub(crate) fn record_ping(
-        &self,
-        nonce: u16,
-        peer: PublicKey,
-        sent_at_ms: u64,
-        deadline_ms: u64,
-    ) {
+    /// Wait for the answer to `ping`.
+    pub(crate) fn record_ping(&self, ping: PendingPing) {
         let mut state = self.state.borrow_mut();
-        state.pending_pings.retain(|ping| ping.peer != peer);
-        state.pending_pings.push(PendingPing {
-            nonce,
-            peer,
-            sent_at_ms,
-            deadline_ms,
-        });
+        state
+            .pending_pings
+            .retain(|pending| pending.peer != ping.peer);
+        state.pending_pings.push(ping);
     }
 
-    /// Stop waiting for the ping with `nonce` to `peer`, as when it was
-    /// never sent. A newer ping to the same peer is left waiting.
-    pub(crate) fn forget_ping(&self, nonce: u16, peer: PublicKey) {
-        self.state
+    /// Stop waiting on the ping to `peer`, returning the send that carries
+    /// it for the caller to cancel. A newer ping asks the same question
+    /// afresh, so nothing more is reported of the old one.
+    pub(crate) fn take_ping(&self, peer: PublicKey) -> Option<SendToken> {
+        let mut state = self.state.borrow_mut();
+        let index = state
+            .pending_pings
+            .iter()
+            .position(|ping| ping.peer == peer)?;
+        Some(state.pending_pings.swap_remove(index).token)
+    }
+
+    /// Note that the ping `token` carries began to air at `began_ms`.
+    pub(crate) fn note_ping_aired(&self, token: SendToken, began_ms: u64) {
+        if let Some(ping) = self
+            .state
             .borrow_mut()
             .pending_pings
-            .retain(|ping| ping.nonce != nonce || ping.peer != peer);
+            .iter_mut()
+            .find(|ping| ping.token == token)
+        {
+            ping.aired_ms = began_ms;
+        }
+    }
+
+    /// Time out the ping `token` carries, which the MAC gave up on, so no
+    /// answer is coming. Returns whether the send was a ping's.
+    pub(crate) fn fail_ping(&self, token: SendToken) -> bool {
+        let Some(ping) = self.take_ping_carried_by(token) else {
+            return false;
+        };
+        self.dispatch_ping_timeout(ping.peer);
+        true
+    }
+
+    /// Time out a ping to `peer` whose send the MAC is not tracking, so
+    /// nothing would ever end it.
+    pub(crate) fn fail_untracked_ping(&self, peer: PublicKey) {
+        self.dispatch_ping_timeout(peer);
+    }
+
+    /// Stop waiting on the ping `token` carries, and return it.
+    fn take_ping_carried_by(&self, token: SendToken) -> Option<PendingPing> {
+        let mut state = self.state.borrow_mut();
+        let index = state
+            .pending_pings
+            .iter()
+            .position(|ping| ping.token == token)?;
+        Some(state.pending_pings.swap_remove(index))
     }
 
     pub(crate) async fn now_ms(&self) -> u64 {
         self.mac.now_ms().await
     }
 
-    /// Have the host's pump come round by `deadline_ms`; see
-    /// [`MacBackend::wake_by`].
-    pub(crate) async fn wake_by(&self, deadline_ms: u64) {
-        self.mac.wake_by(deadline_ms).await
-    }
-
     /// The earliest deadline the host's timeout service has to meet for
-    /// this node: a ping awaiting its echo, a forward-secrecy request
-    /// awaiting its answer, or a session's end.
+    /// this node: a forward-secrecy request awaiting its answer, or a
+    /// session's end. A ping has none; the MAC ends it.
     pub(crate) fn next_deadline_ms(&self) -> Option<u64> {
-        let state = self.state.borrow();
-        let pings = state.pending_pings.iter().map(|ping| ping.deadline_ms);
         #[cfg(feature = "software-crypto")]
-        let pings = pings.chain(state.pfs.next_deadline_ms());
-        pings.min()
+        return self.state.borrow().pfs.next_deadline_ms();
+        #[cfg(not(feature = "software-crypto"))]
+        None
     }
 
     pub(crate) async fn fill_random(&self, dest: &mut [u8]) {
         self.mac.fill_random(dest).await
     }
 
-    /// Called when an EchoResponse arrives. Matches against pending pings and fires pong handlers.
-    pub(crate) fn match_pong(
+    /// Called when the send `token` names is acknowledged: if it carried a
+    /// ping, that acknowledgment is the ping's answer, and the pong
+    /// handlers fire. Returns whether it did.
+    ///
+    /// `answered_ms` is when the acknowledgment was heard, on a frame heard
+    /// as `rx` that took `hop_count` hops and recorded `trace` on the way.
+    pub(crate) fn resolve_ping(
         &self,
-        from: PublicKey,
-        data: &[u8],
-        packet: &ReceivedPacketRef<'_>,
-        now_ms: u64,
-    ) {
-        if data.len() < 2 {
-            return;
-        }
-        let nonce = u16::from_be_bytes([data[0], data[1]]);
-        // Under a session with forward secrecy, the peer answers from its
-        // session key; the ping waits under its long-term one.
-        let from = canonical_peer(&self.state.borrow(), from);
-        let ping = {
-            let mut state = self.state.borrow_mut();
-            let idx = state
-                .pending_pings
-                .iter()
-                .position(|p| p.nonce == nonce && p.peer == from);
-            idx.map(|idx| state.pending_pings.swap_remove(idx))
+        token: SendToken,
+        answered_ms: u64,
+        rx: &RxMetadata,
+        hop_count: Option<u8>,
+        trace: Option<TraceRef<'_>>,
+        via_route_retry: bool,
+    ) -> bool {
+        let Some(ping) = self.take_ping_carried_by(token) else {
+            return false;
         };
-        if let Some(ping) = ping {
-            let rtt_ms = now_ms.saturating_sub(ping.sent_at_ms);
-            let trace = packet.trace();
-            let route_hints = trace
-                .iter()
-                .flat_map(|trace| trace.entries().map(|entry| entry.hint))
-                .collect::<Vec<_>>();
-            let trace_signal = trace
-                .filter(|trace| trace.has_signal())
-                .iter()
-                .flat_map(|trace| trace.entries().filter_map(|entry| entry.signal))
-                .collect();
-            let metadata = PongMetadata {
-                round_trip_ms: rtt_ms,
-                hop_count: packet.hop_count(),
-                route_hints,
-                trace_signal,
-                trace_truncated: trace.is_some_and(|trace| !trace.is_complete()),
-                rssi_dbm: packet.rssi(),
-                snr_centibels: packet.snr().map(|snr| snr.as_centibels()),
-                lqi: packet.lqi().map(core::num::NonZeroU8::get),
-            };
-            self.each_handler(
-                |state| Some(&state.find_peer_subscriptions(from)?.pong_handlers),
-                |h| h(rtt_ms),
-            );
-            self.each_handler(|state| Some(&state.pong_handlers), |h| h(from, rtt_ms));
-            self.each_handler(
-                |state| Some(&state.pong_metadata_handlers),
-                |h| h(from, &metadata),
-            );
-        }
+        let from = ping.peer;
+        let rtt_ms = answered_ms.saturating_sub(ping.aired_ms);
+        let metadata = PongMetadata::from_path(rtt_ms, rx, hop_count, trace, via_route_retry);
+        self.each_handler(
+            |state| Some(&state.find_peer_subscriptions(from)?.pong_handlers),
+            |h| h(rtt_ms),
+        );
+        self.each_handler(|state| Some(&state.pong_handlers), |h| h(from, rtt_ms));
+        self.each_handler(
+            |state| Some(&state.pong_metadata_handlers),
+            |h| h(from, &metadata),
+        );
+        true
     }
 
-    /// Called periodically by the host timeout service. Fires timeout handlers for expired pings.
-    pub(crate) fn expire_pings(&self, now_ms: u64) {
-        let expired = {
-            let mut state = self.state.borrow_mut();
-            let mut expired = Vec::new();
-            let mut i = 0;
-            while i < state.pending_pings.len() {
-                if now_ms >= state.pending_pings[i].deadline_ms {
-                    expired.push(state.pending_pings.swap_remove(i).peer);
-                } else {
-                    i += 1;
-                }
-            }
-            expired
-        };
-        for peer in expired {
-            self.each_handler(
-                |state| Some(&state.find_peer_subscriptions(peer)?.ping_timeout_handlers),
-                |h| h(),
-            );
-            self.each_handler(|state| Some(&state.ping_timeout_handlers), |h| h(peer));
-        }
+    fn dispatch_ping_timeout(&self, peer: PublicKey) {
+        self.each_handler(
+            |state| Some(&state.find_peer_subscriptions(peer)?.ping_timeout_handlers),
+            |h| h(),
+        );
+        self.each_handler(|state| Some(&state.ping_timeout_handlers), |h| h(peer));
     }
 
     #[cfg(feature = "software-crypto")]

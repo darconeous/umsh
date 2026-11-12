@@ -1573,15 +1573,7 @@ impl<'a> ReceivedPacketRef<'a> {
     /// option, so a routed frame arrives carrying it—usually emptied—and its
     /// presence is the tell that `FHOPS_ACC` did not see every hop.
     pub fn hop_count(&self) -> Option<u8> {
-        let flooded = self.flood_hops().map(FloodHops::accumulated).unwrap_or(0);
-        if let Some(trace) = self.trace().filter(TraceRef::is_complete) {
-            let traced = u8::try_from(trace.len()).unwrap_or(u8::MAX);
-            Some(traced.max(flooded).saturating_add(1))
-        } else if self.source_route().is_some() {
-            None
-        } else {
-            Some(flooded.saturating_add(1))
-        }
+        hop_count(self.wire, &self.header, &self.options)
     }
 
     /// Repeater hints left in the source-route option: repeaters still to
@@ -1590,6 +1582,21 @@ impl<'a> ReceivedPacketRef<'a> {
         self.source_route()
             .map(|route| route.len() / 2)
             .unwrap_or(0)
+    }
+}
+
+/// Hops the frame `wire` took to reach this node, as
+/// [`ReceivedPacketRef::hop_count`] counts them. A MAC ack is counted the
+/// same way as a packet.
+pub(crate) fn hop_count(wire: &[u8], header: &PacketHeader, options: &ParsedOptions) -> Option<u8> {
+    let flooded = header.flood_hops.map(FloodHops::accumulated).unwrap_or(0);
+    if let Some(trace) = options.trace(wire).filter(TraceRef::is_complete) {
+        let traced = u8::try_from(trace.len()).unwrap_or(u8::MAX);
+        Some(traced.max(flooded).saturating_add(1))
+    } else if options.source_route.is_some() {
+        None
+    } else {
+        Some(flooded.saturating_add(1))
     }
 }
 
@@ -1603,12 +1610,23 @@ pub enum MacEventRef<'a> {
     /// Accepted inbound packet with parsed metadata and resolved sender/channel information.
     Received(ReceivedPacketRef<'a>),
     /// Matching transport ACK received.
+    ///
+    /// `rx`, `hop_count` and `trace` describe the frame that carried the
+    /// acknowledgment, a MAC ack or a packet with an Ack MIC option, as
+    /// this node heard it.
     AckReceived {
         peer: PublicKey,
         receipt: SendReceipt,
         /// The acknowledged attempt was the route-retry flood that followed a
         /// miss on the cached route, not the original send.
         via_route_retry: bool,
+        /// How the frame was heard, and when.
+        rx: RxMetadata,
+        /// The hops the frame took to get here, counted as
+        /// [`ReceivedPacketRef::hop_count`] counts them.
+        hop_count: Option<u8>,
+        /// The frame's trace, most recent hop first.
+        trace: Option<TraceRef<'a>>,
     },
     /// Pending ACK timed out.
     AckTimeout {
@@ -1618,11 +1636,14 @@ pub enum MacEventRef<'a> {
     /// Frame was successfully handed to the radio transmitter.
     ///
     /// `identity_id` + `receipt` together form the identity-scoped send token.
-    /// `receipt` is `Some` only for ACK-requested sends.
+    /// `receipt` is `Some` only for ACK-requested sends. `began_ms` is when
+    /// the radio was handed the frame, its channel check included: a round
+    /// trip runs from there.
     Transmitted {
         identity_id: LocalIdentityId,
         receipt: Option<SendReceipt>,
         wire_bytes: &'a [u8],
+        began_ms: u64,
     },
     /// A repeater was overheard forwarding this frame.
     ///

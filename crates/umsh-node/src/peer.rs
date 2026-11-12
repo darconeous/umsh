@@ -6,11 +6,10 @@ use umsh_mac::SendOptions;
 
 /// MIC size callers should normally ask for on a ping.
 ///
-/// A ping frame is otherwise nearly half MIC: with a 2-byte nonce the whole
-/// frame is 34 bytes, 16 of them the authenticator. Dropping to 8 takes a
-/// quarter off the airtime while leaving forgery resistance at 2^-64—far
-/// out of reach at LoRa packet rates, and the echo payload is a random nonce
-/// and filler that is worth nothing to forge.
+/// An unpadded ping frame is otherwise about half MIC: 16 of its bytes are
+/// the authenticator. Dropping to 8 takes a quarter off the airtime while
+/// leaving forgery resistance at 2^-64—far out of reach at LoRa packet
+/// rates, and a ping's payload is filler that is worth nothing to forge.
 ///
 /// Not applied inside [`PeerConnection::ping`], which honours whatever it is
 /// given: a caller measuring how 16-byte-MIC traffic fares should ping with a
@@ -249,78 +248,73 @@ where
         })
     }
 
-    /// Send an echo request and record it as pending until the matching echo
-    /// response arrives or `timeout_ms` elapses.
+    /// Ping this peer: send a No-Op that asks for an acknowledgment, and
+    /// record it as pending until that acknowledgment arrives or the MAC
+    /// gives up on the send.
     ///
-    /// `options` is honoured as given, so a ping travels the same way the
+    /// The MAC ack is the answer. So a ping is retried, and its route
+    /// confirmed, failed or retried, like any other acknowledged send, and a
+    /// ping the MAC gives up on times out then and there.
+    ///
+    /// A ping has no deadline of its own. How long an acknowledgment can
+    /// take depends on the radio's airtime and on how far the send may
+    /// travel, and the MAC's Route Retry goes out only once that whole wait
+    /// has passed: a fixed deadline shorter than the two together ends the
+    /// ping just before the answer its route recovery earns. A caller that
+    /// will not wait that long pings again or stops listening.
+    ///
+    /// `options` is honored as given, so a ping travels the same way the
     /// traffic it is measuring would: same MIC size, same encryption, same
-    /// routing and region options. Only `ack_requested` is overridden—the
-    /// echo response *is* the acknowledgement, so asking for a MAC ack as
-    /// well would put a second frame on the air for nothing.
+    /// routing and region options. Only `ack_requested` is overridden.
     ///
-    /// `extra_bytes` pads the payload beyond the 2-byte nonce. Padding
+    /// `padding` is how many filler bytes follow the command. Padding
     /// matters for the same reason the MIC size does: packet error rate rises
     /// with frame length, so a minimal ping reports a link as usable when a
     /// full-size message would not get through. See [`PING_MIC_SIZE`] for the
     /// MIC size callers should normally ask for.
     ///
     /// The padding is bounded by what one frame can carry, not by this call:
-    /// a ping too large to build fails with the MAC's own send error rather
-    /// than being quietly shortened into a measurement of a smaller frame.
+    /// a ping too large fails with the MAC's own send error rather than
+    /// being quietly shortened into a measurement of a smaller frame.
     ///
     /// A new ping cancels any ping to this peer still waiting for an answer:
-    /// a late echo to the old one is ignored, and its deadline never fires.
+    /// its send is canceled, and nothing more is reported of it.
     pub async fn ping(
         &self,
-        extra_bytes: usize,
+        padding: usize,
         options: &SendOptions,
-        timeout_ms: u64,
     ) -> Result<crate::ticket::SendProgressTicket, NodeError<M>> {
-        // Generate a 2-byte nonce via the MAC RNG.
-        let mut nonce_bytes = [0u8; 2];
-        self.transport
-            .local_node()
-            .fill_random(&mut nonce_bytes)
-            .await;
-        let nonce = u16::from_be_bytes(nonce_bytes);
+        // A destination ignores whatever follows a No-Op's command byte.
+        let mut payload = alloc::vec![0xA5u8; 2 + padding];
+        payload[0] = umsh_core::PayloadType::MacCommand as u8;
+        payload[1] = crate::mac_command::CommandId::Noop as u8;
 
-        // Build data: [nonce_hi, nonce_lo, 0xA5, 0xA5, ...].
-        let total = 2 + extra_bytes;
-        let mut data = alloc::vec![0xA5u8; total];
-        data[0] = nonce_bytes[0];
-        data[1] = nonce_bytes[1];
-
-        // Encode the outbound payload: PayloadType::MacCommand byte followed by
-        // the encoded command body. The receiver's MAC dispatches on payload[0]
-        // and the EchoRequest auto-reply in the coordinator depends on this
-        // framing.
-        let cmd = crate::mac_command::MacCommand::EchoRequest { data: &data };
-        let mut buf = alloc::vec![0u8; total + 2];
-        buf[0] = umsh_core::PayloadType::MacCommand as u8;
-        let n = crate::mac_command::encode(&cmd, &mut buf[1..])?;
-        let n = n + 1;
-
-        // Record the pending ping BEFORE sending (avoid race if response is very fast).
-        let sent_at_ms = self.transport.local_node().now_ms().await;
-        let deadline_ms = sent_at_ms.saturating_add(timeout_ms);
-        self.transport
-            .local_node()
-            .record_ping(nonce, self.peer, sent_at_ms, deadline_ms);
-        // An echo that never comes has to be noticed on a quiet radio.
-        self.transport.local_node().wake_by(deadline_ms).await;
+        let node = self.transport.local_node();
+        if let Some(superseded) = node.take_ping(self.peer) {
+            node.cancel_send(superseded).await;
+        }
 
         // The caller's options carry through unchanged: a ping that is
         // secured, sized or routed differently from real traffic measures a
         // link the real traffic will not use. Only the ack request is
-        // dropped, because the EchoResponse already serves as one.
-        let opts = options.clone().with_ack_requested(false);
-        let sent = self.send(&buf[..n], &opts).await;
-        if sent.is_err() {
-            // A ping that never left can only time out; the caller already
-            // has the error.
-            self.transport.local_node().forget_ping(nonce, self.peer);
+        // forced, because the ack is what answers it.
+        let sent_at_ms = node.now_ms().await;
+        let opts = options.clone().with_ack_requested(true);
+        let ticket = self.send(&payload, &opts).await?;
+        // Recorded before anything else can run: no answer arrives before
+        // the ping has aired, and it has not even been handed over yet.
+        match ticket.token() {
+            Some(token) => node.record_ping(crate::node::PendingPing {
+                peer: self.peer,
+                token,
+                aired_ms: sent_at_ms,
+            }),
+            // The MAC tracks every send that asks for an acknowledgment, and
+            // it is the MAC that ends a ping. One it is not tracking would
+            // wait forever, so it ends here.
+            None => node.fail_untracked_ping(self.peer),
         }
-        sent
+        Ok(ticket)
     }
 
     /// Solicit this peer's current identity by sending a targeted MAC

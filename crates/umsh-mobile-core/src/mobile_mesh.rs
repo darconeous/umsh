@@ -1046,7 +1046,6 @@ enum WorkerCommand {
     Ping {
         operation_id: u64,
         peer: PublicKey,
-        timeout_ms: u64,
         /// An explicit path to test, with its flood allowance past the end;
         /// `None` for the usual flood-reach ping.
         path: Option<(Vec<umsh_core::RouterHint>, u8)>,
@@ -1738,8 +1737,8 @@ const MOBILE_CHAT_TRANSMIT_WINDOW: usize = 8;
 /// Long-lived Rust protocol engine used by the mobile app.
 ///
 /// `ping` is the only ping operation exposed to Swift. The existing Rust node
-/// layer owns its nonce, authenticated echo request, counter reservation,
-/// response matching, and timeout.
+/// layer owns the acknowledged No-Op it sends, the matching of its ack, and
+/// its timeout.
 #[derive(uniffi::Object)]
 pub struct MobileMeshSession {
     /// This phone's node public key. Held here rather than asked of the
@@ -1783,16 +1782,17 @@ impl MobileMeshSession {
         .await
     }
 
-    /// Send one traced Echo Request to `peer`. Without a `path` it pings
-    /// the usual way; with one it sends the ping down exactly that path, to
-    /// test it without installing it.
+    /// Send one traced ping to `peer`: a No-Op whose acknowledgment is the
+    /// answer. Without a `path` it pings the usual way; with one it sends
+    /// the ping down exactly that path, to test it without installing it.
     ///
-    /// A new ping to a peer cancels the one still waiting on it, which
-    /// ends with `Canceled`.
+    /// The ping ends with `Reply` when it is acknowledged and `TimedOut`
+    /// when the MAC gives up on it, which is after its retries and its
+    /// Route Retry have run. A new ping to a peer cancels the one still
+    /// waiting on it, which ends with `Canceled`.
     pub fn ping(
         &self,
         peer_address: String,
-        timeout_ms: u64,
         path: Option<MobileMeshExplicitPath>,
     ) -> Result<u64, MobileMeshError> {
         let peer = decode_peer(&peer_address).map_err(|_| MobileMeshError::InvalidPeer)?;
@@ -1805,7 +1805,6 @@ impl MobileMeshSession {
             .try_send(WorkerCommand::Ping {
                 operation_id,
                 peer,
-                timeout_ms,
                 path,
             })
             .map_err(command_refused)?;
@@ -4535,11 +4534,11 @@ async fn run_worker(
                             }
                             let _ = response.send(Ok(()));
                         }
-                        Some(WorkerCommand::Ping { operation_id, peer, timeout_ms, path }) => {
+                        Some(WorkerCommand::Ping { operation_id, peer, path }) => {
                             // A new ping to a peer replaces the one still
-                            // waiting on it, as the node does: the old one's
-                            // echo and deadline will never be reported, so
-                            // its operation ends here.
+                            // waiting on it, as the node does: nothing more
+                            // will be reported of the old one, so its
+                            // operation ends here.
                             if let Some(replaced) = pending.borrow_mut().remove(&peer.0) {
                                 emit_ping_outcome(&events, replaced, MobileMeshPingOutcome::Canceled);
                             }
@@ -4560,7 +4559,7 @@ async fn run_worker(
                             });
                             let result = match (options, node.peer(peer).await) {
                                 (Ok(options), Ok(connection)) => connection
-                                    .ping(6, &options, timeout_ms)
+                                    .ping(6, &options)
                                     .await
                                     .map(|_| ())
                                     .map_err(|_| MobileMeshError::SendFailed),
@@ -5890,6 +5889,7 @@ mod tests {
             rssi_dbm: Some(-90),
             snr_centibels: Some(40),
             lqi: None,
+            via_route_retry: false,
         };
         let whole = ping_reply_record(7, &metadata(false, Some(2)));
         assert_eq!(whole.route_hints, [vec![0xA1, 0x01]]);
@@ -6537,8 +6537,8 @@ mod tests {
         // Each endpoint knows the other peer, as it would from its durable peer
         // registry in the application. Starting both pings registers both keys
         // through the same public Rust API without test-only MAC access.
-        let operation = alice.ping(address(&bob_identity), 2_000, None).unwrap();
-        let _ = bob.ping(address(&alice_identity), 2_000, None).unwrap();
+        let operation = alice.ping(address(&bob_identity), None).unwrap();
+        let _ = bob.ping(address(&alice_identity), None).unwrap();
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             let alice_update = alice.poll_update();
@@ -6598,7 +6598,7 @@ mod tests {
     /// Drive one authenticated ping between the two sessions to completion,
     /// shuttling frames both ways.
     async fn complete_ping(alice: &MobileMeshSession, bob: &MobileMeshSession, target: String) {
-        let operation = alice.ping(target, 2_000, None).unwrap();
+        let operation = alice.ping(target, None).unwrap();
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             let alice_update = alice.poll_update();
@@ -7355,8 +7355,8 @@ mod tests {
                 .unwrap()
         );
 
-        let operation = alice.ping(address(&bob_identity), 2_000, None).unwrap();
-        let _ = bob.ping(address(&alice_identity), 2_000, None).unwrap();
+        let operation = alice.ping(address(&bob_identity), None).unwrap();
+        let _ = bob.ping(address(&alice_identity), None).unwrap();
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             let alice_update = alice.poll_update();
@@ -7432,7 +7432,7 @@ mod tests {
 
         // Clearing a route must not disturb the peer's crypto state: the next
         // ping still completes, and teaches the route again.
-        let operation = alice.ping(address(&bob_identity), 2_000, None).unwrap();
+        let operation = alice.ping(address(&bob_identity), None).unwrap();
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             let alice_update = alice.poll_update();
@@ -7859,7 +7859,7 @@ mod tests {
     }
 
     /// A new ping to a peer cancels the one still waiting, whose operation
-    /// ends at once; the new one waits out its own deadline.
+    /// ends at once; the new one waits until the MAC gives up on it.
     #[tokio::test]
     async fn a_new_ping_cancels_the_one_still_waiting() {
         let directory = tempfile::tempdir().unwrap();
@@ -7870,8 +7870,8 @@ mod tests {
         let session = MobileMeshSession::new_with_virtual_time(local_identity, store)
             .await
             .unwrap();
-        let first = session.ping(address(&silent_peer), 30_000, None).unwrap();
-        let second = session.ping(address(&silent_peer), 30_000, None).unwrap();
+        let first = session.ping(address(&silent_peer), None).unwrap();
+        let second = session.ping(address(&silent_peer), None).unwrap();
 
         let deadline = Instant::now() + Duration::from_secs(5);
         let mut ended = Vec::new();
@@ -7915,7 +7915,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let first = session.ping(address(&silent_peer), 30_000, None).unwrap();
+        let first = session.ping(address(&silent_peer), None).unwrap();
 
         // Never completed: the platform has lost this frame.
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -7946,7 +7946,7 @@ mod tests {
 
         // Arriving is the point; completing it would race this frame's own
         // virtual-time deadline from this real-time thread.
-        session.ping(address(&silent_peer), 30_000, None).unwrap();
+        session.ping(address(&silent_peer), None).unwrap();
         loop {
             if !session.poll_update().outbound_frames.is_empty() {
                 break;
@@ -7970,10 +7970,11 @@ mod tests {
         );
     }
 
-    /// The virtual-time seam: with the worker runtime's clock paused, a
-    /// 30-second protocol timeout resolves in wall-clock milliseconds. This
-    /// is the harness for exercising MAC ACK timeouts, repair timers, and
-    /// retry cadences deterministically without real sleeps.
+    /// The virtual-time seam: with the worker runtime's clock paused, the
+    /// MAC's acknowledgment timeout, seconds long, resolves in wall-clock
+    /// milliseconds. This is the harness for exercising MAC ACK timeouts,
+    /// repair timers, and retry cadences deterministically without real
+    /// sleeps.
     #[tokio::test]
     async fn virtual_time_fast_forwards_protocol_timeouts() {
         let directory = tempfile::tempdir().unwrap();
@@ -7985,7 +7986,7 @@ mod tests {
             .await
             .unwrap();
         let started = Instant::now();
-        let operation = session.ping(address(&silent_peer), 30_000, None).unwrap();
+        let operation = session.ping(address(&silent_peer), None).unwrap();
 
         let deadline = started + Duration::from_secs(5);
         loop {
@@ -8006,7 +8007,7 @@ mod tests {
         }
         assert!(
             started.elapsed() < Duration::from_secs(5),
-            "a 30s virtual timeout must not take real-time seconds"
+            "a virtual timeout must not take real-time seconds"
         );
     }
 
@@ -8017,8 +8018,12 @@ mod tests {
         let silent_peer = identity(13);
         let store =
             MobileCounterStore::new(directory.path().join("local").display().to_string()).unwrap();
-        let session = MobileMeshSession::new(local_identity, store).await.unwrap();
-        let operation = session.ping(address(&silent_peer), 100, None).unwrap();
+        // The MAC ends a ping nobody answers, in its own time: virtual, so
+        // that its acknowledgment timeout does not take real seconds.
+        let session = MobileMeshSession::new_with_virtual_time(local_identity, store)
+            .await
+            .unwrap();
+        let operation = session.ping(address(&silent_peer), None).unwrap();
         let deadline = Instant::now() + Duration::from_secs(2);
 
         loop {
@@ -8123,12 +8128,16 @@ mod tests {
         let silent_peer = identity(64);
         let store =
             MobileCounterStore::new(directory.path().join("wake").display().to_string()).unwrap();
-        let session = MobileMeshSession::new(local_identity, store).await.unwrap();
+        // Virtual time, so that the MAC's acknowledgment timeout, which is
+        // what ends the ping, does not take real seconds.
+        let session = MobileMeshSession::new_with_virtual_time(local_identity, store)
+            .await
+            .unwrap();
         let (signal, wakes) = std_mpsc::channel();
         session.set_wake_listener(Arc::new(TestWakeListener { signal }));
 
         // The ping's outbound frame must announce itself with no polling.
-        let operation = session.ping(address(&silent_peer), 100, None).unwrap();
+        let operation = session.ping(address(&silent_peer), None).unwrap();
         wakes
             .recv_timeout(Duration::from_secs(5))
             .expect("no wake for the outbound ping frame");
@@ -8142,14 +8151,17 @@ mod tests {
             session.complete_outbound_frame(frame.id, true).unwrap();
         }
 
-        // The drain re-armed the signal: the ping-timeout event a moment
-        // later must produce a second wake.
+        // The drain re-armed the signal: what the MAC does next, a
+        // retransmission or giving up, must produce a second wake.
         wakes
             .recv_timeout(Duration::from_secs(5))
-            .expect("no wake for the ping timeout event");
-        let deadline = Instant::now() + Duration::from_secs(2);
+            .expect("no wake after the drain");
+        let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             let update = session.poll_update();
+            for frame in update.outbound_frames {
+                session.complete_outbound_frame(frame.id, true).unwrap();
+            }
             if let Some(event) = update.ping_events.into_iter().next() {
                 assert_eq!(event.operation_id, operation);
                 assert_eq!(event.outcome, MobileMeshPingOutcome::TimedOut);
@@ -8172,7 +8184,7 @@ mod tests {
                 .unwrap();
         let session = MobileMeshSession::new(local_identity, store).await.unwrap();
 
-        session.ping(address(&silent_peer), 5_000, None).unwrap();
+        session.ping(address(&silent_peer), None).unwrap();
         // Give the worker time to enqueue the outbound frame first; even if
         // it loses this race, the enqueue itself fires the listener, so the
         // assertion below holds either way.

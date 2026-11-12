@@ -1342,8 +1342,8 @@ public func FfiConverterTypeMobileIdentity_lower(_ value: MobileIdentity) -> UIn
  * Long-lived Rust protocol engine used by the mobile app.
  *
  * `ping` is the only ping operation exposed to Swift. The existing Rust node
- * layer owns its nonce, authenticated echo request, counter reservation,
- * response matching, and timeout.
+ * layer owns the acknowledged No-Op it sends, the matching of its ack, and
+ * its timeout.
  */
 public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
 
@@ -1739,14 +1739,16 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
     func peerRoute(peerAddress: String) async throws  -> MobileMeshRouteRecord
 
     /**
-     * Send one traced Echo Request to `peer`. Without a `path` it pings
-     * the usual way; with one it sends the ping down exactly that path, to
-     * test it without installing it.
+     * Send one traced ping to `peer`: a No-Op whose acknowledgment is the
+     * answer. Without a `path` it pings the usual way; with one it sends
+     * the ping down exactly that path, to test it without installing it.
      *
-     * A new ping to a peer cancels the one still waiting on it, which
-     * ends with `Canceled`.
+     * The ping ends with `Reply` when it is acknowledged and `TimedOut`
+     * when the MAC gives up on it, which is after its retries and its
+     * Route Retry have run. A new ping to a peer cancels the one still
+     * waiting on it, which ends with `Canceled`.
      */
-    func ping(peerAddress: String, timeoutMs: UInt64, path: MobileMeshExplicitPath?) throws  -> UInt64
+    func ping(peerAddress: String, path: MobileMeshExplicitPath?) throws  -> UInt64
 
     func pollUpdate()  -> MobileMeshSessionUpdateRecord
 
@@ -1933,8 +1935,8 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
  * Long-lived Rust protocol engine used by the mobile app.
  *
  * `ping` is the only ping operation exposed to Swift. The existing Rust node
- * layer owns its nonce, authenticated echo request, counter reservation,
- * response matching, and timeout.
+ * layer owns the acknowledged No-Op it sends, the matching of its ack, and
+ * its timeout.
  */
 open class MobileMeshSession: MobileMeshSessionProtocol, @unchecked Sendable {
     fileprivate let handle: UInt64
@@ -2916,20 +2918,21 @@ open func peerRoute(peerAddress: String)async throws  -> MobileMeshRouteRecord  
 }
 
     /**
-     * Send one traced Echo Request to `peer`. Without a `path` it pings
-     * the usual way; with one it sends the ping down exactly that path, to
-     * test it without installing it.
+     * Send one traced ping to `peer`: a No-Op whose acknowledgment is the
+     * answer. Without a `path` it pings the usual way; with one it sends
+     * the ping down exactly that path, to test it without installing it.
      *
-     * A new ping to a peer cancels the one still waiting on it, which
-     * ends with `Canceled`.
+     * The ping ends with `Reply` when it is acknowledged and `TimedOut`
+     * when the MAC gives up on it, which is after its retries and its
+     * Route Retry have run. A new ping to a peer cancels the one still
+     * waiting on it, which ends with `Canceled`.
      */
-open func ping(peerAddress: String, timeoutMs: UInt64, path: MobileMeshExplicitPath?)throws  -> UInt64  {
+open func ping(peerAddress: String, path: MobileMeshExplicitPath?)throws  -> UInt64  {
     return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeMobileMeshError_lift) {
         uniffiCallStatus in
     uniffi_umsh_mobile_core_fn_method_mobilemeshsession_ping(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(peerAddress),
-        FfiConverterUInt64.lower(timeoutMs),
         FfiConverterOptionTypeMobileMeshExplicitPath.lower(path),uniffiCallStatus
     )
 })
@@ -22557,7 +22560,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_peer_route() != 15956) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_ping() != 40918) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_ping() != 50575) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_poll_update() != 43386) {

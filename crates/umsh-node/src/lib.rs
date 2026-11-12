@@ -526,11 +526,11 @@ mod tests {
 
     /// A ping must travel the way the traffic it is measuring would, so the
     /// caller's options carry through untouched. The one exception is the ack
-    /// request: the echo response already acknowledges the ping, so asking
-    /// for a MAC ack too would put a second frame on the air for nothing.
+    /// request, which a ping always makes: the acknowledgment is its answer.
+    /// What it sends is a No-Op, padded as asked.
     #[cfg(feature = "software-crypto")]
     #[test]
-    fn ping_honours_caller_options_but_never_requests_a_mac_ack() {
+    fn ping_honors_caller_options_and_always_requests_an_ack() {
         use crate::node::{LocalNode, LocalNodeState, NodeMembership};
         use umsh_core::MicSize;
 
@@ -546,22 +546,28 @@ mod tests {
 
         let options = SendOptions::default()
             .with_mic_size(MicSize::Mic4)
-            .with_ack_requested(true)
             .with_trace()
             .with_flood_hops(3)
             .with_region_code([0x78, 0x53]);
-        block_on_ready(peer_connection.ping(6, &options, 1_000)).unwrap();
+        block_on_ready(peer_connection.ping(6, &options)).unwrap();
 
         let sent = mac.take_unicasts().pop().expect("ping send");
         assert_eq!(sent.options.mic_size, MicSize::Mic4);
         assert!(sent.options.trace);
         assert_eq!(sent.options.flood_hops, Some(3));
         assert_eq!(sent.options.region_code, Some([0x78, 0x53]));
-        assert!(!sent.options.ack_requested, "the echo response is the ack");
+        assert!(sent.options.ack_requested, "the ack is the answer");
+        let mut no_op = vec![umsh_core::PayloadType::MacCommand as u8, 9];
+        no_op.extend([0xA5; 6]);
+        assert_eq!(sent.payload, no_op);
+        assert_eq!(
+            parse_owned_mac_command(&sent.payload),
+            OwnedMacCommand::Noop
+        );
 
         // `no_flood` is a distinct state from an unset budget and must also
         // survive, rather than collapsing back to the wide default.
-        block_on_ready(peer_connection.ping(0, &SendOptions::default().no_flood(), 1_000)).unwrap();
+        block_on_ready(peer_connection.ping(0, &SendOptions::default().no_flood())).unwrap();
         let sent = mac.take_unicasts().pop().expect("ping send");
         assert_eq!(sent.options.flood_hops, None);
     }
@@ -573,18 +579,17 @@ mod tests {
     fn unsent_ping_never_times_out() {
         let mac = FakeMac::new(vec![[7u8; 32]]);
         let node = test_node(mac.clone());
-        let peer_connection = block_on_ready(node.peer(PublicKey([0x55; 32]))).unwrap();
+        let peer = PublicKey([0x55; 32]);
+        let peer_connection = block_on_ready(node.peer(peer)).unwrap();
         let timeouts = Rc::new(RefCell::new(0u32));
         let counted = timeouts.clone();
         let _subscription = node.on_ping_timeout(move |_| *counted.borrow_mut() += 1);
 
         mac.state.borrow_mut().refuse_sends = true;
-        assert!(
-            block_on_ready(peer_connection.ping(0, &SendOptions::default(), u64::MAX)).is_err()
-        );
-        node.expire_pings(u64::MAX);
+        assert!(block_on_ready(peer_connection.ping(0, &SendOptions::default())).is_err());
 
         assert_eq!(*timeouts.borrow(), 0);
+        assert_eq!(node.take_ping(peer), None, "nothing is left waiting");
     }
 
     /// The MIC size pings are normally sent with. A ping frame is otherwise
@@ -595,7 +600,7 @@ mod tests {
         assert_eq!(crate::PING_MIC_SIZE.byte_len(), 8);
     }
 
-    /// How much echo data fits is a property of the frame the ping is sealed
+    /// How much padding fits is a property of the frame the ping is sealed
     /// into—MIC size, source form, options—and the MAC builder is the only
     /// thing that knows all of it. A ping asks for the size it was told to and
     /// lets an oversize request fail at the builder, rather than being quietly
@@ -603,26 +608,47 @@ mod tests {
     /// asked about.
     #[cfg(feature = "software-crypto")]
     #[test]
-    fn ping_data_is_not_capped_by_the_node_layer() {
+    fn ping_padding_is_not_capped_by_the_node_layer() {
         let mac = FakeMac::new(vec![[7u8; 32]]);
         let node = test_node(mac.clone());
         let peer_connection = block_on_ready(node.peer(PublicKey([0x55; 32]))).unwrap();
 
-        block_on_ready(peer_connection.ping(120, &SendOptions::default(), 1_000)).unwrap();
+        block_on_ready(peer_connection.ping(120, &SendOptions::default())).unwrap();
 
         let sent = mac.take_unicasts().pop().expect("ping send");
-        match parse_owned_mac_command(&sent.payload) {
-            OwnedMacCommand::EchoRequest { data } => {
-                assert_eq!(data.len(), 2 + 120, "2-byte nonce plus the requested fill");
-            }
-            other => panic!("unexpected ping payload: {other:?}"),
+        assert_eq!(sent.payload.len(), 2 + 120, "the command plus the fill");
+    }
+
+    /// How an acknowledgment arrived, for a ping it answers: heard at
+    /// `received_at_ms`, at -90 dBm.
+    #[cfg(feature = "software-crypto")]
+    fn heard_at(received_at_ms: u64) -> umsh_mac::RxMetadata {
+        umsh_mac::RxMetadata::new(
+            Some(-90),
+            Some(umsh_mac::Snr::from_centibels(40)),
+            None,
+            Some(received_at_ms),
+        )
+    }
+
+    /// The acknowledgment of the send `receipt` names, heard directly at
+    /// `received_at_ms`.
+    #[cfg(feature = "software-crypto")]
+    fn ack_of(peer: PublicKey, receipt: u32, received_at_ms: u64) -> MacEventRef<'static> {
+        MacEventRef::AckReceived {
+            peer,
+            receipt: SendReceipt(receipt),
+            via_route_retry: false,
+            rx: heard_at(received_at_ms),
+            hop_count: Some(1),
+            trace: None,
         }
     }
 
     /// A peer reached through a channel pings over that channel. The ping is
     /// measuring the path the channel's traffic takes, so it has to be carried
-    /// the same way—and the reply that comes back on the channel matches the
-    /// pending ping just as a unicast reply would.
+    /// the same way—and its acknowledgment answers it just as a unicast
+    /// ping's would.
     #[cfg(feature = "software-crypto")]
     #[test]
     fn ping_over_a_bound_channel_sends_a_blind_unicast() {
@@ -639,7 +665,7 @@ mod tests {
             pong_log.borrow_mut().push(rtt_ms);
         });
 
-        block_on_ready(peer_connection.ping(4, &SendOptions::default(), 1_000)).unwrap();
+        let ticket = block_on_ready(peer_connection.ping(4, &SendOptions::default())).unwrap();
 
         let sent = mac.take_unicasts().pop().expect("ping send");
         assert_eq!(
@@ -647,34 +673,28 @@ mod tests {
             Some(*channel.key()),
             "a channel-bound ping goes out blind on that channel"
         );
-        assert!(!sent.options.ack_requested, "the echo response is the ack");
-        let nonce = match parse_owned_mac_command(&sent.payload) {
-            OwnedMacCommand::EchoRequest { data } => {
-                assert_eq!(data.len(), 2 + 4);
-                [data[0], data[1]]
-            }
-            other => panic!("unexpected ping payload: {other:?}"),
-        };
+        assert!(sent.options.ack_requested, "the ack is the answer");
 
-        let packet = test_channel_packet(
-            peer,
-            umsh_core::PacketType::BlindUnicast,
-            channel.key(),
-            *channel.channel_id(),
-            &nonce,
+        let answered = node.resolve_ping(
+            ticket.token().unwrap(),
+            1_250,
+            &heard_at(1_250),
+            Some(1),
+            None,
+            false,
         );
-        node.match_pong(peer, &nonce, &packet, 1_250);
-
+        assert!(answered);
         assert_eq!(pongs.borrow().as_slice(), &[250]);
     }
 
     /// A new ping to a peer cancels the one still waiting: the old one's
-    /// echo is ignored and its deadline never fires, while the new one is
+    /// send is canceled and its answer is ignored, while the new one is
     /// answered and timed on its own.
     #[cfg(feature = "software-crypto")]
     #[test]
     fn a_new_ping_cancels_the_one_still_waiting() {
         let mac = FakeMac::new(vec![[7u8; 32], [9u8; 32]]);
+        mac.hand_out_receipts(&[5, 6]);
         let node = test_node(mac.clone());
         let peer = PublicKey([0x55; 32]);
         let peer_connection = block_on_ready(node.peer(peer)).unwrap();
@@ -684,36 +704,37 @@ mod tests {
         let timeout_log = timeouts.clone();
         let _pong_subscription = node.on_pong(move |_, rtt_ms| pong_log.borrow_mut().push(rtt_ms));
         let _timeout_subscription = node.on_ping_timeout(move |_| *timeout_log.borrow_mut() += 1);
-        let nonce_of = |mac: &FakeMac| match parse_owned_mac_command(
-            &mac.take_unicasts().pop().unwrap().payload,
-        ) {
-            OwnedMacCommand::EchoRequest { data } => [data[0], data[1]],
-            other => panic!("unexpected ping payload: {other:?}"),
-        };
 
-        block_on_ready(peer_connection.ping(4, &SendOptions::default(), 1_000)).unwrap();
-        let old = nonce_of(&mac);
-        block_on_ready(peer_connection.ping(4, &SendOptions::default(), 1_000)).unwrap();
-        let new = nonce_of(&mac);
-        let packet = test_broadcast_packet_with_traces(peer, None, None, None);
-
-        node.match_pong(peer, &old, &packet, 250);
-        assert!(
-            pongs.borrow().is_empty(),
-            "the canceled ping's echo is ignored"
+        let old = block_on_ready(peer_connection.ping(4, &SendOptions::default()))
+            .unwrap()
+            .token()
+            .unwrap();
+        let new = block_on_ready(peer_connection.ping(4, &SendOptions::default()))
+            .unwrap()
+            .token()
+            .unwrap();
+        assert_eq!(
+            mac.state.borrow().cancelled.as_slice(),
+            &[(LocalIdentityId(1), SendReceipt(5))]
         );
-        node.match_pong(peer, &new, &packet, 250);
+
+        assert!(
+            !node.resolve_ping(old, 1_250, &heard_at(1_250), Some(1), None, false),
+            "the canceled ping's answer is ignored"
+        );
+        assert!(pongs.borrow().is_empty());
+        assert!(node.resolve_ping(new, 1_250, &heard_at(1_250), Some(1), None, false));
         assert_eq!(pongs.borrow().len(), 1, "the new ping is answered");
-        node.expire_pings(10_000);
+        assert!(!node.fail_ping(old) && !node.fail_ping(new));
         assert_eq!(*timeouts.borrow(), 0, "neither ping is left to time out");
     }
 
-    /// A traced reply reports how each repeater heard the hop beyond it,
+    /// A traced answer reports how each repeater heard the hop beyond it,
     /// unless its trace lost the signal in transit.
     #[cfg(feature = "software-crypto")]
     #[test]
     fn a_pong_reports_the_trace_signal_the_trace_kept() {
-        use umsh_core::options::HopSignal;
+        use umsh_core::options::{HopSignal, TraceRef};
 
         for (trace, expected) in [
             (
@@ -732,22 +753,248 @@ mod tests {
                 *log.borrow_mut() = Some(pong.clone());
             });
 
-            block_on_ready(peer_connection.ping(4, &SendOptions::default(), 1_000)).unwrap();
-            let sent = mac.take_unicasts().pop().expect("ping send");
-            let nonce = match parse_owned_mac_command(&sent.payload) {
-                OwnedMacCommand::EchoRequest { data } => [data[0], data[1]],
-                other => panic!("unexpected ping payload: {other:?}"),
-            };
-
-            let trace: &'static [u8] = Box::leak(trace.to_vec().into_boxed_slice());
-            let packet = test_broadcast_packet_with_traces(peer, None, None, Some(trace));
-            node.match_pong(peer, &nonce, &packet, 1_250);
+            let ticket = block_on_ready(peer_connection.ping(4, &SendOptions::default())).unwrap();
+            node.resolve_ping(
+                ticket.token().unwrap(),
+                1_250,
+                &heard_at(1_250),
+                Some(3),
+                Some(TraceRef::parse(trace).expect("a well-formed trace")),
+                false,
+            );
 
             let pong = seen.borrow_mut().take().expect("pong");
+            assert_eq!(pong.hop_count, Some(3));
             assert_eq!(pong.route_hints.len(), 2);
             assert_eq!(pong.trace_signal, expected);
             assert!(!pong.trace_truncated);
         }
+    }
+
+    /// A ping and the host driving its node, with the ping's send given
+    /// receipt 5.
+    #[cfg(feature = "software-crypto")]
+    fn pinging_host() -> (
+        FakeMac,
+        crate::Host<FakeMac>,
+        crate::node::LocalNode<FakeMac>,
+        PublicKey,
+    ) {
+        let mac = FakeMac::new(vec![[7u8; 32]]);
+        mac.hand_out_receipts(&[5]);
+        let mut host = crate::Host::new(mac.clone());
+        let node = host.add_node(LocalIdentityId(1));
+        let peer = PublicKey([0x55; 32]);
+        let peer_connection = block_on_ready(node.peer(peer)).unwrap();
+        let ticket = block_on_ready(peer_connection.ping(4, &SendOptions::default())).unwrap();
+        assert_eq!(
+            ticket.token(),
+            Some(SendToken::new(LocalIdentityId(1), SendReceipt(5)))
+        );
+        mac.take_unicasts();
+        (mac, host, node, peer)
+    }
+
+    /// A ping is answered by the acknowledgment of the send that carried
+    /// it, and by no other. The pong reports how that acknowledgment
+    /// arrived, and the ping's send raises no ack callback of its own.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn the_ack_of_its_send_answers_a_ping() {
+        let (mac, mut host, node, peer) = pinging_host();
+        let pongs = Rc::new(RefCell::new(Vec::new()));
+        let log = pongs.clone();
+        let _pong_subscription = node.on_pong_with_metadata(move |from, pong| {
+            log.borrow_mut().push((from, pong.clone()));
+        });
+        let acks = Rc::new(RefCell::new(Vec::new()));
+        let log = acks.clone();
+        let _ack_subscription = node.on_ack_received(move |_, token| log.borrow_mut().push(token));
+
+        // Another send of ours, acknowledged: an ack, and no pong.
+        mac.script(LocalIdentityId(1), ack_of(peer, 9, 1_100));
+        block_on_ready(host.step()).unwrap();
+        assert!(pongs.borrow().is_empty());
+        assert_eq!(
+            acks.borrow().as_slice(),
+            &[SendToken::new(LocalIdentityId(1), SendReceipt(9))]
+        );
+
+        let trace: &'static [u8] = &[0xAA, 0x01, 97, 65, 0xBB, 0x02, 96, 20];
+        mac.script(
+            LocalIdentityId(1),
+            MacEventRef::AckReceived {
+                peer,
+                receipt: SendReceipt(5),
+                via_route_retry: true,
+                rx: heard_at(1_250),
+                hop_count: Some(3),
+                trace: umsh_core::options::TraceRef::parse(trace),
+            },
+        );
+        block_on_ready(host.step()).unwrap();
+        let pongs = pongs.borrow();
+        assert_eq!(pongs.len(), 1);
+        let (from, pong) = &pongs[0];
+        assert_eq!(*from, peer);
+        assert_eq!(pong.round_trip_ms, 250);
+        assert_eq!(pong.hop_count, Some(3));
+        assert_eq!(
+            pong.route_hints,
+            [
+                umsh_core::RouterHint([0xAA, 0x01]),
+                umsh_core::RouterHint([0xBB, 0x02])
+            ]
+        );
+        assert_eq!(pong.trace_signal.len(), 2);
+        assert_eq!(pong.rssi_dbm, Some(-90));
+        assert_eq!(pong.snr_centibels, Some(40));
+        assert!(pong.via_route_retry);
+        assert_eq!(acks.borrow().len(), 1, "a ping's ack is its pong");
+    }
+
+    /// An Echo Response answers no ping: it is an ordinary MAC command to
+    /// whoever listens for one.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn an_echo_response_answers_no_ping() {
+        let (mac, mut host, node, peer) = pinging_host();
+        let pongs = Rc::new(RefCell::new(0));
+        let log = pongs.clone();
+        let _pong_subscription = node.on_pong(move |_, _| *log.borrow_mut() += 1);
+        let commands = Rc::new(RefCell::new(Vec::new()));
+        let log = commands.clone();
+        let _command_subscription =
+            node.on_mac_command(move |_, command| log.borrow_mut().push(command.clone()));
+
+        let echo: &'static [u8] = &[umsh_core::PayloadType::MacCommand as u8, 5, 7, 7];
+        mac.script(
+            LocalIdentityId(1),
+            MacEventRef::Received(test_unicast_packet(peer, echo)),
+        );
+        block_on_ready(host.step()).unwrap();
+
+        assert_eq!(*pongs.borrow(), 0);
+        assert_eq!(
+            commands.borrow().as_slice(),
+            &[OwnedMacCommand::EchoResponse { data: vec![7, 7] }]
+        );
+    }
+
+    /// A ping the MAC gave up on, unacknowledged or never aired, times out
+    /// then and there, and as a ping: no ack timeout is reported for it.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn a_ping_the_mac_gave_up_on_times_out_at_once() {
+        for abandoned in [false, true] {
+            let (mac, mut host, node, peer) = pinging_host();
+            let timeouts = Rc::new(RefCell::new(Vec::new()));
+            let log = timeouts.clone();
+            let _subscription = node.on_ping_timeout(move |peer| log.borrow_mut().push(peer));
+            let ack_timeouts = Rc::new(RefCell::new(0));
+            let log = ack_timeouts.clone();
+            let _ack_subscription = node.on_ack_timeout(move |_, _| *log.borrow_mut() += 1);
+
+            let event = if abandoned {
+                MacEventRef::TxAbandoned {
+                    identity_id: LocalIdentityId(1),
+                    receipt: Some(SendReceipt(5)),
+                }
+            } else {
+                MacEventRef::AckTimeout {
+                    peer,
+                    receipt: SendReceipt(5),
+                }
+            };
+            mac.script(LocalIdentityId(1), event);
+            block_on_ready(host.step()).unwrap();
+            assert_eq!(timeouts.borrow().as_slice(), &[peer]);
+            assert_eq!(*ack_timeouts.borrow(), 0);
+
+            mac.state.borrow_mut().now_ms = 100_000;
+            block_on_ready(host.step()).unwrap();
+            assert_eq!(timeouts.borrow().len(), 1, "it timed out once");
+        }
+    }
+
+    /// A ping's round trip runs from when it last began to air to when its
+    /// acknowledgment was heard: neither the queue nor a copy that went
+    /// unanswered counts.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn a_pongs_round_trip_runs_from_the_last_airing() {
+        let (mac, mut host, node, peer) = pinging_host();
+        let rtts = Rc::new(RefCell::new(Vec::new()));
+        let log = rtts.clone();
+        let _subscription = node.on_pong(move |_, rtt_ms| log.borrow_mut().push(rtt_ms));
+        for began_ms in [1_400, 3_000] {
+            mac.script(
+                LocalIdentityId(1),
+                MacEventRef::Transmitted {
+                    identity_id: LocalIdentityId(1),
+                    receipt: Some(SendReceipt(5)),
+                    wire_bytes: &[],
+                    began_ms,
+                },
+            );
+            block_on_ready(host.step()).unwrap();
+        }
+
+        mac.script(LocalIdentityId(1), ack_of(peer, 5, 3_600));
+        block_on_ready(host.step()).unwrap();
+        assert_eq!(rtts.borrow().as_slice(), &[600]);
+    }
+
+    /// A ping waits on the MAC however long the MAC takes: nothing here
+    /// times it out or cancels its send, so the acknowledgment a Route
+    /// Retry earns, long after the first airing, still answers it.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn a_ping_waits_out_the_macs_route_recovery() {
+        let (mac, mut host, node, peer) = pinging_host();
+        let timeouts = Rc::new(RefCell::new(0));
+        let log = timeouts.clone();
+        let _timeout_subscription = node.on_ping_timeout(move |_| *log.borrow_mut() += 1);
+        let pongs = Rc::new(RefCell::new(Vec::new()));
+        let log = pongs.clone();
+        let _pong_subscription =
+            node.on_pong_with_metadata(move |_, pong| log.borrow_mut().push(pong.clone()));
+
+        // Two minutes with no word from the MAC.
+        mac.state.borrow_mut().now_ms = 120_000;
+        block_on_ready(host.step()).unwrap();
+        assert_eq!(*timeouts.borrow(), 0);
+        assert!(mac.state.borrow().cancelled.is_empty());
+
+        // The Route Retry airs, and its acknowledgment comes back.
+        mac.script(
+            LocalIdentityId(1),
+            MacEventRef::Transmitted {
+                identity_id: LocalIdentityId(1),
+                receipt: Some(SendReceipt(5)),
+                wire_bytes: &[],
+                began_ms: 121_000,
+            },
+        );
+        block_on_ready(host.step()).unwrap();
+        mac.script(
+            LocalIdentityId(1),
+            MacEventRef::AckReceived {
+                peer,
+                receipt: SendReceipt(5),
+                via_route_retry: true,
+                rx: heard_at(128_000),
+                hop_count: Some(4),
+                trace: None,
+            },
+        );
+        block_on_ready(host.step()).unwrap();
+
+        let pongs = pongs.borrow();
+        assert_eq!(pongs.len(), 1);
+        assert_eq!(pongs[0].round_trip_ms, 7_000);
+        assert!(pongs[0].via_route_retry);
+        assert_eq!(*timeouts.borrow(), 0);
     }
 
     #[cfg(feature = "software-crypto")]
@@ -821,6 +1068,9 @@ mod tests {
                 peer: pairwise_from_pfs,
                 receipt: SendReceipt(42),
                 via_route_retry: false,
+                rx: Default::default(),
+                hop_count: None,
+                trace: None,
             },
         );
         assert!(ticket.was_acked());
@@ -892,6 +1142,9 @@ mod tests {
             peer: PublicKey([0x44; 32]),
             receipt: SendReceipt(receipt),
             via_route_retry: false,
+            rx: Default::default(),
+            hop_count: None,
+            trace: None,
         };
         dispatcher.dispatch_ticket_state(LocalIdentityId(10), &ack(1));
 
@@ -1804,6 +2057,9 @@ mod tests {
             peer,
             receipt: SendReceipt(receipt),
             via_route_retry: false,
+            rx: Default::default(),
+            hop_count: None,
+            trace: None,
         };
         mac.script(LocalIdentityId(1), ack(41));
         block_on_ready(host.step()).unwrap();
@@ -1861,6 +2117,9 @@ mod tests {
             peer: peer_ephemeral,
             receipt: SendReceipt(43),
             via_route_retry: false,
+            rx: Default::default(),
+            hop_count: None,
+            trace: None,
         };
         mac.script(session, delivered);
         undelivered(2);
@@ -2536,6 +2795,10 @@ mod tests {
         events: VecDeque<(LocalIdentityId, MacEventRef<'static>)>,
         /// Retired addresses watched, with their parent and peer.
         retired: Vec<(LocalIdentityId, PublicKey, PublicKey)>,
+        /// The receipts the next unicasts get, in order; 42 once spent.
+        receipts: VecDeque<u32>,
+        /// The sends cancelled, in order.
+        cancelled: Vec<(LocalIdentityId, SendReceipt)>,
     }
 
     #[cfg(feature = "software-crypto")]
@@ -2592,6 +2855,15 @@ mod tests {
         /// Have the next pump cycle report `event` under `identity`.
         fn script(&self, identity: LocalIdentityId, event: MacEventRef<'static>) {
             self.state.borrow_mut().events.push_back((identity, event));
+        }
+
+        /// Give the next unicasts `receipts`, in order.
+        fn hand_out_receipts(&self, receipts: &[u32]) {
+            self.state.borrow_mut().receipts.extend(receipts);
+        }
+
+        fn next_receipt(&self) -> SendReceipt {
+            SendReceipt(self.state.borrow_mut().receipts.pop_front().unwrap_or(42))
         }
     }
 
@@ -2770,7 +3042,7 @@ mod tests {
                 options: options.clone(),
                 channel: None,
             });
-            Ok(Some(SendReceipt(42)))
+            Ok(Some(self.next_receipt()))
         }
 
         async fn send_blind_unicast(
@@ -2789,7 +3061,14 @@ mod tests {
                 options: options.clone(),
                 channel: Some(*channel),
             });
-            Ok(Some(SendReceipt(42)))
+            Ok(Some(self.next_receipt()))
+        }
+
+        async fn cancel_send(&self, identity_id: LocalIdentityId, receipt: SendReceipt) {
+            self.state
+                .borrow_mut()
+                .cancelled
+                .push((identity_id, receipt));
         }
 
         async fn fill_random(&self, dest: &mut [u8]) {

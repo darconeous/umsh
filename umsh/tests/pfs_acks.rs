@@ -168,7 +168,7 @@ async fn a_ping_under_a_session_is_answered() {
                 .peer(key(&BOB))
                 .await
                 .unwrap()
-                .ping(4, &SendOptions::default(), 10_000)
+                .ping(4, &SendOptions::default())
                 .await
                 .unwrap();
             until("Bob answers the ping", || {

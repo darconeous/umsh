@@ -519,7 +519,7 @@ removed with the delete control and reordered by dragging. **Add Hop…**
 disappears at 15 repeaters, the most a source route carries. Each hop row uses
 the Peer Repeaters row form: the node's name and avatar when this phone knows
 it, otherwise **Router hint** and a gray hexagon. **Ping Along Path** sends a
-traced Echo Request down the unsaved draft and reports the reply. **Then
+traced ping down the unsaved draft and reports the reply. **Then
 flood** sets how many hops the frame may flood past the last repeater, from
 Off to 15; with no repeaters the row reads **Flood** and the path is direct.
 A path with no repeaters saves as a direct path.

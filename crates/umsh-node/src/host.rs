@@ -210,7 +210,14 @@ impl<M: MacBackend> Host<M> {
                             );
                         }
                     }
-                    umsh_mac::MacEventRef::AckReceived { peer, receipt, .. } => {
+                    umsh_mac::MacEventRef::AckReceived {
+                        peer,
+                        receipt,
+                        via_route_retry,
+                        rx,
+                        hop_count,
+                        trace,
+                    } => {
                         let token = crate::SendToken::new(identity_id, receipt);
                         #[cfg(feature = "software-crypto")]
                         {
@@ -222,7 +229,19 @@ impl<M: MacBackend> Host<M> {
                                 node.dispatch_pfs_established(peer);
                             }
                         }
-                        node.dispatch_ack_received(peer, token);
+                        // A ping's acknowledgment is its answer, reported as
+                        // a pong and not as an ack.
+                        let pong = node.resolve_ping(
+                            token,
+                            rx.received_at_ms().unwrap_or(wait_began_ms),
+                            &rx,
+                            hop_count,
+                            trace,
+                            via_route_retry,
+                        );
+                        if !pong {
+                            node.dispatch_ack_received(peer, token);
+                        }
                     }
                     umsh_mac::MacEventRef::AckTimeout { peer, receipt } => {
                         let token = crate::SendToken::new(identity_id, receipt);
@@ -235,29 +254,40 @@ impl<M: MacBackend> Host<M> {
                                     .push((node.clone(), session));
                             }
                         }
-                        node.dispatch_ack_timeout(peer, token);
+                        // Likewise a ping the MAC gave up on is a ping
+                        // timeout and not an ack timeout.
+                        if !node.fail_ping(token) {
+                            node.dispatch_ack_timeout(peer, token);
+                        }
                     }
-                    umsh_mac::MacEventRef::Transmitted { wire_bytes, .. } => {
+                    umsh_mac::MacEventRef::Transmitted {
+                        identity_id,
+                        receipt,
+                        wire_bytes,
+                        began_ms,
+                    } => {
+                        if let Some(receipt) = receipt {
+                            node.note_ping_aired(
+                                crate::SendToken::new(identity_id, receipt),
+                                began_ms,
+                            );
+                        }
                         node.dispatch_transmitted(wire_bytes);
                     }
                     umsh_mac::MacEventRef::Forwarded { .. } => {}
                     // Ticket resolution (failed + finished) is handled by
                     // dispatch_ticket_state above; there is no peer to
                     // notify since the frame never aired.
-                    #[cfg_attr(not(feature = "software-crypto"), allow(unused_variables))]
                     umsh_mac::MacEventRef::TxAbandoned {
                         identity_id,
-                        receipt,
-                    } =>
-                    {
+                        receipt: Some(receipt),
+                    } => {
+                        let token = crate::SendToken::new(identity_id, receipt);
+                        node.fail_ping(token);
                         #[cfg(feature = "software-crypto")]
-                        if let Some(receipt) = receipt {
-                            node.settle_pfs_close(
-                                crate::SendToken::new(identity_id, receipt),
-                                false,
-                            );
-                        }
+                        node.settle_pfs_close(token, false);
                     }
+                    umsh_mac::MacEventRef::TxAbandoned { receipt: None, .. } => {}
                     umsh_mac::MacEventRef::RetiredAddressHeard { address } => {
                         retired_heard_ref.borrow_mut().push((node, address));
                     }
@@ -330,10 +360,10 @@ impl<M: MacBackend> Host<M> {
     /// Fire the node-layer deadlines that have come, then ask the MAC to wake
     /// the pump by the earliest of those still ahead.
     ///
-    /// Ping and PFS request timeouts have to fire even when the remote peer
-    /// sends nothing at all, and a quiet radio wakes no one; the request
-    /// makes the next deadline one of the MAC's own wake sources. A deadline
-    /// set outside the pump asks for its own wake as it is set.
+    /// A PFS request's timeout has to fire even when the remote peer sends
+    /// nothing at all, and a quiet radio wakes no one; the request makes the
+    /// next deadline one of the MAC's own wake sources. A ping has no
+    /// deadline here: the MAC ends the send that carries it.
     async fn service_protocol_timeouts(&mut self) {
         let now_ms = self.mac.now_ms().await;
         service_node_timeouts(&self.nodes, now_ms).await;
@@ -432,10 +462,6 @@ async fn service_node_timeouts<M: MacBackend>(
             node.dispatch_pfs_failed(peer, crate::node::PfsFailure::Timeout);
         }
         node.dispatch_pfs_records_changed();
-    }
-
-    for (_, node) in nodes {
-        node.expire_pings(now_ms);
     }
 }
 
@@ -664,9 +690,6 @@ fn dispatch_payload_callbacks<M: MacBackend>(
             .then(|| packet.channel().map(|c| *c.key))
             .flatten();
         // Match borrowed variants before converting to owned.
-        if let mac_command::MacCommand::EchoResponse { data } = command {
-            node.match_pong(from, data, packet, received_at_ms);
-        }
         // Identity Request: let the built-in responder (if enabled) build a
         // reply plan now, while the reception context is live; the async
         // pump sends it after this synchronous dispatch returns.

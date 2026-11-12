@@ -1,4 +1,5 @@
 mod ack_authentication;
+mod ack_path;
 mod bearer;
 #[cfg(feature = "software-crypto")]
 mod colliding_channels;
@@ -4557,6 +4558,73 @@ fn receive_one_resynchronizes_peer_counter_after_out_of_window_restart() {
         .unwrap()
     );
     assert_eq!(delivered_again, Some((local_id, b"works again".to_vec())));
+}
+
+/// The answer to our probe, withheld while newer frames from its sender
+/// were accepted, finds the window already in step. Adopting its counter
+/// would roll the window back and let those frames in a second time, so it
+/// sets no baseline and prompts nothing.
+#[test]
+fn a_withheld_probe_answer_cannot_roll_the_window_back() {
+    let (mut mac, _, remote, _, keys, dst_hint) = desynchronized_peer();
+    let baseline = |mac: &TestMac| {
+        mac.rx_windows()
+            .get(remote.public_key())
+            .unwrap()
+            .replay_window
+            .last_accepted
+    };
+    mac.radio_mut().queue_received_unicast_with_counter(
+        &remote,
+        &keys,
+        &dst_hint,
+        b"after reboot",
+        false,
+        7,
+    );
+    let (delivered, queued) = receive_and_collect(&mut mac);
+    assert!(delivered.is_empty());
+    let [probe] = queued.as_slice() else {
+        panic!("one probe, not {} frames", queued.len());
+    };
+    let nonce = match decrypt_unicast_payload(probe, &keys).as_slice() {
+        [_, 4, a, b, c, d] => u32::from_be_bytes([*a, *b, *c, *d]),
+        other => panic!("unexpected probe payload: {other:?}"),
+    };
+
+    // The answer, kept back by whoever carried it.
+    mac.radio_mut().queue_received_unicast_with_counter(
+        &remote,
+        &keys,
+        &dst_hint,
+        &encode_echo_command_payload(5, &nonce.to_be_bytes()),
+        false,
+        8,
+    );
+    let withheld = last_queued_received(&mac);
+    mac.radio_mut().received.pop_back();
+
+    // Meanwhile the peer's counter turns out to be where the window expected.
+    let newer: std::vec::Vec<_> = (10_001..=10_010)
+        .map(|counter| {
+            mac.radio_mut().queue_received_unicast_with_counter(
+                &remote, &keys, &dst_hint, b"newer", false, counter,
+            );
+            let frame = last_queued_received(&mac);
+            assert_eq!(receive_and_collect(&mut mac).0, [b"newer".to_vec()]);
+            frame
+        })
+        .collect();
+
+    mac.radio_mut().queue_received_frame(&withheld);
+    let (delivered, queued) = receive_and_collect(&mut mac);
+    assert!(delivered.is_empty());
+    assert!(queued.is_empty(), "nothing left to probe for");
+    assert_eq!(baseline(&mac), 10_010);
+    for frame in &newer {
+        mac.radio_mut().queue_received_frame(frame);
+        assert!(receive_and_collect(&mut mac).0.is_empty(), "replayed");
+    }
 }
 
 /// A MAC holding a baseline of 10,000 for `remote`, so a frame from it at

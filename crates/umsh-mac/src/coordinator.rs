@@ -194,6 +194,24 @@ enum AckOccasion {
 struct PendingCounterResync {
     nonce: u32,
     requested_ms: u64,
+    /// The peer's highest accepted counter when the probe went out.
+    /// Anything accepted from the peer since moves it, and then the window
+    /// is already in step and adopting the answer's counter would roll it
+    /// back.
+    seen_last_accepted: u32,
+}
+
+/// What an Echo Response outside the window made of our counter-resync
+/// probe.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ProbeAnswer {
+    /// It answers no probe of ours.
+    NotOurs,
+    /// It answered the probe, and its counter is the peer's baseline now.
+    Adopted,
+    /// It answered the probe after something accepted from the peer had
+    /// already put the window in step. Nothing is left for it to do.
+    InStep,
 }
 
 /// An acknowledgment-requested frame whose counter fell outside the
@@ -768,6 +786,19 @@ fn rx_metadata(rx: &RxInfo, received_at_ms: u64) -> crate::send::RxMetadata {
     match rx.buffered {
         Some(buffered) => meta.with_buffered_age_s(buffered.age_s),
         None => meta,
+    }
+}
+
+/// The hops a frame that carried an acknowledgment took to get here, and
+/// its trace, for the `AckReceived` it raises. Neither is known for a
+/// frame whose options cannot be read.
+fn ack_path<'a>(frame: &'a [u8], header: &PacketHeader) -> (Option<u8>, Option<TraceRef<'a>>) {
+    match ParsedOptions::extract(frame, header.options_range.clone()) {
+        Ok(options) => (
+            crate::send::hop_count(frame, header, &options),
+            options.trace(frame),
+        ),
+        Err(_) => (None, None),
     }
 }
 
@@ -3058,6 +3089,7 @@ impl<
                     .and_then(IdentitySlot::tx_power_dbm)
             }),
         };
+        let began_ms = self.clock.now_ms();
         let result = self
             .radio
             .transmit(queued.frame.as_slice(), tx_options)
@@ -3118,6 +3150,7 @@ impl<
                     identity_id,
                     receipt,
                     wire_bytes: queued.frame.as_slice(),
+                    began_ms,
                 },
             );
         }
@@ -3781,6 +3814,7 @@ impl<
                 frame_len,
                 &header,
                 rx,
+                received_at_ms,
                 forwarding_confirmed,
                 &mut on_event,
             ),
@@ -3905,12 +3939,17 @@ impl<
         delivered || forwarded
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the frame, how it was heard, and what its arrival already settled"
+    )]
     fn process_mac_ack(
         &mut self,
         buf: &[u8; FRAME],
         frame_len: usize,
         header: &PacketHeader,
         rx: &RxInfo,
+        received_at_ms: u64,
         forwarding_confirmed: bool,
         mut on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
     ) -> bool {
@@ -3941,12 +3980,16 @@ impl<
             if let Some((peer_id, _)) = self.peer_registry.lookup_by_key(&target_peer) {
                 self.learn_route_for_peer(peer_id, &buf[..frame_len], header, rx);
             }
+            let (hop_count, trace) = ack_path(&buf[..frame_len], header);
             on_event(
                 identity_id,
                 crate::MacEventRef::AckReceived {
                     peer: target_peer,
                     receipt,
                     via_route_retry,
+                    rx: rx_metadata(rx, received_at_ms),
+                    hop_count,
+                    trace,
                 },
             );
             return true;
@@ -4102,24 +4145,20 @@ impl<
                         Some(ReplayVerdict::Accept) => {
                             acceptance =
                                 self.accept_unicast_replay(peer_id, header, &buf[..frame_len]);
-                            self.settle_counter_resync_response(
-                                local_id,
-                                peer_id,
-                                header,
-                                &buf[..frame_len],
-                                payload,
-                                false,
-                            );
+                            self.settle_counter_resync_response(local_id, peer_id, payload);
                         }
                         Some(ReplayVerdict::OutOfWindow | ReplayVerdict::Stale) => {
-                            if !self.settle_counter_resync_response(
+                            let answer = self.adopt_counter_resync_response(
                                 local_id,
                                 peer_id,
                                 header,
                                 &buf[..frame_len],
                                 payload,
-                                true,
-                            ) {
+                            );
+                            if answer == ProbeAnswer::InStep {
+                                continue;
+                            }
+                            if answer == ProbeAnswer::NotOurs {
                                 // A frame asking for an ack is held while its
                                 // sender vouches for it. Any other is dropped
                                 // behind the probe: it falls behind the
@@ -4192,6 +4231,8 @@ impl<
                     &peer_key,
                     &original[..frame_len],
                     header,
+                    rx,
+                    received_at_ms,
                     &mut on_event,
                 );
 
@@ -4625,24 +4666,20 @@ impl<
                                         header,
                                         &buf[..frame_len],
                                     );
-                                    self.settle_counter_resync_response(
-                                        local_id,
-                                        peer_id,
-                                        header,
-                                        &buf[..frame_len],
-                                        payload,
-                                        false,
-                                    );
+                                    self.settle_counter_resync_response(local_id, peer_id, payload);
                                 }
                                 Some(ReplayVerdict::OutOfWindow | ReplayVerdict::Stale) => {
-                                    if !self.settle_counter_resync_response(
+                                    let answer = self.adopt_counter_resync_response(
                                         local_id,
                                         peer_id,
                                         header,
                                         &buf[..frame_len],
                                         payload,
-                                        true,
-                                    ) {
+                                    );
+                                    if answer == ProbeAnswer::InStep {
+                                        continue;
+                                    }
+                                    if answer == ProbeAnswer::NotOurs {
                                         // As on the unicast path, and the
                                         // answers ride the channel the frame
                                         // came on.
@@ -4707,6 +4744,8 @@ impl<
                             &peer_key,
                             &original[..frame_len],
                             header,
+                            rx,
+                            received_at_ms,
                             &mut on_event,
                         );
 
@@ -6172,39 +6211,65 @@ impl<
         )
     }
 
-    /// Settle an Echo Response that answers our counter-resync probe.
-    ///
-    /// With `adopt`—the response fell outside the window—its counter becomes
-    /// the peer's new baseline. Within the window the response was accepted
-    /// as usual, and only the probe is cleared. Returns whether `payload`
-    /// answered the pending probe.
+    /// Clear our counter-resync probe if `payload` is the Echo Response
+    /// that answers it, accepted within the window as usual. Returns
+    /// whether it was.
     fn settle_counter_resync_response(
+        &mut self,
+        local_id: LocalIdentityId,
+        peer_id: PeerId,
+        payload: &[u8],
+    ) -> bool {
+        self.take_counter_resync_probe(local_id, peer_id, payload)
+            .is_some()
+    }
+
+    /// Adopt the counter of an Echo Response outside the window that
+    /// answers our counter-resync probe as the peer's new baseline—unless
+    /// something accepted from the peer since the probe went out has
+    /// already put the window in step, when adopting would roll it back
+    /// and re-admit what was accepted.
+    fn adopt_counter_resync_response(
         &mut self,
         local_id: LocalIdentityId,
         peer_id: PeerId,
         header: &PacketHeader,
         frame: &[u8],
         payload: &[u8],
-        adopt: bool,
-    ) -> bool {
-        let Some(nonce) = Self::echo_response_nonce(payload) else {
-            return false;
-        };
+    ) -> ProbeAnswer {
         let Some((counter, mic)) = Self::replay_metadata(header, frame) else {
-            return false;
+            return ProbeAnswer::NotOurs;
         };
-        let Some(slot) = self.identity_mut(local_id) else {
-            return false;
+        let Some(probe) = self.take_counter_resync_probe(local_id, peer_id, payload) else {
+            return ProbeAnswer::NotOurs;
         };
-        if slot
-            .pending_counter_resync()
-            .get(&peer_id)
-            .is_none_or(|pending| pending.nonce != nonce)
+        if self
+            .rx_window(peer_id)
+            .is_none_or(|entry| entry.replay_window.last_accepted != probe.seen_last_accepted)
         {
-            return false;
+            return ProbeAnswer::InStep;
         }
-        let _ = slot.pending_counter_resync_mut().remove(&peer_id);
-        !adopt || self.adopt_rx_baseline(peer_id, counter, Some(mic))
+        if self.adopt_rx_baseline(peer_id, counter, Some(mic)) {
+            ProbeAnswer::Adopted
+        } else {
+            ProbeAnswer::InStep
+        }
+    }
+
+    /// Remove and return our pending counter-resync probe to `peer_id` if
+    /// `payload` is the Echo Response that echoes its nonce.
+    fn take_counter_resync_probe(
+        &mut self,
+        local_id: LocalIdentityId,
+        peer_id: PeerId,
+        payload: &[u8],
+    ) -> Option<PendingCounterResync> {
+        let nonce = Self::echo_response_nonce(payload)?;
+        let slot = self.identity_mut(local_id)?;
+        if slot.pending_counter_resync().get(&peer_id)?.nonce != nonce {
+            return None;
+        }
+        slot.pending_counter_resync_mut().remove(&peer_id)
     }
 
     /// Make `counter` the peer's new baseline, whatever it is relative to
@@ -6589,6 +6654,12 @@ impl<
             return;
         }
 
+        let Some(seen_last_accepted) = self
+            .rx_window(peer_id)
+            .map(|entry| entry.replay_window.last_accepted)
+        else {
+            return;
+        };
         let nonce = self.rng.next_u32();
         let payload =
             Self::build_mac_command_payload(MAC_COMMAND_ECHO_REQUEST_ID, &nonce.to_be_bytes());
@@ -6604,6 +6675,7 @@ impl<
                 PendingCounterResync {
                     nonce,
                     requested_ms: now_ms,
+                    seen_last_accepted,
                 },
             );
         }
@@ -8793,6 +8865,8 @@ impl<
         peer: &PublicKey,
         frame: &[u8],
         header: &PacketHeader,
+        rx: &RxInfo,
+        received_at_ms: u64,
         on_event: &mut impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
     ) {
         let Some(ack_mic) = Self::ack_mic_option(frame, header) else {
@@ -8805,12 +8879,16 @@ impl<
         else {
             return;
         };
+        let (hop_count, trace) = ack_path(frame, header);
         on_event(
             identity_id,
             crate::MacEventRef::AckReceived {
                 peer: *peer,
                 receipt,
                 via_route_retry,
+                rx: rx_metadata(rx, received_at_ms),
+                hop_count,
+                trace,
             },
         );
     }

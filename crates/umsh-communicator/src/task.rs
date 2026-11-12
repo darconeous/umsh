@@ -40,11 +40,8 @@ pub const INBOX_FRAMES: usize = 16;
 /// and repair all run on the scale of seconds.
 pub const TICK_MS: u64 = 1_000;
 
-/// How long a ping waits for its answer.
-const PING_TIMEOUT_MS: u64 = 30_000;
-
-/// What a ping carries beyond its nonce, so it measures a link as a
-/// message would use it.
+/// The filler a ping carries, so it measures a link as a message would
+/// use it.
 const PING_PADDING: usize = 6;
 
 /// What the device node received for the chats.
@@ -445,10 +442,7 @@ async fn execute<P: LocalPort, S: ChatStore, M: MacBackend>(
     match command {
         Command::Ping { peer, options } => {
             let sent = match mesh.peer(peer).await {
-                Ok(connection) => connection
-                    .ping(PING_PADDING, &options, PING_TIMEOUT_MS)
-                    .await
-                    .is_ok(),
+                Ok(connection) => connection.ping(PING_PADDING, &options).await.is_ok(),
                 Err(_) => false,
             };
             // One that never went has no answer to wait for.

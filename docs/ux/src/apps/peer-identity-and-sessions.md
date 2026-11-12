@@ -164,12 +164,11 @@ ephemeral private material.
 
 ## Ping behavior
 
-**Ping** sends one MAC Echo Request and measures round-trip time only when the
-matching Echo Response returns. While waiting, show the time elapsed; then the
-round trip, the hop count, and the path the reply took, with a signal reading
-for each leg. A timeout says **No reply**; it does not say the peer is
-offline, because packets or responses may be lost and MAC-command support is
-optional.
+**Ping** sends one MAC No-Op that requests an acknowledgment and measures
+round-trip time only when its MAC ack returns. While waiting, show the time
+elapsed; then the round trip, the hop count, and the path the ack took, with a
+signal reading for each leg. A timeout says **No reply**; it does not say the
+peer is offline, because the ping or its ack may have been lost.
 
 Ping is a deliberate action, not continuous presence polling. Repeated or
 automatic pings consume shared airtime and must not run merely because Peer

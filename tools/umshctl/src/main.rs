@@ -933,6 +933,8 @@ mod tests {
         assert_eq!(args.size, 8);
         assert!(!args.untraced);
         assert!(args.channel.is_none());
+        // The MAC ends a ping, so the tool names no wait of its own.
+        assert_eq!(args.timeout, None);
         // Borrowing the radio is what a ping does, so it needs one.
         assert!(
             parse(&["ping", KEY])
@@ -976,7 +978,7 @@ mod tests {
         else {
             panic!("expected ping");
         };
-        assert_eq!((args.count, args.interval, args.timeout), (5, 10, 45));
+        assert_eq!((args.count, args.interval, args.timeout), (5, 10, Some(45)));
         assert_eq!(args.size, 120);
         assert_eq!(args.flood_hops, Some(3));
         assert_eq!(args.route.as_ref().unwrap().0.len(), 2);
@@ -989,10 +991,11 @@ mod tests {
         const KEY: &str = "c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4";
         // A steered route and a forced flood ask for opposite things.
         assert!(parse(&["ping", KEY, "--flood", "--route", "a1b2"]).is_err());
-        // An ack-only ping carries no echo data to size.
-        assert!(parse(&["ping", KEY, "--ack-only", "-s", "40"]).is_err());
-        // Two bytes of the echo are the nonce that matches the reply.
-        assert!(parse(&["ping", KEY, "-s", "1"]).is_err());
+        // Every ping is an acknowledged No-Op, so no flag asks for one.
+        assert!(parse(&["ping", KEY, "--ack-only"]).is_err());
+        // A No-Op needs no filler at all, and an echo takes the same sizes.
+        assert!(parse(&["ping", KEY, "-s", "0"]).is_ok());
+        assert!(parse(&["ping", KEY, "--echo", "-s", "40"]).is_ok());
         assert!(parse(&["ping", KEY, "-c", "0"]).is_err());
         assert!(parse(&["ping", KEY, "--flood-hops", "16"]).is_err());
         // `--hops` is the old spelling of the same flag, still accepted.
