@@ -129,6 +129,12 @@ final class AppRuntime {
     /// session is installed, and no identity is minted while this stands:
     /// answering it is what decides which of those happens.
     var orphanedIdentity: LocalIdentitySnapshot?
+    /// Radios this phone left holding its identity as their host, most
+    /// recent first. Each could still acknowledge for this phone, so each
+    /// is revoked across the mesh from whichever radio it attaches next.
+    private(set) var claimedRadios: [StoredClaimedRadio] = []
+    /// Whether a revocation of ``claimedRadios`` is under way.
+    private(set) var isRevokingClaimedRadios = false
 
     // MARK: - Dependencies
 
@@ -206,6 +212,7 @@ final class AppRuntime {
         tasks.append(Task { await self.consumePeerHeardEvents() })
         tasks.append(Task { await self.consumeLocalDestinationHints() })
         tasks.append(Task { await self.consumeForwardSecretConversations() })
+        tasks.append(Task { await self.consumeHostReleases() })
         tasks.append(Task { await self.consumeMeetStates() })
         tasks.append(Task { await self.regionService.load() })
         installObservers()
@@ -356,8 +363,10 @@ final class AppRuntime {
             // tab tree included—on each one, which is felt as stutter
             // while typing.
             if radioSnapshot != snapshot {
+                let previous = radioSnapshot
                 let carried = radioSnapshot.carriesThisPhone
                 radioSnapshot = snapshot
+                await noteClaimTransition(from: previous, to: snapshot)
                 if snapshot.carriesThisPhone != carried {
                     await settleMeet()
                 }
@@ -405,6 +414,14 @@ final class AppRuntime {
             guard !Task.isCancelled else { break }
             coordinator.localDestinationHints = hints
             await reconcileHostDestinations()
+        }
+    }
+
+    func consumeHostReleases() async {
+        for await address in await radioConnection.hostReleases() {
+            guard !Task.isCancelled else { break }
+            coordinator.releasedRadios.insert(address)
+            await forgetClaimedRadio(address)
         }
     }
 
@@ -2088,7 +2105,9 @@ final class AppRuntime {
     }
 
     /// Give the radio the channel keys the phone identity has joined, so it
-    /// can recognize and queue that traffic while the phone is away.
+    /// can recognize and queue that traffic while the phone is away. A
+    /// radio that takes no keys gets a filter per channel instead, without
+    /// which it passes no channel traffic at all once it holds the host key.
     ///
     /// Bookkeeping between the app and its own radio: no part of it is a user
     /// setting, and a radio that cannot hold them all still leaves the phone
@@ -2096,7 +2115,9 @@ final class AppRuntime {
     private func reconcileHostChannels() async {
         guard radioSnapshot.linkState == .attached || radioSnapshot.linkState == .ready,
               radioSnapshot.hostState == .matchesCurrentIdentity,
-              radioSnapshot.provisioning?.supportsHostKeys == true
+              let provisioning = radioSnapshot.provisioning,
+              // A filter count is reported exactly when the radio filters.
+              provisioning.supportsHostKeys || provisioning.filterCount != nil
         else {
             coordinator.lastReconciledHostChannels = nil
             return
@@ -4465,6 +4486,7 @@ final class AppRuntime {
             await ensureBuiltinChannels()
             await seedStagedContentIfNeeded()
             await synchronizeRadioPeer(from: radioSnapshot)
+            await reloadClaimedRadios()
             await reloadApplicationState()
             // The mesh session starts with an empty channel table, so
             // membership only survives a relaunch by being replayed into it.
@@ -4491,8 +4513,11 @@ final class AppRuntime {
             // different radio, or the same one under a new name.
             coordinator.synchronizedRadioPeer = nil
             coordinator.lastReconciledDevicePeers = nil
+            await forgetClaimIfHeldElsewhere(snapshot)
             return
         }
+        await recordClaimedRadio(snapshot, refresh: false)
+        revokeClaimedRadiosOncePerAttach(attachedTo: radioIdentity.canonicalAddress)
         // The radio's device-identity peer list, read back on attach. The
         // device is the authority; the store rows only cache it. Gated on
         // the last reconciled list so the steady snapshot stream costs
@@ -4534,6 +4559,165 @@ final class AppRuntime {
         } catch {
             // The live radio remains usable; persistence failure must not
             // synthesize or duplicate a peer in memory.
+        }
+    }
+
+    // MARK: - Claimed radios
+
+    /// How often an attached radio's claim record is rewritten, so the
+    /// record's age follows the last time this phone was attached to it.
+    private static let claimRecordInterval: TimeInterval = 10 * 60
+
+    /// Whether `snapshot` is this phone attached to a radio as its host.
+    private static func isAttachedAsHost(_ snapshot: RadioSnapshot) -> Bool {
+        (snapshot.linkState == .attached || snapshot.linkState == .ready)
+            && snapshot.hostState == .matchesCurrentIdentity
+            && snapshot.deviceIdentity != nil
+    }
+
+    /// Follow the link across an attach and a detach: a fresh attach to a
+    /// radio is a new claim on it, and leaving it is the moment its record
+    /// must be current, since the radio's own lease runs from then.
+    private func noteClaimTransition(from previous: RadioSnapshot, to snapshot: RadioSnapshot) async {
+        let wasAttached = previous.linkState == .attached || previous.linkState == .ready
+        let isAttached = snapshot.linkState == .attached || snapshot.linkState == .ready
+        if !wasAttached, isAttached, let address = snapshot.deviceIdentity?.canonicalAddress {
+            coordinator.releasedRadios.remove(address)
+            coordinator.claimRecordedAt[address] = nil
+        }
+        if wasAttached, !isAttached {
+            coordinator.revokedClaimedRadiosThisAttach = false
+            if Self.isAttachedAsHost(previous) {
+                await recordClaimedRadio(previous, refresh: true)
+            }
+        }
+    }
+
+    /// Write the record of the radio this phone is attached to as host:
+    /// once per attach, every ``claimRecordInterval`` after, and on
+    /// `refresh`.
+    private func recordClaimedRadio(_ snapshot: RadioSnapshot, refresh: Bool) async {
+        guard Self.isAttachedAsHost(snapshot),
+              let address = snapshot.deviceIdentity?.canonicalAddress,
+              !coordinator.releasedRadios.contains(address),
+              let applicationStore, let localIdentity
+        else { return }
+        let now = Date()
+        if !refresh, let recorded = coordinator.claimRecordedAt[address],
+           now.timeIntervalSince(recorded) < Self.claimRecordInterval {
+            return
+        }
+        coordinator.claimRecordedAt[address] = now
+        do {
+            try await applicationStore.recordClaimedRadio(
+                ownerIdentityID: localIdentity.id,
+                deviceAddress: address,
+                name: snapshot.name,
+                now: now
+            )
+            // A release confirmed while the write was waiting its turn
+            // outranks it.
+            if coordinator.releasedRadios.contains(address) {
+                await forgetClaimedRadio(address)
+                return
+            }
+        } catch {
+            coordinator.claimRecordedAt[address] = nil
+            return
+        }
+        await reloadClaimedRadios()
+    }
+
+    /// A radio found holding some other host, or none, no longer answers
+    /// for this phone.
+    private func forgetClaimIfHeldElsewhere(_ snapshot: RadioSnapshot) async {
+        guard snapshot.linkState == .attached || snapshot.linkState == .ready,
+              ([.unclaimed, .belongsToAnotherIdentity, .unsupported] as [RadioHostState])
+                  .contains(snapshot.hostState),
+              let address = snapshot.deviceIdentity?.canonicalAddress,
+              claimedRadios.contains(where: { $0.deviceAddress == address })
+        else { return }
+        await forgetClaimedRadio(address)
+    }
+
+    private func forgetClaimedRadio(_ address: String) async {
+        guard let applicationStore, let localIdentity else { return }
+        coordinator.claimRecordedAt[address] = nil
+        try? await applicationStore.clearClaimedRadio(
+            ownerIdentityID: localIdentity.id,
+            deviceAddress: address
+        )
+        await reloadClaimedRadios()
+    }
+
+    private func reloadClaimedRadios() async {
+        guard let applicationStore, let localIdentity else {
+            claimedRadios = []
+            return
+        }
+        guard let radios = try? await applicationStore.claimedRadios(
+            ownerIdentityID: localIdentity.id
+        ) else { return }
+        if radios != claimedRadios {
+            claimedRadios = radios
+        }
+    }
+
+    /// The recorded radios other than the one attached now, still within
+    /// their lapse.
+    var strandedRadios: [StoredClaimedRadio] {
+        let attached = Self.isAttachedAsHost(radioSnapshot)
+            ? radioSnapshot.deviceIdentity?.canonicalAddress
+            : nil
+        let now = Date()
+        return claimedRadios.filter {
+            $0.deviceAddress != attached
+                && now.timeIntervalSince($0.attachedAt) < StoredClaimedRadio.lapse
+        }
+    }
+
+    /// Revoke the recorded radios once per attach, as soon as the mesh
+    /// session can carry the request. In its own task: a radio out of
+    /// reach takes the full management timeout to give up on, and the
+    /// snapshot stream must not wait for it.
+    private func revokeClaimedRadiosOncePerAttach(attachedTo address: String) {
+        guard !coordinator.revokedClaimedRadiosThisAttach,
+              coordinator.meshSessionInstalled
+        else { return }
+        coordinator.revokedClaimedRadiosThisAttach = true
+        Task { await self.revokeClaimedRadios(except: address) }
+    }
+
+    /// Ask each recorded radio again to let go of this phone.
+    func retryClaimedRadioRevocation() async {
+        guard Self.isAttachedAsHost(radioSnapshot),
+              let address = radioSnapshot.deviceIdentity?.canonicalAddress
+        else { return }
+        await revokeClaimedRadios(except: address)
+    }
+
+    /// Empty `PROP_HOST_KEY` on each recorded radio across the mesh. A
+    /// radio honors that from the identity it holds, and it is the one
+    /// write it honors from it. Only a radio that echoes the write is
+    /// forgotten; any other answer, or none, leaves the record to the
+    /// next attach or Retry.
+    private func revokeClaimedRadios(except attached: String) async {
+        guard !isRevokingClaimedRadios else { return }
+        isRevokingClaimedRadios = true
+        defer { isRevokingClaimedRadios = false }
+        await reloadClaimedRadios()
+        let hostKey = ulcpProperties.hostKey
+        for radio in claimedRadios where radio.deviceAddress != attached {
+            guard let answers = try? await radioConnection.writeRemoteProperties(
+                peerAddress: radio.deviceAddress,
+                writes: [MobileMeshPropertyWriteRecord(propertyId: hostKey, value: Data())]
+            ) else { continue }
+            let revoked = answers.contains {
+                $0.propertyId == hostKey && $0.statusCode == nil && $0.value?.isEmpty == true
+            }
+            if revoked {
+                await forgetClaimedRadio(radio.deviceAddress)
+            }
         }
     }
 
@@ -4747,6 +4931,15 @@ struct HostMuteLists: Equatable, Sendable {
 @MainActor
 private final class AppStateCoordinator {
     var synchronizedRadioPeer: SynchronizedRadioPeer?
+    /// When each radio's claim record was last written in this process,
+    /// so the steady snapshot stream rewrites it only now and then.
+    var claimRecordedAt: [String: Date] = [:]
+    /// Radios that confirmed they let go of this phone, until this phone
+    /// attaches to them again. A snapshot still in flight from before the
+    /// release must not write the record back.
+    var releasedRadios: Set<String> = []
+    /// Whether this attach has already tried to revoke the recorded radios.
+    var revokedClaimedRadiosThisAttach = false
     /// The device-identity peer list last written into the store's cache
     /// flags, so the steady snapshot stream reconciles only on real change.
     var lastReconciledDevicePeers: [String]?

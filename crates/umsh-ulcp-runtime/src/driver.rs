@@ -151,8 +151,12 @@ pub enum InEvent {
     /// Authorization has already happened: the responder checked that the
     /// packet arrived by unicast or blind unicast, that its source is
     /// authenticated, and that the source key is listed in
-    /// `PROP_DEV_ADMINS`. Nothing that fails those checks reaches here.
+    /// `PROP_DEV_ADMINS` or is the host identity. Nothing that fails
+    /// those checks reaches here; the session holds the host to the one
+    /// write it may make.
     Admin {
+        from: [u8; 32],
+        listed_admin: bool,
         frame: AdminFrame,
         reply_budget: usize,
     },
@@ -1591,21 +1595,33 @@ async fn regenerate_device_identity<A, S, const TXQ: usize, E>(
     }
 }
 
-/// Tell the board whether a host identity is configured, when that
-/// changed since `synced`, or for the first time.
+/// Tell the board whether a host identity is configured, and the Node
+/// Management responder which identity it is, when that changed since
+/// `synced`, or for the first time.
+///
+/// The responder decides admission in the node's receive callback, which
+/// cannot borrow the session, so it keeps a mirror of the host key: the
+/// host may revoke this radio over the mesh (spec §Node Management—
+/// Authorization).
 fn sync_hosted<A, S, const TXQ: usize, E>(
     session: &Session<A, S, TXQ>,
-    synced: &mut Option<bool>,
+    synced: &mut Option<Option<[u8; 32]>>,
     env: &mut E,
 ) where
     A: AesProvider,
     S: Sha256Provider,
     E: DeviceEnv,
 {
-    let hosted = session.hosted();
-    if *synced != Some(hosted) {
-        *synced = Some(hosted);
-        env.hosted_changed(hosted);
+    let key = session.host_key().copied();
+    if *synced == Some(key) {
+        return;
+    }
+    let was_hosted = synced.map(|previous| previous.is_some());
+    *synced = Some(key);
+    #[cfg(feature = "device-node")]
+    crate::admin_responder::publish_host_key(key);
+    if was_hosted != Some(key.is_some()) {
+        env.hosted_changed(key.is_some());
     }
 }
 
@@ -1726,6 +1742,8 @@ enum Exchange<'a> {
     /// A frame from a mesh administrator, whose reply must fit
     /// `reply_budget` octets.
     Admin {
+        from: &'a [u8; 32],
+        listed_admin: bool,
         frame: &'a [u8],
         reply_budget: usize,
     },
@@ -1772,11 +1790,18 @@ where
             session.handle_frame(bytes, now_ms, &mut |frame: &[u8]| emitter.push(frame))
         }
         Exchange::Admin {
+            from,
+            listed_admin,
             frame,
             reply_budget,
-        } => session.handle_admin_frame(frame, now_ms, reply_budget, &mut |frame: &[u8]| {
-            emitter.push(frame)
-        }),
+        } => session.handle_mesh_frame(
+            from,
+            listed_admin,
+            frame,
+            now_ms,
+            reply_budget,
+            &mut |frame: &[u8]| emitter.push(frame),
+        ),
         Exchange::Device(bytes) => {
             session.handle_device_frame(bytes, now_ms, &mut |frame: &[u8]| emitter.push(frame))
         }
@@ -2169,7 +2194,7 @@ where
     // device with no identity or snapshot; changes drive the rest.
     let mut dev_domain_synced: Option<(u32, bool)> = None;
     // Last `Session::hosted` told to the board; `None` forces the first.
-    let mut hosted_synced: Option<bool> = None;
+    let mut hosted_synced: Option<Option<[u8; 32]>> = None;
     // Shared staging buffer for the durable-write effect arms
     // (save/wipe). Held across their persist awaits, so as a
     // loop-lifetime local it costs one future slot instead of one
@@ -2290,15 +2315,25 @@ where
                     None => core::future::pending().await,
                 }
             };
-            // The locate alert's deadline. Enforced here rather than by
-            // each board so that "a device MUST bound how long it will
-            // remain in ALERT_LOCATE" holds for every board that
-            // advertises CAP_ALERT, including ones whose UX layer has no
-            // timer of its own. Idle (never completes) while no alert is
-            // running. It borrows `session` immutably, alongside
-            // `tx_done`—only `publish_event` touches `env`.
-            let alert_deadline = async {
-                match session.alert_deadline_ms() {
+            // The session's next deadline: the locate alert's, or the
+            // detached host's lease. Enforced here rather than by each
+            // board so that "a device MUST bound how long it will remain
+            // in ALERT_LOCATE" holds for every board that advertises
+            // CAP_ALERT, including ones whose UX layer has no timer of
+            // its own, and so that a radio left behind stands down
+            // whether or not anything is received. Idle (never
+            // completes) while neither is running. It borrows `session`
+            // immutably, alongside `tx_done`—only `publish_event`
+            // touches `env`.
+            let next_deadline = match (
+                session.alert_deadline_ms(),
+                session.host_lease_deadline_ms(),
+            ) {
+                (Some(alert), Some(lease)) => Some(alert.min(lease)),
+                (alert, lease) => alert.or(lease),
+            };
+            let session_deadline = async {
+                match next_deadline {
                     Some(deadline) => Timer::at(Instant::from_millis(deadline)).await,
                     None => core::future::pending().await,
                 }
@@ -2317,7 +2352,7 @@ where
                 rt.input.receive(),
                 rt.radio.rx.receive(),
                 tx_done,
-                select3(env.publish_event(), alert_deadline, save),
+                select3(env.publish_event(), session_deadline, save),
             )
             .await
         };
@@ -2346,7 +2381,7 @@ where
                 // must not clear the successor's session state.
                 if arbitration.detach(transport) {
                     env.set_advertising_allowed(true);
-                    session.detach();
+                    session.detach(Instant::now().as_millis());
                 }
             }
             Either4::First(InEvent::CancelAlert) => {
@@ -2441,6 +2476,8 @@ where
                 }
             }
             Either4::First(InEvent::Admin {
+                from,
+                listed_admin,
                 frame,
                 reply_budget,
             }) => {
@@ -2459,6 +2496,8 @@ where
                     serve_frame(
                         session,
                         Exchange::Admin {
+                            from: &from,
+                            listed_admin,
                             frame: &frame,
                             reply_budget,
                         },
@@ -2638,12 +2677,14 @@ where
                 snapshot_settled = true;
             }
             Either4::Fourth(Either3::Second(())) => {
-                // The alert outlived its deadline: stop the indication
-                // and publish the transition the host did not command.
-                let effect = session
-                    .poll_alert(Instant::now().as_millis(), &mut |frame: &[u8]| {
-                        emitter.push(frame)
-                    });
+                // A deadline passed. A lease that ran out stands the
+                // device down; an alert that outlived its deadline stops
+                // its indication and publishes the transition the host
+                // did not command. Each does nothing before its own
+                // deadline.
+                let now_ms = Instant::now().as_millis();
+                session.poll_host_lease(now_ms);
+                let effect = session.poll_alert(now_ms, &mut |frame: &[u8]| emitter.push(frame));
                 emitter.flush(&mut ReplySink::host(&arbitration, &rt)).await;
                 apply_effect(session, effect, &rt, &mut env).await;
             }

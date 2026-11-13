@@ -158,7 +158,9 @@ receive filters, delegation policy—and thereafter the device filters,
 queues, and acknowledges on its behalf. A device serves at most one
 tethered host at a time, and being tethered is a transient local
 relationship: it does not appear in the device's node identity, does not
-survive a power cycle, and is re-established on every attach.
+survive a power cycle, and is re-established on every attach. A host that
+has moved on can end it from across the mesh (see [Node Management
+Authorization](app-node-management.md#authorization)).
 
 **Administrative attach.** The host is *configuring the device*: its own
 identity, its radio, its behavior, its saved snapshot. It writes nothing

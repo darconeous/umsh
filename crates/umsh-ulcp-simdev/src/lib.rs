@@ -95,6 +95,7 @@ pub fn full_config(
         }),
         keyboard: true,
         sound: true,
+        host_custody: true,
         illuminance: true,
         temperatures: true,
         ble: true,

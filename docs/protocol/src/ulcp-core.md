@@ -972,10 +972,13 @@ snapshot, and at power-on every host-domain property takes its documented
 default.
 
 It emphatically does survive a *disconnect*. A detached radio keeps
-filtering, queueing and acknowledging on behalf of its host for as long as
-it stays powered—that is the entire value of the host domain, and
-nothing about the host going out of range changes what the host wants
-done.
+filtering, queueing and acknowledging on behalf of its host—that is the
+entire value of the host domain, and nothing about the host going out of
+range changes what the host wants done. What bounds it is the rule that
+only one device answers for an identity at a time: a detached radio
+[stands down](ulcp-host.md#standing-down) after a lease or when its queue
+fills with held messages, and resets the host domain when it [hears the
+host identity elsewhere](ulcp-host.md#host-heard-elsewhere).
 
 The two together give the host a simple rule with no detection in it: a
 host **MUST** establish its complete host domain on every tethered
@@ -1144,7 +1147,9 @@ uses. The interface is a binding of its own:
   PHY stream, and the receive queue belong to whichever host is tethered,
   and the device answers the interface's writes to them with
   `STATUS_NOT_PERMITTED`, as it answers an
-  [administrator's](app-node-management.md#authorization).
+  [administrator's](app-node-management.md#authorization). Node
+  management's one host-domain write, the host releasing the device,
+  does not extend to the interface.
 * **A local binding.** The device answers every request that carries a
   non-zero TID exactly once.
 * **Not an attach.** Its requests reset no session state, emit no

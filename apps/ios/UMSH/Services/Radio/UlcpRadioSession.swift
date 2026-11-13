@@ -240,6 +240,9 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     /// release whose deadline may still end that wait.
     private var hostReleaseWaiters: [CheckedContinuation<Void, Never>] = []
     private var hostReleaseToken: UInt64 = 0
+    /// The device address of the radio being released, until it answers.
+    private var hostReleaseAddress: String?
+    var hostReleaseContinuations: [UUID: AsyncStream<String>.Continuation] = [:]
     var meshSession: MobileMeshSession?
     var pingWaiters: [UInt64: CheckedContinuation<RadioPingResult, any Error>] = [:]
     /// Callers awaiting a node-management exchange, by operation id.
@@ -437,6 +440,23 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
         latestLocalDestinationHints = hints
         for continuation in localHintContinuations.values {
             continuation.yield(hints)
+        }
+    }
+
+    func hostReleases() async -> AsyncStream<String> {
+        await withCheckedContinuation { result in
+            sessionQueue.async { [self] in
+                let stream = AsyncStream<String> { continuation in
+                    let id = UUID()
+                    hostReleaseContinuations[id] = continuation
+                    continuation.onTermination = { [weak self] _ in
+                        self?.sessionQueue.async { [weak self] in
+                            self?.hostReleaseContinuations[id] = nil
+                        }
+                    }
+                }
+                result.resume(returning: stream)
+            }
         }
     }
 
@@ -760,6 +780,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
                     return
                 }
                 hostReleaseWaiters = [result]
+                hostReleaseAddress = snapshot.deviceIdentity?.canonicalAddress
                 hostReleaseToken &+= 1
                 let token = hostReleaseToken
                 Self.logger.notice("release: clearing the radio's host key")
@@ -784,9 +805,17 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
         }
     }
 
-    private func finishHostRelease() {
+    /// End the wait for a release. `confirmed` is the radio saying it no
+    /// longer holds this phone's key, which ``hostReleases()`` announces.
+    private func finishHostRelease(confirmed: Bool = false) {
         let waiters = hostReleaseWaiters
         hostReleaseWaiters.removeAll()
+        if confirmed, let address = hostReleaseAddress {
+            for continuation in hostReleaseContinuations.values {
+                continuation.yield(address)
+            }
+        }
+        hostReleaseAddress = nil
         for waiter in waiters {
             waiter.resume()
         }
@@ -2443,7 +2472,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
         }
 
         if !update.waitingForResponses, update.snapshot.phase == .releasing {
-            finishHostRelease()
+            finishHostRelease(confirmed: update.snapshot.hostOwnership == .unclaimed)
         }
         if !update.waitingForResponses, update.snapshot.phase == .attached {
             let rejection = operationErrorMessage.map(RadioConnectionError.operationRejected)

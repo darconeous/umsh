@@ -302,9 +302,9 @@ The contract:
 A device executes a Node Management request only when the packet arrived
 by unicast or blind unicast, its source is authenticated by the MAC layer,
 and the source's public key is listed in
-[`PROP_DEV_ADMINS`](#prop-dev-admins). Everything else it drops, with
-accounting and without a response: an unlisted sender learns nothing about
-whether the device is manageable.
+[`PROP_DEV_ADMINS`](#prop-dev-admins), with one exception below for the
+host. Everything else it drops, with accounting and without a response:
+an unlisted sender learns nothing about whether the device is manageable.
 
 Administrators read everything: `CMD_PROP_GET` is never refused for lack
 of standing, and a property the device does not serve fails exactly as it
@@ -328,6 +328,16 @@ operation exists, and the binding is what refused it—to:
   [`PROP_DEV_PRIVATE_KEY`](ulcp-device.md#prop-dev-private-key): a device
   identity cannot be installed over the mesh.
 
+A request authenticated as the identity in
+[`PROP_HOST_KEY`](ulcp-host.md#prop-host-key) is executed whether or not
+that identity is listed, for one operation: setting `PROP_HOST_KEY` to
+empty, which releases the device (see [Host
+Replacement](ulcp-host.md#host-replacement)). This lets a host free a
+radio it left holding its identity once the local link to it is gone.
+It grants nothing else: the device answers every other operation in the
+request with `STATUS_NOT_PERMITTED` unless that identity is also listed
+in `PROP_DEV_ADMINS`.
+
 For everything else this binding meets the transport requirement of
 [Provisioning Security](ulcp-core.md#provisioning-security): every
 executed request already arrives authenticated and encrypted from a listed
@@ -348,8 +358,9 @@ Each item is the Ed25519 public key of a node authorized as an
 administrator of this device. Items are public keys: they carry no secret
 material and are reported verbatim.
 
-An empty list disables node management entirely and is the post-reset
-default. The property is device-domain state: it participates in the
+An empty list admits no administrator, leaving only the tethered host's
+release, and is the post-reset default. The property is device-domain
+state: it participates in the
 [saved snapshot](ulcp-saved-state.md#saved-state) like any other
 device-domain property, which is how a commissioned repeater stays
 manageable across a power cycle. It is writable over the local bindings

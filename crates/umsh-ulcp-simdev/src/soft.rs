@@ -295,7 +295,7 @@ impl<P: SoftPlatform> SoftDevice<P> {
     pub fn detach(&mut self) {
         self.decoder.reset();
         self.outbound.clear();
-        self.session.detach();
+        self.session.detach(self.device_ms());
     }
 
     /// Pay whatever session-reset notice the session is owing, the way

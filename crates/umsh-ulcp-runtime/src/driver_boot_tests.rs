@@ -44,6 +44,7 @@ fn session(name: &'static str) -> TestSession {
             display: None,
             keyboard: false,
             sound: false,
+            host_custody: true,
             illuminance: false,
             temperatures: false,
             ble: true,

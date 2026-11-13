@@ -210,14 +210,45 @@ struct PersistenceSmokeTest {
 
         try await checkReplies(store)
         try await checkRepeats(store)
+        try await checkClaimedRadios(store)
 
-        print("SQLite tier, delete/demote, retention, migration, upgrade, reply, and repeat checks passed")
+        print("SQLite tier, delete/demote, retention, migration, upgrade, reply, repeat, and claimed-radio checks passed")
 
         // Seeding tens of thousands of rows takes long enough that the ordinary
         // smoke run should not pay for it.
         if ProcessInfo.processInfo.environment["UMSH_CHAT_BENCH"] == "1" {
             try await runChatScaleBenchmark()
         }
+    }
+
+    /// A radio left holding the identity is remembered until it is cleared
+    /// or its record lapses, and an attach refreshes it.
+    private static func checkClaimedRadios(_ store: SQLiteApplicationStore) async throws {
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        try await store.recordClaimedRadio(
+            ownerIdentityID: "alice", deviceAddress: "radio-a", name: "Ridge", now: start
+        )
+        try await store.recordClaimedRadio(
+            ownerIdentityID: "alice", deviceAddress: "radio-b", name: nil,
+            now: start.addingTimeInterval(60)
+        )
+        var radios = try await store.claimedRadios(ownerIdentityID: "alice", now: start)
+        precondition(radios.map(\.deviceAddress) == ["radio-b", "radio-a"])
+        precondition(radios[1].name == "Ridge" && radios[0].name == nil)
+
+        // Attaching again moves the lapse out.
+        let later = start.addingTimeInterval(StoredClaimedRadio.lapse - 1)
+        try await store.recordClaimedRadio(
+            ownerIdentityID: "alice", deviceAddress: "radio-a", name: "Ridge", now: later
+        )
+        radios = try await store.claimedRadios(
+            ownerIdentityID: "alice", now: start.addingTimeInterval(StoredClaimedRadio.lapse + 60)
+        )
+        precondition(radios.map(\.deviceAddress) == ["radio-a"])
+
+        try await store.clearClaimedRadio(ownerIdentityID: "alice", deviceAddress: "radio-a")
+        radios = try await store.claimedRadios(ownerIdentityID: "alice", now: later)
+        precondition(radios.isEmpty)
     }
 
     /// The repeaters heard carrying a message fold across its fragments and

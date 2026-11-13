@@ -64,6 +64,11 @@ Code | Name                | Requires                             | Grants
 A device advertising none of these is a transparent radio: it delivers
 every frame it receives and holds nothing on anyone's behalf.
 
+A device that cannot sound a [receipt cue](#receipt-cues) **MUST NOT**
+advertise `CAP_HOST_RX_QUEUE`, `CAP_HOST_KEYS`, or `CAP_HOST_AUTO_ACK`.
+Custody is only worth taking when the operator can learn that something is
+waiting; such a device remains a filtering radio under `CAP_HOST_FILTER`.
+
 ## Commands
 
 Id | Mnemonic          | Dir          | Description
@@ -416,8 +421,9 @@ already.
 
 A device may indicate locally that it took a frame in for a host that is
 not attached—a sound, a light, a count on a panel. What form the
-indication takes, and whether a device makes one at all, is a property of
-the board rather than of the protocol.
+indication takes is a property of the board rather than of the protocol.
+Every device that holds traffic for its host can sound one; a device that
+cannot does not take custody (see [Capabilities](#capabilities)).
 
 An indication of one arrival is reserved for a message the operator
 reads: a frame the device authenticated with a provisioned key whose
@@ -577,15 +583,29 @@ frame is **unauthenticated**: a destination hint is public, so anyone can
 send a frame that passes the receive filters. Only an authenticated frame
 can be acknowledged on the host's behalf.
 
-When a new frame is accepted and the queue is full, the device makes room as
-follows:
+Every queued frame falls into one of three classes:
 
-1. If the queue holds an unauthenticated entry, the oldest unauthenticated
-   entry is discarded.
-2. Otherwise, if the new frame is authenticated, the oldest entry is
-   discarded.
-3. Otherwise the new frame is discarded. A device **MUST NOT** discard an
-   authenticated entry to admit an unauthenticated frame.
+Class           | Definition                                                     | Discarded
+----------------|----------------------------------------------------------------|----------
+Unauthenticated | Not authenticated                                              | First, oldest first
+Channel         | Authenticated multicast                                        | Next, oldest first
+Held            | Authenticated direct message (unicast or blind unicast)        | Never
+
+When a new frame is accepted and the queue is full, the device makes room
+by discarding the oldest entry of the first class the arriving frame may
+displace that the queue holds:
+
+Arriving frame  | May displace
+----------------|-------------
+Unauthenticated | Unauthenticated
+Channel         | Unauthenticated, then channel
+Direct          | Unauthenticated, then channel
+
+An arriving frame that finds nothing it may displace is discarded. An
+authenticated direct message discarded this way is not acknowledged, and the device
+[stands down](#standing-down). A device **MUST NOT** evict a held entry:
+a direct message acknowledged on the host's behalf leaves the queue only
+by a drain, a [host replacement](#host-replacement), or loss of power.
 
 Within each class the queue holds the most recent traffic, and queue order
 stays the order of reception. Every frame discarded under these rules,
@@ -594,12 +614,6 @@ whether queued or arriving, increments `PROP_HOST_RX_QUEUE_DROPPED`.
 Traffic from a peer the device holds no keys for, including first contact
 from an unprovisioned peer, is unauthenticated: it is the first displaced
 when the queue fills, and it cannot displace authenticated traffic.
-
-Eviction can discard a frame that was already acknowledged on the host's
-behalf—the sender believes it delivered, but the host will never
-receive it. This is the same best-effort custody semantic that applies to
-power loss (see [Acknowledgement Delegation](ulcp-host.md#ack-delegation) and [Saved State](ulcp-saved-state.md#saved-state)): a delegated ack
-asserts volatile custody, not guaranteed delivery.
 
 Duplicate detection for queueing uses the standard final-destination
 mechanisms of [replay detection](security.md#replay-detection): per-peer
@@ -644,11 +658,9 @@ if all of the following hold:
    store leaves the baseline unchanged, so its retransmissions remain
    acceptable later.
 7. The frame was placed in the inbound queue (see [Inbound Queueing](ulcp-host.md#inbound-queueing)).
-   An authenticated frame always finds room when the queue is full (see
-   [Inbound Queueing](ulcp-host.md#inbound-queueing)); a frame that
-   nevertheless cannot be stored (for example, one exceeding the device's
-   buffer) is not acknowledged, so the sender keeps retrying until the host
-   returns.
+   A frame that cannot be stored—one that finds the queue holding only
+   held entries, or one exceeding the device's buffer—is not
+   acknowledged, so the sender keeps retrying until the host returns.
 
 A delegated ACK also requires that no unconsumed source-route hints remain. An early overheard copy may be queued without an ACK; the first eligible duplicate can then supply the ACK without another queue entry. `RX_FLAG_ACKED` requires successful radio transmission.
 
@@ -656,8 +668,8 @@ Delegated ACKs follow the [return-path guidance](beacons.md#scoping-flood-hops-t
 
 **Duplicates.** An authenticated frame that replay detection identifies as
 a previously accepted frame—typically a retransmission whose original
-ack was lost—is not queued again, but the device **MAY** retransmit its
-acknowledgement under the core
+ack was lost—is not queued again, but while the original entry is still
+queued the device **MAY** retransmit its acknowledgement under the core
 [duplicate-acknowledgement window](security.md#duplicate-acknowledgement-window):
 only when the frame authenticates and its counter is no more than 8 behind
 the peer's baseline, and without advancing or otherwise modifying the
@@ -743,3 +755,43 @@ While a host is attached, the device never acks on its behalf: live-delivered
 frames are the host's responsibility. Acks generated by the **device
 identity** for its own traffic are ordinary device-node behavior and are
 not governed by this section.
+
+A detached device **MUST NOT** transmit anything on the host identity's
+behalf except a MAC ack. A MAC ack carries no source address, so any
+other frame heard from the host identity while the host is detached comes
+from somewhere else (see [Host Identity Heard
+Elsewhere](#host-heard-elsewhere)).
+
+## Standing Down {#standing-down}
+
+A detached device **stands down** by emptying
+[`PROP_HOST_PEER_KEYS`](#prop-host-peer-keys) and
+[`PROP_HOST_CHANNEL_KEYS`](#prop-host-channel-keys). Nothing else
+changes: `PROP_HOST_KEY`, the filter and mute tables, and the inbound
+queue are kept, so a returning host drains what was held and rewrites both
+key tables as it does on every attach (see [Host
+Domain](ulcp-core.md#host-domain)).
+
+A device stands down when either of the following occurs:
+
+* **Lease.** Twelve hours have passed since the host detached.
+* **Full.** An authenticated direct message arrives and the inbound queue
+  holds only held entries (see [Inbound Queueing](#inbound-queueing)).
+
+Once it has stood down, the device can authenticate nothing for the host:
+every frame it accepts is unauthenticated, so it earns no acknowledgement
+and no receipt cue for a single arrival, and it cannot displace a held
+entry.
+
+## Host Identity Heard Elsewhere {#host-heard-elsewhere}
+
+While the host is detached, a received frame whose source is the host
+identity means that identity is live on the mesh through some other
+device. The device erases `PROP_HOST_KEY`, which resets the entire host
+domain (see [Host Replacement](#host-replacement)).
+
+The source matches by the full public key when the frame carries one, and
+by its 3-byte hint otherwise. A frame whose trailer opens with a value the
+device recorded when transmitting a frame for the host (see [Receive
+Filtering](#receive-filtering)) does not count: it is a repeater's onward
+copy of something the host sent through this device before detaching.

@@ -18,6 +18,9 @@ protocol RadioConnection: AnyObject, Sendable {
     /// under a session with forward secrecy: the current set first, then
     /// each change.
     func forwardSecretConversations() async -> AsyncStream<Set<String>>
+    /// The device address of each radio that confirmed it let go of this
+    /// phone's host key.
+    func hostReleases() async -> AsyncStream<String>
     /// Add Peer's contact exchange: the current state first, then each
     /// change. Nil while no mesh session is installed.
     func meetStates() async -> AsyncStream<MobileMeetStateRecord?>

@@ -92,6 +92,8 @@ fn session_config() -> SessionConfig {
         display: None,
         keyboard: false,
         sound: false,
+        // No sounder to cue a held message with.
+        host_custody: false,
         illuminance: false,
         temperatures: false,
         ble: false,

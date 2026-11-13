@@ -294,6 +294,9 @@ struct AppRootView: View {
                     channels: runtime.channels,
                     unknownDeviceChannels: runtime.unknownDeviceChannels,
                     channelActions: channelManagementActions,
+                    strandedRadios: runtime.strandedRadios,
+                    isRevokingStrandedRadios: runtime.isRevokingClaimedRadios,
+                    retryRevocation: runtime.retryClaimedRadioRevocation,
                     seedMessages: runtime.seedGeneratedMessages,
                     stagedPeerSendsMessage: runtime.stagedPeerSendsMessage,
                     stagedPeerLosesChannelMessage: runtime.stagedPeerLosesChannelMessage,
@@ -419,7 +422,10 @@ struct AppRootView: View {
                         requestMissing: runtime.requestMissingMessages,
                         clearMessages: runtime.clearConversationMessages,
                         countMessages: runtime.countConversationMessages
-                    )
+                    ),
+                    strandedRadios: runtime.strandedRadios,
+                    isRevokingStrandedRadios: runtime.isRevokingClaimedRadios,
+                    retryRevocation: runtime.retryClaimedRadioRevocation
                 )
             }
         }

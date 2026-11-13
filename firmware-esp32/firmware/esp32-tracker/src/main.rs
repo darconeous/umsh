@@ -519,6 +519,10 @@ fn session_config() -> SessionConfig {
         display: None,
         keyboard: cfg!(feature = "communicator"),
         sound: cfg!(any(feature = "board-tlora-pager", feature = "board-tdeck")),
+        // No image here cues a message it holds for an absent host, so
+        // none may hold one: the Pager and T-Deck have speakers but play
+        // no queue cue.
+        host_custody: false,
         illuminance: false,
         temperatures: cfg!(feature = "chip-esp32s3"),
         // The ESP32-S3 radio is always up on this board, but the

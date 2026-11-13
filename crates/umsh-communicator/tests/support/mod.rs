@@ -49,6 +49,7 @@ pub fn config() -> SessionConfig {
         }),
         keyboard: true,
         sound: true,
+        host_custody: true,
         illuminance: false,
         temperatures: false,
         ble: true,

@@ -286,6 +286,18 @@ pub struct SessionConfig {
     /// `PROP_SOUND_VOLUME` exist, on and at `DEFAULT_SOUND_VOLUME` after a
     /// reset; otherwise both are unknown.
     pub sound: bool,
+    /// Whether the device may hold messages for its tethered host: the
+    /// inbound queue, the host's keys, and delegated acknowledgement. When
+    /// set, `CAP_HOST_RX_QUEUE`, `CAP_HOST_KEYS`, and `CAP_HOST_AUTO_ACK`
+    /// are advertised. When unset, the device is a filtering radio only
+    /// (`CAP_HOST_FILTER`): the properties behind those three are unknown,
+    /// `CMD_QUEUE_DRAIN` answers `STATUS_UNIMPLEMENTED`, and nothing is
+    /// queued while the host is away.
+    ///
+    /// Set only where the device can sound a receipt cue. A radio that
+    /// accepts a message for an absent host and cannot tell anyone nearby
+    /// has silently taken custody of it.
+    pub host_custody: bool,
     /// Whether the device has a Bluetooth transport it can make
     /// unreachable on demand. When set, `CAP_BLE` is advertised and
     /// `PROP_BLE_ENABLED` and `PROP_BLE_LINK` exist; otherwise both
@@ -1407,6 +1419,10 @@ fn table_error(error: ItemError) -> Status {
     }
 }
 
+/// How long a detached device keeps the keys that let it acknowledge for
+/// its host before it stands down (spec §Standing Down): 12 hours.
+pub const HOST_LEASE_MS: u64 = 12 * 60 * 60 * 1000;
+
 /// `PROP_HOST_RX_QUEUE_CAPACITY`: the fixed size of the inbound queue.
 pub const RX_QUEUE_CAPACITY: usize = 16;
 
@@ -1488,6 +1504,9 @@ struct QueueEntry {
     /// Whether the device authenticated the frame against a provisioned
     /// key when it queued it. Only an authenticated frame can be acked.
     authenticated: bool,
+    /// An authenticated direct message: one a sender may have been told
+    /// was delivered. Never displaced; see [`RxQueue::push`].
+    held: bool,
     /// Monotonic (wrapping) sequence number: a stable handle that a
     /// pending ack transmission can use to mark this exact entry
     /// later, immune to queue rotation and eviction.
@@ -1505,6 +1524,7 @@ impl QueueEntry {
         rx_time_ms: 0,
         acked: false,
         authenticated: false,
+        held: false,
         seq: 0,
         identity: None,
     };
@@ -1514,12 +1534,27 @@ impl QueueEntry {
     }
 }
 
-/// The FIFO inbound queue (spec §Inbound Queueing). When full, a new
-/// frame displaces the oldest unauthenticated entry, or failing that—
-/// and only for an authenticated arrival—the oldest entry. An
-/// unauthenticated arrival never displaces an authenticated entry; it
-/// is refused instead. Either loss counts in
-/// `PROP_HOST_RX_QUEUE_DROPPED`.
+/// What [`RxQueue::push`] did with a frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Admission {
+    /// Queued, with this sequence handle.
+    Queued(u16),
+    /// Refused: the queue is full of entries this frame may not displace.
+    Refused,
+    /// A direct message refused because every entry is held. The device
+    /// has run out of room to take custody of anything more, and stands
+    /// down (spec §Standing Down).
+    FullOfHeld,
+}
+
+/// The FIFO inbound queue (spec §Inbound Queueing). Entries fall in
+/// three classes: unauthenticated, channel (authenticated multicast), and
+/// held (authenticated direct messages). When full, an unauthenticated
+/// arrival displaces the oldest unauthenticated entry; an authenticated
+/// one displaces the oldest unauthenticated entry, or failing that the
+/// oldest channel entry. A held entry is never displaced: the device may
+/// have told its sender the message was delivered. Every loss, refusals
+/// included, counts in `PROP_HOST_RX_QUEUE_DROPPED`.
 struct RxQueue {
     entries: [QueueEntry; RX_QUEUE_CAPACITY],
     /// Index of the oldest entry.
@@ -1556,28 +1591,35 @@ impl RxQueue {
         }
     }
 
-    /// Append an entry and return its sequence handle, making room when
-    /// full by the eviction order above. `None` means the queue holds
-    /// only authenticated entries and the unauthenticated arrival was
-    /// refused (and counted).
+    /// Append an entry, making room when full by the order above. `held`
+    /// implies `authenticated`.
     fn push(
         &mut self,
         data: &[u8],
         info: &RadioRxInfo,
         rx_time_ms: u64,
         authenticated: bool,
+        held: bool,
         identity: Option<RxIdentity>,
-    ) -> Option<u16> {
+    ) -> Admission {
         debug_assert!(data.len() <= MAX_MTU);
+        debug_assert!(authenticated || !held);
         if self.len == RX_QUEUE_CAPACITY {
-            let unauthenticated = self.iter().position(|entry| !entry.authenticated);
-            let victim = match unauthenticated {
-                Some(offset) => offset,
-                None if authenticated => 0,
-                None => {
-                    self.dropped = self.dropped.wrapping_add(1);
-                    return None;
-                }
+            let victim = self
+                .iter()
+                .position(|entry| !entry.authenticated)
+                .or_else(|| {
+                    authenticated
+                        .then(|| self.iter().position(|entry| !entry.held))
+                        .flatten()
+                });
+            let Some(victim) = victim else {
+                self.dropped = self.dropped.wrapping_add(1);
+                return if held {
+                    Admission::FullOfHeld
+                } else {
+                    Admission::Refused
+                };
             };
             self.remove_at(victim);
             self.dropped = self.dropped.wrapping_add(1);
@@ -1594,10 +1636,11 @@ impl RxQueue {
         entry.rx_time_ms = rx_time_ms;
         entry.acked = false;
         entry.authenticated = authenticated;
+        entry.held = held;
         entry.seq = seq;
         entry.identity = identity;
         self.len += 1;
-        Some(seq)
+        Admission::Queued(seq)
     }
 
     /// Remove the entry `offset` places from the oldest, closing the gap
@@ -2331,6 +2374,10 @@ struct HostDomain {
     /// returning echoes: MAC acks (which carry no destination hint) and
     /// repeats of our own sends (whose destination hint is the peer's).
     transmitted_mics: TransmittedMics,
+    /// When a detached device stands down (spec §Standing Down): set on
+    /// detach while a host key is configured, cleared on attach and once
+    /// the device has stood down.
+    lease_deadline_ms: Option<u64>,
 }
 
 impl HostDomain {
@@ -2348,6 +2395,51 @@ impl HostDomain {
         self.auto_ack = false;
         self.queue.clear();
         self.transmitted_mics = TransmittedMics::default();
+        self.lease_deadline_ms = None;
+    }
+
+    /// Stand down (spec §Standing Down): forget the keys that let the
+    /// device authenticate, and so acknowledge, anything more for the
+    /// host. The host key and the queue stay, so a returning host still
+    /// drains what was held for it; it rewrites both tables on attach.
+    fn stand_down(&mut self) {
+        self.channel_keys = ChannelKeyTable::default();
+        self.peer_keys = PeerKeyTable::default();
+        self.lease_deadline_ms = None;
+    }
+
+    /// Whether this frame's source is the host identity: the full key
+    /// when the frame carries one, otherwise its hint. A frame whose
+    /// trailer this device recorded when transmitting it is excluded—
+    /// that is a repeater carrying onward something the host sent
+    /// through this radio.
+    fn hears_host(&self, data: &[u8]) -> bool {
+        let Some(host_key) = &self.key else {
+            return false;
+        };
+        let Ok(header) = PacketHeader::parse(data) else {
+            return false;
+        };
+        let from_host = match &header.source {
+            SourceAddrRef::FullKeyAt { offset } => data
+                .get(*offset..*offset + items::PUBLIC_KEY_LEN)
+                .is_some_and(|key| key == host_key),
+            SourceAddrRef::Hint(hint) => hint.0 == host_key[..3],
+            // A concealed source (blind unicast) is not this device's to
+            // read.
+            SourceAddrRef::Encrypted { .. } | SourceAddrRef::None => false,
+        };
+        if !from_host {
+            return false;
+        }
+        let echo = data
+            .get(header.mic_range.clone())
+            .filter(|mic| mic.len() >= 4)
+            .is_some_and(|mic| {
+                self.transmitted_mics
+                    .contains(&[mic[0], mic[1], mic[2], mic[3]])
+            });
+        !echo
     }
 
     /// Record the trailer prefix of a frame we are about to transmit, so its
@@ -3679,6 +3771,10 @@ pub struct Session<A: AesProvider, S: Sha256Provider, const TX: usize = 1> {
     /// `respond_*` completing an admin exchange still answers by the
     /// admin binding's rules.
     binding: Binding,
+    /// The mesh requester being served is the identity in
+    /// `PROP_HOST_KEY`, and so may empty it. Held for the exchange, like
+    /// [`binding`](Self::binding).
+    mesh_requester_hosts: bool,
     /// A session reset the attached host has not been told about yet.
     ///
     /// Session state is discarded from four places, some of which are
@@ -3710,6 +3806,10 @@ pub enum Binding {
     /// A Node Management Request from a listed administrator, arriving
     /// over the mesh.
     Admin,
+    /// A Node Management Request from the identity in `PROP_HOST_KEY`,
+    /// which is not a listed administrator. Its one permitted write is an
+    /// empty `PROP_HOST_KEY`: a host revoking a radio it left behind.
+    Host,
     /// The device's own settings interface, in process: a screen and
     /// keyboard on the device itself.
     ///
@@ -3887,6 +3987,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             queued_notice: None,
             multi: None,
             binding: Binding::Local,
+            mesh_requester_hosts: false,
             session_reset_pending: None,
             scratch: [0; SCRATCH],
             signatures: SignatureScratch::new(),
@@ -4404,22 +4505,51 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         self.discard_session_state(SessionResetReason::Attached);
         self.attached = true;
         self.link_secure = link_secure;
+        self.host.lease_deadline_ms = None;
     }
 
-    /// The host detached. Session state is discarded; the device and
-    /// host domains keep operating detached: accepted frames are queued
-    /// instead of delivered (delegated acknowledgement arrives with
-    /// `CAP_HOST_AUTO_ACK`).
+    /// The host detached at `now_ms`. Session state is discarded; the
+    /// device and host domains keep operating detached: accepted frames
+    /// are queued instead of delivered (delegated acknowledgement arrives
+    /// with `CAP_HOST_AUTO_ACK`), until the device stands down
+    /// [`HOST_LEASE_MS`] from now.
     ///
     /// No notice is owed, and any notice still owed is dropped: there is
     /// nobody left to tell, and carrying the debt across would fire it
     /// into the session that follows.
-    pub fn detach(&mut self) {
+    pub fn detach(&mut self, now_ms: u64) {
         self.multi = None;
         self.session = SessionState::default();
         self.session_reset_pending = None;
         self.attached = false;
         self.link_secure = false;
+        self.host.lease_deadline_ms = self
+            .host
+            .key
+            .is_some()
+            .then(|| now_ms.saturating_add(HOST_LEASE_MS));
+    }
+
+    /// When a detached device stands down, as a monotonic millisecond
+    /// deadline on the caller's clock, or `None` while a host is attached,
+    /// none is configured, or the device has already stood down.
+    ///
+    /// The driver arms a timer on this and calls
+    /// [`Session::poll_host_lease`] when it fires.
+    pub fn host_lease_deadline_ms(&self) -> Option<u64> {
+        self.host.lease_deadline_ms
+    }
+
+    /// Stand down if the lease has run out (spec §Standing Down). Safe
+    /// to call at any time: it does nothing before the deadline.
+    pub fn poll_host_lease(&mut self, now_ms: u64) {
+        if self
+            .host
+            .lease_deadline_ms
+            .is_some_and(|deadline| now_ms >= deadline)
+        {
+            self.host.stand_down();
+        }
     }
 
     /// Whether a host is attached.
@@ -4458,6 +4588,11 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// companion radio for someone.
     pub const fn hosted(&self) -> bool {
         self.host.key.is_some()
+    }
+
+    /// `PROP_HOST_KEY`: the tethered host identity, attached or not.
+    pub const fn host_key(&self) -> Option<&[u8; items::PUBLIC_KEY_LEN]> {
+        self.host.key.as_ref()
     }
 
     /// Discard session state and record that the attached host has to be
@@ -4548,7 +4683,53 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         reply_budget: usize,
         emit: &mut impl FnMut(&[u8]),
     ) -> Option<Effect> {
-        self.binding = Binding::Admin;
+        self.serve_mesh_frame(Binding::Admin, false, bytes, now_ms, reply_budget, emit)
+    }
+
+    /// Handle one ULCP frame carried in a Node Management Request from
+    /// `from`, a listed administrator when `listed_admin` is set.
+    ///
+    /// The caller has established that the packet arrived by unicast or
+    /// blind unicast and that its source is authenticated, as for
+    /// [`Session::handle_admin_frame`]. A requester that is the identity
+    /// in `PROP_HOST_KEY` may also set that property to empty—a host
+    /// revoking a radio it left behind—whether or not it is an
+    /// administrator; if it is not, that is the only thing it may do. A
+    /// requester that is neither is refused `STATUS_NOT_PERMITTED`.
+    pub fn handle_mesh_frame(
+        &mut self,
+        from: &[u8; items::PUBLIC_KEY_LEN],
+        listed_admin: bool,
+        bytes: &[u8],
+        now_ms: u64,
+        reply_budget: usize,
+        emit: &mut impl FnMut(&[u8]),
+    ) -> Option<Effect> {
+        let hosts = self.host.key.as_ref() == Some(from);
+        let binding = match (listed_admin, hosts) {
+            (true, _) => Binding::Admin,
+            (false, true) => Binding::Host,
+            (false, false) => {
+                self.binding = Binding::Admin;
+                self.mesh_requester_hosts = false;
+                self.send_status(TID_UNSOLICITED, Status::NOT_PERMITTED, emit);
+                return None;
+            }
+        };
+        self.serve_mesh_frame(binding, hosts, bytes, now_ms, reply_budget, emit)
+    }
+
+    fn serve_mesh_frame(
+        &mut self,
+        binding: Binding,
+        hosts: bool,
+        bytes: &[u8],
+        now_ms: u64,
+        reply_budget: usize,
+        emit: &mut impl FnMut(&[u8]),
+    ) -> Option<Effect> {
+        self.binding = binding;
+        self.mesh_requester_hosts = hosts;
         // A local binding ignores a frame it cannot parse—the host
         // will notice its own transport went wrong. An administrator is
         // owed an answer, because silence over the mesh is
@@ -4582,12 +4763,13 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     pub fn end_admin_exchange(&mut self) {
         self.multi = None;
         self.binding = Binding::Local;
+        self.mesh_requester_hosts = false;
     }
 
-    /// Whether the frame in flight arrived over the mesh administrative
-    /// binding.
+    /// Whether the frame in flight arrived over the mesh: from an
+    /// administrator, or from the host revoking this radio.
     fn is_admin(&self) -> bool {
-        self.binding == Binding::Admin
+        matches!(self.binding, Binding::Admin | Binding::Host)
     }
 
     /// Whether the frame in flight came from the tethered host, which owns
@@ -4596,11 +4778,30 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         self.binding == Binding::Local
     }
 
-    /// Whether the binding of the frame in flight may change `key`.
-    fn binding_writable(&self, key: u32) -> bool {
+    /// Whether the binding of the frame in flight may set `key` to
+    /// `value`.
+    fn binding_writable(&self, key: u32, value: &[u8]) -> bool {
+        // The host revoking this radio over the mesh: the identity in
+        // PROP_HOST_KEY may empty it, and nothing about that write
+        // depends on whether it is also an administrator.
+        if key == prop::HOST_KEY && value.is_empty() && self.mesh_requester_hosts {
+            return true;
+        }
         match self.binding {
             Binding::Local => true,
             Binding::Admin => admin_writable(key),
+            Binding::Host => false,
+            Binding::Device => device_writable(key),
+        }
+    }
+
+    /// Whether the binding of the frame in flight may insert into or
+    /// remove from `key`.
+    fn binding_listable(&self, key: u32) -> bool {
+        match self.binding {
+            Binding::Local => true,
+            Binding::Admin => admin_writable(key),
+            Binding::Host => false,
             Binding::Device => device_writable(key),
         }
     }
@@ -4616,6 +4817,15 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         // ignored per the spec.
         let received = Frame::parse(bytes).ok()?;
         let tid = received.header.tid();
+        // The host revoking this radio reaches nothing but the write that
+        // does it; every entry of a multi-property set is held to that by
+        // `binding_writable`.
+        if self.binding == Binding::Host
+            && !matches!(received.command(), Some(Cmd::PropSet | Cmd::PropMultiSet))
+        {
+            self.complete(tid, Status::NOT_PERMITTED, emit);
+            return None;
+        }
         match received.command() {
             Some(Cmd::Nop) => {
                 self.complete(tid, Status::OK, emit);
@@ -4669,6 +4879,10 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             // ignored. The drain covers exactly the frames queued now;
             // an empty queue succeeds immediately.
             Some(Cmd::QueueDrain) => {
+                if !self.config.host_custody {
+                    self.complete(tid, Status::UNIMPLEMENTED, emit);
+                    return None;
+                }
                 if self.session.drain.is_some() {
                     self.complete(tid, Status::BUSY, emit);
                     return None;
@@ -4874,7 +5088,18 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             if info.self_tx {
                 return None;
             }
-            if !self.host.accepts_queued_frame(data) {
+            // A frame that arrives before the driver's timer fires is
+            // still past the lease.
+            self.poll_host_lease(now_ms);
+            // The host identity is live elsewhere on the mesh, so this
+            // device must no longer be able to answer for it (spec §Host
+            // Identity Heard Elsewhere). Erasing the host key resets the
+            // whole domain, keys and queue included.
+            if self.host.hears_host(data) {
+                self.host.reset(None);
+                return None;
+            }
+            if !self.config.host_custody || !self.host.accepts_queued_frame(data) {
                 return None;
             }
             return match self.evaluate_detached_rx(data, info, now_ms) {
@@ -4882,10 +5107,12 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     // Coalesced with the existing queue entry. A
                     // confirmed re-ack marks the original entry, which
                     // may still be queued unacked from a failed or
-                    // refused earlier attempt.
-                    let original =
-                        identity.and_then(|identity| self.host.queue.seq_for_identity(&identity));
-                    ack.and_then(|plan| self.stage_ack(plan, original, now_ms))
+                    // refused earlier attempt. With no entry still
+                    // queued there is nothing this device holds to vouch
+                    // for, and no ack.
+                    let original = identity
+                        .and_then(|identity| self.host.queue.seq_for_identity(&identity))?;
+                    ack.and_then(|plan| self.stage_ack(plan, Some(original), now_ms))
                 }
                 verdict => {
                     // An unauthenticated frame reaches the queue on the
@@ -4906,14 +5133,29 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     // leaves the frame queued unacked and the sender's
                     // retransmission hits the re-ack window later.
                     //
-                    // A full queue of authenticated entries refuses an
-                    // unauthenticated arrival (counted as dropped): a
-                    // forged frame costs nothing to send, and must not
-                    // push out a message the device vouched for.
-                    let seq = self
-                        .host
-                        .queue
-                        .push(data, info, now_ms, authenticated, identity)?;
+                    // A full queue refuses what it has no room for
+                    // (counted as dropped): a forged frame costs nothing
+                    // to send and displaces only its own kind, and a held
+                    // message is never displaced at all. A direct message
+                    // that finds the queue full of held ones goes
+                    // unacknowledged, and the device stands down so it
+                    // stops vouching for anything more.
+                    let held = authenticated && queued_class(data) == QueuedClass::Direct;
+                    let seq = match self.host.queue.push(
+                        data,
+                        info,
+                        now_ms,
+                        authenticated,
+                        held,
+                        identity,
+                    ) {
+                        Admission::Queued(seq) => seq,
+                        Admission::Refused => return None,
+                        Admission::FullOfHeld => {
+                            self.host.stand_down();
+                            return None;
+                        }
+                    };
                     self.queued_notice = Some(QueuedNotice {
                         class: queued_class(data),
                         cue,
@@ -5563,7 +5805,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         now_ms: u64,
         emit: &mut impl FnMut(&[u8]),
     ) -> Option<Effect> {
-        if self.refuse_without_identity(tid, key, emit) {
+        if self.refuse_absent_property(tid, key, emit) {
             return None;
         }
         if self.config.battery.is_some()
@@ -7493,10 +7735,10 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         now_ms: u64,
         emit: &mut impl FnMut(&[u8]),
     ) -> Option<Effect> {
-        if self.refuse_without_identity(tid, key, emit) {
+        if self.refuse_absent_property(tid, key, emit) {
             return None;
         }
-        if !self.binding_writable(key) {
+        if !self.binding_writable(key, value) {
             self.complete(tid, Status::NOT_PERMITTED, emit);
             return None;
         }
@@ -8270,10 +8512,10 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         item: &[u8],
         emit: &mut impl FnMut(&[u8]),
     ) -> Option<Effect> {
-        if self.refuse_without_identity(tid, key, emit) {
+        if self.refuse_absent_property(tid, key, emit) {
             return None;
         }
-        if !self.binding_writable(key) {
+        if !self.binding_listable(key) {
             self.complete(tid, Status::NOT_PERMITTED, emit);
             return None;
         }
@@ -8463,10 +8705,10 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         selector: &[u8],
         emit: &mut impl FnMut(&[u8]),
     ) -> Option<Effect> {
-        if self.refuse_without_identity(tid, key, emit) {
+        if self.refuse_absent_property(tid, key, emit) {
             return None;
         }
-        if !self.binding_writable(key) {
+        if !self.binding_listable(key) {
             self.complete(tid, Status::NOT_PERMITTED, emit);
             return None;
         }
@@ -8830,15 +9072,21 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// Refuse a property that needs a device identity this device does
     /// not have, as unknown. One check at the head of each property
     /// command, so no handler below has to know.
-    fn refuse_without_identity(&mut self, tid: u8, key: u32, emit: &mut impl FnMut(&[u8])) -> bool {
-        if self.config.dev_identity || !is_identity_property(key) {
-            return false;
+    /// Refuse a property that belongs to a capability this device's
+    /// configuration leaves out: the device identity's or host custody's.
+    fn refuse_absent_property(&mut self, tid: u8, key: u32, emit: &mut impl FnMut(&[u8])) -> bool {
+        let absent = (!self.config.dev_identity && is_identity_property(key))
+            || (!self.config.host_custody && is_custody_property(key));
+        if absent {
+            self.complete(tid, Status::PROP_NOT_FOUND, emit);
         }
-        self.complete(tid, Status::PROP_NOT_FOUND, emit);
-        true
+        absent
     }
 
     fn known_prop(&self, key: u32) -> bool {
+        if is_custody_property(key) {
+            return self.config.host_custody;
+        }
         if (prop::BRIDGE_ENABLED..=prop::BRIDGE_LINK).contains(&key) {
             return self.has_bridge();
         }
@@ -9027,15 +9275,16 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 let mut len = 0;
                 let mac_node = self.config.mac_node;
                 let identity = self.config.dev_identity;
+                let custody = self.config.host_custody;
                 for (capability, advertised) in [
                     (cap::WRITABLE_RAW_STREAM, true),
                     (cap::PHY_DUTY_LIMIT, true),
                     (cap::DEV_NAME, true),
                     (cap::PHY_LORA, true),
                     (cap::HOST_FILTER, true),
-                    (cap::HOST_RX_QUEUE, true),
-                    (cap::HOST_KEYS, true),
-                    (cap::HOST_AUTO_ACK, true),
+                    (cap::HOST_RX_QUEUE, custody),
+                    (cap::HOST_KEYS, custody),
+                    (cap::HOST_AUTO_ACK, custody),
                     (cap::SAVE, true),
                     (cap::DEV_IDENTITY, identity),
                     (cap::REPEATER, mac_node),
@@ -9755,6 +10004,23 @@ const fn is_identity_property(key: u32) -> bool {
     )
 }
 
+/// The properties of host custody: `CAP_HOST_RX_QUEUE`, `CAP_HOST_KEYS`,
+/// and `CAP_HOST_AUTO_ACK`. `PROP_HOST_KEY` and `PROP_HOST_RX_FILTERS`
+/// belong to filtering, which every device does.
+const fn is_custody_property(key: u32) -> bool {
+    matches!(
+        key,
+        prop::HOST_CHANNEL_KEYS
+            | prop::HOST_PEER_KEYS
+            | prop::HOST_MUTED_CHANNELS
+            | prop::HOST_MUTED_PEERS
+            | prop::HOST_AUTO_ACK
+            | prop::HOST_RX_QUEUE_COUNT
+            | prop::HOST_RX_QUEUE_CAPACITY
+            | prop::HOST_RX_QUEUE_DROPPED
+    )
+}
+
 /// The properties whose value the platform holds rather than the session:
 /// the stored networks, what a scan heard, and each family's addresses.
 const fn is_deferred_table(key: u32) -> bool {
@@ -10072,6 +10338,7 @@ mod tests {
             display: None,
             keyboard: false,
             sound: false,
+            host_custody: true,
             illuminance: true,
             temperatures: false,
             ble: true,
@@ -10273,6 +10540,7 @@ mod tests {
     fn sound_is_a_saved_device_setting() {
         let config = SessionConfig {
             sound: true,
+            host_custody: true,
             ..test_config()
         };
         let mut session = Session::new(config, Status::RESET_POWER_ON, test_engine());
@@ -11652,7 +11920,7 @@ mod tests {
         assert_eq!((tid, key), (TID_UNSOLICITED, prop::TIME));
         assert_eq!(value, 1_780_000_000u32.to_le_bytes());
 
-        session.detach();
+        session.detach(0);
         let mut out = Vec::new();
         assert!(
             !session.publish_time(Some(1_780_000_000), &mut |bytes: &[u8]| {
@@ -11893,7 +12161,7 @@ mod tests {
             let mut session = test_session();
             let mut host = test_session();
             if !attached {
-                session.detach();
+                session.detach(0);
             }
             let original = session.settings();
             for enabled in [!original.enabled, original.enabled] {
@@ -13449,7 +13717,7 @@ mod tests {
         let mut session = test_session();
         take_notice(&mut session);
 
-        session.detach();
+        session.detach(0);
         assert_eq!(take_notice(&mut session), None);
 
         session.reset(Status::RESET_SOFTWARE, &mut |_: &[u8]| {});
@@ -13496,7 +13764,7 @@ mod tests {
 
         // Detach discards session state the same way.
         set(&mut session, prop::MAC_PROMISCUOUS, &[1]);
-        session.detach();
+        session.detach(0);
         session.attach(true);
         assert_eq!(get(&mut session, prop::MAC_PROMISCUOUS), [0]);
 
@@ -13622,7 +13890,7 @@ mod tests {
         send_packet(&mut session, 3, &[0x01; 4], &[], 0);
         let discarded = session.tx_radio_id().expect("a pending transmit");
 
-        session.detach();
+        session.detach(0);
         session.attach(true);
         enable(&mut session);
         assert_eq!(session.tx_radio_id(), None);
@@ -14051,7 +14319,7 @@ mod tests {
             session.respond_battery_group(tid, key, BatterySample::default(), &mut |_| {});
             assert!(session.multi.as_ref().unwrap().battery_sample.is_some());
             match boundary {
-                0 => session.detach(),
+                0 => session.detach(0),
                 1 => session.attach(true),
                 2 => {
                     session.reset(Status::RESET_SOFTWARE, &mut |_| {});
@@ -14425,7 +14693,7 @@ mod tests {
 
         // Detach must not silence it: the link drops as soon as the
         // searcher walks out of range, which is when it matters most.
-        session.detach();
+        session.detach(0);
         assert_eq!(session.alert(), AlertState::Locate);
         assert!(session.alert_deadline_ms().is_some());
 
@@ -14443,7 +14711,7 @@ mod tests {
     fn cancelling_while_detached_emits_nothing() {
         let mut session = test_session();
         set_alert_at(&mut session, AlertState::Locate, 0);
-        session.detach();
+        session.detach(0);
 
         let mut emitted = Vec::new();
         let effect = session.cancel_alert(&mut |bytes: &[u8]| emitted.push(bytes.to_vec()));
@@ -14542,7 +14810,7 @@ mod tests {
     #[test]
     fn battery_publish_needs_an_attached_host() {
         let mut session = test_session();
-        session.detach();
+        session.detach(0);
         let (published, out) = publish(&mut session, matching_sample());
         assert!(!published, "nobody to notify while detached");
         assert!(out.is_empty());
@@ -14945,7 +15213,7 @@ mod tests {
         );
         assert!(emitted.is_empty());
         // Nothing is queued either: the PHY is disabled.
-        session.detach();
+        session.detach(0);
         session.on_radio_rx(
             &[1, 2, 3],
             &RadioRxInfo::measured(-91, -53, None),
@@ -15694,7 +15962,7 @@ mod tests {
             prop::HOST_RX_FILTERS,
             &[items::FILTER_PKT_TYPE, PacketType::Unicast as u8],
         );
-        session.detach();
+        session.detach(0);
         session
     }
 
@@ -15746,7 +16014,7 @@ mod tests {
             prop::HOST_RX_FILTERS,
             &[items::FILTER_PKT_TYPE, PacketType::Broadcast as u8],
         );
-        session.detach();
+        session.detach(0);
         receive_detached(&mut session, &unicast_to([1, 2, 3]), 1_000);
         receive_detached(&mut session, &broadcast_frame(), 3_000);
 
@@ -15805,7 +16073,7 @@ mod tests {
             prop::HOST_RX_FILTERS,
             &[items::FILTER_DEST_HINT, 0x11, 0x22, 0x33],
         );
-        session.detach();
+        session.detach(0);
         receive_detached(&mut session, &unicast_to([0x11, 0x22, 0x33]), 0);
         receive_detached(&mut session, &unicast_to([4, 5, 6]), 0); // rejected
         receive_detached(&mut session, &[0xFF, 0xFE], 0); // unparseable
@@ -15824,7 +16092,7 @@ mod tests {
         assert!(delivered(&mut session, &broadcast_frame()));
         // While detached the implicit rule does not apply—ambient
         // broadcast traffic must not displace queued unicast frames.
-        session.detach();
+        session.detach(0);
         receive_detached(&mut session, &broadcast_frame(), 0);
         session.attach(true);
         assert_eq!(queue_count(&mut session), 0);
@@ -15839,7 +16107,7 @@ mod tests {
         // recording the whole neighborhood on nobody's behalf.
         let mut session = test_session();
         enable(&mut session);
-        session.detach();
+        session.detach(0);
         receive_detached(&mut session, &unicast_to([1, 2, 3]), 0);
         receive_detached(&mut session, &broadcast_frame(), 0);
         session.attach(true);
@@ -15860,7 +16128,7 @@ mod tests {
         let mut session = test_session();
         enable(&mut session);
         install_host_key(&mut session, &[0xC4; 32]);
-        session.detach();
+        session.detach(0);
 
         // The implicit host-hint filter matches both forms, and both are
         // delivered live. Only the one whose sender is waiting on an
@@ -15887,7 +16155,7 @@ mod tests {
             prop::HOST_RX_FILTERS,
             &[items::FILTER_PKT_TYPE, PacketType::Unicast as u8],
         );
-        session.detach();
+        session.detach(0);
         receive_detached(&mut session, &unicast_to([0xC4, 0xC4, 0xC4]), 0);
         session.attach(true);
         assert_eq!(queue_count(&mut session), 2);
@@ -15899,7 +16167,7 @@ mod tests {
         let mut session = auto_ack_session();
         session.attach(true);
         install_channel_key(&mut session, &channel_key);
-        session.detach();
+        session.detach(0);
 
         // Both reach the queue's door through the implicit channel
         // filter—a blind unicast's destination is concealed, so the
@@ -16044,7 +16312,7 @@ mod tests {
         // CMD_RST does too. (Refill first; the host key now filters, so
         // address the host.)
         enable(&mut session);
-        session.detach();
+        session.detach(0);
         receive_detached(&mut session, &unicast_ack_req_to([0xAA, 0xAA, 0xAA]), 0);
         session.attach(true);
         assert_eq!(queue_count(&mut session), 1);
@@ -16261,7 +16529,7 @@ mod tests {
         assert!(!delivered(&mut session, &[0x00, 0x01, 0x02]));
 
         // Detached queueing honors the same implicit filter.
-        session.detach();
+        session.detach(0);
         receive_detached(&mut session, &multicast_on(id), 0);
         receive_detached(&mut session, &multicast_on(other), 0);
         session.attach(true);
@@ -16319,7 +16587,7 @@ mod tests {
             &peer_item(&PEER_PUB, &test_pairwise()),
         );
         set(&mut session, prop::HOST_AUTO_ACK, &[1]);
-        session.detach();
+        session.detach(0);
         session
     }
 
@@ -16525,7 +16793,7 @@ mod tests {
         // With the channel key provisioned it is accepted,
         // authenticated with the combined blind keys, and acked.
         install_channel_key(&mut session, &channel_key);
-        session.detach();
+        session.detach(0);
         let effect = rx_effect(&mut session, &frame, 0);
         expect_ack_transmit(&mut session, effect, None);
         session.attach(true);
@@ -16614,7 +16882,7 @@ mod tests {
             prop::HOST_PEER_KEYS,
             &peer_item(&twin, &test_pairwise()),
         );
-        session.detach();
+        session.detach(0);
 
         // Hint form: ambiguous, does not resolve, no ack.
         assert!(rx_effect(&mut session, &sealed_unar(4, &test_pairwise(), false), 0).is_none());
@@ -16687,7 +16955,7 @@ mod tests {
         let mut session = auto_ack_session();
         session.attach(true);
         set(&mut session, prop::HOST_AUTO_ACK, &[0]);
-        session.detach();
+        session.detach(0);
         assert!(rx_effect(&mut session, &sealed_unar(5, &test_pairwise(), false), 0).is_none());
 
         // Re-enable delegation but exhaust the duty budget: the ack is
@@ -16695,7 +16963,7 @@ mod tests {
         session.attach(true);
         set(&mut session, prop::HOST_AUTO_ACK, &[1]);
         set(&mut session, prop::PHY_DUTY_LIMIT, &0u16.to_le_bytes());
-        session.detach();
+        session.detach(0);
         assert!(rx_effect(&mut session, &sealed_unar(6, &test_pairwise(), false), 0).is_none());
 
         session.attach(true);
@@ -16740,7 +17008,7 @@ mod tests {
             prop::HOST_PEER_KEYS,
             &peer_item(&PEER_PUB, &new_keys),
         );
-        session.detach();
+        session.detach(0);
 
         // The baseline survived the replacement: a fresh frame reusing
         // counter 5 under the new keys is a suspected replay and is
@@ -17353,7 +17621,7 @@ mod tests {
 
         // Accumulate dynamic state: a queued frame and an advanced
         // replay baseline (counter 5 acknowledged).
-        session.detach();
+        session.detach(0);
         let first = sealed_unar(5, &test_pairwise(), false);
         let effect = rx_effect(&mut session, &first, 0);
         expect_ack_transmit(&mut session, effect, None);
@@ -17390,7 +17658,7 @@ mod tests {
         // frame (past the re-ack holdoff) is still an identified
         // duplicate (coalesced, re-acked), not a first-contact
         // acceptance.
-        session.detach();
+        session.detach(0);
         let effect = rx_effect(&mut session, &first, 10_000);
         expect_ack_transmit(&mut session, effect, None);
         session.attach(true);
@@ -17409,7 +17677,7 @@ mod tests {
         // detached traffic.
         install_host_key(&mut session, &[0xBB; 32]);
         assert_eq!(get(&mut session, prop::SAVED), [ids::saved::CURRENT]);
-        session.detach();
+        session.detach(0);
         assert!(!delivered_at(
             &mut session,
             &unicast_ack_req_to([0xBB, 0xBB, 0xBB]),
@@ -17467,7 +17735,7 @@ mod tests {
         set(&mut session, prop::HOST_AUTO_ACK, &[1]);
 
         // Establish a replay baseline for PEER_PUB.
-        session.detach();
+        session.detach(0);
         let frame = sealed_unar(9, &test_pairwise(), false);
         let effect = rx_effect(&mut session, &frame, 0);
         expect_ack_transmit(&mut session, effect, None);
@@ -17483,9 +17751,10 @@ mod tests {
         set(&mut session, prop::HOST_PEER_KEYS, &table);
         assert_eq!(get(&mut session, prop::HOST_PEER_KEYS).len(), 64);
 
-        session.detach();
-        let effect = rx_effect(&mut session, &frame, 10_000);
-        expect_ack_transmit(&mut session, effect, None);
+        // The drained original is no longer held here, so the replay
+        // earns no ack either.
+        session.detach(0);
+        assert_eq!(rx_effect(&mut session, &frame, 10_000), None);
         session.attach(true);
         assert_eq!(
             queue_count(&mut session),
@@ -17550,7 +17819,7 @@ mod tests {
     }
 
     #[test]
-    fn failed_ack_leaves_flag_clear_and_eviction_is_handle_safe() {
+    fn failed_ack_leaves_flag_clear_and_a_full_queue_keeps_every_held_message() {
         let mut session = auto_ack_session();
         let keys = test_pairwise();
 
@@ -17559,27 +17828,42 @@ mod tests {
         assert_eq!(effect, Some(Effect::StartTransmit));
         session.on_tx_result(TxOutcome::Failed, 0, &mut |_: &[u8]| {});
 
-        // Evict frame 1 with newer traffic while an ack for frame 2 is
-        // in flight, then confirm it: the stale handle for the evicted
-        // entry must mark nothing, and the confirmed handle must mark
-        // exactly frame 2's entry even though the queue rotated
-        // underneath it.
+        // Fill the queue while an ack for frame 2 is in flight, then
+        // confirm it: the confirmed handle must mark exactly frame 2's
+        // entry.
         let effect = rx_effect(&mut session, &sealed_unar(2, &keys, false), 0);
         assert_eq!(effect, Some(Effect::StartTransmit));
-        for counter in 3..(2 + RX_QUEUE_CAPACITY as u32) {
+        for counter in 3..=RX_QUEUE_CAPACITY as u32 {
             // Radio busy: these queue unacked, no effect.
             assert!(rx_effect(&mut session, &sealed_unar(counter, &keys, false), 0).is_none());
         }
         session.on_tx_result(TxOutcome::Sent, 0, &mut |_: &[u8]| {});
 
+        // One more direct message finds only held entries: it is neither
+        // queued nor acknowledged, and the device stands down.
+        let refused = sealed_unar(99, &keys, false);
+        assert!(rx_effect(&mut session, &refused, 0).is_none());
+        assert!(session.session.pending.is_empty(), "no ack staged");
+
         session.attach(true);
-        assert_eq!(queue_count(&mut session), RX_QUEUE_CAPACITY as u16);
-        let flags = drained_flags(&mut session);
-        // Frame 1 was evicted; the oldest remaining entry is frame 2—
-        // the only acknowledged one.
-        assert_eq!(flags[0], RX_FLAG_BUFFERED | RX_FLAG_ACKED);
+        assert!(get(&mut session, prop::HOST_PEER_KEYS).is_empty());
+        assert!(get(&mut session, prop::HOST_CHANNEL_KEYS).is_empty());
+        assert_eq!(get(&mut session, prop::HOST_KEY), HOST_PUB);
+        assert_eq!(
+            get(&mut session, prop::HOST_RX_QUEUE_DROPPED),
+            1u32.to_le_bytes()
+        );
+        let drained = drain(&mut session, 0);
+        assert_eq!(drained.len(), RX_QUEUE_CAPACITY);
+        for (counter, (frame, _)) in (1..).zip(&drained) {
+            assert_eq!(*frame, sealed_unar(counter, &keys, false));
+        }
+        assert_eq!(drained[0].1.flags, RX_FLAG_BUFFERED);
+        assert_eq!(drained[1].1.flags, RX_FLAG_BUFFERED | RX_FLAG_ACKED);
         assert!(
-            flags[1..].iter().all(|flags| *flags == RX_FLAG_BUFFERED),
+            drained[2..]
+                .iter()
+                .all(|(_, meta)| meta.flags == RX_FLAG_BUFFERED),
             "no other entry may borrow the confirmation"
         );
     }
@@ -17660,22 +17944,21 @@ mod tests {
             assert_eq!(meta.flags, RX_FLAG_BUFFERED | RX_FLAG_ACKED);
         }
 
-        // An authenticated arrival still gets in, displacing the oldest.
-        session.detach();
+        // Nor does an authenticated direct message displace a held one.
+        session.detach(0);
         for counter in 17..=(16 + RX_QUEUE_CAPACITY as u32) {
             rx_effect(&mut session, &sealed_unar(counter, &keys, false), 0);
             session.on_tx_result(TxOutcome::Sent, 0, &mut |_: &[u8]| {});
         }
         let newest = sealed_unar(99, &keys, false);
-        assert_eq!(
-            rx_effect(&mut session, &newest, 0),
-            Some(Effect::StartTransmit)
-        );
-        session.on_tx_result(TxOutcome::Sent, 0, &mut |_: &[u8]| {});
+        assert_eq!(rx_effect(&mut session, &newest, 0), None);
         session.attach(true);
         let drained = drain(&mut session, 0);
-        assert_eq!(drained[0].0, sealed_unar(18, &keys, false));
-        assert_eq!(drained.last().unwrap().0, newest);
+        assert_eq!(drained[0].0, sealed_unar(17, &keys, false));
+        assert_eq!(
+            drained.last().unwrap().0,
+            sealed_unar(16 + RX_QUEUE_CAPACITY as u32, &keys, false)
+        );
     }
 
     /// Build a sealed UNAR carrying flood-hop state with the given
@@ -18127,7 +18410,7 @@ mod tests {
         let mut session = auto_ack_session();
         session.attach(true);
         install_channel_key(&mut session, &channel_key);
-        session.detach();
+        session.detach(0);
 
         // Exact retransmissions of an authenticated multicast frame
         // coalesce; no ack is ever generated for multicast.
@@ -18212,7 +18495,7 @@ mod tests {
         let mut session = auto_ack_session();
         session.attach(true);
         insert_item(&mut session, prop::HOST_MUTED_PEERS, &PEER_PUB);
-        session.detach();
+        session.detach(0);
 
         let frame = sealed_unar(1, &test_pairwise(), true);
         let effect = rx_effect(&mut session, &frame, 0);
@@ -18227,7 +18510,7 @@ mod tests {
         // Un-muting reaches the very next frame.
         session.attach(true);
         remove_item(&mut session, prop::HOST_MUTED_PEERS, &PEER_PUB);
-        session.detach();
+        session.detach(0);
         rx_effect(&mut session, &sealed_unar(2, &test_pairwise(), true), 5_000);
         assert!(session.take_queued_notice().expect("queued").cue);
     }
@@ -18301,7 +18584,7 @@ mod tests {
             prop::HOST_MUTED_CHANNELS,
             &channel_tag(&channel_key),
         );
-        session.detach();
+        session.detach(0);
 
         rx_effect(&mut session, &sealed_multicast(1, &channel_key, 0x11), 0);
         let notice = session.take_queued_notice().expect("queued");
@@ -18344,7 +18627,7 @@ mod tests {
                 prop::HOST_MUTED_CHANNELS,
                 &channel_tag(&muted),
             );
-            session.detach();
+            session.detach(0);
 
             rx_effect(&mut session, &sealed_multicast(1, &heard, 0x11), 0);
             let notice = session.take_queued_notice().expect("queued");
@@ -18406,7 +18689,7 @@ mod tests {
             prop::HOST_PEER_KEYS,
             &peer_item(&public_key_of(&SIGNER_SEED), &test_pairwise()),
         );
-        session.detach();
+        session.detach(0);
         session
     }
 
@@ -18518,7 +18801,7 @@ mod tests {
         session.attach(true);
         set(&mut session, prop::TEST_MESSAGE_ALERTS, &[1]);
         assert_eq!(get(&mut session, prop::TEST_MESSAGE_ALERTS), [1]);
-        session.detach();
+        session.detach(0);
         let notice = notice_for(&mut session, &emergency, test);
         assert!(!notice.silent);
         assert_eq!(notice.cue, cfg!(feature = "software-crypto"));
@@ -18598,7 +18881,7 @@ mod tests {
         assert!(session.take_queued_notice().is_none());
         session.attach(true);
         assert_eq!(drain(&mut session, 2_000).len(), 1);
-        session.detach();
+        session.detach(0);
         let notice = queued_notice(&mut session, &frame, 3_000);
         assert!(!notice.cue, "replayed after the drain");
         assert_eq!(notice.depth, 1);
@@ -18734,7 +19017,7 @@ mod tests {
             prop::HOST_MUTED_CHANNELS,
             &channel_tag(&[0x42; 32]),
         );
-        session.detach();
+        session.detach(0);
 
         receive_detached(&mut session, &sealed_multicast(9, &[0x42; 32], 0x11), 0);
         let notice = session.take_queued_notice().expect("queued");
@@ -18754,7 +19037,7 @@ mod tests {
             prop::HOST_RX_FILTERS,
             &[items::FILTER_PKT_TYPE, PacketType::Multicast as u8],
         );
-        session.detach();
+        session.detach(0);
         let frame = sealed_multicast(9, &[0x42; 32], 0x11);
         receive_detached(&mut session, &frame, 0);
         receive_detached(&mut session, &frame, 0);
@@ -19105,14 +19388,14 @@ mod tests {
 
         // Traffic on the device channel reaches the host only through
         // the host's own filtering—it is not queued.
-        session.detach();
+        session.detach(0);
         receive_detached(&mut session, &multicast_on(dev_id), 0);
         session.attach(true);
         assert_eq!(queue_count(&mut session), 0);
 
         // The same frame with a matching *host* channel key queues.
         install_channel_key(&mut session, &dev_channel);
-        session.detach();
+        session.detach(0);
         receive_detached(&mut session, &multicast_on(dev_id), 0);
         session.attach(true);
         assert_eq!(queue_count(&mut session), 1);
@@ -19629,6 +19912,259 @@ mod tests {
             let emitted = admin(&mut session, &buf[..len]);
             expect_status(&emitted[0], TID_UNSOLICITED, Status::NOT_PERMITTED);
         }
+    }
+
+    /// Serve one mesh request from `from`.
+    fn mesh(
+        session: &mut TestSession,
+        from: &[u8; 32],
+        listed_admin: bool,
+        request: &[u8],
+    ) -> Vec<Vec<u8>> {
+        let mut emitted = Vec::new();
+        let effect = session.handle_mesh_frame(from, listed_admin, request, 0, 180, &mut |bytes| {
+            emitted.push(bytes.to_vec())
+        });
+        assert!(effect.is_none(), "this exchange defers nothing");
+        session.end_admin_exchange();
+        emitted
+    }
+
+    /// The host may revoke a radio it left behind across the mesh, and
+    /// that is all being the host grants there.
+    #[test]
+    fn the_host_may_empty_its_key_over_the_mesh_and_do_nothing_else() {
+        let mut session = test_session();
+        install_host_key(&mut session, &HOST_PUB);
+        let mut buf = [0u8; 64];
+
+        // Anything else the host asks for is refused, reads included.
+        let len = frame::prop_get(&mut buf, TID_UNSOLICITED, prop::PROTOCOL_VERSION).unwrap();
+        let emitted = mesh(&mut session, &HOST_PUB, false, &buf[..len]);
+        expect_status(&emitted[0], TID_UNSOLICITED, Status::NOT_PERMITTED);
+        for (key, value) in [
+            (prop::HOST_KEY, &[0x33; 32][..]),
+            (prop::DEV_NAME, b"mine\0"),
+            (prop::HOST_AUTO_ACK, &[0]),
+        ] {
+            let len = frame::prop_set(&mut buf, TID_UNSOLICITED, key, value).unwrap();
+            let emitted = mesh(&mut session, &HOST_PUB, false, &buf[..len]);
+            expect_status(&emitted[0], TID_UNSOLICITED, Status::NOT_PERMITTED);
+        }
+        let len =
+            frame::prop_insert(&mut buf, TID_UNSOLICITED, prop::HOST_RX_FILTERS, &[0; 4]).unwrap();
+        let emitted = mesh(&mut session, &HOST_PUB, false, &buf[..len]);
+        expect_status(&emitted[0], TID_UNSOLICITED, Status::NOT_PERMITTED);
+        assert_eq!(session.host_key(), Some(&HOST_PUB));
+
+        // Someone who is neither host nor administrator is refused the
+        // revocation.
+        let len = frame::prop_set(&mut buf, TID_UNSOLICITED, prop::HOST_KEY, &[]).unwrap();
+        let emitted = mesh(&mut session, &[0x55; 32], false, &buf[..len]);
+        expect_status(&emitted[0], TID_UNSOLICITED, Status::NOT_PERMITTED);
+        // So is an administrator who is not the host.
+        let emitted = mesh(&mut session, &[0x55; 32], true, &buf[..len]);
+        expect_status(&emitted[0], TID_UNSOLICITED, Status::NOT_PERMITTED);
+        assert_eq!(session.host_key(), Some(&HOST_PUB));
+
+        // The host empties it.
+        let emitted = mesh(&mut session, &HOST_PUB, false, &buf[..len]);
+        let (_, key, value) = parse_prop_is(&emitted[0]);
+        assert_eq!(key, prop::HOST_KEY);
+        assert!(value.is_empty());
+        assert_eq!(session.host_key(), None);
+
+        // A host that is also an administrator may as well.
+        install_host_key(&mut session, &HOST_PUB);
+        let emitted = mesh(&mut session, &HOST_PUB, true, &buf[..len]);
+        let (_, key, _) = parse_prop_is(&emitted[0]);
+        assert_eq!(key, prop::HOST_KEY);
+        assert_eq!(session.host_key(), None);
+    }
+
+    /// A device that cannot cue a held message is a filtering radio only.
+    #[test]
+    fn a_device_without_custody_only_filters() {
+        let mut session: TestSession = Session::new(
+            SessionConfig {
+                host_custody: false,
+                ..test_config()
+            },
+            Status::RESET_POWER_ON,
+            test_engine(),
+        );
+        session.attach(true);
+        enable(&mut session);
+        let caps = capabilities(&mut session);
+        assert!(caps.contains(&cap::HOST_FILTER));
+        for absent in [cap::HOST_RX_QUEUE, cap::HOST_KEYS, cap::HOST_AUTO_ACK] {
+            assert!(!caps.contains(&absent));
+        }
+        let mut buf = [0u8; 64];
+        for key in [
+            prop::HOST_CHANNEL_KEYS,
+            prop::HOST_PEER_KEYS,
+            prop::HOST_MUTED_CHANNELS,
+            prop::HOST_MUTED_PEERS,
+            prop::HOST_AUTO_ACK,
+            prop::HOST_RX_QUEUE_COUNT,
+            prop::HOST_RX_QUEUE_CAPACITY,
+            prop::HOST_RX_QUEUE_DROPPED,
+        ] {
+            let len = frame::prop_get(&mut buf, 1, key).unwrap();
+            let (emitted, _) = dispatch(&mut session, &buf[..len], 0);
+            expect_status(&emitted[0], 1, Status::PROP_NOT_FOUND);
+            let len = frame::prop_set(&mut buf, 2, key, &[1]).unwrap();
+            let (emitted, _) = dispatch(&mut session, &buf[..len], 0);
+            expect_status(&emitted[0], 2, Status::PROP_NOT_FOUND);
+            let len = frame::prop_insert(&mut buf, 3, key, &[0; 32]).unwrap();
+            let (emitted, _) = dispatch(&mut session, &buf[..len], 0);
+            expect_status(&emitted[0], 3, Status::PROP_NOT_FOUND);
+        }
+        let len = frame::queue_drain(&mut buf, 7).unwrap();
+        let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
+        assert!(effect.is_none());
+        expect_status(&emitted[0], 7, Status::UNIMPLEMENTED);
+
+        // Filtering still works, and nothing is queued while detached.
+        install_host_key(&mut session, &HOST_PUB);
+        session.detach(0);
+        let frame = unicast_ack_req_to([0xC4, 0xC4, 0xC4]);
+        assert!(rx_effect(&mut session, &frame, 0).is_none());
+        assert!(session.take_queued_notice().is_none());
+        assert_eq!(session.host.queue.len, 0);
+    }
+
+    /// A detached device holding channel and peer keys, with delegated
+    /// acknowledgement on.
+    fn custody_session() -> TestSession {
+        let mut session = test_session();
+        enable(&mut session);
+        install_host_key(&mut session, &HOST_PUB);
+        install_channel_key(&mut session, &[0x42; 32]);
+        insert_item(
+            &mut session,
+            prop::HOST_PEER_KEYS,
+            &peer_item(&PEER_PUB, &test_pairwise()),
+        );
+        set(&mut session, prop::HOST_AUTO_ACK, &[1]);
+        session.detach(0);
+        session
+    }
+
+    fn acked(session: &mut TestSession, frame: &[u8], now_ms: u64) {
+        assert_eq!(
+            rx_effect(session, frame, now_ms),
+            Some(Effect::StartTransmit)
+        );
+        session.on_tx_result(TxOutcome::Sent, now_ms, &mut |_: &[u8]| {});
+    }
+
+    #[test]
+    fn a_held_message_outlasts_newer_channel_and_direct_traffic() {
+        let mut session = custody_session();
+        let keys = test_pairwise();
+        let first = sealed_unar(1, &keys, false);
+        acked(&mut session, &first, 0);
+        for counter in 1..RX_QUEUE_CAPACITY as u32 {
+            assert!(
+                rx_effect(&mut session, &sealed_multicast(counter, &[0x42; 32], 1), 0).is_none()
+            );
+        }
+        // Newer channel traffic displaces older channel traffic.
+        for counter in 100..105 {
+            assert!(
+                rx_effect(&mut session, &sealed_multicast(counter, &[0x42; 32], 2), 0).is_none()
+            );
+        }
+        // A newer direct message displaces channel traffic too.
+        let second = sealed_unar(2, &keys, false);
+        acked(&mut session, &second, 0);
+
+        session.attach(true);
+        assert_eq!(
+            get(&mut session, prop::HOST_RX_QUEUE_DROPPED),
+            6u32.to_le_bytes()
+        );
+        let drained = drain(&mut session, 0);
+        assert_eq!(drained.len(), RX_QUEUE_CAPACITY);
+        assert_eq!(drained[0].0, first);
+        assert_eq!(drained[0].1.flags, RX_FLAG_BUFFERED | RX_FLAG_ACKED);
+        assert_eq!(drained.last().unwrap().0, second);
+    }
+
+    #[test]
+    fn the_lease_stands_a_detached_device_down_and_keeps_what_it_holds() {
+        let mut session = custody_session();
+        let keys = test_pairwise();
+        assert_eq!(session.host_lease_deadline_ms(), Some(HOST_LEASE_MS));
+        let first = sealed_unar(1, &keys, false);
+        acked(&mut session, &first, 1_000);
+
+        session.poll_host_lease(HOST_LEASE_MS - 1);
+        assert_eq!(session.host_lease_deadline_ms(), Some(HOST_LEASE_MS));
+        session.poll_host_lease(HOST_LEASE_MS);
+        assert_eq!(session.host_lease_deadline_ms(), None);
+
+        // Nothing more authenticates, so nothing more is acknowledged.
+        let second = sealed_unar(2, &keys, false);
+        assert!(rx_effect(&mut session, &second, HOST_LEASE_MS + 1).is_none());
+
+        session.attach(true);
+        assert!(get(&mut session, prop::HOST_PEER_KEYS).is_empty());
+        assert!(get(&mut session, prop::HOST_CHANNEL_KEYS).is_empty());
+        assert_eq!(get(&mut session, prop::HOST_KEY), HOST_PUB);
+        let drained = drain(&mut session, 0);
+        assert_eq!(drained[0].0, first);
+        assert_eq!(drained[0].1.flags, RX_FLAG_BUFFERED | RX_FLAG_ACKED);
+        assert!(
+            drained[1..]
+                .iter()
+                .all(|(_, meta)| meta.flags & RX_FLAG_ACKED == 0)
+        );
+
+        // A frame arriving past the deadline is held to it even when the
+        // driver has not polled.
+        let mut session = custody_session();
+        assert!(rx_effect(&mut session, &sealed_unar(1, &keys, false), HOST_LEASE_MS).is_none());
+        session.attach(true);
+        assert!(get(&mut session, prop::HOST_PEER_KEYS).is_empty());
+    }
+
+    /// A frame from the host identity to the test peer.
+    fn sealed_from_host(counter: u32) -> Vec<u8> {
+        let mut buf = [0u8; 96];
+        let mut packet = PacketBuilder::new(&mut buf)
+            .unicast(NodeHint([0x0A, 0x0A, 0x0A]))
+            .source_hint(NodeHint([0xC4, 0xC4, 0xC4]))
+            .frame_counter(counter)
+            .mic_size(MicSize::Mic8)
+            .payload(TEXT_PAYLOAD)
+            .build()
+            .unwrap();
+        test_engine()
+            .seal_packet(&mut packet, &test_pairwise())
+            .unwrap();
+        packet.as_bytes().to_vec()
+    }
+
+    #[test]
+    fn hearing_the_host_elsewhere_erases_its_key() {
+        // A repeater's onward copy of something the host sent through
+        // this radio is not the host being elsewhere.
+        let mut session = custody_session();
+        let echo = sealed_from_host(1);
+        session.host.note_tx_mic(&echo);
+        assert!(rx_effect(&mut session, &echo, 0).is_none());
+        assert_eq!(session.host_key(), Some(&HOST_PUB));
+
+        // Anything else from the host identity is.
+        let elsewhere = sealed_from_host(2);
+        assert!(rx_effect(&mut session, &elsewhere, 0).is_none());
+        assert_eq!(session.host_key(), None);
+        session.attach(true);
+        assert!(get(&mut session, prop::HOST_PEER_KEYS).is_empty());
+        assert_eq!(queue_count(&mut session), 0);
     }
 
     /// Reads are never refused for standing: what the device serves it
@@ -20531,7 +21067,7 @@ mod tests {
             assert_eq!(*session.bridge_config(), before);
         }
         let wanted = session.bridge_config().clone();
-        session.detach();
+        session.detach(0);
         assert_eq!(*session.bridge_config(), wanted);
         let mut bytes = [0; SNAPSHOT_MAX];
         let len = session.encode_snapshot(&mut bytes).unwrap();

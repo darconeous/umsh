@@ -121,6 +121,7 @@ impl DeviceSide {
             display: None,
             keyboard: false,
             sound: false,
+            host_custody: true,
             illuminance: true,
             temperatures: false,
             // The simulated board is reachable over Bluetooth, so

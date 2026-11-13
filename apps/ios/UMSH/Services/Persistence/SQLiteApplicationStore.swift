@@ -165,6 +165,20 @@ struct StoredManualRoute: Equatable, Sendable {
     let promptSettled: Bool
 }
 
+/// A radio that took this phone's identity as its host and has not been
+/// seen to let it go.
+struct StoredClaimedRadio: Equatable, Sendable {
+    /// After this long the radio has stood down on its own, so the record
+    /// lapses: the device lease runs this long from detach.
+    static let lapse: TimeInterval = 12 * 60 * 60
+
+    /// The radio's device address.
+    let deviceAddress: String
+    let name: String?
+    /// The last time this phone was attached to it.
+    let attachedAt: Date
+}
+
 /// A neighbor entry with the row of the router that reported it.
 struct StoredPeerRepeaterReport: Equatable, Sendable {
     let reporterNodeID: Int64
@@ -591,7 +605,7 @@ actor SQLiteApplicationStore {
     /// store refuses to open any database above this constant, so a stale value
     /// lets the new schema apply once and then locks the user out of their own
     /// data on the next launch. ``migrate(_:)`` checks the two agree.
-    static let currentSchemaVersion: Int32 = 30
+    static let currentSchemaVersion: Int32 = 31
 
     nonisolated(unsafe) private let database: OpaquePointer
 
@@ -1881,6 +1895,87 @@ actor SQLiteApplicationStore {
         defer { sqlite3_finalize(statement) }
         try bind(ownerIdentityID, to: statement, at: 1)
         try bind(publicAddress, to: statement, at: 2)
+        try stepDone(statement)
+    }
+
+    // MARK: - Claimed radios
+
+    /// Note that this phone is attached to the radio at `deviceAddress` as
+    /// its host, as of `now`.
+    func recordClaimedRadio(
+        ownerIdentityID: String,
+        deviceAddress: String,
+        name: String?,
+        now: Date = Date()
+    ) throws {
+        let statement = try prepare(
+            """
+            INSERT OR REPLACE INTO claimed_radio (
+                owner_identity_id, device_address, name, attached_at_ms
+            ) VALUES (?, ?, ?, ?)
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind(ownerIdentityID, to: statement, at: 1)
+        try bind(deviceAddress, to: statement, at: 2)
+        try bindOptional(name, to: statement, at: 3)
+        try check(sqlite3_bind_int64(statement, 4, Self.milliseconds(now)))
+        try stepDone(statement)
+    }
+
+    /// Every radio still recorded as holding this identity, forgetting
+    /// those whose record has lapsed by `now`. Most recent first.
+    func claimedRadios(ownerIdentityID: String, now: Date = Date()) throws -> [StoredClaimedRadio] {
+        try transaction {
+            let expired = try prepare(
+                """
+                DELETE FROM claimed_radio
+                WHERE owner_identity_id = ? AND attached_at_ms <= ?
+                """
+            )
+            defer { sqlite3_finalize(expired) }
+            try bind(ownerIdentityID, to: expired, at: 1)
+            try check(sqlite3_bind_int64(
+                expired,
+                2,
+                Self.milliseconds(now.addingTimeInterval(-StoredClaimedRadio.lapse))
+            ))
+            try stepDone(expired)
+
+            let statement = try prepare(
+                """
+                SELECT device_address, name, attached_at_ms FROM claimed_radio
+                WHERE owner_identity_id = ?
+                ORDER BY attached_at_ms DESC
+                """
+            )
+            defer { sqlite3_finalize(statement) }
+            try bind(ownerIdentityID, to: statement, at: 1)
+            var radios: [StoredClaimedRadio] = []
+            while sqlite3_step(statement) == SQLITE_ROW {
+                radios.append(StoredClaimedRadio(
+                    deviceAddress: Self.stringColumn(statement, at: 0),
+                    name: Self.optionalStringColumn(statement, at: 1),
+                    attachedAt: Date(
+                        timeIntervalSince1970: Double(sqlite3_column_int64(statement, 2)) / 1000
+                    )
+                ))
+            }
+            return radios
+        }
+    }
+
+    /// Forget the record of a radio: it let go of this identity, or is no
+    /// longer holding it.
+    func clearClaimedRadio(ownerIdentityID: String, deviceAddress: String) throws {
+        let statement = try prepare(
+            """
+            DELETE FROM claimed_radio WHERE owner_identity_id = ? AND device_address = ?
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind(ownerIdentityID, to: statement, at: 1)
+        try bind(deviceAddress, to: statement, at: 2)
         try stepDone(statement)
     }
 
@@ -5827,6 +5922,35 @@ actor SQLiteApplicationStore {
                     ALTER TABLE chat_message ADD COLUMN forward_secret INTEGER;
 
                     PRAGMA user_version = 30;
+                    """
+                )
+                try execute(database, sql: "COMMIT")
+            } catch {
+                try? execute(database, sql: "ROLLBACK")
+                throw error
+            }
+        }
+
+        if version < 31 {
+            try execute(database, sql: "BEGIN IMMEDIATE")
+            do {
+                // Radios this phone left holding its identity as their
+                // host, so it can revoke them from wherever it next attaches.
+                // Keyed by device address, which outlives a radio's name and
+                // its Bluetooth identifier.
+                try execute(
+                    database,
+                    sql: """
+                    CREATE TABLE claimed_radio (
+                        owner_identity_id TEXT NOT NULL
+                            REFERENCES local_identity(id) ON DELETE CASCADE,
+                        device_address TEXT NOT NULL,
+                        name TEXT,
+                        attached_at_ms INTEGER NOT NULL,
+                        PRIMARY KEY (owner_identity_id, device_address)
+                    ) WITHOUT ROWID;
+
+                    PRAGMA user_version = 31;
                     """
                 )
                 try execute(database, sql: "COMMIT")

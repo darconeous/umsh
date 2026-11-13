@@ -548,6 +548,9 @@ mod firmware {
             display: None,
             keyboard: false,
             sound: false,
+            // Only a board with a buzzer can cue a message it holds for an
+            // absent host: the T1000-E and the Wio Tracker L1.
+            host_custody: cfg!(any(feature = "t1000e", feature = "cap-buzzer")),
             illuminance: cfg!(feature = "cap-illuminance"),
             // Every supported nRF52840 board has the MPSL-managed die sensor.
             temperatures: true,

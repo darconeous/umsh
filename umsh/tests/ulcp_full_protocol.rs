@@ -84,6 +84,7 @@ fn session_config() -> SessionConfig {
         display: None,
         keyboard: false,
         sound: false,
+        host_custody: true,
         // A simulated device has nothing to flash or beep with, so it
         // does not advertise CAP_ALERT.
         alert: None,
@@ -446,7 +447,7 @@ fn attach(sim: &Arc<Mutex<SimDevice>>, link_secure: bool) {
 }
 
 fn detach(sim: &Arc<Mutex<SimDevice>>) {
-    sim.lock().unwrap().session.detach();
+    sim.lock().unwrap().session.detach(0);
 }
 
 /// Simulate a power cycle: a fresh session boots from the durable

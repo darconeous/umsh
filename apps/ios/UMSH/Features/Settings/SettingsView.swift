@@ -49,6 +49,9 @@ struct SettingsView: View {
     var channels: [ChannelSummary] = []
     var unknownDeviceChannels: [UnknownDeviceChannel] = []
     var channelActions: ChannelActions = .unavailable
+    var strandedRadios: [StoredClaimedRadio] = []
+    var isRevokingStrandedRadios = false
+    var retryRevocation: () async -> Void = {}
 
     /// Fills a conversation with generated messages, for exercising the
     /// transcript at a size no test account reaches by hand. Only supplied by
@@ -166,7 +169,10 @@ struct SettingsView: View {
                         conversations: conversations,
                         updateDraft: updateDraft,
                         sendMessage: sendMessage,
-                        messageActions: messageActions
+                        messageActions: messageActions,
+                        strandedRadios: strandedRadios,
+                        isRevokingStrandedRadios: isRevokingStrandedRadios,
+                        retryRevocation: retryRevocation
                     )
                 }
             }
@@ -701,6 +707,10 @@ struct RadioDetailView: View {
     var updateDraft: ((Int64, String) async -> AppOperationResult)? = nil
     var sendMessage: ((DirectConversationSummary, String, Bool) async -> MessageSendResult)? = nil
     var messageActions: ChatMessageActions = .unavailable
+    /// Radios other than this one still holding this phone's identity.
+    var strandedRadios: [StoredClaimedRadio] = []
+    var isRevokingStrandedRadios = false
+    var retryRevocation: () async -> Void = {}
     @Environment(\.dismiss) private var dismiss
     @State private var confirmsHostReplacement = false
     @State private var confirmsForget = false
@@ -715,6 +725,33 @@ struct RadioDetailView: View {
     #if DEBUG && targetEnvironment(simulator)
     @AppStorage("debug.radioLan.enabled") private var lanRadioEnabled = false
     #endif
+
+    private func strandedRadioRow(_ radio: StoredClaimedRadio) -> some View {
+        HStack {
+            Label {
+                if let name = radio.name {
+                    Text("\(name) still holds your identity",
+                         comment: "Another radio this phone set up can still acknowledge for it. The placeholder is the radio's name.")
+                } else {
+                    Text("A radio still holds your identity",
+                         comment: "Another radio this phone set up can still acknowledge for it.")
+                }
+            } icon: {
+                Image(systemName: "exclamationmark.triangle")
+                    .foregroundStyle(.orange)
+            }
+            .font(.caption)
+            Spacer()
+            Button {
+                Task { await retryRevocation() }
+            } label: {
+                Text("Retry", comment: "Button: ask the radio again to let go of this phone's identity.")
+            }
+            .buttonStyle(.borderless)
+            .disabled(isRevokingStrandedRadios
+                || !(snapshot.linkState == .attached || snapshot.linkState == .ready))
+        }
+    }
 
     var body: some View {
         List {
@@ -741,6 +778,9 @@ struct RadioDetailView: View {
                     LabeledContent("Host identity", value: snapshot.hostState.label)
                 }
                 connectionControl
+                ForEach(strandedRadios, id: \.deviceAddress) { radio in
+                    strandedRadioRow(radio)
+                }
                 if let problem = snapshot.problemDescription {
                     Label(problem, systemImage: "exclamationmark.circle")
                         .font(.caption)

@@ -4168,8 +4168,10 @@ public protocol MobileUlcpSessionProtocol: AnyObject, Sendable {
      * The host domain is volatile—the device does not persist it—so no
      * `CMD_SAVE` is chained and reconciling on attach is what makes it stick.
      * Requires an attached, idle session on a device advertising
-     * `CAP_HOST_KEYS`; otherwise the table is not this session's to manage
-     * and the call reports that the capability is missing.
+     * `CAP_HOST_KEYS`. A device advertising only `CAP_HOST_FILTER` gets
+     * a `FILTER_CHANNEL_ID` entry per channel instead, so channel traffic
+     * still reaches the attached host; the other filter entries stay as
+     * they are. A device with neither reports the capability missing.
      *
      * Returns without any frames when the device already holds exactly the
      * requested set.
@@ -4900,8 +4902,10 @@ open func reboot()throws  -> UlcpSessionUpdateRecord  {
      * The host domain is volatile—the device does not persist it—so no
      * `CMD_SAVE` is chained and reconciling on attach is what makes it stick.
      * Requires an attached, idle session on a device advertising
-     * `CAP_HOST_KEYS`; otherwise the table is not this session's to manage
-     * and the call reports that the capability is missing.
+     * `CAP_HOST_KEYS`. A device advertising only `CAP_HOST_FILTER` gets
+     * a `FILTER_CHANNEL_ID` entry per channel instead, so channel traffic
+     * still reaches the attached host; the other filter entries stay as
+     * they are. A device with neither reports the capability missing.
      *
      * Returns without any frames when the device already holds exactly the
      * requested set.
@@ -12834,6 +12838,11 @@ public func FfiConverterTypeUlcpLocalManagementEventRecord_lower(_ value: UlcpLo
  */
 public struct UlcpManagedPropertyIds: Equatable, Hashable {
     public var caps: UInt32
+    /**
+     * `PROP_HOST_KEY`, which a host empties across the mesh to revoke
+     * a radio it left holding its identity.
+     */
+    public var hostKey: UInt32
     public var deviceVersion: UInt32
     public var deviceModel: UInt32
     public var deviceName: UInt32
@@ -12938,8 +12947,13 @@ public struct UlcpManagedPropertyIds: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(caps: UInt32, deviceVersion: UInt32, deviceModel: UInt32, deviceName: UInt32, battery: UInt32, illuminance: UInt32, temperatures: UInt32, temperatureNames: UInt32, batteryCurrent: UInt32, batteryRemainingCapacity: UInt32, batteryFullCapacity: UInt32, batteryDesignCapacity: UInt32, batteryExtPowerPresent: UInt32, batteryPresent: UInt32, batteryGaugeFull: UInt32, batteryGaugeInitialized: UInt32, batteryGaugeSmoothing: UInt32, batteryChargeVoltageRequest: UInt32, batteryGaugeFormat: UInt32, batteryGaugeStatus: UInt32, batteryGaugeOperationStatus: UInt32, phyEnabled: UInt32, frequency: UInt32, transmitPower: UInt32, loraBandwidth: UInt32, loraSpreadingFactor: UInt32, loraCodingRate: UInt32, dutyCycleNow: UInt32, dutyCycleLimit: UInt32, statTxPackets: UInt32, statTxChannelBusy: UInt32, statRxPackets: UInt32, statRxBadCrc: UInt32, statRxNonUmsh: UInt32, statRxAccepted: UInt32, statRadioResets: UInt32, statForwarded: UInt32, statForwardDropped: UInt32, statForwardCancelled: UInt32, statMeshcoreSeen: UInt32, statMeshcoreForwardedRouted: UInt32, statMeshcoreForwardedFlood: UInt32, statMeshcoreDeclined: UInt32, identRole: UInt32, identMobile: UInt32, identLocation: UInt32, identAltitude: UInt32, devDiscoverable: UInt32, gnssIdentUpdate: UInt32, gnssIdentPrecision: UInt32, uptime: UInt32, advertInterval: UInt32, beaconInterval: UInt32, startupBeacon: UInt32, gnssEnabled: UInt32, displayMotionWakeEnabled: UInt32, gnssTimeTrust: UInt32, bleEnabled: UInt32, bleBondCount: UInt32, bleLink: UInt32, blePairing: UInt32, wifiEnabled: UInt32, bridgeEnabled: UInt32, bridgeHost: UInt32, bridgePort: UInt32, bridgeServerKey: UInt32, bridgeLink: UInt32, lanBearerEnabled: UInt32, lanBearerGroup: UInt32, lanBearerIngressLimit: UInt32, lanBearerState: UInt32, devKey: UInt32, wifiNetworks: UInt32, wifiNetwork: UInt32, wifiScanning: UInt32, wifiScanResults: UInt32, wifiLink: UInt32, wifiRssi: UInt32, wifiMac: UInt32, ipv4State: UInt32, ipv4Config: UInt32, ipv4Address: UInt32, ipv6State: UInt32, ipv6Config: UInt32, ipv6Addresses: UInt32, ipDns: UInt32, ipResolvers: UInt32, time: UInt32, tzRule: UInt32, time24h: UInt32, alert: UInt32, repeaterEnabled: UInt32, repeaterRegions: UInt32, repeaterDefaultRegion: UInt32, repeaterMinRssi: UInt32, repeaterMinSnr: UInt32, meshcoreForwardingEnabled: UInt32, meshcoreRegionPolicy: UInt32, meshcoreRegions: UInt32, devPeers: UInt32, devAdmins: UInt32, testMessageAlerts: UInt32) {
+    public init(caps: UInt32,
+        /**
+         * `PROP_HOST_KEY`, which a host empties across the mesh to revoke
+         * a radio it left holding its identity.
+         */hostKey: UInt32, deviceVersion: UInt32, deviceModel: UInt32, deviceName: UInt32, battery: UInt32, illuminance: UInt32, temperatures: UInt32, temperatureNames: UInt32, batteryCurrent: UInt32, batteryRemainingCapacity: UInt32, batteryFullCapacity: UInt32, batteryDesignCapacity: UInt32, batteryExtPowerPresent: UInt32, batteryPresent: UInt32, batteryGaugeFull: UInt32, batteryGaugeInitialized: UInt32, batteryGaugeSmoothing: UInt32, batteryChargeVoltageRequest: UInt32, batteryGaugeFormat: UInt32, batteryGaugeStatus: UInt32, batteryGaugeOperationStatus: UInt32, phyEnabled: UInt32, frequency: UInt32, transmitPower: UInt32, loraBandwidth: UInt32, loraSpreadingFactor: UInt32, loraCodingRate: UInt32, dutyCycleNow: UInt32, dutyCycleLimit: UInt32, statTxPackets: UInt32, statTxChannelBusy: UInt32, statRxPackets: UInt32, statRxBadCrc: UInt32, statRxNonUmsh: UInt32, statRxAccepted: UInt32, statRadioResets: UInt32, statForwarded: UInt32, statForwardDropped: UInt32, statForwardCancelled: UInt32, statMeshcoreSeen: UInt32, statMeshcoreForwardedRouted: UInt32, statMeshcoreForwardedFlood: UInt32, statMeshcoreDeclined: UInt32, identRole: UInt32, identMobile: UInt32, identLocation: UInt32, identAltitude: UInt32, devDiscoverable: UInt32, gnssIdentUpdate: UInt32, gnssIdentPrecision: UInt32, uptime: UInt32, advertInterval: UInt32, beaconInterval: UInt32, startupBeacon: UInt32, gnssEnabled: UInt32, displayMotionWakeEnabled: UInt32, gnssTimeTrust: UInt32, bleEnabled: UInt32, bleBondCount: UInt32, bleLink: UInt32, blePairing: UInt32, wifiEnabled: UInt32, bridgeEnabled: UInt32, bridgeHost: UInt32, bridgePort: UInt32, bridgeServerKey: UInt32, bridgeLink: UInt32, lanBearerEnabled: UInt32, lanBearerGroup: UInt32, lanBearerIngressLimit: UInt32, lanBearerState: UInt32, devKey: UInt32, wifiNetworks: UInt32, wifiNetwork: UInt32, wifiScanning: UInt32, wifiScanResults: UInt32, wifiLink: UInt32, wifiRssi: UInt32, wifiMac: UInt32, ipv4State: UInt32, ipv4Config: UInt32, ipv4Address: UInt32, ipv6State: UInt32, ipv6Config: UInt32, ipv6Addresses: UInt32, ipDns: UInt32, ipResolvers: UInt32, time: UInt32, tzRule: UInt32, time24h: UInt32, alert: UInt32, repeaterEnabled: UInt32, repeaterRegions: UInt32, repeaterDefaultRegion: UInt32, repeaterMinRssi: UInt32, repeaterMinSnr: UInt32, meshcoreForwardingEnabled: UInt32, meshcoreRegionPolicy: UInt32, meshcoreRegions: UInt32, devPeers: UInt32, devAdmins: UInt32, testMessageAlerts: UInt32) {
         self.caps = caps
+        self.hostKey = hostKey
         self.deviceVersion = deviceVersion
         self.deviceModel = deviceModel
         self.deviceName = deviceName
@@ -13060,6 +13074,7 @@ public struct FfiConverterTypeUlcpManagedPropertyIds: FfiConverterRustBuffer {
         return
             try UlcpManagedPropertyIds(
                 caps: FfiConverterUInt32.read(from: &buf),
+                hostKey: FfiConverterUInt32.read(from: &buf),
                 deviceVersion: FfiConverterUInt32.read(from: &buf),
                 deviceModel: FfiConverterUInt32.read(from: &buf),
                 deviceName: FfiConverterUInt32.read(from: &buf),
@@ -13166,6 +13181,7 @@ public struct FfiConverterTypeUlcpManagedPropertyIds: FfiConverterRustBuffer {
 
     public static func write(_ value: UlcpManagedPropertyIds, into buf: inout [UInt8]) {
         FfiConverterUInt32.write(value.caps, into: &buf)
+        FfiConverterUInt32.write(value.hostKey, into: &buf)
         FfiConverterUInt32.write(value.deviceVersion, into: &buf)
         FfiConverterUInt32.write(value.deviceModel, into: &buf)
         FfiConverterUInt32.write(value.deviceName, into: &buf)
@@ -22722,7 +22738,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_reboot() != 35097) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_reconcile_host_channel_keys() != 40741) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_reconcile_host_channel_keys() != 14137) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_reconcile_host_destination_hints() != 10915) {

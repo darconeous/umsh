@@ -857,9 +857,8 @@ struct HostMuteStep {
     insert: bool,
 }
 
-/// One insert or removal in a destination-hint filter reconciliation. The
-/// item is the unprefixed `FILTER_DEST_HINT` entry, which is also its own
-/// remove selector.
+/// One insert or removal in a receive-filter reconciliation. The item is
+/// the unprefixed filter entry, which is also its own remove selector.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct HostFilterStep {
     item: Vec<u8>,
@@ -1889,8 +1888,10 @@ impl MobileUlcpSession {
     /// The host domain is volatile—the device does not persist it—so no
     /// `CMD_SAVE` is chained and reconciling on attach is what makes it stick.
     /// Requires an attached, idle session on a device advertising
-    /// `CAP_HOST_KEYS`; otherwise the table is not this session's to manage
-    /// and the call reports that the capability is missing.
+    /// `CAP_HOST_KEYS`. A device advertising only `CAP_HOST_FILTER` gets
+    /// a `FILTER_CHANNEL_ID` entry per channel instead, so channel traffic
+    /// still reaches the attached host; the other filter entries stay as
+    /// they are. A device with neither reports the capability missing.
     ///
     /// Returns without any frames when the device already holds exactly the
     /// requested set.
@@ -1910,7 +1911,23 @@ impl MobileUlcpSession {
             return Err(MobileError::InvalidUlcpFrame);
         }
         if !state.has_capability(cap::HOST_KEYS) {
-            return Err(MobileError::UnsupportedCapability);
+            if !state.has_capability(cap::HOST_FILTER) {
+                return Err(MobileError::UnsupportedCapability);
+            }
+            // A radio that takes no channel keys passes a channel's traffic
+            // only through an explicit filter: the host key alone admits
+            // nothing channel-addressed.
+            let desired: Vec<items::Filter> = desired
+                .iter()
+                .map(|key| items::Filter::ChannelId(wire_channel_id(key)))
+                .collect();
+            let steps = state.host_filter_steps(&desired, |filter| {
+                matches!(filter, items::Filter::ChannelId(_))
+            });
+            return match state.next_host_filter_operation(steps) {
+                Some(frame) => Ok(state.update(vec![frame])),
+                None => Ok(state.update(Vec::new())),
+            };
         }
 
         let current = state
@@ -2118,44 +2135,11 @@ impl MobileUlcpSession {
             return Err(MobileError::UnsupportedCapability);
         }
 
-        let current: Vec<[u8; 3]> = state
-            .responses
-            .get(&prop::HOST_RX_FILTERS)
-            .map(|entry| {
-                items::prefixed_items(&entry.value)
-                    .map_while(Result::ok)
-                    .filter_map(|item| match items::Filter::decode(item) {
-                        Ok(items::Filter::DestHint(hint)) => Some(hint),
-                        _ => None,
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        // Removals first, so a full table can be reshaped without
-        // transiently overflowing it.
-        let step = |hint: [u8; 3], insert: bool| {
-            let mut item = [0u8; items::Filter::MAX_WIRE_LEN];
-            let length = items::Filter::DestHint(hint)
-                .encode(&mut item)
-                .expect("a destination-hint filter fits its own maximum");
-            HostFilterStep {
-                item: item[..length].to_vec(),
-                insert,
-            }
-        };
-        let steps: VecDeque<HostFilterStep> = current
-            .iter()
-            .filter(|hint| !desired.contains(hint))
-            .map(|hint| step(*hint, false))
-            .chain(
-                desired
-                    .iter()
-                    .filter(|hint| !current.contains(hint))
-                    .map(|hint| step(*hint, true)),
-            )
-            .collect();
-
+        let desired: Vec<items::Filter> =
+            desired.into_iter().map(items::Filter::DestHint).collect();
+        let steps = state.host_filter_steps(&desired, |filter| {
+            matches!(filter, items::Filter::DestHint(_))
+        });
         match state.next_host_filter_operation(steps) {
             Some(frame) => Ok(state.update(vec![frame])),
             None => Ok(state.update(Vec::new())),
@@ -2862,7 +2846,7 @@ impl MobileUlcpSession {
             } => {
                 if response.property_id == prop::LAST_STATUS {
                     let error = state.refusal(
-                        "provision session address filter".to_owned(),
+                        "provision receive filter".to_owned(),
                         &response,
                         Some(prop::HOST_RX_FILTERS),
                     );
@@ -2890,10 +2874,7 @@ impl MobileUlcpSession {
                     if response.property_id != prop::HOST_RX_FILTERS
                         || response.command != expected_command as u8
                     {
-                        state.note_mismatch(
-                            "provision session address filter".to_owned(),
-                            &response,
-                        );
+                        state.note_mismatch("provision receive filter".to_owned(), &response);
                         state.reread(prop::HOST_RX_FILTERS);
                         remaining.clear();
                     }
@@ -3919,7 +3900,7 @@ impl UlcpSessionState {
         Some(frame)
     }
 
-    /// Issue the next step of a destination-hint filter reconciliation, one
+    /// Issue the next step of a receive-filter reconciliation, one
     /// frame at a time, patching the cached table as each frame goes out.
     fn next_host_filter_operation(
         &mut self,
@@ -4130,6 +4111,55 @@ impl UlcpSessionState {
             value.extend_from_slice(key);
         }
         entry.value = value;
+    }
+
+    /// The removals, then the inserts, that make the entries of
+    /// `PROP_HOST_RX_FILTERS` selected by `manages` equal `desired`.
+    /// Removals come first so a full table can be reshaped without
+    /// transiently overflowing it. Entries `manages` does not select stay.
+    fn host_filter_steps(
+        &self,
+        desired: &[items::Filter],
+        manages: impl Fn(&items::Filter) -> bool,
+    ) -> VecDeque<HostFilterStep> {
+        let mut wanted: Vec<items::Filter> = Vec::with_capacity(desired.len());
+        for filter in desired {
+            if !wanted.contains(filter) {
+                wanted.push(*filter);
+            }
+        }
+        let current: Vec<items::Filter> = self
+            .responses
+            .get(&prop::HOST_RX_FILTERS)
+            .map(|entry| {
+                items::prefixed_items(&entry.value)
+                    .map_while(Result::ok)
+                    .filter_map(|item| items::Filter::decode(item).ok())
+                    .filter(|filter| manages(filter))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let step = |filter: &items::Filter, insert: bool| {
+            let mut item = [0u8; items::Filter::MAX_WIRE_LEN];
+            let length = filter
+                .encode(&mut item)
+                .expect("a filter fits the largest filter entry");
+            HostFilterStep {
+                item: item[..length].to_vec(),
+                insert,
+            }
+        };
+        current
+            .iter()
+            .filter(|filter| !wanted.contains(filter))
+            .map(|filter| step(filter, false))
+            .chain(
+                wanted
+                    .iter()
+                    .filter(|filter| !current.contains(filter))
+                    .map(|filter| step(filter, true)),
+            )
+            .collect()
     }
 
     /// Whether the device advertised `capability`. A session that has not
@@ -4870,6 +4900,9 @@ pub enum UlcpManageCategory {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct UlcpManagedPropertyIds {
     pub caps: u32,
+    /// `PROP_HOST_KEY`, which a host empties across the mesh to revoke
+    /// a radio it left holding its identity.
+    pub host_key: u32,
     pub device_version: u32,
     pub device_model: u32,
     pub device_name: u32,
@@ -4978,6 +5011,7 @@ pub struct UlcpManagedPropertyIds {
 pub fn ulcp_managed_property_ids() -> UlcpManagedPropertyIds {
     UlcpManagedPropertyIds {
         caps: prop::CAPS,
+        host_key: prop::HOST_KEY,
         device_version: prop::DEV_VERSION,
         device_model: prop::DEV_MODEL,
         device_name: prop::DEV_NAME,
@@ -7534,6 +7568,16 @@ pub fn ulcp_radio_presets() -> Vec<RadioPresetRecord> {
 #[uniffi::export]
 pub fn ulcp_supported_bandwidths_hz() -> Vec<u32> {
     umsh_ulcp::profiles::SUPPORTED_BANDWIDTHS_HZ.to_vec()
+}
+
+/// The 2-octet channel identifier a channel's frames carry. `key` has
+/// already been checked to be a channel key.
+fn wire_channel_id(key: &[u8]) -> [u8; items::CHANNEL_ID_LEN] {
+    use umsh_crypto::software::{SoftwareAes, SoftwareSha256};
+    let key = crate::channel_key_from_bytes(key).expect("a checked channel key");
+    umsh_crypto::CryptoEngine::new(SoftwareAes, SoftwareSha256)
+        .derive_channel_id(&key)
+        .0
 }
 
 /// Derive the identifier a device will report for a channel key: the
@@ -11225,6 +11269,53 @@ mod tests {
             done.snapshot.provisioning.as_ref().unwrap().filter_count,
             Some(1)
         );
+    }
+
+    #[test]
+    fn a_radio_without_host_keys_gets_channel_filters_instead() {
+        let session = MobileUlcpSession::new();
+        attach_with_filters(&session);
+        let key = vec![0x42; 32];
+        let mut entry = vec![items::FILTER_CHANNEL_ID];
+        entry.extend_from_slice(&wire_channel_id(&key));
+
+        let update = session
+            .reconcile_host_channel_keys(vec![key.clone()])
+            .unwrap();
+        let [request] = update.outbound_frames.as_slice() else {
+            panic!("one filter insert");
+        };
+        let request = Frame::parse(request).unwrap();
+        assert_eq!(request.command(), Some(Cmd::PropInsert));
+        let mut expected = vec![prop::HOST_RX_FILTERS as u8];
+        expected.extend_from_slice(&entry);
+        assert_eq!(request.payload, expected.as_slice());
+        let done = session
+            .consume(inserted_response(
+                request.header.tid(),
+                prop::HOST_RX_FILTERS,
+                &entry,
+            ))
+            .unwrap();
+        assert!(done.outbound_frames.is_empty());
+        assert_eq!(done.operation_error, None);
+        // The packet-type and destination-hint filters stay.
+        assert_eq!(
+            done.snapshot.provisioning.as_ref().unwrap().filter_count,
+            Some(3)
+        );
+
+        let again = session.reconcile_host_channel_keys(vec![key]).unwrap();
+        assert!(again.outbound_frames.is_empty());
+
+        // Leaving the channel sheds exactly its filter.
+        let update = session.reconcile_host_channel_keys(Vec::new()).unwrap();
+        let [request] = update.outbound_frames.as_slice() else {
+            panic!("one filter removal");
+        };
+        let request = Frame::parse(request).unwrap();
+        assert_eq!(request.command(), Some(Cmd::PropRemove));
+        assert_eq!(request.payload, expected.as_slice());
     }
 
     #[test]

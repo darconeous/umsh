@@ -167,6 +167,10 @@ actor FakeRadioConnection: RadioConnection {
         AsyncStream { _ in }
     }
 
+    func hostReleases() -> AsyncStream<String> {
+        AsyncStream { _ in }
+    }
+
     func forwardSecretConversations() -> AsyncStream<Set<String>> {
         AsyncStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
             let id = UUID()

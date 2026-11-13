@@ -98,6 +98,7 @@ impl<const PAYLOAD: usize> Device<PAYLOAD> {
             display: None,
             keyboard: false,
             sound: false,
+            host_custody: true,
             illuminance: true,
             temperatures: true,
             ble: true,

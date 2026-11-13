@@ -82,6 +82,9 @@ pub fn config(name: &'static str) -> SessionConfig {
         }),
         keyboard: true,
         sound: true,
+        // Plays no queue cue, so it may not hold messages for an absent
+        // host.
+        host_custody: false,
         illuminance: false,
         temperatures: false,
         ble: false,

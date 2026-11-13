@@ -97,6 +97,8 @@ const _: () = assert!(
 /// One admitted request on its way to the responder.
 struct Request {
     from: [u8; 32],
+    /// `from` is listed in `PROP_DEV_ADMINS`; otherwise it is the host.
+    listed_admin: bool,
     /// The channel the request arrived on, when it came as a blind unicast.
     /// The response follows it back rather than naming both parties in the
     /// clear.
@@ -178,8 +180,23 @@ pub fn publish_dev_domain(snapshot: &DevDomainSnapshot) {
     });
 }
 
+/// The mirrored `PROP_HOST_KEY`. The host may revoke this radio over the
+/// mesh, and nothing else, without being a listed administrator.
+static HOST_KEY: BlockingMutex<CriticalSectionRawMutex, RefCell<Option<[u8; 32]>>> =
+    BlockingMutex::new(RefCell::new(None));
+
+/// Republish the host identity. Called by the driver whenever
+/// `PROP_HOST_KEY` changes.
+pub fn publish_host_key(key: Option<[u8; 32]>) {
+    HOST_KEY.lock(|cell| *cell.borrow_mut() = key);
+}
+
 fn is_admin(key: &[u8; 32]) -> bool {
     ADMINS.lock(|cell| cell.borrow().iter().any(|listed| listed == key))
+}
+
+fn is_host(key: &[u8; 32]) -> bool {
+    HOST_KEY.lock(|cell| cell.borrow().as_ref() == Some(key))
 }
 
 /// Decide whether an arriving packet is a Node Management Request this
@@ -209,12 +226,15 @@ pub fn admit(packet: &ReceivedPacketRef<'_>) {
     }
     // Both conditions matter and neither implies the other: an
     // unauthenticated source could claim any key, and an authenticated
-    // one that is not listed is simply not an administrator here.
+    // one that is not listed is simply not an administrator here. The
+    // host identity is heard too, for the one write it may make; the
+    // session holds it to that.
     let Some(from) = packet.from_key().filter(|_| packet.source_authenticated()) else {
         UNAUTHORIZED.fetch_add(1, Ordering::Relaxed);
         return;
     };
-    if !is_admin(&from.0) {
+    let listed_admin = is_admin(&from.0);
+    if !listed_admin && !is_host(&from.0) {
         UNAUTHORIZED.fetch_add(1, Ordering::Relaxed);
         return;
     }
@@ -229,6 +249,7 @@ pub fn admit(packet: &ReceivedPacketRef<'_>) {
     if REQUESTS
         .try_send(Request {
             from: from.0,
+            listed_admin,
             channel: packet.channel().map(|c| *c.key),
             ack_mic: packet.ack_mic(),
             payload,
@@ -262,7 +283,7 @@ pub async fn responder_loop<CS: CounterStore + 'static, M: RawMutex + 'static>(
             }
             Ingress::Respond { len } => Some(len),
             Ingress::Dispatch(dispatch) => {
-                let reply = serve(input, &dispatch).await;
+                let reply = serve(input, &request, &dispatch).await;
                 completion = reply.completion;
                 match engine.complete(&reply.frame, &mut out) {
                     Ok(len) => len,
@@ -306,6 +327,7 @@ pub async fn responder_loop<CS: CounterStore + 'static, M: RawMutex + 'static>(
 /// reset—so this never has to time out.
 async fn serve<M: RawMutex + 'static>(
     input: &'static InputChannel<M>,
+    request: &Request,
     dispatch: &Dispatch<'_>,
 ) -> AdminReply {
     let mut frame = AdminFrame::new();
@@ -327,6 +349,8 @@ async fn serve<M: RawMutex + 'static>(
     // has already said which.
     input
         .send(InEvent::Admin {
+            from: request.from,
+            listed_admin: request.listed_admin,
             frame,
             reply_budget: dispatch.budget,
         })
