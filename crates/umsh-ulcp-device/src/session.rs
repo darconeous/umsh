@@ -4540,6 +4540,31 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         self.host.lease_deadline_ms
     }
 
+    /// The session's next deadline, as a monotonic millisecond instant on
+    /// the caller's clock: the earlier of the locate alert's
+    /// ([`alert_deadline_ms`](Self::alert_deadline_ms)) and the detached
+    /// host's lease ([`host_lease_deadline_ms`](Self::host_lease_deadline_ms)).
+    /// `None` while neither is running.
+    ///
+    /// The driver arms one timer on this and calls
+    /// [`Session::poll_deadlines`] when it fires.
+    pub fn next_deadline_ms(&self) -> Option<u64> {
+        match (self.alert_deadline_ms, self.host.lease_deadline_ms) {
+            (Some(alert), Some(lease)) => Some(alert.min(lease)),
+            (alert, lease) => alert.or(lease),
+        }
+    }
+
+    /// Act on every deadline that has passed by `now_ms`: stand down a
+    /// detached device whose lease has run out, and end an alert that
+    /// has outlived its bound, returning the effect that stops the
+    /// board's indication. Safe to call at any time: each does nothing
+    /// before its own deadline.
+    pub fn poll_deadlines(&mut self, now_ms: u64, emit: &mut impl FnMut(&[u8])) -> Option<Effect> {
+        self.poll_host_lease(now_ms);
+        self.poll_alert(now_ms, emit)
+    }
+
     /// Stand down if the lease has run out (spec §Standing Down). Safe
     /// to call at any time: it does nothing before the deadline.
     pub fn poll_host_lease(&mut self, now_ms: u64) {
@@ -14642,6 +14667,38 @@ mod tests {
         // The transition the host did not command is announced.
         let (tid, key, value) = parse_prop_is(&emitted[0]);
         assert_eq!((tid, key, value), (TID_UNSOLICITED, prop::ALERT, vec![0]));
+    }
+
+    /// One timer serves both deadlines: it is armed on the earlier, and
+    /// each fires only at its own.
+    #[test]
+    fn the_next_deadline_is_the_earlier_of_the_alert_and_the_lease() {
+        let mut session = test_session();
+        enable(&mut session);
+        install_host_key(&mut session, &HOST_PUB);
+        install_channel_key(&mut session, &[0x42; 32]);
+        assert_eq!(session.next_deadline_ms(), None, "attached: no lease");
+
+        set_alert_at(&mut session, AlertState::Locate, 10_000);
+        let alert = 10_000 + u64::from(AlertConfig::DEFAULT.timeout_ms);
+        session.detach(20_000);
+        let lease = 20_000 + HOST_LEASE_MS;
+        assert!(alert < lease);
+        assert_eq!(session.next_deadline_ms(), Some(alert));
+
+        let effect = session.poll_deadlines(alert, &mut |_: &[u8]| {});
+        assert_eq!(effect, Some(Effect::ApplyAlert(AlertState::None)));
+        assert_eq!(session.host_lease_deadline_ms(), Some(lease), "alert only");
+        assert_eq!(session.next_deadline_ms(), Some(lease));
+
+        assert_eq!(session.poll_deadlines(lease - 1, &mut |_: &[u8]| {}), None);
+        assert_eq!(session.next_deadline_ms(), Some(lease));
+        assert_eq!(session.poll_deadlines(lease, &mut |_: &[u8]| {}), None);
+        assert_eq!(session.next_deadline_ms(), None);
+
+        session.attach(true);
+        assert!(get(&mut session, prop::HOST_CHANNEL_KEYS).is_empty());
+        assert_eq!(get(&mut session, prop::HOST_KEY), HOST_PUB);
     }
 
     #[test]

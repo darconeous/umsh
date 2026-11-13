@@ -191,12 +191,24 @@ pub fn publish_host_key(key: Option<[u8; 32]>) {
     HOST_KEY.lock(|cell| *cell.borrow_mut() = key);
 }
 
-fn is_admin(key: &[u8; 32]) -> bool {
-    ADMINS.lock(|cell| cell.borrow().iter().any(|listed| listed == key))
+/// Whether an authenticated request from `from` is heard: `Some(true)`
+/// from a listed administrator, `Some(false)` from the host identity that
+/// is not one, `None` from anyone else.
+fn authorize(from: &[u8; 32], admins: &[[u8; 32]], host: Option<&[u8; 32]>) -> Option<bool> {
+    if admins.contains(from) {
+        Some(true)
+    } else if host == Some(from) {
+        Some(false)
+    } else {
+        None
+    }
 }
 
-fn is_host(key: &[u8; 32]) -> bool {
-    HOST_KEY.lock(|cell| cell.borrow().as_ref() == Some(key))
+/// [`authorize`] against the published administrator list and host key.
+fn admission(from: &[u8; 32]) -> Option<bool> {
+    ADMINS.lock(|admins| {
+        HOST_KEY.lock(|host| authorize(from, &admins.borrow(), host.borrow().as_ref()))
+    })
 }
 
 /// Decide whether an arriving packet is a Node Management Request this
@@ -233,11 +245,10 @@ pub fn admit(packet: &ReceivedPacketRef<'_>) {
         UNAUTHORIZED.fetch_add(1, Ordering::Relaxed);
         return;
     };
-    let listed_admin = is_admin(&from.0);
-    if !listed_admin && !is_host(&from.0) {
+    let Some(listed_admin) = admission(&from.0) else {
         UNAUTHORIZED.fetch_add(1, Ordering::Relaxed);
         return;
-    }
+    };
     let mut payload = heapless::Vec::new();
     if payload.extend_from_slice(packet.payload()).is_err() {
         // Larger than this device can answer within. Dropped rather than
@@ -420,4 +431,41 @@ async fn respond<CS: CounterStore + 'static>(
         return false;
     }
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ADMIN: [u8; 32] = [0xA1; 32];
+    const HOST: [u8; 32] = [0xC4; 32];
+    const STRANGER: [u8; 32] = [0x55; 32];
+
+    #[test]
+    fn the_host_is_heard_beside_the_administrators() {
+        let admins = [ADMIN];
+        assert_eq!(authorize(&ADMIN, &admins, Some(&HOST)), Some(true));
+        assert_eq!(authorize(&HOST, &admins, Some(&HOST)), Some(false));
+        assert_eq!(authorize(&STRANGER, &admins, Some(&HOST)), None);
+        // With no host configured, only administrators are heard.
+        assert_eq!(authorize(&HOST, &admins, None), None);
+        assert_eq!(authorize(&ADMIN, &admins, None), Some(true));
+        // A host that is also listed is heard as an administrator.
+        assert_eq!(authorize(&HOST, &[HOST], Some(&HOST)), Some(true));
+    }
+
+    /// The driver's publication is what admission reads: a host key
+    /// published is heard, and one replaced or erased stops being heard.
+    #[test]
+    fn admission_follows_the_published_host_key() {
+        let other = [0x77; 32];
+        publish_host_key(Some(HOST));
+        assert_eq!(admission(&HOST), Some(false));
+        assert_eq!(admission(&other), None);
+        publish_host_key(Some(other));
+        assert_eq!(admission(&HOST), None);
+        assert_eq!(admission(&other), Some(false));
+        publish_host_key(None);
+        assert_eq!(admission(&other), None);
+    }
 }

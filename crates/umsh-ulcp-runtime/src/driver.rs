@@ -2325,15 +2325,8 @@ where
             // completes) while neither is running. It borrows `session`
             // immutably, alongside `tx_done`—only `publish_event`
             // touches `env`.
-            let next_deadline = match (
-                session.alert_deadline_ms(),
-                session.host_lease_deadline_ms(),
-            ) {
-                (Some(alert), Some(lease)) => Some(alert.min(lease)),
-                (alert, lease) => alert.or(lease),
-            };
             let session_deadline = async {
-                match next_deadline {
+                match session.next_deadline_ms() {
                     Some(deadline) => Timer::at(Instant::from_millis(deadline)).await,
                     None => core::future::pending().await,
                 }
@@ -2680,11 +2673,11 @@ where
                 // A deadline passed. A lease that ran out stands the
                 // device down; an alert that outlived its deadline stops
                 // its indication and publishes the transition the host
-                // did not command. Each does nothing before its own
-                // deadline.
-                let now_ms = Instant::now().as_millis();
-                session.poll_host_lease(now_ms);
-                let effect = session.poll_alert(now_ms, &mut |frame: &[u8]| emitter.push(frame));
+                // did not command.
+                let effect = session
+                    .poll_deadlines(Instant::now().as_millis(), &mut |frame: &[u8]| {
+                        emitter.push(frame)
+                    });
                 emitter.flush(&mut ReplySink::host(&arbitration, &rt)).await;
                 apply_effect(session, effect, &rt, &mut env).await;
             }

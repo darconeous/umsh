@@ -482,15 +482,16 @@ impl<P: SoftPlatform> SoftDevice<P> {
     }
 
     /// Advance the device's clock: the inbound queue ages, deadlines pass,
-    /// and a running alert that has reached its own ends, as it does on the
-    /// next pass of a firmware driver's loop.
+    /// a detached host's lease runs out, and a running alert that has
+    /// reached its own ends, as they do on the next pass of a firmware
+    /// driver's loop.
     pub fn tick(&mut self, now_ms: u64) {
         self.now_ms = now_ms;
         let device_ms = self.device_ms();
         let mut emitted = Vec::new();
         let effect = self
             .session
-            .poll_alert(device_ms, &mut |frame| emitted.push(frame.to_vec()));
+            .poll_deadlines(device_ms, &mut |frame| emitted.push(frame.to_vec()));
         self.note_emitted(emitted.len());
         self.execute(effect, &mut emitted);
         self.queue_emitted(emitted);
