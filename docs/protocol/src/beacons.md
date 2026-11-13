@@ -131,7 +131,7 @@ Recovery stays within the sender's original flood ceiling; disabled flooding doe
 
 A sender that held no route and flooded at its whole budget has no route to discard, yet the timeout may still be the destination's fault: a route back to the sender that no longer works, on which the ACK died. When it has heard from the destination recently, the sender sends one Route Retry anyway, at the same budget and with a trace. A logical packet gets at most one Route Retry.
 
-A Route Retry duplicating a packet the destination already acknowledged suggests the ACK was lost, so the destination re-acknowledges by a flood scoped to the retry's `FHOPS_ACC` plus one hop, within the retry's regions, carrying a trace. Being a duplicate, the retry neither teaches a route nor retires one. See [Lost Acknowledgments](repeater-operation.md#lost-acknowledgments).
+A Route Retry duplicating a packet the destination already acknowledged suggests the ACK was lost, so the destination re-acknowledges by a flood scoped to the retry's `FHOPS_ACC` plus one hop, within the retry's regions, carrying a trace. Being a duplicate, the retry neither teaches a route nor retires one; it leaves the route in doubt for the sender's next packet to confirm or replace. See [Lost Acknowledgments](repeater-operation.md#lost-acknowledgments).
 
 ## Scoping Flood Hops to a Known Route
 

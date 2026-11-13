@@ -256,6 +256,14 @@ where
     /// confirmed, failed or retried, like any other acknowledged send, and a
     /// ping the MAC gives up on times out then and there.
     ///
+    /// It is sent as a [reachability test], so it gets its Route Retry even
+    /// to a peer this node has not heard from. A peer whose route back has
+    /// gone stale acknowledges along it, and only the retry draws an
+    /// acknowledgment by flood: without one the ping would call a peer that
+    /// answered unreachable.
+    ///
+    /// [reachability test]: SendOptions::as_reachability_test
+    ///
     /// A ping has no deadline of its own. How long an acknowledgment can
     /// take depends on the radio's airtime and on how far the send may
     /// travel, and the MAC's Route Retry goes out only once that whole wait
@@ -265,7 +273,8 @@ where
     ///
     /// `options` is honored as given, so a ping travels the same way the
     /// traffic it is measuring would: same MIC size, same encryption, same
-    /// routing and region options. Only `ack_requested` is overridden.
+    /// routing and region options. Only `ack_requested` and
+    /// `reachability_test` are overridden.
     ///
     /// `padding` is how many filler bytes follow the command. Padding
     /// matters for the same reason the MIC size does: packet error rate rises
@@ -297,9 +306,13 @@ where
         // The caller's options carry through unchanged: a ping that is
         // secured, sized or routed differently from real traffic measures a
         // link the real traffic will not use. Only the ack request is
-        // forced, because the ack is what answers it.
+        // forced, because the ack is what answers it, and with it the Route
+        // Retry that a lost ack needs. Neither changes the frame.
         let sent_at_ms = node.now_ms().await;
-        let opts = options.clone().with_ack_requested(true);
+        let opts = options
+            .clone()
+            .with_ack_requested(true)
+            .as_reachability_test();
         let ticket = self.send(&payload, &opts).await?;
         // Recorded before anything else can run: no answer arrives before
         // the ping has aired, and it has not even been handed over yet.

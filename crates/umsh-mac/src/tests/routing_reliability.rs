@@ -1520,15 +1520,21 @@ fn send_and_time_out(
     key: &PublicKey,
     flood_hops: u8,
 ) -> (SendReceipt, bool) {
+    let options = SendOptions::default()
+        .with_ack_requested(true)
+        .with_flood_hops(flood_hops);
+    send_as_and_time_out(mac, local_id, key, &options)
+}
+
+/// As [`send_and_time_out`], for a send with `options`.
+fn send_as_and_time_out(
+    mac: &mut TestMac,
+    local_id: LocalIdentityId,
+    key: &PublicKey,
+    options: &SendOptions,
+) -> (SendReceipt, bool) {
     let receipt = mac
-        .queue_unicast(
-            local_id,
-            key,
-            b"payload",
-            &SendOptions::default()
-                .with_ack_requested(true)
-                .with_flood_hops(flood_hops),
-        )
+        .queue_unicast(local_id, key, b"payload", options)
         .unwrap()
         .unwrap();
     let sent = mac.tx_queue_mut().pop_next().unwrap();
@@ -1537,7 +1543,7 @@ fn send_and_time_out(
             .unwrap()
             .flood_hops
             .map(|hops| hops.remaining()),
-        Some(flood_hops),
+        options.flood_hops,
         "nothing narrowed the send"
     );
     (receipt, expire_and_report(mac, local_id, receipt))
@@ -1624,6 +1630,37 @@ fn a_full_budget_flood_to_a_peer_not_heard_recently_just_times_out() {
     assert!(mac.tx_queue().is_empty());
 }
 
+/// Whether the peer is there is what a reachability test asks, so it gets
+/// its Route Retry from a peer nothing has arrived from: the peer may have
+/// acknowledged along a way back that is dead.
+#[test]
+fn a_reachability_test_retries_once_to_a_peer_never_heard() {
+    let (mut mac, local_id, key, _) = mac_with_keyed_peer();
+    let options = SendOptions::default()
+        .with_ack_requested(true)
+        .with_flood_hops(6)
+        .as_reachability_test();
+    let (receipt, timed_out) = send_as_and_time_out(&mut mac, local_id, &key, &options);
+    assert!(!timed_out);
+    let retry = mac.tx_queue_mut().pop_next().unwrap();
+    let header = PacketHeader::parse(&retry.frame).unwrap();
+    // The same budget, never a wider one.
+    assert_eq!(header.flood_hops.unwrap().remaining(), 6);
+    let parsed = ParsedOptions::extract(&retry.frame, header.options_range).unwrap();
+    assert!(parsed.route_retry);
+    assert!(parsed.trace(&retry.frame).unwrap().has_signal());
+    // Exactly one per packet: the retry's own timeout ends the send.
+    assert!(expire_and_report(&mut mac, local_id, receipt));
+    assert!(mac.tx_queue().is_empty());
+
+    // It earns nothing a send has no budget for: one that may not flood at
+    // all has nothing to retry with.
+    let (_, timed_out) =
+        send_as_and_time_out(&mut mac, local_id, &key, &options.clone().no_flood());
+    assert!(timed_out);
+    assert!(mac.tx_queue().is_empty());
+}
+
 const LOST_REPLY_REGION: [u8; 2] = [0x12, 0x34];
 
 /// One copy of an ack-requested unicast from `remote` at counter 7, as it
@@ -1633,6 +1670,28 @@ const LOST_REPLY_REGION: [u8; 2] = [0x12, 0x34];
 fn queue_request_copy(
     mac: &mut TestMac,
     remote: &DummyIdentity,
+    accumulated: u8,
+    trace: Option<&[RouterHint]>,
+    source_route: Option<&[RouterHint]>,
+    route_retry: bool,
+) {
+    queue_request(
+        mac,
+        remote,
+        7,
+        accumulated,
+        trace,
+        source_route,
+        route_retry,
+    );
+}
+
+/// As [`queue_request_copy`], at frame counter `counter`: a different
+/// counter is a different request.
+fn queue_request(
+    mac: &mut TestMac,
+    remote: &DummyIdentity,
+    counter: u32,
     accumulated: u8,
     trace: Option<&[RouterHint]>,
     source_route: Option<&[RouterHint]>,
@@ -1648,7 +1707,7 @@ fn queue_request_copy(
     let mut builder = PacketBuilder::new(&mut buf)
         .unicast(dst)
         .source_full(remote.public_key())
-        .frame_counter(7)
+        .frame_counter(counter)
         .encrypted()
         .ack_requested()
         .flood_hops(6);
@@ -1735,7 +1794,7 @@ const LATE_MS: u64 = 60_000;
 /// Route Retry is a dynamic option, and the copy it rides on duplicates a
 /// frame already taken: anyone who heard the request can send it again with
 /// the option added. It earns the scoped-flood re-ack the lost-reply case
-/// needs, but it is no evidence against the route, which stays.
+/// needs, but it retires nothing: the route stays, held in doubt.
 #[test]
 fn a_route_retry_of_an_acked_request_reacks_by_scoped_flood_and_keeps_the_route() {
     let dead = [RouterHint([4, 5])];
@@ -1774,11 +1833,94 @@ fn a_route_retry_of_an_acked_request_reacks_by_scoped_flood_and_keeps_the_route(
         );
         assert!(mac.tx_queue().is_empty());
         // Neither retired nor replaced by whatever the copy traced.
-        assert_eq!(
-            mac.peer_registry().get(peer_id).unwrap().route,
-            CachedRoute::source(&dead)
-        );
+        let info = mac.peer_registry().get(peer_id).unwrap();
+        assert_eq!(info.route, CachedRoute::source(&dead));
+        assert!(info.route_doubted);
     }
+}
+
+/// A dead route keeps the score it earned while it worked, so no path a
+/// later frame offers displaces it, and a peer this node only ever answers
+/// never shows it dead by a send of this node's own. The lost reply is the
+/// one sign there is: it puts the route in doubt, and the peer's next new
+/// frame replaces it.
+#[test]
+fn the_peers_next_frame_replaces_a_route_a_lost_reply_put_in_doubt() {
+    let dead = [RouterHint([4, 5])];
+    let live = [RouterHint([6, 7])];
+    let (mut mac, _, _, peer_id) = mac_with_keyed_peer();
+    let remote = DummyIdentity::new([0xAB; 32]);
+    // Learned on links no later path will match.
+    mac.peer_registry_mut()
+        .offer_route(peer_id, scored(CachedRoute::source(&dead).unwrap(), 0), 1);
+
+    // A request by the live path scores no better, so the route stays and
+    // the ack goes down it.
+    queue_request(&mut mac, &remote, 7, 1, Some(&live), None, false);
+    assert_eq!(receive_counting(&mut mac), 1);
+    assert_eq!(queued_ack_shape(&mut mac).source_route, Some(dead.to_vec()));
+    let info = mac.peer_registry().get(peer_id).unwrap();
+    assert_eq!(info.route, CachedRoute::source(&dead));
+    assert!(!info.route_doubted);
+
+    // Its Route Retry is re-acked by flood and leaves the route in doubt.
+    mac.clock().advance_ms(LATE_MS);
+    queue_request(&mut mac, &remote, 7, 1, Some(&live), None, true);
+    assert_eq!(receive_counting(&mut mac), 0);
+    assert_eq!(queued_ack_shape(&mut mac).source_route, None);
+    let info = mac.peer_registry().get(peer_id).unwrap();
+    assert_eq!(info.route, CachedRoute::source(&dead));
+    assert!(info.route_doubted);
+
+    // The next request settles it, and its own ack goes back the way it
+    // came.
+    queue_request(&mut mac, &remote, 8, 1, Some(&live), None, false);
+    assert_eq!(receive_counting(&mut mac), 1);
+    assert_eq!(queued_ack_shape(&mut mac).source_route, Some(live.to_vec()));
+    let info = mac.peer_registry().get(peer_id).unwrap();
+    assert_eq!(info.route, CachedRoute::source(&live));
+    assert!(!info.route_doubted);
+}
+
+/// Doubt lasts one offer. The same path ends it, since the peer's frame
+/// just came that way; so does an acknowledgment for a send along the
+/// route. Any other offer replaces the route, a flood distance included.
+#[test]
+fn doubt_is_settled_by_the_first_offer_or_by_an_acknowledgment() {
+    let held = CachedRoute::source(&[RouterHint([1, 1])]).unwrap();
+    let worse = CachedRoute::source(&[RouterHint([2, 2])]).unwrap();
+    let (mut mac, _, key, peer_id) = mac_with_keyed_peer();
+    let registry = mac.peer_registry_mut();
+    registry.offer_route(peer_id, scored(held.clone(), -50), 1);
+
+    registry.doubt_route(peer_id);
+    registry.offer_route(peer_id, scored(held.clone(), -60), 2);
+    assert!(!registry.get(peer_id).unwrap().route_doubted);
+    registry.offer_route(peer_id, scored(worse.clone(), -900), 3);
+    assert_eq!(registry.get(peer_id).unwrap().route, Some(held.clone()));
+
+    registry.doubt_route(peer_id);
+    let revision = registry.get(peer_id).unwrap().route_revision;
+    registry.confirm_route(&key, revision, 4);
+    assert!(!registry.get(peer_id).unwrap().route_doubted);
+    registry.offer_route(peer_id, scored(worse, -900), 5);
+    assert_eq!(registry.get(peer_id).unwrap().route, Some(held));
+
+    registry.doubt_route(peer_id);
+    let distance = CachedRoute::flood(2, &[]).unwrap();
+    let offer = RouteOffer {
+        score: None,
+        ..scored(distance.clone(), 0)
+    };
+    registry.offer_route(peer_id, offer, 6);
+    let info = registry.get(peer_id).unwrap();
+    assert_eq!(info.route, Some(distance));
+    assert!(!info.route_doubted);
+
+    // With no route there is nothing to doubt.
+    registry.clear_route(peer_id);
+    registry.doubt_route(peer_id);
+    assert!(!registry.get(peer_id).unwrap().route_doubted);
 }
 
 /// A Route Retry that is the first copy of its frame to arrive is as
@@ -1881,5 +2023,19 @@ fn a_lost_reply_floods_the_reack_but_leaves_a_held_route_held() {
         mac.peer_registry()
             .route_hold(peer_id, now)
             .is_some_and(|hold| hold.candidate.is_none())
+    );
+
+    // Doubt does not undo a hold: the peer's next request only proposes.
+    queue_request(&mut mac, &remote, 8, 3, Some(&fresh), None, false);
+    receive_counting(&mut mac);
+    let now = mac.clock().now_ms();
+    assert_eq!(
+        mac.peer_registry().get(peer_id).unwrap().route,
+        Some(CachedRoute::source(&[RouterHint([1, 2])]).unwrap())
+    );
+    assert!(
+        mac.peer_registry()
+            .route_hold(peer_id, now)
+            .is_some_and(|hold| hold.candidate.is_some())
     );
 }

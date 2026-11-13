@@ -237,19 +237,20 @@ pub(super) fn build_shaped<'b>(
 /// it failed, and only one with a flood budget of its own has a budget to
 /// rediscover a route with. Past that, a send that assumed a route (an
 /// attached source route, or a budget the MAC narrowed) always earns one,
-/// and one that assumed nothing earns one only when the peer was heard
-/// recently (see [`Mac::can_attempt_route_retry`]).
+/// and one that assumed nothing earns one only when the peer is worth a
+/// second flood: it was heard recently, or the send is a reachability test
+/// (see [`Mac::can_attempt_route_retry`]).
 pub(super) fn route_retry_eligible(
     expects_ack: bool,
     requested_flood_hops: Option<u8>,
     already_retried: bool,
     route_assumed: bool,
-    peer_heard_recently: bool,
+    peer_worth_a_second_flood: bool,
 ) -> bool {
     expects_ack
         && requested_flood_hops.is_some_and(|hops| hops > 0)
         && !already_retried
-        && (route_assumed || peer_heard_recently)
+        && (route_assumed || peer_worth_a_second_flood)
 }
 
 impl<

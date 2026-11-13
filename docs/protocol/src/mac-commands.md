@@ -221,7 +221,7 @@ No command-specific payload. Like the handshake, this command travels between th
 
 ## No-Op (9)
 
-Asks nothing of the destination. Sent in a packet that requests an acknowledgement, it tests reachability and measures round-trip latency: the MAC ack is the answer, and the packet is retransmitted and its route recovered like any other acknowledgement-requested packet.
+Asks nothing of the destination. Sent in a packet that requests an acknowledgement, it tests reachability and measures round-trip latency: the MAC ack is the answer, and the packet is retransmitted and its route recovered like any other acknowledgement-requested packet. As a reachability test it gets its [Route Retry](repeater-operation.md#route-failure-recovery) whether or not the sender has heard from the destination recently.
 
 No command-specific payload. A sender MAY follow the command identifier with filler bytes to give the packet the size it wants to test.
 

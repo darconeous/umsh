@@ -5728,6 +5728,7 @@ impl<
             PendingAck::direct(full_mac, peer, resend)
         };
         pending.cached_route_revision = cached_route_revision;
+        pending.reachability_test = options.reachability_test;
         slot.try_insert_pending_ack(receipt, pending)
             .map_err(|_| SendError::PendingAckFull)?;
         Ok(receipt)
@@ -6089,9 +6090,10 @@ impl<
     /// first ack. A Route Retry of one already acknowledged says that ack
     /// was lost, since the sender sends one only after its whole ack
     /// timeout, so the re-ack floods rather than follow the route the lost
-    /// one took. The route itself stays: Route Retry is a dynamic option on
-    /// a copy anyone can resend, so it is no evidence against a route. Any
-    /// other late copy may cross an ack still on its way.
+    /// one took. The route itself stays, held in doubt
+    /// ([`PeerRegistry::doubt_route`]): Route Retry is a dynamic option on a
+    /// copy anyone can resend, so by itself it retires nothing. Any other
+    /// late copy may cross an ack still on its way.
     fn duplicate_ack_occasion(
         &self,
         peer_id: PeerId,
@@ -6123,7 +6125,8 @@ impl<
     /// An [`AckOccasion::Repeat`] keeps the route's slack whatever its
     /// evidence says: no ack has reached the sender yet. An
     /// [`AckOccasion::LostReply`] ignores any cached route and floods
-    /// instead ([`Mac::queue_lost_reply_mac_ack`]).
+    /// instead ([`Mac::queue_lost_reply_mac_ack`]), and leaves the route in
+    /// doubt for the peer's next frame to settle.
     fn queue_received_mac_ack(
         &mut self,
         local_id: LocalIdentityId,
@@ -6138,6 +6141,7 @@ impl<
         };
         let regions = Self::region_codes_from_options(frame, header.options_range.clone());
         let queued = if occasion == AckOccasion::LostReply {
+            self.peer_registry.doubt_route(peer_id);
             self.queue_lost_reply_mac_ack(
                 local_id,
                 peer_id,
@@ -9066,6 +9070,10 @@ impl<
     /// second copy of the request, arriving after the peer already answered
     /// the first, can tell the peer so. The retry floods at the same budget;
     /// it never widens what the application was willing to spend.
+    ///
+    /// A [reachability test](SendOptions::reachability_test) earns it
+    /// unheard: whether the peer is there is the question being asked, and a
+    /// dead way back would answer it wrongly.
     fn can_attempt_route_retry(pending: &PendingAck<FRAME>, peer_heard_recently: bool) -> bool {
         let Ok(header) = PacketHeader::parse(pending.resend.frame.as_slice()) else {
             return false;
@@ -9095,7 +9103,7 @@ impl<
             pending.resend.requested_flood_hops,
             options.route_retry || pending.route_retry_spent,
             has_source_route || narrowed,
-            peer_heard_recently,
+            peer_heard_recently || pending.reachability_test,
         )
     }
 

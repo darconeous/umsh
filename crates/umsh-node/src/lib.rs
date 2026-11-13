@@ -527,7 +527,9 @@ mod tests {
     /// A ping must travel the way the traffic it is measuring would, so the
     /// caller's options carry through untouched. The one exception is the ack
     /// request, which a ping always makes: the acknowledgment is its answer.
-    /// What it sends is a No-Op, padded as asked.
+    /// It is marked a reachability test with it, so a lost acknowledgment
+    /// gets its Route Retry even from a peer never heard. What it sends is a
+    /// No-Op, padded as asked.
     #[cfg(feature = "software-crypto")]
     #[test]
     fn ping_honors_caller_options_and_always_requests_an_ack() {
@@ -557,6 +559,7 @@ mod tests {
         assert_eq!(sent.options.flood_hops, Some(3));
         assert_eq!(sent.options.region_code, Some([0x78, 0x53]));
         assert!(sent.options.ack_requested, "the ack is the answer");
+        assert!(sent.options.reachability_test);
         let mut no_op = vec![umsh_core::PayloadType::MacCommand as u8, 9];
         no_op.extend([0xA5; 6]);
         assert_eq!(sent.payload, no_op);

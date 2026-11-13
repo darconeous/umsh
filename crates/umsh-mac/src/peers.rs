@@ -205,6 +205,10 @@ pub struct PeerInfo {
     /// ([`PeerRegistry::hold_route`]) rather than learned. It stays so after
     /// the hold ends, until a learned route replaces it.
     pub(crate) route_hand_set: bool,
+    /// A Route Retry reported an acknowledgment sent along the selected
+    /// route lost ([`PeerRegistry::doubt_route`]). The route stays, and the
+    /// next route a frame from the peer offers settles it.
+    pub(crate) route_doubted: bool,
     /// The peer advertises itself as mobile.
     pub(crate) mobile: bool,
     /// One recently failed route, suppressed only for passive route learning.
@@ -252,6 +256,7 @@ impl PeerInfo {
             route_confirmed_ms: None,
             route_last_hop: None,
             route_hand_set: false,
+            route_doubted: false,
             mobile: false,
             failed_route: None,
             unflooded_arrival_s: None,
@@ -306,6 +311,7 @@ impl PeerInfo {
         self.route_score = selection.score;
         self.route_last_hop = selection.last_hop;
         self.route_hand_set = selection.hand_set;
+        self.route_doubted = false;
         self.route_confirmed_ms = None;
         self.route_revision = revision;
     }
@@ -901,6 +907,10 @@ impl<const N: usize, const H: usize> PeerRegistry<N, H> {
     /// - A scored path displaces one nothing has measured.
     /// - Otherwise the offer has to score clearly better, and better still
     ///   when an acknowledgment has recently vouched for the route held.
+    /// - A route in doubt ([`Self::doubt_route`]) is settled by the first
+    ///   offer, whatever either scores: the same path ends the doubt, since
+    ///   the peer's frame just came that way, and any other replaces the
+    ///   route.
     ///
     /// Whatever becomes of the route, an offer that measured the same last
     /// hop as the route held refreshes its reading: that link is the same
@@ -930,6 +940,7 @@ impl<const N: usize, const H: usize> PeerRegistry<N, H> {
             if offer.score.is_some() {
                 peer.route_score = offer.score;
             }
+            peer.route_doubted = false;
             return;
         }
         if let Some(index) = self.hold_index(id, now_ms) {
@@ -945,6 +956,7 @@ impl<const N: usize, const H: usize> PeerRegistry<N, H> {
             .route_confirmed_ms
             .is_some_and(|at| now_ms.saturating_sub(at) <= crate::route_score::CONFIRMATION_TTL_MS);
         let replace = offer.supersedes
+            || peer.route_doubted
             || match (&peer.route, offer.score) {
                 (None | Some(CachedRoute::Flood { .. }), _) => true,
                 (Some(_), None) => false,
@@ -966,6 +978,24 @@ impl<const N: usize, const H: usize> PeerRegistry<N, H> {
         let revision = self.next_revision();
         let peer = self.get_mut(id).expect("peer was just found");
         peer.select_route(RouteSelection::learned(offer.into()), revision);
+    }
+
+    /// Hold `id`'s selected route in doubt: a Route Retry reported an
+    /// acknowledgment sent along it lost.
+    ///
+    /// The route stays. Route Retry is a dynamic option on a copy of a
+    /// frame anyone can send again, so by itself it retires nothing. What
+    /// it earns is that the next route a frame from the peer offers is
+    /// believed over this one ([`Self::offer_route`]): a peer that sends
+    /// nothing of its own this way would otherwise keep a dead route for
+    /// as long as it outscored the live one. An acknowledgment for a send
+    /// along the route ends the doubt too ([`Self::confirm_route`]).
+    pub(crate) fn doubt_route(&mut self, id: PeerId) {
+        if let Some(peer) = self.get_mut(id)
+            && peer.route.is_some()
+        {
+            peer.route_doubted = true;
+        }
     }
 
     /// Forget a route explicitly; passive learning remains allowed.
@@ -1040,6 +1070,7 @@ impl<const N: usize, const H: usize> PeerRegistry<N, H> {
         let peer = self.get_mut(id).expect("peer was just found");
         peer.route_revision = next_revision;
         peer.route_confirmed_ms = Some(now_ms);
+        peer.route_doubted = false;
     }
 
     /// Record how a packet from `id` reached us: by flooding or not.

@@ -126,6 +126,11 @@ pub struct SendOptions {
     /// Signature option on a broadcast, `D` on a frame with SECINFO. Only
     /// the async broadcast and multicast sends sign.
     pub signed: bool,
+    /// Whether this send tests that the peer can be reached. One that
+    /// floods at its whole budget and goes unacknowledged then gets its
+    /// Route Retry even when the peer has not been heard recently, which
+    /// is otherwise what earns one.
+    pub reachability_test: bool,
 }
 
 impl Default for SendOptions {
@@ -145,6 +150,7 @@ impl Default for SendOptions {
             tx_delay_ms: None,
             ack_mic: None,
             signed: false,
+            reachability_test: false,
         }
     }
 }
@@ -255,6 +261,19 @@ impl SendOptions {
     /// reaches it first.
     pub fn with_ack_mic(mut self, ack_mic: [u8; 4]) -> Self {
         self.ack_mic = Some(ack_mic);
+        self
+    }
+
+    /// Mark the send as a test of whether the peer can be reached.
+    ///
+    /// An unacknowledged flood to a peer not heard recently normally ends
+    /// without a Route Retry: a peer that is gone answers a second flood no
+    /// more than the first. A reachability test cannot leave it there. The
+    /// peer may have acknowledged along a route back that no longer works,
+    /// and only the retry gets it to acknowledge by flood instead, so
+    /// without one the test reports a reachable peer as unreachable.
+    pub fn as_reachability_test(mut self) -> Self {
+        self.reachability_test = true;
         self
     }
 }
@@ -450,6 +469,9 @@ pub struct PendingAck<const FRAME: usize = MAX_RESEND_FRAME_LEN> {
     /// This send has had its one Route Retry, even if the retry had to go
     /// out as the original frame rather than its rewrite.
     pub(crate) route_retry_spent: bool,
+    /// The send was a [reachability test](SendOptions::reachability_test),
+    /// which earns its Route Retry without the peer having been heard.
+    pub(crate) reachability_test: bool,
     /// Set when this entry carries a Frame Verified on behalf of the send
     /// it vouches for, and the Verify Frame's counter fell outside our
     /// window for the requester: the acknowledgment that completes the
@@ -490,6 +512,7 @@ impl<const FRAME: usize> PendingAck<FRAME> {
             cached_route_revision: 0,
             held_route_missed: false,
             route_retry_spent: false,
+            reachability_test: false,
             adopt_on_ack: None,
         }
     }
@@ -512,6 +535,7 @@ impl<const FRAME: usize> PendingAck<FRAME> {
             cached_route_revision: 0,
             held_route_missed: false,
             route_retry_spent: false,
+            reachability_test: false,
             adopt_on_ack: None,
         }
     }
@@ -535,6 +559,7 @@ impl<const FRAME: usize> PendingAck<FRAME> {
             cached_route_revision: 0,
             held_route_missed: false,
             route_retry_spent: false,
+            reachability_test: false,
             adopt_on_ack: None,
         }
     }
