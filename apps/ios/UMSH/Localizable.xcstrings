@@ -263,6 +263,9 @@
     "Across the mesh" : {
 
     },
+    "Adaptive" : {
+      "comment" : "Forwarding mode: the device forwards only what no repeater carried."
+    },
     "Add" : {
 
     },
@@ -331,6 +334,9 @@
     },
     "Airport code, name, or 0x1234" : {
 
+    },
+    "Airtime heard" : {
+      "comment" : "Statistics row: the share of the past hour other transmitters occupied the channel."
     },
     "Alias" : {
 
@@ -490,6 +496,9 @@
     },
     "Carried the flooded acks" : {
 
+    },
+    "Carrying traffic" : {
+      "comment" : "Adaptive forwarding state: recently needed, so forwarding as a repeater does."
     },
     "Cell" : {
 
@@ -998,6 +1007,9 @@
     "Form" : {
 
     },
+    "Forward for others" : {
+      "comment" : "Picker title: whether a remote device forwards other nodes' traffic."
+    },
     "Forward other nodes' traffic" : {
 
     },
@@ -1057,6 +1069,9 @@
     },
     "Hold for" : {
       "comment" : "Picker label: how long a manual path stands."
+    },
+    "Holding back" : {
+      "comment" : "Adaptive forwarding state: the channel is busy and repeaters are plentiful, so nothing is flooded."
     },
     "Hop" : {
 
@@ -1613,14 +1628,17 @@
     "Notifications off" : {
 
     },
+    "Now" : {
+      "comment" : "Row title: what an adaptive forwarder is doing at the moment."
+    },
     "Off" : {
-      "comment" : "Flood allowance: the frame does not flood.\nVoiceOver value of a switch-like control."
+      "comment" : "Flood allowance: the frame does not flood.\nForwarding mode: the device does not forward.\nVoiceOver value of a switch-like control."
     },
     "OK" : {
       "comment" : "Dismisses an alert."
     },
     "On" : {
-      "comment" : "VoiceOver value of a switch-like control."
+      "comment" : "Forwarding mode: the device is a repeater.\nVoiceOver value of a switch-like control."
     },
     "On radio" : {
 
@@ -1852,6 +1870,9 @@
     },
     "Repeater names are matched by a two-byte hint and may not be the node shown." : {
       "comment" : "Footer under a path whose repeaters were named by guessing from their short hints."
+    },
+    "Repeaters heard" : {
+      "comment" : "Statistics row: how many repeaters the device heard in the past hour."
     },
     "Replace All" : {
 
@@ -2179,6 +2200,9 @@
     "Spreading factor" : {
 
     },
+    "Standing by" : {
+      "comment" : "Adaptive forwarding state: forwarding only what nobody else carries."
+    },
     "Start a conversation with a peer, or open one in a channel you have joined." : {
 
     },
@@ -2419,10 +2443,13 @@
     "This device can see the networks around it. It cannot join one." : {
 
     },
-    "This device carries only its own traffic and advertises no forwarding role." : {
+    "This device carries only its own traffic." : {
 
     },
     "This device did not report %@. Those settings are not shown here and are set to this sheet's values when you apply changes, because the device accepts its configuration whole. Everything else works normally." : {
+
+    },
+    "This device forwards only what no repeater carried." : {
 
     },
     "This device has not said what it is yet." : {
