@@ -54,7 +54,8 @@ final class DeviceConfigDraft {
     var identRole: UInt8?
     var identMobile: Bool
     var devDiscoverable: Bool
-    var repeaterEnabled: Bool
+    /// `PROP_MAC_REPEATER_MODE`: 0 off, 1 on, 2 adaptive.
+    var repeaterMode: UInt8
     var regions: [String]
     var defaultRegion: Data?
     var minRssiDBm: Int16?
@@ -164,7 +165,7 @@ final class DeviceConfigDraft {
         identRole = sync.identRole
         identMobile = sync.identMobile ?? false
         devDiscoverable = sync.devDiscoverable ?? true
-        repeaterEnabled = repeater?.enabled ?? false
+        repeaterMode = repeater?.mode ?? 0
         regions = repeater?.regions ?? []
         defaultRegion = repeater?.defaultRegion
         minRssiDBm = repeater?.minRssiDbm
@@ -326,7 +327,8 @@ final class DeviceConfigDraft {
     /// the device has not been given yet.
     var advertisedPeerRole: PeerRole {
         guard let role = reported.identRole else {
-            return reported.repeater?.enabled == true ? .repeater : .unknown
+            // An adaptive forwarder does not present itself as a repeater.
+            return reported.repeater?.mode == 1 ? .repeater : .unknown
         }
         return PeerRole(roleCode: role)
     }
@@ -359,7 +361,7 @@ final class DeviceConfigDraft {
             devDiscoverable: sync.supportsDeviceIdentity ? devDiscoverable : nil,
             repeater: sync.supportsRepeater
                 ? UlcpRepeaterSettingsRecord(
-                    enabled: repeaterEnabled,
+                    mode: repeaterMode,
                     regions: regions,
                     defaultRegion: defaultRegion,
                     minRssiDbm: minRssiDBm,

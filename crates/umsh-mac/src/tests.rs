@@ -1,5 +1,6 @@
 mod ack_authentication;
 mod ack_path;
+mod adaptive;
 mod bearer;
 #[cfg(feature = "software-crypto")]
 mod colliding_channels;
@@ -6860,7 +6861,7 @@ fn receive_one_blind_unicast_with_ambiguous_hint_tries_candidate_peers() {
 #[test]
 fn receive_one_repeater_forwards_blind_unicast_using_original_encrypted_frame() {
     let mut mac = make_mac();
-    mac.repeater_config_mut().enabled = true;
+    mac.repeater_config_mut().mode = RepeaterMode::On;
     let repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let repeater_hint = mac
         .identity(repeater_id)
@@ -8377,7 +8378,7 @@ fn receive_one_confirms_forwarded_send_when_same_frame_is_overheard() {
 #[test]
 fn receive_one_repeater_forwards_source_routed_unicast_and_rewrites_options() {
     let mut mac = make_mac();
-    mac.repeater_config_mut().enabled = true;
+    mac.repeater_config_mut().mode = RepeaterMode::On;
     let repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let repeater_hint = mac
         .identity(repeater_id)
@@ -8444,7 +8445,7 @@ fn receive_one_repeater_forwards_source_routed_unicast_and_rewrites_options() {
 #[test]
 fn receive_one_repeater_forwards_source_routed_unicast_without_trace() {
     let mut repeater = make_mac();
-    repeater.repeater_config_mut().enabled = true;
+    repeater.repeater_config_mut().mode = RepeaterMode::On;
     repeater
         .repeater_config_mut()
         .regions
@@ -8556,7 +8557,7 @@ fn receive_one_repeater_forwards_source_routed_unicast_without_trace() {
 #[test]
 fn receive_one_repeater_ignores_signal_thresholds_for_source_routed_hops() {
     let mut repeater = make_mac();
-    repeater.repeater_config_mut().enabled = true;
+    repeater.repeater_config_mut().mode = RepeaterMode::On;
     repeater.repeater_config_mut().min_rssi = Some(10);
     repeater.repeater_config_mut().min_snr = Some(10);
     let repeater_id = repeater
@@ -8604,7 +8605,7 @@ fn receive_one_repeater_ignores_signal_thresholds_for_source_routed_hops() {
 #[test]
 fn receive_one_repeater_ignores_signal_thresholds_on_the_final_source_routed_hop() {
     let mut repeater = make_mac();
-    repeater.repeater_config_mut().enabled = true;
+    repeater.repeater_config_mut().mode = RepeaterMode::On;
     repeater.repeater_config_mut().min_rssi = Some(10);
     repeater.repeater_config_mut().min_snr = Some(10);
     let repeater_id = repeater
@@ -8651,7 +8652,7 @@ fn receive_one_repeater_ignores_signal_thresholds_on_the_final_source_routed_hop
 #[test]
 fn receive_one_repeater_applies_signal_thresholds_when_hybrid_route_enters_flooding() {
     let mut repeater = make_mac();
-    repeater.repeater_config_mut().enabled = true;
+    repeater.repeater_config_mut().mode = RepeaterMode::On;
     repeater.repeater_config_mut().min_rssi = Some(10);
     repeater.repeater_config_mut().min_snr = Some(10);
     repeater
@@ -8691,7 +8692,7 @@ fn receive_one_repeater_applies_signal_thresholds_when_hybrid_route_enters_flood
 #[test]
 fn receive_one_repeater_forwards_source_routed_mac_ack() {
     let mut mac = make_mac();
-    mac.repeater_config_mut().enabled = true;
+    mac.repeater_config_mut().mode = RepeaterMode::On;
     let repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let repeater_hint = mac
         .identity(repeater_id)
@@ -8727,7 +8728,7 @@ fn receive_one_repeater_forwards_source_routed_mac_ack() {
 #[test]
 fn receive_one_repeater_flood_forwards_with_delay_and_decrements_hops() {
     let mut mac = make_mac();
-    mac.repeater_config_mut().enabled = true;
+    mac.repeater_config_mut().mode = RepeaterMode::On;
     let _repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
 
     let remote = DummyIdentity::new([0xAB; 32]);
@@ -8768,7 +8769,7 @@ fn receive_one_repeater_adds_ack_guard_to_flood_forward_of_ack_requested_packet(
         let mut mac = make_mac();
         {
             let repeater = mac.repeater_config_mut();
-            repeater.enabled = true;
+            repeater.mode = RepeaterMode::On;
             // Collapse the contention window and its jitter so the ACK
             // protection interval is the only delay component.
             repeater.flood_contention_min_window_percent = 0;
@@ -8840,7 +8841,7 @@ fn receive_one_repeater_adds_ack_guard_to_flood_forward_of_ack_requested_packet(
 #[test]
 fn repeater_does_not_repeat_what_its_own_antenna_transmitted() {
     let mut mac = make_mac();
-    mac.repeater_config_mut().enabled = true;
+    mac.repeater_config_mut().mode = RepeaterMode::On;
     let _repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
 
     let source = DummyIdentity::new([0xAB; 32]);
@@ -8881,7 +8882,7 @@ fn repeater_forwards_a_backhauled_frame_without_inventing_measurements() {
     let mut mac = make_mac();
     {
         let repeater = mac.repeater_config_mut();
-        repeater.enabled = true;
+        repeater.mode = RepeaterMode::On;
         // Thresholds no wired frame could satisfy if they were applied.
         repeater.min_rssi = Some(-50);
         repeater.min_snr = Some(5);
@@ -8930,7 +8931,7 @@ fn repeater_forwards_a_backhauled_frame_without_inventing_measurements() {
 #[test]
 fn repeater_forwards_a_repeated_beacon_again_once_the_duplicate_entry_ages_out() {
     let mut mac = make_mac();
-    mac.repeater_config_mut().enabled = true;
+    mac.repeater_config_mut().mode = RepeaterMode::On;
     let _repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
 
     let source = DummyIdentity::new([0xAB; 32]);
@@ -8974,7 +8975,7 @@ fn repeater_forwards_a_repeated_beacon_again_once_the_duplicate_entry_ages_out()
 #[test]
 fn repeater_forwards_an_identical_reack_once_the_ack_entry_ages_out() {
     let mut mac = make_mac();
-    mac.repeater_config_mut().enabled = true;
+    mac.repeater_config_mut().mode = RepeaterMode::On;
     let _repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
 
     let mut buf = [0u8; 64];
@@ -9019,7 +9020,7 @@ fn flood_contention_delay_at(rssi_dbm: i16, snr: Snr) -> u64 {
 /// [`flood_contention_delay_at`] on a radio reporting spreading factor `sf`.
 fn flood_contention_delay_at_sf(sf: Option<u8>, rssi_dbm: i16, snr: Snr) -> u64 {
     let mut mac = make_mac();
-    mac.repeater_config_mut().enabled = true;
+    mac.repeater_config_mut().mode = RepeaterMode::On;
     mac.radio_mut().spreading_factor = sf;
     mac.radio_mut().rx_rssi = rssi_dbm;
     mac.radio_mut().rx_snr = snr;
@@ -9122,7 +9123,7 @@ fn flood_contention_leaves_only_jitter_when_the_window_is_collapsed() {
     let mut mac = make_mac();
     {
         let repeater = mac.repeater_config_mut();
-        repeater.enabled = true;
+        repeater.mode = RepeaterMode::On;
         repeater.flood_contention_min_window_percent = 0;
         repeater.flood_contention_max_window_percent = 0;
     }
@@ -9154,7 +9155,7 @@ fn flood_contention_leaves_only_jitter_when_the_window_is_collapsed() {
 #[test]
 fn repeater_prepends_its_signal_reading_alongside_the_router_hint() {
     let mut mac = make_mac();
-    mac.repeater_config_mut().enabled = true;
+    mac.repeater_config_mut().mode = RepeaterMode::On;
     mac.radio_mut().rx_rssi = -93;
     mac.radio_mut().rx_snr = Snr::from_centibels(-45);
     let repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
@@ -9199,7 +9200,7 @@ fn repeater_prepends_its_signal_reading_alongside_the_router_hint() {
 #[test]
 fn repeater_prepends_its_signal_reading_when_forwarding_a_unicast() {
     let mut mac = make_mac();
-    mac.repeater_config_mut().enabled = true;
+    mac.repeater_config_mut().mode = RepeaterMode::On;
     mac.radio_mut().rx_rssi = -101;
     mac.radio_mut().rx_snr = Snr::from_centibels(35);
     let repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
@@ -9256,7 +9257,7 @@ fn repeater_prepends_its_signal_reading_when_forwarding_a_unicast() {
 #[test]
 fn hop_signal_saturates_rather_than_wrapping() {
     let mut mac = make_mac();
-    mac.repeater_config_mut().enabled = true;
+    mac.repeater_config_mut().mode = RepeaterMode::On;
     mac.radio_mut().rx_rssi = -300;
     mac.radio_mut().rx_snr = Snr::from_centibels(-2000);
     let _repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
@@ -9303,7 +9304,7 @@ fn repeater_declines_to_forward_a_malformed_trace_rather_than_panicking() {
     ];
     for value in malformed {
         let mut mac = make_mac();
-        mac.repeater_config_mut().enabled = true;
+        mac.repeater_config_mut().mode = RepeaterMode::On;
         let _repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
 
         let source = DummyIdentity::new([0xAB; 32]);
@@ -9472,7 +9473,7 @@ fn a_repeater_inserting_a_region_code_still_fits_the_frame() {
 #[test]
 fn repeater_does_not_add_a_trace_to_a_frame_that_carries_none() {
     let mut mac = make_mac();
-    mac.repeater_config_mut().enabled = true;
+    mac.repeater_config_mut().mode = RepeaterMode::On;
     let _repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
 
     let source = DummyIdentity::new([0xAB; 32]);
@@ -9505,7 +9506,7 @@ fn repeater_does_not_forward_a_broadcast_it_originated() {
     let local = DummyIdentity::new([0x10; 32]);
     let local_key = *local.public_key();
     let mut mac = make_mac();
-    mac.repeater_config_mut().enabled = true;
+    mac.repeater_config_mut().mode = RepeaterMode::On;
     mac.add_identity(local).unwrap();
 
     let mut buf = [0u8; 256];
@@ -9537,7 +9538,7 @@ fn has_queued_forward(mac: &TestMac) -> bool {
 #[test]
 fn repeater_does_not_forward_its_own_broadcast_sent_by_hint() {
     let mut mac = make_mac();
-    mac.repeater_config_mut().enabled = true;
+    mac.repeater_config_mut().mode = RepeaterMode::On;
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     mac.queue_broadcast(
         local_id,
@@ -9566,7 +9567,7 @@ fn repeater_forwards_a_broadcast_from_a_node_sharing_its_hint() {
     let local = DummyIdentity::new([0x10; 32]);
     let local_hint = local.public_key().hint();
     let mut mac = make_mac();
-    mac.repeater_config_mut().enabled = true;
+    mac.repeater_config_mut().mode = RepeaterMode::On;
     mac.add_identity(local).unwrap();
 
     let mut buf = [0u8; 256];
@@ -9591,7 +9592,7 @@ fn repeater_forwards_a_unicast_for_a_node_sharing_its_hint() {
     let local = DummyIdentity::new([0x10; 32]);
     let local_hint = local.public_key().hint();
     let mut mac = make_mac();
-    mac.repeater_config_mut().enabled = true;
+    mac.repeater_config_mut().mode = RepeaterMode::On;
     mac.add_identity(local).unwrap();
 
     let remote = DummyIdentity::new([0xAB; 32]);
@@ -9621,7 +9622,7 @@ fn repeater_forwards_a_unicast_for_a_node_sharing_its_hint() {
 #[test]
 fn repeater_does_not_forward_a_unicast_it_opened_or_its_replay() {
     let mut mac = make_mac();
-    mac.repeater_config_mut().enabled = true;
+    mac.repeater_config_mut().mode = RepeaterMode::On;
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let remote = DummyIdentity::new([0xAB; 32]);
     let peer_id = mac.add_peer(*remote.public_key()).unwrap();
@@ -9658,7 +9659,7 @@ fn repeater_does_not_forward_a_unicast_it_opened_or_its_replay() {
 #[test]
 fn receive_one_repeater_inserts_region_on_untagged_flood_forward() {
     let mut mac = make_mac();
-    mac.repeater_config_mut().enabled = true;
+    mac.repeater_config_mut().mode = RepeaterMode::On;
     mac.repeater_config_mut()
         .regions
         .push([0x78, 0x53])
@@ -9702,7 +9703,7 @@ fn forwarded_region_for_untagged_flood(
     default_region: Option<[u8; 2]>,
 ) -> Option<[u8; 2]> {
     let mut mac = make_mac();
-    mac.repeater_config_mut().enabled = true;
+    mac.repeater_config_mut().mode = RepeaterMode::On;
     for region in regions {
         mac.repeater_config_mut().regions.push(*region).unwrap();
     }
@@ -9760,7 +9761,7 @@ fn receive_one_repeater_inserts_the_default_region_not_the_first_configured_one(
 #[test]
 fn receive_one_repeater_without_configured_regions_forwards_tagged_floods() {
     let mut mac = make_mac();
-    mac.repeater_config_mut().enabled = true;
+    mac.repeater_config_mut().mode = RepeaterMode::On;
     let _repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
 
     let remote = DummyIdentity::new([0xAB; 32]);
@@ -9803,7 +9804,7 @@ fn receive_one_repeater_without_configured_regions_forwards_tagged_floods() {
 #[test]
 fn receive_one_repeater_counts_configured_region_refusal_as_policy_drop() {
     let mut mac = make_mac();
-    mac.repeater_config_mut().enabled = true;
+    mac.repeater_config_mut().mode = RepeaterMode::On;
     mac.repeater_config_mut()
         .regions
         .push([0x31, 0xD9])
@@ -9851,7 +9852,7 @@ fn repeater_forward_of_flood_with_options(
     options: &[(OptionNumber, &[u8])],
 ) -> Option<heapless::Vec<u8, 256>> {
     let mut mac = make_mac();
-    mac.repeater_config_mut().enabled = true;
+    mac.repeater_config_mut().mode = RepeaterMode::On;
     mac.repeater_config_mut().default_region = Some([0x78, 0x53]);
     let _repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
 
@@ -10032,7 +10033,7 @@ fn receive_one_repeater_does_not_forward_malformed_critical_options() {
 #[test]
 fn receive_one_repeater_preserves_existing_region_without_inserting_another() {
     let mut mac = make_mac();
-    mac.repeater_config_mut().enabled = true;
+    mac.repeater_config_mut().mode = RepeaterMode::On;
     mac.repeater_config_mut()
         .regions
         .push([0x31, 0xD9])
@@ -10086,7 +10087,7 @@ fn receive_one_repeater_preserves_existing_region_without_inserting_another() {
 #[test]
 fn receive_one_repeater_accepts_any_matching_region_from_multiple_region_options() {
     let mut mac = make_mac();
-    mac.repeater_config_mut().enabled = true;
+    mac.repeater_config_mut().mode = RepeaterMode::On;
     mac.repeater_config_mut()
         .regions
         .push([0x78, 0x53])
@@ -10134,7 +10135,7 @@ fn receive_one_repeater_accepts_any_matching_region_from_multiple_region_options
 #[test]
 fn receive_one_defers_pending_forward_when_duplicate_is_overheard() {
     let mut mac = make_mac();
-    mac.repeater_config_mut().enabled = true;
+    mac.repeater_config_mut().mode = RepeaterMode::On;
     let repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let repeater_hint = mac
         .identity(repeater_id)
@@ -10163,7 +10164,15 @@ fn receive_one_defers_pending_forward_when_duplicate_is_overheard() {
     assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
     assert_eq!(mac.tx_queue().len(), 1);
 
+    // The previous hop sending the frame again is a copy from behind: it
+    // shows the packet has not been carried, and defers nothing.
     mac.radio_mut().queue_received_frame(frame.as_slice());
+    assert!(!block_on(mac.receive_one(|_, _| {})).unwrap());
+    let carried = pending_forward_frame(&mut mac);
+    assert_eq!(mac.tx_queue().len(), 1);
+
+    // Another forwarder's copy from this hop does.
+    mac.radio_mut().queue_received_frame(carried.as_slice());
     let handled = block_on(mac.receive_one(|_, _| {})).unwrap();
 
     assert!(!handled);
@@ -10173,10 +10182,21 @@ fn receive_one_defers_pending_forward_when_duplicate_is_overheard() {
     assert_eq!(forwarded.forward_deferrals, 1);
 }
 
+/// The frame of the one forward waiting in `mac`'s queue: what another
+/// forwarder at the same hop would put on the air. The entry goes back as
+/// it was.
+fn pending_forward_frame(mac: &mut TestMac) -> heapless::Vec<u8, 256> {
+    let queued = mac.tx_queue_mut().pop_next().unwrap();
+    assert_eq!(queued.priority, TxPriority::Forward);
+    let frame = queued.frame.clone();
+    mac.tx_queue_mut().enqueue_entry(queued).unwrap();
+    frame
+}
+
 #[test]
 fn receive_one_drops_pending_forward_on_the_third_overheard_copy() {
     let mut mac = make_mac();
-    mac.repeater_config_mut().enabled = true;
+    mac.repeater_config_mut().mode = RepeaterMode::On;
     let repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let repeater_hint = mac
         .identity(repeater_id)
@@ -10206,17 +10226,18 @@ fn receive_one_drops_pending_forward_on_the_third_overheard_copy() {
     assert_eq!(mac.tx_queue().len(), 1);
 
     assert_eq!(mac.repeater_config().flood_contention_abandon_copies, 3);
+    let carried = pending_forward_frame(&mut mac);
 
     // The first two copies overheard from other repeaters defer the forward.
     for copy in 1..=2 {
-        mac.radio_mut().queue_received_frame(frame.as_slice());
+        mac.radio_mut().queue_received_frame(carried.as_slice());
         let handled = block_on(mac.receive_one(|_, _| {})).unwrap();
         assert!(!handled);
         assert_eq!(mac.tx_queue().len(), 1, "copy {copy} defers");
     }
 
     // The third drops it.
-    mac.radio_mut().queue_received_frame(frame.as_slice());
+    mac.radio_mut().queue_received_frame(carried.as_slice());
     let handled = block_on(mac.receive_one(|_, _| {})).unwrap();
     assert!(!handled);
     assert!(
@@ -10333,7 +10354,7 @@ fn counters_separate_receptions_from_receptions_that_meant_something() {
 #[test]
 fn counters_record_a_forwarded_frame() {
     let mut mac = make_mac();
-    mac.repeater_config_mut().enabled = true;
+    mac.repeater_config_mut().mode = RepeaterMode::On;
     let repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let repeater_hint = mac
         .identity(repeater_id)
@@ -10382,7 +10403,7 @@ fn counters_record_a_forwarded_frame() {
 #[test]
 fn counters_record_only_administrator_policy_drops() {
     let mut repeater = make_mac();
-    repeater.repeater_config_mut().enabled = true;
+    repeater.repeater_config_mut().mode = RepeaterMode::On;
     repeater.repeater_config_mut().min_rssi = Some(-70);
     repeater.repeater_config_mut().min_snr = Some(5);
     repeater
@@ -11295,7 +11316,7 @@ fn modeled_dense_repeater_neighborhood_prefers_one_of_the_best_candidates() {
         let radio = network.add_radio_with_config(256, 50);
         radio_ids.push(radio.id());
         let mut mac = crate::test_support::make_modeled_test_mac(radio, clock.clone());
-        mac.repeater_config_mut().enabled = (1..=4).contains(&index);
+        mac.repeater_config_mut().mode = (1..=4).contains(&index).into();
         let id = mac
             .add_identity(crate::test_support::DummyIdentity::new(
                 [0x30u8.wrapping_add(index as u8); 32],
@@ -11985,7 +12006,7 @@ fn receive_one_repeater_does_not_forward_reserved_packet_type_five() {
     // Packet type 5 remains opaque and non-routable until the protocol assigns
     // it explicit forwarding semantics.
     let mut repeater = make_mac();
-    repeater.repeater_config_mut().enabled = true;
+    repeater.repeater_config_mut().mode = RepeaterMode::On;
     let repeater_id = repeater
         .add_identity(DummyIdentity::new([0x10; 32]))
         .unwrap();
@@ -13108,7 +13129,7 @@ fn mic_prefix(frame: &[u8]) -> [u8; 4] {
 
 fn make_repeater_mac() -> TestMac {
     let mut mac = make_mac();
-    mac.repeater_config_mut().enabled = true;
+    mac.repeater_config_mut().mode = RepeaterMode::On;
     let _ = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     mac
 }
@@ -13681,7 +13702,7 @@ fn a_real_repeater_rewrite_confirms_the_senders_repeat_only_entry() {
     let original = sender.radio().transmitted[0].clone();
 
     let mut repeater = make_mac();
-    repeater.repeater_config_mut().enabled = true;
+    repeater.repeater_config_mut().mode = RepeaterMode::On;
     repeater.repeater_config_mut().default_region = Some([0x78, 0x53]);
     let _ = repeater
         .add_identity(DummyIdentity::new([0x30; 32]))
@@ -13829,7 +13850,7 @@ fn same_packet_ignores_exactly_what_a_forwarder_may_rewrite() {
 /// returning the rewrite it queued and the router hint it signs it with.
 fn forward_through(seed: u8, frame: &[u8]) -> (heapless::Vec<u8, 256>, RouterHint) {
     let mut repeater = make_mac();
-    repeater.repeater_config_mut().enabled = true;
+    repeater.repeater_config_mut().mode = RepeaterMode::On;
     repeater.repeater_config_mut().default_region = Some([0x78, 0x53]);
     let identity = DummyIdentity::new([seed; 32]);
     let hint = identity.public_key().router_hint();
@@ -14653,7 +14674,7 @@ fn build_modeled_line_scenario(node_count: usize) -> ModeledScenario {
         let radio = network.add_radio_with_config(256, 50);
         radio_ids.push(radio.id());
         let mut mac = crate::test_support::make_modeled_test_mac(radio, clock.clone());
-        mac.repeater_config_mut().enabled = index > 0 && index + 1 < node_count;
+        mac.repeater_config_mut().mode = (index > 0 && index + 1 < node_count).into();
         let id = mac
             .add_identity(crate::test_support::DummyIdentity::new(
                 [0x10u8.wrapping_add(index as u8); 32],

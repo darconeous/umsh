@@ -36,7 +36,7 @@ use umsh_ulcp::gnss::GnssSnapshot;
 use umsh_ulcp::hdlc;
 use umsh_ulcp::host::{PropertyNotification, PropertyNotificationKind, TidAllocator};
 use umsh_ulcp::i2c;
-use umsh_ulcp::ids::{self, cap, prop, stream};
+use umsh_ulcp::ids::{self, cap, prop, repeater_mode, stream};
 use umsh_ulcp::items;
 use umsh_ulcp::meta::{
     BufferedRxMeta, RX_FLAG_ACKED, RX_FLAG_BUFFERED, RX_FLAG_SELF_TX, RxMeta, TX_FLAG_NOCCA, TxMeta,
@@ -539,9 +539,10 @@ impl DeviceSync {
 /// the same shape [`decode_opt_i16`] returns.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RepeaterPolicy {
-    /// `PROP_MAC_REPEATER_ENABLED`: whether the on-board node forwards at
-    /// all. The remaining fields are inert while this is false.
-    pub enabled: Option<bool>,
+    /// `PROP_MAC_REPEATER_MODE`: whether, and how eagerly, the on-board
+    /// node forwards. The remaining fields are inert while this is
+    /// [`RepeaterMode::Off`].
+    pub mode: Option<RepeaterMode>,
     /// `PROP_MAC_REPEATER_REGIONS`: which region-tagged floods to forward,
     /// as the strings an operator wrote—a short code, a name, or a
     /// literal `0x1234`. Empty imposes no regional restriction. The
@@ -557,6 +558,45 @@ pub struct RepeaterPolicy {
     pub min_rssi: Option<Option<i16>>,
     /// `PROP_MAC_REPEATER_MIN_SNR` in dB. `Some(None)` accepts any.
     pub min_snr: Option<Option<i8>>,
+}
+
+/// `PROP_MAC_REPEATER_MODE`: whether, and how eagerly, a device's on-board
+/// node forwards other nodes' traffic.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RepeaterMode {
+    /// The node carries only its own traffic.
+    Off,
+    /// An ordinary repeater.
+    On,
+    /// Honors every source-routed hop and flood-forwards only what no
+    /// ordinary repeater was heard carrying.
+    Adaptive,
+}
+
+impl RepeaterMode {
+    /// The mode a property value names, or `None` for one not assigned.
+    pub fn from_byte(byte: u8) -> Option<Self> {
+        match byte {
+            repeater_mode::OFF => Some(Self::Off),
+            repeater_mode::ON => Some(Self::On),
+            repeater_mode::ADAPTIVE => Some(Self::Adaptive),
+            _ => None,
+        }
+    }
+
+    /// The property value for this mode.
+    pub fn as_byte(self) -> u8 {
+        match self {
+            Self::Off => repeater_mode::OFF,
+            Self::On => repeater_mode::ON,
+            Self::Adaptive => repeater_mode::ADAPTIVE,
+        }
+    }
+
+    /// Whether the node forwards at all.
+    pub fn forwards(self) -> bool {
+        self != Self::Off
+    }
 }
 
 /// How MeshCore transport codes gate flood forwarding
@@ -1969,7 +2009,7 @@ where
     /// `Ok(None)` means the device does not advertise `CAP_REPEATER`.
     pub async fn repeater_policy(&mut self) -> Result<Option<RepeaterPolicy>, UlcpError> {
         const KEYS: [u32; 5] = [
-            prop::MAC_REPEATER_ENABLED,
+            prop::MAC_REPEATER_MODE,
             prop::MAC_REPEATER_REGIONS,
             prop::MAC_REPEATER_DEFAULT_REGION,
             prop::MAC_REPEATER_MIN_RSSI,
@@ -1978,9 +2018,12 @@ where
         let Some(answers) = self.read_gated(cap::REPEATER, &KEYS).await? else {
             return Ok(None);
         };
-        let [enabled, regions, default_region, min_rssi, min_snr] = positions(answers)?;
+        let [mode, regions, default_region, min_rssi, min_snr] = positions(answers)?;
         Ok(Some(RepeaterPolicy {
-            enabled: reported(&enabled, decode_bool),
+            mode: reported(&mode, |value| match value {
+                [byte] => RepeaterMode::from_byte(*byte),
+                _ => None,
+            }),
             regions: reported(&regions, |value| Some(decode_region_list(value))),
             default_region: reported(&default_region, |value| decode_region_code(value).ok()),
             min_rssi: reported(&min_rssi, decode_opt_i16),
@@ -5569,7 +5612,7 @@ mod tests {
     async fn a_policy_with_a_refused_member_reports_the_rest() {
         let mut radio = scripted(
             answering(|key| match key {
-                prop::MAC_REPEATER_ENABLED => Ok(vec![2]),
+                prop::MAC_REPEATER_MODE => Ok(vec![2]),
                 prop::MAC_REPEATER_REGIONS => Err(Status::PROP_NOT_FOUND),
                 prop::MAC_REPEATER_DEFAULT_REGION => Ok(vec![0x12, 0x34, 0xEE]),
                 prop::MAC_REPEATER_MIN_RSSI => Ok(vec![0xFF]),
@@ -5582,7 +5625,7 @@ mod tests {
         assert_eq!(
             policy,
             RepeaterPolicy {
-                enabled: Some(true),
+                mode: Some(RepeaterMode::Adaptive),
                 regions: None,
                 default_region: Some(Some(RegionCode::from_bytes([0x12, 0x34]))),
                 min_rssi: None,

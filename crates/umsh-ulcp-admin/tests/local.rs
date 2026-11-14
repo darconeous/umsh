@@ -186,16 +186,14 @@ fn one_bundle_fills_the_cache() {
 
     // A property the device does not have says so, once.
     assert!(matches!(
-        model.freshness(prop::MAC_REPEATER_ENABLED),
+        model.freshness(prop::MAC_REPEATER_MODE),
         Freshness::Unavailable(_)
     ));
     let events = events(&mut model);
     assert!(events.contains(&Event::Changed(prop::DEV_NAME)));
-    assert!(
-        events
-            .iter()
-            .any(|event| matches!(event, Event::Unavailable { key, .. } if *key == prop::MAC_REPEATER_ENABLED))
-    );
+    assert!(events.iter().any(
+        |event| matches!(event, Event::Unavailable { key, .. } if *key == prop::MAC_REPEATER_MODE)
+    ));
 
     // Once the capabilities are known, a refresh leaves out what the
     // device lacks and the constant it already has.
@@ -207,7 +205,7 @@ fn one_bundle_fills_the_cache() {
         .map(Result::unwrap)
         .collect();
     assert!(!asked.contains(&prop::CAPS));
-    assert!(!asked.contains(&prop::MAC_REPEATER_ENABLED));
+    assert!(!asked.contains(&prop::MAC_REPEATER_MODE));
     assert!(asked.contains(&prop::PHY_TX_POWER));
 }
 
@@ -250,7 +248,7 @@ fn a_write_reports_what_the_device_applied() {
 #[test]
 fn writes_the_device_cannot_take_never_leave() {
     let (mut model, exchange) = device();
-    assert_eq!(model.set_forwarding(true), Err(Refusal::Unsupported));
+    assert_eq!(model.set_forwarding(1), Err(Refusal::Unsupported));
     assert_eq!(
         model.set_lan_bearer_enabled(true),
         Err(Refusal::Unsupported)

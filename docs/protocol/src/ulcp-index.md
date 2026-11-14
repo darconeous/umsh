@@ -68,7 +68,7 @@ Id   | Mnemonic                                                                 
 67   | [`PROP_DEV_PEERS`](ulcp-device.md#prop-dev-peers)                                     | Get, Set, Insert, Remove   | `CAP_DEV_IDENTITY`
 68   | [`PROP_DEV_NAME`](ulcp-device.md#prop-dev-name)                                       | Get, Set                   | `CAP_DEV_NAME`
 69   | [`PROP_BATTERY`](ulcp-device.md#prop-battery)                                         | Get, Is                    | `CAP_BATTERY`
-70   | [`PROP_MAC_REPEATER_ENABLED`](ulcp-device.md#prop-mac-repeater-enabled)               | Get, Set                   | `CAP_REPEATER`
+70   | [`PROP_MAC_REPEATER_MODE`](ulcp-device.md#prop-mac-repeater-mode)               | Get, Set                   | `CAP_REPEATER`
 71   | [`PROP_IDENT`](ulcp-device.md#prop-ident)                                             | Get                        | `CAP_IDENT`
 72   | [`PROP_IDENT_ROLE`](ulcp-device.md#prop-ident-role)                                   | Get, Set                   | `CAP_IDENT`
 73   | [`PROP_IDENT_MOBILE`](ulcp-device.md#prop-ident-mobile)                               | Get, Set                   | `CAP_IDENT`
@@ -84,6 +84,7 @@ Id   | Mnemonic                                                                 
 83   | [`PROP_IDENT_LOCATION`](ulcp-device.md#prop-ident-location)                           | Get, Set                   | `CAP_IDENT`
 84   | [`PROP_IDENT_ALTITUDE`](ulcp-device.md#prop-ident-altitude)                           | Get, Set                   | `CAP_IDENT`
 85   | [`PROP_IDENT_CONTACT`](ulcp-device.md#prop-ident-contact)                             | Get                        | `CAP_IDENT`
+86   | [`PROP_MAC_REPEATER_STATE`](ulcp-device.md#prop-mac-repeater-state)                   | Get                        | `CAP_REPEATER`, `CAP_STATS`
 88   | [`PROP_GNSS_ENABLED`](ulcp-device.md#prop-gnss-enabled)                               | Get, Set                   | `CAP_GNSS`
 89   | [`PROP_GNSS_LOCATION`](ulcp-device.md#prop-gnss-location)                             | Get, Is                    | `CAP_GNSS`
 90   | [`PROP_GNSS_ALTITUDE`](ulcp-device.md#prop-gnss-altitude)                             | Get                        | `CAP_GNSS`
@@ -104,6 +105,7 @@ Id   | Mnemonic                                                                 
 105  | [`PROP_HOST_MUTED_PEERS`](ulcp-host.md#prop-host-muted-peers)                         | Get, Set, Insert, Remove   | `CAP_HOST_RX_QUEUE`
 113  | [`STR_PHY_RAW`](ulcp-transport.md#str-radio-raw)                                      | Send, Recv                 | —
 4820 | [`PROP_PHY_DUTY_NOW`](ulcp-radio.md#prop-phy-duty-now)                                | Get                        | `CAP_PHY_DUTY_LIMIT`
+4821 | [`PROP_PHY_RX_DUTY`](ulcp-radio.md#prop-phy-rx-duty)                                  | Get                        | `CAP_PHY_DUTY_LIMIT`
 4822 | [`PROP_PHY_DUTY_LIMIT`](ulcp-radio.md#prop-phy-duty-limit)                            | Get, Set                   | `CAP_PHY_DUTY_LIMIT`
 4832 | [`PROP_STAT_TX_PACKETS`](ulcp-radio.md#prop-stat-tx-packets)                          | Get, Set                   | `CAP_STATS`
 4833 | [`PROP_STAT_TX_CHANNEL_BUSY`](ulcp-radio.md#prop-stat-tx-channel-busy)                | Get, Set                   | `CAP_STATS`
@@ -127,6 +129,7 @@ Id   | Mnemonic                                                                 
 4851 | [`PROP_STAT_RADIO_RESETS`](ulcp-radio.md#prop-stat-radio-resets)                      | Get, Set                   | `CAP_STATS`
 4852 | [`PROP_STAT_HOST_RX_DROPPED`](ulcp-radio.md#prop-stat-host-rx-dropped)                | Get, Set                   | `CAP_STATS`
 4853 | [`PROP_STAT_HOST_OUT_DROPPED`](ulcp-radio.md#prop-stat-host-out-dropped)              | Get, Set                   | `CAP_STATS`
+4854 | [`PROP_MAC_REPEATERS_HEARD`](ulcp-radio.md#prop-mac-repeaters-heard)                  | Get                        | `CAP_STATS`, `CAP_REPEATER`
 4864 | [`PROP_BLE_PAIRING_PIN`](ulcp-ble.md#prop-ble-pairing-pin)                            | Set                        | BLE transport
 4865 | [`PROP_DEV_ADMINS`](app-node-management.md#prop-dev-admins)                           | Get, Set, Insert, Remove   | `CAP_ADMIN`
 4866 | [`PROP_TIME`](ulcp-device.md#prop-time)                                               | Get, Set, Is               | `CAP_TIME`
@@ -288,6 +291,8 @@ Charge states | 0 discharging, 1 charging, 2 charged, 3 not charging | [`PROP_BA
 Alert states | 0 `ALERT_NONE`, 1 `ALERT_LOCATE` | [`PROP_ALERT`](ulcp-device.md#prop-alert)
 Keyboard aids | bit 0 `KEYBOARD_AID_CAPITALIZE`, bit 1 `KEYBOARD_AID_PERIOD` | [`PROP_KEYBOARD_AIDS`](ulcp-device.md#prop-keyboard-aids)
 Fix quality | 0 none, 1 two-dimensional, 2 three-dimensional | [`PROP_GNSS_FIX`](ulcp-device.md#prop-gnss-fix)
+Repeater modes | 0 off, 1 on, 2 adaptive | [`PROP_MAC_REPEATER_MODE`](ulcp-device.md#prop-mac-repeater-mode)
+Repeater states | 0 off, 1 forwarding, 2 standby, 3 engaged, 4 withheld | [`PROP_MAC_REPEATER_STATE`](ulcp-device.md#prop-mac-repeater-state)
 MeshCore region policies | 0 open, 1 scoped only, 2 ignore | [`PROP_MESHCORE_REGION_POLICY`](ulcp-device.md#prop-meshcore-region-policy)
 Transmit flags | bit 0 `TX_FLAG_NOCCA`, bit 1 `TX_FLAG_NODUTY` | [`STR_PHY_RAW`](ulcp-transport.md#str-radio-raw)
 Receive flags | bit 0 `RX_FLAG_BUFFERED`, bit 1 `RX_FLAG_ACKED`, bit 2 `RX_FLAG_SELF_TX` | [Extended Recv Metadata](ulcp-transport.md#buffered-metadata)

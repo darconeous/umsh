@@ -147,7 +147,7 @@ After transmitting, the node listens for the same packet—identified by its [ca
 confirm_timeout = 2 × T_frame + W_max + 2 × W_jitter + D_ack
 ```
 
-where `W_max + 2 × W_jitter` bounds the intentional forwarding delay permitted for the path, including the wait of a repeater that heard the packet below the contention band, and `D_ack` is the [ACK protection interval](channel-access.md#ack-protection-interval) when it applies. With the suggested defaults `W_max = T_frame/2`, `W_jitter = T_frame/10`, and `D_ack = 0.25 × T_frame`, this yields `confirm_timeout = 2.95 × T_frame`.
+where `W_max + 2 × W_jitter` bounds the intentional forwarding delay permitted for the path, including the wait of a repeater that heard the packet below the contention band, and `D_ack` is the [ACK protection interval](channel-access.md#ack-protection-interval) when it applies. An [adaptive forwarder](#adaptive-forwarding) waits up to twice that bound; the guard margin in the timeout [covers the difference](channel-access.md#adaptive-forwarders). With the suggested defaults `W_max = T_frame/2`, `W_jitter = T_frame/10`, and `D_ack = 0.25 × T_frame`, this yields `confirm_timeout = 2.95 × T_frame`.
 
 If the packet is heard before `confirm_timeout` expires, forwarding is confirmed. A copy received from an [IP multicast group](ip-multicast.md#channel-access) confirms as one heard on the air does.
 
@@ -222,6 +222,32 @@ For flood-forwarding repeaters that have accepted a packet for forwarding but ha
 3. on overhearing a third copy, abandon the pending forward
 
 This behavior is still provisional and should be validated empirically. The intent is to reduce near-simultaneous forwarding while still allowing a second or third repeater to contribute if an earlier forward was not widely heard.
+
+## Adaptive Forwarding
+
+An **adaptive forwarder** is a node that carries what would otherwise go uncarried and stays quiet when a repeater has carried it. It suits a device someone carries: beside fixed repeaters it adds nothing to the channel, and where there are none it is the coverage.
+
+It follows the [forwarding procedure](#forwarding-procedure) as a repeater does, with these differences:
+
+- **Source-routed hops are forwarded as a repeater forwards them**, without delay and whatever state the forwarder is in. A route that names the forwarder was chosen by its owner, and nothing tells that owner the hop was declined.
+- **Flood hops contend in a later window**, which opens once every repeater's has closed ([Adaptive Forwarders](channel-access.md#adaptive-forwarders)). A repeater in range always transmits first, and its record is the one a trace carries.
+- **In standby, the first overheard carry ends the forward.** A repeater defers twice and abandons on the third copy; an adaptive forwarder in standby abandons on the first.
+
+An adaptive forwarder is in one of three states:
+
+| State | Flood forwarding |
+|---|---|
+| Standby | Later window; abandons on the first overheard carry |
+| Engaged | Later window; defers and abandons as a repeater does |
+| Withheld | None |
+
+It is **engaged** for a hold period after one of its flood forwards airs; 30 minutes is a reasonable default. A flood forward that airs was carried by nobody else, so some neighbor depends on this node, and the traffic returning to that neighbor arrives as other repeaters' forwards, which a forwarder in standby gives way to. A source-routed hop does not engage it.
+
+It is **withheld** while the channel is busy and repeaters are plentiful: a packet nobody was heard carrying is then more likely lost to congestion than to a gap in coverage, and another copy adds to the congestion. A reasonable default is a tenth or more of the past hour occupied by other transmitters, together with four or more repeaters heard in that hour. A forward withheld does not engage the forwarder. Without a measure of channel occupancy a forwarder is never withheld.
+
+An adaptive forwarder sets the `REP` [capability bit](node-identity.md#capability-bitmap), and SHOULD NOT present itself with the Repeater role.
+
+The states are local. Nothing on the air distinguishes an adaptive forwarder's copy of a packet from a repeater's.
 
 ## Routing Implications
 

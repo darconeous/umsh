@@ -171,7 +171,7 @@ struct DeviceSettingsView: View {
         case .forwarding:
             if draft.showsRepeater {
                 RepeaterSettingsSection(
-                    enabled: $draft.repeaterEnabled,
+                    mode: $draft.repeaterMode,
                     regions: $draft.regions,
                     defaultRegion: $draft.defaultRegion,
                     minRssiDBm: $draft.minRssiDBm,

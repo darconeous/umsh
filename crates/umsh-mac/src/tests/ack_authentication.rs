@@ -68,7 +68,7 @@ fn endpoint(seed: u8, peer: &DummyIdentity) -> (AckMac, LocalIdentityId) {
 
 fn repeater(seed: u8) -> AckMac {
     let mut mac = make_ack_mac();
-    mac.repeater_config_mut().enabled = true;
+    mac.repeater_config_mut().mode = crate::RepeaterMode::On;
     mac.add_identity(DummyIdentity::new([seed; 32])).unwrap();
     mac
 }

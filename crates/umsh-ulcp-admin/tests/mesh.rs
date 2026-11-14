@@ -373,7 +373,7 @@ fn a_distant_device_fills_the_cache_without_being_waited_on() {
 
     settle(&mut model, &mut link);
     assert_eq!(model.device_name(), Some("Ridgeline"));
-    assert_eq!(model.forwarding(), Some(false));
+    assert_eq!(model.forwarding(), Some(0));
     assert_eq!(model.has_cap(cap::REPEATER), Some(true));
     assert_eq!(model.tx_power_dbm(), Some(14));
     assert!(matches!(
@@ -442,7 +442,7 @@ fn a_write_stays_pending_until_its_answer_lands() {
 fn requests_made_while_one_is_out_wait_their_turn() {
     let (mut model, mut link) = mesh::<PAYLOAD>();
     let name = model.set_device_name("Saddle").unwrap();
-    let forwarding = model.set_forwarding(true).unwrap();
+    let forwarding = model.set_forwarding(1).unwrap();
     model.read(prop::PHY_DUTY_NOW);
     pump(&mut model, &mut link);
     assert_eq!(model.in_flight(), 1);
@@ -466,11 +466,11 @@ fn requests_made_while_one_is_out_wait_their_turn() {
         written,
         [
             (prop::DEV_NAME, WriteOutcome::Applied),
-            (prop::MAC_REPEATER_ENABLED, WriteOutcome::Applied),
+            (prop::MAC_REPEATER_MODE, WriteOutcome::Applied),
         ]
     );
     assert_eq!(link.device.local_get(prop::DEV_NAME), b"Saddle");
-    assert_eq!(model.forwarding(), Some(true));
+    assert_eq!(model.forwarding(), Some(1));
 }
 
 #[test]

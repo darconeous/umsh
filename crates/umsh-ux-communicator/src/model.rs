@@ -363,6 +363,11 @@ pub struct Statistics {
     pub meshcore_routed: Option<u32>,
     pub meshcore_flooded: Option<u32>,
     pub meshcore_declined: Option<u32>,
+    /// Repeaters heard in the past hour.
+    pub repeaters_heard: Option<u8>,
+    /// How much of the hour others' transmissions took, in tenths of a
+    /// percent.
+    pub received_airtime: Option<u16>,
 }
 
 /// What Device › About reads of the node.
@@ -609,6 +614,38 @@ pub enum Profile {
     Custom,
 }
 
+/// Whether, and how eagerly, a node repeats what it hears for others.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Forwarding {
+    #[default]
+    Off,
+    /// Repeats only what no repeater was heard repeating.
+    Adaptive,
+    On,
+}
+
+impl Forwarding {
+    /// What the setting is called.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Off => "Off",
+            Self::Adaptive => "Adaptive",
+            Self::On => "On",
+        }
+    }
+
+    /// The setting after this one, around again from the last.
+    #[must_use]
+    pub const fn next(self) -> Self {
+        match self {
+            Self::Off => Self::Adaptive,
+            Self::Adaptive => Self::On,
+            Self::On => Self::Off,
+        }
+    }
+}
+
 /// The radio's settings, and how much of its airtime it has spent.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RadioSettings {
@@ -617,8 +654,8 @@ pub struct RadioSettings {
     /// What it sends and listens on, which nodes must share to hear one
     /// another.
     pub profile: Profile,
-    /// Repeats what it hears for others.
-    pub forwarding: bool,
+    /// Whether, and how eagerly, it repeats what it hears for others.
+    pub forwarding: Forwarding,
     /// The radio's transmit power, in dBm.
     pub transmit_power: i8,
     /// How much of this hour's airtime is spent, in tenths of a percent.
@@ -1914,7 +1951,7 @@ pub trait Node {
     /// Turns the radio on or off.
     fn set_radio_enabled(&self, on: bool);
 
-    fn set_forwarding(&self, on: bool);
+    fn set_forwarding(&self, forwarding: Forwarding);
 
     /// Sets the radio's transmit power, within [`TRANSMIT_POWER`].
     fn set_transmit_power(&self, dbm: i8);

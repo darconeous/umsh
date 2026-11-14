@@ -97,6 +97,17 @@ pub(crate) fn carried_onward(sent: &[u8], heard: &[u8]) -> bool {
     }
 }
 
+/// Whether `heard` is a copy of the packet at least as far along its path as
+/// `pending`, a forward of it waiting to be sent: another forwarder's copy
+/// from the same hop, or one from further on. A copy from behind, the
+/// previous hop sending again, is not.
+pub(crate) fn carried_as_far(pending: &[u8], heard: &[u8]) -> bool {
+    match (path_progress(pending), path_progress(heard)) {
+        (Some(pending), Some(heard)) => heard >= pending,
+        _ => false,
+    }
+}
+
 /// How far along its path `frame` is, ordered so that later is greater:
 /// source-route hints left, fewer first, then flood hops spent.
 fn path_progress(frame: &[u8]) -> Option<(core::cmp::Reverse<usize>, u8)> {

@@ -649,7 +649,7 @@ infrastructure wins:
 |---|---|
 | Fixed repeater | 0 |
 | Mobile repeater (mobile bit set) | + W_max / 2 |
-| Auto-mode forwarder (M11) | + W_max |
+| Auto-mode forwarder (M11) | + W_max + 2 × W_jitter |
 
 Mobile repeaters and handhelds still forward when nobody else does—the
 offset delays them, it does not exclude them—but the trace of a packet that
@@ -661,6 +661,14 @@ delay. Class offsets extend that worst case; the timeout formula must
 include the largest offset a sender can expect, or senders will retry into
 a repeater that was about to forward. This is spec text in
 `channel-access.md`, not a wire change.
+
+The auto-mode offset landed on 2026-11-13, as the latest moment an
+ordinary repeater may still be waiting, with the timeout left at
+2.95 × `T_frame`: the adaptive window ends 1.65 × `T_frame` after the
+reception, and the guard margin covers a maximum-length forward from
+there. A retry that does arrive early no longer cancels the forward,
+because a copy from behind is not counted as a carry. The mobile-repeater
+offset has not landed.
 
 ### M11. Auto forwarding mode *(local policy, ULCP surface)*
 
@@ -674,7 +682,7 @@ and a table of heard repeaters cannot tell it so. What can tell it is the
 packet itself: an auto forwarder that receives a flood with budget
 remaining and hears no forward of it during a full contention window is,
 for that packet, the coverage nobody else provided. Auto mode is therefore
-a per-packet decision, not a state machine:
+a per-packet decision first, with two pieces of state around it (below):
 
 - always eligible, never first: the auto class carries the largest
   contention offset (M10), so every fixed and every explicit mobile
@@ -690,6 +698,28 @@ a per-packet decision, not a state machine:
 - bounded by its own duty budget and a battery floor, below which the node
   stops carrying others' traffic whatever it hears;
 - never inserting a region code.
+
+As landed on 2026-11-13 (the spec calls it *adaptive forwarding*), three
+of these differ. Adaptive forwarders are ranked among themselves by
+reception, as repeaters are, not by a packet hash. The node's duty budget
+and battery do not yet bound what it carries; the deferred duty reserve
+for forwarded traffic is the place for that. And the operator's default
+region is inserted as an ordinary repeater inserts it.
+
+Two pieces of state were added:
+
+- **Engaged.** A pure per-packet rule loses inbound traffic: an adaptive
+  node that hears two upstream hops gives way to the second, and the
+  neighbor behind it, whose outbound packet it just carried, never hears
+  the reply. So for 30 minutes after one of its flood forwards airs, the
+  node tolerates as many overheard copies as a repeater does. It keeps
+  the late window, so fixed repeaters still win the traces.
+- **Withheld.** With a tenth of the past hour occupied by others and four
+  or more repeaters heard, the node floods nothing: a packet nobody was
+  heard carrying is then more likely lost to congestion than to a gap in
+  coverage. Both thresholds are provisional.
+
+Source-routed hops are forwarded in every state.
 
 The link table still matters, as a soft input: a confirmed fixed repeater
 heard well lengthens the auto window further, and a neighborhood that just
@@ -715,12 +745,12 @@ Trickle-style suppression ([RFC 6206](https://www.rfc-editor.org/rfc/rfc6206)),
 but OLSR's symmetric-neighbor assumption would have to be replaced by the
 directed evidence in M6 first. Not proposed now.
 
-On the ULCP side `PROP_MAC_REPEATER_ENABLED` is a BOOL and the MAC's
-`RepeaterConfig.enabled` is a bool, so this is either a new tri-state
-property or a sibling *auto* flag that the enabled bit reports the live
-result of. The advertised role stays under the operator's control as it is
-now; the capability bit tracks the live state as the spec already
-requires.
+On the ULCP side `PROP_MAC_REPEATER_MODE` is the tri-state (0 off, 1 on,
+2 adaptive) and the MAC's `RepeaterConfig.mode` matches it;
+`PROP_MAC_REPEATER_STATE` reports standby, engaged, or withheld. The
+advertised role stays under the operator's control as it is now, and an
+adaptive forwarder with no role configured does not derive Repeater; the
+capability bit is set whenever the mode is not off.
 
 ## What landed on 2026-10-09
 

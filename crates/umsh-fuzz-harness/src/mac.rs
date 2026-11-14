@@ -331,7 +331,7 @@ impl<const PEERS: usize, const HOLDS: usize> Station<PEERS, HOLDS> {
         let clock = DummyClock::new(1);
         let store = FaultyCounterStore::default();
         let repeater = RepeaterConfig {
-            enabled: repeating,
+            mode: repeating.into(),
             default_region,
             min_rssi,
             min_snr,

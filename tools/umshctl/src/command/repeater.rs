@@ -9,7 +9,7 @@
 use anyhow::{Result, bail};
 
 use umsh::core::RegionCode;
-use umsh::ulcp::{MeshCoreRegionPolicy, UlcpError, meshcore_identity_allowed};
+use umsh::ulcp::{MeshCoreRegionPolicy, RepeaterMode, UlcpError, meshcore_identity_allowed};
 use umsh::ulcp_wire::Status;
 use umsh::ulcp_wire::ids::prop;
 
@@ -27,6 +27,8 @@ pub enum RepeaterOp {
     Show,
     /// Forward overheard frames and advertise as a repeater.
     On,
+    /// Forward only what no repeater was heard carrying.
+    Adaptive,
     /// Stop forwarding.
     Off,
     /// Only flood-forward packets tagged with one of these regions.
@@ -139,7 +141,7 @@ pub async fn run(app: &mut App, op: Option<RepeaterOp>) -> Result<()> {
             let Some(policy) = device.repeater_policy().await? else {
                 bail!("device does not advertise CAP_REPEATER");
             };
-            print_enabled(policy.enabled.map(u8::from));
+            print_mode(policy.mode.map(RepeaterMode::as_byte));
             subfield(
                 "regions",
                 or_unavailable(policy.regions.as_deref(), format_regions),
@@ -187,7 +189,7 @@ pub async fn run(app: &mut App, op: Option<RepeaterOp>) -> Result<()> {
                     ));
                 }
             }
-            if policy.enabled == Some(true)
+            if policy.mode.is_some_and(RepeaterMode::forwards)
                 && let (Some(Some(code)), Some(regions)) = (policy.default_region, &policy.regions)
                 && !regions.is_empty()
                 && !region_codes(regions).contains(&code)
@@ -203,8 +205,9 @@ pub async fn run(app: &mut App, op: Option<RepeaterOp>) -> Result<()> {
             }
             return Ok(());
         }
-        RepeaterOp::On => set_enabled(device, true).await?,
-        RepeaterOp::Off => set_enabled(device, false).await?,
+        RepeaterOp::On => set_mode(device, RepeaterMode::On).await?,
+        RepeaterOp::Adaptive => set_mode(device, RepeaterMode::Adaptive).await?,
+        RepeaterOp::Off => set_mode(device, RepeaterMode::Off).await?,
         RepeaterOp::Regions { op } => match op.unwrap_or(RegionOp::List) {
             RegionOp::List => {
                 let regions = device.repeater_regions().await?;
@@ -316,21 +319,28 @@ async fn identity_allowed(
     Ok(<[u8; 32]>::try_from(key.as_slice()).map_or(true, |key| meshcore_identity_allowed(&key)))
 }
 
-async fn set_enabled(
+async fn set_mode(
     device: &mut umsh::ulcp::UlcpDevice<crate::connection::SessionLink>,
-    enabled: bool,
+    mode: RepeaterMode,
 ) -> Result<()> {
     let echoed = device
-        .set_prop(prop::MAC_REPEATER_ENABLED, &[enabled as u8])
+        .set_prop(prop::MAC_REPEATER_MODE, &[mode.as_byte()])
         .await?;
-    print_enabled(echoed.first().copied());
+    print_mode(echoed.first().copied());
     Ok(())
 }
 
-fn print_enabled(byte: Option<u8>) {
-    match byte {
-        Some(0) => println!("repeater off"),
-        Some(_) => println!("repeater on (on-board node forwards overheard frames)"),
+fn print_mode(byte: Option<u8>) {
+    match byte.map(RepeaterMode::from_byte) {
+        Some(Some(RepeaterMode::Off)) => println!("repeater off"),
+        Some(Some(RepeaterMode::On)) => {
+            println!("repeater on (on-board node forwards overheard frames)")
+        }
+        Some(Some(RepeaterMode::Adaptive)) => {
+            println!("repeater adaptive (forwards what no repeater was heard carrying)")
+        }
+        // A mode this tool does not know still forwards.
+        Some(None) => println!("repeater on (mode {})", byte.unwrap_or_default()),
         None => println!("repeater state {UNAVAILABLE}"),
     }
 }

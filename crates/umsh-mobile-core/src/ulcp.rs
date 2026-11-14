@@ -96,9 +96,9 @@ impl UlcpChargeState {
 /// [`region_code_description`] convert between the two.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct UlcpRepeaterSettingsRecord {
-    /// `PROP_MAC_REPEATER_ENABLED`. The remaining fields are inert while
-    /// this is false, but are still read and written.
-    pub enabled: bool,
+    /// `PROP_MAC_REPEATER_MODE`: 0 off, 1 on, 2 adaptive. The remaining
+    /// fields are inert while this is off, but are still read and written.
+    pub mode: u8,
     /// `PROP_MAC_REPEATER_REGIONS`: which region-tagged floods to
     /// forward, as region strings of 1 to 24 octets—a short code, a
     /// name, or a literal `0x1234`. Empty imposes no regional
@@ -118,7 +118,7 @@ pub struct UlcpRepeaterSettingsRecord {
 ///
 /// Kept apart from [`UlcpRepeaterSettingsRecord`] because it rides on a
 /// capability of its own (`CAP_MESHCORE_FORWARDER`) and runs independently
-/// of `PROP_MAC_REPEATER_ENABLED`. Read and written as a set, `enabled`
+/// of `PROP_MAC_REPEATER_MODE`. Read and written as a set, `enabled`
 /// last.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct UlcpMeshCoreSettingsRecord {
@@ -4484,7 +4484,7 @@ pub fn ulcp_inspection_properties(capabilities: Vec<u8>) -> Result<Vec<u32>, Mob
     }
     if has(cap::REPEATER) {
         properties.extend([
-            prop::MAC_REPEATER_ENABLED,
+            prop::MAC_REPEATER_MODE,
             prop::MAC_REPEATER_REGIONS,
             prop::MAC_REPEATER_DEFAULT_REGION,
             prop::MAC_REPEATER_MIN_RSSI,
@@ -4675,7 +4675,7 @@ pub fn inspect_ulcp_sync(
     // Every part of the policy is read before any of it is required, so one
     // unreadable property does not hide the others behind it.
     let forwards = has(cap::REPEATER);
-    let repeater_enabled = expected.read(forwards, prop::MAC_REPEATER_ENABLED, decode_bool);
+    let repeater_mode = expected.read(forwards, prop::MAC_REPEATER_MODE, decode_u8);
     let regions = expected.read(forwards, prop::MAC_REPEATER_REGIONS, decode_region_list);
     let default_region = expected.read(
         forwards,
@@ -4690,7 +4690,7 @@ pub fn inspect_ulcp_sync(
     });
     let repeater = (|| {
         Some(UlcpRepeaterSettingsRecord {
-            enabled: repeater_enabled?,
+            mode: repeater_mode?,
             regions: regions?,
             default_region: default_region?,
             min_rssi_dbm: min_rssi_dbm?,
@@ -4930,6 +4930,7 @@ pub struct UlcpManagedPropertyIds {
     pub lora_spreading_factor: u32,
     pub lora_coding_rate: u32,
     pub duty_cycle_now: u32,
+    pub rx_duty_cycle: u32,
     pub duty_cycle_limit: u32,
     pub stat_tx_packets: u32,
     pub stat_tx_channel_busy: u32,
@@ -4941,6 +4942,7 @@ pub struct UlcpManagedPropertyIds {
     pub stat_forwarded: u32,
     pub stat_forward_dropped: u32,
     pub stat_forward_cancelled: u32,
+    pub repeaters_heard: u32,
     pub stat_meshcore_seen: u32,
     pub stat_meshcore_forwarded_routed: u32,
     pub stat_meshcore_forwarded_flood: u32,
@@ -4993,7 +4995,8 @@ pub struct UlcpManagedPropertyIds {
     pub tz_rule: u32,
     pub time_24h: u32,
     pub alert: u32,
-    pub repeater_enabled: u32,
+    pub repeater_mode: u32,
+    pub repeater_state: u32,
     pub repeater_regions: u32,
     pub repeater_default_region: u32,
     pub repeater_min_rssi: u32,
@@ -5039,6 +5042,7 @@ pub fn ulcp_managed_property_ids() -> UlcpManagedPropertyIds {
         lora_spreading_factor: prop::PHY_LORA_SF,
         lora_coding_rate: prop::PHY_LORA_CR,
         duty_cycle_now: prop::PHY_DUTY_NOW,
+        rx_duty_cycle: prop::PHY_RX_DUTY,
         duty_cycle_limit: prop::PHY_DUTY_LIMIT,
         stat_tx_packets: prop::STAT_TX_PACKETS,
         stat_tx_channel_busy: prop::STAT_TX_CHANNEL_BUSY,
@@ -5050,6 +5054,7 @@ pub fn ulcp_managed_property_ids() -> UlcpManagedPropertyIds {
         stat_forwarded: prop::STAT_FORWARDED,
         stat_forward_dropped: prop::STAT_FORWARD_DROPPED,
         stat_forward_cancelled: prop::STAT_FORWARD_CANCELLED,
+        repeaters_heard: prop::MAC_REPEATERS_HEARD,
         stat_meshcore_seen: prop::STAT_MESHCORE_SEEN,
         stat_meshcore_forwarded_routed: prop::STAT_MESHCORE_FORWARDED_ROUTED,
         stat_meshcore_forwarded_flood: prop::STAT_MESHCORE_FORWARDED_FLOOD,
@@ -5102,7 +5107,8 @@ pub fn ulcp_managed_property_ids() -> UlcpManagedPropertyIds {
         tz_rule: prop::TZ_RULE,
         time_24h: prop::TIME_24H,
         alert: prop::ALERT,
-        repeater_enabled: prop::MAC_REPEATER_ENABLED,
+        repeater_mode: prop::MAC_REPEATER_MODE,
+        repeater_state: prop::MAC_REPEATER_STATE,
         repeater_regions: prop::MAC_REPEATER_REGIONS,
         repeater_default_region: prop::MAC_REPEATER_DEFAULT_REGION,
         repeater_min_rssi: prop::MAC_REPEATER_MIN_RSSI,
@@ -5192,6 +5198,11 @@ pub fn ulcp_category_properties(
             );
             // Discovered per property: older firmware answers it with a status.
             when(has(cap::STATS), &[prop::STAT_RADIO_RESETS]);
+            when(has(cap::STATS), &[prop::PHY_RX_DUTY]);
+            when(
+                has(cap::STATS) && has(cap::REPEATER),
+                &[prop::MAC_REPEATERS_HEARD],
+            );
             when(
                 has(cap::STATS) && has(cap::REPEATER),
                 &[
@@ -5337,7 +5348,7 @@ pub fn ulcp_category_properties(
                     prop::BRIDGE_SERVER_KEY,
                     prop::BRIDGE_LINK,
                     prop::DEV_KEY,
-                    prop::MAC_REPEATER_ENABLED,
+                    prop::MAC_REPEATER_MODE,
                 ],
             );
             // A device that can forward between the group and its LoRa
@@ -5357,12 +5368,17 @@ pub fn ulcp_category_properties(
             when(
                 has(cap::REPEATER),
                 &[
-                    prop::MAC_REPEATER_ENABLED,
+                    prop::MAC_REPEATER_MODE,
                     prop::MAC_REPEATER_REGIONS,
                     prop::MAC_REPEATER_DEFAULT_REGION,
                     prop::MAC_REPEATER_MIN_RSSI,
                     prop::MAC_REPEATER_MIN_SNR,
                 ],
+            );
+            // Discovered per property: older firmware answers it with a status.
+            when(
+                has(cap::REPEATER) && has(cap::STATS),
+                &[prop::MAC_REPEATER_STATE],
             );
             // The identity key decides whether MeshCore forwarding can be
             // turned on at all, so the screen needs it alongside.
@@ -5697,6 +5713,9 @@ pub struct UlcpDevicePropertiesRecord {
     pub spreading_factor: Option<u8>,
     pub coding_rate_denom: Option<u8>,
     pub duty_cycle_now: Option<u16>,
+    /// `PROP_PHY_RX_DUTY`: the share of the past hour other transmitters
+    /// occupied the channel, on the scale of `duty_cycle_now`.
+    pub rx_duty_cycle: Option<u16>,
     pub duty_cycle_limit: Option<u16>,
     pub stat_tx_packets: Option<u32>,
     pub stat_tx_channel_busy: Option<u32>,
@@ -5708,6 +5727,9 @@ pub struct UlcpDevicePropertiesRecord {
     pub stat_forwarded: Option<u32>,
     pub stat_forward_dropped: Option<u32>,
     pub stat_forward_cancelled: Option<u32>,
+    /// `PROP_MAC_REPEATERS_HEARD`: repeaters heard in the past hour. What
+    /// is so now, not a counter: a reset leaves it.
+    pub repeaters_heard: Option<u8>,
     pub stat_meshcore_seen: Option<u32>,
     pub stat_meshcore_forwarded_routed: Option<u32>,
     pub stat_meshcore_forwarded_flood: Option<u32>,
@@ -5799,7 +5821,11 @@ pub struct UlcpDevicePropertiesRecord {
     /// `PROP_TZ_RULE`, a POSIX TZ rule.
     pub tz_rule: Option<String>,
     pub time_24h: Option<bool>,
-    pub repeater_enabled: Option<bool>,
+    /// `PROP_MAC_REPEATER_MODE`: 0 off, 1 on, 2 adaptive.
+    pub repeater_mode: Option<u8>,
+    /// `PROP_MAC_REPEATER_STATE`: 0 off, 1 forwarding, 2 standby,
+    /// 3 engaged, 4 withheld. Read-only.
+    pub repeater_state: Option<u8>,
     pub repeater_regions: Option<Vec<String>>,
     pub repeater_default_region: Option<Vec<u8>>,
     pub repeater_min_rssi_dbm: Option<i16>,
@@ -5949,6 +5975,7 @@ pub fn inspect_ulcp_properties(
         spreading_factor: optional_value(at, prop::PHY_LORA_SF, decode_u8),
         coding_rate_denom: optional_value(at, prop::PHY_LORA_CR, decode_u8),
         duty_cycle_now: optional_value(at, prop::PHY_DUTY_NOW, decode_u16),
+        rx_duty_cycle: optional_value(at, prop::PHY_RX_DUTY, decode_u16),
         duty_cycle_limit: optional_value(at, prop::PHY_DUTY_LIMIT, decode_u16),
         stat_tx_packets: optional_value(at, prop::STAT_TX_PACKETS, decode_u32),
         stat_tx_channel_busy: optional_value(at, prop::STAT_TX_CHANNEL_BUSY, decode_u32),
@@ -5960,6 +5987,7 @@ pub fn inspect_ulcp_properties(
         stat_forwarded: optional_value(at, prop::STAT_FORWARDED, decode_u32),
         stat_forward_dropped: optional_value(at, prop::STAT_FORWARD_DROPPED, decode_u32),
         stat_forward_cancelled: optional_value(at, prop::STAT_FORWARD_CANCELLED, decode_u32),
+        repeaters_heard: optional_value(at, prop::MAC_REPEATERS_HEARD, decode_u8),
         stat_meshcore_seen: optional_value(at, prop::STAT_MESHCORE_SEEN, decode_u32),
         stat_meshcore_forwarded_routed: optional_value(
             at,
@@ -6048,7 +6076,8 @@ pub fn inspect_ulcp_properties(
         }),
         tz_rule: optional_value(at, prop::TZ_RULE, decode_tz_rule),
         time_24h: optional_value(at, prop::TIME_24H, decode_bool),
-        repeater_enabled: optional_value(at, prop::MAC_REPEATER_ENABLED, decode_bool),
+        repeater_mode: optional_value(at, prop::MAC_REPEATER_MODE, decode_u8),
+        repeater_state: optional_value(at, prop::MAC_REPEATER_STATE, decode_u8),
         repeater_regions: optional_value(at, prop::MAC_REPEATER_REGIONS, decode_region_list),
         repeater_default_region: optional_value(
             at,
@@ -6299,7 +6328,7 @@ pub fn ulcp_dirty_writes(
                 .to_le_bytes()
                 .to_vec(),
             prop::STARTUP_BEACON => vec![desired.startup_beacon.ok_or_else(missing)? as u8],
-            prop::MAC_REPEATER_ENABLED => vec![desired.repeater_enabled.ok_or_else(missing)? as u8],
+            prop::MAC_REPEATER_MODE => vec![desired.repeater_mode.ok_or_else(missing)?],
             prop::MAC_REPEATER_REGIONS => encode_region_list(
                 desired
                     .repeater_regions
@@ -6390,7 +6419,7 @@ pub fn ulcp_dirty_writes(
 const WHOLE_WRITE_GROUPS: [&[u32]; 5] = [
     &[prop::PHY_LORA_BW, prop::PHY_LORA_SF, prop::PHY_LORA_CR],
     &[
-        prop::MAC_REPEATER_ENABLED,
+        prop::MAC_REPEATER_MODE,
         prop::MAC_REPEATER_REGIONS,
         prop::MAC_REPEATER_DEFAULT_REGION,
         prop::MAC_REPEATER_MIN_RSSI,
@@ -6898,7 +6927,7 @@ fn validate_device_settings(
                     .map(|snr| vec![snr as u8])
                     .unwrap_or_default(),
             ),
-            (prop::MAC_REPEATER_ENABLED, vec![repeater.enabled as u8]),
+            (prop::MAC_REPEATER_MODE, vec![repeater.mode]),
         ]);
     }
 
@@ -8083,7 +8112,7 @@ mod tests {
             prop::PHY_T_FRAME => 1_200u32.to_le_bytes().to_vec(),
             prop::SAVED => vec![saved::CURRENT],
             prop::HOST_RX_FILTERS => Vec::new(),
-            prop::MAC_REPEATER_ENABLED => vec![0],
+            prop::MAC_REPEATER_MODE => vec![0],
             prop::MAC_REPEATER_REGIONS
             | prop::MAC_REPEATER_DEFAULT_REGION
             | prop::MAC_REPEATER_MIN_RSSI
@@ -9031,7 +9060,7 @@ mod tests {
         assert_eq!(
             provisioning.repeater,
             Some(UlcpRepeaterSettingsRecord {
-                enabled: false,
+                mode: 0,
                 regions: Vec::new(),
                 default_region: None,
                 min_rssi_dbm: None,
@@ -9066,7 +9095,7 @@ mod tests {
             response(prop::PHY_TX_POWER, &[14]),
             response(prop::SAVED, &[saved::CURRENT]),
             response(prop::HOST_RX_FILTERS, &[]),
-            response(prop::MAC_REPEATER_ENABLED, &[1]),
+            response(prop::MAC_REPEATER_MODE, &[1]),
             // SJC and SFO, the strings exactly as they were written.
             response(
                 prop::MAC_REPEATER_REGIONS,
@@ -9084,7 +9113,7 @@ mod tests {
         assert_eq!(
             sync.repeater,
             Some(UlcpRepeaterSettingsRecord {
-                enabled: true,
+                mode: 1,
                 regions: vec!["SJC".to_owned(), "SFO".to_owned()],
                 default_region: Some(vec![0x78, 0x53]),
                 min_rssi_dbm: Some(-115),
@@ -9106,7 +9135,7 @@ mod tests {
                 response(prop::PHY_FREQ, &915_000u32.to_le_bytes()),
                 response(prop::PHY_TX_POWER, &[14]),
                 response(prop::SAVED, &[saved::CURRENT]),
-                response(prop::MAC_REPEATER_ENABLED, &[0]),
+                response(prop::MAC_REPEATER_MODE, &[0]),
                 response(prop::MAC_REPEATER_REGIONS, &[]),
                 response(prop::MAC_REPEATER_DEFAULT_REGION, &[]),
                 response(prop::MAC_REPEATER_MIN_RSSI, &[]),
@@ -9192,7 +9221,7 @@ mod tests {
                 ident_mobile: Some(true),
                 dev_discoverable: Some(true),
                 repeater: Some(UlcpRepeaterSettingsRecord {
-                    enabled: false,
+                    mode: 0,
                     regions: Vec::new(),
                     default_region: None,
                     min_rssi_dbm: None,
@@ -9212,7 +9241,7 @@ mod tests {
         // forwarding under half a policy is worse than one left alone.
         assert!(!written.contains_key(&prop::DEV_DISCOVERABLE));
         for property in [
-            prop::MAC_REPEATER_ENABLED,
+            prop::MAC_REPEATER_MODE,
             prop::MAC_REPEATER_REGIONS,
             prop::MAC_REPEATER_DEFAULT_REGION,
             prop::MAC_REPEATER_MIN_RSSI,
@@ -9249,7 +9278,7 @@ mod tests {
                 ident_mobile: Some(false),
                 dev_discoverable: Some(false),
                 repeater: Some(UlcpRepeaterSettingsRecord {
-                    enabled: true,
+                    mode: 1,
                     regions: vec!["SJC".to_owned()],
                     default_region: Some(vec![0x78, 0x53]),
                     min_rssi_dbm: Some(-115),
@@ -9285,7 +9314,7 @@ mod tests {
                     (-115i16).to_le_bytes().to_vec()
                 ),
                 (prop::MAC_REPEATER_MIN_SNR, vec![(-7i8) as u8]),
-                (prop::MAC_REPEATER_ENABLED, vec![1]),
+                (prop::MAC_REPEATER_MODE, vec![1]),
                 (prop::PHY_ENABLED, vec![1]),
             ])
         );
@@ -9293,7 +9322,7 @@ mod tests {
         // forwards over—is in place.
         assert_eq!(
             &order[order.len() - 2..],
-            &[prop::MAC_REPEATER_ENABLED, prop::PHY_ENABLED]
+            &[prop::MAC_REPEATER_MODE, prop::PHY_ENABLED]
         );
 
         let attached = session
@@ -9310,7 +9339,7 @@ mod tests {
         assert_eq!(
             provisioning.repeater,
             Some(UlcpRepeaterSettingsRecord {
-                enabled: true,
+                mode: 1,
                 regions: vec!["SJC".to_owned()],
                 default_region: Some(vec![0x78, 0x53]),
                 min_rssi_dbm: Some(-115),
@@ -9335,7 +9364,7 @@ mod tests {
             duty_cycle_limit: None,
         };
         let repeater = UlcpRepeaterSettingsRecord {
-            enabled: true,
+            mode: 1,
             regions: Vec::new(),
             default_region: None,
             min_rssi_dbm: None,
@@ -9523,7 +9552,7 @@ mod tests {
             ident_mobile: Some(false),
             dev_discoverable: Some(true),
             repeater: Some(UlcpRepeaterSettingsRecord {
-                enabled: true,
+                mode: 1,
                 regions: Vec::new(),
                 default_region: None,
                 min_rssi_dbm: None,
@@ -9584,7 +9613,7 @@ mod tests {
         );
         assert!(at(prop::MESHCORE_REGION_POLICY) < at(prop::MESHCORE_FORWARDING_ENABLED));
         assert!(at(prop::MESHCORE_REGIONS) < at(prop::MESHCORE_FORWARDING_ENABLED));
-        assert!(at(prop::MESHCORE_FORWARDING_ENABLED) < at(prop::MAC_REPEATER_ENABLED));
+        assert!(at(prop::MESHCORE_FORWARDING_ENABLED) < at(prop::MAC_REPEATER_MODE));
 
         // A device without the capability is not told about MeshCore.
         let plain = MobileUlcpSession::administrative();
@@ -10391,7 +10420,7 @@ mod tests {
             ident_mobile: Some(false),
             dev_discoverable: Some(true),
             repeater: Some(UlcpRepeaterSettingsRecord {
-                enabled: true,
+                mode: 1,
                 regions: Vec::new(),
                 default_region: None,
                 min_rssi_dbm: None,
@@ -10455,7 +10484,7 @@ mod tests {
             ident_mobile: Some(false),
             dev_discoverable: Some(true),
             repeater: Some(UlcpRepeaterSettingsRecord {
-                enabled: true,
+                mode: 1,
                 regions: Vec::new(),
                 default_region: None,
                 min_rssi_dbm: None,
@@ -12149,7 +12178,7 @@ mod tests {
                 ident_mobile: Some(false),
                 dev_discoverable: Some(true),
                 repeater: Some(UlcpRepeaterSettingsRecord {
-                    enabled: false,
+                    mode: 0,
                     regions: Vec::new(),
                     default_region: None,
                     min_rssi_dbm: None,
@@ -12299,7 +12328,7 @@ mod tests {
             ident_mobile: Some(false),
             dev_discoverable: Some(true),
             repeater: Some(UlcpRepeaterSettingsRecord {
-                enabled: false,
+                mode: 0,
                 regions: Vec::new(),
                 default_region: None,
                 min_rssi_dbm: None,
@@ -12424,7 +12453,7 @@ mod tests {
                 ident_mobile: Some(false),
                 dev_discoverable: Some(true),
                 repeater: Some(UlcpRepeaterSettingsRecord {
-                    enabled: false,
+                    mode: 0,
                     regions: Vec::new(),
                     default_region: None,
                     min_rssi_dbm: None,
@@ -13570,6 +13599,8 @@ mod tests {
                 prop::PHY_DUTY_NOW,
                 prop::UPTIME,
                 prop::STAT_RADIO_RESETS,
+                prop::PHY_RX_DUTY,
+                prop::MAC_REPEATERS_HEARD,
                 prop::STAT_FORWARDED,
                 prop::STAT_FORWARD_DROPPED,
                 prop::STAT_FORWARD_CANCELLED,
@@ -13594,7 +13625,7 @@ mod tests {
                 encoded_capabilities(&[cap::STATS])
             )
             .unwrap(),
-            full[..9],
+            full[..10],
             "forwarding counters need CAP_REPEATER, MeshCore ones CAP_MESHCORE_FORWARDER"
         );
         assert_eq!(
@@ -13603,7 +13634,7 @@ mod tests {
                 encoded_capabilities(&[cap::STATS, cap::DEV_IDENTITY, cap::REPEATER])
             )
             .unwrap(),
-            full[..12],
+            full[..14],
             "MeshCore counters need CAP_MESHCORE_FORWARDER"
         );
 
@@ -13757,7 +13788,7 @@ mod tests {
         assert_eq!(read.transmit_power_dbm, Some(22));
         assert_eq!(read.spreading_factor, Some(11));
         assert_eq!(read.device_name, None, "nobody asked");
-        assert_eq!(read.repeater_enabled, None);
+        assert_eq!(read.repeater_mode, None);
         assert_eq!(read.gnss, None);
     }
 
@@ -13877,7 +13908,7 @@ mod tests {
                 // Everything a full read would have filled in, none of
                 // which was touched.
                 ident_mobile: Some(true),
-                repeater_enabled: Some(true),
+                repeater_mode: Some(1),
                 dev_discoverable: Some(false),
                 ..Default::default()
             },
@@ -14043,7 +14074,7 @@ mod tests {
     fn a_forwarding_policy_edit_travels_alone() {
         let written = dirty(
             UlcpDevicePropertiesRecord {
-                repeater_enabled: Some(true),
+                repeater_mode: Some(1),
                 repeater_regions: Some(vec!["SJC".into()]),
                 repeater_default_region: None,
                 repeater_min_rssi_dbm: Some(-115),
@@ -14464,7 +14495,7 @@ mod tests {
             prop::PHY_TX_POWER,
             prop::IDENT_MOBILE,
             prop::DEV_DISCOVERABLE,
-            prop::MAC_REPEATER_ENABLED,
+            prop::MAC_REPEATER_MODE,
             prop::DEV_PEERS,
             prop::DEV_ADMINS,
         ]
@@ -14900,17 +14931,17 @@ mod tests {
             "the preamble in two requests and the reduction's four in one"
         );
         assert!(
-            !asked.contains(&prop::MAC_REPEATER_ENABLED),
+            !asked.contains(&prop::MAC_REPEATER_MODE),
             "the device domain is left to be read on demand"
         );
 
         // And reading on demand works.
         let fetch = session
-            .begin_property_fetch(vec![prop::MAC_REPEATER_ENABLED])
+            .begin_property_fetch(vec![prop::MAC_REPEATER_MODE])
             .unwrap();
         let (tid, _) = property_request(&fetch.outbound_frames[0]);
         let done = session
-            .consume(property_response(tid, prop::MAC_REPEATER_ENABLED, &[0]))
+            .consume(property_response(tid, prop::MAC_REPEATER_MODE, &[0]))
             .unwrap();
         assert!(done.management_event.is_some());
     }

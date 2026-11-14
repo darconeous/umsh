@@ -17,7 +17,7 @@ device writes nothing in the
 
 The device hosts a node belonging to the device itself, used for in-band
 management, diagnostics, repeater forwarding (see
-[`PROP_MAC_REPEATER_ENABLED`](ulcp-device.md#prop-mac-repeater-enabled)),
+[`PROP_MAC_REPEATER_MODE`](ulcp-device.md#prop-mac-repeater-mode)),
 and (in future revisions) periodic advertisement behavior. Its Ed25519
 private key is held by the device and is never readable through this
 protocol.
@@ -85,7 +85,7 @@ Code | Name               | Requires           | Grants
 37   | `CAP_DEV_IDENTITY` | —                  | The device identity: `PROP_DEV_KEY`, `PROP_DEV_PRIVATE_KEY`, `PROP_DEV_CHANNEL_KEYS`, `PROP_DEV_PEERS`
 38   | `CAP_DEV_NAME`     | —                  | `PROP_DEV_NAME`
 39   | `CAP_BATTERY`      | —                  | Battery-powered operation and `PROP_BATTERY`
-40   | `CAP_REPEATER`     | `CAP_DEV_IDENTITY` | Autonomous repeater forwarding by the device identity: `PROP_MAC_REPEATER_ENABLED`, `PROP_MAC_REPEATER_REGIONS`, `PROP_MAC_REPEATER_DEFAULT_REGION`, `PROP_MAC_REPEATER_MIN_RSSI`, `PROP_MAC_REPEATER_MIN_SNR`
+40   | `CAP_REPEATER`     | `CAP_DEV_IDENTITY` | Autonomous repeater forwarding by the device identity: `PROP_MAC_REPEATER_MODE`, `PROP_MAC_REPEATER_STATE` (with `CAP_STATS`), `PROP_MAC_REPEATER_REGIONS`, `PROP_MAC_REPEATER_DEFAULT_REGION`, `PROP_MAC_REPEATER_MIN_RSSI`, `PROP_MAC_REPEATER_MIN_SNR`
 41   | `CAP_IDENT`        | `CAP_DEV_IDENTITY` | `PROP_IDENT`, `PROP_IDENT_ROLE`, `PROP_IDENT_MOBILE`, `PROP_IDENT_LOCATION`, `PROP_IDENT_ALTITUDE`, `PROP_IDENT_CONTACT`—serving and configuring the device identity's advertised node identity
 42   | `CAP_ALERT`        | —                  | Some means of making the device physically conspicuous on demand, and `PROP_ALERT`
 44   | `CAP_TIME`         | —                  | A wall clock: `PROP_TIME`, `PROP_TZ_RULE`, `PROP_TIME_24H`
@@ -242,7 +242,7 @@ Id | Mnemonic                    | Commands                 | Description
 4956 | `PROP_BATTERY_GAUGE_OPERATION_STATUS` | Get, Is | Battery diagnostics
 4957 | `PROP_BATTERY_GAUGE_CONFIG` | Get, Is | On-demand gauge configuration
 4958 | `PROP_BATTERY_GAUGE_TELEMETRY` | Get, Is | Live gauge counters and estimates
-70 | `PROP_MAC_REPEATER_ENABLED` | Get, Set                 | Autonomous repeater forwarding enable
+70 | `PROP_MAC_REPEATER_MODE`    | Get, Set                 | Whether, and how eagerly, the device forwards
 71 | `PROP_IDENT`                | Get                      | Signed node identity of the device identity
 72 | `PROP_IDENT_ROLE`           | Get, Set                 | Advertised node role, or empty to derive it
 73 | `PROP_IDENT_MOBILE`         | Get, Set                 | Advertise the mobile capability bit
@@ -258,6 +258,7 @@ Id | Mnemonic                    | Commands                 | Description
 83 | `PROP_IDENT_LOCATION`       | Get, Set                 | Position the advertised node identity carries
 84 | `PROP_IDENT_ALTITUDE`       | Get, Set                 | Altitude the advertised node identity carries
 85 | `PROP_IDENT_CONTACT`        | Get                      | Signed node identity for keeping as a contact
+86 | `PROP_MAC_REPEATER_STATE`   | Get                      | What the device's forwarding is doing now
 88 | `PROP_GNSS_ENABLED`         | Get, Set                 | Whether the GNSS receiver is powered
 89 | `PROP_GNSS_LOCATION`        | Get, Is                  | Position of the last fix
 90 | `PROP_GNSS_ALTITUDE`        | Get                      | Altitude of the last fix
@@ -986,47 +987,55 @@ the stated mW unit; see the [hardware qualification notes](https://github.com/da
 normal monitoring, retains raw values, labels unavailable estimates, and adds
 Celsius conversions. `umshctl get battery-gauge-telemetry` reads this property alone.
 
-### PROP 70: `PROP_MAC_REPEATER_ENABLED` {#prop-mac-repeater-enabled}
+### PROP 70: `PROP_MAC_REPEATER_MODE` {#prop-mac-repeater-mode}
 
 * Type: Single-Value, Read-Write
 * Asynchronous Updates: Yes
 * Required: `CAP_REPEATER`
-* Value Type: BOOL
-* Post-Reset Value: Persisted
+* Value Type: UINT8
+* Post-Reset Value: 0, or restored from saved state
 
 The first of the device-behavior settings (property identifiers 70–78),
 and the master switch for the repeater policy in
 `PROP_MAC_REPEATER_REGIONS`, `PROP_MAC_REPEATER_DEFAULT_REGION`,
 `PROP_MAC_REPEATER_MIN_RSSI`, and `PROP_MAC_REPEATER_MIN_SNR`, which are
-configurable while forwarding is disabled and take effect when it is
-enabled. When true, the **device identity** acts as an
-autonomous mesh repeater: its on-board node forwards the routable UMSH
-frames it receives—off the air, from an [IP multicast group](ip-multicast.md), or over
+configurable while forwarding is off and take effect when it is not.
+
+| Value | Mode | Forwarding |
+|---|---|---|
+| 0 | Off | None on any medium: the device identity sends only its own traffic and its attached host's |
+| 1 | On | An autonomous mesh repeater |
+| 2 | Adaptive | An [adaptive forwarder](repeater-operation.md#adaptive-forwarding): every source-routed hop, and the floods no repeater was heard carrying |
+
+A device **MUST** reject any other value with `STATUS_INVALID_ARGUMENT`.
+
+Unless the mode is off, the **device identity**'s on-board node forwards
+the routable UMSH frames it receives—off the air, from an [IP multicast
+group](ip-multicast.md), or over
 [backhaul](ulcp-host.md#prop-mac-backhaul)—according to [Repeater
 Operation](repeater-operation.md) and [Nodes With a LoRa
 Radio](ip-multicast.md#nodes-with-a-lora-radio), and it sets the repeater
-capability bit in its [node identity](node-identity.md). When false, the
-device identity forwards nothing on any medium—it sends only its own traffic
-and its attached host's—and the bit is clear.
+capability bit in its [node identity](node-identity.md). While the mode is
+off the bit is clear.
 
-The capability bit is a statement of fact and **MUST** track the live
-forwarding state. The advertised *role* is a separate matter: it is
+The capability bit is a statement of fact and **MUST** track whether the
+device forwards. The advertised *role* is a separate matter: it is
 configuration, set through [`PROP_IDENT_ROLE`](ulcp-device.md#prop-ident-role),
-and defaults to being derived from this flag rather than being fixed by
+and defaults to being derived from this mode rather than being fixed by
 it. A mobile repeater and a fixed tracker are both expressible.
 
 This property governs only the *forwarding behavior* of the device
 identity. It is independent of `PROP_MAC_PROMISCUOUS` (a session-scoped
 host-delivery mode) and of the host identity, which never forwards.
 
-The flag is device-domain state: it is part of the saved snapshot, so a
+The mode is device-domain state: it is part of the saved snapshot, so a
 `CMD_SAVE` arms an unattended repeater across power cycles, and it
 survives a change of host.
 
 Asynchronous because a device **MAY** offer forwarding as a control the
 operator can reach—the menu on a device with a screen is where a user
 decides whether to spend their battery carrying other people's traffic.
-A device that flips it locally **MUST** publish the new value like any
+A device that changes it locally **MUST** publish the new value like any
 other transition the host did not command.
 
 Flood-contention tuning—the forwarding delay window, deferral count,
@@ -1075,12 +1084,13 @@ The `ROLE` byte the device identity advertises (see [Node
 Primary Role](node-identity.md#node-primary-role)).
 
 An **empty** value—the factory default—means the device derives the
-role from what it is actually doing. While `PROP_MAC_REPEATER_ENABLED`
-is set, it derives `Bridge` if the device node also has a link beyond
+role from what it is actually doing. While `PROP_MAC_REPEATER_MODE`
+is on, it derives `Bridge` if the device node also has a link beyond
 its radio—[`PROP_MAC_BACKHAUL`](ulcp-host.md#prop-mac-backhaul) is set,
 or the [bridge client](ulcp-bridge.md) is enabled with a host and server
 key—and `Repeater` if it does not. Otherwise it derives `Tracker`,
-whatever links it has. On a device
+whatever links it has: an adaptive forwarder carries what nobody else
+did, which is not what a repeater is asked to be. On a device
 whose device identity is a messaging identity (see [The Device
 Identity](#device-identity)), it derives `Chat` whether or not the device
 forwards. Any other value is advertised verbatim.
@@ -1112,7 +1122,7 @@ for a device that moves, false for one installed in a fixed location. A
 device with a messaging identity is carried by its person, so it starts
 out mobile.
 
-Orthogonal to `PROP_IDENT_ROLE` and to `PROP_MAC_REPEATER_ENABLED`, and
+Orthogonal to `PROP_IDENT_ROLE` and to `PROP_MAC_REPEATER_MODE`, and
 orthogonal to whether a host is tethered. A hand-carried repeater and a
 pole-mounted sensor are both ordinary configurations.
 
@@ -1246,7 +1256,7 @@ PHY enabled AND MESHCORE_FORWARDING_ENABLED
             AND running identity prefix not reserved
 ~~~
 
-`PROP_MAC_REPEATER_ENABLED` governs UMSH forwarding alone; a device may
+`PROP_MAC_REPEATER_MODE` governs UMSH forwarding alone; a device may
 forward either protocol without the other.
 
 The forwarder takes its path entries from the public key of the device
@@ -1272,7 +1282,7 @@ UMSH only.
 * Post-Reset Value: False, or restored from saved state
 
 Whether the device forwards MeshCore traffic. Independent of
-`PROP_MAC_REPEATER_ENABLED`.
+`PROP_MAC_REPEATER_MODE`.
 
 Changing it from false to true **MUST** fail with `STATUS_INVALID_STATE`
 while the first octet of `PROP_DEV_KEY` is `0x00` or `0xFF`. Replacing the
@@ -1344,7 +1354,7 @@ volunteer its identity to arbitrary nearby askers.
 Affects only Identity Request responses. Unsolicited advertisements and
 beacons are governed by the [advertisement
 policy](#prop-advert-interval), and the device's participation in
-forwarding by `PROP_MAC_REPEATER_ENABLED`; neither is changed by this
+forwarding by `PROP_MAC_REPEATER_MODE`; neither is changed by this
 property. A device that is not discoverable still advertises on its own
 schedule if it has one—declining to answer strangers and declining to
 speak are different decisions.
@@ -1607,6 +1617,28 @@ exchange. It is built from the same role, capabilities, and options as
 It carries the [Unix Timestamp](node-identity.md#unix-timestamp-option-3)
 when the device knows the time, which is what lets whoever holds it judge
 how old it is. Like `PROP_IDENT`, it is signed afresh on each read.
+
+### PROP 86: `PROP_MAC_REPEATER_STATE` {#prop-mac-repeater-state}
+
+* Type: Single-Value, Read-Only
+* Asynchronous Updates: No
+* Required: `CAP_REPEATER`, `CAP_STATS`
+* Value Type: UINT8
+
+What the device identity's forwarding is doing at the moment.
+
+| Value | State | Meaning |
+|---|---|---|
+| 0 | Off | [`PROP_MAC_REPEATER_MODE`](#prop-mac-repeater-mode) is off |
+| 1 | Forwarding | The mode is on |
+| 2 | Standby | Adaptive, and giving way to the first carry it overhears |
+| 3 | Engaged | Adaptive, and tolerating as many overheard copies as a repeater: one of its flood forwards aired recently |
+| 4 | Withheld | Adaptive, and flooding nothing: the channel is busy and repeaters are plentiful |
+
+The three adaptive states are those of [Adaptive
+Forwarding](repeater-operation.md#adaptive-forwarding). The value is
+never saved, and a write is refused with `STATUS_INVALID_ARGUMENT`. A
+host that wants to follow it reads it again.
 
 ### PROP 88: `PROP_GNSS_ENABLED` {#prop-gnss-enabled}
 

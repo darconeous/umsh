@@ -65,7 +65,7 @@ async fn main(_spawner: Spawner) {
 
 fn build_mac(radio: umsh::mac::test_support::SimulatedRadio) -> RepeaterMac {
     let mut repeater_config = RepeaterConfig::default();
-    repeater_config.enabled = true;
+    repeater_config.mode = umsh::mac::RepeaterMode::On;
     Mac::new(
         radio,
         CryptoEngine::new(SoftwareAes, SoftwareSha256),

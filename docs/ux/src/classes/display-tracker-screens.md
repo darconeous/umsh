@@ -50,7 +50,7 @@ Settings            names itself; Select enters
     Radio           Select enters       >
         Back                            <
         LoRa            toggle          on / off
-        Forwarding      toggle          on / off
+        Forwarding      toggle          off / auto / on
         Statistics      Select opens    >
     WiFi            Select enters       >
         Back                            <
@@ -434,9 +434,9 @@ state as `PROP_PHY_ENABLED`. It preserves the frequency, modulation, transmit
 power, and Forwarding setting. Local changes update an existing saved
 configuration, like the other menu toggles.
 
-**Forwarding** turns relaying of other nodes' frames on and off. A device with
-forwarding on is acting as a repeater; the menu says what the device does, not
-what to call it.
+**Forwarding** steps through *off*, *auto*, and *on*. A device with forwarding
+on is acting as a repeater; with *auto* it relays only what it hears nobody
+else carry. The menu says what the device does, not what to call it.
 
 **Statistics** is a page reporting what the radio has done since boot: frames
 transmitted and received, frames repeated onward, receptions that went nowhere,

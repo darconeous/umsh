@@ -4129,7 +4129,11 @@ mod firmware {
             share_location: Some(umsh_ulcp_runtime::gnss::policy().update_identity),
             #[cfg(not(feature = "cap-gnss"))]
             share_location: None,
-            forwarding: Some(super::device_node::repeater_enabled()),
+            forwarding: Some(match super::device_node::repeater_mode() {
+                umsh_ulcp::ids::repeater_mode::OFF => screen::Forwarding::Off,
+                umsh_ulcp::ids::repeater_mode::ADAPTIVE => screen::Forwarding::Adaptive,
+                _ => screen::Forwarding::On,
+            }),
         }
     }
 
@@ -4220,6 +4224,7 @@ mod firmware {
             rx_frames: STATS.get(Counter::RxPackets) + STATS.get(Counter::RxNonUmsh),
             rx_accepted: STATS.get(Counter::RxAccepted),
             forwarded: STATS.get(Counter::Forwarded),
+            repeaters_heard: STATS.repeaters_heard(),
             tx_power_dbm: super::device_node::tx_power_dbm(),
             // The ledger's scale is 0-65535 for 0-100%; the page shows
             // tenths of a percent, which is the range a tracker lives in.

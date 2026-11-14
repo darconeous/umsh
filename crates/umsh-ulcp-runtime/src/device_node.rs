@@ -46,7 +46,7 @@
 extern crate alloc;
 
 use core::cell::RefCell;
-use core::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU16, AtomicU32, Ordering};
 
 use embassy_futures::select::{Either, select};
 use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
@@ -59,8 +59,11 @@ use embassy_time::{Duration, Instant, Timer, with_timeout};
 use umsh_core::{ChannelKey, PublicKey};
 use umsh_crypto::CryptoEngine;
 use umsh_crypto::software::{SoftwareAes, SoftwareIdentity, SoftwareSha256};
-use umsh_hal::{CounterStore, EmbassyClock, NoKeyValueStore};
-use umsh_mac::{MacCounters, MacHandle, OperatingPolicy, RepeaterConfig, SendOptions};
+use umsh_hal::{Clock, CounterStore, EmbassyClock, NoKeyValueStore};
+use umsh_mac::{
+    MacCounters, MacHandle, OperatingPolicy, RepeaterConfig, RepeaterMode, RepeaterState,
+    SendOptions,
+};
 use umsh_node::location::NodeLocation;
 use umsh_node::{
     Channel as NodeChannel, Host, LocalNode, NodeCapabilities, NodeIdentityProfile, NodeRole,
@@ -68,6 +71,7 @@ use umsh_node::{
 };
 use umsh_sync::AsyncRefCell;
 use umsh_ulcp::announce::AnnouncementKind;
+use umsh_ulcp::ids::{repeater_mode, repeater_state};
 use umsh_ulcp::stats::{Counter, Mirror, StatsLedger};
 use umsh_ulcp_device::{
     AnnounceRequest, IdentityForm, MAX_CHANNEL_KEYS, MAX_DEV_ADMINS, MAX_DEV_PEERS,
@@ -262,15 +266,14 @@ pub static DEV_SYNC: Signal<NodeMutex, DevDomainSnapshot> = Signal::new();
 /// that lags the publish by however long that task takes to be scheduled
 ///—and a panel redrawing on the publish would draw the old one.
 pub fn publish_snapshot(snapshot: DevDomainSnapshot) {
-    if NODE_IS_REPEATER.swap(snapshot.repeater_enabled, Ordering::Relaxed)
-        != snapshot.repeater_enabled
+    if NODE_REPEATER_MODE.swap(snapshot.repeater_mode, Ordering::Relaxed) != snapshot.repeater_mode
     {
         debug_log(format_args!(
             "node dev-sync: repeater {}",
-            if snapshot.repeater_enabled {
-                "ON"
-            } else {
-                "off"
+            match snapshot.repeater_mode {
+                repeater_mode::OFF => "off",
+                repeater_mode::ADAPTIVE => "ADAPTIVE",
+                _ => "ON",
             }
         ));
     }
@@ -284,9 +287,15 @@ pub fn publish_snapshot(snapshot: DevDomainSnapshot) {
 /// identity until reboot, but it must stop originating traffic.
 static NODE_ACTIVE: AtomicBool = AtomicBool::new(true);
 
-/// Whether the device node is acting as a repeater
-/// (`PROP_MAC_REPEATER_ENABLED`).
-static NODE_IS_REPEATER: AtomicBool = AtomicBool::new(false);
+/// How the device node forwards (`PROP_MAC_REPEATER_MODE`).
+static NODE_REPEATER_MODE: AtomicU8 = AtomicU8::new(repeater_mode::OFF);
+
+/// The duty ledger the node's radio draws on, published at bring-up so
+/// the pump can tell the MAC how busy the channel has been.
+static NODE_DUTY: BlockingMutex<
+    CriticalSectionRawMutex,
+    core::cell::Cell<Option<&'static umsh_ulcp_device::DutyLedger>>,
+> = BlockingMutex::new(core::cell::Cell::new(None));
 
 /// The public key the running MAC actually holds, published once at
 /// bring-up.
@@ -302,14 +311,15 @@ static NODE_IS_REPEATER: AtomicBool = AtomicBool::new(false);
 static NODE_KEY: BlockingMutex<CriticalSectionRawMutex, RefCell<Option<[u8; 32]>>> =
     BlockingMutex::new(RefCell::new(None));
 
-/// Whether the device node forwards other nodes' frames.
+/// How the device node forwards other nodes' frames: one of
+/// [`repeater_mode`].
 ///
-/// Reads the same state the session's `PROP_MAC_REPEATER_ENABLED` names,
+/// Reads the same state the session's `PROP_MAC_REPEATER_MODE` names,
 /// published here so a display can glance at it without borrowing the
 /// coordinator or racing `dev_sync_loop` for the mirror—which is a
 /// single-consumer `Signal` and already has one.
-pub fn repeater_enabled() -> bool {
-    NODE_IS_REPEATER.load(Ordering::Relaxed)
+pub fn repeater_mode() -> u8 {
+    NODE_REPEATER_MODE.load(Ordering::Relaxed)
 }
 
 /// The public key the running node answers to, or `None` before
@@ -480,14 +490,17 @@ fn profile_name() -> Option<alloc::string::String> {
 /// tracker. A link that nothing is forwarded across bridges nothing. A
 /// communicator, whose device identity is its person's messaging
 /// identity, is a chat node either way, takes text messages, and says it
-/// forwards by `REP` alone.
+/// forwards by `REP` alone. So does an adaptive forwarder, whatever it is:
+/// it carries what nobody else did, which is not what a repeater is asked
+/// to be.
 fn advertised_identity(
-    is_repeater: bool,
+    mode: u8,
     is_bridged: bool,
     is_mobile: bool,
     configured_role: Option<u8>,
 ) -> (NodeRole, NodeCapabilities) {
     let messaging = cfg!(feature = "communicator");
+    let is_repeater = mode == repeater_mode::ON;
     let role = match configured_role {
         Some(byte) => NodeRole::from_byte(byte),
         None if messaging => NodeRole::Chat,
@@ -496,7 +509,7 @@ fn advertised_identity(
         None => NodeRole::Tracker,
     };
     let mut capabilities = NodeCapabilities::empty();
-    capabilities.set(NodeCapabilities::REPEATER, is_repeater);
+    capabilities.set(NodeCapabilities::REPEATER, mode != repeater_mode::OFF);
     capabilities.set(NodeCapabilities::MOBILE, is_mobile);
     capabilities.set(NodeCapabilities::TEXT_MESSAGES, messaging);
     (role, capabilities)
@@ -512,7 +525,7 @@ fn advertised_identity(
 fn advertised_regions(
     snapshot: &DevDomainSnapshot,
 ) -> Option<alloc::vec::Vec<alloc::string::String>> {
-    (snapshot.repeater_enabled && !snapshot.repeater_region_names.is_empty()).then(|| {
+    (snapshot.forwards() && !snapshot.repeater_region_names.is_empty()).then(|| {
         snapshot
             .repeater_region_names
             .iter()
@@ -574,7 +587,12 @@ pub async fn dev_sync_loop<CS: CounterStore + 'static>(
         // advertised role/capabilities. All are idempotent; the profile is
         // refreshed unconditionally because the role and mobility
         // properties can move without the forwarding flag.
-        mac.set_repeater_enabled(snapshot.repeater_enabled).await;
+        mac.set_repeater_mode(match snapshot.repeater_mode {
+            repeater_mode::OFF => RepeaterMode::Off,
+            repeater_mode::ADAPTIVE => RepeaterMode::Adaptive,
+            _ => RepeaterMode::On,
+        })
+        .await;
         let regions: heapless::Vec<[u8; 2], 8> =
             snapshot.repeater_region_codes.iter().copied().collect();
         let stored = mac
@@ -593,7 +611,7 @@ pub async fn dev_sync_loop<CS: CounterStore + 'static>(
             ));
         }
         let (role, capabilities) = advertised_identity(
-            snapshot.repeater_enabled,
+            snapshot.repeater_mode,
             snapshot.bridged,
             snapshot.ident_mobile,
             snapshot.ident_role,
@@ -625,7 +643,7 @@ pub async fn dev_sync_loop<CS: CounterStore + 'static>(
         // nothing has no peer repeaters to describe and stays quiet. Gated
         // on forwarding rather than on discoverability, because the listing
         // is about the mesh around this node, not about this node.
-        if snapshot.repeater_enabled {
+        if snapshot.forwards() {
             node.enable_peer_repeaters_responder();
         } else {
             node.disable_peer_repeaters_responder();
@@ -862,8 +880,21 @@ pub async fn pump_loop<CS: CounterStore + 'static>(
             .run_with(async || {
                 let counters = mac.counters().await;
                 publish_mac_counters(counters);
+                // The MAC cannot price a frame's airtime, so how busy the
+                // channel has been is told to it here.
+                if let Some(duty) = NODE_DUTY.lock(|duty| duty.get()) {
+                    mac.set_rx_duty(duty.rx_usage(EmbassyClock.now_ms())).await;
+                }
                 if let Some(stats) = stats {
                     mirrors.advance(stats, counters);
+                    let state = match mac.repeater_state().await {
+                        RepeaterState::Off => repeater_state::OFF,
+                        RepeaterState::Forwarding => repeater_state::FORWARDING,
+                        RepeaterState::Standby => repeater_state::STANDBY,
+                        RepeaterState::Engaged => repeater_state::ENGAGED,
+                        RepeaterState::Withheld => repeater_state::WITHHELD,
+                    };
+                    stats.set_forwarding(state, mac.repeaters_heard().await);
                 }
             })
             .await;
@@ -1511,7 +1542,8 @@ fn initialize_mac<CS: CounterStore + 'static>(
             duty,
             EmbassyClock,
             hooks.note_external_load,
-        ),
+        )
+        .counting_receptions(),
         CryptoEngine::new(SoftwareAes, SoftwareSha256),
         EmbassyClock,
         NodeRng::from_seed(seed),
@@ -1539,6 +1571,7 @@ pub async fn bring_up<CS: CounterStore + 'static>(
     duty: &'static umsh_ulcp_device::DutyLedger,
     hooks: NodeHooks,
 ) -> DeviceNodeParts<CS> {
+    NODE_DUTY.lock(|shared| shared.set(Some(duty)));
     let mac_cell = initialize_mac(mac_arena, node_seed, t_frame_ms, counters, duty, hooks);
     debug_log(format_args!("node bring-up: mac cell ready"));
     let identity = SoftwareIdentity::from_secret_bytes(identity_secret);
@@ -1618,7 +1651,7 @@ pub async fn bring_up<CS: CounterStore + 'static>(
     {
         use umsh_crypto::NodeIdentity as _;
         let public_key = *SoftwareIdentity::from_secret_bytes(identity_secret).public_key();
-        let (role, capabilities) = advertised_identity(false, false, false, None);
+        let (role, capabilities) = advertised_identity(repeater_mode::OFF, false, false, None);
         let mut profile = NodeIdentityProfile::new(public_key, role, capabilities);
         profile.name = profile_name();
         node.enable_identity_responder_default(profile);
@@ -1658,23 +1691,38 @@ mod tests {
             caps
         };
         assert_eq!(
-            advertised_identity(true, false, false, None),
+            advertised_identity(repeater_mode::ON, false, false, None),
             (NodeRole::Repeater, caps(true))
         );
         assert_eq!(
-            advertised_identity(true, true, false, None),
+            advertised_identity(repeater_mode::ON, true, false, None),
             (NodeRole::Bridge, caps(true))
         );
         assert_eq!(
-            advertised_identity(false, true, false, None),
+            advertised_identity(repeater_mode::OFF, true, false, None),
             (NodeRole::Tracker, caps(false))
         );
         assert_eq!(
-            advertised_identity(false, false, false, None),
+            advertised_identity(repeater_mode::OFF, false, false, None),
             (NodeRole::Tracker, caps(false))
         );
+        // An adaptive forwarder says it forwards and does not call itself
+        // a repeater, with or without a link beyond its radio.
         assert_eq!(
-            advertised_identity(true, true, false, Some(NodeRole::Sensor.as_byte())),
+            advertised_identity(repeater_mode::ADAPTIVE, false, false, None),
+            (NodeRole::Tracker, caps(true))
+        );
+        assert_eq!(
+            advertised_identity(repeater_mode::ADAPTIVE, true, false, None),
+            (NodeRole::Tracker, caps(true))
+        );
+        assert_eq!(
+            advertised_identity(
+                repeater_mode::ON,
+                true,
+                false,
+                Some(NodeRole::Sensor.as_byte())
+            ),
             (NodeRole::Sensor, caps(true))
         );
     }
@@ -1690,19 +1738,24 @@ mod tests {
             caps
         };
         assert_eq!(
-            advertised_identity(true, false, false, None),
+            advertised_identity(repeater_mode::ON, false, false, None),
             (NodeRole::Chat, caps(true))
         );
         assert_eq!(
-            advertised_identity(true, true, false, None),
+            advertised_identity(repeater_mode::ON, true, false, None),
             (NodeRole::Chat, caps(true))
         );
         assert_eq!(
-            advertised_identity(false, false, false, None),
+            advertised_identity(repeater_mode::OFF, false, false, None),
             (NodeRole::Chat, caps(false))
         );
         assert_eq!(
-            advertised_identity(false, false, false, Some(NodeRole::Tracker.as_byte())),
+            advertised_identity(
+                repeater_mode::OFF,
+                false,
+                false,
+                Some(NodeRole::Tracker.as_byte())
+            ),
             (NodeRole::Tracker, caps(false))
         );
     }

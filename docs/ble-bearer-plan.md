@@ -386,7 +386,7 @@ clear of the MeshCore block (4976–4978).
 
 **Independence from other switches.**
 
-- Enabling the bearer does not change `PROP_MAC_REPEATER_ENABLED` or
+- Enabling the bearer does not change `PROP_MAC_REPEATER_MODE` or
   `PROP_BLE_ENABLED`.
 - When BLE is off, the bearer reports state 2 and neither scans nor
   advertises.

@@ -84,8 +84,8 @@ struct RemoteBridgeScreen: View {
         Section("Connection") {
             RemoteValueRow("Status", value: stateText)
             if let reason = reasonText { Text(reason).foregroundStyle(.secondary) }
-            RemoteValueRow("Node", value: reading?.properties.repeaterEnabled.map { $0 ? "Repeater" : "Leaf" } ?? "Not read")
-            if reading?.properties.repeaterEnabled == false {
+            RemoteValueRow("Node", value: reading?.properties.repeaterMode.map { $0 != 0 ? "Repeater" : "Leaf" } ?? "Not read")
+            if reading?.properties.repeaterMode == 0 {
                 Text("This device can communicate across the bridge but does not forward traffic for other nodes.")
                     .foregroundStyle(.secondary)
             }

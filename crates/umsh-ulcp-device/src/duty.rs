@@ -114,6 +114,9 @@ pub struct DutyExceeded;
 
 struct LedgerState {
     tracker: DutyTracker,
+    /// Airtime of the frames received off the air, kept the same way.
+    /// It bounds nothing: it is how busy others have made the channel.
+    rx: DutyTracker,
     /// Live `PROP_PHY_DUTY_LIMIT`. The session owns its lifecycle
     /// (defaults, property sets, snapshot restore); it lives here so
     /// every radio client enforces the same bound.
@@ -164,6 +167,7 @@ impl DutyLedger {
         Self {
             state: Mutex::new(RefCell::new(LedgerState {
                 tracker: DutyTracker::new(),
+                rx: DutyTracker::new(),
                 limit: DUTY_LIMIT_DISABLED,
                 // Placeholder modulation until the first radio apply;
                 // nothing can transmit before one happens.
@@ -195,6 +199,24 @@ impl DutyLedger {
     pub fn record(&self, now_ms: u64, airtime_ms: u32) {
         self.state
             .lock(|state| state.borrow_mut().tracker.record(now_ms, airtime_ms));
+    }
+
+    /// Record the reception of a `frame_len`-byte frame off the air.
+    ///
+    /// Priced at the transmit preamble, the only one known here; a sender
+    /// using another is off by a few symbols.
+    pub fn record_rx(&self, now_ms: u64, frame_len: usize) {
+        self.state.lock(|state| {
+            let mut state = state.borrow_mut();
+            let airtime_ms = state.airtime_ms(frame_len);
+            state.rx.record(now_ms, airtime_ms);
+        });
+    }
+
+    /// The share of the past hour received frames occupied, on the
+    /// `PROP_PHY_DUTY_NOW` scale (`PROP_PHY_RX_DUTY`).
+    pub fn rx_usage(&self, now_ms: u64) -> u16 {
+        self.state.lock(|state| state.borrow_mut().rx.usage(now_ms))
     }
 
     /// Zero the accounting bins (protocol reset). The limit and

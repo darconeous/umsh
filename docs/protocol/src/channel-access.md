@@ -81,6 +81,8 @@ After computing the delay, the repeater waits. Other packets SHOULD continue to 
 
 If the repeater overhears the same packet forwarded by another node (identified by MIC in the duplicate cache) before the delay expires, it SHOULD defer rather than transmit. A safe default is to recalculate a new delay using the same `W_min`/`W_max` limits—including `D_ack` when it applies, since the overheard copy may itself elicit an immediate ACK from the destination—and restart the waiting period. The first two overheard copies each defer the pending forward this way; on overhearing a third copy, the repeater SHOULD abandon the pending forward.
 
+Only a copy at least as far along its path as the pending forward counts: one with as many flood hops spent and no more source-route hints left. Such a copy shows the packet carried. A copy from behind—the previous hop transmitting again because it heard nobody carry the packet—shows the opposite, and neither defers the pending forward nor counts toward abandoning it.
+
 Only a copy received over the radio defers. A packet received from an [IP multicast group](ip-multicast.md#channel-access), heard by every bridge in the group at once, contends with a window drawn uniformly from `[W_min, W_max]`.
 
 If the repeater instead overhears a MAC ack whose `ack_mic` matches the pending packet's MIC prefix, it SHOULD [let the pending forward give way to a busy channel](repeater-operation.md#ack-cancellation) rather than defer: the destination probably has the packet, though no repeater can verify the ack.
@@ -93,6 +95,20 @@ Nodes waiting for implicit forwarding confirmation MUST size their confirmation 
 - up to `W_max + 2 × W_jitter` of intentional forwarding delay
 - up to `T_frame` for the forwarded transmission itself
 - an additional guard margin of up to `T_frame`
+
+### Adaptive Forwarders
+
+An [adaptive forwarder](repeater-operation.md#adaptive-forwarding) contends in a window of its own, which opens when every repeater's has closed:
+
+```text
+delay_adaptive = (W_max + 2 × W_jitter) + delay
+```
+
+where `delay` is computed as above, `D_ack` included, from the forwarder's own reception. The offset is the latest moment a repeater that heard the packet may still be waiting, so every repeater in range transmits first, and adaptive forwarders are ranked among themselves as repeaters are.
+
+An adaptive forwarder in standby abandons its pending forward on the first copy it overhears that counts. One that is engaged defers and abandons as a repeater does, recalculating `delay_adaptive` each time.
+
+With the suggested defaults an adaptive forward begins no later than `D_ack + 1.4 × T_frame` after the reception, which is `1.65 × T_frame`. A sender's `confirm_timeout` of `2.95 × T_frame` therefore covers it for any frame whose airtime is at most `1.3 × T_frame`, which every frame is.
 
 ## ACK Protection Interval
 

@@ -249,16 +249,30 @@ pub fn format_value(key: u32, value: &[u8]) -> String {
 /// A number with the unit the property carries, where it has one worth
 /// saying. The bare number stays visible: it is what a `set` takes back.
 fn scalar(key: u32, value: u32) -> String {
-    use umsh::ulcp_wire::ids::prop;
+    use umsh::ulcp_wire::ids::{prop, repeater_mode, repeater_state};
     match key {
         prop::PHY_FREQ => format!("{value} kHz"),
         prop::PHY_LORA_BW => format!("{value} Hz"),
         prop::PHY_MTU => format!("{value} bytes"),
         prop::PHY_T_FRAME => format!("{value} ms"),
-        prop::PHY_DUTY_NOW => format!(
+        prop::PHY_DUTY_NOW | prop::PHY_RX_DUTY => format!(
             "{value} ({:.2}% of the hour)",
             super::duty_percent(value as u16)
         ),
+        prop::MAC_REPEATER_MODE => match value as u8 {
+            repeater_mode::OFF => "0 (off)".to_string(),
+            repeater_mode::ON => "1 (on)".to_string(),
+            repeater_mode::ADAPTIVE => "2 (adaptive)".to_string(),
+            _ => value.to_string(),
+        },
+        prop::MAC_REPEATER_STATE => match value as u8 {
+            repeater_state::OFF => "0 (off)".to_string(),
+            repeater_state::FORWARDING => "1 (forwarding)".to_string(),
+            repeater_state::STANDBY => "2 (standby)".to_string(),
+            repeater_state::ENGAGED => "3 (engaged)".to_string(),
+            repeater_state::WITHHELD => "4 (withheld)".to_string(),
+            _ => value.to_string(),
+        },
         prop::UPTIME | prop::ADVERT_INTERVAL | prop::BEACON_INTERVAL => {
             format!("{value} s ({})", super::format_duration(value))
         }

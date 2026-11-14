@@ -114,8 +114,8 @@ enum DeviceSetupAssumption: String, Hashable {
     @MainActor
     func force(_ draft: DeviceConfigDraft) {
         switch self {
-        case .forwardingOff: draft.repeaterEnabled = false
-        case .forwardingOn: draft.repeaterEnabled = true
+        case .forwardingOff: draft.repeaterMode = 0
+        case .forwardingOn: draft.repeaterMode = 1
         case .radioEnabled: draft.radioEnabled = true
         case .advertisesTracker: draft.identRole = PeerRole.tracker.roleCode
         // Left empty on purpose: the device derives "repeater" from the fact

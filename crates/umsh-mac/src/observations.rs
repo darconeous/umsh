@@ -169,6 +169,14 @@ impl TransmitterObservations {
         self.entries.is_empty()
     }
 
+    /// How many transmitters were heard within `window_ms` of `now_ms`.
+    pub fn heard_since(&self, now_ms: u64, window_ms: u64) -> usize {
+        self.entries
+            .iter()
+            .filter(|entry| now_ms.saturating_sub(entry.last_seen_ms) <= window_ms)
+            .count()
+    }
+
     /// The observation for one transmitter, if it is still held.
     pub fn get(&self, hint: &RouterHint) -> Option<&TransmitterObservation> {
         self.entries.iter().find(|entry| &entry.hint == hint)

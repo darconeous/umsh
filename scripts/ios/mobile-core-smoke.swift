@@ -175,7 +175,7 @@ struct MobileCoreSmokeTest {
                     identMobile: nil,
                     devDiscoverable: nil,
                     repeater: UlcpRepeaterSettingsRecord(
-                        enabled: true,
+                        mode: 1,
                         regions: ["SJC"],
                         defaultRegion: sjc,
                         minRssiDbm: -115,

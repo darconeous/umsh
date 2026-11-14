@@ -723,6 +723,9 @@ pub struct QueuedTx<const FRAME: usize = MAX_RESEND_FRAME_LEN> {
     pub counter_holds: u8,
     /// For a forward, whether it is listened for once it airs.
     pub(crate) forward_watch: ForwardWatch,
+    /// A flood forward made by an adaptive forwarder
+    /// ([`RepeaterMode::Adaptive`](crate::RepeaterMode::Adaptive)).
+    pub(crate) adaptive_flood: bool,
 }
 
 impl<const FRAME: usize> QueuedTx<FRAME> {
@@ -770,6 +773,7 @@ impl<const FRAME: usize> QueuedTx<FRAME> {
             frame_counter: identity_id.and_then(|_| sealed_frame_counter(frame)),
             counter_holds: 0,
             forward_watch: ForwardWatch::None,
+            adaptive_flood: false,
         })
     }
 

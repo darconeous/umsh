@@ -106,21 +106,23 @@ pub mod prop {
     pub const DEV_NAME: u32 = 68;
     /// Battery status snapshot (`PROP_BATTERY`).
     pub const BATTERY: u32 = 69;
-    /// Autonomous MAC-layer repeater/forwarding enable (`PROP_MAC_REPEATER_ENABLED`).
+    /// Whether, and how eagerly, the device identity's on-board MAC
+    /// forwards (`PROP_MAC_REPEATER_MODE`)—UINT8, one of
+    /// [`repeater_mode`](super::repeater_mode), default off.
     ///
     /// First of the device-behavior settings range (70–95), which is
     /// subdivided as 70–79 repeater and identity, 80–87 advertisement
-    /// policy (80–84 allocated, 85–87 spare), 88–93 positioning, 94–95
-    /// environmental sensing (94 illuminance, 95 temperatures). A
-    /// single-octet identifier is the scarce resource, so the positioning
-    /// range holds the enable toggle and the fix telemetry a host reads
-    /// and the device announces continually; the rarely-touched
-    /// positioning *configuration* lives in the extended device range
-    /// alongside `PROP_TIME`. A persisted, device-domain boolean: when
-    /// set, the device identity's on-board MAC forwards overheard routable
-    /// frames and advertises the `REP` capability bit. The advertised
-    /// *role* is a separate matter—see `IDENT_ROLE`.
-    pub const MAC_REPEATER_ENABLED: u32 = 70;
+    /// policy and forwarding state (80–86 allocated, 87 spare), 88–93
+    /// positioning, 94–95 environmental sensing (94 illuminance, 95
+    /// temperatures). A single-octet identifier is the scarce resource, so
+    /// the positioning range holds the enable toggle and the fix telemetry
+    /// a host reads and the device announces continually; the
+    /// rarely-touched positioning *configuration* lives in the extended
+    /// device range alongside `PROP_TIME`. Persisted and device-domain:
+    /// unless off, the MAC forwards overheard routable frames and
+    /// advertises the `REP` capability bit. The advertised *role* is a
+    /// separate matter—see `IDENT_ROLE`.
+    pub const MAC_REPEATER_MODE: u32 = 70;
     /// The device identity's complete signed node-identity blob
     /// (`PROP_IDENT`), served through a deferred signing effect.
     pub const IDENT: u32 = 71;
@@ -202,6 +204,11 @@ pub mod prop {
     /// mobile node, the regions it forwards for, or a nonce. Served
     /// through the same deferred signing effect; requires `CAP_IDENT`.
     pub const IDENT_CONTACT: u32 = 85;
+    /// What the device identity's forwarding is doing at the moment
+    /// (`PROP_MAC_REPEATER_STATE`)—UINT8, one of
+    /// [`repeater_state`](super::repeater_state). Read-only, never saved.
+    /// Requires `CAP_REPEATER`.
+    pub const MAC_REPEATER_STATE: u32 = 86;
     /// Whether the GNSS receiver is powered (`PROP_GNSS_ENABLED`)—BOOL,
     /// default 0. Off means the lowest power state the receiver reaches;
     /// a board whose receiver RTC is the board's only clock keeps that
@@ -264,6 +271,11 @@ pub mod prop {
     pub const HOST_MUTED_PEERS: u32 = 105;
     /// Transmit duty usage over the past hour (`PROP_PHY_DUTY_NOW`).
     pub const PHY_DUTY_NOW: u32 = 4820;
+    /// The share of the past hour other transmitters occupied the channel
+    /// (`PROP_PHY_RX_DUTY`)—UINT16, on the scale of `PHY_DUTY_NOW`. Counts
+    /// the frames this radio received, so it reads low once collisions
+    /// are what fills the channel. Read-only.
+    pub const PHY_RX_DUTY: u32 = 4821;
     /// Duty-cycle limit (`PROP_PHY_DUTY_LIMIT`).
     pub const PHY_DUTY_LIMIT: u32 = 4822;
     /// Frames that reached the air (`PROP_STAT_TX_PACKETS`)—`UINT32_LE`,
@@ -379,6 +391,11 @@ pub mod prop {
     /// reading (`PROP_STAT_HOST_OUT_DROPPED`)—`UINT32_LE`. Requires
     /// `CAP_STATS`.
     pub const STAT_HOST_OUT_DROPPED: u32 = 4853;
+    /// Distinct repeaters heard in the past hour
+    /// (`PROP_MAC_REPEATERS_HEARD`)—UINT8, at most 16. Not a counter:
+    /// read-only, and nothing clears it. Requires `CAP_STATS` and
+    /// `CAP_REPEATER`.
+    pub const MAC_REPEATERS_HEARD: u32 = 4854;
     /// Persisted, write-only BLE pairing passkey (`PROP_BLE_PAIRING_PIN`).
     pub const BLE_PAIRING_PIN: u32 = 4864;
     /// Nodes authorized to manage this device over the mesh
@@ -707,7 +724,7 @@ pub mod prop {
     /// (`PROP_MESHCORE_FORWARDING_ENABLED`)—BOOL, default 0. Requires
     /// `CAP_MESHCORE_FORWARDER`.
     ///
-    /// Independent of `PROP_MAC_REPEATER_ENABLED`. Never takes effect
+    /// Independent of `PROP_MAC_REPEATER_MODE`. Never takes effect
     /// under a device identity whose public key begins with 0x00 or 0xFF;
     /// enabling it under such a key is refused.
     pub const MESHCORE_FORWARDING_ENABLED: u32 = 4976;
@@ -725,7 +742,7 @@ pub mod prop {
 
     /// Whether the node forwards onto and from the LAN bearer
     /// (`PROP_LAN_BEARER_ENABLED`)—BOOL, default 0. Requires
-    /// `CAP_LAN_BEARER`. Independent of `PROP_MAC_REPEATER_ENABLED`.
+    /// `CAP_LAN_BEARER`. Independent of `PROP_MAC_REPEATER_MODE`.
     pub const LAN_BEARER_ENABLED: u32 = 4992;
     /// The bearer's multicast group (`PROP_LAN_BEARER_GROUP`)—six
     /// octets: an IPv4 multicast address in network byte order, then
@@ -739,6 +756,33 @@ pub mod prop {
     /// one of [`lan::State`](crate::lan::State). Read-only. Requires
     /// `CAP_LAN_BEARER`.
     pub const LAN_BEARER_STATE: u32 = 4995;
+}
+
+/// `PROP_MAC_REPEATER_MODE` values.
+pub mod repeater_mode {
+    /// The node carries only its own traffic.
+    pub const OFF: u8 = 0;
+    /// An ordinary repeater.
+    pub const ON: u8 = 1;
+    /// Honors every source-routed hop and flood-forwards only what no
+    /// ordinary repeater was heard carrying.
+    pub const ADAPTIVE: u8 = 2;
+}
+
+/// `PROP_MAC_REPEATER_STATE` values.
+pub mod repeater_state {
+    /// Not forwarding.
+    pub const OFF: u8 = 0;
+    /// An ordinary repeater.
+    pub const FORWARDING: u8 = 1;
+    /// Adaptive, giving way to the first carry it overhears.
+    pub const STANDBY: u8 = 2;
+    /// Adaptive, tolerating as many overheard copies as an ordinary
+    /// repeater: one of its flood forwards aired recently.
+    pub const ENGAGED: u8 = 3;
+    /// Adaptive, flooding nothing: the channel is busy and repeaters are
+    /// plentiful.
+    pub const WITHHELD: u8 = 4;
 }
 
 /// `PROP_MESHCORE_REGION_POLICY` values: what happens to an unscoped
@@ -810,7 +854,7 @@ pub mod cap {
     /// `CAP_BATTERY`
     pub const BATTERY: u32 = 39;
     /// `CAP_REPEATER`—the device can act as an autonomous mesh repeater
-    /// (`PROP_MAC_REPEATER_ENABLED`). Requires `CAP_DEV_IDENTITY`.
+    /// (`PROP_MAC_REPEATER_MODE`). Requires `CAP_DEV_IDENTITY`.
     pub const REPEATER: u32 = 40;
     /// `CAP_IDENT`—the device serves and configures its own advertised
     /// node identity (`PROP_IDENT`, `PROP_IDENT_ROLE`,

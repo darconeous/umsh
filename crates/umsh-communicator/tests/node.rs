@@ -39,9 +39,9 @@ use umsh_ulcp::ids::prop;
 use umsh_ulcp::profiles::VETTED;
 use umsh_ulcp_simdev::{SessionConfig, SimulatedDevice, TimeConfig};
 use umsh_ux_communicator::model::{
-    ChannelAccess, ChannelEntry, ChatKind, Chats, Delivery, Direction, KeyboardSettings, Leg,
-    MESSAGE_LEN, Node, NodeEvent, PeerEntry, PeerSummary, PingView, Presence, Profile, Reaction,
-    RouteKind, Rule, Setting, Shareable, Signal,
+    ChannelAccess, ChannelEntry, ChatKind, Chats, Delivery, Direction, Forwarding,
+    KeyboardSettings, Leg, MESSAGE_LEN, Node, NodeEvent, PeerEntry, PeerSummary, PingView,
+    Presence, Profile, Reaction, RouteKind, Rule, Setting, Shareable, Signal,
 };
 
 /// 14:32 UTC, when the test clock starts.
@@ -302,12 +302,12 @@ fn a_refused_change_reads_back_what_the_device_kept() {
     assert_eq!(node.radio().profile, kept);
 
     // A setting the device does not have is refused before it goes out.
-    node.set_forwarding(true);
+    node.set_forwarding(Forwarding::On);
     assert_eq!(
         events(&node),
         [NodeEvent::SettingRefused(Setting::Forwarding)]
     );
-    assert!(!node.radio().forwarding);
+    assert_eq!(node.radio().forwarding, Forwarding::Off);
 }
 
 #[test]

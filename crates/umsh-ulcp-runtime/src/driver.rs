@@ -207,7 +207,7 @@ pub enum Setting {
     /// `PROP_GNSS_IDENT_UPDATE`: whether position goes out in what the
     /// device advertises.
     ShareLocation,
-    /// `PROP_MAC_REPEATER_ENABLED`: whether the node forwards other
+    /// `PROP_MAC_REPEATER_MODE`: whether the node forwards other
     /// nodes' frames.
     Forwarding,
 }
@@ -405,11 +405,12 @@ pub struct DevDomainSnapshot {
     /// the identity the session describes and must stop originating
     /// traffic under it.
     pub dev_key: Option<[u8; 32]>,
-    /// `PROP_MAC_REPEATER_ENABLED`: whether the device node should
-    /// forward overheard routable frames. Advertised as the `REP`
-    /// capability bit—a fact about what the node does, not a choice
-    /// about what it calls itself.
-    pub repeater_enabled: bool,
+    /// `PROP_MAC_REPEATER_MODE`: whether, and how eagerly, the device
+    /// node should forward overheard routable frames; one of
+    /// [`umsh_ulcp::ids::repeater_mode`]. Unless off it is advertised as
+    /// the `REP` capability bit—a fact about what the node does, not a
+    /// choice about what it calls itself.
+    pub repeater_mode: u8,
     /// Whether the device node has a link beyond its radio: a host
     /// attached under `PROP_MAC_BACKHAUL`, or a bridge client that is
     /// enabled and configured. A node that forwards across such a link is
@@ -436,7 +437,7 @@ pub struct DevDomainSnapshot {
     /// flood-forward, or `None` for no threshold.
     pub repeater_min_snr: Option<i8>,
     /// `PROP_MESHCORE_FORWARDING_ENABLED`: whether MeshCore traffic is
-    /// forwarded too, independently of `repeater_enabled`. Always false
+    /// forwarded too, independently of `repeater_mode`. Always false
     /// on a board without `CAP_MESHCORE_FORWARDER`.
     pub meshcore_forwarding_enabled: bool,
     /// `PROP_MESHCORE_REGION_POLICY`: how MeshCore transport codes gate
@@ -505,6 +506,13 @@ pub struct DevDomainSnapshot {
     /// hears about a host write, a boot restore, a `CMD_RST` and a menu
     /// entry by one path instead of four.
     pub ble_enabled: bool,
+}
+
+impl DevDomainSnapshot {
+    /// Whether the device node forwards other nodes' frames at all.
+    pub fn forwards(&self) -> bool {
+        self.repeater_mode != umsh_ulcp::ids::repeater_mode::OFF
+    }
 }
 
 /// What the device's Wi-Fi station and IP stack have been configured to
@@ -1661,7 +1669,7 @@ fn sync_dev_domain<A, S, const TXQ: usize, E>(
         peers: heapless::Vec::new(),
         admins: heapless::Vec::new(),
         dev_key: session.dev_key().copied(),
-        repeater_enabled: session.repeater_enabled(),
+        repeater_mode: session.repeater_mode(),
         bridged: current.1 || bridging_client,
         repeater_region_codes: session.repeater_region_codes().collect(),
         repeater_region_names: session
@@ -1728,7 +1736,7 @@ fn sync_dev_domain<A, S, const TXQ: usize, E>(
         name: session.device_name(),
         node_key: snapshot.dev_key,
         lora: radio.enabled.then_some(radio),
-        repeater: snapshot.repeater_enabled,
+        repeater: snapshot.forwards(),
         meshcore: snapshot.meshcore_forwarding_enabled,
     });
     env.publish_dev_domain(snapshot);

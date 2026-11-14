@@ -32,7 +32,8 @@ use umsh_ulcp::i2c::{self, BusInfo, DeviceInfo, ScanRequest, TransferRequest};
 use umsh_ulcp::ids::{
     self, DEFAULT_ADVERT_INTERVAL_S, DEFAULT_BEACON_INTERVAL_S, DEFAULT_SOUND_VOLUME,
     MAX_AUTO_ANNOUNCE_INTERVAL_S, MIN_AUTO_ANNOUNCE_INTERVAL_S, MIN_DISPLAY_TIMEOUT_S,
-    admin_writable, cap, device_writable, keyboard_aids, meshcore_region_policy, prop, stream,
+    admin_writable, cap, device_writable, keyboard_aids, meshcore_region_policy, prop,
+    repeater_mode, stream,
 };
 use umsh_ulcp::ip;
 use umsh_ulcp::items::{self, Filter, ItemError, REGION_CODE_LEN};
@@ -1107,11 +1108,11 @@ struct DeviceDomain {
     /// the mesh. Empty by default—a device answers node management
     /// only from keys someone deliberately put here.
     admins: DevAdminTable,
-    /// `PROP_MAC_REPEATER_ENABLED`: when set, the device identity's
-    /// on-board MAC autonomously forwards overheard routable frames.
-    /// Persisted device-domain state; takes effect only once a device
-    /// identity is provisioned (store-and-defer otherwise).
-    repeater_enabled: bool,
+    /// `PROP_MAC_REPEATER_MODE`: whether, and how eagerly, the device
+    /// identity's on-board MAC forwards overheard routable frames; one of
+    /// [`repeater_mode`]. Persisted device-domain state; takes effect only
+    /// once a device identity is provisioned (store-and-defer otherwise).
+    repeater_mode: u8,
     /// `PROP_MAC_REPEATER_REGIONS`: the flood-forwarding region filter.
     /// Empty imposes no regional restriction. Configurable while
     /// forwarding is disabled; it simply takes effect when enabled.
@@ -1130,7 +1131,7 @@ struct DeviceDomain {
     /// flood forwarding, or `None` for no threshold.
     repeater_min_snr: Option<i8>,
     /// `PROP_MESHCORE_FORWARDING_ENABLED`: whether MeshCore traffic is
-    /// forwarded, independently of `repeater_enabled`.
+    /// forwarded, independently of `repeater_mode`.
     meshcore_forwarding_enabled: bool,
     /// `PROP_MESHCORE_REGION_POLICY`: one of
     /// [`ids::meshcore_region_policy`].
@@ -1281,7 +1282,7 @@ impl DeviceDomain {
             channel_keys: ChannelKeyTable::default(),
             peers: DevPeerTable::default(),
             admins: DevAdminTable::default(),
-            repeater_enabled: false,
+            repeater_mode: repeater_mode::OFF,
             repeater_regions: RepeaterRegions::default(),
             repeater_default_region: None,
             repeater_min_rssi: None,
@@ -2707,7 +2708,7 @@ const SAVED_SCHEMA: &[SavedProperty] = &[
     saved(prop::DEV_CHANNEL_KEYS, ApplyPhase::Keys, true),
     saved(prop::DEV_PEERS, ApplyPhase::Keys, true),
     saved(prop::DEV_NAME, ApplyPhase::Config, false),
-    saved(prop::MAC_REPEATER_ENABLED, ApplyPhase::Config, false),
+    saved(prop::MAC_REPEATER_MODE, ApplyPhase::Config, false),
     saved(prop::IDENT_ROLE, ApplyPhase::Config, false),
     saved(prop::IDENT_MOBILE, ApplyPhase::Config, false),
     saved(prop::MAC_REPEATER_REGIONS, ApplyPhase::Config, true),
@@ -2874,7 +2875,7 @@ struct SavedState {
     dev_channel_keys: ChannelKeyTable,
     dev_peers: DevPeerTable,
     dev_admins: DevAdminTable,
-    repeater_enabled: bool,
+    repeater_mode: u8,
     repeater_regions: RepeaterRegions,
     repeater_default_region: Option<[u8; REGION_CODE_LEN]>,
     repeater_min_rssi: Option<i16>,
@@ -2937,7 +2938,7 @@ impl SavedState {
             dev_channel_keys: device.channel_keys,
             dev_peers: device.peers,
             dev_admins: device.admins,
-            repeater_enabled: device.repeater_enabled,
+            repeater_mode: device.repeater_mode,
             repeater_regions: device.repeater_regions,
             repeater_default_region: device.repeater_default_region,
             repeater_min_rssi: device.repeater_min_rssi,
@@ -3001,7 +3002,7 @@ impl SavedState {
             dev_channel_keys: ChannelKeyTable::default(),
             dev_peers: DevPeerTable::default(),
             dev_admins: DevAdminTable::default(),
-            repeater_enabled: false,
+            repeater_mode: repeater_mode::OFF,
             repeater_regions: RepeaterRegions::default(),
             repeater_default_region: None,
             repeater_min_rssi: None,
@@ -3098,7 +3099,7 @@ impl SavedState {
                 Ok(())
             }
             prop::DEV_NAME => encoder.put(number, &self.name[..self.name_len]),
-            prop::MAC_REPEATER_ENABLED => encoder.put(number, &[self.repeater_enabled as u8]),
+            prop::MAC_REPEATER_MODE => encoder.put(number, &[self.repeater_mode]),
             prop::IDENT_ROLE => match self.ident_role {
                 Some(role) => encoder.put(number, &[role]),
                 None => Ok(()),
@@ -3343,8 +3344,8 @@ impl SavedState {
                 self.name[..value.len()].copy_from_slice(value);
                 self.name_len = value.len();
             }
-            prop::MAC_REPEATER_ENABLED => {
-                self.repeater_enabled = parse_bool(value).map_err(invalid)?
+            prop::MAC_REPEATER_MODE => {
+                self.repeater_mode = validate_repeater_mode(value).map_err(invalid)?
             }
             prop::IDENT_ROLE => self.ident_role = Some(parse_u8(value).map_err(invalid)?),
             prop::IDENT_MOBILE => self.ident_mobile = parse_bool(value).map_err(invalid)?,
@@ -4123,13 +4124,14 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         self.device.admins.iter().copied()
     }
 
-    /// `PROP_MAC_REPEATER_ENABLED`: whether the device node should
-    /// autonomously forward overheard routable frames and advertise the
-    /// `REP` capability bit. Part of the device domain, so it changes
+    /// `PROP_MAC_REPEATER_MODE`: whether, and how eagerly, the device
+    /// node should forward overheard routable frames; one of
+    /// [`repeater_mode`]. Unless it is off the node advertises the `REP`
+    /// capability bit. Part of the device domain, so it changes
     /// [`Session::dev_domain_version`] and the firmware reconciles it
     /// against the live MAC on the next sync.
-    pub fn repeater_enabled(&self) -> bool {
-        self.device.repeater_enabled
+    pub fn repeater_mode(&self) -> u8 {
+        self.device.repeater_mode
     }
 
     /// `PROP_MAC_REPEATER_REGIONS`, as the forwarding filter needs it: the
@@ -4367,9 +4369,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                         self.device.name = saved.name;
                         self.device.name_len = saved.name_len;
                     }
-                    prop::MAC_REPEATER_ENABLED => {
-                        self.device.repeater_enabled = saved.repeater_enabled
-                    }
+                    prop::MAC_REPEATER_MODE => self.device.repeater_mode = saved.repeater_mode,
                     prop::IDENT_ROLE => self.device.ident_role = saved.ident_role,
                     prop::IDENT_MOBILE => self.device.ident_mobile = saved.ident_mobile,
                     prop::MAC_REPEATER_REGIONS => {
@@ -6283,17 +6283,24 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         enabled
     }
 
-    /// Flip `PROP_MAC_REPEATER_ENABLED` from the device itself.
+    /// Step `PROP_MAC_REPEATER_MODE` from the device itself: off,
+    /// adaptive, on, and around again.
     ///
     /// Every device carries the repeater, so this never refuses—the
-    /// return is the new state rather than an availability answer.
+    /// return is whether the node now forwards rather than an
+    /// availability answer.
     pub fn toggle_repeater(&mut self, emit: &mut impl FnMut(&[u8])) -> Option<bool> {
-        self.toggle_device_flag(
-            true,
-            prop::MAC_REPEATER_ENABLED,
-            |device| &mut device.repeater_enabled,
-            emit,
-        )
+        let mode = match self.device.repeater_mode {
+            repeater_mode::OFF => repeater_mode::ADAPTIVE,
+            repeater_mode::ADAPTIVE => repeater_mode::ON,
+            _ => repeater_mode::OFF,
+        };
+        self.device.repeater_mode = mode;
+        self.bump_dev_domain();
+        if self.publishing() {
+            self.announce_prop_is(prop::MAC_REPEATER_MODE, &[mode], emit);
+        }
+        Some(mode != repeater_mode::OFF)
     }
 
     /// Flip `PROP_BLE_ENABLED` from the device itself.
@@ -8161,8 +8168,8 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             // and takes effect the moment the device node is brought up
             // (store-and-defer). The firmware reconciles it against the
             // live MAC via the dev-domain version.
-            prop::MAC_REPEATER_ENABLED if self.config.mac_node => {
-                self.device.repeater_enabled = parse_bool(value)?;
+            prop::MAC_REPEATER_MODE if self.config.mac_node => {
+                self.device.repeater_mode = validate_repeater_mode(value)?;
                 self.bump_dev_domain();
                 Ok(false)
             }
@@ -8460,11 +8467,17 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             | prop::PHY_MTU
             | prop::PHY_T_FRAME
             | prop::PHY_DUTY_NOW
+            | prop::PHY_RX_DUTY
             | prop::DEV_KEY
             | prop::HOST_RX_QUEUE_COUNT
             | prop::HOST_RX_QUEUE_DROPPED
             | prop::SAVED => Err(Status::INVALID_ARGUMENT),
             prop::BATTERY if self.config.battery.is_some() => Err(Status::INVALID_ARGUMENT),
+            prop::MAC_REPEATER_STATE | prop::MAC_REPEATERS_HEARD
+                if self.forwarding_gauges().is_some() =>
+            {
+                Err(Status::INVALID_ARGUMENT)
+            }
             // What the board is wired with is not the host's to change.
             prop::I2C_BUSES | prop::I2C_DEVICES if self.has_i2c() => Err(Status::INVALID_ARGUMENT),
             key if self.config.battery.is_some()
@@ -9057,6 +9070,13 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         present.then_some((counter, ledger))
     }
 
+    /// Where `PROP_MAC_REPEATER_STATE` and `PROP_MAC_REPEATERS_HEARD` are
+    /// read from: the node reports both beside its counters, so they exist
+    /// where the counters it feeds do.
+    fn forwarding_gauges(&self) -> Option<&'static StatsLedger> {
+        self.config.stats.filter(|_| self.config.mac_node)
+    }
+
     /// Whether this device can hear access points at all.
     fn has_wifi(&self) -> bool {
         self.config.wifi.is_some()
@@ -9205,7 +9225,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         }
         if matches!(
             key,
-            prop::MAC_REPEATER_ENABLED
+            prop::MAC_REPEATER_MODE
                 | prop::MAC_REPEATER_REGIONS
                 | prop::MAC_REPEATER_DEFAULT_REGION
                 | prop::MAC_REPEATER_MIN_RSSI
@@ -9213,6 +9233,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 | prop::MAC_BACKHAUL
         ) {
             return self.config.mac_node;
+        }
+        if matches!(key, prop::MAC_REPEATER_STATE | prop::MAC_REPEATERS_HEARD) {
+            return self.forwarding_gauges().is_some();
         }
         if is_identity_property(key) {
             return self.config.dev_identity;
@@ -9248,6 +9271,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 | prop::PHY_LORA_SW
                 | prop::DEV_NAME
                 | prop::PHY_DUTY_NOW
+                | prop::PHY_RX_DUTY
                 | prop::PHY_DUTY_LIMIT
                 | prop::MAC_PROMISCUOUS
                 | prop::SAVED
@@ -9488,8 +9512,19 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 }
                 len
             }
-            prop::MAC_REPEATER_ENABLED if self.config.mac_node => {
-                out[0] = self.device.repeater_enabled as u8;
+            prop::MAC_REPEATER_MODE if self.config.mac_node => {
+                out[0] = self.device.repeater_mode;
+                1
+            }
+            prop::MAC_REPEATER_STATE | prop::MAC_REPEATERS_HEARD => {
+                let Some(ledger) = self.forwarding_gauges() else {
+                    return PropValue::Unknown;
+                };
+                out[0] = if key == prop::MAC_REPEATER_STATE {
+                    ledger.repeater_state()
+                } else {
+                    ledger.repeaters_heard()
+                };
                 1
             }
             // Deferred-read like PHY_RSSI: prop_get intercepts and asks
@@ -9724,6 +9759,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 1
             }
             prop::PHY_DUTY_NOW => put(out, &self.config.duty.usage(now_ms).to_le_bytes()),
+            prop::PHY_RX_DUTY => put(out, &self.config.duty.rx_usage(now_ms).to_le_bytes()),
             prop::PHY_DUTY_LIMIT => put(out, &self.config.duty.limit().to_le_bytes()),
 
             prop::MAC_PROMISCUOUS => {
@@ -10074,6 +10110,15 @@ fn validate_meshcore_region_policy(value: &[u8]) -> Result<u8, Status> {
         return Err(Status::INVALID_ARGUMENT);
     }
     Ok(policy)
+}
+
+/// A `PROP_MAC_REPEATER_MODE` value: one of the three assigned.
+fn validate_repeater_mode(value: &[u8]) -> Result<u8, Status> {
+    let mode = parse_u8(value)?;
+    if mode > repeater_mode::ADAPTIVE {
+        return Err(Status::INVALID_ARGUMENT);
+    }
+    Ok(mode)
 }
 
 fn parse_bool(value: &[u8]) -> Result<bool, Status> {
@@ -11361,7 +11406,7 @@ mod tests {
         assert!(!caps.contains(&cap::MAC_BACKHAUL));
 
         for key in [
-            prop::MAC_REPEATER_ENABLED,
+            prop::MAC_REPEATER_MODE,
             prop::MAC_REPEATER_REGIONS,
             prop::MAC_REPEATER_DEFAULT_REGION,
             prop::MAC_REPEATER_MIN_RSSI,
@@ -12222,26 +12267,19 @@ mod tests {
         }
     }
 
-    /// The other three switches a display board offers behave the same
+    /// Two of the other switches a display board offers behave the same
     /// way: flip the value, move the mirror, publish the transition.
     #[test]
     fn every_local_toggle_flips_its_own_property() {
         // (start, toggle, property)—each starts at its post-reset value.
         type Toggle = fn(&mut TestSession, &mut Vec<Vec<u8>>) -> Option<bool>;
-        let cases: [(bool, Toggle, u32); 3] = [
+        let cases: [(bool, Toggle, u32); 2] = [
             (
                 false,
                 |session, emitted| {
                     session.toggle_gnss_ident_update(&mut |b: &[u8]| emitted.push(b.to_vec()))
                 },
                 prop::GNSS_IDENT_UPDATE,
-            ),
-            (
-                false,
-                |session, emitted| {
-                    session.toggle_repeater(&mut |b: &[u8]| emitted.push(b.to_vec()))
-                },
-                prop::MAC_REPEATER_ENABLED,
             ),
             (
                 true,
@@ -12273,6 +12311,56 @@ mod tests {
             emitted.clear();
             assert_eq!(toggle(&mut session, &mut emitted), Some(start));
         }
+    }
+
+    /// Forwarding has three settings, so its local control steps through
+    /// them: off, adaptive, on, and around again.
+    #[test]
+    fn the_local_forwarding_control_steps_through_every_mode() {
+        let mut session = test_session();
+        for (mode, forwards) in [
+            (repeater_mode::ADAPTIVE, true),
+            (repeater_mode::ON, true),
+            (repeater_mode::OFF, false),
+        ] {
+            let before = session.dev_domain_version();
+            let mut emitted = Vec::new();
+            let flipped = session.toggle_repeater(&mut |b: &[u8]| emitted.push(b.to_vec()));
+            assert_eq!(flipped, Some(forwards));
+            assert_eq!(get(&mut session, prop::MAC_REPEATER_MODE), [mode]);
+            assert_ne!(session.dev_domain_version(), before);
+            assert_eq!(
+                parse_prop_is(&emitted[0]),
+                (TID_UNSOLICITED, prop::MAC_REPEATER_MODE, vec![mode])
+            );
+        }
+    }
+
+    /// What the node reports of its forwarding is read, never written, and
+    /// exists only where a node is there to report it.
+    #[test]
+    fn forwarding_state_and_repeaters_heard_are_read_only_gauges() {
+        let mut session = test_session();
+        let ledger = session
+            .config
+            .stats
+            .expect("the test device keeps statistics");
+        ledger.set_forwarding(umsh_ulcp::ids::repeater_state::ENGAGED, 5);
+        assert_eq!(
+            get(&mut session, prop::MAC_REPEATER_STATE),
+            [umsh_ulcp::ids::repeater_state::ENGAGED]
+        );
+        assert_eq!(get(&mut session, prop::MAC_REPEATERS_HEARD), [5]);
+        for key in [prop::MAC_REPEATER_STATE, prop::MAC_REPEATERS_HEARD] {
+            let (emitted, _) = set(&mut session, key, &[0]);
+            expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
+        }
+        ledger.set_forwarding(0, 0);
+
+        session.config.duty.record_rx(0, 100);
+        assert_ne!(get(&mut session, prop::PHY_RX_DUTY), 0u16.to_le_bytes());
+        let (emitted, _) = set(&mut session, prop::PHY_RX_DUTY, &[0, 0]);
+        expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
     }
 
     /// Bluetooth is a capability like any other: a board without the
@@ -12446,7 +12534,7 @@ mod tests {
         // Enabling forwarding does not touch either property; the role
         // stays "derive it", and derivation happens where the identity
         // is actually built.
-        set(&mut session, prop::MAC_REPEATER_ENABLED, &[1]);
+        set(&mut session, prop::MAC_REPEATER_MODE, &[1]);
         assert_eq!(get(&mut session, prop::IDENT_ROLE), Vec::<u8>::new());
 
         // A mobile repeater: an explicit role plus the mobility bit,
@@ -12459,7 +12547,7 @@ mod tests {
         set(&mut session, prop::IDENT_MOBILE, &[1]);
         assert_eq!(get(&mut session, prop::IDENT_ROLE), [1]);
         assert_eq!(get(&mut session, prop::IDENT_MOBILE), [1]);
-        assert_eq!(get(&mut session, prop::MAC_REPEATER_ENABLED), [1]);
+        assert_eq!(get(&mut session, prop::MAC_REPEATER_MODE), [1]);
 
         // Clearing the role returns it to derivation.
         set(&mut session, prop::IDENT_ROLE, &[]);
@@ -12765,18 +12853,21 @@ mod tests {
         let mut session = test_session();
         // Defaults off, accepted before any identity is provisioned
         // (store-and-defer), and echoes the authoritative value back.
-        assert_eq!(get(&mut session, prop::MAC_REPEATER_ENABLED), [0]);
-        let (emitted, effect) = set(&mut session, prop::MAC_REPEATER_ENABLED, &[1]);
+        assert_eq!(get(&mut session, prop::MAC_REPEATER_MODE), [0]);
+        let (emitted, effect) = set(&mut session, prop::MAC_REPEATER_MODE, &[1]);
         let (_, key, value) = parse_prop_is(&emitted[0]);
-        assert_eq!(key, prop::MAC_REPEATER_ENABLED);
+        assert_eq!(key, prop::MAC_REPEATER_MODE);
         assert_eq!(value, [1]);
         // Not radio-affecting; no ApplyRadio effect.
         assert_eq!(effect, None);
-        assert_eq!(get(&mut session, prop::MAC_REPEATER_ENABLED), [1]);
-        assert!(session.repeater_enabled());
-        // Only a boolean is accepted.
-        let (emitted, _) = set(&mut session, prop::MAC_REPEATER_ENABLED, &[2]);
-        expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
+        assert_eq!(get(&mut session, prop::MAC_REPEATER_MODE), [1]);
+        assert_eq!(session.repeater_mode(), repeater_mode::ON);
+        // Only an assigned mode is accepted.
+        for refused in [&[3][..], &[0xFF], &[], &[1, 0]] {
+            let (emitted, _) = set(&mut session, prop::MAC_REPEATER_MODE, refused);
+            expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
+        }
+        assert_eq!(session.repeater_mode(), repeater_mode::ON);
 
         // Survives save + boot-from-snapshot.
         save(&mut session);
@@ -12785,13 +12876,13 @@ mod tests {
         let mut booted: TestSession =
             Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
         booted.restore_at_boot(&bytes[..len]).unwrap();
-        assert!(booted.repeater_enabled());
+        assert_eq!(booted.repeater_mode(), repeater_mode::ON);
         booted.attach(true);
-        assert_eq!(get(&mut booted, prop::MAC_REPEATER_ENABLED), [1]);
+        assert_eq!(get(&mut booted, prop::MAC_REPEATER_MODE), [1]);
 
         // A fresh unprovisioned session defaults off.
         let fresh: TestSession = Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
-        assert!(!fresh.repeater_enabled());
+        assert_eq!(fresh.repeater_mode(), repeater_mode::OFF);
     }
 
     /// Both MeshCore settings default off and open, read back what was
@@ -12808,7 +12899,7 @@ mod tests {
             get(&mut session, prop::MESHCORE_REGION_POLICY),
             [meshcore_region_policy::OPEN]
         );
-        assert!(!session.repeater_enabled());
+        assert_eq!(session.repeater_mode(), repeater_mode::OFF);
 
         let version = session.dev_domain_version();
         let (emitted, effect) = set(&mut session, prop::MESHCORE_FORWARDING_ENABLED, &[1]);
@@ -12988,7 +13079,7 @@ mod tests {
     #[test]
     fn meshcore_settings_default_from_an_older_snapshot() {
         let mut session = test_session();
-        set(&mut session, prop::MAC_REPEATER_ENABLED, &[1]);
+        set(&mut session, prop::MAC_REPEATER_MODE, &[1]);
         save(&mut session);
         let mut bytes = [0u8; SNAPSHOT_MAX];
         let len = session.encode_snapshot(&mut bytes).unwrap();
@@ -13009,7 +13100,7 @@ mod tests {
         let mut booted: TestSession =
             Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
         booted.restore_at_boot(&older[..older_len]).unwrap();
-        assert!(booted.repeater_enabled());
+        assert_eq!(booted.repeater_mode(), repeater_mode::ON);
         assert!(!booted.meshcore_forwarding_enabled());
         assert_eq!(
             booted.meshcore_region_policy(),
@@ -13178,7 +13269,7 @@ mod tests {
         for replacement in [[0x77; 32], [0xFF; 32]] {
             let mut session = test_session();
             session.set_boot_identity([0x5A; 32]);
-            set(&mut session, prop::MAC_REPEATER_ENABLED, &[1]);
+            set(&mut session, prop::MAC_REPEATER_MODE, &[1]);
             set(&mut session, prop::MESHCORE_FORWARDING_ENABLED, &[1]);
 
             let mut buf = [0u8; 64];
@@ -13188,7 +13279,7 @@ mod tests {
             session.respond_identity(5, Ok(replacement), &mut |_: &[u8]| {});
 
             assert_eq!(session.dev_key(), Some(&replacement));
-            assert!(session.repeater_enabled());
+            assert_eq!(session.repeater_mode(), repeater_mode::ON);
             assert!(session.meshcore_forwarding_enabled());
             assert_eq!(get(&mut session, prop::MESHCORE_FORWARDING_ENABLED), [1]);
 
@@ -13329,7 +13420,7 @@ mod tests {
         );
 
         // Written with forwarding still disabled.
-        assert_eq!(get(&mut session, prop::MAC_REPEATER_ENABLED), [0]);
+        assert_eq!(get(&mut session, prop::MAC_REPEATER_MODE), [0]);
         let table = region_table(&["SJC", "Rogue Valley"]);
         let (emitted, effect) = set(&mut session, prop::MAC_REPEATER_REGIONS, &table);
         assert_eq!(effect, None, "policy is not radio-affecting");
@@ -15301,7 +15392,7 @@ mod tests {
             prop::PHY_FREQ,
             prop::BLE_PAIRING_PIN,
             prop::CAPS,
-            prop::MAC_REPEATER_ENABLED,
+            prop::MAC_REPEATER_MODE,
             prop::IDENT_ROLE,
             prop::IDENT_MOBILE,
             prop::IDENT_LOCATION,
@@ -15323,9 +15414,9 @@ mod tests {
             assert!(effect.is_none());
             expect_status(&emitted[0], 1, Status::INVALID_ARGUMENT);
         }
-        // An unknown property is not found; 86 is still-spare space in
+        // An unknown property is not found; 87 is still-spare space in
         // the advertisement sub-range.
-        for unknown in [86, 1_234] {
+        for unknown in [87, 1_234] {
             let len = frame::prop_remove(&mut buf, 2, unknown, &[0; 4]).unwrap();
             let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
             assert!(effect.is_none());
@@ -17382,7 +17473,7 @@ mod tests {
         assert_eq!(booted.device_name(), test_config().default_device_name);
         booted.attach(true);
         assert_eq!(get(&mut booted, prop::SAVED), [ids::saved::CURRENT]);
-        assert_eq!(get(&mut booted, prop::MAC_REPEATER_ENABLED), [0]);
+        assert_eq!(get(&mut booted, prop::MAC_REPEATER_MODE), [0]);
         assert_eq!(get(&mut booted, prop::HOST_KEY), [] as [u8; 0]);
     }
 
@@ -21143,7 +21234,7 @@ mod tests {
         set(&mut restored, prop::BRIDGE_ENABLED, &[0]);
         restored.reset(Status::RESET_SOFTWARE, &mut |_| {});
         assert_eq!(*restored.bridge_config(), wanted);
-        assert_eq!(get(&mut restored, prop::MAC_REPEATER_ENABLED), [0]);
+        assert_eq!(get(&mut restored, prop::MAC_REPEATER_MODE), [0]);
     }
 
     #[cfg(feature = "bridge-client")]

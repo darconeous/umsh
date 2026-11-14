@@ -1189,13 +1189,14 @@ impl Model {
         self.set(prop::GNSS_ENABLED, &[u8::from(enabled)])
     }
 
-    /// `PROP_MAC_REPEATER_ENABLED`: forwarding.
-    pub fn forwarding(&self) -> Option<bool> {
-        self.bool(prop::MAC_REPEATER_ENABLED)
+    /// `PROP_MAC_REPEATER_MODE`: forwarding, as one of
+    /// [`umsh_ulcp::ids::repeater_mode`].
+    pub fn forwarding(&self) -> Option<u8> {
+        self.u8(prop::MAC_REPEATER_MODE)
     }
 
-    pub fn set_forwarding(&mut self, enabled: bool) -> Result<WriteId, Refusal> {
-        self.set(prop::MAC_REPEATER_ENABLED, &[u8::from(enabled)])
+    pub fn set_forwarding(&mut self, mode: u8) -> Result<WriteId, Refusal> {
+        self.set(prop::MAC_REPEATER_MODE, &[mode])
     }
 
     /// `PROP_GNSS_IDENT_UPDATE`: location sharing.
@@ -1779,18 +1780,18 @@ mod tests {
     #[test]
     fn publications_keep_the_cache_current() {
         let (mut model, mut script) = with_caps(&[cap::DEV_IDENTITY, cap::REPEATER]);
-        script.publish(prop_is(prop::MAC_REPEATER_ENABLED, &[1]));
+        script.publish(prop_is(prop::MAC_REPEATER_MODE, &[1]));
         // Not covered: passed by.
         script.publish(prop_is(prop::ALERT, &[1]));
         model.pump(&mut script, 5);
-        assert_eq!(model.forwarding(), Some(true));
+        assert_eq!(model.forwarding(), Some(1));
         assert_eq!(
-            model.freshness(prop::MAC_REPEATER_ENABLED),
+            model.freshness(prop::MAC_REPEATER_MODE),
             Freshness::Fresh { at_ms: 5 }
         );
         assert_eq!(
             events(&mut model),
-            [Event::Changed(prop::MAC_REPEATER_ENABLED)]
+            [Event::Changed(prop::MAC_REPEATER_MODE)]
         );
 
         // A table never read is not known whole: one item asks for the
@@ -1843,7 +1844,7 @@ mod tests {
         assert!(asked.contains(&prop::DEV_NAME));
         assert!(!asked.contains(&prop::CAPS));
         // What the device lacks is not asked for either.
-        assert!(!asked.contains(&prop::MAC_REPEATER_ENABLED));
+        assert!(!asked.contains(&prop::MAC_REPEATER_MODE));
         assert!(asked.contains(&prop::PHY_TX_POWER));
     }
 

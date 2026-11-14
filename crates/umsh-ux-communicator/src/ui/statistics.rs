@@ -16,7 +16,7 @@ type Value = String<20>;
 
 /// Every readout the screen can show, in order; its place here names its
 /// row.
-const NAMES: [&str; 15] = [
+const NAMES: [&str; 17] = [
     "Uptime",
     "Airtime",
     "Packets sent",
@@ -32,6 +32,8 @@ const NAMES: [&str; 15] = [
     "MeshCore routed",
     "MeshCore flooded",
     "MeshCore declined",
+    "Repeaters heard",
+    "Airtime heard",
 ];
 
 /// Indices `ForEach` can hold without borrowing the state.
@@ -84,6 +86,12 @@ fn readouts(stats: &Statistics, airtime: u16) -> Vec<(usize, Value), { NAMES.len
         if let Some(count) = count {
             _ = shown.push((place, grouped(count)));
         }
+    }
+    if let Some(heard) = stats.repeaters_heard {
+        _ = shown.push((15, grouped(u32::from(heard))));
+    }
+    if let Some(tenths) = stats.received_airtime {
+        _ = shown.push((16, airtime_text(tenths)));
     }
     shown
 }
@@ -165,7 +173,16 @@ mod tests {
             forwarded: Some(1_630),
             ..Statistics::default()
         };
-        let places: Vec<usize, 15> = readouts(&stats, 3).iter().map(|(p, _)| *p).collect();
+        let places: Vec<usize, 17> = readouts(&stats, 3).iter().map(|(p, _)| *p).collect();
         assert_eq!(places, [0, 1, 2, 8]);
+
+        let stats = Statistics {
+            repeaters_heard: Some(3),
+            received_airtime: Some(42),
+            ..Statistics::default()
+        };
+        let shown = readouts(&stats, 3);
+        assert_eq!(shown[2], (15, Value::try_from("3").unwrap()));
+        assert_eq!(shown[3], (16, Value::try_from("4.2% this hour").unwrap()));
     }
 }

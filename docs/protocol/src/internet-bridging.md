@@ -229,7 +229,7 @@ Both properties are session-scoped and revert on every attach, so both
 must be re-asserted after each reconnection to the device.
 
 A participant **MUST NOT** write
-[`PROP_MAC_REPEATER_ENABLED`](ulcp-host.md). Whether a device repeats is
+[`PROP_MAC_REPEATER_MODE`](ulcp-host.md). Whether a device repeats is
 persisted, device-domain configuration belonging to whoever provisioned
 it. A participant whose device has its repeater disabled is a **leaf**:
 its node is reachable across the bridge and its own traffic crosses, but

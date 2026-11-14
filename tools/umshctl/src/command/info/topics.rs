@@ -11,7 +11,7 @@ use umsh::node::location::NodeLocation;
 use umsh::ulcp::{ReportedFilter, decode_filter_table, decode_status};
 use umsh::ulcp_wire::Status;
 use umsh::ulcp_wire::battery::BatteryStatus;
-use umsh::ulcp_wire::ids::{DUTY_LIMIT_DISABLED, cap, prop, saved};
+use umsh::ulcp_wire::ids::{DUTY_LIMIT_DISABLED, cap, prop, repeater_mode, repeater_state, saved};
 use umsh::ulcp_wire::items;
 
 use super::props::PropSet;
@@ -130,7 +130,9 @@ pub const TOPICS: &[Topic] = &[
                 prop::STAT_LAN_RX_MALFORMED,
                 prop::STAT_LAN_EXPORTED,
                 prop::STAT_LAN_EXPORT_DROPPED,
+                prop::MAC_REPEATERS_HEARD,
                 prop::PHY_DUTY_NOW,
+                prop::PHY_RX_DUTY,
                 prop::UPTIME,
             ]
         },
@@ -163,7 +165,8 @@ pub const TOPICS: &[Topic] = &[
         gate: |ctx| ctx.has(cap::REPEATER),
         keys: |ctx| {
             let mut keys = vec![
-                prop::MAC_REPEATER_ENABLED,
+                prop::MAC_REPEATER_MODE,
+                prop::MAC_REPEATER_STATE,
                 prop::MAC_REPEATER_REGIONS,
                 prop::MAC_REPEATER_DEFAULT_REGION,
                 prop::MAC_REPEATER_MIN_RSSI,
@@ -612,8 +615,14 @@ fn render_stats(set: &PropSet, _ctx: &Context) -> Vec<Line> {
                 .map(|value| (label.to_string(), value.to_string()))
         })
         .collect::<Vec<_>>();
+    if let Some(heard) = set.u8(prop::MAC_REPEATERS_HEARD) {
+        lines.push(("repeaters heard".into(), heard.to_string()));
+    }
     if let Some(raw) = set.u16(prop::PHY_DUTY_NOW) {
         lines.push(("tx duty cycle".into(), format!("{:.1}%", duty_percent(raw))));
+    }
+    if let Some(raw) = set.u16(prop::PHY_RX_DUTY) {
+        lines.push(("rx duty cycle".into(), format!("{:.1}%", duty_percent(raw))));
     }
     if let Some(seconds) = set.u32(prop::UPTIME) {
         lines.push((
@@ -637,6 +646,15 @@ fn env_stats(set: &PropSet, _ctx: &Context) -> Vec<Line> {
             "TX_DUTY_PERCENT".into(),
             format!("{:.2}", duty_percent(raw)),
         ));
+    }
+    if let Some(raw) = set.u16(prop::PHY_RX_DUTY) {
+        env.push((
+            "RX_DUTY_PERCENT".into(),
+            format!("{:.2}", duty_percent(raw)),
+        ));
+    }
+    if let Some(heard) = set.u8(prop::MAC_REPEATERS_HEARD) {
+        env.push(("REPEATERS_HEARD".into(), heard.to_string()));
     }
     if let Some(seconds) = set.u32(prop::UPTIME) {
         env.push(("UPTIME_S".into(), seconds.to_string()));
@@ -830,12 +848,37 @@ fn precision_cell(bytes: u8) -> &'static str {
 // ─── repeater ────────────────────────────────────────────────────────
 
 fn render_repeater(set: &PropSet, _ctx: &Context) -> Vec<Line> {
-    let enabled = set.bool(prop::MAC_REPEATER_ENABLED).unwrap_or(false);
+    let mode = set
+        .u8(prop::MAC_REPEATER_MODE)
+        .unwrap_or(repeater_mode::OFF);
+    let enabled = mode != repeater_mode::OFF;
     let meshcore = meshcore(set);
     let meshcore_enabled = meshcore
         .as_ref()
         .is_some_and(|meshcore| meshcore.enabled == Some(true));
-    let mut lines = vec![("forwarding".into(), on_off(enabled).into())];
+    let mut lines = vec![(
+        "forwarding".into(),
+        match mode {
+            repeater_mode::ADAPTIVE => "adaptive",
+            _ => on_off(enabled),
+        }
+        .into(),
+    )];
+    // What an adaptive forwarder is doing changes by the minute; an
+    // ordinary repeater's state says nothing its mode did not.
+    if mode == repeater_mode::ADAPTIVE
+        && let Some(state) = set.u8(prop::MAC_REPEATER_STATE)
+    {
+        lines.push((
+            "state".into(),
+            match state {
+                repeater_state::STANDBY => "standby".to_string(),
+                repeater_state::ENGAGED => "engaged".to_string(),
+                repeater_state::WITHHELD => "withheld (busy channel)".to_string(),
+                other => other.to_string(),
+            },
+        ));
+    }
     // Each protocol's gates are inert while it is off, and printing
     // settings that do nothing invites reading them as if they did.
     if enabled {
@@ -923,8 +966,16 @@ fn meshcore_identity_allowed(set: &PropSet) -> bool {
 }
 
 fn env_repeater(set: &PropSet, _ctx: &Context) -> Vec<Line> {
-    let enabled = set.bool(prop::MAC_REPEATER_ENABLED).unwrap_or(false);
-    let mut env = vec![("ENABLED".into(), bit(enabled))];
+    let mode = set
+        .u8(prop::MAC_REPEATER_MODE)
+        .unwrap_or(repeater_mode::OFF);
+    let mut env = vec![
+        ("ENABLED".into(), bit(mode != repeater_mode::OFF)),
+        ("MODE".into(), mode.to_string()),
+    ];
+    if let Some(state) = set.u8(prop::MAC_REPEATER_STATE) {
+        env.push(("STATE".into(), state.to_string()));
+    }
     let regions = regions(set);
     if !regions.is_empty() {
         env.push(("REGIONS".into(), regions.join(" ")));

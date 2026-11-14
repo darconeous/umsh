@@ -258,18 +258,33 @@ impl<
             .set_auto_register_full_key_peers(enabled);
     }
 
-    /// Whether the MAC autonomously forwards overheard routable frames.
-    pub async fn repeater_enabled(&self) -> bool {
-        self.mac.borrow().await.repeater_config().enabled
+    /// Whether, and how eagerly, the MAC forwards overheard routable frames.
+    pub async fn repeater_mode(&self) -> crate::RepeaterMode {
+        self.mac.borrow().await.repeater_config().mode
     }
 
-    /// Enable or disable autonomous repeater forwarding. Only the master
-    /// `enabled` switch is touched; every other [`RepeaterConfig`] field
-    /// (regions, RSSI/SNR gates, contention tuning) keeps its current
-    /// value. Toggling at runtime is safe: forwarding simply starts or
-    /// stops honoring newly received frames.
-    pub async fn set_repeater_enabled(&self, enabled: bool) {
-        self.mac.borrow_mut().await.repeater_config_mut().enabled = enabled;
+    /// Set the forwarding mode. Only the mode is touched; every other
+    /// [`RepeaterConfig`] field (regions, RSSI/SNR gates, contention tuning)
+    /// keeps its current value. Changing it at runtime is safe: the new
+    /// mode governs frames received from then on.
+    pub async fn set_repeater_mode(&self, mode: crate::RepeaterMode) {
+        self.mac.borrow_mut().await.repeater_config_mut().mode = mode;
+    }
+
+    /// What the MAC's forwarding is doing at the moment.
+    pub async fn repeater_state(&self) -> crate::RepeaterState {
+        self.mac.borrow().await.repeater_state()
+    }
+
+    /// How many distinct repeaters were heard in the past hour.
+    pub async fn repeaters_heard(&self) -> u8 {
+        self.mac.borrow().await.repeaters_heard()
+    }
+
+    /// Tell the MAC the share of the past hour other transmitters occupied
+    /// the channel, as a fraction of 65535.
+    pub async fn set_rx_duty(&self, rx_duty: u16) {
+        self.mac.borrow_mut().await.set_rx_duty(rx_duty);
     }
 
     /// Replace the forwarding policy applied to flood-forwarded frames.

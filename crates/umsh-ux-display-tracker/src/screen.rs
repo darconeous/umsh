@@ -433,6 +433,8 @@ pub struct StatsModel {
     /// people's traffic and undecodable noise, shown as "drop".
     pub rx_accepted: u32,
     pub forwarded: u32,
+    /// Repeaters heard in the past hour.
+    pub repeaters_heard: u8,
     /// Configured transmit power; `None` until the radio is configured.
     pub tx_power_dbm: Option<i8>,
     /// Duty-cycle usage in tenths of a percent. Trackers normally sit
@@ -530,7 +532,17 @@ pub struct SettingsModel {
     pub gnss: Option<bool>,
     pub motion_wake: Option<bool>,
     pub share_location: Option<bool>,
-    pub forwarding: Option<bool>,
+    pub forwarding: Option<Forwarding>,
+}
+
+/// Whether, and how eagerly, the device repeats what it hears for others.
+/// Select steps through the three.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Forwarding {
+    Off,
+    /// Repeats only what no repeater was heard repeating.
+    Adaptive,
+    On,
 }
 
 /// This device's own address, rendered by the firmware.
@@ -1111,7 +1123,11 @@ where
     let _ = write!(line, "duty {whole}.{tenth}%");
     draw_row(target, layout, 4, line);
 
-    5
+    line.clear();
+    let _ = write!(line, "repeaters {}", stats.repeaters_heard);
+    draw_row(target, layout, 5, line);
+
+    6
 }
 
 /// Draw this device's address.
@@ -2150,7 +2166,14 @@ fn toggle_label(item: MenuItem, settings: &SettingsModel) -> &'static str {
         EntryKind::Toggle(ToggleId::Gnss) => settings.gnss,
         EntryKind::Toggle(ToggleId::MotionWake) => settings.motion_wake,
         EntryKind::Toggle(ToggleId::ShareLocation) => settings.share_location,
-        EntryKind::Toggle(ToggleId::Forwarding) => settings.forwarding,
+        EntryKind::Toggle(ToggleId::Forwarding) => {
+            return match settings.forwarding {
+                Some(Forwarding::On) => "on",
+                Some(Forwarding::Adaptive) => "auto",
+                Some(Forwarding::Off) => "off",
+                None => "",
+            };
+        }
         _ => return "",
     };
     match value {
@@ -2657,6 +2680,7 @@ mod tests {
                 forwarded: 7,
                 tx_power_dbm: Some(22),
                 duty_permille: 4,
+                repeaters_heard: 2,
             },
             // The device does not know what time it is, which is the
             // state every panel must render as no clock at all.
@@ -2668,7 +2692,7 @@ mod tests {
                 bluetooth: Some(true),
                 gnss: Some(false),
                 share_location: Some(false),
-                forwarding: Some(true),
+                forwarding: Some(Forwarding::On),
             },
             gnss_fix: false,
             identity: Some(IdentityModel {
@@ -3931,7 +3955,7 @@ mod tests {
             bluetooth: Some(true),
             gnss: Some(false),
             share_location: None,
-            forwarding: Some(true),
+            forwarding: Some(Forwarding::On),
         };
         let mut line: String<LINE> = String::new();
 
@@ -3974,7 +3998,7 @@ mod tests {
             bluetooth: Some(true),
             gnss: Some(false),
             share_location: None,
-            forwarding: Some(true),
+            forwarding: Some(Forwarding::On),
         };
         let mut line: String<LINE> = String::new();
 

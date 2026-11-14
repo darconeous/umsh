@@ -73,7 +73,8 @@ enum RegionCodeText {
 /// keeps that line visible, because conflating them produces a repeater
 /// that is silent for reasons nobody can find.
 struct RepeaterSettingsSection: View {
-    @Binding var enabled: Bool
+    /// `PROP_MAC_REPEATER_MODE`: 0 off, 1 on, 2 adaptive.
+    @Binding var mode: UInt8
     @Binding var regions: [String]
     @Binding var defaultRegion: Data?
     @Binding var minRssiDBm: Int16?
@@ -107,13 +108,22 @@ struct RepeaterSettingsSection: View {
 
     var body: some View {
         Section {
-            Toggle("Forward other nodes' traffic", isOn: $enabled)
+            Picker("Forward other nodes' traffic", selection: $mode) {
+                Text("Off", comment: "Forwarding mode: the device does not forward.")
+                    .tag(UInt8(0))
+                Text("Adaptive", comment: "Forwarding mode: the device forwards only what no repeater carried.")
+                    .tag(UInt8(2))
+                Text("On", comment: "Forwarding mode: the device is a repeater.")
+                    .tag(UInt8(1))
+            }
         } header: {
             Text("Repeater")
         } footer: {
-            Text(enabled
-                 ? "This device relays floods it hears, subject to the limits below."
-                 : "This device carries only its own traffic and advertises no forwarding role.")
+            switch mode {
+            case 0: Text("This device carries only its own traffic.")
+            case 2: Text("This device forwards only what no repeater carried.")
+            default: Text("This device relays floods it hears, subject to the limits below.")
+            }
         }
         // Carried on the first section because this view is a run of
         // sections rather than one container: it is always present, and a
@@ -131,7 +141,7 @@ struct RepeaterSettingsSection: View {
         }
         .task(id: suggestsFromPhone) { await suggestFromPhone() }
 
-        if enabled {
+        if mode != 0 {
             Section {
                 ForEach(regions, id: \.self) { region in
                     Text(RegionCodeText.label(region: region))

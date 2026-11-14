@@ -2438,12 +2438,26 @@ fn settings_no_profile_has_read_as_custom() {
 fn a_switch_flips_on_press() {
     let mut app = app!();
     open_radio(&mut app);
+    turn_to(&mut app, keys::RADIO_ENABLED);
+    assert!(radio(app.state()).enabled);
+    run(&mut app, &[Input::Press]);
+    assert!(!radio(app.state()).enabled);
+    run(&mut app, &[Input::Press]);
+    assert!(radio(app.state()).enabled);
+}
+
+/// Forwarding has three settings, so pressing it steps through them.
+#[test]
+fn forwarding_steps_through_its_settings_on_press() {
+    use umsh_ux_communicator::model::Forwarding;
+    let mut app = app!();
+    open_radio(&mut app);
     turn_to(&mut app, keys::FORWARDING);
-    assert!(radio(app.state()).forwarding);
-    run(&mut app, &[Input::Press]);
-    assert!(!radio(app.state()).forwarding);
-    run(&mut app, &[Input::Press]);
-    assert!(radio(app.state()).forwarding);
+    assert_eq!(radio(app.state()).forwarding, Forwarding::On);
+    for next in [Forwarding::Off, Forwarding::Adaptive, Forwarding::On] {
+        run(&mut app, &[Input::Press]);
+        assert_eq!(radio(app.state()).forwarding, next);
+    }
 }
 
 #[test]
@@ -3571,9 +3585,12 @@ fn a_setting_refused_reads_back_as_it_stands() {
     );
     assert_eq!(radio(app.state()).transmit_power, 22);
     // A setting applied elsewhere shows as it is applied.
-    store.set_forwarding(false);
+    store.set_forwarding(umsh_ux_communicator::model::Forwarding::Off);
     input::events(&mut app, 0);
-    assert!(!radio(app.state()).forwarding);
+    assert_eq!(
+        radio(app.state()).forwarding,
+        umsh_ux_communicator::model::Forwarding::Off
+    );
 }
 
 #[test]
@@ -3737,15 +3754,15 @@ fn rolling_left_from_a_list_reaches_the_rail_and_right_enters_a_section() {
 fn rolling_across_a_switch_sets_it() {
     let mut app = app!();
     open_radio(&mut app);
-    turn_to(&mut app, keys::FORWARDING);
+    turn_to(&mut app, keys::RADIO_ENABLED);
     run(&mut app, &[Input::Move(Arrow::Left)]);
-    assert!(!radio(app.state()).forwarding);
+    assert!(!radio(app.state()).enabled);
     run(&mut app, &[Input::Move(Arrow::Right)]);
-    assert!(radio(app.state()).forwarding);
+    assert!(radio(app.state()).enabled);
     run(&mut app, &[Input::Move(Arrow::Right)]);
-    assert!(radio(app.state()).forwarding);
+    assert!(radio(app.state()).enabled);
     run(&mut app, &[Input::Move(Arrow::Left)]);
-    assert!(!radio(app.state()).forwarding);
+    assert!(!radio(app.state()).enabled);
 }
 
 #[test]

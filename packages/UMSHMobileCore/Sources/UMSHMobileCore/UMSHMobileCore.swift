@@ -11483,6 +11483,11 @@ public struct UlcpDevicePropertiesRecord: Equatable, Hashable {
     public var spreadingFactor: UInt8?
     public var codingRateDenom: UInt8?
     public var dutyCycleNow: UInt16?
+    /**
+     * `PROP_PHY_RX_DUTY`: the share of the past hour other transmitters
+     * occupied the channel, on the scale of `duty_cycle_now`.
+     */
+    public var rxDutyCycle: UInt16?
     public var dutyCycleLimit: UInt16?
     public var statTxPackets: UInt32?
     public var statTxChannelBusy: UInt32?
@@ -11494,6 +11499,11 @@ public struct UlcpDevicePropertiesRecord: Equatable, Hashable {
     public var statForwarded: UInt32?
     public var statForwardDropped: UInt32?
     public var statForwardCancelled: UInt32?
+    /**
+     * `PROP_MAC_REPEATERS_HEARD`: repeaters heard in the past hour. What
+     * is so now, not a counter: a reset leaves it.
+     */
+    public var repeatersHeard: UInt8?
     public var statMeshcoreSeen: UInt32?
     public var statMeshcoreForwardedRouted: UInt32?
     public var statMeshcoreForwardedFlood: UInt32?
@@ -11637,7 +11647,15 @@ public struct UlcpDevicePropertiesRecord: Equatable, Hashable {
      */
     public var tzRule: String?
     public var time24h: Bool?
-    public var repeaterEnabled: Bool?
+    /**
+     * `PROP_MAC_REPEATER_MODE`: 0 off, 1 on, 2 adaptive.
+     */
+    public var repeaterMode: UInt8?
+    /**
+     * `PROP_MAC_REPEATER_STATE`: 0 off, 1 forwarding, 2 standby,
+     * 3 engaged, 4 withheld. Read-only.
+     */
+    public var repeaterState: UInt8?
     public var repeaterRegions: [String]?
     public var repeaterDefaultRegion: Data?
     public var repeaterMinRssiDbm: Int16?
@@ -11673,7 +11691,15 @@ public struct UlcpDevicePropertiesRecord: Equatable, Hashable {
          */illuminanceMillilux: UInt32?,
         /**
          * Tenths of kelvin; inner None is an unavailable sensor.
-         */temperatures: [UInt16?]?, temperatureNames: [String]?, phyEnabled: Bool?, frequencyKhz: UInt32?, transmitPowerDbm: Int8?, bandwidthHz: UInt32?, spreadingFactor: UInt8?, codingRateDenom: UInt8?, dutyCycleNow: UInt16?, dutyCycleLimit: UInt16?, statTxPackets: UInt32?, statTxChannelBusy: UInt32?, statRxPackets: UInt32?, statRxBadCrc: UInt32?, statRxNonUmsh: UInt32?, statRxAccepted: UInt32?, statRadioResets: UInt32?, statForwarded: UInt32?, statForwardDropped: UInt32?, statForwardCancelled: UInt32?, statMeshcoreSeen: UInt32?, statMeshcoreForwardedRouted: UInt32?, statMeshcoreForwardedFlood: UInt32?, statMeshcoreDeclined: UInt32?, deviceName: String?,
+         */temperatures: [UInt16?]?, temperatureNames: [String]?, phyEnabled: Bool?, frequencyKhz: UInt32?, transmitPowerDbm: Int8?, bandwidthHz: UInt32?, spreadingFactor: UInt8?, codingRateDenom: UInt8?, dutyCycleNow: UInt16?,
+        /**
+         * `PROP_PHY_RX_DUTY`: the share of the past hour other transmitters
+         * occupied the channel, on the scale of `duty_cycle_now`.
+         */rxDutyCycle: UInt16?, dutyCycleLimit: UInt16?, statTxPackets: UInt32?, statTxChannelBusy: UInt32?, statRxPackets: UInt32?, statRxBadCrc: UInt32?, statRxNonUmsh: UInt32?, statRxAccepted: UInt32?, statRadioResets: UInt32?, statForwarded: UInt32?, statForwardDropped: UInt32?, statForwardCancelled: UInt32?,
+        /**
+         * `PROP_MAC_REPEATERS_HEARD`: repeaters heard in the past hour. What
+         * is so now, not a counter: a reset leaves it.
+         */repeatersHeard: UInt8?, statMeshcoreSeen: UInt32?, statMeshcoreForwardedRouted: UInt32?, statMeshcoreForwardedFlood: UInt32?, statMeshcoreDeclined: UInt32?, deviceName: String?,
         /**
          * `None` is the device deriving its own role, which reads the same
          * as never having been told.
@@ -11770,7 +11796,14 @@ public struct UlcpDevicePropertiesRecord: Equatable, Hashable {
          */time: UlcpTimeRecord?,
         /**
          * `PROP_TZ_RULE`, a POSIX TZ rule.
-         */tzRule: String?, time24h: Bool?, repeaterEnabled: Bool?, repeaterRegions: [String]?, repeaterDefaultRegion: Data?, repeaterMinRssiDbm: Int16?, repeaterMinSnrDb: Int8?, meshcoreForwardingEnabled: Bool?,
+         */tzRule: String?, time24h: Bool?,
+        /**
+         * `PROP_MAC_REPEATER_MODE`: 0 off, 1 on, 2 adaptive.
+         */repeaterMode: UInt8?,
+        /**
+         * `PROP_MAC_REPEATER_STATE`: 0 off, 1 forwarding, 2 standby,
+         * 3 engaged, 4 withheld. Read-only.
+         */repeaterState: UInt8?, repeaterRegions: [String]?, repeaterDefaultRegion: Data?, repeaterMinRssiDbm: Int16?, repeaterMinSnrDb: Int8?, meshcoreForwardingEnabled: Bool?,
         /**
          * `PROP_MESHCORE_REGION_POLICY`: 0 open, 1 scoped only, 2 ignore.
          */meshcoreRegionPolicy: UInt8?,
@@ -11798,6 +11831,7 @@ public struct UlcpDevicePropertiesRecord: Equatable, Hashable {
         self.spreadingFactor = spreadingFactor
         self.codingRateDenom = codingRateDenom
         self.dutyCycleNow = dutyCycleNow
+        self.rxDutyCycle = rxDutyCycle
         self.dutyCycleLimit = dutyCycleLimit
         self.statTxPackets = statTxPackets
         self.statTxChannelBusy = statTxChannelBusy
@@ -11809,6 +11843,7 @@ public struct UlcpDevicePropertiesRecord: Equatable, Hashable {
         self.statForwarded = statForwarded
         self.statForwardDropped = statForwardDropped
         self.statForwardCancelled = statForwardCancelled
+        self.repeatersHeard = repeatersHeard
         self.statMeshcoreSeen = statMeshcoreSeen
         self.statMeshcoreForwardedRouted = statMeshcoreForwardedRouted
         self.statMeshcoreForwardedFlood = statMeshcoreForwardedFlood
@@ -11855,7 +11890,8 @@ public struct UlcpDevicePropertiesRecord: Equatable, Hashable {
         self.time = time
         self.tzRule = tzRule
         self.time24h = time24h
-        self.repeaterEnabled = repeaterEnabled
+        self.repeaterMode = repeaterMode
+        self.repeaterState = repeaterState
         self.repeaterRegions = repeaterRegions
         self.repeaterDefaultRegion = repeaterDefaultRegion
         self.repeaterMinRssiDbm = repeaterMinRssiDbm
@@ -11904,6 +11940,7 @@ public struct FfiConverterTypeUlcpDevicePropertiesRecord: FfiConverterRustBuffer
                 spreadingFactor: FfiConverterOptionUInt8.read(from: &buf),
                 codingRateDenom: FfiConverterOptionUInt8.read(from: &buf),
                 dutyCycleNow: FfiConverterOptionUInt16.read(from: &buf),
+                rxDutyCycle: FfiConverterOptionUInt16.read(from: &buf),
                 dutyCycleLimit: FfiConverterOptionUInt16.read(from: &buf),
                 statTxPackets: FfiConverterOptionUInt32.read(from: &buf),
                 statTxChannelBusy: FfiConverterOptionUInt32.read(from: &buf),
@@ -11915,6 +11952,7 @@ public struct FfiConverterTypeUlcpDevicePropertiesRecord: FfiConverterRustBuffer
                 statForwarded: FfiConverterOptionUInt32.read(from: &buf),
                 statForwardDropped: FfiConverterOptionUInt32.read(from: &buf),
                 statForwardCancelled: FfiConverterOptionUInt32.read(from: &buf),
+                repeatersHeard: FfiConverterOptionUInt8.read(from: &buf),
                 statMeshcoreSeen: FfiConverterOptionUInt32.read(from: &buf),
                 statMeshcoreForwardedRouted: FfiConverterOptionUInt32.read(from: &buf),
                 statMeshcoreForwardedFlood: FfiConverterOptionUInt32.read(from: &buf),
@@ -11961,7 +11999,8 @@ public struct FfiConverterTypeUlcpDevicePropertiesRecord: FfiConverterRustBuffer
                 time: FfiConverterOptionTypeUlcpTimeRecord.read(from: &buf),
                 tzRule: FfiConverterOptionString.read(from: &buf),
                 time24h: FfiConverterOptionBool.read(from: &buf),
-                repeaterEnabled: FfiConverterOptionBool.read(from: &buf),
+                repeaterMode: FfiConverterOptionUInt8.read(from: &buf),
+                repeaterState: FfiConverterOptionUInt8.read(from: &buf),
                 repeaterRegions: FfiConverterOptionSequenceString.read(from: &buf),
                 repeaterDefaultRegion: FfiConverterOptionData.read(from: &buf),
                 repeaterMinRssiDbm: FfiConverterOptionInt16.read(from: &buf),
@@ -11996,6 +12035,7 @@ public struct FfiConverterTypeUlcpDevicePropertiesRecord: FfiConverterRustBuffer
         FfiConverterOptionUInt8.write(value.spreadingFactor, into: &buf)
         FfiConverterOptionUInt8.write(value.codingRateDenom, into: &buf)
         FfiConverterOptionUInt16.write(value.dutyCycleNow, into: &buf)
+        FfiConverterOptionUInt16.write(value.rxDutyCycle, into: &buf)
         FfiConverterOptionUInt16.write(value.dutyCycleLimit, into: &buf)
         FfiConverterOptionUInt32.write(value.statTxPackets, into: &buf)
         FfiConverterOptionUInt32.write(value.statTxChannelBusy, into: &buf)
@@ -12007,6 +12047,7 @@ public struct FfiConverterTypeUlcpDevicePropertiesRecord: FfiConverterRustBuffer
         FfiConverterOptionUInt32.write(value.statForwarded, into: &buf)
         FfiConverterOptionUInt32.write(value.statForwardDropped, into: &buf)
         FfiConverterOptionUInt32.write(value.statForwardCancelled, into: &buf)
+        FfiConverterOptionUInt8.write(value.repeatersHeard, into: &buf)
         FfiConverterOptionUInt32.write(value.statMeshcoreSeen, into: &buf)
         FfiConverterOptionUInt32.write(value.statMeshcoreForwardedRouted, into: &buf)
         FfiConverterOptionUInt32.write(value.statMeshcoreForwardedFlood, into: &buf)
@@ -12053,7 +12094,8 @@ public struct FfiConverterTypeUlcpDevicePropertiesRecord: FfiConverterRustBuffer
         FfiConverterOptionTypeUlcpTimeRecord.write(value.time, into: &buf)
         FfiConverterOptionString.write(value.tzRule, into: &buf)
         FfiConverterOptionBool.write(value.time24h, into: &buf)
-        FfiConverterOptionBool.write(value.repeaterEnabled, into: &buf)
+        FfiConverterOptionUInt8.write(value.repeaterMode, into: &buf)
+        FfiConverterOptionUInt8.write(value.repeaterState, into: &buf)
         FfiConverterOptionSequenceString.write(value.repeaterRegions, into: &buf)
         FfiConverterOptionData.write(value.repeaterDefaultRegion, into: &buf)
         FfiConverterOptionInt16.write(value.repeaterMinRssiDbm, into: &buf)
@@ -12870,6 +12912,7 @@ public struct UlcpManagedPropertyIds: Equatable, Hashable {
     public var loraSpreadingFactor: UInt32
     public var loraCodingRate: UInt32
     public var dutyCycleNow: UInt32
+    public var rxDutyCycle: UInt32
     public var dutyCycleLimit: UInt32
     public var statTxPackets: UInt32
     public var statTxChannelBusy: UInt32
@@ -12881,6 +12924,7 @@ public struct UlcpManagedPropertyIds: Equatable, Hashable {
     public var statForwarded: UInt32
     public var statForwardDropped: UInt32
     public var statForwardCancelled: UInt32
+    public var repeatersHeard: UInt32
     public var statMeshcoreSeen: UInt32
     public var statMeshcoreForwardedRouted: UInt32
     public var statMeshcoreForwardedFlood: UInt32
@@ -12933,7 +12977,8 @@ public struct UlcpManagedPropertyIds: Equatable, Hashable {
     public var tzRule: UInt32
     public var time24h: UInt32
     public var alert: UInt32
-    public var repeaterEnabled: UInt32
+    public var repeaterMode: UInt32
+    public var repeaterState: UInt32
     public var repeaterRegions: UInt32
     public var repeaterDefaultRegion: UInt32
     public var repeaterMinRssi: UInt32
@@ -12951,7 +12996,7 @@ public struct UlcpManagedPropertyIds: Equatable, Hashable {
         /**
          * `PROP_HOST_KEY`, which a host empties across the mesh to revoke
          * a radio it left holding its identity.
-         */hostKey: UInt32, deviceVersion: UInt32, deviceModel: UInt32, deviceName: UInt32, battery: UInt32, illuminance: UInt32, temperatures: UInt32, temperatureNames: UInt32, batteryCurrent: UInt32, batteryRemainingCapacity: UInt32, batteryFullCapacity: UInt32, batteryDesignCapacity: UInt32, batteryExtPowerPresent: UInt32, batteryPresent: UInt32, batteryGaugeFull: UInt32, batteryGaugeInitialized: UInt32, batteryGaugeSmoothing: UInt32, batteryChargeVoltageRequest: UInt32, batteryGaugeFormat: UInt32, batteryGaugeStatus: UInt32, batteryGaugeOperationStatus: UInt32, phyEnabled: UInt32, frequency: UInt32, transmitPower: UInt32, loraBandwidth: UInt32, loraSpreadingFactor: UInt32, loraCodingRate: UInt32, dutyCycleNow: UInt32, dutyCycleLimit: UInt32, statTxPackets: UInt32, statTxChannelBusy: UInt32, statRxPackets: UInt32, statRxBadCrc: UInt32, statRxNonUmsh: UInt32, statRxAccepted: UInt32, statRadioResets: UInt32, statForwarded: UInt32, statForwardDropped: UInt32, statForwardCancelled: UInt32, statMeshcoreSeen: UInt32, statMeshcoreForwardedRouted: UInt32, statMeshcoreForwardedFlood: UInt32, statMeshcoreDeclined: UInt32, identRole: UInt32, identMobile: UInt32, identLocation: UInt32, identAltitude: UInt32, devDiscoverable: UInt32, gnssIdentUpdate: UInt32, gnssIdentPrecision: UInt32, uptime: UInt32, advertInterval: UInt32, beaconInterval: UInt32, startupBeacon: UInt32, gnssEnabled: UInt32, displayMotionWakeEnabled: UInt32, gnssTimeTrust: UInt32, bleEnabled: UInt32, bleBondCount: UInt32, bleLink: UInt32, blePairing: UInt32, wifiEnabled: UInt32, bridgeEnabled: UInt32, bridgeHost: UInt32, bridgePort: UInt32, bridgeServerKey: UInt32, bridgeLink: UInt32, lanBearerEnabled: UInt32, lanBearerGroup: UInt32, lanBearerIngressLimit: UInt32, lanBearerState: UInt32, devKey: UInt32, wifiNetworks: UInt32, wifiNetwork: UInt32, wifiScanning: UInt32, wifiScanResults: UInt32, wifiLink: UInt32, wifiRssi: UInt32, wifiMac: UInt32, ipv4State: UInt32, ipv4Config: UInt32, ipv4Address: UInt32, ipv6State: UInt32, ipv6Config: UInt32, ipv6Addresses: UInt32, ipDns: UInt32, ipResolvers: UInt32, time: UInt32, tzRule: UInt32, time24h: UInt32, alert: UInt32, repeaterEnabled: UInt32, repeaterRegions: UInt32, repeaterDefaultRegion: UInt32, repeaterMinRssi: UInt32, repeaterMinSnr: UInt32, meshcoreForwardingEnabled: UInt32, meshcoreRegionPolicy: UInt32, meshcoreRegions: UInt32, devPeers: UInt32, devAdmins: UInt32, testMessageAlerts: UInt32) {
+         */hostKey: UInt32, deviceVersion: UInt32, deviceModel: UInt32, deviceName: UInt32, battery: UInt32, illuminance: UInt32, temperatures: UInt32, temperatureNames: UInt32, batteryCurrent: UInt32, batteryRemainingCapacity: UInt32, batteryFullCapacity: UInt32, batteryDesignCapacity: UInt32, batteryExtPowerPresent: UInt32, batteryPresent: UInt32, batteryGaugeFull: UInt32, batteryGaugeInitialized: UInt32, batteryGaugeSmoothing: UInt32, batteryChargeVoltageRequest: UInt32, batteryGaugeFormat: UInt32, batteryGaugeStatus: UInt32, batteryGaugeOperationStatus: UInt32, phyEnabled: UInt32, frequency: UInt32, transmitPower: UInt32, loraBandwidth: UInt32, loraSpreadingFactor: UInt32, loraCodingRate: UInt32, dutyCycleNow: UInt32, rxDutyCycle: UInt32, dutyCycleLimit: UInt32, statTxPackets: UInt32, statTxChannelBusy: UInt32, statRxPackets: UInt32, statRxBadCrc: UInt32, statRxNonUmsh: UInt32, statRxAccepted: UInt32, statRadioResets: UInt32, statForwarded: UInt32, statForwardDropped: UInt32, statForwardCancelled: UInt32, repeatersHeard: UInt32, statMeshcoreSeen: UInt32, statMeshcoreForwardedRouted: UInt32, statMeshcoreForwardedFlood: UInt32, statMeshcoreDeclined: UInt32, identRole: UInt32, identMobile: UInt32, identLocation: UInt32, identAltitude: UInt32, devDiscoverable: UInt32, gnssIdentUpdate: UInt32, gnssIdentPrecision: UInt32, uptime: UInt32, advertInterval: UInt32, beaconInterval: UInt32, startupBeacon: UInt32, gnssEnabled: UInt32, displayMotionWakeEnabled: UInt32, gnssTimeTrust: UInt32, bleEnabled: UInt32, bleBondCount: UInt32, bleLink: UInt32, blePairing: UInt32, wifiEnabled: UInt32, bridgeEnabled: UInt32, bridgeHost: UInt32, bridgePort: UInt32, bridgeServerKey: UInt32, bridgeLink: UInt32, lanBearerEnabled: UInt32, lanBearerGroup: UInt32, lanBearerIngressLimit: UInt32, lanBearerState: UInt32, devKey: UInt32, wifiNetworks: UInt32, wifiNetwork: UInt32, wifiScanning: UInt32, wifiScanResults: UInt32, wifiLink: UInt32, wifiRssi: UInt32, wifiMac: UInt32, ipv4State: UInt32, ipv4Config: UInt32, ipv4Address: UInt32, ipv6State: UInt32, ipv6Config: UInt32, ipv6Addresses: UInt32, ipDns: UInt32, ipResolvers: UInt32, time: UInt32, tzRule: UInt32, time24h: UInt32, alert: UInt32, repeaterMode: UInt32, repeaterState: UInt32, repeaterRegions: UInt32, repeaterDefaultRegion: UInt32, repeaterMinRssi: UInt32, repeaterMinSnr: UInt32, meshcoreForwardingEnabled: UInt32, meshcoreRegionPolicy: UInt32, meshcoreRegions: UInt32, devPeers: UInt32, devAdmins: UInt32, testMessageAlerts: UInt32) {
         self.caps = caps
         self.hostKey = hostKey
         self.deviceVersion = deviceVersion
@@ -12981,6 +13026,7 @@ public struct UlcpManagedPropertyIds: Equatable, Hashable {
         self.loraSpreadingFactor = loraSpreadingFactor
         self.loraCodingRate = loraCodingRate
         self.dutyCycleNow = dutyCycleNow
+        self.rxDutyCycle = rxDutyCycle
         self.dutyCycleLimit = dutyCycleLimit
         self.statTxPackets = statTxPackets
         self.statTxChannelBusy = statTxChannelBusy
@@ -12992,6 +13038,7 @@ public struct UlcpManagedPropertyIds: Equatable, Hashable {
         self.statForwarded = statForwarded
         self.statForwardDropped = statForwardDropped
         self.statForwardCancelled = statForwardCancelled
+        self.repeatersHeard = repeatersHeard
         self.statMeshcoreSeen = statMeshcoreSeen
         self.statMeshcoreForwardedRouted = statMeshcoreForwardedRouted
         self.statMeshcoreForwardedFlood = statMeshcoreForwardedFlood
@@ -13044,7 +13091,8 @@ public struct UlcpManagedPropertyIds: Equatable, Hashable {
         self.tzRule = tzRule
         self.time24h = time24h
         self.alert = alert
-        self.repeaterEnabled = repeaterEnabled
+        self.repeaterMode = repeaterMode
+        self.repeaterState = repeaterState
         self.repeaterRegions = repeaterRegions
         self.repeaterDefaultRegion = repeaterDefaultRegion
         self.repeaterMinRssi = repeaterMinRssi
@@ -13102,6 +13150,7 @@ public struct FfiConverterTypeUlcpManagedPropertyIds: FfiConverterRustBuffer {
                 loraSpreadingFactor: FfiConverterUInt32.read(from: &buf),
                 loraCodingRate: FfiConverterUInt32.read(from: &buf),
                 dutyCycleNow: FfiConverterUInt32.read(from: &buf),
+                rxDutyCycle: FfiConverterUInt32.read(from: &buf),
                 dutyCycleLimit: FfiConverterUInt32.read(from: &buf),
                 statTxPackets: FfiConverterUInt32.read(from: &buf),
                 statTxChannelBusy: FfiConverterUInt32.read(from: &buf),
@@ -13113,6 +13162,7 @@ public struct FfiConverterTypeUlcpManagedPropertyIds: FfiConverterRustBuffer {
                 statForwarded: FfiConverterUInt32.read(from: &buf),
                 statForwardDropped: FfiConverterUInt32.read(from: &buf),
                 statForwardCancelled: FfiConverterUInt32.read(from: &buf),
+                repeatersHeard: FfiConverterUInt32.read(from: &buf),
                 statMeshcoreSeen: FfiConverterUInt32.read(from: &buf),
                 statMeshcoreForwardedRouted: FfiConverterUInt32.read(from: &buf),
                 statMeshcoreForwardedFlood: FfiConverterUInt32.read(from: &buf),
@@ -13165,7 +13215,8 @@ public struct FfiConverterTypeUlcpManagedPropertyIds: FfiConverterRustBuffer {
                 tzRule: FfiConverterUInt32.read(from: &buf),
                 time24h: FfiConverterUInt32.read(from: &buf),
                 alert: FfiConverterUInt32.read(from: &buf),
-                repeaterEnabled: FfiConverterUInt32.read(from: &buf),
+                repeaterMode: FfiConverterUInt32.read(from: &buf),
+                repeaterState: FfiConverterUInt32.read(from: &buf),
                 repeaterRegions: FfiConverterUInt32.read(from: &buf),
                 repeaterDefaultRegion: FfiConverterUInt32.read(from: &buf),
                 repeaterMinRssi: FfiConverterUInt32.read(from: &buf),
@@ -13209,6 +13260,7 @@ public struct FfiConverterTypeUlcpManagedPropertyIds: FfiConverterRustBuffer {
         FfiConverterUInt32.write(value.loraSpreadingFactor, into: &buf)
         FfiConverterUInt32.write(value.loraCodingRate, into: &buf)
         FfiConverterUInt32.write(value.dutyCycleNow, into: &buf)
+        FfiConverterUInt32.write(value.rxDutyCycle, into: &buf)
         FfiConverterUInt32.write(value.dutyCycleLimit, into: &buf)
         FfiConverterUInt32.write(value.statTxPackets, into: &buf)
         FfiConverterUInt32.write(value.statTxChannelBusy, into: &buf)
@@ -13220,6 +13272,7 @@ public struct FfiConverterTypeUlcpManagedPropertyIds: FfiConverterRustBuffer {
         FfiConverterUInt32.write(value.statForwarded, into: &buf)
         FfiConverterUInt32.write(value.statForwardDropped, into: &buf)
         FfiConverterUInt32.write(value.statForwardCancelled, into: &buf)
+        FfiConverterUInt32.write(value.repeatersHeard, into: &buf)
         FfiConverterUInt32.write(value.statMeshcoreSeen, into: &buf)
         FfiConverterUInt32.write(value.statMeshcoreForwardedRouted, into: &buf)
         FfiConverterUInt32.write(value.statMeshcoreForwardedFlood, into: &buf)
@@ -13272,7 +13325,8 @@ public struct FfiConverterTypeUlcpManagedPropertyIds: FfiConverterRustBuffer {
         FfiConverterUInt32.write(value.tzRule, into: &buf)
         FfiConverterUInt32.write(value.time24h, into: &buf)
         FfiConverterUInt32.write(value.alert, into: &buf)
-        FfiConverterUInt32.write(value.repeaterEnabled, into: &buf)
+        FfiConverterUInt32.write(value.repeaterMode, into: &buf)
+        FfiConverterUInt32.write(value.repeaterState, into: &buf)
         FfiConverterUInt32.write(value.repeaterRegions, into: &buf)
         FfiConverterUInt32.write(value.repeaterDefaultRegion, into: &buf)
         FfiConverterUInt32.write(value.repeaterMinRssi, into: &buf)
@@ -13308,7 +13362,7 @@ public func FfiConverterTypeUlcpManagedPropertyIds_lower(_ value: UlcpManagedPro
  *
  * Kept apart from [`UlcpRepeaterSettingsRecord`] because it rides on a
  * capability of its own (`CAP_MESHCORE_FORWARDER`) and runs independently
- * of `PROP_MAC_REPEATER_ENABLED`. Read and written as a set, `enabled`
+ * of `PROP_MAC_REPEATER_MODE`. Read and written as a set, `enabled`
  * last.
  */
 public struct UlcpMeshCoreSettingsRecord: Equatable, Hashable {
@@ -13925,10 +13979,10 @@ public func FfiConverterTypeUlcpReceivedFrameRecord_lower(_ value: UlcpReceivedF
  */
 public struct UlcpRepeaterSettingsRecord: Equatable, Hashable {
     /**
-     * `PROP_MAC_REPEATER_ENABLED`. The remaining fields are inert while
-     * this is false, but are still read and written.
+     * `PROP_MAC_REPEATER_MODE`: 0 off, 1 on, 2 adaptive. The remaining
+     * fields are inert while this is off, but are still read and written.
      */
-    public var enabled: Bool
+    public var mode: UInt8
     /**
      * `PROP_MAC_REPEATER_REGIONS`: which region-tagged floods to
      * forward, as region strings of 1 to 24 octets—a short code, a
@@ -13954,9 +14008,9 @@ public struct UlcpRepeaterSettingsRecord: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * `PROP_MAC_REPEATER_ENABLED`. The remaining fields are inert while
-         * this is false, but are still read and written.
-         */enabled: Bool,
+         * `PROP_MAC_REPEATER_MODE`: 0 off, 1 on, 2 adaptive. The remaining
+         * fields are inert while this is off, but are still read and written.
+         */mode: UInt8,
         /**
          * `PROP_MAC_REPEATER_REGIONS`: which region-tagged floods to
          * forward, as region strings of 1 to 24 octets—a short code, a
@@ -13973,7 +14027,7 @@ public struct UlcpRepeaterSettingsRecord: Equatable, Hashable {
         /**
          * `PROP_MAC_REPEATER_MIN_SNR` in whole dB. `None` accepts any.
          */minSnrDb: Int8?) {
-        self.enabled = enabled
+        self.mode = mode
         self.regions = regions
         self.defaultRegion = defaultRegion
         self.minRssiDbm = minRssiDbm
@@ -13996,7 +14050,7 @@ public struct FfiConverterTypeUlcpRepeaterSettingsRecord: FfiConverterRustBuffer
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpRepeaterSettingsRecord {
         return
             try UlcpRepeaterSettingsRecord(
-                enabled: FfiConverterBool.read(from: &buf),
+                mode: FfiConverterUInt8.read(from: &buf),
                 regions: FfiConverterSequenceString.read(from: &buf),
                 defaultRegion: FfiConverterOptionData.read(from: &buf),
                 minRssiDbm: FfiConverterOptionInt16.read(from: &buf),
@@ -14005,7 +14059,7 @@ public struct FfiConverterTypeUlcpRepeaterSettingsRecord: FfiConverterRustBuffer
     }
 
     public static func write(_ value: UlcpRepeaterSettingsRecord, into buf: inout [UInt8]) {
-        FfiConverterBool.write(value.enabled, into: &buf)
+        FfiConverterUInt8.write(value.mode, into: &buf)
         FfiConverterSequenceString.write(value.regions, into: &buf)
         FfiConverterOptionData.write(value.defaultRegion, into: &buf)
         FfiConverterOptionInt16.write(value.minRssiDbm, into: &buf)

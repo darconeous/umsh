@@ -168,6 +168,7 @@ fn status(
             forwarded: 42,
             tx_power_dbm: Some(22),
             duty_permille: 13,
+            repeaters_heard: 3,
         },
         // The preview shows a device that has a clock; the "no clock at
         // all" state has its own unit test, and a blank corner makes for
@@ -184,7 +185,7 @@ fn status(
             bluetooth: Some(true),
             gnss: Some(true),
             share_location: Some(false),
-            forwarding: Some(true),
+            forwarding: Some(umsh_ux_display_tracker::screen::Forwarding::On),
         },
         gnss_fix: false,
         identity: Some(IdentityModel {

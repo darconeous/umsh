@@ -38,6 +38,7 @@ Id   | Mnemonic              | Commands | Description
 43   | `PROP_PHY_LORA_SW`    | Get, Set | LoRa sync word (16-bit style)
 44   | `PROP_PHY_T_FRAME`    | Get      | Maximum frame airtime in milliseconds
 4820 | `PROP_PHY_DUTY_NOW`   | Get      | Current duty usage
+4821 | `PROP_PHY_RX_DUTY`    | Get      | Share of the past hour others occupied the channel
 4822 | `PROP_PHY_DUTY_LIMIT` | Get, Set | Duty-cycle limit
 4832 | `PROP_STAT_TX_PACKETS` | Get, Set | Packets transmitted over the air
 4833 | `PROP_STAT_TX_CHANNEL_BUSY` | Get, Set | Transmissions deferred because the channel was busy
@@ -56,6 +57,7 @@ Id   | Mnemonic              | Commands | Description
 4851 | `PROP_STAT_RADIO_RESETS` | Get, Set | Times the radio chip was reset after it stopped responding
 4852 | `PROP_STAT_HOST_RX_DROPPED` | Get, Set | Received packets not delivered live because the host was not reading
 4853 | `PROP_STAT_HOST_OUT_DROPPED` | Get, Set | Other frames for the host discarded after it stopped reading
+4854 | `PROP_MAC_REPEATERS_HEARD` | Get | Repeaters heard in the past hour
 
 ### PROP 32: `PROP_PHY_ENABLED` {#prop-phy-enabled}
 
@@ -229,6 +231,25 @@ the transition between intervals, the new current bin is reset to zero.
 To calculate the current duty cycle, all of the bins are added together,
 multiplied by 65535, and then divided by 720000.
 
+### PROP 4821: `PROP_PHY_RX_DUTY` {#prop-phy-rx-duty}
+
+* Type: Single-Value, Read-Only
+* Value Type: `u16`
+* Units: Percent, `0-65535 -> 0-100%`
+* Post-Reset Value: 0%
+* Required Capability: `CAP_PHY_DUTY_LIMIT`
+
+The share of the past hour that frames received off the air occupied the
+channel, kept in the same bins and on the same scale as
+[`PROP_PHY_DUTY_NOW`](#prop-phy-duty-now). Each received frame is priced
+at its airtime under the device's current modulation.
+
+It counts the frames the radio decoded, whatever protocol they carried
+and whoever they were for. A frame lost to a collision is not counted, so
+the value reads low on a channel busy enough that collisions are what
+fills it. It bounds nothing: `PROP_PHY_DUTY_LIMIT` applies to the
+device's own transmissions.
+
 ### PROP 4822: `PROP_PHY_DUTY_LIMIT` {#prop-phy-duty-limit}
 
 * Type: Single-Value, Read-Write
@@ -383,3 +404,19 @@ Frames for the attached host other than live receptions—answers,
 publications, frames of a queue drain—that the device discarded after the
 host had stopped reading (see [A Host That Stops
 Reading](ulcp-core.md#stalled-host)). Requires `CAP_STATS`.
+
+### PROP 4854: `PROP_MAC_REPEATERS_HEARD` {#prop-mac-repeaters-heard}
+
+* Type: Single-Value, Read-Only
+* Value Type: UINT8
+* Required Capability: `CAP_STATS`, `CAP_REPEATER`
+
+How many distinct repeaters the device's node has heard in the past hour:
+the transmitters named by the first hop of a [trace](packet-options.md#trace-option-7)
+on any packet received, and repeaters whose identities were heard
+directly. A device remembers a bounded number of them, so the value does
+not exceed 16.
+
+It is what is so now, not a tally: nothing clears it, and a write is
+refused with `STATUS_INVALID_ARGUMENT`. A router hint in a trace is not
+authenticated, so the value can be inflated by anyone on the channel.

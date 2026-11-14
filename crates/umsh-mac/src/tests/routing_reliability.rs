@@ -997,7 +997,7 @@ fn discovery_sends_and_their_acks_carry_a_trace_with_signal() {
 /// `snr`, returning what the repeater forwards and the repeater's hint.
 fn forward_through(frame: &[u8], seed: u8, snr: Snr) -> (heapless::Vec<u8, 256>, RouterHint) {
     let mut repeater = make_mac();
-    repeater.repeater_config_mut().enabled = true;
+    repeater.repeater_config_mut().mode = crate::RepeaterMode::On;
     repeater.radio_mut().rx_rssi = -90;
     repeater.radio_mut().rx_snr = snr;
     let id = repeater

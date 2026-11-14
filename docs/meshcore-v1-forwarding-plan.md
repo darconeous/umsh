@@ -65,7 +65,7 @@ Primary source references:
   path mutation, payload-specific behavior, region scoping, and flood limits
   as the baseline repeater applies them.
 - Give MeshCore forwarding its own enable, defaulting to false and
-  independent of `PROP_MAC_REPEATER_ENABLED`, so a device can forward either
+  independent of `PROP_MAC_REPEATER_MODE`, so a device can forward either
   protocol without the other.
 - Use the UMSH device identity's Ed25519 public key as the MeshCore repeater
   identity. Never create or persist a second identity.
@@ -466,7 +466,7 @@ explain why the option is unavailable before the user tries it.
 The effective gates are:
 
 ~~~text
-UMSH forwarding     = PHY enabled AND MAC_REPEATER_ENABLED
+UMSH forwarding     = PHY enabled AND MAC_REPEATER_MODE
 MeshCore forwarding = PHY enabled AND MESHCORE_FORWARDING_ENABLED
                       AND running identity prefix not reserved
 ~~~

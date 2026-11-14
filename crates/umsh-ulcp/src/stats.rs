@@ -30,7 +30,7 @@
 //! pin at the maximum and never move again, which is worse than starting
 //! over.
 
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 
 use crate::ids::prop;
 
@@ -249,13 +249,39 @@ impl Cell {
 /// diagnostics agree about an instant nobody is looking at.
 pub struct StatsLedger {
     cells: [Cell; COUNTERS],
+    /// `PROP_MAC_REPEATER_STATE`, as the node last reported it. Not a
+    /// counter: it is what is so now, and nothing clears it.
+    repeater_state: AtomicU8,
+    /// `PROP_MAC_REPEATERS_HEARD`, likewise.
+    repeaters_heard: AtomicU8,
 }
 
 impl StatsLedger {
     pub const fn new() -> Self {
         Self {
             cells: [const { Cell::new() }; COUNTERS],
+            repeater_state: AtomicU8::new(0),
+            repeaters_heard: AtomicU8::new(0),
         }
+    }
+
+    /// Publish what the node's forwarding is doing
+    /// ([`repeater_state`](crate::ids::repeater_state)) and how many repeaters
+    /// it has heard in the past hour.
+    pub fn set_forwarding(&self, repeater_state: u8, repeaters_heard: u8) {
+        self.repeater_state.store(repeater_state, Ordering::Relaxed);
+        self.repeaters_heard
+            .store(repeaters_heard, Ordering::Relaxed);
+    }
+
+    /// `PROP_MAC_REPEATER_STATE`.
+    pub fn repeater_state(&self) -> u8 {
+        self.repeater_state.load(Ordering::Relaxed)
+    }
+
+    /// `PROP_MAC_REPEATERS_HEARD`.
+    pub fn repeaters_heard(&self) -> u8 {
+        self.repeaters_heard.load(Ordering::Relaxed)
     }
 
     /// Record one event.

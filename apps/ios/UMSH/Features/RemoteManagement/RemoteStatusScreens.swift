@@ -686,6 +686,18 @@ struct RemoteStatisticsScreen: View {
                 if let value = stats.statRxAccepted {
                     RemoteValueRow("For this node", value: value.formatted())
                 }
+                if let value = stats.rxDutyCycle {
+                    RemoteValueRow(
+                        String(localized: "Airtime heard", comment: "Statistics row: the share of the past hour other transmitters occupied the channel."),
+                        value: dutyPercent(value)
+                    )
+                }
+                if let value = stats.repeatersHeard {
+                    RemoteValueRow(
+                        String(localized: "Repeaters heard", comment: "Statistics row: how many repeaters the device heard in the past hour."),
+                        value: value.formatted()
+                    )
+                }
             }
 
             if hasForwarding {

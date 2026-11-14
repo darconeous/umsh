@@ -35,7 +35,7 @@ pub async fn run(app: &mut App, op: Option<BridgeOp>) -> Result<()> {
                     prop::BRIDGE_SERVER_KEY,
                     prop::DEV_KEY,
                     prop::BRIDGE_LINK,
-                    prop::MAC_REPEATER_ENABLED,
+                    prop::MAC_REPEATER_MODE,
                 ])
                 .await?;
             subfield(
@@ -71,7 +71,14 @@ pub async fn run(app: &mut App, op: Option<BridgeOp>) -> Result<()> {
                     format!("{:?} ({:?})", link.state, link.reason),
                 );
             }
-            subfield("node", if repeater == [1] { "repeater" } else { "leaf" });
+            subfield(
+                "node",
+                match repeater.as_slice() {
+                    [1] => "repeater",
+                    [2] => "adaptive forwarder",
+                    _ => "leaf",
+                },
+            );
             return Ok(());
         }
         BridgeOp::On => {

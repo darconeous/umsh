@@ -153,7 +153,7 @@ async fn repeater(radio: SimulatedRadio, secret: [u8; 32]) -> PublicKey {
     let identity = SoftwareIdentity::from_secret_bytes(&secret);
     let key = *identity.public_key();
     let config = RepeaterConfig {
-        enabled: true,
+        mode: umsh_mac::RepeaterMode::On,
         ..RepeaterConfig::default()
     };
     let mac: &'static AsyncRefCell<MeshMac> = Box::leak(Box::new(AsyncRefCell::new(Mac::new(

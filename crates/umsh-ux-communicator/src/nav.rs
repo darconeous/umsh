@@ -1962,9 +1962,10 @@ impl State {
         }
     }
 
-    pub fn toggle_forwarding(&mut self) {
+    /// Steps Forwarding to its next setting.
+    pub fn step_forwarding(&mut self) {
         if let Some(settings) = self.shown_radio() {
-            self.node.set_forwarding(!settings.forwarding);
+            self.node.set_forwarding(settings.forwarding.next());
             self.refresh_settings();
         }
     }

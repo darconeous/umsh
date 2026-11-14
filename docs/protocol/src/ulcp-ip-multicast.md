@@ -6,17 +6,17 @@ is sent there. It is one of two kinds:
 
 - A **forwarding device** has a LoRa radio and a node beside the group, and
   advertises `CAP_REPEATER`. With
-  [`PROP_MAC_REPEATER_ENABLED`](ulcp-device.md#prop-mac-repeater-enabled) set,
-  its node is a bridge between the group and its radio, as
+  [`PROP_MAC_REPEATER_MODE`](ulcp-device.md#prop-mac-repeater-mode) other
+  than off, its node is a bridge between the group and its radio, as
   [Nodes With a LoRa Radio](ip-multicast.md#nodes-with-a-lora-radio)
-  describes; without it, the node sends only its own traffic and its host's
+  describes; with it off, the node sends only its own traffic and its host's
   to the group.
 - A **virtual radio** has no LoRa radio: the group is its PHY, and
   `PROP_PHY_ENABLED` turns it on and off.
 
 Configuration belongs to the device domain and is independent of the
 attached host. Joining the group does not enable Wi-Fi, change IP
-configuration, or change `PROP_MAC_REPEATER_ENABLED`.
+configuration, or change `PROP_MAC_REPEATER_MODE`.
 
 ## Capabilities
 

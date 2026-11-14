@@ -11,14 +11,14 @@ use crate::model::{
     About, BatteryReading, Bluetooth, BluetoothReading, Card, ChannelAccess, ChannelChats,
     ChannelEntry, Charge, ChatId, ChatKind, ChatSummary, Chats, ClockSettings, ClockSource,
     Contact, ContactUri, DEFAULT_AUTO_LOCK_S, Delivery, Details, Direction, EventQueue, Exchange,
-    ExchangeEnd, Fix, Gnss, GnssReading, Heard, Invite, KeyboardFirmware, KeyboardSettings, Leg,
-    Links, MAX_CHATS, MAX_HEARD, MAX_NEARBY_NETWORKS, MAX_PATH, MAX_SAVED_NETWORKS, MESSAGE_LEN,
-    MeetState, Member, Message, MessageId, NearbyDevice, NearbyId, NearbyNetwork, Neighbor, Node,
-    NodeEvent, Parts, PeerDetail, PeerEntry, PeerId, PeerRoute, PeerSummary, PingReply, PingView,
-    Presence, Profile, Quote, RadioSettings, Reacted, Reaction, Reactions, Reactor, Repeater,
-    RouteKind, Rule, SavedNetwork, Sender, Setting, ShareUri, Shareable, Signal, Ssid, State,
-    Statistics, StatusStrip, TRANSMIT_POWER, Via, WifiReading, WifiSecurity, WifiStatus,
-    brightness_at, route_text, word_match,
+    ExchangeEnd, Fix, Forwarding, Gnss, GnssReading, Heard, Invite, KeyboardFirmware,
+    KeyboardSettings, Leg, Links, MAX_CHATS, MAX_HEARD, MAX_NEARBY_NETWORKS, MAX_PATH,
+    MAX_SAVED_NETWORKS, MESSAGE_LEN, MeetState, Member, Message, MessageId, NearbyDevice, NearbyId,
+    NearbyNetwork, Neighbor, Node, NodeEvent, Parts, PeerDetail, PeerEntry, PeerId, PeerRoute,
+    PeerSummary, PingReply, PingView, Presence, Profile, Quote, RadioSettings, Reacted, Reaction,
+    Reactions, Reactor, Repeater, RouteKind, Rule, SavedNetwork, Sender, Setting, ShareUri,
+    Shareable, Signal, Ssid, State, Statistics, StatusStrip, TRANSMIT_POWER, Via, WifiReading,
+    WifiSecurity, WifiStatus, brightness_at, route_text, word_match,
 };
 use crate::models;
 use crate::picker::RecentText;
@@ -757,7 +757,7 @@ pub struct Store {
     /// The radio's settings.
     radio_enabled: Cell<bool>,
     profile: Cell<Profile>,
-    forwarding: Cell<bool>,
+    forwarding: Cell<Forwarding>,
     share_location: Cell<bool>,
     transmit_power: Cell<i8>,
     keyboard: Cell<KeyboardSettings>,
@@ -999,7 +999,7 @@ impl Store {
             name: RefCell::new(None),
             radio_enabled: Cell::new(true),
             profile: Cell::new(Profile::Vetted(0)),
-            forwarding: Cell::new(true),
+            forwarding: Cell::new(Forwarding::On),
             share_location: Cell::new(false),
             transmit_power: Cell::new(22),
             clock: Cell::new(ClockSettings {
@@ -2892,7 +2892,7 @@ impl Node for Store {
         });
     }
 
-    fn set_forwarding(&self, on: bool) {
+    fn set_forwarding(&self, on: Forwarding) {
         self.setting(Setting::Forwarding, || {
             self.forwarding.set(on);
             true
@@ -3164,6 +3164,8 @@ impl Node for Store {
             forwarded: Some(1_630 + 3 * more),
             forward_dropped: Some(9),
             forward_cancelled: Some(214),
+            repeaters_heard: Some(3),
+            received_airtime: Some(42),
             ..Statistics::default()
         }
     }

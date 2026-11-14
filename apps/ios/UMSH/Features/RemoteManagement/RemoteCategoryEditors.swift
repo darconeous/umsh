@@ -994,15 +994,23 @@ struct RemoteRepeaterEditor: View {
     var body: some View {
         Form {
             Section {
-                if edits.enabled.isKnown {
-                    Toggle(isOn: $edits.enabled.edited.replacingNil(with: false)) {
-                        RemoteFieldTitle(
-                            "Forward for others",
-                            problem: problems[edits.enabled.property]
-                        )
-                    }
-                } else {
-                    RemoteReadOnlyToggle("Forward for others", isOn: nil)
+                RemotePicker(
+                    String(localized: "Forward for others", comment: "Picker title: whether a remote device forwards other nodes' traffic."),
+                    selection: $edits.mode.edited,
+                    problem: problems[edits.mode.property]
+                ) {
+                    Text("Off", comment: "Forwarding mode: the device does not forward.")
+                        .tag(UInt8(0))
+                    Text("Adaptive", comment: "Forwarding mode: the device forwards only what no repeater carried.")
+                        .tag(UInt8(2))
+                    Text("On", comment: "Forwarding mode: the device is a repeater.")
+                        .tag(UInt8(1))
+                }
+                if edits.mode.reported == 2, let state = reading?.properties.repeaterState {
+                    RemoteValueRow(
+                        String(localized: "Now", comment: "Row title: what an adaptive forwarder is doing at the moment."),
+                        value: Self.stateText(state)
+                    )
                 }
             } header: {
                 Text("Forwarding")
@@ -1228,6 +1236,16 @@ struct RemoteRepeaterEditor: View {
         edits.regions.edited = regions
     }
 
+    /// What `PROP_MAC_REPEATER_STATE` says an adaptive forwarder is doing.
+    private static func stateText(_ state: UInt8) -> String {
+        switch state {
+        case 2: String(localized: "Standing by", comment: "Adaptive forwarding state: forwarding only what nobody else carries.")
+        case 3: String(localized: "Carrying traffic", comment: "Adaptive forwarding state: recently needed, so forwarding as a repeater does.")
+        case 4: String(localized: "Holding back", comment: "Adaptive forwarding state: the channel is busy and repeaters are plentiful, so nothing is flooded.")
+        default: state.formatted()
+        }
+    }
+
     private func apply() async {
         // Only rebuilt when the device answered: see RemoteGnssScreen.
         if await model.apply(.repeater, desired: edits.desired, dirty: edits.dirty) {
@@ -1236,7 +1254,7 @@ struct RemoteRepeaterEditor: View {
     }
 
     private struct Edits {
-        var enabled = RemoteField<Bool>(0, nil)
+        var mode = RemoteField<UInt8>(0, nil)
         var regions = RemoteField<[String]>(0, nil)
         var defaultRegion = RemoteField<Data?>(0, nil)
         var minRssi = RemoteField<Int16?>(0, nil)
@@ -1253,7 +1271,7 @@ struct RemoteRepeaterEditor: View {
             let id = ulcpProperties
             held = reading?.properties ?? UlcpDevicePropertiesRecord.empty
             let read = { (property: UInt32) in reading?.answered(property) == true }
-            enabled = RemoteField(id.repeaterEnabled, held.repeaterEnabled)
+            mode = RemoteField(id.repeaterMode, held.repeaterMode)
             regions = RemoteField(id.repeaterRegions, held.repeaterRegions)
             // Empty is "never tag" and "no threshold": values in their own
             // right, told apart from never having been read by whether the
@@ -1282,7 +1300,7 @@ struct RemoteRepeaterEditor: View {
             self.init(reading)
             guard !old.isEmpty else { return }
             let typed = old.typed
-            enabled = enabled.preserving(typed.enabled)
+            mode = mode.preserving(typed.mode)
             regions = regions.preserving(typed.regions)
             defaultRegion = defaultRegion.preserving(typed.defaultRegion)
             minRssi = minRssi.preserving(typed.minRssi)
@@ -1315,7 +1333,7 @@ struct RemoteRepeaterEditor: View {
         var dirty: Set<UInt32> {
             let typed = self.typed
             var dirty: Set<UInt32> = []
-            if typed.enabled.isDirty { dirty.insert(typed.enabled.property) }
+            if typed.mode.isDirty { dirty.insert(typed.mode.property) }
             if typed.regions.isDirty { dirty.insert(typed.regions.property) }
             if typed.defaultRegion.isDirty { dirty.insert(typed.defaultRegion.property) }
             if typed.minRssi.isDirty { dirty.insert(typed.minRssi.property) }
@@ -1328,7 +1346,7 @@ struct RemoteRepeaterEditor: View {
             // Only the dirty set is written; the rest of the record is
             // carried for completeness and never reaches the air.
             var desired = held
-            desired.repeaterEnabled = typed.enabled.value
+            desired.repeaterMode = typed.mode.value
             desired.repeaterRegions = typed.regions.value
             desired.repeaterDefaultRegion = typed.defaultRegion.value ?? nil
             desired.repeaterMinRssiDbm = typed.minRssi.value ?? nil

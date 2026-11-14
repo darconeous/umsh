@@ -512,13 +512,13 @@ mod tests {
     #[test]
     fn a_disabled_repeater_is_one_line() {
         let ctx = context(&[cap::REPEATER]);
-        let off = props_of(&[(prop::MAC_REPEATER_ENABLED, &[0])]);
+        let off = props_of(&[(prop::MAC_REPEATER_MODE, &[0])]);
         let lines = (topic("repeater").unwrap().render)(&off, &ctx);
         assert_eq!(lines.len(), 1);
         assert_eq!(value(&lines, "forwarding").as_deref(), Some("off"));
 
         let on = props_of(&[
-            (prop::MAC_REPEATER_ENABLED, &[1]),
+            (prop::MAC_REPEATER_MODE, &[1]),
             (prop::MAC_REPEATER_REGIONS, &[]),
             (prop::MAC_REPEATER_MIN_RSSI, &(-110i16).to_le_bytes()),
             (prop::MAC_REPEATER_MIN_SNR, &[]),
@@ -528,6 +528,16 @@ mod tests {
         assert_eq!(value(&lines, "tags").as_deref(), Some("untagged"));
         // No MeshCore line from a device without the forwarder.
         assert_eq!(value(&lines, "meshcore"), None);
+        // An ordinary repeater's state says nothing its mode did not.
+        assert_eq!(value(&lines, "state"), None);
+
+        let adaptive = props_of(&[
+            (prop::MAC_REPEATER_MODE, &[2]),
+            (prop::MAC_REPEATER_STATE, &[3]),
+        ]);
+        let lines = (topic("repeater").unwrap().render)(&adaptive, &ctx);
+        assert_eq!(value(&lines, "forwarding").as_deref(), Some("adaptive"));
+        assert_eq!(value(&lines, "state").as_deref(), Some("engaged"));
     }
 
     /// MeshCore forwarding runs without the UMSH repeater, so its state
@@ -536,7 +546,7 @@ mod tests {
     fn meshcore_forwarding_shows_while_the_umsh_repeater_is_off() {
         let ctx = context(&[cap::REPEATER, cap::MESHCORE_FORWARDER]);
         let set = props_of(&[
-            (prop::MAC_REPEATER_ENABLED, &[0]),
+            (prop::MAC_REPEATER_MODE, &[0]),
             (prop::MAC_REPEATER_MIN_RSSI, &(-110i16).to_le_bytes()),
             (prop::MESHCORE_FORWARDING_ENABLED, &[1]),
             (prop::MESHCORE_REGION_POLICY, &[0]),
@@ -559,7 +569,7 @@ mod tests {
         let ctx = context(&[cap::REPEATER, cap::MESHCORE_FORWARDER]);
         let with = |enabled: u8, key: [u8; 32]| {
             props_of(&[
-                (prop::MAC_REPEATER_ENABLED, &[1]),
+                (prop::MAC_REPEATER_MODE, &[1]),
                 (prop::MESHCORE_FORWARDING_ENABLED, &[enabled]),
                 (prop::MESHCORE_REGION_POLICY, &[1]),
                 (prop::MESHCORE_REGIONS, &[5, b'u', b's', b'-', b'c', b'a']),

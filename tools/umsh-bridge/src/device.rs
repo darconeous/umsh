@@ -303,9 +303,9 @@ impl Device {
     async fn report_repeater_state(&mut self) {
         let value = match self {
             #[cfg(feature = "serial-radio")]
-            Self::Serial(device) => device.get_prop(prop::MAC_REPEATER_ENABLED).await,
+            Self::Serial(device) => device.get_prop(prop::MAC_REPEATER_MODE).await,
             #[cfg(feature = "ble-radio")]
-            Self::Ble(device) => device.get_prop(prop::MAC_REPEATER_ENABLED).await,
+            Self::Ble(device) => device.get_prop(prop::MAC_REPEATER_MODE).await,
             Self::Udp(_) => {
                 tracing::info!(
                     "fake radio: no node behind it, so frames cross this interface with no \

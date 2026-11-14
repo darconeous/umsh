@@ -718,6 +718,12 @@ mod tests {
         assert!(parse(&["repeater", "regions", "set", "SJC,"]).is_err());
         assert!(parse(&["repeater", "regions", "SJC"]).is_err());
         assert!(parse(&["repeater", "yes"]).is_err());
+        assert!(matches!(
+            parse(&["repeater", "adaptive"]).unwrap().command,
+            Some(Command::Repeater {
+                op: Some(RepeaterOp::Adaptive)
+            })
+        ));
     }
 
     #[test]

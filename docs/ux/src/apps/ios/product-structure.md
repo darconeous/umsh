@@ -917,7 +917,8 @@ tracker that stops moving is still a tracker.
 
 Repeater settings appear only for a device that can forward:
 
-- whether the device forwards other nodes' traffic at all;
+- whether the device forwards other nodes' traffic: never, always, or
+  *adaptive*, only where nobody else is heard carrying it;
 - the **routing regions** it relays for;
 - which region, if any, is applied to traffic that arrives untagged; and
 - minimum signal and quality thresholds below which nothing is relayed.

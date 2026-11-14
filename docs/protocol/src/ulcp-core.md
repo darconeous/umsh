@@ -946,7 +946,7 @@ host is attached:
 * the human-readable device name (`PROP_DEV_NAME`)
 * live battery telemetry (`PROP_BATTERY`), when `CAP_BATTERY` is present
 * device behavior settings (property identifiers 70–95): the repeater
-  forwarding switch (`PROP_MAC_REPEATER_ENABLED`), with the rest of the
+  forwarding mode (`PROP_MAC_REPEATER_MODE`), with the rest of the
   range reserved for future definition (further repeater policy,
   positioning, periodic advertisement of the device identity, and similar)
 * the administrator list ([`PROP_DEV_ADMINS`](app-node-management.md#prop-dev-admins))

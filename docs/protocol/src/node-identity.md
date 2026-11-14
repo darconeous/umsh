@@ -46,7 +46,7 @@ A single byte describing optional feature support, orthogonal to the primary rol
 +---+---+---+---+---+---+---+---+
 ```
 
-- bit 0 (`REP`)—Repeater
+- bit 0 (`REP`)—Repeater, or [adaptive forwarder](repeater-operation.md#adaptive-forwarding)
 - bit 1 (`MOB`)—Mobile/Handheld (As opposed to "fixed")
 - bit 2 (`TXT`)—Text Messages
 - bit 3 (`TLM`)—Public Telemetry

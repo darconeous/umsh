@@ -868,7 +868,7 @@ fn a_signed_frame_past_the_verify_budget_is_dropped_not_unverified() {
 #[test]
 fn a_flood_past_the_verify_budget_is_still_forwarded() {
     let mut mac = receiver();
-    mac.repeater_config_mut().enabled = true;
+    mac.repeater_config_mut().mode = crate::RepeaterMode::On;
     spend_verify_budget(&mut mac);
     let forwarded = mac.counters().forwarded;
     let flood = signed_broadcast(SEED, 10, false, Some(3));

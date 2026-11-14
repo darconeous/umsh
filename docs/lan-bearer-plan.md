@@ -457,7 +457,7 @@ default was current at the first save of any setting. The precedent for the
 empty write is `PROP_IDENT_ROLE`, where empty means "derive your own."
 
 **Independence from other switches.** Enabling the bearer does not change
-`PROP_MAC_REPEATER_ENABLED` or the Wi-Fi properties. When Wi-Fi is off or not
+`PROP_MAC_REPEATER_MODE` or the Wi-Fi properties. When Wi-Fi is off or not
 associated, the bearer reports state 2.
 
 Counters under `CAP_STATS`: received, dropped by the ingress limit, malformed,

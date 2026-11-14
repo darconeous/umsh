@@ -32,7 +32,7 @@
 
 use umsh_core::ChannelTag;
 use umsh_ulcp::Status;
-use umsh_ulcp::ids::{DEFAULT_SOUND_VOLUME, cap, keyboard_aids, prop, saved};
+use umsh_ulcp::ids::{DEFAULT_SOUND_VOLUME, cap, keyboard_aids, prop, repeater_mode, saved};
 use umsh_ulcp::ip::FamilyState;
 use umsh_ulcp::profiles::VETTED;
 use umsh_ulcp::wifi::{LinkReason, LinkState, NetworkEntry, SecurityMode};
@@ -43,9 +43,9 @@ use umsh_ulcp_admin::{
 use umsh_ux_communicator::avatar::{AvatarStyle, PeerShape};
 use umsh_ux_communicator::heapless::{Deque, String, Vec};
 use umsh_ux_communicator::model::{
-    ClockSettings, DEFAULT_AUTO_LOCK_S, KeyboardSettings, MAX_NEARBY_NETWORKS, NearbyNetwork,
-    NodeEvent, Profile, RadioSettings, Rule, SavedNetwork, Setting, ShareUri, Ssid, Statistics,
-    WifiReading, WifiSecurity, WifiStatus, brightness_at,
+    ClockSettings, DEFAULT_AUTO_LOCK_S, Forwarding, KeyboardSettings, MAX_NEARBY_NETWORKS,
+    NearbyNetwork, NodeEvent, Profile, RadioSettings, Rule, SavedNetwork, Setting, ShareUri, Ssid,
+    Statistics, WifiReading, WifiSecurity, WifiStatus, brightness_at,
 };
 
 use crate::chat::address;
@@ -58,11 +58,18 @@ pub const SAVE_DELAY_MS: u64 = 2_000;
 /// four-minute steps.
 pub const AIRTIME_READ_MS: u64 = 60_000;
 
+/// A share of the hour as the device reports it, in tenths of a percent,
+/// to the nearest.
+fn tenths_of_a_percent(duty: u16) -> u16 {
+    let max = u32::from(u16::MAX);
+    ((u32::from(duty) * 1_000 + max / 2) / max) as u16
+}
+
 /// How often the device's counters are read while they are watched.
 pub const STATISTICS_READ_MS: u64 = 5_000;
 
 /// The counters the Statistics screen shows, read together.
-const STATISTICS: [u32; 13] = [
+const STATISTICS: [u32; 15] = [
     prop::STAT_TX_PACKETS,
     prop::STAT_TX_CHANNEL_BUSY,
     prop::STAT_RX_PACKETS,
@@ -76,6 +83,8 @@ const STATISTICS: [u32; 13] = [
     prop::STAT_MESHCORE_FORWARDED_ROUTED,
     prop::STAT_MESHCORE_FORWARDED_FLOOD,
     prop::STAT_MESHCORE_DECLINED,
+    prop::MAC_REPEATERS_HEARD,
+    prop::PHY_RX_DUTY,
 ];
 
 /// How often the Wi-Fi signal is read while it is watched.
@@ -402,8 +411,12 @@ impl<P: LocalPort> Settings<P> {
         self.written(Setting::Gnss, write)
     }
 
-    pub fn set_forwarding(&mut self, on: bool) -> bool {
-        let write = self.model.set_forwarding(on);
+    pub fn set_forwarding(&mut self, forwarding: Forwarding) -> bool {
+        let write = self.model.set_forwarding(match forwarding {
+            Forwarding::Off => repeater_mode::OFF,
+            Forwarding::On => repeater_mode::ON,
+            Forwarding::Adaptive => repeater_mode::ADAPTIVE,
+        });
         self.written(Setting::Forwarding, write)
     }
 
@@ -827,15 +840,16 @@ impl<P: LocalPort> Settings<P> {
                 .map_or(Profile::Custom, Profile::Vetted),
             _ => Profile::Custom,
         };
-        // In tenths of a percent, to the nearest.
-        let airtime = self.model.duty_now().map_or(0, |duty| {
-            let max = u32::from(u16::MAX);
-            ((u32::from(duty) * 1_000 + max / 2) / max) as u16
-        });
+        let airtime = self.model.duty_now().map_or(0, tenths_of_a_percent);
         RadioSettings {
             enabled: self.bool(prop::PHY_ENABLED).unwrap_or(false),
             profile,
-            forwarding: self.bool(prop::MAC_REPEATER_ENABLED).unwrap_or(false),
+            forwarding: match self.u8(prop::MAC_REPEATER_MODE) {
+                Some(repeater_mode::ADAPTIVE) => Forwarding::Adaptive,
+                // A mode newer than this build still forwards.
+                Some(mode) if mode != repeater_mode::OFF => Forwarding::On,
+                _ => Forwarding::Off,
+            },
             transmit_power: match self.model.intended(prop::PHY_TX_POWER) {
                 Some(Value::I8(dbm)) => dbm,
                 _ => 0,
@@ -1038,6 +1052,8 @@ impl<P: LocalPort> Settings<P> {
             meshcore_routed: self.u32(prop::STAT_MESHCORE_FORWARDED_ROUTED),
             meshcore_flooded: self.u32(prop::STAT_MESHCORE_FORWARDED_FLOOD),
             meshcore_declined: self.u32(prop::STAT_MESHCORE_DECLINED),
+            repeaters_heard: self.u8(prop::MAC_REPEATERS_HEARD),
+            received_airtime: self.u16(prop::PHY_RX_DUTY).map(tenths_of_a_percent),
         }
     }
 

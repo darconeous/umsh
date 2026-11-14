@@ -1685,6 +1685,8 @@ struct FakeManagedDevice: Sendable {
             id.statRxAccepted: UInt32(2_405).littleEndianData,
             id.statRadioResets: UInt32(0).littleEndianData,
             id.statForwarded: UInt32(1_733).littleEndianData,
+            id.repeatersHeard: Data([3]),
+            id.rxDutyCycle: UInt16(2_750).littleEndianData,
             id.statForwardDropped: UInt32(82).littleEndianData,
             id.statForwardCancelled: UInt32(14).littleEndianData,
             id.statMeshcoreSeen: UInt32(120).littleEndianData,
@@ -1733,7 +1735,8 @@ struct FakeManagedDevice: Sendable {
             91: Data([2]),
             92: UInt16(41).littleEndianData,
             93: Data([9, 14]),
-            id.repeaterEnabled: Data([1]),
+            id.repeaterMode: Data([2]),
+            id.repeaterState: Data([2]),
             id.repeaterRegions: Data([3]) + Data("SJC".utf8),
             // Empty: this device never tags what arrives untagged.
             id.repeaterDefaultRegion: Data(),

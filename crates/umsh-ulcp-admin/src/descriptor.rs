@@ -260,8 +260,8 @@ pub const COVERED: &[Descriptor] = &[
     ),
     // Behavior.
     scalar(
-        prop::MAC_REPEATER_ENABLED,
-        PropertyType::Bool,
+        prop::MAC_REPEATER_MODE,
+        PropertyType::U8,
         Some(cap::REPEATER),
         Access::ReadWrite,
         1,
@@ -497,6 +497,21 @@ pub const COVERED: &[Descriptor] = &[
     stat(prop::STAT_MESHCORE_FORWARDED_ROUTED),
     stat(prop::STAT_MESHCORE_FORWARDED_FLOOD),
     stat(prop::STAT_MESHCORE_DECLINED),
+    // What is so now, not what has been counted: nothing clears these.
+    scalar(
+        prop::MAC_REPEATERS_HEARD,
+        PropertyType::U8,
+        Some(cap::STATS),
+        Access::OnDemand,
+        0,
+    ),
+    scalar(
+        prop::PHY_RX_DUTY,
+        PropertyType::U16,
+        None,
+        Access::OnDemand,
+        0,
+    ),
 ];
 
 /// One of the device's counters (`CAP_STATS`).

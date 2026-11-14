@@ -60,7 +60,7 @@ pub const fn property_name(key: u32) -> Option<&'static str> {
         prop::I2C_BUSES => "PROP_I2C_BUSES",
         prop::I2C_DEVICES => "PROP_I2C_DEVICES",
 
-        prop::MAC_REPEATER_ENABLED => "PROP_MAC_REPEATER_ENABLED",
+        prop::MAC_REPEATER_MODE => "PROP_MAC_REPEATER_MODE",
         prop::IDENT => "PROP_IDENT",
         prop::IDENT_ROLE => "PROP_IDENT_ROLE",
         prop::IDENT_MOBILE => "PROP_IDENT_MOBILE",
@@ -76,6 +76,7 @@ pub const fn property_name(key: u32) -> Option<&'static str> {
         prop::IDENT_LOCATION => "PROP_IDENT_LOCATION",
         prop::IDENT_ALTITUDE => "PROP_IDENT_ALTITUDE",
         prop::IDENT_CONTACT => "PROP_IDENT_CONTACT",
+        prop::MAC_REPEATER_STATE => "PROP_MAC_REPEATER_STATE",
         prop::GNSS_ENABLED => "PROP_GNSS_ENABLED",
         prop::GNSS_LOCATION => "PROP_GNSS_LOCATION",
         prop::GNSS_ALTITUDE => "PROP_GNSS_ALTITUDE",
@@ -96,6 +97,7 @@ pub const fn property_name(key: u32) -> Option<&'static str> {
         prop::HOST_MUTED_CHANNELS => "PROP_HOST_MUTED_CHANNELS",
         prop::HOST_MUTED_PEERS => "PROP_HOST_MUTED_PEERS",
         prop::PHY_DUTY_NOW => "PROP_PHY_DUTY_NOW",
+        prop::PHY_RX_DUTY => "PROP_PHY_RX_DUTY",
         prop::PHY_DUTY_LIMIT => "PROP_PHY_DUTY_LIMIT",
         prop::STAT_TX_PACKETS => "PROP_STAT_TX_PACKETS",
         prop::STAT_TX_CHANNEL_BUSY => "PROP_STAT_TX_CHANNEL_BUSY",
@@ -116,6 +118,7 @@ pub const fn property_name(key: u32) -> Option<&'static str> {
         prop::STAT_LAN_EXPORTED => "PROP_STAT_LAN_EXPORTED",
         prop::STAT_LAN_EXPORT_DROPPED => "PROP_STAT_LAN_EXPORT_DROPPED",
         prop::STAT_RX_OWN_HINT => "PROP_STAT_RX_OWN_HINT",
+        prop::MAC_REPEATERS_HEARD => "PROP_MAC_REPEATERS_HEARD",
         prop::STAT_RADIO_RESETS => "PROP_STAT_RADIO_RESETS",
         prop::STAT_HOST_RX_DROPPED => "PROP_STAT_HOST_RX_DROPPED",
         prop::STAT_HOST_OUT_DROPPED => "PROP_STAT_HOST_OUT_DROPPED",
@@ -223,7 +226,7 @@ pub const PROPERTIES: &[u32] = &[
     prop::BATTERY_GAUGE_OPERATION_STATUS,
     prop::BATTERY_GAUGE_CONFIG,
     prop::BATTERY_GAUGE_TELEMETRY,
-    prop::MAC_REPEATER_ENABLED,
+    prop::MAC_REPEATER_MODE,
     prop::IDENT,
     prop::IDENT_ROLE,
     prop::IDENT_MOBILE,
@@ -239,6 +242,7 @@ pub const PROPERTIES: &[u32] = &[
     prop::IDENT_LOCATION,
     prop::IDENT_ALTITUDE,
     prop::IDENT_CONTACT,
+    prop::MAC_REPEATER_STATE,
     prop::GNSS_ENABLED,
     prop::GNSS_LOCATION,
     prop::GNSS_ALTITUDE,
@@ -259,6 +263,7 @@ pub const PROPERTIES: &[u32] = &[
     prop::HOST_MUTED_CHANNELS,
     prop::HOST_MUTED_PEERS,
     prop::PHY_DUTY_NOW,
+    prop::PHY_RX_DUTY,
     prop::PHY_DUTY_LIMIT,
     prop::STAT_TX_PACKETS,
     prop::STAT_TX_CHANNEL_BUSY,
@@ -282,6 +287,7 @@ pub const PROPERTIES: &[u32] = &[
     prop::STAT_RADIO_RESETS,
     prop::STAT_HOST_RX_DROPPED,
     prop::STAT_HOST_OUT_DROPPED,
+    prop::MAC_REPEATERS_HEARD,
     prop::BLE_PAIRING_PIN,
     prop::DEV_ADMINS,
     prop::TIME,
@@ -415,7 +421,7 @@ pub const fn property_type(key: u32) -> Option<PropertyType> {
         | prop::HOST_RX_FILTERS => Bytes,
         // A flags octet followed by whichever components it claims.
         prop::BATTERY => Bytes,
-        prop::MAC_REPEATER_ENABLED => Bool,
+        prop::MAC_REPEATER_MODE | prop::MAC_REPEATER_STATE | prop::MAC_REPEATERS_HEARD => U8,
         // The signed node-identity blob, as advertised and as kept.
         prop::IDENT | prop::IDENT_CONTACT => Bytes,
         prop::IDENT_ROLE => U8,
@@ -453,7 +459,7 @@ pub const fn property_type(key: u32) -> Option<PropertyType> {
         prop::HOST_AUTO_ACK => Bool,
         prop::HOST_RX_QUEUE_COUNT | prop::HOST_RX_QUEUE_CAPACITY => U16,
         prop::HOST_RX_QUEUE_DROPPED => U32,
-        prop::PHY_DUTY_NOW | prop::PHY_DUTY_LIMIT => U16,
+        prop::PHY_DUTY_NOW | prop::PHY_RX_DUTY | prop::PHY_DUTY_LIMIT => U16,
         prop::STAT_TX_PACKETS
         | prop::STAT_TX_CHANNEL_BUSY
         | prop::STAT_RX_PACKETS

@@ -24,7 +24,7 @@ fn make_bearer_mac(repeater: bool) -> BearerMac {
         RepeaterConfig::default(),
         OperatingPolicy::default(),
     );
-    mac.repeater_config_mut().enabled = repeater;
+    mac.repeater_config_mut().mode = repeater.into();
     mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     mac
 }
