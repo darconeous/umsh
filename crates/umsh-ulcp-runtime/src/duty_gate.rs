@@ -17,7 +17,7 @@
 //! is effectively shed—exactly the spec's posture (transmits never
 //! wait for duty-cycle allowance).
 
-use umsh_hal::{Clock, Radio, RxInfo, RxOrigin, TxError, TxOptions};
+use umsh_hal::{Clock, Radio, RxInfo, TxError, TxOptions};
 use umsh_ulcp_device::DutyLedger;
 
 /// A [`Radio`] decorator enforcing the shared duty budget.
@@ -29,10 +29,6 @@ pub struct DutyGatedRadio<R, C> {
     /// T-1000E marks the load for its battery level estimator: voltage
     /// sampled near a transmission is sagged, not resting OCV).
     load_hook: fn(),
-    /// Whether receptions off the air are priced into the ledger's
-    /// receive duty. One client of a shared radio does this, or each
-    /// frame would be counted once per client.
-    count_receptions: bool,
 }
 
 impl<R, C> DutyGatedRadio<R, C> {
@@ -51,15 +47,7 @@ impl<R, C> DutyGatedRadio<R, C> {
             ledger,
             clock,
             load_hook,
-            count_receptions: false,
         }
-    }
-
-    /// Price every frame this radio receives off the air into the
-    /// ledger's receive duty (`PROP_PHY_RX_DUTY`).
-    pub fn counting_receptions(mut self) -> Self {
-        self.count_receptions = true;
-        self
     }
 }
 
@@ -89,16 +77,7 @@ impl<R: Radio, C: Clock> Radio for DutyGatedRadio<R, C> {
         cx: &mut core::task::Context<'_>,
         buf: &mut [u8],
     ) -> core::task::Poll<Result<RxInfo, Self::Error>> {
-        let received = self.inner.poll_receive(cx, buf);
-        // Only what the antenna heard as it happened: a frame handed over
-        // a link occupied no channel, and one replayed from a queue
-        // occupied it some other time.
-        if let core::task::Poll::Ready(Ok(info)) = &received {
-            if self.count_receptions && info.origin == RxOrigin::Air && info.buffered.is_none() {
-                self.ledger.record_rx(self.clock.now_ms(), info.len);
-            }
-        }
-        received
+        self.inner.poll_receive(cx, buf)
     }
 
     fn max_frame_size(&self) -> usize {
@@ -107,6 +86,10 @@ impl<R: Radio, C: Clock> Radio for DutyGatedRadio<R, C> {
 
     fn t_frame_ms(&self) -> u32 {
         self.inner.t_frame_ms()
+    }
+
+    fn airtime_ms(&self, len: usize) -> u32 {
+        self.inner.airtime_ms(len)
     }
 
     fn spreading_factor(&self) -> Option<u8> {

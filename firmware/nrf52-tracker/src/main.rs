@@ -7183,9 +7183,9 @@ mod firmware {
         // MAC/node stack always comes up on mux client B; whether it
         // transmits is a matter of configuration (the PHY enable state
         // and the forwarding switch), not of whether a key was ever
-        // provisioned. The airtime hint is the worst case at the
-        // MeshCore-US default profile—the MAC scheduler only uses it as
-        // a conservative bound.
+        // provisioned. The airtime hint is a maximum-size frame at the
+        // MeshCore-US default profile, and stands only until the radio
+        // has a modulation to price one by.
         //
         // Report a previous panic independently of node startup. An
         // unrelated crash must not suppress identity or mesh service.

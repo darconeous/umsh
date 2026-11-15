@@ -756,6 +756,8 @@ struct ForwardPlan {
     delay_ms: u64,
     /// A flood forward made in [`RepeaterMode::Adaptive`].
     adaptive_flood: bool,
+    /// An adaptive flood forward of a frame heard from its originator.
+    adaptive_first_hop: bool,
     station_action: ForwardStationAction,
     /// Signal quality this repeater received the frame at, for its Trace
     /// record.
@@ -934,16 +936,26 @@ pub struct RepeaterConfig {
     /// abandoned. Each copy before that defers the forward; the copy that
     /// reaches this count drops it.
     pub flood_contention_abandon_copies: u8,
-    /// How long an adaptive forwarder stays engaged after one of its flood
-    /// forwards airs, in milliseconds.
+    /// How long an adaptive forwarder stays engaged after it carries a
+    /// flood for the node that originated it, in milliseconds.
     pub adaptive_engaged_hold_ms: u64,
-    /// Receive duty, as a fraction of 65535, at or above which an adaptive
-    /// forwarder that also hears `adaptive_gate_repeaters` repeaters floods
-    /// nothing.
-    pub adaptive_gate_rx_duty: u16,
-    /// Repeaters heard within [`REPEATERS_HEARD_WINDOW_MS`] at or above
-    /// which the receive-duty gate applies.
-    pub adaptive_gate_repeaters: u8,
+    /// Signal strength at or above which a transmitter is taken to stand
+    /// beside this node, hearing and reaching what it does. An adaptive
+    /// forwarder leaves alone a flood it heard from one: its own copy
+    /// would cover the same ground.
+    pub adaptive_beside_rssi_dbm: i16,
+    /// How many of a group standing together should forward a flood that
+    /// reached them from elsewhere. An adaptive forwarder with more
+    /// neighbors beside it than this forwards with that many chances in
+    /// their number, drawn for itself.
+    pub adaptive_beside_forwarders: u8,
+    /// Battery level, in percent, at or below which an adaptive forwarder
+    /// forwards nothing.
+    pub adaptive_battery_low_percent: u8,
+    /// Battery level at or above which it forwards again. Higher than
+    /// `adaptive_battery_low_percent`, so a pack at the line does not
+    /// switch back and forth.
+    pub adaptive_battery_resume_percent: u8,
     /// Amateur-radio operating mode for forwarding.
     pub amateur_radio_mode: AmateurRadioMode,
     /// Optional station callsign injected on forwarded traffic.
@@ -967,10 +979,11 @@ impl Default for RepeaterConfig {
             flood_contention_jitter_percent: 10,
             flood_contention_ack_guard_percent: 25,
             flood_contention_abandon_copies: 3,
-            adaptive_engaged_hold_ms: 30 * 60 * 1000,
-            // A tenth of the past hour.
-            adaptive_gate_rx_duty: 6554,
-            adaptive_gate_repeaters: 4,
+            adaptive_engaged_hold_ms: 5 * 60 * 1000,
+            adaptive_beside_rssi_dbm: -65,
+            adaptive_beside_forwarders: 3,
+            adaptive_battery_low_percent: 10,
+            adaptive_battery_resume_percent: 15,
             amateur_radio_mode: AmateurRadioMode::Unlicensed,
             station_callsign: None,
         }
@@ -989,9 +1002,25 @@ pub enum RepeaterMode {
     Off,
     /// An ordinary repeater.
     On,
-    /// Honors every source-routed hop, and flood-forwards only what no
-    /// ordinary repeater was heard carrying: its contention window opens
-    /// after theirs has closed, and one overheard carry ends its interest.
+    /// Honors every source-routed hop, and floods only where nobody else
+    /// is heard forwarding (repeater-operation.md § Adaptive Forwarding).
+    ///
+    /// A flood it has not seen before is taken through these in order:
+    ///
+    /// 1. Low battery: nothing is forwarded, a source-routed hop included
+    ///    ([`Mac::set_battery_percent`]).
+    /// 2. Heard at `adaptive_beside_rssi_dbm` or stronger: its transmitter
+    ///    stands beside this node, and the flood is left alone.
+    /// 3. More than `adaptive_beside_forwarders` in the group standing
+    ///    here: forwarded only on this node's own draw.
+    /// 4. Otherwise queued for a window that opens once every ordinary
+    ///    repeater's has closed, and given up on the first copy overheard
+    ///    from another forwarder; while [`RepeaterState::Engaged`], on as
+    ///    many as a repeater tolerates for a flood that arrived already
+    ///    forwarded.
+    ///
+    /// A flood left alone at 2 or 3 is remembered as seen, so a later copy
+    /// of it is not weighed again.
     Adaptive,
 }
 
@@ -1016,14 +1045,14 @@ pub enum RepeaterState {
     Off,
     /// [`RepeaterMode::On`].
     Forwarding,
-    /// Adaptive, and giving way to the first carry it overhears.
+    /// Adaptive, and giving way to the first copy of a packet it hears
+    /// another forwarder send.
     Standby,
     /// Adaptive, and tolerating as many overheard copies as an ordinary
-    /// repeater does: one of its flood forwards aired recently, so some
-    /// neighbor depends on it.
+    /// repeater does: it recently carried a flood for the node that
+    /// originated it, so that neighbor depends on it for what comes back.
     Engaged,
-    /// Adaptive, and flooding nothing: the channel is busy and repeaters
-    /// are plentiful.
+    /// Adaptive, and forwarding nothing: the battery is low.
     Withheld,
 }
 
@@ -1373,10 +1402,13 @@ pub struct Mac<
     /// Until when an adaptive forwarder is engaged; see
     /// [`RepeaterState::Engaged`].
     adaptive_engaged_until_ms: u64,
-    /// The share of the past hour other transmitters occupied the channel,
-    /// as a fraction of 65535. Measured outside the MAC, which cannot
-    /// price a frame's airtime; see [`Self::set_rx_duty`].
-    rx_duty: u16,
+    /// How busy other transmitters have made the channel lately.
+    rx_occupancy: crate::occupancy::RxOccupancy,
+    /// The nodes heard beside this one lately.
+    neighbors_beside: crate::neighbors::NeighborsHeard,
+    /// The battery is too low for an adaptive forwarder to spend on other
+    /// nodes' traffic; see [`Self::set_battery_percent`].
+    battery_low: bool,
     operating_policy: OperatingPolicy,
     auto_register_full_key_peers: bool,
     admissions: crate::admission::Admissions,
@@ -1456,7 +1488,9 @@ impl<
             requested_wake_ms: None,
             repeater,
             adaptive_engaged_until_ms: 0,
-            rx_duty: 0,
+            battery_low: false,
+            rx_occupancy: crate::occupancy::RxOccupancy::new(),
+            neighbors_beside: crate::neighbors::NeighborsHeard::new(),
             operating_policy,
             auto_register_full_key_peers: false,
             admissions: crate::admission::Admissions::new(),
@@ -1487,10 +1521,27 @@ impl<
             .heard_since(self.clock.now_ms(), REPEATERS_HEARD_WINDOW_MS) as u8
     }
 
-    /// Tell the MAC how busy the channel has been: the share of the past
-    /// hour other transmitters occupied it, as a fraction of 65535.
-    pub fn set_rx_duty(&mut self, rx_duty: u16) {
-        self.rx_duty = rx_duty;
+    /// How busy the channel has been: the share of the past five minutes
+    /// that frames received off the air occupied it, as a fraction of
+    /// 65535.
+    pub fn rx_duty(&self) -> u16 {
+        self.rx_occupancy.share(self.clock.now_ms())
+    }
+
+    /// Tell the MAC how much battery is left, in percent. `None` for a
+    /// node with no battery to run down: one that cannot measure it, or
+    /// one on external power.
+    pub fn set_battery_percent(&mut self, percent: Option<u8>) {
+        match percent {
+            None => self.battery_low = false,
+            Some(percent) if percent <= self.repeater.adaptive_battery_low_percent => {
+                self.battery_low = true;
+            }
+            Some(percent) if percent >= self.repeater.adaptive_battery_resume_percent => {
+                self.battery_low = false;
+            }
+            Some(_) => {}
+        }
     }
 
     /// What this node's forwarding is doing at the moment.
@@ -1498,23 +1549,71 @@ impl<
         match self.repeater.mode {
             RepeaterMode::Off => RepeaterState::Off,
             RepeaterMode::On => RepeaterState::Forwarding,
-            RepeaterMode::Adaptive if self.adaptive_flooding_withheld() => RepeaterState::Withheld,
+            RepeaterMode::Adaptive if self.battery_low => RepeaterState::Withheld,
             RepeaterMode::Adaptive if self.adaptive_engaged() => RepeaterState::Engaged,
             RepeaterMode::Adaptive => RepeaterState::Standby,
         }
     }
 
-    /// Whether an adaptive forwarder should flood nothing: the channel is
-    /// busy and enough repeaters are about that a packet nobody was heard
-    /// carrying is more likely lost to the congestion than to a gap in
-    /// coverage, and one more copy would add to it.
-    fn adaptive_flooding_withheld(&self) -> bool {
-        self.rx_duty >= self.repeater.adaptive_gate_rx_duty
-            && self.repeaters_heard() >= self.repeater.adaptive_gate_repeaters
-    }
-
     fn adaptive_engaged(&self) -> bool {
         self.clock.now_ms() < self.adaptive_engaged_until_ms
+    }
+
+    /// How many distinct nodes were heard beside this one within
+    /// [`NEIGHBORS_HEARD_WINDOW_MS`](crate::neighbors::NEIGHBORS_HEARD_WINDOW_MS).
+    pub fn neighbors_beside(&self) -> usize {
+        self.neighbors_beside.count(self.clock.now_ms())
+    }
+
+    /// Count the transmitter of a frame nobody has forwarded, heard
+    /// strongly enough to be standing beside this node: it came off its
+    /// originator's own radio, so the source address names that neighbor.
+    fn note_neighbor_beside(&mut self, frame: &[u8], rssi: i16) {
+        if rssi < self.repeater.adaptive_beside_rssi_dbm {
+            return;
+        }
+        let Ok(header) = PacketHeader::parse(frame) else {
+            return;
+        };
+        if header
+            .flood_hops
+            .is_some_and(|flood_hops| flood_hops.accumulated() != 0)
+        {
+            return;
+        }
+        let Ok(options) = ParsedOptions::extract(frame, header.options_range.clone()) else {
+            return;
+        };
+        if options.source_route.is_some() {
+            return;
+        }
+        let prefix = match header.source {
+            SourceAddrRef::Hint(hint) => Some([hint.0[0], hint.0[1]]),
+            SourceAddrRef::FullKeyAt { offset } => frame
+                .get(offset..offset + 2)
+                .map(|bytes| [bytes[0], bytes[1]]),
+            _ => None,
+        };
+        if let Some(prefix) = prefix {
+            self.neighbors_beside.record(prefix, self.clock.now_ms());
+        }
+    }
+
+    /// Whether an adaptive forwarder standing in a group takes a flood
+    /// that reached the group from elsewhere.
+    ///
+    /// The nodes beside this one heard the same flood and would reach the
+    /// same ground with it, so a few of them forwarding is as good as all.
+    /// Each draws for itself, with odds that leave about
+    /// `adaptive_beside_forwarders` of them forwarding. The draw is each
+    /// node's own because nothing else can settle it: forwarders that all
+    /// start within one channel check of each other collide, and none
+    /// hears a copy to give way to.
+    fn adaptive_group_admits(&mut self) -> bool {
+        let wanted = u32::from(self.repeater.adaptive_beside_forwarders);
+        // This node and the ones beside it.
+        let group = self.neighbors_beside() as u32 + 1;
+        group <= wanted || self.rng.random_range(..group) < wanted
     }
 
     /// The delay that puts an adaptive forwarder's contention window after
@@ -3297,12 +3396,14 @@ impl<
     /// ([`Mac::is_locally_originated`]).
     fn remember_transmitted(&mut self, queued: &crate::QueuedTx<FRAME>) {
         if queued.priority == TxPriority::Forward {
-            // An adaptive forwarder's flood forward aired because nobody
-            // else was heard carrying the packet. Whoever it was carried for
-            // is likely to need the traffic coming back as well, and that
-            // arrives as forwards an adaptive node would otherwise give way
-            // to.
-            if queued.adaptive_flood {
+            // An adaptive forwarder carried a flood for the node that
+            // originated it, because nobody else was heard doing so. That
+            // neighbor needs the traffic coming back as well, which reaches
+            // this node as several repeaters' copies, any one of which
+            // would end a forward in standby. Only this renews the hold:
+            // what the node forwards for the rest of the mesh says nothing
+            // about the neighbor.
+            if queued.adaptive_first_hop {
                 self.adaptive_engaged_until_ms = self
                     .clock
                     .now_ms()
@@ -3823,6 +3924,14 @@ impl<
         mut on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
     ) -> bool {
         MacCounters::bump(&mut self.counters.rx_frames);
+        // Whatever the frame turns out to be, it held the channel. One
+        // replayed from a queue held it at some other time, and one from a
+        // bearer or a wire never did.
+        if rx.origin == RxOrigin::Air && rx.buffered.is_none() {
+            let airtime_ms = self.radio.airtime_ms(frame_len);
+            self.rx_occupancy.record(self.clock.now_ms(), airtime_ms);
+            self.note_neighbor_beside(&buf[..frame_len], rx.rssi);
+        }
         self.note_transmitter_observation(&buf[..frame_len], rx);
         let handled = self
             .process_received_frame_inner(buf, frame_len, rx, &mut on_event)
@@ -7922,6 +8031,13 @@ impl<
         if !self.repeater.mode.forwards() {
             return false;
         }
+        // An adaptive forwarder's battery is its owner's before it is the
+        // mesh's. Low, it carries nothing for anyone, a source-routed hop
+        // included: the sender's missing confirmation is what tells it to
+        // find another way.
+        if self.repeater.mode == RepeaterMode::Adaptive && self.battery_low {
+            return false;
+        }
         if !header.packet_type().is_routable() {
             return false;
         }
@@ -7971,7 +8087,15 @@ impl<
             return false;
         }
 
-        let Some(plan) = self.plan_forwarding(frame, header, &options, rx) else {
+        let mut left_to_others = false;
+        let Some(plan) = self.plan_forwarding(frame, header, &options, rx, &mut left_to_others)
+        else {
+            // A flood an adaptive forwarder left to the nodes beside it
+            // stays left: a later copy of it, from a forwarder further
+            // off, is the same flood and not a second chance at it.
+            if left_to_others {
+                self.dup_cache.insert(cache_key, self.clock.now_ms());
+            }
             return false;
         };
 
@@ -8020,6 +8144,7 @@ impl<
         };
         if let Some(entry) = self.tx_queue.get_mut(sequence) {
             entry.adaptive_flood = plan.adaptive_flood;
+            entry.adaptive_first_hop = plan.adaptive_first_hop;
         }
         if plan.consume_source_route {
             let hints_left = options
@@ -8076,6 +8201,7 @@ impl<
         header: &PacketHeader,
         options: &ParsedOptions,
         rx: &RxInfo,
+        left_to_others: &mut bool,
     ) -> Option<ForwardPlan> {
         // A forwarding-critical option this node cannot interpret, whether
         // unrecognized or malformed, may carry a restriction it cannot honor.
@@ -8100,6 +8226,7 @@ impl<
         let mut insert_region_code = None;
         let mut delay_ms = 0u64;
         let mut adaptive_flood = false;
+        let mut adaptive_first_hop = false;
 
         if !source_route_bytes.is_empty() {
             // A source-routed hop costs no flood budget, even the one that
@@ -8124,8 +8251,20 @@ impl<
                 return None;
             }
             adaptive_flood = self.repeater.mode == RepeaterMode::Adaptive;
-            if adaptive_flood && self.adaptive_flooding_withheld() {
-                return None;
+            if adaptive_flood {
+                // A transmitter this strong stands beside this node, and
+                // reaches what it would. Only a radio measures that.
+                let beside =
+                    rx.origin.is_measured() && rx.rssi >= self.repeater.adaptive_beside_rssi_dbm;
+                if beside || !self.adaptive_group_admits() {
+                    *left_to_others = true;
+                    return None;
+                }
+                // A flood nobody has forwarded yet came from its originator:
+                // no hop spent, and no source route that brought it here.
+                // Carrying that one shows a neighbor nobody else serves.
+                adaptive_first_hop =
+                    flood_hops.accumulated() == 0 && options.source_route.is_none();
             }
             // Signal-quality filtering applies only to flood forwarding,
             // not to source-routed hops—and only to frames that arrived
@@ -8213,6 +8352,7 @@ impl<
             insert_region_code,
             delay_ms,
             adaptive_flood,
+            adaptive_first_hop,
             station_action,
             signal: hop_signal(rx),
         })
@@ -8833,24 +8973,31 @@ impl<
         // that already aired is waiting on its next hop, and a copy that
         // did not confirm it is one from behind: the previous hop's retry.
         //
-        // Nor does a copy from behind defer a forward still waiting. Only a
-        // copy at least as far along as this one shows the packet carried;
-        // the previous hop sending it again shows the opposite.
+        // An adaptive forwarder's forward answers only to a copy someone
+        // else forwarded. The originator sending the packet again shows the
+        // opposite, that nobody carried it, which is when the adaptive
+        // forward is wanted.
         let Some(mut queued) = self.tx_queue.remove_first_matching(|entry| {
             entry.priority == TxPriority::Forward
                 && !entry.forward_watch.has_aired()
                 && Self::confirmation_key(entry.frame.as_slice())
                     .map(|entry_key| &entry_key == key)
                     .unwrap_or(false)
-                && crate::forward_id::carried_as_far(entry.frame.as_slice(), frame)
+                && (!entry.adaptive_flood
+                    || crate::forward_id::serves_neighborhood(entry.frame.as_slice(), frame))
         }) else {
             return;
         };
 
         // `forward_deferrals` counts the copies already heard, so this one
         // is the next; the copy that reaches the limit abandons the forward.
-        // An adaptive forwarder gives way to the first, unless it is engaged.
-        let abandon_copies = if queued.adaptive_flood && !self.adaptive_engaged() {
+        // An adaptive forwarder gives way to the first. Engaged, it holds
+        // on through as many as a repeater would for a flood that arrived
+        // already forwarded, which may be on its way to the neighbor it
+        // carries for. A flood from its originator is not: another
+        // forwarder's copy of that one is the whole of what was wanted.
+        let tolerant = self.adaptive_engaged() && !queued.adaptive_first_hop;
+        let abandon_copies = if queued.adaptive_flood && !tolerant {
             1
         } else {
             self.repeater.flood_contention_abandon_copies

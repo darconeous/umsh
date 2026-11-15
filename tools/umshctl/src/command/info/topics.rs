@@ -874,7 +874,7 @@ fn render_repeater(set: &PropSet, _ctx: &Context) -> Vec<Line> {
             match state {
                 repeater_state::STANDBY => "standby".to_string(),
                 repeater_state::ENGAGED => "engaged".to_string(),
-                repeater_state::WITHHELD => "withheld (busy channel)".to_string(),
+                repeater_state::WITHHELD => "withheld (low battery)".to_string(),
                 other => other.to_string(),
             },
         ));

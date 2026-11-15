@@ -4200,6 +4200,16 @@ where
         self.t_frame_ms
     }
 
+    fn airtime_ms(&self, len: usize) -> u32 {
+        lora_airtime_ms_with_preamble(
+            self.config.spreading_factor,
+            self.config.bandwidth_hz,
+            self.config.coding_rate_denom,
+            len,
+            FIRMWARE_TX_PREAMBLE,
+        )
+    }
+
     fn spreading_factor(&self) -> Option<u8> {
         Some(self.config.spreading_factor)
     }

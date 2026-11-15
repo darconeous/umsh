@@ -1005,7 +1005,7 @@ configurable while forwarding is off and take effect when it is not.
 |---|---|---|
 | 0 | Off | None on any medium: the device identity sends only its own traffic and its attached host's |
 | 1 | On | An autonomous mesh repeater |
-| 2 | Adaptive | An [adaptive forwarder](repeater-operation.md#adaptive-forwarding): every source-routed hop, and the floods no repeater was heard carrying |
+| 2 | Adaptive | An [adaptive forwarder](repeater-operation.md#adaptive-forwarding): every source-routed hop, and floods where no other forwarder is heard |
 
 A device **MUST** reject any other value with `STATUS_INVALID_ARGUMENT`.
 
@@ -1014,12 +1014,12 @@ the routable UMSH frames it receives—off the air, from an [IP multicast
 group](ip-multicast.md), or over
 [backhaul](ulcp-host.md#prop-mac-backhaul)—according to [Repeater
 Operation](repeater-operation.md) and [Nodes With a LoRa
-Radio](ip-multicast.md#nodes-with-a-lora-radio), and it sets the repeater
-capability bit in its [node identity](node-identity.md). While the mode is
-off the bit is clear.
+Radio](ip-multicast.md#nodes-with-a-lora-radio). While the mode is on it
+sets the repeater capability bit in its [node identity](node-identity.md);
+otherwise the bit is clear.
 
 The capability bit is a statement of fact and **MUST** track whether the
-device forwards. The advertised *role* is a separate matter: it is
+device is a repeater. The advertised *role* is a separate matter: it is
 configuration, set through [`PROP_IDENT_ROLE`](ulcp-device.md#prop-ident-role),
 and defaults to being derived from this mode rather than being fixed by
 it. A mobile repeater and a fixed tracker are both expressible.
@@ -1089,8 +1089,7 @@ is on, it derives `Bridge` if the device node also has a link beyond
 its radio—[`PROP_MAC_BACKHAUL`](ulcp-host.md#prop-mac-backhaul) is set,
 or the [bridge client](ulcp-bridge.md) is enabled with a host and server
 key—and `Repeater` if it does not. Otherwise it derives `Tracker`,
-whatever links it has: an adaptive forwarder carries what nobody else
-did, which is not what a repeater is asked to be. On a device
+whatever links it has: an adaptive forwarder is not a repeater. On a device
 whose device identity is a messaging identity (see [The Device
 Identity](#device-identity)), it derives `Chat` whether or not the device
 forwards. Any other value is advertised verbatim.
@@ -1159,10 +1158,10 @@ inserted; an item identical to a held one reports `STATUS_ALREADY`. The
 remove selector matches the same way, and a whole-value write keeps the
 last spelling it carried. Stored items keep the capitalization written.
 
-A device with forwarding enabled and a non-empty set **SHOULD** advertise
+A device whose mode is on, with a non-empty set, **SHOULD** advertise
 the same strings in its node identity, subject to that option's count and
 packet-fit limits, so that a peer choosing a route can see what a repeater
-will carry. A device that is not forwarding makes no such claim and omits
+will carry. A device that is not a repeater makes no such claim and omits
 the option.
 
 Whether an untagged packet is tagged on the way out is a separate
@@ -1631,9 +1630,9 @@ What the device identity's forwarding is doing at the moment.
 |---|---|---|
 | 0 | Off | [`PROP_MAC_REPEATER_MODE`](#prop-mac-repeater-mode) is off |
 | 1 | Forwarding | The mode is on |
-| 2 | Standby | Adaptive, and giving way to the first carry it overhears |
-| 3 | Engaged | Adaptive, and tolerating as many overheard copies as a repeater: one of its flood forwards aired recently |
-| 4 | Withheld | Adaptive, and flooding nothing: the channel is busy and repeaters are plentiful |
+| 2 | Standby | Adaptive, and giving way to the first copy it hears another forwarder send |
+| 3 | Engaged | Adaptive, and tolerating as many overheard copies as a repeater: it recently carried a flood for its originator |
+| 4 | Withheld | Adaptive, and forwarding nothing: the battery is low |
 
 The three adaptive states are those of [Adaptive
 Forwarding](repeater-operation.md#adaptive-forwarding). The value is

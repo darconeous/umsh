@@ -688,7 +688,7 @@ struct RemoteStatisticsScreen: View {
                 }
                 if let value = stats.rxDutyCycle {
                     RemoteValueRow(
-                        String(localized: "Airtime heard", comment: "Statistics row: the share of the past hour other transmitters occupied the channel."),
+                        String(localized: "Airtime heard", comment: "Statistics row: the share of the past five minutes other transmitters occupied the channel."),
                         value: dutyPercent(value)
                     )
                 }

@@ -66,6 +66,10 @@ impl Radio for GatedRadio {
     fn t_frame_ms(&self) -> u32 {
         self.inner.t_frame_ms()
     }
+
+    fn airtime_ms(&self, len: usize) -> u32 {
+        self.inner.airtime_ms(len)
+    }
 }
 
 /// Holds `pump` on the air, starts `operation` so that it waits on the MAC,

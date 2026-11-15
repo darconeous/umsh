@@ -666,9 +666,9 @@ The auto-mode offset landed on 2026-11-13, as the latest moment an
 ordinary repeater may still be waiting, with the timeout left at
 2.95 × `T_frame`: the adaptive window ends 1.65 × `T_frame` after the
 reception, and the guard margin covers a maximum-length forward from
-there. A retry that does arrive early no longer cancels the forward,
-because a copy from behind is not counted as a carry. The mobile-repeater
-offset has not landed.
+there. A retry that does arrive early does not cancel an adaptive
+forward, which answers only to a copy at least as far along as itself.
+The mobile-repeater offset has not landed.
 
 ### M11. Auto forwarding mode *(local policy, ULCP surface)*
 
@@ -699,27 +699,61 @@ a per-packet decision first, with two pieces of state around it (below):
   stops carrying others' traffic whatever it hears;
 - never inserting a region code.
 
-As landed on 2026-11-13 (the spec calls it *adaptive forwarding*), three
-of these differ. Adaptive forwarders are ranked among themselves by
-reception, as repeaters are, not by a packet hash. The node's duty budget
-and battery do not yet bound what it carries; the deferred duty reserve
-for forwarded traffic is the place for that. And the operator's default
-region is inserted as an ordinary repeater inserts it.
+As landed (the spec calls it *adaptive forwarding*), several of these
+differ. Adaptive forwarders are ranked among themselves by reception, as
+repeaters are, not by a packet hash. The operator's default region is
+inserted as an ordinary repeater inserts it. The node's transmit duty
+budget does not yet bound what it carries; the deferred duty reserve for
+forwarded traffic is the place for that.
 
-Two pieces of state were added:
+What was added, and what two wrong turns taught:
 
-- **Engaged.** A pure per-packet rule loses inbound traffic: an adaptive
-  node that hears two upstream hops gives way to the second, and the
-  neighbor behind it, whose outbound packet it just carried, never hears
-  the reply. So for 30 minutes after one of its flood forwards airs, the
-  node tolerates as many overheard copies as a repeater does. It keeps
-  the late window, so fixed repeaters still win the traces.
-- **Withheld.** With a tenth of the past hour occupied by others and four
-  or more repeaters heard, the node floods nothing: a packet nobody was
-  heard carrying is then more likely lost to congestion than to a gap in
-  coverage. Both thresholds are provisional.
-
-Source-routed hops are forwarded in every state.
+- **A sibling's copy counts.** "Nobody carried it further" is not
+  evidence for a flood that arrives already forwarded: among repeaters
+  every one of them holds it already, so none repeats it again and the
+  node always hears silence. The first version forwarded those, and two
+  nodes among six repeaters engaged at once. The second version ignored
+  every flood that arrived forwarded, which kept them quiet and broke a
+  team of adaptive nodes with no repeater: a flood stopped two hops out.
+  What tells the two apart is whether another forwarder's copy of the
+  same reception is heard. Among repeaters there is one; in a chain of
+  adaptive nodes there is not.
+- **Engaged.** A node that carried a flood for its originator has a
+  neighbor nobody else serves, and what returns to that neighbor may
+  reach the node as several repeaters' copies. So for five minutes after
+  such a forward airs, the node tolerates as many overheard copies as a
+  repeater does. Only first-hop forwards renew the hold. It keeps the
+  late window, so fixed repeaters still win the traces.
+- **A flood from a transmitter beside the node is left alone.** Heard at
+  −65 dBm or stronger, the sender covers the ground this node would. A
+  hall of fifty then forwards nothing among themselves, where giving way
+  to the first copy heard does not hold: forwarders that start within one
+  channel check of each other collide, and none hears a copy. A team
+  spread over an area hears each other weakly and is unaffected. The
+  −65 dBm line is provisional and unmeasured.
+- **A group standing together shares floods from elsewhere.** A node
+  with more than a few neighbors beside it forwards a flood heard from
+  far off on a draw of its own, with odds that leave about three of the
+  group forwarding. Counting every neighbor instead of those beside the
+  node broke multi-hop delivery in the model.
+- **A flood left alone stays left.** One declined by either rule is
+  recorded for duplicate suppression. Otherwise a repeater's weaker copy
+  of a flood from beside the node read as a new flood and was forwarded,
+  which in the model cost a hall near a repeater more than having
+  neither rule.
+- **No occupancy rule.** Thinning floods by received airtime read low
+  when collisions filled the channel, and cost a sixteen-node team
+  delivery; the two rules above replace it.
+- **Engaged tolerance is for forwarded floods only.** In a group of
+  adaptive nodes every forward is of a flood from its originator, so
+  every node was soon engaged, and with a repeater's tolerance the group
+  sent three copies of each flood. A flood from its originator now ends
+  on the first copy in either state.
+- **A low battery stops everything**, routed hops included, at 10% with
+  resumption at 15%.
+- **No `REP`.** An adaptive node that set `REP` took a slot in every
+  neighbor's sixteen-entry repeater list whether or not it ever
+  forwarded. It is listed as any forwarder is, when heard forwarding.
 
 The link table still matters, as a soft input: a confirmed fixed repeater
 heard well lengthens the auto window further, and a neighborhood that just
@@ -750,7 +784,7 @@ On the ULCP side `PROP_MAC_REPEATER_MODE` is the tri-state (0 off, 1 on,
 `PROP_MAC_REPEATER_STATE` reports standby, engaged, or withheld. The
 advertised role stays under the operator's control as it is now, and an
 adaptive forwarder with no role configured does not derive Repeater; the
-capability bit is set whenever the mode is not off.
+capability bit is set only while the mode is on.
 
 ## What landed on 2026-10-09
 

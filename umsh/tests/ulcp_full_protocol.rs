@@ -812,7 +812,9 @@ async fn full_queue_drains_losslessly_through_the_callback() {
     drop(radio);
     detach(&sim);
 
-    // 19 distinct frames into a 16-slot queue: 3 evictions.
+    // 19 distinct frames into a 16-slot queue. They are direct messages
+    // the device holds for its host, and a held entry is never displaced,
+    // so the first 16 stay and the last 3 are refused.
     for counter in 1..=19u32 {
         inject_radio_rx(&sim, &sealed_unicast(counter));
     }
@@ -827,12 +829,8 @@ async fn full_queue_drains_losslessly_through_the_callback() {
         .await
         .unwrap();
     assert_eq!(drained.len(), 16, "every queued frame reaches the callback");
-    assert_eq!(
-        drained[0],
-        sealed_unicast(4),
-        "oldest surviving frame first"
-    );
-    assert_eq!(drained[15], sealed_unicast(19));
+    assert_eq!(drained[0], sealed_unicast(1), "oldest frame first");
+    assert_eq!(drained[15], sealed_unicast(16));
 }
 
 /// Over a transport that does not meet its provisioning-security

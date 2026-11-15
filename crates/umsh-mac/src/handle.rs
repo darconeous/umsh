@@ -281,10 +281,16 @@ impl<
         self.mac.borrow().await.repeaters_heard()
     }
 
-    /// Tell the MAC the share of the past hour other transmitters occupied
-    /// the channel, as a fraction of 65535.
-    pub async fn set_rx_duty(&self, rx_duty: u16) {
-        self.mac.borrow_mut().await.set_rx_duty(rx_duty);
+    /// The share of the past five minutes other transmitters occupied the
+    /// channel, as a fraction of 65535.
+    pub async fn rx_duty(&self) -> u16 {
+        self.mac.borrow().await.rx_duty()
+    }
+
+    /// Tell the MAC how much battery is left, in percent; `None` for a
+    /// node with no battery to run down.
+    pub async fn set_battery_percent(&self, percent: Option<u8>) {
+        self.mac.borrow_mut().await.set_battery_percent(percent);
     }
 
     /// Replace the forwarding policy applied to flood-forwarded frames.

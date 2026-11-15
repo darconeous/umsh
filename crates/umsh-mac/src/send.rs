@@ -726,6 +726,9 @@ pub struct QueuedTx<const FRAME: usize = MAX_RESEND_FRAME_LEN> {
     /// A flood forward made by an adaptive forwarder
     /// ([`RepeaterMode::Adaptive`](crate::RepeaterMode::Adaptive)).
     pub(crate) adaptive_flood: bool,
+    /// An adaptive flood forward of a frame heard from its originator: the
+    /// one whose airing shows a neighbor nobody else carries for.
+    pub(crate) adaptive_first_hop: bool,
 }
 
 impl<const FRAME: usize> QueuedTx<FRAME> {
@@ -774,6 +777,7 @@ impl<const FRAME: usize> QueuedTx<FRAME> {
             counter_holds: 0,
             forward_watch: ForwardWatch::None,
             adaptive_flood: false,
+            adaptive_first_hop: false,
         })
     }
 

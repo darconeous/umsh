@@ -8467,14 +8467,13 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             | prop::PHY_MTU
             | prop::PHY_T_FRAME
             | prop::PHY_DUTY_NOW
-            | prop::PHY_RX_DUTY
             | prop::DEV_KEY
             | prop::HOST_RX_QUEUE_COUNT
             | prop::HOST_RX_QUEUE_DROPPED
             | prop::SAVED => Err(Status::INVALID_ARGUMENT),
             prop::BATTERY if self.config.battery.is_some() => Err(Status::INVALID_ARGUMENT),
-            prop::MAC_REPEATER_STATE | prop::MAC_REPEATERS_HEARD
-                if self.forwarding_gauges().is_some() =>
+            prop::MAC_REPEATER_STATE | prop::MAC_REPEATERS_HEARD | prop::PHY_RX_DUTY
+                if self.node_gauges().is_some() =>
             {
                 Err(Status::INVALID_ARGUMENT)
             }
@@ -9070,10 +9069,10 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         present.then_some((counter, ledger))
     }
 
-    /// Where `PROP_MAC_REPEATER_STATE` and `PROP_MAC_REPEATERS_HEARD` are
-    /// read from: the node reports both beside its counters, so they exist
-    /// where the counters it feeds do.
-    fn forwarding_gauges(&self) -> Option<&'static StatsLedger> {
+    /// Where `PROP_MAC_REPEATER_STATE`, `PROP_MAC_REPEATERS_HEARD`, and
+    /// `PROP_PHY_RX_DUTY` are read from: the node reports them beside its
+    /// counters, so they exist where the counters it feeds do.
+    fn node_gauges(&self) -> Option<&'static StatsLedger> {
         self.config.stats.filter(|_| self.config.mac_node)
     }
 
@@ -9234,8 +9233,11 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         ) {
             return self.config.mac_node;
         }
-        if matches!(key, prop::MAC_REPEATER_STATE | prop::MAC_REPEATERS_HEARD) {
-            return self.forwarding_gauges().is_some();
+        if matches!(
+            key,
+            prop::MAC_REPEATER_STATE | prop::MAC_REPEATERS_HEARD | prop::PHY_RX_DUTY
+        ) {
+            return self.node_gauges().is_some();
         }
         if is_identity_property(key) {
             return self.config.dev_identity;
@@ -9271,7 +9273,6 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 | prop::PHY_LORA_SW
                 | prop::DEV_NAME
                 | prop::PHY_DUTY_NOW
-                | prop::PHY_RX_DUTY
                 | prop::PHY_DUTY_LIMIT
                 | prop::MAC_PROMISCUOUS
                 | prop::SAVED
@@ -9517,7 +9518,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 1
             }
             prop::MAC_REPEATER_STATE | prop::MAC_REPEATERS_HEARD => {
-                let Some(ledger) = self.forwarding_gauges() else {
+                let Some(ledger) = self.node_gauges() else {
                     return PropValue::Unknown;
                 };
                 out[0] = if key == prop::MAC_REPEATER_STATE {
@@ -9759,7 +9760,10 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 1
             }
             prop::PHY_DUTY_NOW => put(out, &self.config.duty.usage(now_ms).to_le_bytes()),
-            prop::PHY_RX_DUTY => put(out, &self.config.duty.rx_usage(now_ms).to_le_bytes()),
+            prop::PHY_RX_DUTY => match self.node_gauges() {
+                Some(ledger) => put(out, &ledger.rx_duty().to_le_bytes()),
+                None => return PropValue::Unknown,
+            },
             prop::PHY_DUTY_LIMIT => put(out, &self.config.duty.limit().to_le_bytes()),
 
             prop::MAC_PROMISCUOUS => {
@@ -12345,7 +12349,7 @@ mod tests {
             .config
             .stats
             .expect("the test device keeps statistics");
-        ledger.set_forwarding(umsh_ulcp::ids::repeater_state::ENGAGED, 5);
+        ledger.set_node_gauges(umsh_ulcp::ids::repeater_state::ENGAGED, 5, 6553);
         assert_eq!(
             get(&mut session, prop::MAC_REPEATER_STATE),
             [umsh_ulcp::ids::repeater_state::ENGAGED]
@@ -12355,12 +12359,10 @@ mod tests {
             let (emitted, _) = set(&mut session, key, &[0]);
             expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
         }
-        ledger.set_forwarding(0, 0);
-
-        session.config.duty.record_rx(0, 100);
-        assert_ne!(get(&mut session, prop::PHY_RX_DUTY), 0u16.to_le_bytes());
+        assert_eq!(get(&mut session, prop::PHY_RX_DUTY), 6553u16.to_le_bytes());
         let (emitted, _) = set(&mut session, prop::PHY_RX_DUTY, &[0, 0]);
         expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
+        ledger.set_node_gauges(0, 0, 0);
     }
 
     /// Bluetooth is a capability like any other: a board without the

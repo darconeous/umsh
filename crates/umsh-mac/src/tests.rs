@@ -10164,15 +10164,7 @@ fn receive_one_defers_pending_forward_when_duplicate_is_overheard() {
     assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
     assert_eq!(mac.tx_queue().len(), 1);
 
-    // The previous hop sending the frame again is a copy from behind: it
-    // shows the packet has not been carried, and defers nothing.
     mac.radio_mut().queue_received_frame(frame.as_slice());
-    assert!(!block_on(mac.receive_one(|_, _| {})).unwrap());
-    let carried = pending_forward_frame(&mut mac);
-    assert_eq!(mac.tx_queue().len(), 1);
-
-    // Another forwarder's copy from this hop does.
-    mac.radio_mut().queue_received_frame(carried.as_slice());
     let handled = block_on(mac.receive_one(|_, _| {})).unwrap();
 
     assert!(!handled);

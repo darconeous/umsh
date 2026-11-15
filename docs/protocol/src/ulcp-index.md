@@ -105,7 +105,7 @@ Id   | Mnemonic                                                                 
 105  | [`PROP_HOST_MUTED_PEERS`](ulcp-host.md#prop-host-muted-peers)                         | Get, Set, Insert, Remove   | `CAP_HOST_RX_QUEUE`
 113  | [`STR_PHY_RAW`](ulcp-transport.md#str-radio-raw)                                      | Send, Recv                 | —
 4820 | [`PROP_PHY_DUTY_NOW`](ulcp-radio.md#prop-phy-duty-now)                                | Get                        | `CAP_PHY_DUTY_LIMIT`
-4821 | [`PROP_PHY_RX_DUTY`](ulcp-radio.md#prop-phy-rx-duty)                                  | Get                        | `CAP_PHY_DUTY_LIMIT`
+4821 | [`PROP_PHY_RX_DUTY`](ulcp-radio.md#prop-phy-rx-duty)                                  | Get                        | `CAP_STATS`, `CAP_REPEATER`
 4822 | [`PROP_PHY_DUTY_LIMIT`](ulcp-radio.md#prop-phy-duty-limit)                            | Get, Set                   | `CAP_PHY_DUTY_LIMIT`
 4832 | [`PROP_STAT_TX_PACKETS`](ulcp-radio.md#prop-stat-tx-packets)                          | Get, Set                   | `CAP_STATS`
 4833 | [`PROP_STAT_TX_CHANNEL_BUSY`](ulcp-radio.md#prop-stat-tx-channel-busy)                | Get, Set                   | `CAP_STATS`

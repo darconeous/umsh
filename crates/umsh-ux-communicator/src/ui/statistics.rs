@@ -19,6 +19,7 @@ type Value = String<20>;
 const NAMES: [&str; 17] = [
     "Uptime",
     "Airtime",
+    "Airtime heard",
     "Packets sent",
     "Channel busy",
     "Packets heard",
@@ -33,7 +34,6 @@ const NAMES: [&str; 17] = [
     "MeshCore flooded",
     "MeshCore declined",
     "Repeaters heard",
-    "Airtime heard",
 ];
 
 /// Indices `ForEach` can hold without borrowing the state.
@@ -62,11 +62,15 @@ pub fn view(state: &State) -> impl View<Rgb565, State> + use<> {
 
 /// The readouts to show, each with its place in [`NAMES`]: Uptime always,
 /// empty until it is known, and the airtime, `airtime` tenths of a percent
-/// of the hour; then each counter the device keeps.
+/// of the hour, with the airtime heard under it; then each counter the
+/// device keeps.
 fn readouts(stats: &Statistics, airtime: u16) -> Vec<(usize, Value), { NAMES.len() }> {
     let mut shown = Vec::new();
     _ = shown.push((0, stats.uptime.map(uptime).unwrap_or_default()));
     _ = shown.push((1, airtime_text(airtime)));
+    if let Some(tenths) = stats.received_airtime {
+        _ = shown.push((2, airtime_heard_text(tenths)));
+    }
     let counters = [
         stats.sent,
         stats.channel_busy,
@@ -82,16 +86,13 @@ fn readouts(stats: &Statistics, airtime: u16) -> Vec<(usize, Value), { NAMES.len
         stats.meshcore_flooded,
         stats.meshcore_declined,
     ];
-    for (place, count) in (2..).zip(counters) {
+    for (place, count) in (3..).zip(counters) {
         if let Some(count) = count {
             _ = shown.push((place, grouped(count)));
         }
     }
     if let Some(heard) = stats.repeaters_heard {
-        _ = shown.push((15, grouped(u32::from(heard))));
-    }
-    if let Some(tenths) = stats.received_airtime {
-        _ = shown.push((16, airtime_text(tenths)));
+        _ = shown.push((16, grouped(u32::from(heard))));
     }
     shown
 }
@@ -103,6 +104,17 @@ pub(super) fn airtime_text(tenths: u16) -> Value {
     _ = core::fmt::write(
         &mut text,
         format_args!("{}.{}% this hour", tenths / 10, tenths % 10),
+    );
+    text
+}
+
+/// The share of the past five minutes other transmitters held the channel,
+/// from `tenths` of a percent, to one decimal place.
+fn airtime_heard_text(tenths: u16) -> Value {
+    let mut text = Value::new();
+    _ = core::fmt::write(
+        &mut text,
+        format_args!("{}.{}% last 5 min", tenths / 10, tenths % 10),
     );
     text
 }
@@ -174,7 +186,7 @@ mod tests {
             ..Statistics::default()
         };
         let places: Vec<usize, 17> = readouts(&stats, 3).iter().map(|(p, _)| *p).collect();
-        assert_eq!(places, [0, 1, 2, 8]);
+        assert_eq!(places, [0, 1, 3, 9]);
 
         let stats = Statistics {
             repeaters_heard: Some(3),
@@ -182,7 +194,7 @@ mod tests {
             ..Statistics::default()
         };
         let shown = readouts(&stats, 3);
-        assert_eq!(shown[2], (15, Value::try_from("3").unwrap()));
-        assert_eq!(shown[3], (16, Value::try_from("4.2% this hour").unwrap()));
+        assert_eq!(shown[2], (2, Value::try_from("4.2% last 5 min").unwrap()));
+        assert_eq!(shown[3], (16, Value::try_from("3").unwrap()));
     }
 }

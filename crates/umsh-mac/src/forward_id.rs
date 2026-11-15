@@ -97,15 +97,26 @@ pub(crate) fn carried_onward(sent: &[u8], heard: &[u8]) -> bool {
     }
 }
 
-/// Whether `heard` is a copy of the packet at least as far along its path as
-/// `pending`, a forward of it waiting to be sent: another forwarder's copy
-/// from the same hop, or one from further on. A copy from behind, the
-/// previous hop sending again, is not.
-pub(crate) fn carried_as_far(pending: &[u8], heard: &[u8]) -> bool {
-    match (path_progress(pending), path_progress(heard)) {
-        (Some(pending), Some(heard)) => heard >= pending,
-        _ => false,
-    }
+/// Whether `heard`, a copy of the packet an adaptive forwarder has the
+/// flood forward `pending` queued for, shows the neighborhood served
+/// without it.
+///
+/// A copy someone else forwarded does, when it is at least as far along as
+/// the copy `pending` was made from: a sibling's forward of the same
+/// reception, or a carry from further on. Either way another forwarder in
+/// earshot has put the packet on the air here.
+///
+/// A copy nobody has forwarded does not. That is the originator sending
+/// again because it heard nobody carry the packet, which is when the
+/// adaptive forward is wanted. Nor does a copy still under a source route,
+/// which has not reached the flood this forward belongs to.
+pub(crate) fn serves_neighborhood(pending: &[u8], heard: &[u8]) -> bool {
+    let (Some(pending), Some(heard)) = (path_progress(pending), path_progress(heard)) else {
+        return false;
+    };
+    let (core::cmp::Reverse(heard_hints_left), heard_spent) = heard;
+    let (_, pending_spent) = pending;
+    heard_hints_left == 0 && heard_spent >= pending_spent.saturating_sub(1).max(1)
 }
 
 /// How far along its path `frame` is, ordered so that later is greater:

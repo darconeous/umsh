@@ -37,7 +37,7 @@
 #![no_std]
 #![allow(async_fn_in_trait)]
 
-use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU16, AtomicU32, Ordering};
 use core::task::{Context, Poll};
 
 use embassy_futures::select::{Either, select};
@@ -231,6 +231,12 @@ pub struct Channels<M: RawMutex, const RX: usize, const TX: usize> {
     /// The spreading factor [`device_runner`] last configured the chip
     /// with, or zero before it has configured one.
     spreading_factor: AtomicU8,
+    /// The rest of what that configuration's airtime depends on: the
+    /// bandwidth in hertz, the coding rate's denominator, and the
+    /// transmit preamble in symbols.
+    bandwidth_hz: AtomicU32,
+    coding_rate_denom: AtomicU8,
+    preamble_symbols: AtomicU16,
     next_tx_id: AtomicU32,
 }
 
@@ -242,8 +248,44 @@ impl<M: RawMutex, const RX: usize, const TX: usize> Channels<M, RX, TX> {
             tx_done: Signal::new(),
             rx_waker: AtomicWaker::new(),
             spreading_factor: AtomicU8::new(0),
+            bandwidth_hz: AtomicU32::new(0),
+            coding_rate_denom: AtomicU8::new(0),
+            preamble_symbols: AtomicU16::new(0),
             next_tx_id: AtomicU32::new(0),
         }
+    }
+
+    /// Record the modulation the chip was just configured with, which is
+    /// what a [`LoraphyRadio`] over this bundle prices frames by.
+    pub fn note_modulation(
+        &self,
+        spreading_factor: u8,
+        bandwidth_hz: u32,
+        coding_rate_denom: u8,
+        preamble_symbols: u16,
+    ) {
+        self.bandwidth_hz.store(bandwidth_hz, Ordering::Relaxed);
+        self.coding_rate_denom
+            .store(coding_rate_denom, Ordering::Relaxed);
+        self.preamble_symbols
+            .store(preamble_symbols, Ordering::Relaxed);
+        // Last: the others are read only once this one is set.
+        self.spreading_factor
+            .store(spreading_factor, Ordering::Relaxed);
+    }
+
+    /// Take on the modulation `real` was last configured with.
+    ///
+    /// Only the bundle [`device_runner`] serves is told the modulation. A
+    /// multiplexer that fans that bundle out to others calls this for each
+    /// of them.
+    pub fn adopt_modulation_of(&self, real: &Self) {
+        self.note_modulation(
+            real.spreading_factor.load(Ordering::Relaxed),
+            real.bandwidth_hz.load(Ordering::Relaxed),
+            real.coding_rate_denom.load(Ordering::Relaxed),
+            real.preamble_symbols.load(Ordering::Relaxed),
+        );
     }
 
     /// A fresh [`TxRequest::id`], for a requester that keeps no numbering
@@ -283,15 +325,16 @@ impl<M: RawMutex, const RX: usize, const TX: usize> Default for Channels<M, RX, 
 /// The actual TX power and modulation params live on the `runner` side (it
 /// owns the `LoRa` driver). This handle only carries:
 ///   - the channel pair used to talk to the runner,
-///   - a precomputed worst-case airtime so the MAC's scheduler doesn't have
-///     to recompute it.
+///   - the frame time to report before the runner has configured a
+///     modulation; after that it follows the modulation in use.
 pub struct LoraphyRadio<M: RawMutex + 'static, const RX: usize, const TX: usize> {
     ch: &'static Channels<M, RX, TX>,
     t_frame_ms: u32,
 }
 
 impl<M: RawMutex + 'static, const RX: usize, const TX: usize> LoraphyRadio<M, RX, TX> {
-    /// Use [`airtime_ms`] with your modulation settings to compute `t_frame_ms`.
+    /// `t_frame_ms` stands in until the runner has a modulation; compute it
+    /// with [`airtime_ms`] for the one the device starts on.
     pub fn new(ch: &'static Channels<M, RX, TX>, t_frame_ms: u32) -> Self {
         Self { ch, t_frame_ms }
     }
@@ -346,8 +389,26 @@ impl<M: RawMutex + 'static, const RX: usize, const TX: usize> umsh_hal::Radio
         MAX_PAYLOAD
     }
 
+    /// A maximum-size frame at the modulation the runner is using, so the
+    /// MAC's timing follows a change of modulation.
     fn t_frame_ms(&self) -> u32 {
-        self.t_frame_ms
+        self.airtime_ms(MAX_PAYLOAD)
+    }
+
+    fn airtime_ms(&self, len: usize) -> u32 {
+        // Priced at the transmit preamble, the only one known here; a
+        // sender using another is off by a few symbols.
+        match self.ch.spreading_factor.load(Ordering::Relaxed) {
+            // Nothing configured yet, so nothing was received either.
+            0 => self.t_frame_ms,
+            sf => umsh_ulcp::airtime::lora_airtime_ms_with_preamble(
+                sf,
+                self.ch.bandwidth_hz.load(Ordering::Relaxed),
+                self.ch.coding_rate_denom.load(Ordering::Relaxed),
+                len,
+                self.ch.preamble_symbols.load(Ordering::Relaxed),
+            ),
+        }
     }
 
     fn spreading_factor(&self) -> Option<u8> {
@@ -1375,8 +1436,12 @@ where
             settings = Some(wait_settings_while_idle(ch, ctl, &clock).await);
             continue 'reconfigure;
         };
-        ch.spreading_factor
-            .store(sf_value(active.sf) as u8, Ordering::Relaxed);
+        ch.note_modulation(
+            sf_value(active.sf) as u8,
+            bw_value_hz(active.bw),
+            active.cr.denom() as u8,
+            tx_preamble,
+        );
         let rx_busy_window = rx_busy_window_ms(&mdltn, tx_preamble);
         let op_limit_ms = u64::from(rx_busy_window) + CHIP_OP_SLACK_MS;
 
@@ -1697,6 +1762,26 @@ mod tests {
             RxMode::DutyCycle(params) => params,
             _ => panic!("expected duty-cycle RX mode"),
         }
+    }
+
+    /// The frame time is the boot figure until a modulation is known,
+    /// and a maximum-size frame at that modulation afterwards.
+    #[test]
+    fn frame_time_follows_the_modulation() {
+        use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+        use umsh_hal::Radio;
+
+        static CHANNELS: Channels<CriticalSectionRawMutex, 1, 1> = Channels::new();
+        let channels = &CHANNELS;
+        let radio = LoraphyRadio::new(channels, 777);
+        assert_eq!(radio.t_frame_ms(), 777);
+
+        channels.note_modulation(11, 250_000, 5, 16);
+        let slow = radio.t_frame_ms();
+        assert_eq!(slow, radio.airtime_ms(MAX_PAYLOAD));
+
+        channels.note_modulation(7, 250_000, 5, 16);
+        assert!(radio.t_frame_ms() * 8 < slow);
     }
 
     /// The shipping SX1262 configuration: 8-symbol acquisition against

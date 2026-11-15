@@ -271,7 +271,7 @@ pub mod prop {
     pub const HOST_MUTED_PEERS: u32 = 105;
     /// Transmit duty usage over the past hour (`PROP_PHY_DUTY_NOW`).
     pub const PHY_DUTY_NOW: u32 = 4820;
-    /// The share of the past hour other transmitters occupied the channel
+    /// The share of the past five minutes other transmitters occupied the channel
     /// (`PROP_PHY_RX_DUTY`)—UINT16, on the scale of `PHY_DUTY_NOW`. Counts
     /// the frames this radio received, so it reads low once collisions
     /// are what fills the channel. Read-only.
@@ -775,13 +775,14 @@ pub mod repeater_state {
     pub const OFF: u8 = 0;
     /// An ordinary repeater.
     pub const FORWARDING: u8 = 1;
-    /// Adaptive, giving way to the first carry it overhears.
+    /// Adaptive, giving way to the first copy it hears another forwarder
+    /// send.
     pub const STANDBY: u8 = 2;
     /// Adaptive, tolerating as many overheard copies as an ordinary
-    /// repeater: one of its flood forwards aired recently.
+    /// repeater: it recently carried a flood for its originator.
     pub const ENGAGED: u8 = 3;
-    /// Adaptive, flooding nothing: the channel is busy and repeaters are
-    /// plentiful.
+    /// Adaptive, holding back: the battery is low, or the channel is
+    /// busy.
     pub const WITHHELD: u8 = 4;
 }
 

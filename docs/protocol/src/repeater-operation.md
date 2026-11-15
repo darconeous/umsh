@@ -225,29 +225,80 @@ This behavior is still provisional and should be validated empirically. The inte
 
 ## Adaptive Forwarding
 
-An **adaptive forwarder** is a node that carries what would otherwise go uncarried and stays quiet when a repeater has carried it. It suits a device someone carries: beside fixed repeaters it adds nothing to the channel, and where there are none it is the coverage.
+An **adaptive forwarder** is a node that forwards where it hears no other forwarder and is otherwise quiet. Beside repeaters it adds nothing to the channel; where there are none, adaptive forwarders are the mesh.
 
-It follows the [forwarding procedure](#forwarding-procedure) as a repeater does, with these differences:
+It follows the [forwarding procedure](#forwarding-procedure) as a repeater does, except as this section says. Nothing on the air distinguishes its copy of a packet from a repeater's.
 
-- **Source-routed hops are forwarded as a repeater forwards them**, without delay and whatever state the forwarder is in. A route that names the forwarder was chosen by its owner, and nothing tells that owner the hop was declined.
-- **Flood hops contend in a later window**, which opens once every repeater's has closed ([Adaptive Forwarders](channel-access.md#adaptive-forwarders)). A repeater in range always transmits first, and its record is the one a trace carries.
-- **In standby, the first overheard carry ends the forward.** A repeater defers twice and abandons on the third copy; an adaptive forwarder in standby abandons on the first.
+### Source-Routed Hops
 
-An adaptive forwarder is in one of three states:
+A source-routed hop is forwarded as a repeater forwards it, without delay. A route that names the forwarder was chosen by its owner. Only a [low battery](#battery) stops it.
 
-| State | Flood forwarding |
-|---|---|
-| Standby | Later window; abandons on the first overheard carry |
-| Engaged | Later window; defers and abandons as a repeater does |
-| Withheld | None |
+### Flood Hops
 
-It is **engaged** for a hold period after one of its flood forwards airs; 30 minutes is a reasonable default. A flood forward that airs was carried by nobody else, so some neighbor depends on this node, and the traffic returning to that neighbor arrives as other repeaters' forwards, which a forwarder in standby gives way to. A source-routed hop does not engage it.
+An adaptive forwarder decides what to do with a flood it has not seen before in this order:
 
-It is **withheld** while the channel is busy and repeaters are plentiful: a packet nobody was heard carrying is then more likely lost to congestion than to a gap in coverage, and another copy adds to the congestion. A reasonable default is a tenth or more of the past hour occupied by other transmitters, together with four or more repeaters heard in that hour. A forward withheld does not engage the forwarder. Without a measure of channel occupancy a forwarder is never withheld.
+1. **Low battery.** It forwards nothing ([Battery](#battery)).
+2. **Heard from beside it.** It does not forward a flood whose transmitter stands beside it ([Transmitters Beside It](#transmitters-beside-it)).
+3. **In a group.** With several nodes beside it, it forwards only if a draw of its own says so ([Groups](#groups)).
+4. **Otherwise** it schedules the forward in a later window than a repeater's, and gives it up when it hears another forwarder send the packet ([Giving Way](#giving-way)).
 
-An adaptive forwarder sets the `REP` [capability bit](node-identity.md#capability-bitmap), and SHOULD NOT present itself with the Repeater role.
+A flood left alone at step 2 or 3 is recorded for [duplicate suppression](#duplicate-suppression) as a forwarded one is. A copy of it that arrives later, from a forwarder further off, is the same flood and is not considered again.
 
-The states are local. Nothing on the air distinguishes an adaptive forwarder's copy of a packet from a repeater's.
+### Transmitters Beside It
+
+A transmitter heard very strongly stands beside the forwarder: it hears what the forwarder hears and reaches what the forwarder reaches. Forwarding its flood would cover the same ground.
+
+An adaptive forwarder does not forward a flood it received at or above a signal strength that marks such a transmitter; −65 dBm is a reasonable default. Nodes in one room then forward nothing among themselves, and nodes spread over a wide area, which hear each other weakly, are unaffected.
+
+The rule needs a measured signal strength, so it does not apply to a frame that arrived over a wire or a bearer.
+
+### Groups
+
+A flood that reaches a group standing together from elsewhere is heard by all of them at once, and any of them would carry it to the same ground. A few of them forwarding it is as good as all.
+
+An adaptive forwarder counts the distinct nodes beside it: those it has heard, within the past ten minutes, send a frame nobody had forwarded, at or above the signal strength of [Transmitters Beside It](#transmitters-beside-it). The group is those nodes and the forwarder itself.
+
+In a group of more than three, it forwards the flood with a probability of three in the size of the group, drawn for itself, so that about three of the group forward. In a group of three or fewer it forwards as it otherwise would.
+
+The draw is each node's own because giving way to the first copy heard fails in a crowd: forwarders that start within one [channel check](channel-access.md#channel-sensing) of each other collide, and none hears a copy to give way to.
+
+### Giving Way
+
+A flood forward contends in a window that opens once every repeater's has closed ([Adaptive Forwarders](channel-access.md#adaptive-forwarders)). A repeater in range always transmits first, and its record is the one a trace carries.
+
+While the forward waits, the first copy of the packet overheard from another forwarder ends it. A repeater defers twice and abandons on the third copy. Another forwarder's copy of the same reception counts as a copy from further on does: among repeaters a flood arrives from several of them and none carries it further, each holding it already, so the second repeater's copy is the evidence that the neighborhood is served.
+
+A copy nobody has forwarded does not end it. That is the originator sending again because it heard nobody carry the packet.
+
+### Engaged
+
+An adaptive forwarder is **engaged** for a hold period after it forwards a flood heard from its originator: one with no flood hops spent and no source-route option. Five minutes is a reasonable default.
+
+That forward aired because nobody else carried the packet, so the originator depends on this node. The traffic returning to the originator may reach this node as several repeaters' copies, the first of which would end the forward.
+
+While engaged, a forward of a flood that arrived already forwarded is deferred and abandoned on the counts a repeater uses. A flood heard from its originator still ends on the first copy: another forwarder's copy of it is all that was wanted.
+
+Each forward of a flood heard from its originator renews the hold. Forwarding any other flood does not, nor does a source-routed hop: neither says anything about the neighbor.
+
+### Battery
+
+An adaptive forwarder whose battery is running down SHOULD stop forwarding, source-routed hops included, at a level it resumes above: 10% of capacity to stop and 15% to resume are reasonable defaults. Its battery is its owner's first. A sender routed through it hears no confirmation and [finds another way](#forwarding-confirmation).
+
+A forwarder on external power, or one that cannot measure its battery, is not held back.
+
+### States
+
+An adaptive forwarder is in one of three states. They are local.
+
+| State | When | Forwarding |
+|---|---|---|
+| Standby | Otherwise | Source-routed hops; floods as [Flood Hops](#flood-hops) describes |
+| Engaged | Within the hold period after forwarding a flood heard from its originator | As standby, tolerating overheard copies of a flood that arrived already forwarded |
+| Withheld | The battery is low | None |
+
+### Identity
+
+An adaptive forwarder does not set the `REP` [capability bit](node-identity.md#capability-bitmap) and does not advertise supported regions. `REP` names a repeater its neighbors can plan on, and lists it among theirs; an adaptive forwarder is recorded by its neighbors only as any forwarder is, when it is [heard forwarding](mac-commands.md).
 
 ## Routing Implications
 

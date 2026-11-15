@@ -513,6 +513,12 @@ impl DevDomainSnapshot {
     pub fn forwards(&self) -> bool {
         self.repeater_mode != umsh_ulcp::ids::repeater_mode::OFF
     }
+
+    /// Whether the device node is a repeater: one its neighbors can count
+    /// on, which an adaptive forwarder is not.
+    pub fn is_repeater(&self) -> bool {
+        self.repeater_mode == umsh_ulcp::ids::repeater_mode::ON
+    }
 }
 
 /// What the device's Wi-Fi station and IP stack have been configured to
@@ -1850,6 +1856,10 @@ where
                 // source for a fresh measurement, then
                 // answer the deferred PROP_BATTERY get.
                 let sample = env.sample_battery().await;
+                #[cfg(feature = "device-node")]
+                if let Ok(status) = &sample {
+                    crate::device_node::note_battery(status);
+                }
                 session.respond_battery(tid, sample, &mut |frame: &[u8]| emitter.push(frame));
                 emitter.flush(sink).await;
             }
@@ -2593,6 +2603,8 @@ where
                 let emit = &mut |frame: &[u8]| emitter.push(frame);
                 match event {
                     PublishEvent::Battery(sample) => {
+                        #[cfg(feature = "device-node")]
+                        crate::device_node::note_battery(&sample);
                         session.publish_battery(sample, emit);
                     }
                     PublishEvent::Time(epoch) => {

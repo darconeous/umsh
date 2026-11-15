@@ -59,7 +59,7 @@ use embassy_time::{Duration, Instant, Timer, with_timeout};
 use umsh_core::{ChannelKey, PublicKey};
 use umsh_crypto::CryptoEngine;
 use umsh_crypto::software::{SoftwareAes, SoftwareIdentity, SoftwareSha256};
-use umsh_hal::{Clock, CounterStore, EmbassyClock, NoKeyValueStore};
+use umsh_hal::{CounterStore, EmbassyClock, NoKeyValueStore};
 use umsh_mac::{
     MacCounters, MacHandle, OperatingPolicy, RepeaterConfig, RepeaterMode, RepeaterState,
     SendOptions,
@@ -290,12 +290,32 @@ static NODE_ACTIVE: AtomicBool = AtomicBool::new(true);
 /// How the device node forwards (`PROP_MAC_REPEATER_MODE`).
 static NODE_REPEATER_MODE: AtomicU8 = AtomicU8::new(repeater_mode::OFF);
 
-/// The duty ledger the node's radio draws on, published at bring-up so
-/// the pump can tell the MAC how busy the channel has been.
-static NODE_DUTY: BlockingMutex<
-    CriticalSectionRawMutex,
-    core::cell::Cell<Option<&'static umsh_ulcp_device::DutyLedger>>,
-> = BlockingMutex::new(core::cell::Cell::new(None));
+/// No battery to run down: none measured yet, or the device is on
+/// external power.
+const NO_BATTERY: u8 = u8::MAX;
+
+/// The battery's last reported level in percent, or [`NO_BATTERY`].
+static NODE_BATTERY_PERCENT: AtomicU8 = AtomicU8::new(NO_BATTERY);
+
+/// Tell the device node what the battery last measured. An adaptive
+/// forwarder stops carrying other nodes' traffic on a low one.
+///
+/// The driver calls this with every measurement that passes through it,
+/// a host's read and the board's own announcements alike, so the node
+/// needs no battery source of its own.
+pub fn note_battery(status: &umsh_ulcp::battery::BatteryStatus) {
+    NODE_BATTERY_PERCENT.store(draining_percent(status), Ordering::Relaxed);
+}
+
+/// The level of a battery that is running down, or [`NO_BATTERY`] for one
+/// that is not: unmeasured, or with power coming in.
+fn draining_percent(status: &umsh_ulcp::battery::BatteryStatus) -> u8 {
+    use umsh_ulcp::battery::BatteryChargeState;
+    match (status.level_percent, status.charge_state) {
+        (Some(level), None | Some(BatteryChargeState::Discharging)) => level.min(100),
+        _ => NO_BATTERY,
+    }
+}
 
 /// The public key the running MAC actually holds, published once at
 /// bring-up.
@@ -477,7 +497,7 @@ fn profile_name() -> Option<alloc::string::String> {
 ///
 /// Role and forwarding are separate dimensions, and this is where they
 /// meet without being conflated. Capabilities are **facts**: `REP` is set
-/// exactly when the node is actually forwarding, `MOB` exactly when the
+/// exactly when the node is a repeater, `MOB` exactly when the
 /// operator has said the device moves. The role is what the device
 /// *presents itself as*, which is configuration—an explicit
 /// `PROP_IDENT_ROLE` is advertised verbatim, so a mobile repeater and a
@@ -490,9 +510,13 @@ fn profile_name() -> Option<alloc::string::String> {
 /// tracker. A link that nothing is forwarded across bridges nothing. A
 /// communicator, whose device identity is its person's messaging
 /// identity, is a chat node either way, takes text messages, and says it
-/// forwards by `REP` alone. So does an adaptive forwarder, whatever it is:
-/// it carries what nobody else did, which is not what a repeater is asked
-/// to be.
+/// forwards by `REP` alone.
+///
+/// An adaptive forwarder advertises as a node that forwards nothing. It
+/// carries only where nobody else is heard to, which is not something its
+/// neighbors can plan on, and `REP` is what lists a node among theirs:
+/// a room of adaptive handhelds would otherwise fill every repeater list
+/// in earshot with nodes that forward nothing there.
 fn advertised_identity(
     mode: u8,
     is_bridged: bool,
@@ -509,7 +533,7 @@ fn advertised_identity(
         None => NodeRole::Tracker,
     };
     let mut capabilities = NodeCapabilities::empty();
-    capabilities.set(NodeCapabilities::REPEATER, mode != repeater_mode::OFF);
+    capabilities.set(NodeCapabilities::REPEATER, is_repeater);
     capabilities.set(NodeCapabilities::MOBILE, is_mobile);
     capabilities.set(NodeCapabilities::TEXT_MESSAGES, messaging);
     (role, capabilities)
@@ -525,7 +549,7 @@ fn advertised_identity(
 fn advertised_regions(
     snapshot: &DevDomainSnapshot,
 ) -> Option<alloc::vec::Vec<alloc::string::String>> {
-    (snapshot.forwards() && !snapshot.repeater_region_names.is_empty()).then(|| {
+    (snapshot.is_repeater() && !snapshot.repeater_region_names.is_empty()).then(|| {
         snapshot
             .repeater_region_names
             .iter()
@@ -639,11 +663,11 @@ pub async fn dev_sync_loop<CS: CounterStore + 'static>(
         } else {
             node.enable_identity_responder(profile, never_respond_policy);
         }
-        // A repeater answers for its neighborhood; a node that forwards
-        // nothing has no peer repeaters to describe and stays quiet. Gated
-        // on forwarding rather than on discoverability, because the listing
-        // is about the mesh around this node, not about this node.
-        if snapshot.forwards() {
+        // A repeater answers for its neighborhood; a node that is not one
+        // has no peer repeaters to describe and stays quiet. Gated on
+        // repeating rather than on discoverability, because the listing is
+        // about the mesh around this node, not about this node.
+        if snapshot.is_repeater() {
             node.enable_peer_repeaters_responder();
         } else {
             node.disable_peer_repeaters_responder();
@@ -880,11 +904,9 @@ pub async fn pump_loop<CS: CounterStore + 'static>(
             .run_with(async || {
                 let counters = mac.counters().await;
                 publish_mac_counters(counters);
-                // The MAC cannot price a frame's airtime, so how busy the
-                // channel has been is told to it here.
-                if let Some(duty) = NODE_DUTY.lock(|duty| duty.get()) {
-                    mac.set_rx_duty(duty.rx_usage(EmbassyClock.now_ms())).await;
-                }
+                let battery = NODE_BATTERY_PERCENT.load(Ordering::Relaxed);
+                mac.set_battery_percent((battery != NO_BATTERY).then_some(battery))
+                    .await;
                 if let Some(stats) = stats {
                     mirrors.advance(stats, counters);
                     let state = match mac.repeater_state().await {
@@ -894,7 +916,7 @@ pub async fn pump_loop<CS: CounterStore + 'static>(
                         RepeaterState::Engaged => repeater_state::ENGAGED,
                         RepeaterState::Withheld => repeater_state::WITHHELD,
                     };
-                    stats.set_forwarding(state, mac.repeaters_heard().await);
+                    stats.set_node_gauges(state, mac.repeaters_heard().await, mac.rx_duty().await);
                 }
             })
             .await;
@@ -1542,8 +1564,7 @@ fn initialize_mac<CS: CounterStore + 'static>(
             duty,
             EmbassyClock,
             hooks.note_external_load,
-        )
-        .counting_receptions(),
+        ),
         CryptoEngine::new(SoftwareAes, SoftwareSha256),
         EmbassyClock,
         NodeRng::from_seed(seed),
@@ -1558,7 +1579,8 @@ fn initialize_mac<CS: CounterStore + 'static>(
 /// persists one when the journal is empty—so there is no
 /// "unprovisioned" path here.
 ///
-/// `t_frame_ms` is the worst-case airtime hint for the MAC scheduler.
+/// `t_frame_ms` is the frame time the MAC schedules by until the radio
+/// has a modulation configured.
 /// The caller spawns the loops and must do so promptly: `NODE_UP` is set
 /// here, so a `PROP_IDENT` read arriving between this returning and the
 /// spawns would wait on the signal.
@@ -1571,7 +1593,6 @@ pub async fn bring_up<CS: CounterStore + 'static>(
     duty: &'static umsh_ulcp_device::DutyLedger,
     hooks: NodeHooks,
 ) -> DeviceNodeParts<CS> {
-    NODE_DUTY.lock(|shared| shared.set(Some(duty)));
     let mac_cell = initialize_mac(mac_arena, node_seed, t_frame_ms, counters, duty, hooks);
     debug_log(format_args!("node bring-up: mac cell ready"));
     let identity = SoftwareIdentity::from_secret_bytes(identity_secret);
@@ -1706,15 +1727,15 @@ mod tests {
             advertised_identity(repeater_mode::OFF, false, false, None),
             (NodeRole::Tracker, caps(false))
         );
-        // An adaptive forwarder says it forwards and does not call itself
-        // a repeater, with or without a link beyond its radio.
+        // An adaptive forwarder advertises as a node that forwards
+        // nothing, with or without a link beyond its radio.
         assert_eq!(
             advertised_identity(repeater_mode::ADAPTIVE, false, false, None),
-            (NodeRole::Tracker, caps(true))
+            (NodeRole::Tracker, caps(false))
         );
         assert_eq!(
             advertised_identity(repeater_mode::ADAPTIVE, true, false, None),
-            (NodeRole::Tracker, caps(true))
+            (NodeRole::Tracker, caps(false))
         );
         assert_eq!(
             advertised_identity(
@@ -1725,6 +1746,34 @@ mod tests {
             ),
             (NodeRole::Sensor, caps(true))
         );
+    }
+
+    /// Only a battery that is running down holds an adaptive forwarder
+    /// back: one being charged, or one nobody measured, does not.
+    #[test]
+    fn only_a_draining_battery_reports_a_level() {
+        use umsh_ulcp::battery::{BatteryChargeState, BatteryStatus};
+        let status = |level_percent, charge_state| BatteryStatus {
+            voltage_mv: None,
+            level_percent,
+            charge_state,
+        };
+        assert_eq!(draining_percent(&status(Some(8), None)), 8);
+        assert_eq!(
+            draining_percent(&status(Some(8), Some(BatteryChargeState::Discharging))),
+            8
+        );
+        for powered in [
+            BatteryChargeState::Charging,
+            BatteryChargeState::Charged,
+            BatteryChargeState::NotCharging,
+        ] {
+            assert_eq!(
+                draining_percent(&status(Some(8), Some(powered))),
+                NO_BATTERY
+            );
+        }
+        assert_eq!(draining_percent(&status(None, None)), NO_BATTERY);
     }
 
     /// A communicator is a chat node that takes text messages, forwarding

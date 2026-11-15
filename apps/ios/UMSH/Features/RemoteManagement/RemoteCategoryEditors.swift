@@ -1239,9 +1239,9 @@ struct RemoteRepeaterEditor: View {
     /// What `PROP_MAC_REPEATER_STATE` says an adaptive forwarder is doing.
     private static func stateText(_ state: UInt8) -> String {
         switch state {
-        case 2: String(localized: "Standing by", comment: "Adaptive forwarding state: forwarding only what nobody else carries.")
-        case 3: String(localized: "Carrying traffic", comment: "Adaptive forwarding state: recently needed, so forwarding as a repeater does.")
-        case 4: String(localized: "Holding back", comment: "Adaptive forwarding state: the channel is busy and repeaters are plentiful, so nothing is flooded.")
+        case 2: String(localized: "Standing by", comment: "Adaptive forwarding state: forwarding only where no other forwarder is heard.")
+        case 3: String(localized: "Carrying traffic", comment: "Adaptive forwarding state: a nearby node depends on this one, so it is forwarding as a repeater does.")
+        case 4: String(localized: "Holding back", comment: "Adaptive forwarding state: the battery is low or the channel is busy, so the device forwards little or nothing.")
         default: state.formatted()
         }
     }

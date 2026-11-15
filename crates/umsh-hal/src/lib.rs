@@ -246,6 +246,20 @@ pub trait Radio {
     /// Return the approximate airtime for a maximum-length frame.
     fn t_frame_ms(&self) -> u32;
 
+    /// Return the approximate airtime of a `len`-byte frame.
+    ///
+    /// Only the radio knows how long its modulation holds the channel for
+    /// a frame of a given length, so only it can say how much of the
+    /// channel a reception took. A radio that knows its modulation should
+    /// answer from it. The default prorates the maximum-length figure,
+    /// which prices a short frame too low wherever a preamble and header
+    /// cost the same at every length.
+    fn airtime_ms(&self, len: usize) -> u32 {
+        let max = self.max_frame_size().max(1) as u64;
+        let len = (len as u64).min(max);
+        (u64::from(self.t_frame_ms()) * len).div_ceil(max) as u32
+    }
+
     /// The LoRa spreading factor this radio is currently receiving with,
     /// when it knows.
     ///

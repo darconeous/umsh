@@ -238,7 +238,14 @@ where
             Poll::Pending
         });
 
-        match select4(real.rx.receive(), tx_done, next_tx, handoff).await {
+        let event = select4(real.rx.receive(), tx_done, next_tx, handoff).await;
+        // The runner tells only the real bundle what modulation the chip
+        // is on. Each client learns it here, ahead of whatever this event
+        // hands it, so a frame is priced at the modulation it arrived on.
+        for client in clients {
+            client.adopt_modulation_of(real);
+        }
+        match event {
             Either4::First(frame) => {
                 // Counted before delivery, because who hears it is a
                 // routing question and this one is about the antenna.
@@ -544,9 +551,15 @@ mod tests {
                 // What the radio hears is not mirrored; what it sends is,
                 // whichever client sent it. A backhauled frame never
                 // reaches the air, so it is not.
+                real.note_modulation(9, 125_000, 5, 16);
                 real.rx.send(umsh_rx_frame(0xC1)).await;
                 node.rx.receive().await;
                 session.rx.receive().await;
+                // A client knows the chip's modulation by the time it has
+                // a frame received on it.
+                let node_radio = umsh_radio_loraphy::LoraphyRadio::new(node, 1);
+                assert_eq!(umsh_hal::Radio::spreading_factor(&node_radio), Some(9));
+                assert!(umsh_hal::Radio::t_frame_ms(&node_radio) > 1);
                 session.tx.send(tx_request(0xC2)).await;
                 real.tx.receive().await;
                 real.tx_done.signal((0, Ok(())));

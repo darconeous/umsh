@@ -400,6 +400,11 @@ impl Radio for SimulatedRadio {
     fn t_frame_ms(&self) -> u32 {
         self.t_frame_ms
     }
+
+    /// The model holds the channel for `t_frame_ms` whatever the length.
+    fn airtime_ms(&self, _len: usize) -> u32 {
+        self.t_frame_ms
+    }
 }
 
 /// Link model used by [`ModeledNetwork`] to derive receive metadata and loss.
@@ -438,6 +443,32 @@ impl ModeledLinkProfile {
     }
 }
 
+/// How well a modeled radio's channel check sees a transmission.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ModeledCarrierSense {
+    /// How long a transmission has been on the air before a check can see
+    /// it: the check's own length, the turnaround from checking to sending,
+    /// and the symbols a detector needs. Two radios whose checks fall this
+    /// close together both find the channel clear.
+    pub blind_ms: u64,
+    /// How many checks in a thousand miss a transmission they could have
+    /// seen. A radio that is receiving a frame intact knows the channel is
+    /// busy without a check, so this applies only where what is on the air
+    /// has collided at that radio.
+    pub miss_per_thousand: u16,
+}
+
+/// When the stronger of two frames that overlap at a receiver survives.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ModeledCapture {
+    /// How much stronger it has to be.
+    pub margin_db: i16,
+    /// How long after the weaker frame's start it may still arrive: once a
+    /// receiver has locked onto a frame it stays with it, and a stronger
+    /// one arriving later ruins that frame and is missed itself.
+    pub lock_ms: u64,
+}
+
 /// Shared simulated network with scheduled delivery, jitter, packet loss, and coarse collision modeling.
 #[derive(Clone)]
 pub struct ModeledNetwork {
@@ -452,6 +483,8 @@ struct ModeledNetworkState {
     in_flight: Vec<InFlightTransmission>,
     scheduled: Vec<ScheduledDelivery>,
     rng: ModeledRng,
+    carrier_sense: ModeledCarrierSense,
+    capture: Option<ModeledCapture>,
 }
 
 struct InFlightTransmission {
@@ -487,6 +520,8 @@ impl ModeledNetwork {
                 in_flight: Vec::new(),
                 scheduled: Vec::new(),
                 rng: ModeledRng::new(0x554d_5348),
+                carrier_sense: ModeledCarrierSense::default(),
+                capture: None,
             })),
             clock,
         }
@@ -506,6 +541,18 @@ impl ModeledNetwork {
     /// Override the deterministic RNG seed used for loss/jitter sampling.
     pub fn reseed(&self, seed: u64) {
         self.inner.borrow_mut().rng = ModeledRng::new(seed);
+    }
+
+    /// Replace the perfect, instant channel check with one that has a
+    /// blind spell and misses.
+    pub fn set_carrier_sense(&self, carrier_sense: ModeledCarrierSense) {
+        self.inner.borrow_mut().carrier_sense = carrier_sense;
+    }
+
+    /// Let the stronger of two overlapping frames survive at a receiver,
+    /// where by default both are lost.
+    pub fn set_capture(&self, capture: ModeledCapture) {
+        self.inner.borrow_mut().capture = Some(capture);
     }
 
     /// Add a modeled radio with default limits.
@@ -530,6 +577,20 @@ impl ModeledNetwork {
             id,
             max_frame_size,
             t_frame_ms,
+            airtime_by_length: false,
+        }
+    }
+
+    /// Add a modeled radio whose frames hold the channel in proportion to
+    /// their length, a maximum-size frame taking `t_frame_ms`.
+    pub fn add_radio_with_airtime_by_length(
+        &self,
+        max_frame_size: usize,
+        t_frame_ms: u32,
+    ) -> ModeledRadio {
+        ModeledRadio {
+            airtime_by_length: true,
+            ..self.add_radio_with_config(max_frame_size, t_frame_ms)
         }
     }
 
@@ -614,10 +675,14 @@ impl ModeledNetwork {
     }
 
     fn channel_busy(&self, from: usize, now_ms: u64) -> bool {
-        let state = self.inner.borrow();
-        state.in_flight.iter().any(|tx| {
+        let mut state = self.inner.borrow_mut();
+        let ModeledCarrierSense {
+            blind_ms,
+            miss_per_thousand,
+        } = state.carrier_sense;
+        let audible = state.in_flight.iter().any(|tx| {
             tx.from != from
-                && tx.start_ms <= now_ms
+                && tx.start_ms.saturating_add(blind_ms) <= now_ms
                 && now_ms < tx.end_ms
                 && state
                     .links
@@ -625,7 +690,17 @@ impl ModeledNetwork {
                     .and_then(|row| row.get(from))
                     .map(|profile| profile.connected)
                     .unwrap_or(false)
-        })
+        });
+        if !audible {
+            return false;
+        }
+        let receiving = state.scheduled.iter().any(|delivery| {
+            delivery.to == from
+                && !delivery.collided
+                && delivery.start_ms.saturating_add(blind_ms) <= now_ms
+                && now_ms < delivery.end_ms
+        });
+        receiving || !(miss_per_thousand > 0 && state.rng.random_u16(1000) < miss_per_thousand)
     }
 
     fn transmit(
@@ -703,17 +778,47 @@ impl ModeledNetwork {
                 collided: false,
             };
 
+            let capture = state.capture;
+            // Whether `strong` survives overlapping `weak` at one receiver.
+            let survives = |strong: (i16, u64), weak: (i16, u64)| {
+                capture.is_some_and(|capture| {
+                    strong.0 >= weak.0.saturating_add(capture.margin_db)
+                        && strong.1 <= weak.1.saturating_add(capture.lock_ms)
+                })
+            };
             for existing in &mut state.scheduled {
                 if existing.to != to {
                     continue;
                 }
                 if existing.start_ms < end_ms && start_ms < existing.end_ms {
-                    existing.collided = true;
-                    delivery.collided = true;
+                    let (old, new) = (
+                        (existing.rssi, existing.start_ms),
+                        (delivery.rssi, start_ms),
+                    );
+                    if !survives(old, new) {
+                        existing.collided = true;
+                    }
+                    if !survives(new, old) {
+                        delivery.collided = true;
+                    }
                 }
+            }
+            // A radio that is sending hears nothing.
+            if state
+                .in_flight
+                .iter()
+                .any(|tx| tx.from == to && tx.start_ms < end_ms && start_ms < tx.end_ms)
+            {
+                delivery.collided = true;
             }
 
             state.scheduled.push(delivery);
+        }
+        // Nor does this one hear what was arriving when it started.
+        for existing in &mut state.scheduled {
+            if existing.to == from && existing.start_ms < end_ms && start_ms < existing.end_ms {
+                existing.collided = true;
+            }
         }
 
         state.in_flight.push(InFlightTransmission {
@@ -770,7 +875,11 @@ pub struct ModeledRadio {
     id: usize,
     max_frame_size: usize,
     t_frame_ms: u32,
+    airtime_by_length: bool,
 }
+
+/// What a frame's preamble and header cost, in payload bytes.
+const MODELED_FRAME_OVERHEAD: usize = 16;
 
 #[derive(Clone, Copy)]
 struct ModeledRng(u64);
@@ -823,7 +932,7 @@ impl Radio for ModeledRadio {
         options: TxOptions,
     ) -> Result<(), TxError<Self::Error>> {
         self.network
-            .transmit(self.id, data, self.t_frame_ms, options)
+            .transmit(self.id, data, self.airtime_ms(data.len()), options)
     }
 
     fn poll_receive(
@@ -845,6 +954,18 @@ impl Radio for ModeledRadio {
 
     fn t_frame_ms(&self) -> u32 {
         self.t_frame_ms
+    }
+
+    /// How long the model holds the channel for a frame: `t_frame_ms`
+    /// whatever the length, unless the radio was added to go by length.
+    fn airtime_ms(&self, len: usize) -> u32 {
+        if !self.airtime_by_length {
+            return self.t_frame_ms;
+        }
+        let len = len.min(self.max_frame_size);
+        let scaled = u64::from(self.t_frame_ms) * (MODELED_FRAME_OVERHEAD + len) as u64
+            / (MODELED_FRAME_OVERHEAD + self.max_frame_size) as u64;
+        scaled.max(1) as u32
     }
 }
 

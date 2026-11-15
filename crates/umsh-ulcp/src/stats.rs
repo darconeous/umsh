@@ -30,7 +30,7 @@
 //! pin at the maximum and never move again, which is worse than starting
 //! over.
 
-use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU8, AtomicU16, AtomicU32, Ordering};
 
 use crate::ids::prop;
 
@@ -254,6 +254,8 @@ pub struct StatsLedger {
     repeater_state: AtomicU8,
     /// `PROP_MAC_REPEATERS_HEARD`, likewise.
     repeaters_heard: AtomicU8,
+    /// `PROP_PHY_RX_DUTY`, likewise.
+    rx_duty: AtomicU16,
 }
 
 impl StatsLedger {
@@ -262,16 +264,24 @@ impl StatsLedger {
             cells: [const { Cell::new() }; COUNTERS],
             repeater_state: AtomicU8::new(0),
             repeaters_heard: AtomicU8::new(0),
+            rx_duty: AtomicU16::new(0),
         }
     }
 
     /// Publish what the node's forwarding is doing
-    /// ([`repeater_state`](crate::ids::repeater_state)) and how many repeaters
-    /// it has heard in the past hour.
-    pub fn set_forwarding(&self, repeater_state: u8, repeaters_heard: u8) {
+    /// ([`repeater_state`](crate::ids::repeater_state)), how many
+    /// forwarders it has heard in the past hour, and how much of the past
+    /// five minutes other transmitters occupied the channel.
+    pub fn set_node_gauges(&self, repeater_state: u8, repeaters_heard: u8, rx_duty: u16) {
         self.repeater_state.store(repeater_state, Ordering::Relaxed);
         self.repeaters_heard
             .store(repeaters_heard, Ordering::Relaxed);
+        self.rx_duty.store(rx_duty, Ordering::Relaxed);
+    }
+
+    /// `PROP_PHY_RX_DUTY`.
+    pub fn rx_duty(&self) -> u16 {
+        self.rx_duty.load(Ordering::Relaxed)
     }
 
     /// `PROP_MAC_REPEATER_STATE`.
