@@ -1,4 +1,4 @@
-use crate::battery::Rail;
+use crate::battery::{OCV_CURVE, Rail};
 use crate::es7210;
 use crate::gt911::{Gt911, Point, Polarity, Report, landscape};
 use crate::keyboard::{Identity, Key, Latch, Status, identity, key, set_latch, status};
@@ -155,6 +155,31 @@ fn the_rail_tells_battery_from_external_power() {
     assert_eq!(Rail::classify(3700), Rail::Battery(3700));
     assert_eq!(Rail::classify(4200), Rail::Battery(4200));
     assert_eq!(Rail::classify(4550), Rail::External);
+}
+
+/// Points read off the bench discharge the curve was fit to, as hours
+/// left of the 53.6 between 4.05 V and 3.1 V.
+#[test]
+fn the_rail_curve_follows_the_bench_discharge() {
+    assert_eq!(OCV_CURVE.soc(4_200), 100);
+    assert_eq!(OCV_CURVE.soc(4_050), 100);
+    assert_eq!(OCV_CURVE.soc(3_100), 0);
+    assert_eq!(OCV_CURVE.soc(2_900), 0);
+    for (mv, hours_left) in [
+        (4_000, 51.5),
+        (3_800, 41.1),
+        (3_600, 27.9),
+        (3_500, 12.8),
+        (3_400, 5.5),
+        (3_300, 1.4),
+    ] {
+        let measured = 100.0 * hours_left / 53.6;
+        let curve = f64::from(OCV_CURVE.soc(mv));
+        assert!(
+            (curve - measured).abs() <= 2.0,
+            "{mv} mV: curve {curve}%, measured {measured:.1}%"
+        );
+    }
 }
 
 #[test]

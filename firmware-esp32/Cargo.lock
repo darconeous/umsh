@@ -4189,6 +4189,7 @@ name = "umsh-tdeck-peripherals"
 version = "0.1.0"
 dependencies = [
  "embedded-hal-async",
+ "umsh-ux-tracker",
 ]
 
 [[package]]

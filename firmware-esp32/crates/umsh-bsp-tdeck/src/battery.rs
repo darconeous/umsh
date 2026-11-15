@@ -1,14 +1,15 @@
 //! The rail-sense divider on GPIO4 (ADC1 channel 3), 100 kΩ : 100 kΩ.
 //! It reads the board's `+5V` rail through a switch that GPIO10 closes:
 //! the cell on battery, VBUS less a diode on USB (§4.5). Which of those a
-//! reading is, [`umsh_tdeck_peripherals::battery::Rail`] says.
+//! reading is, [`umsh_tdeck_peripherals::battery::Rail`] says, and what
+//! charge a battery reading stands for, [`OCV_CURVE`].
 //!
 //! Calibrated millivolts at 11 dB attenuation, the median of a burst.
 
 use esp_hal::Blocking;
 use esp_hal::analog::adc::{Adc, AdcCalCurve, AdcConfig, AdcPin, Attenuation};
 use esp_hal::peripherals::{ADC1, GPIO4};
-pub use umsh_tdeck_peripherals::battery::Rail;
+pub use umsh_tdeck_peripherals::battery::{OCV_CURVE, Rail};
 
 /// Samples per burst, after one discarded read.
 const BURST: usize = 7;

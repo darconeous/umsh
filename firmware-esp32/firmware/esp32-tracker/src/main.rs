@@ -1078,8 +1078,10 @@ async fn battery_task(mut sampler: BatterySampler) {
     // Level last announced; `None` until the first sample, which always
     // announces.
     let mut announced: Option<u8> = None;
+    // The board's own curve: the rail reads its cell through its sense
+    // path, which a generic cell table does not describe.
     #[cfg(feature = "battery-adc-rail")]
-    let mut estimator = LevelEstimator::new();
+    let mut estimator = LevelEstimator::with_curve(board::battery::OCV_CURVE);
     // Whether the rail was last on external power.
     #[cfg(feature = "battery-adc-rail")]
     let mut external = false;

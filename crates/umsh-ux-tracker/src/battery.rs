@@ -122,11 +122,65 @@ pub const fn classify(
     }
 }
 
-/// Generic single-cell Li-ion open-circuit-voltage → state-of-charge
-/// breakpoints, linearly interpolated. Approximate by design (no cell
-/// model, no temperature term); refine from a bench discharge log when
-/// one exists.
-const OCV_TABLE: &[(u16, u8)] = &[
+/// A resting-voltage → state-of-charge curve: `(millivolts, percent)`
+/// breakpoints in ascending voltage, linearly interpolated, and held at
+/// the end values beyond either end.
+#[derive(Clone, Copy, Debug)]
+pub struct OcvCurve {
+    points: &'static [(u16, u8)],
+}
+
+impl OcvCurve {
+    /// Panics unless `points` is non-empty, strictly ascending in voltage,
+    /// and non-decreasing in percent up to at most 100. Built as a `const`,
+    /// a bad table fails the build.
+    pub const fn new(points: &'static [(u16, u8)]) -> Self {
+        assert!(!points.is_empty(), "an OCV curve needs a breakpoint");
+        let mut index = 1;
+        while index < points.len() {
+            assert!(
+                points[index].0 > points[index - 1].0,
+                "OCV breakpoints must ascend in voltage"
+            );
+            assert!(
+                points[index].1 >= points[index - 1].1,
+                "OCV breakpoints must not fall in charge"
+            );
+            index += 1;
+        }
+        assert!(points[points.len() - 1].1 <= 100, "OCV charge above 100%");
+        Self { points }
+    }
+
+    /// State of charge for a *resting* (open-circuit) terminal voltage.
+    pub fn soc(&self, mv: u16) -> u8 {
+        let points = self.points;
+        let (first, last) = (points[0], points[points.len() - 1]);
+        if mv <= first.0 {
+            return first.1;
+        }
+        if mv >= last.0 {
+            return last.1;
+        }
+        let mut below = first;
+        for &point in points {
+            if point.0 >= mv {
+                let span_mv = u32::from(point.0 - below.0);
+                let span_pct = u32::from(point.1 - below.1);
+                let offset = u32::from(mv - below.0);
+                return below.1 + ((offset * span_pct + span_mv / 2) / span_mv) as u8;
+            }
+            below = point;
+        }
+        last.1
+    }
+}
+
+/// Generic single-cell Li-ion breakpoints. Approximate by design (no cell
+/// model, no temperature term); a board with a bench discharge log of its
+/// own cell and sense path gives [`LevelEstimator::with_curve`] a curve
+/// fit to that instead.
+pub const GENERIC_LI_ION: OcvCurve = OcvCurve::new(&[
     (3_300, 0),
     (3_400, 2),
     (3_500, 5),
@@ -144,28 +198,12 @@ const OCV_TABLE: &[(u16, u8)] = &[
     (4_100, 92),
     (4_150, 96),
     (4_200, 100),
-];
+]);
 
-/// State of charge for a *resting* (open-circuit) terminal voltage.
+/// State of charge for a *resting* (open-circuit) terminal voltage, on
+/// [`GENERIC_LI_ION`].
 pub fn soc_from_ocv(mv: u16) -> u8 {
-    let (first, last) = (OCV_TABLE[0], OCV_TABLE[OCV_TABLE.len() - 1]);
-    if mv <= first.0 {
-        return first.1;
-    }
-    if mv >= last.0 {
-        return last.1;
-    }
-    let mut below = first;
-    for &point in OCV_TABLE {
-        if point.0 >= mv {
-            let span_mv = u32::from(point.0 - below.0);
-            let span_pct = u32::from(point.1 - below.1);
-            let offset = u32::from(mv - below.0);
-            return below.1 + ((offset * span_pct + span_mv / 2) / span_mv) as u8;
-        }
-        below = point;
-    }
-    last.1
+    GENERIC_LI_ION.soc(mv)
 }
 
 /// Number of consecutive quiet samples the anchor median runs over.
@@ -253,6 +291,7 @@ pub const fn load_recent(now_ms: u32, last_load_ms: Option<u32>) -> bool {
 /// inferred level to 100. Boards without completion evidence report no level
 /// for as long as they are plugged in.
 pub struct LevelEstimator {
+    curve: OcvCurve,
     window: [u16; LEVEL_WINDOW],
     window_len: usize,
     level: Option<u8>,
@@ -264,8 +303,15 @@ pub struct LevelEstimator {
 }
 
 impl LevelEstimator {
+    /// An estimator on [`GENERIC_LI_ION`].
     pub const fn new() -> Self {
+        Self::with_curve(GENERIC_LI_ION)
+    }
+
+    /// An estimator that reads voltages through `curve`.
+    pub const fn with_curve(curve: OcvCurve) -> Self {
         Self {
+            curve,
             window: [0; LEVEL_WINDOW],
             window_len: 0,
             level: None,
@@ -316,7 +362,7 @@ impl LevelEstimator {
                     // low, and the level is provisional until an anchor, so
                     // the first quiet reading replaces it.
                     if self.level.is_none() {
-                        self.level = Some(quantize(soc_from_ocv(s.battery_mv)));
+                        self.level = Some(quantize(self.curve.soc(s.battery_mv)));
                     }
                     self.disturb(s.now_ms);
                     return;
@@ -338,7 +384,7 @@ impl LevelEstimator {
                 // The median runs over however much of the window has
                 // filled, so the bound gains outlier rejection as it goes
                 // without giving up the first-sample response.
-                let bound = quantize(soc_from_ocv(median(&self.window[..self.window_len])));
+                let bound = quantize(self.curve.soc(median(&self.window[..self.window_len])));
                 self.level = Some(match self.level {
                     // A charge since the last anchor invalidates the
                     // stored level in *both* directions, so the bound
@@ -351,7 +397,7 @@ impl LevelEstimator {
 
                 let rested = s.now_ms.wrapping_sub(self.last_disturbance_ms) >= LEVEL_REST_MS;
                 if rested && self.window_len == LEVEL_WINDOW {
-                    let mut candidate = quantize(soc_from_ocv(median(&self.window)));
+                    let mut candidate = quantize(self.curve.soc(median(&self.window)));
                     // Discharge never raises the level; a completed or
                     // partial charge since the last anchor releases the
                     // clamp exactly once.
@@ -466,6 +512,30 @@ mod tests {
         }
         // A midpoint interpolates rather than steps.
         assert_eq!(soc_from_ocv(3_775), 46);
+    }
+
+    #[test]
+    fn an_estimator_reads_through_its_own_curve() {
+        const LINEAR: OcvCurve = OcvCurve::new(&[(3_100, 0), (4_050, 100)]);
+        let mut estimator = LevelEstimator::with_curve(LINEAR);
+        estimator.sample(quiet(3_575, 0));
+        assert_eq!(estimator.level(), Some(50));
+        // The generic curve puts the same reading far lower.
+        let mut generic = LevelEstimator::new();
+        generic.sample(quiet(3_575, 0));
+        assert_eq!(generic.level(), Some(10));
+    }
+
+    #[test]
+    #[should_panic(expected = "ascend in voltage")]
+    fn a_curve_out_of_voltage_order_is_refused() {
+        OcvCurve::new(&[(4_000, 50), (3_900, 60)]);
+    }
+
+    #[test]
+    #[should_panic(expected = "fall in charge")]
+    fn a_curve_that_loses_charge_as_voltage_rises_is_refused() {
+        OcvCurve::new(&[(3_900, 60), (4_000, 50)]);
     }
 
     #[test]
