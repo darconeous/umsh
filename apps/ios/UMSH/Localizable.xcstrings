@@ -336,7 +336,7 @@
 
     },
     "Airtime heard" : {
-      "comment" : "Statistics row: the share of the past hour other transmitters occupied the channel."
+      "comment" : "Statistics row: the share of the past five minutes other transmitters occupied the channel."
     },
     "Alias" : {
 
@@ -498,7 +498,7 @@
 
     },
     "Carrying traffic" : {
-      "comment" : "Adaptive forwarding state: recently needed, so forwarding as a repeater does."
+      "comment" : "Adaptive forwarding state: a nearby node depends on this one, so it is forwarding as a repeater does."
     },
     "Cell" : {
 
@@ -1071,7 +1071,7 @@
       "comment" : "Picker label: how long a manual path stands."
     },
     "Holding back" : {
-      "comment" : "Adaptive forwarding state: the channel is busy and repeaters are plentiful, so nothing is flooded."
+      "comment" : "Adaptive forwarding state: the battery is low or the channel is busy, so the device forwards little or nothing."
     },
     "Hop" : {
 
@@ -2201,7 +2201,7 @@
 
     },
     "Standing by" : {
-      "comment" : "Adaptive forwarding state: forwarding only what nobody else carries."
+      "comment" : "Adaptive forwarding state: forwarding only where no other forwarder is heard."
     },
     "Start a conversation with a peer, or open one in a channel you have joined." : {
 

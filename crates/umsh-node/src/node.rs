@@ -29,6 +29,16 @@ use crate::ticket::{SendProgressTicket, SendToken};
 use crate::transport::Transport;
 use crate::{AppEncodeError, NodeCapabilities, NodeRole, OwnedMacCommand};
 
+/// Whose Peer Repeaters Requests a node answers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum PeerRepeatersResponder {
+    Off,
+    Anyone,
+    /// These nodes alone: a node that is not a repeater describes the
+    /// mesh around it only to those who administer it.
+    Only(Vec<[u8; 32]>),
+}
+
 /// Octets one Peer Repeaters Response body may occupy.
 ///
 /// Sized against the same 192-octet reply buffer the identity responder
@@ -289,7 +299,7 @@ pub(crate) struct LocalNodeState {
     /// The repeaters whose identities this node has seen, and whether it
     /// answers questions about them.
     peer_repeaters: PeerRepeaterTable,
-    peer_repeaters_responder: bool,
+    peer_repeaters_responder: PeerRepeatersResponder,
     #[cfg(feature = "software-crypto")]
     pub(crate) pfs: PfsSessionManager,
     /// The session identity of a contact exchange in progress.
@@ -331,7 +341,7 @@ impl LocalNodeState {
             peer_subscriptions: Vec::new(),
             identity_responder: None,
             peer_repeaters: PeerRepeaterTable::new(),
-            peer_repeaters_responder: false,
+            peer_repeaters_responder: PeerRepeatersResponder::Off,
             #[cfg(feature = "software-crypto")]
             pfs: PfsSessionManager::new(),
             #[cfg(feature = "software-crypto")]
@@ -1078,15 +1088,30 @@ impl<M: MacBackend> LocalNode<M> {
     /// recorded when it arrives, whether or not anyone will ever ask—so
     /// switching this on does not start from an empty neighborhood.
     pub fn enable_peer_repeaters_responder(&self) {
-        self.state.borrow_mut().peer_repeaters_responder = true;
+        self.state.borrow_mut().peer_repeaters_responder = PeerRepeatersResponder::Anyone;
+    }
+
+    /// Answer Peer Repeaters Requests only from `askers`.
+    pub fn enable_peer_repeaters_responder_for(&self, askers: &[[u8; 32]]) {
+        self.state.borrow_mut().peer_repeaters_responder =
+            PeerRepeatersResponder::Only(askers.to_vec());
     }
 
     pub fn disable_peer_repeaters_responder(&self) {
-        self.state.borrow_mut().peer_repeaters_responder = false;
+        self.state.borrow_mut().peer_repeaters_responder = PeerRepeatersResponder::Off;
     }
 
     pub fn peer_repeaters_responder_enabled(&self) -> bool {
-        self.state.borrow().peer_repeaters_responder
+        self.state.borrow().peer_repeaters_responder != PeerRepeatersResponder::Off
+    }
+
+    /// Whether a Peer Repeaters Request from `from` is answered.
+    pub(crate) fn answers_peer_repeaters_request(&self, from: &PublicKey) -> bool {
+        match &self.state.borrow().peer_repeaters_responder {
+            PeerRepeatersResponder::Off => false,
+            PeerRepeatersResponder::Anyone => true,
+            PeerRepeatersResponder::Only(askers) => askers.contains(&from.0),
+        }
     }
 
     /// Record what an identity heard directly off the air said, if it came
@@ -1211,7 +1236,7 @@ impl<M: MacBackend> LocalNode<M> {
         channel: Option<ChannelKey>,
         request: &[u8],
     ) {
-        if !self.peer_repeaters_responder_enabled() {
+        if !self.answers_peer_repeaters_request(&to) {
             return;
         }
         let view = crate::mac_command::PeerRepeatersRequestView::new(request);

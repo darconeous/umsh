@@ -663,14 +663,15 @@ pub async fn dev_sync_loop<CS: CounterStore + 'static>(
         } else {
             node.enable_identity_responder(profile, never_respond_policy);
         }
-        // A repeater answers for its neighborhood; a node that is not one
-        // has no peer repeaters to describe and stays quiet. Gated on
-        // repeating rather than on discoverability, because the listing is
-        // about the mesh around this node, not about this node.
+        // A repeater answers anyone for its neighborhood: the listing is
+        // about the mesh around this node, not about this node, so it is
+        // gated on repeating rather than on discoverability. Any other
+        // node, an adaptive forwarder included, is not a repeater others
+        // plan on, and tells only its administrators what it hears.
         if snapshot.is_repeater() {
             node.enable_peer_repeaters_responder();
         } else {
-            node.disable_peer_repeaters_responder();
+            node.enable_peer_repeaters_responder_for(&snapshot.admins);
         }
         let mut index = 0;
         while index < applied.len() {

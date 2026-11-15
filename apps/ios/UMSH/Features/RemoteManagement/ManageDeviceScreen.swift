@@ -17,16 +17,21 @@ import UMSHMobileCore
 /// operator's call.
 struct ManageDeviceScreen: View {
     let browsing: RemotePeerBrowsing
+    /// The node's neighbor listing, which is asked for over the mesh.
+    /// Nil for the attached radio, which is not reached that way.
+    private let neighbors: AnyView?
     @State private var model: ManageDeviceModel
     @State private var lease: ManagementLease
     @State private var confirmsRestart = false
     @State private var confirmsFactoryReset = false
     @State private var confirmsDfu = false
 
-    init(peer: PeerSummary, management: DeviceManagementBackend, browsing: RemotePeerBrowsing) {
+    init(peer: PeerSummary, management: DeviceManagementBackend, browsing: RemotePeerBrowsing,
+         neighbors: AnyView? = nil) {
         self.init(
             model: ManageDeviceModel(peer: peer, management: management),
-            browsing: browsing
+            browsing: browsing,
+            neighbors: neighbors
         )
     }
 
@@ -39,12 +44,15 @@ struct ManageDeviceScreen: View {
                 fallbackName: name,
                 management: management
             ),
-            browsing: browsing
+            browsing: browsing,
+            neighbors: nil
         )
     }
 
-    private init(model: ManageDeviceModel, browsing: RemotePeerBrowsing) {
+    private init(model: ManageDeviceModel, browsing: RemotePeerBrowsing,
+                 neighbors: AnyView?) {
         self.browsing = browsing
+        self.neighbors = neighbors
         _model = State(initialValue: model)
         _lease = State(initialValue: ManagementLease(model))
     }
@@ -59,6 +67,15 @@ struct ManageDeviceScreen: View {
                 }
             } else if model.card != nil {
                 ManageDeviceCategoriesSection(model: model, browsing: browsing)
+                if let neighbors {
+                    Section {
+                        NavigationLink {
+                            neighbors
+                        } label: {
+                            Label("Neighbors", systemImage: "antenna.radiowaves.left.and.right")
+                        }
+                    }
+                }
                 ManageDeviceLifecycleSection(
                     model: model,
                     confirmsRestart: $confirmsRestart,

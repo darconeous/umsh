@@ -703,7 +703,7 @@ fn dispatch_payload_callbacks<M: MacBackend>(
         // observations, which only an async borrow reaches, so it is
         // built by the pump after this synchronous dispatch returns.
         if let mac_command::MacCommand::PeerRepeatersRequest { options } = command
-            && node.peer_repeaters_responder_enabled()
+            && node.answers_peer_repeaters_request(&from)
         {
             pending_peer_repeaters.borrow_mut().push((
                 node.clone(),

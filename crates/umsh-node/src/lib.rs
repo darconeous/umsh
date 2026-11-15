@@ -4173,6 +4173,28 @@ mod tests {
         assert!(mac.take_unicasts().is_empty());
     }
 
+    /// A node that answers only some askers answers them, however they
+    /// asked, and nobody else.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn a_responder_kept_to_its_askers_answers_only_them() {
+        let mac = FakeMac::new(Vec::new());
+        let node = responder_node(&mac);
+        let asker = PublicKey([0x41; 32]);
+        node.enable_peer_repeaters_responder_for(&[asker.0]);
+        let request = peer_repeaters_request(Some(7), None);
+
+        block_on_ready(node.answer_peer_repeaters_request(PublicKey([0x42; 32]), None, &request));
+        assert!(mac.take_unicasts().is_empty(), "a stranger");
+
+        block_on_ready(node.answer_peer_repeaters_request(asker, None, &request));
+        assert_eq!(sent_response(&mac).0, asker);
+
+        let channel = ChannelKey([0x5A; 32]);
+        block_on_ready(node.answer_peer_repeaters_request(asker, Some(channel), &request));
+        assert_eq!(sent_response(&mac).0, asker, "blind");
+    }
+
     #[cfg(feature = "software-crypto")]
     #[test]
     fn a_response_echoes_the_nonce_and_reports_what_both_sources_know() {
