@@ -632,10 +632,12 @@ where
         });
         return;
     }
-    // The gamma chart's square: up lightens it, down darkens it.
-    if let Some(detents) = direction.detents()
-        && state.turn_gamma(detents)
-    {
+    // The gamma chart's square: up and right lighten it, down and left
+    // darken it.
+    if state.turn_gamma(match direction {
+        Arrow::Up | Arrow::Right => -1,
+        Arrow::Down | Arrow::Left => 1,
+    }) {
         return;
     }
     // A part of the date and time being changed: up is more, and across
