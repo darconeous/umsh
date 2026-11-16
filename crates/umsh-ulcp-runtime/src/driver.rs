@@ -634,8 +634,12 @@ pub enum PublishEvent {
     /// What the LAN bearer made of its configuration: running, switched
     /// off, or waiting for a network to join its group on.
     LanBearerState(umsh_ulcp::lan::State),
+    /// A table the platform owns changed, named by its property. The
+    /// driver reads it through [`DeviceEnv::read_network_table`], as it
+    /// answers a host's read: the table would make every event as large
+    /// as it is.
     #[cfg(feature = "wifi")]
-    NetworkTableChanged(u32, heapless::Vec<u8, NETWORK_TABLE_MAX>),
+    NetworkTableChanged(u32),
 }
 
 /// The LAN bearer's configuration and the facts its DNS-SD record
@@ -2654,8 +2658,11 @@ where
                         session.set_wifi_mac(mac);
                     }
                     #[cfg(feature = "wifi")]
-                    PublishEvent::NetworkTableChanged(key, value) => {
-                        session.publish_network_table(key, &value, emit);
+                    PublishEvent::NetworkTableChanged(key) => {
+                        let mut table = [0u8; NETWORK_TABLE_MAX];
+                        if let Ok(len) = env.read_network_table(key, &mut table).await {
+                            session.publish_network_table(key, &table[..len], emit);
+                        }
                     }
                     PublishEvent::IpState(key, state) => {
                         session.set_ip_state(key, state, emit);

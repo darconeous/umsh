@@ -19,7 +19,6 @@ use umsh_ulcp::{
     ip,
     wifi::{Link, LinkReason, LinkState, NetworkEntry, ScanResult, SecurityMode},
 };
-use umsh_ulcp_device::NETWORK_TABLE_MAX;
 use umsh_ulcp_device::known_networks::KnownNetworks;
 use umsh_ulcp_device::net::{NetworkName as StationName, StationIntent};
 use umsh_ulcp_device::station::{Chooser, Mode, Next};
@@ -315,11 +314,8 @@ pub(super) async fn table(key: u32, bytes: &[u8]) {
         _ => return,
     };
     if changed {
-        publish(PublishEvent::NetworkTableChanged(
-            key,
-            heapless::Vec::<u8, NETWORK_TABLE_MAX>::from_slice(bytes).unwrap(),
-        ))
-        .await;
+        // The driver reads the table back through `read_table`.
+        publish(PublishEvent::NetworkTableChanged(key)).await;
     }
 }
 

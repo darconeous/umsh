@@ -2611,6 +2611,11 @@ impl HostDomain {
 /// journal record of the store a firmware binds: 2029 octets in a
 /// half-page record, 4077 in the full-page record the Wi-Fi image
 /// writes. Each firmware asserts the fit where it binds its store.
+///
+/// A `communicator` build's larger peer table is not counted: its store
+/// keeps the peers and channel keys ([`Session::hold_lists`]), so they
+/// never reach the snapshot. Such a build that did not hold them would
+/// outgrow this.
 #[cfg(not(feature = "wifi"))]
 pub const SNAPSHOT_MAX: usize = 1792;
 #[cfg(feature = "wifi")]
@@ -17705,9 +17710,15 @@ mod tests {
     /// The buffer every caller sizes from `SNAPSHOT_MAX` has to hold a
     /// snapshot with every table full—the option framing costs about
     /// two octets an entry over the retired positional format.
+    ///
+    /// A communicator's store keeps its peers and channel keys, so its
+    /// snapshot never carries them; it holds the lists here as its
+    /// firmware does.
     #[test]
     fn snapshot_at_capacity_fits_the_buffer() {
         let mut session = provisioned_session();
+        #[cfg(feature = "communicator")]
+        session.hold_lists(&[], None);
         #[cfg(feature = "bridge-client")]
         {
             let host = [
@@ -17784,8 +17795,11 @@ mod tests {
             Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
         booted.set_boot_identity([0xEE; 32]);
         booted.restore_at_boot(&bytes[..len]).unwrap();
-        assert_eq!(booted.device.channel_keys.len, MAX_CHANNEL_KEYS);
-        assert_eq!(booted.device.peers.len, MAX_DEV_PEERS);
+        #[cfg(not(feature = "communicator"))]
+        {
+            assert_eq!(booted.device.channel_keys.len, MAX_CHANNEL_KEYS);
+            assert_eq!(booted.device.peers.len, MAX_DEV_PEERS);
+        }
         assert_eq!(booted.device.admins.len, MAX_DEV_ADMINS);
         assert_eq!(booted.meshcore_region_names().count(), MAX_MESHCORE_REGIONS);
     }
