@@ -3605,6 +3605,17 @@ struct Station {
     /// The network the station is on or joining.
     current: net::NetworkName,
     intent: net::StationIntent,
+    /// What a reconcile moved and has yet to publish; see
+    /// [`Session::take_owed_publications`].
+    owed: StationOwed,
+}
+
+/// The station properties a reconcile changed without publishing them.
+#[cfg(feature = "wifi")]
+#[derive(Clone, Copy, Default)]
+struct StationOwed {
+    network: bool,
+    link: bool,
 }
 
 /// Largest table a platform may hand back for a deferred read.
@@ -4289,7 +4300,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         // the saved snapshot); the node must re-sync.
         self.bump_dev_domain();
         #[cfg(feature = "wifi")]
-        self.reconcile_station(emit);
+        self.reconcile_station_unannounced();
         self.announce_status(reason, emit);
         self.apply_radio()
     }
@@ -4657,6 +4668,37 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         true
     }
 
+    /// Publish what changed on the device without a publication of its
+    /// own, and report whether anything was written. At most two frames.
+    ///
+    /// The driver pays this at the tail of its loop, where it pays
+    /// [`Session::take_session_reset_notice`]: the call that ran up the
+    /// debt had a frame of its own to emit, and on a mesh exchange that
+    /// frame is the only one its binding carries. The values published
+    /// are the current ones, so a debt paid late is never stale.
+    pub fn take_owed_publications(&mut self, emit: &mut impl FnMut(&[u8])) -> bool {
+        #[cfg(feature = "wifi")]
+        {
+            let owed = core::mem::take(&mut self.station.owed);
+            if !self.publishing() {
+                return false;
+            }
+            if owed.network {
+                let current = self.station.current;
+                self.announce_prop_is(prop::WIFI_NETWORK, current.as_bytes(), emit);
+            }
+            if owed.link {
+                self.announce_link(emit);
+            }
+            owed.network || owed.link
+        }
+        #[cfg(not(feature = "wifi"))]
+        {
+            let _ = emit;
+            false
+        }
+    }
+
     /// Handle one decoded ULCP frame from the host.
     pub fn handle_frame(
         &mut self,
@@ -4943,7 +4985,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 }
                 self.apply_saved_device();
                 #[cfg(feature = "wifi")]
-                self.reconcile_station(emit);
+                self.reconcile_station_unannounced();
                 self.discard_session_state(SessionResetReason::Restored);
                 self.announce_status(Status::RESET_RESTORED, emit);
                 Some(self.apply_radio())
@@ -6317,7 +6359,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         )
     }
 
-    /// Flip station power from the device's physical controls.
+    /// Flip station power from the device's physical controls. What the
+    /// station's live state does in consequence is owed
+    /// ([`Session::take_owed_publications`]).
     pub fn toggle_wifi(&mut self, emit: &mut impl FnMut(&[u8])) -> Option<bool> {
         let enabled = self.toggle_device_flag(
             self.has_station(),
@@ -6326,7 +6370,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             emit,
         );
         #[cfg(feature = "wifi")]
-        self.reconcile_station(emit);
+        self.reconcile_station();
         enabled
     }
 
@@ -6394,13 +6438,26 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         Ok(())
     }
 
+    /// Bring the station in line on a reset or restore, publishing
+    /// nothing: like everything else a reset moves, the reset obliges
+    /// every listener to read it afresh.
+    #[cfg(feature = "wifi")]
+    fn reconcile_station_unannounced(&mut self) {
+        self.reconcile_station();
+        self.station.owed = StationOwed::default();
+    }
+
     /// Bring the station's live state back in line with its configuration
     /// after the switch or the table moved: a station that is off is on
     /// nothing and holds nothing, and neither the hold nor the current
-    /// network may name an entry that is gone. What changes without a
-    /// write of `PROP_WIFI_NETWORK` is announced.
+    /// network may name an entry that is gone.
+    ///
+    /// What changes without a write of `PROP_WIFI_NETWORK` is owed as a
+    /// publication rather than emitted: every caller already emits a
+    /// frame of its own, and a driver stages two per call. The driver
+    /// pays the debt through [`Session::take_owed_publications`].
     #[cfg(feature = "wifi")]
-    fn reconcile_station(&mut self, emit: &mut impl FnMut(&[u8])) {
+    fn reconcile_station(&mut self) {
         let enabled = self.has_station() && self.device.wifi_enabled;
         let known = |networks: &crate::known_networks::KnownNetworks, name: &net::NetworkName| {
             name.is_empty() || networks.get(name.as_bytes()).is_some()
@@ -6420,21 +6477,18 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         let current_stays = enabled && known(&self.device.wifi_networks, &station.current);
         if !current_stays && !station.current.is_empty() {
             station.current = net::NetworkName::default();
+            station.owed.network = true;
             changed = true;
-            if self.publishing() {
-                self.announce_prop_is(prop::WIFI_NETWORK, &[], emit);
-            }
         }
         // A station that is off is down now, not when the platform gets
         // round to saying so: its report would carry the epoch this
         // overrules.
         if !enabled {
-            let link = self.wifi_link;
-            self.wifi_link = wifi::Link::default();
-            self.wifi_rssi_dbm = None;
-            if self.publishing() {
-                self.announce_link_if_changed(link, emit);
+            if self.wifi_link != wifi::Link::default() {
+                self.wifi_link = wifi::Link::default();
+                self.station.owed.link = true;
             }
+            self.wifi_rssi_dbm = None;
         }
         if changed {
             self.station.intent.epoch = self.station.intent.epoch.wrapping_add(1);
@@ -6495,9 +6549,13 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
 
     #[cfg(feature = "wifi")]
     fn announce_link_if_changed(&mut self, before: wifi::Link, emit: &mut impl FnMut(&[u8])) {
-        if self.wifi_link == before {
-            return;
+        if self.wifi_link != before {
+            self.announce_link(emit);
         }
+    }
+
+    #[cfg(feature = "wifi")]
+    fn announce_link(&mut self, emit: &mut impl FnMut(&[u8])) {
         let mut value = [0u8; wifi::LINK_MAX_LEN];
         if let Ok(len) = self.wifi_link.encode(&mut value) {
             self.announce_prop_is(prop::WIFI_LINK, &value[..len], emit);
@@ -7577,15 +7635,14 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
 
     /// Forget a stored network: a `PROP_WIFI_NETWORKS` remove.
     ///
-    /// The station's live state follows before the removal is
-    /// acknowledged, so a host learns that the station is leaving the
-    /// network in the same breath as it learns the entry is gone.
+    /// The station's live state follows at once; its publication is owed
+    /// ([`Session::take_owed_publications`]) and follows the answer.
     #[cfg(feature = "wifi")]
     fn forget_wifi_network(&mut self, tid: u8, ssid: &[u8], emit: &mut impl FnMut(&[u8])) {
         match self.device.wifi_networks.remove(ssid) {
             Ok(()) => {
                 self.bump_dev_domain();
-                self.reconcile_station(emit);
+                self.reconcile_station();
                 self.send_prop_removed(tid, prop::WIFI_NETWORKS, ssid, emit);
             }
             Err(status) => self.complete(tid, status, emit),
@@ -7996,10 +8053,11 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             }
         };
         // The switch and the table are what the station's live state
-        // follows; what moves with them is announced before the answer.
+        // follows; what moves with them is owed, and published after the
+        // answer.
         #[cfg(feature = "wifi")]
         if matches!(key, prop::WIFI_ENABLED | prop::WIFI_NETWORKS) {
-            self.reconcile_station(emit);
+            self.reconcile_station();
         }
         // Echo the authoritative value back from session state.
         let mut encoded = [0u8; PROP_BUF];
@@ -20908,8 +20966,10 @@ mod tests {
         set(&mut session, prop::WIFI_NETWORK, b"X");
         let (frames, effect) = set(&mut session, prop::WIFI_NETWORKS, &[]);
         assert!(effect.is_none());
+        assert_eq!(frames.len(), 1, "the answer alone");
+        let owed = owed_publications(&mut session);
         assert_eq!(
-            parse_prop_is(&frames[0]),
+            parse_prop_is(&owed[0]),
             (TID_UNSOLICITED, prop::WIFI_NETWORK, vec![])
         );
         let (frames, _) = set(&mut session, prop::WIFI_NETWORK, b"X");
@@ -20922,10 +20982,66 @@ mod tests {
         set(&mut session, prop::WIFI_NETWORK, b"X");
         let (frames, effect) = remove_item(&mut session, prop::WIFI_NETWORKS, b"X");
         assert!(effect.is_none());
+        assert_eq!(frames.len(), 1, "the answer alone");
+        let owed = owed_publications(&mut session);
         assert_eq!(
-            parse_prop_is(&frames[0]),
+            parse_prop_is(&owed[0]),
             (TID_UNSOLICITED, prop::WIFI_NETWORK, vec![])
         );
+    }
+
+    fn owed_publications(session: &mut TestSession) -> Vec<Vec<u8>> {
+        let mut frames = Vec::new();
+        session.take_owed_publications(&mut |frame: &[u8]| frames.push(frame.to_vec()));
+        frames
+    }
+
+    /// Turning the station off while it joins moves the network and the
+    /// link: the write's answer goes out alone, and both follow as one
+    /// owed payment, so neither call stages more than a driver holds.
+    #[test]
+    #[cfg(feature = "wifi")]
+    fn disabling_a_joining_station_owes_network_and_link() {
+        let mut session = test_session();
+        set(&mut session, prop::WIFI_ENABLED, &[1]);
+        insert_item(
+            &mut session,
+            prop::WIFI_NETWORKS,
+            &network_item(b"X", b"password"),
+        );
+        set(&mut session, prop::WIFI_NETWORK, b"X");
+        owed_publications(&mut session);
+
+        let (frames, _) = set(&mut session, prop::WIFI_ENABLED, &[0]);
+        assert_eq!(frames.len(), 1, "the answer alone");
+        let owed = owed_publications(&mut session);
+        assert_eq!(owed.len(), 2);
+        assert_eq!(
+            parse_prop_is(&owed[0]),
+            (TID_UNSOLICITED, prop::WIFI_NETWORK, vec![])
+        );
+        assert_eq!(parse_prop_is(&owed[1]).1, prop::WIFI_LINK);
+        assert!(owed_publications(&mut session).is_empty(), "paid once");
+    }
+
+    /// A reset forgives the debt: it obliges every listener to read the
+    /// station afresh.
+    #[test]
+    #[cfg(feature = "wifi")]
+    fn a_reset_owes_no_station_publications() {
+        let mut session = test_session();
+        set(&mut session, prop::WIFI_ENABLED, &[1]);
+        insert_item(
+            &mut session,
+            prop::WIFI_NETWORKS,
+            &network_item(b"X", b"password"),
+        );
+        set(&mut session, prop::WIFI_NETWORK, b"X");
+        owed_publications(&mut session);
+
+        session.reset(Status::RESET_SOFTWARE, &mut |_| {});
+        assert!(session.wifi_network().is_empty());
+        assert!(owed_publications(&mut session).is_empty());
     }
 
     #[test]

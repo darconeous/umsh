@@ -289,7 +289,7 @@ impl<P: SoftPlatform> SoftDevice<P> {
         self.decoder.reset();
         self.outbound.clear();
         self.session.attach(true);
-        self.flush_session_reset_notice();
+        self.pay_debts();
     }
 
     pub fn detach(&mut self) {
@@ -298,16 +298,20 @@ impl<P: SoftPlatform> SoftDevice<P> {
         self.session.detach(self.device_ms());
     }
 
-    /// Pay whatever session-reset notice the session is owing, the way
-    /// the firmware driver does at the tail of its loop.
-    fn flush_session_reset_notice(&mut self) {
+    /// Pay whatever the session is owing, the session-reset notice and
+    /// then its publications, the way the firmware driver does at the
+    /// tail of its loop: each a session call of its own.
+    fn pay_debts(&mut self) {
         let mut emitted = Vec::new();
-        if self
-            .session
-            .take_session_reset_notice(&mut |frame: &[u8]| emitted.push(frame.to_vec()))
-        {
-            self.queue_emitted(emitted);
-        }
+        self.session
+            .take_session_reset_notice(&mut |frame: &[u8]| emitted.push(frame.to_vec()));
+        self.note_emitted(emitted.len());
+        self.queue_emitted(emitted);
+        let mut emitted = Vec::new();
+        self.session
+            .take_owed_publications(&mut |frame: &[u8]| emitted.push(frame.to_vec()));
+        self.note_emitted(emitted.len());
+        self.queue_emitted(emitted);
     }
 
     /// Feed bytes from the host's side of the link.
@@ -375,7 +379,7 @@ impl<P: SoftPlatform> SoftDevice<P> {
             }
         }
         self.queue_emitted(published);
-        self.flush_session_reset_notice();
+        self.pay_debts();
         if writes.saved {
             self.keep_snapshot_in_step();
         }
@@ -401,7 +405,7 @@ impl<P: SoftPlatform> SoftDevice<P> {
         self.note_emitted(emitted.len());
         self.execute(effect, &mut emitted);
         self.session.end_admin_exchange();
-        self.flush_session_reset_notice();
+        self.pay_debts();
         emitted
     }
 
@@ -520,7 +524,7 @@ impl<P: SoftPlatform> SoftDevice<P> {
                 emitted.push(frame.to_vec())
             });
         self.queue_emitted(emitted);
-        self.flush_session_reset_notice();
+        self.pay_debts();
         self.keep_lists();
     }
 

@@ -904,9 +904,9 @@ fn run_survey(survey: Survey) -> Outcome {
             }
             backlogs[from].push_back(packet);
         };
-        for from in 0..nodes {
-            if talks(from) && now_ms >= next_ms[from] {
-                next_ms[from] = now_ms + wait_ms(mean_ms).max(STEP_MS);
+        for (from, next_ms) in next_ms.iter_mut().enumerate() {
+            if talks(from) && now_ms >= *next_ms {
+                *next_ms = now_ms + wait_ms(mean_ms).max(STEP_MS);
                 offer(from, &mut floods);
             }
         }

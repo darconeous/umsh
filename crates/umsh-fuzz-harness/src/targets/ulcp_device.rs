@@ -149,10 +149,17 @@ impl Harness {
             .ingest(&wire[..len], self.now_ms)
             .expect("its own encoding decodes");
         if !parses {
-            assert!(
-                self.device.take_outbound().is_none(),
-                "a frame that does not parse was answered"
-            );
+            // The platform settles after every frame, so a station may
+            // publish what it did meanwhile; only an answer is wrong.
+            while let Some(wire) = self.device.take_outbound() {
+                for frame in decoded(&wire) {
+                    assert!(
+                        Frame::parse(&frame).is_ok_and(|frame| frame.is_publication()),
+                        "a frame that does not parse was answered"
+                    );
+                }
+                self.check_outbound(&wire);
+            }
             assert_eq!(
                 self.device.session().dev_domain_version(),
                 version,

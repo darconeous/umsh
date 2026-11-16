@@ -2746,6 +2746,12 @@ where
         if session.take_session_reset_notice(&mut |frame: &[u8]| emitter.push(frame)) {
             emitter.flush(&mut ReplySink::host(&arbitration, &rt)).await;
         }
+        // What moved under a call that had its own frame to emit, paid
+        // here for the same reason: by now it goes to everyone listening,
+        // not to an administrator's one-frame exchange.
+        if session.take_owed_publications(&mut |frame: &[u8]| emitter.push(frame)) {
+            emitter.flush(&mut ReplySink::host(&arbitration, &rt)).await;
+        }
     }
 }
 
