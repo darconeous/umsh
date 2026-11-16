@@ -508,6 +508,7 @@ where
             if app.state_mut().turn_set_time(detents)
                 || app.state_mut().turn_brightness(detents)
                 || app.state_mut().turn_volume(detents)
+                || app.state_mut().turn_gamma(detents)
             {
                 return;
             }
@@ -629,6 +630,12 @@ where
             Arrow::Up | Arrow::Right => 1,
             Arrow::Down | Arrow::Left => -1,
         });
+        return;
+    }
+    // The gamma chart's square: up lightens it, down darkens it.
+    if let Some(detents) = direction.detents()
+        && state.turn_gamma(detents)
+    {
         return;
     }
     // A part of the date and time being changed: up is more, and across

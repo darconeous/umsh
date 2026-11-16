@@ -257,6 +257,7 @@ pub fn page(state: &State, page: &DevicePage) -> impl View<Rgb565, State> + use<
         | DevicePage::Sounds { .. }
         | DevicePage::Display { .. }
         | DevicePage::AutoLock
+        | DevicePage::Gamma { .. }
         | DevicePage::Statistics
         | DevicePage::About
         | DevicePage::Credits => board_page(state, page),
@@ -272,8 +273,7 @@ fn board_page(state: &State, page: &DevicePage) -> impl View<Rgb565, State> + us
         DevicePage::Gnss => super::links::gnss(state),
         DevicePage::Battery => super::battery::view(state),
         DevicePage::Sounds { .. } => super::sounds::view(state),
-        DevicePage::Display { .. } => super::display::view(state),
-        DevicePage::AutoLock => super::display::auto_lock(state),
+        DevicePage::Display { .. } | DevicePage::AutoLock | DevicePage::Gamma { .. } => super::display::screen(state, page),
         DevicePage::Statistics => super::statistics::view(state),
         DevicePage::About => super::about::view(state),
         // Credits, the only other `page` sends here.

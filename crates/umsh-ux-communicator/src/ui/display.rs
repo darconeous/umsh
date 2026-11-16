@@ -1,6 +1,8 @@
 //! Display: the screen's brightness, which pressing lets turning change
-//! until it is pressed again, and Auto-Lock, with its choices.
+//! until it is pressed again, Auto-Lock, with its choices, and the gamma
+//! chart.
 
+use buoyant::match_view;
 use buoyant::view::prelude::*;
 use embedded_graphics::pixelcolor::Rgb565;
 use heapless::String;
@@ -8,7 +10,7 @@ use heapless::String;
 use super::setting::{End, marked_row, page, row};
 use crate::board::Metrics;
 use crate::model::{AUTO_LOCK_CHOICES, State, brightness_level};
-use crate::nav::keys;
+use crate::nav::{DevicePage, keys};
 
 const ROW: u32 = 36;
 
@@ -16,8 +18,17 @@ const ROW: u32 = 36;
 const NAMES: [&str; AUTO_LOCK_CHOICES.len()] =
     ["Never", "30 seconds", "1 minute", "2 minutes", "5 minutes"];
 
-/// Brightness, and Auto-Lock where the device has it.
-pub fn view(state: &State) -> impl View<Rgb565, State> + use<> {
+/// Display, or a screen it opens.
+pub fn screen(state: &State, page: &DevicePage) -> impl View<Rgb565, State> + use<> {
+    match_view!(page, {
+        DevicePage::AutoLock => auto_lock(state),
+        DevicePage::Gamma { test } => super::gamma::view(state, *test),
+        _ => view(state),
+    })
+}
+
+/// Brightness, Auto-Lock where the device has it, and Gamma.
+fn view(state: &State) -> impl View<Rgb565, State> + use<> {
     let m = state.metrics();
     let level = brightness_level(state.node.brightness());
     let active = state.adjusting_brightness();
@@ -50,13 +61,22 @@ pub fn view(state: &State) -> impl View<Rgb565, State> + use<> {
                     ROW,
                 )
             }),
+            row(
+                m,
+                "Gamma",
+                keys::GAMMA,
+                State::open_gamma,
+                End::Chevron,
+                false,
+                ROW,
+            ),
         ))
         .with_spacing(0),
     )
 }
 
 /// Auto-Lock's choices, the one in force checked. Pressing one sets it.
-pub fn auto_lock(state: &State) -> impl View<Rgb565, State> + use<> {
+fn auto_lock(state: &State) -> impl View<Rgb565, State> + use<> {
     let m = state.metrics();
     let current = state.node.auto_lock();
     page(

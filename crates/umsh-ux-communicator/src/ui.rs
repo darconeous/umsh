@@ -35,6 +35,7 @@ mod display;
 mod enter_address;
 mod exchange;
 mod find;
+mod gamma;
 mod identity;
 mod indicators;
 mod join;
@@ -59,6 +60,7 @@ mod status;
 mod typing;
 mod wifi;
 
+pub use gamma::GammaTest;
 pub use typing::{picker_geometry, picker_spot};
 
 /// How much of the content past the focused row a list keeps in view, so

@@ -18,6 +18,7 @@ use crate::model::{
     Member, MessageId, NearbyId, PeerDetail, PeerEntry, PeerId, PingView, Profile, RadioSettings,
     Reaction, Repeater, Section, Shareable, State, TRANSMIT_POWER, word_match,
 };
+use crate::ui::GammaTest;
 pub use crate::wifi_settings::{NetworkText, PasswordText, WifiPage};
 
 use crate::text::SharedText;
@@ -202,6 +203,9 @@ pub mod keys {
     /// The Display screen's rows, in order.
     pub const BRIGHTNESS: FocusKey = FocusKey(0x2300_0000);
     pub const AUTO_LOCK: FocusKey = FocusKey(0x2300_0001);
+    pub const GAMMA: FocusKey = FocusKey(0x2300_0002);
+    /// The gamma chart, as a whole.
+    pub const GAMMA_CHART: FocusKey = FocusKey(0x2300_0003);
     /// The Bluetooth screen's actions, in order, and Clear pairings'
     /// confirmation.
     pub const BLUETOOTH_ENABLED: FocusKey = FocusKey(0x1E00_0000);
@@ -603,6 +607,8 @@ pub enum DevicePage {
     Display { adjusting: bool },
     /// How long the screen stays lit without input.
     AutoLock,
+    /// A chart to read the panel's gamma from.
+    Gamma { test: GammaTest },
     /// The device's counters.
     Statistics,
     /// What the device is and runs.
@@ -1884,6 +1890,46 @@ impl State {
             page: DevicePage::AutoLock,
             focus: FocusState::requesting(keys::auto_lock_choice(current)),
         });
+    }
+
+    /// Shows the gamma chart. Any change of brightness under way ends.
+    pub fn open_gamma(&mut self) {
+        if let Some(adjusting) = self.adjusting_mut() {
+            *adjusting = false;
+        }
+        _ = self.screens.push(Screen::Device {
+            page: DevicePage::Gamma {
+                test: GammaTest::new(),
+            },
+            focus: FocusState::requesting(keys::GAMMA_CHART),
+        });
+    }
+
+    fn gamma_mut(&mut self) -> Option<&mut GammaTest> {
+        match self.screens.last_mut() {
+            Some(Screen::Device {
+                page: DevicePage::Gamma { test },
+                ..
+            }) => Some(test),
+            _ => None,
+        }
+    }
+
+    /// The gamma chart was pressed: its next field is shown.
+    pub fn next_gamma_field(&mut self) {
+        if let Some(test) = self.gamma_mut() {
+            *test = test.next_field();
+        }
+    }
+
+    /// The wheel turned `detents` while the gamma chart is shown: its
+    /// square changes, turned up lightening, and returns whether it did.
+    pub fn turn_gamma(&mut self, detents: i8) -> bool {
+        let Some(test) = self.gamma_mut() else {
+            return false;
+        };
+        *test = test.step(detents.saturating_neg());
+        true
     }
 
     /// Sets Auto-Lock to `seconds`, and returns to Display.
