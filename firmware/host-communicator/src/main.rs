@@ -560,6 +560,7 @@ fn headless(
                     percent: Some(percent),
                     charge: Some(charge),
                     millivolts: None,
+                    gauge: None,
                 };
                 app.state_mut().battery(reading, clock);
                 app.finalize_view();

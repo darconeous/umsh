@@ -316,6 +316,25 @@ pub struct BatteryReading {
     pub charge: Option<Charge>,
     /// The cell's voltage in millivolts, when it is known.
     pub millivolts: Option<u16>,
+    /// What a fuel gauge adds, on a board that has one and while the
+    /// Battery screen is shown.
+    pub gauge: Option<GaugeReading>,
+}
+
+/// A fuel gauge's readings, each `None` where the gauge has not given it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GaugeReading {
+    /// Positive while charging, negative while discharging.
+    pub current_ma: Option<i16>,
+    pub remaining_mah: Option<u16>,
+    /// What the battery holds full, as the gauge has learned it.
+    pub full_mah: Option<u16>,
+    pub health_percent: Option<u8>,
+    pub cycles: Option<u16>,
+    pub minutes_to_empty: Option<u16>,
+    pub minutes_to_full: Option<u16>,
+    /// The cell's temperature in tenths of a kelvin.
+    pub temperature_dk: Option<u16>,
 }
 
 impl BatteryReading {
@@ -2947,22 +2966,29 @@ impl State {
     }
 
     /// Whether `reading` changes what is shown: its charge or what external
-    /// power is doing, always, and the voltage while the Battery screen
-    /// shows it. A board reading often takes in only these, so that a
-    /// wavering voltage nobody is looking at draws nothing.
+    /// power is doing, always, and the voltage and gauge readings while the
+    /// Battery screen shows them. A board reading often takes in only
+    /// these, so that a wavering voltage nobody is looking at draws nothing.
     #[must_use]
     pub fn battery_changes(&self, reading: &BatteryReading) -> bool {
         let shown = &self.battery;
-        let voltage_shown = matches!(
+        let details_shown = self.battery_shown();
+        shown.percent != reading.percent
+            || shown.charge != reading.charge
+            || (details_shown
+                && (shown.millivolts != reading.millivolts || shown.gauge != reading.gauge))
+    }
+
+    /// The Battery screen is the one shown.
+    #[must_use]
+    pub fn battery_shown(&self) -> bool {
+        matches!(
             self.screen(),
             Screen::Device {
                 page: DevicePage::Battery,
                 ..
             }
-        );
-        shown.percent != reading.percent
-            || shown.charge != reading.charge
-            || (voltage_shown && shown.millivolts != reading.millivolts)
+        )
     }
 
     /// The battery is empty: the screen shows only its icon, `lit` or not.

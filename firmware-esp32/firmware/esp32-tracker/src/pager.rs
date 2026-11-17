@@ -7,7 +7,8 @@ use esp_hal::ram;
 use umsh_pager_peripherals::{
     input::{KeyEvent, Keyboard, Modifier, Quadrature},
     power::{
-        Battery, BatteryWatch, Expander, LowBattery, battery_poll_fields, battery_poll_interval_ms,
+        Battery, BatteryWatch, Expander, GaugeReadout, LowBattery, battery_poll_fields,
+        battery_poll_interval_ms,
     },
 };
 use umsh_ulcp::battery_diagnostics::{
@@ -95,47 +96,25 @@ pub fn has_separate_gauge_temperature() -> bool {
     SEPARATE_GAUGE_TEMPERATURE.load(Ordering::Acquire)
 }
 
-fn screen_battery(sample: &BatterySample) -> Option<screen::BatteryDiagnostics> {
-    use umsh_ulcp::{battery_diagnostics::VoltageRequest, ids::prop};
-    let unsigned = |key| match sample.get(key).ok()?? {
-        BatteryValue::Unsigned(v) => u16::try_from(v).ok(),
-        _ => None,
-    };
-    Some(screen::BatteryDiagnostics {
-        current_ma: match sample.get(prop::BATTERY_CURRENT).ok()?? {
-            BatteryValue::Current(v) => i16::try_from(v).ok()?,
-            _ => return None,
-        },
-        remaining_mah: unsigned(prop::BATTERY_REMAINING_CAPACITY)?,
-        full_mah: unsigned(prop::BATTERY_FULL_CAPACITY)?,
-        design_mah: unsigned(prop::BATTERY_DESIGN_CAPACITY)?,
-        charging_mv: match sample.get(prop::BATTERY_CHARGE_VOLTAGE_REQUEST).ok()?? {
-            BatteryValue::Voltage(VoltageRequest::Maximum) => u16::MAX,
-            BatteryValue::Voltage(VoltageRequest::Millivolts(v)) => u16::try_from(v).ok()?,
-            _ => return None,
-        },
-        status: unsigned(prop::BATTERY_GAUGE_STATUS)?,
-        operation: unsigned(prop::BATTERY_GAUGE_OPERATION_STATUS)?,
-        usb: match sample.get(prop::BATTERY_EXT_POWER_PRESENT).ok()?? {
-            BatteryValue::Bool(v) => v,
-            _ => return None,
-        },
-    })
-}
 static BATTERY_DETAILS_ACTIVE: AtomicBool = AtomicBool::new(false);
 /// The panel is lit, so the status's battery is in view.
 static BATTERY_DISPLAY_LIT: AtomicBool = AtomicBool::new(false);
 /// Either of the above changed, so the battery task's cadence has.
 static BATTERY_WATCH_CHANGED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
-static BATTERY_DETAILS: critical_section::Mutex<RefCell<Option<screen::BatteryDiagnostics>>> =
+/// The gauge's readings for a visible battery page, from its latest read.
+static BATTERY_DETAILS: critical_section::Mutex<RefCell<Option<GaugeReadout>>> =
     critical_section::Mutex::new(RefCell::new(None));
 
-pub fn battery_diagnostics() -> Option<screen::BatteryDiagnostics> {
+pub fn battery_diagnostics() -> Option<GaugeReadout> {
     critical_section::with(|cs| *BATTERY_DETAILS.borrow(cs).borrow())
 }
 
 pub fn set_battery_details_visible(visible: bool) {
     if BATTERY_DETAILS_ACTIVE.swap(visible, Ordering::AcqRel) != visible {
+        if visible {
+            // A page opening again shows nothing older than its first read.
+            critical_section::with(|cs| *BATTERY_DETAILS.borrow(cs).borrow_mut() = None);
+        }
         BATTERY_WATCH_CHANGED.signal(());
     }
 }
@@ -513,8 +492,8 @@ pub async fn battery_task(bus: &'static board::I2cBus, initial: board_battery::R
             ),
         });
         if periodic && details_visible {
-            let details = screen_battery(&sample);
-            critical_section::with(|cs| *BATTERY_DETAILS.borrow(cs).borrow_mut() = details);
+            let details = GaugeReadout::from_sample(&sample, has_separate_gauge_temperature());
+            critical_section::with(|cs| *BATTERY_DETAILS.borrow(cs).borrow_mut() = Some(details));
         }
         match reading {
             Ok(reading) => {

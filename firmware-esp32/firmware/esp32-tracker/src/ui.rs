@@ -252,7 +252,7 @@ fn ui_status<'a>(name: &'a DeviceName, identity: &'a IdentityText) -> screen::St
         battery,
         battery_mv: (mv != 0).then_some(mv),
         #[cfg(feature = "board-tlora-pager")]
-        battery_details: pager::battery_diagnostics(),
+        battery_details: pager::battery_diagnostics().and_then(battery_details),
         #[cfg(not(feature = "board-tlora-pager"))]
         battery_details: None,
         queued: Some(QUEUED_FRAMES.load(Ordering::Acquire)),
@@ -282,6 +282,23 @@ fn ui_status<'a>(name: &'a DeviceName, identity: &'a IdentityText) -> screen::St
 /// Sampled when a frame is drawn rather than pushed: the counters move
 /// with every frame on the air, and a redraw per frame would burn the
 /// panel's power budget reporting numbers nobody is looking at.
+/// The tracker's battery pages draw only a complete set of readings.
+#[cfg(feature = "board-tlora-pager")]
+fn battery_details(
+    gauge: umsh_pager_peripherals::power::GaugeReadout,
+) -> Option<screen::BatteryDiagnostics> {
+    Some(screen::BatteryDiagnostics {
+        current_ma: gauge.current_ma?,
+        remaining_mah: gauge.remaining_mah?,
+        full_mah: gauge.full_mah?,
+        design_mah: gauge.design_mah?,
+        charging_mv: gauge.charging_mv?,
+        status: gauge.status?,
+        operation: gauge.operation?,
+        usb: gauge.usb?,
+    })
+}
+
 fn ui_stats() -> screen::StatsModel {
     // The same ledger the host reads over ULCP, so a reset from the phone
     // clears this page too. `rx_frames` is everything the radio handed up,

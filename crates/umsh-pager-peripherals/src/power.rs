@@ -90,6 +90,84 @@ pub struct GaugeDiagnostics {
     pub status: u16,
     pub operation: u16,
 }
+/// What a battery page shows of one diagnostic acquisition, numbers only.
+/// Each field is `None` when it was not read, failed, or the gauge marks
+/// it unavailable, so one missing register never hides the others.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GaugeReadout {
+    /// Instantaneous; positive while charging, negative while discharging.
+    pub current_ma: Option<i16>,
+    pub remaining_mah: Option<u16>,
+    /// Full-charge capacity as the gauge has learned it.
+    pub full_mah: Option<u16>,
+    pub design_mah: Option<u16>,
+    /// `u16::MAX` requests the charger's maximum voltage.
+    pub charging_mv: Option<u16>,
+    pub status: Option<u16>,
+    pub operation: Option<u16>,
+    pub usb: Option<bool>,
+    pub health_percent: Option<u8>,
+    pub cycles: Option<u16>,
+    pub minutes_to_empty: Option<u16>,
+    pub minutes_to_full: Option<u16>,
+    /// Tenths of a kelvin, only where `Temperature()` has a source of its
+    /// own: the gauge die is not the cell.
+    pub temperature_dk: Option<u16>,
+}
+
+impl GaugeReadout {
+    /// Decode `sample`. `separate_temperature` is whether `Temperature()`
+    /// reads something other than the gauge die ([`crate::gauge::has_separate_temperature`]).
+    pub fn from_sample(
+        sample: &umsh_ulcp::battery_diagnostics::Sample,
+        separate_temperature: bool,
+    ) -> Self {
+        use umsh_ulcp::{
+            battery_diagnostics::{Value, VoltageRequest},
+            battery_gauge_telemetry::FIELDS,
+            ids::prop,
+        };
+        let value = |key| sample.get(key).ok().flatten();
+        let unsigned = |key| match value(key)? {
+            Value::Unsigned(v) => u16::try_from(v).ok(),
+            _ => None,
+        };
+        // Telemetry registers, with the gauge's "unavailable" sentinel removed.
+        let telemetry = |register| {
+            let telemetry = sample.gauge_telemetry.as_ref().ok()?;
+            let index = FIELDS.iter().position(|f| f.register == register)?;
+            Some(telemetry.raw[index]).filter(|&raw| raw != u16::MAX)
+        };
+        Self {
+            current_ma: match value(prop::BATTERY_CURRENT) {
+                Some(Value::Current(v)) => i16::try_from(v).ok(),
+                _ => None,
+            },
+            remaining_mah: unsigned(prop::BATTERY_REMAINING_CAPACITY),
+            full_mah: unsigned(prop::BATTERY_FULL_CAPACITY),
+            design_mah: unsigned(prop::BATTERY_DESIGN_CAPACITY),
+            charging_mv: match value(prop::BATTERY_CHARGE_VOLTAGE_REQUEST) {
+                Some(Value::Voltage(VoltageRequest::Maximum)) => Some(u16::MAX),
+                Some(Value::Voltage(VoltageRequest::Millivolts(v))) => u16::try_from(v).ok(),
+                _ => None,
+            },
+            status: unsigned(prop::BATTERY_GAUGE_STATUS),
+            operation: unsigned(prop::BATTERY_GAUGE_OPERATION_STATUS),
+            usb: match value(prop::BATTERY_EXT_POWER_PRESENT) {
+                Some(Value::Bool(v)) => Some(v),
+                _ => None,
+            },
+            health_percent: telemetry(0x2e)
+                .filter(|&percent| percent <= 100)
+                .map(|percent| percent as u8),
+            cycles: telemetry(0x2a),
+            minutes_to_empty: telemetry(0x16),
+            minutes_to_full: telemetry(0x18),
+            temperature_dk: telemetry(0x06).filter(|_| separate_temperature),
+        }
+    }
+}
+
 pub struct Battery<I> {
     i2c: I,
 }
@@ -543,7 +621,7 @@ pub fn battery_poll_interval_ms(reading: Option<&Reading>, watch: BatteryWatch) 
 pub fn battery_poll_fields(details_visible: bool) -> umsh_ulcp::battery_diagnostics::Fields {
     use umsh_ulcp::{battery_diagnostics::Fields, ids::prop};
     if details_visible {
-        Fields::ALL
+        Fields::ALL.union(Fields::GAUGE_TELEMETRY)
     } else {
         Fields::SNAPSHOT.union(Fields::for_key(prop::BATTERY_EXT_POWER_PRESENT))
     }

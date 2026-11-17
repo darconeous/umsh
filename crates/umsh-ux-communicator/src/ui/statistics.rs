@@ -12,7 +12,7 @@ use crate::model::{State, Statistics};
 const ROW: u32 = 36;
 
 /// A readout's value.
-type Value = String<20>;
+pub(super) type Value = String<20>;
 
 /// Every readout the screen can show, in order; its place here names its
 /// row.
@@ -120,7 +120,7 @@ fn airtime_heard_text(tenths: u16) -> Value {
 }
 
 /// `count`, its thousands set apart by commas.
-fn grouped(count: u32) -> Value {
+pub(super) fn grouped(count: u32) -> Value {
     let mut digits: String<10> = String::new();
     _ = core::fmt::write(&mut digits, format_args!("{count}"));
     let mut text = Value::new();

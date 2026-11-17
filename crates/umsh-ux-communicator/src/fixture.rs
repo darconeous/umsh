@@ -11,7 +11,7 @@ use crate::model::{
     About, BatteryReading, Bluetooth, BluetoothReading, Card, ChannelAccess, ChannelChats,
     ChannelEntry, Charge, ChatId, ChatKind, ChatSummary, Chats, ClockSettings, ClockSource,
     Contact, ContactUri, DEFAULT_AUTO_LOCK_S, Delivery, Details, Direction, EventQueue, Exchange,
-    ExchangeEnd, Fix, Forwarding, Gnss, GnssReading, Heard, Invite, KeyboardFirmware,
+    ExchangeEnd, Fix, Forwarding, GaugeReading, Gnss, GnssReading, Heard, Invite, KeyboardFirmware,
     KeyboardSettings, Leg, Links, MAX_CHATS, MAX_HEARD, MAX_NEARBY_NETWORKS, MAX_PATH,
     MAX_SAVED_NETWORKS, MESSAGE_LEN, MeetState, Member, Message, MessageId, NearbyDevice, NearbyId,
     NearbyNetwork, Neighbor, Node, NodeEvent, Parts, PeerDetail, PeerEntry, PeerId, PeerRoute,
@@ -3544,6 +3544,16 @@ pub fn state(store: &'static Store, board: &'static Board) -> State {
         percent: Some(64),
         charge: Some(Charge::Discharging),
         millivolts: Some(3_812),
+        gauge: Some(GaugeReading {
+            current_ma: Some(-148),
+            remaining_mah: Some(1_206),
+            full_mah: Some(1_884),
+            health_percent: Some(96),
+            cycles: Some(37),
+            minutes_to_empty: Some(489),
+            minutes_to_full: None,
+            temperature_dk: None,
+        }),
     };
     state.links = Links {
         bluetooth: BluetoothReading {

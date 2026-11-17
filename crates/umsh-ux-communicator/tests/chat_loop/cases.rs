@@ -13,7 +13,7 @@ use umsh_ux_communicator::input::{self, Arrow, Input};
 use umsh_ux_communicator::keyboard::{Latch, Modifier};
 use umsh_ux_communicator::picker::Pick;
 use umsh_ux_communicator::model::{
-    BatteryReading, ChannelAccess, Charge, ChannelEntry, ChatKind, ClockSource, Delivery, Details, Direction, Ending, Exchange,
+    BatteryReading, ChannelAccess, Charge, GaugeReading, ChannelEntry, ChatKind, ClockSource, Delivery, Details, Direction, Ending, Exchange,
     ExchangeEnd, FoundKind,
     Glance, Node as _, NodeEvent, Notice, Presence, Profile, Reaction, Rule, Section, Shareable, State,
     brightness_level,
@@ -2694,6 +2694,7 @@ fn reading(percent: u8, charging: bool) -> BatteryReading {
             Charge::Discharging
         }),
         millivolts: None,
+        gauge: None,
     }
 }
 
@@ -3968,6 +3969,7 @@ fn battery_is_listed_once_the_board_reads_it() {
             percent: None,
             charge: Some(Charge::Charged),
             millivolts: Some(4_180),
+            gauge: None,
         },
         0,
     );
@@ -3983,8 +3985,18 @@ fn battery_is_listed_once_the_board_reads_it() {
         ..app.state().battery
     };
     assert!(app.state().battery_changes(&wavered));
+    // So are the gauge's readings.
+    let drawn = BatteryReading {
+        gauge: Some(GaugeReading {
+            current_ma: Some(-150),
+            ..GaugeReading::default()
+        }),
+        ..app.state().battery
+    };
+    assert!(app.state().battery_changes(&drawn));
     run(&mut app, &[Input::Backspace]);
     assert!(!app.state().battery_changes(&wavered));
+    assert!(!app.state().battery_changes(&drawn));
 }
 
 #[test]

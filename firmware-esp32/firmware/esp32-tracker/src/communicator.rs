@@ -332,6 +332,9 @@ async fn interface(
         if let Some(lit) = crate::board_input::switched_light() {
             app.state_mut().set_keyboard_light(lit);
         }
+        // The gauge is read in detail only while its page is in view.
+        #[cfg(feature = "board-tlora-pager")]
+        pager::set_battery_details_visible(lit && app.state().battery_shown());
         let battery = battery_reading();
         if app.state().battery_changes(&battery) {
             app.state_mut().battery(battery, now());
@@ -542,6 +545,21 @@ fn battery_reading() -> BatteryReading {
             _ => None,
         },
         millivolts: battery_millivolts(),
+        #[cfg(feature = "board-tlora-pager")]
+        gauge: pager::battery_diagnostics().map(|gauge| {
+            umsh_ux_communicator::model::GaugeReading {
+                current_ma: gauge.current_ma,
+                remaining_mah: gauge.remaining_mah,
+                full_mah: gauge.full_mah,
+                health_percent: gauge.health_percent,
+                cycles: gauge.cycles,
+                minutes_to_empty: gauge.minutes_to_empty,
+                minutes_to_full: gauge.minutes_to_full,
+                temperature_dk: gauge.temperature_dk,
+            }
+        }),
+        #[cfg(not(feature = "board-tlora-pager"))]
+        gauge: None,
     }
 }
 

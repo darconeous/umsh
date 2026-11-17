@@ -943,7 +943,72 @@ fn battery_polling_is_minimal_until_lit_visible_low_or_unknown() {
         battery_poll_fields(false),
         Fields::SNAPSHOT.union(Fields::for_key(prop::BATTERY_EXT_POWER_PRESENT))
     );
-    assert_eq!(battery_poll_fields(true), Fields::ALL);
+    assert_eq!(
+        battery_poll_fields(true),
+        Fields::ALL.union(Fields::GAUGE_TELEMETRY)
+    );
+}
+
+#[test]
+fn gauge_readout_drops_sentinels_and_keeps_failures_independent() {
+    use umsh_ulcp::{
+        Status,
+        battery_diagnostics::{Sample, Value},
+        battery_gauge_telemetry::{FIELDS, Telemetry},
+        ids::prop,
+    };
+    let mut sample = Sample::default();
+    sample.set(prop::BATTERY_CURRENT, Ok(Some(Value::Current(-152))));
+    sample.set(
+        prop::BATTERY_REMAINING_CAPACITY,
+        Ok(Some(Value::Unsigned(900))),
+    );
+    // Not initialized: the gauge withholds it.
+    sample.set(prop::BATTERY_FULL_CAPACITY, Ok(None));
+    sample.set(
+        prop::BATTERY_EXT_POWER_PRESENT,
+        Ok(Some(Value::Bool(false))),
+    );
+    let mut telemetry = Telemetry::default();
+    fn put(telemetry: &mut Telemetry, register: u8, raw: u16) {
+        let index = FIELDS.iter().position(|f| f.register == register).unwrap();
+        telemetry.raw[index] = raw;
+    }
+    put(&mut telemetry, 0x2a, 41);
+    put(&mut telemetry, 0x2e, 94);
+    put(&mut telemetry, 0x16, 135);
+    put(&mut telemetry, 0x18, u16::MAX);
+    put(&mut telemetry, 0x06, 2981);
+    sample.gauge_telemetry = Ok(telemetry);
+
+    let readout = GaugeReadout::from_sample(&sample, false);
+    assert_eq!(readout.current_ma, Some(-152));
+    assert_eq!(readout.remaining_mah, Some(900));
+    assert_eq!(readout.full_mah, None);
+    assert_eq!(readout.design_mah, None);
+    assert_eq!(readout.usb, Some(false));
+    assert_eq!(readout.cycles, Some(41));
+    assert_eq!(readout.health_percent, Some(94));
+    assert_eq!(readout.minutes_to_empty, Some(135));
+    assert_eq!(readout.minutes_to_full, None);
+    // The die's reading is not the cell's.
+    assert_eq!(readout.temperature_dk, None);
+    assert_eq!(
+        GaugeReadout::from_sample(&sample, true).temperature_dk,
+        Some(2981)
+    );
+
+    put(&mut telemetry, 0x2e, 101);
+    sample.gauge_telemetry = Ok(telemetry);
+    assert_eq!(
+        GaugeReadout::from_sample(&sample, false).health_percent,
+        None
+    );
+
+    sample.gauge_telemetry = Err(Status::FAILURE);
+    let readout = GaugeReadout::from_sample(&sample, true);
+    assert_eq!((readout.cycles, readout.temperature_dk), (None, None));
+    assert_eq!(readout.current_ma, Some(-152));
 }
 #[test]
 fn rtc_calendar_and_invalid_oscillator() {
