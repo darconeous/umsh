@@ -45,7 +45,16 @@ drawing are in [Android open decisions](open-decisions.md).
 | 3 | [Q. Permissions](#q-permissions) | Approved 2026-11-18 |
 | 3 | [R. Your identity](#r-your-identity) | Approved 2026-11-18 |
 | 3 | [S. Manage space](#s-manage-space) | Approved 2026-11-18 |
-| 4 | Peers and channels | Not drawn yet |
+| 4 | [T. Peers list](#t-peers-list) | Approved 2026-11-18 |
+| 4 | [U. Peer page](#u-peer-page) | Approved 2026-11-18 |
+| 4 | [V. Ping and Route](#v-ping-and-route) | Approved 2026-11-18 |
+| 4 | [W. Manual path](#w-manual-path) | Approved 2026-11-18 |
+| 4 | [X. Repeaters and Discover](#x-repeaters-and-discover) | Approved 2026-11-18 |
+| 4 | [Y. Add peer and import](#y-add-peer-and-import) | Approved 2026-11-18 |
+| 4 | [Z. Exchanging contacts](#z-exchanging-contacts) | Approved 2026-11-18 |
+| 4 | [AA. QR scanner](#aa-qr-scanner) | Approved 2026-11-18 |
+| 4 | [AB. Sharing](#ab-sharing) | Approved 2026-11-18 |
+| 4 | [AC. Channels](#ac-channels) | Approved 2026-11-18 |
 | 5 | Map, radio, and management | Not drawn yet |
 
 # Batch 1: Design language and shell
@@ -286,3 +295,121 @@ key storage. Where Android departs from it, the board's notes say so and
   **Manage space** instead of Clear storage.
 - The screen offers Erase identity and Start over with their usual
   confirmations, then closes back to the system page. Start over asks twice.
+
+# Batch 4: Peers and channels
+
+Drawn from the iOS app as built, with the iOS peer-page redesign. Where Android
+departs from it, the board's notes say so and
+[open decisions](open-decisions.md#peers-and-channels) explain why.
+
+## T. Peers list
+
+[![Peers mockups: the list with its sort and filter chips, the sort menu, search with saved and discovered nodes, the long-press menu, the remove confirmation, and the empty state](mockups/peers-list.svg)](mockups/peers-list.svg)
+
+- iOS's sections: Favorites, Saved, and the companion radio's own identity,
+  then **Discover peers**.
+- Sort and the role filters are chips under the top app bar, so the current
+  choice is always visible. They stay on the search screen.
+- Search finds every known node, saved first, then nodes heard but not saved.
+- Long press offers Favorite, Share, and Remove peer. Remove keeps iOS's
+  choices and wording.
+
+## U. Peer page
+
+[![Peer page mockups: a chat peer at the top and scrolled to the end, a repeater, a node that never advertised, a node opened from a link, renaming, and the page in the Peers list-detail layout on a tablet](mockups/peer-page.svg)](mockups/peer-page.svg)
+
+- The iOS redesign: name, verbs, the Heard / Route / Distance strip, the map
+  card, Notifications, About, then Clear all messages and Remove peer.
+- Verbs follow advertised capabilities, never role. A node that never
+  advertised gets every verb, led by **Identify**.
+- An unsaved node shows **Add to Peers**. A link opens the page above the
+  shell, with Close.
+- Tapping the name opens **Rename**; the line under the field is what the node
+  calls itself.
+
+## V. Ping and Route
+
+[![Ping and Route mockups: the Ping sheet with a reply, waiting, and with no reply, and the Route page for a learned route and for a held manual path](mockups/ping-route.svg)](mockups/ping-route.svg)
+
+- Ping is a bottom sheet that sends as it opens: round trip, hops, the reply's
+  path with each leg's signal, **Reset route**, and this visit's earlier pings.
+- Route is a page with the numbered path, what the next send will do, **Ask
+  near this node**, and Reset route or **Clear manual path**.
+- An unmatched router hint has the lookup button; a named repeater opens its
+  page.
+
+## W. Manual path
+
+[![Manual path mockups: the editor, a direct path, adding a hop from a repeater's neighbors, entering a router hint, two hints that fit, discarding changes, and the learned-path prompt in a thread](mockups/manual-path.svg)](mockups/manual-path.svg)
+
+- Edit on Route opens the editor as a full-screen dialog: hops drag and are
+  removed, **Then flood** runs Off to 15, **Ping along path** tests the
+  unsaved path, and the hold runs 30 minutes to 1 day.
+- **Add hop** offers the previous hop's neighbors or the known repeaters, and
+  **Enter router hint** takes a Base58 prefix or 4 hex digits.
+- Leaving with changes asks first. The learned-path prompt keeps iOS's rules
+  and wording.
+
+## X. Repeaters and Discover
+
+[![Mockups for a repeater's neighbors, read and unanswered, and for Discover peers, listening, asking near a node, and the announce confirmation](mockups/repeaters-discover.svg)](mockups/repeaters-discover.svg)
+
+- **Neighboring repeaters** reads one page per Refresh, with Load more;
+  opening it sends nothing.
+- **Discover peers** is a page in the Peers stack: ask, a live list of nodes
+  heard since it opened, and **Announce my identity** with a confirmation.
+
+## Y. Add peer and import
+
+[![Add peer mockups: the page with nearby devices, the identity field and your code, without a radio and with a link that does not parse, and the import preview signed and unsigned](mockups/add-peer.svg)](mockups/add-peer.svg)
+
+- The Add peer FAB pushes a page: Nearby first, then the identity field with
+  its scan button, then **Show your code**.
+- Every node link, typed, opened, or scanned, goes through the same import
+  preview: a bottom sheet with the advertised details, their signature
+  status, and a local name, ending in **Save peer** or **Message**.
+
+## Z. Exchanging contacts
+
+[![Contact exchange mockups: being asked, waiting, comparing codes, after Same, codes that differ, the unsaved peer afterward, and the nearby glyphs](mockups/nearby-exchange.svg)](mockups/nearby-exchange.svg)
+
+- The iOS flow on Android pages: being asked is a sheet over Add peer; the
+  exchange is pushed in the Peers stack.
+- Same and Different sit at the bottom. The new peer's page replaces the
+  exchange, so Back never returns to the code.
+
+## AA. QR scanner
+
+[![QR scanner mockups: scanning, a code that is not a UMSH code, a node code opening the import preview over Peers, and a channel code opening the join preview over Conversations](mockups/qr-scanner.svg)](mockups/qr-scanner.svg)
+
+- One scanner, full screen above the shell, opened by **Scan** on the
+  Conversations and Peers roots and by the scan button in the Add peer and
+  Join channel fields.
+- Only `umsh:` codes are accepted; anything else is reported as **Not a UMSH
+  code** while scanning continues.
+- A recognized code opens its preview as a bottom sheet over the screen the
+  scan began on.
+
+## AB. Sharing
+
+[![Sharing mockups: sharing a peer, the Android Sharesheet, the system's copy confirmation, and your own code from Add peer](mockups/share.svg)](mockups/share.svg)
+
+- Sharing a peer reuses Your identity's QR sheet: code, address, **Copy
+  link**, and **Share**, which opens the Android Sharesheet.
+- On Android 13 and later the system confirms a copy, so the app shows
+  nothing of its own.
+
+## AC. Channels
+
+[![Channel mockups: the channels list, the add menu, the empty state, creating a private channel, joining by name or invitation with each preview, the channel page, leaving, the invitation sheet, and the list-detail layout on a tablet](mockups/channels.svg)](mockups/channels.svg)
+
+- **Settings › Channels** lists the channels this phone has joined. The FAB
+  offers **Join channel** and **New private channel**.
+- Join channel takes a name or an invitation and previews it without joining.
+  A key already held updates its details; a name already in use gets a
+  suggestion to choose another, never a requirement.
+- The channel page holds the channel's details, alias, Share, and Leave
+  channel. Routing stays in Conversation info.
+- Nothing here concerns the radio's own channels, which will be managed
+  separately.
+- A private channel's invitation shows its warning before the code.

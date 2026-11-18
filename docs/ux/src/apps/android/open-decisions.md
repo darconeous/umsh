@@ -479,7 +479,135 @@ Afterwards it closes back to the system page. Unlike erasing from inside the
 app, it makes no new identity: the next launch starts from Welcome, as it
 would after Clear storage.
 
+## Peers and channels
+
+### Sort and filter as chips
+
+Batch 1's Peers board said sort and filter would belong to the search bar. iOS
+keeps them in a toolbar menu, where the current sort and filter are hidden
+until the menu is opened.
+
+**Recommendation:** a row of chips under the top app bar on the Peers root,
+kept on the search screen. The first chip opens the sort menu and names the
+current sort; the others are single-choice role filters. The filter names are
+shortened from iOS: **People** for "People & text" and **Repeaters** for
+"Repeaters & bridges". What each matches is unchanged. The row scrolls
+sideways on narrow phones.
+
+### Long press instead of swipe actions on peer rows
+
+iOS rows swipe one way to favorite or save and the other way to remove.
+
+**Recommendation:** a long-press menu with Favorite (or Save for an unsaved
+node), Share, and Remove peer. Two-way swipe actions are an iOS idiom. On
+Android a swipe usually dismisses, and removing a peer always asks first.
+Batch 2's conversation swipe is unchanged; it is a dismissal.
+
+### Renaming a peer
+
+iOS edits the peer's name in place, in the header.
+
+**Recommendation:** tapping the name, which carries an edit mark, opens a
+**Rename** dialog. The line under the field is what the node calls itself,
+using batch 2's "Calls itself" wording. An empty name falls back to it.
+Android has no editable large title, and an always-editable header invites
+accidental edits.
+
+### No snackbar for copies on Android 13 and later
+
+**Recommendation:** copying an address or link shows nothing of the app's own
+on Android 13 and later, where the system shows its own copy confirmation. On
+Android 12 and earlier it shows a snackbar: "Address copied" or "Link copied".
+
+### Full-screen dialogs keep the radio control
+
+The manual path editor and channel creation are full-screen dialogs. Material
+puts the confirming action, such as Save, at the end of the top app bar, which
+is where the radio control always sits.
+
+**Recommendation:** the confirming action comes just before the radio
+control, as screen actions do everywhere else. The radio control never moves,
+and the dialog hides only the navigation bar.
+
+### Add peer and Discover are pages
+
+iOS presents Add Peer and Discover Peers as sheets. The exchange is pushed
+inside the Add Peer sheet.
+
+**Recommendation:** both are pages in the Peers stack.
+- Their rows open peer pages, and the exchange pushes onto Add peer, so Back
+  and predictive back work through them.
+- A completed exchange replaces Add peer and the exchange with the new peer's
+  page, so Back leads to the Peers list.
+- Being asked to exchange stays a sheet, over Add peer.
+
+### More ways into the scanner
+
+Batch 1 placed **Scan** on the Conversations and Peers roots.
+
+**Recommendation:** the Add peer and Join channel fields also get a scan
+button, opening the same scanner. What a code opens, and where, does not
+change. These are the two places where the person is already holding
+something to scan. The Global actions table in the product structure lists
+them.
+
+### The channel page and Conversation info
+
+iOS has one channel page, holding the routing and the membership. Batch 2
+approved Conversation info with Routing and a header row that "leads to the
+channel itself".
+
+**Recommendation:** keep two pages.
+- **Conversation info** is about what this phone sends and keeps. It holds
+  Notifications, Routing, and the message history.
+- **The channel page** is the channel itself: its details, alias, Share, and
+  Leave channel. It is reached from that header row and from Settings ›
+  Channels.
+
+The header row's caption in batch 2 reads "Members, invitations, and leaving
+the channel". There is no member list, so it should read "Alias, sharing,
+and leaving the channel". That changes an approved board, so it is listed here
+for approval.
+
+### The radio's own channels are left out
+
+iOS lists the channels the radio's own identity has joined and lets each
+channel page switch membership for the phone and the radio separately.
+
+**Recommendation:** the channel screens cover only this phone's channels. They
+show no radio-only list, no "Joined by" switches, and no phone or radio scope
+on rows. The radio's channels will be managed separately, later.
+
+### A name already in use is a suggestion
+
+**Recommendation:** joining a channel whose name matches a different channel
+shows a note, not a warning. It says the two are different channels and
+suggests another name. Join works as it is, and the alias stays optional.
+
+### Creating a channel opens it
+
+iOS closes the sheet after creating a channel and shows no invitation.
+
+**Recommendation:** Create opens the new channel's page, so Share is one tap
+away. The invitation sheet puts its warning before the code, which is the
+disclosure the [sharing chapter](../import-discovery-sharing.md) asks for
+before an invitation is shared.
+
+### iOS copy shortened
+
+**Recommendation:** these iOS lines are cut to what the reader needs:
+- the private-channel disclosure before Create;
+- the footer for channels only the radio holds;
+- the public and private notes in the join preview;
+- Discover's footers.
+
+The cuts drop mechanism and keep every security consequence. Strings that
+iOS words the same way everywhere, such as dialogs and errors, are kept word
+for word.
+
 ## Protocol and core changes
+
+Batch 4 adds no protocol or core changes.
 
 ### Several regions on a channel
 

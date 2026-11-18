@@ -216,8 +216,8 @@ Each global action from the guidelines has one place:
 
 | Action | Where |
 |---|---|
-| Scan a UMSH QR code | **Scan** (`qr_code_scanner`) in the top app bar of the Conversations and Peers roots |
-| Import a pasted or opened `umsh:` URI | Deep link, the Add peer flow, and Join channel |
+| Scan a UMSH QR code | **Scan** (`qr_code_scanner`) in the top app bar of the Conversations and Peers roots, and the scan button in the Add peer and Join channel fields |
+| Import a pasted or opened `umsh:` URI | Deep link, the Add peer page, and Join channel |
 | Share your public identity | Your identity in Settings, and the Add peer flow |
 | Create or join a channel | Settings, and the new-chat action in Conversations |
 | Find observed nodes | **Discover** in Peers, and on a peer page |
@@ -230,8 +230,9 @@ Each global action from the guidelines has one place:
 The scanner is one shared action with one flow, reachable from both
 Conversations and Peers:
 
-1. **Scan** opens the scanner as an app-level full-screen page above the shell.
-   It asks for the camera permission the first time it opens.
+1. **Scan**, or the scan button in the Add peer or Join channel field, opens
+   the scanner as an app-level full-screen page above the shell. It asks for
+   the camera permission the first time it opens.
 2. The scanner accepts only `umsh:` codes. Any other code is reported as not a
    UMSH code, and the scanner keeps running.
 3. A recognized code closes the scanner and opens the same import preview a
