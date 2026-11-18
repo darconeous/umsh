@@ -45,7 +45,7 @@ These do not change between platforms:
 | 1 | **Conversations** | `forum` | Direct and channel conversations, drafts, unread state |
 | 2 | **Peers** | `hub` | Known nodes, saved peers, repeaters, discovery, adding peers |
 | 3 | **Map** | `map` | Nodes with usable location, and the node cards and list over them |
-| 4 | **Settings** | `settings` | Your identity and its channels, the radio, devices, regions, notifications, storage, diagnostics |
+| 4 | **Settings** | `settings` | Your identity and its channels, the radio, devices, routing, regions, notifications, storage, diagnostics, about |
 
 The selected item uses the filled icon; the others use the outlined one.
 Conversations is the start destination.
@@ -125,7 +125,7 @@ Conversations, Peers, and Settings use `ListDetailPaneScaffold`:
   returns focus to the list without hiding it.
 
 Map is one full pane at every width. Its node list is a bottom sheet on compact
-widths and a side sheet on expanded ones (drawn in batch 5).
+widths and a side sheet, in the list pane's place, on expanded ones.
 
 ## App-level chrome
 
@@ -208,7 +208,8 @@ slot with **Retry**, above any radio banner.
 Radio Detail opens from the radio control as an app-level page above the
 shell, outside every destination's back stack, so opening it never changes the
 selected destination. Back returns to the screen it was opened from. It is also
-reachable as **Companion radio** in Settings, inside the Settings stack.
+reachable as **Companion radio** in Settings, inside the Settings stack; on
+expanded widths it then opens in the Settings detail pane.
 
 ## Global actions
 

@@ -55,7 +55,15 @@ drawing are in [Android open decisions](open-decisions.md).
 | 4 | [AA. QR scanner](#aa-qr-scanner) | Approved 2026-11-18 |
 | 4 | [AB. Sharing](#ab-sharing) | Approved 2026-11-18 |
 | 4 | [AC. Channels](#ac-channels) | Approved 2026-11-18 |
-| 5 | Map, radio, and management | Not drawn yet |
+| 5 | [AD. Map](#ad-map) | Approved 2026-11-18 |
+| 5 | [AE. Place picker](#ae-place-picker) | Approved 2026-11-18 |
+| 5 | [AF. Region suggestion](#af-region-suggestion) | Approved 2026-11-18 |
+| 5 | [AG. Radio Detail](#ag-radio-detail) | Approved 2026-11-18 |
+| 5 | [AH. Choosing a radio](#ah-choosing-a-radio) | Approved 2026-11-18 |
+| 5 | [AI. Setting up a device](#ai-setting-up-a-device) | Approved 2026-11-18 |
+| 5 | [AJ. Remote management](#aj-remote-management) | Approved 2026-11-18 |
+| 5 | [AK. Remote management, continued](#ak-remote-management-continued) | Approved 2026-11-18 |
+| 5 | [AL. Settings](#al-settings) | Approved 2026-11-18 |
 
 # Batch 1: Design language and shell
 
@@ -413,3 +421,104 @@ departs from it, the board's notes say so and
 - Nothing here concerns the radio's own channels, which will be managed
   separately.
 - A private channel's invitation shows its warning before the code.
+
+# Batch 5: Map, radio, and management
+
+Drawn from the iOS app as built. Where the built screen is weaker than the iOS
+spec, as with Radio Detail and the Settings overview, the drawing follows the
+spec instead. Where Android departs from iOS, the board's notes say so and
+[open decisions](open-decisions.md#map-radio-and-management) explain why. No
+screen in this batch shows or edits the radio's own channel list.
+
+## AD. Map
+
+[![Map mockups: the map with its node list at the peek height, a selected node, the capability filter, a row's long-press menu, the two empty states, and the map on a tablet with the list as a side sheet](mockups/map.svg)](mockups/map.svg)
+
+- MapLibre, with every node that reports a position as its avatar on a pin.
+  The companion radio's own fix is **This radio**.
+- A cell is drawn only when it is coarse, reported by a router, or selected.
+  Router-reported and unverified positions carry iOS's badges.
+- The node list is a standard bottom sheet on phones and a side sheet on
+  tablets. Selecting a pin or a row flies to the node and lifts its row.
+- iOS's filter menu becomes three chips: Show, Heard, and Capabilities.
+
+## AE. Place picker
+
+[![Place picker mockups: choosing a place with its cell, after the phone could not find itself, and without a precision](mockups/place-picker.svg)](mockups/place-picker.svg)
+
+- A full-screen dialog with a fixed crosshair over a panning map. **My
+  location** centers on the phone.
+- From a device's Identity it shows the cell at the chosen precision; from
+  region suggestion it only fills in coordinates.
+
+## AF. Region suggestion
+
+[![Region suggestion mockups: regions suggested from this phone's position, from typed coordinates, and when the position is too coarse](mockups/region-suggestion.svg)](mockups/region-suggestion.svg)
+
+- **Update based on location** in a repeater's routing regions opens
+  **Regions for this place**: the place's source, what covers it, and what
+  each choice would change.
+- **Add** keeps what is listed; **Replace all** drops what does not cover the
+  place. Either fills in the editor, which is applied as usual.
+
+## AG. Radio Detail
+
+[![Radio Detail mockups: the companion radio connected, the rest of the page, waiting for the radio, a failed connection, the factory reset confirmation, and Radio Detail on a tablet](mockups/radio-detail.svg)](mockups/radio-detail.svg)
+
+- The board photo, name, model, state, and battery lead, with **Disconnect**
+  and **Forget** under them. **Manage device** opens Remote management.
+- Then Mesh radio, Connection, Offline assistance, Radio identity, and
+  Maintenance, with iOS's confirmations.
+- The app sets up whichever radio it connects to for this phone, without
+  asking. Radio Detail shows no host and offers nothing to take over; a failed
+  connection says why, with **Reconnect**.
+
+## AH. Choosing a radio
+
+[![Mockups for choosing another companion radio: the scan list with board photos and the current radio checked, and the system confirmation for a new one](mockups/radio-picker.svg)](mockups/radio-picker.svg)
+
+- **Choose another radio** opens the scan list from onboarding. A radio not
+  yet associated raises Android's confirmation, then pairing.
+
+## AI. Setting up a device
+
+[![Device setup mockups: choosing what the device is for, choosing the device, connecting, the repeater form at the top and further down, the result, and a readback that does not match](mockups/device-setup.svg)](mockups/device-setup.svg)
+
+- **Set up a device** opens a full-screen flow: the goal, the scan list with
+  board photos, connecting, then one form and **Set up**.
+- Each device gets its own one-device association; this phone's radio stays
+  connected and cannot be chosen.
+- The result offers **Save to Peers**, **Review all settings**, and **Set up
+  another device**. A failed or mismatched write gets the failure dialog.
+
+## AJ. Remote management
+
+[![Remote management mockups: Manage device for a repeater over the mesh, no answer from a device, the Radio category with edits, leaving with changes, the mesh warning before a radio change, the Identity category waiting with a rejected value, Repeater, Power, entering DFU mode, and Manage device for the companion radio on a tablet](mockups/manage-device.svg)](mockups/manage-device.svg)
+
+- **Manage device** leads with the device card, then the categories the
+  device reports, in iOS's order, then Maintenance.
+- A category edits in place; **Refresh** becomes **Apply** once anything
+  changes. Leaving with changes asks first.
+- The strip under the top bar shows a spinner while asking and the problem
+  when there is one. A rejected value is an error field with iOS's reason.
+- Over the mesh, changes that can strand a device confirm first.
+
+## AK. Remote management, continued
+
+[![More remote management mockups: Bluetooth, Wi-Fi, joining a network, Network, Bridge, Peer nodes with a row's menu, and Time](mockups/manage-connectivity.svg)](mockups/manage-connectivity.svg)
+
+- Bluetooth, Wi-Fi, Network, Bridge, Peer nodes, and Time, each with iOS's
+  rows and confirmations.
+- Joining or editing a Wi-Fi network is a full-screen dialog.
+- Peer nodes applies each change at once, so it has no Apply.
+
+## AL. Settings
+
+[![Settings mockups: the overview, Routing and its warning, Notifications, Storage, Diagnostics with the share preview, About, and Settings on a tablet](mockups/settings.svg)](mockups/settings.svg)
+
+- The overview: Identity, Radios, Mesh, and This app. Nothing destructive is
+  on it.
+- **Routing** holds Reach; **Storage** holds Start over. Both moved out of
+  Your identity.
+- **Notifications** lists the notification channels and the lock-screen
+  option. **Diagnostics** and **About** are new; neither app has them yet.

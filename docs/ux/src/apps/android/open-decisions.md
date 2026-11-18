@@ -564,10 +564,8 @@ channel itself".
   Leave channel. It is reached from that header row and from Settings ›
   Channels.
 
-The header row's caption in batch 2 reads "Members, invitations, and leaving
-the channel". There is no member list, so it should read "Alias, sharing,
-and leaving the channel". That changes an approved board, so it is listed here
-for approval.
+There is no member list, so the header row's caption in Conversation info
+reads "Alias, sharing, and leaving the channel".
 
 ### The radio's own channels are left out
 
@@ -605,9 +603,159 @@ The cuts drop mechanism and keep every security consequence. Strings that
 iOS words the same way everywhere, such as dialogs and errors, are kept word
 for word.
 
+## Map, radio, and management
+
+### The node list is a sheet, and filters are chips
+
+iOS draws its own card over the map with three heights, and keeps the filters
+in a toolbar menu.
+
+**Recommendation:** a standard bottom sheet with the same three heights on
+phones, which never covers the navigation bar, and a side sheet in the list
+pane's place on expanded widths. The filters are three chips over the map, as
+on Peers: Show, Heard, and Capabilities. A chip that differs from the default
+is filled, so the header no longer needs to name the filters, though it still
+does for TalkBack.
+
+### No node card on the map
+
+iOS's UX chapters describe a summary card for the selected node with a **View
+node** button. The built app has none: selecting a node moves its row to the
+top of the list.
+
+**Recommendation:** follow the built app. Tapping a pin or a row selects the
+node; tapping the selected row opens its peer page, and a row's long press
+has **Details**. A card would repeat the row it sits above.
+
+### Open in maps app
+
+iOS offers **Show in Maps…**, which opens Apple Maps.
+
+**Recommendation:** **Open in maps app** hands a `geo:` link to whatever map
+app the phone has, or asks which one when there are several.
+
+### Radio Detail follows the iOS spec
+
+The built iOS screen starts with a Connection list and a long caption for each
+link state. It shows no battery, board photo, or model, and its many buttons
+sit in one list.
+
+**Recommendation:** Android draws the screen the
+[iOS spec](../ios/product-structure.md) describes, and iOS follows later:
+- **The top:** the board photo, name, model, state, and battery with its age.
+- **Two buttons:** Disconnect and Forget, as on Android's own Bluetooth device
+  page.
+- **Sections:** Manage device, then Mesh radio, Connection, Offline assistance
+  (iOS's Host provisioning), Radio identity, and Maintenance.
+
+The state captions are left out; the state and the problem banner say enough.
+
+### Setting up the radio
+
+The plan listed a host takeover screen, and the built iOS app still shows a
+radio's host, with **Set Up for This Phone** and **Replace Existing Host…**
+when the radio holds no host or another one.
+
+**Recommendation:** the app sets up whichever radio it connects to for this
+phone, every time, without asking. Radio Detail shows no host row, no host
+state, and no takeover control, and Manage device is never locked for it. A
+radio that cannot be set up is a failed connection like any other: its reason
+and **Reconnect**. iOS drops the same controls.
+
+### Forgetting a radio
+
+iOS words its Forget confirmation for the accessory picker and for Bluetooth
+Settings, neither of which Android has.
+
+**Recommendation:** "Forget this companion radio?" with "The app stops
+reconnecting to this radio and releases it. The radio keeps its own pairing
+until you pair it again." Forgetting also removes the radio's association. As
+on iOS, the radio's host key is cleared first.
+
+### Device setup on Android
+
+**Recommendation:** iOS's flow and form, with three changes:
+- It is a full-screen flow over the shell, not a sheet.
+- Each new device gets its own one-device association before pairing, as
+  agreed in batch 3, using the same scan list with board photos.
+- The result replaces the form instead of covering it. iOS's "Congrats,
+  you've successfully set up your repeater!" becomes **Repeater set up**.
+
+### Management screens keep iOS's behavior and lose its footers
+
+iOS's categories carry long footers that explain each setting.
+
+**Recommendation:** keep iOS's behavior: values edit in place; **Refresh**
+becomes **Apply**; leaving with changes asks first; and over the mesh nothing
+is read until Refresh. Keep every confirmation and error word for word. Drop
+the explanatory footers: what a footer warns about is either confirmed before
+it happens or follows from the value. Each screen keeps one line saying how
+fresh its values are.
+
+The top app bar's subtitle names the device, since Manage device can be open
+for several devices in different stacks.
+
+### The Settings overview follows the iOS spec
+
+The built iOS Settings tab has Identity, Radio, Devices, and Region database.
+
+**Recommendation:** the spec's order, under four headers: Identity (Your
+identity, Channels), Radios (Companion radio, Set up a device), Mesh (Routing,
+Region database), and This app (Notifications, Storage, Diagnostics, About
+UMSH). Region database is a row of information, as on iOS, with no page.
+
+### Notifications in Settings
+
+**Recommendation:** one row per Android notification channel (Direct
+messages, Channels, EMERGENCY, Radio connection, and Problems), each opening
+the system page for its channel, where sound and importance are set. The page
+also holds **Hide contents on the lock screen** (batch 2) and a link to all of
+UMSH's notification settings. With notifications off for the app, a card at
+the top says so, with **Turn on**.
+
+### Diagnostics and About are new
+
+The iOS spec asks for diagnostics with a redaction preview and an About page.
+iOS has neither.
+
+**Recommendation:**
+- **Diagnostics:** versions; the radio's capabilities, by name; a radio log;
+  and **Share diagnostics…**. Its preview leaves out addresses, locations, and
+  message text until each is turned on, and never includes keys.
+- **About UMSH:** the version, umsh.dev, and the open-source licenses.
+
+iOS adds both. The radio log and the shared file need the core change below.
+
+### iOS copy shortened
+
+**Recommendation:** these iOS lines are cut to what the reader needs:
+- the place sources' details in region suggestion;
+- the setup goals' details;
+- the empty states on the map;
+- Radio Detail's state captions;
+- the management footers (see above);
+- the Wi-Fi password footer.
+
+Dialogs and errors keep iOS's words. The one exception is the Reach warning,
+titled "More than 10 hops?" instead of "Warning".
+
 ## Protocol and core changes
 
-Batch 4 adds no protocol or core changes.
+Batch 4 adds no protocol or core changes. Batch 5 adds no protocol changes,
+and one core change:
+
+### A diagnostics log
+
+Diagnostics needs a bounded log of radio and session events and a way to export
+it with chosen kinds of detail left out. Neither app keeps one today.
+
+1. **Mobile core:** keep a fixed-size ring of recent events: link state
+   changes, ULCP errors, and frame accounting. Store each event's addresses,
+   locations, and message text as separate fields, so an export can leave each
+   kind out.
+2. **Mobile core:** export the ring and the versions as one file, given the
+   kinds of detail to include. Keys are never in the ring.
+3. **Both apps:** the Diagnostics page and its share preview.
 
 ### Several regions on a channel
 
