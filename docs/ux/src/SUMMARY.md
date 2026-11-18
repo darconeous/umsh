@@ -27,6 +27,12 @@
 - [Screen Mockups](apps/ios/mockups.md)
 - [Open Product Decisions](apps/ios/open-decisions.md)
 
+# Android Application
+
+- [Product Structure](apps/android/product-structure.md)
+- [Screen Mockups](apps/android/mockups.md)
+- [Open Decisions](apps/android/open-decisions.md)
+
 # Device-Class Guidance
 
 - [Communicators](classes/communicators.md)
