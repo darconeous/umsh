@@ -902,6 +902,7 @@ mod tests {
                 MacEventRef::TxAbandoned {
                     identity_id: LocalIdentityId(1),
                     receipt: Some(SendReceipt(5)),
+                    reason: umsh_mac::TxAbandonReason::ChannelBusy,
                 }
             } else {
                 MacEventRef::AckTimeout {

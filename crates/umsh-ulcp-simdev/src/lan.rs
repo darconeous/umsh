@@ -103,6 +103,7 @@ pub fn session_config(dev_version: &'static str) -> SessionConfig {
         bridge_client: false,
         i2c_buses: &[],
         i2c_devices: &[],
+        node_msg: None,
     }
 }
 

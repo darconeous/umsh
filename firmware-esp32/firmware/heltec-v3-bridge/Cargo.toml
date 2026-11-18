@@ -45,6 +45,9 @@ entropy-sar-adc = []
 # Forwards MeshCore v1 traffic beside UMSH, as a third radio client.
 # For images plausibly left in place as infrastructure.
 meshcore-forwarder = ["umsh-ulcp-runtime/meshcore-forwarder"]
+# Node messaging (`CAP_NODE_MSG`): a link sends and receives UMSH
+# payloads through the device node. Off by default.
+node-msg = ["umsh-ulcp-runtime/node-msg"]
 # The LAN bearer: the device node's frames over IP multicast on the
 # station's network, and the DNS-SD record that describes them. The
 # T-Beam Supreme and the XIAO ESP32S3 carry it by default.

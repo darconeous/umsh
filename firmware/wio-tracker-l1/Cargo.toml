@@ -34,6 +34,9 @@ cap-gnss = []
 # Forwards MeshCore v1 traffic beside UMSH, as a third radio client.
 # For boards plausibly left in place as infrastructure.
 meshcore-forwarder = ["umsh-ulcp-runtime/meshcore-forwarder"]
+# Node messaging (`CAP_NODE_MSG`): a link sends and receives UMSH
+# payloads through the device node. Off by default.
+node-msg = ["umsh-ulcp-runtime/node-msg"]
 # The GNSS receiver's own backup domain is this board's only real-time
 # clock, so the boot path reads the time back out of the receiver.
 gnss-holds-the-clock = []

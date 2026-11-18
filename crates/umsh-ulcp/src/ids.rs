@@ -94,6 +94,9 @@ pub mod prop {
     /// Carry the host on a point-to-point link to the device's own node
     /// instead of the shared medium (`PROP_MAC_BACKHAUL`). Session-scoped.
     pub const MAC_BACKHAUL: u32 = 50;
+    /// The attached host receives node messages (`PROP_NODE_MSG_LISTEN`).
+    /// Session-scoped, and the host's alone.
+    pub const NODE_MSG_LISTEN: u32 = 51;
     /// Device identity public key (`PROP_DEV_KEY`).
     pub const DEV_KEY: u32 = 64;
     /// Device identity private key, write-only (`PROP_DEV_PRIVATE_KEY`).
@@ -756,6 +759,12 @@ pub mod prop {
     /// one of [`lan::State`](crate::lan::State). Read-only. Requires
     /// `CAP_LAN_BEARER`.
     pub const LAN_BEARER_STATE: u32 = 4995;
+    /// The payload types delivered over node messaging
+    /// (`PROP_NODE_MSG_TYPES`): device domain, saved, one octet per item.
+    pub const NODE_MSG_TYPES: u32 = 5008;
+    /// The longest `STR_NODE_MSG` payload every send accepts
+    /// (`PROP_NODE_MSG_MTU`).
+    pub const NODE_MSG_MTU: u32 = 5009;
 }
 
 /// `PROP_MAC_REPEATER_MODE` values.
@@ -828,6 +837,9 @@ pub mod saved {
 pub mod stream {
     /// Raw radio frame stream (`STR_PHY_RAW`).
     pub const PHY_RAW: u32 = 113;
+    /// Application payloads sent and received by the device's node
+    /// (`STR_NODE_MSG`).
+    pub const NODE_MSG: u32 = 114;
 }
 
 /// Capability codes advertised via `PROP_CAPS`.
@@ -995,6 +1007,10 @@ pub mod cap {
     /// `CAP_SOUND`: the device has a sounder it plays optional sounds on
     /// (`PROP_SOUND_ENABLED`, `PROP_SOUND_VOLUME`).
     pub const SOUND: u32 = 66;
+    /// `CAP_NODE_MSG`: node messaging (`STR_NODE_MSG`,
+    /// `PROP_NODE_MSG_LISTEN`, `PROP_NODE_MSG_TYPES`,
+    /// `PROP_NODE_MSG_MTU`). Requires [`DEV_IDENTITY`].
+    pub const NODE_MSG: u32 = 67;
 }
 
 /// `PROP_KEYBOARD_AIDS` flags.
@@ -1041,6 +1057,7 @@ pub fn admin_writable(key: u32) -> bool {
             // administrator may write it even though the host's next
             // attach resets it.
             | prop::MAC_PROMISCUOUS
+            | prop::NODE_MSG_LISTEN
             // A device identity cannot be installed over the mesh.
             | prop::DEV_PRIVATE_KEY
     )

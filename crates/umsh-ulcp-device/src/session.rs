@@ -407,6 +407,19 @@ pub struct SessionConfig {
     /// or board knowledge before constructing the session. Reading
     /// `PROP_I2C_DEVICES` only encodes this slice; it never probes a bus.
     pub i2c_devices: &'static [DeviceInfo<'static>],
+    /// Node messaging (`CAP_NODE_MSG`), in a build with the `node-msg`
+    /// feature, on a device with a node and a device identity. `None`, or
+    /// a build without the feature: the capability is absent and its
+    /// stream and properties are unknown.
+    pub node_msg: Option<NodeMsgConfig>,
+}
+
+/// How a device serves node messaging (see [`SessionConfig::node_msg`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NodeMsgConfig {
+    /// The payload types the device's node consumes itself, which no link
+    /// may claim in `PROP_NODE_MSG_TYPES`.
+    pub reserved_types: &'static [u8],
 }
 
 /// Physical-radio outcome of the transmit started by
@@ -619,6 +632,16 @@ pub enum Effect {
     /// [`Session::respond_i2c`] carrying the ascending list of addresses
     /// that acknowledged.
     I2cScan { tid: u8 },
+    /// `CMD_STR_SEND` on `STR_NODE_MSG`: hand the request staged in
+    /// [`Session::take_node_msg_request`] to the device's node, and report
+    /// its outcome with [`Session::on_node_msg_result`] quoting `id`. A
+    /// node with no room for it is reported as `STATUS_BUSY` at once.
+    NodeMsgSend { id: u16 },
+    /// `CMD_SESSION_START` started a new session on `binding`'s link.
+    /// What a platform holds for that link's previous session, such as
+    /// node messages it delivered and may deliver again, is its to act
+    /// on; the session has already discarded its own state.
+    SessionStarted { binding: Binding },
 }
 
 /// Largest sum of write-data and read-length octets one `CMD_I2C_TRANSFER`
@@ -700,6 +723,99 @@ pub struct AnnounceRequest {
     /// The device channel to send on, or `None` for a broadcast.
     pub channel_key: Option<[u8; items::CHANNEL_KEY_LEN]>,
 }
+
+/// Longest node message payload the session stages: what a broadcast,
+/// the kind with the least overhead, leaves of a LoRa frame.
+pub const NODE_MSG_PAYLOAD_MAX: usize = 250;
+
+/// Most node message sends whose outcome the session awaits at once.
+/// Another with a non-zero TID is refused with `STATUS_BUSY`.
+pub const NODE_MSG_SENDS: usize = 4;
+
+/// Most payload types `PROP_NODE_MSG_TYPES` holds.
+pub const MAX_NODE_MSG_TYPES: usize = 8;
+
+/// A validated `CMD_STR_SEND` on `STR_NODE_MSG` (see
+/// [`Effect::NodeMsgSend`]), with the channel resolved to its key and the
+/// transmit power clamped to the radio's range.
+#[cfg(feature = "node-msg")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NodeMsgRequest {
+    /// Quoted back in [`Session::on_node_msg_result`].
+    pub id: u16,
+    pub kind: umsh_ulcp::node_msg::Kind,
+    /// Request an acknowledgement.
+    pub ack: bool,
+    /// Carry the full public key as the source.
+    pub full_source: bool,
+    /// Carry a frame signature.
+    pub signed: bool,
+    /// The device channel to send on, for a kind with a channel.
+    pub channel_key: Option<[u8; items::CHANNEL_KEY_LEN]>,
+    /// The destination, for a kind with one.
+    pub peer: Option<[u8; items::PUBLIC_KEY_LEN]>,
+    /// The flood budget, or `None` for the device's default.
+    pub flood_hops: Option<u8>,
+    /// Router hints, next repeater first; empty for none.
+    pub source_route: HeaplessVec<
+        u8,
+        { umsh_ulcp::node_msg::MAX_ROUTE_HINTS * umsh_ulcp::node_msg::ROUTER_HINT_LEN },
+    >,
+    /// The transmit power in dBm, or `None` for the identity's own.
+    pub tx_power_dbm: Option<i8>,
+    /// The UMSH payload: type octet, then body.
+    pub payload: HeaplessVec<u8, NODE_MSG_PAYLOAD_MAX>,
+}
+
+/// A node message send awaiting its outcome, so the answer can reach the
+/// link that asked.
+#[cfg(feature = "node-msg")]
+#[derive(Clone, Copy)]
+struct NodeMsgSend {
+    id: u16,
+    binding: Binding,
+    tid: u8,
+}
+
+/// The session's node messaging state outside the device and session
+/// domains.
+#[cfg(feature = "node-msg")]
+struct NodeMsgState {
+    /// `PROP_NODE_MSG_MTU`, as the node last published it.
+    mtu: u16,
+    /// Sends awaiting their outcome.
+    sends: [Option<NodeMsgSend>; NODE_MSG_SENDS],
+    /// The next request's id.
+    next_id: u16,
+    /// The request staged for [`Effect::NodeMsgSend`].
+    staged: Option<NodeMsgRequest>,
+}
+
+#[cfg(feature = "node-msg")]
+impl NodeMsgState {
+    const fn new() -> Self {
+        Self {
+            mtu: 0,
+            sends: [None; NODE_MSG_SENDS],
+            next_id: 0,
+            staged: None,
+        }
+    }
+
+    /// Forget the sends `binding` is waiting on: their link's session
+    /// ended, so whatever their outcome, nobody is there to hear it.
+    fn forget(&mut self, binding: Binding) {
+        for slot in &mut self.sends {
+            if slot.is_some_and(|send| send.binding == binding) {
+                *slot = None;
+            }
+        }
+    }
+}
+
+/// `PROP_NODE_MSG_TYPES`.
+#[cfg(feature = "node-msg")]
+type NodeMsgTypes = FixedItemSet<MAX_NODE_MSG_TYPES, 1>;
 
 /// A staged `PROP_DEV_PRIVATE_KEY` provisioning request (see
 /// [`Effect::ProvisionIdentity`]).
@@ -1108,6 +1224,9 @@ struct DeviceDomain {
     /// the mesh. Empty by default—a device answers node management
     /// only from keys someone deliberately put here.
     admins: DevAdminTable,
+    /// `PROP_NODE_MSG_TYPES`: the payload types delivered to a link.
+    #[cfg(feature = "node-msg")]
+    node_msg_types: NodeMsgTypes,
     /// `PROP_MAC_REPEATER_MODE`: whether, and how eagerly, the device
     /// identity's on-board MAC forwards overheard routable frames; one of
     /// [`repeater_mode`]. Persisted device-domain state; takes effect only
@@ -1282,6 +1401,8 @@ impl DeviceDomain {
             channel_keys: ChannelKeyTable::default(),
             peers: DevPeerTable::default(),
             admins: DevAdminTable::default(),
+            #[cfg(feature = "node-msg")]
+            node_msg_types: NodeMsgTypes::default(),
             repeater_mode: repeater_mode::OFF,
             repeater_regions: RepeaterRegions::default(),
             repeater_default_region: None,
@@ -1736,6 +1857,17 @@ struct ChannelKeyTable {
     len: usize,
 }
 
+/// Equal as sets: the order keys were inserted in is not state. The
+/// identifier derives from the key, so the keys are the whole value.
+impl PartialEq for ChannelKeyTable {
+    fn eq(&self, other: &Self) -> bool {
+        self.len == other.len
+            && self
+                .iter()
+                .all(|entry| other.iter().any(|held| held.key == entry.key))
+    }
+}
+
 impl ChannelKeyTable {
     fn iter(&self) -> impl Iterator<Item = &ChannelKeyEntry> {
         self.entries[..self.len]
@@ -2036,6 +2168,13 @@ fn take_items<const N: usize, const L: usize>(
     Some(set)
 }
 
+/// Equal as sets: the order items were inserted in is not state.
+impl<const N: usize, const L: usize> PartialEq for FixedItemSet<N, L> {
+    fn eq(&self, other: &Self) -> bool {
+        self.len == other.len && self.iter().all(|item| other.contains(item))
+    }
+}
+
 // `[[u8; L]; N]` does not derive `Default` for arbitrary const parameters.
 impl<const N: usize, const L: usize> Default for FixedItemSet<N, L> {
     fn default() -> Self {
@@ -2126,6 +2265,17 @@ impl RegionEntry {
 struct RepeaterRegions {
     entries: [Option<RegionEntry>; MAX_REPEATER_REGIONS],
     len: usize,
+}
+
+/// Equal as sets of the regions as written: the order they were inserted
+/// in is not state, and the codes derive from the text.
+impl PartialEq for RepeaterRegions {
+    fn eq(&self, other: &Self) -> bool {
+        self.len == other.len
+            && self
+                .iter()
+                .all(|entry| other.iter().any(|held| held.text() == entry.text()))
+    }
 }
 
 impl RepeaterRegions {
@@ -2228,6 +2378,16 @@ type MeshCoreRegionName = HeaplessVec<u8, MESHCORE_REGION_NAME_MAX_LEN>;
 /// which holds them for every packet it gates.
 #[derive(Clone, Default)]
 struct MeshCoreRegions(HeaplessVec<MeshCoreRegionName, MAX_MESHCORE_REGIONS>);
+
+/// Equal as sets: the order names were inserted in is not state.
+impl PartialEq for MeshCoreRegions {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.len() == other.0.len()
+            && self
+                .iter()
+                .all(|name| other.iter().any(|held| held == name))
+    }
+}
 
 impl MeshCoreRegions {
     fn iter(&self) -> impl Iterator<Item = &[u8]> {
@@ -2767,6 +2927,8 @@ const SAVED_SCHEMA: &[SavedProperty] = &[
     saved(prop::LAN_BEARER_ENABLED, ApplyPhase::Enable, false),
     saved(prop::LAN_BEARER_GROUP, ApplyPhase::Config, false),
     saved(prop::LAN_BEARER_INGRESS_LIMIT, ApplyPhase::Config, false),
+    #[cfg(feature = "node-msg")]
+    saved(prop::NODE_MSG_TYPES, ApplyPhase::Config, true),
 ];
 
 /// Whether `key` is part of the saved snapshot: what `CMD_SAVE` persists
@@ -2859,7 +3021,7 @@ impl SavedStatus {
 /// and forgets them on power cycle, when the host re-provisions in full.
 /// Also excluded: queue contents, per-peer replay baselines, and the
 /// independently persisted device identity keypair.
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 struct SavedState {
     #[cfg(feature = "bridge-client")]
     bridge: crate::bridge::BridgeConfig,
@@ -2880,6 +3042,8 @@ struct SavedState {
     dev_channel_keys: ChannelKeyTable,
     dev_peers: DevPeerTable,
     dev_admins: DevAdminTable,
+    #[cfg(feature = "node-msg")]
+    node_msg_types: NodeMsgTypes,
     repeater_mode: u8,
     repeater_regions: RepeaterRegions,
     repeater_default_region: Option<[u8; REGION_CODE_LEN]>,
@@ -2943,6 +3107,8 @@ impl SavedState {
             dev_channel_keys: device.channel_keys,
             dev_peers: device.peers,
             dev_admins: device.admins,
+            #[cfg(feature = "node-msg")]
+            node_msg_types: device.node_msg_types,
             repeater_mode: device.repeater_mode,
             repeater_regions: device.repeater_regions,
             repeater_default_region: device.repeater_default_region,
@@ -3007,6 +3173,8 @@ impl SavedState {
             dev_channel_keys: ChannelKeyTable::default(),
             dev_peers: DevPeerTable::default(),
             dev_admins: DevAdminTable::default(),
+            #[cfg(feature = "node-msg")]
+            node_msg_types: NodeMsgTypes::default(),
             repeater_mode: repeater_mode::OFF,
             repeater_regions: RepeaterRegions::default(),
             repeater_default_region: None,
@@ -3193,6 +3361,13 @@ impl SavedState {
             prop::DEV_ADMINS => {
                 for public_key in self.dev_admins.iter() {
                     encoder.put(number, public_key)?;
+                }
+                Ok(())
+            }
+            #[cfg(feature = "node-msg")]
+            prop::NODE_MSG_TYPES => {
+                for payload_type in self.node_msg_types.iter() {
+                    encoder.put(number, payload_type)?;
                 }
                 Ok(())
             }
@@ -3425,6 +3600,11 @@ impl SavedState {
                     value.try_into().map_err(|_| Unheld)?;
                 held(self.dev_admins.insert(public_key))?;
             }
+            #[cfg(feature = "node-msg")]
+            prop::NODE_MSG_TYPES => {
+                let payload_type: [u8; 1] = value.try_into().map_err(|_| Unheld)?;
+                held(self.node_msg_types.insert(payload_type))?;
+            }
             prop::TZ_RULE => self.tz_rule = ZoneRule::parse(value).map_err(invalid)?,
             prop::TIME_24H => self.time_24h = parse_bool(value).map_err(invalid)?,
             prop::GNSS_IDENT_UPDATE => {
@@ -3573,6 +3753,9 @@ struct SessionState<const TX: usize> {
     /// the transaction; flash remains the source of truth either way
     /// (see [`Session::respond_identity`]).
     pending_identity: Option<PendingIdentity>,
+    /// `PROP_NODE_MSG_LISTEN`.
+    #[cfg(feature = "node-msg")]
+    node_msg_listen: bool,
 }
 
 impl<const TX: usize> Default for SessionState<TX> {
@@ -3583,6 +3766,8 @@ impl<const TX: usize> Default for SessionState<TX> {
             pending: Deque::new(),
             drain: None,
             pending_identity: None,
+            #[cfg(feature = "node-msg")]
+            node_msg_listen: false,
         }
     }
 }
@@ -3809,6 +3994,8 @@ pub struct Session<A: AesProvider, S: Sha256Provider, const TX: usize = 1> {
     /// started the attached host's session over, and the code is that
     /// session's boundary; paid with the other owed publications.
     owed_reset_status: Option<Status>,
+    #[cfg(feature = "node-msg")]
+    node_msg: NodeMsgState,
     scratch: [u8; SCRATCH],
     /// Kept beside `scratch` rather than on the stack: a signature input
     /// holds about four frames.
@@ -4016,6 +4203,8 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             session_end_pending: None,
             session_ended: false,
             owed_reset_status: None,
+            #[cfg(feature = "node-msg")]
+            node_msg: NodeMsgState::new(),
             scratch: [0; SCRATCH],
             signatures: SignatureScratch::new(),
         }
@@ -4393,6 +4582,8 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     prop::DEV_CHANNEL_KEYS => self.device.channel_keys = saved.dev_channel_keys,
                     prop::DEV_PEERS => self.device.peers = saved.dev_peers,
                     prop::DEV_ADMINS => self.device.admins = saved.dev_admins,
+                    #[cfg(feature = "node-msg")]
+                    prop::NODE_MSG_TYPES => self.device.node_msg_types = saved.node_msg_types,
                     prop::DEV_NAME => {
                         self.device.name = saved.name;
                         self.device.name_len = saved.name_len;
@@ -4657,6 +4848,8 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             self.multi = None;
         }
         self.session = SessionState::default();
+        #[cfg(feature = "node-msg")]
+        self.node_msg.forget(Binding::Local);
     }
 
     /// End the attached host's session on a serial link (spec §Sessions):
@@ -4699,26 +4892,31 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     }
 
     /// `CMD_SESSION_START` from the binding in flight.
-    fn start_session(&mut self, tid: u8, emit: &mut impl FnMut(&[u8])) {
-        match self.binding {
+    fn start_session(&mut self, tid: u8, emit: &mut impl FnMut(&[u8])) -> Option<Effect> {
+        let binding = self.binding;
+        match binding {
             Binding::Local => {
                 self.discard_session_state();
                 self.session_ended = false;
                 // A notice still owed belongs to the session this ends.
                 self.session_end_pending = None;
             }
-            // The interface's session holds nothing in the session yet
-            // but its exchange, which this one is.
-            Binding::Device => {}
+            // The interface's session holds nothing in the session but
+            // its exchange, which this one is, and the sends it awaits.
+            Binding::Device => {
+                #[cfg(feature = "node-msg")]
+                self.node_msg.forget(Binding::Device);
+            }
             Binding::Admin | Binding::Host => {
                 self.complete(tid, Status::NOT_PERMITTED, emit);
-                return;
+                return None;
             }
         }
         let mut buf = [0u8; 4];
         if let Ok(len) = frame::session_did_start(&mut buf, tid) {
             emit(&buf[..len]);
         }
+        Some(Effect::SessionStarted { binding })
     }
 
     /// Publish what changed on the device without a publication of its
@@ -4961,10 +5159,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 self.complete(tid, Status::OK, emit);
                 None
             }
-            Some(Cmd::SessionStart) => {
-                self.start_session(tid, emit);
-                None
-            }
+            Some(Cmd::SessionStart) => self.start_session(tid, emit),
             Some(Cmd::Reset) => Some(self.reset(Status::RESET_SOFTWARE, emit)),
             Some(Cmd::PropGet) => match PropPayload::parse(received.payload) {
                 Ok(payload) => self.prop_get(tid, payload.key, now_ms, emit),
@@ -4980,15 +5175,22 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     None
                 }
             },
-            // The raw PHY stream and the host-facing receive queue are
-            // the tethered host's, and neither an administrator nor the
-            // device's own interface is one (spec §Node Management—
-            // Authorization).
-            Some(Cmd::StrSend | Cmd::QueueDrain) if !self.is_tethered() => {
+            // The host-facing receive queue is the tethered host's, and
+            // neither an administrator nor the device's own interface is
+            // one (spec §Node Management—Authorization).
+            Some(Cmd::QueueDrain) if !self.is_tethered() => {
                 self.complete(tid, Status::NOT_PERMITTED, emit);
                 None
             }
             Some(Cmd::StrSend) => match StreamPayload::parse(received.payload) {
+                Ok(payload) if payload.stream == stream::NODE_MSG && self.has_node_msg() => {
+                    self.node_msg_send(tid, &payload, emit)
+                }
+                // The raw PHY stream is the tethered host's alone.
+                Ok(_) if !self.is_tethered() => {
+                    self.complete(tid, Status::NOT_PERMITTED, emit);
+                    None
+                }
                 Ok(payload) => self.str_send(tid, &payload, now_ms, emit),
                 Err(_) => {
                     self.complete(tid, Status::PARSE_ERROR, emit);
@@ -7160,7 +7362,13 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         if self.saved_status() != SavedStatus::Current {
             return false;
         }
-        self.saved = Some(self.capture());
+        let state = self.capture();
+        // A write that changed nothing, such as an application setting
+        // its claims as it does at every start, owes flash nothing.
+        if self.saved.as_ref() == Some(&state) {
+            return false;
+        }
+        self.saved = Some(state);
         self.saved_unwritten = true;
         true
     }
@@ -8105,6 +8313,19 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             self.send_prop_is(tid, key, &[enabled as u8], emit);
             return None;
         }
+        // Session state, and the attached host's alone: the device's own
+        // interface is refused by `binding_writable` above.
+        #[cfg(feature = "node-msg")]
+        if key == prop::NODE_MSG_LISTEN && self.has_node_msg() {
+            match parse_bool(value) {
+                Ok(listen) => {
+                    self.session.node_msg_listen = listen;
+                    self.send_prop_is(tid, key, &[listen as u8], emit);
+                }
+                Err(status) => self.complete(tid, status, emit),
+            }
+            return None;
+        }
         if key == prop::DEV_NAME {
             if !valid_device_name(value) {
                 self.complete(tid, Status::INVALID_ARGUMENT, emit);
@@ -8289,6 +8510,23 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             prop::DEV_ADMINS => {
                 self.device.admins = DevAdminTable::parse_table(value)?;
                 self.bump_dev_domain();
+                Ok(false)
+            }
+            #[cfg(feature = "node-msg")]
+            prop::NODE_MSG_TYPES if self.has_node_msg() => {
+                let types = NodeMsgTypes::parse_table(value)?;
+                if types
+                    .iter()
+                    .any(|&[payload_type]| self.node_msg_reserved(payload_type))
+                {
+                    return Err(Status::NOT_PERMITTED);
+                }
+                // An application sets its claims every time it starts;
+                // the same claims again are not a change.
+                if types != self.device.node_msg_types {
+                    self.device.node_msg_types = types;
+                    self.bump_dev_domain();
+                }
                 Ok(false)
             }
             // Device-domain forwarding switch. Accepted regardless of
@@ -8853,6 +9091,20 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     Err(status) => self.complete(tid, status, emit),
                 }
             }
+            #[cfg(feature = "node-msg")]
+            prop::NODE_MSG_TYPES if self.has_node_msg() => match *item {
+                [payload_type] if self.node_msg_reserved(payload_type) => {
+                    self.complete(tid, Status::NOT_PERMITTED, emit)
+                }
+                [payload_type] => match self.device.node_msg_types.insert([payload_type]) {
+                    Ok(()) => {
+                        self.bump_dev_domain();
+                        self.send_prop_inserted(tid, key, item, emit);
+                    }
+                    Err(status) => self.complete(tid, status, emit),
+                },
+                _ => self.complete(tid, Status::INVALID_ARGUMENT, emit),
+            },
             // A known property that is not a mutable multi-value
             // property cannot be inserted into.
             _ if self.known_prop(key) => self.complete(tid, Status::INVALID_ARGUMENT, emit),
@@ -9029,6 +9281,22 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     Err(status) => self.complete(tid, status, emit),
                 }
             }
+            #[cfg(feature = "node-msg")]
+            prop::NODE_MSG_TYPES if self.has_node_msg() => {
+                let result = selector
+                    .try_into()
+                    .map_err(|_| Status::INVALID_ARGUMENT)
+                    .and_then(|payload_type: &[u8; 1]| {
+                        self.device.node_msg_types.remove(payload_type)
+                    });
+                match result {
+                    Ok(()) => {
+                        self.bump_dev_domain();
+                        self.send_prop_removed(tid, key, selector, emit);
+                    }
+                    Err(status) => self.complete(tid, status, emit),
+                }
+            }
             _ if self.known_prop(key) => self.complete(tid, Status::INVALID_ARGUMENT, emit),
             _ => self.complete(tid, Status::PROP_NOT_FOUND, emit),
         }
@@ -9084,6 +9352,180 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         } else {
             Err(Status::INVALID_STATE)
         }
+    }
+
+    /// Whether no link may claim `payload_type`: the device's node
+    /// consumes it.
+    #[cfg(feature = "node-msg")]
+    fn node_msg_reserved(&self, payload_type: u8) -> bool {
+        self.config
+            .node_msg
+            .is_some_and(|config| config.reserved_types.contains(&payload_type))
+    }
+
+    /// `CMD_STR_SEND` on `STR_NODE_MSG`: validate, resolve, and stage the
+    /// send for [`Effect::NodeMsgSend`].
+    #[cfg(feature = "node-msg")]
+    fn node_msg_send(
+        &mut self,
+        tid: u8,
+        payload: &StreamPayload<'_>,
+        emit: &mut impl FnMut(&[u8]),
+    ) -> Option<Effect> {
+        match self.stage_node_msg(tid, payload) {
+            Ok(id) => Some(Effect::NodeMsgSend { id }),
+            Err(status) => {
+                self.complete(tid, status, emit);
+                None
+            }
+        }
+    }
+
+    #[cfg(not(feature = "node-msg"))]
+    fn node_msg_send(
+        &mut self,
+        tid: u8,
+        _payload: &StreamPayload<'_>,
+        emit: &mut impl FnMut(&[u8]),
+    ) -> Option<Effect> {
+        self.complete(tid, Status::PROP_NOT_FOUND, emit);
+        None
+    }
+
+    #[cfg(feature = "node-msg")]
+    fn stage_node_msg(&mut self, tid: u8, payload: &StreamPayload<'_>) -> Result<u16, Status> {
+        use umsh_ulcp::node_msg::SendMeta;
+
+        // An administrator's sends would be the device's own traffic
+        // with nobody on the device asking for it.
+        if !matches!(self.binding, Binding::Local | Binding::Device) {
+            return Err(Status::NOT_PERMITTED);
+        }
+        let meta = SendMeta::parse(payload.metadata).map_err(|error| error.status())?;
+        // A payload is at least its type octet.
+        if payload.data.is_empty() {
+            return Err(Status::INVALID_ARGUMENT);
+        }
+        let payload_bytes =
+            HeaplessVec::from_slice(payload.data).map_err(|_| Status::INVALID_ARGUMENT)?;
+        let channel_key = match meta.channel {
+            Some(identifier) => Some(
+                self.channel_key_for(&identifier)
+                    .ok_or(Status::CHANNEL_NOT_FOUND)?,
+            ),
+            None => None,
+        };
+        let source_route = HeaplessVec::from_slice(meta.source_route.unwrap_or_default())
+            .map_err(|_| Status::INVALID_ARGUMENT)?;
+        // A send nobody waits on needs no row; one with a TID does, and
+        // with no row free the link hears so now rather than never.
+        let slot = if tid == TID_UNSOLICITED {
+            None
+        } else {
+            let index = self
+                .node_msg
+                .sends
+                .iter()
+                .position(Option::is_none)
+                .ok_or(Status::BUSY)?;
+            Some(index)
+        };
+        let id = self.node_msg.next_id;
+        self.node_msg.next_id = id.wrapping_add(1);
+        if let Some(index) = slot {
+            self.node_msg.sends[index] = Some(NodeMsgSend {
+                id,
+                binding: self.binding,
+                tid,
+            });
+        }
+        self.node_msg.staged = Some(NodeMsgRequest {
+            id,
+            kind: meta.kind,
+            ack: meta.ack,
+            full_source: meta.full_source,
+            signed: meta.signed,
+            channel_key,
+            peer: meta.peer,
+            flood_hops: meta.flood_hops,
+            source_route,
+            // An unreachable power transmits at the nearest reachable
+            // one, as for `PROP_PHY_TX_POWER`.
+            tx_power_dbm: meta
+                .tx_power
+                .map(|dbm| dbm.clamp(self.config.min_tx_power_dbm, self.config.max_tx_power_dbm)),
+            payload: payload_bytes,
+        });
+        Ok(id)
+    }
+
+    /// The send [`Effect::NodeMsgSend`] staged, taken by the platform to
+    /// hand to the device's node.
+    #[cfg(feature = "node-msg")]
+    pub fn take_node_msg_request(&mut self) -> Option<NodeMsgRequest> {
+        self.node_msg.staged.take()
+    }
+
+    /// The outcome of the node message send `id`. Answers the link that
+    /// sent it, if it is still waiting, with `PROP_LAST_STATUS` carrying
+    /// its TID, and returns which binding that answer is for. `None` when
+    /// nobody is waiting: the send had TID 0, or its link's session has
+    /// since ended.
+    #[cfg(feature = "node-msg")]
+    pub fn on_node_msg_result(
+        &mut self,
+        id: u16,
+        status: Status,
+        emit: &mut impl FnMut(&[u8]),
+    ) -> Option<Binding> {
+        let slot = self
+            .node_msg
+            .sends
+            .iter_mut()
+            .find(|slot| slot.is_some_and(|send| send.id == id))?;
+        let send = slot.take()?;
+        // An answer to a host whose session has ended would be the
+        // ended session's.
+        if send.binding == Binding::Local && (!self.attached || self.session_ended) {
+            return None;
+        }
+        self.send_status(send.tid, status, emit);
+        Some(send.binding)
+    }
+
+    /// Record `PROP_NODE_MSG_MTU` as the node computes it.
+    #[cfg(feature = "node-msg")]
+    pub fn set_node_msg_mtu(&mut self, mtu: u16) {
+        self.node_msg.mtu = mtu;
+    }
+
+    /// The link that receives node messages now (spec §Who Receives):
+    /// the attached host if it set `PROP_NODE_MSG_LISTEN` and its session
+    /// is live, otherwise the device's own interface if the device has
+    /// one, as `device_interface` says. `None` when no link does, or the
+    /// device does not serve node messaging.
+    #[cfg(feature = "node-msg")]
+    pub fn node_msg_receiver(&self, device_interface: bool) -> Option<Binding> {
+        if !self.has_node_msg() {
+            None
+        } else if self.attached && !self.session_ended && self.session.node_msg_listen {
+            Some(Binding::Local)
+        } else {
+            device_interface.then_some(Binding::Device)
+        }
+    }
+
+    /// `PROP_NODE_MSG_TYPES`: the payload types delivered to a link.
+    /// `None` on a device that does not serve node messaging, which
+    /// claims nothing whatever it has saved.
+    #[cfg(feature = "node-msg")]
+    pub fn node_msg_types(&self) -> Option<impl Iterator<Item = u8> + '_> {
+        self.has_node_msg().then(|| {
+            self.device
+                .node_msg_types
+                .iter()
+                .map(|&[payload_type]| payload_type)
+        })
     }
 
     fn str_send(
@@ -9216,6 +9658,15 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         cfg!(feature = "wifi") && self.config.wifi.is_some_and(|wifi| wifi.station)
     }
 
+    /// Whether the device serves node messaging: the build, the board's
+    /// configuration, a node to send through, and an identity to send as.
+    fn has_node_msg(&self) -> bool {
+        cfg!(feature = "node-msg")
+            && self.config.node_msg.is_some()
+            && self.config.mac_node
+            && self.config.dev_identity
+    }
+
     fn has_bridge(&self) -> bool {
         cfg!(feature = "bridge-client")
             && self.config.bridge_client
@@ -9258,6 +9709,12 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     fn known_prop(&self, key: u32) -> bool {
         if is_custody_property(key) {
             return self.config.host_custody;
+        }
+        if matches!(
+            key,
+            prop::NODE_MSG_LISTEN | prop::NODE_MSG_TYPES | prop::NODE_MSG_MTU
+        ) {
+            return self.has_node_msg();
         }
         if (prop::BRIDGE_ENABLED..=prop::BRIDGE_LINK).contains(&key) {
             return self.has_bridge();
@@ -9544,6 +10001,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 }
                 if self.has_i2c() {
                     len += pui::encode(cap::I2C, &mut out[len..]).unwrap_or(0);
+                }
+                if self.has_node_msg() {
+                    len += pui::encode(cap::NODE_MSG, &mut out[len..]).unwrap_or(0);
                 }
                 len
             }
@@ -9902,6 +10362,21 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 out[0] = self.session.backhaul as u8;
                 1
             }
+            #[cfg(feature = "node-msg")]
+            prop::NODE_MSG_LISTEN if self.has_node_msg() => {
+                out[0] = self.session.node_msg_listen as u8;
+                1
+            }
+            #[cfg(feature = "node-msg")]
+            prop::NODE_MSG_TYPES if self.has_node_msg() => {
+                let mut len = 0;
+                for payload_type in self.device.node_msg_types.iter() {
+                    len += put(&mut out[len..], payload_type);
+                }
+                len
+            }
+            #[cfg(feature = "node-msg")]
+            prop::NODE_MSG_MTU if self.has_node_msg() => put(out, &self.node_msg.mtu.to_le_bytes()),
             prop::SAVED => {
                 out[0] = self.saved_status().as_octet();
                 1
@@ -10558,6 +11033,7 @@ mod tests {
             bridge_client: false,
             i2c_buses: TEST_I2C_BUSES,
             i2c_devices: TEST_I2C_DEVICES,
+            node_msg: None,
         }
     }
 
@@ -21555,6 +22031,7 @@ mod tests {
             SessionConfig {
                 i2c_buses: &[],
                 i2c_devices: &[],
+                node_msg: None,
                 ..test_config()
             },
             Status::RESET_POWER_ON,
@@ -21980,5 +22457,361 @@ mod tests {
         );
         session.end_admin_exchange();
         expect_status(&emitted[0], TID_UNSOLICITED, Status::BUS_ERROR);
+    }
+
+    // ─── Node messaging ──────────────────────────────────────────────
+
+    #[cfg(feature = "node-msg")]
+    mod node_msg {
+        use super::*;
+        use umsh_ulcp::node_msg::{Kind, SendMeta, tx_flag};
+
+        const RESERVED: &[u8] = &[8, 9];
+
+        fn node_msg_session() -> TestSession {
+            let config = SessionConfig {
+                node_msg: Some(NodeMsgConfig {
+                    reserved_types: RESERVED,
+                }),
+                ..test_config()
+            };
+            let mut session = Session::new(config, Status::RESET_POWER_ON, test_engine());
+            session.attach(true);
+            session
+        }
+
+        fn send_frame(tid: u8, data: &[u8], meta: &SendMeta<'_>) -> Vec<u8> {
+            let mut buf = [0u8; 512];
+            let mut writer = FrameWriter::new(&mut buf, tid, Cmd::StrSend).unwrap();
+            writer.write_pui(stream::NODE_MSG).unwrap();
+            writer.write_u16_le(data.len() as u16).unwrap();
+            writer.write_bytes(data).unwrap();
+            meta.write(&mut writer).unwrap();
+            let len = writer.finish();
+            buf[..len].to_vec()
+        }
+
+        fn unicast() -> SendMeta<'static> {
+            let mut meta = SendMeta::new(Kind::Unicast);
+            meta.peer = Some([0xAA; 32]);
+            meta.ack = true;
+            meta
+        }
+
+        fn sent_id(effect: Option<Effect>) -> u16 {
+            match effect {
+                Some(Effect::NodeMsgSend { id }) => id,
+                other => panic!("expected a node message send, got {other:?}"),
+            }
+        }
+
+        fn result(
+            session: &mut TestSession,
+            id: u16,
+            status: Status,
+        ) -> (Vec<Vec<u8>>, Option<Binding>) {
+            let mut emitted = Vec::new();
+            let binding = session
+                .on_node_msg_result(id, status, &mut |bytes: &[u8]| emitted.push(bytes.to_vec()));
+            (emitted, binding)
+        }
+
+        #[test]
+        fn the_capability_needs_the_config_a_node_and_an_identity() {
+            let mut session = node_msg_session();
+            assert!(capabilities(&mut session).contains(&cap::NODE_MSG));
+            assert_eq!(get(&mut session, prop::NODE_MSG_TYPES), [0u8; 0]);
+
+            let mut bare = test_session();
+            assert!(!capabilities(&mut bare).contains(&cap::NODE_MSG));
+            let mut buf = [0u8; 16];
+            let len = frame::prop_get(&mut buf, 1, prop::NODE_MSG_TYPES).unwrap();
+            let (emitted, _) = dispatch(&mut bare, &buf[..len], 0);
+            expect_status(&emitted[0], 1, Status::PROP_NOT_FOUND);
+
+            for config in [
+                SessionConfig {
+                    mac_node: false,
+                    node_msg: Some(NodeMsgConfig {
+                        reserved_types: RESERVED,
+                    }),
+                    ..test_config()
+                },
+                SessionConfig {
+                    dev_identity: false,
+                    node_msg: Some(NodeMsgConfig {
+                        reserved_types: RESERVED,
+                    }),
+                    ..test_config()
+                },
+            ] {
+                let mut session = Session::new(config, Status::RESET_POWER_ON, test_engine());
+                session.attach(true);
+                assert!(!capabilities(&mut session).contains(&cap::NODE_MSG));
+            }
+        }
+
+        #[test]
+        fn a_link_claims_any_type_the_device_does_not_consume() {
+            let mut session = node_msg_session();
+            let (emitted, _) = set(&mut session, prop::NODE_MSG_TYPES, &[3, 0x80]);
+            let (_, key, value) = parse_prop_is(&emitted[0]);
+            assert_eq!(key, prop::NODE_MSG_TYPES);
+            assert_eq!(value, [3, 0x80]);
+            assert_eq!(
+                session.node_msg_types().unwrap().collect::<Vec<_>>(),
+                [3, 0x80]
+            );
+
+            let (emitted, _) = set(&mut session, prop::NODE_MSG_TYPES, &[3, 8]);
+            expect_status(&emitted[0], 2, Status::NOT_PERMITTED);
+            let (emitted, _) = insert_item(&mut session, prop::NODE_MSG_TYPES, &[9]);
+            expect_status(&emitted[0], 5, Status::NOT_PERMITTED);
+            let (emitted, _) = insert_item(&mut session, prop::NODE_MSG_TYPES, &[3]);
+            expect_status(&emitted[0], 5, Status::ALREADY);
+            let (emitted, _) = insert_item(&mut session, prop::NODE_MSG_TYPES, &[3, 4]);
+            expect_status(&emitted[0], 5, Status::INVALID_ARGUMENT);
+            insert_item(&mut session, prop::NODE_MSG_TYPES, &[4]);
+            remove_item(&mut session, prop::NODE_MSG_TYPES, &[0x80]);
+            assert_eq!(get(&mut session, prop::NODE_MSG_TYPES), [3, 4]);
+            // Refused writes left the claims alone.
+            assert_eq!(session.node_msg_types().unwrap().count(), 2);
+        }
+
+        /// An application sets its claims every time it starts. The same
+        /// claims again, in any order, are not a change: nothing to sync
+        /// and nothing owed to flash.
+        #[test]
+        fn the_same_claims_again_change_nothing() {
+            let mut out = [0u8; SNAPSHOT_MAX];
+            let mut session = node_msg_session();
+            set(&mut session, prop::NODE_MSG_TYPES, &[3, 0x80]);
+            let len = session.encode_snapshot(&mut out).unwrap();
+            let saved = out[..len].to_vec();
+            session.restore_at_boot(&saved).unwrap();
+
+            let version = session.dev_domain_version();
+            set(&mut session, prop::NODE_MSG_TYPES, &[0x80, 3]);
+            assert_eq!(session.dev_domain_version(), version);
+            assert!(!session.note_device_change());
+            assert_eq!(session.unwritten_snapshot(&mut out), None);
+
+            set(&mut session, prop::NODE_MSG_TYPES, &[3]);
+            assert_ne!(session.dev_domain_version(), version);
+            assert!(session.note_device_change());
+        }
+
+        #[test]
+        fn claims_are_saved() {
+            let mut out = [0u8; SNAPSHOT_MAX];
+            let mut session = node_msg_session();
+            set(&mut session, prop::NODE_MSG_TYPES, &[3, 0x80]);
+            let len = session.encode_snapshot(&mut out).unwrap();
+            let mut rebooted = node_msg_session();
+            rebooted.restore_at_boot(&out[..len]).unwrap();
+            let mut types = rebooted.node_msg_types().unwrap().collect::<Vec<_>>();
+            types.sort();
+            assert_eq!(types, [3, 0x80]);
+        }
+
+        #[test]
+        fn listening_is_the_host_session_s_alone() {
+            let mut session = node_msg_session();
+            // Until the host listens, the device's own interface
+            // receives, if there is one.
+            assert_eq!(session.node_msg_receiver(false), None);
+            assert_eq!(session.node_msg_receiver(true), Some(Binding::Device));
+            set(&mut session, prop::NODE_MSG_LISTEN, &[1]);
+            assert_eq!(get(&mut session, prop::NODE_MSG_LISTEN), [1]);
+            assert_eq!(session.node_msg_receiver(true), Some(Binding::Local));
+
+            // The device's own interface may read it, not write it.
+            let mut buf = [0u8; 16];
+            let len = frame::prop_set(&mut buf, 3, prop::NODE_MSG_LISTEN, &[0]).unwrap();
+            let (emitted, _) = device(&mut session, &buf[..len]);
+            expect_status(&emitted[0], 3, Status::NOT_PERMITTED);
+            assert_eq!(session.node_msg_receiver(false), Some(Binding::Local));
+
+            // A session that ends or starts over starts deaf.
+            session.end_session(SessionEndReason::FrameLost);
+            assert_eq!(session.node_msg_receiver(false), None);
+            let len = frame::session_start(&mut buf, 1).unwrap();
+            let (_, effect) = dispatch(&mut session, &buf[..len], 0);
+            assert_eq!(
+                effect,
+                Some(Effect::SessionStarted {
+                    binding: Binding::Local
+                })
+            );
+            assert_eq!(get(&mut session, prop::NODE_MSG_LISTEN), [0]);
+            set(&mut session, prop::NODE_MSG_LISTEN, &[1]);
+            session.attach(true);
+            assert_eq!(session.node_msg_receiver(false), None);
+            // A device that does not serve node messaging hands nothing
+            // to anyone.
+            let plain: TestSession =
+                Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
+            assert_eq!(plain.node_msg_receiver(true), None);
+        }
+
+        #[test]
+        fn a_send_is_staged_and_answered_when_the_node_is_done() {
+            let mut session = node_msg_session();
+            let mut meta = unicast();
+            meta.flood_hops = Some(2);
+            meta.source_route = Some(&[1, 2, 3, 4]);
+            meta.tx_power = Some(100);
+            let (emitted, effect) =
+                dispatch(&mut session, &send_frame(4, &[3, 0xFF, b'h'], &meta), 0);
+            assert!(emitted.is_empty(), "no answer before the outcome");
+            let id = sent_id(effect);
+            let request = session.take_node_msg_request().unwrap();
+            assert_eq!(request.id, id);
+            assert_eq!(request.kind, Kind::Unicast);
+            assert!(request.ack);
+            assert_eq!(request.peer, Some([0xAA; 32]));
+            assert_eq!(request.flood_hops, Some(2));
+            assert_eq!(request.source_route, [1, 2, 3, 4]);
+            assert_eq!(request.tx_power_dbm, Some(22), "clamped to the radio");
+            assert_eq!(request.payload, [3, 0xFF, b'h']);
+            assert!(session.take_node_msg_request().is_none());
+
+            let (emitted, binding) = result(&mut session, id, Status::NO_ACK);
+            assert_eq!(binding, Some(Binding::Local));
+            expect_status(&emitted[0], 4, Status::NO_ACK);
+            // Answered once.
+            assert_eq!(result(&mut session, id, Status::OK).1, None);
+        }
+
+        #[test]
+        fn a_channel_is_named_by_its_identifier() {
+            let mut session = node_msg_session();
+            insert_item(&mut session, prop::DEV_CHANNEL_KEYS, &[0x42; 32]);
+            let identifier: [u8; 16] = get(&mut session, prop::DEV_CHANNEL_KEYS)[..16]
+                .try_into()
+                .unwrap();
+            let mut meta = SendMeta::new(Kind::Multicast);
+            meta.channel = Some(identifier);
+            let (_, effect) = dispatch(&mut session, &send_frame(1, &[3], &meta), 0);
+            sent_id(effect);
+            assert_eq!(
+                session.take_node_msg_request().unwrap().channel_key,
+                Some([0x42; 32])
+            );
+
+            meta.channel = Some([0x99; 16]);
+            let (emitted, effect) = dispatch(&mut session, &send_frame(2, &[3], &meta), 0);
+            assert_eq!(effect, None);
+            expect_status(&emitted[0], 2, Status::CHANNEL_NOT_FOUND);
+        }
+
+        #[test]
+        fn a_send_the_device_cannot_make_is_refused_at_once() {
+            let mut session = node_msg_session();
+            // An acknowledged broadcast.
+            let mut buf = [0u8; 16];
+            let metadata = [Kind::Broadcast.code(), tx_flag::ACK];
+            let len = frame::str_send(&mut buf, 1, stream::NODE_MSG, &[3], &metadata).unwrap();
+            let (emitted, _) = dispatch(&mut session, &buf[..len], 0);
+            expect_status(&emitted[0], 1, Status::INVALID_ARGUMENT);
+            // No payload type.
+            let (emitted, _) = dispatch(&mut session, &send_frame(2, &[], &unicast()), 0);
+            expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
+            // Metadata cut short.
+            let mut buf = [0u8; 16];
+            let len = frame::str_send(&mut buf, 3, stream::NODE_MSG, &[3], &[0]).unwrap();
+            let (emitted, _) = dispatch(&mut session, &buf[..len], 0);
+            expect_status(&emitted[0], 3, Status::PARSE_ERROR);
+        }
+
+        #[test]
+        fn sends_awaited_at_once_are_bounded_and_tid_zero_is_not_awaited() {
+            let mut session = node_msg_session();
+            let mut ids = Vec::new();
+            for tid in 1..=NODE_MSG_SENDS as u8 {
+                let (_, effect) = dispatch(&mut session, &send_frame(tid, &[3], &unicast()), 0);
+                ids.push(sent_id(effect));
+                session.take_node_msg_request();
+            }
+            let (emitted, effect) = dispatch(&mut session, &send_frame(7, &[3], &unicast()), 0);
+            assert_eq!(effect, None);
+            expect_status(&emitted[0], 7, Status::BUSY);
+            // Nobody waits on TID 0, so it takes no row.
+            let (emitted, effect) = dispatch(&mut session, &send_frame(0, &[3], &unicast()), 0);
+            assert!(emitted.is_empty());
+            let unawaited = sent_id(effect);
+            assert_eq!(result(&mut session, unawaited, Status::OK).1, None);
+            // An outcome frees its row.
+            result(&mut session, ids[0], Status::OK);
+            let (_, effect) = dispatch(&mut session, &send_frame(7, &[3], &unicast()), 0);
+            sent_id(effect);
+        }
+
+        /// A new session is a new set of TIDs: the old session's sends
+        /// finish on the air, unheard.
+        #[test]
+        fn a_new_session_forgets_the_old_one_s_sends() {
+            let mut session = node_msg_session();
+            let (_, effect) = dispatch(&mut session, &send_frame(1, &[3], &unicast()), 0);
+            let before_start = sent_id(effect);
+            let mut buf = [0u8; 4];
+            let len = frame::session_start(&mut buf, 2).unwrap();
+            dispatch(&mut session, &buf[..len], 0);
+            assert_eq!(
+                result(&mut session, before_start, Status::OK),
+                (vec![], None)
+            );
+
+            let (_, effect) = dispatch(&mut session, &send_frame(1, &[3], &unicast()), 0);
+            let before_end = sent_id(effect);
+            session.end_session(SessionEndReason::FrameLost);
+            assert_eq!(result(&mut session, before_end, Status::OK), (vec![], None));
+        }
+
+        #[test]
+        fn the_device_interface_sends_and_hears_its_answer() {
+            let mut session = node_msg_session();
+            let (emitted, effect) = device(&mut session, &send_frame(5, &[3], &unicast()));
+            assert!(emitted.is_empty());
+            let id = sent_id(effect);
+            // The host starting its session over is not the interface's.
+            let mut buf = [0u8; 4];
+            let len = frame::session_start(&mut buf, 1).unwrap();
+            dispatch(&mut session, &buf[..len], 0);
+            let (emitted, binding) = result(&mut session, id, Status::OK);
+            assert_eq!(binding, Some(Binding::Device));
+            expect_status(&emitted[0], 5, Status::OK);
+
+            // The interface's own start is its, and is reported.
+            let (_, effect) = device(&mut session, &send_frame(5, &[3], &unicast()));
+            let id = sent_id(effect);
+            let (_, effect) = device(&mut session, &buf[..len]);
+            assert_eq!(
+                effect,
+                Some(Effect::SessionStarted {
+                    binding: Binding::Device
+                })
+            );
+            assert_eq!(result(&mut session, id, Status::OK).1, None);
+
+            // The raw stream is still the host's alone.
+            let mut buf = [0u8; 32];
+            let len = frame::str_send(&mut buf, 6, stream::PHY_RAW, &[1, 2], &[0, 0]).unwrap();
+            let (emitted, _) = device(&mut session, &buf[..len]);
+            expect_status(&emitted[0], 6, Status::NOT_PERMITTED);
+        }
+
+        #[test]
+        fn an_administrator_may_not_send_as_the_device() {
+            let mut session = node_msg_session();
+            let request = send_frame(2, &[3], &unicast());
+            let mut emitted = Vec::new();
+            let effect = session.handle_admin_frame(&request, 0, 180, &mut |bytes: &[u8]| {
+                emitted.push(bytes.to_vec())
+            });
+            session.end_admin_exchange();
+            assert_eq!(effect, None);
+            expect_status(&emitted[0], 2, Status::NOT_PERMITTED);
+        }
     }
 }

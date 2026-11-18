@@ -17,6 +17,7 @@ pub mod lan;
 pub mod lifecycle;
 pub mod manage;
 pub mod message;
+pub mod node_msg;
 pub mod phy;
 pub mod ping;
 pub mod props;
@@ -254,6 +255,12 @@ pub enum Command {
     /// Print text messages addressed to this tool, until interrupted.
     Listen(message::ListenArgs),
 
+    /// Send and receive UMSH payloads as the attached device.
+    NodeMsg {
+        #[command(subcommand)]
+        op: node_msg::NodeMsgOp,
+    },
+
     /// Show or forget the routes this tool has learned to other nodes.
     ///
     /// Learned from replies and remembered between invocations, so a
@@ -359,6 +366,11 @@ impl Command {
             Self::Replay(_) => {
                 Some("replay needs the attached radio's own link; `disconnect` first")
             }
+            // Node messaging is for a local link; the device refuses it to
+            // an administrator.
+            Self::NodeMsg { .. } => {
+                Some("node messaging needs the attached radio's own link; `disconnect` first")
+            }
             // Each of these becomes a node on the mesh, and this session
             // is already using the only radio there is.
             Self::Manage { .. }
@@ -448,6 +460,7 @@ impl Command {
             Self::Discover(args) => discover::discover(app, args).await,
             Self::Send(args) => message::send(app, args).await,
             Self::Listen(args) => message::listen(app, args).await,
+            Self::NodeMsg { op } => node_msg::run(app, op).await,
             Self::Routes { op } => routes_cmd::run(op),
             Self::AdminKey => crate::mesh::show_admin_key(),
             Self::Get { keys, hex } => props::get(app.device()?, &keys, hex).await,

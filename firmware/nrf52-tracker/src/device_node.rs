@@ -81,6 +81,12 @@ async fn node_admin_task(node_handle: DeviceNode, input: &'static SessionInput, 
     umsh_ulcp_runtime::admin_responder::responder_loop(node_handle, input, nonce).await
 }
 
+#[cfg(feature = "node-msg")]
+#[embassy_executor::task]
+async fn node_msg_task(node_handle: DeviceNode, input: &'static SessionInput) {
+    umsh_ulcp_runtime::node_msg::node_msg_loop(node_handle, input).await
+}
+
 #[cfg(feature = "meshcore-forwarder")]
 #[embassy_executor::task]
 async fn meshcore_forwarder_task(public_key: [u8; 32], seed: [u8; 32], t_frame_ms: u32) {
@@ -179,6 +185,8 @@ pub async fn bring_up(
     spawner.spawn(node_dev_sync_task(parts.node.clone(), parts.mac, parts.node_key).unwrap());
     spawner.spawn(node_identity_profile_task(parts.node.clone()).unwrap());
     spawner.spawn(node_admin_task(parts.node.clone(), input, admin_nonce).unwrap());
+    #[cfg(feature = "node-msg")]
+    spawner.spawn(node_msg_task(parts.node.clone(), input).unwrap());
     spawner.spawn(node_beacon_task(parts.node, hooks).unwrap());
     spawner.spawn(node_advert_task(parts.mac).unwrap());
     spawner.spawn(node_reboot_quiesce_task(parts.mac).unwrap());

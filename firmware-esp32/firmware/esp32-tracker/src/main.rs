@@ -569,6 +569,10 @@ fn session_config() -> SessionConfig {
         #[cfg(not(feature = "ulcp-i2c"))]
         i2c_buses: &[],
         i2c_devices: &[],
+        #[cfg(feature = "node-msg")]
+        node_msg: Some(umsh_ulcp_runtime::node_msg::CONFIG),
+        #[cfg(not(feature = "node-msg"))]
+        node_msg: None,
     }
 }
 

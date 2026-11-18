@@ -142,6 +142,7 @@ impl DeviceSide {
             bridge_client: false,
             i2c_buses: umsh_ulcp_simdev::SIMULATED_I2C_BUSES,
             i2c_devices: umsh_ulcp_simdev::SIMULATED_I2C_DEVICES,
+            node_msg: None,
         };
         let mut session = Session::new(
             config,

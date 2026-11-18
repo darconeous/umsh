@@ -10,8 +10,9 @@
 //!   ([`NODE_CH`], mux client B) behind the shared duty-ledger gate: the
 //!   session and the node share one physical radio through `radio_mux`
 //!   and draw from one combined `PROP_PHY_DUTY_LIMIT` budget. A refused
-//!   transmit is shed via the MAC's CAD-backoff path rather than killing
-//!   the pump.
+//!   transmit is backed off from like a busy channel and, once its
+//!   attempts run out, abandoned as duty-limited rather than killing the
+//!   pump.
 //! - **Rng** is a ChaCha12 CSPRNG seeded from the board's hardware TRNG
 //!   at boot ([`NodeRng`]): project policy forbids non-crypto RNGs, and
 //!   under BLE builds the RNG peripheral is not ours to read at runtime.
@@ -286,6 +287,12 @@ pub fn publish_snapshot(snapshot: DevDomainSnapshot) {
 /// the identity gone (factory reset); the MAC still holds the old
 /// identity until reboot, but it must stop originating traffic.
 static NODE_ACTIVE: AtomicBool = AtomicBool::new(true);
+
+/// Whether the device node originates traffic: its MAC holds the
+/// session's live device identity.
+pub fn node_active() -> bool {
+    NODE_ACTIVE.load(Ordering::Relaxed)
+}
 
 /// How the device node forwards (`PROP_MAC_REPEATER_MODE`).
 static NODE_REPEATER_MODE: AtomicU8 = AtomicU8::new(repeater_mode::OFF);
@@ -1646,6 +1653,19 @@ pub async fn bring_up<CS: CounterStore + 'static>(
         crate::admin_responder::admit(packet);
         false
     }));
+    // Node messaging: what a link claimed is kept for it, and the MAC
+    // acknowledges a claimed message only when there is room to keep it.
+    // Never consumes: a claimed type is one the device does not act on.
+    #[cfg(feature = "node-msg")]
+    {
+        core::mem::forget(node.on_receive(|packet| {
+            crate::node_msg::tap(packet);
+            false
+        }));
+        MacHandle::new(mac_cell)
+            .set_payload_admission(Some(crate::node_msg::admits))
+            .await;
+    }
     // Identity Request observability tap. The actual reply is produced by
     // the built-in responder enabled below (a targeted unicast identity,
     // echoing any NONCE); this handler only logs, and never consumes.

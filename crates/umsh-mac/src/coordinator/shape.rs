@@ -106,6 +106,7 @@ pub(super) struct PreparedSend {
     pub frame_counter: u32,
     pub salt: Option<u16>,
     pub not_before_ms: u64,
+    pub power_dbm: Option<i8>,
 }
 
 /// A send's shapes, most preferred first.
@@ -273,6 +274,11 @@ impl<
     /// and if that shape could be Route-Retried, its retry form fits too.
     /// A frame that carries a Trace is held one byte below the frame limit,
     /// so the first repeater always has room for at least a truncated trace.
+    ///
+    /// A peer that is not registered is measured as a first contact: no
+    /// route known, flooding as asked. A channel that is not configured
+    /// measures as one that is. Sending to either still needs it
+    /// registered.
     pub fn payload_capacity(
         &self,
         from: LocalIdentityId,
@@ -285,7 +291,7 @@ impl<
             .identity()
             .public_key();
         let options = Self::sanitized_send_options(destination, options);
-        let chain = self.resolve_send_shapes(destination, &options)?;
+        let chain = self.resolve_shapes(destination, &options, true)?;
         let mut capacity = 0;
         for shape in &chain {
             let Ok((len, retry_len)) =
@@ -360,7 +366,20 @@ impl<
         destination: SendDestination<'_>,
         options: &SendOptions,
     ) -> Result<ShapeChain, SendError> {
-        if let Some(channel) = destination.channel()
+        self.resolve_shapes(destination, options, false)
+    }
+
+    /// [`resolve_send_shapes`](Self::resolve_send_shapes), taking a peer
+    /// that is not registered for a first contact, and a channel that is
+    /// not configured for one that is, when `strangers` allows.
+    fn resolve_shapes(
+        &self,
+        destination: SendDestination<'_>,
+        options: &SendOptions,
+        strangers: bool,
+    ) -> Result<ShapeChain, SendError> {
+        if !strangers
+            && let Some(channel) = destination.channel()
             && self.channels.lookup_by_key(channel).is_none()
         {
             return Err(SendError::ChannelMissing);
@@ -405,10 +424,11 @@ impl<
             return Ok(chain);
         };
 
-        let (peer_id, _) = self
-            .peer_registry
-            .lookup_by_key(peer)
-            .ok_or(SendError::PeerMissing)?;
+        let peer_id = match self.peer_registry.lookup_by_key(peer) {
+            Some((peer_id, _)) => Some(peer_id),
+            None if strangers => None,
+            None => return Err(SendError::PeerMissing),
+        };
         let route = self.effective_source_route(peer_id, options);
         let flood_hops = self.effective_flood_hops(peer_id, options, route.as_ref());
         // A caller asking for a trace is asking for a path to be recorded,
@@ -471,10 +491,13 @@ impl<
         // exactly what the real values will.
         let mut buf = [0u8; FRAME];
         let salt = shape.salted.then_some(0);
-        let channel_id = destination
-            .channel()
-            .and_then(|key| self.channels.lookup_by_key(key))
-            .map(|channel| channel.derived.channel_id);
+        // A channel that is not configured is being measured, not sent
+        // on, and every identifier is the same two octets.
+        let channel_id = destination.channel().map(|key| {
+            self.channels
+                .lookup_by_key(key)
+                .map_or(ChannelId([0; 2]), |channel| channel.derived.channel_id)
+        });
         let frame = build_shaped(
             destination.target(channel_id),
             source,

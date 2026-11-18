@@ -392,3 +392,54 @@ fn an_oversized_route_retry_resends_the_original() {
     });
     assert!(timed_out);
 }
+
+/// A peer that is not registered measures as one just registered: a first
+/// contact, flooding with nothing learned; a channel that is not configured
+/// as one that is. Sending to it is still refused.
+#[test]
+fn an_unregistered_peer_measures_as_a_first_contact() {
+    let setup = fresh();
+    let stranger = PublicKey([0x77; 32]);
+    let ack = SendOptions::default().with_ack_requested(true);
+    for options in [SendOptions::default(), ack] {
+        let registered = setup.capacity(Kind::Unicast, &options);
+        let unregistered = setup
+            .mac
+            .payload_capacity(
+                setup.local_id,
+                SendDestination::Unicast(&stranger),
+                &options,
+            )
+            .unwrap();
+        assert_eq!(unregistered, registered);
+        let blind = setup
+            .mac
+            .payload_capacity(
+                setup.local_id,
+                SendDestination::BlindUnicast {
+                    peer: &stranger,
+                    channel: &CHANNEL_KEY,
+                },
+                &options,
+            )
+            .unwrap();
+        assert_eq!(blind, setup.capacity(Kind::BlindUnicast, &options));
+        let elsewhere = ChannelKey([0x33; 32]);
+        let multicast = setup
+            .mac
+            .payload_capacity(
+                setup.local_id,
+                SendDestination::Multicast(&elsewhere),
+                &options,
+            )
+            .unwrap();
+        assert_eq!(multicast, setup.capacity(Kind::Multicast, &options));
+    }
+    let mut setup = setup;
+    assert_eq!(
+        setup
+            .mac
+            .queue_unicast(setup.local_id, &stranger, &[1], &SendOptions::default()),
+        Err(SendError::PeerMissing)
+    );
+}

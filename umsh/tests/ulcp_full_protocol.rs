@@ -112,6 +112,7 @@ fn session_config() -> SessionConfig {
         bridge_client: false,
         i2c_buses: umsh_ulcp_simdev::SIMULATED_I2C_BUSES,
         i2c_devices: umsh_ulcp_simdev::SIMULATED_I2C_DEVICES,
+        node_msg: None,
     }
 }
 
@@ -380,6 +381,9 @@ impl SimDevice {
                 };
                 self.session.respond_identity(tid, result, &mut emit);
             }
+            // The simulator offers no node messaging, and holds nothing to
+            // hand a link again.
+            Some(Effect::NodeMsgSend { .. }) | Some(Effect::SessionStarted { .. }) => {}
         }
     }
 

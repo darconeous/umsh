@@ -40,6 +40,7 @@ pub mod ip;
 pub mod items;
 pub mod lan;
 pub mod meta;
+pub mod node_msg;
 pub mod profiles;
 pub mod pui;
 pub mod reply;

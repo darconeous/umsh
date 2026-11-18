@@ -106,6 +106,7 @@ impl<const PAYLOAD: usize> Device<PAYLOAD> {
             bridge_client: false,
             i2c_buses: &[],
             i2c_devices: &[],
+            node_msg: None,
         };
         let mut session = Session::new(
             config,

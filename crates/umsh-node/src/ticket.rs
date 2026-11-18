@@ -1,8 +1,9 @@
 use alloc::rc::Rc;
 use core::cell::RefCell;
+use core::task::{Context, Poll, Waker};
 
 use umsh_core::RouterHint;
-use umsh_mac::{LocalIdentityId, SendReceipt};
+use umsh_mac::{LocalIdentityId, SendReceipt, TxAbandonReason};
 
 /// Distinct named repeaters a [`RepeatTally`] remembers. Past this, a newly
 /// named repeater is counted as an anonymous one.
@@ -100,6 +101,21 @@ pub(crate) struct TicketState {
     /// True for sends that don't request ACK (broadcast/multicast).
     /// The dispatcher marks these finished as soon as Transmitted fires.
     pub non_ack: bool,
+    /// Why the MAC gave up on the frame without transmitting it, when it did.
+    pub abandoned: Option<TxAbandonReason>,
+    /// The task waiting for the send to finish.
+    pub waker: Option<Waker>,
+}
+
+impl TicketState {
+    /// Wake whoever waits on the send, once it is finished.
+    pub(crate) fn wake_if_finished(&mut self) {
+        if self.finished
+            && let Some(waker) = self.waker.take()
+        {
+            waker.wake();
+        }
+    }
 }
 
 /// Lightweight handle for observing the progress of an in-flight send.
@@ -204,6 +220,32 @@ impl SendProgressTicket {
     pub fn is_finished(&self) -> bool {
         self.state.borrow().finished
     }
+
+    /// Why the MAC gave up on the frame before it ever reached the air,
+    /// when that is how the send finished.
+    pub fn abandon_reason(&self) -> Option<TxAbandonReason> {
+        self.state.borrow().abandoned
+    }
+
+    /// Ready once [`is_finished`](Self::is_finished); otherwise `cx` is
+    /// woken when it becomes so. Only the latest waker is kept, so one
+    /// task may wait on several tickets but two tasks may not wait on one.
+    pub fn poll_finished(&self, cx: &mut Context<'_>) -> Poll<()> {
+        let mut state = self.state.borrow_mut();
+        if state.finished {
+            return Poll::Ready(());
+        }
+        match &mut state.waker {
+            Some(waker) => waker.clone_from(cx.waker()),
+            none => *none = Some(cx.waker().clone()),
+        }
+        Poll::Pending
+    }
+
+    /// Wait until the MAC is done with the send.
+    pub async fn finished(&self) {
+        core::future::poll_fn(|cx| self.poll_finished(cx)).await
+    }
 }
 
 #[cfg(test)]
@@ -288,6 +330,32 @@ mod tests {
 
         state.borrow_mut().finished = true;
         assert!(ticket.is_finished());
+    }
+
+    #[test]
+    fn a_waiter_is_woken_when_the_send_finishes() {
+        use alloc::sync::Arc;
+        use alloc::task::Wake;
+        use core::sync::atomic::{AtomicBool, Ordering};
+
+        struct Flag(AtomicBool);
+        impl Wake for Flag {
+            fn wake(self: Arc<Self>) {
+                self.0.store(true, Ordering::Relaxed);
+            }
+        }
+        let flag = Arc::new(Flag(AtomicBool::new(false)));
+        let waker = Waker::from(flag.clone());
+        let mut cx = Context::from_waker(&waker);
+        let (ticket, state) = make_ticket();
+        assert!(ticket.poll_finished(&mut cx).is_pending());
+        state.borrow_mut().transmitted = true;
+        state.borrow_mut().wake_if_finished();
+        assert!(!flag.0.load(Ordering::Relaxed));
+        state.borrow_mut().finished = true;
+        state.borrow_mut().wake_if_finished();
+        assert!(flag.0.load(Ordering::Relaxed));
+        assert!(ticket.poll_finished(&mut cx).is_ready());
     }
 
     #[test]

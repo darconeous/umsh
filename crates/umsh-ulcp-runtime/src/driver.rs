@@ -190,6 +190,18 @@ pub enum InEvent {
     /// device already reachable would otherwise strand it—and ignored
     /// entirely when Bluetooth is already on or the device has none.
     ForceBluetoothOn,
+    /// Node messaging: send `id` finished, or was refused, with `status`.
+    #[cfg(feature = "node-msg")]
+    NodeMsgResult {
+        id: u16,
+        status: Status,
+    },
+    /// Node messaging: `PROP_NODE_MSG_MTU`, as the device node measures it.
+    #[cfg(feature = "node-msg")]
+    NodeMsgMtu(u16),
+    /// Node messaging: a held message may have a link to go to now.
+    #[cfg(feature = "node-msg")]
+    NodeMsgPending,
 }
 
 /// A device-domain switch a board may offer as a control the operator
@@ -401,6 +413,13 @@ impl<M: RawMutex> DeviceLink<M> {
     /// for a frame is waiting for it too.
     pub async fn ready(&self) {
         self.frames.ready_to_receive().await
+    }
+
+    /// Queue `frame` if there is room now, without waiting and without
+    /// recording an overrun: a frame that can wait for the link to read.
+    #[cfg(feature = "node-msg")]
+    fn offer(&self, frame: &[u8]) -> bool {
+        FrameBuf::from_slice(frame).is_ok_and(|copy| self.frames.try_send(copy).is_ok())
     }
 
     fn publish(&self, frame: &[u8]) {
@@ -1570,7 +1589,67 @@ async fn apply_effect<A, S, const TXQ: usize, M, const RX: usize, const TX: usiz
         | Some(Effect::Reboot)
         | Some(Effect::Dfu { .. })
         | Some(Effect::Announce { .. })
+        | Some(Effect::NodeMsgSend { .. })
+        | Some(Effect::SessionStarted { .. })
         | None => {}
+    }
+}
+
+/// Hand held node messages to the link that receives them (spec §Who
+/// Receives), oldest first, for as long as it has room. A link found full
+/// is tried again shortly, from [`crate::node_msg::node_msg_loop`].
+#[cfg(feature = "node-msg")]
+fn deliver_node_msgs<A, S, const TXQ: usize, M, const RX: usize, const TX: usize>(
+    session: &Session<A, S, TXQ>,
+    arbitration: &SessionArbitration,
+    rt: &DeviceRuntime<M, RX, TX>,
+) where
+    A: AesProvider,
+    S: Sha256Provider,
+    M: RawMutex,
+{
+    use crate::node_msg::INBOX;
+    use umsh_ulcp_device::Binding;
+    let Some(binding) = session.node_msg_receiver(rt.device.is_some()) else {
+        return;
+    };
+    // Where the host's frames go; `None` for the device's own interface.
+    let destination = match binding {
+        Binding::Local => match arbitration.destination() {
+            Some(destination) => Some(destination),
+            None => return,
+        },
+        _ => None,
+    };
+    let mut frame = [0u8; FRAME_OUT_MAX];
+    loop {
+        let Some((seq, encoded)) = INBOX.lock(|inbox| {
+            let inbox = inbox.borrow();
+            let waiting = inbox.next(binding)?;
+            let encoded = waiting
+                .message
+                .encode(waiting.redelivered, waiting.gap, &mut frame);
+            Some((waiting.seq, encoded))
+        }) else {
+            return;
+        };
+        let taken = match encoded {
+            Ok(len) => match destination {
+                Some((transport, generation)) => rt.out.offer(transport, generation, &frame[..len]),
+                None => rt.device.is_some_and(|link| link.offer(&frame[..len])),
+            },
+            // Every message the inbox holds fits a frame. One that did not
+            // would never go out, so it goes no further.
+            Err(_) => {
+                debug_assert!(false, "a held node message exceeds a frame");
+                true
+            }
+        };
+        if !taken {
+            crate::node_msg::link_full();
+            return;
+        }
+        INBOX.lock(|inbox| inbox.borrow_mut().delivered(seq, binding));
     }
 }
 
@@ -1805,6 +1884,12 @@ fn sync_dev_domain<A, S, const TXQ: usize, E>(
     }
     for public_key in session.dev_admins() {
         let _ = snapshot.admins.push(public_key);
+    }
+    // The claims are device domain too. The receive tap and the MAC's
+    // admission read them from the node's side of the mirror.
+    #[cfg(feature = "node-msg")]
+    if let Some(claims) = session.node_msg_types() {
+        crate::node_msg::publish_claims(claims);
     }
     // Ahead of the mirror: the mirror is consumed by the device node,
     // and Bluetooth reachability is the transport's business rather than
@@ -2211,6 +2296,25 @@ where
                 env.trace(format_args!("CMD_FACTORY_RESET: wiping all state + reboot"));
                 env.factory_reset().await
             }
+            #[cfg(feature = "node-msg")]
+            Some(Effect::NodeMsgSend { id }) => {
+                // The node's send queue is full: as busy as a session
+                // table with no row free.
+                if let Some(request) = session.take_node_msg_request()
+                    && crate::node_msg::SENDS.try_send(request).is_err()
+                {
+                    session.on_node_msg_result(id, Status::BUSY, &mut |frame: &[u8]| {
+                        emitter.push(frame)
+                    });
+                    emitter.flush(sink).await;
+                }
+            }
+            // What was delivered to the link may not have reached it; the
+            // driver hands it over again at the end of this pass.
+            #[cfg(feature = "node-msg")]
+            Some(Effect::SessionStarted { binding }) => {
+                crate::node_msg::INBOX.lock(|inbox| inbox.borrow_mut().redeliver(binding));
+            }
             Some(Effect::Reboot) => {
                 // Same shape as the factory reset above and none of the
                 // erasing: the platform restarts and the device comes
@@ -2479,6 +2583,13 @@ where
                 // A displaced transport's loss is not the host's.
                 if arbitration.accepts_frame(transport) {
                     end_host_session(session, rt.out, transport, SessionEndReason::FrameLost);
+                    // The lost frame may have been a node message's.
+                    #[cfg(feature = "node-msg")]
+                    crate::node_msg::INBOX.lock(|inbox| {
+                        inbox
+                            .borrow_mut()
+                            .redeliver(umsh_ulcp_device::Binding::Local)
+                    });
                 }
             }
             Either4::First(InEvent::Detached(transport)) => {
@@ -2589,6 +2700,36 @@ where
                     ));
                 }
             }
+            #[cfg(feature = "node-msg")]
+            Either4::First(InEvent::NodeMsgResult { id, status }) => {
+                let binding =
+                    session.on_node_msg_result(id, status, &mut |frame: &[u8]| emitter.push(frame));
+                match (binding, rt.device) {
+                    (Some(umsh_ulcp_device::Binding::Device), Some(link)) => {
+                        emitter
+                            .flush(&mut ReplySink::Device {
+                                link,
+                                destination: arbitration.destination(),
+                                out: rt.out,
+                            })
+                            .await;
+                    }
+                    _ => {
+                        emitter
+                            .flush(&mut ReplySink::host(
+                                &arbitration,
+                                &rt,
+                                session.host_session_live(),
+                            ))
+                            .await;
+                    }
+                }
+            }
+            #[cfg(feature = "node-msg")]
+            Either4::First(InEvent::NodeMsgMtu(mtu)) => session.set_node_msg_mtu(mtu),
+            // Delivery happens at the end of every pass.
+            #[cfg(feature = "node-msg")]
+            Either4::First(InEvent::NodeMsgPending) => {}
             Either4::First(InEvent::Frame(transport, frame_bytes)) => {
                 if arbitration.accepts_frame(transport) {
                     // Live even when the session has ended: the session
@@ -2715,7 +2856,11 @@ where
                 let now_ms = Instant::now().as_millis();
                 let outcome = match result {
                     Ok(()) => TxOutcome::Sent,
-                    Err(umsh_hal::TxError::CadTimeout) => TxOutcome::ChannelBusy,
+                    // The session prices its own airtime before it
+                    // transmits, so nothing behind it refuses on duty.
+                    Err(umsh_hal::TxError::CadTimeout | umsh_hal::TxError::DutyLimited) => {
+                        TxOutcome::ChannelBusy
+                    }
                     Err(umsh_hal::TxError::Io(_)) => TxOutcome::Failed,
                 };
                 let effect =
@@ -2920,6 +3065,11 @@ where
                 ))
                 .await;
         }
+        // Last, so whatever this pass changed about who receives—a host
+        // that started listening, a session that started over—already
+        // counts, and anything owed the host went ahead of it.
+        #[cfg(feature = "node-msg")]
+        deliver_node_msgs(session, &arbitration, &rt);
     }
 }
 

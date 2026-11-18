@@ -13,58 +13,63 @@ type TestSession = Session<SoftwareAes, SoftwareSha256, 1>;
 
 fn session(name: &'static str) -> TestSession {
     Session::new(
-        SessionConfig {
-            dev_version: "test",
-            dev_model: None,
-            default_device_name: name,
-            mtu: 255,
-            tx_preamble_symbols: 32,
-            sync_word: 0x1424,
-            min_tx_power_dbm: -9,
-            max_tx_power_dbm: 22,
-            freq_khz_min: 150_000,
-            freq_khz_max: 960_000,
-            defaults: RadioSettings {
-                enabled: false,
-                freq_khz: 910_525,
-                bw_hz: 62_500,
-                sf: 7,
-                cr_denom: 5,
-                tx_power_dbm: 14,
-            },
-            default_duty_limit: 0xffff,
-            duty: Box::leak(Box::new(DutyLedger::new())),
-            battery: None,
-            battery_diagnostics: Default::default(),
-            stats: None,
-            alert: None,
-            time: None,
-            gnss: None,
-            display_motion_wake: false,
-            display: None,
-            keyboard: false,
-            sound: false,
-            host_custody: true,
-            illuminance: false,
-            temperatures: false,
-            ble: true,
-            ble_pairing: true,
-            ble_pin: true,
-            reboot: true,
-            dev_identity: true,
-            messaging: false,
-            mac_node: false,
-            meshcore_forwarder: false,
-            lan_bearer: umsh_ulcp_device::LanBearerRole::None,
-            wifi: None,
-            ip: None,
-            bridge_client: false,
-            i2c_buses: &[],
-            i2c_devices: &[],
-        },
+        config(name),
         Status::RESET_POWER_ON,
         CryptoEngine::new(SoftwareAes, SoftwareSha256),
     )
+}
+
+fn config(name: &'static str) -> SessionConfig {
+    SessionConfig {
+        dev_version: "test",
+        dev_model: None,
+        default_device_name: name,
+        mtu: 255,
+        tx_preamble_symbols: 32,
+        sync_word: 0x1424,
+        min_tx_power_dbm: -9,
+        max_tx_power_dbm: 22,
+        freq_khz_min: 150_000,
+        freq_khz_max: 960_000,
+        defaults: RadioSettings {
+            enabled: false,
+            freq_khz: 910_525,
+            bw_hz: 62_500,
+            sf: 7,
+            cr_denom: 5,
+            tx_power_dbm: 14,
+        },
+        default_duty_limit: 0xffff,
+        duty: Box::leak(Box::new(DutyLedger::new())),
+        battery: None,
+        battery_diagnostics: Default::default(),
+        stats: None,
+        alert: None,
+        time: None,
+        gnss: None,
+        display_motion_wake: false,
+        display: None,
+        keyboard: false,
+        sound: false,
+        host_custody: true,
+        illuminance: false,
+        temperatures: false,
+        ble: true,
+        ble_pairing: true,
+        ble_pin: true,
+        reboot: true,
+        dev_identity: true,
+        messaging: false,
+        mac_node: false,
+        meshcore_forwarder: false,
+        lan_bearer: umsh_ulcp_device::LanBearerRole::None,
+        wifi: None,
+        ip: None,
+        bridge_client: false,
+        i2c_buses: &[],
+        i2c_devices: &[],
+        node_msg: None,
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -699,4 +704,137 @@ fn the_device_interface_is_answered_on_its_link_and_hears_every_publication() {
     }
     assert_eq!(kept, DEVICE_LINK_DEPTH);
     assert!(overrun);
+}
+
+/// Node messaging through the driver: the claims reach the node's side of
+/// the mirror, a held message goes to the host only once it listens, and
+/// a host whose session starts over is handed it again, flagged, once it
+/// listens again.
+#[cfg(feature = "node-msg")]
+#[test]
+fn node_messages_wait_for_a_host_that_listens() {
+    use crate::node_msg::{self, Inbox, Message};
+    use umsh_ulcp::frame::StreamPayload;
+    use umsh_ulcp::node_msg::{Kind, RecvMeta, Source};
+    use umsh_ulcp::{
+        Frame, frame,
+        ids::{prop, stream},
+    };
+
+    let _alone = node_msg::TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    node_msg::INBOX.lock(|inbox| *inbox.borrow_mut() = Inbox::new());
+    node_msg::publish_claims([]);
+
+    let rt = DeviceRuntime {
+        input: Box::leak(Box::new(InputChannel::<NoopRawMutex>::new())),
+        radio: Box::leak(Box::new(Channels::<NoopRawMutex, 1, 1>::new())),
+        ctl: Box::leak(Box::new(DeviceControl::new())),
+        out: Box::leak(Box::new(TransportChannels::new())),
+        session_gen: Box::leak(Box::new(AtomicU32::new(0))),
+        device: None,
+        snapshot: Box::leak(Box::new(SnapshotControl::new())),
+    };
+    let input = rt.input;
+    let out = rt.out;
+    let env = Env {
+        events: Rc::new(RefCell::new(std::vec::Vec::new())),
+        older: None,
+        restore_gate: Box::leak(Box::new(Signal::new())),
+        name_gate: None,
+        dfu_result: Err(Status::UNIMPLEMENTED),
+    };
+    let mut session: TestSession = Session::new(
+        SessionConfig {
+            mac_node: true,
+            node_msg: Some(node_msg::CONFIG),
+            ..config("Node messages")
+        },
+        Status::RESET_POWER_ON,
+        CryptoEngine::new(SoftwareAes, SoftwareSha256),
+    );
+    let mut storage = [0; SNAPSHOT_MAX];
+    let mut run = core::pin::pin!(run_with_storage(
+        &mut session,
+        &mut storage,
+        None,
+        Some([0x55; 32]),
+        rt,
+        env
+    ));
+    let mut cx = Context::from_waker(Waker::noop());
+    let mut step = |event: Option<InEvent>| {
+        if let Some(event) = event {
+            assert!(input.try_send(event).is_ok());
+        }
+        assert!(run.as_mut().poll(&mut cx).is_pending());
+    };
+    let from_host =
+        |bytes: &[u8]| InEvent::Frame(Transport::Usb, FrameBuf::from_slice(bytes).unwrap());
+    let drain = || while out.wired.try_receive().is_ok() {};
+    // The node messages among what the host was sent since the last look,
+    // each as its payload and whether it is flagged as delivered before.
+    // Whatever else the driver published in between is not this test's.
+    let received = || {
+        let mut messages = std::vec::Vec::new();
+        while let Ok(queued) = out.wired.try_receive() {
+            let parsed = Frame::parse(&queued.frame).unwrap();
+            if parsed.command() != Some(umsh_ulcp::Cmd::StrRecv) {
+                continue;
+            }
+            let payload = StreamPayload::parse(parsed.payload).unwrap();
+            assert_eq!(payload.stream, stream::NODE_MSG);
+            let meta = RecvMeta::parse(payload.metadata).unwrap();
+            messages.push((payload.data.to_vec(), meta.redelivered));
+        }
+        messages
+    };
+    step(None);
+    step(Some(InEvent::Attached(Transport::Usb)));
+    drain();
+
+    // A claim the host writes is the node's to act on at once.
+    let mut buf = [0u8; 64];
+    let len = frame::prop_set(&mut buf, 1, prop::NODE_MSG_TYPES, &[3]).unwrap();
+    step(Some(from_host(&buf[..len])));
+    drain();
+    assert!(node_msg::claimed(3), "the claim reached the receive tap");
+    assert!(!node_msg::claimed(4));
+
+    // A message arrives while the host is not listening: it waits.
+    let stored = node_msg::INBOX.lock(|inbox| {
+        inbox.borrow_mut().store(Message {
+            kind: Kind::Unicast,
+            source: Source::Key([0xAA; 32]),
+            channel: None,
+            sender_auth: true,
+            acked: true,
+            rssi_dbm: None,
+            snr_cb: None,
+            trace: heapless::Vec::new(),
+            payload: heapless::Vec::from_slice(&[3, 7]).unwrap(),
+        })
+    });
+    assert!(stored);
+    step(Some(InEvent::NodeMsgPending));
+    assert_eq!(received(), [], "nobody is listening");
+
+    // The host listens, and has it, once.
+    let len = frame::prop_set(&mut buf, 2, prop::NODE_MSG_LISTEN, &[1]).unwrap();
+    step(Some(from_host(&buf[..len])));
+    assert_eq!(received(), [(vec![3, 7], false)]);
+    step(Some(InEvent::NodeMsgPending));
+    assert_eq!(received(), [], "delivered once");
+
+    // Its session starts over. Listening is session state, so the message
+    // waits again, for this host and no other link.
+    let len = frame::session_start(&mut buf, 3).unwrap();
+    step(Some(from_host(&buf[..len])));
+    drain();
+    step(Some(InEvent::NodeMsgPending));
+    assert_eq!(received(), [], "not listening yet");
+    let len = frame::prop_set(&mut buf, 4, prop::NODE_MSG_LISTEN, &[1]).unwrap();
+    step(Some(from_host(&buf[..len])));
+    assert_eq!(received(), [(vec![3, 7], true)]);
 }

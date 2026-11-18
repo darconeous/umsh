@@ -45,13 +45,16 @@ pub use net::{
 };
 #[cfg(feature = "wifi")]
 pub mod known_networks;
+#[cfg(feature = "node-msg")]
+pub use session::NodeMsgRequest;
 pub use session::{
     AlertConfig, AnnounceRequest, BatteryFields, Binding, CHANNEL_TAG_LEN, DEFAULT_IDENT_PRECISION,
     DisplayConfig, Effect, GnssConfig, HELD_LISTS_MAX, I2C_DATA_MAX, I2C_MAX_OPS, IdentityForm,
     IdentitySource, MAX_CHANNEL_KEYS, MAX_DEV_ADMINS, MAX_DEV_PEERS, MAX_DEVICE_NAME_LEN,
-    MAX_IDENT_PRECISION, MAX_MESHCORE_REGIONS, MAX_PEER_KEYS, MAX_REPEATER_REGIONS,
-    MAX_TEMPERATURE_SENSORS, MESHCORE_REGION_NAME_MAX_LEN, MULTI_MAX, NETWORK_TABLE_MAX,
-    PRIVATE_KEY_LEN, QueuedClass, QueuedNotice, REGION_STRING_MAX_LEN, RadioRxInfo, RadioSettings,
-    SNAPSHOT_MAX, SavedStatus, Session, SessionConfig, SnapshotError, TEMPERATURE_NAMES_MAX,
-    TimeConfig, TxOutcome, TxPower, assert_i2c_tables_fit, is_saved,
+    MAX_IDENT_PRECISION, MAX_MESHCORE_REGIONS, MAX_NODE_MSG_TYPES, MAX_PEER_KEYS,
+    MAX_REPEATER_REGIONS, MAX_TEMPERATURE_SENSORS, MESHCORE_REGION_NAME_MAX_LEN, MULTI_MAX,
+    NETWORK_TABLE_MAX, NODE_MSG_PAYLOAD_MAX, NODE_MSG_SENDS, NodeMsgConfig, PRIVATE_KEY_LEN,
+    QueuedClass, QueuedNotice, REGION_STRING_MAX_LEN, RadioRxInfo, RadioSettings, SNAPSHOT_MAX,
+    SavedStatus, Session, SessionConfig, SnapshotError, TEMPERATURE_NAMES_MAX, TimeConfig,
+    TxOutcome, TxPower, assert_i2c_tables_fit, is_saved,
 };

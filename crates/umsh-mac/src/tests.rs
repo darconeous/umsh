@@ -5,6 +5,8 @@ mod bearer;
 #[cfg(feature = "software-crypto")]
 mod colliding_channels;
 mod forward_confirmation;
+#[cfg(feature = "payload-admission")]
+mod payload_admission;
 mod queue_resilience;
 mod retired_addresses;
 mod routing_reliability;
@@ -2928,9 +2930,10 @@ fn transmit_next_drops_frame_after_sixteen_busy_cad_attempts() {
             if let crate::MacEventRef::TxAbandoned {
                 identity_id,
                 receipt,
+                reason,
             } = event
             {
-                abandoned.push((id, identity_id, receipt));
+                abandoned.push((id, identity_id, receipt, reason));
             }
         }))
         .unwrap();
@@ -2943,8 +2946,63 @@ fn transmit_next_drops_frame_after_sixteen_busy_cad_attempts() {
     // The drop is accounted: exactly one TxAbandoned, on the final attempt.
     assert_eq!(
         abandoned.as_slice(),
-        &[(LocalIdentityId(0), LocalIdentityId(0), Some(SendReceipt(3)))]
+        &[(
+            LocalIdentityId(0),
+            LocalIdentityId(0),
+            Some(SendReceipt(3)),
+            crate::TxAbandonReason::ChannelBusy
+        )]
     );
+}
+
+/// A duty-cycle refusal is backed off from like a busy channel, and a
+/// frame it held back at any attempt is given up as duty-limited.
+#[test]
+fn transmit_next_backs_off_from_duty_limit_and_names_it_on_abandon() {
+    let mut mac = make_mac();
+    mac.radio_mut().duty_refusals = 1;
+    for _ in 1..crate::MAX_CAD_ATTEMPTS {
+        mac.radio_mut().cad_responses.push_back(true).unwrap();
+    }
+    mac.tx_queue_mut()
+        .enqueue(
+            TxPriority::Application,
+            b"app",
+            Some(SendReceipt(3)),
+            Some(LocalIdentityId(0)),
+        )
+        .unwrap();
+
+    let mut reasons = std::vec::Vec::new();
+    let _ = block_on(mac.transmit_next(&mut |_, event| {
+        if let crate::MacEventRef::TxAbandoned { reason, .. } = event {
+            reasons.push(reason);
+        }
+    }))
+    .unwrap();
+    // Refused before channel-activity detection, but kept for another
+    // attempt after a backoff.
+    assert_eq!(mac.tx_queue().len(), 1);
+    assert!(reasons.is_empty());
+    assert_eq!(mac.radio().cad_calls, 0);
+
+    for _ in 1..crate::MAX_CAD_ATTEMPTS {
+        mac.clock().advance_ms(1_000);
+        let _ = block_on(mac.transmit_next(&mut |_, event| {
+            if let crate::MacEventRef::TxAbandoned { reason, .. } = event {
+                reasons.push(reason);
+            }
+        }))
+        .unwrap();
+    }
+
+    assert!(mac.tx_queue().is_empty());
+    assert!(mac.radio().transmitted.is_empty());
+    assert_eq!(
+        mac.radio().cad_calls,
+        u32::from(crate::MAX_CAD_ATTEMPTS - 1)
+    );
+    assert_eq!(reasons.as_slice(), &[crate::TxAbandonReason::DutyLimit]);
 }
 
 /// A radio fault drops the frame at once, with the same accounting as an
@@ -2968,9 +3026,10 @@ fn transmit_next_drops_frame_on_radio_fault_and_keeps_going() {
         if let crate::MacEventRef::TxAbandoned {
             identity_id,
             receipt,
+            reason,
         } = event
         {
-            abandoned.push((id, identity_id, receipt));
+            abandoned.push((id, identity_id, receipt, reason));
         }
     }));
 
@@ -2979,7 +3038,12 @@ fn transmit_next_drops_frame_on_radio_fault_and_keeps_going() {
     assert_eq!(mac.counters().tx_abandoned, 1);
     assert_eq!(
         abandoned.as_slice(),
-        &[(LocalIdentityId(0), LocalIdentityId(0), Some(SendReceipt(3)))]
+        &[(
+            LocalIdentityId(0),
+            LocalIdentityId(0),
+            Some(SendReceipt(3)),
+            crate::TxAbandonReason::RadioFault
+        )]
     );
 
     mac.tx_queue_mut()
@@ -3851,6 +3915,69 @@ fn an_identitys_power_carries_its_sends_and_its_acks() {
             (PacketType::MacAck, None),
             (PacketType::Unicast, None),
         ]
+    );
+}
+
+#[test]
+fn a_send_and_its_retries_go_out_at_the_power_it_asked_for() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let peer_key = test_pubkey(0xAB);
+    let peer_id = mac.add_peer(peer_key).unwrap();
+    mac.install_pairwise_keys(
+        local_id,
+        peer_id,
+        PairwiseKeys {
+            k_enc: [1; 32],
+            k_mic: [2; 32],
+        },
+    )
+    .unwrap();
+    mac.identity_mut(local_id)
+        .unwrap()
+        .set_tx_power_dbm(Some(20));
+    let route = [RouterHint([1, 2])];
+    let options = SendOptions::default()
+        .with_ack_requested(true)
+        .with_power_dbm(Some(-4))
+        .try_with_source_route(&route)
+        .unwrap();
+    let receipt = mac
+        .queue_unicast(local_id, &peer_key, b"hello", &options)
+        .unwrap()
+        .unwrap();
+    block_on(mac.transmit_next(&mut |_, _| {})).unwrap();
+    assert_eq!(mac.radio().transmitted_power.as_slice(), &[Some(-4)]);
+
+    // Nothing confirms it, so it is sent again.
+    let pending = mac
+        .identity_mut(local_id)
+        .unwrap()
+        .pending_ack_mut(&receipt)
+        .unwrap();
+    pending.ack_deadline_ms = u64::MAX;
+    pending.state = AckState::AwaitingForward {
+        confirm_deadline_ms: 0,
+    };
+    mac.service_pending_ack_timeouts(|_, _| {});
+    mac.clock().advance_ms(10_000);
+    block_on(mac.transmit_next(&mut |_, _| {})).unwrap();
+    assert_eq!(mac.radio().transmitted.len(), 2);
+    assert_eq!(
+        mac.radio().transmitted_power.as_slice(),
+        &[Some(-4), Some(-4)]
+    );
+
+    // A send that asks for nothing goes at its identity's power.
+    mac.queue_unicast(local_id, &peer_key, b"plain", &SendOptions::default())
+        .unwrap();
+    for _ in 0..4 {
+        mac.clock().advance_ms(1_000);
+        block_on(mac.transmit_next(&mut |_, _| {})).unwrap();
+    }
+    assert_eq!(
+        mac.radio().transmitted_power.as_slice(),
+        &[Some(-4), Some(-4), Some(20)]
     );
 }
 
@@ -14977,6 +15104,9 @@ struct DummyRadio {
     cad_calls: u32,
     /// Transmits still to fail with a radio fault before they succeed.
     tx_faults: u8,
+    /// Transmits still to be refused by a duty-cycle limit, ahead of
+    /// channel-activity detection, before any reaches it.
+    duty_refusals: u8,
     /// While set, a transmit never completes: it stays pending until the
     /// caller drops it, the way a driver's `select!` cancels one.
     hold_transmit: bool,
@@ -15589,6 +15719,10 @@ impl Radio for DummyRadio {
     ) -> Result<(), TxError<Self::Error>> {
         if self.hold_transmit {
             core::future::pending::<()>().await;
+        }
+        if self.duty_refusals != 0 {
+            self.duty_refusals -= 1;
+            return Err(TxError::DutyLimited);
         }
         if !matches!(options.cad, umsh_hal::CadPolicy::Skip) {
             self.cad_calls = self.cad_calls.wrapping_add(1);

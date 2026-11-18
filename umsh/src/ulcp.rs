@@ -243,6 +243,38 @@ impl UlcpDeviceConfig {
     }
 }
 
+/// One node message the device delivered (`CMD_STR_RECV` on
+/// `STR_NODE_MSG`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NodeMessage {
+    /// The payload, type octet first.
+    pub data: Vec<u8>,
+    pub kind: umsh_ulcp::node_msg::Kind,
+    pub source: umsh_ulcp::node_msg::Source,
+    /// The full channel identifier, for a kind with a channel.
+    pub channel: Option<[u8; umsh_ulcp::items::CHANNEL_IDENTIFIER_LEN]>,
+    /// The sender is authenticated, pairwise or by signature.
+    pub sender_auth: bool,
+    /// The device acknowledged the message.
+    pub acked: bool,
+    /// The device discarded unacknowledged messages before this one.
+    pub gap: bool,
+    /// Delivered before, over a session that then ended: it may be a
+    /// duplicate.
+    pub redelivered: bool,
+    pub rssi_dbm: Option<i16>,
+    pub snr_cb: Option<i16>,
+    /// The router hints of a complete trace, nearest repeater first: a
+    /// source route back to the sender as it stands.
+    pub trace: Vec<u8>,
+}
+
+/// Node messages held for the caller before it asks for them. Past this
+/// the oldest unacknowledged one makes way, and the message after it says
+/// so with its `gap`. An acknowledged message is never dropped: its
+/// sender was told the device has it.
+const NODE_MSG_QUEUE_DEPTH: usize = 16;
+
 struct RxPacket {
     data: Vec<u8>,
     meta: RxMeta,
@@ -1500,6 +1532,7 @@ pub struct UlcpDevice<L> {
     link: L,
     config: UlcpDeviceConfig,
     rx_queue: VecDeque<RxPacket>,
+    node_msgs: VecDeque<NodeMessage>,
     responses: VecDeque<Response>,
     prop_events: VecDeque<PropEvent>,
     /// Unsolicited reset notification not yet surfaced to the caller.
@@ -1580,6 +1613,7 @@ where
             link,
             config,
             rx_queue: VecDeque::new(),
+            node_msgs: VecDeque::new(),
             responses: VecDeque::new(),
             prop_events: VecDeque::new(),
             seen_reset: None,
@@ -1827,6 +1861,7 @@ where
         }
         self.link = link;
         self.rx_queue.clear();
+        self.node_msgs.clear();
         self.responses.clear();
         self.prop_events.clear();
         self.seen_reset = None;
@@ -3715,6 +3750,10 @@ where
                 let Ok(payload) = StreamPayload::parse(frame.payload) else {
                     return false;
                 };
+                if payload.stream == stream::NODE_MSG {
+                    self.ingest_node_msg(&payload);
+                    return false;
+                }
                 if payload.stream != stream::PHY_RAW {
                     return false;
                 }
@@ -3979,6 +4018,87 @@ where
                 }
                 // A stale response from an earlier timed-out
                 // transaction; drop it.
+            }
+            if let Some(error) = self.take_reset_notice() {
+                return Err(error);
+            }
+            self.read_more(deadline).await?;
+        }
+    }
+
+    fn ingest_node_msg(&mut self, payload: &StreamPayload<'_>) {
+        let Ok(meta) = umsh_ulcp::node_msg::RecvMeta::parse(payload.metadata) else {
+            return;
+        };
+        let displaced = (self.node_msgs.len() >= NODE_MSG_QUEUE_DEPTH)
+            .then(|| self.node_msgs.iter().position(|held| !held.acked))
+            .flatten();
+        if let Some(index) = displaced {
+            self.node_msgs.remove(index);
+        }
+        self.node_msgs.push_back(NodeMessage {
+            data: payload.data.to_vec(),
+            kind: meta.kind,
+            source: meta.source,
+            channel: meta.channel,
+            sender_auth: meta.sender_auth,
+            acked: meta.acked,
+            gap: meta.gap,
+            redelivered: meta.redelivered,
+            rssi_dbm: meta.rssi_dbm,
+            snr_cb: meta.snr_cb,
+            trace: meta.trace.map(<[u8]>::to_vec).unwrap_or_default(),
+        });
+        // Whatever now stands where the displaced message stood is the
+        // first one after the loss.
+        if let Some(after) = displaced.and_then(|index| self.node_msgs.get_mut(index)) {
+            after.gap = true;
+        }
+    }
+
+    /// Send a node message: the device sends `data` (payload type first)
+    /// as its own identity, as `meta` asks, and answers once the outcome
+    /// is known—after the acknowledgement, or after the device stops
+    /// waiting for one. `timeout` bounds the wait, which for an
+    /// acknowledged send spans the device's retries.
+    ///
+    /// Any status but `STATUS_OK` is [`UlcpError::Status`]:
+    /// `STATUS_NO_ACK` when no acknowledgement came. A send too long for
+    /// any device to take is `STATUS_INVALID_ARGUMENT` without being
+    /// sent: a frame over the limit would cost the session, not the send.
+    pub async fn node_msg_send(
+        &mut self,
+        data: &[u8],
+        meta: &umsh_ulcp::node_msg::SendMeta<'_>,
+        timeout: Duration,
+    ) -> Result<(), UlcpError> {
+        let tid = self.alloc_tid();
+        let mut buf = vec![0u8; data.len() + 128];
+        let len = umsh_ulcp::node_msg::send_frame(&mut buf, tid, data, meta)
+            .map_err(|_| UlcpError::Protocol("frame encode"))?;
+        if len > umsh_ulcp::frame::FRAME_IN_MAX {
+            return Err(UlcpError::Status(Status::INVALID_ARGUMENT));
+        }
+        self.send(&buf[..len]).await?;
+        let response = self.wait_response(tid, Instant::now() + timeout).await?;
+        if response.kind != ResponseKind::Is || response.key != prop::LAST_STATUS {
+            return Err(UlcpError::Protocol("unexpected node message response"));
+        }
+        match decode_status(&response.value) {
+            Status::OK => Ok(()),
+            status => Err(UlcpError::Status(status)),
+        }
+    }
+
+    /// The next node message the device delivered, waiting up to
+    /// `timeout` for one. The device delivers to this host only while
+    /// `PROP_NODE_MSG_LISTEN` is set, and only the payload types in
+    /// `PROP_NODE_MSG_TYPES`.
+    pub async fn receive_node_msg(&mut self, timeout: Duration) -> Result<NodeMessage, UlcpError> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if let Some(message) = self.node_msgs.pop_front() {
+                return Ok(message);
             }
             if let Some(error) = self.take_reset_notice() {
                 return Err(error);
@@ -4642,6 +4762,9 @@ pub mod testing {
     /// Payload that makes the fake device report success and then end
     /// the session, as a device does that lost a frame the host sent.
     pub const SESSION_END_AFTER: &[u8] = b"session-end-after";
+    /// Node message payload whose acknowledged send the fake device
+    /// reports unacknowledged.
+    pub const NO_ACK: &[u8] = b"\x03no-ack";
     /// Property that switches the fake device's `CMD_RESTORE` completion
     /// to the reset form.
     pub const RESTORE_RESET_FORM_KEY: u32 = 59_999;
@@ -4745,6 +4868,37 @@ pub mod testing {
                     }
                     Cmd::StrSend => {
                         let payload = StreamPayload::parse(frame.payload).unwrap();
+                        // A node message: unanswered when acknowledged
+                        // and marked so, and otherwise echoed back as a
+                        // receipt from the destination.
+                        if payload.stream == stream::NODE_MSG {
+                            use umsh_ulcp::node_msg::{RecvMeta, SendMeta, Source};
+                            let meta = SendMeta::parse(payload.metadata).unwrap();
+                            let status = if meta.ack && payload.data == NO_ACK {
+                                Status::NO_ACK
+                            } else {
+                                Status::OK
+                            };
+                            let len = frame::last_status(&mut buf, tid, status).unwrap();
+                            replies.push(buf[..len].to_vec());
+                            let receipt = RecvMeta {
+                                kind: meta.kind,
+                                source: Source::Key(meta.peer.unwrap_or([0x5A; 32])),
+                                channel: meta.channel,
+                                sender_auth: true,
+                                acked: meta.ack,
+                                gap: false,
+                                redelivered: false,
+                                rssi_dbm: Some(-91),
+                                snr_cb: Some(55),
+                                trace: meta.source_route,
+                            };
+                            let len =
+                                umsh_ulcp::node_msg::recv_frame(&mut buf, payload.data, &receipt)
+                                    .unwrap();
+                            replies.push(buf[..len].to_vec());
+                            continue;
+                        }
                         assert_eq!(payload.stream, stream::PHY_RAW);
                         if payload.data == CCA_FAIL {
                             let len =
@@ -5306,6 +5460,90 @@ mod tests {
         radio.set_prop(prop::PHY_TX_POWER, &[14]).await.unwrap();
         assert_eq!(radio.get_prop(prop::PHY_TX_POWER).await.unwrap(), [14]);
         assert!(!radio.link_lost());
+    }
+
+    /// A node message is answered with its outcome, and what the device
+    /// delivers waits for the caller beside everything else.
+    #[tokio::test]
+    async fn a_node_message_is_sent_and_one_received() {
+        use umsh_ulcp::node_msg::{Kind, SendMeta, Source};
+        let mut radio = attached_radio().await;
+        let mut meta = SendMeta::new(Kind::Unicast);
+        meta.peer = Some([0xAA; 32]);
+        meta.ack = true;
+        meta.source_route = Some(&[1, 2]);
+        radio
+            .node_msg_send(b"\x03\xFFhi", &meta, Duration::from_secs(2))
+            .await
+            .unwrap();
+        let received = radio
+            .receive_node_msg(Duration::from_secs(2))
+            .await
+            .unwrap();
+        assert_eq!(received.data, b"\x03\xFFhi");
+        assert_eq!(received.source, Source::Key([0xAA; 32]));
+        assert!(received.acked && received.sender_auth && !received.redelivered);
+        assert_eq!(received.trace, [1, 2]);
+
+        assert!(matches!(
+            radio
+                .node_msg_send(testing::NO_ACK, &meta, Duration::from_secs(2))
+                .await,
+            Err(UlcpError::Status(Status::NO_ACK))
+        ));
+        // Nothing the device sent before is lost to a property read.
+        assert_eq!(radio.get_prop(prop::PHY_TX_POWER).await.unwrap().len(), 1);
+        let received = radio
+            .receive_node_msg(Duration::from_secs(2))
+            .await
+            .unwrap();
+        assert_eq!(received.data, testing::NO_ACK);
+    }
+
+    /// Messages nobody has asked for yet are held, and when there are too
+    /// many, an unacknowledged one makes way, never an acknowledged one;
+    /// the message after the loss says so.
+    #[tokio::test]
+    async fn an_acknowledged_node_message_is_never_dropped_for_room() {
+        use umsh_ulcp::node_msg::{Kind, SendMeta};
+        let mut radio = attached_radio().await;
+        let mut acked = SendMeta::new(Kind::Unicast);
+        acked.peer = Some([0xAA; 32]);
+        acked.ack = true;
+        let mut plain = acked;
+        plain.ack = false;
+        let wait = Duration::from_secs(2);
+        // The fake hands every send back as a delivery.
+        radio.node_msg_send(&[3, 0], &plain, wait).await.unwrap();
+        for body in 1..=NODE_MSG_QUEUE_DEPTH as u8 + 1 {
+            radio.node_msg_send(&[3, body], &acked, wait).await.unwrap();
+        }
+        let mut held = Vec::new();
+        while let Ok(message) = radio.receive_node_msg(Duration::from_millis(20)).await {
+            held.push((message.data[1], message.gap));
+        }
+        let mut expected: Vec<_> = (1..=NODE_MSG_QUEUE_DEPTH as u8 + 1)
+            .map(|body| (body, false))
+            .collect();
+        expected[0].1 = true;
+        assert_eq!(held, expected);
+    }
+
+    /// A send no device could take is refused here: sent, its frame would
+    /// be too long for the link and would end the session.
+    #[tokio::test]
+    async fn an_overlong_node_message_is_refused_before_it_is_sent() {
+        use umsh_ulcp::node_msg::{Kind, SendMeta};
+        let mut radio = attached_radio().await;
+        let mut meta = SendMeta::new(Kind::Unicast);
+        meta.peer = Some([0xAA; 32]);
+        assert!(matches!(
+            radio
+                .node_msg_send(&[3; 400], &meta, Duration::from_secs(2))
+                .await,
+            Err(UlcpError::Status(Status::INVALID_ARGUMENT))
+        ));
+        assert_eq!(radio.get_prop(prop::PHY_TX_POWER).await.unwrap().len(), 1);
     }
 
     /// Frames queued from the old link are not delivered on the new one.

@@ -95,6 +95,14 @@ reseed = ["dep:rand_core", "dep:rand_chacha", "dep:umsh-crypto", "dep:zeroize"]
 # single thread-mode executor whose BLE controller cannot tolerate the
 # critical sections the portable default would take in the radio path.
 node-thread-mode-mutex = []
+# Node messaging (`CAP_NODE_MSG`): a link sends and receives UMSH payloads
+# through the device node, which holds claimed messages for it.
+node-msg = [
+    "device-node",
+    "umsh-ulcp-device/node-msg",
+    "umsh-mac/payload-admission",
+    "umsh-node/payload-admission",
+]
 # The glue between a staged `CMD_I2C_TRANSFER`/`CMD_I2C_SCAN` and any
 # `embedded-hal-async` bus: operation carving, the probe loop, and the
 # mapping from HAL error kinds to ULCP statuses. The trait, not a HAL, so

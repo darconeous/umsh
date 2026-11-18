@@ -1419,6 +1419,26 @@ local notice = dissect_payload("08 0001 FF 8018 01")
 check("the reason is decoded",
       has(notice, "Session End Reason: owed frame discarded (1)"), true)
 
+-- Node messaging: a send names its kind, flags, and options; a receipt its
+-- sender, flags, and measurements.
+local node_send = dissect_payload("08 0001 FF 8009 72 0300 03FF68 0104 020103 03021022")
+check("node message send stream",   has(node_send, "Stream: STR_NODE_MSG (114)"), true)
+check("node message payload type",  has(node_send, "Payload Type: 3"), true)
+check("node message send kind",     has(node_send, "Kind: broadcast (1)"), true)
+check("node message signed",        has(node_send, "Signed: 1"), true)
+check("node message flood hops",    has(node_send, "TX_OPT_FLOOD_HOPS = 3"), true)
+check("node message route",         has(node_send, "TX_OPT_SOURCE_ROUTE = 1 hints"), true)
+check("clean node message send has no violations", #node_send.violations, 0)
+
+local node_recv = dissect_payload("09 0001 FF 800A 72 0200 8001 0118 AABBCC 020150 03030102")
+check("node message receipt kind",  has(node_recv, "Kind: broadcast (1)"), true)
+check("node message source hint",   has(node_recv, "Source: AABBCC"), true)
+check("node message redelivered",   has(node_recv, "Redelivered: 1"), true)
+check("node message gap",           has(node_recv, "Gap: 1"), true)
+check("node message rssi",          has(node_recv, "RX_OPT_RSSI = -80 dBm"), true)
+check("node message trace",         has(node_recv, "RX_OPT_TRACE = 1 hints"), true)
+check("clean node message receipt has no violations", #node_recv.violations, 0)
+
 -- A payload that stops at the end-of-options marker carries no frame.
 local no_frame = dissect_payload("08 0001 FF")
 check("missing frame is flagged", #no_frame.violations, 1)

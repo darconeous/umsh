@@ -215,6 +215,10 @@ pub struct TxOptions {
 pub enum TxError<E> {
     /// CAD did not find the channel clear before the timeout expired.
     CadTimeout,
+    /// A duty-cycle limit left no room for the frame's airtime; nothing
+    /// was sent. Like [`Self::CadTimeout`], the frame may be offered
+    /// again later.
+    DutyLimited,
     /// Platform-specific radio or transport failure.
     Io(E),
 }

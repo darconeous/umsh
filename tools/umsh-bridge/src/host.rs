@@ -116,6 +116,7 @@ fn session_config() -> SessionConfig {
         // A process has no bus to expose.
         i2c_buses: &[],
         i2c_devices: &[],
+        node_msg: None,
     }
 }
 

@@ -52,6 +52,8 @@ pub mod lan_bearer;
 pub mod meshcore;
 #[cfg(feature = "counters")]
 pub mod node_counters;
+#[cfg(feature = "node-msg")]
+pub mod node_msg;
 #[cfg(feature = "radio")]
 pub mod radio_mux;
 #[cfg(feature = "driver")]

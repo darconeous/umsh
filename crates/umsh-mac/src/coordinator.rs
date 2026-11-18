@@ -36,8 +36,9 @@ use crate::{
     route_score::{Hop, path_score},
     rx_windows::{RxWindow, RxWindows},
     send::{
-        CompletionSignal, ForwardWatch, PendingAck, PendingAckError, QueuedTx, ResendRecord,
-        RxBaselineAdoption, SendOptions, SendReceipt, SignatureStatus, TxPriority, TxQueue,
+        AdaptiveFlood, CompletionSignal, ForwardWatch, PendingAck, PendingAckError, QueuedTx,
+        ResendRecord, RxBaselineAdoption, SendOptions, SendReceipt, SignatureStatus, TxPriority,
+        TxQueue,
     },
     uplinks::Uplink,
 };
@@ -231,6 +232,10 @@ struct HeldFrame<const FRAME: usize> {
     ack_v: [u8; 16],
     /// The frame as it arrived, still sealed.
     frame: Vec<u8, FRAME>,
+    /// Its payload-type octet, which the payload admission is asked about
+    /// again on release; `None` for a frame with no payload.
+    #[cfg(feature = "payload-admission")]
+    payload_type: Option<u8>,
     rx: RxInfo,
     received_at_ms: u64,
     verify_sent_ms: u64,
@@ -1411,6 +1416,10 @@ pub struct Mac<
     battery_low: bool,
     operating_policy: OperatingPolicy,
     auto_register_full_key_peers: bool,
+    /// Whether there is room for a new acknowledgment-requested frame's
+    /// payload, by payload type; see [`Self::set_payload_admission`].
+    #[cfg(feature = "payload-admission")]
+    payload_admission: Option<fn(u8) -> bool>,
     admissions: crate::admission::Admissions,
     /// What the receive path may spend on Ed25519 verification.
     verify_budget: VerifyBudget,
@@ -1493,6 +1502,8 @@ impl<
             neighbors_beside: crate::neighbors::NeighborsHeard::new(),
             operating_policy,
             auto_register_full_key_peers: false,
+            #[cfg(feature = "payload-admission")]
+            payload_admission: None,
             admissions: crate::admission::Admissions::new(),
             verify_budget: VerifyBudget::new(),
             counters: MacCounters::default(),
@@ -1729,6 +1740,21 @@ impl<
     /// Enable or disable inbound full-key peer auto-registration.
     pub fn set_auto_register_full_key_peers(&mut self, enabled: bool) {
         self.auto_register_full_key_peers = enabled;
+    }
+
+    /// Ask `admits`, with its payload-type octet, whether there is room
+    /// for a new acknowledgment-requested unicast or blind unicast. One
+    /// it refuses is declined ([Packet Processing][spec], step 6): neither
+    /// acknowledged, delivered, nor taken by the replay window, so its
+    /// sender's retransmission is judged as new. A duplicate of a frame
+    /// already accepted is re-acknowledged regardless, and a held frame
+    /// is asked about again when its sender vouches for it. `None` admits
+    /// everything.
+    ///
+    /// [spec]: https://darconeous.github.io/umsh/docs/protocol/packet-processing.html
+    #[cfg(feature = "payload-admission")]
+    pub fn set_payload_admission(&mut self, admits: Option<fn(u8) -> bool>) {
+        self.payload_admission = admits;
     }
 
     /// Register one long-term local identity.
@@ -2462,6 +2488,7 @@ impl<
             frame_counter,
             salt,
             not_before_ms: self.tx_not_before_ms(options),
+            power_dbm: options.power_dbm,
         })
     }
 
@@ -2585,17 +2612,21 @@ impl<
                         .clone();
                     buf[range].copy_from_slice(signature);
                 }
-                self.tx_queue
-                    .enqueue_with_state(
-                        TxPriority::Application,
-                        &buf[..len],
-                        Some(prepared.receipt),
-                        Some(from),
-                        prepared.not_before_ms,
-                        0,
-                        0,
-                    )
-                    .map_err(|_| SendError::QueueFull)?;
+                QueuedTx::try_new_with_state(
+                    TxPriority::Application,
+                    &buf[..len],
+                    Some(prepared.receipt),
+                    Some(from),
+                    0,
+                    prepared.not_before_ms,
+                    0,
+                    0,
+                )
+                .and_then(|entry| {
+                    self.tx_queue
+                        .enqueue_entry(entry.with_power_dbm(prepared.power_dbm))
+                })
+                .map_err(|_| SendError::QueueFull)?;
             }
             ShapedFrame::Secured(mut packet) => {
                 if let Some(signature) = signature {
@@ -2620,6 +2651,7 @@ impl<
                     Some(prepared.receipt),
                     Some(from),
                     prepared.not_before_ms,
+                    prepared.power_dbm,
                 )?;
             }
         }
@@ -2664,7 +2696,7 @@ impl<
         retransmission: bool,
     ) -> Result<(), SendError> {
         let slack = self.route_slack(
-            peer_id,
+            Some(peer_id),
             if retransmission {
                 RouteTraffic::Reack
             } else {
@@ -3009,7 +3041,13 @@ impl<
             None => None,
         };
         let not_before_ms = self.tx_not_before_ms(options);
-        if let Err(err) = self.enqueue_packet(packet, tracked_receipt, Some(from), not_before_ms) {
+        if let Err(err) = self.enqueue_packet(
+            packet,
+            tracked_receipt,
+            Some(from),
+            not_before_ms,
+            options.power_dbm,
+        ) {
             if let Some(tracked_receipt) = tracked_receipt {
                 let _ = self
                     .identity_mut(from)
@@ -3165,7 +3203,13 @@ impl<
             None => None,
         };
         let not_before_ms = self.tx_not_before_ms(options);
-        if let Err(err) = self.enqueue_packet(packet, tracked_receipt, Some(from), not_before_ms) {
+        if let Err(err) = self.enqueue_packet(
+            packet,
+            tracked_receipt,
+            Some(from),
+            not_before_ms,
+            options.power_dbm,
+        ) {
             if let Some(tracked_receipt) = tracked_receipt {
                 let _ = self
                     .identity_mut(from)
@@ -3320,11 +3364,21 @@ impl<
         };
         match result {
             Ok(()) => {}
-            Err(TxError::CadTimeout) => {
+            // A duty-cycle refusal is waited out like a busy channel; the
+            // entry remembers it, so a frame given up says which held it
+            // back.
+            Err(error @ (TxError::CadTimeout | TxError::DutyLimited)) => {
+                let mut queued = queued;
+                queued.duty_limited |= matches!(error, TxError::DutyLimited);
                 let next_attempt = queued.cad_attempts.saturating_add(1);
                 if next_attempt >= MAX_CAD_ATTEMPTS {
                     self.forget_unaired_forward(&queued);
-                    self.abandon_transmit(identity_id, receipt, queued.priority, on_event);
+                    let reason = if queued.duty_limited {
+                        crate::TxAbandonReason::DutyLimit
+                    } else {
+                        crate::TxAbandonReason::ChannelBusy
+                    };
+                    self.abandon_transmit(identity_id, receipt, queued.priority, reason, on_event);
                     return Ok(None);
                 }
                 // Uniform over [T_frame/40, T_frame/4] (channel-access.md
@@ -3340,7 +3394,6 @@ impl<
                             .random_range(..(backoff_hi_ms - backoff_lo_ms).saturating_add(1)),
                     ),
                 );
-                let mut queued = queued;
                 queued.not_before_ms = now_ms.saturating_add(backoff_ms);
                 queued.cad_attempts = next_attempt;
                 self.tx_queue
@@ -3354,7 +3407,13 @@ impl<
             // frame is dropped the way an exhausted busy channel drops it.
             Err(TxError::Io(_)) => {
                 self.forget_unaired_forward(&queued);
-                self.abandon_transmit(identity_id, receipt, queued.priority, on_event);
+                self.abandon_transmit(
+                    identity_id,
+                    receipt,
+                    queued.priority,
+                    crate::TxAbandonReason::RadioFault,
+                    on_event,
+                );
                 return Ok(None);
             }
         }
@@ -3403,7 +3462,7 @@ impl<
             // would end a forward in standby. Only this renews the hold:
             // what the node forwards for the rest of the mesh says nothing
             // about the neighbor.
-            if queued.adaptive_first_hop {
+            if queued.adaptive == AdaptiveFlood::FirstHop {
                 self.adaptive_engaged_until_ms = self
                     .clock
                     .now_ms()
@@ -3577,7 +3636,13 @@ impl<
         self.counters.tx_counter_holds = self.counters.tx_counter_holds.saturating_add(holds);
         for sequence in expired {
             if let Some(entry) = self.tx_queue.take(sequence) {
-                self.abandon_transmit(entry.identity_id, entry.receipt, entry.priority, on_event);
+                self.abandon_transmit(
+                    entry.identity_id,
+                    entry.receipt,
+                    entry.priority,
+                    crate::TxAbandonReason::CounterUnavailable,
+                    on_event,
+                );
             }
         }
     }
@@ -3587,6 +3652,7 @@ impl<
         identity_id: Option<LocalIdentityId>,
         receipt: Option<SendReceipt>,
         priority: TxPriority,
+        reason: crate::TxAbandonReason,
         on_event: &mut impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
     ) {
         MacCounters::bump(&mut self.counters.tx_abandoned);
@@ -3606,6 +3672,7 @@ impl<
                 crate::MacEventRef::TxAbandoned {
                     identity_id,
                     receipt,
+                    reason,
                 },
             );
         }
@@ -4317,6 +4384,13 @@ impl<
                 }
                 let verified =
                     verified.is_some_and(|v| v.local_id == local_id && v.peer_id == peer_id);
+                // A new frame with no room is declined before the window
+                // takes it, so its retransmission is judged as new. A
+                // held frame was asked when its sender vouched for it.
+                if !verified && self.declines_payload(&buf[..frame_len], header, rx, payload) {
+                    handled = true;
+                    break;
+                }
                 // A held frame its sender vouched for was acknowledged
                 // already, so it is never dropped here.
                 if !verified && self.unicast_over_verify_budget(header) {
@@ -4426,6 +4500,7 @@ impl<
                                                 peer_key,
                                                 ReplyCarriage::Unicast,
                                                 &original[..frame_len],
+                                                payload.first().copied(),
                                                 ack_v,
                                                 rx,
                                                 received_at_ms,
@@ -4825,6 +4900,13 @@ impl<
                         let verified = verified
                             .is_some_and(|v| v.local_id == local_id && v.peer_id == peer_id);
                         // As on the unicast path.
+                        if !verified
+                            && self.declines_payload(&buf[..frame_len], header, rx, payload)
+                        {
+                            handled = true;
+                            break;
+                        }
+                        // As on the unicast path.
                         if !verified && self.unicast_over_verify_budget(header) {
                             handled = true;
                             break;
@@ -4947,6 +5029,7 @@ impl<
                                                         peer_key,
                                                         carriage,
                                                         &original[..frame_len],
+                                                        payload.first().copied(),
                                                         ack_v,
                                                         rx,
                                                         received_at_ms,
@@ -5453,14 +5536,11 @@ impl<
                         resend,
                         not_before_ms,
                     } => {
-                        let queued = self.tx_queue.enqueue_with_state(
-                            TxPriority::Retry,
+                        let queued = self.enqueue_retry(
                             resend.frame.as_slice(),
-                            Some(receipt),
-                            Some(identity_id),
+                            receipt,
+                            identity_id,
                             not_before_ms,
-                            0,
-                            0,
                         );
                         if queued.is_err() {
                             // Give the rung back and look again shortly.
@@ -5515,14 +5595,11 @@ impl<
                                 not_before_ms.saturating_add(self.forwarded_ack_timeout_ms(
                                     Self::allowed_forward_count(rewritten.frame.as_slice()),
                                 ));
-                            let queued = self.tx_queue.enqueue_with_state(
-                                TxPriority::Retry,
+                            let queued = self.enqueue_retry(
                                 rewritten.frame.as_slice(),
-                                Some(receipt),
-                                Some(identity_id),
+                                receipt,
+                                identity_id,
                                 not_before_ms,
-                                0,
-                                0,
                             );
                             if queued.is_err() {
                                 MacCounters::bump(&mut self.counters.retry_enqueue_deferred);
@@ -5590,6 +5667,7 @@ impl<
                             crate::MacEventRef::TxAbandoned {
                                 identity_id,
                                 receipt: Some(receipt),
+                                reason: crate::TxAbandonReason::Orphaned,
                             },
                         );
                     }
@@ -5763,28 +5841,66 @@ impl<
                 .is_some_and(|prefix| prefix == ack_mic)
     }
 
+    /// Queue a sealed send at `power_dbm`, or its identity's power when
+    /// `None`. A send tracked for retransmission keeps the power on its
+    /// pending entry, so every retry goes out at it too.
     fn enqueue_packet(
         &mut self,
         packet: UnsealedPacket<'_>,
         receipt: Option<SendReceipt>,
         identity_id: Option<LocalIdentityId>,
         not_before_ms: u64,
+        power_dbm: Option<i8>,
     ) -> Result<(), SendError> {
         if packet.total_len() > self.radio.max_frame_size() {
             return Err(SendError::Build(BuildError::BufferTooSmall));
         }
-        self.tx_queue
-            .enqueue_with_state(
-                TxPriority::Application,
-                packet.as_bytes(),
-                receipt,
-                identity_id,
-                not_before_ms,
-                0,
-                0,
-            )
-            .map_err(|_| SendError::QueueFull)?;
+        QueuedTx::try_new_with_state(
+            TxPriority::Application,
+            packet.as_bytes(),
+            receipt,
+            identity_id,
+            0,
+            not_before_ms,
+            0,
+            0,
+        )
+        .and_then(|entry| self.tx_queue.enqueue_entry(entry.with_power_dbm(power_dbm)))
+        .map_err(|_| SendError::QueueFull)?;
+        if let (Some(receipt), Some(identity_id)) = (receipt, identity_id)
+            && let Some(pending) = self
+                .identity_mut(identity_id)
+                .and_then(|slot| slot.pending_ack_mut(&receipt))
+        {
+            pending.power_dbm = power_dbm;
+        }
         Ok(())
+    }
+
+    /// Queue a retransmission of `identity_id`'s send `receipt`, at the
+    /// power the send asked for.
+    fn enqueue_retry(
+        &mut self,
+        frame: &[u8],
+        receipt: SendReceipt,
+        identity_id: LocalIdentityId,
+        not_before_ms: u64,
+    ) -> Result<u32, crate::CapacityError> {
+        let power_dbm = self
+            .identity(identity_id)
+            .and_then(|slot| slot.pending_ack(&receipt))
+            .and_then(|pending| pending.power_dbm);
+        QueuedTx::try_new_with_state(
+            TxPriority::Retry,
+            frame,
+            Some(receipt),
+            Some(identity_id),
+            0,
+            not_before_ms,
+            0,
+            0,
+        )
+        .and_then(|entry| self.tx_queue.enqueue_entry(entry.with_power_dbm(power_dbm)))
     }
 
     /// The earliest transmit instant a send's options allow: now plus the
@@ -6005,7 +6121,7 @@ impl<
 
     fn effective_source_route(
         &self,
-        peer_id: PeerId,
+        peer_id: Option<PeerId>,
         options: &SendOptions,
     ) -> Option<Vec<RouterHint, MAX_SOURCE_ROUTE_HINTS>> {
         // An explicitly supplied route that constrains no hop is the same as
@@ -6014,7 +6130,7 @@ impl<
             return (!route.is_empty()).then(|| route.clone());
         }
 
-        let peer = self.peer_registry.get(peer_id)?;
+        let peer = self.peer_registry.get(peer_id?)?;
         match peer.route.as_ref() {
             Some(CachedRoute::Source(route)) => Some(route.clone()),
             _ => None,
@@ -6031,10 +6147,11 @@ impl<
     /// the flood allowance's concern rather than the trace's.
     fn needs_route_discovery(
         &self,
-        peer_id: PeerId,
+        peer_id: Option<PeerId>,
         source_route: Option<&Vec<RouterHint, MAX_SOURCE_ROUTE_HINTS>>,
     ) -> bool {
-        let Some(peer) = self.peer_registry.get(peer_id) else {
+        let Some((peer_id, peer)) = peer_id.and_then(|id| Some((id, self.peer_registry.get(id)?)))
+        else {
             return true;
         };
         let routed = peer.route.is_some() || source_route.is_some_and(|route| !route.is_empty());
@@ -6090,14 +6207,13 @@ impl<
     /// `FHOPS_REM` nibble can hold.
     fn effective_flood_hops(
         &self,
-        peer_id: PeerId,
+        peer_id: Option<PeerId>,
         options: &SendOptions,
         source_route: Option<&Vec<RouterHint, MAX_SOURCE_ROUTE_HINTS>>,
     ) -> Option<u8> {
         let requested = options.flood_hops?;
-        let cached = self
-            .peer_registry
-            .get(peer_id)
+        let cached = peer_id
+            .and_then(|id| self.peer_registry.get(id))
             .and_then(|peer| peer.route.as_ref());
         // An empty source route is carried for provenance only; it constrains
         // no hop, so it costs nothing.
@@ -6107,7 +6223,7 @@ impl<
         let held_slack = options
             .source_route
             .is_none()
-            .then(|| self.peer_registry.route_hold(peer_id, self.clock.now_ms()))
+            .then(|| self.peer_registry.route_hold(peer_id?, self.clock.now_ms()))
             .flatten()
             .filter(|_| matches!(cached, Some(CachedRoute::Direct | CachedRoute::Source(_))))
             .map(|hold| hold.flood_hops);
@@ -6159,9 +6275,9 @@ impl<
     /// Only what this node originates follows a route chosen by hand to the
     /// letter; an ack's reach is never the application's choice, so a
     /// hand-set route leaves it to the route's evidence.
-    fn route_slack(&self, peer_id: PeerId, traffic: RouteTraffic) -> u8 {
+    fn route_slack(&self, peer_id: Option<PeerId>, traffic: RouteTraffic) -> u8 {
         let peer_retransmitted = traffic == RouteTraffic::Reack;
-        let evidence = match self.peer_registry.get(peer_id) {
+        let evidence = match peer_id.and_then(|id| self.peer_registry.get(id)) {
             Some(peer) => RouteEvidence {
                 hand_set: traffic == RouteTraffic::Send && peer.route_hand_set,
                 direct: peer.route.as_ref().and_then(CachedRoute::far_hop) == Some(FarHop::Peer),
@@ -6657,10 +6773,13 @@ impl<
         peer_key: PublicKey,
         carriage: ReplyCarriage<'_>,
         frame: &[u8],
+        payload_type: Option<u8>,
         ack_v: [u8; 16],
         rx: &RxInfo,
         received_at_ms: u64,
     ) -> bool {
+        #[cfg(not(feature = "payload-admission"))]
+        let _ = payload_type;
         let now_ms = self.clock.now_ms();
         self.expire_held_frames(now_ms);
         if let Some(held) = self
@@ -6695,6 +6814,8 @@ impl<
             peer_id,
             ack_v,
             frame: stored,
+            #[cfg(feature = "payload-admission")]
+            payload_type,
             rx: *rx,
             received_at_ms,
             verify_sent_ms: now_ms,
@@ -6748,6 +6869,14 @@ impl<
         };
         let ack_v = self.held_frames[index].ack_v;
         if self.verify_nonce(peer_id, &ack_v) != Some(nonce) {
+            return false;
+        }
+        // Room may have gone while the frame waited. Declined now, the
+        // Frame Verified goes unacknowledged and the frame stays held for
+        // the sender's next one.
+        #[cfg(feature = "payload-admission")]
+        if !self.admits_payload_type(self.held_frames[index].payload_type) {
+            MacCounters::bump(&mut self.counters.rx_delivery_refused);
             return false;
         }
         let Some((counter, mic)) = Self::replay_metadata(header, frame) else {
@@ -7973,6 +8102,43 @@ impl<
         refused
     }
 
+    /// Whether an endpoint declines a new frame for want of room: one it
+    /// would acknowledge whose payload type the
+    /// [payload admission](Self::set_payload_admission) refuses. Counted
+    /// as a refused delivery.
+    fn declines_payload(
+        &mut self,
+        frame: &[u8],
+        header: &PacketHeader,
+        rx: &RxInfo,
+        payload: &[u8],
+    ) -> bool {
+        #[cfg(feature = "payload-admission")]
+        {
+            let declined = header.ack_requested()
+                && !self.admits_payload_type(payload.first().copied())
+                && self.should_emit_destination_ack(frame, header, rx);
+            if declined {
+                MacCounters::bump(&mut self.counters.rx_delivery_refused);
+            }
+            declined
+        }
+        #[cfg(not(feature = "payload-admission"))]
+        {
+            let _ = (frame, header, rx, payload);
+            false
+        }
+    }
+
+    /// Whether the payload admission has room for a payload of
+    /// `payload_type`; `None` is a frame with no payload, which needs none.
+    #[cfg(feature = "payload-admission")]
+    fn admits_payload_type(&self, payload_type: Option<u8>) -> bool {
+        payload_type
+            .zip(self.payload_admission)
+            .is_none_or(|(payload_type, admits)| admits(payload_type))
+    }
+
     fn payload_is_allowed(packet_type: PacketType, payload: &[u8]) -> bool {
         if payload.is_empty() {
             return true;
@@ -8143,8 +8309,7 @@ impl<
             return false;
         };
         if let Some(entry) = self.tx_queue.get_mut(sequence) {
-            entry.adaptive_flood = plan.adaptive_flood;
-            entry.adaptive_first_hop = plan.adaptive_first_hop;
+            entry.adaptive = AdaptiveFlood::new(plan.adaptive_flood, plan.adaptive_first_hop);
         }
         if plan.consume_source_route {
             let hints_left = options
@@ -8983,7 +9148,7 @@ impl<
                 && Self::confirmation_key(entry.frame.as_slice())
                     .map(|entry_key| &entry_key == key)
                     .unwrap_or(false)
-                && (!entry.adaptive_flood
+                && (!entry.adaptive.is_flood()
                     || crate::forward_id::serves_neighborhood(entry.frame.as_slice(), frame))
         }) else {
             return;
@@ -8996,8 +9161,8 @@ impl<
         // already forwarded, which may be on its way to the neighbor it
         // carries for. A flood from its originator is not: another
         // forwarder's copy of that one is the whole of what was wanted.
-        let tolerant = self.adaptive_engaged() && !queued.adaptive_first_hop;
-        let abandon_copies = if queued.adaptive_flood && !tolerant {
+        let tolerant = self.adaptive_engaged() && queued.adaptive != AdaptiveFlood::FirstHop;
+        let abandon_copies = if queued.adaptive.is_flood() && !tolerant {
             1
         } else {
             self.repeater.flood_contention_abandon_copies
@@ -9008,7 +9173,7 @@ impl<
 
         let now_ms = self.clock.now_ms();
         let mut delay_ms = self.sample_flood_contention_delay_ms(rx, options);
-        if queued.adaptive_flood {
+        if queued.adaptive.is_flood() {
             delay_ms = delay_ms.saturating_add(self.adaptive_contention_offset_ms());
         }
         // The overheard copy may itself elicit an immediate ACK from the

@@ -281,6 +281,7 @@ impl<M: MacBackend> Host<M> {
                     umsh_mac::MacEventRef::TxAbandoned {
                         identity_id,
                         receipt: Some(receipt),
+                        ..
                     } => {
                         let token = crate::SendToken::new(identity_id, receipt);
                         node.fail_ping(token);

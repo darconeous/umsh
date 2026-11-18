@@ -115,6 +115,7 @@ pub fn full_config(
         bridge_client: false,
         i2c_buses: SIMULATED_I2C_BUSES,
         i2c_devices: SIMULATED_I2C_DEVICES,
+        node_msg: None,
     }
 }
 

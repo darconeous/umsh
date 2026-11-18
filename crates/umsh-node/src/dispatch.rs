@@ -76,10 +76,12 @@ impl EventDispatcher {
             MacEventRef::TxAbandoned {
                 identity_id: tx_id,
                 receipt: Some(receipt),
+                reason,
             } => {
                 let token = SendToken::new(tx_id, receipt);
                 self.update_ticket(&token, |state| {
                     state.failed = true;
+                    state.abandoned = Some(reason);
                     state.finished = true;
                 });
             }
@@ -102,6 +104,7 @@ impl EventDispatcher {
                     state.failed = true;
                     state.session_ended = true;
                     state.finished = true;
+                    state.wake_if_finished();
                 }
             }
             false
@@ -112,7 +115,9 @@ impl EventDispatcher {
         if let Some(pos) = self.ticket_states.iter().position(|(t, _)| t == token) {
             let (_, weak) = &self.ticket_states[pos];
             if let Some(rc) = weak.upgrade() {
-                f(&mut rc.borrow_mut());
+                let mut state = rc.borrow_mut();
+                f(&mut state);
+                state.wake_if_finished();
             } else {
                 self.ticket_states.swap_remove(pos);
             }
