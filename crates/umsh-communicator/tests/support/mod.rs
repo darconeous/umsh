@@ -55,6 +55,7 @@ pub fn config() -> SessionConfig {
         ble: true,
         ble_pairing: false,
         ble_pin: false,
+        uart_links: Default::default(),
         reboot: true,
         dev_identity: true,
         messaging: true,

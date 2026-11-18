@@ -42,7 +42,7 @@ use umsh_ulcp::i2c::{ScanRequest, TransferRequest};
 use umsh_ulcp::stats::{Counter, StatsLedger};
 use umsh_ulcp_device::listeners::{Mirrors, Writes};
 use umsh_ulcp_device::{
-    Effect, I2C_DATA_MAX, IdentityForm, IdentitySource, MAX_CHANNEL_KEYS, MAX_DEV_ADMINS,
+    Effect, HostLink, I2C_DATA_MAX, IdentityForm, IdentitySource, MAX_CHANNEL_KEYS, MAX_DEV_ADMINS,
     MAX_DEV_PEERS, MAX_REPEATER_REGIONS, NETWORK_TABLE_MAX, QueuedNotice, REGION_STRING_MAX_LEN,
     RadioRxInfo, Resolvers, SNAPSHOT_MAX, Session, TxOutcome, TxPower,
 };
@@ -1891,6 +1891,11 @@ fn sync_dev_domain<A, S, const TXQ: usize, E>(
     if let Some(claims) = session.node_msg_types() {
         crate::node_msg::publish_claims(claims);
     }
+    // The window too, which the UART link task reads at each XON.
+    #[cfg(feature = "uart-link")]
+    if let Some(window) = session.uart_window() {
+        crate::uart_link::WINDOW.publish(window);
+    }
     // Ahead of the mirror: the mirror is consumed by the device node,
     // and Bluetooth reachability is the transport's business rather than
     // the node's. The station and the stack are neither the node's
@@ -2560,6 +2565,15 @@ where
             .await
         };
 
+        // A frame from a UART link, whose task holds an XON back until
+        // the frames ahead of it have been acted on.
+        #[cfg(feature = "uart-link")]
+        let from_uart = match &event {
+            Either4::First(InEvent::Frame(Transport::Usb, _)) => session.uart_links().wired_host,
+            Either4::First(InEvent::Device(_)) => session.uart_links().device,
+            _ => false,
+        };
+
         match event {
             Either4::First(InEvent::Attached(transport)) => {
                 // Fresh session state for the new host session; the
@@ -2577,7 +2591,13 @@ where
                 // possession, BLE because the ULCP GATT service
                 // refuses any access outside an encrypted LESC-bonded
                 // link.
-                session.attach(true);
+                session.attach_over(
+                    match transport {
+                        Transport::Usb => HostLink::Wired,
+                        Transport::Ble => HostLink::Wireless,
+                    },
+                    true,
+                );
             }
             Either4::First(InEvent::FrameLost(transport)) => {
                 // A displaced transport's loss is not the host's.
@@ -3000,6 +3020,11 @@ where
         // (property mutation, CMD_RST, CMD_RESTORE); one u32
         // compare when they did not.
         sync_dev_domain(session, &mut dev_domain_synced, &mut env);
+        // After the window it may have set is published.
+        #[cfg(feature = "uart-link")]
+        if from_uart {
+            crate::uart_link::WINDOW.frame_acted_on();
+        }
         // The board's own store keeps the device lists as they change.
         // One it could not take is offered again once the retry delay has
         // passed, not after every event: the save deadline is what wakes

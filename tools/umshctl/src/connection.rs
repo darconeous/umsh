@@ -43,12 +43,24 @@ const DISCOVERY_EXTENSION: Duration = Duration::from_secs(3);
 /// configuration.
 pub fn attach_config() -> UlcpDeviceConfig {
     let profile = umsh::ulcp_wire::profiles::DEFAULT;
-    UlcpDeviceConfig::new(
+    let mut config = UlcpDeviceConfig::new(
         profile.freq_khz,
         profile.bw_hz,
         profile.sf,
         profile.cr_denom,
-    )
+    );
+    config.uart_window = UART_WINDOW.get().copied();
+    config
+}
+
+/// `--uart-window`: the window every attach in this process paces a
+/// radio on a UART with. Set once, before the first attach.
+static UART_WINDOW: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+
+/// Pace radios on a UART with `window` octets per XON, 0 for plain
+/// XON/XOFF.
+pub fn set_uart_window(window: u16) {
+    let _ = UART_WINDOW.set(window);
 }
 
 /// How long a mesh session waits for one command to come back.
@@ -263,6 +275,50 @@ impl FrameLink for AnyLink {
             Self::Unavailable => core::task::Poll::Ready(Err(UlcpError::Disconnected)),
         }
     }
+
+    fn sessions_in_band(&self) -> bool {
+        match self {
+            #[cfg(feature = "serial-radio")]
+            Self::Serial(link) => link.sessions_in_band(),
+            #[cfg(feature = "ble-radio")]
+            Self::Ble(link) => link.sessions_in_band(),
+            Self::Tcp(link) => link.sessions_in_band(),
+            Self::Lan(link) => link.sessions_in_band(),
+            Self::Mesh(link) => link.sessions_in_band(),
+            Self::Unavailable => false,
+        }
+    }
+
+    // Every HDLC-Lite link takes XON and XOFF; only a UART acts on them.
+    async fn send_flow(&mut self, octet: u8) -> Result<(), UlcpError> {
+        match self {
+            #[cfg(feature = "serial-radio")]
+            Self::Serial(link) => link.send_flow(octet).await,
+            Self::Tcp(link) => link.send_flow(octet).await,
+            Self::Lan(link) => link.send_flow(octet).await,
+            _ => Ok(()),
+        }
+    }
+
+    fn pace(&mut self, window: u16) {
+        match self {
+            #[cfg(feature = "serial-radio")]
+            Self::Serial(link) => link.pace(window),
+            Self::Tcp(link) => link.pace(window),
+            Self::Lan(link) => link.pace(window),
+            _ => {}
+        }
+    }
+
+    fn withhold_xon(&mut self, withheld: bool) {
+        match self {
+            #[cfg(feature = "serial-radio")]
+            Self::Serial(link) => link.withhold_xon(withheld),
+            Self::Tcp(link) => link.withhold_xon(withheld),
+            Self::Lan(link) => link.withhold_xon(withheld),
+            _ => {}
+        }
+    }
 }
 
 /// The pcap sink shared by the link wrapper (ULCP frames) and the
@@ -328,6 +384,22 @@ impl FrameLink for SessionLink {
             }
             other => other,
         }
+    }
+
+    fn sessions_in_band(&self) -> bool {
+        self.inner.sessions_in_band()
+    }
+
+    async fn send_flow(&mut self, octet: u8) -> Result<(), UlcpError> {
+        self.inner.send_flow(octet).await
+    }
+
+    fn pace(&mut self, window: u16) {
+        self.inner.pace(window);
+    }
+
+    fn withhold_xon(&mut self, withheld: bool) {
+        self.inner.withhold_xon(withheld);
     }
 }
 

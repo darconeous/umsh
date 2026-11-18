@@ -104,6 +104,7 @@ impl<const PAYLOAD: usize> Device<PAYLOAD> {
             ble: true,
             ble_pairing: true,
             ble_pin: true,
+            uart_links: Default::default(),
             reboot: true,
             dev_identity: true,
             messaging: false,

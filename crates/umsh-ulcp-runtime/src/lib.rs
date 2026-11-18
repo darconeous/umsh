@@ -62,6 +62,8 @@ pub mod reply_completion;
 pub mod reseed;
 #[cfg(feature = "driver")]
 pub mod temperature;
+#[cfg(feature = "uart-link")]
+pub mod uart_link;
 
 #[cfg(feature = "wifi")]
 pub mod wifi_journal;

@@ -16,6 +16,10 @@ wifi = []
 # Node messaging (`CAP_NODE_MSG`): a link sends and receives UMSH payloads
 # through the device's own node.
 node-msg = []
+# Flow control on a UART link (`PROP_UART_WINDOW`): the window a reader
+# paces the device with. For a board that serves a link on a UART without
+# hardware flow control; every other build leaves it out.
+uart-window = []
 # A device with chats of its own, and a store to keep its peers in, holds
 # more of them.
 communicator = []

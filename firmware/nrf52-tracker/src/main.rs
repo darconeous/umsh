@@ -563,6 +563,7 @@ mod firmware {
             // front-panel menu already drives.
             ble_pairing: true,
             ble_pin: true,
+            uart_links: Default::default(),
             // Every nRF52 board can reset itself through the bootloader
             // register; see the `reboot` hook below.
             reboot: true,

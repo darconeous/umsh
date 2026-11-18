@@ -765,6 +765,11 @@ pub mod prop {
     /// The longest `STR_NODE_MSG` payload every send accepts
     /// (`PROP_NODE_MSG_MTU`).
     pub const NODE_MSG_MTU: u32 = 5009;
+    /// The window of the UART link the request arrives on
+    /// (`PROP_UART_WINDOW`)—`UINT16_LE`, in octets; 0 for plain XON and
+    /// XOFF. Saved. Exists only on a device with a UART link, and only
+    /// that link's reader may read or set it.
+    pub const UART_WINDOW: u32 = 5010;
 }
 
 /// `PROP_MAC_REPEATER_MODE` values.
@@ -1058,6 +1063,8 @@ pub fn admin_writable(key: u32) -> bool {
             // attach resets it.
             | prop::MAC_PROMISCUOUS
             | prop::NODE_MSG_LISTEN
+            // The link's: an exchange over the mesh arrives on no UART.
+            | prop::UART_WINDOW
             // A device identity cannot be installed over the mesh.
             | prop::DEV_PRIVATE_KEY
     )
@@ -1070,9 +1077,11 @@ pub fn admin_writable(key: u32) -> bool {
 /// session state belong to whichever host is tethered, and an exchange
 /// that is not an attach has no session to configure. The one difference
 /// is the device identity, which whoever is holding the device may
-/// install, by the authority of physical possession.
+/// install, by the authority of physical possession. The other is
+/// `PROP_UART_WINDOW`, which belongs to the link an application is wired
+/// over; the session refuses it where that link is not a UART.
 pub fn device_writable(key: u32) -> bool {
-    key == prop::DEV_PRIVATE_KEY || admin_writable(key)
+    matches!(key, prop::DEV_PRIVATE_KEY | prop::UART_WINDOW) || admin_writable(key)
 }
 
 /// `PROP_SOUND_VOLUME` after a reset.

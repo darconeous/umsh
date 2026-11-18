@@ -178,6 +178,7 @@ pub const fn property_name(key: u32) -> Option<&'static str> {
         prop::LAN_BEARER_STATE => "PROP_LAN_BEARER_STATE",
         prop::NODE_MSG_TYPES => "PROP_NODE_MSG_TYPES",
         prop::NODE_MSG_MTU => "PROP_NODE_MSG_MTU",
+        prop::UART_WINDOW => "PROP_UART_WINDOW",
         _ => return None,
     })
 }
@@ -349,6 +350,7 @@ pub const PROPERTIES: &[u32] = &[
     prop::LAN_BEARER_STATE,
     prop::NODE_MSG_TYPES,
     prop::NODE_MSG_MTU,
+    prop::UART_WINDOW,
 ];
 
 /// How a property's octets are meant to be read.
@@ -533,6 +535,7 @@ pub const fn property_type(key: u32) -> Option<PropertyType> {
         // Payload types, one octet per item: a list, not a number.
         prop::NODE_MSG_TYPES => Bytes,
         prop::NODE_MSG_MTU => U16,
+        prop::UART_WINDOW => U16,
         _ => return None,
     })
 }

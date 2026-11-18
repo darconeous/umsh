@@ -208,6 +208,45 @@ pub const DEFAULT_IDENT_PRECISION: u8 = 5;
 /// own maximum.
 pub const MAX_IDENT_PRECISION: u8 = gnss::MAX_LOCATION_LEN as u8;
 
+/// Which of the device's local links are carried on a UART without
+/// hardware flow control, and so are paced by their reader with XON and
+/// XOFF under `PROP_UART_WINDOW` (spec §Flow Control on a UART). With
+/// neither, the property is unknown.
+///
+/// Acted on only in a build with the `uart-window` feature. Without it
+/// the session has no flow control and no window, whatever this says.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct UartLinks {
+    /// The wired host transport is such a UART, as behind the Heltecs'
+    /// USB bridge. A host attached over BLE is not.
+    pub wired_host: bool,
+    /// The device's own interface is an application on such a UART.
+    pub device: bool,
+}
+
+impl UartLinks {
+    /// No UART links.
+    pub const NONE: Self = Self {
+        wired_host: false,
+        device: false,
+    };
+
+    /// Whether the device has a UART link at all.
+    pub const fn any(self) -> bool {
+        self.wired_host || self.device
+    }
+}
+
+/// The transport a host attached over, as far as the session cares: a
+/// wired one may be a UART (see [`UartLinks::wired_host`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HostLink {
+    /// USB, or a UART behind a USB bridge.
+    Wired,
+    /// BLE, or anything else that is not wired to the device.
+    Wireless,
+}
+
 /// Fixed properties of the device this session runs on.
 #[derive(Clone, Copy, Debug)]
 pub struct SessionConfig {
@@ -323,6 +362,9 @@ pub struct SessionConfig {
     /// Separate from [`ble`](Self::ble), which is about making the
     /// transport unreachable: one that is always reachable still pairs.
     pub ble_pin: bool,
+    /// The local links carried on a UART, which `PROP_UART_WINDOW`
+    /// governs.
+    pub uart_links: UartLinks,
     /// `None`: no Wi-Fi hardware; `CAP_WIFI_SCAN` and `CAP_WIFI` are
     /// absent and every Wi-Fi property is unknown. `Some`: the scan
     /// capability is advertised, and the station capability with it
@@ -1227,6 +1269,10 @@ struct DeviceDomain {
     /// `PROP_NODE_MSG_TYPES`: the payload types delivered to a link.
     #[cfg(feature = "node-msg")]
     node_msg_types: NodeMsgTypes,
+    /// `PROP_UART_WINDOW`: the octets each XON permits on the UART link.
+    /// No board has more than one, so one value serves.
+    #[cfg(feature = "uart-window")]
+    uart_window: u16,
     /// `PROP_MAC_REPEATER_MODE`: whether, and how eagerly, the device
     /// identity's on-board MAC forwards overheard routable frames; one of
     /// [`repeater_mode`]. Persisted device-domain state; takes effect only
@@ -1403,6 +1449,8 @@ impl DeviceDomain {
             admins: DevAdminTable::default(),
             #[cfg(feature = "node-msg")]
             node_msg_types: NodeMsgTypes::default(),
+            #[cfg(feature = "uart-window")]
+            uart_window: 0,
             repeater_mode: repeater_mode::OFF,
             repeater_regions: RepeaterRegions::default(),
             repeater_default_region: None,
@@ -2929,6 +2977,8 @@ const SAVED_SCHEMA: &[SavedProperty] = &[
     saved(prop::LAN_BEARER_INGRESS_LIMIT, ApplyPhase::Config, false),
     #[cfg(feature = "node-msg")]
     saved(prop::NODE_MSG_TYPES, ApplyPhase::Config, true),
+    #[cfg(feature = "uart-window")]
+    saved(prop::UART_WINDOW, ApplyPhase::Config, false),
 ];
 
 /// Whether `key` is part of the saved snapshot: what `CMD_SAVE` persists
@@ -3044,6 +3094,8 @@ struct SavedState {
     dev_admins: DevAdminTable,
     #[cfg(feature = "node-msg")]
     node_msg_types: NodeMsgTypes,
+    #[cfg(feature = "uart-window")]
+    uart_window: u16,
     repeater_mode: u8,
     repeater_regions: RepeaterRegions,
     repeater_default_region: Option<[u8; REGION_CODE_LEN]>,
@@ -3109,6 +3161,8 @@ impl SavedState {
             dev_admins: device.admins,
             #[cfg(feature = "node-msg")]
             node_msg_types: device.node_msg_types,
+            #[cfg(feature = "uart-window")]
+            uart_window: device.uart_window,
             repeater_mode: device.repeater_mode,
             repeater_regions: device.repeater_regions,
             repeater_default_region: device.repeater_default_region,
@@ -3175,6 +3229,8 @@ impl SavedState {
             dev_admins: DevAdminTable::default(),
             #[cfg(feature = "node-msg")]
             node_msg_types: NodeMsgTypes::default(),
+            #[cfg(feature = "uart-window")]
+            uart_window: 0,
             repeater_mode: repeater_mode::OFF,
             repeater_regions: RepeaterRegions::default(),
             repeater_default_region: None,
@@ -3371,6 +3427,8 @@ impl SavedState {
                 }
                 Ok(())
             }
+            #[cfg(feature = "uart-window")]
+            prop::UART_WINDOW => encoder.put(number, &self.uart_window.to_le_bytes()),
             prop::TZ_RULE => encoder.put(number, self.tz_rule.text()),
             prop::TIME_24H => encoder.put(number, &[self.time_24h as u8]),
             prop::GNSS_IDENT_UPDATE => encoder.put(number, &[self.gnss_ident_update as u8]),
@@ -3605,6 +3663,8 @@ impl SavedState {
                 let payload_type: [u8; 1] = value.try_into().map_err(|_| Unheld)?;
                 held(self.node_msg_types.insert(payload_type))?;
             }
+            #[cfg(feature = "uart-window")]
+            prop::UART_WINDOW => self.uart_window = parse_u16(value).map_err(invalid)?,
             prop::TZ_RULE => self.tz_rule = ZoneRule::parse(value).map_err(invalid)?,
             prop::TIME_24H => self.time_24h = parse_bool(value).map_err(invalid)?,
             prop::GNSS_IDENT_UPDATE => {
@@ -3858,6 +3918,10 @@ pub struct Session<A: AesProvider, S: Sha256Provider, const TX: usize = 1> {
     /// key provisioning (spec §Provisioning Security): physical
     /// possession for serial, an encrypted bonded LESC link for BLE.
     link_secure: bool,
+    /// Whether the attached host's link is a UART: it attached over the
+    /// wired transport and [`UartLinks::wired_host`] says that is one.
+    #[cfg(feature = "uart-window")]
+    host_on_uart: bool,
     /// RAM mirror of the durably saved snapshot (`None` when nothing
     /// is saved). Post-reset values and `CMD_RESTORE` come from here;
     /// the firmware keeps the flash journal in sync through the
@@ -4171,6 +4235,8 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             attached: false,
             device_interface: false,
             link_secure: false,
+            #[cfg(feature = "uart-window")]
+            host_on_uart: false,
             saved: None,
             saved_unwritten: false,
             snapshot_rejected: false,
@@ -4584,6 +4650,8 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     prop::DEV_ADMINS => self.device.admins = saved.dev_admins,
                     #[cfg(feature = "node-msg")]
                     prop::NODE_MSG_TYPES => self.device.node_msg_types = saved.node_msg_types,
+                    #[cfg(feature = "uart-window")]
+                    prop::UART_WINDOW => self.device.uart_window = saved.uart_window,
                     prop::DEV_NAME => {
                         self.device.name = saved.name;
                         self.device.name_len = saved.name_len;
@@ -4719,6 +4787,19 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// physical possession for serial transports, an encrypted bonded
     /// LESC link for BLE. Key-bearing writes are refused while false.
     pub fn attach(&mut self, link_secure: bool) {
+        self.attach_over(HostLink::Wireless, link_secure);
+    }
+
+    /// A host attached over `link`. As [`Session::attach`], and the
+    /// session learns whether the host's link is a UART, which only that
+    /// host may then read or set the window of.
+    pub fn attach_over(&mut self, link: HostLink, link_secure: bool) {
+        #[cfg(feature = "uart-window")]
+        {
+            self.host_on_uart = link == HostLink::Wired && self.config.uart_links.wired_host;
+        }
+        #[cfg(not(feature = "uart-window"))]
+        let _ = link;
         self.discard_session_state();
         self.session_end_pending = None;
         self.session_ended = false;
@@ -4743,6 +4824,10 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         self.session_ended = false;
         self.attached = false;
         self.link_secure = false;
+        #[cfg(feature = "uart-window")]
+        {
+            self.host_on_uart = false;
+        }
         self.host.lease_deadline_ms = self
             .host
             .key
@@ -5098,6 +5183,17 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         self.binding == Binding::Local
     }
 
+    /// Whether the frame in flight arrived on a UART link, whose window
+    /// its reader alone may read or set.
+    #[cfg(feature = "uart-window")]
+    fn on_uart(&self) -> bool {
+        match self.binding {
+            Binding::Local => self.attached && self.host_on_uart,
+            Binding::Device => self.config.uart_links.device,
+            Binding::Admin | Binding::Host => false,
+        }
+    }
+
     /// Whether the binding of the frame in flight may set `key` to
     /// `value`.
     fn binding_writable(&self, key: u32, value: &[u8]) -> bool {
@@ -5126,6 +5222,24 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         }
     }
 
+    /// A new window from the reader of the UART link the frame in flight
+    /// arrived on. Answers nothing itself: an ended session takes a
+    /// window too, and says nothing about it.
+    #[cfg(feature = "uart-window")]
+    fn take_uart_window(&mut self, value: &[u8]) -> Result<u16, Status> {
+        if !self.on_uart() {
+            return Err(Status::NOT_PERMITTED);
+        }
+        let window = parse_u16(value)?;
+        // A reader sets its window every time it starts; the same window
+        // again is not a change.
+        if window != self.device.uart_window {
+            self.device.uart_window = window;
+            self.bump_dev_domain();
+        }
+        Ok(window)
+    }
+
     fn dispatch_frame(
         &mut self,
         bytes: &[u8],
@@ -5152,6 +5266,16 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             && self.session_ended
             && received.command() != Some(Cmd::SessionStart)
         {
+            // Bar one: the window governs the link rather than its
+            // session, and a reader starting over sets it before
+            // CMD_SESSION_START. Acted on, and answered with nothing.
+            #[cfg(feature = "uart-window")]
+            if received.command() == Some(Cmd::PropSet)
+                && let Ok(payload) = PropPayload::parse(received.payload)
+                && payload.key == prop::UART_WINDOW
+            {
+                let _ = self.take_uart_window(payload.value);
+            }
             return None;
         }
         match received.command() {
@@ -6180,6 +6304,17 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         // configured (spec §PROP_DEV_PRIVATE_KEY).
         if (key == prop::BLE_PAIRING_PIN && self.config.ble_pin) || key == prop::DEV_PRIVATE_KEY {
             self.complete(tid, Status::UNIMPLEMENTED, emit);
+            return None;
+        }
+        // The link's own, and only its reader's (spec §PROP_UART_WINDOW).
+        #[cfg(feature = "uart-window")]
+        if key == prop::UART_WINDOW {
+            if self.on_uart() {
+                let window = self.device.uart_window.to_le_bytes();
+                self.send_prop_is(tid, key, &window, emit);
+            } else {
+                self.complete(tid, Status::NOT_PERMITTED, emit);
+            }
             return None;
         }
         if key == prop::PHY_RSSI {
@@ -8109,6 +8244,14 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             self.complete(tid, Status::NOT_PERMITTED, emit);
             return None;
         }
+        #[cfg(feature = "uart-window")]
+        if key == prop::UART_WINDOW {
+            match self.take_uart_window(value) {
+                Ok(window) => self.send_prop_is(tid, key, &window.to_le_bytes(), emit),
+                Err(status) => self.complete(tid, status, emit),
+            }
+            return None;
+        }
         if key == prop::BLE_PAIRING_PIN {
             if !self.config.ble_pin {
                 self.complete(tid, Status::PROP_NOT_FOUND, emit);
@@ -9515,6 +9658,26 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         }
     }
 
+    /// Which of the device's local links are UARTs paced by their reader.
+    #[cfg(feature = "uart-window")]
+    pub fn uart_links(&self) -> UartLinks {
+        self.config.uart_links
+    }
+
+    /// `PROP_UART_WINDOW`, for the UART link task: the octets each XON
+    /// permits, 0 for no limit. `None` on a device with no UART link.
+    #[cfg(feature = "uart-window")]
+    pub fn uart_window(&self) -> Option<u16> {
+        self.has_uart_window().then_some(self.device.uart_window)
+    }
+
+    /// Whether the device has a UART link paced by its reader, and so
+    /// `PROP_UART_WINDOW`.
+    #[cfg(feature = "uart-window")]
+    fn has_uart_window(&self) -> bool {
+        self.config.uart_links.any()
+    }
+
     /// `PROP_NODE_MSG_TYPES`: the payload types delivered to a link.
     /// `None` on a device that does not serve node messaging, which
     /// claims nothing whatever it has saved.
@@ -9700,6 +9863,10 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     fn refuse_absent_property(&mut self, tid: u8, key: u32, emit: &mut impl FnMut(&[u8])) -> bool {
         let absent = (!self.config.dev_identity && is_identity_property(key))
             || (!self.config.host_custody && is_custody_property(key));
+        // On a board with no UART link. A build without flow control does
+        // not know the property at all.
+        #[cfg(feature = "uart-window")]
+        let absent = absent || (key == prop::UART_WINDOW && !self.has_uart_window());
         if absent {
             self.complete(tid, Status::PROP_NOT_FOUND, emit);
         }
@@ -9709,6 +9876,10 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     fn known_prop(&self, key: u32) -> bool {
         if is_custody_property(key) {
             return self.config.host_custody;
+        }
+        #[cfg(feature = "uart-window")]
+        if key == prop::UART_WINDOW {
+            return self.has_uart_window();
         }
         if matches!(
             key,
@@ -11022,6 +11193,7 @@ mod tests {
             ble: true,
             ble_pairing: true,
             ble_pin: true,
+            uart_links: UartLinks::NONE,
             reboot: true,
             dev_identity: true,
             messaging: false,
@@ -15745,6 +15917,7 @@ mod tests {
     fn pairing_pin_is_unknown_without_a_transport_that_takes_one() {
         let config = SessionConfig {
             ble_pin: false,
+            uart_links: UartLinks::NONE,
             ..test_config()
         };
         let mut session: TestSession = Session::new(config, Status::RESET_POWER_ON, test_engine());
@@ -22457,6 +22630,199 @@ mod tests {
         );
         session.end_admin_exchange();
         expect_status(&emitted[0], TID_UNSOLICITED, Status::BUS_ERROR);
+    }
+
+    // ─── Flow control on a UART ──────────────────────────────────────
+
+    /// Without flow control built in, the window is unknown whatever the
+    /// board says about its links.
+    #[cfg(not(feature = "uart-window"))]
+    #[test]
+    fn a_build_without_flow_control_has_no_uart_window() {
+        let config = SessionConfig {
+            uart_links: UartLinks {
+                wired_host: true,
+                device: true,
+            },
+            ..test_config()
+        };
+        let mut session: TestSession = Session::new(config, Status::RESET_POWER_ON, test_engine());
+        session.attach_over(HostLink::Wired, true);
+        let mut buf = [0u8; 16];
+        let len = frame::prop_get(&mut buf, 1, prop::UART_WINDOW).unwrap();
+        let (emitted, _) = dispatch(&mut session, &buf[..len], 0);
+        expect_status(&emitted[0], 1, Status::PROP_NOT_FOUND);
+        let (emitted, _) = set(&mut session, prop::UART_WINDOW, &64u16.to_le_bytes());
+        expect_status(&emitted[0], 2, Status::PROP_NOT_FOUND);
+        assert!(!is_saved(prop::UART_WINDOW));
+    }
+
+    #[cfg(feature = "uart-window")]
+    mod uart_window {
+        use super::*;
+
+        fn session_with(uart_links: UartLinks) -> TestSession {
+            let config = SessionConfig {
+                uart_links,
+                ..test_config()
+            };
+            Session::new(config, Status::RESET_POWER_ON, test_engine())
+        }
+
+        const WIRED_HOST: UartLinks = UartLinks {
+            wired_host: true,
+            device: false,
+        };
+
+        fn get_status(session: &mut TestSession) -> Vec<Vec<u8>> {
+            let mut buf = [0u8; 16];
+            let len = frame::prop_get(&mut buf, 1, prop::UART_WINDOW).unwrap();
+            dispatch(session, &buf[..len], 0).0
+        }
+
+        #[test]
+        fn a_device_with_no_uart_link_has_no_window() {
+            let mut session = session_with(UartLinks::NONE);
+            session.attach_over(HostLink::Wired, true);
+            expect_status(&get_status(&mut session)[0], 1, Status::PROP_NOT_FOUND);
+            let (emitted, _) = set(&mut session, prop::UART_WINDOW, &64u16.to_le_bytes());
+            expect_status(&emitted[0], 2, Status::PROP_NOT_FOUND);
+            assert_eq!(session.uart_window(), None);
+        }
+
+        #[test]
+        fn the_reader_on_the_uart_reads_and_sets_its_window() {
+            let mut session = session_with(WIRED_HOST);
+            session.attach_over(HostLink::Wired, true);
+            assert_eq!(get(&mut session, prop::UART_WINDOW), [0, 0]);
+            assert_eq!(session.uart_window(), Some(0));
+            let (emitted, _) = set(&mut session, prop::UART_WINDOW, &64u16.to_le_bytes());
+            let (_, key, value) = parse_prop_is(&emitted[0]);
+            assert_eq!(key, prop::UART_WINDOW);
+            assert_eq!(value, 64u16.to_le_bytes());
+            assert_eq!(session.uart_window(), Some(64));
+            let (emitted, _) = set(&mut session, prop::UART_WINDOW, &[64]);
+            expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
+            assert_eq!(session.uart_window(), Some(64));
+        }
+
+        /// The window is the link's: a host on BLE, a mesh administrator,
+        /// and an interface that is not wired over a UART are all refused,
+        /// and none of them moves it.
+        #[test]
+        fn only_the_uart_link_s_reader_reaches_its_window() {
+            let mut session = session_with(WIRED_HOST);
+            session.attach_over(HostLink::Wireless, true);
+            expect_status(&get_status(&mut session)[0], 1, Status::NOT_PERMITTED);
+            let (emitted, _) = set(&mut session, prop::UART_WINDOW, &64u16.to_le_bytes());
+            expect_status(&emitted[0], 2, Status::NOT_PERMITTED);
+
+            let mut buf = [0u8; 16];
+            let len = frame::prop_set(&mut buf, 3, prop::UART_WINDOW, &[64, 0]).unwrap();
+            expect_status(
+                &device(&mut session, &buf[..len]).0[0],
+                3,
+                Status::NOT_PERMITTED,
+            );
+            let len = frame::prop_get(&mut buf, 3, prop::UART_WINDOW).unwrap();
+            expect_status(
+                &device(&mut session, &buf[..len]).0[0],
+                3,
+                Status::NOT_PERMITTED,
+            );
+            assert_eq!(session.uart_window(), Some(0));
+
+            let mut session = session_with(UartLinks {
+                wired_host: false,
+                device: true,
+            });
+            session.attach_over(HostLink::Wired, true);
+            expect_status(&get_status(&mut session)[0], 1, Status::NOT_PERMITTED);
+            let len = frame::prop_set(&mut buf, 3, prop::UART_WINDOW, &[64, 0]).unwrap();
+            let (emitted, _) = device(&mut session, &buf[..len]);
+            assert_eq!(parse_prop_is(&emitted[0]).2, [64, 0]);
+            assert_eq!(session.uart_window(), Some(64));
+        }
+
+        #[test]
+        fn an_administrator_is_refused_the_window() {
+            let mut session = session_with(UartLinks {
+                wired_host: true,
+                device: true,
+            });
+            let mut buf = [0u8; 16];
+            let len = frame::prop_set(&mut buf, 0, prop::UART_WINDOW, &[64, 0]).unwrap();
+            let mut emitted = Vec::new();
+            session.handle_admin_frame(&buf[..len], 0, 180, &mut |bytes: &[u8]| {
+                emitted.push(bytes.to_vec())
+            });
+            session.end_admin_exchange();
+            expect_status(&emitted[0], TID_UNSOLICITED, Status::NOT_PERMITTED);
+            let len = frame::prop_get(&mut buf, 0, prop::UART_WINDOW).unwrap();
+            let mut emitted = Vec::new();
+            session.handle_admin_frame(&buf[..len], 0, 180, &mut |bytes: &[u8]| {
+                emitted.push(bytes.to_vec())
+            });
+            session.end_admin_exchange();
+            expect_status(&emitted[0], TID_UNSOLICITED, Status::NOT_PERMITTED);
+            assert_eq!(session.uart_window(), Some(0));
+        }
+
+        /// A reader starting over sets its window before
+        /// CMD_SESSION_START: an ended session acts on that write and
+        /// answers nothing, and still answers nothing else.
+        #[test]
+        fn an_ended_session_still_takes_the_window() {
+            let mut session = session_with(WIRED_HOST);
+            session.attach_over(HostLink::Wired, true);
+            session.end_session(SessionEndReason::FrameLost);
+            let (emitted, _) = set(&mut session, prop::UART_WINDOW, &32u16.to_le_bytes());
+            assert!(emitted.is_empty());
+            assert_eq!(session.uart_window(), Some(32));
+            // One it cannot take is as silent, and leaves no status behind.
+            let status = session.last_status;
+            let (emitted, _) = set(&mut session, prop::UART_WINDOW, &[32]);
+            assert!(emitted.is_empty());
+            assert_eq!(session.last_status, status);
+            assert_eq!(session.uart_window(), Some(32));
+            let (emitted, _) = set(&mut session, prop::DEV_NAME, b"Ignored");
+            assert!(emitted.is_empty());
+            assert!(get_status(&mut session).is_empty());
+        }
+
+        /// A reader sets its window every time it starts. The same window
+        /// again is not a change, and nothing is owed to flash.
+        #[test]
+        fn the_window_is_saved_and_the_same_one_again_changes_nothing() {
+            assert!(is_saved(prop::UART_WINDOW));
+            let mut out = [0u8; SNAPSHOT_MAX];
+            let mut session = session_with(WIRED_HOST);
+            session.attach_over(HostLink::Wired, true);
+            set(&mut session, prop::UART_WINDOW, &48u16.to_le_bytes());
+            let len = session.encode_snapshot(&mut out).unwrap();
+            let saved = out[..len].to_vec();
+
+            let mut rebooted = session_with(WIRED_HOST);
+            rebooted.restore_at_boot(&saved).unwrap();
+            assert_eq!(rebooted.uart_window(), Some(48));
+
+            rebooted.attach_over(HostLink::Wired, true);
+            let version = rebooted.dev_domain_version();
+            set(&mut rebooted, prop::UART_WINDOW, &48u16.to_le_bytes());
+            assert_eq!(rebooted.dev_domain_version(), version);
+            assert!(!rebooted.note_device_change());
+            set(&mut rebooted, prop::UART_WINDOW, &16u16.to_le_bytes());
+            assert_ne!(rebooted.dev_domain_version(), version);
+        }
+
+        #[test]
+        fn a_detached_host_is_no_longer_on_the_uart() {
+            let mut session = session_with(WIRED_HOST);
+            session.attach_over(HostLink::Wired, true);
+            session.detach(0);
+            session.attach(true);
+            expect_status(&get_status(&mut session)[0], 1, Status::NOT_PERMITTED);
+        }
     }
 
     // ─── Node messaging ──────────────────────────────────────────────

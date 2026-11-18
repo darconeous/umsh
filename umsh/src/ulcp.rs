@@ -219,6 +219,17 @@ pub struct UlcpDeviceConfig {
     /// confirmations allow the largest of this, three seconds, and twice
     /// the device's current maximum frame airtime.
     pub response_timeout: Duration,
+    /// On a serial link that is a UART: the window to pace the device
+    /// with (`PROP_UART_WINDOW`), set at the start of every session and
+    /// granted again with XON as it is used; 0 for plain XON/XOFF, where
+    /// the one XON that opens the session permits without limit.
+    ///
+    /// `None` leaves the device's window as it is and sends neither XON
+    /// nor XOFF. That is the default, because a device with no UART link
+    /// refuses the set, and the refusal replaces the reset cause in
+    /// `PROP_LAST_STATUS` before this handle reads it. A device with a
+    /// saved window answers nothing until it is given one.
+    pub uart_window: Option<u16>,
 }
 
 impl UlcpDeviceConfig {
@@ -239,6 +250,7 @@ impl UlcpDeviceConfig {
             tx_power_dbm: 0,
             sync_word: umsh_ulcp::profiles::DEFAULT_SYNC_WORD,
             response_timeout: Duration::from_secs(2),
+            uart_window: None,
         }
     }
 }
@@ -875,6 +887,21 @@ pub trait FrameLink {
     fn sessions_in_band(&self) -> bool {
         false
     }
+
+    /// Send XON or XOFF outside any frame (spec §Flow Control on a UART).
+    /// A link that carries no such octets has nothing to send.
+    async fn send_flow(&mut self, _octet: u8) -> Result<(), UlcpError> {
+        Ok(())
+    }
+
+    /// Pace the device with a window of `window` octets: grant another
+    /// with XON before the last one runs out. 0 grants nothing on its own,
+    /// which is plain XON/XOFF.
+    fn pace(&mut self, _window: u16) {}
+
+    /// Stop granting the device permission to send, or start again. For
+    /// testing a device that is pushed back on.
+    fn withhold_xon(&mut self, _withheld: bool) {}
 }
 
 /// HDLC-Lite framing over a reliable asynchronous byte stream.
@@ -884,6 +911,14 @@ pub struct SerialFrameLink<IO> {
     read_buf: [u8; READ_CHUNK],
     read_pos: usize,
     read_len: usize,
+    /// The window the device is paced with, 0 for none.
+    window: u16,
+    /// Octets received since the last XON.
+    since_xon: usize,
+    /// Whether XON is withheld.
+    withheld: bool,
+    /// An XON is due and has not been written yet.
+    xon_owed: bool,
 }
 
 impl<IO> SerialFrameLink<IO> {
@@ -895,6 +930,10 @@ impl<IO> SerialFrameLink<IO> {
             read_buf: [0; READ_CHUNK],
             read_pos: 0,
             read_len: 0,
+            window: 0,
+            since_xon: 0,
+            withheld: false,
+            xon_owed: false,
         }
     }
 
@@ -933,6 +972,24 @@ where
 
             self.read_pos = 0;
             self.read_len = 0;
+            // Everything received is taken: grant another window before
+            // waiting for more, once half the last is used. An XON the
+            // port cannot take now is written on a later poll.
+            if self.window > 0
+                && !self.withheld
+                && self.since_xon >= usize::from(self.window / 2).max(1)
+            {
+                self.xon_owed = true;
+            }
+            if self.xon_owed
+                && !self.withheld
+                && let core::task::Poll::Ready(Ok(1)) =
+                    core::pin::Pin::new(&mut self.io).poll_write(cx, &[hdlc::XON])
+            {
+                self.xon_owed = false;
+                self.since_xon = 0;
+                let _ = core::pin::Pin::new(&mut self.io).poll_flush(cx);
+            }
             let mut read_buf = ReadBuf::new(&mut self.read_buf);
             match core::pin::Pin::new(&mut self.io).poll_read(cx, &mut read_buf) {
                 core::task::Poll::Ready(Ok(())) => {
@@ -940,6 +997,7 @@ where
                     if self.read_len == 0 {
                         return core::task::Poll::Ready(Err(UlcpError::Disconnected));
                     }
+                    self.since_xon += self.read_len;
                 }
                 core::task::Poll::Ready(Err(error)) => {
                     return core::task::Poll::Ready(Err(UlcpError::Io(error)));
@@ -951,6 +1009,28 @@ where
 
     fn sessions_in_band(&self) -> bool {
         true
+    }
+
+    async fn send_flow(&mut self, octet: u8) -> Result<(), UlcpError> {
+        self.io.write_all(&[octet]).await?;
+        self.io.flush().await?;
+        if octet == hdlc::XON {
+            self.xon_owed = false;
+            self.since_xon = 0;
+        }
+        Ok(())
+    }
+
+    fn pace(&mut self, window: u16) {
+        self.window = window;
+        self.since_xon = 0;
+    }
+
+    fn withhold_xon(&mut self, withheld: bool) {
+        self.withheld = withheld;
+        // Granting again: the device may be waiting on the XON it was
+        // denied.
+        self.xon_owed |= !withheld;
     }
 }
 
@@ -1966,6 +2046,24 @@ where
             self.note_link_error(error);
         }
         result
+    }
+
+    /// Withdraw the device's permission to send (XOFF), on a link paced
+    /// by its reader. Elsewhere it changes nothing.
+    pub async fn xoff(&mut self) -> Result<(), UlcpError> {
+        self.link.send_flow(hdlc::XOFF).await
+    }
+
+    /// Permit the device to send (XON): one window, or without limit
+    /// with a window of 0.
+    pub async fn xon(&mut self) -> Result<(), UlcpError> {
+        self.link.send_flow(hdlc::XON).await
+    }
+
+    /// Stop granting the device further windows, or start again, so a
+    /// test can watch a device that is pushed back on.
+    pub fn withhold_xon(&mut self, withheld: bool) {
+        self.link.withhold_xon(withheld);
     }
 
     /// The device's firmware version string (`PROP_DEV_VERSION`).
@@ -3924,12 +4022,36 @@ where
     async fn start_session(&mut self) -> Result<(), UlcpError> {
         self.session_start_due = true;
         let deadline = Instant::now() + self.config.response_timeout;
+        let window = self.config.uart_window;
         loop {
+            // A reader that does not know the device's state withdraws
+            // its permission, sets the window, starts the session, and
+            // only then permits again: the window is in force before the
+            // first octet (spec §Flow Control on a UART). All of it goes
+            // again with every resend, since any of it can vanish with
+            // the request. The set asks for no answer: one would come
+            // before the boundary and be discarded.
+            if let Some(window) = window {
+                self.link.send_flow(hdlc::XOFF).await?;
+                let mut buf = [0u8; 16];
+                let len = frame::prop_set(
+                    &mut buf,
+                    TID_UNSOLICITED,
+                    prop::UART_WINDOW,
+                    &window.to_le_bytes(),
+                )
+                .map_err(|_| UlcpError::Protocol("frame encode"))?;
+                self.send_raw(&buf[..len]).await?;
+            }
             let tid = self.alloc_tid();
             let mut buf = [0u8; 4];
             let len = frame::session_start(&mut buf, tid)
                 .map_err(|_| UlcpError::Protocol("frame encode"))?;
             self.send_raw(&buf[..len]).await?;
+            if let Some(window) = window {
+                self.link.pace(window);
+                self.link.send_flow(hdlc::XON).await?;
+            }
             let resend_at = (Instant::now() + SESSION_START_RESEND).min(deadline);
             loop {
                 let now = Instant::now();
@@ -4864,7 +4986,10 @@ pub mod testing {
                         } else {
                             frame::prop_is(&mut buf, tid, payload.key, payload.value).unwrap()
                         };
-                        replies.push(buf[..len].to_vec());
+                        // A set that asks for no answer gets none.
+                        if tid != TID_UNSOLICITED {
+                            replies.push(buf[..len].to_vec());
+                        }
                     }
                     Cmd::StrSend => {
                         let payload = StreamPayload::parse(frame.payload).unwrap();
@@ -6217,6 +6342,102 @@ mod tests {
         radio.open_session().await.unwrap();
         assert_eq!(started.load(std::sync::atomic::Ordering::Relaxed), 1);
         assert!(!radio.session_start_unsupported);
+    }
+
+    /// A paced serial session opens as a reader that does not know the
+    /// device's state must: XOFF, the window, `CMD_SESSION_START`, and
+    /// only then XON.
+    #[tokio::test]
+    async fn a_paced_session_sets_its_window_before_it_permits() {
+        use tokio::io::AsyncReadExt;
+        let (client, mut server) = tokio::io::duplex(4096);
+        let mut config = test_config();
+        config.uart_window = Some(64);
+        let mut radio = UlcpDevice::bare(SerialFrameLink::new(client), config);
+        let device = tokio::spawn(async move {
+            let mut decoder = hdlc::Decoder::<WIRE_BUF>::new();
+            let mut seen = Vec::new();
+            let mut chunk = [0u8; 64];
+            loop {
+                let len = server.read(&mut chunk).await.unwrap();
+                for &octet in &chunk[..len] {
+                    match octet {
+                        hdlc::XON => seen.push("XON".to_string()),
+                        hdlc::XOFF => seen.push("XOFF".to_string()),
+                        _ => {}
+                    }
+                    let Some(Ok(bytes)) = decoder.push(octet) else {
+                        continue;
+                    };
+                    let frame = Frame::parse(bytes).unwrap();
+                    match frame.command() {
+                        Some(Cmd::PropSet) => {
+                            let payload = frame::PropPayload::parse(frame.payload).unwrap();
+                            assert_eq!(payload.key, prop::UART_WINDOW);
+                            assert_eq!(payload.value, 64u16.to_le_bytes());
+                            seen.push("SET".to_string());
+                        }
+                        Some(Cmd::SessionStart) => {
+                            seen.push("START".to_string());
+                            let mut out = [0u8; 8];
+                            let len =
+                                frame::session_did_start(&mut out, frame.header.tid()).unwrap();
+                            let mut wire = [0u8; 32];
+                            let len = hdlc::encode_frame(&out[..len], &mut wire).unwrap();
+                            server.write_all(&wire[..len]).await.unwrap();
+                        }
+                        other => panic!("unexpected {other:?}"),
+                    }
+                }
+                if seen.iter().any(|event| event == "XON") {
+                    return seen;
+                }
+            }
+        });
+        radio.open_session().await.unwrap();
+        assert_eq!(device.await.unwrap(), ["XOFF", "SET", "START", "XON"]);
+    }
+
+    /// A paced link grants another window once half the last is used,
+    /// and grants nothing while XON is withheld.
+    #[tokio::test]
+    async fn a_paced_link_grants_windows_unless_withheld() {
+        use tokio::io::AsyncReadExt;
+        let (client, mut server) = tokio::io::duplex(4096);
+        let mut link = SerialFrameLink::new(client);
+        link.pace(8);
+        let mut wire = [0u8; 32];
+        let len = hdlc::encode_frame(&[0x81, 0x05, 1, 2, 3, 4], &mut wire).unwrap();
+        let mut flow = [0u8; 8];
+
+        server.write_all(&wire[..len]).await.unwrap();
+        assert_eq!(link.recv_frame().await.unwrap(), [0x81, 0x05, 1, 2, 3, 4]);
+        // The next wait for octets is when the grant goes out.
+        let _ = tokio::time::timeout(Duration::from_millis(20), link.recv_frame()).await;
+        let read = tokio::time::timeout(Duration::from_millis(100), server.read(&mut flow))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(&flow[..read], [hdlc::XON]);
+
+        link.withhold_xon(true);
+        server.write_all(&wire[..len]).await.unwrap();
+        assert!(link.recv_frame().await.is_ok());
+        let _ = tokio::time::timeout(Duration::from_millis(20), link.recv_frame()).await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), server.read(&mut flow))
+                .await
+                .is_err(),
+            "no XON while withheld"
+        );
+
+        link.withhold_xon(false);
+        let _ = tokio::time::timeout(Duration::from_millis(20), link.recv_frame()).await;
+        let read = tokio::time::timeout(Duration::from_millis(100), server.read(&mut flow))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(&flow[..read], [hdlc::XON]);
     }
 
     /// A device that predates `CMD_SESSION_START` refuses it, and the

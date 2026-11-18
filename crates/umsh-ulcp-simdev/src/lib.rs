@@ -101,6 +101,7 @@ pub fn full_config(
         ble: true,
         ble_pairing: true,
         ble_pin: true,
+        uart_links: Default::default(),
         // A simulated power cycle is a rebuilt session, which is
         // exactly what a host watching this device would see.
         reboot: true,

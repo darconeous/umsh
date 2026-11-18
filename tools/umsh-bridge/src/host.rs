@@ -99,6 +99,7 @@ fn session_config() -> SessionConfig {
         ble: false,
         ble_pairing: false,
         ble_pin: false,
+        uart_links: Default::default(),
         // A host interface is a task inside this process; there is no
         // hardware for `CMD_REBOOT` to restart, and restarting the
         // bridge is the operator's business.

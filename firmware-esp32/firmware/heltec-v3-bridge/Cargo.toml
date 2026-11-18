@@ -75,6 +75,8 @@ board-heltec-v2 = [
     "battery-adc",
     "status-led",
     "power-off-deep-sleep",
+    # The wired host transport is UART0, paced by XON and XOFF.
+    "umsh-ulcp-runtime/uart-link",
 ]
 board-heltec-v3 = [
     "ulcp-i2c",
@@ -85,6 +87,8 @@ board-heltec-v3 = [
     "battery-adc",
     "status-led",
     "power-off-deep-sleep",
+    # The wired host transport is UART0, paced by XON and XOFF.
+    "umsh-ulcp-runtime/uart-link",
 ]
 board-tlora-pager = [
     "chip-esp32s3",

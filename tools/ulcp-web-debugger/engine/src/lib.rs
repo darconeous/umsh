@@ -84,6 +84,7 @@ pub fn web_sim_config() -> umsh_ulcp_simdev::SessionConfig {
         ble: true,
         ble_pairing: true,
         ble_pin: true,
+        uart_links: Default::default(),
         // The simulator restarts by rebuilding its session, which is
         // near enough a power cycle for the debugger to exercise.
         reboot: true,
@@ -492,6 +493,16 @@ const PROPERTY_SPECS: &[PropertySpec] = &[
         "none",
         Some("octets"),
         Some(umsh_ulcp::ids::cap::NODE_MSG),
+    ),
+    spec(
+        prop::UART_WINDOW,
+        "Device",
+        "Octets each XON permits on this UART link",
+        true,
+        true,
+        "integer",
+        Some("octets"),
+        None,
     ),
     spec(
         prop::SAVED,
@@ -1893,12 +1904,13 @@ fn decode_property(key: u32, value: &[u8]) -> Option<DecodedValue> {
         }
         prop::PHY_MTU
         | prop::NODE_MSG_MTU
+        | prop::UART_WINDOW
         | prop::HOST_RX_QUEUE_COUNT
         | prop::HOST_RX_QUEUE_CAPACITY
             if value.len() == 2 =>
         {
             let number = u16::from_le_bytes(value.try_into().ok()?);
-            let suffix = if matches!(key, prop::PHY_MTU | prop::NODE_MSG_MTU) {
+            let suffix = if matches!(key, prop::PHY_MTU | prop::NODE_MSG_MTU | prop::UART_WINDOW) {
                 " octets"
             } else {
                 " frames"
@@ -2097,7 +2109,7 @@ fn encode_property_text(key: u32, value: &str) -> Result<Vec<u8>, String> {
             "an 8-bit unsigned integer",
         )?]),
         prop::PHY_LORA_SW => Ok(parse_u16(value)?.to_le_bytes().to_vec()),
-        prop::PHY_DUTY_LIMIT | prop::HOST_RX_QUEUE_CAPACITY => {
+        prop::PHY_DUTY_LIMIT | prop::HOST_RX_QUEUE_CAPACITY | prop::UART_WINDOW => {
             Ok(parse_integer::<u16>(value, "a number from 0 to 65535")?
                 .to_le_bytes()
                 .to_vec())

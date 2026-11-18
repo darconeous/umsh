@@ -57,6 +57,7 @@ fn config(name: &'static str) -> SessionConfig {
         ble: true,
         ble_pairing: true,
         ble_pin: true,
+        uart_links: Default::default(),
         reboot: true,
         dev_identity: true,
         messaging: false,
@@ -837,4 +838,78 @@ fn node_messages_wait_for_a_host_that_listens() {
     let len = frame::prop_set(&mut buf, 4, prop::NODE_MSG_LISTEN, &[1]).unwrap();
     step(Some(from_host(&buf[..len])));
     assert_eq!(received(), [(vec![3, 7], true)]);
+}
+
+/// The window reaches the UART link task at boot, before any host, and
+/// again when the host on the wired UART sets it. A host on BLE is not
+/// on the UART and is refused. The link task also hears of each frame
+/// from the UART once it is acted on, and of no other.
+#[cfg(feature = "uart-link")]
+#[test]
+fn the_uart_window_is_published_for_the_link_task() {
+    use crate::uart_link::WINDOW;
+    use umsh_ulcp::{frame, ids::prop};
+    use umsh_ulcp_device::UartLinks;
+
+    let rt = DeviceRuntime {
+        input: Box::leak(Box::new(InputChannel::<NoopRawMutex>::new())),
+        radio: Box::leak(Box::new(Channels::<NoopRawMutex, 1, 1>::new())),
+        ctl: Box::leak(Box::new(DeviceControl::new())),
+        out: Box::leak(Box::new(TransportChannels::new())),
+        session_gen: Box::leak(Box::new(AtomicU32::new(0))),
+        device: None,
+        snapshot: Box::leak(Box::new(SnapshotControl::new())),
+    };
+    let input = rt.input;
+    let env = Env {
+        events: Rc::new(RefCell::new(std::vec::Vec::new())),
+        older: None,
+        restore_gate: Box::leak(Box::new(Signal::new())),
+        name_gate: None,
+        dfu_result: Err(Status::UNIMPLEMENTED),
+    };
+    let mut session: TestSession = Session::new(
+        SessionConfig {
+            uart_links: UartLinks {
+                wired_host: true,
+                device: false,
+            },
+            ..config("UART window")
+        },
+        Status::RESET_POWER_ON,
+        CryptoEngine::new(SoftwareAes, SoftwareSha256),
+    );
+    let mut storage = [0; SNAPSHOT_MAX];
+    let mut run = core::pin::pin!(run_with_storage(
+        &mut session,
+        &mut storage,
+        None,
+        Some([0x55; 32]),
+        rt,
+        env
+    ));
+    let mut cx = Context::from_waker(Waker::noop());
+    let mut step = |event: Option<InEvent>| {
+        if let Some(event) = event {
+            assert!(input.try_send(event).is_ok());
+        }
+        assert!(run.as_mut().poll(&mut cx).is_pending());
+    };
+    let set_window = |transport: Transport, window: u16| {
+        let mut buf = [0u8; 16];
+        let len = frame::prop_set(&mut buf, 1, prop::UART_WINDOW, &window.to_le_bytes()).unwrap();
+        InEvent::Frame(transport, FrameBuf::from_slice(&buf[..len]).unwrap())
+    };
+
+    step(None);
+    assert_eq!(WINDOW.get(), Some(0));
+    step(Some(InEvent::Attached(Transport::Ble)));
+    step(Some(set_window(Transport::Ble, 16)));
+    assert_eq!(WINDOW.get(), Some(0));
+    step(Some(InEvent::Attached(Transport::Usb)));
+    assert!(!WINDOW.acted_on(1), "nothing from the UART yet");
+    step(Some(set_window(Transport::Usb, 32)));
+    assert_eq!(WINDOW.get(), Some(32));
+    assert!(WINDOW.acted_on(1));
+    assert!(!WINDOW.acted_on(2));
 }
