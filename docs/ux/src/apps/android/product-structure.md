@@ -199,7 +199,6 @@ a second line, and one action:
 | Bluetooth is off | **Turn on** (the system Bluetooth request) |
 | Nearby devices permission denied | **Allow** (asks again, or opens app settings once Android stops asking) |
 | Radio failed or rejected a transmission | **Details** |
-| Radio needs a host decision | **Details** |
 
 Recovery removes the banner. A failure to load the app's data uses the same
 slot with **Retry**, above any radio banner.

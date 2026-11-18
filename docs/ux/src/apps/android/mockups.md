@@ -32,7 +32,14 @@ drawing are in [Android open decisions](open-decisions.md).
 | 1 | [D. Radio control and problem banner](#d-radio-control-and-problem-banner) | Approved 2026-11-17 |
 | 1 | [E. List-detail on tablets and foldables](#e-list-detail-on-tablets-and-foldables) | Approved 2026-11-17 |
 | 1 | [F. Storage unavailable](#f-storage-unavailable) | Approved 2026-11-17 |
-| 2 | Conversations | Not drawn yet |
+| 2 | [G. Conversation list](#g-conversation-list) | Approved 2026-11-18 |
+| 2 | [H. Threads](#h-threads) | Approved 2026-11-18 |
+| 2 | [I. Bubbles, delivery, and the message menu](#i-bubbles-delivery-and-the-message-menu) | Approved 2026-11-18 |
+| 2 | [J. Replies and reactions](#j-replies-and-reactions) | Approved 2026-11-18 |
+| 2 | [K. Composer](#k-composer) | Approved 2026-11-18 |
+| 2 | [L. Conversation info](#l-conversation-info) | Approved 2026-11-18 |
+| 2 | [M. Notifications](#m-notifications) | Approved 2026-11-18 |
+| 2 | [N. Conversations on tablets](#n-conversations-on-tablets) | Approved 2026-11-18 |
 | 3 | Onboarding and identity | Not drawn yet |
 | 4 | Peers and channels | Not drawn yet |
 | 5 | Map, radio, and management | Not drawn yet |
@@ -69,8 +76,8 @@ approved before the others are drawn in detail.
 - Sizes: 32 dp in a top app bar, 40 dp in a list, 56 dp on a card, 96 dp at the
   top of a page.
 - Avatars carry no session state. PFS shows as the violet of a bubble sent under
-  a PFS session, as on iOS and the communicator, and in text in the
-  conversation's top app bar and on the peer page. Bubbles are drawn in batch 2.
+  a PFS session, as on iOS and the communicator. Text names PFS only where a
+  choice depends on it, such as resending a message first sent under it.
 
 ## C. Navigation bar, rail, and back
 
@@ -114,3 +121,104 @@ approved before the others are drawn in detail.
 - The copy is adapted to Android, where uninstalling also erases the identity
   and an older build cannot be installed over a newer one.
 - **Copy details** puts the error on the clipboard.
+
+# Batch 2: Conversations
+
+Drawn from the iOS app as built. Where Android departs from it, the board's
+notes say so and [open decisions](open-decisions.md#conversations) explain why.
+
+## G. Conversation list
+
+[![Conversation list mockups: the list with every preview kind, empty and loading states, search with results and with none, the new-chat sheet, swipe to delete, and the two delete confirmations](mockups/conversation-list.svg)](mockups/conversation-list.svg)
+
+- One list for direct and channel conversations, newest first, with iOS's
+  previews: "You:", the channel sender, "Draft:", "Message deleted", and
+  "No messages yet".
+- **New chat** is an extended FAB opening a sheet with iOS's two ways in.
+- Search is full screen and grouped as on iOS. It finds conversations, peers,
+  joined channels, and heard nodes, not message text.
+- Swiping a row away asks first: Delete for a direct conversation, Leave for a
+  channel chat, with iOS's wording.
+
+## H. Threads
+
+[![Thread mockups: a direct thread, a channel thread with senders and a gap, jump to latest, an empty thread, and the EMERGENCY certification sheet](mockups/threads.svg)](mockups/threads.svg)
+
+- The top app bar holds Back, the avatar and title, and the radio control.
+  There is no subtitle, and tapping the title opens conversation info.
+- Threads hide the navigation bar; the composer owns the bottom edge.
+- A time line appears after an hour's gap. Channel runs are named above and
+  carry the sender's avatar.
+- A gap of missing messages is a tappable placeholder.
+- EMERGENCY asks for certification before the first action after each launch.
+
+## I. Bubbles, delivery, and the message menu
+
+[![Bubble mockups: delivery captions, message kinds in dark, the long-press reactions and menu, delete and resend confirmations, and message details for a sent and a received message](mockups/bubbles.svg)](mockups/bubbles.svg)
+
+- Received bubbles use the surface container. Mine are the fixed blue, green,
+  or violet.
+- Runs join with tight corners instead of tails.
+- Delivery is a caption in iOS's words, in sentence case. The two failures are
+  red, with a retry button.
+- Long press shows the reaction bar and a menu. Delete is "Delete for
+  everyone".
+- Resending a message first sent under PFS offers to send it without forward
+  secrecy, the one place text names PFS.
+- Message details is a full page with iOS's sections.
+
+## J. Replies and reactions
+
+[![Reply and reaction mockups: swipe to reply, the composer while replying, quotes in bubbles, jumping to a quoted message, and reaction chips](mockups/replies-reactions.svg)](mockups/replies-reactions.svg)
+
+- Swipe or Reply puts a quote strip in the composer. A sent reply carries its
+  quote inside the bubble.
+- Tapping a quote jumps to the original and highlights it briefly.
+- Reaction chips sit across the bubble's bottom edge. Mine is filled with the
+  conversation's color; one that failed is faded.
+
+## K. Composer
+
+[![Composer mockups: empty, typing in each security color, while the radio reconnects, blocked with no radio, a long draft, editing, and the not-sent alert](mockups/composer.svg)](mockups/composer.svg)
+
+- Send appears only when there is text, in the color the message will be
+  sent in.
+- While the link is transient, Send is dimmed and waits.
+- With no radio, the draft stays editable and Send shows blocked. A line above
+  the field gives the reason and the way out. Nothing is queued.
+- Editing happens in the composer under an "Editing message" strip.
+
+## L. Conversation info
+
+[![Conversation info mockups: a channel conversation's page with its routing, the EMERGENCY variant, adding a region, the hop limit menu, the clear confirmation, and the channel member sheet](mockups/conversation-info.svg)](mockups/conversation-info.svg)
+
+- A channel conversation has its own page, as on iOS; a direct conversation's
+  title opens the peer page (batch 4).
+- **Routing** limits what this phone sends in the channel: any number of
+  regions, or none, and a maximum hop count. Public and EMERGENCY keep the
+  protocol's fixed 10 hops.
+- **Clear all messages** erases only this phone's history and keeps the
+  conversation.
+- A channel sender's avatar opens a member sheet with **Request identity**
+  for someone not saved.
+
+## M. Notifications
+
+[![Notification mockups: message notifications in the system shade, inline reply, the states of the ongoing radio notification, the private lock screen, and failure notices](mockups/notifications.svg)](mockups/notifications.svg)
+
+- The boards show Android's own shade and lock screen; the app has no
+  notification list of its own.
+- Messages use MessagingStyle conversations with the canonical avatar or
+  channel badge, and offer Reply and Mark as read.
+- The radio's ongoing notification is silent. It always states the power
+  state and opens Radio Detail.
+- The lock screen version hides sender and content. iOS's failure notices are
+  kept word for word.
+
+## N. Conversations on tablets
+
+[![Tablet conversation mockups: the list and an open channel thread in light, and the same with the radio disconnected in dark](mockups/conversations-tablet.svg)](mockups/conversations-tablet.svg)
+
+- The batch 1 list-detail layout with a thread in the detail pane. Its top app
+  bar has no Back; the overflow holds conversation info.
+- The banner spans both panes, and the composer blocks Send as on a phone.

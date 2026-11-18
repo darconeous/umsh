@@ -162,9 +162,9 @@ draws the bubbles.
 Material 3 has no banner component, and dynamic color makes tints unpredictable.
 
 **Recommendation:** attention states (no radio, disconnected, Bluetooth off,
-permission, host decision) use the warning container; failures (connection
-failed, transmission rejected, data load failed) use the error container. The
-icon and the wording carry the difference, never the tint alone.
+permission) use the warning container; failures (connection failed,
+transmission rejected, data load failed) use the error container. The icon and
+the wording carry the difference, never the tint alone.
 
 ### Material 3 Expressive
 
@@ -209,6 +209,165 @@ erases the database and, unlike iOS, the identity with it.
 that doing so also erases the identity, and that an update fixing the error
 restores everything. **Clear storage** in system settings leads to the app's
 manage-space screen (batch 3), not a wipe.
+
+## Conversations
+
+### The blocked composer keeps the field
+
+When sending is impossible, iOS replaces the text field with the reason and a
+button, so the draft is hidden until the radio returns. The guidelines ask
+that a draft stay and that Send look blocked and explain itself.
+
+**Recommendation:** Android keeps the field and the draft editable. Send is
+drawn blocked, and a line above the field gives the reason and the way out
+(Connect radio, Radio settings); tapping Send explains in an alert. iOS
+adopts the same so a long draft never disappears under a banner.
+
+### The thread header carries no subtitle
+
+Batch 1's thread placeholder had a subtitle ("Chat · heard 2 min ago"). iOS
+shows only the avatar and title, and tapping either opens the info page.
+
+**Recommendation:** match iOS. Presence from routing or recent traffic is weak
+evidence; it belongs on the peer page, worded as such, not as a standing claim
+in every thread.
+
+### How an unnamed channel sender is labeled
+
+iOS names a channel sender by saved name, then the name they gave, then the
+first 10 characters of their address, then "Member" and the node hint. The
+conversation list uses the first 6 characters of the address. Neither prefix
+is a form the shared presentation rules define, and the hint already is the
+address's prefix.
+
+**Recommendation:** after the saved name and the name they gave, both apps
+show "Member" and the node hint (for example "Member BtC5"), in the thread and
+the list alike. The full address stays on the member sheet.
+
+### Bubbles join instead of having tails
+
+iOS bubbles have tails on the last of a run. Android's messaging apps instead
+round every corner and tighten the corners where a run continues.
+
+**Recommendation:** Android uses grouped corners, with no tails, and keeps
+iOS's spacing: tight within a run, wider between runs.
+
+### Reaction chips at the bubble's bottom edge
+
+iOS places reaction chips over the bubble's top outer corner, where they can
+cover the end of the message above.
+
+**Recommendation:** Android places them across the bottom edge, on the side
+toward the screen's middle, where Android users expect them and where they
+never cover another message.
+
+### Editing in the composer
+
+iOS edits a message in a sheet with Cancel and Save.
+
+**Recommendation:** Android loads the message into the composer under an
+"Editing message" strip, with a check to save and a close button to cancel,
+so writing always happens in the same place. The 4-hour limit is unchanged.
+
+### Message details as a page
+
+**Recommendation:** a full page pushed in the thread's stack, with iOS's
+sections and wording. On tablets it opens in the detail pane over the thread.
+
+### No unread count on Back
+
+iOS's Back button in a thread counts unread conversations elsewhere ("99+").
+Android's Back is an arrow with no label, and badging it is not an Android
+pattern.
+
+**Recommendation:** no count on Android. Notifications and the list's badge
+already say that something else needs attention.
+
+### Mark as read on message notifications
+
+iOS's message notifications offer only Reply.
+
+**Recommendation:** Android offers Reply and Mark as read, the pair Android's
+messaging apps use. iOS adds Mark as read as well.
+
+### Hiding notification contents on the lock screen
+
+The guidelines ask for an in-app option to hide sender and content on the
+lock screen. iOS has none and relies on the system's Show Previews.
+
+**Recommendation:** Android adds the option in notification settings (batch
+5). Message notifications are always private with a public version, so the
+system setting already works; the option forces the public version. iOS adds
+the same option.
+
+### Warning before a message needs several frames
+
+The guidelines ask the composer to estimate fragmentation and warn before a
+message needs several frames. Neither app does yet.
+
+**Recommendation:** leave it out of batch 2 and design it once for both apps,
+since the estimate comes from the shared core. The long-draft board shows
+where it would appear.
+
+### Floating conversation bubbles
+
+**Recommendation:** no Android Bubbles (floating chat heads) in the first
+release. The notifications carry the shortcut and metadata Bubbles need, so
+they can be added later without redesign.
+
+### Channel routing on the conversation page
+
+iOS edits a channel's region and hop limit on the channel page, under Local
+Details, beside its alias. The conversation page has neither.
+
+**Recommendation:** a Routing section on the channel conversation page, right
+after Notifications, because it governs what this phone sends there. The
+channel page in batch 4 shows the same two settings, since there is one record
+per channel. Notifications already appears on both pages this way. iOS adds
+the section to its conversation page as well.
+
+Regions are input chips plus an **Add region** chip that opens a dialog. The
+dialog takes the same text as iOS and the repeater settings: a short code, an
+agreed name, or a raw `0x` code. The hop limit is an exposed dropdown with
+Default and 1 to 15. On public and EMERGENCY, where the protocol fixes it, the
+limit is a plain value.
+
+### Region suggestions for a channel
+
+Repeater settings can propose regions from a position. A channel could do the
+same from the phone's location.
+
+**Recommendation:** not in v1. A channel's regions describe how far its
+messages should reach, which is the members' agreement, not where this phone
+happens to be.
+
+## Protocol and core changes
+
+### Several regions on a channel
+
+A channel today holds at most one region, and in practice none reaches the
+air: iOS saves a channel's region, but the core's channel registration carries
+only the hop limit, so no channel send is tagged. Supporting any number of
+regions, including none, takes these changes. None changes the wire format,
+because the Region Code option (11) already repeats, and a repeater forwards
+when any listed region matches.
+
+1. **Channel URIs** (`uri-formats.md`): `r` may repeat, one parameter per
+   region. Repetition is used instead of a list separator because a region
+   name may contain any character.
+2. **MAC send options** (`umsh-mac` `SendOptions`): `region_code` becomes a
+   list, written as one Region Code option per entry. A repeater's own region
+   insertion stays single, as the spec requires.
+3. **Mobile core:** a channel's registration carries its region list beside
+   its hop limit, and every send in the channel applies both.
+4. **iOS:** the channel's `regionCode` becomes a list. Its Region text field
+   becomes the chip editor described above. A stored single region becomes a
+   one-item list.
+
+**Cost:** each region adds 3 bytes to every message sent in the channel: one
+byte of option header and the 2-byte code. **Recommendation:** no fixed limit
+on the number of regions. The fragmentation estimate, when it is designed,
+counts these bytes like any other.
 
 ## Reconciling the shared chapters
 
@@ -278,10 +437,6 @@ are not made yet.
     > the peer's avatar, which looks the same with or without a session. A
     > message sent under a PFS session is drawn in the forward-secrecy bubble
     > color, distinct from ordinary encrypted messages and from open channels,
-    > and its message details may record it.
-    >
-    > The direct-conversation header and Peer Detail state the session in
-    > text: **Establishing PFS…**, **PFS active · expires in 24 min** or
-    > **PFS active · until restart**, **Ending PFS…**, or a specific failure
-    > or **Session ended after restart**. Peer Detail shows **Standard
-    > encryption** when there is no session.
+    > and its message details may record it. No header, badge, or page
+    > states whether a session is held; text names PFS only where a choice
+    > depends on it, such as resending a message first sent under one.
