@@ -159,8 +159,8 @@ Repeaters requests:
   the RSSI/SNR heard here and a last-seen time. No expiry.
 - `PeerRepeaterTable` (`crates/umsh-node/src/peer_repeaters.rs`): up to 16
   identities heard directly that claim the repeater role or bit, with
-  name, location, regions, mobile bit, signal, and last-identity time. No
-  expiry.
+  name, location, regions, eviction rank, signal, last-heard time, and
+  last-identity time. A record expires a week after its last identity.
 
 Neither is consulted when a route is chosen or an ack is addressed. The
 phone keeps a third, unbounded table of channel-member traces used only to

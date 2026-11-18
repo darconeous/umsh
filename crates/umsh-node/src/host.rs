@@ -187,6 +187,18 @@ impl<M: MacBackend> Host<M> {
                         {
                             node.dispatch_pfs_established(peer);
                         }
+                        // Anything a listed repeater originates, beacons
+                        // included, says it is still around. Noted before the
+                        // callbacks, so one asking for the listing sees it.
+                        if heard_off_its_sender(&packet)
+                            && let Some(hint) = packet.from_hint()
+                        {
+                            node.note_peer_heard(
+                                hint,
+                                packet.rssi().zip(packet.snr()),
+                                packet.received_at_ms().unwrap_or(wait_began_ms),
+                            );
+                        }
                         let _ = node.dispatch_received_packet(&packet);
                         if packet.payload_type() == umsh_core::PayloadType::Meet {
                             return;
@@ -295,6 +307,18 @@ impl<M: MacBackend> Host<M> {
             })
             .await
             .map_err(HostError::Mac)?;
+
+        // Forwards are heard only in the MAC, whose table is small enough to
+        // forget one. A cycle hears far fewer frames than the table holds,
+        // so copying it after every cycle loses none in practice.
+        let nodes = &self.nodes;
+        self.mac
+            .for_each_transmitter_observation(&mut |observation| {
+                for (_, node) in nodes {
+                    node.credit_peer_repeater_forwarding(&observation);
+                }
+            })
+            .await;
 
         let queued: Vec<PfsCommand> = pending_pfs.borrow_mut().drain(..).collect();
         // Forward secrecy needs the software crypto back end; without it, a
@@ -558,8 +582,14 @@ pub fn identity_is_trustworthy(
 /// whenever it is put back on the air; it says who the node is, and is
 /// believed as that, but not that the node is in range.
 pub fn identity_heard_directly(packet: &ReceivedPacketRef<'_>) -> bool {
-    packet.sender_authenticated()
-        && packet.hop_count() == Some(1)
+    packet.sender_authenticated() && heard_off_its_sender(packet)
+}
+
+/// Whether a frame came off its sender's own transmitter, on the air now:
+/// one hop, not replayed from a queue, and not a copy of this stack's own
+/// transmission. Nothing here authenticates the sender.
+fn heard_off_its_sender(packet: &ReceivedPacketRef<'_>) -> bool {
+    packet.hop_count() == Some(1)
         && packet.rx().buffered_age_s() == 0
         && packet.rx().origin() != umsh_hal::RxOrigin::LocalTx
 }

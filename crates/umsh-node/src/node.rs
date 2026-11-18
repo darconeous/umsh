@@ -1135,6 +1135,32 @@ impl<M: MacBackend> LocalNode<M> {
             .observe_identity(&from, identity, update, rssi_snr, now_ms);
     }
 
+    /// Note a frame heard directly off the node whose hint is `hint`, which
+    /// keeps a listed repeater from giving way.
+    pub(crate) fn note_peer_heard(
+        &self,
+        hint: NodeHint,
+        rssi_snr: Option<(i16, umsh_hal::Snr)>,
+        at_ms: u64,
+    ) {
+        self.state
+            .borrow_mut()
+            .peer_repeaters
+            .note_heard(hint, rssi_snr, at_ms);
+    }
+
+    /// Note a forward the MAC heard, on whichever listed repeaters it is
+    /// credited to.
+    pub(crate) fn credit_peer_repeater_forwarding(
+        &self,
+        observation: &umsh_mac::TransmitterObservation,
+    ) {
+        self.state
+            .borrow_mut()
+            .peer_repeaters
+            .credit_forwarding(observation);
+    }
+
     /// The repeaters this node has heard directly: those introduced by their
     /// own identity advertisements, merged with those the radio has heard
     /// forwarding.
@@ -1147,8 +1173,12 @@ impl<M: MacBackend> LocalNode<M> {
             .await;
         // The borrow ends before the merge so a handler holding the state
         // across an await cannot deadlock against it.
-        let identities = self.state.borrow().peer_repeaters.clone();
-        let mut peers = peer_repeaters::merge(&identities, observations.iter(), now_ms);
+        let identities = {
+            let mut state = self.state.borrow_mut();
+            state.peer_repeaters.expire(now_ms);
+            state.peer_repeaters.clone()
+        };
+        let mut peers = peer_repeaters::merge(identities, observations.iter(), now_ms);
         // A node is not its own neighbor. A copy of its own advertisement can
         // come back off the air, and delivery does not screen a broadcast's
         // source, so the identity table can hold this node too.
@@ -1240,8 +1270,10 @@ impl<M: MacBackend> LocalNode<M> {
             return;
         }
         let view = crate::mac_command::PeerRepeatersRequestView::new(request);
-        let generation = self.state.borrow().peer_repeaters.generation();
+        // Read after the listing, which may expire entries and so move the
+        // generation on.
         let peers = self.peer_repeaters().await;
+        let generation = self.state.borrow().peer_repeaters.generation();
 
         // A cursor from a listing that has since changed names a place in a
         // list that no longer exists, so the enumeration restarts rather than

@@ -4400,4 +4400,102 @@ mod tests {
         assert_eq!(view.entries().count(), 0);
         assert_eq!(view.cursor(), None);
     }
+
+    /// A host and its node, which knows of one repeater by its identity.
+    #[cfg(feature = "software-crypto")]
+    fn host_knowing_ridge() -> (
+        FakeMac,
+        crate::Host<FakeMac>,
+        crate::LocalNode<FakeMac>,
+        PublicKey,
+    ) {
+        let mac = FakeMac::new(vec![[7u8; 32]]);
+        let mut host = crate::Host::new(mac.clone());
+        let node = host.add_node(LocalIdentityId(1));
+        let ridge = PublicKey([0xAA; 32]);
+        node.observe_peer_identity(
+            ridge,
+            &peer_identity("Ridge", &[]),
+            crate::IdentityUpdate::Replace,
+            None,
+            0,
+        );
+        (mac, host, node, ridge)
+    }
+
+    /// The MAC keeps few forwarders and may forget one; what it heard is
+    /// already the repeater's by then.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn a_forward_the_mac_has_since_forgotten_still_freshens_its_repeater() {
+        let (mac, mut host, node, ridge) = host_knowing_ridge();
+        mac.state.borrow_mut().now_ms = 30 * 60_000;
+        mac.observe(
+            umsh_core::RouterHint([ridge.0[0], ridge.0[1]]),
+            -80,
+            umsh_hal::Snr::from_decibels(3),
+        );
+        block_on_ready(host.step()).unwrap();
+        mac.state.borrow_mut().observations.clear();
+        mac.state.borrow_mut().now_ms = 40 * 60_000;
+
+        let peers = block_on_ready(node.peer_repeaters());
+        assert_eq!(peers[0].last_heard_min, Some(10));
+        assert_eq!(peers[0].rssi_dbm, Some(-80));
+    }
+
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn a_beacon_heard_off_its_repeater_freshens_it_and_a_forwarded_one_does_not() {
+        let (mac, mut host, node, ridge) = host_knowing_ridge();
+        mac.state.borrow_mut().now_ms = 30 * 60_000;
+        let last_heard = || block_on_ready(node.peer_repeaters())[0].last_heard_min;
+
+        // One hop accumulated: a repeater's copy.
+        mac.script(
+            LocalIdentityId(1),
+            MacEventRef::Received(test_broadcast_packet(ridge, Some(0x21), None)),
+        );
+        block_on_ready(host.step()).unwrap();
+        assert_eq!(last_heard(), Some(30));
+
+        mac.script(
+            LocalIdentityId(1),
+            MacEventRef::Received(test_broadcast_packet(ridge, None, None)),
+        );
+        block_on_ready(host.step()).unwrap();
+        assert_eq!(last_heard(), Some(0));
+    }
+
+    /// A listing that drops a repeater unadvertised for a week has changed,
+    /// so a cursor into the listing before it restarts the walk.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn a_listing_leaves_out_a_repeater_unadvertised_for_a_week() {
+        let mac = FakeMac::new(Vec::new());
+        let node = responder_node(&mac);
+        node.enable_peer_repeaters_responder();
+        let lifetime = crate::peer_repeaters::IDENTITY_LIFETIME_MS;
+        for (seed, at_ms) in [(1u8, 0), (2, lifetime / 2)] {
+            node.observe_peer_identity(
+                PublicKey([seed; 32]),
+                &peer_identity("Peer", &[]),
+                crate::IdentityUpdate::Replace,
+                None,
+                at_ms,
+            );
+        }
+        mac.state.borrow_mut().now_ms = lifetime;
+
+        let generation = 2u16.to_be_bytes();
+        block_on_ready(node.answer_peer_repeaters_request(
+            PublicKey([0x41; 32]),
+            None,
+            &peer_repeaters_request(None, Some(&[generation[0], generation[1], 1])),
+        ));
+        let (_, body) = sent_response(&mac);
+        let view = crate::mac_command::PeerRepeatersResponseView::new(&body);
+        assert_eq!(view.total(), Some(1));
+        assert_eq!(view.entries().count(), 1, "the walk restarted");
+    }
 }
