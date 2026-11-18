@@ -302,7 +302,7 @@ actor RustMeshEngine: MeshEngine {
             .appendingPathComponent("CounterReservations", isDirectory: true)
         do {
             let store = try MobileCounterStore(rootDirectory: root.path)
-            let session = try await MobileMeshSession(identity: localIdentity, counterStore: store)
+            let session = try await MobileMeshSession.start(identity: localIdentity, counterStore: store)
             mobileMeshSession = session
             return session
         } catch {

@@ -31,9 +31,21 @@ umsh-ulcp-simdev = { path = "../umsh-ulcp-simdev", features = ["lan"] }
 embedded-hal-async.workspace = true
 lwuri.workspace = true
 rand = { workspace = true, features = ["std", "thread_rng", "sys_rng"] }
+# The application store. Exactly the version `umsh-regiondb` uses:
+# `libsqlite3-sys` declares `links = "sqlite3"`, so the graph holds one.
+rusqlite = { version = "0.32", default-features = false, features = ["functions"] }
 tokio = { version = "1", features = ["macros", "net", "rt", "sync", "time"] }
+# The store's search fold (NFD, then combining marks stripped), the same on
+# both platforms rather than each OS's own.
+unicode-normalization = "0.1"
 uniffi = "=0.32.0"
 zeroize.workspace = true
+
+# The NDK exposes no SQLite to apps, so Android compiles it in. iOS links the
+# system library. `bundled-sqlite` turns on `rusqlite/bundled`, which covers
+# the application store as well, since both share the one `rusqlite`.
+[target.'cfg(target_os = "android")'.dependencies]
+umsh-regiondb = { path = "../umsh-regiondb", features = ["bundled-sqlite"] }
 
 [dev-dependencies]
 tempfile = "3"

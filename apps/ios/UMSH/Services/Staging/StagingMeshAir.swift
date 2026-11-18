@@ -383,7 +383,7 @@ actor StagingMeshAir: FakeRadioAir {
                 let store = try MobileCounterStore(
                     rootDirectory: Self.counterDirectory(for: node).path
                 )
-                let session = try await MobileMeshSession(
+                let session = try await MobileMeshSession.start(
                     identity: identity,
                     counterStore: store
                 )

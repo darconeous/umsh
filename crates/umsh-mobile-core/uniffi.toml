@@ -1,3 +1,10 @@
 [bindings.swift]
 module_name = "UMSHMobileCore"
 ffi_module_name = "UMSHMobileCoreFFI"
+
+# `android` and `android_cleaner` stay unset: turned on, the bindings use
+# `android.system.SystemCleaner`, which needs API 33 and is missing on a host
+# JVM. The default, JNA's cleaner, runs on API 31 and in host unit tests.
+[bindings.kotlin]
+package_name = "com.voria.umsh.core"
+cdylib_name = "umsh_mobile_core"

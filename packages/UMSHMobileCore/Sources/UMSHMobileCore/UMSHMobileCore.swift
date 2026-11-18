@@ -704,6 +704,1501 @@ fileprivate struct FfiConverterData: FfiConverterRustBuffer {
 
 
 /**
+ * The application database, behind one connection.
+ *
+ * One connection serves every query, as the Swift store's single
+ * serialized connection does today. Calls block on SQLite, so platforms
+ * make them off the main thread.
+ */
+public protocol MobileAppStoreProtocol: AnyObject, Sendable {
+
+    /**
+     * Delete every row in every table, in one transaction, leaving the
+     * schema and its version in place so the next open has nothing to
+     * migrate. What identity erasure uses to take the store down with the
+     * key, so every build has it.
+     *
+     * The tables are read from the schema rather than listed here, so a
+     * migration that adds one cannot leave an erasure quietly incomplete.
+     * `sqlite_sequence` is SQLite's own and is left: row IDs carry on from
+     * where they were.
+     */
+    func eraseAllContent() throws
+
+    /**
+     * The schema version the database is at.
+     */
+    func schemaVersion() throws  -> Int64
+
+    /**
+     * The channel this identity already holds under `key_digest`, if any.
+     *
+     * Import checks this before inserting so a re-scanned invitation
+     * updates the existing channel instead of creating a second one for the
+     * same key.
+     */
+    func channel(ownerIdentityId: String, keyDigest: String) throws  -> MobileStoredChannelRecord?
+
+    /**
+     * Every channel of the identity, oldest first. A row whose ID is not a
+     * UUID or whose kind this build does not know is left out, not an
+     * error: one bad row must not hide the rest.
+     */
+    func channels(ownerIdentityId: String) throws  -> [MobileStoredChannelRecord]
+
+    /**
+     * Delete a channel row. Its conversation row goes with it (the schema
+     * cascades), but its transcript does not: a caller leaving a channel
+     * deletes the conversation first, through
+     * `delete_channel_conversation`, which purges the history. Nothing
+     * here refuses a built-in channel; leaving one clears its flags
+     * instead, and that is the caller's to choose.
+     */
+    func deleteChannel(id: String) throws
+
+    /**
+     * Record a channel. `created_at_ms` orders it among the identity's
+     * channels; the record's `id` is stored uppercase. Fails with
+     * [`MobileStoreError::Failed`] when the identity already holds the ID
+     * or the key digest.
+     */
+    func insertChannel(channel: MobileStoredChannelRecord, keyDigest: String, createdAtMs: Int64) throws
+
+    /**
+     * Record which identities have joined. `joined_at_ms` takes `now_ms`
+     * the first time the phone joins and is left alone after, through any
+     * number of leaves and rejoins. A channel that does not exist is not
+     * an error.
+     */
+    func setChannelMembership(id: String, joinedPhone: Bool, joinedDevice: Bool, nowMs: Int64) throws
+
+    /**
+     * Update the parts of a channel the user controls, leaving membership
+     * and key-derived columns alone. A channel that does not exist is not
+     * an error.
+     */
+    func updateChannelDetails(id: String, alias: String?, regionCode: Data?, maxFloodHops: Int64?, notificationsEnabled: Bool) throws
+
+    /**
+     * Every radio still recorded as holding this identity, most recent
+     * first, forgetting in the same transaction those whose record has
+     * lapsed by `now_ms`.
+     */
+    func claimedRadios(ownerIdentityId: String, nowMs: Int64) throws  -> [MobileStoredClaimedRadioRecord]
+
+    /**
+     * Forget the record of a radio: it let go of this identity, or is no
+     * longer holding it.
+     */
+    func clearClaimedRadio(ownerIdentityId: String, deviceAddress: String) throws
+
+    /**
+     * Note that this phone is attached to the radio at `device_address` as
+     * its host, as of `now_ms`, replacing any earlier record of it.
+     */
+    func recordClaimedRadio(ownerIdentityId: String, deviceAddress: String, name: String?, nowMs: Int64) throws
+
+    /**
+     * One read transaction over every list: a concurrent writer cannot
+     * produce a mixture of old and new lists for the interface. With
+     * `conversations_only`, `peers` and `reports` are left empty and are
+     * not read.
+     */
+    func applicationRecords(ownerIdentityId: String, conversationsOnly: Bool) throws  -> MobileApplicationRecords
+
+    /**
+     * Erase a conversation's messages while keeping the conversation
+     * itself. Addressed rather than keyed by row so one call serves both
+     * kinds.
+     *
+     * Outbound stream checkpoints are kept, for the same reason deleting a
+     * conversation keeps them: sequence continuity with the far end has to
+     * outlive the transcript, or the next message would announce a
+     * Sequence Reset. Archived outbound payloads do go, so a later resend
+     * request for a cleared message is answered Unavailable—the protocol
+     * handles that, and keeping erased content on disk would not be
+     * acceptable.
+     */
+    func clearConversationMessages(ownerIdentityId: String, conversationAddress: String) throws
+
+    /**
+     * Remove a channel conversation and its local transcript. Leaving a
+     * group chat is not leaving the channel: the key stays, so traffic
+     * still arrives and a later message opens the conversation again. A
+     * conversation that does not exist is not an error.
+     */
+    func deleteChannelConversation(ownerIdentityId: String, conversationId: Int64) throws
+
+    /**
+     * Remove a direct conversation and its local history; the peer's row
+     * stays. Outbound stream checkpoints are deliberately retained:
+     * sequence continuity with the peer must survive the transcript, or
+     * the next message would announce a Sequence Reset. Archived outbound
+     * payloads go with the history, so a late resend request for them is
+     * answered Unavailable—the protocol handles that; keeping deleted
+     * content on disk would not be acceptable. A conversation that does
+     * not exist is not an error.
+     */
+    func deleteDirectConversation(ownerIdentityId: String, conversationId: Int64) throws
+
+    /**
+     * Delete a peer together with its conversation and local history, in
+     * one transaction. Returns whether there was a peer to delete. Stream
+     * checkpoints are retained (see `delete_direct_conversation`); the
+     * companion radio is refused, returning `false`. What hangs off the
+     * node row—its manual route, management card, cached properties, and
+     * repeater listing—goes with it.
+     */
+    func deletePeerAndConversation(ownerIdentityId: String, publicAddress: String) throws  -> Bool
+
+    /**
+     * The channel conversation for a channel, created if this is the first
+     * time the user has entered it, and its ID. Channels are joined without
+     * a chat; the conversation appears when someone asks for one, or when
+     * a message arrives. An existing conversation keeps its address and
+     * creation time. Fails with [`MobileStoreError::RecordNotFound`] when
+     * there is no such channel.
+     */
+    func ensureChannelConversation(ownerIdentityId: String, channelId: String, conversationAddress: String, createdAtMs: Int64) throws  -> Int64
+
+    /**
+     * The conversation with a peer, created if there is none, and its ID.
+     * `created_at_ms` is used only when it is created. Fails with
+     * [`MobileStoreError::RecordNotFound`] when the identity has no row
+     * for the peer.
+     */
+    func ensureDirectConversation(ownerIdentityId: String, peerAddress: String, createdAtMs: Int64) throws  -> Int64
+
+    /**
+     * Every channel conversation of the identity, newest first, each with
+     * its preview and unread count. A row whose channel ID is not a UUID
+     * is left out.
+     */
+    func listChannelConversations(ownerIdentityId: String) throws  -> [MobileStoredChannelConversationRecord]
+
+    /**
+     * Every direct conversation of the identity, newest first, each with
+     * its peer, preview, and unread count.
+     */
+    func listDirectConversations(ownerIdentityId: String) throws  -> [MobileStoredDirectConversationRecord]
+
+    /**
+     * Mark everything in a conversation read as of `read_at_ms`.
+     * Addressed rather than keyed by row so one call serves both kinds of
+     * conversation. An address with no conversation is not an error.
+     */
+    func markConversationRead(ownerIdentityId: String, conversationAddress: String, readAtMs: Int64) throws
+
+    /**
+     * Turn notifications for one direct conversation on or off. A
+     * conversation that does not exist is not an error.
+     */
+    func setDirectConversationNotifications(ownerIdentityId: String, conversationId: Int64, enabled: Bool) throws
+
+    /**
+     * Fails with [`MobileStoreError::RecordNotFound`] when the identity
+     * has no such channel conversation.
+     */
+    func updateChannelDraft(ownerIdentityId: String, conversationId: Int64, text: String) throws
+
+    /**
+     * Fails with [`MobileStoreError::RecordNotFound`] when the identity
+     * has no such direct conversation.
+     */
+    func updateDraft(ownerIdentityId: String, conversationId: Int64, text: String) throws
+
+    /**
+     * What a device was last seen configured as, for the properties asked
+     * for. Absent properties are simply not in the result: never fetched
+     * and refused read the same from here, and a screen shows both as a
+     * field it has nothing to prefill.
+     */
+    func cachedProperties(ownerIdentityId: String, publicAddress: String, propertyIds: [UInt32]) throws  -> [UInt32: MobileStoredCachedPropertyRecord]
+
+    /**
+     * Forget everything cached about a device, so the next open asks it
+     * afresh. The card goes too: a refresh that cannot be trusted to be
+     * about the same firmware is not a refresh.
+     */
+    func forgetManagementCache(ownerIdentityId: String, publicAddress: String) throws
+
+    /**
+     * What a device last said it is, if this phone has ever asked.
+     */
+    func managementCard(ownerIdentityId: String, publicAddress: String) throws  -> MobileStoredManagementCardRecord?
+
+    /**
+     * Record values a device reported—from a read, or from the echo a
+     * write comes back with, which is the freshest statement of what the
+     * device is actually holding. Every value takes `at_ms`. An empty value
+     * is kept as one: a property can be empty.
+     */
+    func saveCachedProperties(ownerIdentityId: String, publicAddress: String, values: [UInt32: Data], atMs: Int64) throws
+
+    /**
+     * Record what a card read found.
+     *
+     * A device running different firmware is a device whose capabilities,
+     * property set, and defaults may all have moved, so everything cached
+     * about the old firmware is dropped in the same transaction. Nothing
+     * about a cached value says which firmware produced it, and a value
+     * that outlives its firmware is worse than no value: it prefills a form
+     * with a plausible reading nobody can date. A first card has nothing to
+     * supersede, so values cached before it stay.
+     */
+    func saveManagementCard(ownerIdentityId: String, publicAddress: String, card: MobileStoredManagementCardRecord) throws
+
+    /**
+     * Drop every transient row that nothing else depends on: saved peers,
+     * the companion radio, rows on the device identity, rows with a
+     * conversation, and rows carrying a pending watch all stay.
+     */
+    func clearTransientPeers(ownerIdentityId: String) throws
+
+    /**
+     * Delete a peer row outright. Refused—returning `false`—when a
+     * conversation references it (demote instead, or use
+     * `delete_peer_and_conversation`) or when the row is the system-managed companion
+     * radio. Stream checkpoints and counter state survive by design:
+     * sequence continuity and replay protection outlive the row.
+     */
+    func deletePeer(ownerIdentityId: String, publicAddress: String) throws  -> Bool
+
+    /**
+     * Remove a node from the local identity without touching its history:
+     * the row stays as a transient (searchable, discoverable) and any
+     * conversation keeps working. Favorite and alias are local statements
+     * about a saved peer, so they clear with it. Refuses the companion
+     * radio, whose row is system-managed.
+     */
+    func demotePeerToTransient(ownerIdentityId: String, publicAddress: String) throws
+
+    /**
+     * Keep the transient tier bounded: beyond `cap` rows, the oldest-heard
+     * evictable transients are dropped. Rows with a conversation, on the
+     * device identity, with a system role, or carrying a pending watch are
+     * never evicted—a watch that the cap quietly deleted would be a
+     * promise the app stopped keeping without saying so. `cap` defaults to
+     * 256.
+     */
+    func enforceTransientRetention(ownerIdentityId: String, cap: UInt32) throws
+
+    func insertIdentity(id: String, publicAddress: String, createdAtMs: Int64) throws
+
+    /**
+     * Whether this store already holds records for the given identity.
+     *
+     * Asked when a stored identity turns up with no anchor beside it: a
+     * container that still has this identity's row is that identity's
+     * container, anchor or no anchor, and there is nothing to ask about.
+     * The legacy `'primary'` slot counts, since a store written before the
+     * address became the key is still this identity's store.
+     */
+    func knowsIdentity(id: String, publicAddress: String) throws  -> Bool
+
+    /**
+     * Every peer of the identity: system rows first, then by the search
+     * key. Name order is the platform's to impose.
+     */
+    func listNodes(ownerIdentityId: String) throws  -> [MobileStoredNodeRecord]
+
+    func localAdvertisedName(ownerIdentityId: String) throws  -> String?
+
+    /**
+     * Record a transient node on the local identity, making it visible in
+     * the main Peers list.
+     */
+    func promotePeerToSaved(ownerIdentityId: String, publicAddress: String) throws
+
+    /**
+     * Make the local cache of the radio's device-identity peer list match
+     * the device's read-back. The device is the authority: flags clear
+     * where it no longer holds a key, set where it does, and unknown keys
+     * gain a transient row carrying the flag so lists can show them.
+     */
+    func reconcileDeviceIdentityPeers(ownerIdentityId: String, addresses: [String]) throws
+
+    /**
+     * Arm or disarm the one-shot "tell me the next time this node is heard"
+     * watch. Unlike favoriting, this does not save a transient node: the
+     * retention queries exempt armed rows instead, so asking to be told
+     * about a node is not the same as deciding to keep it.
+     */
+    func setNotifyWhenHeard(ownerIdentityId: String, publicAddress: String, enabled: Bool) throws
+
+    func setPeerFavorite(ownerIdentityId: String, publicAddress: String, isFavorite: Bool) throws
+
+    /**
+     * Cache one device-identity membership change after a confirmed radio
+     * mutation, without waiting for the next attach-edge reconcile.
+     */
+    func setPeerOnDeviceIdentity(ownerIdentityId: String, publicAddress: String, isOnDeviceIdentity: Bool) throws
+
+    /**
+     * Record that we just heard from a peer by any means. No-ops when the
+     * peer has no row—an unknown peer has nothing to touch and needs no
+     * last-heard until it is added.
+     *
+     * Returns whether this call is the one that disarmed a pending watch,
+     * which is the caller's cue to post the notice. The disarm is its own
+     * conditional write, so two hearings racing through the store cannot
+     * both come away believing they were first.
+     */
+    func touchLastHeard(ownerIdentityId: String, publicAddress: String, atMs: Int64) throws  -> Bool
+
+    /**
+     * Fails with [`MobileStoreError::RecordNotFound`] when there is no
+     * such identity.
+     */
+    func updateLocalAdvertisedName(ownerIdentityId: String, name: String?) throws
+
+    func updateNodeAlias(ownerIdentityId: String, publicAddress: String, alias: String?) throws
+
+    func upsertIdentity(id: String, publicAddress: String, createdAtMs: Int64) throws
+
+    /**
+     * Record a peer, or add what this call knows to the row already there.
+     *
+     * An absent alias, name, role, radio identifier, kind, or advertisement
+     * leaves the stored one in place, and `is_saved` only ever rises here.
+     * The advertisement's provenance (`advertisement_authenticated`,
+     * `advertisement_received_at_ms`) is written only with an
+     * advertisement. The search key follows the row as it ends up: its
+     * alias or, without one, its advertised name.
+     */
+    func upsertPeer(ownerIdentityId: String, publicAddress: String, peer: MobilePeerUpsertRecord) throws
+
+    /**
+     * Record the attached companion radio as the identity's one
+     * `companion_radio` row, taking the role from any other row that held
+     * it.
+     */
+    func upsertUlcpDevicePeer(ownerIdentityId: String, publicAddress: String, advertisedName: String?, radioIdentifier: String) throws
+
+    /**
+     * Every neighbor any router has reported to this phone, with the row
+     * of the router that said so, by router and then in listing order.
+     * What the map draws.
+     */
+    func allPeerRepeaterEntries(ownerIdentityId: String) throws  -> [MobileStoredPeerRepeaterReportRecord]
+
+    /**
+     * What a router last said about its neighbors, or `None` when it was
+     * never asked. Entries come back in the order the router listed them.
+     * The header and the entries are read in one transaction, so a page
+     * saved meanwhile cannot pair one page's cursor with another's entries.
+     */
+    func peerRepeaterListing(ownerIdentityId: String, publicAddress: String) throws  -> MobileStoredPeerRepeaterListingRecord?
+
+    /**
+     * Record one page of a router's neighbor listing, answered at `at_ms`.
+     *
+     * A page asked for without a cursor (`replacing`) is the top of a fresh
+     * listing and replaces whatever was held. A page that followed a cursor
+     * is added to it: new neighbors take their place at the end, and a
+     * neighbor the router named again—the responder restarts a listing
+     * whose table has moved under a stale cursor—updates in place rather
+     * than appearing twice. Either way the total, the cursor, and the
+     * instant are the latest page's. A router with no row has nowhere to
+     * keep the page, and the call does nothing.
+     *
+     * Stored as the Swift store wrote it: region codes back to back, with
+     * none stored as NULL, and an empty cursor stored as no cursor. An
+     * entry with an empty hint is refused by the column with
+     * [`MobileStoreError::Failed`], and the page with it.
+     */
+    func savePeerRepeaterPage(ownerIdentityId: String, publicAddress: String, entries: [MobileStoredPeerRepeaterEntryRecord], total: Int64?, nextCursor: Data?, replacing: Bool, atMs: Int64) throws
+
+    /**
+     * Forget the path held for one node, if any.
+     */
+    func clearManualRoute(ownerIdentityId: String, publicAddress: String) throws
+
+    /**
+     * The path held for one node, or `None` when none is held at `now_ms`.
+     * A path whose hold has ended reads as none but is left in place;
+     * `manual_routes` is what forgets it.
+     */
+    func manualRoute(ownerIdentityId: String, publicAddress: String, nowMs: Int64) throws  -> MobileStoredManualRouteRecord?
+
+    /**
+     * Every path still held at `now_ms`, forgetting, in the same
+     * transaction, those whose hold has ended. In no particular order.
+     */
+    func manualRoutes(ownerIdentityId: String, nowMs: Int64) throws  -> [MobileStoredManualRouteRecord]
+
+    /**
+     * Hold `hints` for one node until `hold_until_ms`, replacing any path
+     * held for it. A new path is a new choice, so a declined offer to
+     * switch away from the old one does not carry over. A node with no row
+     * has nowhere to keep it, and the call does nothing.
+     *
+     * The hints are stored back to back exactly as given; each is expected
+     * to be two octets, the width a stored path is read back in.
+     */
+    func saveManualRoute(ownerIdentityId: String, publicAddress: String, hints: [Data], floodHops: UInt8, holdUntilMs: Int64, latitude: Double?, longitude: Double?, accuracy: Double?) throws
+
+    /**
+     * Remember that the offer to switch away from this node's path was
+     * declined, so it is not made again for the same path.
+     */
+    func settleManualRoutePrompt(ownerIdentityId: String, publicAddress: String) throws
+
+}
+/**
+ * The application database, behind one connection.
+ *
+ * One connection serves every query, as the Swift store's single
+ * serialized connection does today. Calls block on SQLite, so platforms
+ * make them off the main thread.
+ */
+open class MobileAppStore: MobileAppStoreProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_umsh_mobile_core_fn_clone_mobileappstore(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_umsh_mobile_core_fn_free_mobileappstore(handle, $0) }
+    }
+
+
+    /**
+     * Open the store at `path`, creating it if there is no file, and bring
+     * it to the current schema.
+     */
+public static func `open`(path: String)throws  -> MobileAppStore  {
+    return try  FfiConverterTypeMobileAppStore_lift(try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_constructor_mobileappstore_open(
+        FfiConverterString.lower(path),uniffiCallStatus
+    )
+})
+}
+
+
+
+    /**
+     * Delete every row in every table, in one transaction, leaving the
+     * schema and its version in place so the next open has nothing to
+     * migrate. What identity erasure uses to take the store down with the
+     * key, so every build has it.
+     *
+     * The tables are read from the schema rather than listed here, so a
+     * migration that adds one cannot leave an erasure quietly incomplete.
+     * `sqlite_sequence` is SQLite's own and is left: row IDs carry on from
+     * where they were.
+     */
+open func eraseAllContent()throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_erase_all_content(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * The schema version the database is at.
+     */
+open func schemaVersion()throws  -> Int64  {
+    return try  FfiConverterInt64.lift(try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_schema_version(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * The channel this identity already holds under `key_digest`, if any.
+     *
+     * Import checks this before inserting so a re-scanned invitation
+     * updates the existing channel instead of creating a second one for the
+     * same key.
+     */
+open func channel(ownerIdentityId: String, keyDigest: String)throws  -> MobileStoredChannelRecord?  {
+    return try  FfiConverterOptionTypeMobileStoredChannelRecord.lift(try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_channel(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterString.lower(keyDigest),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Every channel of the identity, oldest first. A row whose ID is not a
+     * UUID or whose kind this build does not know is left out, not an
+     * error: one bad row must not hide the rest.
+     */
+open func channels(ownerIdentityId: String)throws  -> [MobileStoredChannelRecord]  {
+    return try  FfiConverterSequenceTypeMobileStoredChannelRecord.lift(try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_channels(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Delete a channel row. Its conversation row goes with it (the schema
+     * cascades), but its transcript does not: a caller leaving a channel
+     * deletes the conversation first, through
+     * `delete_channel_conversation`, which purges the history. Nothing
+     * here refuses a built-in channel; leaving one clears its flags
+     * instead, and that is the caller's to choose.
+     */
+open func deleteChannel(id: String)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_delete_channel(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(id),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Record a channel. `created_at_ms` orders it among the identity's
+     * channels; the record's `id` is stored uppercase. Fails with
+     * [`MobileStoreError::Failed`] when the identity already holds the ID
+     * or the key digest.
+     */
+open func insertChannel(channel: MobileStoredChannelRecord, keyDigest: String, createdAtMs: Int64)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_insert_channel(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileStoredChannelRecord_lower(channel),
+        FfiConverterString.lower(keyDigest),
+        FfiConverterInt64.lower(createdAtMs),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Record which identities have joined. `joined_at_ms` takes `now_ms`
+     * the first time the phone joins and is left alone after, through any
+     * number of leaves and rejoins. A channel that does not exist is not
+     * an error.
+     */
+open func setChannelMembership(id: String, joinedPhone: Bool, joinedDevice: Bool, nowMs: Int64)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_set_channel_membership(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(id),
+        FfiConverterBool.lower(joinedPhone),
+        FfiConverterBool.lower(joinedDevice),
+        FfiConverterInt64.lower(nowMs),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Update the parts of a channel the user controls, leaving membership
+     * and key-derived columns alone. A channel that does not exist is not
+     * an error.
+     */
+open func updateChannelDetails(id: String, alias: String?, regionCode: Data?, maxFloodHops: Int64?, notificationsEnabled: Bool)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_update_channel_details(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(id),
+        FfiConverterOptionString.lower(alias),
+        FfiConverterOptionData.lower(regionCode),
+        FfiConverterOptionInt64.lower(maxFloodHops),
+        FfiConverterBool.lower(notificationsEnabled),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Every radio still recorded as holding this identity, most recent
+     * first, forgetting in the same transaction those whose record has
+     * lapsed by `now_ms`.
+     */
+open func claimedRadios(ownerIdentityId: String, nowMs: Int64)throws  -> [MobileStoredClaimedRadioRecord]  {
+    return try  FfiConverterSequenceTypeMobileStoredClaimedRadioRecord.lift(try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_claimed_radios(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterInt64.lower(nowMs),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Forget the record of a radio: it let go of this identity, or is no
+     * longer holding it.
+     */
+open func clearClaimedRadio(ownerIdentityId: String, deviceAddress: String)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_clear_claimed_radio(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterString.lower(deviceAddress),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Note that this phone is attached to the radio at `device_address` as
+     * its host, as of `now_ms`, replacing any earlier record of it.
+     */
+open func recordClaimedRadio(ownerIdentityId: String, deviceAddress: String, name: String?, nowMs: Int64)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_record_claimed_radio(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterString.lower(deviceAddress),
+        FfiConverterOptionString.lower(name),
+        FfiConverterInt64.lower(nowMs),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * One read transaction over every list: a concurrent writer cannot
+     * produce a mixture of old and new lists for the interface. With
+     * `conversations_only`, `peers` and `reports` are left empty and are
+     * not read.
+     */
+open func applicationRecords(ownerIdentityId: String, conversationsOnly: Bool = false)throws  -> MobileApplicationRecords  {
+    return try  FfiConverterTypeMobileApplicationRecords_lift(try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_application_records(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterBool.lower(conversationsOnly),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Erase a conversation's messages while keeping the conversation
+     * itself. Addressed rather than keyed by row so one call serves both
+     * kinds.
+     *
+     * Outbound stream checkpoints are kept, for the same reason deleting a
+     * conversation keeps them: sequence continuity with the far end has to
+     * outlive the transcript, or the next message would announce a
+     * Sequence Reset. Archived outbound payloads do go, so a later resend
+     * request for a cleared message is answered Unavailable—the protocol
+     * handles that, and keeping erased content on disk would not be
+     * acceptable.
+     */
+open func clearConversationMessages(ownerIdentityId: String, conversationAddress: String)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_clear_conversation_messages(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterString.lower(conversationAddress),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Remove a channel conversation and its local transcript. Leaving a
+     * group chat is not leaving the channel: the key stays, so traffic
+     * still arrives and a later message opens the conversation again. A
+     * conversation that does not exist is not an error.
+     */
+open func deleteChannelConversation(ownerIdentityId: String, conversationId: Int64)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_delete_channel_conversation(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterInt64.lower(conversationId),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Remove a direct conversation and its local history; the peer's row
+     * stays. Outbound stream checkpoints are deliberately retained:
+     * sequence continuity with the peer must survive the transcript, or
+     * the next message would announce a Sequence Reset. Archived outbound
+     * payloads go with the history, so a late resend request for them is
+     * answered Unavailable—the protocol handles that; keeping deleted
+     * content on disk would not be acceptable. A conversation that does
+     * not exist is not an error.
+     */
+open func deleteDirectConversation(ownerIdentityId: String, conversationId: Int64)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_delete_direct_conversation(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterInt64.lower(conversationId),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Delete a peer together with its conversation and local history, in
+     * one transaction. Returns whether there was a peer to delete. Stream
+     * checkpoints are retained (see `delete_direct_conversation`); the
+     * companion radio is refused, returning `false`. What hangs off the
+     * node row—its manual route, management card, cached properties, and
+     * repeater listing—goes with it.
+     */
+open func deletePeerAndConversation(ownerIdentityId: String, publicAddress: String)throws  -> Bool  {
+    return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_delete_peer_and_conversation(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterString.lower(publicAddress),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * The channel conversation for a channel, created if this is the first
+     * time the user has entered it, and its ID. Channels are joined without
+     * a chat; the conversation appears when someone asks for one, or when
+     * a message arrives. An existing conversation keeps its address and
+     * creation time. Fails with [`MobileStoreError::RecordNotFound`] when
+     * there is no such channel.
+     */
+open func ensureChannelConversation(ownerIdentityId: String, channelId: String, conversationAddress: String, createdAtMs: Int64)throws  -> Int64  {
+    return try  FfiConverterInt64.lift(try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_ensure_channel_conversation(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterString.lower(channelId),
+        FfiConverterString.lower(conversationAddress),
+        FfiConverterInt64.lower(createdAtMs),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * The conversation with a peer, created if there is none, and its ID.
+     * `created_at_ms` is used only when it is created. Fails with
+     * [`MobileStoreError::RecordNotFound`] when the identity has no row
+     * for the peer.
+     */
+open func ensureDirectConversation(ownerIdentityId: String, peerAddress: String, createdAtMs: Int64)throws  -> Int64  {
+    return try  FfiConverterInt64.lift(try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_ensure_direct_conversation(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterString.lower(peerAddress),
+        FfiConverterInt64.lower(createdAtMs),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Every channel conversation of the identity, newest first, each with
+     * its preview and unread count. A row whose channel ID is not a UUID
+     * is left out.
+     */
+open func listChannelConversations(ownerIdentityId: String)throws  -> [MobileStoredChannelConversationRecord]  {
+    return try  FfiConverterSequenceTypeMobileStoredChannelConversationRecord.lift(try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_list_channel_conversations(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Every direct conversation of the identity, newest first, each with
+     * its peer, preview, and unread count.
+     */
+open func listDirectConversations(ownerIdentityId: String)throws  -> [MobileStoredDirectConversationRecord]  {
+    return try  FfiConverterSequenceTypeMobileStoredDirectConversationRecord.lift(try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_list_direct_conversations(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Mark everything in a conversation read as of `read_at_ms`.
+     * Addressed rather than keyed by row so one call serves both kinds of
+     * conversation. An address with no conversation is not an error.
+     */
+open func markConversationRead(ownerIdentityId: String, conversationAddress: String, readAtMs: Int64)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_mark_conversation_read(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterString.lower(conversationAddress),
+        FfiConverterInt64.lower(readAtMs),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Turn notifications for one direct conversation on or off. A
+     * conversation that does not exist is not an error.
+     */
+open func setDirectConversationNotifications(ownerIdentityId: String, conversationId: Int64, enabled: Bool)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_set_direct_conversation_notifications(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterInt64.lower(conversationId),
+        FfiConverterBool.lower(enabled),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Fails with [`MobileStoreError::RecordNotFound`] when the identity
+     * has no such channel conversation.
+     */
+open func updateChannelDraft(ownerIdentityId: String, conversationId: Int64, text: String)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_update_channel_draft(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterInt64.lower(conversationId),
+        FfiConverterString.lower(text),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Fails with [`MobileStoreError::RecordNotFound`] when the identity
+     * has no such direct conversation.
+     */
+open func updateDraft(ownerIdentityId: String, conversationId: Int64, text: String)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_update_draft(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterInt64.lower(conversationId),
+        FfiConverterString.lower(text),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * What a device was last seen configured as, for the properties asked
+     * for. Absent properties are simply not in the result: never fetched
+     * and refused read the same from here, and a screen shows both as a
+     * field it has nothing to prefill.
+     */
+open func cachedProperties(ownerIdentityId: String, publicAddress: String, propertyIds: [UInt32])throws  -> [UInt32: MobileStoredCachedPropertyRecord]  {
+    return try  FfiConverterDictionaryUInt32TypeMobileStoredCachedPropertyRecord.lift(try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_cached_properties(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterString.lower(publicAddress),
+        FfiConverterSequenceUInt32.lower(propertyIds),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Forget everything cached about a device, so the next open asks it
+     * afresh. The card goes too: a refresh that cannot be trusted to be
+     * about the same firmware is not a refresh.
+     */
+open func forgetManagementCache(ownerIdentityId: String, publicAddress: String)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_forget_management_cache(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterString.lower(publicAddress),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * What a device last said it is, if this phone has ever asked.
+     */
+open func managementCard(ownerIdentityId: String, publicAddress: String)throws  -> MobileStoredManagementCardRecord?  {
+    return try  FfiConverterOptionTypeMobileStoredManagementCardRecord.lift(try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_management_card(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterString.lower(publicAddress),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Record values a device reported—from a read, or from the echo a
+     * write comes back with, which is the freshest statement of what the
+     * device is actually holding. Every value takes `at_ms`. An empty value
+     * is kept as one: a property can be empty.
+     */
+open func saveCachedProperties(ownerIdentityId: String, publicAddress: String, values: [UInt32: Data], atMs: Int64)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_save_cached_properties(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterString.lower(publicAddress),
+        FfiConverterDictionaryUInt32Data.lower(values),
+        FfiConverterInt64.lower(atMs),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Record what a card read found.
+     *
+     * A device running different firmware is a device whose capabilities,
+     * property set, and defaults may all have moved, so everything cached
+     * about the old firmware is dropped in the same transaction. Nothing
+     * about a cached value says which firmware produced it, and a value
+     * that outlives its firmware is worse than no value: it prefills a form
+     * with a plausible reading nobody can date. A first card has nothing to
+     * supersede, so values cached before it stay.
+     */
+open func saveManagementCard(ownerIdentityId: String, publicAddress: String, card: MobileStoredManagementCardRecord)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_save_management_card(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterString.lower(publicAddress),
+        FfiConverterTypeMobileStoredManagementCardRecord_lower(card),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Drop every transient row that nothing else depends on: saved peers,
+     * the companion radio, rows on the device identity, rows with a
+     * conversation, and rows carrying a pending watch all stay.
+     */
+open func clearTransientPeers(ownerIdentityId: String)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_clear_transient_peers(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Delete a peer row outright. Refused—returning `false`—when a
+     * conversation references it (demote instead, or use
+     * `delete_peer_and_conversation`) or when the row is the system-managed companion
+     * radio. Stream checkpoints and counter state survive by design:
+     * sequence continuity and replay protection outlive the row.
+     */
+open func deletePeer(ownerIdentityId: String, publicAddress: String)throws  -> Bool  {
+    return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_delete_peer(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterString.lower(publicAddress),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Remove a node from the local identity without touching its history:
+     * the row stays as a transient (searchable, discoverable) and any
+     * conversation keeps working. Favorite and alias are local statements
+     * about a saved peer, so they clear with it. Refuses the companion
+     * radio, whose row is system-managed.
+     */
+open func demotePeerToTransient(ownerIdentityId: String, publicAddress: String)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_demote_peer_to_transient(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterString.lower(publicAddress),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Keep the transient tier bounded: beyond `cap` rows, the oldest-heard
+     * evictable transients are dropped. Rows with a conversation, on the
+     * device identity, with a system role, or carrying a pending watch are
+     * never evicted—a watch that the cap quietly deleted would be a
+     * promise the app stopped keeping without saying so. `cap` defaults to
+     * 256.
+     */
+open func enforceTransientRetention(ownerIdentityId: String, cap: UInt32 = UInt32(256))throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_enforce_transient_retention(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterUInt32.lower(cap),uniffiCallStatus
+    )
+}
+}
+
+open func insertIdentity(id: String, publicAddress: String, createdAtMs: Int64)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_insert_identity(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(id),
+        FfiConverterString.lower(publicAddress),
+        FfiConverterInt64.lower(createdAtMs),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Whether this store already holds records for the given identity.
+     *
+     * Asked when a stored identity turns up with no anchor beside it: a
+     * container that still has this identity's row is that identity's
+     * container, anchor or no anchor, and there is nothing to ask about.
+     * The legacy `'primary'` slot counts, since a store written before the
+     * address became the key is still this identity's store.
+     */
+open func knowsIdentity(id: String, publicAddress: String)throws  -> Bool  {
+    return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_knows_identity(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(id),
+        FfiConverterString.lower(publicAddress),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Every peer of the identity: system rows first, then by the search
+     * key. Name order is the platform's to impose.
+     */
+open func listNodes(ownerIdentityId: String)throws  -> [MobileStoredNodeRecord]  {
+    return try  FfiConverterSequenceTypeMobileStoredNodeRecord.lift(try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_list_nodes(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),uniffiCallStatus
+    )
+})
+}
+
+open func localAdvertisedName(ownerIdentityId: String)throws  -> String?  {
+    return try  FfiConverterOptionString.lift(try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_local_advertised_name(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Record a transient node on the local identity, making it visible in
+     * the main Peers list.
+     */
+open func promotePeerToSaved(ownerIdentityId: String, publicAddress: String)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_promote_peer_to_saved(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterString.lower(publicAddress),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Make the local cache of the radio's device-identity peer list match
+     * the device's read-back. The device is the authority: flags clear
+     * where it no longer holds a key, set where it does, and unknown keys
+     * gain a transient row carrying the flag so lists can show them.
+     */
+open func reconcileDeviceIdentityPeers(ownerIdentityId: String, addresses: [String])throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_reconcile_device_identity_peers(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterSequenceString.lower(addresses),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Arm or disarm the one-shot "tell me the next time this node is heard"
+     * watch. Unlike favoriting, this does not save a transient node: the
+     * retention queries exempt armed rows instead, so asking to be told
+     * about a node is not the same as deciding to keep it.
+     */
+open func setNotifyWhenHeard(ownerIdentityId: String, publicAddress: String, enabled: Bool)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_set_notify_when_heard(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterString.lower(publicAddress),
+        FfiConverterBool.lower(enabled),uniffiCallStatus
+    )
+}
+}
+
+open func setPeerFavorite(ownerIdentityId: String, publicAddress: String, isFavorite: Bool)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_set_peer_favorite(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterString.lower(publicAddress),
+        FfiConverterBool.lower(isFavorite),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Cache one device-identity membership change after a confirmed radio
+     * mutation, without waiting for the next attach-edge reconcile.
+     */
+open func setPeerOnDeviceIdentity(ownerIdentityId: String, publicAddress: String, isOnDeviceIdentity: Bool)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_set_peer_on_device_identity(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterString.lower(publicAddress),
+        FfiConverterBool.lower(isOnDeviceIdentity),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Record that we just heard from a peer by any means. No-ops when the
+     * peer has no row—an unknown peer has nothing to touch and needs no
+     * last-heard until it is added.
+     *
+     * Returns whether this call is the one that disarmed a pending watch,
+     * which is the caller's cue to post the notice. The disarm is its own
+     * conditional write, so two hearings racing through the store cannot
+     * both come away believing they were first.
+     */
+open func touchLastHeard(ownerIdentityId: String, publicAddress: String, atMs: Int64)throws  -> Bool  {
+    return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_touch_last_heard(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterString.lower(publicAddress),
+        FfiConverterInt64.lower(atMs),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Fails with [`MobileStoreError::RecordNotFound`] when there is no
+     * such identity.
+     */
+open func updateLocalAdvertisedName(ownerIdentityId: String, name: String?)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_update_local_advertised_name(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterOptionString.lower(name),uniffiCallStatus
+    )
+}
+}
+
+open func updateNodeAlias(ownerIdentityId: String, publicAddress: String, alias: String?)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_update_node_alias(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterString.lower(publicAddress),
+        FfiConverterOptionString.lower(alias),uniffiCallStatus
+    )
+}
+}
+
+open func upsertIdentity(id: String, publicAddress: String, createdAtMs: Int64)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_upsert_identity(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(id),
+        FfiConverterString.lower(publicAddress),
+        FfiConverterInt64.lower(createdAtMs),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Record a peer, or add what this call knows to the row already there.
+     *
+     * An absent alias, name, role, radio identifier, kind, or advertisement
+     * leaves the stored one in place, and `is_saved` only ever rises here.
+     * The advertisement's provenance (`advertisement_authenticated`,
+     * `advertisement_received_at_ms`) is written only with an
+     * advertisement. The search key follows the row as it ends up: its
+     * alias or, without one, its advertised name.
+     */
+open func upsertPeer(ownerIdentityId: String, publicAddress: String, peer: MobilePeerUpsertRecord)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_upsert_peer(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterString.lower(publicAddress),
+        FfiConverterTypeMobilePeerUpsertRecord_lower(peer),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Record the attached companion radio as the identity's one
+     * `companion_radio` row, taking the role from any other row that held
+     * it.
+     */
+open func upsertUlcpDevicePeer(ownerIdentityId: String, publicAddress: String, advertisedName: String?, radioIdentifier: String)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_upsert_ulcp_device_peer(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterString.lower(publicAddress),
+        FfiConverterOptionString.lower(advertisedName),
+        FfiConverterString.lower(radioIdentifier),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Every neighbor any router has reported to this phone, with the row
+     * of the router that said so, by router and then in listing order.
+     * What the map draws.
+     */
+open func allPeerRepeaterEntries(ownerIdentityId: String)throws  -> [MobileStoredPeerRepeaterReportRecord]  {
+    return try  FfiConverterSequenceTypeMobileStoredPeerRepeaterReportRecord.lift(try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_all_peer_repeater_entries(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * What a router last said about its neighbors, or `None` when it was
+     * never asked. Entries come back in the order the router listed them.
+     * The header and the entries are read in one transaction, so a page
+     * saved meanwhile cannot pair one page's cursor with another's entries.
+     */
+open func peerRepeaterListing(ownerIdentityId: String, publicAddress: String)throws  -> MobileStoredPeerRepeaterListingRecord?  {
+    return try  FfiConverterOptionTypeMobileStoredPeerRepeaterListingRecord.lift(try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_peer_repeater_listing(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterString.lower(publicAddress),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Record one page of a router's neighbor listing, answered at `at_ms`.
+     *
+     * A page asked for without a cursor (`replacing`) is the top of a fresh
+     * listing and replaces whatever was held. A page that followed a cursor
+     * is added to it: new neighbors take their place at the end, and a
+     * neighbor the router named again—the responder restarts a listing
+     * whose table has moved under a stale cursor—updates in place rather
+     * than appearing twice. Either way the total, the cursor, and the
+     * instant are the latest page's. A router with no row has nowhere to
+     * keep the page, and the call does nothing.
+     *
+     * Stored as the Swift store wrote it: region codes back to back, with
+     * none stored as NULL, and an empty cursor stored as no cursor. An
+     * entry with an empty hint is refused by the column with
+     * [`MobileStoreError::Failed`], and the page with it.
+     */
+open func savePeerRepeaterPage(ownerIdentityId: String, publicAddress: String, entries: [MobileStoredPeerRepeaterEntryRecord], total: Int64?, nextCursor: Data?, replacing: Bool, atMs: Int64)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_save_peer_repeater_page(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterString.lower(publicAddress),
+        FfiConverterSequenceTypeMobileStoredPeerRepeaterEntryRecord.lower(entries),
+        FfiConverterOptionInt64.lower(total),
+        FfiConverterOptionData.lower(nextCursor),
+        FfiConverterBool.lower(replacing),
+        FfiConverterInt64.lower(atMs),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Forget the path held for one node, if any.
+     */
+open func clearManualRoute(ownerIdentityId: String, publicAddress: String)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_clear_manual_route(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterString.lower(publicAddress),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * The path held for one node, or `None` when none is held at `now_ms`.
+     * A path whose hold has ended reads as none but is left in place;
+     * `manual_routes` is what forgets it.
+     */
+open func manualRoute(ownerIdentityId: String, publicAddress: String, nowMs: Int64)throws  -> MobileStoredManualRouteRecord?  {
+    return try  FfiConverterOptionTypeMobileStoredManualRouteRecord.lift(try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_manual_route(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterString.lower(publicAddress),
+        FfiConverterInt64.lower(nowMs),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Every path still held at `now_ms`, forgetting, in the same
+     * transaction, those whose hold has ended. In no particular order.
+     */
+open func manualRoutes(ownerIdentityId: String, nowMs: Int64)throws  -> [MobileStoredManualRouteRecord]  {
+    return try  FfiConverterSequenceTypeMobileStoredManualRouteRecord.lift(try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_manual_routes(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterInt64.lower(nowMs),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Hold `hints` for one node until `hold_until_ms`, replacing any path
+     * held for it. A new path is a new choice, so a declined offer to
+     * switch away from the old one does not carry over. A node with no row
+     * has nowhere to keep it, and the call does nothing.
+     *
+     * The hints are stored back to back exactly as given; each is expected
+     * to be two octets, the width a stored path is read back in.
+     */
+open func saveManualRoute(ownerIdentityId: String, publicAddress: String, hints: [Data], floodHops: UInt8, holdUntilMs: Int64, latitude: Double?, longitude: Double?, accuracy: Double?)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_save_manual_route(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterString.lower(publicAddress),
+        FfiConverterSequenceData.lower(hints),
+        FfiConverterUInt8.lower(floodHops),
+        FfiConverterInt64.lower(holdUntilMs),
+        FfiConverterOptionDouble.lower(latitude),
+        FfiConverterOptionDouble.lower(longitude),
+        FfiConverterOptionDouble.lower(accuracy),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Remember that the offer to switch away from this node's path was
+     * declined, so it is not made again for the same path.
+     */
+open func settleManualRoutePrompt(ownerIdentityId: String, publicAddress: String)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_settle_manual_route_prompt(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterString.lower(publicAddress),uniffiCallStatus
+    )
+}
+}
+
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileAppStore: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = MobileAppStore
+
+    public static func lift(_ handle: UInt64) throws -> MobileAppStore {
+        return MobileAppStore(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: MobileAppStore) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileAppStore {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: MobileAppStore, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAppStore_lift(_ handle: UInt64) throws -> MobileAppStore {
+    return try FfiConverterTypeMobileAppStore.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAppStore_lower(_ value: MobileAppStore) -> UInt64 {
+    return FfiConverterTypeMobileAppStore.lower(value)
+}
+
+
+
+
+
+
+/**
  * Durable adapter used by the iOS `umsh_hal::CounterStore` boundary.
  *
  * Each commit writes and synchronizes a temporary record, atomically renames
@@ -1977,23 +3472,7 @@ open class MobileMeshSession: MobileMeshSessionProtocol, @unchecked Sendable {
     public func uniffiCloneHandle() -> UInt64 {
         return try! rustCall { uniffi_umsh_mobile_core_fn_clone_mobilemeshsession(self.handle, $0) }
     }
-public convenience init(identity: MobileIdentity, counterStore: MobileCounterStore)async throws  {
-    let handle =
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_umsh_mobile_core_fn_constructor_mobilemeshsession_new(FfiConverterTypeMobileIdentity_lower(identity),FfiConverterTypeMobileCounterStore_lower(counterStore)
-                )
-            },
-            pollFunc: ffi_umsh_mobile_core_rust_future_poll_u64,
-            completeFunc: ffi_umsh_mobile_core_rust_future_complete_u64,
-            freeFunc: ffi_umsh_mobile_core_rust_future_free_u64,
-            liftFunc: FfiConverterTypeMobileMeshSession_lift,
-            errorHandler: FfiConverterTypeMobileMeshError_lift
-        )
-
-        .uniffiCloneHandle()
-    self.init(unsafeFromHandle: handle)
-}
+    // No primary constructor declared for this class.
 
     deinit {
         if handle == 0 {
@@ -2004,6 +3483,26 @@ public convenience init(identity: MobileIdentity, counterStore: MobileCounterSto
         try! rustCall { uniffi_umsh_mobile_core_fn_free_mobilemeshsession(handle, $0) }
     }
 
+
+    /**
+     * Start a session and its worker. A named constructor because it is
+     * async: Kotlin cannot have an async primary constructor, so UniFFI
+     * generates this as a suspend function on the companion object.
+     */
+public static func start(identity: MobileIdentity, counterStore: MobileCounterStore)async throws  -> MobileMeshSession  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_constructor_mobilemeshsession_start(FfiConverterTypeMobileIdentity_lower(identity),FfiConverterTypeMobileCounterStore_lower(counterStore)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_u64,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_u64,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_u64,
+            liftFunc: FfiConverterTypeMobileMeshSession_lift,
+            errorHandler: FfiConverterTypeMobileMeshError_lift
+        )
+}
 
 
 
@@ -6272,6 +7771,76 @@ public func FfiConverterTypeMobileAnnouncementRecord_lower(_ value: MobileAnnoun
 
 
 /**
+ * Everything the interface lists for an identity, read in one
+ * transaction.
+ */
+public struct MobileApplicationRecords: Equatable, Hashable {
+    public var peers: [MobileStoredNodeRecord]
+    public var channels: [MobileStoredChannelRecord]
+    public var conversations: [MobileStoredDirectConversationRecord]
+    public var channelConversations: [MobileStoredChannelConversationRecord]
+    public var reports: [MobileStoredPeerRepeaterReportRecord]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(peers: [MobileStoredNodeRecord], channels: [MobileStoredChannelRecord], conversations: [MobileStoredDirectConversationRecord], channelConversations: [MobileStoredChannelConversationRecord], reports: [MobileStoredPeerRepeaterReportRecord]) {
+        self.peers = peers
+        self.channels = channels
+        self.conversations = conversations
+        self.channelConversations = channelConversations
+        self.reports = reports
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileApplicationRecords: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileApplicationRecords: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileApplicationRecords {
+        return
+            try MobileApplicationRecords(
+                peers: FfiConverterSequenceTypeMobileStoredNodeRecord.read(from: &buf),
+                channels: FfiConverterSequenceTypeMobileStoredChannelRecord.read(from: &buf),
+                conversations: FfiConverterSequenceTypeMobileStoredDirectConversationRecord.read(from: &buf),
+                channelConversations: FfiConverterSequenceTypeMobileStoredChannelConversationRecord.read(from: &buf),
+                reports: FfiConverterSequenceTypeMobileStoredPeerRepeaterReportRecord.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileApplicationRecords, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeMobileStoredNodeRecord.write(value.peers, into: &buf)
+        FfiConverterSequenceTypeMobileStoredChannelRecord.write(value.channels, into: &buf)
+        FfiConverterSequenceTypeMobileStoredDirectConversationRecord.write(value.conversations, into: &buf)
+        FfiConverterSequenceTypeMobileStoredChannelConversationRecord.write(value.channelConversations, into: &buf)
+        FfiConverterSequenceTypeMobileStoredPeerRepeaterReportRecord.write(value.reports, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileApplicationRecords_lift(_ buf: RustBuffer) throws -> MobileApplicationRecords {
+    return try FfiConverterTypeMobileApplicationRecords.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileApplicationRecords_lower(_ value: MobileApplicationRecords) -> RustBuffer {
+    return FfiConverterTypeMobileApplicationRecords.lower(value)
+}
+
+
+/**
  * One channel the platform hands the session at registration.
  */
 public struct MobileChannelRegistrationRecord: Equatable, Hashable {
@@ -9369,6 +10938,94 @@ public func FfiConverterTypeMobilePeerRegistrationRecord_lower(_ value: MobilePe
 
 
 /**
+ * What an upsert says about a peer; see [`MobileAppStore::upsert_peer`]
+ * for how it merges with the stored row.
+ *
+ * Instants are Unix milliseconds.
+ */
+public struct MobilePeerUpsertRecord: Equatable, Hashable {
+    public var alias: String?
+    public var advertisedName: String?
+    public var isSaved: Bool
+    public var nodeKind: String?
+    public var systemRole: String?
+    public var radioIdentifier: String?
+    public var advertisement: Data?
+    public var advertisementAuthenticated: Bool
+    public var advertisementReceivedAtMs: Int64?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(alias: String?, advertisedName: String? = nil, isSaved: Bool = false, nodeKind: String? = nil, systemRole: String? = nil, radioIdentifier: String? = nil, advertisement: Data? = nil, advertisementAuthenticated: Bool = false, advertisementReceivedAtMs: Int64? = nil) {
+        self.alias = alias
+        self.advertisedName = advertisedName
+        self.isSaved = isSaved
+        self.nodeKind = nodeKind
+        self.systemRole = systemRole
+        self.radioIdentifier = radioIdentifier
+        self.advertisement = advertisement
+        self.advertisementAuthenticated = advertisementAuthenticated
+        self.advertisementReceivedAtMs = advertisementReceivedAtMs
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobilePeerUpsertRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobilePeerUpsertRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobilePeerUpsertRecord {
+        return
+            try MobilePeerUpsertRecord(
+                alias: FfiConverterOptionString.read(from: &buf),
+                advertisedName: FfiConverterOptionString.read(from: &buf),
+                isSaved: FfiConverterBool.read(from: &buf),
+                nodeKind: FfiConverterOptionString.read(from: &buf),
+                systemRole: FfiConverterOptionString.read(from: &buf),
+                radioIdentifier: FfiConverterOptionString.read(from: &buf),
+                advertisement: FfiConverterOptionData.read(from: &buf),
+                advertisementAuthenticated: FfiConverterBool.read(from: &buf),
+                advertisementReceivedAtMs: FfiConverterOptionInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobilePeerUpsertRecord, into buf: inout [UInt8]) {
+        FfiConverterOptionString.write(value.alias, into: &buf)
+        FfiConverterOptionString.write(value.advertisedName, into: &buf)
+        FfiConverterBool.write(value.isSaved, into: &buf)
+        FfiConverterOptionString.write(value.nodeKind, into: &buf)
+        FfiConverterOptionString.write(value.systemRole, into: &buf)
+        FfiConverterOptionString.write(value.radioIdentifier, into: &buf)
+        FfiConverterOptionData.write(value.advertisement, into: &buf)
+        FfiConverterBool.write(value.advertisementAuthenticated, into: &buf)
+        FfiConverterOptionInt64.write(value.advertisementReceivedAtMs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobilePeerUpsertRecord_lift(_ buf: RustBuffer) throws -> MobilePeerUpsertRecord {
+    return try FfiConverterTypeMobilePeerUpsertRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobilePeerUpsertRecord_lower(_ value: MobilePeerUpsertRecord) -> RustBuffer {
+    return FfiConverterTypeMobilePeerUpsertRecord.lower(value)
+}
+
+
+/**
  * A frame entered the inbound queue while no host was attached.
  */
 public struct MobileQueuedNoticeRecord: Equatable, Hashable {
@@ -10073,6 +11730,1307 @@ public func FfiConverterTypeMobileRegionRecord_lift(_ buf: RustBuffer) throws ->
 #endif
 public func FfiConverterTypeMobileRegionRecord_lower(_ value: MobileRegionRecord) -> RustBuffer {
     return FfiConverterTypeMobileRegionRecord.lower(value)
+}
+
+
+/**
+ * One property as a device last reported it, and when.
+ *
+ * The value is the octets that came off the air: what they mean is settled
+ * by the ULCP decoders rather than here, so a value cached by one build
+ * reads the same in the next. The instant (Unix milliseconds) is what lets
+ * a screen date a reading rather than present it as current.
+ */
+public struct MobileStoredCachedPropertyRecord: Equatable, Hashable {
+    public var value: Data
+    public var fetchedAtMs: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(value: Data, fetchedAtMs: Int64) {
+        self.value = value
+        self.fetchedAtMs = fetchedAtMs
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileStoredCachedPropertyRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileStoredCachedPropertyRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileStoredCachedPropertyRecord {
+        return
+            try MobileStoredCachedPropertyRecord(
+                value: FfiConverterData.read(from: &buf),
+                fetchedAtMs: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileStoredCachedPropertyRecord, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.value, into: &buf)
+        FfiConverterInt64.write(value.fetchedAtMs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredCachedPropertyRecord_lift(_ buf: RustBuffer) throws -> MobileStoredCachedPropertyRecord {
+    return try FfiConverterTypeMobileStoredCachedPropertyRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredCachedPropertyRecord_lower(_ value: MobileStoredCachedPropertyRecord) -> RustBuffer {
+    return FfiConverterTypeMobileStoredCachedPropertyRecord.lower(value)
+}
+
+
+/**
+ * A channel's group conversation. Its other end is a channel rather than a
+ * node, which is why it is not a row in `direct_conversation`.
+ *
+ * Instants are Unix milliseconds.
+ */
+public struct MobileStoredChannelConversationRecord: Equatable, Hashable {
+    public var id: Int64
+    /**
+     * The channel's ID, uppercase.
+     */
+    public var channelId: String
+    /**
+     * The address the mesh engine keys this conversation's records by.
+     */
+    public var conversationAddress: String
+    public var draftText: String
+    public var lastReadAtMs: Int64
+    /**
+     * When the conversation row was created—the activity time of a
+     * conversation that has no messages yet.
+     */
+    public var createdAtMs: Int64
+    public var lastMessage: MobileStoredConversationPreviewRecord?
+    /**
+     * Counted as a direct conversation's is.
+     */
+    public var unreadCount: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: Int64,
+        /**
+         * The channel's ID, uppercase.
+         */channelId: String,
+        /**
+         * The address the mesh engine keys this conversation's records by.
+         */conversationAddress: String, draftText: String, lastReadAtMs: Int64,
+        /**
+         * When the conversation row was created—the activity time of a
+         * conversation that has no messages yet.
+         */createdAtMs: Int64, lastMessage: MobileStoredConversationPreviewRecord?,
+        /**
+         * Counted as a direct conversation's is.
+         */unreadCount: Int64) {
+        self.id = id
+        self.channelId = channelId
+        self.conversationAddress = conversationAddress
+        self.draftText = draftText
+        self.lastReadAtMs = lastReadAtMs
+        self.createdAtMs = createdAtMs
+        self.lastMessage = lastMessage
+        self.unreadCount = unreadCount
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileStoredChannelConversationRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileStoredChannelConversationRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileStoredChannelConversationRecord {
+        return
+            try MobileStoredChannelConversationRecord(
+                id: FfiConverterInt64.read(from: &buf),
+                channelId: FfiConverterString.read(from: &buf),
+                conversationAddress: FfiConverterString.read(from: &buf),
+                draftText: FfiConverterString.read(from: &buf),
+                lastReadAtMs: FfiConverterInt64.read(from: &buf),
+                createdAtMs: FfiConverterInt64.read(from: &buf),
+                lastMessage: FfiConverterOptionTypeMobileStoredConversationPreviewRecord.read(from: &buf),
+                unreadCount: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileStoredChannelConversationRecord, into buf: inout [UInt8]) {
+        FfiConverterInt64.write(value.id, into: &buf)
+        FfiConverterString.write(value.channelId, into: &buf)
+        FfiConverterString.write(value.conversationAddress, into: &buf)
+        FfiConverterString.write(value.draftText, into: &buf)
+        FfiConverterInt64.write(value.lastReadAtMs, into: &buf)
+        FfiConverterInt64.write(value.createdAtMs, into: &buf)
+        FfiConverterOptionTypeMobileStoredConversationPreviewRecord.write(value.lastMessage, into: &buf)
+        FfiConverterInt64.write(value.unreadCount, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredChannelConversationRecord_lift(_ buf: RustBuffer) throws -> MobileStoredChannelConversationRecord {
+    return try FfiConverterTypeMobileStoredChannelConversationRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredChannelConversationRecord_lower(_ value: MobileStoredChannelConversationRecord) -> RustBuffer {
+    return FfiConverterTypeMobileStoredChannelConversationRecord.lower(value)
+}
+
+
+/**
+ * A channel this identity knows about.
+ *
+ * Instants are Unix milliseconds.
+ */
+public struct MobileStoredChannelRecord: Equatable, Hashable {
+    /**
+     * Uppercase hyphenated UUID; the secret vault's account name for the
+     * channel's key. Any case is accepted on the way in.
+     */
+    public var id: String
+    public var ownerIdentityId: String
+    public var kind: MobileStoredChannelKind
+    /**
+     * Canonical lowercase name the key is derived from. Key-derivation
+     * machinery, not something to show: `name` is what the channel is
+     * called.
+     */
+    public var canonicalName: String?
+    /**
+     * The channel's own name, written the way it was typed or shared.
+     */
+    public var name: String?
+    /**
+     * What this user calls the channel. Takes display precedence but never
+     * overwrites `name`, matching how a peer alias works.
+     */
+    public var alias: String?
+    /**
+     * Two-octet derived identifier, hex. A hint, not an identity: distinct
+     * keys may collide here.
+     */
+    public var channelIdHex: String
+    /**
+     * Three presentation octets—the identifier extended by one byte—kept
+     * here so a list can color its rows without unlocking every key.
+     */
+    public var tint: Data
+    /**
+     * The channel's one region code, as its octets.
+     */
+    public var regionCode: Data?
+    public var maxFloodHops: Int64?
+    /**
+     * Whether the phone identity has joined. Drives MAC registration and
+     * the radio's host channel table.
+     */
+    public var joinedPhone: Bool
+    /**
+     * Whether the companion radio's device identity has joined. A cache:
+     * the device is authoritative and this is reconciled from it on attach.
+     */
+    public var joinedDevice: Bool
+    public var notificationsEnabled: Bool
+    /**
+     * When the phone identity first joined. Stamped once and kept through
+     * later leaves and rejoins.
+     */
+    public var joinedAtMs: Int64?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Uppercase hyphenated UUID; the secret vault's account name for the
+         * channel's key. Any case is accepted on the way in.
+         */id: String, ownerIdentityId: String, kind: MobileStoredChannelKind,
+        /**
+         * Canonical lowercase name the key is derived from. Key-derivation
+         * machinery, not something to show: `name` is what the channel is
+         * called.
+         */canonicalName: String?,
+        /**
+         * The channel's own name, written the way it was typed or shared.
+         */name: String?,
+        /**
+         * What this user calls the channel. Takes display precedence but never
+         * overwrites `name`, matching how a peer alias works.
+         */alias: String?,
+        /**
+         * Two-octet derived identifier, hex. A hint, not an identity: distinct
+         * keys may collide here.
+         */channelIdHex: String,
+        /**
+         * Three presentation octets—the identifier extended by one byte—kept
+         * here so a list can color its rows without unlocking every key.
+         */tint: Data,
+        /**
+         * The channel's one region code, as its octets.
+         */regionCode: Data?, maxFloodHops: Int64?,
+        /**
+         * Whether the phone identity has joined. Drives MAC registration and
+         * the radio's host channel table.
+         */joinedPhone: Bool,
+        /**
+         * Whether the companion radio's device identity has joined. A cache:
+         * the device is authoritative and this is reconciled from it on attach.
+         */joinedDevice: Bool, notificationsEnabled: Bool,
+        /**
+         * When the phone identity first joined. Stamped once and kept through
+         * later leaves and rejoins.
+         */joinedAtMs: Int64?) {
+        self.id = id
+        self.ownerIdentityId = ownerIdentityId
+        self.kind = kind
+        self.canonicalName = canonicalName
+        self.name = name
+        self.alias = alias
+        self.channelIdHex = channelIdHex
+        self.tint = tint
+        self.regionCode = regionCode
+        self.maxFloodHops = maxFloodHops
+        self.joinedPhone = joinedPhone
+        self.joinedDevice = joinedDevice
+        self.notificationsEnabled = notificationsEnabled
+        self.joinedAtMs = joinedAtMs
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileStoredChannelRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileStoredChannelRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileStoredChannelRecord {
+        return
+            try MobileStoredChannelRecord(
+                id: FfiConverterString.read(from: &buf),
+                ownerIdentityId: FfiConverterString.read(from: &buf),
+                kind: FfiConverterTypeMobileStoredChannelKind.read(from: &buf),
+                canonicalName: FfiConverterOptionString.read(from: &buf),
+                name: FfiConverterOptionString.read(from: &buf),
+                alias: FfiConverterOptionString.read(from: &buf),
+                channelIdHex: FfiConverterString.read(from: &buf),
+                tint: FfiConverterData.read(from: &buf),
+                regionCode: FfiConverterOptionData.read(from: &buf),
+                maxFloodHops: FfiConverterOptionInt64.read(from: &buf),
+                joinedPhone: FfiConverterBool.read(from: &buf),
+                joinedDevice: FfiConverterBool.read(from: &buf),
+                notificationsEnabled: FfiConverterBool.read(from: &buf),
+                joinedAtMs: FfiConverterOptionInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileStoredChannelRecord, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.ownerIdentityId, into: &buf)
+        FfiConverterTypeMobileStoredChannelKind.write(value.kind, into: &buf)
+        FfiConverterOptionString.write(value.canonicalName, into: &buf)
+        FfiConverterOptionString.write(value.name, into: &buf)
+        FfiConverterOptionString.write(value.alias, into: &buf)
+        FfiConverterString.write(value.channelIdHex, into: &buf)
+        FfiConverterData.write(value.tint, into: &buf)
+        FfiConverterOptionData.write(value.regionCode, into: &buf)
+        FfiConverterOptionInt64.write(value.maxFloodHops, into: &buf)
+        FfiConverterBool.write(value.joinedPhone, into: &buf)
+        FfiConverterBool.write(value.joinedDevice, into: &buf)
+        FfiConverterBool.write(value.notificationsEnabled, into: &buf)
+        FfiConverterOptionInt64.write(value.joinedAtMs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredChannelRecord_lift(_ buf: RustBuffer) throws -> MobileStoredChannelRecord {
+    return try FfiConverterTypeMobileStoredChannelRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredChannelRecord_lower(_ value: MobileStoredChannelRecord) -> RustBuffer {
+    return FfiConverterTypeMobileStoredChannelRecord.lower(value)
+}
+
+
+/**
+ * A radio that took this phone's identity as its host and has not been
+ * seen to let it go.
+ *
+ * Instants are Unix milliseconds.
+ */
+public struct MobileStoredClaimedRadioRecord: Equatable, Hashable {
+    /**
+     * The radio's device address.
+     */
+    public var deviceAddress: String
+    public var name: String?
+    /**
+     * The last time this phone was attached to it.
+     */
+    public var attachedAtMs: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The radio's device address.
+         */deviceAddress: String, name: String?,
+        /**
+         * The last time this phone was attached to it.
+         */attachedAtMs: Int64) {
+        self.deviceAddress = deviceAddress
+        self.name = name
+        self.attachedAtMs = attachedAtMs
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileStoredClaimedRadioRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileStoredClaimedRadioRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileStoredClaimedRadioRecord {
+        return
+            try MobileStoredClaimedRadioRecord(
+                deviceAddress: FfiConverterString.read(from: &buf),
+                name: FfiConverterOptionString.read(from: &buf),
+                attachedAtMs: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileStoredClaimedRadioRecord, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.deviceAddress, into: &buf)
+        FfiConverterOptionString.write(value.name, into: &buf)
+        FfiConverterInt64.write(value.attachedAtMs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredClaimedRadioRecord_lift(_ buf: RustBuffer) throws -> MobileStoredClaimedRadioRecord {
+    return try FfiConverterTypeMobileStoredClaimedRadioRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredClaimedRadioRecord_lower(_ value: MobileStoredClaimedRadioRecord) -> RustBuffer {
+    return FfiConverterTypeMobileStoredClaimedRadioRecord.lower(value)
+}
+
+
+/**
+ * The newest message in a conversation, reduced to what a list row draws.
+ *
+ * This is the literal last row in transcript order, tombstones and gap
+ * placeholders included: a list preview says what the bottom of the
+ * transcript is, and a deleted last message reads as "Message deleted"
+ * rather than silently promoting the one before it. Reactions are not
+ * rows of the transcript and never are the preview.
+ */
+public struct MobileStoredConversationPreviewRecord: Equatable, Hashable {
+    public var createdAtMs: Int64
+    public var body: String
+    public var isOutbound: Bool
+    public var isDeleted: Bool
+    /**
+     * Who sent it, for a group conversation: the resolved address once
+     * known, and the hint the wire always carries.
+     */
+    public var senderAddress: String?
+    public var senderHint: Data?
+    /**
+     * Status text, which reads as its sender's name followed by its body.
+     */
+    public var isStatus: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(createdAtMs: Int64, body: String, isOutbound: Bool, isDeleted: Bool,
+        /**
+         * Who sent it, for a group conversation: the resolved address once
+         * known, and the hint the wire always carries.
+         */senderAddress: String?, senderHint: Data?,
+        /**
+         * Status text, which reads as its sender's name followed by its body.
+         */isStatus: Bool) {
+        self.createdAtMs = createdAtMs
+        self.body = body
+        self.isOutbound = isOutbound
+        self.isDeleted = isDeleted
+        self.senderAddress = senderAddress
+        self.senderHint = senderHint
+        self.isStatus = isStatus
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileStoredConversationPreviewRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileStoredConversationPreviewRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileStoredConversationPreviewRecord {
+        return
+            try MobileStoredConversationPreviewRecord(
+                createdAtMs: FfiConverterInt64.read(from: &buf),
+                body: FfiConverterString.read(from: &buf),
+                isOutbound: FfiConverterBool.read(from: &buf),
+                isDeleted: FfiConverterBool.read(from: &buf),
+                senderAddress: FfiConverterOptionString.read(from: &buf),
+                senderHint: FfiConverterOptionData.read(from: &buf),
+                isStatus: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileStoredConversationPreviewRecord, into buf: inout [UInt8]) {
+        FfiConverterInt64.write(value.createdAtMs, into: &buf)
+        FfiConverterString.write(value.body, into: &buf)
+        FfiConverterBool.write(value.isOutbound, into: &buf)
+        FfiConverterBool.write(value.isDeleted, into: &buf)
+        FfiConverterOptionString.write(value.senderAddress, into: &buf)
+        FfiConverterOptionData.write(value.senderHint, into: &buf)
+        FfiConverterBool.write(value.isStatus, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredConversationPreviewRecord_lift(_ buf: RustBuffer) throws -> MobileStoredConversationPreviewRecord {
+    return try FfiConverterTypeMobileStoredConversationPreviewRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredConversationPreviewRecord_lower(_ value: MobileStoredConversationPreviewRecord) -> RustBuffer {
+    return FfiConverterTypeMobileStoredConversationPreviewRecord.lower(value)
+}
+
+
+/**
+ * A conversation with one peer.
+ *
+ * Instants are Unix milliseconds.
+ */
+public struct MobileStoredDirectConversationRecord: Equatable, Hashable {
+    public var id: Int64
+    public var node: MobileStoredNodeRecord
+    public var draftText: String
+    /**
+     * When this conversation was last read. Messages newer than this are
+     * unread; a conversation the user has never opened reads as all-unread
+     * from its first message.
+     */
+    public var lastReadAtMs: Int64
+    /**
+     * When the conversation row was created—the activity time of a
+     * conversation that has no messages yet.
+     */
+    public var createdAtMs: Int64
+    /**
+     * Whether this conversation may raise a notification. Defaults on,
+     * unlike a channel's, which defaults off.
+     */
+    public var notificationsEnabled: Bool
+    public var lastMessage: MobileStoredConversationPreviewRecord?
+    /**
+     * Inbound messages newer than the read cursor that a person reads:
+     * not deleted, not a gap or unavailable marker, not a reaction, not
+     * silent.
+     */
+    public var unreadCount: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: Int64, node: MobileStoredNodeRecord, draftText: String,
+        /**
+         * When this conversation was last read. Messages newer than this are
+         * unread; a conversation the user has never opened reads as all-unread
+         * from its first message.
+         */lastReadAtMs: Int64,
+        /**
+         * When the conversation row was created—the activity time of a
+         * conversation that has no messages yet.
+         */createdAtMs: Int64,
+        /**
+         * Whether this conversation may raise a notification. Defaults on,
+         * unlike a channel's, which defaults off.
+         */notificationsEnabled: Bool, lastMessage: MobileStoredConversationPreviewRecord?,
+        /**
+         * Inbound messages newer than the read cursor that a person reads:
+         * not deleted, not a gap or unavailable marker, not a reaction, not
+         * silent.
+         */unreadCount: Int64) {
+        self.id = id
+        self.node = node
+        self.draftText = draftText
+        self.lastReadAtMs = lastReadAtMs
+        self.createdAtMs = createdAtMs
+        self.notificationsEnabled = notificationsEnabled
+        self.lastMessage = lastMessage
+        self.unreadCount = unreadCount
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileStoredDirectConversationRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileStoredDirectConversationRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileStoredDirectConversationRecord {
+        return
+            try MobileStoredDirectConversationRecord(
+                id: FfiConverterInt64.read(from: &buf),
+                node: FfiConverterTypeMobileStoredNodeRecord.read(from: &buf),
+                draftText: FfiConverterString.read(from: &buf),
+                lastReadAtMs: FfiConverterInt64.read(from: &buf),
+                createdAtMs: FfiConverterInt64.read(from: &buf),
+                notificationsEnabled: FfiConverterBool.read(from: &buf),
+                lastMessage: FfiConverterOptionTypeMobileStoredConversationPreviewRecord.read(from: &buf),
+                unreadCount: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileStoredDirectConversationRecord, into buf: inout [UInt8]) {
+        FfiConverterInt64.write(value.id, into: &buf)
+        FfiConverterTypeMobileStoredNodeRecord.write(value.node, into: &buf)
+        FfiConverterString.write(value.draftText, into: &buf)
+        FfiConverterInt64.write(value.lastReadAtMs, into: &buf)
+        FfiConverterInt64.write(value.createdAtMs, into: &buf)
+        FfiConverterBool.write(value.notificationsEnabled, into: &buf)
+        FfiConverterOptionTypeMobileStoredConversationPreviewRecord.write(value.lastMessage, into: &buf)
+        FfiConverterInt64.write(value.unreadCount, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredDirectConversationRecord_lift(_ buf: RustBuffer) throws -> MobileStoredDirectConversationRecord {
+    return try FfiConverterTypeMobileStoredDirectConversationRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredDirectConversationRecord_lower(_ value: MobileStoredDirectConversationRecord) -> RustBuffer {
+    return FfiConverterTypeMobileStoredDirectConversationRecord.lower(value)
+}
+
+
+/**
+ * What a remote device said it is, kept between openings of its settings.
+ *
+ * The four things worth learning once: a device's capabilities and firmware
+ * version change only when it is reflashed, its hardware never, and its name
+ * rarely. Holding them means a later open of a device's settings puts
+ * nothing on the air at all. Instants are Unix milliseconds.
+ */
+public struct MobileStoredManagementCardRecord: Equatable, Hashable {
+    /**
+     * `PROP_CAPS` verbatim, planned against without asking the device
+     * again.
+     */
+    public var capabilities: Data
+    /**
+     * `PROP_DEV_VERSION`. The key the cached values hang from: different
+     * firmware may hold different properties, so a change here discards
+     * them.
+     */
+    public var deviceVersion: String?
+    public var deviceModel: String?
+    public var deviceName: String?
+    public var fetchedAtMs: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `PROP_CAPS` verbatim, planned against without asking the device
+         * again.
+         */capabilities: Data,
+        /**
+         * `PROP_DEV_VERSION`. The key the cached values hang from: different
+         * firmware may hold different properties, so a change here discards
+         * them.
+         */deviceVersion: String?, deviceModel: String?, deviceName: String?, fetchedAtMs: Int64) {
+        self.capabilities = capabilities
+        self.deviceVersion = deviceVersion
+        self.deviceModel = deviceModel
+        self.deviceName = deviceName
+        self.fetchedAtMs = fetchedAtMs
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileStoredManagementCardRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileStoredManagementCardRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileStoredManagementCardRecord {
+        return
+            try MobileStoredManagementCardRecord(
+                capabilities: FfiConverterData.read(from: &buf),
+                deviceVersion: FfiConverterOptionString.read(from: &buf),
+                deviceModel: FfiConverterOptionString.read(from: &buf),
+                deviceName: FfiConverterOptionString.read(from: &buf),
+                fetchedAtMs: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileStoredManagementCardRecord, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.capabilities, into: &buf)
+        FfiConverterOptionString.write(value.deviceVersion, into: &buf)
+        FfiConverterOptionString.write(value.deviceModel, into: &buf)
+        FfiConverterOptionString.write(value.deviceName, into: &buf)
+        FfiConverterInt64.write(value.fetchedAtMs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredManagementCardRecord_lift(_ buf: RustBuffer) throws -> MobileStoredManagementCardRecord {
+    return try FfiConverterTypeMobileStoredManagementCardRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredManagementCardRecord_lower(_ value: MobileStoredManagementCardRecord) -> RustBuffer {
+    return FfiConverterTypeMobileStoredManagementCardRecord.lower(value)
+}
+
+
+/**
+ * A path the person chose for one node, held until `hold_until_ms`.
+ *
+ * Instants are Unix milliseconds.
+ */
+public struct MobileStoredManualRouteRecord: Equatable, Hashable {
+    public var publicAddress: String
+    /**
+     * Two-byte router hints, in send order. None is a direct path.
+     */
+    public var hints: [Data]
+    /**
+     * How far the path floods past its last repeater.
+     */
+    public var floodHops: UInt8
+    public var holdUntilMs: Int64
+    /**
+     * Where the phone stood when the path was saved, if it knew.
+     */
+    public var savedLatitude: Double?
+    public var savedLongitude: Double?
+    /**
+     * Horizontal accuracy of that fix, in meters.
+     */
+    public var savedAccuracy: Double?
+    /**
+     * The offer to switch to a learned path was declined.
+     */
+    public var promptSettled: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(publicAddress: String,
+        /**
+         * Two-byte router hints, in send order. None is a direct path.
+         */hints: [Data],
+        /**
+         * How far the path floods past its last repeater.
+         */floodHops: UInt8, holdUntilMs: Int64,
+        /**
+         * Where the phone stood when the path was saved, if it knew.
+         */savedLatitude: Double?, savedLongitude: Double?,
+        /**
+         * Horizontal accuracy of that fix, in meters.
+         */savedAccuracy: Double?,
+        /**
+         * The offer to switch to a learned path was declined.
+         */promptSettled: Bool) {
+        self.publicAddress = publicAddress
+        self.hints = hints
+        self.floodHops = floodHops
+        self.holdUntilMs = holdUntilMs
+        self.savedLatitude = savedLatitude
+        self.savedLongitude = savedLongitude
+        self.savedAccuracy = savedAccuracy
+        self.promptSettled = promptSettled
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileStoredManualRouteRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileStoredManualRouteRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileStoredManualRouteRecord {
+        return
+            try MobileStoredManualRouteRecord(
+                publicAddress: FfiConverterString.read(from: &buf),
+                hints: FfiConverterSequenceData.read(from: &buf),
+                floodHops: FfiConverterUInt8.read(from: &buf),
+                holdUntilMs: FfiConverterInt64.read(from: &buf),
+                savedLatitude: FfiConverterOptionDouble.read(from: &buf),
+                savedLongitude: FfiConverterOptionDouble.read(from: &buf),
+                savedAccuracy: FfiConverterOptionDouble.read(from: &buf),
+                promptSettled: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileStoredManualRouteRecord, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.publicAddress, into: &buf)
+        FfiConverterSequenceData.write(value.hints, into: &buf)
+        FfiConverterUInt8.write(value.floodHops, into: &buf)
+        FfiConverterInt64.write(value.holdUntilMs, into: &buf)
+        FfiConverterOptionDouble.write(value.savedLatitude, into: &buf)
+        FfiConverterOptionDouble.write(value.savedLongitude, into: &buf)
+        FfiConverterOptionDouble.write(value.savedAccuracy, into: &buf)
+        FfiConverterBool.write(value.promptSettled, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredManualRouteRecord_lift(_ buf: RustBuffer) throws -> MobileStoredManualRouteRecord {
+    return try FfiConverterTypeMobileStoredManualRouteRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredManualRouteRecord_lower(_ value: MobileStoredManualRouteRecord) -> RustBuffer {
+    return FfiConverterTypeMobileStoredManualRouteRecord.lower(value)
+}
+
+
+/**
+ * One peer as the store holds it.
+ *
+ * Instants are Unix milliseconds.
+ */
+public struct MobileStoredNodeRecord: Equatable, Hashable {
+    public var id: Int64
+    public var ownerIdentityId: String
+    public var publicAddress: String
+    public var alias: String?
+    public var advertisedName: String?
+    public var systemRole: String?
+    public var nodeKind: String?
+    /**
+     * Raw advertised-identity payload bytes (node-identity.md wire form).
+     */
+    public var advertisement: Data?
+    /**
+     * Whether the MAC authenticated the frame that delivered
+     * `advertisement`. A bundle that arrived as a MIC-authenticated unicast
+     * reply carries no signature of its own, so this is the only surviving
+     * evidence that it really came from the peer.
+     */
+    public var advertisementAuthenticated: Bool
+    /**
+     * When we last heard from this peer by any means (advertisement,
+     * inbound message, delivery ack, ping reply). `None` until the first
+     * inbound evidence lands.
+     */
+    public var lastHeardAtMs: Int64?
+    /**
+     * Whether this node is saved on the local (phone) identity. Rows with
+     * `false` are the transient tier: heard on the air, kept for search and
+     * discovery, hidden from the main Peers list, and subject to retention.
+     */
+    public var isSaved: Bool
+    public var isFavorite: Bool
+    /**
+     * Cache of whether this node's public key is stored on the companion
+     * radio's device identity (`PROP_DEV_PEERS`). The device is the
+     * authority; this flag is reconciled from it on attach.
+     */
+    public var onDeviceIdentity: Bool
+    /**
+     * Whether a one-shot watch is armed on this node: tell the user the
+     * next time anything is heard from it, then disarm. Cleared by the same
+     * write that records the hearing, so the notice fires exactly once.
+     */
+    public var notifyWhenHeard: Bool
+    /**
+     * When `advertisement` was heard off the air. `None` for a bundle that
+     * was imported: nothing about how it arrived dates what it says.
+     */
+    public var advertisementReceivedAtMs: Int64?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: Int64, ownerIdentityId: String, publicAddress: String, alias: String?, advertisedName: String?, systemRole: String?, nodeKind: String?,
+        /**
+         * Raw advertised-identity payload bytes (node-identity.md wire form).
+         */advertisement: Data?,
+        /**
+         * Whether the MAC authenticated the frame that delivered
+         * `advertisement`. A bundle that arrived as a MIC-authenticated unicast
+         * reply carries no signature of its own, so this is the only surviving
+         * evidence that it really came from the peer.
+         */advertisementAuthenticated: Bool,
+        /**
+         * When we last heard from this peer by any means (advertisement,
+         * inbound message, delivery ack, ping reply). `None` until the first
+         * inbound evidence lands.
+         */lastHeardAtMs: Int64?,
+        /**
+         * Whether this node is saved on the local (phone) identity. Rows with
+         * `false` are the transient tier: heard on the air, kept for search and
+         * discovery, hidden from the main Peers list, and subject to retention.
+         */isSaved: Bool, isFavorite: Bool,
+        /**
+         * Cache of whether this node's public key is stored on the companion
+         * radio's device identity (`PROP_DEV_PEERS`). The device is the
+         * authority; this flag is reconciled from it on attach.
+         */onDeviceIdentity: Bool,
+        /**
+         * Whether a one-shot watch is armed on this node: tell the user the
+         * next time anything is heard from it, then disarm. Cleared by the same
+         * write that records the hearing, so the notice fires exactly once.
+         */notifyWhenHeard: Bool,
+        /**
+         * When `advertisement` was heard off the air. `None` for a bundle that
+         * was imported: nothing about how it arrived dates what it says.
+         */advertisementReceivedAtMs: Int64?) {
+        self.id = id
+        self.ownerIdentityId = ownerIdentityId
+        self.publicAddress = publicAddress
+        self.alias = alias
+        self.advertisedName = advertisedName
+        self.systemRole = systemRole
+        self.nodeKind = nodeKind
+        self.advertisement = advertisement
+        self.advertisementAuthenticated = advertisementAuthenticated
+        self.lastHeardAtMs = lastHeardAtMs
+        self.isSaved = isSaved
+        self.isFavorite = isFavorite
+        self.onDeviceIdentity = onDeviceIdentity
+        self.notifyWhenHeard = notifyWhenHeard
+        self.advertisementReceivedAtMs = advertisementReceivedAtMs
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileStoredNodeRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileStoredNodeRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileStoredNodeRecord {
+        return
+            try MobileStoredNodeRecord(
+                id: FfiConverterInt64.read(from: &buf),
+                ownerIdentityId: FfiConverterString.read(from: &buf),
+                publicAddress: FfiConverterString.read(from: &buf),
+                alias: FfiConverterOptionString.read(from: &buf),
+                advertisedName: FfiConverterOptionString.read(from: &buf),
+                systemRole: FfiConverterOptionString.read(from: &buf),
+                nodeKind: FfiConverterOptionString.read(from: &buf),
+                advertisement: FfiConverterOptionData.read(from: &buf),
+                advertisementAuthenticated: FfiConverterBool.read(from: &buf),
+                lastHeardAtMs: FfiConverterOptionInt64.read(from: &buf),
+                isSaved: FfiConverterBool.read(from: &buf),
+                isFavorite: FfiConverterBool.read(from: &buf),
+                onDeviceIdentity: FfiConverterBool.read(from: &buf),
+                notifyWhenHeard: FfiConverterBool.read(from: &buf),
+                advertisementReceivedAtMs: FfiConverterOptionInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileStoredNodeRecord, into buf: inout [UInt8]) {
+        FfiConverterInt64.write(value.id, into: &buf)
+        FfiConverterString.write(value.ownerIdentityId, into: &buf)
+        FfiConverterString.write(value.publicAddress, into: &buf)
+        FfiConverterOptionString.write(value.alias, into: &buf)
+        FfiConverterOptionString.write(value.advertisedName, into: &buf)
+        FfiConverterOptionString.write(value.systemRole, into: &buf)
+        FfiConverterOptionString.write(value.nodeKind, into: &buf)
+        FfiConverterOptionData.write(value.advertisement, into: &buf)
+        FfiConverterBool.write(value.advertisementAuthenticated, into: &buf)
+        FfiConverterOptionInt64.write(value.lastHeardAtMs, into: &buf)
+        FfiConverterBool.write(value.isSaved, into: &buf)
+        FfiConverterBool.write(value.isFavorite, into: &buf)
+        FfiConverterBool.write(value.onDeviceIdentity, into: &buf)
+        FfiConverterBool.write(value.notifyWhenHeard, into: &buf)
+        FfiConverterOptionInt64.write(value.advertisementReceivedAtMs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredNodeRecord_lift(_ buf: RustBuffer) throws -> MobileStoredNodeRecord {
+    return try FfiConverterTypeMobileStoredNodeRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredNodeRecord_lower(_ value: MobileStoredNodeRecord) -> RustBuffer {
+    return FfiConverterTypeMobileStoredNodeRecord.lower(value)
+}
+
+
+/**
+ * One neighbor a router reported, as the page carried it.
+ *
+ * Stored decoded rather than as the wire entry: the fields are few and
+ * fixed, the map reads them without a decoder in the loop, and the location
+ * arrives from the core already reduced to a center and a precision.
+ * Instants are Unix milliseconds.
+ */
+public struct MobileStoredPeerRepeaterEntryRecord: Equatable, Hashable {
+    /**
+     * Two or three bytes; the row's key within the router's listing.
+     */
+    public var hint: Data
+    public var name: String?
+    public var rssiDbm: Int16?
+    public var snrQuarterDb: Int16?
+    public var lastHeardMinutes: UInt16?
+    public var latitude: Double?
+    public var longitude: Double?
+    public var locationPrecision: UInt8?
+    /**
+     * Two octets per code, as the wire carries them.
+     */
+    public var regionCodes: [Data]
+    /**
+     * When the page naming this neighbor was answered.
+     */
+    public var reportedAtMs: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Two or three bytes; the row's key within the router's listing.
+         */hint: Data, name: String?, rssiDbm: Int16?, snrQuarterDb: Int16?, lastHeardMinutes: UInt16?, latitude: Double?, longitude: Double?, locationPrecision: UInt8?,
+        /**
+         * Two octets per code, as the wire carries them.
+         */regionCodes: [Data],
+        /**
+         * When the page naming this neighbor was answered.
+         */reportedAtMs: Int64) {
+        self.hint = hint
+        self.name = name
+        self.rssiDbm = rssiDbm
+        self.snrQuarterDb = snrQuarterDb
+        self.lastHeardMinutes = lastHeardMinutes
+        self.latitude = latitude
+        self.longitude = longitude
+        self.locationPrecision = locationPrecision
+        self.regionCodes = regionCodes
+        self.reportedAtMs = reportedAtMs
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileStoredPeerRepeaterEntryRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileStoredPeerRepeaterEntryRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileStoredPeerRepeaterEntryRecord {
+        return
+            try MobileStoredPeerRepeaterEntryRecord(
+                hint: FfiConverterData.read(from: &buf),
+                name: FfiConverterOptionString.read(from: &buf),
+                rssiDbm: FfiConverterOptionInt16.read(from: &buf),
+                snrQuarterDb: FfiConverterOptionInt16.read(from: &buf),
+                lastHeardMinutes: FfiConverterOptionUInt16.read(from: &buf),
+                latitude: FfiConverterOptionDouble.read(from: &buf),
+                longitude: FfiConverterOptionDouble.read(from: &buf),
+                locationPrecision: FfiConverterOptionUInt8.read(from: &buf),
+                regionCodes: FfiConverterSequenceData.read(from: &buf),
+                reportedAtMs: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileStoredPeerRepeaterEntryRecord, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.hint, into: &buf)
+        FfiConverterOptionString.write(value.name, into: &buf)
+        FfiConverterOptionInt16.write(value.rssiDbm, into: &buf)
+        FfiConverterOptionInt16.write(value.snrQuarterDb, into: &buf)
+        FfiConverterOptionUInt16.write(value.lastHeardMinutes, into: &buf)
+        FfiConverterOptionDouble.write(value.latitude, into: &buf)
+        FfiConverterOptionDouble.write(value.longitude, into: &buf)
+        FfiConverterOptionUInt8.write(value.locationPrecision, into: &buf)
+        FfiConverterSequenceData.write(value.regionCodes, into: &buf)
+        FfiConverterInt64.write(value.reportedAtMs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredPeerRepeaterEntryRecord_lift(_ buf: RustBuffer) throws -> MobileStoredPeerRepeaterEntryRecord {
+    return try FfiConverterTypeMobileStoredPeerRepeaterEntryRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredPeerRepeaterEntryRecord_lower(_ value: MobileStoredPeerRepeaterEntryRecord) -> RustBuffer {
+    return FfiConverterTypeMobileStoredPeerRepeaterEntryRecord.lower(value)
+}
+
+
+/**
+ * What a router last said about its neighbors, as far as this phone asked.
+ *
+ * The cursor is kept so the next open can carry on where the last page
+ * stopped rather than starting the listing over: the ask is the operator's
+ * to make, and the cache should make it cheap to make the right one.
+ */
+public struct MobileStoredPeerRepeaterListingRecord: Equatable, Hashable {
+    /**
+     * In the order the router listed them.
+     */
+    public var entries: [MobileStoredPeerRepeaterEntryRecord]
+    /**
+     * How many neighbors the whole listing holds, when a page said.
+     */
+    public var total: Int64?
+    /**
+     * The cursor for the page after the last one held; absent once the
+     * listing is complete.
+     */
+    public var nextCursor: Data?
+    /**
+     * When the latest page was answered, Unix milliseconds.
+     */
+    public var asOfMs: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * In the order the router listed them.
+         */entries: [MobileStoredPeerRepeaterEntryRecord],
+        /**
+         * How many neighbors the whole listing holds, when a page said.
+         */total: Int64?,
+        /**
+         * The cursor for the page after the last one held; absent once the
+         * listing is complete.
+         */nextCursor: Data?,
+        /**
+         * When the latest page was answered, Unix milliseconds.
+         */asOfMs: Int64) {
+        self.entries = entries
+        self.total = total
+        self.nextCursor = nextCursor
+        self.asOfMs = asOfMs
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileStoredPeerRepeaterListingRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileStoredPeerRepeaterListingRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileStoredPeerRepeaterListingRecord {
+        return
+            try MobileStoredPeerRepeaterListingRecord(
+                entries: FfiConverterSequenceTypeMobileStoredPeerRepeaterEntryRecord.read(from: &buf),
+                total: FfiConverterOptionInt64.read(from: &buf),
+                nextCursor: FfiConverterOptionData.read(from: &buf),
+                asOfMs: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileStoredPeerRepeaterListingRecord, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeMobileStoredPeerRepeaterEntryRecord.write(value.entries, into: &buf)
+        FfiConverterOptionInt64.write(value.total, into: &buf)
+        FfiConverterOptionData.write(value.nextCursor, into: &buf)
+        FfiConverterInt64.write(value.asOfMs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredPeerRepeaterListingRecord_lift(_ buf: RustBuffer) throws -> MobileStoredPeerRepeaterListingRecord {
+    return try FfiConverterTypeMobileStoredPeerRepeaterListingRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredPeerRepeaterListingRecord_lower(_ value: MobileStoredPeerRepeaterListingRecord) -> RustBuffer {
+    return FfiConverterTypeMobileStoredPeerRepeaterListingRecord.lower(value)
+}
+
+
+/**
+ * A neighbor entry with the row of the router that reported it.
+ */
+public struct MobileStoredPeerRepeaterReportRecord: Equatable, Hashable {
+    /**
+     * The reporting router's `node` row ID.
+     */
+    public var reporterNodeId: Int64
+    public var entry: MobileStoredPeerRepeaterEntryRecord
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The reporting router's `node` row ID.
+         */reporterNodeId: Int64, entry: MobileStoredPeerRepeaterEntryRecord) {
+        self.reporterNodeId = reporterNodeId
+        self.entry = entry
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileStoredPeerRepeaterReportRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileStoredPeerRepeaterReportRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileStoredPeerRepeaterReportRecord {
+        return
+            try MobileStoredPeerRepeaterReportRecord(
+                reporterNodeId: FfiConverterInt64.read(from: &buf),
+                entry: FfiConverterTypeMobileStoredPeerRepeaterEntryRecord.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileStoredPeerRepeaterReportRecord, into buf: inout [UInt8]) {
+        FfiConverterInt64.write(value.reporterNodeId, into: &buf)
+        FfiConverterTypeMobileStoredPeerRepeaterEntryRecord.write(value.entry, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredPeerRepeaterReportRecord_lift(_ buf: RustBuffer) throws -> MobileStoredPeerRepeaterReportRecord {
+    return try FfiConverterTypeMobileStoredPeerRepeaterReportRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredPeerRepeaterReportRecord_lower(_ value: MobileStoredPeerRepeaterReportRecord) -> RustBuffer {
+    return FfiConverterTypeMobileStoredPeerRepeaterReportRecord.lower(value)
 }
 
 
@@ -17463,6 +20421,215 @@ public func FfiConverterTypeMobileRegionMembership_lower(_ value: MobileRegionMe
 
 
 
+/**
+ * Why the store could not do what was asked. Carries no input and no SQL:
+ * errors reach logs and support bundles.
+ */
+public
+enum MobileStoreError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
+
+
+
+    /**
+     * The file could not be opened or created.
+     */
+    case OpenFailed
+    /**
+     * The file holds a schema this store does not read: newer than it
+     * knows, older than the Swift store's last migration, or a database
+     * that is not the application store at all.
+     */
+    case UnsupportedSchema(version: Int64
+    )
+    /**
+     * The record an update names does not exist.
+     */
+    case RecordNotFound
+    /**
+     * An argument is not in the form the store keeps: a channel ID that is
+     * not a UUID.
+     */
+    case InvalidArgument
+    /**
+     * SQLite refused an operation.
+     */
+    case Failed
+
+
+
+
+
+
+    public var errorDescription: String? {
+        String(reflecting: self)
+    }
+
+}
+
+#if compiler(>=6)
+extension MobileStoreError: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileStoreError: FfiConverterRustBuffer {
+    typealias SwiftType = MobileStoreError
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileStoreError {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+
+
+
+        case 1: return .OpenFailed
+        case 2: return .UnsupportedSchema(
+            version: try FfiConverterInt64.read(from: &buf)
+            )
+        case 3: return .RecordNotFound
+        case 4: return .InvalidArgument
+        case 5: return .Failed
+
+         default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileStoreError, into buf: inout [UInt8]) {
+        switch value {
+
+
+
+
+
+        case .OpenFailed:
+            writeInt(&buf, Int32(1))
+
+
+        case let .UnsupportedSchema(version):
+            writeInt(&buf, Int32(2))
+            FfiConverterInt64.write(version, into: &buf)
+
+
+        case .RecordNotFound:
+            writeInt(&buf, Int32(3))
+
+
+        case .InvalidArgument:
+            writeInt(&buf, Int32(4))
+
+
+        case .Failed:
+            writeInt(&buf, Int32(5))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoreError_lift(_ buf: RustBuffer) throws -> MobileStoreError {
+    return try FfiConverterTypeMobileStoreError.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoreError_lower(_ value: MobileStoreError) -> RustBuffer {
+    return FfiConverterTypeMobileStoreError.lower(value)
+}
+
+
+/**
+ * How a channel's key was established, which decides what may be shared.
+ * Stored as lowercase TEXT.
+ */
+
+public enum MobileStoredChannelKind: Equatable, Hashable {
+
+    /**
+     * `public` or `EMERGENCY`: named channels the protocol fixes rules for.
+     * These rows are never deleted—leaving clears the joined flags so the
+     * channel can be offered again.
+     */
+    case builtin
+    /**
+     * Key derived from a name anyone may know, so the name is shareable.
+     */
+    case named
+    /**
+     * Key distributed out of band; the invitation is a secret.
+     */
+    case privateKey
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileStoredChannelKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileStoredChannelKind: FfiConverterRustBuffer {
+    typealias SwiftType = MobileStoredChannelKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileStoredChannelKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .builtin
+
+        case 2: return .named
+
+        case 3: return .privateKey
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileStoredChannelKind, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .builtin:
+            writeInt(&buf, Int32(1))
+
+
+        case .named:
+            writeInt(&buf, Int32(2))
+
+
+        case .privateKey:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredChannelKind_lift(_ buf: RustBuffer) throws -> MobileStoredChannelKind {
+    return try FfiConverterTypeMobileStoredChannelKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredChannelKind_lower(_ value: MobileStoredChannelKind) -> RustBuffer {
+    return FfiConverterTypeMobileStoredChannelKind.lower(value)
+}
+
+
+
 public
 enum MobileVirtualRadioError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
 
@@ -19307,6 +22474,30 @@ fileprivate struct FfiConverterOptionUInt64: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionInt64: FfiConverterRustBuffer {
+    typealias SwiftType = Int64?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterInt64.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterInt64.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionDouble: FfiConverterRustBuffer {
     typealias SwiftType = Double?
 
@@ -19539,6 +22730,126 @@ fileprivate struct FfiConverterOptionTypeMobileRegionRecord: FfiConverterRustBuf
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeMobileRegionRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileStoredChannelRecord: FfiConverterRustBuffer {
+    typealias SwiftType = MobileStoredChannelRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileStoredChannelRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileStoredChannelRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileStoredConversationPreviewRecord: FfiConverterRustBuffer {
+    typealias SwiftType = MobileStoredConversationPreviewRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileStoredConversationPreviewRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileStoredConversationPreviewRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileStoredManagementCardRecord: FfiConverterRustBuffer {
+    typealias SwiftType = MobileStoredManagementCardRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileStoredManagementCardRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileStoredManagementCardRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileStoredManualRouteRecord: FfiConverterRustBuffer {
+    typealias SwiftType = MobileStoredManualRouteRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileStoredManualRouteRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileStoredManualRouteRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileStoredPeerRepeaterListingRecord: FfiConverterRustBuffer {
+    typealias SwiftType = MobileStoredPeerRepeaterListingRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileStoredPeerRepeaterListingRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileStoredPeerRepeaterListingRecord.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -20942,6 +24253,206 @@ fileprivate struct FfiConverterSequenceTypeMobileRegionRecord: FfiConverterRustB
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeMobileStoredChannelConversationRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileStoredChannelConversationRecord]
+
+    public static func write(_ value: [MobileStoredChannelConversationRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileStoredChannelConversationRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileStoredChannelConversationRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileStoredChannelConversationRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileStoredChannelConversationRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileStoredChannelRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileStoredChannelRecord]
+
+    public static func write(_ value: [MobileStoredChannelRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileStoredChannelRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileStoredChannelRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileStoredChannelRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileStoredChannelRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileStoredClaimedRadioRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileStoredClaimedRadioRecord]
+
+    public static func write(_ value: [MobileStoredClaimedRadioRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileStoredClaimedRadioRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileStoredClaimedRadioRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileStoredClaimedRadioRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileStoredClaimedRadioRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileStoredDirectConversationRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileStoredDirectConversationRecord]
+
+    public static func write(_ value: [MobileStoredDirectConversationRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileStoredDirectConversationRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileStoredDirectConversationRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileStoredDirectConversationRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileStoredDirectConversationRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileStoredManualRouteRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileStoredManualRouteRecord]
+
+    public static func write(_ value: [MobileStoredManualRouteRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileStoredManualRouteRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileStoredManualRouteRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileStoredManualRouteRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileStoredManualRouteRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileStoredNodeRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileStoredNodeRecord]
+
+    public static func write(_ value: [MobileStoredNodeRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileStoredNodeRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileStoredNodeRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileStoredNodeRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileStoredNodeRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileStoredPeerRepeaterEntryRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileStoredPeerRepeaterEntryRecord]
+
+    public static func write(_ value: [MobileStoredPeerRepeaterEntryRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileStoredPeerRepeaterEntryRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileStoredPeerRepeaterEntryRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileStoredPeerRepeaterEntryRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileStoredPeerRepeaterEntryRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileStoredPeerRepeaterReportRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileStoredPeerRepeaterReportRecord]
+
+    public static func write(_ value: [MobileStoredPeerRepeaterReportRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileStoredPeerRepeaterReportRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileStoredPeerRepeaterReportRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileStoredPeerRepeaterReportRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileStoredPeerRepeaterReportRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeMobileTraceSignalRecord: FfiConverterRustBuffer {
     typealias SwiftType = [MobileTraceSignalRecord]
 
@@ -21211,6 +24722,58 @@ fileprivate struct FfiConverterSequenceOptionUInt16: FfiConverterRustBuffer {
             seq.append(try FfiConverterOptionUInt16.read(from: &buf))
         }
         return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterDictionaryUInt32Data: FfiConverterRustBuffer {
+    public static func write(_ value: [UInt32: Data], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for (key, value) in value {
+            FfiConverterUInt32.write(key, into: &buf)
+            FfiConverterData.write(value, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [UInt32: Data] {
+        let len: Int32 = try readInt(&buf)
+        var dict = [UInt32: Data]()
+        dict.reserveCapacity(Int(len))
+        for _ in 0..<len {
+            let key = try FfiConverterUInt32.read(from: &buf)
+            let value = try FfiConverterData.read(from: &buf)
+            dict[key] = value
+        }
+        return dict
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterDictionaryUInt32TypeMobileStoredCachedPropertyRecord: FfiConverterRustBuffer {
+    public static func write(_ value: [UInt32: MobileStoredCachedPropertyRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for (key, value) in value {
+            FfiConverterUInt32.write(key, into: &buf)
+            FfiConverterTypeMobileStoredCachedPropertyRecord.write(value, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [UInt32: MobileStoredCachedPropertyRecord] {
+        let len: Int32 = try readInt(&buf)
+        var dict = [UInt32: MobileStoredCachedPropertyRecord]()
+        dict.reserveCapacity(Int(len))
+        for _ in 0..<len {
+            let key = try FfiConverterUInt32.read(from: &buf)
+            let value = try FfiConverterTypeMobileStoredCachedPropertyRecord.read(from: &buf)
+            dict[key] = value
+        }
+        return dict
     }
 }
 private let UNIFFI_RUST_FUTURE_POLL_READY: Int8 = 0
@@ -21627,6 +25190,18 @@ public func ulcpRecordsFromAnswers(answers: [MobileMeshManagementAnswerRecord]) 
         uniffiCallStatus in
     uniffi_umsh_mobile_core_fn_func_ulcp_records_from_answers(
         FfiConverterSequenceTypeMobileMeshManagementAnswerRecord.lower(answers),uniffiCallStatus
+    )
+})
+}
+/**
+ * How long a claimed-radio record lasts after the last attach, in
+ * milliseconds. A record attached at least this long before now has
+ * lapsed.
+ */
+public func claimedRadioLapseMs() -> Int64  {
+    return try!  FfiConverterInt64.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_claimed_radio_lapse_ms(uniffiCallStatus
     )
 })
 }
@@ -22359,6 +25934,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_records_from_answers() != 35471) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_func_claimed_radio_lapse_ms() != 17480) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_func_fixed_offset_rule() != 4700) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -22731,6 +26309,174 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobileregiondatabase_region_count() != 10598) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_erase_all_content() != 17594) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_schema_version() != 25441) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_channel() != 50757) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_channels() != 59767) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_delete_channel() != 50713) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_insert_channel() != 49103) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_set_channel_membership() != 786) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_update_channel_details() != 22503) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_claimed_radios() != 33687) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_clear_claimed_radio() != 42590) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_record_claimed_radio() != 4018) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_application_records() != 64816) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_clear_conversation_messages() != 48848) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_delete_channel_conversation() != 12849) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_delete_direct_conversation() != 25199) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_delete_peer_and_conversation() != 22095) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_ensure_channel_conversation() != 44837) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_ensure_direct_conversation() != 45560) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_list_channel_conversations() != 40337) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_list_direct_conversations() != 53973) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_mark_conversation_read() != 6558) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_set_direct_conversation_notifications() != 58607) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_update_channel_draft() != 8451) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_update_draft() != 34575) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_cached_properties() != 28519) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_forget_management_cache() != 53112) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_management_card() != 40367) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_save_cached_properties() != 18003) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_save_management_card() != 45544) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_clear_transient_peers() != 28152) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_delete_peer() != 45513) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_demote_peer_to_transient() != 62050) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_enforce_transient_retention() != 18231) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_insert_identity() != 4530) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_knows_identity() != 9119) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_list_nodes() != 58217) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_local_advertised_name() != 37784) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_promote_peer_to_saved() != 33676) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_reconcile_device_identity_peers() != 20706) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_set_notify_when_heard() != 41234) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_set_peer_favorite() != 28474) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_set_peer_on_device_identity() != 48593) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_touch_last_heard() != 22822) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_update_local_advertised_name() != 36573) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_update_node_alias() != 65478) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_upsert_identity() != 54587) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_upsert_peer() != 53649) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_upsert_ulcp_device_peer() != 11532) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_all_peer_repeater_entries() != 13309) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_peer_repeater_listing() != 29854) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_save_peer_repeater_page() != 13882) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_clear_manual_route() != 57960) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_manual_route() != 52854) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_manual_routes() != 39410) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_save_manual_route() != 57998) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_settle_manual_route_prompt() != 50409) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_method_mobilegattreassembler_push() != 37189) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -22875,10 +26621,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_constructor_mobilecounterstore_new() != 37665) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_constructor_mobilemeshsession_new() != 47949) {
+    if (uniffi_umsh_mobile_core_checksum_constructor_mobilemeshsession_start() != 64273) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_constructor_mobileregiondatabase_open() != 34206) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_constructor_mobileappstore_open() != 2451) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_constructor_mobilegattreassembler_new() != 56519) {

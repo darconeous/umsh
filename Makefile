@@ -27,6 +27,7 @@
 	merged-bin-xiao-esp32s3 \
 	release-artifacts release-stage release-publish release-mirror \
 	ios-mobile-core ios-archive ios-upload \
+	android-mobile-core android-debug android-release android-test \
 	build-simulator-communicator run-simulator-communicator \
 	run-simulator-communicator-demo simulator-communicator-tours \
 	install-umshctl install-umsh-bridge install-dissector install-extcap \
@@ -704,6 +705,31 @@ ios-upload:
 	xcodebuild -exportArchive -archivePath "$(IOS_UPLOAD_ARCHIVE)" \
 		-exportOptionsPlist apps/ios/ExportOptions.plist \
 		-exportPath $(IOS_EXPORT_DIR)
+
+# ─── Android ──────────────────────────────────────────────────────────────────
+#
+# Gradle drives the Rust build: `:core` runs cargo-ndk for each ABI and
+# generates the Kotlin bindings from the built library, so nothing generated
+# is committed. Needs a JDK 17, the Android SDK (`ANDROID_HOME`) with the NDK
+# pinned as `ndk` in apps/android/gradle/libs.versions.toml (sdkmanager
+# "ndk;<version>"), cargo-ndk, and the `aarch64-linux-android` and
+# `x86_64-linux-android` Rust targets.
+
+GRADLE := apps/android/gradlew -p apps/android
+
+# The `.so` for each ABI and the Kotlin bindings, without the app.
+android-mobile-core:
+	$(GRADLE) :core:uniffiKotlinRelease
+
+android-debug:
+	$(GRADLE) assembleDebug
+
+android-release:
+	$(GRADLE) assembleRelease
+
+# The JVM unit tests, against a host build of the core.
+android-test:
+	$(GRADLE) testDebugUnitTest
 
 # Where `cargo install` puts a binary, by cargo's own precedence.
 CARGO_BIN_DIR := $(or $(CARGO_INSTALL_ROOT),$(CARGO_HOME),$(HOME)/.cargo)/bin

@@ -5,7 +5,90 @@ use umsh_ulcp_device::session::TZ_RULE_MAX_LEN;
 
 /// Where the zone database lives on Apple's platforms, as on most Unix
 /// systems.
+#[cfg(not(target_os = "android"))]
 const ZONEINFO: &str = "/usr/share/zoneinfo";
+
+/// Android keeps every zone in one packed file instead. Bionic looks for it
+/// in this order: a staged update under `/data` (Android 12 and 13 still
+/// check there), the updatable time zone APEX, then the system image.
+#[cfg(target_os = "android")]
+const PACKED_TZDATA: [&str; 3] = [
+    "/data/misc/zoneinfo/current/tzdata",
+    "/apex/com.android.tzdata/etc/tz/tzdata",
+    "/system/usr/share/zoneinfo/tzdata",
+];
+
+/// The zone's TZif record.
+#[cfg(not(target_os = "android"))]
+fn zone_tzif(identifier: &str) -> Option<Vec<u8>> {
+    std::fs::read(format!("{ZONEINFO}/{identifier}")).ok()
+}
+
+/// The zone's TZif record, from the first packed file that is readable and
+/// well formed. As in bionic, a zone missing from that file is missing: the
+/// older files beneath it are not searched.
+#[cfg(target_os = "android")]
+fn zone_tzif(identifier: &str) -> Option<Vec<u8>> {
+    let packed = PACKED_TZDATA
+        .iter()
+        .filter_map(|path| std::fs::read(path).ok())
+        .find(|packed| packed_layout(packed).is_some())?;
+    packed_record(&packed, identifier).map(<[u8]>::to_vec)
+}
+
+#[cfg(any(target_os = "android", test))]
+const PACKED_HEADER_LEN: usize = 24;
+#[cfg(any(target_os = "android", test))]
+const PACKED_NAME_LEN: usize = 40;
+#[cfg(any(target_os = "android", test))]
+const PACKED_ENTRY_LEN: usize = PACKED_NAME_LEN + 12;
+
+/// Big-endian `i32` at `at`, when it is there and not negative.
+#[cfg(any(target_os = "android", test))]
+fn packed_word(packed: &[u8], at: usize) -> Option<usize> {
+    let bytes = packed.get(at..at.checked_add(4)?)?;
+    usize::try_from(i32::from_be_bytes(bytes.try_into().ok()?)).ok()
+}
+
+/// The index and data offsets of a packed `tzdata` file, when its header is
+/// well formed.
+///
+/// The file is a 24-byte header (`tzdata` and a version, NUL-terminated in
+/// 12 bytes, then the index, data, and final offsets), an index of 52-byte
+/// entries (a NUL-padded 40-byte name, then the record's start relative to
+/// the data offset, its length, and an unused word), and the records. Every
+/// number is a big-endian `i32`.
+#[cfg(any(target_os = "android", test))]
+fn packed_layout(packed: &[u8]) -> Option<(usize, usize)> {
+    if packed.len() < PACKED_HEADER_LEN || !packed.starts_with(b"tzdata") || packed[11] != 0 {
+        return None;
+    }
+    let (index, data) = (packed_word(packed, 12)?, packed_word(packed, 16)?);
+    (PACKED_HEADER_LEN..=data)
+        .contains(&index)
+        .then_some((index, data))
+}
+
+/// The record named `identifier` in a packed `tzdata` file.
+#[cfg(any(target_os = "android", test))]
+fn packed_record<'a>(packed: &'a [u8], identifier: &str) -> Option<&'a [u8]> {
+    let (index, data) = packed_layout(packed)?;
+    let count = (data - index) / PACKED_ENTRY_LEN;
+    let entry = (0..count)
+        .map(|i| index + i * PACKED_ENTRY_LEN)
+        .find(|&at| {
+            packed.get(at..at + PACKED_NAME_LEN).is_some_and(|stored| {
+                let end = stored
+                    .iter()
+                    .position(|&b| b == 0)
+                    .unwrap_or(PACKED_NAME_LEN);
+                &stored[..end] == identifier.as_bytes()
+            })
+        })?;
+    let start = data.checked_add(packed_word(packed, entry + PACKED_NAME_LEN)?)?;
+    let len = packed_word(packed, entry + PACKED_NAME_LEN + 4)?;
+    packed.get(start..start.checked_add(len)?)
+}
 
 /// Whether a device accepts `rule` as its `PROP_TZ_RULE`: it parses, fits,
 /// and keeps offsets within UTC−12:00 through UTC+14:00.
@@ -30,7 +113,7 @@ pub fn zone_rule(identifier: String) -> Option<String> {
     if identifier.is_empty() || identifier.starts_with('/') || identifier.contains("..") {
         return None;
     }
-    let tzif = std::fs::read(format!("{ZONEINFO}/{identifier}")).ok()?;
+    let tzif = zone_tzif(&identifier)?;
     let rule = tzif_rule(&tzif)?;
     device_accepts(rule).then(|| rule.to_owned())
 }
@@ -136,6 +219,83 @@ mod tests {
         assert_eq!(zone_rule(String::new()), None);
     }
 
+    /// A packed file in Android's layout holding `records` in order.
+    fn packed(records: &[(&str, &[u8])]) -> Vec<u8> {
+        let index = 24;
+        let data = index + 52 * records.len();
+        let mut out = b"tzdata2026a\0".to_vec();
+        for offset in [index, data, data] {
+            out.extend_from_slice(&(offset as i32).to_be_bytes());
+        }
+        let mut start = 0;
+        for (name, record) in records {
+            let mut stored = [0u8; 40];
+            stored[..name.len()].copy_from_slice(name.as_bytes());
+            out.extend_from_slice(&stored);
+            out.extend_from_slice(&(start as i32).to_be_bytes());
+            out.extend_from_slice(&(record.len() as i32).to_be_bytes());
+            out.extend_from_slice(&0i32.to_be_bytes());
+            start += record.len();
+        }
+        for (_, record) in records {
+            out.extend_from_slice(record);
+        }
+        out
+    }
+
+    #[test]
+    fn packed_tzdata_yields_the_named_record() {
+        let file = packed(&[
+            ("America/Los_Angeles", b"first"),
+            ("Asia/Kolkata", b"second record"),
+            ("UTC", b""),
+        ]);
+        assert_eq!(
+            packed_record(&file, "America/Los_Angeles"),
+            Some(&b"first"[..])
+        );
+        assert_eq!(
+            packed_record(&file, "Asia/Kolkata"),
+            Some(&b"second record"[..])
+        );
+        assert_eq!(packed_record(&file, "UTC"), Some(&b""[..]));
+        assert_eq!(packed_record(&file, "America/Los"), None);
+        assert_eq!(packed_record(&file, "Europe/Paris"), None);
+        assert_eq!(packed_record(&file, &"A".repeat(41)), None);
+    }
+
+    #[test]
+    fn packed_tzdata_rejects_a_damaged_file() {
+        let file = packed(&[("UTC", b"record")]);
+        assert_eq!(packed_record(&file[..20], "UTC"), None);
+        assert_eq!(packed_record(&file[..file.len() - 1], "UTC"), None);
+        let mut wrong_magic = file.clone();
+        wrong_magic[0] = b'x';
+        assert_eq!(packed_record(&wrong_magic, "UTC"), None);
+        assert!(packed_layout(&file).is_some());
+        assert_eq!(packed_layout(&wrong_magic), None);
+        let mut index_inside_header = file.clone();
+        index_inside_header[12..16].copy_from_slice(&8i32.to_be_bytes());
+        assert_eq!(packed_record(&index_inside_header, "UTC"), None);
+        let mut negative_start = file.clone();
+        negative_start[24 + 40..24 + 44].copy_from_slice(&(-1i32).to_be_bytes());
+        assert_eq!(packed_record(&negative_start, "UTC"), None);
+    }
+
+    /// A real zone, packed the way Android packs it, yields the same rule
+    /// as reading it from the system database.
+    #[cfg(not(target_os = "android"))]
+    #[test]
+    fn packed_tzdata_record_carries_the_rule() {
+        let Ok(tzif) = std::fs::read(format!("{ZONEINFO}/America/Los_Angeles")) else {
+            return;
+        };
+        let file = packed(&[("Etc/UTC", b"x"), ("America/Los_Angeles", &tzif)]);
+        let record = packed_record(&file, "America/Los_Angeles").unwrap();
+        assert_eq!(tzif_rule(record), Some("PST8PDT,M3.2.0,M11.1.0"));
+    }
+
+    #[cfg(not(target_os = "android"))]
     #[test]
     fn zone_rule_reads_the_system_database() {
         // Where the host has a database at all: Apple's and most Linux

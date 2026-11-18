@@ -1773,8 +1773,11 @@ pub struct MobileMeshSession {
 
 #[uniffi::export]
 impl MobileMeshSession {
+    /// Start a session and its worker. A named constructor because it is
+    /// async: Kotlin cannot have an async primary constructor, so UniFFI
+    /// generates this as a suspend function on the companion object.
     #[uniffi::constructor]
-    pub async fn new(
+    pub async fn start(
         identity: Arc<MobileIdentity>,
         counter_store: Arc<MobileCounterStore>,
     ) -> Result<Arc<Self>, MobileMeshError> {
@@ -6259,7 +6262,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let phone_identity = identity(21);
         let store = MobileCounterStore::new(directory.path().display().to_string()).unwrap();
-        let phone = MobileMeshSession::new(phone_identity.clone(), store)
+        let phone = MobileMeshSession::start(phone_identity.clone(), store)
             .await
             .unwrap();
         assert_eq!(
@@ -6323,7 +6326,7 @@ mod tests {
         let first_device = identity(23);
         let second_device = identity(26);
         let store = MobileCounterStore::new(directory.path().display().to_string()).unwrap();
-        let phone = MobileMeshSession::new(identity(22), store).await.unwrap();
+        let phone = MobileMeshSession::start(identity(22), store).await.unwrap();
 
         let first = phone
             .begin_management_get(address(&first_device), prop::DEV_NAME)
@@ -6350,7 +6353,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let device = identity(23);
         let store = MobileCounterStore::new(directory.path().display().to_string()).unwrap();
-        let phone = MobileMeshSession::new(identity(22), store).await.unwrap();
+        let phone = MobileMeshSession::start(identity(22), store).await.unwrap();
 
         let first = phone
             .begin_management_get(address(&device), prop::DEV_NAME)
@@ -6390,7 +6393,9 @@ mod tests {
         let phone_identity = identity(24);
         let device = address(&identity(25));
         let store = MobileCounterStore::new(directory.path().display().to_string()).unwrap();
-        let phone = MobileMeshSession::new(phone_identity, store).await.unwrap();
+        let phone = MobileMeshSession::start(phone_identity, store)
+            .await
+            .unwrap();
 
         assert_eq!(
             phone.begin_management_set(device.clone(), prop::DEV_NAME, vec![0x41; 400]),
@@ -6414,7 +6419,7 @@ mod tests {
             MobileCounterStore::new(directory.path().join(name).display().to_string()).unwrap();
         // The temp directory must outlive the session's counter store.
         std::mem::forget(directory);
-        MobileMeshSession::new(identity(31), store).await.unwrap()
+        MobileMeshSession::start(identity(31), store).await.unwrap()
     }
 
     /// Keys as the platform registers them, each at the default reach.
@@ -6623,10 +6628,10 @@ mod tests {
         let bob_root = directory.path().join("bob");
         let alice_store = MobileCounterStore::new(alice_root.display().to_string()).unwrap();
         let bob_store = MobileCounterStore::new(bob_root.display().to_string()).unwrap();
-        let alice = MobileMeshSession::new(alice_identity.clone(), alice_store)
+        let alice = MobileMeshSession::start(alice_identity.clone(), alice_store)
             .await
             .unwrap();
-        let bob = MobileMeshSession::new(bob_identity.clone(), bob_store)
+        let bob = MobileMeshSession::start(bob_identity.clone(), bob_store)
             .await
             .unwrap();
         // Constructing or repeatedly rebooting a session is read-only. The
@@ -6750,10 +6755,10 @@ mod tests {
             MobileCounterStore::new(directory.path().join("alice").display().to_string()).unwrap();
         let bob_store =
             MobileCounterStore::new(directory.path().join("bob").display().to_string()).unwrap();
-        let alice = MobileMeshSession::new(alice_identity.clone(), alice_store)
+        let alice = MobileMeshSession::start(alice_identity.clone(), alice_store)
             .await
             .unwrap();
-        let bob = MobileMeshSession::new(bob_identity.clone(), bob_store)
+        let bob = MobileMeshSession::start(bob_identity.clone(), bob_store)
             .await
             .unwrap();
 
@@ -6827,7 +6832,7 @@ mod tests {
         let bob_key = *SoftwareIdentity::from_secret_bytes(&[53; 32]).public_key();
         let alice_store =
             MobileCounterStore::new(directory.path().join("alice").display().to_string()).unwrap();
-        let alice = MobileMeshSession::new(alice_identity, alice_store)
+        let alice = MobileMeshSession::start(alice_identity, alice_store)
             .await
             .unwrap();
 
@@ -6871,7 +6876,7 @@ mod tests {
         let carol_identity = identity(55);
         let alice_store =
             MobileCounterStore::new(directory.path().join("alice").display().to_string()).unwrap();
-        let alice = MobileMeshSession::new(alice_identity, alice_store)
+        let alice = MobileMeshSession::start(alice_identity, alice_store)
             .await
             .unwrap();
 
@@ -7080,10 +7085,10 @@ mod tests {
             MobileCounterStore::new(directory.path().join("alice").display().to_string()).unwrap();
         let bob_store =
             MobileCounterStore::new(directory.path().join("bob").display().to_string()).unwrap();
-        let alice = MobileMeshSession::new(alice_identity.clone(), alice_store)
+        let alice = MobileMeshSession::start(alice_identity.clone(), alice_store)
             .await
             .unwrap();
-        let bob = MobileMeshSession::new(bob_identity.clone(), bob_store)
+        let bob = MobileMeshSession::start(bob_identity.clone(), bob_store)
             .await
             .unwrap();
 
@@ -7373,7 +7378,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let alice_store =
             MobileCounterStore::new(directory.path().join("alice").display().to_string()).unwrap();
-        let alice = MobileMeshSession::new(identity(11), alice_store)
+        let alice = MobileMeshSession::start(identity(11), alice_store)
             .await
             .unwrap();
         let bob = address(&identity(13));
@@ -7450,10 +7455,10 @@ mod tests {
             MobileCounterStore::new(directory.path().join("alice").display().to_string()).unwrap();
         let bob_store =
             MobileCounterStore::new(directory.path().join("bob").display().to_string()).unwrap();
-        let alice = MobileMeshSession::new(alice_identity.clone(), alice_store)
+        let alice = MobileMeshSession::start(alice_identity.clone(), alice_store)
             .await
             .unwrap();
-        let bob = MobileMeshSession::new(bob_identity.clone(), bob_store)
+        let bob = MobileMeshSession::start(bob_identity.clone(), bob_store)
             .await
             .unwrap();
 
@@ -7606,10 +7611,10 @@ mod tests {
             MobileCounterStore::new(directory.path().join("alice").display().to_string()).unwrap();
         let bob_store =
             MobileCounterStore::new(directory.path().join("bob").display().to_string()).unwrap();
-        let alice = MobileMeshSession::new(alice_identity.clone(), alice_store)
+        let alice = MobileMeshSession::start(alice_identity.clone(), alice_store)
             .await
             .unwrap();
-        let bob = MobileMeshSession::new(bob_identity, bob_store)
+        let bob = MobileMeshSession::start(bob_identity, bob_store)
             .await
             .unwrap();
 
@@ -7690,10 +7695,10 @@ mod tests {
             MobileCounterStore::new(directory.path().join("alice").display().to_string()).unwrap();
         let bob_store =
             MobileCounterStore::new(directory.path().join("bob").display().to_string()).unwrap();
-        let alice = MobileMeshSession::new(alice_identity.clone(), alice_store)
+        let alice = MobileMeshSession::start(alice_identity.clone(), alice_store)
             .await
             .unwrap();
-        let bob = MobileMeshSession::new(bob_identity, bob_store)
+        let bob = MobileMeshSession::start(bob_identity, bob_store)
             .await
             .unwrap();
 
@@ -7758,10 +7763,10 @@ mod tests {
             MobileCounterStore::new(directory.path().join("alice").display().to_string()).unwrap();
         let bob_store =
             MobileCounterStore::new(directory.path().join("bob").display().to_string()).unwrap();
-        let alice = MobileMeshSession::new(alice_identity.clone(), alice_store)
+        let alice = MobileMeshSession::start(alice_identity.clone(), alice_store)
             .await
             .unwrap();
-        let bob = MobileMeshSession::new(bob_identity, bob_store)
+        let bob = MobileMeshSession::start(bob_identity, bob_store)
             .await
             .unwrap();
 
@@ -7882,10 +7887,10 @@ mod tests {
             MobileCounterStore::new(directory.path().join("alice").display().to_string()).unwrap();
         let bob_store =
             MobileCounterStore::new(directory.path().join("bob").display().to_string()).unwrap();
-        let alice = MobileMeshSession::new(alice_identity.clone(), alice_store)
+        let alice = MobileMeshSession::start(alice_identity.clone(), alice_store)
             .await
             .unwrap();
-        let bob = MobileMeshSession::new(bob_identity, bob_store)
+        let bob = MobileMeshSession::start(bob_identity, bob_store)
             .await
             .unwrap();
 
@@ -7940,7 +7945,9 @@ mod tests {
         let local_identity = identity(41);
         let store =
             MobileCounterStore::new(directory.path().join("local").display().to_string()).unwrap();
-        let session = MobileMeshSession::new(local_identity, store).await.unwrap();
+        let session = MobileMeshSession::start(local_identity, store)
+            .await
+            .unwrap();
 
         session
             .advertise_identity_scheduled(Some("Phone".to_owned()), None)
@@ -8297,7 +8304,9 @@ mod tests {
         let store =
             MobileCounterStore::new(directory.path().join("wake-late").display().to_string())
                 .unwrap();
-        let session = MobileMeshSession::new(local_identity, store).await.unwrap();
+        let session = MobileMeshSession::start(local_identity, store)
+            .await
+            .unwrap();
 
         session.ping(address(&silent_peer), None).unwrap();
         // Give the worker time to enqueue the outbound frame first; even if
@@ -8323,10 +8332,10 @@ mod tests {
         let bob_store =
             MobileCounterStore::new(directory.path().join("chat-bob").display().to_string())
                 .unwrap();
-        let alice = MobileMeshSession::new(alice_identity.clone(), alice_store)
+        let alice = MobileMeshSession::start(alice_identity.clone(), alice_store)
             .await
             .unwrap();
-        let bob = MobileMeshSession::new(bob_identity.clone(), bob_store)
+        let bob = MobileMeshSession::start(bob_identity.clone(), bob_store)
             .await
             .unwrap();
         let alice_address = address(&alice_identity);
@@ -8443,10 +8452,10 @@ mod tests {
         let bob_store =
             MobileCounterStore::new(directory.path().join("long-bob").display().to_string())
                 .unwrap();
-        let alice = MobileMeshSession::new(alice_identity.clone(), alice_store)
+        let alice = MobileMeshSession::start(alice_identity.clone(), alice_store)
             .await
             .unwrap();
-        let bob = MobileMeshSession::new(bob_identity.clone(), bob_store)
+        let bob = MobileMeshSession::start(bob_identity.clone(), bob_store)
             .await
             .unwrap();
         let alice_address = address(&alice_identity);
@@ -8553,7 +8562,9 @@ mod tests {
         let store =
             MobileCounterStore::new(directory.path().join("failed-send").display().to_string())
                 .unwrap();
-        let session = MobileMeshSession::new(local_identity, store).await.unwrap();
+        let session = MobileMeshSession::start(local_identity, store)
+            .await
+            .unwrap();
         session
             .register_peers(vec![stationary(address(&peer_identity))])
             .await
@@ -8604,10 +8615,10 @@ mod tests {
         let bob_store =
             MobileCounterStore::new(directory.path().join("mid-bob").display().to_string())
                 .unwrap();
-        let alice = MobileMeshSession::new(alice_identity.clone(), alice_store)
+        let alice = MobileMeshSession::start(alice_identity.clone(), alice_store)
             .await
             .unwrap();
-        let bob = MobileMeshSession::new(bob_identity.clone(), bob_store)
+        let bob = MobileMeshSession::start(bob_identity.clone(), bob_store)
             .await
             .unwrap();
         let bob_address = address(&bob_identity);
@@ -8761,14 +8772,14 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let alice_identity = identity(61);
         let bob_identity = identity(62);
-        let alice = MobileMeshSession::new(
+        let alice = MobileMeshSession::start(
             alice_identity.clone(),
             MobileCounterStore::new(directory.path().join("ch-alice").display().to_string())
                 .unwrap(),
         )
         .await
         .unwrap();
-        let bob = MobileMeshSession::new(
+        let bob = MobileMeshSession::start(
             bob_identity.clone(),
             MobileCounterStore::new(directory.path().join("ch-bob").display().to_string()).unwrap(),
         )
@@ -8907,14 +8918,14 @@ mod tests {
 
         let directory = tempfile::tempdir().unwrap();
         let alice_identity = identity(71);
-        let alice = MobileMeshSession::new(
+        let alice = MobileMeshSession::start(
             alice_identity.clone(),
             MobileCounterStore::new(directory.path().join("sos-alice").display().to_string())
                 .unwrap(),
         )
         .await
         .unwrap();
-        let bob = MobileMeshSession::new(
+        let bob = MobileMeshSession::start(
             identity(72),
             MobileCounterStore::new(directory.path().join("sos-bob").display().to_string())
                 .unwrap(),
@@ -9102,7 +9113,7 @@ mod tests {
 
         let directory = tempfile::tempdir().unwrap();
         let alice_identity = identity(75);
-        let alice = MobileMeshSession::new(
+        let alice = MobileMeshSession::start(
             alice_identity.clone(),
             MobileCounterStore::new(directory.path().join("pfs-alice").display().to_string())
                 .unwrap(),
@@ -9236,7 +9247,7 @@ mod tests {
 
         let directory = tempfile::tempdir().unwrap();
         let alice_identity = identity(82);
-        let alice = MobileMeshSession::new(
+        let alice = MobileMeshSession::start(
             alice_identity.clone(),
             MobileCounterStore::new(directory.path().join("pfs-sends").display().to_string())
                 .unwrap(),
@@ -9447,7 +9458,7 @@ mod tests {
         MobileChatOriginalRef,
         Vec<MobileChatArchiveRecord>,
     ) {
-        let alice = MobileMeshSession::new(
+        let alice = MobileMeshSession::start(
             identity(seed),
             MobileCounterStore::new(directory.join("resend").display().to_string()).unwrap(),
         )
@@ -9658,7 +9669,7 @@ mod tests {
             .keep_forward_secrecy_records(&alice_key, &PfsSessionRecord::encode_all(&[record]))
             .unwrap();
 
-        let alice = MobileMeshSession::new(alice_identity.clone(), store.clone())
+        let alice = MobileMeshSession::start(alice_identity.clone(), store.clone())
             .await
             .unwrap();
         let entry = alice
@@ -9755,14 +9766,14 @@ mod tests {
 
         let directory = tempfile::tempdir().unwrap();
         let alice_identity = identity(73);
-        let alice = MobileMeshSession::new(
+        let alice = MobileMeshSession::start(
             alice_identity.clone(),
             MobileCounterStore::new(directory.path().join("pub-alice").display().to_string())
                 .unwrap(),
         )
         .await
         .unwrap();
-        let bob = MobileMeshSession::new(
+        let bob = MobileMeshSession::start(
             identity(74),
             MobileCounterStore::new(directory.path().join("pub-bob").display().to_string())
                 .unwrap(),
@@ -9920,14 +9931,14 @@ mod tests {
     #[tokio::test]
     async fn a_dropped_emergency_fragment_is_repaired() {
         let directory = tempfile::tempdir().unwrap();
-        let alice = MobileMeshSession::new(
+        let alice = MobileMeshSession::start(
             identity(73),
             MobileCounterStore::new(directory.path().join("sos-frag-a").display().to_string())
                 .unwrap(),
         )
         .await
         .unwrap();
-        let bob = MobileMeshSession::new(
+        let bob = MobileMeshSession::start(
             identity(74),
             MobileCounterStore::new(directory.path().join("sos-frag-b").display().to_string())
                 .unwrap(),
@@ -10069,7 +10080,7 @@ mod tests {
     async fn a_relayed_copy_of_our_own_group_message_is_not_transcribed() {
         let directory = tempfile::tempdir().unwrap();
         let identity = identity(67);
-        let session = MobileMeshSession::new(
+        let session = MobileMeshSession::start(
             identity.clone(),
             MobileCounterStore::new(directory.path().join("echo").display().to_string()).unwrap(),
         )
@@ -10167,7 +10178,7 @@ mod tests {
     async fn a_message_addressed_to_ourselves_is_transcribed() {
         let directory = tempfile::tempdir().unwrap();
         let identity = identity(71);
-        let session = MobileMeshSession::new(
+        let session = MobileMeshSession::start(
             identity.clone(),
             MobileCounterStore::new(directory.path().join("self").display().to_string()).unwrap(),
         )
@@ -10237,7 +10248,7 @@ mod tests {
     #[tokio::test]
     async fn composing_to_an_unheld_channel_is_refused() {
         let directory = tempfile::tempdir().unwrap();
-        let session = MobileMeshSession::new(
+        let session = MobileMeshSession::start(
             identity(63),
             MobileCounterStore::new(directory.path().join("unheld").display().to_string()).unwrap(),
         )
@@ -10282,7 +10293,7 @@ mod tests {
     #[tokio::test]
     async fn a_malformed_conversation_address_is_refused() {
         let directory = tempfile::tempdir().unwrap();
-        let session = MobileMeshSession::new(
+        let session = MobileMeshSession::start(
             identity(64),
             MobileCounterStore::new(directory.path().join("malformed").display().to_string())
                 .unwrap(),
@@ -10307,14 +10318,14 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let alice_identity = identity(65);
         let bob_identity = identity(66);
-        let alice = MobileMeshSession::new(
+        let alice = MobileMeshSession::start(
             alice_identity.clone(),
             MobileCounterStore::new(directory.path().join("dm-alice").display().to_string())
                 .unwrap(),
         )
         .await
         .unwrap();
-        let bob = MobileMeshSession::new(
+        let bob = MobileMeshSession::start(
             bob_identity.clone(),
             MobileCounterStore::new(directory.path().join("dm-bob").display().to_string()).unwrap(),
         )
@@ -10435,7 +10446,7 @@ mod tests {
     async fn an_overheard_forward_of_a_channel_message_is_reported() {
         let directory = tempfile::tempdir().unwrap();
         let alice_identity = identity(73);
-        let alice = MobileMeshSession::new(
+        let alice = MobileMeshSession::start(
             alice_identity,
             MobileCounterStore::new(directory.path().join("echo-alice").display().to_string())
                 .unwrap(),
@@ -10511,14 +10522,14 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let alice_identity = identity(71);
         let bob_identity = identity(72);
-        let alice = MobileMeshSession::new(
+        let alice = MobileMeshSession::start(
             alice_identity.clone(),
             MobileCounterStore::new(directory.path().join("frag-alice").display().to_string())
                 .unwrap(),
         )
         .await
         .unwrap();
-        let bob = MobileMeshSession::new(
+        let bob = MobileMeshSession::start(
             bob_identity.clone(),
             MobileCounterStore::new(directory.path().join("frag-bob").display().to_string())
                 .unwrap(),
@@ -10645,7 +10656,7 @@ mod tests {
             let directory = directory.path().join(name);
             async move {
                 let identity = identity(seed);
-                let session = MobileMeshSession::new(
+                let session = MobileMeshSession::start(
                     identity.clone(),
                     MobileCounterStore::new(directory.display().to_string()).unwrap(),
                 )

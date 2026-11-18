@@ -293,6 +293,12 @@ jobs:
       - name: Build mobile-core xcframework + Swift bindings
         run: ./scripts/ios/build-mobile-core.sh
 
+      # The Swift bindings are committed; regenerating them must change
+      # nothing, or the app builds against an interface the core no longer
+      # exports.
+      - name: Check the committed Swift bindings are current
+        run: git diff --exit-code packages/UMSHMobileCore/Sources/UMSHMobileCore/UMSHMobileCore.swift
+
       - name: Test persistence and radio boundaries on the host
         run: |
           export CLANG_MODULE_CACHE_PATH="$RUNNER_TEMP/umsh-swift-module-cache"
@@ -303,6 +309,14 @@ jobs:
           scripts/ios/verify-radio-host-state.sh
           scripts/ios/verify-radio-recovery.sh
           scripts/ios/verify-radio-session-recovery.sh
+
+      # The Rust store's baseline is the Swift store's schema; until iOS
+      # moves onto the Rust store, a Swift migration must update it too.
+      - name: Check the shared store's baseline matches the Swift schema
+        run: |
+          export CLANG_MODULE_CACHE_PATH="$RUNNER_TEMP/umsh-swift-module-cache"
+          scripts/ios/dump-store-schema.sh
+          git diff --exit-code crates/umsh-mobile-core/src/store/schema_v31.sql
 
       # GitHub rotates the simulators in its macOS images, so pinning a device
       # name is a standing breakage: the image this first ran on had no
@@ -360,6 +374,61 @@ jobs:
 
       - name: Export strings for translation
         run: scripts/ios/export-localizations.sh
+
+  android:
+    name: Android / mobile-core
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,x86_64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # The image ships the Android SDK but not necessarily the pinned NDK,
+      # and AGP fetches an NDK only for externalNativeBuild.
+      - name: Install the pinned NDK
+        run: |
+          ndk=$(sed -n 's/^ndk = "\(.*\)"/\1/p' apps/android/gradle/libs.versions.toml)
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$ndk" > /dev/null
+
+      - name: Lint, unit tests, and debug build
+        run: apps/android/gradlew -p apps/android lint testDebugUnitTest assembleDebug
+
+      # Play refuses updates whose native code is not 16 KB page aligned:
+      # every LOAD segment of every library, and each library's place in the
+      # APK.
+      - name: Check 16 KB alignment
+        run: |
+          apk=apps/android/app/build/outputs/apk/debug/app-debug.apk
+          zipalign=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)zipalign
+          "$zipalign" -c -P 16 -v 4 "$apk" > /dev/null
+          ndk=$(sed -n 's/^ndk = "\(.*\)"/\1/p' apps/android/gradle/libs.versions.toml)
+          readelf="$ANDROID_HOME/ndk/$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          libs=$(mktemp -d)
+          unzip -q "$apk" 'lib/*' -d "$libs"
+          status=0
+          for so in "$libs"/lib/*/*.so; do
+            if "$readelf" -lW "$so" | awk '$1 == "LOAD" && strtonum($NF) < 16384 { bad = 1 } END { exit bad }'; then
+              echo "ok: ${so#$libs/}"
+            else
+              echo "::error::${so#$libs/} has a LOAD segment aligned below 16 KB"
+              status=1
+            fi
+          done
+          exit $status
 
   esp32:
     name: firmware (ESP32) / ${{ matrix.make_target }}

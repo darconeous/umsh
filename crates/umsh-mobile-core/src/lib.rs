@@ -20,6 +20,7 @@ mod meet;
 mod mobile_chat;
 mod mobile_mesh;
 mod regions;
+mod store;
 mod time_zone;
 mod ulcp;
 mod virtual_radio;
@@ -45,6 +46,15 @@ pub use regions::{
     MobileRegionDatabase, MobileRegionError, MobileRegionLookupRecord, MobileRegionMatchRecord,
     MobileRegionMembership, MobileRegionOutcomeRecord, MobileRegionPositionRecord,
     MobileRegionProposalRecord, MobileRegionRecord,
+};
+pub use store::{
+    MobileAppStore, MobileApplicationRecords, MobilePeerUpsertRecord, MobileStoreError,
+    MobileStoredCachedPropertyRecord, MobileStoredChannelConversationRecord,
+    MobileStoredChannelKind, MobileStoredChannelRecord, MobileStoredClaimedRadioRecord,
+    MobileStoredConversationPreviewRecord, MobileStoredDirectConversationRecord,
+    MobileStoredManagementCardRecord, MobileStoredManualRouteRecord, MobileStoredNodeRecord,
+    MobileStoredPeerRepeaterEntryRecord, MobileStoredPeerRepeaterListingRecord,
+    MobileStoredPeerRepeaterReportRecord, claimed_radio_lapse_ms,
 };
 pub use time_zone::{fixed_offset_rule, rule_abbreviation, rule_offset_min, zone_rule};
 pub use ulcp::{
