@@ -1,10 +1,12 @@
 # ULCP: Frame Transport
 
 Frame transport is the data plane: the host transmits and receives raw,
-complete UMSH frames through the device. Frames cross the link
-untouched—the ULCP link carries UMSH frames, not re-encoded UMSH
+complete UMSH frames through the device. On `STR_PHY_RAW`, frames cross
+the link untouched—the stream carries UMSH frames, not re-encoded UMSH
 semantics—so the host runs the entire UMSH MAC and the device moves
-frames on its behalf.
+frames on its behalf. A link that would rather leave the MAC to the
+device uses [Node Messaging](ulcp-node-messaging.md) instead, which
+shares this chapter's two commands.
 
 One practical consequence is that a host can address the device's own
 [device identity](ulcp-device.md#device-identity) with ordinary UMSH

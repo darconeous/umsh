@@ -244,10 +244,10 @@ impl Harness {
                 frame.len() <= FRAME_OUT_MAX,
                 "an oversized frame for firmware"
             );
-            if Frame::parse(&frame).is_ok_and(|frame| frame.command() == Some(Cmd::SessionReset)) {
+            if Frame::parse(&frame).is_ok_and(|frame| frame.command() == Some(Cmd::SessionDidEnd)) {
                 assert!(
                     self.reset_allowed,
-                    "the host's session was reset with no cause"
+                    "the host's session was ended with no cause"
                 );
             }
         }

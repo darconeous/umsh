@@ -24,7 +24,7 @@ use umsh_ulcp::battery_diagnostics::{
 };
 use umsh_ulcp::ble::BleLinkState;
 use umsh_ulcp::frame::{
-    self, Cmd, Frame, Header, MultiEntries, PropPayload, SessionResetReason, StreamPayload,
+    self, Cmd, Frame, Header, MultiEntries, PropPayload, SessionEndReason, StreamPayload,
     TID_UNSOLICITED,
 };
 use umsh_ulcp::gnss::{self, GnssSnapshot};
@@ -3792,15 +3792,23 @@ pub struct Session<A: AesProvider, S: Sha256Provider, const TX: usize = 1> {
     /// `PROP_HOST_KEY`, and so may empty it. Held for the exchange, like
     /// [`binding`](Self::binding).
     mesh_requester_hosts: bool,
-    /// A session reset the attached host has not been told about yet.
+    /// A `CMD_SESSION_DID_END` the attached host has not been sent yet.
     ///
-    /// Session state is discarded from four places, some of which are
-    /// reached over the administrative binding or by a transport edge
-    /// rather than by a host frame. Recording the debt here and letting
-    /// the driver drain it at the tail of its loop puts the notice on
-    /// the host's transport in every case, and keeps a discard with
-    /// nobody attached from firing into the next session.
-    session_reset_pending: Option<SessionResetReason>,
+    /// The driver ends the session from outside a host exchange—a frame
+    /// its transport lost, or one it owed and discarded—and drains the
+    /// debt at the tail of its loop. Kept until the transport takes the
+    /// frame, and dropped on detach, so it never fires into the next
+    /// session.
+    session_end_pending: Option<SessionEndReason>,
+    /// The host's session has ended and no `CMD_SESSION_START` has
+    /// arrived since: every other request from the host is discarded
+    /// unanswered, and the driver sends the host nothing but the notice.
+    session_ended: bool,
+    /// A reset code an administrator's `CMD_RST` or `CMD_RESTORE` produced.
+    /// The exchange's one frame carries no publication, yet the reset
+    /// started the attached host's session over, and the code is that
+    /// session's boundary; paid with the other owed publications.
+    owed_reset_status: Option<Status>,
     scratch: [u8; SCRATCH],
     /// Kept beside `scratch` rather than on the stack: a signature input
     /// holds about four frames.
@@ -4005,7 +4013,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             multi: None,
             binding: Binding::Local,
             mesh_requester_hosts: false,
-            session_reset_pending: None,
+            session_end_pending: None,
+            session_ended: false,
+            owed_reset_status: None,
             scratch: [0; SCRATCH],
             signatures: SignatureScratch::new(),
         }
@@ -4300,7 +4310,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         // the identity does: normally unchanged, their post-reset values
         // after CMD_CLEAR.
         self.revert_held_lists();
-        self.discard_session_state(SessionResetReason::Reset);
+        // The reset code announced below is the boundary of the session
+        // that starts here, so no session frame goes with it.
+        self.discard_session_state();
         // The device tables were rebuilt from post-reset (and possibly
         // the saved snapshot); the node must re-sync.
         self.bump_dev_domain();
@@ -4508,17 +4520,17 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// queue—are untouched. Accepted frames are delivered live from
     /// here on; queued frames wait for `CMD_QUEUE_DRAIN`.
     ///
-    /// The discarded session state is owed to the host as a
-    /// `CMD_SESSION_RESET`, which the driver drains through
-    /// [`Session::take_session_reset_notice`] before anything else
-    /// reaches the new session.
+    /// The attach starts a session and emits nothing: a session that
+    /// begins at attach holds nothing from before it.
     ///
     /// `link_secure` states whether this transport meets its security
     /// binding for key provisioning (spec §Provisioning Security):
     /// physical possession for serial transports, an encrypted bonded
     /// LESC link for BLE. Key-bearing writes are refused while false.
     pub fn attach(&mut self, link_secure: bool) {
-        self.discard_session_state(SessionResetReason::Attached);
+        self.discard_session_state();
+        self.session_end_pending = None;
+        self.session_ended = false;
         self.attached = true;
         self.link_secure = link_secure;
         self.host.lease_deadline_ms = None;
@@ -4536,7 +4548,8 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     pub fn detach(&mut self, now_ms: u64) {
         self.multi = None;
         self.session = SessionState::default();
-        self.session_reset_pending = None;
+        self.session_end_pending = None;
+        self.session_ended = false;
         self.attached = false;
         self.link_secure = false;
         self.host.lease_deadline_ms = self
@@ -4636,72 +4649,109 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         self.host.key.as_ref()
     }
 
-    /// Discard session state and record that the attached host has to be
-    /// told. The single path every discard takes; see
-    /// [`Session::take_session_reset_notice`] for how the debt is paid.
-    fn discard_session_state(&mut self, reason: SessionResetReason) {
+    /// Discard session state: the single path every discard takes.
+    fn discard_session_state(&mut self) {
         // A read's acquisition belongs to the discarded session. A multi-set
         // can itself replace the host and must still finish its write response.
         if self.multi.as_ref().is_some_and(|state| !state.writes) {
             self.multi = None;
         }
         self.session = SessionState::default();
-        self.session_reset_pending = Some(reason);
     }
 
-    /// Emit any owed `CMD_SESSION_RESET` on the host transport, and
-    /// report whether one was written.
-    ///
-    /// Called at the tail of the driver loop, which is after the frame
-    /// that caused the reset has been served: an administrative
-    /// `CMD_RST` has released the admin binding by then, so the notice
-    /// goes where it belongs. Detaching clears the debt without emitting
-    ///—a detach discards session state with nobody to tell, and a debt
-    /// carried across would fire into the next session.
-    pub fn take_session_reset_notice(&mut self, emit: &mut impl FnMut(&[u8])) -> bool {
-        let Some(reason) = self.session_reset_pending.take() else {
-            return false;
-        };
+    /// End the attached host's session on a serial link (spec §Sessions):
+    /// a frame the host sent was lost, or the device discarded one it
+    /// owed the host. Session state is discarded, every request until
+    /// `CMD_SESSION_START` is discarded unanswered, and the host is owed
+    /// a `CMD_SESSION_DID_END`, which the driver drains through
+    /// [`Session::take_session_end_notice`]. Nothing to end with no host
+    /// attached.
+    pub fn end_session(&mut self, reason: SessionEndReason) {
         if !self.attached {
-            return false;
+            return;
         }
-        let mut buf = [0u8; 8];
-        let Ok(len) = frame::session_reset(&mut buf, reason) else {
-            return false;
-        };
-        emit(&buf[..len]);
-        true
+        self.discard_session_state();
+        self.session_ended = true;
+        // The first reason is the one the host hears; a second loss
+        // before the notice goes out changes nothing it will do.
+        self.session_end_pending.get_or_insert(reason);
+    }
+
+    /// Whether the attached host's session is running, rather than ended
+    /// and waiting for `CMD_SESSION_START`. While it is not, the driver
+    /// sends the host nothing but the owed notice.
+    pub const fn host_session_live(&self) -> bool {
+        !self.session_ended
+    }
+
+    /// The owed `CMD_SESSION_DID_END`, encoded into `buf`, or `None` when
+    /// nothing is owed. The debt stands until
+    /// [`Session::session_end_notice_taken`]: a host that has stopped
+    /// reading is told once it reads again.
+    pub fn session_end_notice(&self, buf: &mut [u8; 8]) -> Option<usize> {
+        let reason = self.session_end_pending?;
+        frame::session_did_end(buf, reason).ok()
+    }
+
+    /// The host's transport took the owed `CMD_SESSION_DID_END`.
+    pub fn session_end_notice_taken(&mut self) {
+        self.session_end_pending = None;
+    }
+
+    /// `CMD_SESSION_START` from the binding in flight.
+    fn start_session(&mut self, tid: u8, emit: &mut impl FnMut(&[u8])) {
+        match self.binding {
+            Binding::Local => {
+                self.discard_session_state();
+                self.session_ended = false;
+                // A notice still owed belongs to the session this ends.
+                self.session_end_pending = None;
+            }
+            // The interface's session holds nothing in the session yet
+            // but its exchange, which this one is.
+            Binding::Device => {}
+            Binding::Admin | Binding::Host => {
+                self.complete(tid, Status::NOT_PERMITTED, emit);
+                return;
+            }
+        }
+        let mut buf = [0u8; 4];
+        if let Ok(len) = frame::session_did_start(&mut buf, tid) {
+            emit(&buf[..len]);
+        }
     }
 
     /// Publish what changed on the device without a publication of its
     /// own, and report whether anything was written. At most two frames.
     ///
     /// The driver pays this at the tail of its loop, where it pays
-    /// [`Session::take_session_reset_notice`]: the call that ran up the
+    /// the owed session notice: the call that ran up the
     /// debt had a frame of its own to emit, and on a mesh exchange that
     /// frame is the only one its binding carries. The values published
     /// are the current ones, so a debt paid late is never stale.
     pub fn take_owed_publications(&mut self, emit: &mut impl FnMut(&[u8])) -> bool {
+        let mut wrote = false;
+        if let Some(status) = self.owed_reset_status.take()
+            && self.publishing()
+        {
+            self.send_status(TID_UNSOLICITED, status, emit);
+            wrote = true;
+        }
         #[cfg(feature = "wifi")]
         {
             let owed = core::mem::take(&mut self.station.owed);
-            if !self.publishing() {
-                return false;
+            if self.publishing() {
+                if owed.network {
+                    let current = self.station.current;
+                    self.announce_prop_is(prop::WIFI_NETWORK, current.as_bytes(), emit);
+                }
+                if owed.link {
+                    self.announce_link(emit);
+                }
+                wrote |= owed.network || owed.link;
             }
-            if owed.network {
-                let current = self.station.current;
-                self.announce_prop_is(prop::WIFI_NETWORK, current.as_bytes(), emit);
-            }
-            if owed.link {
-                self.announce_link(emit);
-            }
-            owed.network || owed.link
         }
-        #[cfg(not(feature = "wifi"))]
-        {
-            let _ = emit;
-            false
-        }
+        wrote
     }
 
     /// Handle one decoded ULCP frame from the host.
@@ -4898,9 +4948,21 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             self.complete(tid, Status::NOT_PERMITTED, emit);
             return None;
         }
+        // An ended session hears nothing but the request that starts the
+        // next one (spec §CMD_SESSION_DID_END).
+        if self.binding == Binding::Local
+            && self.session_ended
+            && received.command() != Some(Cmd::SessionStart)
+        {
+            return None;
+        }
         match received.command() {
             Some(Cmd::Nop) => {
                 self.complete(tid, Status::OK, emit);
+                None
+            }
+            Some(Cmd::SessionStart) => {
+                self.start_session(tid, emit);
                 None
             }
             Some(Cmd::Reset) => Some(self.reset(Status::RESET_SOFTWARE, emit)),
@@ -4991,7 +5053,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 self.apply_saved_device();
                 #[cfg(feature = "wifi")]
                 self.reconcile_station_unannounced();
-                self.discard_session_state(SessionResetReason::Restored);
+                // The reset code is the boundary of the session that
+                // starts here, as it is for CMD_RST.
+                self.discard_session_state();
                 self.announce_status(Status::RESET_RESTORED, emit);
                 Some(self.apply_radio())
             }
@@ -5120,7 +5184,8 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 | Cmd::PropInserted
                 | Cmd::PropRemoved
                 | Cmd::PropAre
-                | Cmd::SessionReset
+                | Cmd::SessionDidEnd
+                | Cmd::SessionDidStart
                 | Cmd::I2cResult,
             ) => {
                 self.complete(tid, Status::INVALID_COMMAND, emit);
@@ -10062,6 +10127,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     fn announce_status(&mut self, status: Status, emit: &mut impl FnMut(&[u8])) {
         if self.is_admin() {
             self.last_status = status;
+            self.owed_reset_status = Some(status);
             return;
         }
         self.send_status(TID_UNSOLICITED, status, emit);
@@ -11226,7 +11292,7 @@ mod tests {
     #[test]
     fn identity_properties() {
         let mut session = test_session();
-        assert_eq!(get(&mut session, prop::PROTOCOL_VERSION), [6, 0]);
+        assert_eq!(get(&mut session, prop::PROTOCOL_VERSION), [6, 1]);
         assert_eq!(get(&mut session, prop::DEV_VERSION), b"test-dev/0.1\0");
         assert_eq!(get(&mut session, prop::DEV_MODEL), b"Test Board\0");
         assert_eq!(get(&mut session, prop::DEV_NAME), b"Test UMSH Device");
@@ -13826,113 +13892,161 @@ mod tests {
         assert_eq!(pui::decode(&raw).unwrap().0, Status::RESET_WATCHDOG.0);
     }
 
-    /// Drain the owed notice the way the driver does at the tail of its
-    /// loop, reporting the reason if one was written.
-    fn take_notice(session: &mut TestSession) -> Option<SessionResetReason> {
-        let mut emitted = Vec::new();
-        if !session.take_session_reset_notice(&mut |bytes: &[u8]| emitted.push(bytes.to_vec())) {
-            return None;
-        }
-        assert_eq!(emitted.len(), 1, "the notice is exactly one frame");
-        let parsed = Frame::parse(&emitted[0]).unwrap();
+    /// The owed `CMD_SESSION_DID_END`, if any, decoded; paid as the driver
+    /// pays it once the transport takes it.
+    fn take_notice(session: &mut TestSession) -> Option<SessionEndReason> {
+        let mut buf = [0u8; 8];
+        let len = session.session_end_notice(&mut buf)?;
+        session.session_end_notice_taken();
+        let parsed = Frame::parse(&buf[..len]).unwrap();
         assert_eq!(parsed.header.tid(), TID_UNSOLICITED);
-        assert_eq!(parsed.command(), Some(Cmd::SessionReset));
-        Some(frame::parse_session_reset(parsed.payload).unwrap())
+        assert_eq!(parsed.command(), Some(Cmd::SessionDidEnd));
+        Some(frame::parse_session_did_end(parsed.payload).unwrap())
+    }
+
+    /// Send `CMD_SESSION_START` with `tid`, returning what came back.
+    fn start(session: &mut TestSession, tid: u8) -> Vec<Vec<u8>> {
+        let mut buf = [0u8; 4];
+        let len = frame::session_start(&mut buf, tid).unwrap();
+        dispatch(session, &buf[..len], 0).0
     }
 
     #[test]
-    fn every_session_discard_owes_the_host_a_notice() {
+    fn attach_and_resets_owe_no_session_frame() {
         let mut session = test_session();
-        assert_eq!(
-            take_notice(&mut session),
-            Some(SessionResetReason::Attached)
-        );
-        // Paid once, and only once.
+        assert_eq!(take_notice(&mut session), None);
+        session.reset(Status::RESET_SOFTWARE, &mut |_: &[u8]| {});
+        assert_eq!(take_notice(&mut session), None);
+        assert!(session.host_session_live());
+    }
+
+    #[test]
+    fn an_ended_session_answers_nothing_but_a_start() {
+        let mut session = test_session();
+        set(&mut session, prop::MAC_PROMISCUOUS, &[1]);
+        session.end_session(SessionEndReason::FrameLost);
+        assert!(!session.host_session_live());
+        assert_eq!(take_notice(&mut session), Some(SessionEndReason::FrameLost));
+        // Paid once.
         assert_eq!(take_notice(&mut session), None);
 
         let mut buf = [0u8; 16];
-        let len = frame::nop(&mut buf, 1).unwrap();
-        session.handle_frame(&buf[..len], 0, &mut |_: &[u8]| {});
-        assert_eq!(take_notice(&mut session), None);
+        let len = frame::nop(&mut buf, 2).unwrap();
+        assert!(dispatch(&mut session, &buf[..len], 0).0.is_empty());
 
-        session.reset(Status::RESET_SOFTWARE, &mut |_: &[u8]| {});
-        assert_eq!(take_notice(&mut session), Some(SessionResetReason::Reset));
+        let emitted = start(&mut session, 6);
+        assert_eq!(emitted.len(), 1);
+        let reply = Frame::parse(&emitted[0]).unwrap();
+        assert_eq!(reply.command(), Some(Cmd::SessionDidStart));
+        assert_eq!(reply.header.tid(), 6);
+        assert!(session.host_session_live());
+        // Session state went with the session that ended.
+        assert_eq!(get(&mut session, prop::MAC_PROMISCUOUS), [0]);
+    }
 
-        // A restore with nothing saved is refused, so nothing is owed.
-        let len = frame::restore(&mut buf, 2).unwrap();
-        session.handle_frame(&buf[..len], 0, &mut |_: &[u8]| {});
-        assert_eq!(take_notice(&mut session), None);
-
-        let len = frame::save(&mut buf, 3).unwrap();
-        session.handle_frame(&buf[..len], 0, &mut |_: &[u8]| {});
-        session.respond_save(3, Ok(()), &mut |_: &[u8]| {});
-        let len = frame::restore(&mut buf, 4).unwrap();
-        session.handle_frame(&buf[..len], 0, &mut |_: &[u8]| {});
+    #[test]
+    fn a_notice_the_transport_did_not_take_stays_owed() {
+        let mut session = test_session();
+        session.end_session(SessionEndReason::OwedFrameDiscarded);
+        let mut buf = [0u8; 8];
+        assert!(session.session_end_notice(&mut buf).is_some());
+        assert!(session.session_end_notice(&mut buf).is_some());
+        // A second loss before it goes out keeps the first reason.
+        session.end_session(SessionEndReason::FrameLost);
         assert_eq!(
             take_notice(&mut session),
-            Some(SessionResetReason::Restored)
+            Some(SessionEndReason::OwedFrameDiscarded)
         );
     }
 
-    /// The one case `announce_status` cannot serve: an administrator over
-    /// the mesh resets session state and the local host hears nothing.
     #[test]
-    fn an_admin_reset_still_owes_the_local_host_a_notice() {
+    fn a_start_supersedes_an_unsent_notice() {
         let mut session = test_session();
-        take_notice(&mut session);
+        session.end_session(SessionEndReason::FrameLost);
+        start(&mut session, 1);
+        assert_eq!(take_notice(&mut session), None);
+    }
 
+    #[test]
+    fn a_start_on_a_live_session_starts_it_over() {
+        let mut session = test_session();
+        set(&mut session, prop::MAC_PROMISCUOUS, &[1]);
+        let emitted = start(&mut session, 3);
+        assert_eq!(
+            Frame::parse(&emitted[0]).unwrap().command(),
+            Some(Cmd::SessionDidStart)
+        );
+        assert_eq!(get(&mut session, prop::MAC_PROMISCUOUS), [0]);
+    }
+
+    #[test]
+    fn a_detached_device_has_no_session_to_end() {
+        let mut session = test_session();
+        session.detach(0);
+        session.end_session(SessionEndReason::FrameLost);
+        assert_eq!(take_notice(&mut session), None);
+        session.attach(true);
+        assert!(session.host_session_live());
+        assert_eq!(take_notice(&mut session), None);
+    }
+
+    #[test]
+    fn detaching_drops_an_owed_notice() {
+        let mut session = test_session();
+        session.end_session(SessionEndReason::FrameLost);
+        session.detach(0);
+        session.attach(true);
+        assert_eq!(take_notice(&mut session), None);
+        assert!(session.host_session_live());
+    }
+
+    /// An administrator's reset starts the host's session over too, and
+    /// the exchange's one frame cannot tell it, so the reset code is owed.
+    #[test]
+    fn an_admin_reset_owes_the_host_its_reset_code() {
+        let mut session = test_session();
         let mut buf = [0u8; 16];
         let len = frame::reset(&mut buf, TID_UNSOLICITED).unwrap();
+        session.handle_admin_frame(&buf[..len], 0, 180, &mut |_: &[u8]| {});
+        session.end_admin_exchange();
+        let mut emitted = Vec::new();
+        assert!(session.take_owed_publications(&mut |bytes: &[u8]| emitted.push(bytes.to_vec())));
+        expect_status(&emitted[0], TID_UNSOLICITED, Status::RESET_SOFTWARE);
+        assert!(!session.take_owed_publications(&mut |_: &[u8]| {}));
+    }
+
+    /// The session commands leave the boot cause alone.
+    #[test]
+    fn session_commands_leave_the_last_status_alone() {
+        let mut session = test_session_with_boot_status(Status::RESET_WATCHDOG);
+        session.end_session(SessionEndReason::FrameLost);
+        start(&mut session, 1);
+        let raw = get(&mut session, prop::LAST_STATUS);
+        assert_eq!(pui::decode(&raw).unwrap().0, Status::RESET_WATCHDOG.0);
+    }
+
+    /// Device-to-host commands, so a host sending one is answered the way
+    /// any other wrong-direction command is.
+    #[test]
+    fn a_host_may_not_send_the_device_session_frames() {
+        let mut session = test_session();
+        for cmd in [Cmd::SessionDidEnd, Cmd::SessionDidStart] {
+            let (emitted, _) = dispatch(&mut session, &[0x83, cmd as u8, 0x01], 0);
+            expect_status(&emitted[0], 3, Status::INVALID_COMMAND);
+        }
+    }
+
+    #[test]
+    fn an_administrator_may_not_start_a_session() {
+        let mut session = test_session();
+        let mut buf = [0u8; 4];
+        let len = frame::session_start(&mut buf, 2).unwrap();
         let mut emitted = Vec::new();
         session.handle_admin_frame(&buf[..len], 0, 180, &mut |bytes: &[u8]| {
             emitted.push(bytes.to_vec())
         });
         session.end_admin_exchange();
-        assert_eq!(take_notice(&mut session), Some(SessionResetReason::Reset));
-    }
-
-    /// A discard with nobody attached has nobody to tell, and the debt
-    /// must not survive into the session that follows.
-    #[test]
-    fn a_detached_discard_owes_nothing_and_leaves_nothing_behind() {
-        let mut session = test_session();
-        take_notice(&mut session);
-
-        session.detach(0);
-        assert_eq!(take_notice(&mut session), None);
-
-        session.reset(Status::RESET_SOFTWARE, &mut |_: &[u8]| {});
-        assert_eq!(take_notice(&mut session), None);
-
-        // The attach that follows owes its own notice, not the reset's.
-        session.attach(true);
-        assert_eq!(
-            take_notice(&mut session),
-            Some(SessionResetReason::Attached)
-        );
-    }
-
-    /// The notice is a separate channel from the boot cause: a host that
-    /// attaches still reads why the device came up.
-    #[test]
-    fn the_notice_leaves_the_last_status_alone() {
-        let mut session = test_session_with_boot_status(Status::RESET_WATCHDOG);
-        assert_eq!(
-            take_notice(&mut session),
-            Some(SessionResetReason::Attached)
-        );
-        let raw = get(&mut session, prop::LAST_STATUS);
-        assert_eq!(pui::decode(&raw).unwrap().0, Status::RESET_WATCHDOG.0);
-    }
-
-    /// Device-to-host, so a host sending it is answered the way any other
-    /// wrong-direction command is.
-    #[test]
-    fn a_host_may_not_send_the_notice() {
-        let mut session = test_session();
-        // Carrying a TID it never uses, so the refusal is observable.
-        let (emitted, _) = dispatch(&mut session, &[0x83, Cmd::SessionReset as u8, 0x01], 0);
-        expect_status(&emitted[0], 3, Status::INVALID_COMMAND);
+        expect_status(&emitted[0], 2, Status::NOT_PERMITTED);
     }
 
     #[test]
@@ -19946,17 +20060,14 @@ mod tests {
     #[test]
     fn the_device_interface_displaces_no_host() {
         let mut session = test_session();
-        // The attach owes its own notice; pay it before the exchange.
-        session.take_session_reset_notice(&mut |_| {});
         let mut buf = [0u8; 80];
         let len = frame::prop_set(&mut buf, 2, prop::HOST_AUTO_ACK, &[1]).unwrap();
         dispatch(&mut session, &buf[..len], 0);
         let len = frame::prop_set(&mut buf, 5, prop::DEV_NAME, b"Pocket").unwrap();
         device(&mut session, &buf[..len]);
         assert!(session.is_attached());
-        let mut owed = false;
-        session.take_session_reset_notice(&mut |_| owed = true);
-        assert!(!owed, "no session reset is owed to the host");
+        assert!(session.host_session_live(), "the host's session goes on");
+        assert_eq!(session.session_end_notice(&mut [0; 8]), None);
         assert_eq!(get(&mut session, prop::HOST_AUTO_ACK), [1]);
     }
 

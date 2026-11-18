@@ -602,7 +602,9 @@ impl fmt::Display for FrameDescription<'_> {
             | Cmd::Clear
             | Cmd::Restore
             | Cmd::FactoryReset
-            | Cmd::Reboot => {
+            | Cmd::Reboot
+            | Cmd::SessionStart
+            | Cmd::SessionDidStart => {
                 write!(out, "{command:?} tid={tid}")
             }
             Cmd::PropGet
@@ -684,7 +686,7 @@ impl fmt::Display for FrameDescription<'_> {
                 ),
                 Err(_) => write!(out, "{command:?} tid={tid} (malformed payload)"),
             },
-            Cmd::SessionReset => match crate::frame::parse_session_reset(frame.payload) {
+            Cmd::SessionDidEnd => match crate::frame::parse_session_did_end(frame.payload) {
                 Ok(reason) => write!(out, "{command:?} tid={tid} {reason:?}"),
                 Err(_) => write!(out, "{command:?} tid={tid} (malformed payload)"),
             },

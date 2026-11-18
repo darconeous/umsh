@@ -30,7 +30,7 @@ use umsh_ulcp::alert::AlertState;
 use umsh_ulcp::announce::Announcement;
 use umsh_ulcp::battery::BatteryStatus;
 use umsh_ulcp::frame::{
-    self, Cmd, Frame, SessionResetReason, StreamPayload, TID_UNSOLICITED, parse_session_reset,
+    self, Cmd, Frame, SessionEndReason, StreamPayload, TID_UNSOLICITED, parse_session_did_end,
 };
 use umsh_ulcp::gnss::GnssSnapshot;
 use umsh_ulcp::hdlc;
@@ -56,6 +56,10 @@ const RESPONSE_QUEUE_DEPTH: usize = 8;
 /// Unsolicited property notifications retained before the oldest is
 /// dropped.
 const PROP_EVENT_DEPTH: usize = 16;
+/// How long a `CMD_SESSION_START` waits for its reply before it is sent
+/// again: the device may still be starting, or the request or its reply
+/// may have been lost with neither end seeing a damaged frame.
+const SESSION_START_RESEND: Duration = Duration::from_secs(1);
 /// Delay between transmit retries while CCA reports a busy channel.
 const CCA_RETRY_DELAY: Duration = Duration::from_millis(10);
 /// Loss-of-state notices one attach exchange absorbs before giving up on
@@ -90,9 +94,9 @@ fn conservative_t_frame_ms(max_frame_size: usize) -> u32 {
 /// Run one attach exchange, absorbing the loss-of-state notices a device
 /// sends while it is booting or being attached to.
 ///
-/// Spec §`CMD_SESSION_RESET`: the reason is diagnostic and a host's
-/// obligation is the same for every value—resynchronize—which is what
-/// an attach is about to do anyway. A reset notice says the device
+/// Spec §`CMD_SESSION_DID_END`: the reason is diagnostic and a host's
+/// obligation is the same for every value—start a session and
+/// resynchronize—which is what an attach is about to do anyway. A reset notice says the device
 /// booted, which is what the boot status records. Neither means this
 /// attach failed; the exchange the notice cut short is simply asked
 /// again.
@@ -124,10 +128,17 @@ pub enum UlcpError {
     /// The device reset outside of an initialization handshake, losing
     /// its configuration. The radio must be re-initialized.
     UnexpectedReset(Status),
-    /// The device discarded session state under us: every session-scoped
-    /// property is back at its default, and whatever this host had
-    /// established there is gone. The session must be set up again.
-    SessionReset(SessionResetReason),
+    /// The session ended under us: the device sent
+    /// `CMD_SESSION_DID_END`, or a frame it sent was lost on a serial
+    /// link. Every session-scoped property is back at its default and
+    /// whatever this host had established there is gone; the handle
+    /// starts a new session before its next request, and the caller sets
+    /// up again whatever it held in the old one.
+    SessionEnded(SessionEndReason),
+    /// The transport could not hand over whole a frame the device sent
+    /// (a failed FCS, a framing violation). Reported by a [`FrameLink`];
+    /// a handle turns it into [`Self::SessionEnded`].
+    FrameLost,
     /// The frame exceeds the device's advertised MTU.
     FrameTooLarge(usize),
     /// The device did not answer a command in time.
@@ -150,9 +161,10 @@ impl core::fmt::Display for UlcpError {
             Self::UnexpectedReset(status) => {
                 write!(formatter, "device reset unexpectedly ({status:?})")
             }
-            Self::SessionReset(reason) => {
-                write!(formatter, "device reset the session ({reason:?})")
+            Self::SessionEnded(reason) => {
+                write!(formatter, "the session ended ({reason:?})")
             }
+            Self::FrameLost => write!(formatter, "a frame from the device was lost"),
             Self::FrameTooLarge(len) => write!(formatter, "frame too large: {len} bytes"),
             Self::Timeout => write!(formatter, "timed out waiting for device response"),
             Self::Transport(message) => write!(formatter, "transport error: {message}"),
@@ -822,6 +834,15 @@ pub trait FrameLink {
     async fn recv_frame(&mut self) -> Result<Vec<u8>, UlcpError> {
         core::future::poll_fn(|cx| self.poll_recv_frame(cx)).await
     }
+
+    /// Whether sessions on this link start and end in-band, with
+    /// `CMD_SESSION_START` and `CMD_SESSION_DID_END` (spec §Sessions): an
+    /// HDLC-Lite byte stream, which neither end can close for the other
+    /// and on which either can see a damaged frame. A connection link
+    /// (BLE) has a session for as long as it is connected.
+    fn sessions_in_band(&self) -> bool {
+        false
+    }
 }
 
 /// HDLC-Lite framing over a reliable asynchronous byte stream.
@@ -871,8 +892,10 @@ where
             while self.read_pos < self.read_len {
                 let byte = self.read_buf[self.read_pos];
                 self.read_pos += 1;
-                if let Some(Ok(frame)) = self.decoder.push(byte) {
-                    return core::task::Poll::Ready(Ok(frame.to_vec()));
+                match self.decoder.push(byte) {
+                    None => {}
+                    Some(Ok(frame)) => return core::task::Poll::Ready(Ok(frame.to_vec())),
+                    Some(Err(_)) => return core::task::Poll::Ready(Err(UlcpError::FrameLost)),
                 }
             }
 
@@ -892,6 +915,10 @@ where
                 core::task::Poll::Pending => return core::task::Poll::Pending,
             }
         }
+    }
+
+    fn sessions_in_band(&self) -> bool {
+        true
     }
 }
 
@@ -976,10 +1003,20 @@ impl BleNotificationReceiver {
         loop {
             match self.notifications.poll_recv(cx) {
                 core::task::Poll::Ready(Some(segment)) => {
-                    if let Some(Ok(frame)) = self.reassembler.push(&segment) {
-                        return core::task::Poll::Ready(Ok(frame.to_vec()));
+                    match self.reassembler.push(&segment) {
+                        None => {}
+                        Some(Ok(frame)) => return core::task::Poll::Ready(Ok(frame.to_vec())),
+                        // A frame lost in reassembly: the connection has
+                        // failed at what it exists to do, and the session
+                        // ends with it (spec §Sessions). Reported as the
+                        // link failing, so the holder detaches.
+                        Some(Err(_)) => {
+                            self.reassembler.reset();
+                            return core::task::Poll::Ready(Err(UlcpError::Transport(
+                                "a frame was lost in BLE reassembly".into(),
+                            )));
+                        }
                     }
-                    // Transport-level malformed/oversize segments are dropped.
                 }
                 core::task::Poll::Ready(None) => {
                     self.reassembler.reset();
@@ -1467,22 +1504,19 @@ pub struct UlcpDevice<L> {
     prop_events: VecDeque<PropEvent>,
     /// Unsolicited reset notification not yet surfaced to the caller.
     seen_reset: Option<Status>,
-    /// Unsolicited session-reset notice not yet surfaced to the caller.
+    /// A session end not yet surfaced to the caller.
     ///
     /// Latched exactly like `seen_reset` and surfaced from the same
     /// places, because it means the same thing to whoever is holding
     /// session-scoped state: what you established is gone.
-    seen_session_reset: Option<SessionResetReason>,
-    /// A session reset this host asked for, to be absorbed rather than
-    /// reported when its notice arrives.
-    ///
-    /// Set before the action that causes one and consumed by the first
-    /// matching notice. It is not enough to swallow notices for the
-    /// duration of a call: the device emits the notice after the reply
-    /// that completes the command, so it commonly arrives during the
-    /// *next* exchange. Matching on the reason keeps the expectation
-    /// from absorbing a reset somebody else caused in the meantime.
-    expected_session_reset: Option<SessionResetReason>,
+    seen_session_end: Option<SessionEndReason>,
+    /// The session has ended and a new one must be started before the
+    /// next request (spec §Starting a Session).
+    session_start_due: bool,
+    /// The device answered `CMD_SESSION_START` with
+    /// `STATUS_INVALID_COMMAND`: it predates the command, and the handle
+    /// carries on as hosts did before it.
+    session_start_unsupported: bool,
     /// The transport reported that it is gone. Latched where the error is
     /// born rather than classified by whoever ends up holding it, because
     /// by then it has usually been turned into prose. Cleared by
@@ -1549,8 +1583,9 @@ where
             responses: VecDeque::new(),
             prop_events: VecDeque::new(),
             seen_reset: None,
-            seen_session_reset: None,
-            expected_session_reset: None,
+            seen_session_end: None,
+            session_start_due: false,
+            session_start_unsupported: false,
             link_lost: false,
             max_frame_size: 0,
             t_frame_ms: 0,
@@ -1695,14 +1730,7 @@ where
     ) -> Result<Self, UlcpError> {
         let mut radio = Self::bare(link, config);
         radio.mode = mode;
-        // Opening the transport is what attached us, and the device
-        // announces the session state it discarded doing so. Recording
-        // the expectation before the first exchange keeps that notice
-        // from failing the very handshake it belongs to; a mesh handle
-        // is not a session and gets none.
-        if mode != AttachMode::Remote {
-            radio.expected_session_reset = Some(SessionResetReason::Attached);
-        }
+        radio.open_session().await?;
         radio.handshake().await?;
         Ok(radio)
     }
@@ -1754,7 +1782,7 @@ where
                 self.boot_status = *status;
                 true
             }
-            UlcpError::SessionReset(_) => true,
+            UlcpError::SessionEnded(_) => true,
             _ => false,
         }
     }
@@ -1802,14 +1830,16 @@ where
         self.responses.clear();
         self.prop_events.clear();
         self.seen_reset = None;
-        self.seen_session_reset = None;
-        self.expected_session_reset = Some(SessionResetReason::Attached);
+        self.seen_session_end = None;
+        self.session_start_due = false;
+        self.session_start_unsupported = false;
         self.tids = TidAllocator::new();
         self.link_lost = false;
         // A link that dropped may have dropped for a firmware update, and
         // capabilities are what a new build changes. Asking again costs
         // one read down a wire.
         self.caps = None;
+        self.open_session().await?;
         self.read_boot_status().await?;
         self.absorb_latched_attach_notices();
         Ok(())
@@ -1877,8 +1907,22 @@ where
         self.trace = trace;
     }
 
-    /// Send one frame through the trace hook.
+    /// Send one request, first starting a new session if the last one
+    /// ended.
     async fn send(&mut self, frame: &[u8]) -> Result<(), UlcpError> {
+        if self.session_start_due {
+            // A caller that has not yet heard that its session ended hears
+            // it now, before anything goes into the next one.
+            if let Some(reason) = self.seen_session_end.take() {
+                return Err(UlcpError::SessionEnded(reason));
+            }
+            self.start_session().await?;
+        }
+        self.send_raw(frame).await
+    }
+
+    /// Send one frame through the trace hook.
+    async fn send_raw(&mut self, frame: &[u8]) -> Result<(), UlcpError> {
         if let Some(trace) = &mut self.trace {
             trace(TraceDirection::HostToDevice, &describe_frame(frame));
         }
@@ -2410,9 +2454,7 @@ where
     }
 
     async fn initialize(&mut self) -> Result<(), UlcpError> {
-        // Opening the transport is what attached us; the notice for that
-        // is ours, and would otherwise fail the handshake it belongs to.
-        self.expected_session_reset = Some(SessionResetReason::Attached);
+        self.open_session().await?;
         // The reset-status property is deliberately read before CMD_RST. The
         // protocol requires the device to retain its hardware boot cause for this
         // first query; CMD_RST would replace it with RESET_SOFTWARE.
@@ -3143,9 +3185,6 @@ where
         let tid = self.alloc_tid();
         let mut buf = [0u8; 4];
         let len = frame::restore(&mut buf, tid).map_err(|_| UlcpError::Protocol("frame encode"))?;
-        // The reset form of a restore discards session state; the notice
-        // for it is ours, and lands after the announcement below.
-        self.expected_session_reset = Some(SessionResetReason::Restored);
         self.send(&buf[..len]).await?;
 
         let deadline = Instant::now() + self.config.response_timeout;
@@ -3156,16 +3195,12 @@ where
                 }
                 if response.kind == ResponseKind::Is && response.key == prop::LAST_STATUS {
                     let status = decode_status(&response.value);
-                    // The updated form leaves session state alone, so
-                    // there is no notice coming after all.
-                    self.expected_session_reset = None;
                     return if status == Status::OK {
                         Ok(RestoreCompletion::Updated)
                     } else {
                         Err(UlcpError::Status(status))
                     };
                 }
-                self.expected_session_reset = None;
                 return Err(UlcpError::Protocol("unexpected restore response"));
             }
             if self.seen_reset == Some(Status::RESET_RESTORED) {
@@ -3735,19 +3770,17 @@ where
                     });
                 }
             }
-            // The device discarded session state. One we asked for is
-            // absorbed—the caller who asked is already rebuilding the
-            // session; anything else is surfaced as an error.
-            Some(Cmd::SessionReset) => {
-                let Ok(reason) = parse_session_reset(frame.payload) else {
+            // The device ended the session: surfaced as an error, and a
+            // new session is started before the next request.
+            Some(Cmd::SessionDidEnd) => {
+                let Ok(reason) = parse_session_did_end(frame.payload) else {
                     return false;
                 };
-                if self.expected_session_reset == Some(reason) {
-                    self.expected_session_reset = None;
-                    return false;
-                }
-                self.seen_session_reset = Some(reason);
+                self.session_ended(reason);
             }
+            // The reply to a start this handle has stopped waiting for:
+            // the device handled that start before anything sent since.
+            Some(Cmd::SessionDidStart) => {}
             _ => {}
         }
         false
@@ -3817,10 +3850,110 @@ where
     fn take_reset_notice(&mut self) -> Option<UlcpError> {
         if let Some(status) = self.seen_reset.take() {
             // The reboot took the session with it; one report is enough.
-            self.seen_session_reset = None;
+            self.seen_session_end = None;
             return Some(UlcpError::UnexpectedReset(status));
         }
-        self.seen_session_reset.take().map(UlcpError::SessionReset)
+        self.seen_session_end.take().map(UlcpError::SessionEnded)
+    }
+
+    /// The session ended: report it, and start a new one before the next
+    /// request. A device that predates `CMD_SESSION_START` is not sent one.
+    fn session_ended(&mut self, reason: SessionEndReason) {
+        self.seen_session_end = Some(reason);
+        self.session_start_due = !self.session_start_unsupported;
+    }
+
+    /// Open the session on a link whose sessions start in-band (spec
+    /// §Starting a Session: a host SHOULD open with one). A mesh handle has
+    /// no session, and a connection link's session is its connection.
+    async fn open_session(&mut self) -> Result<(), UlcpError> {
+        if self.mode == AttachMode::Remote || !self.link.sessions_in_band() {
+            return Ok(());
+        }
+        self.start_session().await
+    }
+
+    /// Start a new session and wait for the device to say it has.
+    ///
+    /// Every frame before the reply belongs to the session that ended and
+    /// is ignored; nothing else is sent meanwhile, so the reply is the
+    /// boundary. The request is sent again every [`SESSION_START_RESEND`]
+    /// until the response timeout runs out: the request or its reply can
+    /// vanish with neither end seeing a damaged frame. A device that
+    /// predates the command answers `STATUS_INVALID_COMMAND`, and the
+    /// handle carries on without it.
+    async fn start_session(&mut self) -> Result<(), UlcpError> {
+        self.session_start_due = true;
+        let deadline = Instant::now() + self.config.response_timeout;
+        loop {
+            let tid = self.alloc_tid();
+            let mut buf = [0u8; 4];
+            let len = frame::session_start(&mut buf, tid)
+                .map_err(|_| UlcpError::Protocol("frame encode"))?;
+            self.send_raw(&buf[..len]).await?;
+            let resend_at = (Instant::now() + SESSION_START_RESEND).min(deadline);
+            loop {
+                let now = Instant::now();
+                if now >= resend_at {
+                    break;
+                }
+                let frame =
+                    match tokio::time::timeout(resend_at - now, self.link.recv_frame()).await {
+                        Err(_elapsed) => break,
+                        // A damaged frame belongs to the session being left.
+                        Ok(Err(UlcpError::FrameLost)) => continue,
+                        Ok(Err(error)) => {
+                            self.note_link_error(&error);
+                            return Err(error);
+                        }
+                        Ok(Ok(frame)) => frame,
+                    };
+                if let Some(trace) = &mut self.trace {
+                    trace(TraceDirection::DeviceToHost, &describe_frame(&frame));
+                }
+                let Ok(parsed) = Frame::parse(&frame) else {
+                    continue;
+                };
+                match parsed.command() {
+                    Some(Cmd::SessionDidStart) => {
+                        self.session_started();
+                        return Ok(());
+                    }
+                    Some(Cmd::PropIs) => {
+                        let Ok(payload) = frame::PropPayload::parse(parsed.payload) else {
+                            continue;
+                        };
+                        if payload.key != prop::LAST_STATUS {
+                            continue;
+                        }
+                        let status = decode_status(payload.value);
+                        if parsed.header.tid() == tid && status == Status::INVALID_COMMAND {
+                            self.session_start_unsupported = true;
+                            self.session_started();
+                            return Ok(());
+                        }
+                        // A reboot is not the session's to discard: it is
+                        // the broader loss, and the caller still hears it.
+                        if parsed.header.tid() == TID_UNSOLICITED && status.is_reset() {
+                            self.seen_reset = Some(status);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if Instant::now() >= deadline {
+                return Err(UlcpError::Timeout);
+            }
+        }
+    }
+
+    /// The boundary: nothing from the session that ended is answered from
+    /// here on.
+    fn session_started(&mut self) {
+        self.session_start_due = false;
+        self.seen_session_end = None;
+        self.responses.clear();
+        self.tids = TidAllocator::new();
     }
 
     /// Take the oldest retained unsolicited property notification.
@@ -3882,7 +4015,6 @@ where
         let mut buf = [0u8; 2];
         let len = frame::reset(&mut buf, TID_UNSOLICITED)
             .map_err(|_| UlcpError::Protocol("frame encode"))?;
-        self.expected_session_reset = Some(SessionResetReason::Reset);
         self.send(&buf[..len]).await?;
         self.wait_reset(deadline).await
     }
@@ -3896,6 +4028,12 @@ where
         }
         let frame = match tokio::time::timeout(deadline - now, self.link.recv_frame()).await {
             Err(_elapsed) => return Err(UlcpError::Timeout),
+            // A frame lost on a serial link ends the session; the caller
+            // hears it as the session ending, as it would from the device.
+            Ok(Err(UlcpError::FrameLost)) => {
+                self.session_ended(SessionEndReason::FrameLost);
+                return Ok(false);
+            }
             Ok(Err(error)) => {
                 self.note_link_error(&error);
                 return Err(error);
@@ -4501,10 +4639,9 @@ pub mod testing {
     /// Payload that makes the fake device report success and then
     /// announce a spurious watchdog reset.
     pub const RESET_AFTER: &[u8] = b"reset-after";
-    /// Payload that makes the fake device report success and then
-    /// announce a session reset nobody asked for—a second host
-    /// displacing this one, as far as this host can tell.
-    pub const SESSION_RESET_AFTER: &[u8] = b"session-reset-after";
+    /// Payload that makes the fake device report success and then end
+    /// the session, as a device does that lost a frame the host sent.
+    pub const SESSION_END_AFTER: &[u8] = b"session-end-after";
     /// Property that switches the fake device's `CMD_RESTORE` completion
     /// to the reset form.
     pub const RESTORE_RESET_FORM_KEY: u32 = 59_999;
@@ -4549,10 +4686,9 @@ pub mod testing {
         let mut props: HashMap<u32, Vec<u8>> = HashMap::new();
         let mut tables: HashMap<u32, Vec<Vec<u8>>> = HashMap::new();
         let mut chunk = [0u8; READ_CHUNK];
-        // This device attaches lazily, the way the ESP32 wired transport
-        // does: the host's own first frame creates the session, so the
-        // notice for it precedes the reply to that frame.
-        let mut announced_attach = false;
+        // After it ends the session, the device answers nothing but the
+        // request that starts the next one.
+        let mut session_ended = false;
         loop {
             let read = match io.read(&mut chunk).await {
                 Ok(0) | Err(_) => return,
@@ -4566,21 +4702,20 @@ pub mod testing {
                 let frame = Frame::parse(frame_bytes).expect("host sent malformed frame");
                 let tid = frame.header.tid();
                 let mut buf = vec![0u8; 512];
-                if !announced_attach {
-                    announced_attach = true;
-                    let len = frame::session_reset(&mut buf, SessionResetReason::Attached).unwrap();
-                    replies.push(buf[..len].to_vec());
+                let command = frame.command().expect("host sent unknown command");
+                if session_ended && command != Cmd::SessionStart {
+                    continue;
                 }
-                match frame.command().expect("host sent unknown command") {
+                match command {
+                    Cmd::SessionStart => {
+                        session_ended = false;
+                        let len = frame::session_did_start(&mut buf, tid).unwrap();
+                        replies.push(buf[..len].to_vec());
+                    }
                     Cmd::Reset => {
                         let len =
                             frame::last_status(&mut buf, TID_UNSOLICITED, Status::RESET_SOFTWARE)
                                 .unwrap();
-                        replies.push(buf[..len].to_vec());
-                        // Announced after the status, the way the driver
-                        // pays the debt at the tail of its loop.
-                        let len =
-                            frame::session_reset(&mut buf, SessionResetReason::Reset).unwrap();
                         replies.push(buf[..len].to_vec());
                     }
                     Cmd::PropGet => {
@@ -4629,10 +4764,11 @@ pub mod testing {
                             replies.push(buf[..len].to_vec());
                             continue;
                         }
-                        if payload.data == SESSION_RESET_AFTER {
-                            let len = frame::session_reset(&mut buf, SessionResetReason::Attached)
+                        if payload.data == SESSION_END_AFTER {
+                            let len = frame::session_did_end(&mut buf, SessionEndReason::FrameLost)
                                 .unwrap();
                             replies.push(buf[..len].to_vec());
+                            session_ended = true;
                             continue;
                         }
                         // Echo the packet back as a reception.
@@ -4791,7 +4927,8 @@ pub mod testing {
                     | Cmd::PropInserted
                     | Cmd::PropRemoved
                     | Cmd::PropAre
-                    | Cmd::SessionReset
+                    | Cmd::SessionDidEnd
+                    | Cmd::SessionDidStart
                     | Cmd::I2cResult => {
                         panic!("host sent a device-only command")
                     }
@@ -5063,13 +5200,19 @@ mod tests {
 
     #[cfg(feature = "ble-radio")]
     #[tokio::test]
-    async fn ble_notification_receiver_reassembles_and_recovers_from_malformed_segment() {
+    async fn ble_notification_receiver_reassembles_and_reports_a_lost_frame() {
         let (tx, rx) = tokio::sync::mpsc::channel(8);
         let mut receiver = BleNotificationReceiver::new(rx);
 
-        // Reserved header bits are malformed and must be dropped without
-        // poisoning the next valid frame.
+        // Reserved header bits are malformed: the frame is lost, and over
+        // BLE that is the link failing.
         tx.send(vec![0x01, 0xff]).await.unwrap();
+        let error = core::future::poll_fn(|cx| receiver.poll_recv_frame(cx))
+            .await
+            .unwrap_err();
+        assert!(error.is_link_lost(), "{error}");
+
+        // What follows still reassembles; the holder has detached by then.
         let frame = b"a frame larger than one tiny GATT segment";
         for segment in umsh_ulcp::gatt::segments(frame, 7) {
             let mut value = vec![0; segment.payload().len() + 1];
@@ -5103,7 +5246,8 @@ mod tests {
             UlcpError::Protocol("nonsense"),
             UlcpError::Status(Status::FAILURE),
             UlcpError::UnexpectedReset(Status::RESET_WATCHDOG),
-            UlcpError::SessionReset(SessionResetReason::Attached),
+            UlcpError::SessionEnded(SessionEndReason::FrameLost),
+            UlcpError::FrameLost,
             UlcpError::FrameTooLarge(300),
             UlcpError::AdministrativeAttach,
         ] {
@@ -5153,13 +5297,12 @@ mod tests {
         assert_eq!(radio.dev_version(), "fake-dev/0.1");
         assert_eq!(radio.max_frame_size(), 255);
         // The trace sink installed before the loss still sees frames,
-        // and it saw exactly one exchange: the status read and its answer,
-        // plus the fresh-attach notice the device sends on the first
-        // frame it hears. Nothing the handle already knew was asked for.
-        assert_eq!(traced.load(Ordering::Relaxed) - before, 3);
+        // and it saw exactly two exchanges: the session start and its
+        // reply, and the status read and its answer. Nothing the handle
+        // already knew was asked for.
+        assert_eq!(traced.load(Ordering::Relaxed) - before, 4);
 
-        // A whole exchange, on a device that announced a fresh attach the
-        // moment it was spoken to: the notice was expected and absorbed.
+        // A whole exchange on the new link.
         radio.set_prop(prop::PHY_TX_POWER, &[14]).await.unwrap();
         assert_eq!(radio.get_prop(prop::PHY_TX_POWER).await.unwrap(), [14]);
         assert!(!radio.link_lost());
@@ -5503,16 +5646,17 @@ mod tests {
         buf[..len].to_vec()
     }
 
-    fn session_notice(reason: SessionResetReason) -> Vec<u8> {
+    fn session_notice(reason: SessionEndReason) -> Vec<u8> {
         let mut buf = [0u8; 16];
-        let len = frame::session_reset(&mut buf, reason).unwrap();
+        let len = frame::session_did_end(&mut buf, reason).unwrap();
         buf[..len].to_vec()
     }
 
-    /// A device that boots as the port opens announces the boot and the
-    /// session it discarded, whatever it calls the reason. None of that
-    /// is the attach failing: the boot is the boot status, and the
-    /// session is the one the attach is about to establish anyway.
+    /// A device that boots as the port opens announces the boot, and an
+    /// older one announces the session it discarded, whatever it calls
+    /// the reason. None of that is the attach failing: the boot is the
+    /// boot status, and the session is the one the attach is about to
+    /// establish anyway.
     #[tokio::test]
     async fn an_attach_survives_a_device_booting_under_it() {
         let (client, server) = tokio::io::duplex(4096);
@@ -5521,11 +5665,11 @@ mod tests {
             inner: SerialFrameLink::new(client),
             on_first: vec![
                 reset_notice(Status::RESET_POWER_ON),
-                session_notice(SessionResetReason::Reset),
+                session_notice(SessionEndReason::OwedFrameDiscarded),
             ],
             on_multi_get: vec![
-                session_notice(SessionResetReason::Restored),
-                session_notice(SessionResetReason::Other(9)),
+                session_notice(SessionEndReason::FrameLost),
+                session_notice(SessionEndReason::Other(9)),
                 reset_notice(Status::RESET_WATCHDOG),
             ],
             pending: VecDeque::new(),
@@ -5761,38 +5905,105 @@ mod tests {
         );
     }
 
-    /// A session reset this host did not cause is an error, from the
-    /// command path and the receive path alike: whatever it established
-    /// in session state is gone, and it has to be told.
+    /// A session the device ended is an error, from the command path and
+    /// the receive path alike: whatever this host established in session
+    /// state is gone, and it has to be told.
     #[tokio::test]
-    async fn an_unrequested_session_reset_surfaces_on_receive() {
+    async fn a_session_end_surfaces_on_receive() {
         let mut radio = attached_radio().await;
         radio
-            .transmit(SESSION_RESET_AFTER, TxOptions::default())
+            .transmit(SESSION_END_AFTER, TxOptions::default())
             .await
             .unwrap();
 
         let result = core::future::poll_fn(|cx| radio.poll_receive_raw(cx)).await;
         assert!(matches!(
             result,
-            Err(UlcpError::SessionReset(SessionResetReason::Attached))
+            Err(UlcpError::SessionEnded(SessionEndReason::FrameLost))
         ));
     }
 
+    /// The device answers nothing after ending the session, so the next
+    /// request is preceded by a new session, and then answered.
     #[tokio::test]
-    async fn an_unrequested_session_reset_surfaces_from_a_command() {
+    async fn a_session_end_surfaces_from_a_command_and_the_next_starts_a_session() {
         let mut radio = attached_radio().await;
         radio
-            .transmit(SESSION_RESET_AFTER, TxOptions::default())
+            .transmit(SESSION_END_AFTER, TxOptions::default())
             .await
             .unwrap();
 
         assert!(matches!(
             radio.get_prop(prop::PHY_FREQ).await,
-            Err(UlcpError::SessionReset(SessionResetReason::Attached))
+            Err(UlcpError::SessionEnded(SessionEndReason::FrameLost))
         ));
         // Reported once: the latch is consumed, not sticky.
         assert!(radio.get_prop(prop::PHY_FREQ).await.is_ok());
+    }
+
+    /// A frame from the device lost on a serial link ends the session at
+    /// this end too: reported, and a new session started before the next
+    /// request.
+    #[tokio::test]
+    async fn a_lost_frame_ends_the_session_and_the_next_request_starts_one() {
+        let mut radio = attached_radio().await;
+        let started = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let seen = started.clone();
+        radio.set_frame_trace(Some(Box::new(move |direction, line| {
+            if direction == TraceDirection::HostToDevice && line.contains("SessionStart") {
+                seen.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+        })));
+        radio.session_ended(SessionEndReason::FrameLost);
+        assert!(matches!(
+            radio.get_prop(prop::PHY_FREQ).await,
+            Err(UlcpError::SessionEnded(SessionEndReason::FrameLost))
+        ));
+        assert!(radio.get_prop(prop::PHY_FREQ).await.is_ok());
+        assert_eq!(started.load(std::sync::atomic::Ordering::Relaxed), 1);
+    }
+
+    /// The serial link opens its session with `CMD_SESSION_START`.
+    #[tokio::test]
+    async fn a_serial_attach_opens_with_a_session_start() {
+        let (client, server) = tokio::io::duplex(4096);
+        tokio::spawn(fake_multi_device(server));
+        let mut radio = UlcpDevice::bare(SerialFrameLink::new(client), test_config());
+        let started = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let seen = started.clone();
+        radio.set_frame_trace(Some(Box::new(move |direction, line| {
+            if direction == TraceDirection::HostToDevice && line.contains("SessionStart") {
+                seen.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+        })));
+        radio.open_session().await.unwrap();
+        assert_eq!(started.load(std::sync::atomic::Ordering::Relaxed), 1);
+        assert!(!radio.session_start_unsupported);
+    }
+
+    /// A device that predates `CMD_SESSION_START` refuses it, and the
+    /// handle carries on without it.
+    #[tokio::test]
+    async fn a_device_without_session_start_is_used_as_before() {
+        let link = ScriptLink {
+            answer: Box::new(|frame: &Frame<'_>| {
+                let mut buf = [0u8; 16];
+                let status = if frame.command() == Some(Cmd::SessionStart) {
+                    Status::INVALID_COMMAND
+                } else {
+                    Status::OK
+                };
+                let len = frame::last_status(&mut buf, frame.header.tid(), status).unwrap();
+                vec![buf[..len].to_vec()]
+            }),
+            replies: VecDeque::new(),
+        };
+        let mut radio = UlcpDevice::bare(link, test_config());
+        radio.start_session().await.unwrap();
+        assert!(radio.session_start_unsupported);
+        // An older device's notice is still reported, with no start sent.
+        radio.session_ended(SessionEndReason::Other(0));
+        assert!(!radio.session_start_due);
     }
 
     /// A reset the host asked for takes the session with it, and says so
@@ -5914,10 +6125,6 @@ mod tests {
         tokio::spawn(fake_device(server));
         let mut radio = UlcpDevice::bare(SerialFrameLink::new(client), test_config());
         radio.mode = AttachMode::Administrative;
-        // Standing in for the handshake this test skips: the fake device
-        // has no CAP_CMD_MULTI, so `attach_administrative` cannot get
-        // past its own multi-property read.
-        radio.expected_session_reset = Some(SessionResetReason::Attached);
 
         let error = radio
             .get_props(&[prop::HOST_KEY, prop::HOST_AUTO_ACK])

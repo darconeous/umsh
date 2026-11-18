@@ -144,7 +144,9 @@ The tunnel is a stream of
 frames, exactly as ULCP uses on asynchronous serial links (see
 [Framing and Common Semantics](ulcp-core.md)). The frame check sequence is
 redundant beneath TLS but is retained so implementations can reuse their
-existing framing code unchanged.
+existing framing code unchanged. The tunnel carries no [marked
+text](ulcp-core.md#hdlc-lite): a tunnel frame begins with a length octet
+that may take any value, `0x23` included.
 
 There is no message header. A non-empty frame contains one
 [`STR_PHY_RAW`](ulcp-transport.md#str-radio-raw) structure and nothing

@@ -25,10 +25,12 @@ local COMMANDS = {
   [21] = "CMD_PROP_MULTI_GET",
   [22] = "CMD_PROP_MULTI_SET",
   [23] = "CMD_PROP_ARE",
-  [24] = "CMD_SESSION_RESET",
+  [24] = "CMD_SESSION_DID_END",
   [25] = "CMD_I2C_TRANSFER",
   [26] = "CMD_I2C_RESULT",
   [27] = "CMD_I2C_SCAN",
+  [28] = "CMD_SESSION_START",
+  [29] = "CMD_SESSION_DID_START",
 }
 
 M.COMMANDS = COMMANDS
@@ -40,19 +42,19 @@ M.COMMAND_TO_DEVICE = {
   [0] = true, [1] = true, [2] = true, [3] = true, [4] = true, [5] = true,
   [9] = true, [11] = true, [12] = true, [13] = true, [14] = true,
   [15] = true, [16] = true, [17] = true, [19] = true,
-  [21] = true, [22] = true, [25] = true, [27] = true,
+  [21] = true, [22] = true, [25] = true, [27] = true, [28] = true,
 }
 M.COMMAND_TO_HOST = {
   [6] = true, [7] = true, [8] = true, [10] = true, [23] = true, [24] = true,
-  [26] = true,
+  [26] = true, [29] = true,
 }
 
 -- Commands that never ride the Node Management binding in either direction.
--- A session reset concerns the local tethered session; an administrator over
--- the mesh is not party to it, so neither a request nor a response may carry
--- one, and the direction tables alone would only catch the request.
+-- The session commands concern a local link's session; an administrator over
+-- the mesh has none, so neither a request nor a response may carry one, and
+-- the direction tables alone would only catch half of them.
 M.COMMAND_LOCAL_ONLY = {
-  [24] = true,
+  [24] = true, [28] = true, [29] = true,
 }
 
 -- Commands whose payload is a property key followed by a value or item.
@@ -218,12 +220,11 @@ local PROPERTIES = {
 
 local STREAMS = {[113] = "STR_PHY_RAW"}
 
--- CMD_SESSION_RESET payload. Unassigned values are reserved rather than
+-- CMD_SESSION_DID_END payload. Unassigned values are reserved rather than
 -- malformed, so an unknown one renders as its number.
-local SESSION_RESET_REASONS = {
-  [0] = "attached",
-  [1] = "CMD_RST",
-  [2] = "CMD_RESTORE",
+local SESSION_END_REASONS = {
+  [0] = "frame lost",
+  [1] = "owed frame discarded",
 }
 
 -- CMD_I2C_TRANSFER operation kinds.
@@ -307,9 +308,9 @@ f.rx_flag_self_tx = ProtoField.bool("umsh.ulcp.rx.flags.self_tx", "Self-transmit
 f.rx_age = ProtoField.uint32("umsh.ulcp.rx.age_s", "RX Age (seconds)", base.DEC)
 f.tx_power = ProtoField.int8("umsh.ulcp.tx.power", "TX Power (dBm)", base.DEC)
 f.tx_flags = ProtoField.uint8("umsh.ulcp.tx.flags", "TX Flags", base.HEX)
-f.session_reset_reason = ProtoField.uint32(
-  "umsh.ulcp.session_reset_reason", "Session Reset Reason", base.DEC,
-  SESSION_RESET_REASONS)
+f.session_end_reason = ProtoField.uint32(
+  "umsh.ulcp.session_end_reason", "Session End Reason", base.DEC,
+  SESSION_END_REASONS)
 f.i2c_bus = ProtoField.uint8("umsh.ulcp.i2c.bus", "I2C Bus", base.DEC)
 f.i2c_address = ProtoField.uint8("umsh.ulcp.i2c.address", "I2C Address", base.HEX)
 f.i2c_op = ProtoField.bytes("umsh.ulcp.i2c.op", "I2C Operation")
@@ -670,11 +671,11 @@ local function dissect_frame(buf, pinfo, tree, direction)
   elseif command == 24 then
     local reason, consumed = decode_pui(buf, 2)
     if not reason then
-      add_malformed(root, "truncated or malformed session reset reason")
+      add_malformed(root, "truncated or malformed session end reason")
     else
-      root:add(f.session_reset_reason, buf(2, consumed), reason)
+      root:add(f.session_end_reason, buf(2, consumed), reason)
       info = info .. " " ..
-        (SESSION_RESET_REASONS[reason] or string.format("reason %d", reason))
+        (SESSION_END_REASONS[reason] or string.format("reason %d", reason))
     end
   elseif buf:len() > 2 then
     root:add(f.payload, buf(2))

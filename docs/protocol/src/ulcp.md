@@ -243,7 +243,7 @@ mechanism and its security consequences.
 
 ## Subsystems
 
-The interface divides into nine subsystems, each specified by its own
+The interface divides into eleven subsystems, each specified by its own
 chapter and each discoverable through the capabilities it advertises.
 Only the first two are unconditional.
 
@@ -267,7 +267,7 @@ The host uses the device as a transport for UMSH frames:
 - receive of raw complete UMSH frames, with RSSI/SNR receive metadata
 - transmit result indications
 
-This keeps the layering clean: the ULCP link carries UMSH frames,
+This keeps the layering clean: the raw stream carries UMSH frames,
 not re-encoded UMSH semantics. One practical consequence is that the host can
 also communicate with the device's own local UMSH node using
 ordinary UMSH frames sent over this stream, rather than requiring a separate
@@ -340,6 +340,15 @@ diagnosis: the buses and known peripherals the device names, one
 transaction per command with its read data in the reply, and a scan of
 who acknowledges. The device's own drivers keep the bus between
 commands.
+
+### [Node Messaging](ulcp-node-messaging.md)
+
+UMSH application payloads sent and received by the device's own node on
+a link's behalf. The device encrypts, routes, retries, and collects
+acknowledgements under its device identity, and delivers the payload
+types the link has claimed. It is how a sensor or a small
+microcontroller wired to the device takes part in the mesh without
+running UMSH itself.
 
 ## Suggested Capability Matrix
 

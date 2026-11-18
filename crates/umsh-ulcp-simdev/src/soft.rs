@@ -26,6 +26,7 @@ use umsh_crypto::{
     CryptoEngine, NodeIdentity,
     software::{SoftwareAes, SoftwareIdentity, SoftwareSha256},
 };
+use umsh_ulcp::frame::SessionEndReason;
 use umsh_ulcp::{Frame, Status, hdlc};
 use umsh_ulcp_device::listeners::{Mirrors, Writes};
 use umsh_ulcp_device::{
@@ -298,15 +299,16 @@ impl<P: SoftPlatform> SoftDevice<P> {
         self.session.detach(self.device_ms());
     }
 
-    /// Pay whatever the session is owing, the session-reset notice and
+    /// Pay whatever the session is owing, the session-end notice and
     /// then its publications, the way the firmware driver does at the
-    /// tail of its loop: each a session call of its own.
+    /// tail of its loop: each a session call of its own. The host's side
+    /// of a soft link always has room, so the notice is always taken.
     fn pay_debts(&mut self) {
-        let mut emitted = Vec::new();
-        self.session
-            .take_session_reset_notice(&mut |frame: &[u8]| emitted.push(frame.to_vec()));
-        self.note_emitted(emitted.len());
-        self.queue_emitted(emitted);
+        let mut notice = [0u8; 8];
+        if let Some(len) = self.session.session_end_notice(&mut notice) {
+            self.send_to_host(&notice[..len]);
+            self.session.session_end_notice_taken();
+        }
         let mut emitted = Vec::new();
         self.session
             .take_owed_publications(&mut |frame: &[u8]| emitted.push(frame.to_vec()));
@@ -323,7 +325,17 @@ impl<P: SoftPlatform> SoftDevice<P> {
                 .push(byte)
                 .map(|result| result.map(<[u8]>::to_vec));
             if let Some(outcome) = outcome {
-                let frame = outcome.map_err(|error| format!("HDLC decode error: {error:?}"))?;
+                let frame = match outcome {
+                    Ok(frame) => frame,
+                    // A lost frame ends the host's session, as on any
+                    // serial link (spec §Lost Frames). A caller serving a
+                    // connection link closes it instead, on the error.
+                    Err(error) => {
+                        self.session.end_session(SessionEndReason::FrameLost);
+                        self.pay_debts();
+                        return Err(format!("HDLC decode error: {error:?}"));
+                    }
+                };
                 self.handle_frame(&frame);
             }
         }
@@ -649,7 +661,9 @@ impl<P: SoftPlatform> SoftDevice<P> {
         for frame in emitted {
             if is_publication(&frame) {
                 self.publish(frame);
-            } else {
+            } else if self.session.host_session_live() {
+                // A host whose session has ended is sent nothing until it
+                // starts a new one.
                 self.send_to_host(&frame);
             }
         }
@@ -659,7 +673,9 @@ impl<P: SoftPlatform> SoftDevice<P> {
     /// the session publishes whether or not a host is attached, so the
     /// host is sent one only while it is there to receive it.
     fn publish(&mut self, frame: Vec<u8>) {
-        if self.session.is_attached() || !self.device_interface {
+        if self.session.host_session_live()
+            && (self.session.is_attached() || !self.device_interface)
+        {
             self.send_to_host(&frame);
         }
         if self.device_interface {

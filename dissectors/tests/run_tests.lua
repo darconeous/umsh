@@ -1341,17 +1341,22 @@ check("the flagged command is named",
         backwards.violations[1]:find("CMD_PROP_IS", 1, true) ~= nil,
       true)
 
--- A session reset concerns the local tethered session, so it may not ride
+-- The session commands concern a local link's session, so none may ride
 -- this binding in either direction—the direction tables alone would only
--- catch the request half.
-for _, case in ipairs({{"08", "request"}, {"09", "response"}}) do
-  local local_only = dissect_payload(case[1] .. " 0001 FF 8018 00")
-  check("CMD_SESSION_RESET in a " .. case[2] .. " is flagged",
-        #local_only.violations, 1)
-  check("the " .. case[2] .. " violation names the local session",
-        local_only.violations[1] and
-          local_only.violations[1]:find("concerns the local session", 1, true) ~= nil,
-        true)
+-- catch half of them.
+for _, frame in ipairs({{"8018 00", "CMD_SESSION_DID_END"},
+                        {"811C", "CMD_SESSION_START"},
+                        {"811D", "CMD_SESSION_DID_START"}}) do
+  for _, case in ipairs({{"08", "request"}, {"09", "response"}}) do
+    local local_only = dissect_payload(case[1] .. " 0001 FF " .. frame[1])
+    check(frame[2] .. " in a " .. case[2] .. " is flagged",
+          #local_only.violations >= 1, true)
+    local named = false
+    for _, violation in ipairs(local_only.violations) do
+      if violation:find("concerns the local session", 1, true) then named = true end
+    end
+    check("the " .. case[2] .. " violation names the local session", named, true)
+  end
 end
 
 -- Raw bus access rides the binding in both directions: a transfer with a
@@ -1411,7 +1416,8 @@ check("the wrong-way result is named",
 
 -- On its own binding it is an ordinary frame, and the reason is named.
 local notice = dissect_payload("08 0001 FF 8018 01")
-check("the reason is decoded", has(notice, "Session Reset Reason: CMD_RST (1)"), true)
+check("the reason is decoded",
+      has(notice, "Session End Reason: owed frame discarded (1)"), true)
 
 -- A payload that stops at the end-of-options marker carries no frame.
 local no_frame = dissect_payload("08 0001 FF")

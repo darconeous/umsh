@@ -253,13 +253,13 @@ pub(crate) async fn run_with_writer(
 /// them, before the capture gives up on the device.
 const MAX_SILENT_RESYNCS: usize = 8;
 
-/// Whether an error is the device discarding its session or rebooting,
-/// as opposed to the link or the tool failing.
+/// Whether an error is the session ending or the device rebooting, as
+/// opposed to the link or the tool failing.
 fn is_session_loss(error: &anyhow::Error) -> bool {
     error.chain().any(|cause| {
         matches!(
             cause.downcast_ref::<UlcpError>(),
-            Some(UlcpError::SessionReset(_) | UlcpError::UnexpectedReset(_))
+            Some(UlcpError::SessionEnded(_) | UlcpError::UnexpectedReset(_))
         )
     })
 }

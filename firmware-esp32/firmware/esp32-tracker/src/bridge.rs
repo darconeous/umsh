@@ -513,7 +513,7 @@ async fn connect(
 }
 
 async fn receive(reader: &mut impl Read<Error = embedded_tls::TlsError>) -> Reason {
-    let mut decoder = hdlc::Decoder::<{ MAX_BODY + 2 }>::new();
+    let mut decoder = hdlc::Decoder::<{ MAX_BODY + 2 }>::plain();
     let mut bytes = [0; 512];
     loop {
         let count =

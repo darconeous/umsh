@@ -1144,6 +1144,19 @@ async fn deliver_outbound(
     outbound: &OutFrame,
     attached: bool,
 ) -> Result<(), trouble_host::Error> {
+    // The driver ended the host's session (it discarded a frame it owed a
+    // host that was not reading); over BLE that closes the connection,
+    // before anything newer goes out.
+    if OUT_CH.take_close_request(Transport::Ble) {
+        debug_log(format_args!(
+            "ble session ended by the driver; disconnecting"
+        ));
+        if let Some(completion) = outbound.completion {
+            completion.complete(false);
+        }
+        conn.raw().disconnect();
+        return Ok(());
+    }
     if attached
         && (conn.raw().is_bonded_peer()
             || (outbound.finish_ble_wipe && BLE_WIPE_WAITING_REPLY.load(Ordering::Acquire)))
@@ -1509,16 +1522,26 @@ async fn gatt_connection<C: Controller, P: PacketPool>(
                                     )
                                     .await?;
                                 }
-                                Err(()) => debug_log(format_args!(
-                                    "gatt frame-in complete staging=FAILED len={}",
-                                    frame.len()
-                                )),
+                                // A frame lost in reassembly: the
+                                // connection failed to deliver what it
+                                // exists to deliver, so the session ends
+                                // with it (spec §Sessions).
+                                Err(()) => {
+                                    debug_log(format_args!(
+                                        "gatt frame-in complete staging=FAILED len={}; disconnecting",
+                                        frame.len()
+                                    ));
+                                    conn.raw().disconnect();
+                                }
                             }
                         }
-                        Some(Err(error)) => debug_log(format_args!(
-                            "gatt frame-in decode=FAILED error={error:?} segment-len={}",
-                            inbound.len()
-                        )),
+                        Some(Err(error)) => {
+                            debug_log(format_args!(
+                                "gatt frame-in decode=FAILED error={error:?} segment-len={}; disconnecting",
+                                inbound.len()
+                            ));
+                            conn.raw().disconnect();
+                        }
                         None => {}
                     }
                 }

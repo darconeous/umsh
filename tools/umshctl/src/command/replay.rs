@@ -119,8 +119,6 @@ enum Handling {
     Send,
     /// It writes to flash: at most one per `--save-interval`.
     RateLimited,
-    /// Its session reset is the board doing as it was told.
-    ExpectReset,
     Withhold,
 }
 
@@ -135,7 +133,6 @@ fn handling(bytes: &[u8]) -> Handling {
     match parsed.command() {
         Some(Cmd::Dfu | Cmd::Reboot | Cmd::FactoryReset | Cmd::I2cTransfer) => Handling::Withhold,
         Some(Cmd::Save | Cmd::Clear) => Handling::RateLimited,
-        Some(Cmd::Reset | Cmd::Restore) => Handling::ExpectReset,
         Some(Cmd::PropSet)
             if PropPayload::parse(parsed.payload)
                 .is_ok_and(|payload| payload.key == prop::DEV_PRIVATE_KEY) =>
@@ -154,16 +151,17 @@ enum Health {
     Lost,
 }
 
-/// Take what has arrived, reporting a session reset nobody asked for.
-async fn drain(device: &mut UlcpDevice<SessionLink>, expect_reset: &mut bool) -> Health {
+/// Take what has arrived, reporting a session the board ended: it lost a
+/// frame, or discarded one it owed.
+async fn drain(device: &mut UlcpDevice<SessionLink>) -> Health {
     loop {
         match timeout(Duration::from_millis(1), device.link_mut().recv_frame()).await {
             Err(_) => return Health::Alive,
             Ok(Err(_)) => return Health::Lost,
             Ok(Ok(bytes)) => {
-                let reset = Frame::parse(&bytes)
-                    .is_ok_and(|parsed| parsed.command() == Some(Cmd::SessionReset));
-                if reset && !std::mem::take(expect_reset) {
+                if Frame::parse(&bytes)
+                    .is_ok_and(|parsed| parsed.command() == Some(Cmd::SessionDidEnd))
+                {
                     return Health::Reset;
                 }
             }
@@ -237,7 +235,6 @@ pub async fn run(app: &mut App, args: ReplayArgs) -> Result<()> {
     let mut recent: VecDeque<Record> = VecDeque::with_capacity(args.keep);
     let (mut sent, mut withheld, mut since_probe) = (0u32, 0u32, 0u32);
     let mut last_save: Option<Instant> = None;
-    let mut expect_reset = false;
 
     for record in records {
         let injector = app.device()?;
@@ -267,7 +264,6 @@ pub async fn run(app: &mut App, args: ReplayArgs) -> Result<()> {
                     }
                     last_save = Some(Instant::now());
                 }
-                Handling::ExpectReset => expect_reset = true,
                 Handling::Send => {}
             }
             (record.frame.clone(), host_gap)
@@ -288,7 +284,7 @@ pub async fn run(app: &mut App, args: ReplayArgs) -> Result<()> {
             None => app.device()?,
         };
         let mut health = if delivered {
-            drain(bench, &mut expect_reset).await
+            drain(bench).await
         } else {
             Health::Lost
         };
@@ -382,14 +378,14 @@ mod tests {
     }
 
     #[test]
-    fn a_save_is_rate_limited_and_a_reset_expected() {
+    fn a_save_is_rate_limited_and_a_reset_goes_out() {
         assert_eq!(
             handling(&built(|b| frame::save(b, 1).unwrap())),
             Handling::RateLimited
         );
         assert_eq!(
             handling(&built(|b| frame::reset(b, 1).unwrap())),
-            Handling::ExpectReset
+            Handling::Send
         );
     }
 

@@ -2813,6 +2813,19 @@ mod firmware {
         outbound: OutFrame,
         attached: bool,
     ) -> Result<Delivered, trouble_host::Error> {
+        // The driver ended the host's session (it discarded a frame it
+        // owed a host that was not reading); over BLE that closes the
+        // connection, before anything newer goes out.
+        if OUT_CH.take_close_request(Transport::Ble) {
+            debug_log(format_args!(
+                "ble session ended by the driver; disconnecting"
+            ));
+            if let Some(completion) = outbound.completion {
+                completion.complete(false);
+            }
+            conn.raw().disconnect();
+            return Ok(Delivered::Disconnected);
+        }
         if attached
             && (conn.raw().is_bonded_peer()
                 || (outbound.finish_ble_wipe && BLE_WIPE_WAITING_REPLY.load(Ordering::Acquire)))
@@ -3301,16 +3314,27 @@ mod firmware {
                                             break;
                                         }
                                     }
-                                    Err(()) => debug_log(format_args!(
-                                        "gatt frame-in complete staging=FAILED len={}",
-                                        frame.len()
-                                    )),
+                                    Err(()) => {
+                                        debug_log(format_args!(
+                                            "gatt frame-in complete staging=FAILED len={}; disconnecting",
+                                            frame.len()
+                                        ));
+                                        conn.raw().disconnect();
+                                        break;
+                                    }
                                 }
                             }
-                            Some(Err(error)) => debug_log(format_args!(
-                                "gatt frame-in decode=FAILED error={error:?} segment-len={}",
-                                inbound.len()
-                            )),
+                            // A frame lost in reassembly: the connection
+                            // failed to deliver what it exists to deliver,
+                            // so the session ends with it (spec §Sessions).
+                            Some(Err(error)) => {
+                                debug_log(format_args!(
+                                    "gatt frame-in decode=FAILED error={error:?} segment-len={}; disconnecting",
+                                    inbound.len()
+                                ));
+                                conn.raw().disconnect();
+                                break;
+                            }
                             None => debug_log(format_args!(
                                 "gatt frame-in segment accepted segment-len={} complete=false",
                                 inbound.len()
@@ -3857,6 +3881,23 @@ mod firmware {
         }
     }
 
+    /// Writes `parts` as one line of marked text, which an HDLC-Lite host
+    /// skips and a serial terminal shows.
+    async fn write_text(tx: &mut DeviceSender, parts: &[&[u8]]) {
+        let mut octets = hdlc::TextOctets::new(parts);
+        let mut chunk = [0u8; 64];
+        loop {
+            let len = chunk
+                .iter_mut()
+                .zip(&mut octets)
+                .map(|(slot, octet)| *slot = octet)
+                .count();
+            if len == 0 || tx.write_packet(&chunk[..len]).await.is_err() {
+                return;
+            }
+        }
+    }
+
     /// Owns the USB `Sender`, HDLC-encodes frames, and writes USB packets.
     #[embassy_executor::task]
     async fn output_task(
@@ -3865,8 +3906,8 @@ mod firmware {
         panic_report: Option<&'static str>,
     ) {
         // Emit the previous boot's diagnostics (watchdog capture and/or
-        // panic message) as ASCII to the first USB reader. HDLC hosts
-        // resynchronize past it; humans read it with a serial terminal.
+        // panic message) as marked text to the first USB reader. HDLC hosts
+        // skip it; humans read it with a serial terminal.
         // Wait for DTR—the OS CDC driver drains the IN endpoint even
         // with no process attached, so writing before a real opener
         // exists would discard the report into the void.
@@ -3876,9 +3917,7 @@ mod firmware {
             }
             Timer::after_millis(300).await;
             for report in [wdt_report, panic_report].into_iter().flatten() {
-                for chunk in report.as_bytes().chunks(64) {
-                    let _ = tx.write_packet(chunk).await;
-                }
+                write_text(&mut tx, &[report.as_bytes()]).await;
             }
         }
         loop {
@@ -3886,9 +3925,7 @@ mod firmware {
             let outbound = match select(OUT_CH.wired.receive(), DEBUG_CH.receive()).await {
                 Either::First(outbound) => outbound,
                 Either::Second(line) => {
-                    for chunk in line.as_bytes().chunks(64) {
-                        let _ = tx.write_packet(chunk).await;
-                    }
+                    write_text(&mut tx, &[line.as_bytes()]).await;
                     continue;
                 }
             };
@@ -3978,12 +4015,20 @@ mod firmware {
                     Ok(0) | Err(_) => break,
                     Ok(len) => {
                         for &byte in &packet[..len] {
-                            let Some(Ok(bytes)) = decoder.push(byte) else {
-                                continue;
-                            };
-                            let mut frame = heapless::Vec::new();
-                            let _ = frame.extend_from_slice(bytes);
-                            INPUT_CH.send(InEvent::Frame(Transport::Usb, frame)).await;
+                            match decoder.push(byte) {
+                                None => {}
+                                Some(Ok(bytes)) => {
+                                    let mut frame = heapless::Vec::new();
+                                    let _ = frame.extend_from_slice(bytes);
+                                    INPUT_CH.send(InEvent::Frame(Transport::Usb, frame)).await;
+                                }
+                                // A frame the host sent and the decoder
+                                // gave up on ends the host's session.
+                                Some(Err(error)) => {
+                                    debug_log(format_args!("usb frame lost error={error:?}"));
+                                    INPUT_CH.send(InEvent::FrameLost(Transport::Usb)).await;
+                                }
+                            }
                         }
                     }
                 }

@@ -950,15 +950,15 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
             guard let reassembled = try reassembler.push(segment: value) else { return }
             frame = reassembled
         } catch {
-            // A discarded segment is a transport-level event: dropped, for
-            // the reasons `peripheral(_:didUpdateValueFor:error:)` gives in
-            // the tethered connection.
-            Self.logger.notice(
-                """
-                administrative session: discarding GATT segment \
-                cause=\(UlcpFrameDiagnostic.cause(error), privacy: .public) \
-                segment=\(value.count)B
-                """
+            // A frame lost in reassembly ends the session, and over BLE the
+            // session is the connection, for the reasons
+            // `peripheral(_:didUpdateValueFor:error:)` gives in the
+            // tethered connection.
+            fail(
+                "A frame from the device was lost",
+                error: RadioConnectionError.incompatibleProtocol,
+                detail: "cause=\(UlcpFrameDiagnostic.cause(error)) segment=\(value.count)B",
+                bytes: value
             )
             return
         }

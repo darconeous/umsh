@@ -238,11 +238,11 @@ impl HostRelay {
                     continue;
                 }
                 Event::Read(len) => {
-                    // A decode error is the host's problem, not the
-                    // link's: the decoder resynchronizes on the next
-                    // flag, so a garbled frame costs one frame.
+                    // A socket is a connection link: a frame lost on it
+                    // means the connection failed at what it exists to
+                    // do, and the session ends with it (spec §Sessions).
                     if let Err(error) = device.ingest(&buf[..len], self.now_ms()) {
-                        tracing::debug!(iface = %self.name, "{error}");
+                        self.detach(&mut device, &mut current, format!("frame lost: {error}"));
                     }
                     self.drain_transmissions(&mut device);
                 }

@@ -1768,16 +1768,15 @@ extension CoreBluetoothRadioConnection: CBPeripheralDelegate {
             guard let frame = try reassembler.push(segment: value) else { return }
             linkDidReceive(frame: frame)
         } catch {
-            // The spec makes a discarded segment a transport-level event:
-            // the reassembler has already reset, the next `SAR_COMPLETE`
-            // or `SAR_FIRST` starts clean, and closing the link would turn
-            // one lost frame into a lost session.
-            Self.logger.notice(
-                """
-                ulcp: discarding GATT segment \
-                cause=\(UlcpFrameDiagnostic.cause(error), privacy: .public) \
-                segment=\(value.count)B
-                """
+            // A frame lost in reassembly. BLE delivers every segment whole
+            // and in order, so the link has failed at what it exists to
+            // do, and the session ends with it (spec §Sessions): the
+            // connection is closed and comes back as any dropped link does.
+            terminateConnectionForFatalProtocolError(
+                "A frame from the radio was lost",
+                detail: "cause=\(UlcpFrameDiagnostic.cause(error)) segment=\(value.count)B",
+                bytes: value,
+                name: displayName(for: peripheral)
             )
         }
     }

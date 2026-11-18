@@ -230,8 +230,12 @@ fn ulcp(seeds: &Seeds) {
         writer.write_entry(prop::LAST_STATUS, &[0]).unwrap();
         writer.finish()
     });
-    add("session_reset", &|b| {
-        frame::session_reset(b, frame::SessionResetReason::Attached).unwrap()
+    add("session_did_end", &|b| {
+        frame::session_did_end(b, frame::SessionEndReason::FrameLost).unwrap()
+    });
+    add("session_start", &|b| frame::session_start(b, 1).unwrap());
+    add("session_did_start", &|b| {
+        frame::session_did_start(b, 1).unwrap()
     });
 
     let mut stream = Vec::new();

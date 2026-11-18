@@ -5,7 +5,7 @@
 /// Protocol version advertised in `PROP_PROTOCOL_VERSION`.
 pub const PROTOCOL_MAJOR_VERSION: u8 = 6;
 /// Protocol version advertised in `PROP_PROTOCOL_VERSION`.
-pub const PROTOCOL_MINOR_VERSION: u8 = 0;
+pub const PROTOCOL_MINOR_VERSION: u8 = 1;
 
 /// Value of `PROP_INTERFACE_TYPE` for this protocol.
 pub const INTERFACE_TYPE: u32 = 8;

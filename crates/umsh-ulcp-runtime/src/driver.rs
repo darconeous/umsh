@@ -37,6 +37,7 @@ use umsh_radio_loraphy::{
     bandwidth_from_hz, coding_rate_from_denom, spreading_factor_from_u8,
 };
 use umsh_ulcp::Status;
+use umsh_ulcp::frame::SessionEndReason;
 use umsh_ulcp::i2c::{ScanRequest, TransferRequest};
 use umsh_ulcp::stats::{Counter, StatsLedger};
 use umsh_ulcp_device::listeners::{Mirrors, Writes};
@@ -145,6 +146,12 @@ pub enum InEvent {
     Attached(Transport),
     Detached(Transport),
     Frame(Transport, FrameBuf),
+    /// The transport could not hand over whole a frame the host sent: a
+    /// failed FCS, a framing violation, a reassembly discard (spec §Lost
+    /// Frames). The host's session ends: on the wired transport with
+    /// `CMD_SESSION_DID_END`, over BLE by closing the connection, which a
+    /// BLE task that found the loss does itself without reporting it.
+    FrameLost(Transport),
     /// One ULCP frame from a mesh administrator, whose response must fit
     /// `reply_budget` octets. The driver answers on [`ADMIN_REPLY`].
     ///
@@ -238,6 +245,16 @@ pub struct TransportChannels<M: RawMutex> {
     /// [`HOST_STALL_LIMIT`] and not taken any since. Only the driver
     /// reads or writes these.
     stalled: [AtomicBool; 2],
+    /// Per transport, whether an answer or a publication was discarded
+    /// for a host that was not reading: a frame owed and not sent, which
+    /// ends the session. Set where the frame is dropped, taken by the
+    /// driver at the tail of its loop.
+    owed_lost: [AtomicBool; 2],
+    /// Per transport, whether the driver wants the connection closed
+    /// (spec §Sessions: a connection link's session ends with its
+    /// connection). The transport's task takes it before carrying its
+    /// next frame. Only BLE can be closed.
+    close: [AtomicBool; 2],
 }
 
 impl<M: RawMutex> TransportChannels<M> {
@@ -246,6 +263,8 @@ impl<M: RawMutex> TransportChannels<M> {
             wired: Channel::new(),
             ble: Channel::new(),
             stalled: [const { AtomicBool::new(false) }; 2],
+            owed_lost: [const { AtomicBool::new(false) }; 2],
+            close: [const { AtomicBool::new(false) }; 2],
         }
     }
 
@@ -257,10 +276,56 @@ impl<M: RawMutex> TransportChannels<M> {
     }
 
     fn stalled(&self, transport: Transport) -> &AtomicBool {
-        &self.stalled[match transport {
+        &self.stalled[Self::index(transport)]
+    }
+
+    const fn index(transport: Transport) -> usize {
+        match transport {
             Transport::Usb => 0,
             Transport::Ble => 1,
-        }]
+        }
+    }
+
+    /// Whether the driver has asked for this transport's connection to be
+    /// closed, clearing the request. A transport task calls this before
+    /// carrying each frame, and closes the connection instead when true.
+    pub fn take_close_request(&self, transport: Transport) -> bool {
+        self.close[Self::index(transport)].swap(false, Ordering::AcqRel)
+    }
+
+    fn request_close(&self, transport: Transport) {
+        self.close[Self::index(transport)].store(true, Ordering::Release);
+    }
+
+    fn take_owed_lost(&self, transport: Transport) -> bool {
+        self.owed_lost[Self::index(transport)].swap(false, Ordering::AcqRel)
+    }
+
+    /// Queue `frame` for `transport` if there is room now, without
+    /// waiting. Taking it ends a stall, as any frame taken does.
+    fn offer(&self, transport: Transport, generation: u32, frame: &[u8]) -> bool {
+        let Ok(copy) = FrameBuf::from_slice(frame) else {
+            return false;
+        };
+        let queued = OutFrame {
+            completion: None,
+            finish_ble_wipe: false,
+            generation,
+            frame: copy,
+        };
+        let taken = self.for_transport(transport).try_send(queued).is_ok();
+        if taken {
+            self.stalled(transport).store(false, Ordering::Relaxed);
+        }
+        taken
+    }
+
+    /// A new host attached over `transport`: nothing owed to or asked of
+    /// the one before carries over.
+    fn attached(&self, transport: Transport) {
+        let index = Self::index(transport);
+        self.owed_lost[index].store(false, Ordering::Relaxed);
+        self.close[index].store(false, Ordering::Relaxed);
     }
 }
 
@@ -1307,6 +1372,7 @@ impl HostFrame {
             stalled.store(true, Ordering::Relaxed);
         }
         self.dropped(Counter::HostOutDropped);
+        out.owed_lost[TransportChannels::<M>::index(transport)].store(true, Ordering::Release);
         false
     }
 
@@ -1359,16 +1425,34 @@ enum ReplySink<'a, M: RawMutex> {
 
 impl<M: RawMutex + 'static> ReplySink<'static, M> {
     /// Frames for the attached host: everything the session emits outside
-    /// an exchange, and the answers to the host's own frames.
+    /// an exchange, and the answers to the host's own frames. A host whose
+    /// session has ended is sent nothing (`live` false) until it starts a
+    /// new one; what the device publishes still reaches its own interface.
     fn host<const RX: usize, const TX: usize>(
         arbitration: &SessionArbitration,
         rt: &DeviceRuntime<M, RX, TX>,
+        live: bool,
     ) -> Self {
         Self::Transport {
-            destination: arbitration.destination(),
+            destination: arbitration.destination().filter(|_| live),
             out: rt.out,
             device: rt.device,
         }
+    }
+}
+
+/// End the attached host's session the way its transport allows (spec
+/// §Sessions): in-band on the wired transport, a serial link; by closing
+/// the connection over BLE.
+fn end_host_session<A: AesProvider, S: Sha256Provider, const TXQ: usize, M: RawMutex>(
+    session: &mut Session<A, S, TXQ>,
+    out: &TransportChannels<M>,
+    transport: Transport,
+    reason: SessionEndReason,
+) {
+    match transport {
+        Transport::Usb => session.end_session(reason),
+        Transport::Ble => out.request_close(transport),
     }
 }
 
@@ -2380,6 +2464,7 @@ where
                 // untouched and nothing is emitted (full-protocol
                 // attach semantics).
                 arbitration.attach(transport);
+                rt.out.attached(transport);
                 rt.session_gen
                     .store(arbitration.generation(), Ordering::Release);
                 env.set_advertising_allowed(arbitration.advertising_allowed());
@@ -2389,6 +2474,12 @@ where
                 // refuses any access outside an encrypted LESC-bonded
                 // link.
                 session.attach(true);
+            }
+            Either4::First(InEvent::FrameLost(transport)) => {
+                // A displaced transport's loss is not the host's.
+                if arbitration.accepts_frame(transport) {
+                    end_host_session(session, rt.out, transport, SessionEndReason::FrameLost);
+                }
             }
             Either4::First(InEvent::Detached(transport)) => {
                 // Only the active transport's detach ends the
@@ -2405,7 +2496,13 @@ where
                 // attached—`cancel_alert` handles that—and a press
                 // with no alert running is simply nothing.
                 let effect = session.cancel_alert(&mut |frame: &[u8]| emitter.push(frame));
-                emitter.flush(&mut ReplySink::host(&arbitration, &rt)).await;
+                emitter
+                    .flush(&mut ReplySink::host(
+                        &arbitration,
+                        &rt,
+                        session.host_session_live(),
+                    ))
+                    .await;
                 apply_effect(session, effect, &rt, &mut env).await;
             }
             Either4::First(InEvent::Toggle(setting)) => {
@@ -2435,7 +2532,13 @@ where
                     }
                 };
                 if let Some(enabled) = flipped {
-                    emitter.flush(&mut ReplySink::host(&arbitration, &rt)).await;
+                    emitter
+                        .flush(&mut ReplySink::host(
+                            &arbitration,
+                            &rt,
+                            session.host_session_live(),
+                        ))
+                        .await;
                     if setting == Setting::Gnss {
                         env.gnss_switched(enabled);
                     }
@@ -2456,7 +2559,13 @@ where
                     .choose_wifi_network(network.as_bytes(), &mut |frame| emitter.push(frame));
                 // Which network the station is on is live, so nothing is
                 // saved.
-                emitter.flush(&mut ReplySink::host(&arbitration, &rt)).await;
+                emitter
+                    .flush(&mut ReplySink::host(
+                        &arbitration,
+                        &rt,
+                        session.host_session_live(),
+                    ))
+                    .await;
                 env.wifi_selection_result(result);
             }
             Either4::First(InEvent::ForceBluetoothOn) => {
@@ -2464,7 +2573,13 @@ where
                     .force_ble_on(&mut |frame: &[u8]| emitter.push(frame))
                     .is_some()
                 {
-                    emitter.flush(&mut ReplySink::host(&arbitration, &rt)).await;
+                    emitter
+                        .flush(&mut ReplySink::host(
+                            &arbitration,
+                            &rt,
+                            session.host_session_live(),
+                        ))
+                        .await;
                     // Persisted like a toggle: the gesture is the device's
                     // own control for the property, and a radio rescued by
                     // it should stay rescued across the next reboot.
@@ -2476,7 +2591,10 @@ where
             }
             Either4::First(InEvent::Frame(transport, frame_bytes)) => {
                 if arbitration.accepts_frame(transport) {
-                    let mut sink = ReplySink::host(&arbitration, &rt);
+                    // Live even when the session has ended: the session
+                    // itself discards everything but the CMD_SESSION_START
+                    // whose answer must reach the host.
+                    let mut sink = ReplySink::host(&arbitration, &rt, true);
                     let dfu = serve_frame(
                         session,
                         Exchange::Local(&frame_bytes),
@@ -2584,7 +2702,13 @@ where
                     env.frame_queued(notice);
                 }
                 emitter.live = true;
-                emitter.flush(&mut ReplySink::host(&arbitration, &rt)).await;
+                emitter
+                    .flush(&mut ReplySink::host(
+                        &arbitration,
+                        &rt,
+                        session.host_session_live(),
+                    ))
+                    .await;
                 apply_effect(session, effect, &rt, &mut env).await;
             }
             Either4::Third(result) => {
@@ -2596,7 +2720,13 @@ where
                 };
                 let effect =
                     session.on_tx_result(outcome, now_ms, &mut |frame: &[u8]| emitter.push(frame));
-                emitter.flush(&mut ReplySink::host(&arbitration, &rt)).await;
+                emitter
+                    .flush(&mut ReplySink::host(
+                        &arbitration,
+                        &rt,
+                        session.host_session_live(),
+                    ))
+                    .await;
                 apply_effect(session, effect, &rt, &mut env).await;
             }
             Either4::Fourth(Either3::First(event)) => {
@@ -2680,7 +2810,13 @@ where
                         session.absorb_ident_fix(&location, altitude_m);
                     }
                 }
-                emitter.flush(&mut ReplySink::host(&arbitration, &rt)).await;
+                emitter
+                    .flush(&mut ReplySink::host(
+                        &arbitration,
+                        &rt,
+                        session.host_session_live(),
+                    ))
+                    .await;
             }
             Either4::Fourth(Either3::Third(())) => {
                 save_due = None;
@@ -2705,7 +2841,13 @@ where
                     .poll_deadlines(Instant::now().as_millis(), &mut |frame: &[u8]| {
                         emitter.push(frame)
                     });
-                emitter.flush(&mut ReplySink::host(&arbitration, &rt)).await;
+                emitter
+                    .flush(&mut ReplySink::host(
+                        &arbitration,
+                        &rt,
+                        session.host_session_live(),
+                    ))
+                    .await;
                 apply_effect(session, effect, &rt, &mut env).await;
             }
         }
@@ -2744,20 +2886,39 @@ where
         // The host key moves on a host's write, a host replacement, and a
         // reset off the mesh alike; one compare covers them all.
         sync_hosted(session, &mut hosted_synced, &mut env);
-        // Session state was discarded under a host that did not ask for
-        // it; tell it, so it can re-establish whatever it was holding
-        // there. Drained here rather than at the discard because a
-        // CMD_RST off the mesh discards while the admin binding is
-        // still held: by now `serve_frame` has released it and the sink
-        // below is the host's own transport.
-        if session.take_session_reset_notice(&mut |frame: &[u8]| emitter.push(frame)) {
-            emitter.flush(&mut ReplySink::host(&arbitration, &rt)).await;
+        // An answer or a publication this iteration discarded for a host
+        // that was not reading is a frame owed and not sent: the session
+        // ends (spec §A Link That Stops Reading).
+        if let Some((transport, generation)) = arbitration.destination() {
+            if rt.out.take_owed_lost(transport) {
+                end_host_session(
+                    session,
+                    rt.out,
+                    transport,
+                    SessionEndReason::OwedFrameDiscarded,
+                );
+            }
+            // The notice goes out only when the transport has room, and
+            // stays owed otherwise: a host that has stopped reading is
+            // told once it reads again, ahead of anything else.
+            let mut notice = [0u8; 8];
+            if let Some(len) = session.session_end_notice(&mut notice)
+                && rt.out.offer(transport, generation, &notice[..len])
+            {
+                session.session_end_notice_taken();
+            }
         }
         // What moved under a call that had its own frame to emit, paid
         // here for the same reason: by now it goes to everyone listening,
         // not to an administrator's one-frame exchange.
         if session.take_owed_publications(&mut |frame: &[u8]| emitter.push(frame)) {
-            emitter.flush(&mut ReplySink::host(&arbitration, &rt)).await;
+            emitter
+                .flush(&mut ReplySink::host(
+                    &arbitration,
+                    &rt,
+                    session.host_session_live(),
+                ))
+                .await;
         }
     }
 }
@@ -2874,9 +3035,45 @@ mod stalled_host_tests {
             assert!(Instant::now() - started < Duration::from_secs(1));
             assert_eq!(stats.get(Counter::HostRxDropped), 1);
             assert_eq!(stats.get(Counter::HostOutDropped), 0);
-            // A dropped reception says nothing about the host's replies.
+            // A dropped reception says nothing about the host's replies,
+            // and is not a frame the host was owed.
+            assert!(!out.stalled(Transport::Usb).load(Ordering::Relaxed));
+            assert!(!out.take_owed_lost(Transport::Usb));
+        });
+    }
+
+    #[test]
+    fn a_discarded_answer_is_owed_and_ends_the_session() {
+        embassy_futures::block_on(async {
+            let out = TransportChannels::<NoopRawMutex>::new();
+            full(&out);
+            out.stalled(Transport::Usb).store(true, Ordering::Relaxed);
+            let mut emitter = Emitter::new();
+            emitter.push(b"answer");
+            assert!(!emitter.flush(&mut usb(&out)).await);
+            assert!(out.take_owed_lost(Transport::Usb));
+            assert!(!out.take_owed_lost(Transport::Usb), "taken once");
+            assert!(!out.take_owed_lost(Transport::Ble));
+
+            // The notice waits for room rather than for the host, and
+            // taking it ends the stall.
+            assert!(!out.offer(Transport::Usb, 1, b"notice"));
+            out.wired.try_receive().unwrap();
+            assert!(out.offer(Transport::Usb, 1, b"notice"));
             assert!(!out.stalled(Transport::Usb).load(Ordering::Relaxed));
         });
+    }
+
+    #[test]
+    fn a_close_request_is_taken_once_and_cleared_by_an_attach() {
+        let out = TransportChannels::<NoopRawMutex>::new();
+        out.request_close(Transport::Ble);
+        assert!(!out.take_close_request(Transport::Usb));
+        assert!(out.take_close_request(Transport::Ble));
+        assert!(!out.take_close_request(Transport::Ble));
+        out.request_close(Transport::Ble);
+        out.attached(Transport::Ble);
+        assert!(!out.take_close_request(Transport::Ble));
     }
 
     #[test]

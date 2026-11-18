@@ -335,7 +335,7 @@ impl<R: AsyncRead + Unpin> TunnelReader<R> {
     pub fn new(inner: R, idle_timeout: Duration) -> Self {
         Self {
             inner,
-            decoder: Box::new(hdlc::Decoder::new()),
+            decoder: Box::new(hdlc::Decoder::plain()),
             buf: vec![0u8; 4096],
             pending: 0..0,
             idle_timeout,

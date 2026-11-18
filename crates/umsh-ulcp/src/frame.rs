@@ -130,12 +130,11 @@ pub enum Cmd {
     /// Multiple property value notification (device to host), answering
     /// `CMD_PROP_MULTI_GET` or `CMD_PROP_MULTI_SET`. Never unsolicited.
     PropAre = 23,
-    /// Session reset notification (device to host): the device has
-    /// discarded session state, so every session-scoped property is back
-    /// at its documented default. Always unsolicited, and never carried
-    /// over the administrative binding. The payload is one
-    /// [`SessionResetReason`].
-    SessionReset = 24,
+    /// The device has ended a serial link's session (device to host,
+    /// TID 0): it discarded the link's session state and sends the link
+    /// nothing more until [`Cmd::SessionStart`]. Never carried over the
+    /// administrative binding. The payload is one [`SessionEndReason`].
+    SessionDidEnd = 24,
     /// Perform one I2C transaction (host to device): a bus, a 7-bit
     /// address, and an operation list with embedded-hal `transaction`
     /// semantics. Answered by [`Cmd::I2cResult`]. See [`crate::i2c`].
@@ -148,6 +147,13 @@ pub enum Cmd {
     /// Probe a range of 7-bit addresses on one bus (host to device).
     /// Answered by [`Cmd::I2cResult`]. Requires `CAP_I2C`.
     I2cScan = 27,
+    /// Start a new session on this link (host to device), ending the one
+    /// in progress. Answered by [`Cmd::SessionDidStart`]. Empty payload.
+    SessionStart = 28,
+    /// The new session has started (device to host): the answer to
+    /// [`Cmd::SessionStart`], with its TID, and the first frame of the new
+    /// session. Empty payload.
+    SessionDidStart = 29,
 }
 
 impl Cmd {
@@ -175,48 +181,47 @@ impl Cmd {
             21 => Some(Self::PropMultiGet),
             22 => Some(Self::PropMultiSet),
             23 => Some(Self::PropAre),
-            24 => Some(Self::SessionReset),
+            24 => Some(Self::SessionDidEnd),
             25 => Some(Self::I2cTransfer),
             26 => Some(Self::I2cResult),
             27 => Some(Self::I2cScan),
+            28 => Some(Self::SessionStart),
+            29 => Some(Self::SessionDidStart),
             _ => None,
         }
     }
 }
 
-/// Why the device discarded session state, carried by
-/// [`Cmd::SessionReset`].
+/// Why the device ended a serial link's session, carried by
+/// [`Cmd::SessionDidEnd`].
 ///
 /// Diagnostic: the host's obligation is the same for every value, so an
-/// unrecognized reason is a session reset without a name for it, never a
+/// unrecognized reason is a session end without a name for it, never a
 /// parse failure.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SessionResetReason {
-    /// A host attached.
-    Attached,
-    /// `CMD_RST`.
-    Reset,
-    /// `CMD_RESTORE` in its reset form.
-    Restored,
+pub enum SessionEndReason {
+    /// A frame sent to the device on the link was lost.
+    FrameLost,
+    /// The device discarded a frame it owed the link: an answer or a
+    /// publication to a link that had stopped reading.
+    OwedFrameDiscarded,
     /// A reason this implementation does not have a name for.
     Other(u32),
 }
 
-impl SessionResetReason {
+impl SessionEndReason {
     pub const fn from_u32(value: u32) -> Self {
         match value {
-            0 => Self::Attached,
-            1 => Self::Reset,
-            2 => Self::Restored,
+            0 => Self::FrameLost,
+            1 => Self::OwedFrameDiscarded,
             other => Self::Other(other),
         }
     }
 
     pub const fn to_u32(self) -> u32 {
         match self {
-            Self::Attached => 0,
-            Self::Reset => 1,
-            Self::Restored => 2,
+            Self::FrameLost => 0,
+            Self::OwedFrameDiscarded => 1,
             Self::Other(value) => value,
         }
     }
@@ -684,17 +689,29 @@ pub fn last_status(buf: &mut [u8], tid: u8, status: Status) -> Result<usize, Wri
     Ok(writer.finish())
 }
 
-/// Encode a `CMD_SESSION_RESET` frame. Always uses TID zero.
-pub fn session_reset(buf: &mut [u8], reason: SessionResetReason) -> Result<usize, WriteError> {
-    let mut writer = FrameWriter::new(buf, TID_UNSOLICITED, Cmd::SessionReset)?;
+/// Encode a `CMD_SESSION_DID_END` frame. Always uses TID zero.
+pub fn session_did_end(buf: &mut [u8], reason: SessionEndReason) -> Result<usize, WriteError> {
+    let mut writer = FrameWriter::new(buf, TID_UNSOLICITED, Cmd::SessionDidEnd)?;
     writer.write_pui(reason.to_u32())?;
     Ok(writer.finish())
 }
 
-/// Decode the payload of a `CMD_SESSION_RESET` frame.
-pub fn parse_session_reset(payload: &[u8]) -> Result<SessionResetReason, ParseError> {
+/// Decode the payload of a `CMD_SESSION_DID_END` frame.
+pub fn parse_session_did_end(payload: &[u8]) -> Result<SessionEndReason, ParseError> {
     let (reason, _) = pui::decode(payload)?;
-    Ok(SessionResetReason::from_u32(reason))
+    Ok(SessionEndReason::from_u32(reason))
+}
+
+/// Encode a `CMD_SESSION_START` frame. Send it with a non-zero TID, so a
+/// device that predates the command answers `STATUS_INVALID_COMMAND`.
+pub fn session_start(buf: &mut [u8], tid: u8) -> Result<usize, WriteError> {
+    Ok(FrameWriter::new(buf, tid, Cmd::SessionStart)?.finish())
+}
+
+/// Encode a `CMD_SESSION_DID_START` frame answering the
+/// `CMD_SESSION_START` that carried `tid`.
+pub fn session_did_start(buf: &mut [u8], tid: u8) -> Result<usize, WriteError> {
+    Ok(FrameWriter::new(buf, tid, Cmd::SessionDidStart)?.finish())
 }
 
 fn stream_payload(
@@ -863,37 +880,49 @@ mod tests {
     }
 
     #[test]
-    fn session_reset_frame() {
+    fn session_did_end_frame() {
         let mut buf = [0u8; 8];
-        let len = session_reset(&mut buf, SessionResetReason::Reset).unwrap();
+        let len = session_did_end(&mut buf, SessionEndReason::OwedFrameDiscarded).unwrap();
         assert_eq!(&buf[..len], &[0x80, 0x18, 0x01]);
 
         let frame = Frame::parse(&buf[..len]).unwrap();
         assert_eq!(frame.header.tid(), TID_UNSOLICITED);
-        assert_eq!(frame.command(), Some(Cmd::SessionReset));
+        assert_eq!(frame.command(), Some(Cmd::SessionDidEnd));
         assert_eq!(
-            parse_session_reset(frame.payload),
-            Ok(SessionResetReason::Reset)
+            parse_session_did_end(frame.payload),
+            Ok(SessionEndReason::OwedFrameDiscarded)
         );
     }
 
     #[test]
-    fn session_reset_reason_keeps_unknown_values() {
+    fn session_end_reason_keeps_unknown_values() {
         for reason in [
-            SessionResetReason::Attached,
-            SessionResetReason::Reset,
-            SessionResetReason::Restored,
-            SessionResetReason::Other(9),
+            SessionEndReason::FrameLost,
+            SessionEndReason::OwedFrameDiscarded,
+            SessionEndReason::Other(9),
         ] {
             let mut buf = [0u8; 8];
-            let len = session_reset(&mut buf, reason).unwrap();
+            let len = session_did_end(&mut buf, reason).unwrap();
             let frame = Frame::parse(&buf[..len]).unwrap();
-            assert_eq!(parse_session_reset(frame.payload), Ok(reason));
+            assert_eq!(parse_session_did_end(frame.payload), Ok(reason));
         }
-        assert_eq!(
-            SessionResetReason::from_u32(9),
-            SessionResetReason::Other(9)
-        );
+        assert_eq!(SessionEndReason::from_u32(9), SessionEndReason::Other(9));
+    }
+
+    #[test]
+    fn session_start_and_reply_carry_the_tid() {
+        let mut buf = [0u8; 8];
+        let len = session_start(&mut buf, 5).unwrap();
+        assert_eq!(&buf[..len], &[0x85, 0x1C]);
+        let frame = Frame::parse(&buf[..len]).unwrap();
+        assert_eq!(frame.command(), Some(Cmd::SessionStart));
+        assert!(frame.payload.is_empty());
+
+        let len = session_did_start(&mut buf, 5).unwrap();
+        assert_eq!(&buf[..len], &[0x85, 0x1D]);
+        let frame = Frame::parse(&buf[..len]).unwrap();
+        assert_eq!(frame.header.tid(), 5);
+        assert_eq!(frame.command(), Some(Cmd::SessionDidStart));
     }
 
     #[test]
@@ -948,11 +977,11 @@ mod tests {
 
     #[test]
     fn every_assigned_command_round_trips() {
-        for id in (0..=17u8).chain([19]).chain(21..=27) {
+        for id in (0..=17u8).chain([19]).chain(21..=29) {
             let cmd = Cmd::from_u8(id).unwrap_or_else(|| panic!("command {id} unassigned"));
             assert_eq!(cmd as u8, id);
         }
-        for id in [18u8, 20].into_iter().chain(28..=127) {
+        for id in [18u8, 20].into_iter().chain(30..=127) {
             assert_eq!(Cmd::from_u8(id), None, "command {id} should be unassigned");
         }
     }

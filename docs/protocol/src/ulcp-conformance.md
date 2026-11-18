@@ -16,8 +16,12 @@ A device **MUST** implement the [frame format](ulcp-core.md#frame-format)
 in full: the header with its `FLG`, `RESERVED`, and `TID` fields, the
 [packed unsigned integer](ulcp-core.md#packed-unsigned-integer) encoding
 for command, property, and stream identifiers, and the transport's
-framing (HDLC-Lite on serial links, the
-[GATT frame transport](ulcp-ble.md#gatt-frame-transport) over BLE).
+framing (HDLC-Lite on serial links, with the rules in
+[HDLC-Lite on a ULCP Link](ulcp-core.md#hdlc-lite); the
+[GATT frame transport](ulcp-ble.md#gatt-frame-transport) over BLE). A
+frame the transport loses ends the link's session, at either end (see
+[Lost Frames](ulcp-core.md#lost-frames) and
+[Sessions](ulcp-core.md#sessions)).
 
 The TID discipline is normative in both directions: a device **MUST NOT**
 send a frame with a non-zero TID that is not a response to a frame it
@@ -36,6 +40,9 @@ Id | Mnemonic       | Required
 9  | `CMD_STR_SEND` | Always
 10 | `CMD_STR_RECV` | Always
 17 | `CMD_DFU`      | Always; unsupported methods return `STATUS_UNIMPLEMENTED`
+24 | `CMD_SESSION_DID_END` | Always
+28 | `CMD_SESSION_START` | Always
+29 | `CMD_SESSION_DID_START` | Always
 
 `CMD_PROP_INSERT`, `CMD_PROP_REMOVE`, and their notifications belong to
 the base grammar rather than to any capability. A device that defines no
@@ -154,6 +161,13 @@ A conforming host:
   [Two Kinds of Attach](ulcp.md#attach-relationships).
 * **SHOULD** follow the post-attach procedure in
   [Attach, Detach, and Synchronization](ulcp-core.md#attach-sync).
+* **MUST** end its session when a frame sent to it is
+  [lost](ulcp-core.md#lost-frames): on a connection link by detaching,
+  and on a serial link by starting a new session with
+  [`CMD_SESSION_START`](ulcp-core.md#cmd-session-start), as it also does
+  after [`CMD_SESSION_DID_END`](ulcp-core.md#cmd-session-did-end) and for
+  any other session-level error it cannot otherwise recover from. It
+  ignores every frame that arrives before the reply.
 
 ## Deployment Shapes
 
@@ -165,6 +179,7 @@ Deployment | Typical capabilities
 Transparent radio | `CAP_WRITABLE_RAW_STREAM`, `CAP_PHY_LORA`, `CAP_PHY_DUTY_LIMIT`
 Companion radio | The above, plus `CAP_HOST_FILTER`, `CAP_HOST_KEYS`, `CAP_HOST_RX_QUEUE`, `CAP_HOST_AUTO_ACK`
 Commissioned repeater | The above, plus `CAP_DEV_IDENTITY`, `CAP_SAVE`, `CAP_REPEATER`, `CAP_IDENT`
+Radio for a wired application | `CAP_DEV_IDENTITY`, `CAP_SAVE`, `CAP_NODE_MSG`, with the application on the device's [own interface](ulcp-core.md#device-interface) over a UART with [flow control](ulcp-core.md#uart-flow-control)
 
 The same firmware ordinarily advertises all of them: which deployment a
 device is doing is a matter of what its operator provisioned, not of what

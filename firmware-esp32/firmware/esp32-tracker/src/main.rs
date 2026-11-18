@@ -49,7 +49,7 @@
 //! USB-Serial-JTAG peripheral). Boot diagnostics interleave cleanly
 //! before the port is claimed; after that, nothing may `println!`. The
 //! `debug-log` feature multiplexes diagnostic lines onto the wired
-//! output stream as ASCII (HDLC hosts resynchronize past them),
+//! output stream as marked text, which HDLC-Lite hosts skip,
 //! mirroring the nRF image's ble-debug.
 
 #![no_std]
@@ -2550,6 +2550,26 @@ async fn wired_write_all(tx: &mut WiredTx, bytes: &[u8]) -> bool {
     true
 }
 
+/// Writes `parts` as one line of marked text, which an HDLC-Lite host
+/// skips and a serial terminal shows.
+async fn wired_write_text(tx: &mut WiredTx, parts: &[&[u8]]) -> bool {
+    let mut octets = hdlc::TextOctets::new(parts);
+    let mut chunk = [0u8; 64];
+    loop {
+        let len = chunk
+            .iter_mut()
+            .zip(&mut octets)
+            .map(|(slot, octet)| *slot = octet)
+            .count();
+        if len == 0 {
+            return true;
+        }
+        if !wired_write_all(tx, &chunk[..len]).await {
+            return false;
+        }
+    }
+}
+
 /// Owns the wired TX half, HDLC-encodes frames, and writes them out.
 #[cfg(not(feature = "wired-usb-serial-jtag"))]
 #[embassy_executor::task]
@@ -2561,22 +2581,20 @@ async fn output_task(mut tx: WiredTx, panic_report: Option<heapless::String<128>
 /// returns; on the USB-Serial-JTAG board the supervisor cancels it when
 /// VBUS drops.
 async fn output_pump(tx: &mut WiredTx, panic_report: Option<heapless::String<128>>) {
-    // Emit the previous boot's panic message as ASCII. HDLC hosts
-    // resynchronize past it; humans read it with a serial terminal.
+    // Emit the previous boot's panic message as marked text. HDLC hosts
+    // skip it; humans read it with a serial terminal.
     // There is no reader handshake to wait for—it lands in the bridge
     // (or the bounded write drops it with no host attached), which is
     // the correct behavior for a serial console.
     if let Some(report) = panic_report {
-        let _ = wired_write_all(tx, b"[PREV PANIC]: ").await;
-        let _ = wired_write_all(tx, report.as_bytes()).await;
-        let _ = wired_write_all(tx, b"\r\n").await;
+        let _ = wired_write_text(tx, &[b"[PREV PANIC]: ", report.as_bytes(), b"\r\n"]).await;
     }
     loop {
         #[cfg(feature = "debug-log")]
         let outbound = match select(OUT_CH.wired.receive(), DEBUG_CH.receive()).await {
             Either::First(outbound) => outbound,
             Either::Second(line) => {
-                let _ = wired_write_all(tx, line.as_bytes()).await;
+                let _ = wired_write_text(tx, &[line.as_bytes()]).await;
                 continue;
             }
         };
@@ -2587,7 +2605,7 @@ async fn output_pump(tx: &mut WiredTx, panic_report: Option<heapless::String<128
         }
         #[cfg(feature = "input-gate")]
         if let Some(report) = input_gate::power_report() {
-            if wired_write_all(tx, report.as_bytes()).await {
+            if wired_write_text(tx, &[report.as_bytes()]).await {
                 input_gate::power_report_sent();
             }
         }
@@ -2657,13 +2675,29 @@ async fn input_pump(rx: &mut WiredRx) {
         let mut packet = [0u8; 64];
         match embedded_io_async::Read::read(rx, &mut packet).await {
             Ok(0) => {}
-            // A FIFO overflow or framing error costs the in-flight
-            // frame, not the session: resynchronize on the next flag.
-            Err(_) => decoder.reset(),
+            // A FIFO overflow or framing error loses whatever was in
+            // flight, which ends the host's session (spec §Lost Frames);
+            // the decoder resynchronizes on the next flag.
+            Err(_) => {
+                decoder.reset();
+                if wired_attached {
+                    INPUT_CH.send(InEvent::FrameLost(Transport::Usb)).await;
+                }
+            }
             Ok(len) => {
                 for &byte in &packet[..len] {
-                    let Some(Ok(bytes)) = decoder.push(byte) else {
-                        continue;
+                    let bytes = match decoder.push(byte) {
+                        None => continue,
+                        Some(Ok(bytes)) => bytes,
+                        // Before the lazy attach there is no session for
+                        // a damaged frame to end.
+                        Some(Err(error)) => {
+                            if wired_attached {
+                                debug_log(format_args!("wired frame lost error={error:?}"));
+                                INPUT_CH.send(InEvent::FrameLost(Transport::Usb)).await;
+                            }
+                            continue;
+                        }
                     };
                     // Covers both first-ever contact and reclaiming
                     // the session after a BLE displacement (which
