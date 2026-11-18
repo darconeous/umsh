@@ -40,7 +40,11 @@ drawing are in [Android open decisions](open-decisions.md).
 | 2 | [L. Conversation info](#l-conversation-info) | Approved 2026-11-18 |
 | 2 | [M. Notifications](#m-notifications) | Approved 2026-11-18 |
 | 2 | [N. Conversations on tablets](#n-conversations-on-tablets) | Approved 2026-11-18 |
-| 3 | Onboarding and identity | Not drawn yet |
+| 3 | [O. Onboarding](#o-onboarding) | Approved 2026-11-18 |
+| 3 | [P. Adding a radio](#p-adding-a-radio) | Approved 2026-11-18 |
+| 3 | [Q. Permissions](#q-permissions) | Approved 2026-11-18 |
+| 3 | [R. Your identity](#r-your-identity) | Approved 2026-11-18 |
+| 3 | [S. Manage space](#s-manage-space) | Approved 2026-11-18 |
 | 4 | Peers and channels | Not drawn yet |
 | 5 | Map, radio, and management | Not drawn yet |
 
@@ -222,3 +226,63 @@ notes say so and [open decisions](open-decisions.md#conversations) explain why.
 - The batch 1 list-detail layout with a thread in the detail pane. Its top app
   bar has no Back; the overflow holds conversation info.
 - The banner spans both panes, and the composer blocks Send as on a phone.
+
+# Batch 3: Onboarding and identity
+
+Drawn from the iOS app as built, with Android's own pairing, permissions, and
+key storage. Where Android departs from it, the board's notes say so and
+[open decisions](open-decisions.md#onboarding-and-identity) explain why.
+
+## O. Onboarding
+
+[![Onboarding mockups: the welcome page with its learn-more link and name field, with the keyboard, and with the save failure dialog; the connect-a-radio step searching, with radios and their board photos, connecting, failed, and without the Nearby devices permission; and the first conversation list with the notification prompt](mockups/onboarding.svg)](mockups/onboarding.svg)
+
+- Two steps, as on iOS: Welcome, then Connect a radio. The identity exists
+  before Welcome appears, and Welcome asks only for an optional name.
+- **Learn more about UMSH** opens umsh.dev in the browser.
+- A failure that won't fix itself, such as the name not saving, opens a dialog
+  with what happened and why.
+- Connect a radio lists radios in pairing mode with their board photos, as
+  iOS's picker does. Tapping one adds it; **Set up later** skips.
+- Onboarding ends on Conversations with Public and EMERGENCY joined and
+  muted. There is no preset or completion step.
+
+## P. Adding a radio
+
+[![Radio pairing mockups: the Nearby devices permission, the Bluetooth request, the system confirmation for the chosen radio, and the pairing dialog for a PIN and for a compared code](mockups/radio-pairing.svg)](mockups/radio-pairing.svg)
+
+- Opening Connect a radio asks, only as needed, for Nearby devices and to turn
+  on Bluetooth. Tapping a radio raises Android's confirmation for it, then the
+  pairing dialog.
+- The system dialogs are drawn for order and wording, not exact appearance.
+
+## Q. Permissions
+
+[![Permission mockups: when each permission is asked and what refusing it does, the camera prompt and the scanner after a refusal, the location prompt with its precise and approximate choice, the precision choices with approximate location only, and the identity page after a refusal](mockups/permissions.svg)](mockups/permissions.svg)
+
+- Each permission is asked by the action that needs it: Nearby devices when
+  Connect a radio opens, notifications after the first radio connects, the camera when
+  the scanner first opens, precise location when sharing is turned on or a
+  device is set to this phone's position.
+- Refusing never blocks the rest of the app, and the same button opens
+  system settings once Android stops asking.
+
+## R. Your identity
+
+[![Identity mockups: the redesigned Your identity page at the top and with location shared, the QR code sheet, editing the name, advertising, the precision choices, the key protection values, the Erase identity confirmation, and the page on a tablet](mockups/identity.svg)](mockups/identity.svg)
+
+- Re-imagined rather than ported; iOS follows later. The top shows the
+  avatar, name, and address, with four actions: **QR code**, **Share**,
+  **Advertise**, and **Edit name**.
+- **Announcements** holds what nearby nodes learn; **Key** holds the key
+  protection Android reported and **Erase identity**.
+- Reach and Start over move out of this page (batch 5).
+
+## S. Manage space
+
+[![Manage space mockups: the system storage page with Manage space in place of Clear storage, UMSH's storage screen, and Start over's two confirmations there](mockups/manage-space.svg)](mockups/manage-space.svg)
+
+- UMSH declares a manage-space screen, so the system storage page offers
+  **Manage space** instead of Clear storage.
+- The screen offers Erase identity and Start over with their usual
+  confirmations, then closes back to the system page. Start over asks twice.

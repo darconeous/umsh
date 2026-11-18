@@ -341,6 +341,144 @@ same from the phone's location.
 messages should reach, which is the members' agreement, not where this phone
 happens to be.
 
+## Onboarding and identity
+
+### No preset or completion step
+
+The plan lists five onboarding steps: welcome, identity, radio, preset, and
+ready. They come from `ios/product-structure.md`, which also describes a
+Learn How It Works page, a restore choice, and a host takeover sheet. The iOS
+app as built has two steps. Welcome names the identity, which already exists,
+and asks for a name. Connect a Radio pairs one radio or is skipped. Then the
+app opens on Conversations. The radio's preset belongs to the radio and is set
+in device setup and Radio Detail (batch 5).
+
+**Recommendation:** match the built app. A preset step would ask a new user a
+regulatory and PHY question before they have sent anything, for a radio that
+usually arrives configured. A completion screen adds a tap and has nothing to
+decide. The iOS chapter is corrected to match (item 11 under "Reconciling the
+shared chapters").
+
+### No identity restore
+
+**Recommendation:** onboarding offers no restore and no recovered identity.
+Android has nothing like iOS's Keychain, which keeps the key after the app is
+deleted, and the identity export format has no implementation yet. A restore
+choice appears once identity export exists, before the public release.
+
+### An in-app radio list with board photos
+
+iOS's AccessorySetupKit picker shows each radio's board photo, chosen by the
+model identifier the radio advertises in pairing mode. Android's
+CompanionDeviceManager picker cannot show one. Its only icon setter,
+`setDeviceIcon` (API 36.1), is a 24 dp icon for self-managed associations,
+not a photo in the discovery list.
+
+**Recommendation:** Connect a radio scans for itself and lists radios in
+pairing mode, each with its board photo from the shared board list
+(`docs/hardware/boards.json`, the same photos iOS bundles). An unknown model
+gets the radio glyph. Tapping a row hands that one radio to
+CompanionDeviceManager as a single-device request, which asks the user to
+confirm it and keeps device presence and background wake-up working. The
+model identifier is recorded at pairing, so Radio Detail and the saved-radio
+picker (batch 5) can show the same photo once the radio has left pairing
+mode and stopped advertising it.
+
+**Cost:** the app needs `BLUETOOTH_SCAN`, declared with `neverForLocation`.
+It is in the same Nearby devices group as `BLUETOOTH_CONNECT`, so the user
+sees one prompt either way. This changes the plan's statement that
+CompanionDeviceManager does discovery and that no scan permission is needed.
+
+### Nearby devices when Connect a radio opens
+
+**Recommendation:** opening the step asks for Nearby devices, because the
+list cannot fill without it. Then it raises the Bluetooth request if
+Bluetooth is off. If either is refused, the page shows the reason and one
+button (Allow or Turn on) in place of the list. Android's own wording
+explains the request; the page behind it already says what it is for.
+
+### A re-imagined Your identity page
+
+iOS's identity page is one long list: the QR code and printed link, the name
+field and an Advertise button, the schedules, the default hop limits, location,
+storage, and both erasures, each section with a footer.
+
+**Recommendation:** Android draws a new page, and iOS later follows it.
+- **The top says who this phone is:** avatar, name, and address (tap to
+  copy). Under it are four actions, as on a contact card: QR code, Share,
+  Advertise, and Edit name. The QR code opens a sheet with a large code;
+  the link is never printed.
+- **Announcements:** what nearby nodes learn. Discoverable, the beacon and
+  identity schedules, and location sharing with its precision. Each row
+  states its current value, so the page needs no footers.
+- **Key:** the key protection and Erase identity.
+- **Moved out, because neither is about this identity:**
+  - Reach, the default hop limits, moves to routing settings.
+  - Start over moves to Settings › Storage.
+
+  Both are drawn in batch 5. Start over also stays on the manage-space screen.
+
+### Key protection on the identity page
+
+**Recommendation:** the Key section names what Android reported when the
+wrapping key was created: Security chip (StrongBox), Secure area (TEE), or
+Software only. It has no caption. A caption would have to say how the key is
+held, which is mechanism, or that it is never exported and is lost with the
+app, which identity export will change.
+
+### Copy that identity export would make untrue
+
+Several iOS lines state today's limits as if they were permanent:
+- Welcome says the key "never leaves the device".
+- The Storage caption says the key is "never displayed or exported".
+- Start over's second ask says "Nothing is backed up".
+- Connect a Radio says nothing is sent or received without a radio, which IP
+  multicast would change.
+
+**Recommendation:** Android leaves these out and says only what an action
+does. iOS drops them too.
+
+### Precise location
+
+The plan asks only for approximate location. But location sharing offers
+areas down to centimeters, and setting a repeater to this phone's position
+needs a real fix. Android's approximate location is only good to a few
+kilometers.
+
+**Recommendation:** ask for precise location, which Android always offers
+with approximate as a choice. Ask when Share location is turned on, or when a
+device is set to this phone's position. With approximate only, the
+precision choices stop at about 9.8 km, and a line offers to allow precise.
+Whether background location is needed depends on how announcements run
+without the app on screen, which is decided with the foreground service in
+Phase 2.
+
+### Failures that won't fix themselves
+
+Saving the name is a local write, so if it fails, storage itself is in
+trouble. Asking the user to try again doesn't help.
+
+**Recommendation:** a failure that won't clear on its own opens a dialog. It
+says what happened, then the reason Android gave, and has Copy details and
+OK. Whatever the user typed stays in place. The same dialog serves every
+failure of this kind across the app.
+
+### Welcome copy and Learn more
+
+**Recommendation:** Welcome says "This phone has its own identity, separate
+from the radio—let's get it set up!" Under it, Learn more about UMSH opens
+umsh.dev in a Custom Tab. That is the only explanation onboarding offers; the
+site can change without an app update.
+
+### Manage space
+
+**Recommendation:** the manage-space screen offers Erase identity and Start
+over with the same confirmations they have in the app. It shows what uses the
+space, so the person who came to free storage sees what each choice removes.
+Afterwards it closes back to the system page. Unlike erasing from inside the
+app, it makes no new identity: the next launch starts from Welcome, as it
+would after Clear storage.
+
 ## Protocol and core changes
 
 ### Several regions on a channel
@@ -440,3 +578,14 @@ are not made yet.
     > and its message details may record it. No header, badge, or page
     > states whether a session is held; text names PFS only where a choice
     > depends on it, such as resending a message first sent under one.
+
+11. **`ios/product-structure.md`, "First launch and onboarding":** replace
+    the four steps with what the app does. Welcome shows the identity
+    already created, named by its hint, and asks for an optional name.
+    Connect a Radio pairs a radio or is skipped with Set Up Later. Then the
+    app opens on Conversations, with `public` and `EMERGENCY` joined and
+    muted. Replace the Learn How It Works action with a Learn more about UMSH
+    link to umsh.dev. Remove the restore choice until
+    identity export is implemented, the host takeover sheet, and step 4
+    ("Radio preset and readiness"). The radio's preset is set in device setup
+    and Radio Detail.
