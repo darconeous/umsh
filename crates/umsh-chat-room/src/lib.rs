@@ -50,7 +50,10 @@ pub enum ChatAction<'a> {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RoomInfo<'a> {
+    /// The encoded option block, without the end marker.
     pub options: &'a [u8],
+    /// The description that follows the end marker. An empty description is
+    /// sent as none.
     pub description: Option<&'a str>,
 }
 
@@ -76,12 +79,11 @@ pub fn parse(payload: &[u8]) -> Result<ChatAction<'_>, Error> {
             }
         }
         1 => {
-            let (options, description) =
-                if let Some(index) = body.iter().position(|byte| *byte == 0xFF) {
-                    (&body[..=index], Some(parse_utf8(&body[index + 1..])?))
-                } else {
-                    (body, None)
-                };
+            let (options, description) = split_options(body)?;
+            let description = match description {
+                Some(bytes) if !bytes.is_empty() => Some(parse_utf8(bytes)?),
+                _ => None,
+            };
             Ok(ChatAction::RoomInfo(RoomInfo {
                 options,
                 description,
@@ -174,12 +176,13 @@ pub fn encode(action: &ChatAction<'_>, buf: &mut [u8]) -> Result<usize, Error> {
         }
         ChatAction::RoomInfo(room_info) => {
             let mut pos = 0usize;
+            if split_options(room_info.options)? != (room_info.options, None) {
+                return Err(Error::InvalidOptionValue);
+            }
             push_byte(buf, &mut pos, 1)?;
             copy_into(buf, &mut pos, room_info.options)?;
-            if let Some(description) = room_info.description {
-                if room_info.options.last().copied() != Some(0xFF) {
-                    push_byte(buf, &mut pos, 0xFF)?;
-                }
+            if let Some(description) = room_info.description.filter(|d| !d.is_empty()) {
+                push_byte(buf, &mut pos, 0xFF)?;
                 copy_into(buf, &mut pos, description.as_bytes())?;
             }
             Ok(pos)
@@ -243,6 +246,21 @@ pub fn encode(action: &ChatAction<'_>, buf: &mut [u8]) -> Result<usize, Error> {
     }
 }
 
+/// Split an option block from the bytes after its end marker, if it has one.
+fn split_options(data: &[u8]) -> Result<(&[u8], Option<&[u8]>), Error> {
+    let mut options = OptionDecoder::new(data);
+    let mut end = options.position();
+    while let Some(option) = options.next() {
+        option.map_err(Error::Core)?;
+        end = options.position();
+    }
+    if end == data.len() {
+        Ok((data, None))
+    } else {
+        Ok((&data[..end], Some(options.remainder())))
+    }
+}
+
 fn parse_utf8(input: &[u8]) -> Result<&str, Error> {
     core::str::from_utf8(input).map_err(|_| Error::InvalidUtf8)
 }
@@ -278,12 +296,134 @@ mod tests {
         assert_eq!(parsed, login);
 
         let room_info = ChatAction::RoomInfo(RoomInfo {
-            options: &[0x11, 0x22, 0xFF],
+            options: &[0x11, 0x22],
             description: Some("mesh room"),
         });
         let len = encode(&room_info, &mut buf).unwrap();
+        assert_eq!(&buf[..len], b"\x01\x11\x22\xFFmesh room");
         let parsed = parse(&buf[..len]).unwrap();
         assert_eq!(parsed, room_info);
+    }
+
+    /// Room Info options with a timestamp whose last byte is 0xFF.
+    fn options_ending_in_ff(buf: &mut [u8]) -> usize {
+        let mut encoder = OptionEncoder::new(buf);
+        encoder.put(0, b"lobby").unwrap();
+        encoder.put(6, &[0x00, 0x00, 0x01, 0xFF]).unwrap();
+        encoder.finish()
+    }
+
+    /// A 0xFF inside an option value is data, not the end of the options.
+    #[test]
+    fn a_room_info_option_value_may_hold_0xff() {
+        let mut options = [0u8; 32];
+        let options_len = options_ending_in_ff(&mut options);
+        let mut payload = [0u8; 64];
+        let mut pos = 0;
+        push_byte(&mut payload, &mut pos, 1).unwrap();
+        copy_into(&mut payload, &mut pos, &options[..options_len]).unwrap();
+        push_byte(&mut payload, &mut pos, 0xFF).unwrap();
+        copy_into(&mut payload, &mut pos, b"general chat").unwrap();
+
+        assert_eq!(
+            parse(&payload[..pos]),
+            Ok(ChatAction::RoomInfo(RoomInfo {
+                options: &options[..options_len],
+                description: Some("general chat"),
+            }))
+        );
+    }
+
+    /// An extended length byte of 0xFF is part of the option header.
+    #[test]
+    fn a_room_info_extended_length_may_be_0xff() {
+        let name = [b'a'; 13 + 0xFF];
+        let mut payload = [0u8; 300];
+        payload[0] = 1;
+        let mut encoder = OptionEncoder::new(&mut payload[1..]);
+        encoder.put(0, &name).unwrap();
+        let len = 1 + encoder.finish();
+        assert_eq!(&payload[1..3], &[0x0D, 0xFF]);
+
+        assert_eq!(
+            parse(&payload[..len]),
+            Ok(ChatAction::RoomInfo(RoomInfo {
+                options: &payload[1..len],
+                description: None,
+            }))
+        );
+    }
+
+    /// The encoder marks the end of the options even when their last byte
+    /// is 0xFF.
+    #[test]
+    fn room_info_options_ending_in_0xff_still_get_a_marker() {
+        let mut options = [0u8; 32];
+        let options_len = options_ending_in_ff(&mut options);
+        let room_info = ChatAction::RoomInfo(RoomInfo {
+            options: &options[..options_len],
+            description: Some("x"),
+        });
+        let mut buf = [0u8; 64];
+        let len = encode(&room_info, &mut buf).unwrap();
+        assert_eq!(len, 1 + options_len + 2);
+        assert_eq!(&buf[1..1 + options_len], &options[..options_len]);
+        assert_eq!(&buf[1 + options_len..len], &[0xFF, b'x']);
+        assert_eq!(parse(&buf[..len]), Ok(room_info));
+    }
+
+    /// The end marker goes out only when a description follows it.
+    #[test]
+    fn room_info_without_a_description_has_no_marker() {
+        let room_info = ChatAction::RoomInfo(RoomInfo {
+            options: &[0x11, 0x22],
+            description: None,
+        });
+        let mut buf = [0u8; 16];
+        let len = encode(&room_info, &mut buf).unwrap();
+        assert_eq!(&buf[..len], &[1, 0x11, 0x22]);
+
+        let empty = ChatAction::RoomInfo(RoomInfo {
+            options: &[0x11, 0x22],
+            description: Some(""),
+        });
+        let len = encode(&empty, &mut buf).unwrap();
+        assert_eq!(&buf[..len], &[1, 0x11, 0x22]);
+    }
+
+    /// A marker with nothing after it is tolerated and reads as no
+    /// description.
+    #[test]
+    fn a_room_info_marker_with_nothing_after_it_is_no_description() {
+        assert_eq!(
+            parse(&[1, 0x11, 0x22, 0xFF]),
+            Ok(ChatAction::RoomInfo(RoomInfo {
+                options: &[0x11, 0x22],
+                description: None,
+            }))
+        );
+    }
+
+    #[test]
+    fn a_malformed_room_info_option_block_is_rejected() {
+        assert_eq!(
+            parse(&[1, 0x13, 0x22]),
+            Err(Error::Core(umsh_core::ParseError::Truncated))
+        );
+    }
+
+    /// Options handed to the encoder are a well-formed block without a
+    /// marker of their own.
+    #[test]
+    fn the_room_info_encoder_refuses_options_it_cannot_frame() {
+        let mut buf = [0u8; 16];
+        for options in [&[0x11, 0x22, 0xFF][..], &[0x13, 0x22][..]] {
+            let room_info = ChatAction::RoomInfo(RoomInfo {
+                options,
+                description: Some("x"),
+            });
+            assert!(encode(&room_info, &mut buf).is_err());
+        }
     }
 
     /// An extended field past sixteen bits is malformed, not a wrapped value.
