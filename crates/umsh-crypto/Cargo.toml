@@ -18,6 +18,12 @@ software-crypto = [
 	"dep:sha2",
 	"dep:x25519-dalek",
 ]
+# SHA-2 as a rolled loop, for every user of `sha2` in the build (Ed25519's
+# SHA-512 included). A fraction of the unrolled form's flash, and slower: by
+# how much has not been measured on a board, but hashing is a small part of an
+# Ed25519 operation beside the curve arithmetic. For flash-bound firmware
+# only: on a host it also displaces the CPU's own SHA instructions.
+compact-sha2 = ["sha2?/force-soft-compact"]
 
 [dependencies]
 heapless.workspace = true

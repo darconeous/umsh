@@ -89,7 +89,7 @@ umsh-ulcp-device = { path = "../../crates/umsh-ulcp-device" }
 # (same main.rs) and the ESP32 port: leaf modules + the session driver.
 umsh-ulcp-runtime = { path = "../../crates/umsh-ulcp-runtime", features = ["ble-host", "device-node", "node-thread-mode-mutex", "gnss"] }
 umsh-gnss = { path = "../../crates/umsh-gnss" }
-umsh-crypto = { path = "../../crates/umsh-crypto", default-features = false, features = ["software-crypto"] }
+umsh-crypto = { path = "../../crates/umsh-crypto", default-features = false, features = ["software-crypto", "compact-sha2"] }
 umsh-hal = { path = "../../crates/umsh-hal", default-features = false }
 umsh-journal-store = { path = "../../crates/umsh-journal-store" }
 umsh-ux-tracker = { path = "../../crates/umsh-ux-tracker", default-features = false }

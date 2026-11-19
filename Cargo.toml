@@ -123,8 +123,9 @@ resolver = "2"
 
 # Sized for the nRF52840 firmware, the only artifact in this workspace with a
 # hard ceiling: 756 KB of application flash on the T-1000E and SenseCAP Solar,
-# 760 KB on the T-Echo. At stock release settings the shipping images sat at
-# ~87% of that budget; these settings put them near 61%.
+# 760 KB on the T-Echo. When these settings went in they took the shipping
+# images from ~87% of that budget to ~61%. The images have grown since: the
+# T-Echo and Wio Tracker L1 are within about 1% of it.
 #
 # `opt-level = "z"` does most of the work—measured on `firmware-t1000e` it is
 # worth ~119 KB on its own, and `lto = "fat"` adds a further ~78 KB on top of
@@ -135,9 +136,11 @@ resolver = "2"
 # Nothing here is CPU-bound enough to miss `opt-level = 3`. The largest single
 # beneficiary is `sha2`, whose fully unrolled `compress512` drops from 27,746
 # bytes to 10,544; it is reached only through Ed25519 sign/verify, where the
-# rolled loop costs microseconds. Everything else runs at LoRa packet rates or
-# slower. A per-package `opt-level` override is available if that ever stops
-# being true, but note it does not propagate to that package's dependencies.
+# curve arithmetic dominates. The nRF52840 images go further with
+# `umsh-crypto`'s `compact-sha2`, which rolls it into a loop of under 1 KB.
+# Everything else runs at LoRa packet rates or slower. A per-package
+# `opt-level` override is available if that ever stops being true, but note it
+# does not propagate to that package's dependencies.
 [profile.release]
 opt-level = "z"
 lto = "fat"
@@ -174,6 +177,8 @@ lora-phy = { version = "3.0.2-alpha", default-features = false }
 lwuri = { version = "0.1.1", default-features = false }
 rand = { version = "0.10.1", default-features = false }
 rand_core = { version = "0.6", default-features = false }
-sha2 = { version = "0.10", default-features = false }
+# 0.10.9 is the first with `force-soft-compact`, which `umsh-crypto`'s
+# `compact-sha2` turns on.
+sha2 = { version = "0.10.9", default-features = false }
 x25519-dalek = { version = "2", default-features = false, features = ["static_secrets"] }
 zeroize = { version = "1", default-features = false, features = ["derive"] }

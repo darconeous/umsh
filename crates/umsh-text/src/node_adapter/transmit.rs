@@ -101,8 +101,7 @@ impl BudgetQuery {
         self.conversation
     }
 
-    /// The peer the frames go to, when they go to one alone: the node
-    /// measures them only once it has registered the peer.
+    /// The peer the frames go to, when they go to one alone.
     pub fn peer(&self) -> Option<PublicKey> {
         match self.route {
             Route::Peer { peer, .. } | Route::ChannelPeer { peer, .. } => Some(peer),
@@ -116,9 +115,10 @@ impl BudgetQuery {
 /// [`ChatFacade::archive_result_within`] take it: the node's capacity for
 /// the destination, less the payload-type byte.
 ///
-/// `None` when the node cannot measure it: a peer it has not registered,
-/// whose capacity rests on a route it does not hold. Measuring registers
-/// nobody, so it costs no peer slot.
+/// A peer the node has not registered measures as a first contact, as the
+/// send that registers it would go. Measuring registers nobody, so it costs
+/// no peer slot. `None` only when the MAC no longer holds the node's own
+/// identity.
 pub async fn payload_budget<M: MacBackend>(
     node: &LocalNode<M>,
     query: &BudgetQuery,
