@@ -53,6 +53,37 @@ Any `Stream` that receives while it sends will do: a hardware UART, or
 AltSoftSerial on a part with only one. SoftwareSerial cannot receive while
 it sends and does not work.
 
+## Preparing the radio
+
+The sketch speaks as the radio's own node, with its identity and its
+channels. Set those up with `umshctl` over USB before wiring the sketch in;
+both stay on the radio.
+
+- **Its address**, which others send to: `umshctl identity` prints it, 44
+  characters. A radio with none makes one with `umshctl identity generate`.
+- **Its channels**: `umshctl dev-channel add KEY` joins one by its
+  32-octet key, in base58 or hex, and `umshctl dev-channel list` prints
+  the 32-digit identifier of each, which `parseChannel()` reads.
+
+Which messages reach the sketch is the sketch's own business: see Claims
+below.
+
+## Examples
+
+- **TextEcho** answers every text message with its own body. Send the
+  radio a text from the app, and it comes back: the quickest check that
+  the wiring works.
+- **ChannelChat** puts the Serial Monitor on one of the radio's channels.
+  Paste the channel's identifier, then type a line to send it; what others
+  say is printed.
+- **SensorReport** sends an analog reading to one node every minute and
+  tries again when it is not acknowledged. It blocks in `delay()` between
+  reports and loses nothing that arrives meanwhile. Paste the collector's
+  address first.
+
+All three talk to the radio on `Serial1`. On a board with only one UART,
+use AltSoftSerial instead.
+
 ## What the library takes care of
 
 - **Flow control.** The radio sends only what the serial buffer holds, a

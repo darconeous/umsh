@@ -1,8 +1,9 @@
 // ChannelChat: the Serial Monitor on one of the radio's channels. Lines
 // typed are sent to the channel, and text on the channel is printed.
 //
-// The channel must already be one of the radio's own: add it from the app
-// or with umshctl, which also lists its 32-digit identifier.
+// The channel must already be one of the radio's own: add it with
+// `umshctl dev-channel add`, and `umshctl dev-channel list` prints its
+// 32-digit identifier.
 
 #include <Umsh.h>
 
