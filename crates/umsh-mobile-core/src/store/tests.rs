@@ -195,20 +195,15 @@ fn a_file_that_is_not_the_store_is_refused_and_left_alone() {
 
 #[test]
 fn the_ladder_runs_each_step_once_and_refuses_what_it_does_not_reach() {
-    fn record_rewrite(connection: &Connection) -> rusqlite::Result<()> {
-        connection.execute("INSERT INTO added_at_32 (x) VALUES (-32)", [])?;
-        Ok(())
-    }
     const LADDER: &[Migration] = &[
         Migration {
             version: 32,
-            sql: "CREATE TABLE added_at_32 (x INTEGER);",
-            rewrite: Some(record_rewrite),
+            sql: "CREATE TABLE added_at_32 (x INTEGER);
+                INSERT INTO added_at_32 (x) VALUES (32);",
         },
         Migration {
             version: 33,
             sql: "INSERT INTO added_at_32 (x) VALUES (33);",
-            rewrite: None,
         },
     ];
     let directory = tempfile::tempdir().unwrap();
@@ -225,8 +220,7 @@ fn the_ladder_runs_each_step_once_and_refuses_what_it_does_not_reach() {
         .unwrap()
         .collect::<rusqlite::Result<_>>()
         .unwrap();
-    // The step's SQL, then its rewrite, then the next step, once each.
-    assert_eq!(rows, [-32, 33], "a step ran twice or out of order");
+    assert_eq!(rows, [32, 33], "a step ran twice or out of order");
 
     // A new file climbs the whole ladder from the baseline.
     let fresh = tempfile::tempdir().unwrap();
@@ -241,23 +235,22 @@ fn the_ladder_runs_each_step_once_and_refuses_what_it_does_not_reach() {
 }
 
 #[test]
-fn a_failing_rewrite_leaves_the_database_where_it_was() {
-    fn failing_rewrite(connection: &Connection) -> rusqlite::Result<()> {
-        connection.execute("INSERT INTO no_such_table (x) VALUES (1)", [])?;
-        Ok(())
-    }
+fn a_failing_step_leaves_the_database_where_it_was() {
+    // The step's first statement succeeds; its second fails.
     const LADDER: &[Migration] = &[Migration {
         version: 32,
-        sql: "CREATE TABLE added_at_32 (x INTEGER);",
-        rewrite: Some(failing_rewrite),
+        sql: "CREATE TABLE added_at_32 (x INTEGER);
+            INSERT INTO no_such_table (x) VALUES (1);",
     }];
     let directory = tempfile::tempdir().unwrap();
     let mut connection = raw(&path_in(&directory));
     assert_eq!(migrate(&mut connection, &[]), Ok(BASELINE_VERSION));
-    assert_eq!(
-        migrate(&mut connection, LADDER),
-        Err(MobileStoreError::Failed)
-    );
+    let Err(MobileStoreError::Failed { code, detail }) = migrate(&mut connection, LADDER) else {
+        panic!("a failing step must fail the open");
+    };
+    // SQLite's own report survives into the error.
+    assert_eq!(code, rusqlite::ffi::SQLITE_ERROR);
+    assert!(detail.contains("no_such_table"), "{detail}");
     assert_eq!(user_version(&connection).unwrap(), BASELINE_VERSION);
     assert_eq!(dump(&connection), baseline_schema());
 }
@@ -389,24 +382,42 @@ fn fill_every_table(store: &MobileAppStore) {
             1,
         )
         .unwrap();
-    // The chat domain's tables, as it writes them.
+    // The chat domain's tables, through its compose and delivery paths.
+    let mut mutation = super::chat_test_support::outbound(1, 1, "peer", 1, "hi");
+    mutation.fragment_count = Some(1);
     store
-        .connection()
-        .execute_batch(
-            "INSERT INTO chat_message (owner_identity_id, session_id, handle,
-                conversation_address, direction, body, created_at_ms)
-            VALUES ('alice', 's', 1, 'peer', 0, 'hi', 1);
-            INSERT INTO chat_delivery_fragment (owner_identity_id, session_id, handle,
-                fragment_index, state)
-            VALUES ('alice', 's', 1, 0, 'sent');
-            INSERT INTO chat_applied_mutation (owner_identity_id, session_id, handle, revision)
-            VALUES ('alice', 's', 1, 1);
-            INSERT INTO chat_outbound_archive (owner_identity_id, conversation_address,
-                message_id, fragment_index, payload)
-            VALUES ('alice', 'peer', 1, 0, x'01');
-            INSERT INTO chat_stream_checkpoint (owner_identity_id, conversation_address,
-                next_id, epoch, updated_at_ms)
-            VALUES ('alice', 'peer', 2, 1, 1);",
+        .commit_chat_compose_batch(
+            "alice".into(),
+            crate::MobileChatComposeBatchRecord {
+                batch_id: 1,
+                checkpoint: crate::MobileChatCheckpointRecord {
+                    conversation_address: "peer".into(),
+                    next_id: 2,
+                    epoch: 1,
+                },
+                archive_deletes: vec![],
+                archives: vec![crate::MobileChatArchiveRecord {
+                    conversation_address: "peer".into(),
+                    message_id: 1,
+                    fragment_index: None,
+                    payload: vec![1],
+                }],
+                mutations: vec![mutation],
+            },
+            1,
+        )
+        .unwrap();
+    store
+        .apply_chat_deliveries(
+            "alice".into(),
+            vec![crate::MobileChatDeliveryRecord {
+                session_id: 1,
+                handle: 1,
+                fragment_index: None,
+                state: crate::MobileChatDeliveryState::Sent,
+                via_flood: false,
+            }],
+            1,
         )
         .unwrap();
 }
@@ -478,4 +489,25 @@ fn erasing_keeps_sqlite_s_row_id_sequences() {
         .query_row("SELECT id FROM node", [], |row| row.get(0))
         .unwrap();
     assert_eq!(id, 2);
+}
+
+#[test]
+fn a_failed_write_carries_sqlite_s_code_and_message() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = MobileAppStore::open(path_in(&directory)).unwrap();
+    store
+        .insert_identity("alice".into(), "alice-public".into(), 1)
+        .unwrap();
+    let error = store
+        .insert_identity("alice".into(), "other-public".into(), 2)
+        .unwrap_err();
+    let MobileStoreError::Failed { code, detail } = &error else {
+        panic!("{error:?}");
+    };
+    assert_eq!(*code, rusqlite::ffi::SQLITE_CONSTRAINT_PRIMARYKEY);
+    assert!(detail.contains("local_identity.id"), "{detail}");
+    assert_eq!(
+        error.to_string(),
+        format!("{} ({code}): {detail}", error.diagnostic_code())
+    );
 }

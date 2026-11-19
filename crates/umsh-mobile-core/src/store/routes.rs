@@ -5,11 +5,10 @@
 //! blob of the hints back to back rather than as a table of their own. A
 //! direct path is an empty blob, never NULL.
 
-use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
+use rusqlite::{Connection, OptionalExtension, params};
 
 use super::peers::node_id;
-use super::repeaters::clamp;
-use super::{MobileAppStore, MobileStoreError};
+use super::{MobileAppStore, MobileStoreError, clamp};
 
 /// The width of one router hint in a stored path.
 const HINT_WIDTH: usize = 2;
@@ -67,17 +66,16 @@ impl MobileAppStore {
         owner_identity_id: String,
         now_ms: i64,
     ) -> Result<Vec<MobileStoredManualRouteRecord>, MobileStoreError> {
-        let mut connection = self.connection();
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        transaction.execute(
-            "DELETE FROM node_manual_route
-            WHERE hold_until_ms <= ?
-                AND node_id IN (SELECT id FROM node WHERE owner_identity_id = ?)",
-            params![now_ms, owner_identity_id],
-        )?;
-        let routes = held_routes(&transaction, &owner_identity_id)?;
-        transaction.commit()?;
-        Ok(routes)
+        self.write(|transaction| {
+            transaction.execute(
+                "DELETE FROM node_manual_route
+                WHERE hold_until_ms <= ?
+                    AND node_id IN (SELECT id FROM node WHERE owner_identity_id = ?)",
+                params![now_ms, owner_identity_id],
+            )?;
+            let routes = held_routes(transaction, &owner_identity_id)?;
+            Ok(routes)
+        })
     }
 
     /// Hold `hints` for one node until `hold_until_ms`, replacing any path
@@ -85,8 +83,10 @@ impl MobileAppStore {
     /// switch away from the old one does not carry over. A node with no row
     /// has nowhere to keep it, and the call does nothing.
     ///
-    /// The hints are stored back to back exactly as given; each is expected
-    /// to be two octets, the width a stored path is read back in.
+    /// The hints are stored back to back, so each must be two octets, the
+    /// width a stored path is read back in: any other width, a node's
+    /// three-octet hint say, would read back as a different path, and
+    /// fails with [`MobileStoreError::InvalidArgument`].
     #[allow(clippy::too_many_arguments)]
     pub fn save_manual_route(
         &self,
@@ -99,30 +99,32 @@ impl MobileAppStore {
         longitude: Option<f64>,
         accuracy: Option<f64>,
     ) -> Result<(), MobileStoreError> {
-        let mut connection = self.connection();
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let Some(node_id) = node_id(&transaction, &owner_identity_id, &public_address)? else {
-            return Ok(());
-        };
-        transaction.execute(
-            "INSERT OR REPLACE INTO node_manual_route (
-                node_id, hints, hold_until_ms, saved_latitude, saved_longitude,
-                saved_accuracy, prompt_settled, flood_hops
-            ) VALUES (?, ?, ?, ?, ?, ?, 0, ?)",
-            params![
-                node_id,
-                // An empty path binds as an empty blob, which the column
-                // needs: it refuses NULL.
-                hints.concat(),
-                hold_until_ms,
-                latitude,
-                longitude,
-                accuracy,
-                flood_hops,
-            ],
-        )?;
-        transaction.commit()?;
-        Ok(())
+        if hints.iter().any(|hint| hint.len() != HINT_WIDTH) {
+            return Err(MobileStoreError::InvalidArgument);
+        }
+        self.write(|transaction| {
+            let Some(node_id) = node_id(transaction, &owner_identity_id, &public_address)? else {
+                return Ok(());
+            };
+            transaction.execute(
+                "INSERT OR REPLACE INTO node_manual_route (
+                    node_id, hints, hold_until_ms, saved_latitude, saved_longitude,
+                    saved_accuracy, prompt_settled, flood_hops
+                ) VALUES (?, ?, ?, ?, ?, ?, 0, ?)",
+                params![
+                    node_id,
+                    // An empty path binds as an empty blob, which the column
+                    // needs: it refuses NULL.
+                    hints.concat(),
+                    hold_until_ms,
+                    latitude,
+                    longitude,
+                    accuracy,
+                    flood_hops,
+                ],
+            )?;
+            Ok(())
+        })
     }
 
     /// Forget the path held for one node, if any.

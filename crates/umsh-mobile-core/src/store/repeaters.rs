@@ -3,10 +3,10 @@
 //! (`node_peer_repeater_entry`), both hung from the router's `node` row and
 //! gone with it.
 
-use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
+use rusqlite::{Connection, OptionalExtension, params};
 
 use super::peers::node_id;
-use super::{MobileAppStore, MobileStoreError};
+use super::{MobileAppStore, MobileStoreError, clamp};
 
 /// One neighbor a router reported, as the page carried it.
 ///
@@ -78,12 +78,11 @@ impl MobileAppStore {
         owner_identity_id: String,
         public_address: String,
     ) -> Result<Option<MobileStoredPeerRepeaterListingRecord>, MobileStoreError> {
-        let mut connection = self.connection();
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Deferred)?;
-        let Some(node_id) = node_id(&transaction, &owner_identity_id, &public_address)? else {
-            return Ok(None);
-        };
-        let Some((total, next_cursor, as_of_ms)) = transaction
+        self.read(|transaction| {
+            let Some(node_id) = node_id(transaction, &owner_identity_id, &public_address)? else {
+                return Ok(None);
+            };
+            let Some((total, next_cursor, as_of_ms)) = transaction
             .query_row(
                 "SELECT total, next_cursor, as_of_ms FROM node_peer_repeaters WHERE node_id = ?",
                 params![node_id],
@@ -99,24 +98,24 @@ impl MobileAppStore {
         else {
             return Ok(None);
         };
-        let entries = {
-            let mut statement = transaction.prepare(&format!(
-                "SELECT {} FROM node_peer_repeater_entry e
-                WHERE e.node_id = ?
-                ORDER BY e.position",
-                entry_columns()
-            ))?;
-            statement
-                .query_map(params![node_id], |row| stored_entry(row, 0))?
-                .collect::<rusqlite::Result<Vec<_>>>()?
-        };
-        transaction.commit()?;
-        Ok(Some(MobileStoredPeerRepeaterListingRecord {
-            entries,
-            total,
-            next_cursor,
-            as_of_ms,
-        }))
+            let entries = {
+                let mut statement = transaction.prepare(&format!(
+                    "SELECT {} FROM node_peer_repeater_entry e
+                    WHERE e.node_id = ?
+                    ORDER BY e.position",
+                    entry_columns()
+                ))?;
+                statement
+                    .query_map(params![node_id], |row| stored_entry(row, 0))?
+                    .collect::<rusqlite::Result<Vec<_>>>()?
+            };
+            Ok(Some(MobileStoredPeerRepeaterListingRecord {
+                entries,
+                total,
+                next_cursor,
+                as_of_ms,
+            }))
+        })
     }
 
     /// Record one page of a router's neighbor listing, answered at `at_ms`.
@@ -145,73 +144,72 @@ impl MobileAppStore {
         replacing: bool,
         at_ms: i64,
     ) -> Result<(), MobileStoreError> {
-        let mut connection = self.connection();
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let Some(node_id) = node_id(&transaction, &owner_identity_id, &public_address)? else {
-            return Ok(());
-        };
-        if replacing {
-            transaction.execute(
-                "DELETE FROM node_peer_repeater_entry WHERE node_id = ?",
-                params![node_id],
-            )?;
-        }
-        transaction.execute(
-            "INSERT INTO node_peer_repeaters (node_id, total, next_cursor, as_of_ms)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(node_id) DO UPDATE SET
-                total = excluded.total,
-                next_cursor = excluded.next_cursor,
-                as_of_ms = excluded.as_of_ms",
-            params![node_id, total, blob_or_null(next_cursor), at_ms],
-        )?;
-        let mut position: i64 = transaction.query_row(
-            "SELECT COALESCE(MAX(position), -1) + 1 FROM node_peer_repeater_entry
-            WHERE node_id = ?",
-            params![node_id],
-            |row| row.get(0),
-        )?;
-        {
-            // A repeated hint keeps the position it already holds; only the
-            // figures move. `excluded.position` would shuffle it to the end.
-            let mut upsert = transaction.prepare(
-                "INSERT INTO node_peer_repeater_entry (
-                    node_id, hint, position, name, rssi_dbm, snr_quarter_db,
-                    last_heard_min, latitude, longitude, location_precision,
-                    region_codes, reported_at_ms
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(node_id, hint) DO UPDATE SET
-                    name = excluded.name,
-                    rssi_dbm = excluded.rssi_dbm,
-                    snr_quarter_db = excluded.snr_quarter_db,
-                    last_heard_min = excluded.last_heard_min,
-                    latitude = excluded.latitude,
-                    longitude = excluded.longitude,
-                    location_precision = excluded.location_precision,
-                    region_codes = excluded.region_codes,
-                    reported_at_ms = excluded.reported_at_ms",
-            )?;
-            for entry in entries {
-                upsert.execute(params![
-                    node_id,
-                    blob_or_null(Some(entry.hint)),
-                    position,
-                    entry.name,
-                    entry.rssi_dbm,
-                    entry.snr_quarter_db,
-                    entry.last_heard_minutes,
-                    entry.latitude,
-                    entry.longitude,
-                    entry.location_precision,
-                    blob_or_null(Some(entry.region_codes.concat())),
-                    entry.reported_at_ms,
-                ])?;
-                position += 1;
+        self.write(|transaction| {
+            let Some(node_id) = node_id(transaction, &owner_identity_id, &public_address)? else {
+                return Ok(());
+            };
+            if replacing {
+                transaction.execute(
+                    "DELETE FROM node_peer_repeater_entry WHERE node_id = ?",
+                    params![node_id],
+                )?;
             }
-        }
-        transaction.commit()?;
-        Ok(())
+            transaction.execute(
+                "INSERT INTO node_peer_repeaters (node_id, total, next_cursor, as_of_ms)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(node_id) DO UPDATE SET
+                    total = excluded.total,
+                    next_cursor = excluded.next_cursor,
+                    as_of_ms = excluded.as_of_ms",
+                params![node_id, total, blob_or_null(next_cursor), at_ms],
+            )?;
+            let mut position: i64 = transaction.query_row(
+                "SELECT COALESCE(MAX(position), -1) + 1 FROM node_peer_repeater_entry
+                WHERE node_id = ?",
+                params![node_id],
+                |row| row.get(0),
+            )?;
+            {
+                // A repeated hint keeps the position it already holds; only the
+                // figures move. `excluded.position` would shuffle it to the end.
+                let mut upsert = transaction.prepare(
+                    "INSERT INTO node_peer_repeater_entry (
+                        node_id, hint, position, name, rssi_dbm, snr_quarter_db,
+                        last_heard_min, latitude, longitude, location_precision,
+                        region_codes, reported_at_ms
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(node_id, hint) DO UPDATE SET
+                        name = excluded.name,
+                        rssi_dbm = excluded.rssi_dbm,
+                        snr_quarter_db = excluded.snr_quarter_db,
+                        last_heard_min = excluded.last_heard_min,
+                        latitude = excluded.latitude,
+                        longitude = excluded.longitude,
+                        location_precision = excluded.location_precision,
+                        region_codes = excluded.region_codes,
+                        reported_at_ms = excluded.reported_at_ms",
+                )?;
+                for entry in entries {
+                    upsert.execute(params![
+                        node_id,
+                        blob_or_null(Some(entry.hint)),
+                        position,
+                        entry.name,
+                        entry.rssi_dbm,
+                        entry.snr_quarter_db,
+                        entry.last_heard_minutes,
+                        entry.latitude,
+                        entry.longitude,
+                        entry.location_precision,
+                        blob_or_null(Some(entry.region_codes.concat())),
+                        entry.reported_at_ms,
+                    ])?;
+                    position += 1;
+                }
+            }
+            Ok(())
+        })
     }
 }
 
@@ -279,28 +277,6 @@ fn region_codes(packed: Option<Vec<u8>>) -> Vec<Vec<u8>> {
         .map(<[u8]>::to_vec)
         .collect()
 }
-
-/// A stored integer narrowed to its field's type, saturating at the type's
-/// bounds rather than wrapping.
-pub(super) fn clamp<T: TryFrom<i64> + Bounded>(value: i64) -> T {
-    T::try_from(value).unwrap_or(if value < 0 { T::MIN } else { T::MAX })
-}
-
-pub(super) trait Bounded {
-    const MIN: Self;
-    const MAX: Self;
-}
-
-macro_rules! bounded {
-    ($($type:ty),*) => {$(
-        impl Bounded for $type {
-            const MIN: Self = <$type>::MIN;
-            const MAX: Self = <$type>::MAX;
-        }
-    )*};
-}
-
-bounded!(u8, u16, i16);
 
 #[cfg(test)]
 mod tests;

@@ -1,7 +1,7 @@
 //! Radios that took this phone's identity as their host and have not been
 //! seen to let it go (`claimed_radio`).
 
-use rusqlite::{TransactionBehavior, params};
+use rusqlite::params;
 
 use super::{MobileAppStore, MobileStoreError};
 
@@ -59,30 +59,29 @@ impl MobileAppStore {
         owner_identity_id: String,
         now_ms: i64,
     ) -> Result<Vec<MobileStoredClaimedRadioRecord>, MobileStoreError> {
-        let mut connection = self.connection();
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        transaction.execute(
-            "DELETE FROM claimed_radio WHERE owner_identity_id = ? AND attached_at_ms <= ?",
-            params![owner_identity_id, now_ms.saturating_sub(LAPSE_MS)],
-        )?;
-        let radios = {
-            let mut statement = transaction.prepare(
-                "SELECT device_address, name, attached_at_ms FROM claimed_radio
-                WHERE owner_identity_id = ?
-                ORDER BY attached_at_ms DESC",
+        self.write(|transaction| {
+            transaction.execute(
+                "DELETE FROM claimed_radio WHERE owner_identity_id = ? AND attached_at_ms <= ?",
+                params![owner_identity_id, now_ms.saturating_sub(LAPSE_MS)],
             )?;
-            statement
-                .query_map(params![owner_identity_id], |row| {
-                    Ok(MobileStoredClaimedRadioRecord {
-                        device_address: row.get(0)?,
-                        name: row.get(1)?,
-                        attached_at_ms: row.get(2)?,
-                    })
-                })?
-                .collect::<rusqlite::Result<Vec<_>>>()?
-        };
-        transaction.commit()?;
-        Ok(radios)
+            let radios = {
+                let mut statement = transaction.prepare(
+                    "SELECT device_address, name, attached_at_ms FROM claimed_radio
+                    WHERE owner_identity_id = ?
+                    ORDER BY attached_at_ms DESC",
+                )?;
+                statement
+                    .query_map(params![owner_identity_id], |row| {
+                        Ok(MobileStoredClaimedRadioRecord {
+                            device_address: row.get(0)?,
+                            name: row.get(1)?,
+                            attached_at_ms: row.get(2)?,
+                        })
+                    })?
+                    .collect::<rusqlite::Result<Vec<_>>>()?
+            };
+            Ok(radios)
+        })
     }
 
     /// Forget the record of a radio: it let go of this identity, or is no

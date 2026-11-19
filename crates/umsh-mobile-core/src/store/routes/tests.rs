@@ -270,3 +270,28 @@ fn a_stored_path_reads_back_in_whole_hints_and_clamped_flood_hops() {
     assert_eq!(read.hints, [vec![1, 2], vec![3, 4]]);
     assert_eq!(read.flood_hops, u8::MAX);
 }
+
+#[test]
+fn a_hint_that_is_not_two_octets_is_refused() {
+    let (_directory, store) = open();
+    peer(&store, OWNER, PEER);
+    for hints in [
+        vec![vec![0xA1, 0x01], vec![0xB2]],
+        vec![vec![0xA1, 0x01, 0x02]],
+    ] {
+        assert_eq!(
+            store.save_manual_route(
+                OWNER.into(),
+                PEER.into(),
+                hints,
+                1,
+                NOW + HOUR,
+                None,
+                None,
+                None,
+            ),
+            Err(MobileStoreError::InvalidArgument)
+        );
+    }
+    assert_eq!(stored_rows(&store), 0);
+}

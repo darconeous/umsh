@@ -9,7 +9,7 @@
 
 use rusqlite::{Connection, OptionalExtension, params};
 
-use super::{MobileAppStore, MobileStoreError};
+use super::{MobileAppStore, MobileStoreError, clamp};
 
 /// How a channel's key was established, which decides what may be shared.
 /// Stored as lowercase TEXT.
@@ -71,7 +71,8 @@ pub struct MobileStoredChannelRecord {
     pub tint: Vec<u8>,
     /// The channel's one region code, as its octets.
     pub region_code: Option<Vec<u8>>,
-    pub max_flood_hops: Option<i64>,
+    /// How far the channel's messages flood, when it sets a limit.
+    pub max_flood_hops: Option<u8>,
     /// Whether the phone identity has joined. Drives MAC registration and
     /// the radio's host channel table.
     pub joined_phone: bool,
@@ -168,7 +169,7 @@ impl MobileAppStore {
         id: String,
         alias: Option<String>,
         region_code: Option<Vec<u8>>,
-        max_flood_hops: Option<i64>,
+        max_flood_hops: Option<u8>,
         notifications_enabled: bool,
     ) -> Result<(), MobileStoreError> {
         let id = channel_id(&id)?;
@@ -265,7 +266,7 @@ fn stored_channel(row: &rusqlite::Row<'_>) -> rusqlite::Result<Option<MobileStor
         channel_id_hex: row.get(6)?,
         tint: row.get(7)?,
         region_code: row.get(8)?,
-        max_flood_hops: row.get(9)?,
+        max_flood_hops: row.get::<_, Option<i64>>(9)?.map(clamp),
         joined_phone: row.get::<_, i64>(10)? != 0,
         joined_device: row.get::<_, i64>(11)? != 0,
         notifications_enabled: row.get::<_, i64>(12)? != 0,

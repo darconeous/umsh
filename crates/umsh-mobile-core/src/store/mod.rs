@@ -8,40 +8,74 @@
 //! Anything older was last opened by a build that predates the shared store
 //! and must be opened once by a build that still migrates in Swift; the
 //! Swift migrations are not ported. This store's own migrations start at
-//! v32.
+//! v32; there are none yet, so a database this store has opened is still
+//! one the Swift store opens.
 //!
 //! Instants cross the interface as integer Unix milliseconds. Most columns
 //! store them that way (`*_at_ms`, truncated by the caller). Two node
 //! columns, `last_heard_at` and `advertisement_received_at`, are REAL Unix
 //! seconds, as the Swift store wrote them: they are converted at this
 //! boundary and read back rounded to the millisecond.
+//!
+//! Every write of more than one statement goes through
+//! [`MobileAppStore::write`], and every read of more than one through
+//! [`MobileAppStore::read`], so each is one transaction.
+//!
+//! A stored value its field cannot hold is handled by what the field is,
+//! never by wrapping it into range:
+//!
+//! - A row whose identity cannot be read (a channel ID that is not a UUID,
+//!   a kind this build does not know) is left out of a list.
+//! - A count with bounds (a hop limit, a signal figure a router reported)
+//!   saturates at them.
+//! - An optional figure or reference (a message's wire coordinates, what
+//!   the radio measured, what a reply answers) reads as absent.
+//! - Anything else, a key column above all, fails the read.
 
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
-use rusqlite::{Connection, TransactionBehavior};
+use rusqlite::{Connection, Transaction, TransactionBehavior};
 
 mod channels;
+mod chat;
 mod claimed_radios;
 mod conversations;
 mod management;
 mod peers;
 mod repeaters;
 mod routes;
+mod staging;
+mod transcript;
 
 pub use channels::{MobileStoredChannelKind, MobileStoredChannelRecord};
+pub use chat::{
+    MobileStoredChatDeliveryFailureRecord, MobileStoredChatDeliveryState,
+    MobileStoredChatMessageRefRecord, MobileStoredChatNotificationTargetRecord,
+    MobileStoredChatReactionNotificationTargetRecord,
+};
 pub use claimed_radios::{MobileStoredClaimedRadioRecord, claimed_radio_lapse_ms};
 pub use conversations::{
     MobileApplicationRecords, MobileStoredChannelConversationRecord,
     MobileStoredConversationPreviewRecord, MobileStoredDirectConversationRecord,
 };
 pub use management::{MobileStoredCachedPropertyRecord, MobileStoredManagementCardRecord};
-pub use peers::{MobilePeerUpsertRecord, MobileStoredNodeRecord};
+pub use peers::{
+    MobilePeerUpsertRecord, MobileStoredNodeKind, MobileStoredNodeRecord, MobileStoredSystemRole,
+};
 pub use repeaters::{
     MobileStoredPeerRepeaterEntryRecord, MobileStoredPeerRepeaterListingRecord,
     MobileStoredPeerRepeaterReportRecord,
 };
 pub use routes::MobileStoredManualRouteRecord;
+pub use staging::{
+    MobileStagedChatMessageRecord, MobileStagedChatReactionRecord, MobileStagedChatRegarding,
+};
+pub use transcript::{
+    MobileStoredChatCursorRecord, MobileStoredChatMessagePageRecord, MobileStoredChatMessageRecord,
+    MobileStoredChatQuoteRecord, MobileStoredChatQuotedMessageRecord,
+    MobileStoredChatReactionRecord, MobileStoredChatReceptionRecord, MobileStoredChatRepeatsRecord,
+};
 
 /// The version the Swift store's migrations end at, and the one a new file
 /// starts at.
@@ -54,31 +88,27 @@ const BASELINE: &str = include_str!("schema_v31.sql");
 /// `version - 1` to `version`.
 struct Migration {
     version: i64,
+    /// May call the functions [`configure`] registers.
     sql: &'static str,
-    /// Work SQL cannot express, run after `sql` in the same transaction.
-    rewrite: Option<fn(&Connection) -> rusqlite::Result<()>>,
 }
 
-/// This store's migrations, in order, starting at v32.
-const MIGRATIONS: &[Migration] = &[
-    // The prefix-search key moves from Foundation's fold to the store's own,
-    // so both platforms write and match the same key.
-    Migration {
-        version: 32,
-        sql: "",
-        rewrite: Some(peers::refold_alias_search),
-    },
-];
+/// This store's migrations, in order, starting at v32. None yet: the first
+/// one ends the Swift store's ability to open the file, so it waits for a
+/// change the schema needs.
+const MIGRATIONS: &[Migration] = &[];
 
 /// How long a statement waits on another connection's lock before failing.
 const BUSY_TIMEOUT: Duration = Duration::from_millis(5_000);
 
-/// Why the store could not do what was asked. Carries no input and no SQL:
-/// errors reach logs and support bundles.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Error)]
+/// Why the store could not do what was asked.
+///
+/// Errors reach logs and support bundles, so none carries what a caller
+/// passed in or the text or bytes a row holds.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Error)]
 pub enum MobileStoreError {
-    /// The file could not be opened or created.
-    OpenFailed,
+    /// The file could not be opened or created. `code` is SQLite's extended
+    /// result code.
+    OpenFailed { code: i32 },
     /// The file holds a schema this store does not read: newer than it
     /// knows, older than the Swift store's last migration, or a database
     /// that is not the application store at all.
@@ -86,36 +116,56 @@ pub enum MobileStoreError {
     /// The record an update names does not exist.
     RecordNotFound,
     /// An argument is not in the form the store keeps: a channel ID that is
-    /// not a UUID.
+    /// not a UUID, a router hint that is not two octets.
     InvalidArgument,
-    /// SQLite refused an operation.
-    Failed,
+    /// SQLite refused an operation, or a row did not read as its columns
+    /// are declared.
+    ///
+    /// `code` is SQLite's extended result code, or 0 when the failure was
+    /// in reading a row. `detail` is SQLite's own account, which names the
+    /// table, column, or constraint: the code alone says only that
+    /// something was refused.
+    Failed { code: i32, detail: String },
 }
 
 impl MobileStoreError {
     /// Redacted diagnostic code suitable for logs and support bundles.
-    pub const fn diagnostic_code(self) -> &'static str {
+    pub const fn diagnostic_code(&self) -> &'static str {
         match self {
-            Self::OpenFailed => "STORE_OPEN_FAILED",
+            Self::OpenFailed { .. } => "STORE_OPEN_FAILED",
             Self::UnsupportedSchema { .. } => "STORE_UNSUPPORTED_SCHEMA",
             Self::RecordNotFound => "STORE_RECORD_NOT_FOUND",
             Self::InvalidArgument => "STORE_INVALID_ARGUMENT",
-            Self::Failed => "STORE_FAILED",
+            Self::Failed { .. } => "STORE_FAILED",
         }
     }
 }
 
 impl core::fmt::Display for MobileStoreError {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        formatter.write_str(self.diagnostic_code())
+        formatter.write_str(self.diagnostic_code())?;
+        match self {
+            Self::OpenFailed { code } => write!(formatter, " ({code})"),
+            Self::UnsupportedSchema { version } => write!(formatter, " (v{version})"),
+            Self::Failed { code, detail } => write!(formatter, " ({code}): {detail}"),
+            Self::RecordNotFound | Self::InvalidArgument => Ok(()),
+        }
     }
 }
 
 impl std::error::Error for MobileStoreError {}
 
 impl From<rusqlite::Error> for MobileStoreError {
-    fn from(_: rusqlite::Error) -> Self {
-        Self::Failed
+    fn from(error: rusqlite::Error) -> Self {
+        Self::Failed {
+            code: sqlite_code(&error),
+            detail: match error {
+                rusqlite::Error::SqliteFailure(failure, detail) => {
+                    detail.unwrap_or_else(|| failure.to_string())
+                }
+                other => other.to_string(),
+            },
+        }
     }
 }
 
@@ -135,7 +185,10 @@ impl MobileAppStore {
     /// it to the current schema.
     #[uniffi::constructor]
     pub fn open(path: String) -> Result<Arc<Self>, MobileStoreError> {
-        let mut connection = Connection::open(&path).map_err(|_| MobileStoreError::OpenFailed)?;
+        let mut connection =
+            Connection::open(&path).map_err(|error| MobileStoreError::OpenFailed {
+                code: sqlite_code(&error),
+            })?;
         configure(&connection)?;
         migrate(&mut connection, MIGRATIONS)?;
         Ok(Arc::new(Self {
@@ -158,21 +211,20 @@ impl MobileAppStore {
     /// `sqlite_sequence` is SQLite's own and is left: row IDs carry on from
     /// where they were.
     pub fn erase_all_content(&self) -> Result<(), MobileStoreError> {
-        let mut connection = self.connection();
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        // Which order the tables empty in is not something this has to
-        // know: with the checks deferred to the commit, the only state the
-        // foreign keys are tested against is the final one, where every
-        // table is empty and nothing can dangle. That holds for RESTRICT
-        // too, which SQLite otherwise checks at once: a `node` row emptied
-        // before the `direct_conversation` rows that hold it would refuse.
-        // The pragma ends with the transaction.
-        transaction.pragma_update(None, "defer_foreign_keys", true)?;
-        for table in table_names(&transaction)? {
-            transaction.execute(&format!("DELETE FROM \"{table}\""), [])?;
-        }
-        transaction.commit()?;
-        Ok(())
+        self.write(|transaction| {
+            // Which order the tables empty in is not something this has to
+            // know: with the checks deferred to the commit, the only state the
+            // foreign keys are tested against is the final one, where every
+            // table is empty and nothing can dangle. That holds for RESTRICT
+            // too, which SQLite otherwise checks at once: a `node` row emptied
+            // before the `direct_conversation` rows that hold it would refuse.
+            // The pragma ends with the transaction.
+            transaction.pragma_update(None, "defer_foreign_keys", true)?;
+            for table in table_names(transaction)? {
+                transaction.execute(&format!("DELETE FROM \"{table}\""), [])?;
+            }
+            Ok(())
+        })
     }
 }
 
@@ -184,6 +236,47 @@ impl MobileAppStore {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
+
+    /// Run `work` as one write transaction: committed when it returns `Ok`,
+    /// rolled back when it fails. The write lock is taken at the start, so
+    /// what `work` reads is what it then writes over.
+    fn write<T>(
+        &self,
+        work: impl FnOnce(&Transaction<'_>) -> Result<T, MobileStoreError>,
+    ) -> Result<T, MobileStoreError> {
+        self.transact(TransactionBehavior::Immediate, work)
+    }
+
+    /// Run `work` as one read transaction, so its statements all see the
+    /// database as of the same moment whatever another connection writes
+    /// meanwhile.
+    fn read<T>(
+        &self,
+        work: impl FnOnce(&Transaction<'_>) -> Result<T, MobileStoreError>,
+    ) -> Result<T, MobileStoreError> {
+        self.transact(TransactionBehavior::Deferred, work)
+    }
+
+    fn transact<T>(
+        &self,
+        behavior: TransactionBehavior,
+        work: impl FnOnce(&Transaction<'_>) -> Result<T, MobileStoreError>,
+    ) -> Result<T, MobileStoreError> {
+        let mut connection = self.connection();
+        let transaction = connection.transaction_with_behavior(behavior)?;
+        let value = work(&transaction)?;
+        transaction.commit()?;
+        Ok(value)
+    }
+}
+
+/// SQLite's extended result code for a failure, or 0 for one that did not
+/// come from SQLite.
+fn sqlite_code(error: &rusqlite::Error) -> i32 {
+    match error {
+        rusqlite::Error::SqliteFailure(failure, _) => failure.extended_code,
+        _ => 0,
+    }
 }
 
 /// The connection settings the Swift store uses, in its order.
@@ -193,7 +286,10 @@ fn configure(connection: &Connection) -> Result<(), MobileStoreError> {
         connection.pragma_update_and_check(None, "journal_mode", "wal", |row| row.get(0))?;
     // An in-memory database answers "memory"; a file must take WAL.
     if !mode.eq_ignore_ascii_case("wal") && !mode.eq_ignore_ascii_case("memory") {
-        return Err(MobileStoreError::Failed);
+        return Err(MobileStoreError::Failed {
+            code: 0,
+            detail: format!("journal mode is {mode}, not wal"),
+        });
     }
     connection.pragma_update(None, "synchronous", "FULL")?;
     connection.busy_timeout(BUSY_TIMEOUT)?;
@@ -240,9 +336,6 @@ fn migrate(connection: &mut Connection, ladder: &[Migration]) -> Result<i64, Mob
     for step in ladder.iter().filter(|step| step.version > start) {
         debug_assert_eq!(step.version, version + 1, "migrations must be consecutive");
         transaction.execute_batch(step.sql)?;
-        if let Some(rewrite) = step.rewrite {
-            rewrite(&transaction)?;
-        }
         version = step.version;
     }
     // A database already current is left unwritten: the transaction rolls
@@ -254,5 +347,35 @@ fn migrate(connection: &mut Connection, ladder: &[Migration]) -> Result<i64, Mob
     Ok(version)
 }
 
+/// A stored count narrowed to its field's type, saturating at the type's
+/// bounds.
+fn clamp<T: TryFrom<i64> + Bounded>(value: i64) -> T {
+    T::try_from(value).unwrap_or(if value < 0 { T::MIN } else { T::MAX })
+}
+
+trait Bounded {
+    const MIN: Self;
+    const MAX: Self;
+}
+
+macro_rules! bounded {
+    ($($type:ty),*) => {$(
+        impl Bounded for $type {
+            const MIN: Self = <$type>::MIN;
+            const MAX: Self = <$type>::MAX;
+        }
+    )*};
+}
+
+bounded!(u8, u16, i16);
+
+/// A stored optional figure narrowed to its field's type: absent when the
+/// type cannot hold it.
+fn narrowed<T: TryFrom<i64>>(value: Option<i64>) -> Option<T> {
+    value.and_then(|value| T::try_from(value).ok())
+}
+
+#[cfg(test)]
+mod chat_test_support;
 #[cfg(test)]
 mod tests;

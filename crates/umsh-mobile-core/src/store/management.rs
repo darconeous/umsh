@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 
 use rusqlite::types::Value;
-use rusqlite::{OptionalExtension, TransactionBehavior, params, params_from_iter};
+use rusqlite::{OptionalExtension, params, params_from_iter};
 
 use super::peers::node_id;
 use super::{MobileAppStore, MobileStoreError};
@@ -91,51 +91,50 @@ impl MobileAppStore {
         public_address: String,
         card: MobileStoredManagementCardRecord,
     ) -> Result<(), MobileStoreError> {
-        let mut connection = self.connection();
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let Some(node_id) = node_id(&transaction, &owner_identity_id, &public_address)? else {
-            return Ok(());
-        };
-        let known_version = transaction
-            .query_row(
-                "SELECT device_version FROM node_mgmt_card WHERE node_id = ?",
-                params![node_id],
-                |row| row.get::<_, Option<String>>(0),
-            )
-            .optional()?;
-        // Absent and absent are the same firmware; absent and a version are
-        // not.
-        if known_version.is_some_and(|known| known != card.device_version) {
+        self.write(|transaction| {
+            let Some(node_id) = node_id(transaction, &owner_identity_id, &public_address)? else {
+                return Ok(());
+            };
+            let known_version = transaction
+                .query_row(
+                    "SELECT device_version FROM node_mgmt_card WHERE node_id = ?",
+                    params![node_id],
+                    |row| row.get::<_, Option<String>>(0),
+                )
+                .optional()?;
+            // Absent and absent are the same firmware; absent and a version are
+            // not.
+            if known_version.is_some_and(|known| known != card.device_version) {
+                transaction.execute(
+                    "DELETE FROM node_prop_cache WHERE node_id = ?",
+                    params![node_id],
+                )?;
+            }
             transaction.execute(
-                "DELETE FROM node_prop_cache WHERE node_id = ?",
-                params![node_id],
+                "INSERT INTO node_mgmt_card (
+                    node_id, capabilities, device_version, device_model, device_name,
+                    fetched_at_ms
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(node_id) DO UPDATE SET
+                    capabilities = excluded.capabilities,
+                    device_version = excluded.device_version,
+                    device_model = excluded.device_model,
+                    device_name = excluded.device_name,
+                    fetched_at_ms = excluded.fetched_at_ms",
+                params![
+                    node_id,
+                    // Empty capabilities are an empty blob, not NULL: the
+                    // column refuses NULL.
+                    card.capabilities,
+                    card.device_version,
+                    card.device_model,
+                    card.device_name,
+                    card.fetched_at_ms,
+                ],
             )?;
-        }
-        transaction.execute(
-            "INSERT INTO node_mgmt_card (
-                node_id, capabilities, device_version, device_model, device_name,
-                fetched_at_ms
-            )
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(node_id) DO UPDATE SET
-                capabilities = excluded.capabilities,
-                device_version = excluded.device_version,
-                device_model = excluded.device_model,
-                device_name = excluded.device_name,
-                fetched_at_ms = excluded.fetched_at_ms",
-            params![
-                node_id,
-                // Empty capabilities are an empty blob, not NULL: the
-                // column refuses NULL.
-                card.capabilities,
-                card.device_version,
-                card.device_model,
-                card.device_name,
-                card.fetched_at_ms,
-            ],
-        )?;
-        transaction.commit()?;
-        Ok(())
+            Ok(())
+        })
     }
 
     /// Forget everything cached about a device, so the next open asks it
@@ -146,19 +145,18 @@ impl MobileAppStore {
         owner_identity_id: String,
         public_address: String,
     ) -> Result<(), MobileStoreError> {
-        let mut connection = self.connection();
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let Some(node_id) = node_id(&transaction, &owner_identity_id, &public_address)? else {
-            return Ok(());
-        };
-        for table in ["node_prop_cache", "node_mgmt_card"] {
-            transaction.execute(
-                &format!("DELETE FROM {table} WHERE node_id = ?"),
-                params![node_id],
-            )?;
-        }
-        transaction.commit()?;
-        Ok(())
+        self.write(|transaction| {
+            let Some(node_id) = node_id(transaction, &owner_identity_id, &public_address)? else {
+                return Ok(());
+            };
+            for table in ["node_prop_cache", "node_mgmt_card"] {
+                transaction.execute(
+                    &format!("DELETE FROM {table} WHERE node_id = ?"),
+                    params![node_id],
+                )?;
+            }
+            Ok(())
+        })
     }
 
     /// What a device was last seen configured as, for the properties asked
@@ -213,25 +211,24 @@ impl MobileAppStore {
         if values.is_empty() {
             return Ok(());
         }
-        let mut connection = self.connection();
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let Some(node_id) = node_id(&transaction, &owner_identity_id, &public_address)? else {
-            return Ok(());
-        };
-        {
-            let mut upsert = transaction.prepare(
-                "INSERT INTO node_prop_cache (node_id, property_id, value, fetched_at_ms)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(node_id, property_id) DO UPDATE SET
-                    value = excluded.value,
-                    fetched_at_ms = excluded.fetched_at_ms",
-            )?;
-            for (property_id, value) in &values {
-                upsert.execute(params![node_id, property_id, value, at_ms])?;
+        self.write(|transaction| {
+            let Some(node_id) = node_id(transaction, &owner_identity_id, &public_address)? else {
+                return Ok(());
+            };
+            {
+                let mut upsert = transaction.prepare(
+                    "INSERT INTO node_prop_cache (node_id, property_id, value, fetched_at_ms)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(node_id, property_id) DO UPDATE SET
+                        value = excluded.value,
+                        fetched_at_ms = excluded.fetched_at_ms",
+                )?;
+                for (property_id, value) in &values {
+                    upsert.execute(params![node_id, property_id, value, at_ms])?;
+                }
             }
-        }
-        transaction.commit()?;
-        Ok(())
+            Ok(())
+        })
     }
 }
 

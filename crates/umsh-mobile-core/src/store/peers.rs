@@ -1,10 +1,77 @@
 //! The local identity rows and the peers (`node` rows) each identity knows.
 
 use rusqlite::functions::FunctionFlags;
-use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use unicode_normalization::{UnicodeNormalization, char::canonical_combining_class};
 
 use super::{MobileAppStore, MobileStoreError};
+
+/// What the app itself made of a node, as against what the node says it
+/// is. Stored as lowercase TEXT.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum MobileStoredSystemRole {
+    /// The radio this phone is attached to. An identity has one.
+    CompanionRadio,
+}
+
+impl MobileStoredSystemRole {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::CompanionRadio => COMPANION_RADIO,
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        (value == COMPANION_RADIO).then_some(Self::CompanionRadio)
+    }
+}
+
+/// The `system_role` text of the companion radio's row, as SQL names it.
+pub(super) const COMPANION_RADIO: &str = "companion_radio";
+
+/// The role a node last advertised, as the app names it. Stored as the
+/// TEXT the Swift store wrote: the role's name in lower camel case.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum MobileStoredNodeKind {
+    Repeater,
+    Chat,
+    Tracker,
+    Sensor,
+    Bridge,
+    ChatRoom,
+    TemporarySession,
+    /// The node claimed a role byte the app has no name for.
+    Unknown,
+}
+
+impl MobileStoredNodeKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Repeater => "repeater",
+            Self::Chat => "chat",
+            Self::Tracker => "tracker",
+            Self::Sensor => "sensor",
+            Self::Bridge => "bridge",
+            Self::ChatRoom => "chatRoom",
+            Self::TemporarySession => "temporarySession",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        Some(match value {
+            "repeater" => Self::Repeater,
+            "chat" => Self::Chat,
+            "tracker" => Self::Tracker,
+            "sensor" => Self::Sensor,
+            "bridge" => Self::Bridge,
+            "chatRoom" => Self::ChatRoom,
+            "temporarySession" => Self::TemporarySession,
+            "unknown" => Self::Unknown,
+            _ => return None,
+        })
+    }
+}
 
 /// One peer as the store holds it.
 ///
@@ -16,8 +83,12 @@ pub struct MobileStoredNodeRecord {
     pub public_address: String,
     pub alias: Option<String>,
     pub advertised_name: Option<String>,
-    pub system_role: Option<String>,
-    pub node_kind: Option<String>,
+    /// `None` for an ordinary peer, and for a role this build does not
+    /// know.
+    pub system_role: Option<MobileStoredSystemRole>,
+    /// `None` until a role is heard, and for a kind this build does not
+    /// know.
+    pub node_kind: Option<MobileStoredNodeKind>,
     /// Raw advertised-identity payload bytes (node-identity.md wire form).
     pub advertisement: Option<Vec<u8>>,
     /// Whether the MAC authenticated the frame that delivered
@@ -59,9 +130,9 @@ pub struct MobilePeerUpsertRecord {
     #[uniffi(default)]
     pub is_saved: bool,
     #[uniffi(default)]
-    pub node_kind: Option<String>,
+    pub node_kind: Option<MobileStoredNodeKind>,
     #[uniffi(default)]
-    pub system_role: Option<String>,
+    pub system_role: Option<MobileStoredSystemRole>,
     #[uniffi(default)]
     pub radio_identifier: Option<String>,
     #[uniffi(default)]
@@ -132,7 +203,7 @@ impl MobileAppStore {
     /// leaves the stored one in place, and `is_saved` only ever rises here.
     /// The advertisement's provenance (`advertisement_authenticated`,
     /// `advertisement_received_at_ms`) is written only with an
-    /// advertisement. The search key follows the row as it ends up: its
+    /// advertisement. The sort key follows the row as it ends up: its
     /// alias or, without one, its advertised name.
     pub fn upsert_peer(
         &self,
@@ -186,29 +257,28 @@ impl MobileAppStore {
         public_address: String,
         alias: Option<String>,
     ) -> Result<(), MobileStoreError> {
-        let mut connection = self.connection();
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        // The prefix-search key falls back to the advertised name when
-        // the alias is cleared, matching upsert_peer's initial insert.
-        let Some(advertised_name) = transaction
-            .query_row(
-                "SELECT advertised_name FROM node
+        self.write(|transaction| {
+            // The sort key falls back to the advertised name when the
+            // alias is cleared, matching upsert_peer's initial insert.
+            let Some(advertised_name) = transaction
+                .query_row(
+                    "SELECT advertised_name FROM node
+                    WHERE owner_identity_id = ? AND public_address = ?",
+                    params![owner_identity_id, public_address],
+                    |row| row.get::<_, Option<String>>(0),
+                )
+                .optional()?
+            else {
+                return Ok(());
+            };
+            let search = search_key(alias.as_deref(), advertised_name.as_deref());
+            transaction.execute(
+                "UPDATE node SET alias = ?, alias_search = ?
                 WHERE owner_identity_id = ? AND public_address = ?",
-                params![owner_identity_id, public_address],
-                |row| row.get::<_, Option<String>>(0),
-            )
-            .optional()?
-        else {
-            return Ok(());
-        };
-        let search = search_key(alias.as_deref(), advertised_name.as_deref());
-        transaction.execute(
-            "UPDATE node SET alias = ?, alias_search = ?
-            WHERE owner_identity_id = ? AND public_address = ?",
-            params![alias, search, owner_identity_id, public_address],
-        )?;
-        transaction.commit()?;
-        Ok(())
+                params![alias, search, owner_identity_id, public_address],
+            )?;
+            Ok(())
+        })
     }
 
     pub fn set_peer_favorite(
@@ -253,32 +323,31 @@ impl MobileAppStore {
         owner_identity_id: String,
         public_address: String,
     ) -> Result<(), MobileStoreError> {
-        let mut connection = self.connection();
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let Some(advertised_name) = transaction
-            .query_row(
-                "SELECT advertised_name FROM node
-                WHERE owner_identity_id = ? AND public_address = ?
-                    AND (system_role IS NULL OR system_role <> 'companion_radio')",
-                params![owner_identity_id, public_address],
-                |row| row.get::<_, Option<String>>(0),
-            )
-            .optional()?
-        else {
-            return Ok(());
-        };
-        transaction.execute(
-            "UPDATE node SET is_saved = 0, is_favorite = 0,
-                alias = NULL, alias_search = ?
-            WHERE owner_identity_id = ? AND public_address = ?",
-            params![
-                search_key(None, advertised_name.as_deref()),
-                owner_identity_id,
-                public_address
-            ],
-        )?;
-        transaction.commit()?;
-        Ok(())
+        self.write(|transaction| {
+            let Some(advertised_name) = transaction
+                .query_row(
+                    "SELECT advertised_name FROM node
+                    WHERE owner_identity_id = ? AND public_address = ?
+                        AND (system_role IS NULL OR system_role <> ?)",
+                    params![owner_identity_id, public_address, COMPANION_RADIO],
+                    |row| row.get::<_, Option<String>>(0),
+                )
+                .optional()?
+            else {
+                return Ok(());
+            };
+            transaction.execute(
+                "UPDATE node SET is_saved = 0, is_favorite = 0,
+                    alias = NULL, alias_search = ?
+                WHERE owner_identity_id = ? AND public_address = ?",
+                params![
+                    search_key(None, advertised_name.as_deref()),
+                    owner_identity_id,
+                    public_address
+                ],
+            )?;
+            Ok(())
+        })
     }
 
     /// Delete a peer row outright. Refused—returning `false`—when a
@@ -294,11 +363,11 @@ impl MobileAppStore {
         let changes = self.connection().execute(
             "DELETE FROM node
             WHERE owner_identity_id = ?1 AND public_address = ?2
-                AND (system_role IS NULL OR system_role <> 'companion_radio')
+                AND (system_role IS NULL OR system_role <> ?3)
                 AND id NOT IN (
                     SELECT node_id FROM direct_conversation WHERE owner_identity_id = ?1
                 )",
-            params![owner_identity_id, public_address],
+            params![owner_identity_id, public_address, COMPANION_RADIO],
         )?;
         Ok(changes > 0)
     }
@@ -356,18 +425,17 @@ impl MobileAppStore {
         owner_identity_id: String,
         addresses: Vec<String>,
     ) -> Result<(), MobileStoreError> {
-        let mut connection = self.connection();
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        transaction.execute(
-            "UPDATE node SET on_dev_identity = 0
-            WHERE owner_identity_id = ? AND on_dev_identity = 1",
-            params![owner_identity_id],
-        )?;
-        for address in &addresses {
-            mark_on_device_identity(&transaction, &owner_identity_id, address)?;
-        }
-        transaction.commit()?;
-        Ok(())
+        self.write(|transaction| {
+            transaction.execute(
+                "UPDATE node SET on_dev_identity = 0
+                WHERE owner_identity_id = ? AND on_dev_identity = 1",
+                params![owner_identity_id],
+            )?;
+            for address in &addresses {
+                mark_on_device_identity(transaction, &owner_identity_id, address)?;
+            }
+            Ok(())
+        })
     }
 
     /// Cache one device-identity membership change after a confirmed radio
@@ -423,18 +491,19 @@ impl MobileAppStore {
         public_address: String,
         at_ms: i64,
     ) -> Result<bool, MobileStoreError> {
-        let connection = self.connection();
-        let fired_watch = connection.execute(
-            "UPDATE node SET notify_when_heard = 0
-            WHERE owner_identity_id = ? AND public_address = ? AND notify_when_heard = 1",
-            params![owner_identity_id, public_address],
-        )? > 0;
-        connection.execute(
-            "UPDATE node SET last_heard_at = ?
-            WHERE owner_identity_id = ? AND public_address = ?",
-            params![seconds(at_ms), owner_identity_id, public_address],
-        )?;
-        Ok(fired_watch)
+        self.write(|transaction| {
+            let fired_watch = transaction.execute(
+                "UPDATE node SET notify_when_heard = 0
+                WHERE owner_identity_id = ? AND public_address = ? AND notify_when_heard = 1",
+                params![owner_identity_id, public_address],
+            )? > 0;
+            transaction.execute(
+                "UPDATE node SET last_heard_at = ?
+                WHERE owner_identity_id = ? AND public_address = ?",
+                params![seconds(at_ms), owner_identity_id, public_address],
+            )?;
+            Ok(fired_watch)
+        })
     }
 
     /// Record the attached companion radio as the identity's one
@@ -447,32 +516,31 @@ impl MobileAppStore {
         advertised_name: Option<String>,
         radio_identifier: String,
     ) -> Result<(), MobileStoreError> {
-        let mut connection = self.connection();
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        transaction.execute(
-            "UPDATE node SET system_role = NULL, radio_identifier = NULL
-            WHERE owner_identity_id = ? AND system_role = 'companion_radio'
-                AND public_address <> ?",
-            params![owner_identity_id, public_address],
-        )?;
-        upsert_peer(
-            &transaction,
-            &owner_identity_id,
-            &public_address,
-            &MobilePeerUpsertRecord {
-                alias: None,
-                advertised_name,
-                is_saved: true,
-                system_role: Some("companion_radio".into()),
-                radio_identifier: Some(radio_identifier),
-                ..MobilePeerUpsertRecord::default()
-            },
-        )?;
-        transaction.commit()?;
-        Ok(())
+        self.write(|transaction| {
+            transaction.execute(
+                "UPDATE node SET system_role = NULL, radio_identifier = NULL
+                WHERE owner_identity_id = ? AND system_role = ?
+                    AND public_address <> ?",
+                params![owner_identity_id, COMPANION_RADIO, public_address],
+            )?;
+            upsert_peer(
+                transaction,
+                &owner_identity_id,
+                &public_address,
+                &MobilePeerUpsertRecord {
+                    alias: None,
+                    advertised_name,
+                    is_saved: true,
+                    system_role: Some(MobileStoredSystemRole::CompanionRadio),
+                    radio_identifier: Some(radio_identifier),
+                    ..MobilePeerUpsertRecord::default()
+                },
+            )?;
+            Ok(())
+        })
     }
 
-    /// Every peer of the identity: system rows first, then by the search
+    /// Every peer of the identity: system rows first, then by the sort
     /// key. Name order is the platform's to impose.
     pub fn list_nodes(
         &self,
@@ -557,8 +625,14 @@ pub(super) fn stored_node(
         public_address: row.get(offset + 2)?,
         alias: row.get(offset + 3)?,
         advertised_name: row.get(offset + 4)?,
-        system_role: row.get(offset + 5)?,
-        node_kind: row.get(offset + 6)?,
+        system_role: row
+            .get::<_, Option<String>>(offset + 5)?
+            .as_deref()
+            .and_then(MobileStoredSystemRole::parse),
+        node_kind: row
+            .get::<_, Option<String>>(offset + 6)?
+            .as_deref()
+            .and_then(MobileStoredNodeKind::parse),
         advertisement: row.get(offset + 7)?,
         advertisement_authenticated: row.get::<_, i64>(offset + 8)? != 0,
         last_heard_at_ms: row.get::<_, Option<f64>>(offset + 9)?.map(milliseconds),
@@ -615,9 +689,9 @@ fn upsert_peer(
             peer.alias,
             peer.advertised_name,
             peer.is_saved,
-            peer.system_role,
+            peer.system_role.map(MobileStoredSystemRole::as_str),
             peer.radio_identifier,
-            peer.node_kind,
+            peer.node_kind.map(MobileStoredNodeKind::as_str),
             peer.advertisement,
             peer.advertisement_authenticated,
             peer.advertisement_received_at_ms.map(seconds),
@@ -642,24 +716,26 @@ fn mark_on_device_identity(
     Ok(())
 }
 
-/// The search and sort key a node row keeps in `alias_search`: its alias
-/// or, without one, its advertised name, folded. Every write that changes
-/// either column derives the key here, in Rust or through
+/// The key a node row keeps in `alias_search`, which [`list_nodes`] orders
+/// by: its alias or, without one, its advertised name, folded. Every write
+/// that changes either column derives the key here, in Rust or through
 /// `umsh_search_key` in SQL.
+///
+/// Nothing searches by the column, whatever its name says. It is a base
+/// order only: the platforms sort names by the reader's locale themselves.
 pub(super) fn search_key(alias: Option<&str>, advertised_name: Option<&str>) -> String {
     fold_search(alias.or(advertised_name).unwrap_or(""))
 }
 
-/// The form `alias_search` holds, and the form a search term takes before
-/// it is matched against one: canonical decomposition with every mark that
-/// attaches to a base letter (a nonzero combining class: accents, cedillas,
-/// tone marks) removed, lowercased with a single sigma, then recomposed.
-/// Both platforms get the key from here, so they cannot disagree about it.
+/// The form `alias_search` holds: canonical decomposition with every mark
+/// of a nonzero combining class (accents, cedillas, tone marks) removed,
+/// lowercased with a single sigma, then recomposed. Close to the fold the
+/// Swift store wrote with Foundation, so rows either store wrote sort
+/// together.
 ///
-/// Spacing marks, such as the vowel signs of Indic scripts, have combining
-/// class zero and stay: they change the word, not its accent. Recomposing
-/// keeps text without marks in its usual form (a Hangul syllable stays one
-/// character rather than its jamo).
+/// Marks of combining class zero, such as most vowel signs of Indic
+/// scripts, stay. Recomposing keeps text without marks in its usual form
+/// (a Hangul syllable stays one character rather than its jamo).
 pub(super) fn fold_search(value: &str) -> String {
     let unmarked: String = value
         .nfd()
@@ -687,29 +763,6 @@ pub(super) fn register_functions(connection: &Connection) -> rusqlite::Result<()
             Ok(search_key(alias.as_deref(), advertised_name.as_deref()))
         },
     )
-}
-
-/// Migration 32: rewrite every row's `alias_search` with [`search_key`].
-pub(super) fn refold_alias_search(connection: &Connection) -> rusqlite::Result<()> {
-    // Read everything before writing: the update must not race the scan.
-    let rows = connection
-        .prepare("SELECT id, alias, advertised_name FROM node")?
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, Option<String>>(1)?,
-                row.get::<_, Option<String>>(2)?,
-            ))
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-    let mut update = connection.prepare("UPDATE node SET alias_search = ? WHERE id = ?")?;
-    for (id, alias, advertised_name) in rows {
-        update.execute(params![
-            search_key(alias.as_deref(), advertised_name.as_deref()),
-            id
-        ])?;
-    }
-    Ok(())
 }
 
 /// A REAL Unix-seconds column's value for an instant in milliseconds.

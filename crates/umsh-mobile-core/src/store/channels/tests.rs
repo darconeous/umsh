@@ -182,20 +182,20 @@ fn an_identity_holds_one_channel_per_id_and_per_key() {
     let (_directory, store) = open();
     insert(&store, channel(ID), "digest", 10);
     // The same ID in another case is the same channel.
-    assert_eq!(
+    assert!(matches!(
         store.insert_channel(channel(&ID.to_ascii_lowercase()), "other".into(), 11),
-        Err(MobileStoreError::Failed)
-    );
-    assert_eq!(
+        Err(MobileStoreError::Failed { .. })
+    ));
+    assert!(matches!(
         store.insert_channel(
             channel("00000000-0000-0000-0000-000000000001"),
             "digest".into(),
             11
         ),
-        Err(MobileStoreError::Failed)
-    );
+        Err(MobileStoreError::Failed { .. })
+    ));
     // A channel needs its identity.
-    assert_eq!(
+    assert!(matches!(
         store.insert_channel(
             MobileStoredChannelRecord {
                 owner_identity_id: "nobody".into(),
@@ -204,8 +204,8 @@ fn an_identity_holds_one_channel_per_id_and_per_key() {
             "nobody".into(),
             11
         ),
-        Err(MobileStoreError::Failed)
-    );
+        Err(MobileStoreError::Failed { .. })
+    ));
     assert_eq!(store.channels(OWNER.into()).unwrap().len(), 1);
 }
 

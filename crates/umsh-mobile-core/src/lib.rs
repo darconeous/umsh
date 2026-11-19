@@ -48,13 +48,21 @@ pub use regions::{
     MobileRegionProposalRecord, MobileRegionRecord,
 };
 pub use store::{
-    MobileAppStore, MobileApplicationRecords, MobilePeerUpsertRecord, MobileStoreError,
-    MobileStoredCachedPropertyRecord, MobileStoredChannelConversationRecord,
-    MobileStoredChannelKind, MobileStoredChannelRecord, MobileStoredClaimedRadioRecord,
+    MobileAppStore, MobileApplicationRecords, MobilePeerUpsertRecord,
+    MobileStagedChatMessageRecord, MobileStagedChatReactionRecord, MobileStagedChatRegarding,
+    MobileStoreError, MobileStoredCachedPropertyRecord, MobileStoredChannelConversationRecord,
+    MobileStoredChannelKind, MobileStoredChannelRecord, MobileStoredChatCursorRecord,
+    MobileStoredChatDeliveryFailureRecord, MobileStoredChatDeliveryState,
+    MobileStoredChatMessagePageRecord, MobileStoredChatMessageRecord,
+    MobileStoredChatMessageRefRecord, MobileStoredChatNotificationTargetRecord,
+    MobileStoredChatQuoteRecord, MobileStoredChatQuotedMessageRecord,
+    MobileStoredChatReactionNotificationTargetRecord, MobileStoredChatReactionRecord,
+    MobileStoredChatReceptionRecord, MobileStoredChatRepeatsRecord, MobileStoredClaimedRadioRecord,
     MobileStoredConversationPreviewRecord, MobileStoredDirectConversationRecord,
-    MobileStoredManagementCardRecord, MobileStoredManualRouteRecord, MobileStoredNodeRecord,
-    MobileStoredPeerRepeaterEntryRecord, MobileStoredPeerRepeaterListingRecord,
-    MobileStoredPeerRepeaterReportRecord, claimed_radio_lapse_ms,
+    MobileStoredManagementCardRecord, MobileStoredManualRouteRecord, MobileStoredNodeKind,
+    MobileStoredNodeRecord, MobileStoredPeerRepeaterEntryRecord,
+    MobileStoredPeerRepeaterListingRecord, MobileStoredPeerRepeaterReportRecord,
+    MobileStoredSystemRole, claimed_radio_lapse_ms,
 };
 pub use time_zone::{fixed_offset_rule, rule_abbreviation, rule_offset_min, zone_rule};
 pub use ulcp::{

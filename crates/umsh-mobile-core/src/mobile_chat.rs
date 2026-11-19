@@ -29,7 +29,7 @@ use umsh_text::validate::DirectChannelProfile;
 pub(crate) type MobileChatFacade = ChatFacade<DirectChannelProfile>;
 
 /// Prefix marking a channel group conversation address.
-const CHANNEL_ADDRESS_PREFIX: &str = "ch:";
+pub(crate) const CHANNEL_ADDRESS_PREFIX: &str = "ch:";
 /// Prefix marking a blind-unicast conversation over a channel key.
 const CHANNEL_DIRECT_ADDRESS_PREFIX: &str = "chd:";
 

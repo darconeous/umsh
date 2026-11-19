@@ -777,7 +777,166 @@ public protocol MobileAppStoreProtocol: AnyObject, Sendable {
      * and key-derived columns alone. A channel that does not exist is not
      * an error.
      */
-    func updateChannelDetails(id: String, alias: String?, regionCode: Data?, maxFloodHops: Int64?, notificationsEnabled: Bool) throws
+    func updateChannelDetails(id: String, alias: String?, regionCode: Data?, maxFloodHops: UInt8?, notificationsEnabled: Bool) throws
+
+    /**
+     * Apply delivery evidence, in one transaction, and report which
+     * messages it just gave up on.
+     *
+     * Only a crossing counts. `delivery_state` is recomputed from every
+     * fragment on each record, so a message already resolved to a failure
+     * recomputes to one again on the next fragment, and a redelivered
+     * batch replays the same records; announcing the state rather than the
+     * transition would announce one failure many times. `now_ms` stamps
+     * the moment a message's first frame is heard of going out.
+     */
+    func applyChatDeliveries(ownerIdentityId: String, deliveries: [MobileChatDeliveryRecord], nowMs: Int64) throws  -> [MobileStoredChatDeliveryFailureRecord]
+
+    /**
+     * Apply what the engine reported, in one transaction, and return the
+     * mutations that materialized a new message row: an edit whose
+     * original this phone never stored arrives as content rather than a
+     * revision (see `materialize_orphan_edit`). The engine could not flag
+     * those `notify`, since only the store knows the original was missing;
+     * the caller treats them as the arrivals they are.
+     *
+     * A mutation at or below the revision already applied for its message
+     * changes nothing, so a redelivered batch is harmless.
+     *
+     * `silent_tests_in` names `EMERGENCY`'s conversation while its test
+     * messages are to arrive silently: one arriving there is kept and
+     * shown, but never counts as unread. New rows are stamped `now_ms`,
+     * less any time the frame spent queued on the radio.
+     */
+    func applyChatMutations(ownerIdentityId: String, mutations: [MobileChatMutationRecord], nowMs: Int64, silentTestsIn: String?) throws  -> [MobileChatMutationRecord]
+
+    /**
+     * Record the repeaters overheard carrying our frames, in one
+     * transaction.
+     *
+     * Each record is one transmission's whole tally, and a fragment sent
+     * again starts a fresh one, so a fragment keeps the union of the
+     * repeaters every transmission of it named (two-byte hints only), and
+     * the most any of them heard anonymously. A message's delivery is
+     * stamped `now_ms` as having moved whenever one of its fragments gains
+     * a repeater; a tally that adds nothing writes nothing.
+     */
+    func applyChatRepeats(ownerIdentityId: String, repeats: [MobileChatRepeatRecord], nowMs: Int64) throws
+
+    /**
+     * Point each resent message's delivery at the transmission its frames
+     * went out under again, ahead of any word of them, and record whether
+     * they go under forward secrecy; one transaction. What was
+     * acknowledged stays so; what was last said of the rest no longer
+     * holds. A resend naming no outbound row is skipped.
+     */
+    func applyChatResends(ownerIdentityId: String, resends: [MobileChatResendRecord], nowMs: Int64) throws
+
+    /**
+     * Fill in the sender of group messages stored before that member's
+     * hint resolved to a full address. Rows that already name a sender are
+     * left alone: the first attribution seen for a hint is the one kept.
+     */
+    func applySenderResolution(ownerIdentityId: String, resolution: MobileChatSenderResolutionRecord) throws
+
+    /**
+     * The archived payload a repair request asks for, if it is still
+     * held.
+     */
+    func chatArchive(ownerIdentityId: String, lookup: MobileChatArchiveLookupRecord) throws  -> Data?
+
+    /**
+     * Every outbound stream's checkpoint, least recently written first:
+     * what a new mesh session resumes each stream from.
+     */
+    func chatCheckpoints(ownerIdentityId: String) throws  -> [MobileChatCheckpointRecord]
+
+    /**
+     * The stored conversation, sender, and body of an inbound message a
+     * person reads, for raising a notification. `None` for outbound rows,
+     * tombstones, gap placeholders, unavailable markers, reactions, and
+     * empty bodies. Everything is read from storage, so a notify carried
+     * on an `UpdateBody`, which omits all of it, still works.
+     */
+    func chatNotificationTarget(ownerIdentityId: String, sessionId: UInt64, handle: UInt32) throws  -> MobileStoredChatNotificationTargetRecord?
+
+    /**
+     * The reaction behind a notifying mutation, when it is one and it
+     * lands on a message this phone sent.
+     *
+     * Reactions to someone else's message are somebody else's business: in
+     * a channel they would ping every member for every tapback. A
+     * withdrawal carries an empty body and is not an event to announce.
+     */
+    func chatReactionNotificationTarget(ownerIdentityId: String, sessionId: UInt64, handle: UInt32) throws  -> MobileStoredChatReactionNotificationTargetRecord?
+
+    /**
+     * What a resend of one of our messages puts back on the air: its
+     * archived fragments, in order, less those already acknowledged under
+     * its current delivery pointer. Empty when nothing is archived under
+     * the wire ID the row carries (an edit's content lives under the
+     * edit's own ID, which the row does not keep), so the caller sends it
+     * as a new message instead.
+     */
+    func chatResendFrames(ownerIdentityId: String, conversationAddress: String, message: MobileStoredChatMessageRefRecord, wireId: UInt8) throws  -> [MobileChatArchiveRecord]
+
+    /**
+     * Make a compose durable: its stream checkpoint, the exact payloads a
+     * resend would serve, and the rows it writes, in one transaction. The
+     * caller releases the engine's batch only after this returns. Rows are
+     * stamped `now_ms`, as is the checkpoint.
+     */
+    func commitChatComposeBatch(ownerIdentityId: String, batch: MobileChatComposeBatchRecord, nowMs: Int64) throws
+
+    /**
+     * The conversation a stored message belongs to, by its durable
+     * identity. What attributes a delivery acknowledgment, which carries
+     * no address of its own, back to a peer.
+     */
+    func conversationAddressForMessage(ownerIdentityId: String, sessionId: UInt64, handle: UInt32) throws  -> String?
+
+    /**
+     * Mark what a compose wrote undelivered, in one transaction, after the
+     * compose was made durable but the engine could not release its
+     * transmissions (the fail-closed counter store became unavailable,
+     * say). Keeps the optimistic row honest instead of leaving it pending
+     * forever.
+     */
+    func markChatComposeBatchFailed(ownerIdentityId: String, batch: MobileChatComposeBatchRecord) throws
+
+    /**
+     * Remove a failed outbound message outright, in one transaction,
+     * because its text just went back on the air as a new message: keeping
+     * the dead row would show the same words twice.
+     *
+     * Local only, and deliberately narrow: anything but a failed outbound
+     * row is left alone, so a stale caller can never take down a message
+     * the mesh knows about. Reactions to the row go with it (nobody ever
+     * received the message they decorate), as does the delivery evidence
+     * under its pointer.
+     */
+    func removeFailedMessage(ownerIdentityId: String, message: MobileStoredChatMessageRefRecord) throws
+
+    /**
+     * Resolve gap placeholders as unavailable: the named rows, in one
+     * transaction, or every gap the identity holds when `rows` is `None`.
+     * A gap belongs to the mesh session that saw it, so once that session
+     * is gone no repair will ever fill it. Rows that are not gaps are left
+     * alone.
+     */
+    func resolveGapsUnavailable(ownerIdentityId: String, rows: [MobileStoredChatMessageRefRecord]?) throws
+
+    /**
+     * Settle the outbound messages a previous process left awaiting word.
+     *
+     * Their transmissions died with that process, and a new mesh session
+     * issues new session IDs, so no evidence can ever arrive for them. One
+     * still `pending` never went out: `undelivered`. A direct one that
+     * reached `sent` went on the air and may have arrived, but its
+     * acknowledgment can no longer be heard: `failed`. A channel message's
+     * `sent` is already its last word.
+     */
+    func settleInterruptedDeliveries(ownerIdentityId: String) throws
 
     /**
      * Every radio still recorded as holding this identity, most recent
@@ -997,7 +1156,7 @@ public protocol MobileAppStoreProtocol: AnyObject, Sendable {
     func knowsIdentity(id: String, publicAddress: String) throws  -> Bool
 
     /**
-     * Every peer of the identity: system rows first, then by the search
+     * Every peer of the identity: system rows first, then by the sort
      * key. Name order is the platform's to impose.
      */
     func listNodes(ownerIdentityId: String) throws  -> [MobileStoredNodeRecord]
@@ -1063,7 +1222,7 @@ public protocol MobileAppStoreProtocol: AnyObject, Sendable {
      * leaves the stored one in place, and `is_saved` only ever rises here.
      * The advertisement's provenance (`advertisement_authenticated`,
      * `advertisement_received_at_ms`) is written only with an
-     * advertisement. The search key follows the row as it ends up: its
+     * advertisement. The sort key follows the row as it ends up: its
      * alias or, without one, its advertised name.
      */
     func upsertPeer(ownerIdentityId: String, publicAddress: String, peer: MobilePeerUpsertRecord) throws
@@ -1133,8 +1292,10 @@ public protocol MobileAppStoreProtocol: AnyObject, Sendable {
      * switch away from the old one does not carry over. A node with no row
      * has nowhere to keep it, and the call does nothing.
      *
-     * The hints are stored back to back exactly as given; each is expected
-     * to be two octets, the width a stored path is read back in.
+     * The hints are stored back to back, so each must be two octets, the
+     * width a stored path is read back in: any other width, a node's
+     * three-octet hint say, would read back as a different path, and
+     * fails with [`MobileStoreError::InvalidArgument`].
      */
     func saveManualRoute(ownerIdentityId: String, publicAddress: String, hints: [Data], floodHops: UInt8, holdUntilMs: Int64, latitude: Double?, longitude: Double?, accuracy: Double?) throws
 
@@ -1143,6 +1304,71 @@ public protocol MobileAppStoreProtocol: AnyObject, Sendable {
      * declined, so it is not made again for the same path.
      */
     func settleManualRoutePrompt(ownerIdentityId: String, publicAddress: String) throws
+
+    /**
+     * Fill a conversation with `count` generated messages, in one
+     * transaction, for exercising a transcript at a size no test account
+     * reaches by hand.
+     *
+     * Instants run back from `now_ms` in one-minute steps, in occasional
+     * same-millisecond clusters, which is what a real batch produces, with
+     * a lull of several hours every so often, so the transcript spans days
+     * and carries the date separators a real one does. The newest message
+     * lands on `now_ms`. Every third message is ours and delivered.
+     */
+    func seedGeneratedMessages(ownerIdentityId: String, conversationAddress: String, count: UInt32, nowMs: Int64) throws
+
+    /**
+     * Write one staged transcript exactly as described, reactions
+     * included, in one transaction. A row already at a staged handle is
+     * replaced.
+     *
+     * Separate from `seed_generated_messages` because the two answer
+     * different questions: that one wants volume and does not care what
+     * it says, this one wants a specific conversation to read plausibly in
+     * a screenshot, so every body, sender, and instant is the caller's.
+     */
+    func seedStagedTranscript(ownerIdentityId: String, conversationAddress: String, sessionId: String, messages: [MobileStagedChatMessageRecord]) throws
+
+    /**
+     * How many messages a conversation holds, reactions aside.
+     * Deliberately a call of its own: it is the one aggregate that walks
+     * the whole range, so it belongs where something asked for it rather
+     * than on the conversation list.
+     */
+    func chatMessageCount(ownerIdentityId: String, conversationAddress: String) throws  -> Int64
+
+    /**
+     * Where a message sits in its conversation's order, by its durable
+     * identity.
+     */
+    func chatMessageCursor(ownerIdentityId: String, conversationAddress: String, message: MobileStoredChatMessageRefRecord) throws  -> MobileStoredChatCursorRecord?
+
+    /**
+     * The `limit` messages immediately newer than `cursor`, or starting at
+     * it when `including` is set, which is how a window re-reads the
+     * extent it already holds.
+     */
+    func chatMessagePageAfter(ownerIdentityId: String, conversationAddress: String, cursor: MobileStoredChatCursorRecord, limit: UInt32, including: Bool) throws  -> MobileStoredChatMessagePageRecord
+
+    /**
+     * The `limit` messages immediately older than `cursor`.
+     */
+    func chatMessagePageBefore(ownerIdentityId: String, conversationAddress: String, cursor: MobileStoredChatCursorRecord, limit: UInt32) throws  -> MobileStoredChatMessagePageRecord
+
+    /**
+     * The newest `limit` messages in a conversation. `limit` is held to
+     * between 1 and 500.
+     */
+    func chatMessagePageNewest(ownerIdentityId: String, conversationAddress: String, limit: UInt32) throws  -> MobileStoredChatMessagePageRecord
+
+    /**
+     * The transcript around one message, for opening a search result in
+     * context: up to `radius` messages either side of it. `None` when that
+     * message is not in this conversation, a stale hit against a cleared
+     * transcript, which is not an error.
+     */
+    func chatMessageWindow(ownerIdentityId: String, conversationAddress: String, message: MobileStoredChatMessageRefRecord, radius: UInt32) throws  -> MobileStoredChatMessagePageRecord?
 
 }
 /**
@@ -1339,15 +1565,319 @@ open func setChannelMembership(id: String, joinedPhone: Bool, joinedDevice: Bool
      * and key-derived columns alone. A channel that does not exist is not
      * an error.
      */
-open func updateChannelDetails(id: String, alias: String?, regionCode: Data?, maxFloodHops: Int64?, notificationsEnabled: Bool)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+open func updateChannelDetails(id: String, alias: String?, regionCode: Data?, maxFloodHops: UInt8?, notificationsEnabled: Bool)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
         uniffiCallStatus in
     uniffi_umsh_mobile_core_fn_method_mobileappstore_update_channel_details(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(id),
         FfiConverterOptionString.lower(alias),
         FfiConverterOptionData.lower(regionCode),
-        FfiConverterOptionInt64.lower(maxFloodHops),
+        FfiConverterOptionUInt8.lower(maxFloodHops),
         FfiConverterBool.lower(notificationsEnabled),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Apply delivery evidence, in one transaction, and report which
+     * messages it just gave up on.
+     *
+     * Only a crossing counts. `delivery_state` is recomputed from every
+     * fragment on each record, so a message already resolved to a failure
+     * recomputes to one again on the next fragment, and a redelivered
+     * batch replays the same records; announcing the state rather than the
+     * transition would announce one failure many times. `now_ms` stamps
+     * the moment a message's first frame is heard of going out.
+     */
+open func applyChatDeliveries(ownerIdentityId: String, deliveries: [MobileChatDeliveryRecord], nowMs: Int64)throws  -> [MobileStoredChatDeliveryFailureRecord]  {
+    return try  FfiConverterSequenceTypeMobileStoredChatDeliveryFailureRecord.lift(try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_apply_chat_deliveries(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterSequenceTypeMobileChatDeliveryRecord.lower(deliveries),
+        FfiConverterInt64.lower(nowMs),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Apply what the engine reported, in one transaction, and return the
+     * mutations that materialized a new message row: an edit whose
+     * original this phone never stored arrives as content rather than a
+     * revision (see `materialize_orphan_edit`). The engine could not flag
+     * those `notify`, since only the store knows the original was missing;
+     * the caller treats them as the arrivals they are.
+     *
+     * A mutation at or below the revision already applied for its message
+     * changes nothing, so a redelivered batch is harmless.
+     *
+     * `silent_tests_in` names `EMERGENCY`'s conversation while its test
+     * messages are to arrive silently: one arriving there is kept and
+     * shown, but never counts as unread. New rows are stamped `now_ms`,
+     * less any time the frame spent queued on the radio.
+     */
+open func applyChatMutations(ownerIdentityId: String, mutations: [MobileChatMutationRecord], nowMs: Int64, silentTestsIn: String? = nil)throws  -> [MobileChatMutationRecord]  {
+    return try  FfiConverterSequenceTypeMobileChatMutationRecord.lift(try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_apply_chat_mutations(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterSequenceTypeMobileChatMutationRecord.lower(mutations),
+        FfiConverterInt64.lower(nowMs),
+        FfiConverterOptionString.lower(silentTestsIn),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Record the repeaters overheard carrying our frames, in one
+     * transaction.
+     *
+     * Each record is one transmission's whole tally, and a fragment sent
+     * again starts a fresh one, so a fragment keeps the union of the
+     * repeaters every transmission of it named (two-byte hints only), and
+     * the most any of them heard anonymously. A message's delivery is
+     * stamped `now_ms` as having moved whenever one of its fragments gains
+     * a repeater; a tally that adds nothing writes nothing.
+     */
+open func applyChatRepeats(ownerIdentityId: String, repeats: [MobileChatRepeatRecord], nowMs: Int64)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_apply_chat_repeats(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterSequenceTypeMobileChatRepeatRecord.lower(repeats),
+        FfiConverterInt64.lower(nowMs),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Point each resent message's delivery at the transmission its frames
+     * went out under again, ahead of any word of them, and record whether
+     * they go under forward secrecy; one transaction. What was
+     * acknowledged stays so; what was last said of the rest no longer
+     * holds. A resend naming no outbound row is skipped.
+     */
+open func applyChatResends(ownerIdentityId: String, resends: [MobileChatResendRecord], nowMs: Int64)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_apply_chat_resends(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterSequenceTypeMobileChatResendRecord.lower(resends),
+        FfiConverterInt64.lower(nowMs),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Fill in the sender of group messages stored before that member's
+     * hint resolved to a full address. Rows that already name a sender are
+     * left alone: the first attribution seen for a hint is the one kept.
+     */
+open func applySenderResolution(ownerIdentityId: String, resolution: MobileChatSenderResolutionRecord)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_apply_sender_resolution(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterTypeMobileChatSenderResolutionRecord_lower(resolution),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * The archived payload a repair request asks for, if it is still
+     * held.
+     */
+open func chatArchive(ownerIdentityId: String, lookup: MobileChatArchiveLookupRecord)throws  -> Data?  {
+    return try  FfiConverterOptionData.lift(try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_chat_archive(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterTypeMobileChatArchiveLookupRecord_lower(lookup),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Every outbound stream's checkpoint, least recently written first:
+     * what a new mesh session resumes each stream from.
+     */
+open func chatCheckpoints(ownerIdentityId: String)throws  -> [MobileChatCheckpointRecord]  {
+    return try  FfiConverterSequenceTypeMobileChatCheckpointRecord.lift(try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_chat_checkpoints(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * The stored conversation, sender, and body of an inbound message a
+     * person reads, for raising a notification. `None` for outbound rows,
+     * tombstones, gap placeholders, unavailable markers, reactions, and
+     * empty bodies. Everything is read from storage, so a notify carried
+     * on an `UpdateBody`, which omits all of it, still works.
+     */
+open func chatNotificationTarget(ownerIdentityId: String, sessionId: UInt64, handle: UInt32)throws  -> MobileStoredChatNotificationTargetRecord?  {
+    return try  FfiConverterOptionTypeMobileStoredChatNotificationTargetRecord.lift(try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_chat_notification_target(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterUInt64.lower(sessionId),
+        FfiConverterUInt32.lower(handle),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * The reaction behind a notifying mutation, when it is one and it
+     * lands on a message this phone sent.
+     *
+     * Reactions to someone else's message are somebody else's business: in
+     * a channel they would ping every member for every tapback. A
+     * withdrawal carries an empty body and is not an event to announce.
+     */
+open func chatReactionNotificationTarget(ownerIdentityId: String, sessionId: UInt64, handle: UInt32)throws  -> MobileStoredChatReactionNotificationTargetRecord?  {
+    return try  FfiConverterOptionTypeMobileStoredChatReactionNotificationTargetRecord.lift(try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_chat_reaction_notification_target(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterUInt64.lower(sessionId),
+        FfiConverterUInt32.lower(handle),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * What a resend of one of our messages puts back on the air: its
+     * archived fragments, in order, less those already acknowledged under
+     * its current delivery pointer. Empty when nothing is archived under
+     * the wire ID the row carries (an edit's content lives under the
+     * edit's own ID, which the row does not keep), so the caller sends it
+     * as a new message instead.
+     */
+open func chatResendFrames(ownerIdentityId: String, conversationAddress: String, message: MobileStoredChatMessageRefRecord, wireId: UInt8)throws  -> [MobileChatArchiveRecord]  {
+    return try  FfiConverterSequenceTypeMobileChatArchiveRecord.lift(try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_chat_resend_frames(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterString.lower(conversationAddress),
+        FfiConverterTypeMobileStoredChatMessageRefRecord_lower(message),
+        FfiConverterUInt8.lower(wireId),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Make a compose durable: its stream checkpoint, the exact payloads a
+     * resend would serve, and the rows it writes, in one transaction. The
+     * caller releases the engine's batch only after this returns. Rows are
+     * stamped `now_ms`, as is the checkpoint.
+     */
+open func commitChatComposeBatch(ownerIdentityId: String, batch: MobileChatComposeBatchRecord, nowMs: Int64)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_commit_chat_compose_batch(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterTypeMobileChatComposeBatchRecord_lower(batch),
+        FfiConverterInt64.lower(nowMs),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * The conversation a stored message belongs to, by its durable
+     * identity. What attributes a delivery acknowledgment, which carries
+     * no address of its own, back to a peer.
+     */
+open func conversationAddressForMessage(ownerIdentityId: String, sessionId: UInt64, handle: UInt32)throws  -> String?  {
+    return try  FfiConverterOptionString.lift(try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_conversation_address_for_message(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterUInt64.lower(sessionId),
+        FfiConverterUInt32.lower(handle),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Mark what a compose wrote undelivered, in one transaction, after the
+     * compose was made durable but the engine could not release its
+     * transmissions (the fail-closed counter store became unavailable,
+     * say). Keeps the optimistic row honest instead of leaving it pending
+     * forever.
+     */
+open func markChatComposeBatchFailed(ownerIdentityId: String, batch: MobileChatComposeBatchRecord)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_mark_chat_compose_batch_failed(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterTypeMobileChatComposeBatchRecord_lower(batch),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Remove a failed outbound message outright, in one transaction,
+     * because its text just went back on the air as a new message: keeping
+     * the dead row would show the same words twice.
+     *
+     * Local only, and deliberately narrow: anything but a failed outbound
+     * row is left alone, so a stale caller can never take down a message
+     * the mesh knows about. Reactions to the row go with it (nobody ever
+     * received the message they decorate), as does the delivery evidence
+     * under its pointer.
+     */
+open func removeFailedMessage(ownerIdentityId: String, message: MobileStoredChatMessageRefRecord)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_remove_failed_message(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterTypeMobileStoredChatMessageRefRecord_lower(message),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Resolve gap placeholders as unavailable: the named rows, in one
+     * transaction, or every gap the identity holds when `rows` is `None`.
+     * A gap belongs to the mesh session that saw it, so once that session
+     * is gone no repair will ever fill it. Rows that are not gaps are left
+     * alone.
+     */
+open func resolveGapsUnavailable(ownerIdentityId: String, rows: [MobileStoredChatMessageRefRecord]? = nil)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_resolve_gaps_unavailable(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterOptionSequenceTypeMobileStoredChatMessageRefRecord.lower(rows),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Settle the outbound messages a previous process left awaiting word.
+     *
+     * Their transmissions died with that process, and a new mesh session
+     * issues new session IDs, so no evidence can ever arrive for them. One
+     * still `pending` never went out: `undelivered`. A direct one that
+     * reached `sent` went on the air and may have arrived, but its
+     * acknowledgment can no longer be heard: `failed`. A channel message's
+     * `sent` is already its last word.
+     */
+open func settleInterruptedDeliveries(ownerIdentityId: String)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_settle_interrupted_deliveries(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),uniffiCallStatus
     )
 }
 }
@@ -1808,7 +2338,7 @@ open func knowsIdentity(id: String, publicAddress: String)throws  -> Bool  {
 }
 
     /**
-     * Every peer of the identity: system rows first, then by the search
+     * Every peer of the identity: system rows first, then by the sort
      * key. Name order is the platform's to impose.
      */
 open func listNodes(ownerIdentityId: String)throws  -> [MobileStoredNodeRecord]  {
@@ -1969,7 +2499,7 @@ open func upsertIdentity(id: String, publicAddress: String, createdAtMs: Int64)t
      * leaves the stored one in place, and `is_saved` only ever rises here.
      * The advertisement's provenance (`advertisement_authenticated`,
      * `advertisement_received_at_ms`) is written only with an
-     * advertisement. The search key follows the row as it ends up: its
+     * advertisement. The sort key follows the row as it ends up: its
      * alias or, without one, its advertised name.
      */
 open func upsertPeer(ownerIdentityId: String, publicAddress: String, peer: MobilePeerUpsertRecord)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
@@ -2115,8 +2645,10 @@ open func manualRoutes(ownerIdentityId: String, nowMs: Int64)throws  -> [MobileS
      * switch away from the old one does not carry over. A node with no row
      * has nowhere to keep it, and the call does nothing.
      *
-     * The hints are stored back to back exactly as given; each is expected
-     * to be two octets, the width a stored path is read back in.
+     * The hints are stored back to back, so each must be two octets, the
+     * width a stored path is read back in: any other width, a node's
+     * three-octet hint say, would read back as a different path, and
+     * fails with [`MobileStoreError::InvalidArgument`].
      */
 open func saveManualRoute(ownerIdentityId: String, publicAddress: String, hints: [Data], floodHops: UInt8, holdUntilMs: Int64, latitude: Double?, longitude: Double?, accuracy: Double?)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
         uniffiCallStatus in
@@ -2146,6 +2678,154 @@ open func settleManualRoutePrompt(ownerIdentityId: String, publicAddress: String
         FfiConverterString.lower(publicAddress),uniffiCallStatus
     )
 }
+}
+
+    /**
+     * Fill a conversation with `count` generated messages, in one
+     * transaction, for exercising a transcript at a size no test account
+     * reaches by hand.
+     *
+     * Instants run back from `now_ms` in one-minute steps, in occasional
+     * same-millisecond clusters, which is what a real batch produces, with
+     * a lull of several hours every so often, so the transcript spans days
+     * and carries the date separators a real one does. The newest message
+     * lands on `now_ms`. Every third message is ours and delivered.
+     */
+open func seedGeneratedMessages(ownerIdentityId: String, conversationAddress: String, count: UInt32, nowMs: Int64)throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_seed_generated_messages(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterString.lower(conversationAddress),
+        FfiConverterUInt32.lower(count),
+        FfiConverterInt64.lower(nowMs),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Write one staged transcript exactly as described, reactions
+     * included, in one transaction. A row already at a staged handle is
+     * replaced.
+     *
+     * Separate from `seed_generated_messages` because the two answer
+     * different questions: that one wants volume and does not care what
+     * it says, this one wants a specific conversation to read plausibly in
+     * a screenshot, so every body, sender, and instant is the caller's.
+     */
+open func seedStagedTranscript(ownerIdentityId: String, conversationAddress: String, sessionId: String, messages: [MobileStagedChatMessageRecord])throws   {try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_seed_staged_transcript(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterString.lower(conversationAddress),
+        FfiConverterString.lower(sessionId),
+        FfiConverterSequenceTypeMobileStagedChatMessageRecord.lower(messages),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * How many messages a conversation holds, reactions aside.
+     * Deliberately a call of its own: it is the one aggregate that walks
+     * the whole range, so it belongs where something asked for it rather
+     * than on the conversation list.
+     */
+open func chatMessageCount(ownerIdentityId: String, conversationAddress: String)throws  -> Int64  {
+    return try  FfiConverterInt64.lift(try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_chat_message_count(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterString.lower(conversationAddress),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Where a message sits in its conversation's order, by its durable
+     * identity.
+     */
+open func chatMessageCursor(ownerIdentityId: String, conversationAddress: String, message: MobileStoredChatMessageRefRecord)throws  -> MobileStoredChatCursorRecord?  {
+    return try  FfiConverterOptionTypeMobileStoredChatCursorRecord.lift(try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_chat_message_cursor(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterString.lower(conversationAddress),
+        FfiConverterTypeMobileStoredChatMessageRefRecord_lower(message),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * The `limit` messages immediately newer than `cursor`, or starting at
+     * it when `including` is set, which is how a window re-reads the
+     * extent it already holds.
+     */
+open func chatMessagePageAfter(ownerIdentityId: String, conversationAddress: String, cursor: MobileStoredChatCursorRecord, limit: UInt32, including: Bool = false)throws  -> MobileStoredChatMessagePageRecord  {
+    return try  FfiConverterTypeMobileStoredChatMessagePageRecord_lift(try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_chat_message_page_after(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterString.lower(conversationAddress),
+        FfiConverterTypeMobileStoredChatCursorRecord_lower(cursor),
+        FfiConverterUInt32.lower(limit),
+        FfiConverterBool.lower(including),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * The `limit` messages immediately older than `cursor`.
+     */
+open func chatMessagePageBefore(ownerIdentityId: String, conversationAddress: String, cursor: MobileStoredChatCursorRecord, limit: UInt32)throws  -> MobileStoredChatMessagePageRecord  {
+    return try  FfiConverterTypeMobileStoredChatMessagePageRecord_lift(try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_chat_message_page_before(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterString.lower(conversationAddress),
+        FfiConverterTypeMobileStoredChatCursorRecord_lower(cursor),
+        FfiConverterUInt32.lower(limit),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * The newest `limit` messages in a conversation. `limit` is held to
+     * between 1 and 500.
+     */
+open func chatMessagePageNewest(ownerIdentityId: String, conversationAddress: String, limit: UInt32)throws  -> MobileStoredChatMessagePageRecord  {
+    return try  FfiConverterTypeMobileStoredChatMessagePageRecord_lift(try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_chat_message_page_newest(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterString.lower(conversationAddress),
+        FfiConverterUInt32.lower(limit),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * The transcript around one message, for opening a search result in
+     * context: up to `radius` messages either side of it. `None` when that
+     * message is not in this conversation, a stale hit against a cleared
+     * transcript, which is not an error.
+     */
+open func chatMessageWindow(ownerIdentityId: String, conversationAddress: String, message: MobileStoredChatMessageRefRecord, radius: UInt32)throws  -> MobileStoredChatMessagePageRecord?  {
+    return try  FfiConverterOptionTypeMobileStoredChatMessagePageRecord.lift(try rustCallWithError(FfiConverterTypeMobileStoreError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileappstore_chat_message_window(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterString.lower(conversationAddress),
+        FfiConverterTypeMobileStoredChatMessageRefRecord_lower(message),
+        FfiConverterUInt32.lower(radius),uniffiCallStatus
+    )
+})
 }
 
 
@@ -10947,8 +11627,8 @@ public struct MobilePeerUpsertRecord: Equatable, Hashable {
     public var alias: String?
     public var advertisedName: String?
     public var isSaved: Bool
-    public var nodeKind: String?
-    public var systemRole: String?
+    public var nodeKind: MobileStoredNodeKind?
+    public var systemRole: MobileStoredSystemRole?
     public var radioIdentifier: String?
     public var advertisement: Data?
     public var advertisementAuthenticated: Bool
@@ -10956,7 +11636,7 @@ public struct MobilePeerUpsertRecord: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(alias: String?, advertisedName: String? = nil, isSaved: Bool = false, nodeKind: String? = nil, systemRole: String? = nil, radioIdentifier: String? = nil, advertisement: Data? = nil, advertisementAuthenticated: Bool = false, advertisementReceivedAtMs: Int64? = nil) {
+    public init(alias: String?, advertisedName: String? = nil, isSaved: Bool = false, nodeKind: MobileStoredNodeKind? = nil, systemRole: MobileStoredSystemRole? = nil, radioIdentifier: String? = nil, advertisement: Data? = nil, advertisementAuthenticated: Bool = false, advertisementReceivedAtMs: Int64? = nil) {
         self.alias = alias
         self.advertisedName = advertisedName
         self.isSaved = isSaved
@@ -10987,8 +11667,8 @@ public struct FfiConverterTypeMobilePeerUpsertRecord: FfiConverterRustBuffer {
                 alias: FfiConverterOptionString.read(from: &buf),
                 advertisedName: FfiConverterOptionString.read(from: &buf),
                 isSaved: FfiConverterBool.read(from: &buf),
-                nodeKind: FfiConverterOptionString.read(from: &buf),
-                systemRole: FfiConverterOptionString.read(from: &buf),
+                nodeKind: FfiConverterOptionTypeMobileStoredNodeKind.read(from: &buf),
+                systemRole: FfiConverterOptionTypeMobileStoredSystemRole.read(from: &buf),
                 radioIdentifier: FfiConverterOptionString.read(from: &buf),
                 advertisement: FfiConverterOptionData.read(from: &buf),
                 advertisementAuthenticated: FfiConverterBool.read(from: &buf),
@@ -11000,8 +11680,8 @@ public struct FfiConverterTypeMobilePeerUpsertRecord: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.alias, into: &buf)
         FfiConverterOptionString.write(value.advertisedName, into: &buf)
         FfiConverterBool.write(value.isSaved, into: &buf)
-        FfiConverterOptionString.write(value.nodeKind, into: &buf)
-        FfiConverterOptionString.write(value.systemRole, into: &buf)
+        FfiConverterOptionTypeMobileStoredNodeKind.write(value.nodeKind, into: &buf)
+        FfiConverterOptionTypeMobileStoredSystemRole.write(value.systemRole, into: &buf)
         FfiConverterOptionString.write(value.radioIdentifier, into: &buf)
         FfiConverterOptionData.write(value.advertisement, into: &buf)
         FfiConverterBool.write(value.advertisementAuthenticated, into: &buf)
@@ -11734,6 +12414,211 @@ public func FfiConverterTypeMobileRegionRecord_lower(_ value: MobileRegionRecord
 
 
 /**
+ * One message a staged transcript is to contain, stated outright.
+ *
+ * Everything a real message derives from the wire is dictated here
+ * instead: the point of a staged transcript is that it reads a particular
+ * way, down to who said what, when, and how it arrived.
+ */
+public struct MobileStagedChatMessageRecord: Equatable, Hashable {
+    public var handle: UInt32
+    public var body: String
+    public var outbound: Bool
+    public var createdAtMs: Int64
+    /**
+     * Who sent it, for a channel message. Absent in a direct conversation,
+     * where the conversation's address already says.
+     */
+    public var senderAddress: String?
+    public var senderHint: Data?
+    /**
+     * The name the sender put in the message, as a group message carries
+     * it.
+     */
+    public var senderHandle: String?
+    /**
+     * Ours only.
+     */
+    public var deliveryState: MobileStoredChatDeliveryState?
+    public var reception: MobileStoredChatReceptionRecord?
+    public var reactions: [MobileStagedChatReactionRecord]
+    /**
+     * What it replies to, when it is a reply.
+     */
+    public var regarding: MobileStagedChatRegarding?
+    /**
+     * Taken back by its sender: a tombstone, with nothing left to say.
+     */
+    public var isDeleted: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(handle: UInt32, body: String, outbound: Bool, createdAtMs: Int64,
+        /**
+         * Who sent it, for a channel message. Absent in a direct conversation,
+         * where the conversation's address already says.
+         */senderAddress: String? = nil, senderHint: Data? = nil,
+        /**
+         * The name the sender put in the message, as a group message carries
+         * it.
+         */senderHandle: String? = nil,
+        /**
+         * Ours only.
+         */deliveryState: MobileStoredChatDeliveryState? = nil, reception: MobileStoredChatReceptionRecord? = nil, reactions: [MobileStagedChatReactionRecord] = [],
+        /**
+         * What it replies to, when it is a reply.
+         */regarding: MobileStagedChatRegarding? = nil,
+        /**
+         * Taken back by its sender: a tombstone, with nothing left to say.
+         */isDeleted: Bool = false) {
+        self.handle = handle
+        self.body = body
+        self.outbound = outbound
+        self.createdAtMs = createdAtMs
+        self.senderAddress = senderAddress
+        self.senderHint = senderHint
+        self.senderHandle = senderHandle
+        self.deliveryState = deliveryState
+        self.reception = reception
+        self.reactions = reactions
+        self.regarding = regarding
+        self.isDeleted = isDeleted
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileStagedChatMessageRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileStagedChatMessageRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileStagedChatMessageRecord {
+        return
+            try MobileStagedChatMessageRecord(
+                handle: FfiConverterUInt32.read(from: &buf),
+                body: FfiConverterString.read(from: &buf),
+                outbound: FfiConverterBool.read(from: &buf),
+                createdAtMs: FfiConverterInt64.read(from: &buf),
+                senderAddress: FfiConverterOptionString.read(from: &buf),
+                senderHint: FfiConverterOptionData.read(from: &buf),
+                senderHandle: FfiConverterOptionString.read(from: &buf),
+                deliveryState: FfiConverterOptionTypeMobileStoredChatDeliveryState.read(from: &buf),
+                reception: FfiConverterOptionTypeMobileStoredChatReceptionRecord.read(from: &buf),
+                reactions: FfiConverterSequenceTypeMobileStagedChatReactionRecord.read(from: &buf),
+                regarding: FfiConverterOptionTypeMobileStagedChatRegarding.read(from: &buf),
+                isDeleted: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileStagedChatMessageRecord, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.handle, into: &buf)
+        FfiConverterString.write(value.body, into: &buf)
+        FfiConverterBool.write(value.outbound, into: &buf)
+        FfiConverterInt64.write(value.createdAtMs, into: &buf)
+        FfiConverterOptionString.write(value.senderAddress, into: &buf)
+        FfiConverterOptionData.write(value.senderHint, into: &buf)
+        FfiConverterOptionString.write(value.senderHandle, into: &buf)
+        FfiConverterOptionTypeMobileStoredChatDeliveryState.write(value.deliveryState, into: &buf)
+        FfiConverterOptionTypeMobileStoredChatReceptionRecord.write(value.reception, into: &buf)
+        FfiConverterSequenceTypeMobileStagedChatReactionRecord.write(value.reactions, into: &buf)
+        FfiConverterOptionTypeMobileStagedChatRegarding.write(value.regarding, into: &buf)
+        FfiConverterBool.write(value.isDeleted, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStagedChatMessageRecord_lift(_ buf: RustBuffer) throws -> MobileStagedChatMessageRecord {
+    return try FfiConverterTypeMobileStagedChatMessageRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStagedChatMessageRecord_lower(_ value: MobileStagedChatMessageRecord) -> RustBuffer {
+    return FfiConverterTypeMobileStagedChatMessageRecord.lower(value)
+}
+
+
+/**
+ * One reaction about a staged message. Its handle is the writer's to
+ * allocate, since nothing outside refers to a reaction by name.
+ */
+public struct MobileStagedChatReactionRecord: Equatable, Hashable {
+    public var body: String
+    public var outbound: Bool
+    public var createdAtMs: Int64
+    public var senderAddress: String?
+    public var senderHint: Data?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(body: String, outbound: Bool, createdAtMs: Int64, senderAddress: String? = nil, senderHint: Data? = nil) {
+        self.body = body
+        self.outbound = outbound
+        self.createdAtMs = createdAtMs
+        self.senderAddress = senderAddress
+        self.senderHint = senderHint
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileStagedChatReactionRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileStagedChatReactionRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileStagedChatReactionRecord {
+        return
+            try MobileStagedChatReactionRecord(
+                body: FfiConverterString.read(from: &buf),
+                outbound: FfiConverterBool.read(from: &buf),
+                createdAtMs: FfiConverterInt64.read(from: &buf),
+                senderAddress: FfiConverterOptionString.read(from: &buf),
+                senderHint: FfiConverterOptionData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileStagedChatReactionRecord, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.body, into: &buf)
+        FfiConverterBool.write(value.outbound, into: &buf)
+        FfiConverterInt64.write(value.createdAtMs, into: &buf)
+        FfiConverterOptionString.write(value.senderAddress, into: &buf)
+        FfiConverterOptionData.write(value.senderHint, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStagedChatReactionRecord_lift(_ buf: RustBuffer) throws -> MobileStagedChatReactionRecord {
+    return try FfiConverterTypeMobileStagedChatReactionRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStagedChatReactionRecord_lower(_ value: MobileStagedChatReactionRecord) -> RustBuffer {
+    return FfiConverterTypeMobileStagedChatReactionRecord.lower(value)
+}
+
+
+/**
  * One property as a device last reported it, and when.
  *
  * The value is the octets that came off the air: what they mean is settled
@@ -11947,7 +12832,10 @@ public struct MobileStoredChannelRecord: Equatable, Hashable {
      * The channel's one region code, as its octets.
      */
     public var regionCode: Data?
-    public var maxFloodHops: Int64?
+    /**
+     * How far the channel's messages flood, when it sets a limit.
+     */
+    public var maxFloodHops: UInt8?
     /**
      * Whether the phone identity has joined. Drives MAC registration and
      * the radio's host channel table.
@@ -11994,7 +12882,10 @@ public struct MobileStoredChannelRecord: Equatable, Hashable {
          */tint: Data,
         /**
          * The channel's one region code, as its octets.
-         */regionCode: Data?, maxFloodHops: Int64?,
+         */regionCode: Data?,
+        /**
+         * How far the channel's messages flood, when it sets a limit.
+         */maxFloodHops: UInt8?,
         /**
          * Whether the phone identity has joined. Drives MAC registration and
          * the radio's host channel table.
@@ -12048,7 +12939,7 @@ public struct FfiConverterTypeMobileStoredChannelRecord: FfiConverterRustBuffer 
                 channelIdHex: FfiConverterString.read(from: &buf),
                 tint: FfiConverterData.read(from: &buf),
                 regionCode: FfiConverterOptionData.read(from: &buf),
-                maxFloodHops: FfiConverterOptionInt64.read(from: &buf),
+                maxFloodHops: FfiConverterOptionUInt8.read(from: &buf),
                 joinedPhone: FfiConverterBool.read(from: &buf),
                 joinedDevice: FfiConverterBool.read(from: &buf),
                 notificationsEnabled: FfiConverterBool.read(from: &buf),
@@ -12066,7 +12957,7 @@ public struct FfiConverterTypeMobileStoredChannelRecord: FfiConverterRustBuffer 
         FfiConverterString.write(value.channelIdHex, into: &buf)
         FfiConverterData.write(value.tint, into: &buf)
         FfiConverterOptionData.write(value.regionCode, into: &buf)
-        FfiConverterOptionInt64.write(value.maxFloodHops, into: &buf)
+        FfiConverterOptionUInt8.write(value.maxFloodHops, into: &buf)
         FfiConverterBool.write(value.joinedPhone, into: &buf)
         FfiConverterBool.write(value.joinedDevice, into: &buf)
         FfiConverterBool.write(value.notificationsEnabled, into: &buf)
@@ -12087,6 +12978,1143 @@ public func FfiConverterTypeMobileStoredChannelRecord_lift(_ buf: RustBuffer) th
 #endif
 public func FfiConverterTypeMobileStoredChannelRecord_lower(_ value: MobileStoredChannelRecord) -> RustBuffer {
     return FfiConverterTypeMobileStoredChannelRecord.lower(value)
+}
+
+
+/**
+ * Where one message sits in its conversation's order.
+ *
+ * Rowids are reused after a transcript is cleared, so two messages in one
+ * conversation and one millisecond either side of a clear could compare in
+ * storage order rather than arrival order; the transcript's order has
+ * always been ambiguous in exactly that case.
+ */
+public struct MobileStoredChatCursorRecord: Equatable, Hashable {
+    public var createdAtMs: Int64
+    public var rowId: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(createdAtMs: Int64, rowId: Int64) {
+        self.createdAtMs = createdAtMs
+        self.rowId = rowId
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileStoredChatCursorRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileStoredChatCursorRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileStoredChatCursorRecord {
+        return
+            try MobileStoredChatCursorRecord(
+                createdAtMs: FfiConverterInt64.read(from: &buf),
+                rowId: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileStoredChatCursorRecord, into buf: inout [UInt8]) {
+        FfiConverterInt64.write(value.createdAtMs, into: &buf)
+        FfiConverterInt64.write(value.rowId, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredChatCursorRecord_lift(_ buf: RustBuffer) throws -> MobileStoredChatCursorRecord {
+    return try FfiConverterTypeMobileStoredChatCursorRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredChatCursorRecord_lower(_ value: MobileStoredChatCursorRecord) -> RustBuffer {
+    return FfiConverterTypeMobileStoredChatCursorRecord.lower(value)
+}
+
+
+/**
+ * An outbound message whose delivery has just been given up on.
+ */
+public struct MobileStoredChatDeliveryFailureRecord: Equatable, Hashable {
+    public var conversationAddress: String
+    public var body: String
+    /**
+     * It never went out where the peer could read it, rather than going
+     * out and drawing no acknowledgment.
+     */
+    public var undelivered: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(conversationAddress: String, body: String,
+        /**
+         * It never went out where the peer could read it, rather than going
+         * out and drawing no acknowledgment.
+         */undelivered: Bool) {
+        self.conversationAddress = conversationAddress
+        self.body = body
+        self.undelivered = undelivered
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileStoredChatDeliveryFailureRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileStoredChatDeliveryFailureRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileStoredChatDeliveryFailureRecord {
+        return
+            try MobileStoredChatDeliveryFailureRecord(
+                conversationAddress: FfiConverterString.read(from: &buf),
+                body: FfiConverterString.read(from: &buf),
+                undelivered: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileStoredChatDeliveryFailureRecord, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.conversationAddress, into: &buf)
+        FfiConverterString.write(value.body, into: &buf)
+        FfiConverterBool.write(value.undelivered, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredChatDeliveryFailureRecord_lift(_ buf: RustBuffer) throws -> MobileStoredChatDeliveryFailureRecord {
+    return try FfiConverterTypeMobileStoredChatDeliveryFailureRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredChatDeliveryFailureRecord_lower(_ value: MobileStoredChatDeliveryFailureRecord) -> RustBuffer {
+    return FfiConverterTypeMobileStoredChatDeliveryFailureRecord.lower(value)
+}
+
+
+/**
+ * One slice of a transcript, oldest first. The flags say whether storage
+ * holds more beyond it in either direction.
+ */
+public struct MobileStoredChatMessagePageRecord: Equatable, Hashable {
+    public var messages: [MobileStoredChatMessageRecord]
+    public var hasOlder: Bool
+    public var hasNewer: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(messages: [MobileStoredChatMessageRecord], hasOlder: Bool, hasNewer: Bool) {
+        self.messages = messages
+        self.hasOlder = hasOlder
+        self.hasNewer = hasNewer
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileStoredChatMessagePageRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileStoredChatMessagePageRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileStoredChatMessagePageRecord {
+        return
+            try MobileStoredChatMessagePageRecord(
+                messages: FfiConverterSequenceTypeMobileStoredChatMessageRecord.read(from: &buf),
+                hasOlder: FfiConverterBool.read(from: &buf),
+                hasNewer: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileStoredChatMessagePageRecord, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeMobileStoredChatMessageRecord.write(value.messages, into: &buf)
+        FfiConverterBool.write(value.hasOlder, into: &buf)
+        FfiConverterBool.write(value.hasNewer, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredChatMessagePageRecord_lift(_ buf: RustBuffer) throws -> MobileStoredChatMessagePageRecord {
+    return try FfiConverterTypeMobileStoredChatMessagePageRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredChatMessagePageRecord_lower(_ value: MobileStoredChatMessagePageRecord) -> RustBuffer {
+    return FfiConverterTypeMobileStoredChatMessagePageRecord.lower(value)
+}
+
+
+/**
+ * One message of a transcript.
+ *
+ * Instants are Unix milliseconds.
+ */
+public struct MobileStoredChatMessageRecord: Equatable, Hashable {
+    /**
+     * The message's durable identity.
+     */
+    public var reference: MobileStoredChatMessageRefRecord
+    public var body: String
+    public var outbound: Bool
+    /**
+     * For a message of ours.
+     */
+    public var deliveryState: MobileStoredChatDeliveryState?
+    public var isDeleted: Bool
+    public var createdAtMs: Int64
+    /**
+     * The durable wire identity, for naming this message after the
+     * session that composed it is gone.
+     */
+    public var wireId: UInt8?
+    public var epoch: UInt16?
+    public var isEdited: Bool
+    /**
+     * A code this store never writes reads as present.
+     */
+    public var presence: MobileChatPresence
+    /**
+     * It filled a gap out of order.
+     */
+    public var receivedLate: Bool
+    /**
+     * Ours, failed, and later acknowledged after all.
+     */
+    public var deliveredLate: Bool
+    /**
+     * Our own edited message's pre-edit text, kept for review.
+     */
+    public var originalBody: String?
+    /**
+     * Who sent it, for a group message: the full address once known, the
+     * claimed hint the wire always carries, and the name the sender put in
+     * the message.
+     */
+    public var senderAddress: String?
+    public var senderHint: Data?
+    public var senderHandle: String?
+    /**
+     * Absent for ours, and for anything stored without it.
+     */
+    public var reception: MobileStoredChatReceptionRecord?
+    /**
+     * With `created_at_ms`, this message's cursor. An ordering key only:
+     * `reference` is the durable identity.
+     */
+    public var rowId: Int64
+    /**
+     * Ours, and its acknowledgment came back through the flood that
+     * followed a missed route.
+     */
+    public var deliveredFlooded: Bool
+    /**
+     * At most one per sender, oldest first.
+     */
+    public var reactions: [MobileStoredChatReactionRecord]
+    public var isReply: Bool
+    /**
+     * Came as an edit of a message this phone does not hold.
+     */
+    public var isEditOfUnknown: Bool
+    /**
+     * Status text, which reads as its sender's name followed by its body,
+     * with no bubble.
+     */
+    public var isStatus: Bool
+    /**
+     * Ours, and what it reads went under a session with forward secrecy.
+     */
+    public var isForwardSecret: Bool
+    /**
+     * The stored row it replies to, once that has been found.
+     */
+    public var replyTarget: MobileStoredChatMessageRefRecord?
+    /**
+     * What it replies to, as that reads now, for a reply: an edit or a
+     * deletion of the original shows in every quote of it.
+     */
+    public var quote: MobileStoredChatQuoteRecord?
+    /**
+     * Ours, once any of it has been sent.
+     */
+    public var repeats: MobileStoredChatRepeatsRecord?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The message's durable identity.
+         */reference: MobileStoredChatMessageRefRecord, body: String, outbound: Bool,
+        /**
+         * For a message of ours.
+         */deliveryState: MobileStoredChatDeliveryState?, isDeleted: Bool, createdAtMs: Int64,
+        /**
+         * The durable wire identity, for naming this message after the
+         * session that composed it is gone.
+         */wireId: UInt8?, epoch: UInt16?, isEdited: Bool,
+        /**
+         * A code this store never writes reads as present.
+         */presence: MobileChatPresence,
+        /**
+         * It filled a gap out of order.
+         */receivedLate: Bool,
+        /**
+         * Ours, failed, and later acknowledged after all.
+         */deliveredLate: Bool,
+        /**
+         * Our own edited message's pre-edit text, kept for review.
+         */originalBody: String?,
+        /**
+         * Who sent it, for a group message: the full address once known, the
+         * claimed hint the wire always carries, and the name the sender put in
+         * the message.
+         */senderAddress: String?, senderHint: Data?, senderHandle: String?,
+        /**
+         * Absent for ours, and for anything stored without it.
+         */reception: MobileStoredChatReceptionRecord?,
+        /**
+         * With `created_at_ms`, this message's cursor. An ordering key only:
+         * `reference` is the durable identity.
+         */rowId: Int64,
+        /**
+         * Ours, and its acknowledgment came back through the flood that
+         * followed a missed route.
+         */deliveredFlooded: Bool,
+        /**
+         * At most one per sender, oldest first.
+         */reactions: [MobileStoredChatReactionRecord], isReply: Bool,
+        /**
+         * Came as an edit of a message this phone does not hold.
+         */isEditOfUnknown: Bool,
+        /**
+         * Status text, which reads as its sender's name followed by its body,
+         * with no bubble.
+         */isStatus: Bool,
+        /**
+         * Ours, and what it reads went under a session with forward secrecy.
+         */isForwardSecret: Bool,
+        /**
+         * The stored row it replies to, once that has been found.
+         */replyTarget: MobileStoredChatMessageRefRecord?,
+        /**
+         * What it replies to, as that reads now, for a reply: an edit or a
+         * deletion of the original shows in every quote of it.
+         */quote: MobileStoredChatQuoteRecord?,
+        /**
+         * Ours, once any of it has been sent.
+         */repeats: MobileStoredChatRepeatsRecord?) {
+        self.reference = reference
+        self.body = body
+        self.outbound = outbound
+        self.deliveryState = deliveryState
+        self.isDeleted = isDeleted
+        self.createdAtMs = createdAtMs
+        self.wireId = wireId
+        self.epoch = epoch
+        self.isEdited = isEdited
+        self.presence = presence
+        self.receivedLate = receivedLate
+        self.deliveredLate = deliveredLate
+        self.originalBody = originalBody
+        self.senderAddress = senderAddress
+        self.senderHint = senderHint
+        self.senderHandle = senderHandle
+        self.reception = reception
+        self.rowId = rowId
+        self.deliveredFlooded = deliveredFlooded
+        self.reactions = reactions
+        self.isReply = isReply
+        self.isEditOfUnknown = isEditOfUnknown
+        self.isStatus = isStatus
+        self.isForwardSecret = isForwardSecret
+        self.replyTarget = replyTarget
+        self.quote = quote
+        self.repeats = repeats
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileStoredChatMessageRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileStoredChatMessageRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileStoredChatMessageRecord {
+        return
+            try MobileStoredChatMessageRecord(
+                reference: FfiConverterTypeMobileStoredChatMessageRefRecord.read(from: &buf),
+                body: FfiConverterString.read(from: &buf),
+                outbound: FfiConverterBool.read(from: &buf),
+                deliveryState: FfiConverterOptionTypeMobileStoredChatDeliveryState.read(from: &buf),
+                isDeleted: FfiConverterBool.read(from: &buf),
+                createdAtMs: FfiConverterInt64.read(from: &buf),
+                wireId: FfiConverterOptionUInt8.read(from: &buf),
+                epoch: FfiConverterOptionUInt16.read(from: &buf),
+                isEdited: FfiConverterBool.read(from: &buf),
+                presence: FfiConverterTypeMobileChatPresence.read(from: &buf),
+                receivedLate: FfiConverterBool.read(from: &buf),
+                deliveredLate: FfiConverterBool.read(from: &buf),
+                originalBody: FfiConverterOptionString.read(from: &buf),
+                senderAddress: FfiConverterOptionString.read(from: &buf),
+                senderHint: FfiConverterOptionData.read(from: &buf),
+                senderHandle: FfiConverterOptionString.read(from: &buf),
+                reception: FfiConverterOptionTypeMobileStoredChatReceptionRecord.read(from: &buf),
+                rowId: FfiConverterInt64.read(from: &buf),
+                deliveredFlooded: FfiConverterBool.read(from: &buf),
+                reactions: FfiConverterSequenceTypeMobileStoredChatReactionRecord.read(from: &buf),
+                isReply: FfiConverterBool.read(from: &buf),
+                isEditOfUnknown: FfiConverterBool.read(from: &buf),
+                isStatus: FfiConverterBool.read(from: &buf),
+                isForwardSecret: FfiConverterBool.read(from: &buf),
+                replyTarget: FfiConverterOptionTypeMobileStoredChatMessageRefRecord.read(from: &buf),
+                quote: FfiConverterOptionTypeMobileStoredChatQuoteRecord.read(from: &buf),
+                repeats: FfiConverterOptionTypeMobileStoredChatRepeatsRecord.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileStoredChatMessageRecord, into buf: inout [UInt8]) {
+        FfiConverterTypeMobileStoredChatMessageRefRecord.write(value.reference, into: &buf)
+        FfiConverterString.write(value.body, into: &buf)
+        FfiConverterBool.write(value.outbound, into: &buf)
+        FfiConverterOptionTypeMobileStoredChatDeliveryState.write(value.deliveryState, into: &buf)
+        FfiConverterBool.write(value.isDeleted, into: &buf)
+        FfiConverterInt64.write(value.createdAtMs, into: &buf)
+        FfiConverterOptionUInt8.write(value.wireId, into: &buf)
+        FfiConverterOptionUInt16.write(value.epoch, into: &buf)
+        FfiConverterBool.write(value.isEdited, into: &buf)
+        FfiConverterTypeMobileChatPresence.write(value.presence, into: &buf)
+        FfiConverterBool.write(value.receivedLate, into: &buf)
+        FfiConverterBool.write(value.deliveredLate, into: &buf)
+        FfiConverterOptionString.write(value.originalBody, into: &buf)
+        FfiConverterOptionString.write(value.senderAddress, into: &buf)
+        FfiConverterOptionData.write(value.senderHint, into: &buf)
+        FfiConverterOptionString.write(value.senderHandle, into: &buf)
+        FfiConverterOptionTypeMobileStoredChatReceptionRecord.write(value.reception, into: &buf)
+        FfiConverterInt64.write(value.rowId, into: &buf)
+        FfiConverterBool.write(value.deliveredFlooded, into: &buf)
+        FfiConverterSequenceTypeMobileStoredChatReactionRecord.write(value.reactions, into: &buf)
+        FfiConverterBool.write(value.isReply, into: &buf)
+        FfiConverterBool.write(value.isEditOfUnknown, into: &buf)
+        FfiConverterBool.write(value.isStatus, into: &buf)
+        FfiConverterBool.write(value.isForwardSecret, into: &buf)
+        FfiConverterOptionTypeMobileStoredChatMessageRefRecord.write(value.replyTarget, into: &buf)
+        FfiConverterOptionTypeMobileStoredChatQuoteRecord.write(value.quote, into: &buf)
+        FfiConverterOptionTypeMobileStoredChatRepeatsRecord.write(value.repeats, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredChatMessageRecord_lift(_ buf: RustBuffer) throws -> MobileStoredChatMessageRecord {
+    return try FfiConverterTypeMobileStoredChatMessageRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredChatMessageRecord_lower(_ value: MobileStoredChatMessageRecord) -> RustBuffer {
+    return FfiConverterTypeMobileStoredChatMessageRecord.lower(value)
+}
+
+
+/**
+ * One stored message's durable identity: the engine handle that wrote it,
+ * under the decimal string of its facade session.
+ */
+public struct MobileStoredChatMessageRefRecord: Equatable, Hashable {
+    public var sessionId: String
+    public var handle: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(sessionId: String, handle: UInt32) {
+        self.sessionId = sessionId
+        self.handle = handle
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileStoredChatMessageRefRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileStoredChatMessageRefRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileStoredChatMessageRefRecord {
+        return
+            try MobileStoredChatMessageRefRecord(
+                sessionId: FfiConverterString.read(from: &buf),
+                handle: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileStoredChatMessageRefRecord, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.sessionId, into: &buf)
+        FfiConverterUInt32.write(value.handle, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredChatMessageRefRecord_lift(_ buf: RustBuffer) throws -> MobileStoredChatMessageRefRecord {
+    return try FfiConverterTypeMobileStoredChatMessageRefRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredChatMessageRefRecord_lower(_ value: MobileStoredChatMessageRefRecord) -> RustBuffer {
+    return FfiConverterTypeMobileStoredChatMessageRefRecord.lower(value)
+}
+
+
+/**
+ * What a notification needs to describe an arrived message, resolved from
+ * storage rather than from the mutation that triggered it.
+ */
+public struct MobileStoredChatNotificationTargetRecord: Equatable, Hashable {
+    public var conversationAddress: String
+    public var body: String
+    /**
+     * The sender's full address, when known. A group message from a
+     * member whose hint has not resolved yet has none.
+     */
+    public var senderAddress: String?
+    /**
+     * The sender's claimed hint, for a group message.
+     */
+    public var senderHint: Data?
+    /**
+     * The name the sender attached to the message.
+     */
+    public var senderHandle: String?
+    /**
+     * Status text, which reads as its sender's name followed by its body.
+     */
+    public var isStatus: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(conversationAddress: String, body: String,
+        /**
+         * The sender's full address, when known. A group message from a
+         * member whose hint has not resolved yet has none.
+         */senderAddress: String?,
+        /**
+         * The sender's claimed hint, for a group message.
+         */senderHint: Data?,
+        /**
+         * The name the sender attached to the message.
+         */senderHandle: String?,
+        /**
+         * Status text, which reads as its sender's name followed by its body.
+         */isStatus: Bool) {
+        self.conversationAddress = conversationAddress
+        self.body = body
+        self.senderAddress = senderAddress
+        self.senderHint = senderHint
+        self.senderHandle = senderHandle
+        self.isStatus = isStatus
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileStoredChatNotificationTargetRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileStoredChatNotificationTargetRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileStoredChatNotificationTargetRecord {
+        return
+            try MobileStoredChatNotificationTargetRecord(
+                conversationAddress: FfiConverterString.read(from: &buf),
+                body: FfiConverterString.read(from: &buf),
+                senderAddress: FfiConverterOptionString.read(from: &buf),
+                senderHint: FfiConverterOptionData.read(from: &buf),
+                senderHandle: FfiConverterOptionString.read(from: &buf),
+                isStatus: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileStoredChatNotificationTargetRecord, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.conversationAddress, into: &buf)
+        FfiConverterString.write(value.body, into: &buf)
+        FfiConverterOptionString.write(value.senderAddress, into: &buf)
+        FfiConverterOptionData.write(value.senderHint, into: &buf)
+        FfiConverterOptionString.write(value.senderHandle, into: &buf)
+        FfiConverterBool.write(value.isStatus, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredChatNotificationTargetRecord_lift(_ buf: RustBuffer) throws -> MobileStoredChatNotificationTargetRecord {
+    return try FfiConverterTypeMobileStoredChatNotificationTargetRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredChatNotificationTargetRecord_lower(_ value: MobileStoredChatNotificationTargetRecord) -> RustBuffer {
+    return FfiConverterTypeMobileStoredChatNotificationTargetRecord.lower(value)
+}
+
+
+/**
+ * What a reply quotes of the message it answers.
+ */
+public struct MobileStoredChatQuoteRecord: Equatable, Hashable {
+    /**
+     * The original, while it is stored and present; `None` when it never
+     * arrived, is no longer kept, or was lost to a gap.
+     */
+    public var original: MobileStoredChatQuotedMessageRecord?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The original, while it is stored and present; `None` when it never
+         * arrived, is no longer kept, or was lost to a gap.
+         */original: MobileStoredChatQuotedMessageRecord?) {
+        self.original = original
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileStoredChatQuoteRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileStoredChatQuoteRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileStoredChatQuoteRecord {
+        return
+            try MobileStoredChatQuoteRecord(
+                original: FfiConverterOptionTypeMobileStoredChatQuotedMessageRecord.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileStoredChatQuoteRecord, into buf: inout [UInt8]) {
+        FfiConverterOptionTypeMobileStoredChatQuotedMessageRecord.write(value.original, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredChatQuoteRecord_lift(_ buf: RustBuffer) throws -> MobileStoredChatQuoteRecord {
+    return try FfiConverterTypeMobileStoredChatQuoteRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredChatQuoteRecord_lower(_ value: MobileStoredChatQuoteRecord) -> RustBuffer {
+    return FfiConverterTypeMobileStoredChatQuoteRecord.lower(value)
+}
+
+
+/**
+ * The message a reply quotes, as it reads now.
+ */
+public struct MobileStoredChatQuotedMessageRecord: Equatable, Hashable {
+    public var reference: MobileStoredChatMessageRefRecord
+    public var body: String
+    public var outbound: Bool
+    public var isDeleted: Bool
+    public var senderAddress: String?
+    public var senderHint: Data?
+    public var senderHandle: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(reference: MobileStoredChatMessageRefRecord, body: String, outbound: Bool, isDeleted: Bool, senderAddress: String?, senderHint: Data?, senderHandle: String?) {
+        self.reference = reference
+        self.body = body
+        self.outbound = outbound
+        self.isDeleted = isDeleted
+        self.senderAddress = senderAddress
+        self.senderHint = senderHint
+        self.senderHandle = senderHandle
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileStoredChatQuotedMessageRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileStoredChatQuotedMessageRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileStoredChatQuotedMessageRecord {
+        return
+            try MobileStoredChatQuotedMessageRecord(
+                reference: FfiConverterTypeMobileStoredChatMessageRefRecord.read(from: &buf),
+                body: FfiConverterString.read(from: &buf),
+                outbound: FfiConverterBool.read(from: &buf),
+                isDeleted: FfiConverterBool.read(from: &buf),
+                senderAddress: FfiConverterOptionString.read(from: &buf),
+                senderHint: FfiConverterOptionData.read(from: &buf),
+                senderHandle: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileStoredChatQuotedMessageRecord, into buf: inout [UInt8]) {
+        FfiConverterTypeMobileStoredChatMessageRefRecord.write(value.reference, into: &buf)
+        FfiConverterString.write(value.body, into: &buf)
+        FfiConverterBool.write(value.outbound, into: &buf)
+        FfiConverterBool.write(value.isDeleted, into: &buf)
+        FfiConverterOptionString.write(value.senderAddress, into: &buf)
+        FfiConverterOptionData.write(value.senderHint, into: &buf)
+        FfiConverterOptionString.write(value.senderHandle, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredChatQuotedMessageRecord_lift(_ buf: RustBuffer) throws -> MobileStoredChatQuotedMessageRecord {
+    return try FfiConverterTypeMobileStoredChatQuotedMessageRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredChatQuotedMessageRecord_lower(_ value: MobileStoredChatQuotedMessageRecord) -> RustBuffer {
+    return FfiConverterTypeMobileStoredChatQuotedMessageRecord.lower(value)
+}
+
+
+/**
+ * An inbound reaction worth telling the user about: who put what on which
+ * message of theirs.
+ */
+public struct MobileStoredChatReactionNotificationTargetRecord: Equatable, Hashable {
+    public var conversationAddress: String
+    /**
+     * The reaction body as it arrived: a wire token like `<3`, rendered
+     * to a glyph for display.
+     */
+    public var body: String
+    /**
+     * What the reaction is on, so the notice can quote it.
+     */
+    public var targetBody: String
+    public var senderAddress: String?
+    public var senderHint: Data?
+    public var senderHandle: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(conversationAddress: String,
+        /**
+         * The reaction body as it arrived: a wire token like `<3`, rendered
+         * to a glyph for display.
+         */body: String,
+        /**
+         * What the reaction is on, so the notice can quote it.
+         */targetBody: String, senderAddress: String?, senderHint: Data?, senderHandle: String?) {
+        self.conversationAddress = conversationAddress
+        self.body = body
+        self.targetBody = targetBody
+        self.senderAddress = senderAddress
+        self.senderHint = senderHint
+        self.senderHandle = senderHandle
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileStoredChatReactionNotificationTargetRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileStoredChatReactionNotificationTargetRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileStoredChatReactionNotificationTargetRecord {
+        return
+            try MobileStoredChatReactionNotificationTargetRecord(
+                conversationAddress: FfiConverterString.read(from: &buf),
+                body: FfiConverterString.read(from: &buf),
+                targetBody: FfiConverterString.read(from: &buf),
+                senderAddress: FfiConverterOptionString.read(from: &buf),
+                senderHint: FfiConverterOptionData.read(from: &buf),
+                senderHandle: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileStoredChatReactionNotificationTargetRecord, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.conversationAddress, into: &buf)
+        FfiConverterString.write(value.body, into: &buf)
+        FfiConverterString.write(value.targetBody, into: &buf)
+        FfiConverterOptionString.write(value.senderAddress, into: &buf)
+        FfiConverterOptionData.write(value.senderHint, into: &buf)
+        FfiConverterOptionString.write(value.senderHandle, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredChatReactionNotificationTargetRecord_lift(_ buf: RustBuffer) throws -> MobileStoredChatReactionNotificationTargetRecord {
+    return try FfiConverterTypeMobileStoredChatReactionNotificationTargetRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredChatReactionNotificationTargetRecord_lower(_ value: MobileStoredChatReactionNotificationTargetRecord) -> RustBuffer {
+    return FfiConverterTypeMobileStoredChatReactionNotificationTargetRecord.lower(value)
+}
+
+
+/**
+ * One person's reaction to one message.
+ *
+ * Carries its own durable identity because it is a message: the sender may
+ * replace it, and one of ours is delivered and acknowledged like anything
+ * else.
+ */
+public struct MobileStoredChatReactionRecord: Equatable, Hashable {
+    /**
+     * The emote body as it arrived: a short token, not necessarily an
+     * emoji.
+     */
+    public var body: String
+    public var outbound: Bool
+    public var senderAddress: String?
+    public var senderHint: Data?
+    public var reference: MobileStoredChatMessageRefRecord
+    public var wireId: UInt8?
+    public var epoch: UInt16?
+    public var createdAtMs: Int64
+    public var deliveryState: MobileStoredChatDeliveryState?
+    /**
+     * Ours, and it went under a session with forward secrecy.
+     */
+    public var forwardSecret: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The emote body as it arrived: a short token, not necessarily an
+         * emoji.
+         */body: String, outbound: Bool, senderAddress: String?, senderHint: Data?, reference: MobileStoredChatMessageRefRecord, wireId: UInt8?, epoch: UInt16?, createdAtMs: Int64, deliveryState: MobileStoredChatDeliveryState?,
+        /**
+         * Ours, and it went under a session with forward secrecy.
+         */forwardSecret: Bool) {
+        self.body = body
+        self.outbound = outbound
+        self.senderAddress = senderAddress
+        self.senderHint = senderHint
+        self.reference = reference
+        self.wireId = wireId
+        self.epoch = epoch
+        self.createdAtMs = createdAtMs
+        self.deliveryState = deliveryState
+        self.forwardSecret = forwardSecret
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileStoredChatReactionRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileStoredChatReactionRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileStoredChatReactionRecord {
+        return
+            try MobileStoredChatReactionRecord(
+                body: FfiConverterString.read(from: &buf),
+                outbound: FfiConverterBool.read(from: &buf),
+                senderAddress: FfiConverterOptionString.read(from: &buf),
+                senderHint: FfiConverterOptionData.read(from: &buf),
+                reference: FfiConverterTypeMobileStoredChatMessageRefRecord.read(from: &buf),
+                wireId: FfiConverterOptionUInt8.read(from: &buf),
+                epoch: FfiConverterOptionUInt16.read(from: &buf),
+                createdAtMs: FfiConverterInt64.read(from: &buf),
+                deliveryState: FfiConverterOptionTypeMobileStoredChatDeliveryState.read(from: &buf),
+                forwardSecret: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileStoredChatReactionRecord, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.body, into: &buf)
+        FfiConverterBool.write(value.outbound, into: &buf)
+        FfiConverterOptionString.write(value.senderAddress, into: &buf)
+        FfiConverterOptionData.write(value.senderHint, into: &buf)
+        FfiConverterTypeMobileStoredChatMessageRefRecord.write(value.reference, into: &buf)
+        FfiConverterOptionUInt8.write(value.wireId, into: &buf)
+        FfiConverterOptionUInt16.write(value.epoch, into: &buf)
+        FfiConverterInt64.write(value.createdAtMs, into: &buf)
+        FfiConverterOptionTypeMobileStoredChatDeliveryState.write(value.deliveryState, into: &buf)
+        FfiConverterBool.write(value.forwardSecret, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredChatReactionRecord_lift(_ buf: RustBuffer) throws -> MobileStoredChatReactionRecord {
+    return try FfiConverterTypeMobileStoredChatReactionRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredChatReactionRecord_lower(_ value: MobileStoredChatReactionRecord) -> RustBuffer {
+    return FfiConverterTypeMobileStoredChatReactionRecord.lower(value)
+}
+
+
+/**
+ * What the radio observed of the frame a message arrived on.
+ */
+public struct MobileStoredChatReceptionRecord: Equatable, Hashable {
+    public var rssiDbm: Int16?
+    public var snrCentibels: Int16?
+    public var lqi: UInt8?
+    /**
+     * Radio links crossed on the way here; a frame heard directly from its
+     * sender is one hop.
+     */
+    public var hopCount: UInt8?
+    /**
+     * Two-byte repeater hints in trace-route order: nearest this phone
+     * first, nearest the sender last.
+     */
+    public var routeHints: [Data]
+    public var sourceAuthenticated: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(rssiDbm: Int16?, snrCentibels: Int16?, lqi: UInt8?,
+        /**
+         * Radio links crossed on the way here; a frame heard directly from its
+         * sender is one hop.
+         */hopCount: UInt8?,
+        /**
+         * Two-byte repeater hints in trace-route order: nearest this phone
+         * first, nearest the sender last.
+         */routeHints: [Data], sourceAuthenticated: Bool) {
+        self.rssiDbm = rssiDbm
+        self.snrCentibels = snrCentibels
+        self.lqi = lqi
+        self.hopCount = hopCount
+        self.routeHints = routeHints
+        self.sourceAuthenticated = sourceAuthenticated
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileStoredChatReceptionRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileStoredChatReceptionRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileStoredChatReceptionRecord {
+        return
+            try MobileStoredChatReceptionRecord(
+                rssiDbm: FfiConverterOptionInt16.read(from: &buf),
+                snrCentibels: FfiConverterOptionInt16.read(from: &buf),
+                lqi: FfiConverterOptionUInt8.read(from: &buf),
+                hopCount: FfiConverterOptionUInt8.read(from: &buf),
+                routeHints: FfiConverterSequenceData.read(from: &buf),
+                sourceAuthenticated: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileStoredChatReceptionRecord, into buf: inout [UInt8]) {
+        FfiConverterOptionInt16.write(value.rssiDbm, into: &buf)
+        FfiConverterOptionInt16.write(value.snrCentibels, into: &buf)
+        FfiConverterOptionUInt8.write(value.lqi, into: &buf)
+        FfiConverterOptionUInt8.write(value.hopCount, into: &buf)
+        FfiConverterSequenceData.write(value.routeHints, into: &buf)
+        FfiConverterBool.write(value.sourceAuthenticated, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredChatReceptionRecord_lift(_ buf: RustBuffer) throws -> MobileStoredChatReceptionRecord {
+    return try FfiConverterTypeMobileStoredChatReceptionRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredChatReceptionRecord_lower(_ value: MobileStoredChatReceptionRecord) -> RustBuffer {
+    return FfiConverterTypeMobileStoredChatReceptionRecord.lower(value)
+}
+
+
+/**
+ * The repeaters overheard carrying an outbound message.
+ */
+public struct MobileStoredChatRepeatsRecord: Equatable, Hashable {
+    /**
+     * Two-byte hints of the repeaters that named themselves, first heard
+     * first.
+     */
+    public var repeaters: [Data]
+    /**
+     * Repeaters heard that did not: the most any one fragment heard.
+     */
+    public var anonymous: Int64
+    /**
+     * When the message's delivery last moved: its first frame going out,
+     * or a repeater being heard.
+     */
+    public var progressAtMs: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Two-byte hints of the repeaters that named themselves, first heard
+         * first.
+         */repeaters: [Data],
+        /**
+         * Repeaters heard that did not: the most any one fragment heard.
+         */anonymous: Int64,
+        /**
+         * When the message's delivery last moved: its first frame going out,
+         * or a repeater being heard.
+         */progressAtMs: Int64) {
+        self.repeaters = repeaters
+        self.anonymous = anonymous
+        self.progressAtMs = progressAtMs
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileStoredChatRepeatsRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileStoredChatRepeatsRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileStoredChatRepeatsRecord {
+        return
+            try MobileStoredChatRepeatsRecord(
+                repeaters: FfiConverterSequenceData.read(from: &buf),
+                anonymous: FfiConverterInt64.read(from: &buf),
+                progressAtMs: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileStoredChatRepeatsRecord, into buf: inout [UInt8]) {
+        FfiConverterSequenceData.write(value.repeaters, into: &buf)
+        FfiConverterInt64.write(value.anonymous, into: &buf)
+        FfiConverterInt64.write(value.progressAtMs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredChatRepeatsRecord_lift(_ buf: RustBuffer) throws -> MobileStoredChatRepeatsRecord {
+    return try FfiConverterTypeMobileStoredChatRepeatsRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredChatRepeatsRecord_lower(_ value: MobileStoredChatRepeatsRecord) -> RustBuffer {
+    return FfiConverterTypeMobileStoredChatRepeatsRecord.lower(value)
 }
 
 
@@ -12598,8 +14626,16 @@ public struct MobileStoredNodeRecord: Equatable, Hashable {
     public var publicAddress: String
     public var alias: String?
     public var advertisedName: String?
-    public var systemRole: String?
-    public var nodeKind: String?
+    /**
+     * `None` for an ordinary peer, and for a role this build does not
+     * know.
+     */
+    public var systemRole: MobileStoredSystemRole?
+    /**
+     * `None` until a role is heard, and for a kind this build does not
+     * know.
+     */
+    public var nodeKind: MobileStoredNodeKind?
     /**
      * Raw advertised-identity payload bytes (node-identity.md wire form).
      */
@@ -12644,7 +14680,15 @@ public struct MobileStoredNodeRecord: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(id: Int64, ownerIdentityId: String, publicAddress: String, alias: String?, advertisedName: String?, systemRole: String?, nodeKind: String?,
+    public init(id: Int64, ownerIdentityId: String, publicAddress: String, alias: String?, advertisedName: String?,
+        /**
+         * `None` for an ordinary peer, and for a role this build does not
+         * know.
+         */systemRole: MobileStoredSystemRole?,
+        /**
+         * `None` until a role is heard, and for a kind this build does not
+         * know.
+         */nodeKind: MobileStoredNodeKind?,
         /**
          * Raw advertised-identity payload bytes (node-identity.md wire form).
          */advertisement: Data?,
@@ -12716,8 +14760,8 @@ public struct FfiConverterTypeMobileStoredNodeRecord: FfiConverterRustBuffer {
                 publicAddress: FfiConverterString.read(from: &buf),
                 alias: FfiConverterOptionString.read(from: &buf),
                 advertisedName: FfiConverterOptionString.read(from: &buf),
-                systemRole: FfiConverterOptionString.read(from: &buf),
-                nodeKind: FfiConverterOptionString.read(from: &buf),
+                systemRole: FfiConverterOptionTypeMobileStoredSystemRole.read(from: &buf),
+                nodeKind: FfiConverterOptionTypeMobileStoredNodeKind.read(from: &buf),
                 advertisement: FfiConverterOptionData.read(from: &buf),
                 advertisementAuthenticated: FfiConverterBool.read(from: &buf),
                 lastHeardAtMs: FfiConverterOptionInt64.read(from: &buf),
@@ -12735,8 +14779,8 @@ public struct FfiConverterTypeMobileStoredNodeRecord: FfiConverterRustBuffer {
         FfiConverterString.write(value.publicAddress, into: &buf)
         FfiConverterOptionString.write(value.alias, into: &buf)
         FfiConverterOptionString.write(value.advertisedName, into: &buf)
-        FfiConverterOptionString.write(value.systemRole, into: &buf)
-        FfiConverterOptionString.write(value.nodeKind, into: &buf)
+        FfiConverterOptionTypeMobileStoredSystemRole.write(value.systemRole, into: &buf)
+        FfiConverterOptionTypeMobileStoredNodeKind.write(value.nodeKind, into: &buf)
         FfiConverterOptionData.write(value.advertisement, into: &buf)
         FfiConverterBool.write(value.advertisementAuthenticated, into: &buf)
         FfiConverterOptionInt64.write(value.lastHeardAtMs, into: &buf)
@@ -20422,8 +22466,88 @@ public func FfiConverterTypeMobileRegionMembership_lower(_ value: MobileRegionMe
 
 
 /**
- * Why the store could not do what was asked. Carries no input and no SQL:
- * errors reach logs and support bundles.
+ * What a staged reply answers.
+ */
+
+public enum MobileStagedChatRegarding: Equatable, Hashable {
+
+    /**
+     * Another message of the same staged transcript, by handle.
+     */
+    case message(handle: UInt32
+    )
+    /**
+     * One this phone never stored.
+     */
+    case missing
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileStagedChatRegarding: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileStagedChatRegarding: FfiConverterRustBuffer {
+    typealias SwiftType = MobileStagedChatRegarding
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileStagedChatRegarding {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .message(handle: try FfiConverterUInt32.read(from: &buf)
+        )
+
+        case 2: return .missing
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileStagedChatRegarding, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case let .message(handle):
+            writeInt(&buf, Int32(1))
+            FfiConverterUInt32.write(handle, into: &buf)
+
+
+        case .missing:
+            writeInt(&buf, Int32(2))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStagedChatRegarding_lift(_ buf: RustBuffer) throws -> MobileStagedChatRegarding {
+    return try FfiConverterTypeMobileStagedChatRegarding.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStagedChatRegarding_lower(_ value: MobileStagedChatRegarding) -> RustBuffer {
+    return FfiConverterTypeMobileStagedChatRegarding.lower(value)
+}
+
+
+
+/**
+ * Why the store could not do what was asked.
+ *
+ * Errors reach logs and support bundles, so none carries what a caller
+ * passed in or the text or bytes a row holds.
  */
 public
 enum MobileStoreError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
@@ -20431,9 +22555,11 @@ enum MobileStoreError: Swift.Error, Equatable, Hashable, Foundation.LocalizedErr
 
 
     /**
-     * The file could not be opened or created.
+     * The file could not be opened or created. `code` is SQLite's extended
+     * result code.
      */
-    case OpenFailed
+    case OpenFailed(code: Int32
+    )
     /**
      * The file holds a schema this store does not read: newer than it
      * knows, older than the Swift store's last migration, or a database
@@ -20447,13 +22573,20 @@ enum MobileStoreError: Swift.Error, Equatable, Hashable, Foundation.LocalizedErr
     case RecordNotFound
     /**
      * An argument is not in the form the store keeps: a channel ID that is
-     * not a UUID.
+     * not a UUID, a router hint that is not two octets.
      */
     case InvalidArgument
     /**
-     * SQLite refused an operation.
+     * SQLite refused an operation, or a row did not read as its columns
+     * are declared.
+     *
+     * `code` is SQLite's extended result code, or 0 when the failure was
+     * in reading a row. `detail` is SQLite's own account, which names the
+     * table, column, or constraint: the code alone says only that
+     * something was refused.
      */
-    case Failed
+    case Failed(code: Int32, detail: String
+    )
 
 
 
@@ -20483,13 +22616,18 @@ public struct FfiConverterTypeMobileStoreError: FfiConverterRustBuffer {
 
 
 
-        case 1: return .OpenFailed
+        case 1: return .OpenFailed(
+            code: try FfiConverterInt32.read(from: &buf)
+            )
         case 2: return .UnsupportedSchema(
             version: try FfiConverterInt64.read(from: &buf)
             )
         case 3: return .RecordNotFound
         case 4: return .InvalidArgument
-        case 5: return .Failed
+        case 5: return .Failed(
+            code: try FfiConverterInt32.read(from: &buf),
+            detail: try FfiConverterString.read(from: &buf)
+            )
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -20502,8 +22640,9 @@ public struct FfiConverterTypeMobileStoreError: FfiConverterRustBuffer {
 
 
 
-        case .OpenFailed:
+        case let .OpenFailed(code):
             writeInt(&buf, Int32(1))
+            FfiConverterInt32.write(code, into: &buf)
 
 
         case let .UnsupportedSchema(version):
@@ -20519,8 +22658,10 @@ public struct FfiConverterTypeMobileStoreError: FfiConverterRustBuffer {
             writeInt(&buf, Int32(4))
 
 
-        case .Failed:
+        case let .Failed(code,detail):
             writeInt(&buf, Int32(5))
+            FfiConverterInt32.write(code, into: &buf)
+            FfiConverterString.write(detail, into: &buf)
 
         }
     }
@@ -20626,6 +22767,287 @@ public func FfiConverterTypeMobileStoredChannelKind_lift(_ buf: RustBuffer) thro
 #endif
 public func FfiConverterTypeMobileStoredChannelKind_lower(_ value: MobileStoredChannelKind) -> RustBuffer {
     return FfiConverterTypeMobileStoredChannelKind.lower(value)
+}
+
+
+
+/**
+ * How far the delivery of one of our messages has got. Stored as lowercase
+ * TEXT.
+ */
+
+public enum MobileStoredChatDeliveryState: Equatable, Hashable {
+
+    /**
+     * Nothing has been heard of its frames going out.
+     */
+    case pending
+    case sent
+    case acknowledged
+    /**
+     * It went out unacknowledged, and may have arrived.
+     */
+    case failed
+    /**
+     * It never went out where the peer could read it.
+     */
+    case undelivered
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileStoredChatDeliveryState: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileStoredChatDeliveryState: FfiConverterRustBuffer {
+    typealias SwiftType = MobileStoredChatDeliveryState
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileStoredChatDeliveryState {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .pending
+
+        case 2: return .sent
+
+        case 3: return .acknowledged
+
+        case 4: return .failed
+
+        case 5: return .undelivered
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileStoredChatDeliveryState, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .pending:
+            writeInt(&buf, Int32(1))
+
+
+        case .sent:
+            writeInt(&buf, Int32(2))
+
+
+        case .acknowledged:
+            writeInt(&buf, Int32(3))
+
+
+        case .failed:
+            writeInt(&buf, Int32(4))
+
+
+        case .undelivered:
+            writeInt(&buf, Int32(5))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredChatDeliveryState_lift(_ buf: RustBuffer) throws -> MobileStoredChatDeliveryState {
+    return try FfiConverterTypeMobileStoredChatDeliveryState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredChatDeliveryState_lower(_ value: MobileStoredChatDeliveryState) -> RustBuffer {
+    return FfiConverterTypeMobileStoredChatDeliveryState.lower(value)
+}
+
+
+
+/**
+ * The role a node last advertised, as the app names it. Stored as the
+ * TEXT the Swift store wrote: the role's name in lower camel case.
+ */
+
+public enum MobileStoredNodeKind: Equatable, Hashable {
+
+    case repeater
+    case chat
+    case tracker
+    case sensor
+    case bridge
+    case chatRoom
+    case temporarySession
+    /**
+     * The node claimed a role byte the app has no name for.
+     */
+    case unknown
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileStoredNodeKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileStoredNodeKind: FfiConverterRustBuffer {
+    typealias SwiftType = MobileStoredNodeKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileStoredNodeKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .repeater
+
+        case 2: return .chat
+
+        case 3: return .tracker
+
+        case 4: return .sensor
+
+        case 5: return .bridge
+
+        case 6: return .chatRoom
+
+        case 7: return .temporarySession
+
+        case 8: return .unknown
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileStoredNodeKind, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .repeater:
+            writeInt(&buf, Int32(1))
+
+
+        case .chat:
+            writeInt(&buf, Int32(2))
+
+
+        case .tracker:
+            writeInt(&buf, Int32(3))
+
+
+        case .sensor:
+            writeInt(&buf, Int32(4))
+
+
+        case .bridge:
+            writeInt(&buf, Int32(5))
+
+
+        case .chatRoom:
+            writeInt(&buf, Int32(6))
+
+
+        case .temporarySession:
+            writeInt(&buf, Int32(7))
+
+
+        case .unknown:
+            writeInt(&buf, Int32(8))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredNodeKind_lift(_ buf: RustBuffer) throws -> MobileStoredNodeKind {
+    return try FfiConverterTypeMobileStoredNodeKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredNodeKind_lower(_ value: MobileStoredNodeKind) -> RustBuffer {
+    return FfiConverterTypeMobileStoredNodeKind.lower(value)
+}
+
+
+
+/**
+ * What the app itself made of a node, as against what the node says it
+ * is. Stored as lowercase TEXT.
+ */
+
+public enum MobileStoredSystemRole: Equatable, Hashable {
+
+    /**
+     * The radio this phone is attached to. An identity has one.
+     */
+    case companionRadio
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileStoredSystemRole: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileStoredSystemRole: FfiConverterRustBuffer {
+    typealias SwiftType = MobileStoredSystemRole
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileStoredSystemRole {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .companionRadio
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileStoredSystemRole, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .companionRadio:
+            writeInt(&buf, Int32(1))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredSystemRole_lift(_ buf: RustBuffer) throws -> MobileStoredSystemRole {
+    return try FfiConverterTypeMobileStoredSystemRole.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStoredSystemRole_lower(_ value: MobileStoredSystemRole) -> RustBuffer {
+    return FfiConverterTypeMobileStoredSystemRole.lower(value)
 }
 
 
@@ -22762,6 +25184,222 @@ fileprivate struct FfiConverterOptionTypeMobileStoredChannelRecord: FfiConverter
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeMobileStoredChatCursorRecord: FfiConverterRustBuffer {
+    typealias SwiftType = MobileStoredChatCursorRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileStoredChatCursorRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileStoredChatCursorRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileStoredChatMessagePageRecord: FfiConverterRustBuffer {
+    typealias SwiftType = MobileStoredChatMessagePageRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileStoredChatMessagePageRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileStoredChatMessagePageRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileStoredChatMessageRefRecord: FfiConverterRustBuffer {
+    typealias SwiftType = MobileStoredChatMessageRefRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileStoredChatMessageRefRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileStoredChatMessageRefRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileStoredChatNotificationTargetRecord: FfiConverterRustBuffer {
+    typealias SwiftType = MobileStoredChatNotificationTargetRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileStoredChatNotificationTargetRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileStoredChatNotificationTargetRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileStoredChatQuoteRecord: FfiConverterRustBuffer {
+    typealias SwiftType = MobileStoredChatQuoteRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileStoredChatQuoteRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileStoredChatQuoteRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileStoredChatQuotedMessageRecord: FfiConverterRustBuffer {
+    typealias SwiftType = MobileStoredChatQuotedMessageRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileStoredChatQuotedMessageRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileStoredChatQuotedMessageRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileStoredChatReactionNotificationTargetRecord: FfiConverterRustBuffer {
+    typealias SwiftType = MobileStoredChatReactionNotificationTargetRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileStoredChatReactionNotificationTargetRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileStoredChatReactionNotificationTargetRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileStoredChatReceptionRecord: FfiConverterRustBuffer {
+    typealias SwiftType = MobileStoredChatReceptionRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileStoredChatReceptionRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileStoredChatReceptionRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileStoredChatRepeatsRecord: FfiConverterRustBuffer {
+    typealias SwiftType = MobileStoredChatRepeatsRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileStoredChatRepeatsRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileStoredChatRepeatsRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeMobileStoredConversationPreviewRecord: FfiConverterRustBuffer {
     typealias SwiftType = MobileStoredConversationPreviewRecord?
 
@@ -23338,6 +25976,102 @@ fileprivate struct FfiConverterOptionTypeMobileMeshRouteKind: FfiConverterRustBu
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeMobileStagedChatRegarding: FfiConverterRustBuffer {
+    typealias SwiftType = MobileStagedChatRegarding?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileStagedChatRegarding.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileStagedChatRegarding.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileStoredChatDeliveryState: FfiConverterRustBuffer {
+    typealias SwiftType = MobileStoredChatDeliveryState?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileStoredChatDeliveryState.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileStoredChatDeliveryState.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileStoredNodeKind: FfiConverterRustBuffer {
+    typealias SwiftType = MobileStoredNodeKind?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileStoredNodeKind.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileStoredNodeKind.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileStoredSystemRole: FfiConverterRustBuffer {
+    typealias SwiftType = MobileStoredSystemRole?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileStoredSystemRole.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileStoredSystemRole.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeRouterHintInputProblem: FfiConverterRustBuffer {
     typealias SwiftType = RouterHintInputProblem?
 
@@ -23474,6 +26208,30 @@ fileprivate struct FfiConverterOptionSequenceData: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterSequenceData.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionSequenceTypeMobileStoredChatMessageRefRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileStoredChatMessageRefRecord]?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterSequenceTypeMobileStoredChatMessageRefRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterSequenceTypeMobileStoredChatMessageRefRecord.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -24253,6 +27011,56 @@ fileprivate struct FfiConverterSequenceTypeMobileRegionRecord: FfiConverterRustB
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeMobileStagedChatMessageRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileStagedChatMessageRecord]
+
+    public static func write(_ value: [MobileStagedChatMessageRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileStagedChatMessageRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileStagedChatMessageRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileStagedChatMessageRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileStagedChatMessageRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileStagedChatReactionRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileStagedChatReactionRecord]
+
+    public static func write(_ value: [MobileStagedChatReactionRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileStagedChatReactionRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileStagedChatReactionRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileStagedChatReactionRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileStagedChatReactionRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeMobileStoredChannelConversationRecord: FfiConverterRustBuffer {
     typealias SwiftType = [MobileStoredChannelConversationRecord]
 
@@ -24295,6 +27103,106 @@ fileprivate struct FfiConverterSequenceTypeMobileStoredChannelRecord: FfiConvert
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeMobileStoredChannelRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileStoredChatDeliveryFailureRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileStoredChatDeliveryFailureRecord]
+
+    public static func write(_ value: [MobileStoredChatDeliveryFailureRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileStoredChatDeliveryFailureRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileStoredChatDeliveryFailureRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileStoredChatDeliveryFailureRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileStoredChatDeliveryFailureRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileStoredChatMessageRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileStoredChatMessageRecord]
+
+    public static func write(_ value: [MobileStoredChatMessageRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileStoredChatMessageRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileStoredChatMessageRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileStoredChatMessageRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileStoredChatMessageRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileStoredChatMessageRefRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileStoredChatMessageRefRecord]
+
+    public static func write(_ value: [MobileStoredChatMessageRefRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileStoredChatMessageRefRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileStoredChatMessageRefRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileStoredChatMessageRefRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileStoredChatMessageRefRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileStoredChatReactionRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileStoredChatReactionRecord]
+
+    public static func write(_ value: [MobileStoredChatReactionRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileStoredChatReactionRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileStoredChatReactionRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileStoredChatReactionRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileStoredChatReactionRecord.read(from: &buf))
         }
         return seq
     }
@@ -26330,7 +29238,55 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_set_channel_membership() != 786) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_update_channel_details() != 22503) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_update_channel_details() != 50906) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_apply_chat_deliveries() != 13872) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_apply_chat_mutations() != 38741) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_apply_chat_repeats() != 52868) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_apply_chat_resends() != 35160) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_apply_sender_resolution() != 59481) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_chat_archive() != 44977) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_chat_checkpoints() != 53354) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_chat_notification_target() != 2305) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_chat_reaction_notification_target() != 22281) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_chat_resend_frames() != 50098) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_commit_chat_compose_batch() != 38066) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_conversation_address_for_message() != 59617) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_mark_chat_compose_batch_failed() != 61762) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_remove_failed_message() != 25000) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_resolve_gaps_unavailable() != 2504) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_settle_interrupted_deliveries() != 47086) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_claimed_radios() != 33687) {
@@ -26414,7 +29370,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_knows_identity() != 9119) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_list_nodes() != 58217) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_list_nodes() != 46511) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_local_advertised_name() != 37784) {
@@ -26447,7 +29403,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_upsert_identity() != 54587) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_upsert_peer() != 53649) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_upsert_peer() != 11981) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_upsert_ulcp_device_peer() != 11532) {
@@ -26471,10 +29427,34 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_manual_routes() != 39410) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_save_manual_route() != 57998) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_save_manual_route() != 17894) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_settle_manual_route_prompt() != 50409) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_seed_generated_messages() != 31981) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_seed_staged_transcript() != 43075) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_chat_message_count() != 19075) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_chat_message_cursor() != 41665) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_chat_message_page_after() != 24055) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_chat_message_page_before() != 7761) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_chat_message_page_newest() != 6226) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_chat_message_window() != 53524) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilegattreassembler_push() != 37189) {

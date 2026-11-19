@@ -86,10 +86,10 @@ fn add_conversation(store: &MobileAppStore, address: &str) {
 #[test]
 fn identities_insert_once_and_upsert_moves_only_the_address() {
     let (_directory, store) = open();
-    assert_eq!(
+    assert!(matches!(
         store.insert_identity(OWNER.into(), "other-public".into(), 2),
-        Err(MobileStoreError::Failed)
-    );
+        Err(MobileStoreError::Failed { .. })
+    ));
     store
         .upsert_identity(OWNER.into(), "alice-moved".into(), 99)
         .unwrap();
@@ -315,7 +315,7 @@ fn an_upsert_adds_what_it_knows_and_keeps_what_it_does_not() {
             alias: Some("Ridge".into()),
             advertised_name: Some("Ridge Node".into()),
             is_saved: true,
-            node_kind: Some("tracker".into()),
+            node_kind: Some(MobileStoredNodeKind::Tracker),
             system_role: None,
             radio_identifier: Some("R1".into()),
             advertisement: Some(vec![1, 2, 3]),
@@ -336,7 +336,7 @@ fn an_upsert_adds_what_it_knows_and_keeps_what_it_does_not() {
             alias: Some("Ridge".into()),
             advertised_name: Some("Ridge Node".into()),
             system_role: None,
-            node_kind: Some("tracker".into()),
+            node_kind: Some(MobileStoredNodeKind::Tracker),
             advertisement: Some(vec![1, 2, 3]),
             advertisement_authenticated: true,
             last_heard_at_ms: None,
@@ -525,7 +525,7 @@ fn retention_and_clearing_spare_saved_device_and_system_rows() {
         &store,
         "system",
         MobilePeerUpsertRecord {
-            system_role: Some("companion_radio".into()),
+            system_role: Some(MobileStoredSystemRole::CompanionRadio),
             ..MobilePeerUpsertRecord::default()
         },
     );
@@ -575,7 +575,10 @@ fn the_companion_radio_role_belongs_to_one_row() {
         )
         .unwrap();
     let radio = node(&store, "radio-a");
-    assert_eq!(radio.system_role.as_deref(), Some("companion_radio"));
+    assert_eq!(
+        radio.system_role,
+        Some(MobileStoredSystemRole::CompanionRadio)
+    );
     assert!(radio.is_saved);
     assert_eq!(radio.advertised_name.as_deref(), Some("Tracker"));
     assert_eq!(alias_search(&store, "radio-a"), "tracker");
@@ -636,10 +639,10 @@ fn nodes_list_system_rows_first_then_by_search_key_then_id() {
 #[test]
 fn a_peer_needs_its_identity() {
     let (_directory, store) = open();
-    assert_eq!(
+    assert!(matches!(
         store.upsert_peer("nobody".into(), "peer".into(), named(None, None)),
-        Err(MobileStoreError::Failed)
-    );
+        Err(MobileStoreError::Failed { .. })
+    ));
 }
 
 #[test]
@@ -710,7 +713,7 @@ fn the_fold_strips_marks_and_case() {
     assert_eq!(fold_search(""), "");
 }
 
-// Migration 32
+// Files the Swift store wrote
 
 /// A database as the Swift store leaves it at v31, holding `rows` of
 /// `(public_address, alias, advertised_name, alias_search)`.
@@ -739,59 +742,16 @@ fn swift_v31(path: &str, rows: &[(&str, Option<&str>, Option<&str>, &str)]) {
 }
 
 #[test]
-fn migration_32_refolds_every_search_key() {
+fn a_swift_store_opens_unchanged() {
     let directory = tempfile::tempdir().unwrap();
     let path = path_in(&directory);
-    swift_v31(
-        &path,
-        &[
-            // What Foundation's fold wrote, which the store's agrees with.
-            ("medic", Some("Ridge Médic"), None, "ridge medic"),
-            ("angstrom", None, Some("Ångström"), "angstrom"),
-            // A key the store's fold would not have written.
-            ("strasse", Some("Straße"), None, "strasse"),
-            ("decomposed", Some("Zoe\u{0308}"), None, "zoe\u{0308}"),
-            // Keys the Swift store left behind its row: a device-identity
-            // row that later learned a name, and a name that changed.
-            ("device", None, Some("Later Name"), ""),
-            ("renamed", None, Some("New Name"), "old name"),
-            ("nameless", None, None, ""),
-        ],
-    );
+    // A key the store's own fold would not have written.
+    swift_v31(&path, &[("strasse", Some("Straße"), None, "strasse")]);
     let store = MobileAppStore::open(path).unwrap();
-    assert_eq!(store.schema_version(), Ok(32));
-    for (address, expected) in [
-        ("medic", "ridge medic"),
-        ("angstrom", "angstrom"),
-        ("strasse", "straße"),
-        ("decomposed", "zoe"),
-        ("device", "later name"),
-        ("renamed", "new name"),
-        ("nameless", ""),
-    ] {
-        assert_eq!(alias_search(&store, address), expected, "{address}");
-    }
-
-    // A write after the migration keys a name exactly as the migration did.
-    upsert(&store, "fresh", named(Some("Straße"), None));
-    assert_eq!(
-        alias_search(&store, "fresh"),
-        alias_search(&store, "strasse")
-    );
-}
-
-#[test]
-fn migration_32_runs_once() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = path_in(&directory);
-    swift_v31(&path, &[("peer", Some("Ridge"), None, "ridge")]);
-    drop(MobileAppStore::open(path.clone()).unwrap());
-    // A key written after the migration is not rewritten by a reopen.
-    Connection::open(&path)
-        .unwrap()
-        .execute("UPDATE node SET alias_search = 'kept'", [])
-        .unwrap();
-    let store = MobileAppStore::open(path).unwrap();
-    assert_eq!(store.schema_version(), Ok(32));
-    assert_eq!(alias_search(&store, "peer"), "kept");
+    // Opening writes nothing, so the Swift store can still open the file.
+    assert_eq!(store.schema_version(), Ok(BASELINE_VERSION));
+    assert_eq!(alias_search(&store, "strasse"), "strasse");
+    // The next write to the row keys it with the store's fold.
+    upsert(&store, "strasse", named(Some("Straße"), None));
+    assert_eq!(alias_search(&store, "strasse"), "straße");
 }

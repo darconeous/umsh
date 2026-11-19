@@ -414,7 +414,7 @@ fn an_entry_with_no_hint_refuses_the_whole_page() {
         1,
     )
     .unwrap();
-    assert_eq!(
+    assert!(matches!(
         save_page(
             &store,
             OWNER,
@@ -424,8 +424,8 @@ fn an_entry_with_no_hint_refuses_the_whole_page() {
             true,
             2,
         ),
-        Err(MobileStoreError::Failed)
-    );
+        Err(MobileStoreError::Failed { .. })
+    ));
     let held = listing(&store, "router").unwrap();
     assert_eq!(names(&held), ["kept"]);
     assert_eq!((held.next_cursor, held.as_of_ms), (Some(vec![1]), 1));
