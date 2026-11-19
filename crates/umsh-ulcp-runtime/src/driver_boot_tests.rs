@@ -426,6 +426,7 @@ fn device_changes_persist_only_over_a_current_snapshot() {
 /// write of something the snapshot does not hold, owes nothing. What is
 /// owed is not written while the interface is answered, but later, or at
 /// once when the board settles it on its way off.
+#[cfg(feature = "device-link")]
 #[test]
 fn device_interface_writes_keep_a_current_snapshot_in_step() {
     use umsh_ulcp::{frame, ids::prop};
@@ -505,6 +506,7 @@ fn device_interface_writes_keep_a_current_snapshot_in_step() {
 
 /// On a device whose own store keeps the device lists, a change to one
 /// reaches the store, and the snapshot is not written for it.
+#[cfg(feature = "device-link")]
 #[test]
 fn held_lists_reach_the_store_and_not_the_snapshot() {
     use umsh_ulcp::{frame, ids::prop};
@@ -567,6 +569,7 @@ fn held_lists_reach_the_store_and_not_the_snapshot() {
 /// hears every publication the host hears, hears what the host changes,
 /// and is told when it fell too far behind to hear them all. What it
 /// changes reaches the host as a change the host did not make.
+#[cfg(feature = "device-link")]
 #[test]
 fn the_device_interface_is_answered_on_its_link_and_hears_every_publication() {
     use umsh_ulcp::{Frame, PropPayload, frame, ids::prop};

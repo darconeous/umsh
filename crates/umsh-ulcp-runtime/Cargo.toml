@@ -43,7 +43,15 @@ counters = ["dep:umsh-journal-store", "dep:umsh-hal", "dep:heapless"]
 # A device with its own messaging interface: its device identity is its
 # person's messaging identity, advertised as a chat node, and its device
 # node is sized for chat traffic and the peers it talks with.
-communicator = ["umsh-journal-store?/chat-peers", "umsh-ulcp-device/communicator"]
+communicator = [
+    "device-link",
+    "umsh-journal-store?/chat-peers",
+    "umsh-ulcp-device/communicator",
+]
+# The device's own settings interface (`DeviceRuntime::device`): a
+# communicator's screen, or an application wired to the device. A board
+# without one leaves the whole path out of its image.
+device-link = ["driver"]
 # The board-agnostic session driver: the device run loop, effect dispatch,
 # and frame staging, parameterized over the `DeviceEnv` board couplings.
 # Also carries `duty_gate`, the shared duty-ledger radio decorator the
@@ -106,7 +114,7 @@ node-msg = [
 # A ULCP link on a UART without hardware flow control: HDLC-Lite framing
 # and the reader's XON/XOFF under `PROP_UART_WINDOW`, over any
 # `embedded-io-async` UART.
-uart-link = ["driver", "dep:embedded-io-async", "umsh-ulcp-device/uart-link"]
+uart-link = ["device-link", "dep:embedded-io-async", "umsh-ulcp-device/uart-link"]
 # The glue between a staged `CMD_I2C_TRANSFER`/`CMD_I2C_SCAN` and any
 # `embedded-hal-async` bus: operation carving, the probe loop, and the
 # mapping from HAL error kinds to ULCP statuses. The trait, not a HAL, so

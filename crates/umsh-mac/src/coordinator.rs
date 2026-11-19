@@ -2379,14 +2379,17 @@ impl<
 
     /// Enqueue a broadcast frame for transmission, signed by `from` when
     /// `options` asks for a signature.
-    pub async fn send_broadcast(
+    ///
+    /// Hands back the shared signing path's future rather than awaiting it,
+    /// as [`Mac::send_multicast`] does: an `async fn` would add a state
+    /// machine.
+    pub fn send_broadcast(
         &mut self,
         from: LocalIdentityId,
         payload: &[u8],
         options: &SendOptions,
-    ) -> Result<SendReceipt, SendError> {
+    ) -> impl Future<Output = Result<SendReceipt, SendError>> {
         self.send_signable(from, SendDestination::Broadcast, payload, options)
-            .await
     }
 
     /// Enqueues a multicast frame using the configured channel keys.
@@ -2413,15 +2416,14 @@ impl<
 
     /// Enqueue a multicast frame for transmission, signed by `from` when
     /// `options` asks for a signature.
-    pub async fn send_multicast(
+    pub fn send_multicast(
         &mut self,
         from: LocalIdentityId,
         channel: &ChannelKey,
         payload: &[u8],
         options: &SendOptions,
-    ) -> Result<SendReceipt, SendError> {
+    ) -> impl Future<Output = Result<SendReceipt, SendError>> {
         self.send_signable(from, SendDestination::Multicast(channel), payload, options)
-            .await
     }
 
     /// Send a broadcast or multicast, signing it first when `options` asks.

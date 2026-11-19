@@ -261,11 +261,17 @@ impl<C: Controller> Controller for Guarded<C> {
         }
         result
     }
-    async fn write_sync_data(&self, packet: &SyncPacket<'_>) -> Result<(), Self::Error> {
-        self.inner.write_sync_data(packet).await
+    fn write_sync_data(
+        &self,
+        packet: &SyncPacket<'_>,
+    ) -> impl Future<Output = Result<(), Self::Error>> {
+        self.inner.write_sync_data(packet)
     }
-    async fn write_iso_data(&self, packet: &IsoPacket<'_>) -> Result<(), Self::Error> {
-        self.inner.write_iso_data(packet).await
+    fn write_iso_data(
+        &self,
+        packet: &IsoPacket<'_>,
+    ) -> impl Future<Output = Result<(), Self::Error>> {
+        self.inner.write_iso_data(packet)
     }
     async fn read<'a>(&self, buf: &'a mut [u8]) -> Result<ControllerToHostPacket<'a>, Self::Error> {
         let packet = self.inner.read(buf).await?;
@@ -367,37 +373,48 @@ where
     }
 }
 impl<C: ControllerCmdAsync<T>, T: AsyncCmd> ControllerCmdAsync<T> for Guarded<C> {
-    async fn exec(&self, command: &T) -> Result<(), cmd::Error<Self::Error>> {
-        self.inner.exec(command).await
+    fn exec(&self, command: &T) -> impl Future<Output = Result<(), cmd::Error<Self::Error>>> {
+        self.inner.exec(command)
     }
 }
 
+/// A controller lent to [`Guarded`] rather than given to it.
+///
+/// Every method hands back the borrowed controller's own future: an
+/// `async fn` here would wrap each one in a state machine of its own, and
+/// there is one `exec` per HCI command the host sends.
 pub struct Borrowed<'a, C>(pub &'a C);
 impl<C: embedded_io::ErrorType> embedded_io::ErrorType for Borrowed<'_, C> {
     type Error = C::Error;
 }
 impl<C: Controller> Controller for Borrowed<'_, C> {
-    async fn write_acl_data(&self, p: &AclPacket<'_>) -> Result<(), Self::Error> {
-        self.0.write_acl_data(p).await
+    fn write_acl_data(&self, p: &AclPacket<'_>) -> impl Future<Output = Result<(), Self::Error>> {
+        self.0.write_acl_data(p)
     }
-    async fn write_sync_data(&self, p: &SyncPacket<'_>) -> Result<(), Self::Error> {
-        self.0.write_sync_data(p).await
+    fn write_sync_data(&self, p: &SyncPacket<'_>) -> impl Future<Output = Result<(), Self::Error>> {
+        self.0.write_sync_data(p)
     }
-    async fn write_iso_data(&self, p: &IsoPacket<'_>) -> Result<(), Self::Error> {
-        self.0.write_iso_data(p).await
+    fn write_iso_data(&self, p: &IsoPacket<'_>) -> impl Future<Output = Result<(), Self::Error>> {
+        self.0.write_iso_data(p)
     }
-    async fn read<'a>(&self, buf: &'a mut [u8]) -> Result<ControllerToHostPacket<'a>, Self::Error> {
-        self.0.read(buf).await
+    fn read<'a>(
+        &self,
+        buf: &'a mut [u8],
+    ) -> impl Future<Output = Result<ControllerToHostPacket<'a>, Self::Error>> {
+        self.0.read(buf)
     }
 }
 impl<C: ControllerCmdSync<T>, T: SyncCmd> ControllerCmdSync<T> for Borrowed<'_, C> {
-    async fn exec(&self, command: &T) -> Result<T::Return, cmd::Error<Self::Error>> {
-        self.0.exec(command).await
+    fn exec(
+        &self,
+        command: &T,
+    ) -> impl Future<Output = Result<T::Return, cmd::Error<Self::Error>>> {
+        self.0.exec(command)
     }
 }
 impl<C: ControllerCmdAsync<T>, T: AsyncCmd> ControllerCmdAsync<T> for Borrowed<'_, C> {
-    async fn exec(&self, command: &T) -> Result<(), cmd::Error<Self::Error>> {
-        self.0.exec(command).await
+    fn exec(&self, command: &T) -> impl Future<Output = Result<(), cmd::Error<Self::Error>>> {
+        self.0.exec(command)
     }
 }
 

@@ -87,6 +87,11 @@ jobs:
       - name: cargo test (umsh-ulcp-runtime gnss, device-node)
         run: cargo test --locked -p umsh-ulcp-runtime --features gnss,device-node
 
+      # The device's own interface, by name: the run above leaves it out, and
+      # the workspace run reaches it only through another crate's features.
+      - name: cargo test (umsh-ulcp-runtime device-link)
+        run: cargo test --locked -p umsh-ulcp-runtime --features gnss,device-node,device-link
+
       - name: cargo clippy
         run: cargo clippy --all-targets -- -D warnings
 

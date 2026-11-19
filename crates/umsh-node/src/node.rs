@@ -644,11 +644,14 @@ impl<M: MacBackend> LocalNode<M> {
             .await?)
     }
 
+    // The methods that only forward to the MAC return its future rather
+    // than await it: an `async fn` would wrap it in a state machine of its own.
+
     /// Make sure `key` holds a peer slot, at least a transient one (held by
     /// nothing, evictable), so a send to it can be sealed. Reports whether
     /// it does.
-    pub async fn ensure_transient_peer(&self, key: &PublicKey) -> bool {
-        self.mac.ensure_transient_peer(key).await
+    pub fn ensure_transient_peer(&self, key: &PublicKey) -> impl Future<Output = bool> {
+        self.mac.ensure_transient_peer(key)
     }
 
     /// Send `payload` to `destination` as this node, the way
@@ -685,13 +688,13 @@ impl<M: MacBackend> LocalNode<M> {
     }
 
     /// Return the live TX frame counter for this node's identity, if available.
-    pub async fn frame_counter(&self) -> Option<u32> {
-        self.mac.frame_counter(self.identity_id).await
+    pub fn frame_counter(&self) -> impl Future<Output = Option<u32>> {
+        self.mac.frame_counter(self.identity_id)
     }
 
     /// Return the persisted TX frame-counter boundary for this node's identity.
-    pub async fn persisted_frame_counter(&self) -> Option<u32> {
-        self.mac.persisted_frame_counter(self.identity_id).await
+    pub fn persisted_frame_counter(&self) -> impl Future<Output = Option<u32>> {
+        self.mac.persisted_frame_counter(self.identity_id)
     }
 
     /// Derive the pairwise transport keys this node's identity shares with
@@ -699,47 +702,51 @@ impl<M: MacBackend> LocalNode<M> {
     /// and acknowledge unicast traffic while the host is away. Deterministic
     /// per (identity, peer); the peer need not have exchanged anything yet.
     /// `None` when the backend cannot derive keys.
-    pub async fn pairwise_keys_for_peer(
+    pub fn pairwise_keys_for_peer(
         &self,
         peer: &PublicKey,
-    ) -> Option<umsh_crypto::PairwiseKeys> {
-        self.mac
-            .pairwise_keys_for_peer(self.identity_id, peer)
-            .await
+    ) -> impl Future<Output = Option<umsh_crypto::PairwiseKeys>> {
+        self.mac.pairwise_keys_for_peer(self.identity_id, peer)
     }
 
     /// Invoke `f` for every peer currently registered in the MAC-layer peer registry.
     ///
     /// Covers all known peers, not just those with an active crypto session.
-    pub async fn for_each_peer(&self, f: &mut dyn FnMut(PublicKey)) {
-        self.mac.for_each_peer(f).await
+    pub fn for_each_peer(&self, f: &mut dyn FnMut(PublicKey)) -> impl Future<Output = ()> {
+        self.mac.for_each_peer(f)
     }
 
     /// Invoke `f` with the key of every channel registered in the MAC.
-    pub async fn for_each_channel(&self, f: &mut dyn FnMut(&umsh_core::ChannelKey)) {
-        self.mac.for_each_channel(f).await
+    pub fn for_each_channel(
+        &self,
+        f: &mut dyn FnMut(&umsh_core::ChannelKey),
+    ) -> impl Future<Output = ()> {
+        self.mac.for_each_channel(f)
     }
 
     /// Invoke `f` for each peer with established crypto state, passing the
     /// peer's public key, last-accepted RX counter, and persisted RX boundary.
-    pub async fn for_each_peer_counter(&self, f: &mut dyn FnMut(PublicKey, u32, u32)) {
-        self.mac.for_each_peer_counter(self.identity_id, f).await
+    pub fn for_each_peer_counter(
+        &self,
+        f: &mut dyn FnMut(PublicKey, u32, u32),
+    ) -> impl Future<Output = ()> {
+        self.mac.for_each_peer_counter(self.identity_id, f)
     }
 
     /// Return the route the MAC has cached for `peer`, if any.
     ///
     /// A cached route is what the next send to this peer will use, so this is
     /// the state to inspect when traffic takes an unexpected path.
-    pub async fn peer_route(&self, peer: &PublicKey) -> Option<CachedRoute> {
-        self.mac.peer_route(peer).await
+    pub fn peer_route(&self, peer: &PublicKey) -> impl Future<Output = Option<CachedRoute>> {
+        self.mac.peer_route(peer)
     }
 
     /// Forget the route cached for `peer`, returning whether one was held.
     ///
     /// Sends fall back to the default delivery mode until an inbound packet
     /// teaches a route again; the peer and its crypto state are untouched.
-    pub async fn clear_peer_route(&self, peer: &PublicKey) -> bool {
-        self.mac.clear_peer_route(peer).await
+    pub fn clear_peer_route(&self, peer: &PublicKey) -> impl Future<Output = bool> {
+        self.mac.clear_peer_route(peer)
     }
 
     /// Install a route learned before this MAC existed, returning whether
@@ -747,41 +754,46 @@ impl<M: MacBackend> LocalNode<M> {
     ///
     /// For a host that remembers routes across the lifetime of the stack
     /// underneath it; see [`umsh_mac::MacHandle::restore_peer_route`].
-    pub async fn restore_peer_route(&self, peer: &PublicKey, route: CachedRoute) -> bool {
-        self.mac.restore_peer_route(peer, route).await
+    pub fn restore_peer_route(
+        &self,
+        peer: &PublicKey,
+        route: CachedRoute,
+    ) -> impl Future<Output = bool> {
+        self.mac.restore_peer_route(peer, route)
     }
 
     /// Record whether `peer` advertises itself as mobile; see
     /// [`umsh_mac::MacHandle::set_peer_mobile`]. For a host that remembers
     /// an advertisement across the lifetime of the stack underneath it;
     /// one heard live is recorded without being asked.
-    pub async fn set_peer_mobile(&self, peer: &PublicKey, mobile: bool) -> bool {
-        self.mac.set_peer_mobile(peer, mobile).await
+    pub fn set_peer_mobile(&self, peer: &PublicKey, mobile: bool) -> impl Future<Output = bool> {
+        self.mac.set_peer_mobile(peer, mobile)
     }
 
     /// Install `route` for `peer` and hold it for `hold_ms`; see
     /// [`umsh_mac::MacHandle::hold_peer_route`].
-    pub async fn hold_peer_route(
+    pub fn hold_peer_route(
         &self,
         peer: &PublicKey,
         route: CachedRoute,
         flood_hops: u8,
         hold_ms: u64,
-    ) -> bool {
-        self.mac
-            .hold_peer_route(peer, route, flood_hops, hold_ms)
-            .await
+    ) -> impl Future<Output = bool> {
+        self.mac.hold_peer_route(peer, route, flood_hops, hold_ms)
     }
 
     /// Switch a held route to the best path learned while it was held; see
     /// [`umsh_mac::MacHandle::adopt_learned_peer_route`].
-    pub async fn adopt_learned_peer_route(&self, peer: &PublicKey) -> bool {
-        self.mac.adopt_learned_peer_route(peer).await
+    pub fn adopt_learned_peer_route(&self, peer: &PublicKey) -> impl Future<Output = bool> {
+        self.mac.adopt_learned_peer_route(peer)
     }
 
     /// The route cached for `peer` with its hold and confirmation state.
-    pub async fn peer_route_status(&self, peer: &PublicKey) -> Option<umsh_mac::PeerRouteStatus> {
-        self.mac.peer_route_status(peer).await
+    pub fn peer_route_status(
+        &self,
+        peer: &PublicKey,
+    ) -> impl Future<Output = Option<umsh_mac::PeerRouteStatus>> {
+        self.mac.peer_route_status(peer)
     }
 
     fn add_receive_handler<F>(&self, handler: F) -> SubscriptionHandle
@@ -1637,8 +1649,8 @@ impl<M: MacBackend> LocalNode<M> {
         Some(state.pending_pings.swap_remove(index))
     }
 
-    pub(crate) async fn now_ms(&self) -> u64 {
-        self.mac.now_ms().await
+    pub(crate) fn now_ms(&self) -> impl Future<Output = u64> {
+        self.mac.now_ms()
     }
 
     /// The earliest deadline the host's timeout service has to meet for
@@ -1651,8 +1663,8 @@ impl<M: MacBackend> LocalNode<M> {
         None
     }
 
-    pub(crate) async fn fill_random(&self, dest: &mut [u8]) {
-        self.mac.fill_random(dest).await
+    pub(crate) fn fill_random(&self, dest: &mut [u8]) -> impl Future<Output = ()> {
+        self.mac.fill_random(dest)
     }
 
     /// Called when the send `token` names is acknowledged: if it carried a

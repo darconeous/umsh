@@ -4541,7 +4541,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     pub fn set_lan_bearer_state(
         &mut self,
         state: umsh_ulcp::lan::State,
-        emit: &mut impl FnMut(&[u8]),
+        emit: &mut dyn FnMut(&[u8]),
     ) {
         if !self.has_lan_bearer() || state == self.lan_bearer_state {
             return;
@@ -4594,7 +4594,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// domain always returns to its documented defaults: it is never
     /// saved. Queue contents and replay baselines are discarded either
     /// way.
-    pub fn reset(&mut self, reason: Status, emit: &mut impl FnMut(&[u8])) -> Effect {
+    pub fn reset(&mut self, reason: Status, emit: &mut dyn FnMut(&[u8])) -> Effect {
         self.device = DeviceDomain::post_reset(&self.config);
         // The device identity's post-reset value is the persisted one:
         // normally unchanged, gone after CMD_CLEAR (completing a
@@ -4906,7 +4906,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// has outlived its bound, returning the effect that stops the
     /// board's indication. Safe to call at any time: each does nothing
     /// before its own deadline.
-    pub fn poll_deadlines(&mut self, now_ms: u64, emit: &mut impl FnMut(&[u8])) -> Option<Effect> {
+    pub fn poll_deadlines(&mut self, now_ms: u64, emit: &mut dyn FnMut(&[u8])) -> Option<Effect> {
         self.poll_host_lease(now_ms);
         self.poll_alert(now_ms, emit)
     }
@@ -5062,7 +5062,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     }
 
     /// `CMD_SESSION_START` from the binding in flight.
-    fn start_session(&mut self, tid: u8, emit: &mut impl FnMut(&[u8])) -> Option<Effect> {
+    fn start_session(&mut self, tid: u8, emit: &mut dyn FnMut(&[u8])) -> Option<Effect> {
         let binding = self.binding;
         match binding {
             Binding::Local => {
@@ -5100,7 +5100,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// debt had a frame of its own to emit, and on a mesh exchange that
     /// frame is the only one its binding carries. The values published
     /// are the current ones, so a debt paid late is never stale.
-    pub fn take_owed_publications(&mut self, emit: &mut impl FnMut(&[u8])) -> bool {
+    pub fn take_owed_publications(&mut self, emit: &mut dyn FnMut(&[u8])) -> bool {
         let mut wrote = false;
         if let Some(status) = self.owed_reset_status.take()
             && self.publishing()
@@ -5130,7 +5130,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         &mut self,
         bytes: &[u8],
         now_ms: u64,
-        emit: &mut impl FnMut(&[u8]),
+        emit: &mut dyn FnMut(&[u8]),
     ) -> Option<Effect> {
         self.handle_frame_budgeted(bytes, now_ms, MULTI_MAX, emit)
     }
@@ -5146,7 +5146,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         bytes: &[u8],
         now_ms: u64,
         reply_budget: usize,
-        emit: &mut impl FnMut(&[u8]),
+        emit: &mut dyn FnMut(&[u8]),
     ) -> Option<Effect> {
         self.binding = Binding::Local;
         self.dispatch_frame(bytes, now_ms, reply_budget, emit)
@@ -5174,7 +5174,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         bytes: &[u8],
         now_ms: u64,
         reply_budget: usize,
-        emit: &mut impl FnMut(&[u8]),
+        emit: &mut dyn FnMut(&[u8]),
     ) -> Option<Effect> {
         self.serve_mesh_frame(Binding::Admin, false, bytes, now_ms, reply_budget, emit)
     }
@@ -5196,7 +5196,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         bytes: &[u8],
         now_ms: u64,
         reply_budget: usize,
-        emit: &mut impl FnMut(&[u8]),
+        emit: &mut dyn FnMut(&[u8]),
     ) -> Option<Effect> {
         let hosts = self.host.key.as_ref() == Some(from);
         let binding = match (listed_admin, hosts) {
@@ -5219,7 +5219,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         bytes: &[u8],
         now_ms: u64,
         reply_budget: usize,
-        emit: &mut impl FnMut(&[u8]),
+        emit: &mut dyn FnMut(&[u8]),
     ) -> Option<Effect> {
         self.binding = binding;
         self.mesh_requester_hosts = hosts;
@@ -5245,7 +5245,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         &mut self,
         bytes: &[u8],
         now_ms: u64,
-        emit: &mut impl FnMut(&[u8]),
+        emit: &mut dyn FnMut(&[u8]),
     ) -> Option<Effect> {
         self.binding = Binding::Device;
         self.dispatch_frame(bytes, now_ms, MULTI_MAX, emit)
@@ -5333,7 +5333,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         bytes: &[u8],
         now_ms: u64,
         reply_budget: usize,
-        emit: &mut impl FnMut(&[u8]),
+        emit: &mut dyn FnMut(&[u8]),
     ) -> Option<Effect> {
         // Malformed frames (bad flag, reserved bits, command MSB) are
         // ignored per the spec.
@@ -5622,7 +5622,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         data: &[u8],
         info: &RadioRxInfo,
         now_ms: u64,
-        emit: &mut impl FnMut(&[u8]),
+        emit: &mut dyn FnMut(&[u8]),
     ) -> Option<Effect> {
         if !self.device.settings.enabled || data.len() > usize::from(self.config.mtu) {
             return None;
@@ -6150,7 +6150,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         &mut self,
         outcome: TxOutcome,
         now_ms: u64,
-        emit: &mut impl FnMut(&[u8]),
+        emit: &mut dyn FnMut(&[u8]),
     ) -> Option<Effect> {
         let pending = self.session.pending.pop_front()?;
         match outcome {
@@ -6195,7 +6195,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         payload: &[u8],
         now_ms: u64,
         reply_budget: usize,
-        emit: &mut impl FnMut(&[u8]),
+        emit: &mut dyn FnMut(&[u8]),
     ) -> Option<Effect> {
         debug_assert!(self.multi.is_none());
         let Some(state) = MultiState::new(tid, writes, payload, reply_budget) else {
@@ -6214,7 +6214,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// Each entry runs through `prop_get` or `prop_set` exactly as a lone
     /// command would; `send_prop_is` and `complete` divert what those
     /// would have sent into the reply being accumulated.
-    fn advance_multi(&mut self, now_ms: u64, emit: &mut impl FnMut(&[u8])) -> Option<Effect> {
+    fn advance_multi(&mut self, now_ms: u64, emit: &mut dyn FnMut(&[u8])) -> Option<Effect> {
         loop {
             let mut value = [0u8; MULTI_MAX];
             let (tid, writes) = {
@@ -6320,7 +6320,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// A reply that ran out of room carries the entries that fit and
     /// nothing else: the requester compares what it asked for against
     /// what came back and reissues the remainder.
-    fn finish_multi(&mut self, emit: &mut impl FnMut(&[u8])) -> Option<Effect> {
+    fn finish_multi(&mut self, emit: &mut dyn FnMut(&[u8])) -> Option<Effect> {
         let state = self.multi.take()?;
         emit(&state.reply);
         None
@@ -6331,7 +6331,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     ///
     /// Returns `None` when no multi-property command is in flight, which
     /// is the ordinary case after a single-property deferral.
-    pub fn resume_multi(&mut self, now_ms: u64, emit: &mut impl FnMut(&[u8])) -> Option<Effect> {
+    pub fn resume_multi(&mut self, now_ms: u64, emit: &mut dyn FnMut(&[u8])) -> Option<Effect> {
         let state = self.multi.as_mut()?;
         if let Some(key) = state.owed {
             // The driver came back without the value this entry deferred
@@ -6351,7 +6351,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         tid: u8,
         key: u32,
         now_ms: u64,
-        emit: &mut impl FnMut(&[u8]),
+        emit: &mut dyn FnMut(&[u8]),
     ) -> Option<Effect> {
         if self.refuse_absent_property(tid, key, emit) {
             return None;
@@ -6475,7 +6475,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// Complete a deferred `PROP_PHY_RSSI` read requested via
     /// [`Effect::SampleRssi`]. `rssi` is the sampled value in dBm, or `Err` if
     /// the radio read failed. Quote the same `tid` the effect carried.
-    pub fn respond_rssi(&mut self, tid: u8, rssi: Result<i16, ()>, emit: &mut impl FnMut(&[u8])) {
+    pub fn respond_rssi(&mut self, tid: u8, rssi: Result<i16, ()>, emit: &mut dyn FnMut(&[u8])) {
         match rssi {
             Ok(dbm) => {
                 let clamped = dbm.clamp(i16::from(i8::MIN), i16::from(i8::MAX)) as i8;
@@ -6496,7 +6496,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         tid: u8,
         form: IdentityForm,
         blob: Result<&[u8], ()>,
-        emit: &mut impl FnMut(&[u8]),
+        emit: &mut dyn FnMut(&[u8]),
     ) {
         match blob {
             Ok(bytes) => self.send_prop_is(tid, form.property(), bytes, emit),
@@ -6659,7 +6659,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         }
     }
 
-    pub fn toggle_display_motion_wake(&mut self, emit: &mut impl FnMut(&[u8])) -> Option<bool> {
+    pub fn toggle_display_motion_wake(&mut self, emit: &mut dyn FnMut(&[u8])) -> Option<bool> {
         self.toggle_device_flag(
             self.config.display_motion_wake,
             prop::DISPLAY_MOTION_WAKE_ENABLED,
@@ -6755,7 +6755,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// Safe to call at any time: it does nothing until the deadline is
     /// actually reached, so a driver that polls it on every loop
     /// iteration behaves identically to one that arms a precise timer.
-    pub fn poll_alert(&mut self, now_ms: u64, emit: &mut impl FnMut(&[u8])) -> Option<Effect> {
+    pub fn poll_alert(&mut self, now_ms: u64, emit: &mut dyn FnMut(&[u8])) -> Option<Effect> {
         match self.alert_deadline_ms {
             Some(deadline) if now_ms >= deadline => self.clear_alert(emit),
             _ => None,
@@ -6768,13 +6768,13 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// Returns the effect that stops the indication, or `None` when no
     /// alert was running (so a board can use the return to decide
     /// whether the press was consumed).
-    pub fn cancel_alert(&mut self, emit: &mut impl FnMut(&[u8])) -> Option<Effect> {
+    pub fn cancel_alert(&mut self, emit: &mut dyn FnMut(&[u8])) -> Option<Effect> {
         self.clear_alert(emit)
     }
 
     /// Flip `PROP_PHY_ENABLED` from the device's physical controls.
     /// The caller must apply the returned radio effect as for a host write.
-    pub fn toggle_radio(&mut self, emit: &mut impl FnMut(&[u8])) -> (bool, Effect) {
+    pub fn toggle_radio(&mut self, emit: &mut dyn FnMut(&[u8])) -> (bool, Effect) {
         self.toggle_device_flag(
             true,
             prop::PHY_ENABLED,
@@ -6789,7 +6789,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     ///
     /// Returns the new state, or `None` on a device without `CAP_GNSS`
     /// (so a board can report a press unconditionally).
-    pub fn toggle_gnss(&mut self, emit: &mut impl FnMut(&[u8])) -> Option<bool> {
+    pub fn toggle_gnss(&mut self, emit: &mut dyn FnMut(&[u8])) -> Option<bool> {
         let enabled = self.toggle_device_flag(
             self.config.gnss.is_some(),
             prop::GNSS_ENABLED,
@@ -6806,7 +6806,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// two decisions, and a board that offers the first as a switch owes
     /// the user the second: nothing else on the device distinguishes a
     /// position kept for the screen from one put on the air.
-    pub fn toggle_gnss_ident_update(&mut self, emit: &mut impl FnMut(&[u8])) -> Option<bool> {
+    pub fn toggle_gnss_ident_update(&mut self, emit: &mut dyn FnMut(&[u8])) -> Option<bool> {
         let enabled = self.toggle_device_flag(
             self.config.gnss.is_some(),
             prop::GNSS_IDENT_UPDATE,
@@ -6823,7 +6823,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// Every device carries the repeater, so this never refuses—the
     /// return is whether the node now forwards rather than an
     /// availability answer.
-    pub fn toggle_repeater(&mut self, emit: &mut impl FnMut(&[u8])) -> Option<bool> {
+    pub fn toggle_repeater(&mut self, emit: &mut dyn FnMut(&[u8])) -> Option<bool> {
         let mode = match self.device.repeater_mode {
             repeater_mode::OFF => repeater_mode::ADAPTIVE,
             repeater_mode::ADAPTIVE => repeater_mode::ON,
@@ -6842,7 +6842,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// The one toggle whose own effect can carry away the host that
     /// would have watched it: clearing it drops the attached link, so
     /// the announcement below is the last thing that host hears.
-    pub fn toggle_ble(&mut self, emit: &mut impl FnMut(&[u8])) -> Option<bool> {
+    pub fn toggle_ble(&mut self, emit: &mut dyn FnMut(&[u8])) -> Option<bool> {
         self.toggle_device_flag(
             self.config.ble,
             prop::BLE_ENABLED,
@@ -6854,7 +6854,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// Flip station power from the device's physical controls. What the
     /// station's live state does in consequence is owed
     /// ([`Session::take_owed_publications`]).
-    pub fn toggle_wifi(&mut self, emit: &mut impl FnMut(&[u8])) -> Option<bool> {
+    pub fn toggle_wifi(&mut self, emit: &mut dyn FnMut(&[u8])) -> Option<bool> {
         let enabled = self.toggle_device_flag(
             self.has_station(),
             prop::WIFI_ENABLED,
@@ -6916,7 +6916,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     pub fn choose_wifi_network(
         &mut self,
         ssid: &[u8],
-        emit: &mut impl FnMut(&[u8]),
+        emit: &mut dyn FnMut(&[u8]),
     ) -> Result<(), Status> {
         if ssid.is_empty() {
             return Err(Status::ITEM_NOT_FOUND);
@@ -7003,7 +7003,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         ssid: &[u8],
         hold_ended: bool,
         epoch: u32,
-        emit: &mut impl FnMut(&[u8]),
+        emit: &mut dyn FnMut(&[u8]),
     ) {
         if !self.has_station()
             || !self.device.wifi_enabled
@@ -7040,14 +7040,14 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     }
 
     #[cfg(feature = "wifi")]
-    fn announce_link_if_changed(&mut self, before: wifi::Link, emit: &mut impl FnMut(&[u8])) {
+    fn announce_link_if_changed(&mut self, before: wifi::Link, emit: &mut dyn FnMut(&[u8])) {
         if self.wifi_link != before {
             self.announce_link(emit);
         }
     }
 
     #[cfg(feature = "wifi")]
-    fn announce_link(&mut self, emit: &mut impl FnMut(&[u8])) {
+    fn announce_link(&mut self, emit: &mut dyn FnMut(&[u8])) {
         let mut value = [0u8; wifi::LINK_MAX_LEN];
         if let Ok(len) = self.wifi_link.encode(&mut value) {
             self.announce_prop_is(prop::WIFI_LINK, &value[..len], emit);
@@ -7062,7 +7062,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// Returns `Some(true)` only when the flag actually moved, so the
     /// caller persists a snapshot for the same reason a toggle does and
     /// stays quiet when there was nothing to change.
-    pub fn force_ble_on(&mut self, emit: &mut impl FnMut(&[u8])) -> Option<bool> {
+    pub fn force_ble_on(&mut self, emit: &mut dyn FnMut(&[u8])) -> Option<bool> {
         if !self.config.ble || self.device.ble_enabled {
             return None;
         }
@@ -7088,7 +7088,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         available: bool,
         key: u32,
         pick: fn(&mut DeviceDomain) -> &mut bool,
-        emit: &mut impl FnMut(&[u8]),
+        emit: &mut dyn FnMut(&[u8]),
     ) -> Option<bool> {
         if !available {
             return None;
@@ -7105,7 +7105,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
 
     /// Return to `ALERT_NONE` for a reason the host did not command,
     /// announcing it with an unsolicited `CMD_PROP_IS`.
-    fn clear_alert(&mut self, emit: &mut impl FnMut(&[u8])) -> Option<Effect> {
+    fn clear_alert(&mut self, emit: &mut dyn FnMut(&[u8])) -> Option<Effect> {
         if !self.alert.is_active() {
             return None;
         }
@@ -7139,7 +7139,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// transaction to fail. A snapshot that merely omits an advertised
     /// field is published as-is: absence is how the device says the value
     /// is not knowable right now.
-    pub fn publish_battery(&mut self, sample: BatteryStatus, emit: &mut impl FnMut(&[u8])) -> bool {
+    pub fn publish_battery(&mut self, sample: BatteryStatus, emit: &mut dyn FnMut(&[u8])) -> bool {
         if !self.publishing() {
             return false;
         }
@@ -7169,7 +7169,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         &mut self,
         tid: u8,
         sample: Result<BatteryStatus, ()>,
-        emit: &mut impl FnMut(&[u8]),
+        emit: &mut dyn FnMut(&[u8]),
     ) {
         let fields = self.config.battery.unwrap_or_default();
         match sample {
@@ -7190,7 +7190,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         tid: u8,
         key: u32,
         sample: BatterySample,
-        emit: &mut impl FnMut(&[u8]),
+        emit: &mut dyn FnMut(&[u8]),
     ) {
         if let Some(state) = &mut self.multi {
             state.battery_sample = Some(sample);
@@ -7203,7 +7203,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         tid: u8,
         key: u32,
         sample: BatterySample,
-        emit: &mut impl FnMut(&[u8]),
+        emit: &mut dyn FnMut(&[u8]),
     ) {
         if key == prop::BATTERY {
             self.respond_battery(tid, sample.snapshot, emit);
@@ -7250,7 +7250,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         &mut self,
         tid: u8,
         millilux: Option<u32>,
-        emit: &mut impl FnMut(&[u8]),
+        emit: &mut dyn FnMut(&[u8]),
     ) {
         match millilux {
             Some(value) => {
@@ -7265,7 +7265,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         &mut self,
         tid: u8,
         values: Result<&[u16], Status>,
-        emit: &mut impl FnMut(&[u8]),
+        emit: &mut dyn FnMut(&[u8]),
     ) {
         let mut out = [0; MAX_TEMPERATURE_SENSORS * 2];
         match values.and_then(|values| {
@@ -7281,7 +7281,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         &mut self,
         tid: u8,
         value: Result<&[u8], Status>,
-        emit: &mut impl FnMut(&[u8]),
+        emit: &mut dyn FnMut(&[u8]),
     ) {
         let value = value.and_then(|value| {
             let count = umsh_ulcp::temperature::names(value)
@@ -7306,7 +7306,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// Not knowing is a legitimate answer, not a failure: it is reported
     /// as the empty value, which is precisely what tells a host—and a
     /// device's own display—that there is no clock to show.
-    pub fn respond_time(&mut self, tid: u8, epoch: Option<u32>, emit: &mut impl FnMut(&[u8])) {
+    pub fn respond_time(&mut self, tid: u8, epoch: Option<u32>, emit: &mut dyn FnMut(&[u8])) {
         match epoch {
             Some(seconds) => self.send_prop_is(tid, prop::TIME, &seconds.to_le_bytes(), emit),
             None => self.send_prop_is(tid, prop::TIME, &[], emit),
@@ -7323,7 +7323,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     ///
     /// Returns whether a frame was emitted; nothing is published while
     /// nobody is listening.
-    pub fn publish_time(&mut self, epoch: Option<u32>, emit: &mut impl FnMut(&[u8])) -> bool {
+    pub fn publish_time(&mut self, epoch: Option<u32>, emit: &mut dyn FnMut(&[u8])) -> bool {
         if !self.publishing() || self.config.time.is_none() {
             return false;
         }
@@ -7346,7 +7346,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         tid: u8,
         key: u32,
         sample: Result<GnssSnapshot, ()>,
-        emit: &mut impl FnMut(&[u8]),
+        emit: &mut dyn FnMut(&[u8]),
     ) {
         let mut value = [0u8; gnss::MAX_VALUE_LEN];
         match sample.and_then(|snapshot| snapshot.encode(key, &mut value).map_err(|_| ())) {
@@ -7370,7 +7370,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         &mut self,
         key: u32,
         snapshot: &GnssSnapshot,
-        emit: &mut impl FnMut(&[u8]),
+        emit: &mut dyn FnMut(&[u8]),
     ) -> bool {
         if !self.publishing() || self.config.gnss.is_none() {
             return false;
@@ -7391,7 +7391,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// A frame leaves the queue only when the next step is asked for, so
     /// a drain the transport could not carry ends with
     /// [`abandon_drain`](Self::abandon_drain) and loses nothing.
-    pub fn drain_step(&mut self, now_ms: u64, emit: &mut impl FnMut(&[u8])) -> bool {
+    pub fn drain_step(&mut self, now_ms: u64, emit: &mut dyn FnMut(&[u8])) -> bool {
         let Some(drain) = &mut self.session.drain else {
             return false;
         };
@@ -7530,7 +7530,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// captured state becomes the post-reset baseline; on `Err` the
     /// previous snapshot (if any) must have been left intact by the
     /// caller and remains in effect.
-    pub fn respond_save(&mut self, tid: u8, result: Result<(), ()>, emit: &mut impl FnMut(&[u8])) {
+    pub fn respond_save(&mut self, tid: u8, result: Result<(), ()>, emit: &mut dyn FnMut(&[u8])) {
         match result {
             Ok(()) => {
                 self.note_snapshot_saved();
@@ -7612,7 +7612,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// quoting the same `tid`. Live state is unaffected either way: the
     /// live device identity in particular remains in effect until the
     /// `CMD_RST` that completes a factory reset.
-    pub fn respond_clear(&mut self, tid: u8, result: Result<(), ()>, emit: &mut impl FnMut(&[u8])) {
+    pub fn respond_clear(&mut self, tid: u8, result: Result<(), ()>, emit: &mut dyn FnMut(&[u8])) {
         match result {
             Ok(()) => {
                 self.saved = None;
@@ -7653,7 +7653,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         &mut self,
         tid: u8,
         result: Result<[u8; items::PUBLIC_KEY_LEN], ()>,
-        emit: &mut impl FnMut(&[u8]),
+        emit: &mut dyn FnMut(&[u8]),
     ) {
         let matched = self
             .session
@@ -7789,7 +7789,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         &mut self,
         tid: u8,
         result: Result<(), ()>,
-        emit: &mut impl FnMut(&[u8]),
+        emit: &mut dyn FnMut(&[u8]),
     ) {
         self.complete(
             tid,
@@ -7812,7 +7812,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         &mut self,
         tid: u8,
         result: Result<(), ()>,
-        emit: &mut impl FnMut(&[u8]),
+        emit: &mut dyn FnMut(&[u8]),
     ) {
         match result {
             Ok(()) => {
@@ -7829,7 +7829,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         &mut self,
         tid: u8,
         result: Result<(), Status>,
-        emit: &mut impl FnMut(&[u8]),
+        emit: &mut dyn FnMut(&[u8]),
     ) {
         self.complete(tid, result.err().unwrap_or(Status::OK), emit);
     }
@@ -7847,7 +7847,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         &mut self,
         tid: u8,
         result: Result<(), Status>,
-        emit: &mut impl FnMut(&[u8]),
+        emit: &mut dyn FnMut(&[u8]),
     ) {
         let status = match result {
             Ok(()) => Status::OK,
@@ -7963,7 +7963,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         &mut self,
         tid: u8,
         result: Result<&[u8], Status>,
-        emit: &mut impl FnMut(&[u8]),
+        emit: &mut dyn FnMut(&[u8]),
     ) {
         match result {
             Ok(data) => {
@@ -7988,7 +7988,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// A change is announced like any the host did not command: enrolling
     /// or forgetting a bond happens at the device, so an attached host
     /// would otherwise have to poll to notice.
-    pub fn set_ble_bond_count(&mut self, count: u8, emit: &mut impl FnMut(&[u8])) {
+    pub fn set_ble_bond_count(&mut self, count: u8, emit: &mut dyn FnMut(&[u8])) {
         if !self.config.ble_pairing || self.ble_bond_count == count {
             return;
         }
@@ -8007,7 +8007,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// the Bluetooth host that would hear "attached" is the one that
     /// caused it, and by the time the state is `None` there is nobody
     /// there to tell.
-    pub fn set_ble_link(&mut self, state: BleLinkState, emit: &mut impl FnMut(&[u8])) {
+    pub fn set_ble_link(&mut self, state: BleLinkState, emit: &mut dyn FnMut(&[u8])) {
         if !self.config.ble || self.ble_link == state {
             return;
         }
@@ -8024,7 +8024,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// and "or not" is the whole reason the window is a property: it
     /// closes by itself on a new bond or a timeout, and a host showing a
     /// toggle has to see it flip back.
-    pub fn set_ble_pairing(&mut self, open: bool, emit: &mut impl FnMut(&[u8])) {
+    pub fn set_ble_pairing(&mut self, open: bool, emit: &mut dyn FnMut(&[u8])) {
         if !self.config.ble_pairing || self.ble_pairing_open == open {
             return;
         }
@@ -8045,7 +8045,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         &mut self,
         tid: u8,
         result: Result<bool, ()>,
-        emit: &mut impl FnMut(&[u8]),
+        emit: &mut dyn FnMut(&[u8]),
     ) {
         match result {
             Ok(open) => {
@@ -8069,7 +8069,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         &mut self,
         tid: u8,
         result: Result<bool, Status>,
-        emit: &mut impl FnMut(&[u8]),
+        emit: &mut dyn FnMut(&[u8]),
     ) {
         match result {
             Ok(scanning) => {
@@ -8087,7 +8087,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// showing a spinner learns the scan is over from this rather than by
     /// polling. The platform calls it on both edges, including the rising
     /// one when the device started a scan nobody asked for.
-    pub fn set_wifi_scanning(&mut self, scanning: bool, emit: &mut impl FnMut(&[u8])) {
+    pub fn set_wifi_scanning(&mut self, scanning: bool, emit: &mut dyn FnMut(&[u8])) {
         if !self.has_wifi() || self.wifi_scanning == scanning {
             return;
         }
@@ -8103,7 +8103,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// The first of the four frames a scan owes a host, and the reason the
     /// inserts that follow can be taken at face value: every one of them
     /// lands in a table the host knows to be empty.
-    pub fn clear_scan_results(&mut self, emit: &mut impl FnMut(&[u8])) {
+    pub fn clear_scan_results(&mut self, emit: &mut dyn FnMut(&[u8])) {
         if self.has_wifi() && self.publishing() {
             self.announce_prop_is(prop::WIFI_SCAN_RESULTS, &[], emit);
         }
@@ -8120,7 +8120,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     pub fn publish_scan_result(
         &mut self,
         result: &wifi::ScanResult<'_>,
-        emit: &mut impl FnMut(&[u8]),
+        emit: &mut dyn FnMut(&[u8]),
     ) {
         if !self.has_wifi() || !self.publishing() {
             return;
@@ -8136,7 +8136,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// The station's live state follows at once; its publication is owed
     /// ([`Session::take_owed_publications`]) and follows the answer.
     #[cfg(feature = "wifi")]
-    fn forget_wifi_network(&mut self, tid: u8, ssid: &[u8], emit: &mut impl FnMut(&[u8])) {
+    fn forget_wifi_network(&mut self, tid: u8, ssid: &[u8], emit: &mut dyn FnMut(&[u8])) {
         match self.device.wifi_networks.remove(ssid) {
             Ok(()) => {
                 self.bump_dev_domain();
@@ -8158,7 +8158,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         tid: u8,
         key: u32,
         items: Result<&[u8], Status>,
-        emit: &mut impl FnMut(&[u8]),
+        emit: &mut dyn FnMut(&[u8]),
     ) {
         match items {
             Ok(items) if items.len() <= NETWORK_TABLE_MAX => {
@@ -8184,7 +8184,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// `epoch` is [`net::StationIntent::epoch`] as the platform last read
     /// it: a link from an attempt the session has since overruled is
     /// dropped, so a refusal of the old network never lands on the new.
-    pub fn set_wifi_link(&mut self, link: wifi::Link, epoch: u32, emit: &mut impl FnMut(&[u8])) {
+    pub fn set_wifi_link(&mut self, link: wifi::Link, epoch: u32, emit: &mut dyn FnMut(&[u8])) {
         #[cfg(feature = "wifi")]
         let current = epoch == self.station.intent.epoch;
         #[cfg(not(feature = "wifi"))]
@@ -8207,7 +8207,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     }
 
     #[cfg(feature = "bridge-client")]
-    pub fn set_bridge_link(&mut self, link: umsh_ulcp::bridge::Link, emit: &mut impl FnMut(&[u8])) {
+    pub fn set_bridge_link(&mut self, link: umsh_ulcp::bridge::Link, emit: &mut dyn FnMut(&[u8])) {
         if !self.has_bridge() || link == self.bridge_link {
             return;
         }
@@ -8246,7 +8246,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// Announced for the same reason the link state is: an address arrives
     /// when the network hands one over, and it is exactly the transition a
     /// host is waiting on before it treats the device as reachable.
-    pub fn set_ip_state(&mut self, key: u32, state: ip::FamilyState, emit: &mut impl FnMut(&[u8])) {
+    pub fn set_ip_state(&mut self, key: u32, state: ip::FamilyState, emit: &mut dyn FnMut(&[u8])) {
         if !self.has_ip_property(key) {
             return;
         }
@@ -8283,7 +8283,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     }
 
     /// Publish an authoritative live network table after the platform updated it.
-    pub fn publish_network_table(&mut self, key: u32, value: &[u8], emit: &mut impl FnMut(&[u8])) {
+    pub fn publish_network_table(&mut self, key: u32, value: &[u8], emit: &mut dyn FnMut(&[u8])) {
         if self.publishing()
             && self.known_prop(key)
             && matches!(
@@ -8320,7 +8320,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         key: u32,
         value: &[u8],
         now_ms: u64,
-        emit: &mut impl FnMut(&[u8]),
+        emit: &mut dyn FnMut(&[u8]),
     ) -> Option<Effect> {
         if self.refuse_absent_property(tid, key, emit) {
             return None;
@@ -9141,7 +9141,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         tid: u8,
         key: u32,
         item: &[u8],
-        emit: &mut impl FnMut(&[u8]),
+        emit: &mut dyn FnMut(&[u8]),
     ) -> Option<Effect> {
         if self.refuse_absent_property(tid, key, emit) {
             return None;
@@ -9348,7 +9348,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         tid: u8,
         key: u32,
         selector: &[u8],
-        emit: &mut impl FnMut(&[u8]),
+        emit: &mut dyn FnMut(&[u8]),
     ) -> Option<Effect> {
         if self.refuse_absent_property(tid, key, emit) {
             return None;
@@ -9598,7 +9598,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         &mut self,
         tid: u8,
         payload: &StreamPayload<'_>,
-        emit: &mut impl FnMut(&[u8]),
+        emit: &mut dyn FnMut(&[u8]),
     ) -> Option<Effect> {
         match self.stage_node_msg(tid, payload) {
             Ok(id) => Some(Effect::NodeMsgSend { id }),
@@ -9614,7 +9614,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         &mut self,
         tid: u8,
         _payload: &StreamPayload<'_>,
-        emit: &mut impl FnMut(&[u8]),
+        emit: &mut dyn FnMut(&[u8]),
     ) -> Option<Effect> {
         self.complete(tid, Status::PROP_NOT_FOUND, emit);
         None
@@ -9704,7 +9704,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         &mut self,
         id: u16,
         status: Status,
-        emit: &mut impl FnMut(&[u8]),
+        emit: &mut dyn FnMut(&[u8]),
     ) -> Option<Binding> {
         let slot = self
             .node_msg
@@ -9781,7 +9781,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         tid: u8,
         payload: &StreamPayload<'_>,
         now_ms: u64,
-        emit: &mut impl FnMut(&[u8]),
+        emit: &mut dyn FnMut(&[u8]),
     ) -> Option<Effect> {
         if payload.stream != stream::PHY_RAW {
             self.complete(tid, Status::PROP_NOT_FOUND, emit);
@@ -9945,7 +9945,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// command, so no handler below has to know.
     /// Refuse a property that belongs to a capability this device's
     /// configuration leaves out: the device identity's or host custody's.
-    fn refuse_absent_property(&mut self, tid: u8, key: u32, emit: &mut impl FnMut(&[u8])) -> bool {
+    fn refuse_absent_property(&mut self, tid: u8, key: u32, emit: &mut dyn FnMut(&[u8])) -> bool {
         let absent = (!self.config.dev_identity && is_identity_property(key))
             || (!self.config.host_custody && is_custody_property(key));
         // On a board with no UART link. A build without flow control does
@@ -10703,7 +10703,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// Emit `CMD_PROP_IS` for `key` with `value` as a correlated
     /// response. Fire-and-forget commands (TID 0) receive nothing—
     /// the state change still happened.
-    fn send_prop_is(&mut self, tid: u8, key: u32, value: &[u8], emit: &mut impl FnMut(&[u8])) {
+    fn send_prop_is(&mut self, tid: u8, key: u32, value: &[u8], emit: &mut dyn FnMut(&[u8])) {
         let mut buf = [0u8; PROP_BUF + 16];
         self.send_prop_is_in(tid, key, value, &mut buf, emit);
     }
@@ -10716,7 +10716,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         key: u32,
         value: &[u8],
         buf: &mut [u8],
-        emit: &mut impl FnMut(&[u8]),
+        emit: &mut dyn FnMut(&[u8]),
     ) {
         // While a multi-property command is being served, the value a
         // single-property path would have sent becomes that entry's
@@ -10753,7 +10753,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// fire-and-forget command is not owed.
     ///
     /// Returns whether the frame was emitted.
-    fn announce_prop_is(&mut self, key: u32, value: &[u8], emit: &mut impl FnMut(&[u8])) -> bool {
+    fn announce_prop_is(&mut self, key: u32, value: &[u8], emit: &mut dyn FnMut(&[u8])) -> bool {
         let mut buf = [0u8; PROP_BUF + 16];
         match frame::prop_is(&mut buf, TID_UNSOLICITED, key, value) {
             Ok(len) => {
@@ -10767,7 +10767,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// Emit an *unsolicited* `CMD_PROP_INSERTED` (TID 0) for `key`: an
     /// item the device added for a reason the host did not initiate, which
     /// is how a scan reports what it hears.
-    fn announce_prop_inserted(&mut self, key: u32, item: &[u8], emit: &mut impl FnMut(&[u8])) {
+    fn announce_prop_inserted(&mut self, key: u32, item: &[u8], emit: &mut dyn FnMut(&[u8])) {
         let mut buf = [0u8; PROP_BUF + 16];
         if let Ok(len) = frame::prop_inserted(&mut buf, TID_UNSOLICITED, key, item) {
             emit(&buf[..len]);
@@ -10783,7 +10783,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         tid: u8,
         key: u32,
         digest: &[u8],
-        emit: &mut impl FnMut(&[u8]),
+        emit: &mut dyn FnMut(&[u8]),
     ) {
         if self.suppress_response(tid) {
             return;
@@ -10796,13 +10796,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
 
     /// Emit `CMD_PROP_REMOVED` for `key` with the item's digest form,
     /// as a correlated response (suppressed for TID 0).
-    fn send_prop_removed(
-        &mut self,
-        tid: u8,
-        key: u32,
-        digest: &[u8],
-        emit: &mut impl FnMut(&[u8]),
-    ) {
+    fn send_prop_removed(&mut self, tid: u8, key: u32, digest: &[u8], emit: &mut dyn FnMut(&[u8])) {
         if self.suppress_response(tid) {
             return;
         }
@@ -10814,7 +10808,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
 
     /// Emit `PROP_LAST_STATUS` unconditionally (success paths and
     /// unsolicited notices).
-    fn send_status(&mut self, tid: u8, status: Status, emit: &mut impl FnMut(&[u8])) {
+    fn send_status(&mut self, tid: u8, status: Status, emit: &mut dyn FnMut(&[u8])) {
         self.last_status = status;
         let mut buf = [0u8; 16];
         if let Ok(len) = frame::last_status(&mut buf, tid, status) {
@@ -10828,7 +10822,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     ///—the spec grants them no correlated response. Deliberate
     /// unsolicited notifications (reset notices, `STATUS_RESET_RESTORED`)
     /// bypass this via [`Self::send_status`] with `TID_UNSOLICITED`.
-    fn complete(&mut self, tid: u8, status: Status, emit: &mut impl FnMut(&[u8])) {
+    fn complete(&mut self, tid: u8, status: Status, emit: &mut dyn FnMut(&[u8])) {
         // As in `send_prop_is`: inside a multi-property command the
         // status occupies the failing entry's slot. A read continues
         // past it; a write sequence stops there.
@@ -10855,7 +10849,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// the MAC acknowledgment and its completion by a later exchange
     /// reading `PROP_LAST_STATUS`. The status is still recorded, which is
     /// what that later exchange reads.
-    fn announce_status(&mut self, status: Status, emit: &mut impl FnMut(&[u8])) {
+    fn announce_status(&mut self, status: Status, emit: &mut dyn FnMut(&[u8])) {
         if self.is_admin() {
             self.last_status = status;
             self.owed_reset_status = Some(status);

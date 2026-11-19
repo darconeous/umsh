@@ -49,16 +49,17 @@ pub trait MacBackend: Clone {
         false
     }
     /// Add or refresh a contact the application holds.
-    async fn add_peer(
+    fn add_peer(
         &self,
         key: PublicKey,
-    ) -> Result<PeerId, MacBackendError<Self::SendError, Self::CapacityError>> {
-        self.hold_peer(key, PeerHolder::Application).await
+    ) -> impl Future<Output = Result<PeerId, MacBackendError<Self::SendError, Self::CapacityError>>>
+    {
+        self.hold_peer(key, PeerHolder::Application)
     }
     /// Give back the application's hold on a contact; see
     /// [`release_peer`](Self::release_peer).
-    async fn remove_peer(&self, key: &PublicKey) -> bool {
-        self.release_peer(key, PeerHolder::Application).await
+    fn remove_peer(&self, key: &PublicKey) -> impl Future<Output = bool> {
+        self.release_peer(key, PeerHolder::Application)
     }
     /// Ensure `key` holds at least a transient (held by nothing,
     /// LRU-evictable) peer slot, so an explicit reply to a stranger can be sent. Reports
@@ -359,11 +360,15 @@ impl<
         self.cancel_pending_ack(identity_id, receipt).await;
     }
 
-    async fn next_event(
+    // Each method below that only forwards to `MacHandle` returns the
+    // handle's own future: an `async fn` would wrap it in a second state
+    // machine.
+
+    fn next_event(
         &self,
         on_event: impl FnMut(LocalIdentityId, MacEventRef<'_>),
-    ) -> Result<(), Self::RunError> {
-        self.next_event(on_event).await
+    ) -> impl Future<Output = Result<(), Self::RunError>> {
+        self.next_event(on_event)
     }
 
     async fn hold_peer(
@@ -377,16 +382,16 @@ impl<
         })
     }
 
-    async fn release_peer(&self, key: &PublicKey, holder: PeerHolder) -> bool {
-        self.release_peer(key, holder).await
+    fn release_peer(&self, key: &PublicKey, holder: PeerHolder) -> impl Future<Output = bool> {
+        self.release_peer(key, holder)
     }
 
-    async fn ensure_transient_peer(&self, key: &PublicKey) -> bool {
-        self.ensure_transient_peer(key).await
+    fn ensure_transient_peer(&self, key: &PublicKey) -> impl Future<Output = bool> {
+        self.ensure_transient_peer(key)
     }
 
-    async fn ensure_unproven_peer(&self, key: &PublicKey) -> bool {
-        self.ensure_unproven_peer(key).await
+    fn ensure_unproven_peer(&self, key: &PublicKey) -> impl Future<Output = bool> {
+        self.ensure_unproven_peer(key)
     }
 
     async fn add_private_channel(
@@ -410,8 +415,8 @@ impl<
         })
     }
 
-    async fn remove_channel(&self, key: &ChannelKey) -> bool {
-        self.remove_channel(key).await
+    fn remove_channel(&self, key: &ChannelKey) -> impl Future<Output = bool> {
+        self.remove_channel(key)
     }
 
     async fn payload_capacity(
@@ -473,16 +478,16 @@ impl<
             .map_err(MacBackendError::Send)
     }
 
-    async fn fill_random(&self, dest: &mut [u8]) {
-        self.fill_random(dest).await
+    fn fill_random(&self, dest: &mut [u8]) -> impl Future<Output = ()> {
+        self.fill_random(dest)
     }
 
-    async fn now_ms(&self) -> u64 {
-        self.now_ms().await
+    fn now_ms(&self) -> impl Future<Output = u64> {
+        self.now_ms()
     }
 
-    async fn wake_by(&self, deadline_ms: u64) {
-        self.wake_by(deadline_ms).await
+    fn wake_by(&self, deadline_ms: u64) -> impl Future<Output = ()> {
+        self.wake_by(deadline_ms)
     }
 
     #[cfg(feature = "software-crypto")]
@@ -497,8 +502,8 @@ impl<
     }
 
     #[cfg(feature = "software-crypto")]
-    async fn remove_ephemeral(&self, id: LocalIdentityId) -> bool {
-        self.remove_ephemeral(id).await
+    fn remove_ephemeral(&self, id: LocalIdentityId) -> impl Future<Output = bool> {
+        self.remove_ephemeral(id)
     }
 
     async fn watch_retired_address(
@@ -512,25 +517,29 @@ impl<
             .is_ok()
     }
 
-    async fn forget_retired_address(&self, address: &PublicKey) -> bool {
-        self.forget_retired_address(address).await
+    fn forget_retired_address(&self, address: &PublicKey) -> impl Future<Output = bool> {
+        self.forget_retired_address(address)
     }
 
-    async fn set_tx_power_dbm(&self, id: LocalIdentityId, power_dbm: Option<i8>) {
-        self.set_tx_power_dbm(id, power_dbm).await
+    fn set_tx_power_dbm(
+        &self,
+        id: LocalIdentityId,
+        power_dbm: Option<i8>,
+    ) -> impl Future<Output = ()> {
+        self.set_tx_power_dbm(id, power_dbm)
     }
 
     #[cfg(feature = "payload-admission")]
-    async fn set_payload_admission(&self, admits: Option<fn(u8) -> bool>) {
-        self.set_payload_admission(admits).await
+    fn set_payload_admission(&self, admits: Option<fn(u8) -> bool>) -> impl Future<Output = ()> {
+        self.set_payload_admission(admits)
     }
 
-    async fn frame_counter(&self, from: LocalIdentityId) -> Option<u32> {
-        self.frame_counter(from).await
+    fn frame_counter(&self, from: LocalIdentityId) -> impl Future<Output = Option<u32>> {
+        self.frame_counter(from)
     }
 
-    async fn persisted_frame_counter(&self, from: LocalIdentityId) -> Option<u32> {
-        self.persisted_frame_counter(from).await
+    fn persisted_frame_counter(&self, from: LocalIdentityId) -> impl Future<Output = Option<u32>> {
+        self.persisted_frame_counter(from)
     }
 
     async fn pairwise_keys_for_peer(
@@ -541,35 +550,38 @@ impl<
         self.pairwise_keys_for_peer(from, peer).await.ok()
     }
 
-    async fn for_each_peer(&self, f: &mut dyn FnMut(umsh_core::PublicKey)) {
-        self.for_each_peer(f).await
+    fn for_each_peer(&self, f: &mut dyn FnMut(umsh_core::PublicKey)) -> impl Future<Output = ()> {
+        self.for_each_peer(f)
     }
 
-    async fn is_application_peer(&self, key: &PublicKey) -> bool {
-        self.is_application_peer(key).await
+    fn is_application_peer(&self, key: &PublicKey) -> impl Future<Output = bool> {
+        self.is_application_peer(key)
     }
 
-    async fn for_each_channel(&self, f: &mut dyn FnMut(&umsh_core::ChannelKey)) {
-        self.for_each_channel(f).await
+    fn for_each_channel(
+        &self,
+        f: &mut dyn FnMut(&umsh_core::ChannelKey),
+    ) -> impl Future<Output = ()> {
+        self.for_each_channel(f)
     }
 
-    async fn for_each_peer_counter(
+    fn for_each_peer_counter(
         &self,
         from: LocalIdentityId,
         f: &mut dyn FnMut(umsh_core::PublicKey, u32, u32),
-    ) {
-        self.for_each_peer_counter(from, f).await
+    ) -> impl Future<Output = ()> {
+        self.for_each_peer_counter(from, f)
     }
 
-    async fn for_each_transmitter_observation(
+    fn for_each_transmitter_observation(
         &self,
         f: &mut dyn FnMut(umsh_mac::TransmitterObservation),
-    ) {
-        self.for_each_transmitter_observation(f).await
+    ) -> impl Future<Output = ()> {
+        self.for_each_transmitter_observation(f)
     }
 
-    async fn identity_public_key(&self, id: LocalIdentityId) -> Option<PublicKey> {
-        self.identity_public_key(id).await
+    fn identity_public_key(&self, id: LocalIdentityId) -> impl Future<Output = Option<PublicKey>> {
+        self.identity_public_key(id)
     }
 
     async fn is_local_identity_key(&self, key: &PublicKey) -> bool {
@@ -584,37 +596,44 @@ impl<
         false
     }
 
-    async fn peer_route(&self, peer: &PublicKey) -> Option<CachedRoute> {
-        self.peer_route(peer).await
+    fn peer_route(&self, peer: &PublicKey) -> impl Future<Output = Option<CachedRoute>> {
+        self.peer_route(peer)
     }
 
-    async fn clear_peer_route(&self, peer: &PublicKey) -> bool {
-        self.clear_peer_route(peer).await
+    fn clear_peer_route(&self, peer: &PublicKey) -> impl Future<Output = bool> {
+        self.clear_peer_route(peer)
     }
 
-    async fn restore_peer_route(&self, peer: &PublicKey, route: CachedRoute) -> bool {
-        self.restore_peer_route(peer, route).await
+    fn restore_peer_route(
+        &self,
+        peer: &PublicKey,
+        route: CachedRoute,
+    ) -> impl Future<Output = bool> {
+        self.restore_peer_route(peer, route)
     }
 
-    async fn set_peer_mobile(&self, peer: &PublicKey, mobile: bool) -> bool {
-        self.set_peer_mobile(peer, mobile).await
+    fn set_peer_mobile(&self, peer: &PublicKey, mobile: bool) -> impl Future<Output = bool> {
+        self.set_peer_mobile(peer, mobile)
     }
 
-    async fn hold_peer_route(
+    fn hold_peer_route(
         &self,
         peer: &PublicKey,
         route: CachedRoute,
         flood_hops: u8,
         hold_ms: u64,
-    ) -> bool {
-        self.hold_peer_route(peer, route, flood_hops, hold_ms).await
+    ) -> impl Future<Output = bool> {
+        self.hold_peer_route(peer, route, flood_hops, hold_ms)
     }
 
-    async fn adopt_learned_peer_route(&self, peer: &PublicKey) -> bool {
-        self.adopt_learned_peer_route(peer).await
+    fn adopt_learned_peer_route(&self, peer: &PublicKey) -> impl Future<Output = bool> {
+        self.adopt_learned_peer_route(peer)
     }
 
-    async fn peer_route_status(&self, peer: &PublicKey) -> Option<umsh_mac::PeerRouteStatus> {
-        self.peer_route_status(peer).await
+    fn peer_route_status(
+        &self,
+        peer: &PublicKey,
+    ) -> impl Future<Output = Option<umsh_mac::PeerRouteStatus>> {
+        self.peer_route_status(peer)
     }
 }

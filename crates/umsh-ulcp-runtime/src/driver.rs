@@ -173,6 +173,7 @@ pub enum InEvent {
     /// A local binding: a request with a non-zero TID is answered exactly
     /// once, so the interface never times one out. It is not an attach,
     /// and it displaces no host.
+    #[cfg(feature = "device-link")]
     Device(FrameBuf),
     /// The UART an application is wired to could not hand over whole a
     /// frame the application sent (spec §Lost Frames): the application's
@@ -420,6 +421,7 @@ pub enum DeviceFrame {
 
 impl<M: RawMutex> DeviceLink<M> {
     /// The link to a built-in interface.
+    #[cfg(feature = "device-link")]
     pub const fn new() -> Self {
         Self {
             frames: Channel::new(),
@@ -539,7 +541,7 @@ impl<M: RawMutex> DeviceLink<M> {
 
     /// Queue a frame owed the interface, waiting for room: a built-in
     /// interface always reads.
-    #[cfg(not(feature = "uart-link"))]
+    #[cfg(all(feature = "device-link", not(feature = "uart-link")))]
     fn owe(
         &self,
         copy: FrameBuf,
@@ -547,6 +549,7 @@ impl<M: RawMutex> DeviceLink<M> {
         self.frames.send(copy)
     }
 
+    #[cfg(feature = "device-link")]
     async fn answer(&self, frame: &[u8]) {
         if let Some(copy) = Self::answer_copy(frame) {
             self.owe(copy).await;
@@ -557,6 +560,7 @@ impl<M: RawMutex> DeviceLink<M> {
     /// out as a `NOMEM` status under the same TID, so the interface hears
     /// that its request failed and takes the TID back instead of waiting
     /// it out.
+    #[cfg(feature = "device-link")]
     fn answer_copy(frame: &[u8]) -> Option<FrameBuf> {
         if let Ok(copy) = FrameBuf::from_slice(frame) {
             return Some(copy);
@@ -604,6 +608,7 @@ async fn send_unless_stalled<M: RawMutex, T, const N: usize>(
     false
 }
 
+#[cfg(feature = "device-link")]
 impl<M: RawMutex> Default for DeviceLink<M> {
     fn default() -> Self {
         Self::new()
@@ -1307,9 +1312,32 @@ pub struct DeviceRuntime<M: RawMutex + 'static, const RX: usize, const TX: usize
     /// The return path to the device's own settings interface, on a board
     /// that has one. With it, the session publishes whether or not a host
     /// is attached, and every publication reaches the interface too.
+    ///
+    /// Only a build with the `device-link` feature can make a
+    /// [`DeviceLink`]; everywhere else this is `None`, and the paths that
+    /// would serve it are left out.
     pub device: Option<&'static DeviceLink<M>>,
     /// How the board's power-off has the saved snapshot written first.
     pub snapshot: &'static SnapshotControl<M>,
+}
+
+impl<M: RawMutex + 'static, const RX: usize, const TX: usize> DeviceRuntime<M, RX, TX> {
+    /// [`DeviceRuntime::device`], as this build serves it.
+    fn device(&self) -> Option<&'static DeviceLink<M>> {
+        linked(self.device)
+    }
+}
+
+/// `device`, in a build with the `device-link` feature; `None` elsewhere.
+///
+/// A constant `None` is what lets the compiler leave out every path that
+/// serves the link, where a field read at run time would keep them all.
+fn linked<M: RawMutex>(device: Option<&DeviceLink<M>>) -> Option<&DeviceLink<M>> {
+    if cfg!(feature = "device-link") {
+        device
+    } else {
+        None
+    }
 }
 
 /// Collects frames emitted synchronously by the session, then flushes
@@ -1390,7 +1418,9 @@ impl Emitter {
                     out,
                     device,
                 } => {
-                    if let Some(link) = device {
+                    // Through `linked` again: the sink is read here at run
+                    // time, out of reach of the constant `rt.device()` fold.
+                    if let Some(link) = linked(*device) {
                         if is_publication(frame) {
                             publish!(link, frame);
                         } else if self.mirror {
@@ -1417,7 +1447,7 @@ impl Emitter {
                         if self.mirror {
                             let mut mirrors = Mirrors::new(frame);
                             while let Some(mirror) = mirrors.next() {
-                                if let Some(link) = device {
+                                if let Some(link) = linked(*device) {
                                     publish!(link, mirror);
                                 }
                                 plain.send(*destination, out, mirror).await;
@@ -1427,6 +1457,7 @@ impl Emitter {
                         debug_assert!(false, "admin exchange emitted more than one frame");
                     }
                 }
+                #[cfg(feature = "device-link")]
                 ReplySink::Device {
                     link,
                     destination,
@@ -1570,6 +1601,7 @@ enum ReplySink<'a, M: RawMutex> {
     /// The device's own interface. Answers go back to it alone, and what
     /// the device publishes while serving it reaches the attached host
     /// too.
+    #[cfg(feature = "device-link")]
     Device {
         link: &'a DeviceLink<M>,
         destination: Option<(Transport, u32)>,
@@ -1625,7 +1657,7 @@ where
     S: Sha256Provider,
     M: RawMutex,
 {
-    rt.device.filter(|_| session.device_session_live())
+    rt.device().filter(|_| session.device_session_live())
 }
 
 /// End the attached host's session the way its transport allows (spec
@@ -1778,7 +1810,7 @@ fn deliver_node_msgs<A, S, const TXQ: usize, M, const RX: usize, const TX: usize
 {
     use crate::node_msg::INBOX;
     use umsh_ulcp_device::Binding;
-    let Some(binding) = session.node_msg_receiver(rt.device.is_some()) else {
+    let Some(binding) = session.node_msg_receiver(rt.device().is_some()) else {
         return;
     };
     // Where the host's frames go; `None` for the device's own interface.
@@ -1804,7 +1836,7 @@ fn deliver_node_msgs<A, S, const TXQ: usize, M, const RX: usize, const TX: usize
         let taken = match encoded {
             Ok(len) => match destination {
                 Some((transport, generation)) => rt.out.offer(transport, generation, &frame[..len]),
-                None => rt.device.is_some_and(|link| link.offer(&frame[..len])),
+                None => rt.device().is_some_and(|link| link.offer(&frame[..len])),
             },
             // Every message the inbox holds fits a frame. One that did not
             // would never go out, so it goes no further.
@@ -2108,6 +2140,7 @@ enum Exchange<'a> {
         reply_budget: usize,
     },
     /// A frame from the device's own settings interface.
+    #[cfg(feature = "device-link")]
     Device(&'a [u8]),
 }
 
@@ -2140,9 +2173,9 @@ where
     let mut dfu = None;
     let now_ms = Instant::now().as_millis();
     let request = match exchange {
-        Exchange::Local(bytes) | Exchange::Admin { frame: bytes, .. } | Exchange::Device(bytes) => {
-            bytes
-        }
+        Exchange::Local(bytes) | Exchange::Admin { frame: bytes, .. } => bytes,
+        #[cfg(feature = "device-link")]
+        Exchange::Device(bytes) => bytes,
     };
     emitter.mirror = Writes::of(request).any;
     let mut pending = match exchange {
@@ -2162,6 +2195,7 @@ where
             reply_budget,
             &mut |frame: &[u8]| emitter.push(frame),
         ),
+        #[cfg(feature = "device-link")]
         Exchange::Device(bytes) => {
             session.handle_device_frame(bytes, now_ms, &mut |frame: &[u8]| emitter.push(frame))
         }
@@ -2585,7 +2619,7 @@ where
 
     // A board with its own interface hears what the device publishes
     // from the start, attached host or not.
-    if rt.device.is_some() {
+    if rt.device().is_some() {
         session.open_device_interface();
     }
 
@@ -2887,22 +2921,21 @@ where
             Either4::First(InEvent::NodeMsgResult { id, status }) => {
                 let binding =
                     session.on_node_msg_result(id, status, &mut |frame: &[u8]| emitter.push(frame));
-                match (binding, rt.device) {
-                    (Some(umsh_ulcp_device::Binding::Device), Some(link)) => {
-                        emitter
-                            .flush(&mut ReplySink::Device {
-                                link,
-                                destination: host_listening(&arbitration, session),
-                                out: rt.out,
-                            })
-                            .await;
-                    }
-                    _ => {
-                        emitter
-                            .flush(&mut ReplySink::host(&arbitration, &rt, session))
-                            .await;
-                    }
-                }
+                #[cfg(feature = "device-link")]
+                let mut sink = match (binding, rt.device()) {
+                    (Some(umsh_ulcp_device::Binding::Device), Some(link)) => ReplySink::Device {
+                        link,
+                        destination: host_listening(&arbitration, session),
+                        out: rt.out,
+                    },
+                    _ => ReplySink::host(&arbitration, &rt, session),
+                };
+                #[cfg(not(feature = "device-link"))]
+                let mut sink = {
+                    let _ = binding;
+                    ReplySink::host(&arbitration, &rt, session)
+                };
+                emitter.flush(&mut sink).await;
             }
             #[cfg(feature = "node-msg")]
             Either4::First(InEvent::NodeMsgMtu(mtu)) => session.set_node_msg_mtu(mtu),
@@ -2974,10 +3007,11 @@ where
                     .await;
                 finish_dfu(&mut env, dfu).await;
             }
+            #[cfg(feature = "device-link")]
             Either4::First(InEvent::Device(frame)) => {
                 // A board without a link has no interface to send this,
                 // so a request here has nowhere to be answered.
-                if let Some(link) = rt.device {
+                if let Some(link) = rt.device() {
                     let mut sink = ReplySink::Device {
                         link,
                         destination: host_listening(&arbitration, session),
@@ -3440,6 +3474,7 @@ mod stalled_host_tests {
         });
     }
 
+    #[cfg(feature = "device-link")]
     fn publication() -> std::vec::Vec<u8> {
         let mut buf = [0u8; 16];
         let len =
@@ -3517,6 +3552,7 @@ mod stalled_host_tests {
 
     /// A built-in interface hears that publications were dropped, and
     /// nothing about it ends a session.
+    #[cfg(feature = "device-link")]
     #[test]
     fn a_built_in_interface_hears_an_overrun() {
         embassy_futures::block_on(async {
@@ -3544,7 +3580,7 @@ mod stalled_host_tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "device-link"))]
 mod mirror_tests {
     use super::*;
     use embassy_sync::blocking_mutex::raw::NoopRawMutex;

@@ -13,13 +13,13 @@ driver = ["dep:umsh-ulcp-runtime", "dep:embassy-sync"]
 
 [dependencies]
 umsh-ulcp = { path = "../umsh-ulcp" }
-umsh-ulcp-runtime = { path = "../umsh-ulcp-runtime", default-features = false, features = ["driver"], optional = true }
+umsh-ulcp-runtime = { path = "../umsh-ulcp-runtime", default-features = false, features = ["device-link"], optional = true }
 embassy-sync = { version = "0.8", default-features = false, optional = true }
 
 [dev-dependencies]
 # The driver port's unit test reaches the real driver's channels, so it
 # needs what the `driver` feature brings even when the feature is off.
-umsh-ulcp-runtime = { path = "../umsh-ulcp-runtime", default-features = false, features = ["driver"] }
+umsh-ulcp-runtime = { path = "../umsh-ulcp-runtime", default-features = false, features = ["device-link"] }
 embassy-sync = { version = "0.8", default-features = false }
 critical-section = { version = "1", features = ["std"] }
 # The local exchange runs against the soft device's real session, and the
