@@ -91,6 +91,12 @@ pub const fn max_encoded_len(payload_len: usize) -> usize {
     2 + (payload_len + 2) * 2
 }
 
+/// The [`Decoder`] capacity that takes frames of up to `payload_len`
+/// bytes: the decoder holds each frame's FCS along with it.
+pub const fn decoder_capacity(payload_len: usize) -> usize {
+    payload_len + 2
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EncodeError {
     BufferTooSmall,
@@ -222,7 +228,8 @@ impl Iterator for TextOctets<'_> {
 
 /// Streaming decoder with an internal reassembly buffer of `N` bytes.
 ///
-/// `N` bounds the *unescaped* frame size including the two FCS bytes.
+/// `N` bounds the *unescaped* frame size including the two FCS bytes:
+/// size it with [`decoder_capacity`].
 /// Feed received bytes one at a time; a completed frame is returned
 /// with the FCS already verified and stripped. Errors report a
 /// discarded frame; the decoder resynchronizes on the next flag
@@ -503,6 +510,22 @@ mod tests {
         let len = encode_frame(&[0x01], &mut wire).unwrap();
         let frame = decode_all(&mut decoder, &wire[..len]).unwrap().unwrap();
         assert_eq!(frame, [0x01]);
+    }
+
+    #[test]
+    fn decoder_capacity_takes_a_frame_of_that_length() {
+        let payload = [0x5A; 16];
+        let mut wire = [0u8; max_encoded_len(16)];
+        let len = encode_frame(&payload, &mut wire).unwrap();
+        let mut decoder = Decoder::<{ decoder_capacity(16) }>::new();
+        let frame = decode_all(&mut decoder, &wire[..len]).unwrap().unwrap();
+        assert_eq!(frame, payload);
+        // A decoder sized to the frame alone has no room for its FCS.
+        let mut decoder = Decoder::<16>::new();
+        assert_eq!(
+            decode_all(&mut decoder, &wire[..len]),
+            Some(Err(DecodeError::TooLong))
+        );
     }
 
     #[test]

@@ -19,7 +19,7 @@ const KIND_HOST: u8 = 1;
 const KIND_RADIO: u8 = 2;
 
 fn export(out: &mut Vec<u8>, script: &[u8]) {
-    let mut decoder = hdlc::Decoder::<FRAME_IN_MAX>::new();
+    let mut decoder = hdlc::Decoder::<{ hdlc::decoder_capacity(FRAME_IN_MAX) }>::new();
     for record in records(script) {
         match record.op {
             dev::OP_FRAME | dev::OP_DEVICE if record.body.len() <= FRAME_IN_MAX => {

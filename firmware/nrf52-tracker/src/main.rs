@@ -4037,7 +4037,8 @@ mod firmware {
         loop {
             rx.wait_connection().await;
             debug_log(format_args!("usb debug attached"));
-            let mut decoder: hdlc::Decoder<FRAME_IN_MAX> = hdlc::Decoder::new();
+            let mut decoder: hdlc::Decoder<{ hdlc::decoder_capacity(FRAME_IN_MAX) }> =
+                hdlc::Decoder::new();
             let mut local_generation = SESSION_GEN.load(Ordering::Acquire);
             // True while this task's own attach is still unprocessed: the
             // single generation bump it causes must not reset the

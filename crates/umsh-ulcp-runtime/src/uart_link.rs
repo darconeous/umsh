@@ -333,7 +333,8 @@ impl Pace<'_> {
 
 /// Serve a UART link until the end of time.
 ///
-/// `FRAME` bounds a received frame and `WIRE` an encoded outbound run.
+/// `FRAME` is the receive decoder's capacity, from
+/// [`hdlc::decoder_capacity`], and `WIRE` bounds an encoded outbound run.
 ///
 /// The two directions run side by side and neither is ever cancelled, so
 /// nothing here asks the UART's reads or writes to be cancel-safe, and a
@@ -425,7 +426,15 @@ pub async fn serve_device<R, W, M, A>(
     M: RawMutex,
     A: Awake,
 {
-    run::<_, _, _, _, _, FRAME_IN_MAX, { hdlc::max_encoded_len(FRAME_OUT_MAX) }>(
+    run::<
+        _,
+        _,
+        _,
+        _,
+        _,
+        { hdlc::decoder_capacity(FRAME_IN_MAX) },
+        { hdlc::max_encoded_len(FRAME_OUT_MAX) },
+    >(
         rx,
         tx,
         &mut DeviceIn { input },

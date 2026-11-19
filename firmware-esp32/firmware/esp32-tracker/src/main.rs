@@ -2623,7 +2623,7 @@ async fn uart_host_task(uart: Uart<'static, Async>, panic_report: Option<heaples
         panic_report,
         sending: None,
     };
-    uart_link::run::<_, _, _, _, _, FRAME_IN_MAX, UART_RUN_MAX>(
+    uart_link::run::<_, _, _, _, _, { hdlc::decoder_capacity(FRAME_IN_MAX) }, UART_RUN_MAX>(
         &mut rx,
         &mut tx,
         &mut inbound,
@@ -2846,7 +2846,7 @@ async fn output_pump(tx: &mut WiredTx, panic_report: Option<heapless::String<128
 /// UART (see [`uart_host_task`]).
 #[cfg(feature = "wired-usb-serial-jtag")]
 async fn input_pump(rx: &mut WiredRx) {
-    let mut decoder: hdlc::Decoder<FRAME_IN_MAX> = hdlc::Decoder::new();
+    let mut decoder: hdlc::Decoder<{ hdlc::decoder_capacity(FRAME_IN_MAX) }> = hdlc::Decoder::new();
     let mut local_generation = SESSION_GEN.load(Ordering::Acquire);
     // True while this task's own lazy attach is still unprocessed: the
     // resulting single generation bump must not reset the decoder,

@@ -100,6 +100,12 @@ Figure: Structure of a typical ULCP frame
 Since the size of the frame is part of the framing mechanism, it is omitted
 from the frame.
 
+A frame is at most 300 octets long, header and command identifier
+included, on every link and in both directions. A sender **MUST NOT** send
+a longer one, and a receiver **MUST** be able to take one of that length.
+A transport that carries longer frames, such as the [GATT
+service](ulcp-ble.md#ulcp-gatt-service), does not raise this limit.
+
 ### Frame Header
 
 Each frame has the following format:

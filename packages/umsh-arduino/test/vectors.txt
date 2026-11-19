@@ -1,0 +1,73 @@
+# Shared vectors for the Arduino library and the Rust codecs. One case per
+# line: a kind, then key=value fields; hex is lowercase, and - is absent.
+# crates/umsh-ulcp/tests/arduino_vectors.rs checks the ULCP lines,
+# crates/umsh-text/tests/arduino_vectors.rs the text lines, and
+# packages/umsh-arduino/test/umsh_test.cpp all of them.
+
+# A packed unsigned integer.
+pui value=0 hex=00
+pui value=1 hex=01
+pui value=127 hex=7f
+pui value=128 hex=8001
+pui value=1337 hex=b90a
+pui value=16383 hex=ff7f
+pui value=16384 hex=808001
+pui value=2097151 hex=ffff7f
+
+# A ULCP frame and its HDLC-Lite encoding.
+hdlc frame=810200 wire=7e8102004ca37e
+hdlc frame=82037e7d1113ff23 wire=7e82037d5e7d5d7d317d33ff2306277e
+hdlc frame=83060012 wire=7e83060012377d317e
+
+# A CMD_STR_SEND on STR_NODE_MSG.
+send tid=1 kind=0 flags=1 channel=- peer=a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf hops=- route=- power=- data=03ff6869 frame=810972040003ff68690001a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf
+send tid=2 kind=1 flags=6 channel=- peer=- hops=- route=- power=- data=800102 frame=82097203008001020106
+send tid=3 kind=2 flags=1 channel=101112131415161718191a1b1c1d1e1f peer=a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf hops=- route=- power=- data=03ff41 frame=830972030003ff410201101112131415161718191a1b1c1d1e1fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf
+send tid=4 kind=3 flags=0 channel=101112131415161718191a1b1c1d1e1f peer=- hops=0 route=11223344 power=-3 data=03ff6368616e6e656c frame=840972090003ff6368616e6e656c0300101112131415161718191a1b1c1d1e1f0201000502112233440203fd
+send tid=7 kind=0 flags=3 channel=- peer=a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf hops=15 route=- power=22 data=05000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f2021222324252627 frame=870972290005000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20212223242526270003a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf02010f020316
+
+# A CMD_STR_RECV on STR_NODE_MSG, and what a receiver reads from it.
+recv frame=800a72040003ff68690017a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf02015b0302cbff050311223344 kind=0 flags=23 channel=- src=a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf rssi=-91 snr=-53 trace=11223344 data=03ff6869
+recv frame=800a7203008001020308101112131415161718191a1b1c1d1e1f010203 kind=3 flags=8 channel=101112131415161718191a1b1c1d1e1f src=010203 rssi=- snr=- trace=- data=800102
+recv frame=800a72070003ff626c696e640203101112131415161718191a1b1c1d1e1fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf kind=2 flags=3 channel=101112131415161718191a1b1c1d1e1f src=a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf rssi=- snr=- trace=- data=03ff626c696e64
+# An unknown option and a misshaped trace are ignored.
+recv frame=800a720100420100010203060900000000000403010203020150 kind=1 flags=0 channel=- src=010203 rssi=-80 snr=- trace=- data=42
+# The values that say the radio does not report RSSI or SNR.
+recv frame=800a7201004201000102030201ff03020080 kind=1 flags=0 channel=- src=010203 rssi=- snr=- trace=- data=42
+
+# A text payload, after its type octet, that encodes from these fields and
+# decodes to them.
+text data=ff68656c6c6f type=0 handle=- seq=- reset=0 regarding=- editing=- body=68656c6c6f
+text data=- type=0 handle=- seq=- reset=0 regarding=- editing=- body=-
+text data=01014407aabbccff2b31 type=1 handle=- seq=- reset=0 regarding=07aabbcc editing=- body=2b31
+text data=13416e6e110510ff6869 type=0 handle=416e6e seq=05 reset=1 regarding=- editing=- body=6869
+text data=4205001104ff6669786564 type=0 handle=- seq=- reset=0 regarding=0500 editing=4 body=6669786564
+text data=1d036162636465666768696a6b6c6d6e6f7011c82109ff7265706c79 type=0 handle=6162636465666768696a6b6c6d6e6f70 seq=c8 reset=0 regarding=09 editing=- body=7265706c79
+text data=0101ff7761766573 type=1 handle=- seq=- reset=0 regarding=- editing=- body=7761766573
+
+# A text payload that decodes to these fields: what a receiver makes of
+# options that repeat, are misshaped, or are not known, and a fragment.
+# A repeated message type cannot be trusted.
+textin data=01010101ff78 type=0 handle=- seq=- reset=0 regarding=- editing=- body=78 ok=1
+# A fragment.
+textin data=23090102ff70617274 type=0 handle=- seq=090102 reset=0 regarding=- editing=- body=70617274 ok=1
+# A fragment index past the count.
+textin data=23090202ff626164 type=0 handle=- seq=- reset=0 regarding=- editing=- body=626164 ok=1
+# A repeated handle keeps the first.
+textin data=12426f02416cff6869 type=0 handle=426f seq=- reset=0 regarding=- editing=- body=6869 ok=1
+# A three-octet Regarding has no form.
+textin data=43010203ff686d type=0 handle=- seq=- reset=0 regarding=- editing=- body=686d ok=1
+# A two-octet Regarding must end in zero.
+textin data=420101ff686d type=0 handle=- seq=- reset=0 regarding=- editing=- body=686d ok=1
+# A repeated sequence, even the same one.
+textin data=21050105ff79 type=0 handle=- seq=- reset=0 regarding=- editing=- body=79 ok=1
+# A Sequence Reset with a value is not the flag.
+textin data=3101ff7a type=0 handle=- seq=- reset=0 regarding=- editing=- body=7a ok=1
+# Padding and an extension are ignored.
+textin data=94000000001400000000ff657874 type=0 handle=- seq=- reset=0 regarding=- editing=- body=657874 ok=1
+# Options and no body.
+textin data=01012103 type=1 handle=- seq=03 reset=0 regarding=- editing=- body=- ok=1
+# A delta nibble of 15 cannot be walked past.
+textin data=f100 ok=0
+# A value longer than the payload.
+textin data=1341 ok=0

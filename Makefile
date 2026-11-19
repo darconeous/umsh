@@ -1,4 +1,4 @@
-.PHONY: docs rust-docs rust-docs-nightly docs-serve gh-pages web-debugger \
+.PHONY: docs rust-docs rust-docs-nightly docs-serve gh-pages web-debugger arduino-test \
 	fuzz fuzz-build fuzz-check fuzz-seeds fuzz-min fuzz-coverage fuzz-smoke \
 	site site-serve site-check site-test site-preview \
 	regions-fetch regions-update regions-update-check regions-build \
@@ -850,6 +850,23 @@ rust-docs-nightly:
 
 docs-serve:
 	mdbook serve docs/protocol/
+
+# ─── Arduino library ─────────────────────────────────────────────────────────
+#
+# The library's desktop tests, built with the system C++ compiler against a
+# stub of the Arduino core: the vector file it shares with the Rust codecs,
+# and its link against a stub radio. The Rust side of the vectors is
+# `cargo test -p umsh-ulcp -p umsh-text --test arduino_vectors`.
+
+ARDUINO_TEST_BIN := target/arduino-test/umsh_test
+
+arduino-test:
+	mkdir -p $(dir $(ARDUINO_TEST_BIN))
+	$(CXX) -std=c++11 -Wall -Wextra -Wshadow -Werror \
+		-Ipackages/umsh-arduino/test -Ipackages/umsh-arduino/src \
+		packages/umsh-arduino/src/*.cpp packages/umsh-arduino/test/umsh_test.cpp \
+		-o $(ARDUINO_TEST_BIN)
+	$(ARDUINO_TEST_BIN) packages/umsh-arduino/test/vectors.txt
 
 # ─── Region database ─────────────────────────────────────────────────────────
 #
