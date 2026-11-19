@@ -644,6 +644,46 @@ impl<M: MacBackend> LocalNode<M> {
             .await?)
     }
 
+    /// Make sure `key` holds a peer slot, at least a transient one (held by
+    /// nothing, evictable), so a send to it can be sealed. Reports whether
+    /// it does.
+    pub async fn ensure_transient_peer(&self, key: &PublicKey) -> bool {
+        self.mac.ensure_transient_peer(key).await
+    }
+
+    /// Send `payload` to `destination` as this node, the way
+    /// [`Transport`] sends to a peer or to everyone in a scope, for a caller
+    /// that holds the destination as data rather than as a joined
+    /// [`BoundChannel`]. A unicast destination must be a registered peer,
+    /// and a channel one a configured channel.
+    #[cfg(feature = "software-crypto")]
+    pub async fn send_to(
+        &self,
+        destination: umsh_mac::SendDestination<'_>,
+        payload: &[u8],
+        options: &SendOptions,
+    ) -> Result<SendProgressTicket, NodeError<M>> {
+        use umsh_mac::SendDestination;
+        match destination {
+            SendDestination::Broadcast => self.send_all(payload, options).await,
+            SendDestination::Unicast(to) => self.send(to, payload, options).await,
+            SendDestination::Multicast(channel) => {
+                let receipt = self
+                    .mac
+                    .send_multicast(self.identity_id, channel, payload, options)
+                    .await?;
+                Ok(self.register_non_ack_send(self.identity_id, receipt))
+            }
+            SendDestination::BlindUnicast { peer, channel } => {
+                let receipt = self
+                    .mac
+                    .send_blind_unicast(self.identity_id, peer, channel, payload, options)
+                    .await?;
+                Ok(self.register_ack_send(self.identity_id, receipt, options.ack_requested))
+            }
+        }
+    }
+
     /// Return the live TX frame counter for this node's identity, if available.
     pub async fn frame_counter(&self) -> Option<u32> {
         self.mac.frame_counter(self.identity_id).await
@@ -1673,7 +1713,7 @@ impl<M: MacBackend> LocalNode<M> {
         )
         .await;
         self.dispatch_pfs_records_changed();
-        Ok(self.register_ack_send(self.identity_id, receipt?))
+        Ok(self.register_ack_send(self.identity_id, receipt?, true))
     }
 
     /// End the session with forward secrecy held with `peer`, or the
@@ -1817,7 +1857,7 @@ impl<M: MacBackend> LocalNode<M> {
                     .await?,
             ),
         };
-        Ok(self.register_ack_send(identity, receipt))
+        Ok(self.register_ack_send(identity, receipt, options.ack_requested))
     }
 
     #[cfg(feature = "software-crypto")]
@@ -2016,15 +2056,23 @@ impl<M: MacBackend> LocalNode<M> {
     }
 
     /// Register an ACK-tracked send with the dispatcher and return a progress ticket.
+    ///
+    /// A unicast that asked for no acknowledgment has a receipt only when
+    /// its transmission is tracked; its ticket then finishes on the air,
+    /// like a broadcast's.
     fn register_ack_send(
         &self,
         send_identity_id: LocalIdentityId,
         receipt: Option<umsh_mac::SendReceipt>,
+        ack_requested: bool,
     ) -> SendProgressTicket {
         match receipt {
             Some(receipt) => {
                 let token = SendToken::new(send_identity_id, receipt);
-                let state = self.dispatcher.borrow_mut().register_ticket(token, false);
+                let state = self
+                    .dispatcher
+                    .borrow_mut()
+                    .register_ticket(token, !ack_requested);
                 SendProgressTicket::new(token, state)
             }
             // Unicast/blind-unicast without ACK requested—no tracking.
@@ -2178,7 +2226,7 @@ impl<M: MacBackend> LocalNode<M> {
             .mac
             .send_unicast(id, peer, frame, &options.with_ack_requested(true))
             .await?;
-        Ok(self.register_ack_send(id, receipt))
+        Ok(self.register_ack_send(id, receipt, true))
     }
 
     #[cfg(feature = "software-crypto")]
@@ -2516,7 +2564,7 @@ impl<M: MacBackend> Transport for LocalNode<M> {
                 .mac
                 .send_unicast(self.identity_id, to, payload, options)
                 .await?;
-            Ok(self.register_ack_send(self.identity_id, receipt))
+            Ok(self.register_ack_send(self.identity_id, receipt, options.ack_requested))
         }
     }
 
@@ -2647,7 +2695,9 @@ impl<M: MacBackend> Transport for BoundChannel<M> {
                 options,
             )
             .await?;
-        Ok(self.node.register_ack_send(self.node.identity_id, receipt))
+        Ok(self
+            .node
+            .register_ack_send(self.node.identity_id, receipt, options.ack_requested))
     }
 
     async fn send_all(

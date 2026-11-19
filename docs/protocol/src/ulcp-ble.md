@@ -109,8 +109,12 @@ on that characteristic.
 Reassembly state is reset whenever the connection drops or the link
 detaches (see [Attach Semantics](ulcp-ble.md#attach-semantics)).
 
-Discarded segments and frames are transport-level events; they do not
-generate protocol-level error responses.
+A discarded segment is a transport-level event. A frame discarded with
+it, or a reassembled frame the receiver cannot accept, is a [lost
+frame](ulcp-core.md#lost-frames). The connection has failed to deliver
+what it exists to deliver, so the session ends with it: the host
+detaches, or the device closes the connection (see
+[Sessions](ulcp-core.md#sessions)).
 
 ### Flow Control {#gatt-flow-control}
 

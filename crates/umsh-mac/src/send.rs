@@ -131,6 +131,10 @@ pub struct SendOptions {
     /// Route Retry even when the peer has not been heard recently, which
     /// is otherwise what earns one.
     pub reachability_test: bool,
+    /// Transmit power in dBm for this send and every retransmission of
+    /// it, ahead of the sending identity's; `None` leaves it to the
+    /// identity.
+    pub power_dbm: Option<i8>,
 }
 
 impl Default for SendOptions {
@@ -151,6 +155,7 @@ impl Default for SendOptions {
             ack_mic: None,
             signed: false,
             reachability_test: false,
+            power_dbm: None,
         }
     }
 }
@@ -274,6 +279,13 @@ impl SendOptions {
     /// without one the test reports a reachable peer as unreachable.
     pub fn as_reachability_test(mut self) -> Self {
         self.reachability_test = true;
+        self
+    }
+
+    /// Send at `power_dbm` in dBm, retransmissions included; `None`
+    /// leaves it to the sending identity.
+    pub fn with_power_dbm(mut self, power_dbm: Option<i8>) -> Self {
+        self.power_dbm = power_dbm;
         self
     }
 }
@@ -477,6 +489,9 @@ pub struct PendingAck<const FRAME: usize = MAX_RESEND_FRAME_LEN> {
     /// window for the requester: the acknowledgment that completes the
     /// send also makes that counter the requester's baseline.
     pub(crate) adopt_on_ack: Option<RxBaselineAdoption>,
+    /// The power the send asked for ([`SendOptions::power_dbm`]), which
+    /// its retransmissions go out at too.
+    pub(crate) power_dbm: Option<i8>,
 }
 
 /// A requester's counter to adopt once it acknowledges a Frame Verified
@@ -514,6 +529,7 @@ impl<const FRAME: usize> PendingAck<FRAME> {
             route_retry_spent: false,
             reachability_test: false,
             adopt_on_ack: None,
+            power_dbm: None,
         }
     }
 
@@ -537,6 +553,7 @@ impl<const FRAME: usize> PendingAck<FRAME> {
             route_retry_spent: false,
             reachability_test: false,
             adopt_on_ack: None,
+            power_dbm: None,
         }
     }
 
@@ -561,6 +578,7 @@ impl<const FRAME: usize> PendingAck<FRAME> {
             route_retry_spent: false,
             reachability_test: false,
             adopt_on_ack: None,
+            power_dbm: None,
         }
     }
 
@@ -664,6 +682,38 @@ impl ForwardWatch {
     }
 }
 
+/// Whether a queued forward is a flood forward made by an adaptive
+/// forwarder ([`RepeaterMode::Adaptive`](crate::RepeaterMode::Adaptive)).
+/// One enum rather than two flags, since a first hop is always an adaptive
+/// flood, and so the queue entry keeps its size.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum AdaptiveFlood {
+    /// Any other frame.
+    #[default]
+    No,
+    /// An adaptive flood forward.
+    Flood,
+    /// An adaptive flood forward of a frame heard from its originator: the
+    /// one whose airing shows a neighbor nobody else carries for.
+    FirstHop,
+}
+
+impl AdaptiveFlood {
+    /// The forward a plan with these two flags makes.
+    pub(crate) const fn new(flood: bool, first_hop: bool) -> Self {
+        match (flood, first_hop) {
+            (false, _) => Self::No,
+            (true, false) => Self::Flood,
+            (true, true) => Self::FirstHop,
+        }
+    }
+
+    /// Whether this is an adaptive flood forward at all.
+    pub(crate) const fn is_flood(self) -> bool {
+        !matches!(self, Self::No)
+    }
+}
+
 /// One entry in the [`TxQueue`] waiting to be transmitted by the [`Mac`](crate::Mac) coordinator.
 ///
 /// Each `QueuedTx` holds a complete, already-sealed frame ready to hand directly to the
@@ -723,12 +773,12 @@ pub struct QueuedTx<const FRAME: usize = MAX_RESEND_FRAME_LEN> {
     pub counter_holds: u8,
     /// For a forward, whether it is listened for once it airs.
     pub(crate) forward_watch: ForwardWatch,
-    /// A flood forward made by an adaptive forwarder
+    /// Whether this is a flood forward made by an adaptive forwarder
     /// ([`RepeaterMode::Adaptive`](crate::RepeaterMode::Adaptive)).
-    pub(crate) adaptive_flood: bool,
-    /// An adaptive flood forward of a frame heard from its originator: the
-    /// one whose airing shows a neighbor nobody else carries for.
-    pub(crate) adaptive_first_hop: bool,
+    pub(crate) adaptive: AdaptiveFlood,
+    /// A duty-cycle limit refused one of this frame's attempts, which is
+    /// then why it is given up if its attempts run out.
+    pub(crate) duty_limited: bool,
 }
 
 impl<const FRAME: usize> QueuedTx<FRAME> {
@@ -776,8 +826,8 @@ impl<const FRAME: usize> QueuedTx<FRAME> {
             frame_counter: identity_id.and_then(|_| sealed_frame_counter(frame)),
             counter_holds: 0,
             forward_watch: ForwardWatch::None,
-            adaptive_flood: false,
-            adaptive_first_hop: false,
+            adaptive: AdaptiveFlood::No,
+            duty_limited: false,
         })
     }
 
@@ -1633,6 +1683,26 @@ pub(crate) fn hop_count(wire: &[u8], header: &PacketHeader, options: &ParsedOpti
     }
 }
 
+/// Why the MAC gave up on a send ([`MacEventRef::TxAbandoned`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TxAbandonReason {
+    /// The frame never aired: channel-activity detection found the
+    /// channel busy on every attempt.
+    ChannelBusy,
+    /// The frame never aired: a duty-cycle limit refused it
+    /// ([`TxError::DutyLimited`](umsh_hal::TxError::DutyLimited)) on at
+    /// least one of its attempts, and the attempts ran out.
+    DutyLimit,
+    /// The frame never aired: no committed reservation covered its frame
+    /// counter, so sending it could repeat a counter after a power loss.
+    CounterUnavailable,
+    /// The radio failed to transmit the frame.
+    RadioFault,
+    /// The frame left the transmit queue without ever completing a
+    /// transmission, leaving the send with nothing to finish it.
+    Orphaned,
+}
+
 /// Borrowing view of an inbound MAC event.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[allow(
@@ -1691,16 +1761,15 @@ pub enum MacEventRef<'a> {
         /// it: by trace route, or by the hint missing from our source route.
         repeater: Option<RouterHint>,
     },
-    /// The frame was dropped before it ever aired: every channel-activity
-    /// -detection attempt found the channel busy and the retry budget ran
-    /// out.
+    /// The MAC gave up on a send; `reason` says why.
     ///
-    /// `receipt` is `Some` for ACK-requested sends; since the frame was
-    /// never transmitted, no `AckReceived`/`AckTimeout` will follow—this
-    /// event is the send's terminal state.
+    /// `receipt` is `Some` for ACK-requested sends; no
+    /// `AckReceived`/`AckTimeout` will follow—this event is the send's
+    /// terminal state.
     TxAbandoned {
         identity_id: LocalIdentityId,
         receipt: Option<SendReceipt>,
+        reason: TxAbandonReason,
     },
     /// A unicast or blind unicast arrived for one of this identity's
     /// retired addresses, from the peer that address was shared with; see

@@ -28,12 +28,14 @@ Id | Mnemonic                                                     | Dir         
 21 | [`CMD_PROP_MULTI_GET`](ulcp-core.md#cmd-prop-multi-get)      | Host->Device | `CAP_CMD_MULTI`
 22 | [`CMD_PROP_MULTI_SET`](ulcp-core.md#cmd-prop-multi-set)      | Host->Device | `CAP_CMD_MULTI`
 23 | [`CMD_PROP_ARE`](ulcp-core.md#cmd-prop-are)                  | Device->Host | `CAP_CMD_MULTI`
-24 | [`CMD_SESSION_RESET`](ulcp-core.md#cmd-session-reset)        | Device->Host | —
+24 | [`CMD_SESSION_DID_END`](ulcp-core.md#cmd-session-did-end)    | Device->Host | —
 25 | [`CMD_I2C_TRANSFER`](ulcp-i2c.md#cmd-i2c-transfer)           | Host->Device | `CAP_I2C`
 26 | [`CMD_I2C_RESULT`](ulcp-i2c.md#cmd-i2c-result)               | Device->Host | `CAP_I2C`
 27 | [`CMD_I2C_SCAN`](ulcp-i2c.md#cmd-i2c-scan)                   | Host->Device | `CAP_I2C`
+28 | [`CMD_SESSION_START`](ulcp-core.md#cmd-session-start)        | Host->Device | —
+29 | [`CMD_SESSION_DID_START`](ulcp-core.md#cmd-session-did-start) | Device->Host | —
 
-Command identifiers are 7-bit; 18, 20, and 28–127 are unassigned.
+Command identifiers are 7-bit; 18, 20, and 30–127 are unassigned.
 
 ## Properties and Streams
 
@@ -62,6 +64,7 @@ Id   | Mnemonic                                                                 
 48   | [`PROP_MAC_PROMISCUOUS`](ulcp-host.md#prop-mac-promiscuous)                           | Get, Set                   | `CAP_HOST_FILTER`
 49   | [`PROP_SAVED`](ulcp-saved-state.md#prop-saved)                                        | Get                        | `CAP_SAVE`
 50   | [`PROP_MAC_BACKHAUL`](ulcp-host.md#prop-mac-backhaul)                                 | Get, Set                   | `CAP_MAC_BACKHAUL`
+51   | [`PROP_NODE_MSG_LISTEN`](ulcp-node-messaging.md#prop-node-msg-listen)                 | Get, Set                   | `CAP_NODE_MSG`
 64   | [`PROP_DEV_KEY`](ulcp-device.md#prop-dev-key)                                         | Get                        | `CAP_DEV_IDENTITY`
 65   | [`PROP_DEV_PRIVATE_KEY`](ulcp-device.md#prop-dev-private-key)                         | Set                        | `CAP_DEV_IDENTITY`
 66   | [`PROP_DEV_CHANNEL_KEYS`](ulcp-device.md#prop-dev-channel-keys)                       | Get, Set, Insert, Remove   | `CAP_DEV_IDENTITY`
@@ -104,6 +107,7 @@ Id   | Mnemonic                                                                 
 104  | [`PROP_HOST_MUTED_CHANNELS`](ulcp-host.md#prop-host-muted-channels)                   | Get, Set, Insert, Remove   | `CAP_HOST_RX_QUEUE`
 105  | [`PROP_HOST_MUTED_PEERS`](ulcp-host.md#prop-host-muted-peers)                         | Get, Set, Insert, Remove   | `CAP_HOST_RX_QUEUE`
 113  | [`STR_PHY_RAW`](ulcp-transport.md#str-radio-raw)                                      | Send, Recv                 | —
+114  | [`STR_NODE_MSG`](ulcp-node-messaging.md#str-node-msg)                                 | Send, Recv                 | `CAP_NODE_MSG`
 4820 | [`PROP_PHY_DUTY_NOW`](ulcp-radio.md#prop-phy-duty-now)                                | Get                        | `CAP_PHY_DUTY_LIMIT`
 4821 | [`PROP_PHY_RX_DUTY`](ulcp-radio.md#prop-phy-rx-duty)                                  | Get                        | `CAP_STATS`, `CAP_REPEATER`
 4822 | [`PROP_PHY_DUTY_LIMIT`](ulcp-radio.md#prop-phy-duty-limit)                            | Get, Set                   | `CAP_PHY_DUTY_LIMIT`
@@ -201,6 +205,9 @@ Id   | Mnemonic                                                                 
 4993 | [`PROP_LAN_BEARER_GROUP`](ulcp-ip-multicast.md#prop-lan-bearer-group) | Get, Set | `CAP_LAN_BEARER`
 4994 | [`PROP_LAN_BEARER_INGRESS_LIMIT`](ulcp-ip-multicast.md#prop-lan-bearer-ingress-limit) | Get, Set | `CAP_LAN_BEARER`, `CAP_REPEATER`
 4995 | [`PROP_LAN_BEARER_STATE`](ulcp-ip-multicast.md#prop-lan-bearer-state) | Get, Is | `CAP_LAN_BEARER`
+5008 | [`PROP_NODE_MSG_TYPES`](ulcp-node-messaging.md#prop-node-msg-types) | Get, Set, Insert, Remove | `CAP_NODE_MSG`
+5009 | [`PROP_NODE_MSG_MTU`](ulcp-node-messaging.md#prop-node-msg-mtu) | Get | `CAP_NODE_MSG`
+5010 | [`PROP_UART_WINDOW`](ulcp-core.md#prop-uart-window) | Get, Set | UART link
 
 ## Capabilities
 
@@ -246,6 +253,7 @@ Code | Name                      | Defined in
 64   | `CAP_DISPLAY`             | [Device Domain](ulcp-device.md#capabilities)
 65   | `CAP_KEYBOARD`            | [Device Domain](ulcp-device.md#capabilities)
 66   | `CAP_SOUND`               | [Device Domain](ulcp-device.md#capabilities)
+67   | `CAP_NODE_MSG`            | [Node Messaging](ulcp-node-messaging.md#capabilities)
 515  | `CAP_PHY_LORA`            | [Radio Control](ulcp-radio.md#capabilities)
 
 ## Status Codes
@@ -264,7 +272,8 @@ Id | Name                      | Id | Name
 9  | `STATUS_PARSE_ERROR`      | 24 | `STATUS_NO_DEVICE`
 10 | `STATUS_IN_PROGRESS`      | 25 | `STATUS_NACK`
 11 | `STATUS_NOMEM`            | 26 | `STATUS_BUS_ERROR`
-12 | `STATUS_BUSY`             | 32 | `STATUS_DUTY_LIMIT`
+12 | `STATUS_BUSY`             | 27 | `STATUS_NO_ACK`
+   |                           | 32 | `STATUS_DUTY_LIMIT`
 
 ## Reset Codes
 
@@ -296,7 +305,12 @@ Repeater states | 0 off, 1 forwarding, 2 standby, 3 engaged, 4 withheld | [`PROP
 MeshCore region policies | 0 open, 1 scoped only, 2 ignore | [`PROP_MESHCORE_REGION_POLICY`](ulcp-device.md#prop-meshcore-region-policy)
 Transmit flags | bit 0 `TX_FLAG_NOCCA`, bit 1 `TX_FLAG_NODUTY` | [`STR_PHY_RAW`](ulcp-transport.md#str-radio-raw)
 Receive flags | bit 0 `RX_FLAG_BUFFERED`, bit 1 `RX_FLAG_ACKED`, bit 2 `RX_FLAG_SELF_TX` | [Extended Recv Metadata](ulcp-transport.md#buffered-metadata)
-Session reset reasons | 0 attached, 1 `CMD_RST`, 2 `CMD_RESTORE` | [`CMD_SESSION_RESET`](ulcp-core.md#cmd-session-reset)
+Session end reasons | 0 frame lost, 1 owed frame discarded | [`CMD_SESSION_DID_END`](ulcp-core.md#cmd-session-did-end)
+Node message kinds | 0 unicast, 1 broadcast, 2 blind unicast, 3 multicast | [`STR_NODE_MSG`](ulcp-node-messaging.md#send-metadata)
+Node message send flags | bit 0 `TX_FLAG_ACK`, bit 1 `TX_FLAG_FULL_SOURCE`, bit 2 `TX_FLAG_SIGNED` | [`STR_NODE_MSG`](ulcp-node-messaging.md#send-metadata)
+Node message send options | 1 `TX_OPT_FLOOD_HOPS`, 2 `TX_OPT_SOURCE_ROUTE`, 3 `TX_OPT_TX_POWER` | [`STR_NODE_MSG`](ulcp-node-messaging.md#send-metadata)
+Node message receive flags | bit 0 `RX_FLAG_SRC_KEY`, bit 1 `RX_FLAG_SENDER_AUTH`, bit 2 `RX_FLAG_ACKED`, bit 3 `RX_FLAG_GAP`, bit 4 `RX_FLAG_REDELIVERED` | [`STR_NODE_MSG`](ulcp-node-messaging.md#recv-metadata)
+Node message receive options | 1 `RX_OPT_RSSI`, 2 `RX_OPT_SNR`, 3 `RX_OPT_TRACE` | [`STR_NODE_MSG`](ulcp-node-messaging.md#recv-metadata)
 Wi-Fi security modes | 0 `WIFI_SEC_OPEN`, 1 `WIFI_SEC_OWE`, 2 `WIFI_SEC_WPA2`, 3 `WIFI_SEC_WPA3`, 4 `WIFI_SEC_WPA`, 5 `WIFI_SEC_WEP`, 6 `WIFI_SEC_WPA2_ENT`, 7 `WIFI_SEC_WPA3_ENT`, 8 `WIFI_SEC_WPA3_ENT_192` | [`PROP_WIFI_NETWORKS`](ulcp-wifi.md#prop-wifi-networks)
 Wi-Fi link states | 0 `WIFI_LINK_DOWN`, 1 `WIFI_LINK_CONNECTING`, 2 `WIFI_LINK_UP` | [`PROP_WIFI_LINK`](ulcp-wifi.md#prop-wifi-link)
 Wi-Fi link reasons | 0 `WIFI_REASON_NONE`, 1 `WIFI_REASON_NOT_FOUND`, 2 `WIFI_REASON_AUTH`, 3 `WIFI_REASON_REJECTED`, 4 `WIFI_REASON_LOST`, 5 `WIFI_REASON_OTHER` | [`PROP_WIFI_LINK`](ulcp-wifi.md#prop-wifi-link)

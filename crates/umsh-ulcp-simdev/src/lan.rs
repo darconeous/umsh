@@ -88,6 +88,7 @@ pub fn session_config(dev_version: &'static str) -> SessionConfig {
         ble: false,
         ble_pairing: false,
         ble_pin: false,
+        uart_links: Default::default(),
         // The device is a task in its owner's process; there is nothing
         // for `CMD_REBOOT` to restart.
         reboot: false,
@@ -103,6 +104,7 @@ pub fn session_config(dev_version: &'static str) -> SessionConfig {
         bridge_client: false,
         i2c_buses: &[],
         i2c_devices: &[],
+        node_msg: None,
     }
 }
 

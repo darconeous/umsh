@@ -24,7 +24,7 @@ use umsh_ulcp::battery_diagnostics::{
 };
 use umsh_ulcp::ble::BleLinkState;
 use umsh_ulcp::frame::{
-    self, Cmd, Frame, Header, MultiEntries, PropPayload, SessionResetReason, StreamPayload,
+    self, Cmd, Frame, Header, MultiEntries, PropPayload, SessionEndReason, StreamPayload,
     TID_UNSOLICITED,
 };
 use umsh_ulcp::gnss::{self, GnssSnapshot};
@@ -208,6 +208,50 @@ pub const DEFAULT_IDENT_PRECISION: u8 = 5;
 /// own maximum.
 pub const MAX_IDENT_PRECISION: u8 = gnss::MAX_LOCATION_LEN as u8;
 
+/// Which of the device's local links are carried on a UART without
+/// hardware flow control, and so are paced by their reader with XON and
+/// XOFF under `PROP_UART_WINDOW` (spec §Flow Control on a UART). With
+/// neither, the property is unknown.
+///
+/// An application on the device's own interface is on a serial link, so
+/// its session can end, as an attached host's can (spec §Sessions); a
+/// built-in interface's never does.
+///
+/// Acted on only in a build with the `uart-link` feature. Without it
+/// the session has no flow control, no window, and no session for the
+/// interface to end, whatever this says.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct UartLinks {
+    /// The wired host transport is such a UART, as behind the Heltecs'
+    /// USB bridge. A host attached over BLE is not.
+    pub wired_host: bool,
+    /// The device's own interface is an application on such a UART.
+    pub device: bool,
+}
+
+impl UartLinks {
+    /// No UART links.
+    pub const NONE: Self = Self {
+        wired_host: false,
+        device: false,
+    };
+
+    /// Whether the device has a UART link at all.
+    pub const fn any(self) -> bool {
+        self.wired_host || self.device
+    }
+}
+
+/// The transport a host attached over, as far as the session cares: a
+/// wired one may be a UART (see [`UartLinks::wired_host`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HostLink {
+    /// USB, or a UART behind a USB bridge.
+    Wired,
+    /// BLE, or anything else that is not wired to the device.
+    Wireless,
+}
+
 /// Fixed properties of the device this session runs on.
 #[derive(Clone, Copy, Debug)]
 pub struct SessionConfig {
@@ -323,6 +367,9 @@ pub struct SessionConfig {
     /// Separate from [`ble`](Self::ble), which is about making the
     /// transport unreachable: one that is always reachable still pairs.
     pub ble_pin: bool,
+    /// The local links carried on a UART, which `PROP_UART_WINDOW`
+    /// governs.
+    pub uart_links: UartLinks,
     /// `None`: no Wi-Fi hardware; `CAP_WIFI_SCAN` and `CAP_WIFI` are
     /// absent and every Wi-Fi property is unknown. `Some`: the scan
     /// capability is advertised, and the station capability with it
@@ -407,6 +454,19 @@ pub struct SessionConfig {
     /// or board knowledge before constructing the session. Reading
     /// `PROP_I2C_DEVICES` only encodes this slice; it never probes a bus.
     pub i2c_devices: &'static [DeviceInfo<'static>],
+    /// Node messaging (`CAP_NODE_MSG`), in a build with the `node-msg`
+    /// feature, on a device with a node and a device identity. `None`, or
+    /// a build without the feature: the capability is absent and its
+    /// stream and properties are unknown.
+    pub node_msg: Option<NodeMsgConfig>,
+}
+
+/// How a device serves node messaging (see [`SessionConfig::node_msg`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NodeMsgConfig {
+    /// The payload types the device's node consumes itself, which no link
+    /// may claim in `PROP_NODE_MSG_TYPES`.
+    pub reserved_types: &'static [u8],
 }
 
 /// Physical-radio outcome of the transmit started by
@@ -619,6 +679,16 @@ pub enum Effect {
     /// [`Session::respond_i2c`] carrying the ascending list of addresses
     /// that acknowledged.
     I2cScan { tid: u8 },
+    /// `CMD_STR_SEND` on `STR_NODE_MSG`: hand the request staged in
+    /// [`Session::take_node_msg_request`] to the device's node, and report
+    /// its outcome with [`Session::on_node_msg_result`] quoting `id`. A
+    /// node with no room for it is reported as `STATUS_BUSY` at once.
+    NodeMsgSend { id: u16 },
+    /// `CMD_SESSION_START` started a new session on `binding`'s link.
+    /// What a platform holds for that link's previous session, such as
+    /// node messages it delivered and may deliver again, is its to act
+    /// on; the session has already discarded its own state.
+    SessionStarted { binding: Binding },
 }
 
 /// Largest sum of write-data and read-length octets one `CMD_I2C_TRANSFER`
@@ -700,6 +770,99 @@ pub struct AnnounceRequest {
     /// The device channel to send on, or `None` for a broadcast.
     pub channel_key: Option<[u8; items::CHANNEL_KEY_LEN]>,
 }
+
+/// Longest node message payload the session stages: what a broadcast,
+/// the kind with the least overhead, leaves of a LoRa frame.
+pub const NODE_MSG_PAYLOAD_MAX: usize = 250;
+
+/// Most node message sends whose outcome the session awaits at once.
+/// Another with a non-zero TID is refused with `STATUS_BUSY`.
+pub const NODE_MSG_SENDS: usize = 4;
+
+/// Most payload types `PROP_NODE_MSG_TYPES` holds.
+pub const MAX_NODE_MSG_TYPES: usize = 8;
+
+/// A validated `CMD_STR_SEND` on `STR_NODE_MSG` (see
+/// [`Effect::NodeMsgSend`]), with the channel resolved to its key and the
+/// transmit power clamped to the radio's range.
+#[cfg(feature = "node-msg")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NodeMsgRequest {
+    /// Quoted back in [`Session::on_node_msg_result`].
+    pub id: u16,
+    pub kind: umsh_ulcp::node_msg::Kind,
+    /// Request an acknowledgement.
+    pub ack: bool,
+    /// Carry the full public key as the source.
+    pub full_source: bool,
+    /// Carry a frame signature.
+    pub signed: bool,
+    /// The device channel to send on, for a kind with a channel.
+    pub channel_key: Option<[u8; items::CHANNEL_KEY_LEN]>,
+    /// The destination, for a kind with one.
+    pub peer: Option<[u8; items::PUBLIC_KEY_LEN]>,
+    /// The flood budget, or `None` for the device's default.
+    pub flood_hops: Option<u8>,
+    /// Router hints, next repeater first; empty for none.
+    pub source_route: HeaplessVec<
+        u8,
+        { umsh_ulcp::node_msg::MAX_ROUTE_HINTS * umsh_ulcp::node_msg::ROUTER_HINT_LEN },
+    >,
+    /// The transmit power in dBm, or `None` for the identity's own.
+    pub tx_power_dbm: Option<i8>,
+    /// The UMSH payload: type octet, then body.
+    pub payload: HeaplessVec<u8, NODE_MSG_PAYLOAD_MAX>,
+}
+
+/// A node message send awaiting its outcome, so the answer can reach the
+/// link that asked.
+#[cfg(feature = "node-msg")]
+#[derive(Clone, Copy)]
+struct NodeMsgSend {
+    id: u16,
+    binding: Binding,
+    tid: u8,
+}
+
+/// The session's node messaging state outside the device and session
+/// domains.
+#[cfg(feature = "node-msg")]
+struct NodeMsgState {
+    /// `PROP_NODE_MSG_MTU`, as the node last published it.
+    mtu: u16,
+    /// Sends awaiting their outcome.
+    sends: [Option<NodeMsgSend>; NODE_MSG_SENDS],
+    /// The next request's id.
+    next_id: u16,
+    /// The request staged for [`Effect::NodeMsgSend`].
+    staged: Option<NodeMsgRequest>,
+}
+
+#[cfg(feature = "node-msg")]
+impl NodeMsgState {
+    const fn new() -> Self {
+        Self {
+            mtu: 0,
+            sends: [None; NODE_MSG_SENDS],
+            next_id: 0,
+            staged: None,
+        }
+    }
+
+    /// Forget the sends `binding` is waiting on: their link's session
+    /// ended, so whatever their outcome, nobody is there to hear it.
+    fn forget(&mut self, binding: Binding) {
+        for slot in &mut self.sends {
+            if slot.is_some_and(|send| send.binding == binding) {
+                *slot = None;
+            }
+        }
+    }
+}
+
+/// `PROP_NODE_MSG_TYPES`.
+#[cfg(feature = "node-msg")]
+type NodeMsgTypes = FixedItemSet<MAX_NODE_MSG_TYPES, 1>;
 
 /// A staged `PROP_DEV_PRIVATE_KEY` provisioning request (see
 /// [`Effect::ProvisionIdentity`]).
@@ -1108,6 +1271,13 @@ struct DeviceDomain {
     /// the mesh. Empty by default—a device answers node management
     /// only from keys someone deliberately put here.
     admins: DevAdminTable,
+    /// `PROP_NODE_MSG_TYPES`: the payload types delivered to a link.
+    #[cfg(feature = "node-msg")]
+    node_msg_types: NodeMsgTypes,
+    /// `PROP_UART_WINDOW`: the octets each XON permits on the UART link.
+    /// No board has more than one, so one value serves.
+    #[cfg(feature = "uart-link")]
+    uart_window: u16,
     /// `PROP_MAC_REPEATER_MODE`: whether, and how eagerly, the device
     /// identity's on-board MAC forwards overheard routable frames; one of
     /// [`repeater_mode`]. Persisted device-domain state; takes effect only
@@ -1282,6 +1452,10 @@ impl DeviceDomain {
             channel_keys: ChannelKeyTable::default(),
             peers: DevPeerTable::default(),
             admins: DevAdminTable::default(),
+            #[cfg(feature = "node-msg")]
+            node_msg_types: NodeMsgTypes::default(),
+            #[cfg(feature = "uart-link")]
+            uart_window: 0,
             repeater_mode: repeater_mode::OFF,
             repeater_regions: RepeaterRegions::default(),
             repeater_default_region: None,
@@ -1736,6 +1910,17 @@ struct ChannelKeyTable {
     len: usize,
 }
 
+/// Equal as sets: the order keys were inserted in is not state. The
+/// identifier derives from the key, so the keys are the whole value.
+impl PartialEq for ChannelKeyTable {
+    fn eq(&self, other: &Self) -> bool {
+        self.len == other.len
+            && self
+                .iter()
+                .all(|entry| other.iter().any(|held| held.key == entry.key))
+    }
+}
+
 impl ChannelKeyTable {
     fn iter(&self) -> impl Iterator<Item = &ChannelKeyEntry> {
         self.entries[..self.len]
@@ -2036,6 +2221,13 @@ fn take_items<const N: usize, const L: usize>(
     Some(set)
 }
 
+/// Equal as sets: the order items were inserted in is not state.
+impl<const N: usize, const L: usize> PartialEq for FixedItemSet<N, L> {
+    fn eq(&self, other: &Self) -> bool {
+        self.len == other.len && self.iter().all(|item| other.contains(item))
+    }
+}
+
 // `[[u8; L]; N]` does not derive `Default` for arbitrary const parameters.
 impl<const N: usize, const L: usize> Default for FixedItemSet<N, L> {
     fn default() -> Self {
@@ -2126,6 +2318,17 @@ impl RegionEntry {
 struct RepeaterRegions {
     entries: [Option<RegionEntry>; MAX_REPEATER_REGIONS],
     len: usize,
+}
+
+/// Equal as sets of the regions as written: the order they were inserted
+/// in is not state, and the codes derive from the text.
+impl PartialEq for RepeaterRegions {
+    fn eq(&self, other: &Self) -> bool {
+        self.len == other.len
+            && self
+                .iter()
+                .all(|entry| other.iter().any(|held| held.text() == entry.text()))
+    }
 }
 
 impl RepeaterRegions {
@@ -2228,6 +2431,16 @@ type MeshCoreRegionName = HeaplessVec<u8, MESHCORE_REGION_NAME_MAX_LEN>;
 /// which holds them for every packet it gates.
 #[derive(Clone, Default)]
 struct MeshCoreRegions(HeaplessVec<MeshCoreRegionName, MAX_MESHCORE_REGIONS>);
+
+/// Equal as sets: the order names were inserted in is not state.
+impl PartialEq for MeshCoreRegions {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.len() == other.0.len()
+            && self
+                .iter()
+                .all(|name| other.iter().any(|held| held == name))
+    }
+}
 
 impl MeshCoreRegions {
     fn iter(&self) -> impl Iterator<Item = &[u8]> {
@@ -2767,6 +2980,10 @@ const SAVED_SCHEMA: &[SavedProperty] = &[
     saved(prop::LAN_BEARER_ENABLED, ApplyPhase::Enable, false),
     saved(prop::LAN_BEARER_GROUP, ApplyPhase::Config, false),
     saved(prop::LAN_BEARER_INGRESS_LIMIT, ApplyPhase::Config, false),
+    #[cfg(feature = "node-msg")]
+    saved(prop::NODE_MSG_TYPES, ApplyPhase::Config, true),
+    #[cfg(feature = "uart-link")]
+    saved(prop::UART_WINDOW, ApplyPhase::Config, false),
 ];
 
 /// Whether `key` is part of the saved snapshot: what `CMD_SAVE` persists
@@ -2859,7 +3076,7 @@ impl SavedStatus {
 /// and forgets them on power cycle, when the host re-provisions in full.
 /// Also excluded: queue contents, per-peer replay baselines, and the
 /// independently persisted device identity keypair.
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 struct SavedState {
     #[cfg(feature = "bridge-client")]
     bridge: crate::bridge::BridgeConfig,
@@ -2880,6 +3097,10 @@ struct SavedState {
     dev_channel_keys: ChannelKeyTable,
     dev_peers: DevPeerTable,
     dev_admins: DevAdminTable,
+    #[cfg(feature = "node-msg")]
+    node_msg_types: NodeMsgTypes,
+    #[cfg(feature = "uart-link")]
+    uart_window: u16,
     repeater_mode: u8,
     repeater_regions: RepeaterRegions,
     repeater_default_region: Option<[u8; REGION_CODE_LEN]>,
@@ -2943,6 +3164,10 @@ impl SavedState {
             dev_channel_keys: device.channel_keys,
             dev_peers: device.peers,
             dev_admins: device.admins,
+            #[cfg(feature = "node-msg")]
+            node_msg_types: device.node_msg_types,
+            #[cfg(feature = "uart-link")]
+            uart_window: device.uart_window,
             repeater_mode: device.repeater_mode,
             repeater_regions: device.repeater_regions,
             repeater_default_region: device.repeater_default_region,
@@ -3007,6 +3232,10 @@ impl SavedState {
             dev_channel_keys: ChannelKeyTable::default(),
             dev_peers: DevPeerTable::default(),
             dev_admins: DevAdminTable::default(),
+            #[cfg(feature = "node-msg")]
+            node_msg_types: NodeMsgTypes::default(),
+            #[cfg(feature = "uart-link")]
+            uart_window: 0,
             repeater_mode: repeater_mode::OFF,
             repeater_regions: RepeaterRegions::default(),
             repeater_default_region: None,
@@ -3196,6 +3425,15 @@ impl SavedState {
                 }
                 Ok(())
             }
+            #[cfg(feature = "node-msg")]
+            prop::NODE_MSG_TYPES => {
+                for payload_type in self.node_msg_types.iter() {
+                    encoder.put(number, payload_type)?;
+                }
+                Ok(())
+            }
+            #[cfg(feature = "uart-link")]
+            prop::UART_WINDOW => encoder.put(number, &self.uart_window.to_le_bytes()),
             prop::TZ_RULE => encoder.put(number, self.tz_rule.text()),
             prop::TIME_24H => encoder.put(number, &[self.time_24h as u8]),
             prop::GNSS_IDENT_UPDATE => encoder.put(number, &[self.gnss_ident_update as u8]),
@@ -3425,6 +3663,13 @@ impl SavedState {
                     value.try_into().map_err(|_| Unheld)?;
                 held(self.dev_admins.insert(public_key))?;
             }
+            #[cfg(feature = "node-msg")]
+            prop::NODE_MSG_TYPES => {
+                let payload_type: [u8; 1] = value.try_into().map_err(|_| Unheld)?;
+                held(self.node_msg_types.insert(payload_type))?;
+            }
+            #[cfg(feature = "uart-link")]
+            prop::UART_WINDOW => self.uart_window = parse_u16(value).map_err(invalid)?,
             prop::TZ_RULE => self.tz_rule = ZoneRule::parse(value).map_err(invalid)?,
             prop::TIME_24H => self.time_24h = parse_bool(value).map_err(invalid)?,
             prop::GNSS_IDENT_UPDATE => {
@@ -3573,6 +3818,9 @@ struct SessionState<const TX: usize> {
     /// the transaction; flash remains the source of truth either way
     /// (see [`Session::respond_identity`]).
     pending_identity: Option<PendingIdentity>,
+    /// `PROP_NODE_MSG_LISTEN`.
+    #[cfg(feature = "node-msg")]
+    node_msg_listen: bool,
 }
 
 impl<const TX: usize> Default for SessionState<TX> {
@@ -3583,6 +3831,8 @@ impl<const TX: usize> Default for SessionState<TX> {
             pending: Deque::new(),
             drain: None,
             pending_identity: None,
+            #[cfg(feature = "node-msg")]
+            node_msg_listen: false,
         }
     }
 }
@@ -3673,6 +3923,10 @@ pub struct Session<A: AesProvider, S: Sha256Provider, const TX: usize = 1> {
     /// key provisioning (spec §Provisioning Security): physical
     /// possession for serial, an encrypted bonded LESC link for BLE.
     link_secure: bool,
+    /// Whether the attached host's link is a UART: it attached over the
+    /// wired transport and [`UartLinks::wired_host`] says that is one.
+    #[cfg(feature = "uart-link")]
+    host_on_uart: bool,
     /// RAM mirror of the durably saved snapshot (`None` when nothing
     /// is saved). Post-reset values and `CMD_RESTORE` come from here;
     /// the firmware keeps the flash journal in sync through the
@@ -3792,15 +4046,21 @@ pub struct Session<A: AesProvider, S: Sha256Provider, const TX: usize = 1> {
     /// `PROP_HOST_KEY`, and so may empty it. Held for the exchange, like
     /// [`binding`](Self::binding).
     mesh_requester_hosts: bool,
-    /// A session reset the attached host has not been told about yet.
-    ///
-    /// Session state is discarded from four places, some of which are
-    /// reached over the administrative binding or by a transport edge
-    /// rather than by a host frame. Recording the debt here and letting
-    /// the driver drain it at the tail of its loop puts the notice on
-    /// the host's transport in every case, and keeps a discard with
-    /// nobody attached from firing into the next session.
-    session_reset_pending: Option<SessionResetReason>,
+    /// The attached host's session, as a serial link ends it. Reset on
+    /// attach and detach, so a notice owed never fires into the next
+    /// host's session.
+    host_serial: SerialSession,
+    /// The session of an application on the device's own interface,
+    /// which is a serial link from the moment the device starts.
+    #[cfg(feature = "uart-link")]
+    device_serial: SerialSession,
+    /// A reset code an administrator's `CMD_RST` or `CMD_RESTORE` produced.
+    /// The exchange's one frame carries no publication, yet the reset
+    /// started the attached host's session over, and the code is that
+    /// session's boundary; paid with the other owed publications.
+    owed_reset_status: Option<Status>,
+    #[cfg(feature = "node-msg")]
+    node_msg: NodeMsgState,
     scratch: [u8; SCRATCH],
     /// Kept beside `scratch` rather than on the stack: a signature input
     /// holds about four frames.
@@ -3827,8 +4087,8 @@ pub enum Binding {
     /// which is not a listed administrator. Its one permitted write is an
     /// empty `PROP_HOST_KEY`: a host revoking a radio it left behind.
     Host,
-    /// The device's own settings interface, in process: a screen and
-    /// keyboard on the device itself.
+    /// The device's own settings interface: a screen and keyboard on the
+    /// device itself, or an application wired to it over a UART.
     ///
     /// A local binding in every respect but one. It answers each request
     /// with a non-zero TID exactly once, and a TID-0 request is
@@ -3837,6 +4097,47 @@ pub enum Binding {
     /// domain, as an administrator does, because the session and host
     /// domains belong to whichever host is tethered.
     Device,
+}
+
+/// How the device ends a serial link's session (spec §Sessions): the link
+/// hears nothing but `CMD_SESSION_DID_END` until it sends
+/// `CMD_SESSION_START`.
+#[derive(Clone, Copy)]
+struct SerialSession {
+    /// Ended, and no `CMD_SESSION_START` has arrived since: every other
+    /// request on the link is discarded unanswered.
+    ended: bool,
+    /// The `CMD_SESSION_DID_END` the link is owed. The driver ends a
+    /// session from outside the link's exchanges—a frame its transport
+    /// lost, or one it owed and discarded—and pays the debt at the tail
+    /// of its loop, once the link has room for it.
+    owed: Option<SessionEndReason>,
+}
+
+impl SerialSession {
+    const LIVE: Self = Self {
+        ended: false,
+        owed: None,
+    };
+
+    const fn ended(&self) -> bool {
+        self.ended
+    }
+
+    fn end(&mut self, reason: SessionEndReason) {
+        self.ended = true;
+        // The first reason is the one the link hears; a second loss
+        // before the notice goes out changes nothing it will do.
+        self.owed.get_or_insert(reason);
+    }
+
+    fn notice(&self, buf: &mut [u8; 8]) -> Option<usize> {
+        frame::session_did_end(buf, self.owed?).ok()
+    }
+
+    fn notice_taken(&mut self) {
+        self.owed = None;
+    }
 }
 
 /// Largest multi-property request the session accepts, and the most it
@@ -3976,6 +4277,8 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             attached: false,
             device_interface: false,
             link_secure: false,
+            #[cfg(feature = "uart-link")]
+            host_on_uart: false,
             saved: None,
             saved_unwritten: false,
             snapshot_rejected: false,
@@ -4005,7 +4308,12 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             multi: None,
             binding: Binding::Local,
             mesh_requester_hosts: false,
-            session_reset_pending: None,
+            host_serial: SerialSession::LIVE,
+            #[cfg(feature = "uart-link")]
+            device_serial: SerialSession::LIVE,
+            owed_reset_status: None,
+            #[cfg(feature = "node-msg")]
+            node_msg: NodeMsgState::new(),
             scratch: [0; SCRATCH],
             signatures: SignatureScratch::new(),
         }
@@ -4300,7 +4608,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         // the identity does: normally unchanged, their post-reset values
         // after CMD_CLEAR.
         self.revert_held_lists();
-        self.discard_session_state(SessionResetReason::Reset);
+        // The reset code announced below is the boundary of the session
+        // that starts here, so no session frame goes with it.
+        self.discard_session_state();
         // The device tables were rebuilt from post-reset (and possibly
         // the saved snapshot); the node must re-sync.
         self.bump_dev_domain();
@@ -4381,6 +4691,10 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     prop::DEV_CHANNEL_KEYS => self.device.channel_keys = saved.dev_channel_keys,
                     prop::DEV_PEERS => self.device.peers = saved.dev_peers,
                     prop::DEV_ADMINS => self.device.admins = saved.dev_admins,
+                    #[cfg(feature = "node-msg")]
+                    prop::NODE_MSG_TYPES => self.device.node_msg_types = saved.node_msg_types,
+                    #[cfg(feature = "uart-link")]
+                    prop::UART_WINDOW => self.device.uart_window = saved.uart_window,
                     prop::DEV_NAME => {
                         self.device.name = saved.name;
                         self.device.name_len = saved.name_len;
@@ -4508,17 +4822,29 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// queue—are untouched. Accepted frames are delivered live from
     /// here on; queued frames wait for `CMD_QUEUE_DRAIN`.
     ///
-    /// The discarded session state is owed to the host as a
-    /// `CMD_SESSION_RESET`, which the driver drains through
-    /// [`Session::take_session_reset_notice`] before anything else
-    /// reaches the new session.
+    /// The attach starts a session and emits nothing: a session that
+    /// begins at attach holds nothing from before it.
     ///
     /// `link_secure` states whether this transport meets its security
     /// binding for key provisioning (spec §Provisioning Security):
     /// physical possession for serial transports, an encrypted bonded
     /// LESC link for BLE. Key-bearing writes are refused while false.
     pub fn attach(&mut self, link_secure: bool) {
-        self.discard_session_state(SessionResetReason::Attached);
+        self.attach_over(HostLink::Wireless, link_secure);
+    }
+
+    /// A host attached over `link`. As [`Session::attach`], and the
+    /// session learns whether the host's link is a UART, which only that
+    /// host may then read or set the window of.
+    pub fn attach_over(&mut self, link: HostLink, link_secure: bool) {
+        #[cfg(feature = "uart-link")]
+        {
+            self.host_on_uart = link == HostLink::Wired && self.config.uart_links.wired_host;
+        }
+        #[cfg(not(feature = "uart-link"))]
+        let _ = link;
+        self.discard_session_state();
+        self.host_serial = SerialSession::LIVE;
         self.attached = true;
         self.link_secure = link_secure;
         self.host.lease_deadline_ms = None;
@@ -4536,9 +4862,13 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     pub fn detach(&mut self, now_ms: u64) {
         self.multi = None;
         self.session = SessionState::default();
-        self.session_reset_pending = None;
+        self.host_serial = SerialSession::LIVE;
         self.attached = false;
         self.link_secure = false;
+        #[cfg(feature = "uart-link")]
+        {
+            self.host_on_uart = false;
+        }
         self.host.lease_deadline_ms = self
             .host
             .key
@@ -4636,72 +4966,163 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         self.host.key.as_ref()
     }
 
-    /// Discard session state and record that the attached host has to be
-    /// told. The single path every discard takes; see
-    /// [`Session::take_session_reset_notice`] for how the debt is paid.
-    fn discard_session_state(&mut self, reason: SessionResetReason) {
+    /// Discard session state: the single path every discard takes.
+    fn discard_session_state(&mut self) {
         // A read's acquisition belongs to the discarded session. A multi-set
         // can itself replace the host and must still finish its write response.
         if self.multi.as_ref().is_some_and(|state| !state.writes) {
             self.multi = None;
         }
         self.session = SessionState::default();
-        self.session_reset_pending = Some(reason);
+        #[cfg(feature = "node-msg")]
+        self.node_msg.forget(Binding::Local);
     }
 
-    /// Emit any owed `CMD_SESSION_RESET` on the host transport, and
-    /// report whether one was written.
-    ///
-    /// Called at the tail of the driver loop, which is after the frame
-    /// that caused the reset has been served: an administrative
-    /// `CMD_RST` has released the admin binding by then, so the notice
-    /// goes where it belongs. Detaching clears the debt without emitting
-    ///—a detach discards session state with nobody to tell, and a debt
-    /// carried across would fire into the next session.
-    pub fn take_session_reset_notice(&mut self, emit: &mut impl FnMut(&[u8])) -> bool {
-        let Some(reason) = self.session_reset_pending.take() else {
-            return false;
-        };
+    /// End the attached host's session on a serial link (spec §Sessions):
+    /// a frame the host sent was lost, or the device discarded one it
+    /// owed the host. Session state is discarded, every request until
+    /// `CMD_SESSION_START` is discarded unanswered, and the host is owed
+    /// a `CMD_SESSION_DID_END`, which the driver drains through
+    /// [`Session::session_end_notice`]. Nothing to end with no host
+    /// attached.
+    pub fn end_session(&mut self, reason: SessionEndReason) {
         if !self.attached {
-            return false;
+            return;
         }
-        let mut buf = [0u8; 8];
-        let Ok(len) = frame::session_reset(&mut buf, reason) else {
-            return false;
-        };
-        emit(&buf[..len]);
+        self.discard_session_state();
+        self.host_serial.end(reason);
+    }
+
+    /// Whether the attached host's session is running, rather than ended
+    /// and waiting for `CMD_SESSION_START`. While it is not, the driver
+    /// sends the host nothing but the owed notice.
+    pub const fn host_session_live(&self) -> bool {
+        !self.host_serial.ended()
+    }
+
+    /// The owed `CMD_SESSION_DID_END`, encoded into `buf`, or `None` when
+    /// nothing is owed. The debt stands until
+    /// [`Session::session_end_notice_taken`]: a host that has stopped
+    /// reading is told once it reads again.
+    pub fn session_end_notice(&self, buf: &mut [u8; 8]) -> Option<usize> {
+        self.host_serial.notice(buf)
+    }
+
+    /// The host's transport took the owed `CMD_SESSION_DID_END`.
+    pub fn session_end_notice_taken(&mut self) {
+        self.host_serial.notice_taken();
+    }
+
+    /// End the session of the application on the device's own interface
+    /// (spec §Sessions), as [`Session::end_session`] ends a host's. The
+    /// sends it awaits are forgotten, and every request until
+    /// `CMD_SESSION_START` is discarded unanswered. A built-in interface
+    /// is not on a serial link, and its session never ends.
+    #[cfg(feature = "uart-link")]
+    pub fn end_device_session(&mut self, reason: SessionEndReason) {
+        if !self.config.uart_links.device {
+            return;
+        }
+        #[cfg(feature = "node-msg")]
+        self.node_msg.forget(Binding::Device);
+        self.device_serial.end(reason);
+    }
+
+    /// Whether the session of the device's own interface is running.
+    /// While it is not, the driver sends the interface nothing but the
+    /// owed notice. Always, for an interface whose session cannot end.
+    pub const fn device_session_live(&self) -> bool {
+        #[cfg(feature = "uart-link")]
+        return !self.device_serial.ended();
+        #[cfg(not(feature = "uart-link"))]
         true
+    }
+
+    /// The `CMD_SESSION_DID_END` owed the device's own interface, as
+    /// [`Session::session_end_notice`] gives the host's.
+    #[cfg(feature = "uart-link")]
+    pub fn device_session_end_notice(&self, buf: &mut [u8; 8]) -> Option<usize> {
+        self.device_serial.notice(buf)
+    }
+
+    /// The device's own interface took the owed `CMD_SESSION_DID_END`.
+    #[cfg(feature = "uart-link")]
+    pub fn device_session_end_notice_taken(&mut self) {
+        self.device_serial.notice_taken();
+    }
+
+    /// Whether the session of the link the frame in flight arrived on has
+    /// ended.
+    fn link_session_ended(&self) -> bool {
+        match self.binding {
+            Binding::Local => self.host_serial.ended(),
+            Binding::Device => !self.device_session_live(),
+            Binding::Admin | Binding::Host => false,
+        }
+    }
+
+    /// `CMD_SESSION_START` from the binding in flight.
+    fn start_session(&mut self, tid: u8, emit: &mut impl FnMut(&[u8])) -> Option<Effect> {
+        let binding = self.binding;
+        match binding {
+            Binding::Local => {
+                self.discard_session_state();
+                // A notice still owed belongs to the session this ends.
+                self.host_serial = SerialSession::LIVE;
+            }
+            // The interface's session holds nothing in the session but
+            // its exchange, which this one is, and the sends it awaits.
+            Binding::Device => {
+                #[cfg(feature = "node-msg")]
+                self.node_msg.forget(Binding::Device);
+                #[cfg(feature = "uart-link")]
+                {
+                    self.device_serial = SerialSession::LIVE;
+                }
+            }
+            Binding::Admin | Binding::Host => {
+                self.complete(tid, Status::NOT_PERMITTED, emit);
+                return None;
+            }
+        }
+        let mut buf = [0u8; 4];
+        if let Ok(len) = frame::session_did_start(&mut buf, tid) {
+            emit(&buf[..len]);
+        }
+        Some(Effect::SessionStarted { binding })
     }
 
     /// Publish what changed on the device without a publication of its
     /// own, and report whether anything was written. At most two frames.
     ///
     /// The driver pays this at the tail of its loop, where it pays
-    /// [`Session::take_session_reset_notice`]: the call that ran up the
+    /// the owed session notice: the call that ran up the
     /// debt had a frame of its own to emit, and on a mesh exchange that
     /// frame is the only one its binding carries. The values published
     /// are the current ones, so a debt paid late is never stale.
     pub fn take_owed_publications(&mut self, emit: &mut impl FnMut(&[u8])) -> bool {
+        let mut wrote = false;
+        if let Some(status) = self.owed_reset_status.take()
+            && self.publishing()
+        {
+            self.send_status(TID_UNSOLICITED, status, emit);
+            wrote = true;
+        }
         #[cfg(feature = "wifi")]
         {
             let owed = core::mem::take(&mut self.station.owed);
-            if !self.publishing() {
-                return false;
+            if self.publishing() {
+                if owed.network {
+                    let current = self.station.current;
+                    self.announce_prop_is(prop::WIFI_NETWORK, current.as_bytes(), emit);
+                }
+                if owed.link {
+                    self.announce_link(emit);
+                }
+                wrote |= owed.network || owed.link;
             }
-            if owed.network {
-                let current = self.station.current;
-                self.announce_prop_is(prop::WIFI_NETWORK, current.as_bytes(), emit);
-            }
-            if owed.link {
-                self.announce_link(emit);
-            }
-            owed.network || owed.link
         }
-        #[cfg(not(feature = "wifi"))]
-        {
-            let _ = emit;
-            false
-        }
+        wrote
     }
 
     /// Handle one decoded ULCP frame from the host.
@@ -4850,6 +5271,17 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         self.binding == Binding::Local
     }
 
+    /// Whether the frame in flight arrived on a UART link, whose window
+    /// its reader alone may read or set.
+    #[cfg(feature = "uart-link")]
+    fn on_uart(&self) -> bool {
+        match self.binding {
+            Binding::Local => self.attached && self.host_on_uart,
+            Binding::Device => self.config.uart_links.device,
+            Binding::Admin | Binding::Host => false,
+        }
+    }
+
     /// Whether the binding of the frame in flight may set `key` to
     /// `value`.
     fn binding_writable(&self, key: u32, value: &[u8]) -> bool {
@@ -4878,6 +5310,24 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         }
     }
 
+    /// A new window from the reader of the UART link the frame in flight
+    /// arrived on. Answers nothing itself: an ended session takes a
+    /// window too, and says nothing about it.
+    #[cfg(feature = "uart-link")]
+    fn take_uart_window(&mut self, value: &[u8]) -> Result<u16, Status> {
+        if !self.on_uart() {
+            return Err(Status::NOT_PERMITTED);
+        }
+        let window = parse_u16(value)?;
+        // A reader sets its window every time it starts; the same window
+        // again is not a change.
+        if window != self.device.uart_window {
+            self.device.uart_window = window;
+            self.bump_dev_domain();
+        }
+        Ok(window)
+    }
+
     fn dispatch_frame(
         &mut self,
         bytes: &[u8],
@@ -4898,11 +5348,27 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             self.complete(tid, Status::NOT_PERMITTED, emit);
             return None;
         }
+        // An ended session hears nothing but the request that starts the
+        // next one (spec §CMD_SESSION_DID_END).
+        if self.link_session_ended() && received.command() != Some(Cmd::SessionStart) {
+            // Bar one: the window governs the link rather than its
+            // session, and a reader starting over sets it before
+            // CMD_SESSION_START. Acted on, and answered with nothing.
+            #[cfg(feature = "uart-link")]
+            if received.command() == Some(Cmd::PropSet)
+                && let Ok(payload) = PropPayload::parse(received.payload)
+                && payload.key == prop::UART_WINDOW
+            {
+                let _ = self.take_uart_window(payload.value);
+            }
+            return None;
+        }
         match received.command() {
             Some(Cmd::Nop) => {
                 self.complete(tid, Status::OK, emit);
                 None
             }
+            Some(Cmd::SessionStart) => self.start_session(tid, emit),
             Some(Cmd::Reset) => Some(self.reset(Status::RESET_SOFTWARE, emit)),
             Some(Cmd::PropGet) => match PropPayload::parse(received.payload) {
                 Ok(payload) => self.prop_get(tid, payload.key, now_ms, emit),
@@ -4918,15 +5384,22 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     None
                 }
             },
-            // The raw PHY stream and the host-facing receive queue are
-            // the tethered host's, and neither an administrator nor the
-            // device's own interface is one (spec §Node Management—
-            // Authorization).
-            Some(Cmd::StrSend | Cmd::QueueDrain) if !self.is_tethered() => {
+            // The host-facing receive queue is the tethered host's, and
+            // neither an administrator nor the device's own interface is
+            // one (spec §Node Management—Authorization).
+            Some(Cmd::QueueDrain) if !self.is_tethered() => {
                 self.complete(tid, Status::NOT_PERMITTED, emit);
                 None
             }
             Some(Cmd::StrSend) => match StreamPayload::parse(received.payload) {
+                Ok(payload) if payload.stream == stream::NODE_MSG && self.has_node_msg() => {
+                    self.node_msg_send(tid, &payload, emit)
+                }
+                // The raw PHY stream is the tethered host's alone.
+                Ok(_) if !self.is_tethered() => {
+                    self.complete(tid, Status::NOT_PERMITTED, emit);
+                    None
+                }
                 Ok(payload) => self.str_send(tid, &payload, now_ms, emit),
                 Err(_) => {
                     self.complete(tid, Status::PARSE_ERROR, emit);
@@ -4991,7 +5464,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 self.apply_saved_device();
                 #[cfg(feature = "wifi")]
                 self.reconcile_station_unannounced();
-                self.discard_session_state(SessionResetReason::Restored);
+                // The reset code is the boundary of the session that
+                // starts here, as it is for CMD_RST.
+                self.discard_session_state();
                 self.announce_status(Status::RESET_RESTORED, emit);
                 Some(self.apply_radio())
             }
@@ -5120,7 +5595,8 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 | Cmd::PropInserted
                 | Cmd::PropRemoved
                 | Cmd::PropAre
-                | Cmd::SessionReset
+                | Cmd::SessionDidEnd
+                | Cmd::SessionDidStart
                 | Cmd::I2cResult,
             ) => {
                 self.complete(tid, Status::INVALID_COMMAND, emit);
@@ -5913,6 +6389,17 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         // configured (spec §PROP_DEV_PRIVATE_KEY).
         if (key == prop::BLE_PAIRING_PIN && self.config.ble_pin) || key == prop::DEV_PRIVATE_KEY {
             self.complete(tid, Status::UNIMPLEMENTED, emit);
+            return None;
+        }
+        // The link's own, and only its reader's (spec §PROP_UART_WINDOW).
+        #[cfg(feature = "uart-link")]
+        if key == prop::UART_WINDOW {
+            if self.on_uart() {
+                let window = self.device.uart_window.to_le_bytes();
+                self.send_prop_is(tid, key, &window, emit);
+            } else {
+                self.complete(tid, Status::NOT_PERMITTED, emit);
+            }
             return None;
         }
         if key == prop::PHY_RSSI {
@@ -7095,7 +7582,13 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         if self.saved_status() != SavedStatus::Current {
             return false;
         }
-        self.saved = Some(self.capture());
+        let state = self.capture();
+        // A write that changed nothing, such as an application setting
+        // its claims as it does at every start, owes flash nothing.
+        if self.saved.as_ref() == Some(&state) {
+            return false;
+        }
+        self.saved = Some(state);
         self.saved_unwritten = true;
         true
     }
@@ -7836,6 +8329,14 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             self.complete(tid, Status::NOT_PERMITTED, emit);
             return None;
         }
+        #[cfg(feature = "uart-link")]
+        if key == prop::UART_WINDOW {
+            match self.take_uart_window(value) {
+                Ok(window) => self.send_prop_is(tid, key, &window.to_le_bytes(), emit),
+                Err(status) => self.complete(tid, status, emit),
+            }
+            return None;
+        }
         if key == prop::BLE_PAIRING_PIN {
             if !self.config.ble_pin {
                 self.complete(tid, Status::PROP_NOT_FOUND, emit);
@@ -8040,6 +8541,19 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             self.send_prop_is(tid, key, &[enabled as u8], emit);
             return None;
         }
+        // Session state, and the attached host's alone: the device's own
+        // interface is refused by `binding_writable` above.
+        #[cfg(feature = "node-msg")]
+        if key == prop::NODE_MSG_LISTEN && self.has_node_msg() {
+            match parse_bool(value) {
+                Ok(listen) => {
+                    self.session.node_msg_listen = listen;
+                    self.send_prop_is(tid, key, &[listen as u8], emit);
+                }
+                Err(status) => self.complete(tid, status, emit),
+            }
+            return None;
+        }
         if key == prop::DEV_NAME {
             if !valid_device_name(value) {
                 self.complete(tid, Status::INVALID_ARGUMENT, emit);
@@ -8224,6 +8738,23 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             prop::DEV_ADMINS => {
                 self.device.admins = DevAdminTable::parse_table(value)?;
                 self.bump_dev_domain();
+                Ok(false)
+            }
+            #[cfg(feature = "node-msg")]
+            prop::NODE_MSG_TYPES if self.has_node_msg() => {
+                let types = NodeMsgTypes::parse_table(value)?;
+                if types
+                    .iter()
+                    .any(|&[payload_type]| self.node_msg_reserved(payload_type))
+                {
+                    return Err(Status::NOT_PERMITTED);
+                }
+                // An application sets its claims every time it starts;
+                // the same claims again are not a change.
+                if types != self.device.node_msg_types {
+                    self.device.node_msg_types = types;
+                    self.bump_dev_domain();
+                }
                 Ok(false)
             }
             // Device-domain forwarding switch. Accepted regardless of
@@ -8788,6 +9319,20 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     Err(status) => self.complete(tid, status, emit),
                 }
             }
+            #[cfg(feature = "node-msg")]
+            prop::NODE_MSG_TYPES if self.has_node_msg() => match *item {
+                [payload_type] if self.node_msg_reserved(payload_type) => {
+                    self.complete(tid, Status::NOT_PERMITTED, emit)
+                }
+                [payload_type] => match self.device.node_msg_types.insert([payload_type]) {
+                    Ok(()) => {
+                        self.bump_dev_domain();
+                        self.send_prop_inserted(tid, key, item, emit);
+                    }
+                    Err(status) => self.complete(tid, status, emit),
+                },
+                _ => self.complete(tid, Status::INVALID_ARGUMENT, emit),
+            },
             // A known property that is not a mutable multi-value
             // property cannot be inserted into.
             _ if self.known_prop(key) => self.complete(tid, Status::INVALID_ARGUMENT, emit),
@@ -8964,6 +9509,22 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     Err(status) => self.complete(tid, status, emit),
                 }
             }
+            #[cfg(feature = "node-msg")]
+            prop::NODE_MSG_TYPES if self.has_node_msg() => {
+                let result = selector
+                    .try_into()
+                    .map_err(|_| Status::INVALID_ARGUMENT)
+                    .and_then(|payload_type: &[u8; 1]| {
+                        self.device.node_msg_types.remove(payload_type)
+                    });
+                match result {
+                    Ok(()) => {
+                        self.bump_dev_domain();
+                        self.send_prop_removed(tid, key, selector, emit);
+                    }
+                    Err(status) => self.complete(tid, status, emit),
+                }
+            }
             _ if self.known_prop(key) => self.complete(tid, Status::INVALID_ARGUMENT, emit),
             _ => self.complete(tid, Status::PROP_NOT_FOUND, emit),
         }
@@ -9019,6 +9580,200 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         } else {
             Err(Status::INVALID_STATE)
         }
+    }
+
+    /// Whether no link may claim `payload_type`: the device's node
+    /// consumes it.
+    #[cfg(feature = "node-msg")]
+    fn node_msg_reserved(&self, payload_type: u8) -> bool {
+        self.config
+            .node_msg
+            .is_some_and(|config| config.reserved_types.contains(&payload_type))
+    }
+
+    /// `CMD_STR_SEND` on `STR_NODE_MSG`: validate, resolve, and stage the
+    /// send for [`Effect::NodeMsgSend`].
+    #[cfg(feature = "node-msg")]
+    fn node_msg_send(
+        &mut self,
+        tid: u8,
+        payload: &StreamPayload<'_>,
+        emit: &mut impl FnMut(&[u8]),
+    ) -> Option<Effect> {
+        match self.stage_node_msg(tid, payload) {
+            Ok(id) => Some(Effect::NodeMsgSend { id }),
+            Err(status) => {
+                self.complete(tid, status, emit);
+                None
+            }
+        }
+    }
+
+    #[cfg(not(feature = "node-msg"))]
+    fn node_msg_send(
+        &mut self,
+        tid: u8,
+        _payload: &StreamPayload<'_>,
+        emit: &mut impl FnMut(&[u8]),
+    ) -> Option<Effect> {
+        self.complete(tid, Status::PROP_NOT_FOUND, emit);
+        None
+    }
+
+    #[cfg(feature = "node-msg")]
+    fn stage_node_msg(&mut self, tid: u8, payload: &StreamPayload<'_>) -> Result<u16, Status> {
+        use umsh_ulcp::node_msg::SendMeta;
+
+        // An administrator's sends would be the device's own traffic
+        // with nobody on the device asking for it.
+        if !matches!(self.binding, Binding::Local | Binding::Device) {
+            return Err(Status::NOT_PERMITTED);
+        }
+        let meta = SendMeta::parse(payload.metadata).map_err(|error| error.status())?;
+        // A payload is at least its type octet.
+        if payload.data.is_empty() {
+            return Err(Status::INVALID_ARGUMENT);
+        }
+        let payload_bytes =
+            HeaplessVec::from_slice(payload.data).map_err(|_| Status::INVALID_ARGUMENT)?;
+        let channel_key = match meta.channel {
+            Some(identifier) => Some(
+                self.channel_key_for(&identifier)
+                    .ok_or(Status::CHANNEL_NOT_FOUND)?,
+            ),
+            None => None,
+        };
+        let source_route = HeaplessVec::from_slice(meta.source_route.unwrap_or_default())
+            .map_err(|_| Status::INVALID_ARGUMENT)?;
+        // A send nobody waits on needs no row; one with a TID does, and
+        // with no row free the link hears so now rather than never.
+        let slot = if tid == TID_UNSOLICITED {
+            None
+        } else {
+            let index = self
+                .node_msg
+                .sends
+                .iter()
+                .position(Option::is_none)
+                .ok_or(Status::BUSY)?;
+            Some(index)
+        };
+        let id = self.node_msg.next_id;
+        self.node_msg.next_id = id.wrapping_add(1);
+        if let Some(index) = slot {
+            self.node_msg.sends[index] = Some(NodeMsgSend {
+                id,
+                binding: self.binding,
+                tid,
+            });
+        }
+        self.node_msg.staged = Some(NodeMsgRequest {
+            id,
+            kind: meta.kind,
+            ack: meta.ack,
+            full_source: meta.full_source,
+            signed: meta.signed,
+            channel_key,
+            peer: meta.peer,
+            flood_hops: meta.flood_hops,
+            source_route,
+            // An unreachable power transmits at the nearest reachable
+            // one, as for `PROP_PHY_TX_POWER`.
+            tx_power_dbm: meta
+                .tx_power
+                .map(|dbm| dbm.clamp(self.config.min_tx_power_dbm, self.config.max_tx_power_dbm)),
+            payload: payload_bytes,
+        });
+        Ok(id)
+    }
+
+    /// The send [`Effect::NodeMsgSend`] staged, taken by the platform to
+    /// hand to the device's node.
+    #[cfg(feature = "node-msg")]
+    pub fn take_node_msg_request(&mut self) -> Option<NodeMsgRequest> {
+        self.node_msg.staged.take()
+    }
+
+    /// The outcome of the node message send `id`. Answers the link that
+    /// sent it, if it is still waiting, with `PROP_LAST_STATUS` carrying
+    /// its TID, and returns which binding that answer is for. `None` when
+    /// nobody is waiting: the send had TID 0, or its link's session has
+    /// since ended.
+    #[cfg(feature = "node-msg")]
+    pub fn on_node_msg_result(
+        &mut self,
+        id: u16,
+        status: Status,
+        emit: &mut impl FnMut(&[u8]),
+    ) -> Option<Binding> {
+        let slot = self
+            .node_msg
+            .sends
+            .iter_mut()
+            .find(|slot| slot.is_some_and(|send| send.id == id))?;
+        let send = slot.take()?;
+        // An answer to a host whose session has ended would be the
+        // ended session's.
+        if send.binding == Binding::Local && (!self.attached || self.host_serial.ended()) {
+            return None;
+        }
+        self.send_status(send.tid, status, emit);
+        Some(send.binding)
+    }
+
+    /// Record `PROP_NODE_MSG_MTU` as the node computes it.
+    #[cfg(feature = "node-msg")]
+    pub fn set_node_msg_mtu(&mut self, mtu: u16) {
+        self.node_msg.mtu = mtu;
+    }
+
+    /// The link that receives node messages now (spec §Who Receives):
+    /// the attached host if it set `PROP_NODE_MSG_LISTEN` and its session
+    /// is live, otherwise the device's own interface if the device has
+    /// one, as `device_interface` says, and its session is live. `None`
+    /// when no link does, or the device does not serve node messaging.
+    #[cfg(feature = "node-msg")]
+    pub fn node_msg_receiver(&self, device_interface: bool) -> Option<Binding> {
+        if !self.has_node_msg() {
+            None
+        } else if self.attached && !self.host_serial.ended() && self.session.node_msg_listen {
+            Some(Binding::Local)
+        } else {
+            (device_interface && self.device_session_live()).then_some(Binding::Device)
+        }
+    }
+
+    /// Which of the device's local links are UARTs paced by their reader.
+    #[cfg(feature = "uart-link")]
+    pub fn uart_links(&self) -> UartLinks {
+        self.config.uart_links
+    }
+
+    /// `PROP_UART_WINDOW`, for the UART link task: the octets each XON
+    /// permits, 0 for no limit. `None` on a device with no UART link.
+    #[cfg(feature = "uart-link")]
+    pub fn uart_window(&self) -> Option<u16> {
+        self.has_uart_window().then_some(self.device.uart_window)
+    }
+
+    /// Whether the device has a UART link paced by its reader, and so
+    /// `PROP_UART_WINDOW`.
+    #[cfg(feature = "uart-link")]
+    fn has_uart_window(&self) -> bool {
+        self.config.uart_links.any()
+    }
+
+    /// `PROP_NODE_MSG_TYPES`: the payload types delivered to a link.
+    /// `None` on a device that does not serve node messaging, which
+    /// claims nothing whatever it has saved.
+    #[cfg(feature = "node-msg")]
+    pub fn node_msg_types(&self) -> Option<impl Iterator<Item = u8> + '_> {
+        self.has_node_msg().then(|| {
+            self.device
+                .node_msg_types
+                .iter()
+                .map(|&[payload_type]| payload_type)
+        })
     }
 
     fn str_send(
@@ -9151,6 +9906,15 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         cfg!(feature = "wifi") && self.config.wifi.is_some_and(|wifi| wifi.station)
     }
 
+    /// Whether the device serves node messaging: the build, the board's
+    /// configuration, a node to send through, and an identity to send as.
+    fn has_node_msg(&self) -> bool {
+        cfg!(feature = "node-msg")
+            && self.config.node_msg.is_some()
+            && self.config.mac_node
+            && self.config.dev_identity
+    }
+
     fn has_bridge(&self) -> bool {
         cfg!(feature = "bridge-client")
             && self.config.bridge_client
@@ -9184,6 +9948,10 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     fn refuse_absent_property(&mut self, tid: u8, key: u32, emit: &mut impl FnMut(&[u8])) -> bool {
         let absent = (!self.config.dev_identity && is_identity_property(key))
             || (!self.config.host_custody && is_custody_property(key));
+        // On a board with no UART link. A build without flow control does
+        // not know the property at all.
+        #[cfg(feature = "uart-link")]
+        let absent = absent || (key == prop::UART_WINDOW && !self.has_uart_window());
         if absent {
             self.complete(tid, Status::PROP_NOT_FOUND, emit);
         }
@@ -9193,6 +9961,16 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     fn known_prop(&self, key: u32) -> bool {
         if is_custody_property(key) {
             return self.config.host_custody;
+        }
+        #[cfg(feature = "uart-link")]
+        if key == prop::UART_WINDOW {
+            return self.has_uart_window();
+        }
+        if matches!(
+            key,
+            prop::NODE_MSG_LISTEN | prop::NODE_MSG_TYPES | prop::NODE_MSG_MTU
+        ) {
+            return self.has_node_msg();
         }
         if (prop::BRIDGE_ENABLED..=prop::BRIDGE_LINK).contains(&key) {
             return self.has_bridge();
@@ -9479,6 +10257,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 }
                 if self.has_i2c() {
                     len += pui::encode(cap::I2C, &mut out[len..]).unwrap_or(0);
+                }
+                if self.has_node_msg() {
+                    len += pui::encode(cap::NODE_MSG, &mut out[len..]).unwrap_or(0);
                 }
                 len
             }
@@ -9837,6 +10618,21 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 out[0] = self.session.backhaul as u8;
                 1
             }
+            #[cfg(feature = "node-msg")]
+            prop::NODE_MSG_LISTEN if self.has_node_msg() => {
+                out[0] = self.session.node_msg_listen as u8;
+                1
+            }
+            #[cfg(feature = "node-msg")]
+            prop::NODE_MSG_TYPES if self.has_node_msg() => {
+                let mut len = 0;
+                for payload_type in self.device.node_msg_types.iter() {
+                    len += put(&mut out[len..], payload_type);
+                }
+                len
+            }
+            #[cfg(feature = "node-msg")]
+            prop::NODE_MSG_MTU if self.has_node_msg() => put(out, &self.node_msg.mtu.to_le_bytes()),
             prop::SAVED => {
                 out[0] = self.saved_status().as_octet();
                 1
@@ -10062,6 +10858,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     fn announce_status(&mut self, status: Status, emit: &mut impl FnMut(&[u8])) {
         if self.is_admin() {
             self.last_status = status;
+            self.owed_reset_status = Some(status);
             return;
         }
         self.send_status(TID_UNSOLICITED, status, emit);
@@ -10481,6 +11278,7 @@ mod tests {
             ble: true,
             ble_pairing: true,
             ble_pin: true,
+            uart_links: UartLinks::NONE,
             reboot: true,
             dev_identity: true,
             messaging: false,
@@ -10492,6 +11290,7 @@ mod tests {
             bridge_client: false,
             i2c_buses: TEST_I2C_BUSES,
             i2c_devices: TEST_I2C_DEVICES,
+            node_msg: None,
         }
     }
 
@@ -11226,7 +12025,7 @@ mod tests {
     #[test]
     fn identity_properties() {
         let mut session = test_session();
-        assert_eq!(get(&mut session, prop::PROTOCOL_VERSION), [6, 0]);
+        assert_eq!(get(&mut session, prop::PROTOCOL_VERSION), [6, 1]);
         assert_eq!(get(&mut session, prop::DEV_VERSION), b"test-dev/0.1\0");
         assert_eq!(get(&mut session, prop::DEV_MODEL), b"Test Board\0");
         assert_eq!(get(&mut session, prop::DEV_NAME), b"Test UMSH Device");
@@ -13826,113 +14625,161 @@ mod tests {
         assert_eq!(pui::decode(&raw).unwrap().0, Status::RESET_WATCHDOG.0);
     }
 
-    /// Drain the owed notice the way the driver does at the tail of its
-    /// loop, reporting the reason if one was written.
-    fn take_notice(session: &mut TestSession) -> Option<SessionResetReason> {
-        let mut emitted = Vec::new();
-        if !session.take_session_reset_notice(&mut |bytes: &[u8]| emitted.push(bytes.to_vec())) {
-            return None;
-        }
-        assert_eq!(emitted.len(), 1, "the notice is exactly one frame");
-        let parsed = Frame::parse(&emitted[0]).unwrap();
+    /// The owed `CMD_SESSION_DID_END`, if any, decoded; paid as the driver
+    /// pays it once the transport takes it.
+    fn take_notice(session: &mut TestSession) -> Option<SessionEndReason> {
+        let mut buf = [0u8; 8];
+        let len = session.session_end_notice(&mut buf)?;
+        session.session_end_notice_taken();
+        let parsed = Frame::parse(&buf[..len]).unwrap();
         assert_eq!(parsed.header.tid(), TID_UNSOLICITED);
-        assert_eq!(parsed.command(), Some(Cmd::SessionReset));
-        Some(frame::parse_session_reset(parsed.payload).unwrap())
+        assert_eq!(parsed.command(), Some(Cmd::SessionDidEnd));
+        Some(frame::parse_session_did_end(parsed.payload).unwrap())
+    }
+
+    /// Send `CMD_SESSION_START` with `tid`, returning what came back.
+    fn start(session: &mut TestSession, tid: u8) -> Vec<Vec<u8>> {
+        let mut buf = [0u8; 4];
+        let len = frame::session_start(&mut buf, tid).unwrap();
+        dispatch(session, &buf[..len], 0).0
     }
 
     #[test]
-    fn every_session_discard_owes_the_host_a_notice() {
+    fn attach_and_resets_owe_no_session_frame() {
         let mut session = test_session();
-        assert_eq!(
-            take_notice(&mut session),
-            Some(SessionResetReason::Attached)
-        );
-        // Paid once, and only once.
+        assert_eq!(take_notice(&mut session), None);
+        session.reset(Status::RESET_SOFTWARE, &mut |_: &[u8]| {});
+        assert_eq!(take_notice(&mut session), None);
+        assert!(session.host_session_live());
+    }
+
+    #[test]
+    fn an_ended_session_answers_nothing_but_a_start() {
+        let mut session = test_session();
+        set(&mut session, prop::MAC_PROMISCUOUS, &[1]);
+        session.end_session(SessionEndReason::FrameLost);
+        assert!(!session.host_session_live());
+        assert_eq!(take_notice(&mut session), Some(SessionEndReason::FrameLost));
+        // Paid once.
         assert_eq!(take_notice(&mut session), None);
 
         let mut buf = [0u8; 16];
-        let len = frame::nop(&mut buf, 1).unwrap();
-        session.handle_frame(&buf[..len], 0, &mut |_: &[u8]| {});
-        assert_eq!(take_notice(&mut session), None);
+        let len = frame::nop(&mut buf, 2).unwrap();
+        assert!(dispatch(&mut session, &buf[..len], 0).0.is_empty());
 
-        session.reset(Status::RESET_SOFTWARE, &mut |_: &[u8]| {});
-        assert_eq!(take_notice(&mut session), Some(SessionResetReason::Reset));
+        let emitted = start(&mut session, 6);
+        assert_eq!(emitted.len(), 1);
+        let reply = Frame::parse(&emitted[0]).unwrap();
+        assert_eq!(reply.command(), Some(Cmd::SessionDidStart));
+        assert_eq!(reply.header.tid(), 6);
+        assert!(session.host_session_live());
+        // Session state went with the session that ended.
+        assert_eq!(get(&mut session, prop::MAC_PROMISCUOUS), [0]);
+    }
 
-        // A restore with nothing saved is refused, so nothing is owed.
-        let len = frame::restore(&mut buf, 2).unwrap();
-        session.handle_frame(&buf[..len], 0, &mut |_: &[u8]| {});
-        assert_eq!(take_notice(&mut session), None);
-
-        let len = frame::save(&mut buf, 3).unwrap();
-        session.handle_frame(&buf[..len], 0, &mut |_: &[u8]| {});
-        session.respond_save(3, Ok(()), &mut |_: &[u8]| {});
-        let len = frame::restore(&mut buf, 4).unwrap();
-        session.handle_frame(&buf[..len], 0, &mut |_: &[u8]| {});
+    #[test]
+    fn a_notice_the_transport_did_not_take_stays_owed() {
+        let mut session = test_session();
+        session.end_session(SessionEndReason::OwedFrameDiscarded);
+        let mut buf = [0u8; 8];
+        assert!(session.session_end_notice(&mut buf).is_some());
+        assert!(session.session_end_notice(&mut buf).is_some());
+        // A second loss before it goes out keeps the first reason.
+        session.end_session(SessionEndReason::FrameLost);
         assert_eq!(
             take_notice(&mut session),
-            Some(SessionResetReason::Restored)
+            Some(SessionEndReason::OwedFrameDiscarded)
         );
     }
 
-    /// The one case `announce_status` cannot serve: an administrator over
-    /// the mesh resets session state and the local host hears nothing.
     #[test]
-    fn an_admin_reset_still_owes_the_local_host_a_notice() {
+    fn a_start_supersedes_an_unsent_notice() {
         let mut session = test_session();
-        take_notice(&mut session);
+        session.end_session(SessionEndReason::FrameLost);
+        start(&mut session, 1);
+        assert_eq!(take_notice(&mut session), None);
+    }
 
+    #[test]
+    fn a_start_on_a_live_session_starts_it_over() {
+        let mut session = test_session();
+        set(&mut session, prop::MAC_PROMISCUOUS, &[1]);
+        let emitted = start(&mut session, 3);
+        assert_eq!(
+            Frame::parse(&emitted[0]).unwrap().command(),
+            Some(Cmd::SessionDidStart)
+        );
+        assert_eq!(get(&mut session, prop::MAC_PROMISCUOUS), [0]);
+    }
+
+    #[test]
+    fn a_detached_device_has_no_session_to_end() {
+        let mut session = test_session();
+        session.detach(0);
+        session.end_session(SessionEndReason::FrameLost);
+        assert_eq!(take_notice(&mut session), None);
+        session.attach(true);
+        assert!(session.host_session_live());
+        assert_eq!(take_notice(&mut session), None);
+    }
+
+    #[test]
+    fn detaching_drops_an_owed_notice() {
+        let mut session = test_session();
+        session.end_session(SessionEndReason::FrameLost);
+        session.detach(0);
+        session.attach(true);
+        assert_eq!(take_notice(&mut session), None);
+        assert!(session.host_session_live());
+    }
+
+    /// An administrator's reset starts the host's session over too, and
+    /// the exchange's one frame cannot tell it, so the reset code is owed.
+    #[test]
+    fn an_admin_reset_owes_the_host_its_reset_code() {
+        let mut session = test_session();
         let mut buf = [0u8; 16];
         let len = frame::reset(&mut buf, TID_UNSOLICITED).unwrap();
+        session.handle_admin_frame(&buf[..len], 0, 180, &mut |_: &[u8]| {});
+        session.end_admin_exchange();
+        let mut emitted = Vec::new();
+        assert!(session.take_owed_publications(&mut |bytes: &[u8]| emitted.push(bytes.to_vec())));
+        expect_status(&emitted[0], TID_UNSOLICITED, Status::RESET_SOFTWARE);
+        assert!(!session.take_owed_publications(&mut |_: &[u8]| {}));
+    }
+
+    /// The session commands leave the boot cause alone.
+    #[test]
+    fn session_commands_leave_the_last_status_alone() {
+        let mut session = test_session_with_boot_status(Status::RESET_WATCHDOG);
+        session.end_session(SessionEndReason::FrameLost);
+        start(&mut session, 1);
+        let raw = get(&mut session, prop::LAST_STATUS);
+        assert_eq!(pui::decode(&raw).unwrap().0, Status::RESET_WATCHDOG.0);
+    }
+
+    /// Device-to-host commands, so a host sending one is answered the way
+    /// any other wrong-direction command is.
+    #[test]
+    fn a_host_may_not_send_the_device_session_frames() {
+        let mut session = test_session();
+        for cmd in [Cmd::SessionDidEnd, Cmd::SessionDidStart] {
+            let (emitted, _) = dispatch(&mut session, &[0x83, cmd as u8, 0x01], 0);
+            expect_status(&emitted[0], 3, Status::INVALID_COMMAND);
+        }
+    }
+
+    #[test]
+    fn an_administrator_may_not_start_a_session() {
+        let mut session = test_session();
+        let mut buf = [0u8; 4];
+        let len = frame::session_start(&mut buf, 2).unwrap();
         let mut emitted = Vec::new();
         session.handle_admin_frame(&buf[..len], 0, 180, &mut |bytes: &[u8]| {
             emitted.push(bytes.to_vec())
         });
         session.end_admin_exchange();
-        assert_eq!(take_notice(&mut session), Some(SessionResetReason::Reset));
-    }
-
-    /// A discard with nobody attached has nobody to tell, and the debt
-    /// must not survive into the session that follows.
-    #[test]
-    fn a_detached_discard_owes_nothing_and_leaves_nothing_behind() {
-        let mut session = test_session();
-        take_notice(&mut session);
-
-        session.detach(0);
-        assert_eq!(take_notice(&mut session), None);
-
-        session.reset(Status::RESET_SOFTWARE, &mut |_: &[u8]| {});
-        assert_eq!(take_notice(&mut session), None);
-
-        // The attach that follows owes its own notice, not the reset's.
-        session.attach(true);
-        assert_eq!(
-            take_notice(&mut session),
-            Some(SessionResetReason::Attached)
-        );
-    }
-
-    /// The notice is a separate channel from the boot cause: a host that
-    /// attaches still reads why the device came up.
-    #[test]
-    fn the_notice_leaves_the_last_status_alone() {
-        let mut session = test_session_with_boot_status(Status::RESET_WATCHDOG);
-        assert_eq!(
-            take_notice(&mut session),
-            Some(SessionResetReason::Attached)
-        );
-        let raw = get(&mut session, prop::LAST_STATUS);
-        assert_eq!(pui::decode(&raw).unwrap().0, Status::RESET_WATCHDOG.0);
-    }
-
-    /// Device-to-host, so a host sending it is answered the way any other
-    /// wrong-direction command is.
-    #[test]
-    fn a_host_may_not_send_the_notice() {
-        let mut session = test_session();
-        // Carrying a TID it never uses, so the refusal is observable.
-        let (emitted, _) = dispatch(&mut session, &[0x83, Cmd::SessionReset as u8, 0x01], 0);
-        expect_status(&emitted[0], 3, Status::INVALID_COMMAND);
+        expect_status(&emitted[0], 2, Status::NOT_PERMITTED);
     }
 
     #[test]
@@ -15155,6 +16002,7 @@ mod tests {
     fn pairing_pin_is_unknown_without_a_transport_that_takes_one() {
         let config = SessionConfig {
             ble_pin: false,
+            uart_links: UartLinks::NONE,
             ..test_config()
         };
         let mut session: TestSession = Session::new(config, Status::RESET_POWER_ON, test_engine());
@@ -19946,17 +20794,14 @@ mod tests {
     #[test]
     fn the_device_interface_displaces_no_host() {
         let mut session = test_session();
-        // The attach owes its own notice; pay it before the exchange.
-        session.take_session_reset_notice(&mut |_| {});
         let mut buf = [0u8; 80];
         let len = frame::prop_set(&mut buf, 2, prop::HOST_AUTO_ACK, &[1]).unwrap();
         dispatch(&mut session, &buf[..len], 0);
         let len = frame::prop_set(&mut buf, 5, prop::DEV_NAME, b"Pocket").unwrap();
         device(&mut session, &buf[..len]);
         assert!(session.is_attached());
-        let mut owed = false;
-        session.take_session_reset_notice(&mut |_| owed = true);
-        assert!(!owed, "no session reset is owed to the host");
+        assert!(session.host_session_live(), "the host's session goes on");
+        assert_eq!(session.session_end_notice(&mut [0; 8]), None);
         assert_eq!(get(&mut session, prop::HOST_AUTO_ACK), [1]);
     }
 
@@ -21444,6 +22289,7 @@ mod tests {
             SessionConfig {
                 i2c_buses: &[],
                 i2c_devices: &[],
+                node_msg: None,
                 ..test_config()
             },
             Status::RESET_POWER_ON,
@@ -21869,5 +22715,671 @@ mod tests {
         );
         session.end_admin_exchange();
         expect_status(&emitted[0], TID_UNSOLICITED, Status::BUS_ERROR);
+    }
+
+    // ─── Flow control on a UART ──────────────────────────────────────
+
+    /// Without flow control built in, the window is unknown whatever the
+    /// board says about its links.
+    #[cfg(not(feature = "uart-link"))]
+    #[test]
+    fn a_build_without_flow_control_has_no_uart_window() {
+        let config = SessionConfig {
+            uart_links: UartLinks {
+                wired_host: true,
+                device: true,
+            },
+            ..test_config()
+        };
+        let mut session: TestSession = Session::new(config, Status::RESET_POWER_ON, test_engine());
+        session.attach_over(HostLink::Wired, true);
+        let mut buf = [0u8; 16];
+        let len = frame::prop_get(&mut buf, 1, prop::UART_WINDOW).unwrap();
+        let (emitted, _) = dispatch(&mut session, &buf[..len], 0);
+        expect_status(&emitted[0], 1, Status::PROP_NOT_FOUND);
+        let (emitted, _) = set(&mut session, prop::UART_WINDOW, &64u16.to_le_bytes());
+        expect_status(&emitted[0], 2, Status::PROP_NOT_FOUND);
+        assert!(!is_saved(prop::UART_WINDOW));
+    }
+
+    #[cfg(feature = "uart-link")]
+    mod uart_window {
+        use super::*;
+
+        fn session_with(uart_links: UartLinks) -> TestSession {
+            let config = SessionConfig {
+                uart_links,
+                ..test_config()
+            };
+            Session::new(config, Status::RESET_POWER_ON, test_engine())
+        }
+
+        const WIRED_HOST: UartLinks = UartLinks {
+            wired_host: true,
+            device: false,
+        };
+
+        fn get_status(session: &mut TestSession) -> Vec<Vec<u8>> {
+            let mut buf = [0u8; 16];
+            let len = frame::prop_get(&mut buf, 1, prop::UART_WINDOW).unwrap();
+            dispatch(session, &buf[..len], 0).0
+        }
+
+        #[test]
+        fn a_device_with_no_uart_link_has_no_window() {
+            let mut session = session_with(UartLinks::NONE);
+            session.attach_over(HostLink::Wired, true);
+            expect_status(&get_status(&mut session)[0], 1, Status::PROP_NOT_FOUND);
+            let (emitted, _) = set(&mut session, prop::UART_WINDOW, &64u16.to_le_bytes());
+            expect_status(&emitted[0], 2, Status::PROP_NOT_FOUND);
+            assert_eq!(session.uart_window(), None);
+        }
+
+        #[test]
+        fn the_reader_on_the_uart_reads_and_sets_its_window() {
+            let mut session = session_with(WIRED_HOST);
+            session.attach_over(HostLink::Wired, true);
+            assert_eq!(get(&mut session, prop::UART_WINDOW), [0, 0]);
+            assert_eq!(session.uart_window(), Some(0));
+            let (emitted, _) = set(&mut session, prop::UART_WINDOW, &64u16.to_le_bytes());
+            let (_, key, value) = parse_prop_is(&emitted[0]);
+            assert_eq!(key, prop::UART_WINDOW);
+            assert_eq!(value, 64u16.to_le_bytes());
+            assert_eq!(session.uart_window(), Some(64));
+            let (emitted, _) = set(&mut session, prop::UART_WINDOW, &[64]);
+            expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
+            assert_eq!(session.uart_window(), Some(64));
+        }
+
+        /// The window is the link's: a host on BLE, a mesh administrator,
+        /// and an interface that is not wired over a UART are all refused,
+        /// and none of them moves it.
+        #[test]
+        fn only_the_uart_link_s_reader_reaches_its_window() {
+            let mut session = session_with(WIRED_HOST);
+            session.attach_over(HostLink::Wireless, true);
+            expect_status(&get_status(&mut session)[0], 1, Status::NOT_PERMITTED);
+            let (emitted, _) = set(&mut session, prop::UART_WINDOW, &64u16.to_le_bytes());
+            expect_status(&emitted[0], 2, Status::NOT_PERMITTED);
+
+            let mut buf = [0u8; 16];
+            let len = frame::prop_set(&mut buf, 3, prop::UART_WINDOW, &[64, 0]).unwrap();
+            expect_status(
+                &device(&mut session, &buf[..len]).0[0],
+                3,
+                Status::NOT_PERMITTED,
+            );
+            let len = frame::prop_get(&mut buf, 3, prop::UART_WINDOW).unwrap();
+            expect_status(
+                &device(&mut session, &buf[..len]).0[0],
+                3,
+                Status::NOT_PERMITTED,
+            );
+            assert_eq!(session.uart_window(), Some(0));
+
+            let mut session = session_with(UartLinks {
+                wired_host: false,
+                device: true,
+            });
+            session.attach_over(HostLink::Wired, true);
+            expect_status(&get_status(&mut session)[0], 1, Status::NOT_PERMITTED);
+            let len = frame::prop_set(&mut buf, 3, prop::UART_WINDOW, &[64, 0]).unwrap();
+            let (emitted, _) = device(&mut session, &buf[..len]);
+            assert_eq!(parse_prop_is(&emitted[0]).2, [64, 0]);
+            assert_eq!(session.uart_window(), Some(64));
+        }
+
+        #[test]
+        fn an_administrator_is_refused_the_window() {
+            let mut session = session_with(UartLinks {
+                wired_host: true,
+                device: true,
+            });
+            let mut buf = [0u8; 16];
+            let len = frame::prop_set(&mut buf, 0, prop::UART_WINDOW, &[64, 0]).unwrap();
+            let mut emitted = Vec::new();
+            session.handle_admin_frame(&buf[..len], 0, 180, &mut |bytes: &[u8]| {
+                emitted.push(bytes.to_vec())
+            });
+            session.end_admin_exchange();
+            expect_status(&emitted[0], TID_UNSOLICITED, Status::NOT_PERMITTED);
+            let len = frame::prop_get(&mut buf, 0, prop::UART_WINDOW).unwrap();
+            let mut emitted = Vec::new();
+            session.handle_admin_frame(&buf[..len], 0, 180, &mut |bytes: &[u8]| {
+                emitted.push(bytes.to_vec())
+            });
+            session.end_admin_exchange();
+            expect_status(&emitted[0], TID_UNSOLICITED, Status::NOT_PERMITTED);
+            assert_eq!(session.uart_window(), Some(0));
+        }
+
+        /// A reader starting over sets its window before
+        /// CMD_SESSION_START: an ended session acts on that write and
+        /// answers nothing, and still answers nothing else.
+        #[test]
+        fn an_ended_session_still_takes_the_window() {
+            let mut session = session_with(WIRED_HOST);
+            session.attach_over(HostLink::Wired, true);
+            session.end_session(SessionEndReason::FrameLost);
+            let (emitted, _) = set(&mut session, prop::UART_WINDOW, &32u16.to_le_bytes());
+            assert!(emitted.is_empty());
+            assert_eq!(session.uart_window(), Some(32));
+            // One it cannot take is as silent, and leaves no status behind.
+            let status = session.last_status;
+            let (emitted, _) = set(&mut session, prop::UART_WINDOW, &[32]);
+            assert!(emitted.is_empty());
+            assert_eq!(session.last_status, status);
+            assert_eq!(session.uart_window(), Some(32));
+            let (emitted, _) = set(&mut session, prop::DEV_NAME, b"Ignored");
+            assert!(emitted.is_empty());
+            assert!(get_status(&mut session).is_empty());
+        }
+
+        /// A reader sets its window every time it starts. The same window
+        /// again is not a change, and nothing is owed to flash.
+        #[test]
+        fn the_window_is_saved_and_the_same_one_again_changes_nothing() {
+            assert!(is_saved(prop::UART_WINDOW));
+            let mut out = [0u8; SNAPSHOT_MAX];
+            let mut session = session_with(WIRED_HOST);
+            session.attach_over(HostLink::Wired, true);
+            set(&mut session, prop::UART_WINDOW, &48u16.to_le_bytes());
+            let len = session.encode_snapshot(&mut out).unwrap();
+            let saved = out[..len].to_vec();
+
+            let mut rebooted = session_with(WIRED_HOST);
+            rebooted.restore_at_boot(&saved).unwrap();
+            assert_eq!(rebooted.uart_window(), Some(48));
+
+            rebooted.attach_over(HostLink::Wired, true);
+            let version = rebooted.dev_domain_version();
+            set(&mut rebooted, prop::UART_WINDOW, &48u16.to_le_bytes());
+            assert_eq!(rebooted.dev_domain_version(), version);
+            assert!(!rebooted.note_device_change());
+            set(&mut rebooted, prop::UART_WINDOW, &16u16.to_le_bytes());
+            assert_ne!(rebooted.dev_domain_version(), version);
+        }
+
+        #[test]
+        fn a_detached_host_is_no_longer_on_the_uart() {
+            let mut session = session_with(WIRED_HOST);
+            session.attach_over(HostLink::Wired, true);
+            session.detach(0);
+            session.attach(true);
+            expect_status(&get_status(&mut session)[0], 1, Status::NOT_PERMITTED);
+        }
+
+        const APPLICATION: UartLinks = UartLinks {
+            wired_host: false,
+            device: true,
+        };
+
+        /// The `CMD_SESSION_DID_END` owed the device's own interface, if
+        /// any, decoded and paid.
+        fn take_device_notice(session: &mut TestSession) -> Option<SessionEndReason> {
+            let mut buf = [0u8; 8];
+            let len = session.device_session_end_notice(&mut buf)?;
+            session.device_session_end_notice_taken();
+            let parsed = Frame::parse(&buf[..len]).unwrap();
+            assert_eq!(parsed.command(), Some(Cmd::SessionDidEnd));
+            Some(frame::parse_session_did_end(parsed.payload).unwrap())
+        }
+
+        /// An application's UART is a serial link: its session ends as a
+        /// host's does, apart from the host's, and it hears nothing but
+        /// the start of the next one, bar the window it sets first.
+        #[test]
+        fn an_application_s_session_ends_and_starts_apart_from_the_host_s() {
+            let mut session = session_with(APPLICATION);
+            session.attach_over(HostLink::Wired, true);
+            assert!(session.device_session_live());
+            assert_eq!(take_device_notice(&mut session), None);
+
+            session.end_device_session(SessionEndReason::OwedFrameDiscarded);
+            session.end_device_session(SessionEndReason::FrameLost);
+            assert!(!session.device_session_live());
+            assert!(session.host_session_live());
+            assert_eq!(
+                take_device_notice(&mut session),
+                Some(SessionEndReason::OwedFrameDiscarded)
+            );
+            assert_eq!(take_device_notice(&mut session), None, "paid once");
+
+            let mut buf = [0u8; 16];
+            let len = frame::nop(&mut buf, 2).unwrap();
+            assert!(device(&mut session, &buf[..len]).0.is_empty());
+            let len = frame::prop_set(&mut buf, 3, prop::UART_WINDOW, &[32, 0]).unwrap();
+            assert!(device(&mut session, &buf[..len]).0.is_empty());
+            assert_eq!(session.uart_window(), Some(32));
+            // The host is served as ever.
+            let len = frame::nop(&mut buf, 4).unwrap();
+            expect_status(&dispatch(&mut session, &buf[..len], 0).0[0], 4, Status::OK);
+
+            let len = frame::session_start(&mut buf, 5).unwrap();
+            let (emitted, effect) = device(&mut session, &buf[..len]);
+            assert_eq!(
+                Frame::parse(&emitted[0]).unwrap().command(),
+                Some(Cmd::SessionDidStart)
+            );
+            assert_eq!(
+                effect,
+                Some(Effect::SessionStarted {
+                    binding: Binding::Device
+                })
+            );
+            assert!(session.device_session_live());
+            let len = frame::nop(&mut buf, 6).unwrap();
+            expect_status(&device(&mut session, &buf[..len]).0[0], 6, Status::OK);
+        }
+
+        /// A notice still owed when the application starts over belongs
+        /// to the session that start ended.
+        #[test]
+        fn a_start_drops_the_notice_still_owed() {
+            let mut session = session_with(APPLICATION);
+            session.end_device_session(SessionEndReason::FrameLost);
+            let mut buf = [0u8; 4];
+            let len = frame::session_start(&mut buf, 1).unwrap();
+            device(&mut session, &buf[..len]);
+            assert_eq!(take_device_notice(&mut session), None);
+        }
+
+        /// A built-in interface is carried inside the device, not on a
+        /// serial link: there is no session of its to end.
+        #[test]
+        fn a_built_in_interface_s_session_never_ends() {
+            let mut session = session_with(WIRED_HOST);
+            session.end_device_session(SessionEndReason::FrameLost);
+            assert!(session.device_session_live());
+            assert_eq!(take_device_notice(&mut session), None);
+        }
+    }
+
+    // ─── Node messaging ──────────────────────────────────────────────
+
+    #[cfg(feature = "node-msg")]
+    mod node_msg {
+        use super::*;
+        use umsh_ulcp::node_msg::{Kind, SendMeta, tx_flag};
+
+        const RESERVED: &[u8] = &[8, 9];
+
+        fn node_msg_session() -> TestSession {
+            let config = SessionConfig {
+                node_msg: Some(NodeMsgConfig {
+                    reserved_types: RESERVED,
+                }),
+                ..test_config()
+            };
+            let mut session = Session::new(config, Status::RESET_POWER_ON, test_engine());
+            session.attach(true);
+            session
+        }
+
+        fn send_frame(tid: u8, data: &[u8], meta: &SendMeta<'_>) -> Vec<u8> {
+            let mut buf = [0u8; 512];
+            let mut writer = FrameWriter::new(&mut buf, tid, Cmd::StrSend).unwrap();
+            writer.write_pui(stream::NODE_MSG).unwrap();
+            writer.write_u16_le(data.len() as u16).unwrap();
+            writer.write_bytes(data).unwrap();
+            meta.write(&mut writer).unwrap();
+            let len = writer.finish();
+            buf[..len].to_vec()
+        }
+
+        fn unicast() -> SendMeta<'static> {
+            let mut meta = SendMeta::new(Kind::Unicast);
+            meta.peer = Some([0xAA; 32]);
+            meta.ack = true;
+            meta
+        }
+
+        fn sent_id(effect: Option<Effect>) -> u16 {
+            match effect {
+                Some(Effect::NodeMsgSend { id }) => id,
+                other => panic!("expected a node message send, got {other:?}"),
+            }
+        }
+
+        fn result(
+            session: &mut TestSession,
+            id: u16,
+            status: Status,
+        ) -> (Vec<Vec<u8>>, Option<Binding>) {
+            let mut emitted = Vec::new();
+            let binding = session
+                .on_node_msg_result(id, status, &mut |bytes: &[u8]| emitted.push(bytes.to_vec()));
+            (emitted, binding)
+        }
+
+        #[test]
+        fn the_capability_needs_the_config_a_node_and_an_identity() {
+            let mut session = node_msg_session();
+            assert!(capabilities(&mut session).contains(&cap::NODE_MSG));
+            assert_eq!(get(&mut session, prop::NODE_MSG_TYPES), [0u8; 0]);
+
+            let mut bare = test_session();
+            assert!(!capabilities(&mut bare).contains(&cap::NODE_MSG));
+            let mut buf = [0u8; 16];
+            let len = frame::prop_get(&mut buf, 1, prop::NODE_MSG_TYPES).unwrap();
+            let (emitted, _) = dispatch(&mut bare, &buf[..len], 0);
+            expect_status(&emitted[0], 1, Status::PROP_NOT_FOUND);
+
+            for config in [
+                SessionConfig {
+                    mac_node: false,
+                    node_msg: Some(NodeMsgConfig {
+                        reserved_types: RESERVED,
+                    }),
+                    ..test_config()
+                },
+                SessionConfig {
+                    dev_identity: false,
+                    node_msg: Some(NodeMsgConfig {
+                        reserved_types: RESERVED,
+                    }),
+                    ..test_config()
+                },
+            ] {
+                let mut session = Session::new(config, Status::RESET_POWER_ON, test_engine());
+                session.attach(true);
+                assert!(!capabilities(&mut session).contains(&cap::NODE_MSG));
+            }
+        }
+
+        #[test]
+        fn a_link_claims_any_type_the_device_does_not_consume() {
+            let mut session = node_msg_session();
+            let (emitted, _) = set(&mut session, prop::NODE_MSG_TYPES, &[3, 0x80]);
+            let (_, key, value) = parse_prop_is(&emitted[0]);
+            assert_eq!(key, prop::NODE_MSG_TYPES);
+            assert_eq!(value, [3, 0x80]);
+            assert_eq!(
+                session.node_msg_types().unwrap().collect::<Vec<_>>(),
+                [3, 0x80]
+            );
+
+            let (emitted, _) = set(&mut session, prop::NODE_MSG_TYPES, &[3, 8]);
+            expect_status(&emitted[0], 2, Status::NOT_PERMITTED);
+            let (emitted, _) = insert_item(&mut session, prop::NODE_MSG_TYPES, &[9]);
+            expect_status(&emitted[0], 5, Status::NOT_PERMITTED);
+            let (emitted, _) = insert_item(&mut session, prop::NODE_MSG_TYPES, &[3]);
+            expect_status(&emitted[0], 5, Status::ALREADY);
+            let (emitted, _) = insert_item(&mut session, prop::NODE_MSG_TYPES, &[3, 4]);
+            expect_status(&emitted[0], 5, Status::INVALID_ARGUMENT);
+            insert_item(&mut session, prop::NODE_MSG_TYPES, &[4]);
+            remove_item(&mut session, prop::NODE_MSG_TYPES, &[0x80]);
+            assert_eq!(get(&mut session, prop::NODE_MSG_TYPES), [3, 4]);
+            // Refused writes left the claims alone.
+            assert_eq!(session.node_msg_types().unwrap().count(), 2);
+        }
+
+        /// An application sets its claims every time it starts. The same
+        /// claims again, in any order, are not a change: nothing to sync
+        /// and nothing owed to flash.
+        #[test]
+        fn the_same_claims_again_change_nothing() {
+            let mut out = [0u8; SNAPSHOT_MAX];
+            let mut session = node_msg_session();
+            set(&mut session, prop::NODE_MSG_TYPES, &[3, 0x80]);
+            let len = session.encode_snapshot(&mut out).unwrap();
+            let saved = out[..len].to_vec();
+            session.restore_at_boot(&saved).unwrap();
+
+            let version = session.dev_domain_version();
+            set(&mut session, prop::NODE_MSG_TYPES, &[0x80, 3]);
+            assert_eq!(session.dev_domain_version(), version);
+            assert!(!session.note_device_change());
+            assert_eq!(session.unwritten_snapshot(&mut out), None);
+
+            set(&mut session, prop::NODE_MSG_TYPES, &[3]);
+            assert_ne!(session.dev_domain_version(), version);
+            assert!(session.note_device_change());
+        }
+
+        #[test]
+        fn claims_are_saved() {
+            let mut out = [0u8; SNAPSHOT_MAX];
+            let mut session = node_msg_session();
+            set(&mut session, prop::NODE_MSG_TYPES, &[3, 0x80]);
+            let len = session.encode_snapshot(&mut out).unwrap();
+            let mut rebooted = node_msg_session();
+            rebooted.restore_at_boot(&out[..len]).unwrap();
+            let mut types = rebooted.node_msg_types().unwrap().collect::<Vec<_>>();
+            types.sort();
+            assert_eq!(types, [3, 0x80]);
+        }
+
+        #[test]
+        fn listening_is_the_host_session_s_alone() {
+            let mut session = node_msg_session();
+            // Until the host listens, the device's own interface
+            // receives, if there is one.
+            assert_eq!(session.node_msg_receiver(false), None);
+            assert_eq!(session.node_msg_receiver(true), Some(Binding::Device));
+            set(&mut session, prop::NODE_MSG_LISTEN, &[1]);
+            assert_eq!(get(&mut session, prop::NODE_MSG_LISTEN), [1]);
+            assert_eq!(session.node_msg_receiver(true), Some(Binding::Local));
+
+            // The device's own interface may read it, not write it.
+            let mut buf = [0u8; 16];
+            let len = frame::prop_set(&mut buf, 3, prop::NODE_MSG_LISTEN, &[0]).unwrap();
+            let (emitted, _) = device(&mut session, &buf[..len]);
+            expect_status(&emitted[0], 3, Status::NOT_PERMITTED);
+            assert_eq!(session.node_msg_receiver(false), Some(Binding::Local));
+
+            // A session that ends or starts over starts deaf.
+            session.end_session(SessionEndReason::FrameLost);
+            assert_eq!(session.node_msg_receiver(false), None);
+            let len = frame::session_start(&mut buf, 1).unwrap();
+            let (_, effect) = dispatch(&mut session, &buf[..len], 0);
+            assert_eq!(
+                effect,
+                Some(Effect::SessionStarted {
+                    binding: Binding::Local
+                })
+            );
+            assert_eq!(get(&mut session, prop::NODE_MSG_LISTEN), [0]);
+            set(&mut session, prop::NODE_MSG_LISTEN, &[1]);
+            session.attach(true);
+            assert_eq!(session.node_msg_receiver(false), None);
+            // A device that does not serve node messaging hands nothing
+            // to anyone.
+            let plain: TestSession =
+                Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
+            assert_eq!(plain.node_msg_receiver(true), None);
+        }
+
+        /// An application whose session has ended receives nothing, and
+        /// the outcome of a send it made reaches nobody, until it starts
+        /// a new session.
+        #[cfg(feature = "uart-link")]
+        #[test]
+        fn an_application_s_ended_session_receives_nothing() {
+            let config = SessionConfig {
+                node_msg: Some(NodeMsgConfig {
+                    reserved_types: RESERVED,
+                }),
+                uart_links: UartLinks {
+                    wired_host: false,
+                    device: true,
+                },
+                ..test_config()
+            };
+            let mut session: TestSession =
+                Session::new(config, Status::RESET_POWER_ON, test_engine());
+            let (_, effect) = device(&mut session, &send_frame(4, &[3], &unicast()));
+            let id = sent_id(effect);
+            assert_eq!(session.node_msg_receiver(true), Some(Binding::Device));
+
+            session.end_device_session(SessionEndReason::FrameLost);
+            assert_eq!(session.node_msg_receiver(true), None);
+            assert_eq!(result(&mut session, id, Status::OK).1, None);
+
+            let mut buf = [0u8; 4];
+            let len = frame::session_start(&mut buf, 1).unwrap();
+            device(&mut session, &buf[..len]);
+            assert_eq!(session.node_msg_receiver(true), Some(Binding::Device));
+        }
+
+        #[test]
+        fn a_send_is_staged_and_answered_when_the_node_is_done() {
+            let mut session = node_msg_session();
+            let mut meta = unicast();
+            meta.flood_hops = Some(2);
+            meta.source_route = Some(&[1, 2, 3, 4]);
+            meta.tx_power = Some(100);
+            let (emitted, effect) =
+                dispatch(&mut session, &send_frame(4, &[3, 0xFF, b'h'], &meta), 0);
+            assert!(emitted.is_empty(), "no answer before the outcome");
+            let id = sent_id(effect);
+            let request = session.take_node_msg_request().unwrap();
+            assert_eq!(request.id, id);
+            assert_eq!(request.kind, Kind::Unicast);
+            assert!(request.ack);
+            assert_eq!(request.peer, Some([0xAA; 32]));
+            assert_eq!(request.flood_hops, Some(2));
+            assert_eq!(request.source_route, [1, 2, 3, 4]);
+            assert_eq!(request.tx_power_dbm, Some(22), "clamped to the radio");
+            assert_eq!(request.payload, [3, 0xFF, b'h']);
+            assert!(session.take_node_msg_request().is_none());
+
+            let (emitted, binding) = result(&mut session, id, Status::NO_ACK);
+            assert_eq!(binding, Some(Binding::Local));
+            expect_status(&emitted[0], 4, Status::NO_ACK);
+            // Answered once.
+            assert_eq!(result(&mut session, id, Status::OK).1, None);
+        }
+
+        #[test]
+        fn a_channel_is_named_by_its_identifier() {
+            let mut session = node_msg_session();
+            insert_item(&mut session, prop::DEV_CHANNEL_KEYS, &[0x42; 32]);
+            let identifier: [u8; 16] = get(&mut session, prop::DEV_CHANNEL_KEYS)[..16]
+                .try_into()
+                .unwrap();
+            let mut meta = SendMeta::new(Kind::Multicast);
+            meta.channel = Some(identifier);
+            let (_, effect) = dispatch(&mut session, &send_frame(1, &[3], &meta), 0);
+            sent_id(effect);
+            assert_eq!(
+                session.take_node_msg_request().unwrap().channel_key,
+                Some([0x42; 32])
+            );
+
+            meta.channel = Some([0x99; 16]);
+            let (emitted, effect) = dispatch(&mut session, &send_frame(2, &[3], &meta), 0);
+            assert_eq!(effect, None);
+            expect_status(&emitted[0], 2, Status::CHANNEL_NOT_FOUND);
+        }
+
+        #[test]
+        fn a_send_the_device_cannot_make_is_refused_at_once() {
+            let mut session = node_msg_session();
+            // An acknowledged broadcast.
+            let mut buf = [0u8; 16];
+            let metadata = [Kind::Broadcast.code(), tx_flag::ACK];
+            let len = frame::str_send(&mut buf, 1, stream::NODE_MSG, &[3], &metadata).unwrap();
+            let (emitted, _) = dispatch(&mut session, &buf[..len], 0);
+            expect_status(&emitted[0], 1, Status::INVALID_ARGUMENT);
+            // No payload type.
+            let (emitted, _) = dispatch(&mut session, &send_frame(2, &[], &unicast()), 0);
+            expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
+            // Metadata cut short.
+            let mut buf = [0u8; 16];
+            let len = frame::str_send(&mut buf, 3, stream::NODE_MSG, &[3], &[0]).unwrap();
+            let (emitted, _) = dispatch(&mut session, &buf[..len], 0);
+            expect_status(&emitted[0], 3, Status::PARSE_ERROR);
+        }
+
+        #[test]
+        fn sends_awaited_at_once_are_bounded_and_tid_zero_is_not_awaited() {
+            let mut session = node_msg_session();
+            let mut ids = Vec::new();
+            for tid in 1..=NODE_MSG_SENDS as u8 {
+                let (_, effect) = dispatch(&mut session, &send_frame(tid, &[3], &unicast()), 0);
+                ids.push(sent_id(effect));
+                session.take_node_msg_request();
+            }
+            let (emitted, effect) = dispatch(&mut session, &send_frame(7, &[3], &unicast()), 0);
+            assert_eq!(effect, None);
+            expect_status(&emitted[0], 7, Status::BUSY);
+            // Nobody waits on TID 0, so it takes no row.
+            let (emitted, effect) = dispatch(&mut session, &send_frame(0, &[3], &unicast()), 0);
+            assert!(emitted.is_empty());
+            let unawaited = sent_id(effect);
+            assert_eq!(result(&mut session, unawaited, Status::OK).1, None);
+            // An outcome frees its row.
+            result(&mut session, ids[0], Status::OK);
+            let (_, effect) = dispatch(&mut session, &send_frame(7, &[3], &unicast()), 0);
+            sent_id(effect);
+        }
+
+        /// A new session is a new set of TIDs: the old session's sends
+        /// finish on the air, unheard.
+        #[test]
+        fn a_new_session_forgets_the_old_one_s_sends() {
+            let mut session = node_msg_session();
+            let (_, effect) = dispatch(&mut session, &send_frame(1, &[3], &unicast()), 0);
+            let before_start = sent_id(effect);
+            let mut buf = [0u8; 4];
+            let len = frame::session_start(&mut buf, 2).unwrap();
+            dispatch(&mut session, &buf[..len], 0);
+            assert_eq!(
+                result(&mut session, before_start, Status::OK),
+                (vec![], None)
+            );
+
+            let (_, effect) = dispatch(&mut session, &send_frame(1, &[3], &unicast()), 0);
+            let before_end = sent_id(effect);
+            session.end_session(SessionEndReason::FrameLost);
+            assert_eq!(result(&mut session, before_end, Status::OK), (vec![], None));
+        }
+
+        #[test]
+        fn the_device_interface_sends_and_hears_its_answer() {
+            let mut session = node_msg_session();
+            let (emitted, effect) = device(&mut session, &send_frame(5, &[3], &unicast()));
+            assert!(emitted.is_empty());
+            let id = sent_id(effect);
+            // The host starting its session over is not the interface's.
+            let mut buf = [0u8; 4];
+            let len = frame::session_start(&mut buf, 1).unwrap();
+            dispatch(&mut session, &buf[..len], 0);
+            let (emitted, binding) = result(&mut session, id, Status::OK);
+            assert_eq!(binding, Some(Binding::Device));
+            expect_status(&emitted[0], 5, Status::OK);
+
+            // The interface's own start is its, and is reported.
+            let (_, effect) = device(&mut session, &send_frame(5, &[3], &unicast()));
+            let id = sent_id(effect);
+            let (_, effect) = device(&mut session, &buf[..len]);
+            assert_eq!(
+                effect,
+                Some(Effect::SessionStarted {
+                    binding: Binding::Device
+                })
+            );
+            assert_eq!(result(&mut session, id, Status::OK).1, None);
+
+            // The raw stream is still the host's alone.
+            let mut buf = [0u8; 32];
+            let len = frame::str_send(&mut buf, 6, stream::PHY_RAW, &[1, 2], &[0, 0]).unwrap();
+            let (emitted, _) = device(&mut session, &buf[..len]);
+            expect_status(&emitted[0], 6, Status::NOT_PERMITTED);
+        }
+
+        #[test]
+        fn an_administrator_may_not_send_as_the_device() {
+            let mut session = node_msg_session();
+            let request = send_frame(2, &[3], &unicast());
+            let mut emitted = Vec::new();
+            let effect = session.handle_admin_frame(&request, 0, 180, &mut |bytes: &[u8]| {
+                emitted.push(bytes.to_vec())
+            });
+            session.end_admin_exchange();
+            assert_eq!(effect, None);
+            expect_status(&emitted[0], 2, Status::NOT_PERMITTED);
+        }
     }
 }

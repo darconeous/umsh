@@ -1,13 +1,13 @@
 //! ULCP frames and the payload grammars their commands select.
 
-use umsh_ulcp::frame::{FrameWriter, MultiEntries, MultiGetKeys, parse_session_reset};
+use umsh_ulcp::frame::{FrameWriter, MultiEntries, MultiGetKeys, parse_session_did_end};
 use umsh_ulcp::host::PropertyNotification;
 use umsh_ulcp::{Frame, FrameDescription, PropPayload, StreamPayload, reply};
 
 fn payloads(data: &[u8], payload: &[u8]) {
     let _ = PropPayload::parse(payload);
     let _ = StreamPayload::parse(payload);
-    let _ = parse_session_reset(payload);
+    let _ = parse_session_did_end(payload);
     let _ = PropertyNotification::parse(data);
     let _ = MultiGetKeys::new(payload).count();
     let _ = MultiEntries::new(payload).count();

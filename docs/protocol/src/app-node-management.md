@@ -323,7 +323,9 @@ operation exists, and the binding is what refused it—to:
   across the mesh, so an administrator may write it, though the host's
   next attach still resets it;
 - `CMD_STR_SEND` and `CMD_QUEUE_DRAIN`: the raw PHY stream and the
-  receive queue are likewise the tethered host's;
+  receive queue are likewise the tethered host's, and
+  [node messaging](ulcp-node-messaging.md) belongs to the local links;
+- `CMD_SESSION_START`: an administrator has no session;
 - writes to
   [`PROP_DEV_PRIVATE_KEY`](ulcp-device.md#prop-dev-private-key): a device
   identity cannot be installed over the mesh.

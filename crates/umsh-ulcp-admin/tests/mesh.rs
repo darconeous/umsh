@@ -94,6 +94,7 @@ impl<const PAYLOAD: usize> Device<PAYLOAD> {
             ble: true,
             ble_pairing: true,
             ble_pin: true,
+            uart_links: Default::default(),
             reboot: true,
             dev_identity: true,
             messaging: false,
@@ -106,6 +107,7 @@ impl<const PAYLOAD: usize> Device<PAYLOAD> {
             bridge_client: false,
             i2c_buses: &[],
             i2c_devices: &[],
+            node_msg: None,
         };
         let mut session = Session::new(
             config,

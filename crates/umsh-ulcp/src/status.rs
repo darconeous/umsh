@@ -35,6 +35,9 @@ impl Status {
     /// Arbitration lost, a bus error, a timeout, or an overrun during
     /// a bus transaction.
     pub const BUS_ERROR: Self = Self(26);
+    /// A node message that requested an acknowledgement was sent, and
+    /// none arrived before the device stopped waiting for it.
+    pub const NO_ACK: Self = Self(27);
     pub const DUTY_LIMIT: Self = Self(32);
 
     pub const RESET_POWER_ON: Self = Self(112);
@@ -75,6 +78,7 @@ impl Status {
             Self::NO_DEVICE => "NO_DEVICE",
             Self::NACK => "NACK",
             Self::BUS_ERROR => "BUS_ERROR",
+            Self::NO_ACK => "NO_ACK",
             Self::DUTY_LIMIT => "DUTY_LIMIT",
             Self::RESET_POWER_ON => "RESET_POWER_ON",
             Self::RESET_EXTERNAL => "RESET_EXTERNAL",

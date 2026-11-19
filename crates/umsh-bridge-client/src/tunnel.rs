@@ -143,7 +143,7 @@ mod tests {
         let frame = Frame::transmitted(&[0x7e, 0x7d, 3], 0).unwrap();
         let mut encoded = [0; hdlc::max_encoded_len(MAX_BODY)];
         let len = hdlc::encode_frame(&frame.body, &mut encoded).unwrap();
-        let mut decoder = hdlc::Decoder::<{ MAX_BODY + 2 }>::new();
+        let mut decoder = hdlc::Decoder::<{ MAX_BODY + 2 }>::plain();
         for _ in 0..100 {
             assert!(decoder.push(0x7e).is_none());
         }
@@ -158,7 +158,7 @@ mod tests {
         for &byte in &encoded[..len / 2] {
             let _ = decoder.push(byte);
         }
-        decoder = hdlc::Decoder::new();
+        decoder = hdlc::Decoder::plain();
         for &byte in &encoded[len / 2..len] {
             assert!(!matches!(decoder.push(byte), Some(Ok(body)) if !body.is_empty()));
         }

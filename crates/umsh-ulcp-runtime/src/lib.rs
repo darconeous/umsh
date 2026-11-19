@@ -52,6 +52,8 @@ pub mod lan_bearer;
 pub mod meshcore;
 #[cfg(feature = "counters")]
 pub mod node_counters;
+#[cfg(feature = "node-msg")]
+pub mod node_msg;
 #[cfg(feature = "radio")]
 pub mod radio_mux;
 #[cfg(feature = "driver")]
@@ -60,6 +62,8 @@ pub mod reply_completion;
 pub mod reseed;
 #[cfg(feature = "driver")]
 pub mod temperature;
+#[cfg(feature = "uart-link")]
+pub mod uart_link;
 
 #[cfg(feature = "wifi")]
 pub mod wifi_journal;

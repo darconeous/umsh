@@ -113,10 +113,25 @@ bootloader and no reset short of removing power.
 ## 6. USB and serial
 
 USB goes straight to the ESP32-S3's USB-Serial-JTAG controller
-(`303a:1001`) on GPIO19/20. There is no USB-UART bridge. UART0 is on D6/D7
-(GPIO43/44), and nothing in the kit uses it.
+(`303a:1001`) on GPIO19/20. There is no USB-UART bridge.
 
-### 6.1 No VBUS sense
+### 6.1 Application UART
+
+UART0 on D6 (GPIO43, TX) and D7 (GPIO44, RX) carries ULCP to a
+microcontroller wired to the header: the device's own interface, served
+beside a host on USB or BLE (`ulcp-uart`, on by default). It runs at
+115200 8N1 unless the build sets `UMSH_ULCP_UART_BAUD`, with HDLC-Lite
+framing and XON/XOFF pacing under `PROP_UART_WINDOW`. RX is pulled up, so
+the pads may be left unwired.
+
+The board light-sleeps while the link listens (§7.2). An application
+that has sent nothing for 100 ms sends a wake preamble before it writes
+again.
+
+The boot ROM prints on D6 at every reset. The application reads that as a
+lost frame and starts a new session, which a restart requires anyway.
+
+### 6.2 No VBUS sense
 
 Nothing routes VBUS, the battery, or the charger's status to a GPIO, so the
 firmware cannot tell USB power from a battery. Host presence comes from the
@@ -138,7 +153,7 @@ halves:
 
 `esp-println` reads the same flag to pick its output port.
 
-### 6.2 D+ activity as a wake source
+### 6.3 D+ activity as a wake source
 
 esp-hal's S3 sleep support offers no USB wake source. Every packet, bus
 reset, and resume drives D+ low, so a GPIO wake on GPIO20 could replace the
@@ -147,7 +162,7 @@ one calls `disable_usb_pads()`, which drops the D+ pull-up and detaches the
 board. Whether the pad's digital input reads D+ while the USB PHY owns it is
 unconfirmed.
 
-### 6.3 Flashing
+### 6.4 Flashing
 
 espflash resets the chip into the ROM bootloader over USB-Serial-JTAG, and a
 hard reset afterward starts the new image.
@@ -177,6 +192,15 @@ The S3 light-sleeps whenever nothing holds a wake lock. The USB pads and
 their pull-up stay powered, so a host still sees the device attached; RXEN
 holds its level.
 
+Light sleep stops the UART, so the application UART wakes the chip: three
+rising edges on RX, which the application's wake preamble supplies. The
+link then holds a wake lock for 250 ms after the last octet it received,
+and while it writes. RX interrupts at every octet, so the first octet
+after a wake reaches the link before the chip can sleep again. A UART wake
+source keeps the digital peripherals powered through the sleep. Not yet
+measured: how long the wake takes, how many octets it loses, and the
+sleep current it adds.
+
 ### 7.3 Deep sleep
 
 UMSH powers off into deep sleep with USR (GPIO21, an RTC GPIO) armed as the
@@ -203,7 +227,7 @@ Nothing is fitted. UMSH opens the bus to hosts at 100 kHz (`ulcp-i2c`) as
 | BSP crate | `umsh-bsp-xiao-esp32s3` |
 | `PROP_DEV_MODEL` | `Seeed XIAO ESP32S3 + Wio-SX1262 Kit` |
 | BLE pairing `model_id` | 10 |
-| Default features | `ble`, `psram`, `coex`, `bridge-client`, `meshcore-forwarder`, `lan-bearer`, `entropy-sar-adc` |
+| Default features | `ulcp-uart`, `ble`, `psram`, `coex`, `bridge-client`, `meshcore-forwarder`, `lan-bearer`, `entropy-sar-adc` |
 | Capabilities | `radio-sx126x`, `radio-rxen`, `status-led`, `power-off-deep-sleep`, `usb-presence-sof`, `ulcp-i2c` |
 
 No `display` (the button and LED are the interface), no `battery-telemetry`,
@@ -230,7 +254,7 @@ and no GNSS. ADC1 is free, so the boot entropy read from the SAR ADC is on.
 
 ### 10.1 Confirmed on hardware (2026-10-16, one kit, USB power, no battery)
 
-- Flashed over the factory Meshtastic image (§6.3). The image boots, the
+- Flashed over the factory Meshtastic image (§6.4). The image boots, the
   journals format, and the identity, device name, PHY setting, and BLE bond
   all survive reflashing. PSRAM is inferred working: the session lives there.
 - ULCP over USB-Serial-JTAG; the transport stays up while a host sends

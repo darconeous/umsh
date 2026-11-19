@@ -43,12 +43,24 @@ const DISCOVERY_EXTENSION: Duration = Duration::from_secs(3);
 /// configuration.
 pub fn attach_config() -> UlcpDeviceConfig {
     let profile = umsh::ulcp_wire::profiles::DEFAULT;
-    UlcpDeviceConfig::new(
+    let mut config = UlcpDeviceConfig::new(
         profile.freq_khz,
         profile.bw_hz,
         profile.sf,
         profile.cr_denom,
-    )
+    );
+    config.uart_window = UART_WINDOW.get().copied();
+    config
+}
+
+/// `--uart-window`: the window every attach in this process paces a
+/// radio on a UART with. Set once, before the first attach.
+static UART_WINDOW: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+
+/// Pace radios on a UART with `window` octets per XON, 0 for plain
+/// XON/XOFF.
+pub fn set_uart_window(window: u16) {
+    let _ = UART_WINDOW.set(window);
 }
 
 /// How long a mesh session waits for one command to come back.
@@ -263,6 +275,50 @@ impl FrameLink for AnyLink {
             Self::Unavailable => core::task::Poll::Ready(Err(UlcpError::Disconnected)),
         }
     }
+
+    fn sessions_in_band(&self) -> bool {
+        match self {
+            #[cfg(feature = "serial-radio")]
+            Self::Serial(link) => link.sessions_in_band(),
+            #[cfg(feature = "ble-radio")]
+            Self::Ble(link) => link.sessions_in_band(),
+            Self::Tcp(link) => link.sessions_in_band(),
+            Self::Lan(link) => link.sessions_in_band(),
+            Self::Mesh(link) => link.sessions_in_band(),
+            Self::Unavailable => false,
+        }
+    }
+
+    // Every HDLC-Lite link takes XON and XOFF; only a UART acts on them.
+    async fn send_flow(&mut self, octet: u8) -> Result<(), UlcpError> {
+        match self {
+            #[cfg(feature = "serial-radio")]
+            Self::Serial(link) => link.send_flow(octet).await,
+            Self::Tcp(link) => link.send_flow(octet).await,
+            Self::Lan(link) => link.send_flow(octet).await,
+            _ => Ok(()),
+        }
+    }
+
+    fn pace(&mut self, window: u16) {
+        match self {
+            #[cfg(feature = "serial-radio")]
+            Self::Serial(link) => link.pace(window),
+            Self::Tcp(link) => link.pace(window),
+            Self::Lan(link) => link.pace(window),
+            _ => {}
+        }
+    }
+
+    fn withhold_xon(&mut self, withheld: bool) {
+        match self {
+            #[cfg(feature = "serial-radio")]
+            Self::Serial(link) => link.withhold_xon(withheld),
+            Self::Tcp(link) => link.withhold_xon(withheld),
+            Self::Lan(link) => link.withhold_xon(withheld),
+            _ => {}
+        }
+    }
 }
 
 /// The pcap sink shared by the link wrapper (ULCP frames) and the
@@ -328,6 +384,22 @@ impl FrameLink for SessionLink {
             }
             other => other,
         }
+    }
+
+    fn sessions_in_band(&self) -> bool {
+        self.inner.sessions_in_band()
+    }
+
+    async fn send_flow(&mut self, octet: u8) -> Result<(), UlcpError> {
+        self.inner.send_flow(octet).await
+    }
+
+    fn pace(&mut self, window: u16) {
+        self.inner.pace(window);
+    }
+
+    fn withhold_xon(&mut self, withheld: bool) {
+        self.inner.withhold_xon(withheld);
     }
 }
 
@@ -584,7 +656,9 @@ async fn open_serial(port: &str, baud: u32) -> Result<AnyLink> {
     let stream = tokio_serial::new(port, baud)
         .open_native_async()
         .with_context(|| format!("opening {port}"))?;
-    Ok(AnyLink::Serial(umsh::ulcp::SerialFrameLink::new(stream)))
+    Ok(AnyLink::Serial(
+        umsh::ulcp::SerialFrameLink::new(stream).with_baud(baud),
+    ))
 }
 
 #[cfg(not(feature = "serial-radio"))]
@@ -621,11 +695,25 @@ async fn attach_tapped(link: AnyLink, tap: FrameTap) -> Result<UlcpDevice<Sessio
     Ok(device)
 }
 
+/// A radio on a UART may sleep, and only a paced link sends what wakes
+/// it (spec §Waking a Device on a UART): say so when an attach over a
+/// serial port that was not paced hears nothing.
+fn uart_hint(target: &Target, error: anyhow::Error) -> anyhow::Error {
+    let silent = matches!(error.downcast_ref(), Some(UlcpError::Timeout));
+    if silent && matches!(target, Target::Serial { .. }) && UART_WINDOW.get().is_none() {
+        error.context("no answer: a radio whose serial port is a UART needs --uart-window")
+    } else {
+        error
+    }
+}
+
 /// Open, attach, and name a device in one step.
 pub async fn connect(target: Target, trace: bool) -> Result<Session> {
     let tap = new_tap();
     let link = open(&target).await?;
-    let mut device = attach_tapped(link, tap.clone()).await?;
+    let mut device = attach_tapped(link, tap.clone())
+        .await
+        .map_err(|error| uart_hint(&target, error))?;
     if trace {
         install_trace(&mut device);
     }

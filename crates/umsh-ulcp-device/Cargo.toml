@@ -13,6 +13,14 @@ default = ["software-crypto"]
 software-crypto = ["umsh-crypto/software-crypto"]
 bridge-client = ["dep:ed25519-dalek"]
 wifi = []
+# Node messaging (`CAP_NODE_MSG`): a link sends and receives UMSH payloads
+# through the device's own node.
+node-msg = []
+# A local link on a UART without hardware flow control: the window its
+# reader paces the device with (`PROP_UART_WINDOW`), and, for an
+# application wired to the device's own interface, a session the device
+# can end. Every other build leaves it out.
+uart-link = []
 # A device with chats of its own, and a store to keep its peers in, holds
 # more of them.
 communicator = []

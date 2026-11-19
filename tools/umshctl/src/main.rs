@@ -136,6 +136,13 @@ pub struct ToolArgs {
     #[arg(long, default_value_t = 115_200, value_name = "N", global = true)]
     baud: u32,
 
+    /// Pace a radio on a UART with XON and XOFF, permitting this many
+    /// octets at a time; 0 for plain XON/XOFF, with no limit. Only for a
+    /// radio whose serial port is a UART, and needed to wake one that
+    /// sleeps.
+    #[arg(long, value_name = "OCTETS", global = true)]
+    uart_window: Option<u16>,
+
     /// Print every ULCP frame on stderr.
     #[arg(long, global = true)]
     trace: bool,
@@ -395,6 +402,9 @@ pub fn parse_group(spec: &str) -> Result<std::net::SocketAddrV4> {
 
 async fn run(args: ToolArgs) -> Result<()> {
     output::set_color(args.color.enabled());
+    if let Some(window) = args.uart_window {
+        connection::set_uart_window(window);
+    }
     let interactive = args.command.is_none();
     let mut app = App {
         session: None,

@@ -162,7 +162,7 @@ impl MobileVirtualRadio {
     }
 
     /// A host in this process attached, taking replies at `sink`: the
-    /// device starts a session, announcing it with `CMD_SESSION_RESET`.
+    /// device starts a session, which the attach itself does not announce.
     pub fn attach(&self, sink: Arc<dyn MobileWireSink>) {
         self.send(HostEvent::Attach(Box::new(move |bytes| {
             sink.on_wire(bytes)
@@ -333,7 +333,7 @@ mod tests {
 
         let mut decoder = hdlc::Decoder::<512>::new();
         let mut frames = Vec::new();
-        while frames.len() < 2 {
+        while frames.is_empty() {
             let bytes = wire
                 .recv_timeout(Duration::from_secs(2))
                 .expect("the device answers");
@@ -343,8 +343,9 @@ mod tests {
                 }
             }
         }
-        // The answer to the GET: PHY on, as asked for at start.
-        assert_eq!(frames[1].last(), Some(&1));
+        // The attach emits nothing, so the first frame is the answer to
+        // the GET: PHY on, as asked for at start.
+        assert_eq!(frames[0].last(), Some(&1));
 
         radio.stop();
         // The worker lets go of the state as it winds down.
@@ -362,8 +363,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// A serving radio greets a connection with a session reset, and
-    /// takes its socket with it when it stops.
+    /// A serving radio answers on a connection to its socket, and takes
+    /// its socket with it when it stops.
     #[test]
     fn a_serving_radio_answers_on_its_socket() {
         use std::io::Read;
@@ -383,6 +384,11 @@ mod tests {
         stream
             .set_read_timeout(Some(Duration::from_secs(2)))
             .unwrap();
+        let mut request = [0u8; 8];
+        let len = frame::nop(&mut request, 1).unwrap();
+        let mut encoded = vec![0; hdlc::max_encoded_len(len)];
+        let encoded_len = hdlc::encode_frame(&request[..len], &mut encoded).unwrap();
+        std::io::Write::write_all(&mut stream, &encoded[..encoded_len]).unwrap();
         let mut buf = [0u8; 64];
         assert!(stream.read(&mut buf).unwrap() > 0);
 

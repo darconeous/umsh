@@ -49,7 +49,7 @@
 //! USB-Serial-JTAG peripheral). Boot diagnostics interleave cleanly
 //! before the port is claimed; after that, nothing may `println!`. The
 //! `debug-log` feature multiplexes diagnostic lines onto the wired
-//! output stream as ASCII (HDLC hosts resynchronize past them),
+//! output stream as marked text, which HDLC-Lite hosts skip,
 //! mirroring the nRF image's ble-debug.
 
 #![no_std]
@@ -98,10 +98,12 @@ use esp_hal::spi::Mode;
 use esp_hal::spi::master::{Config as SpiConfig, Spi};
 use esp_hal::time::Rate;
 use esp_hal::timer::timg::TimerGroup;
-#[cfg(any(not(feature = "wired-usb-serial-jtag"), feature = "gnss"))]
+#[cfg(any(
+    not(feature = "wired-usb-serial-jtag"),
+    feature = "gnss",
+    feature = "ulcp-uart"
+))]
 use esp_hal::uart::{Config as UartConfig, Uart};
-#[cfg(not(feature = "wired-usb-serial-jtag"))]
-use esp_hal::uart::{UartRx, UartTx};
 #[cfg(feature = "wired-usb-serial-jtag")]
 use esp_hal::usb::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagRx, UsbSerialJtagTx};
 use esp_println::println;
@@ -167,11 +169,13 @@ use umsh_ulcp_device::GnssConfig;
 #[cfg(feature = "wall-clock")]
 use umsh_ulcp_device::TimeConfig;
 use umsh_ulcp_device::{
-    BatteryFields, IdentityForm, MAX_DEVICE_NAME_LEN, RadioSettings, SessionConfig,
+    BatteryFields, IdentityForm, MAX_DEVICE_NAME_LEN, RadioSettings, SessionConfig, UartLinks,
 };
 use umsh_ulcp_runtime::driver::{
     self, DeviceEnv, DeviceRuntime, InEvent, InputChannel, TransportChannels,
 };
+#[cfg(any(not(feature = "wired-usb-serial-jtag"), feature = "ulcp-uart"))]
+use umsh_ulcp_runtime::uart_link;
 use umsh_ulcp_runtime::{radio_mux, transport_policy};
 #[cfg(not(feature = "input-gate"))]
 use umsh_ux_display_tracker::gate::{Disposition, Gate, GateReason};
@@ -192,7 +196,9 @@ use umsh_ux_tracker::battery::{
 #[cfg(not(feature = "input-gate"))]
 use umsh_ux_tracker::button::{ButtonEdge, ButtonEvent, ButtonFsm};
 
-use transport_policy::{Transport, generation_checked};
+use transport_policy::Transport;
+#[cfg(feature = "wired-usb-serial-jtag")]
+use transport_policy::generation_checked;
 
 #[cfg(any(feature = "board-tlora-pager", feature = "board-tdeck"))]
 mod audio_stream;
@@ -293,6 +299,11 @@ compile_error!(
     any(feature = "pmic-axp2101", feature = "board-tlora-pager")
 ))]
 compile_error!("`usb-presence-sof` is for boards that cannot sense VBUS");
+#[cfg(all(feature = "ulcp-uart", not(feature = "board-xiao-esp32s3")))]
+compile_error!("`ulcp-uart` is wired for the XIAO ESP32S3 kit's D6 and D7 alone");
+// One device's own interface: a built-in one or a wired application.
+#[cfg(all(feature = "ulcp-uart", feature = "communicator"))]
+compile_error!("`ulcp-uart` and `communicator` both need the device's own interface");
 #[cfg(not(any(
     feature = "power-off-deep-sleep",
     feature = "pmic-axp2101",
@@ -534,6 +545,10 @@ fn session_config() -> SessionConfig {
         // menu already drives.
         ble_pairing: cfg!(feature = "ble"),
         ble_pin: cfg!(feature = "ble"),
+        uart_links: UartLinks {
+            wired_host: cfg!(not(feature = "wired-usb-serial-jtag")),
+            device: cfg!(feature = "ulcp-uart"),
+        },
         // The SoC restarts on command; see the `reboot` hook below.
         reboot: true,
         dev_identity: true,
@@ -569,6 +584,10 @@ fn session_config() -> SessionConfig {
         #[cfg(not(feature = "ulcp-i2c"))]
         i2c_buses: &[],
         i2c_devices: &[],
+        #[cfg(feature = "node-msg")]
+        node_msg: Some(umsh_ulcp_runtime::node_msg::CONFIG),
+        #[cfg(not(feature = "node-msg"))]
+        node_msg: None,
     }
 }
 
@@ -653,7 +672,7 @@ static INPUT_CH: InputChannel<CriticalSectionRawMutex> = InputChannel::new();
 type FrameBuf = driver::FrameBuf;
 const FRAME_IN_MAX: usize = driver::FRAME_IN_MAX;
 
-/// Outbound frame queues: `wired` drained by output_task (UART0), `ble`
+/// Outbound frame queues: `wired` drained by the wired link (UART0), `ble`
 /// by the GATT connection writer.
 static OUT_CH: TransportChannels<CriticalSectionRawMutex> = TransportChannels::new();
 
@@ -661,6 +680,14 @@ static OUT_CH: TransportChannels<CriticalSectionRawMutex> = TransportChannels::n
 /// and everything the session publishes.
 #[cfg(feature = "communicator")]
 static DEVICE_LINK: driver::DeviceLink<CriticalSectionRawMutex> = driver::DeviceLink::new();
+
+/// The wired application's way into the session, carried on its UART.
+#[cfg(feature = "ulcp-uart")]
+static DEVICE_LINK: driver::DeviceLink<CriticalSectionRawMutex> = driver::DeviceLink::wire();
+
+/// The application UART's rate, unless the build sets another.
+#[cfg(feature = "ulcp-uart")]
+const ULCP_UART_BAUD: u32 = uart_link::baud(option_env!("UMSH_ULCP_UART_BAUD"), 115_200);
 
 /// Published session epoch, checked by each transport at framing edges.
 static SESSION_GEN: AtomicU32 = AtomicU32::new(0);
@@ -2513,11 +2540,8 @@ async fn hears_a_sentence(uart: &mut Uart<'static, Async>) -> bool {
 
 // ─── Wired transport (UART0 or native USB-Serial-JTAG) ───────────────────
 
-/// The wired port's halves, whichever peripheral carries them.
-#[cfg(not(feature = "wired-usb-serial-jtag"))]
-type WiredTx = UartTx<'static, Async>;
-#[cfg(not(feature = "wired-usb-serial-jtag"))]
-type WiredRx = UartRx<'static, Async>;
+/// The native USB port's halves. A UART is served by
+/// [`uart_host_task`] instead.
 #[cfg(feature = "wired-usb-serial-jtag")]
 type WiredTx = UsbSerialJtagTx<'static, Async>;
 #[cfg(feature = "wired-usb-serial-jtag")]
@@ -2529,11 +2553,13 @@ type WiredRx = UsbSerialJtagRx<'static, Async>;
 /// the output queue draining (frames are dropped instead) and the
 /// session alive. A UART drains unconditionally and never comes near
 /// this bound.
+#[cfg(feature = "wired-usb-serial-jtag")]
 const WIRED_WRITE_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// Write all of `bytes`, best-effort. Returns false when the host
 /// stopped draining—the caller abandons the rest of the frame, since
 /// half an HDLC frame is worth less than nothing.
+#[cfg(feature = "wired-usb-serial-jtag")]
 async fn wired_write_all(tx: &mut WiredTx, bytes: &[u8]) -> bool {
     let mut sent = 0;
     while sent < bytes.len() {
@@ -2550,33 +2576,242 @@ async fn wired_write_all(tx: &mut WiredTx, bytes: &[u8]) -> bool {
     true
 }
 
-/// Owns the wired TX half, HDLC-encodes frames, and writes them out.
+/// Writes `parts` as one line of marked text, which an HDLC-Lite host
+/// skips and a serial terminal shows.
+#[cfg(feature = "wired-usb-serial-jtag")]
+async fn wired_write_text(tx: &mut WiredTx, parts: &[&[u8]]) -> bool {
+    let mut octets = hdlc::TextOctets::new(parts);
+    let mut chunk = [0u8; 64];
+    loop {
+        let len = chunk
+            .iter_mut()
+            .zip(&mut octets)
+            .map(|(slot, octet)| *slot = octet)
+            .count();
+        if len == 0 {
+            return true;
+        }
+        if !wired_write_all(tx, &chunk[..len]).await {
+            return false;
+        }
+    }
+}
+
+/// The wired host link on a board whose USB socket reaches a UART
+/// through a bridge: one task for both directions, framed with HDLC-Lite
+/// and paced by the host's XON and XOFF under `PROP_UART_WINDOW`.
+///
+/// A UART bridge cannot tell when a host goes away, so the wired
+/// attachment persists from the first valid frame. A board nobody
+/// serials into stays detached and operates autonomously (queueing and
+/// delegated acknowledgement). Displacement by a BLE attach is observed
+/// as a foreign `SESSION_GEN` bump, which re-arms the lazy attach, so a
+/// displaced serial host reclaims the session with its next frame.
 #[cfg(not(feature = "wired-usb-serial-jtag"))]
 #[embassy_executor::task]
-async fn output_task(mut tx: WiredTx, panic_report: Option<heapless::String<128>>) {
-    output_pump(&mut tx, panic_report).await
+async fn uart_host_task(uart: Uart<'static, Async>, panic_report: Option<heapless::String<128>>) {
+    // A host can write at any moment and light sleep stops the UART, so
+    // a board with a wired UART stays awake for as long as it listens.
+    let _awake = esp_hal::rtc_cntl::WakeLock::new();
+    let (mut rx, mut tx) = uart.split();
+    let mut inbound = UartHostIn {
+        local_generation: SESSION_GEN.load(Ordering::Acquire),
+        own_attach_pending: false,
+        attached: false,
+    };
+    let mut outbound = UartHostOut {
+        panic_report,
+        sending: None,
+    };
+    uart_link::run::<_, _, _, _, _, { hdlc::decoder_capacity(FRAME_IN_MAX) }, UART_RUN_MAX>(
+        &mut rx,
+        &mut tx,
+        &mut inbound,
+        &mut outbound,
+        &uart_link::WINDOW,
+        &(),
+    )
+    .await
+}
+
+/// The application wired to the device's own interface, served on its
+/// UART beside whatever host is attached (spec §The Device's Own
+/// Interface).
+///
+/// The board light-sleeps while the link listens (spec §Waking a Device
+/// on a UART). Three rising edges on RX wake it, which the application's
+/// wake preamble supplies, and a receive interrupt at every octet brings
+/// the first one after the wake to the link at once: otherwise the idle
+/// hook could sleep again before the link takes its wake lock, and spend
+/// more of the preamble.
+#[cfg(feature = "ulcp-uart")]
+#[embassy_executor::task]
+async fn application_uart_task(uart: Uart<'static, Async>) {
+    let (mut rx, mut tx) = uart.split();
+    // UART0 can wake this chip, and three edges is the fewest it counts.
+    rx.enable_wakeup(&esp_hal::uart::WakeupConfig::default())
+        .unwrap();
+    let awake = UartAwake(core::cell::RefCell::new(None));
+    uart_link::serve_device(&mut rx, &mut tx, &DEVICE_LINK, &INPUT_CH, &awake).await
+}
+
+/// The wake lock the application UART's link holds while it needs the
+/// board awake.
+#[cfg(feature = "ulcp-uart")]
+struct UartAwake(core::cell::RefCell<Option<esp_hal::rtc_cntl::WakeLock>>);
+
+#[cfg(feature = "ulcp-uart")]
+impl uart_link::Awake for UartAwake {
+    fn hold(&self) {
+        self.0
+            .borrow_mut()
+            .get_or_insert_with(esp_hal::rtc_cntl::WakeLock::new);
+    }
+
+    fn release(&self) {
+        self.0.borrow_mut().take();
+    }
+}
+
+/// The longest run the UART host link sends at once: a frame, with
+/// marked text ahead of it on a board that reports its input power.
+#[cfg(not(feature = "wired-usb-serial-jtag"))]
+const UART_RUN_MAX: usize = WIRE_MAX + 2 * 256;
+
+/// Encode `parts` as one line of marked text into `wire`, cut short if
+/// it does not fit; the next frame's flag ends it either way.
+#[cfg(not(feature = "wired-usb-serial-jtag"))]
+fn text_run(parts: &[&[u8]], wire: &mut [u8]) -> usize {
+    wire.iter_mut()
+        .zip(hdlc::TextOctets::new(parts))
+        .map(|(slot, octet)| *slot = octet)
+        .count()
+}
+
+/// The host output queue, as the UART link sees it.
+#[cfg(not(feature = "wired-usb-serial-jtag"))]
+struct UartHostOut {
+    /// The previous boot's panic message, sent first as marked text. A
+    /// host skips it; a person reads it with a serial terminal.
+    panic_report: Option<heapless::String<128>>,
+    /// The session generation of the frame being sent; `None` for text,
+    /// which belongs to no session.
+    sending: Option<u32>,
+}
+
+/// The host input, as the UART link sees it.
+#[cfg(not(feature = "wired-usb-serial-jtag"))]
+struct UartHostIn {
+    /// The generation this link last saw.
+    local_generation: u32,
+    /// True while this link's own lazy attach is still unprocessed: the
+    /// single generation bump it causes must not reset the decoder,
+    /// because the octets in flight belong to the very session being
+    /// attached. Any other movement is a displacement.
+    own_attach_pending: bool,
+    /// Whether the link attached and was not displaced since; keeps one
+    /// read's frames from attaching more than once (each attach bumps the
+    /// generation and would void the answer to the frame before).
+    attached: bool,
+}
+
+#[cfg(not(feature = "wired-usb-serial-jtag"))]
+impl uart_link::UartOutbound for UartHostOut {
+    async fn next(&mut self, wire: &mut [u8]) -> usize {
+        if let Some(report) = self.panic_report.take() {
+            self.sending = None;
+            return text_run(&[b"[PREV PANIC]: ", report.as_bytes(), b"\r\n"], wire);
+        }
+        loop {
+            #[cfg(feature = "debug-log")]
+            let outbound = match select(OUT_CH.wired.receive(), DEBUG_CH.receive()).await {
+                Either::First(outbound) => outbound,
+                Either::Second(line) => {
+                    self.sending = None;
+                    return text_run(&[line.as_bytes()], wire);
+                }
+            };
+            #[cfg(not(feature = "debug-log"))]
+            let outbound = OUT_CH.wired.receive().await;
+            if SESSION_GEN.load(Ordering::Acquire) != outbound.generation {
+                continue;
+            }
+            #[allow(unused_mut)]
+            let mut len = 0;
+            #[cfg(feature = "input-gate")]
+            if let Some(report) = input_gate::power_report() {
+                len = text_run(&[report.as_bytes()], wire);
+                input_gate::power_report_sent();
+            }
+            let Ok(frame_len) = hdlc::encode_frame(&outbound.frame, &mut wire[len..]) else {
+                continue;
+            };
+            self.sending = Some(outbound.generation);
+            return len + frame_len;
+        }
+    }
+
+    fn current(&self) -> bool {
+        self.sending
+            .is_none_or(|generation| SESSION_GEN.load(Ordering::Acquire) == generation)
+    }
+}
+
+#[cfg(not(feature = "wired-usb-serial-jtag"))]
+impl uart_link::UartInbound for UartHostIn {
+    async fn frame(&mut self, bytes: &[u8]) {
+        if !self.attached {
+            self.attached = true;
+            self.own_attach_pending = true;
+            INPUT_CH.send(InEvent::Attached(Transport::Usb)).await;
+        }
+        let mut frame = heapless::Vec::new();
+        let _ = frame.extend_from_slice(bytes);
+        INPUT_CH.send(InEvent::Frame(Transport::Usb, frame)).await;
+    }
+
+    async fn lost(&mut self) {
+        // Before the lazy attach there is no session for it to end.
+        if self.attached {
+            debug_log(format_args!("wired frame lost"));
+            INPUT_CH.send(InEvent::FrameLost(Transport::Usb)).await;
+        }
+    }
+
+    fn resync(&mut self) -> bool {
+        let generation = SESSION_GEN.load(Ordering::Acquire);
+        if generation == self.local_generation {
+            return false;
+        }
+        let own = core::mem::take(&mut self.own_attach_pending)
+            && generation == self.local_generation.wrapping_add(1);
+        self.local_generation = generation;
+        if !own {
+            // A BLE attach, or a racing burst: re-arm the lazy attach.
+            self.attached = false;
+        }
+        !own
+    }
 }
 
 /// The wired TX pump: HDLC-encode frames and write them out. Never
-/// returns; on the USB-Serial-JTAG board the supervisor cancels it when
-/// VBUS drops.
+/// returns; the supervisor cancels it when VBUS drops.
+#[cfg(feature = "wired-usb-serial-jtag")]
 async fn output_pump(tx: &mut WiredTx, panic_report: Option<heapless::String<128>>) {
-    // Emit the previous boot's panic message as ASCII. HDLC hosts
-    // resynchronize past it; humans read it with a serial terminal.
+    // Emit the previous boot's panic message as marked text. HDLC hosts
+    // skip it; humans read it with a serial terminal.
     // There is no reader handshake to wait for—it lands in the bridge
     // (or the bounded write drops it with no host attached), which is
     // the correct behavior for a serial console.
     if let Some(report) = panic_report {
-        let _ = wired_write_all(tx, b"[PREV PANIC]: ").await;
-        let _ = wired_write_all(tx, report.as_bytes()).await;
-        let _ = wired_write_all(tx, b"\r\n").await;
+        let _ = wired_write_text(tx, &[b"[PREV PANIC]: ", report.as_bytes(), b"\r\n"]).await;
     }
     loop {
         #[cfg(feature = "debug-log")]
         let outbound = match select(OUT_CH.wired.receive(), DEBUG_CH.receive()).await {
             Either::First(outbound) => outbound,
             Either::Second(line) => {
-                let _ = wired_write_all(tx, line.as_bytes()).await;
+                let _ = wired_write_text(tx, &[line.as_bytes()]).await;
                 continue;
             }
         };
@@ -2587,7 +2822,7 @@ async fn output_pump(tx: &mut WiredTx, panic_report: Option<heapless::String<128
         }
         #[cfg(feature = "input-gate")]
         if let Some(report) = input_gate::power_report() {
-            if wired_write_all(tx, report.as_bytes()).await {
+            if wired_write_text(tx, &[report.as_bytes()]).await {
                 input_gate::power_report_sent();
             }
         }
@@ -2605,29 +2840,13 @@ async fn output_pump(tx: &mut WiredTx, panic_report: Option<heapless::String<128
     }
 }
 
-/// Owns the wired RX half and HDLC decoder, forwarding frames into
-/// `INPUT_CH`. UART bridges cannot detect host disconnection, so their
-/// wired attachment persists after the first valid HDLC frame. Native
-/// USB instead uses the supervisor below to detach on VBUS loss. A board
-/// nobody serials into stays detached and operates
-/// autonomously (queueing and delegated acknowledgement). Displacement
-/// by a BLE attach is observed as a foreign `SESSION_GEN` bump, which
-/// re-arms the lazy attach, so a displaced serial host reclaims the
-/// session with its next frame.
-#[cfg(not(feature = "wired-usb-serial-jtag"))]
-#[embassy_executor::task]
-async fn uart_in_task(mut rx: WiredRx) {
-    // A host can write at any moment and light sleep stops the UART, so
-    // a board with a wired UART stays awake for as long as it listens.
-    let _awake = esp_hal::rtc_cntl::WakeLock::new();
-    input_pump(&mut rx).await
-}
-
-/// The wired RX pump. Never returns; on the USB-Serial-JTAG board the
-/// supervisor cancels it when VBUS drops, and the decoder state dies
-/// with it—a torn frame cannot outlive the cable that carried it.
+/// The wired RX pump. Never returns; the supervisor cancels it when VBUS
+/// drops, and the decoder state dies with it—a torn frame cannot outlive
+/// the cable that carried it. Lazy attach and displacement work as on a
+/// UART (see [`uart_host_task`]).
+#[cfg(feature = "wired-usb-serial-jtag")]
 async fn input_pump(rx: &mut WiredRx) {
-    let mut decoder: hdlc::Decoder<FRAME_IN_MAX> = hdlc::Decoder::new();
+    let mut decoder: hdlc::Decoder<{ hdlc::decoder_capacity(FRAME_IN_MAX) }> = hdlc::Decoder::new();
     let mut local_generation = SESSION_GEN.load(Ordering::Acquire);
     // True while this task's own lazy attach is still unprocessed: the
     // resulting single generation bump must not reset the decoder,
@@ -2657,13 +2876,29 @@ async fn input_pump(rx: &mut WiredRx) {
         let mut packet = [0u8; 64];
         match embedded_io_async::Read::read(rx, &mut packet).await {
             Ok(0) => {}
-            // A FIFO overflow or framing error costs the in-flight
-            // frame, not the session: resynchronize on the next flag.
-            Err(_) => decoder.reset(),
+            // A FIFO overflow or framing error loses whatever was in
+            // flight, which ends the host's session (spec §Lost Frames);
+            // the decoder resynchronizes on the next flag.
+            Err(_) => {
+                decoder.reset();
+                if wired_attached {
+                    INPUT_CH.send(InEvent::FrameLost(Transport::Usb)).await;
+                }
+            }
             Ok(len) => {
                 for &byte in &packet[..len] {
-                    let Some(Ok(bytes)) = decoder.push(byte) else {
-                        continue;
+                    let bytes = match decoder.push(byte) {
+                        None => continue,
+                        Some(Ok(bytes)) => bytes,
+                        // Before the lazy attach there is no session for
+                        // a damaged frame to end.
+                        Some(Err(error)) => {
+                            if wired_attached {
+                                debug_log(format_args!("wired frame lost error={error:?}"));
+                                INPUT_CH.send(InEvent::FrameLost(Transport::Usb)).await;
+                            }
+                            continue;
+                        }
                     };
                     // Covers both first-ever contact and reclaiming
                     // the session after a BLE displacement (which
@@ -2945,9 +3180,9 @@ async fn device_task(
             ctl: &DEVICE_CTL,
             out: &OUT_CH,
             session_gen: &SESSION_GEN,
-            #[cfg(feature = "communicator")]
+            #[cfg(any(feature = "communicator", feature = "ulcp-uart"))]
             device: Some(&DEVICE_LINK),
-            #[cfg(not(feature = "communicator"))]
+            #[cfg(not(any(feature = "communicator", feature = "ulcp-uart")))]
             device: None,
             snapshot: &SNAPSHOT_CTL,
         },
@@ -4178,11 +4413,7 @@ async fn main(spawner: Spawner) {
         .with_tx(peripherals.GPIO1)
         .into_async();
     #[cfg(not(feature = "wired-usb-serial-jtag"))]
-    {
-        let (wired_rx, wired_tx) = uart.split();
-        spawner.spawn(output_task(wired_tx, panic_report.clone()).unwrap());
-        spawner.spawn(uart_in_task(wired_rx).unwrap());
-    }
+    spawner.spawn(uart_host_task(uart, panic_report.clone()).unwrap());
     // Pinless: the peripheral owns GPIO19/20 itself. The supervisor
     // constructs and drops the driver as a host comes and goes.
     #[cfg(feature = "wired-usb-serial-jtag")]
@@ -4191,6 +4422,27 @@ async fn main(spawner: Spawner) {
     spawner.spawn(usb_presence_task().unwrap());
     #[cfg(all(feature = "wired-usb-serial-jtag", not(feature = "usb-presence-sof")))]
     spawner.spawn(usb_vbus_task().unwrap());
+    // The application's UART: UART0 on the header's D6 (TX) and D7 (RX),
+    // free here because the host's wired transport is the native USB
+    // port. The boot ROM prints on D6 at every reset, which the
+    // application reads as a lost frame: the radio has restarted, and
+    // that is the right reading.
+    #[cfg(feature = "ulcp-uart")]
+    spawner.spawn(
+        application_uart_task(
+            Uart::new(
+                peripherals.UART0,
+                UartConfig::default()
+                    .with_baudrate(ULCP_UART_BAUD)
+                    .with_rx(esp_hal::uart::RxConfig::default().with_fifo_full_threshold(1)),
+            )
+            .unwrap()
+            .with_rx(peripherals.GPIO44)
+            .with_tx(peripherals.GPIO43)
+            .into_async(),
+        )
+        .unwrap(),
+    );
 
     #[cfg(feature = "vext")]
     vext.enable().await;

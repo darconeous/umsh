@@ -37,11 +37,12 @@ use umsh_radio_loraphy::{
     bandwidth_from_hz, coding_rate_from_denom, spreading_factor_from_u8,
 };
 use umsh_ulcp::Status;
+use umsh_ulcp::frame::SessionEndReason;
 use umsh_ulcp::i2c::{ScanRequest, TransferRequest};
 use umsh_ulcp::stats::{Counter, StatsLedger};
 use umsh_ulcp_device::listeners::{Mirrors, Writes};
 use umsh_ulcp_device::{
-    Effect, I2C_DATA_MAX, IdentityForm, IdentitySource, MAX_CHANNEL_KEYS, MAX_DEV_ADMINS,
+    Effect, HostLink, I2C_DATA_MAX, IdentityForm, IdentitySource, MAX_CHANNEL_KEYS, MAX_DEV_ADMINS,
     MAX_DEV_PEERS, MAX_REPEATER_REGIONS, NETWORK_TABLE_MAX, QueuedNotice, REGION_STRING_MAX_LEN,
     RadioRxInfo, Resolvers, SNAPSHOT_MAX, Session, TxOutcome, TxPower,
 };
@@ -145,6 +146,12 @@ pub enum InEvent {
     Attached(Transport),
     Detached(Transport),
     Frame(Transport, FrameBuf),
+    /// The transport could not hand over whole a frame the host sent: a
+    /// failed FCS, a framing violation, a reassembly discard (spec §Lost
+    /// Frames). The host's session ends: on the wired transport with
+    /// `CMD_SESSION_DID_END`, over BLE by closing the connection, which a
+    /// BLE task that found the loss does itself without reporting it.
+    FrameLost(Transport),
     /// One ULCP frame from a mesh administrator, whose response must fit
     /// `reply_budget` octets. The driver answers on [`ADMIN_REPLY`].
     ///
@@ -167,6 +174,11 @@ pub enum InEvent {
     /// once, so the interface never times one out. It is not an attach,
     /// and it displaces no host.
     Device(FrameBuf),
+    /// The UART an application is wired to could not hand over whole a
+    /// frame the application sent (spec §Lost Frames): the application's
+    /// session ends with `CMD_SESSION_DID_END`.
+    #[cfg(feature = "uart-link")]
+    DeviceFrameLost,
     /// Someone cancelled a running locate alert at the device—the
     /// button press of whoever found the radio. Ignored when no alert is
     /// running, so a board may report the press unconditionally.
@@ -183,6 +195,18 @@ pub enum InEvent {
     /// device already reachable would otherwise strand it—and ignored
     /// entirely when Bluetooth is already on or the device has none.
     ForceBluetoothOn,
+    /// Node messaging: send `id` finished, or was refused, with `status`.
+    #[cfg(feature = "node-msg")]
+    NodeMsgResult {
+        id: u16,
+        status: Status,
+    },
+    /// Node messaging: `PROP_NODE_MSG_MTU`, as the device node measures it.
+    #[cfg(feature = "node-msg")]
+    NodeMsgMtu(u16),
+    /// Node messaging: a held message may have a link to go to now.
+    #[cfg(feature = "node-msg")]
+    NodeMsgPending,
 }
 
 /// A device-domain switch a board may offer as a control the operator
@@ -238,6 +262,16 @@ pub struct TransportChannels<M: RawMutex> {
     /// [`HOST_STALL_LIMIT`] and not taken any since. Only the driver
     /// reads or writes these.
     stalled: [AtomicBool; 2],
+    /// Per transport, whether an answer or a publication was discarded
+    /// for a host that was not reading: a frame owed and not sent, which
+    /// ends the session. Set where the frame is dropped, taken by the
+    /// driver at the tail of its loop.
+    owed_lost: [AtomicBool; 2],
+    /// Per transport, whether the driver wants the connection closed
+    /// (spec §Sessions: a connection link's session ends with its
+    /// connection). The transport's task takes it before carrying its
+    /// next frame. Only BLE can be closed.
+    close: [AtomicBool; 2],
 }
 
 impl<M: RawMutex> TransportChannels<M> {
@@ -246,6 +280,8 @@ impl<M: RawMutex> TransportChannels<M> {
             wired: Channel::new(),
             ble: Channel::new(),
             stalled: [const { AtomicBool::new(false) }; 2],
+            owed_lost: [const { AtomicBool::new(false) }; 2],
+            close: [const { AtomicBool::new(false) }; 2],
         }
     }
 
@@ -257,10 +293,56 @@ impl<M: RawMutex> TransportChannels<M> {
     }
 
     fn stalled(&self, transport: Transport) -> &AtomicBool {
-        &self.stalled[match transport {
+        &self.stalled[Self::index(transport)]
+    }
+
+    const fn index(transport: Transport) -> usize {
+        match transport {
             Transport::Usb => 0,
             Transport::Ble => 1,
-        }]
+        }
+    }
+
+    /// Whether the driver has asked for this transport's connection to be
+    /// closed, clearing the request. A transport task calls this before
+    /// carrying each frame, and closes the connection instead when true.
+    pub fn take_close_request(&self, transport: Transport) -> bool {
+        self.close[Self::index(transport)].swap(false, Ordering::AcqRel)
+    }
+
+    fn request_close(&self, transport: Transport) {
+        self.close[Self::index(transport)].store(true, Ordering::Release);
+    }
+
+    fn take_owed_lost(&self, transport: Transport) -> bool {
+        self.owed_lost[Self::index(transport)].swap(false, Ordering::AcqRel)
+    }
+
+    /// Queue `frame` for `transport` if there is room now, without
+    /// waiting. Taking it ends a stall, as any frame taken does.
+    fn offer(&self, transport: Transport, generation: u32, frame: &[u8]) -> bool {
+        let Ok(copy) = FrameBuf::from_slice(frame) else {
+            return false;
+        };
+        let queued = OutFrame {
+            completion: None,
+            finish_ble_wipe: false,
+            generation,
+            frame: copy,
+        };
+        let taken = self.for_transport(transport).try_send(queued).is_ok();
+        if taken {
+            self.stalled(transport).store(false, Ordering::Relaxed);
+        }
+        taken
+    }
+
+    /// A new host attached over `transport`: nothing owed to or asked of
+    /// the one before carries over.
+    fn attached(&self, transport: Transport) {
+        let index = Self::index(transport);
+        self.owed_lost[index].store(false, Ordering::Relaxed);
+        self.close[index].store(false, Ordering::Relaxed);
     }
 }
 
@@ -285,18 +367,42 @@ impl<M: RawMutex> Default for TransportChannels<M> {
 /// Frames held for the device's own interface until it reads them.
 pub const DEVICE_LINK_DEPTH: usize = 8;
 
+/// Publish `frame` to a [`DeviceLink`], waiting only where the build has
+/// a wire to wait for.
+macro_rules! publish {
+    ($link:expr, $frame:expr) => {{
+        #[cfg(feature = "uart-link")]
+        $link.publish($frame).await;
+        #[cfg(not(feature = "uart-link"))]
+        $link.publish($frame);
+    }};
+}
+
 /// The return path to the device's own settings interface: the answers
 /// to its [`InEvent::Device`] requests, and everything the device
 /// publishes.
 ///
-/// An answer always gets through: the driver waits for room. A
-/// publication never waits, because the interface's task may itself be
-/// waiting on the driver. One that finds the link full is dropped, and
-/// the interface hears [`DeviceFrame::Overrun`] in its place, after the
-/// frames that were queued ahead of it.
+/// For a built-in interface, an answer always gets through: the driver
+/// waits for room. A publication never waits, because the interface's
+/// task may itself be waiting on the driver. One that finds the link full
+/// is dropped, and the interface hears [`DeviceFrame::Overrun`] in its
+/// place, after the frames that were queued ahead of it.
+///
+/// An application on a wire ([`DeviceLink::wire`]) is a link that may
+/// stop reading, and is served as a host is (spec §A Link That Stops
+/// Reading): an answer or a publication waits for room until the link has
+/// refused output for [`HOST_STALL_LIMIT`], and one discarded after that
+/// ends the link's session.
 pub struct DeviceLink<M: RawMutex> {
     frames: Channel<M, FrameBuf, DEVICE_LINK_DEPTH>,
+    /// A frame owed the interface was discarded.
     overrun: AtomicBool,
+    #[cfg(feature = "uart-link")]
+    wire: bool,
+    /// The wire has refused output for [`HOST_STALL_LIMIT`] and taken
+    /// none since.
+    #[cfg(feature = "uart-link")]
+    stalled: AtomicBool,
 }
 
 /// What the device's own interface reads from its [`DeviceLink`].
@@ -313,11 +419,41 @@ pub enum DeviceFrame {
 }
 
 impl<M: RawMutex> DeviceLink<M> {
+    /// The link to a built-in interface.
     pub const fn new() -> Self {
         Self {
             frames: Channel::new(),
             overrun: AtomicBool::new(false),
+            #[cfg(feature = "uart-link")]
+            wire: false,
+            #[cfg(feature = "uart-link")]
+            stalled: AtomicBool::new(false),
         }
+    }
+
+    /// The link to an application wired to the device, which
+    /// [`crate::uart_link::serve_device`] carries.
+    #[cfg(feature = "uart-link")]
+    pub const fn wire() -> Self {
+        Self {
+            frames: Channel::new(),
+            overrun: AtomicBool::new(false),
+            wire: true,
+            stalled: AtomicBool::new(false),
+        }
+    }
+
+    /// The next frame for the wire.
+    #[cfg(feature = "uart-link")]
+    pub(crate) async fn next_frame(&self) -> FrameBuf {
+        self.frames.receive().await
+    }
+
+    /// Whether a frame owed the wire was discarded since this was last
+    /// asked, which ends its session.
+    #[cfg(feature = "uart-link")]
+    fn take_owed_lost(&self) -> bool {
+        self.wire && self.overrun.swap(false, Ordering::AcqRel)
     }
 
     /// The next frame for the interface, if there is one.
@@ -338,40 +474,134 @@ impl<M: RawMutex> DeviceLink<M> {
         self.frames.ready_to_receive().await
     }
 
+    /// Queue `frame` if there is room now, without waiting and without
+    /// recording an overrun: a frame that can wait for the link to read.
+    #[cfg(any(feature = "node-msg", feature = "uart-link"))]
+    fn offer(&self, frame: &[u8]) -> bool {
+        let taken =
+            FrameBuf::from_slice(frame).is_ok_and(|copy| self.frames.try_send(copy).is_ok());
+        // Taking a frame is what ends a stall.
+        #[cfg(feature = "uart-link")]
+        if taken {
+            self.stalled.store(false, Ordering::Relaxed);
+        }
+        taken
+    }
+
+    /// A publication. Called through [`publish!`], since only a wire ever
+    /// waits for one: a build without one has no await point here.
+    #[cfg(not(feature = "uart-link"))]
     fn publish(&self, frame: &[u8]) {
-        let Ok(copy) = FrameBuf::from_slice(frame) else {
-            debug_assert!(false, "a publication exceeds FrameBuf");
+        if let Some(copy) = Self::publication(frame) {
+            self.publish_now(copy);
+        }
+    }
+
+    /// A publication, owed a wire as an answer is. Called through
+    /// [`publish!`].
+    #[cfg(feature = "uart-link")]
+    async fn publish(&self, frame: &[u8]) {
+        let Some(copy) = Self::publication(frame) else {
             return;
         };
+        if self.wire {
+            self.owe(copy).await;
+        } else {
+            self.publish_now(copy);
+        }
+    }
+
+    fn publication(frame: &[u8]) -> Option<FrameBuf> {
+        let copy = FrameBuf::from_slice(frame).ok();
+        debug_assert!(copy.is_some(), "a publication exceeds FrameBuf");
+        copy
+    }
+
+    /// A built-in interface's publication, which never waits: one that
+    /// finds the link full is dropped and leaves the overrun mark.
+    fn publish_now(&self, copy: FrameBuf) {
         if self.frames.try_send(copy).is_err() {
             self.overrun.store(true, Ordering::Release);
         }
     }
 
-    /// An answer too large for the link goes out as a `NOMEM` status under
-    /// the same TID, so the interface hears that its request failed and
-    /// takes the TID back instead of waiting it out.
-    async fn answer(&self, frame: &[u8]) {
-        if let Ok(copy) = FrameBuf::from_slice(frame) {
-            self.frames.send(copy).await;
-            return;
+    /// Queue a frame owed the interface, waiting for room as the link
+    /// allows.
+    #[cfg(feature = "uart-link")]
+    async fn owe(&self, copy: FrameBuf) {
+        if !self.wire {
+            return self.frames.send(copy).await;
         }
-        let Some(header) = frame
-            .first()
-            .copied()
-            .and_then(umsh_ulcp::frame::Header::from_byte)
-        else {
-            return;
-        };
-        let mut status = [0u8; 16];
-        let Ok(len) = umsh_ulcp::frame::last_status(&mut status, header.tid(), Status::NOMEM)
-        else {
-            return;
-        };
-        if let Ok(copy) = FrameBuf::from_slice(&status[..len]) {
-            self.frames.send(copy).await;
+        if !send_unless_stalled(&self.frames, &self.stalled, copy, None).await {
+            self.overrun.store(true, Ordering::Release);
         }
     }
+
+    /// Queue a frame owed the interface, waiting for room: a built-in
+    /// interface always reads.
+    #[cfg(not(feature = "uart-link"))]
+    fn owe(
+        &self,
+        copy: FrameBuf,
+    ) -> embassy_sync::channel::SendFuture<'_, M, FrameBuf, DEVICE_LINK_DEPTH> {
+        self.frames.send(copy)
+    }
+
+    async fn answer(&self, frame: &[u8]) {
+        if let Some(copy) = Self::answer_copy(frame) {
+            self.owe(copy).await;
+        }
+    }
+
+    /// The answer as the link takes it. One too large for the link goes
+    /// out as a `NOMEM` status under the same TID, so the interface hears
+    /// that its request failed and takes the TID back instead of waiting
+    /// it out.
+    fn answer_copy(frame: &[u8]) -> Option<FrameBuf> {
+        if let Ok(copy) = FrameBuf::from_slice(frame) {
+            return Some(copy);
+        }
+        let header = frame
+            .first()
+            .copied()
+            .and_then(umsh_ulcp::frame::Header::from_byte)?;
+        let mut status = [0u8; 16];
+        let len = umsh_ulcp::frame::last_status(&mut status, header.tid(), Status::NOMEM).ok()?;
+        FrameBuf::from_slice(&status[..len]).ok()
+    }
+}
+
+/// Queue `item` for a link that may have stopped reading (spec §A Link
+/// That Stops Reading): at once if there is room, and otherwise by
+/// `deadline` (by default [`HOST_STALL_LIMIT`] from now), unless the link
+/// has already refused output that long and taken nothing since. False
+/// when the item was discarded; the link is stalled from then until it
+/// takes a frame again.
+async fn send_unless_stalled<M: RawMutex, T, const N: usize>(
+    channel: &Channel<M, T, N>,
+    stalled: &AtomicBool,
+    item: T,
+    deadline: Option<Instant>,
+) -> bool {
+    let item = match channel.try_send(item) {
+        Ok(()) => {
+            stalled.store(false, Ordering::Relaxed);
+            return true;
+        }
+        Err(embassy_sync::channel::TrySendError::Full(item)) => item,
+    };
+    if stalled.load(Ordering::Relaxed) {
+        return false;
+    }
+    let deadline = deadline.unwrap_or_else(|| Instant::now() + HOST_STALL_LIMIT);
+    if embassy_time::with_deadline(deadline, channel.send(item))
+        .await
+        .is_ok()
+    {
+        return true;
+    }
+    stalled.store(true, Ordering::Relaxed);
+    false
 }
 
 impl<M: RawMutex> Default for DeviceLink<M> {
@@ -1162,11 +1392,11 @@ impl Emitter {
                 } => {
                     if let Some(link) = device {
                         if is_publication(frame) {
-                            link.publish(frame);
+                            publish!(link, frame);
                         } else if self.mirror {
                             let mut mirrors = Mirrors::new(frame);
                             while let Some(mirror) = mirrors.next() {
-                                link.publish(mirror);
+                                publish!(link, mirror);
                             }
                         }
                     }
@@ -1188,7 +1418,7 @@ impl Emitter {
                             let mut mirrors = Mirrors::new(frame);
                             while let Some(mirror) = mirrors.next() {
                                 if let Some(link) = device {
-                                    link.publish(mirror);
+                                    publish!(link, mirror);
                                 }
                                 plain.send(*destination, out, mirror).await;
                             }
@@ -1205,7 +1435,7 @@ impl Emitter {
                     if is_publication(frame) {
                         // Everyone listening hears a publication, the host
                         // included, whoever's request it came out of.
-                        link.publish(frame);
+                        publish!(link, frame);
                         plain.send(*destination, out, frame).await;
                     } else {
                         if self.mirror {
@@ -1280,33 +1510,23 @@ impl HostFrame {
             generation,
             frame: copy,
         };
-        let queued = match channel.try_send(queued) {
-            Ok(()) => {
+        if self.live {
+            // A live reception goes now or not at all.
+            if channel.try_send(queued).is_ok() {
                 // Taking a frame is what ends a stall.
                 stalled.store(false, Ordering::Relaxed);
                 return true;
             }
-            Err(embassy_sync::channel::TrySendError::Full(queued)) => queued,
-        };
-        if self.live {
             self.dropped(Counter::HostRxDropped);
             return false;
         }
-        if !stalled.load(Ordering::Relaxed) {
-            // A reply with a completion already carries its own deadline.
-            let deadline = self.completion.map_or_else(
-                || Instant::now() + HOST_STALL_LIMIT,
-                |completion| completion.deadline(),
-            );
-            if embassy_time::with_deadline(deadline, channel.send(queued))
-                .await
-                .is_ok()
-            {
-                return true;
-            }
-            stalled.store(true, Ordering::Relaxed);
+        // A reply with a completion already carries its own deadline.
+        let deadline = self.completion.map(|completion| completion.deadline());
+        if send_unless_stalled(channel, stalled, queued, deadline).await {
+            return true;
         }
         self.dropped(Counter::HostOutDropped);
+        out.owed_lost[TransportChannels::<M>::index(transport)].store(true, Ordering::Release);
         false
     }
 
@@ -1359,16 +1579,67 @@ enum ReplySink<'a, M: RawMutex> {
 
 impl<M: RawMutex + 'static> ReplySink<'static, M> {
     /// Frames for the attached host: everything the session emits outside
-    /// an exchange, and the answers to the host's own frames.
-    fn host<const RX: usize, const TX: usize>(
+    /// an exchange. A host whose session has ended is sent nothing until
+    /// it starts a new one, and neither is the device's own interface.
+    fn host<A, S, const TXQ: usize, const RX: usize, const TX: usize>(
         arbitration: &SessionArbitration,
         rt: &DeviceRuntime<M, RX, TX>,
-    ) -> Self {
+        session: &Session<A, S, TXQ>,
+    ) -> Self
+    where
+        A: AesProvider,
+        S: Sha256Provider,
+    {
         Self::Transport {
-            destination: arbitration.destination(),
+            destination: host_listening(arbitration, session),
             out: rt.out,
-            device: rt.device,
+            device: device_listening(session, rt),
         }
+    }
+}
+
+/// Where the attached host hears publications, unless its session has
+/// ended: it then hears nothing but the notice of that until it starts a
+/// new one.
+fn host_listening<A, S, const TXQ: usize>(
+    arbitration: &SessionArbitration,
+    session: &Session<A, S, TXQ>,
+) -> Option<(Transport, u32)>
+where
+    A: AesProvider,
+    S: Sha256Provider,
+{
+    arbitration
+        .destination()
+        .filter(|_| session.host_session_live())
+}
+
+/// The device's own interface, unless its session has ended, as for
+/// [`host_listening`].
+fn device_listening<A, S, const TXQ: usize, M, const RX: usize, const TX: usize>(
+    session: &Session<A, S, TXQ>,
+    rt: &DeviceRuntime<M, RX, TX>,
+) -> Option<&'static DeviceLink<M>>
+where
+    A: AesProvider,
+    S: Sha256Provider,
+    M: RawMutex,
+{
+    rt.device.filter(|_| session.device_session_live())
+}
+
+/// End the attached host's session the way its transport allows (spec
+/// §Sessions): in-band on the wired transport, a serial link; by closing
+/// the connection over BLE.
+fn end_host_session<A: AesProvider, S: Sha256Provider, const TXQ: usize, M: RawMutex>(
+    session: &mut Session<A, S, TXQ>,
+    out: &TransportChannels<M>,
+    transport: Transport,
+    reason: SessionEndReason,
+) {
+    match transport {
+        Transport::Usb => session.end_session(reason),
+        Transport::Ble => out.request_close(transport),
     }
 }
 
@@ -1486,7 +1757,67 @@ async fn apply_effect<A, S, const TXQ: usize, M, const RX: usize, const TX: usiz
         | Some(Effect::Reboot)
         | Some(Effect::Dfu { .. })
         | Some(Effect::Announce { .. })
+        | Some(Effect::NodeMsgSend { .. })
+        | Some(Effect::SessionStarted { .. })
         | None => {}
+    }
+}
+
+/// Hand held node messages to the link that receives them (spec §Who
+/// Receives), oldest first, for as long as it has room. A link found full
+/// is tried again shortly, from [`crate::node_msg::node_msg_loop`].
+#[cfg(feature = "node-msg")]
+fn deliver_node_msgs<A, S, const TXQ: usize, M, const RX: usize, const TX: usize>(
+    session: &Session<A, S, TXQ>,
+    arbitration: &SessionArbitration,
+    rt: &DeviceRuntime<M, RX, TX>,
+) where
+    A: AesProvider,
+    S: Sha256Provider,
+    M: RawMutex,
+{
+    use crate::node_msg::INBOX;
+    use umsh_ulcp_device::Binding;
+    let Some(binding) = session.node_msg_receiver(rt.device.is_some()) else {
+        return;
+    };
+    // Where the host's frames go; `None` for the device's own interface.
+    let destination = match binding {
+        Binding::Local => match arbitration.destination() {
+            Some(destination) => Some(destination),
+            None => return,
+        },
+        _ => None,
+    };
+    let mut frame = [0u8; FRAME_OUT_MAX];
+    loop {
+        let Some((seq, encoded)) = INBOX.lock(|inbox| {
+            let inbox = inbox.borrow();
+            let waiting = inbox.next(binding)?;
+            let encoded = waiting
+                .message
+                .encode(waiting.redelivered, waiting.gap, &mut frame);
+            Some((waiting.seq, encoded))
+        }) else {
+            return;
+        };
+        let taken = match encoded {
+            Ok(len) => match destination {
+                Some((transport, generation)) => rt.out.offer(transport, generation, &frame[..len]),
+                None => rt.device.is_some_and(|link| link.offer(&frame[..len])),
+            },
+            // Every message the inbox holds fits a frame. One that did not
+            // would never go out, so it goes no further.
+            Err(_) => {
+                debug_assert!(false, "a held node message exceeds a frame");
+                true
+            }
+        };
+        if !taken {
+            crate::node_msg::link_full();
+            return;
+        }
+        INBOX.lock(|inbox| inbox.borrow_mut().delivered(seq, binding));
     }
 }
 
@@ -1721,6 +2052,17 @@ fn sync_dev_domain<A, S, const TXQ: usize, E>(
     }
     for public_key in session.dev_admins() {
         let _ = snapshot.admins.push(public_key);
+    }
+    // The claims are device domain too. The receive tap and the MAC's
+    // admission read them from the node's side of the mirror.
+    #[cfg(feature = "node-msg")]
+    if let Some(claims) = session.node_msg_types() {
+        crate::node_msg::publish_claims(claims);
+    }
+    // The window too, which the UART link task reads at each XON.
+    #[cfg(feature = "uart-link")]
+    if let Some(window) = session.uart_window() {
+        crate::uart_link::WINDOW.publish(window);
     }
     // Ahead of the mirror: the mirror is consumed by the device node,
     // and Bluetooth reachability is the transport's business rather than
@@ -2127,6 +2469,25 @@ where
                 env.trace(format_args!("CMD_FACTORY_RESET: wiping all state + reboot"));
                 env.factory_reset().await
             }
+            #[cfg(feature = "node-msg")]
+            Some(Effect::NodeMsgSend { id }) => {
+                // The node's send queue is full: as busy as a session
+                // table with no row free.
+                if let Some(request) = session.take_node_msg_request()
+                    && crate::node_msg::SENDS.try_send(request).is_err()
+                {
+                    session.on_node_msg_result(id, Status::BUSY, &mut |frame: &[u8]| {
+                        emitter.push(frame)
+                    });
+                    emitter.flush(sink).await;
+                }
+            }
+            // What was delivered to the link may not have reached it; the
+            // driver hands it over again at the end of this pass.
+            #[cfg(feature = "node-msg")]
+            Some(Effect::SessionStarted { binding }) => {
+                crate::node_msg::INBOX.lock(|inbox| inbox.borrow_mut().redeliver(binding));
+            }
             Some(Effect::Reboot) => {
                 // Same shape as the factory reset above and none of the
                 // erasing: the platform restarts and the device comes
@@ -2372,6 +2733,15 @@ where
             .await
         };
 
+        // A frame from a UART link, whose task holds an XON back until
+        // the frames ahead of it have been acted on.
+        #[cfg(feature = "uart-link")]
+        let from_uart = match &event {
+            Either4::First(InEvent::Frame(Transport::Usb, _)) => session.uart_links().wired_host,
+            Either4::First(InEvent::Device(_)) => session.uart_links().device,
+            _ => false,
+        };
+
         match event {
             Either4::First(InEvent::Attached(transport)) => {
                 // Fresh session state for the new host session; the
@@ -2380,6 +2750,7 @@ where
                 // untouched and nothing is emitted (full-protocol
                 // attach semantics).
                 arbitration.attach(transport);
+                rt.out.attached(transport);
                 rt.session_gen
                     .store(arbitration.generation(), Ordering::Release);
                 env.set_advertising_allowed(arbitration.advertising_allowed());
@@ -2388,7 +2759,37 @@ where
                 // possession, BLE because the ULCP GATT service
                 // refuses any access outside an encrypted LESC-bonded
                 // link.
-                session.attach(true);
+                session.attach_over(
+                    match transport {
+                        Transport::Usb => HostLink::Wired,
+                        Transport::Ble => HostLink::Wireless,
+                    },
+                    true,
+                );
+            }
+            Either4::First(InEvent::FrameLost(transport)) => {
+                // A displaced transport's loss is not the host's.
+                if arbitration.accepts_frame(transport) {
+                    end_host_session(session, rt.out, transport, SessionEndReason::FrameLost);
+                    // The lost frame may have been a node message's.
+                    #[cfg(feature = "node-msg")]
+                    crate::node_msg::INBOX.lock(|inbox| {
+                        inbox
+                            .borrow_mut()
+                            .redeliver(umsh_ulcp_device::Binding::Local)
+                    });
+                }
+            }
+            #[cfg(feature = "uart-link")]
+            Either4::First(InEvent::DeviceFrameLost) => {
+                session.end_device_session(SessionEndReason::FrameLost);
+                // The lost frame may have been a node message's.
+                #[cfg(feature = "node-msg")]
+                crate::node_msg::INBOX.lock(|inbox| {
+                    inbox
+                        .borrow_mut()
+                        .redeliver(umsh_ulcp_device::Binding::Device)
+                });
             }
             Either4::First(InEvent::Detached(transport)) => {
                 // Only the active transport's detach ends the
@@ -2405,7 +2806,9 @@ where
                 // attached—`cancel_alert` handles that—and a press
                 // with no alert running is simply nothing.
                 let effect = session.cancel_alert(&mut |frame: &[u8]| emitter.push(frame));
-                emitter.flush(&mut ReplySink::host(&arbitration, &rt)).await;
+                emitter
+                    .flush(&mut ReplySink::host(&arbitration, &rt, session))
+                    .await;
                 apply_effect(session, effect, &rt, &mut env).await;
             }
             Either4::First(InEvent::Toggle(setting)) => {
@@ -2435,7 +2838,9 @@ where
                     }
                 };
                 if let Some(enabled) = flipped {
-                    emitter.flush(&mut ReplySink::host(&arbitration, &rt)).await;
+                    emitter
+                        .flush(&mut ReplySink::host(&arbitration, &rt, session))
+                        .await;
                     if setting == Setting::Gnss {
                         env.gnss_switched(enabled);
                     }
@@ -2456,7 +2861,9 @@ where
                     .choose_wifi_network(network.as_bytes(), &mut |frame| emitter.push(frame));
                 // Which network the station is on is live, so nothing is
                 // saved.
-                emitter.flush(&mut ReplySink::host(&arbitration, &rt)).await;
+                emitter
+                    .flush(&mut ReplySink::host(&arbitration, &rt, session))
+                    .await;
                 env.wifi_selection_result(result);
             }
             Either4::First(InEvent::ForceBluetoothOn) => {
@@ -2464,7 +2871,9 @@ where
                     .force_ble_on(&mut |frame: &[u8]| emitter.push(frame))
                     .is_some()
                 {
-                    emitter.flush(&mut ReplySink::host(&arbitration, &rt)).await;
+                    emitter
+                        .flush(&mut ReplySink::host(&arbitration, &rt, session))
+                        .await;
                     // Persisted like a toggle: the gesture is the device's
                     // own control for the property, and a radio rescued by
                     // it should stay rescued across the next reboot.
@@ -2474,9 +2883,42 @@ where
                     ));
                 }
             }
+            #[cfg(feature = "node-msg")]
+            Either4::First(InEvent::NodeMsgResult { id, status }) => {
+                let binding =
+                    session.on_node_msg_result(id, status, &mut |frame: &[u8]| emitter.push(frame));
+                match (binding, rt.device) {
+                    (Some(umsh_ulcp_device::Binding::Device), Some(link)) => {
+                        emitter
+                            .flush(&mut ReplySink::Device {
+                                link,
+                                destination: host_listening(&arbitration, session),
+                                out: rt.out,
+                            })
+                            .await;
+                    }
+                    _ => {
+                        emitter
+                            .flush(&mut ReplySink::host(&arbitration, &rt, session))
+                            .await;
+                    }
+                }
+            }
+            #[cfg(feature = "node-msg")]
+            Either4::First(InEvent::NodeMsgMtu(mtu)) => session.set_node_msg_mtu(mtu),
+            // Delivery happens at the end of every pass.
+            #[cfg(feature = "node-msg")]
+            Either4::First(InEvent::NodeMsgPending) => {}
             Either4::First(InEvent::Frame(transport, frame_bytes)) => {
                 if arbitration.accepts_frame(transport) {
-                    let mut sink = ReplySink::host(&arbitration, &rt);
+                    // Live even when the session has ended: the session
+                    // itself discards everything but the CMD_SESSION_START
+                    // whose answer must reach the host.
+                    let mut sink = ReplySink::Transport {
+                        destination: arbitration.destination(),
+                        out: rt.out,
+                        device: device_listening(session, &rt),
+                    };
                     let dfu = serve_frame(
                         session,
                         Exchange::Local(&frame_bytes),
@@ -2504,9 +2946,9 @@ where
                 let dfu = {
                     let mut sink = ReplySink::Admin {
                         reply: &mut reply,
-                        destination: arbitration.destination(),
+                        destination: host_listening(&arbitration, session),
                         out: rt.out,
-                        device: rt.device,
+                        device: device_listening(session, &rt),
                     };
                     serve_frame(
                         session,
@@ -2538,7 +2980,7 @@ where
                 if let Some(link) = rt.device {
                     let mut sink = ReplySink::Device {
                         link,
-                        destination: arbitration.destination(),
+                        destination: host_listening(&arbitration, session),
                         out: rt.out,
                     };
                     let dfu = serve_frame(
@@ -2584,19 +3026,27 @@ where
                     env.frame_queued(notice);
                 }
                 emitter.live = true;
-                emitter.flush(&mut ReplySink::host(&arbitration, &rt)).await;
+                emitter
+                    .flush(&mut ReplySink::host(&arbitration, &rt, session))
+                    .await;
                 apply_effect(session, effect, &rt, &mut env).await;
             }
             Either4::Third(result) => {
                 let now_ms = Instant::now().as_millis();
                 let outcome = match result {
                     Ok(()) => TxOutcome::Sent,
-                    Err(umsh_hal::TxError::CadTimeout) => TxOutcome::ChannelBusy,
+                    // The session prices its own airtime before it
+                    // transmits, so nothing behind it refuses on duty.
+                    Err(umsh_hal::TxError::CadTimeout | umsh_hal::TxError::DutyLimited) => {
+                        TxOutcome::ChannelBusy
+                    }
                     Err(umsh_hal::TxError::Io(_)) => TxOutcome::Failed,
                 };
                 let effect =
                     session.on_tx_result(outcome, now_ms, &mut |frame: &[u8]| emitter.push(frame));
-                emitter.flush(&mut ReplySink::host(&arbitration, &rt)).await;
+                emitter
+                    .flush(&mut ReplySink::host(&arbitration, &rt, session))
+                    .await;
                 apply_effect(session, effect, &rt, &mut env).await;
             }
             Either4::Fourth(Either3::First(event)) => {
@@ -2680,7 +3130,9 @@ where
                         session.absorb_ident_fix(&location, altitude_m);
                     }
                 }
-                emitter.flush(&mut ReplySink::host(&arbitration, &rt)).await;
+                emitter
+                    .flush(&mut ReplySink::host(&arbitration, &rt, session))
+                    .await;
             }
             Either4::Fourth(Either3::Third(())) => {
                 save_due = None;
@@ -2705,7 +3157,9 @@ where
                     .poll_deadlines(Instant::now().as_millis(), &mut |frame: &[u8]| {
                         emitter.push(frame)
                     });
-                emitter.flush(&mut ReplySink::host(&arbitration, &rt)).await;
+                emitter
+                    .flush(&mut ReplySink::host(&arbitration, &rt, session))
+                    .await;
                 apply_effect(session, effect, &rt, &mut env).await;
             }
         }
@@ -2713,6 +3167,11 @@ where
         // (property mutation, CMD_RST, CMD_RESTORE); one u32
         // compare when they did not.
         sync_dev_domain(session, &mut dev_domain_synced, &mut env);
+        // After the window it may have set is published.
+        #[cfg(feature = "uart-link")]
+        if from_uart {
+            crate::uart_link::WINDOW.frame_acted_on();
+        }
         // The board's own store keeps the device lists as they change.
         // One it could not take is offered again once the retry delay has
         // passed, not after every event: the save deadline is what wakes
@@ -2744,21 +3203,54 @@ where
         // The host key moves on a host's write, a host replacement, and a
         // reset off the mesh alike; one compare covers them all.
         sync_hosted(session, &mut hosted_synced, &mut env);
-        // Session state was discarded under a host that did not ask for
-        // it; tell it, so it can re-establish whatever it was holding
-        // there. Drained here rather than at the discard because a
-        // CMD_RST off the mesh discards while the admin binding is
-        // still held: by now `serve_frame` has released it and the sink
-        // below is the host's own transport.
-        if session.take_session_reset_notice(&mut |frame: &[u8]| emitter.push(frame)) {
-            emitter.flush(&mut ReplySink::host(&arbitration, &rt)).await;
+        // An answer or a publication this iteration discarded for a host
+        // that was not reading is a frame owed and not sent: the session
+        // ends (spec §A Link That Stops Reading).
+        if let Some((transport, generation)) = arbitration.destination() {
+            if rt.out.take_owed_lost(transport) {
+                end_host_session(
+                    session,
+                    rt.out,
+                    transport,
+                    SessionEndReason::OwedFrameDiscarded,
+                );
+            }
+            // The notice goes out only when the transport has room, and
+            // stays owed otherwise: a host that has stopped reading is
+            // told once it reads again, ahead of anything else.
+            let mut notice = [0u8; 8];
+            if let Some(len) = session.session_end_notice(&mut notice)
+                && rt.out.offer(transport, generation, &notice[..len])
+            {
+                session.session_end_notice_taken();
+            }
+        }
+        // The same for an application wired to the device's own interface.
+        #[cfg(feature = "uart-link")]
+        if let Some(link) = rt.device {
+            if link.take_owed_lost() {
+                session.end_device_session(SessionEndReason::OwedFrameDiscarded);
+            }
+            let mut notice = [0u8; 8];
+            if let Some(len) = session.device_session_end_notice(&mut notice)
+                && link.offer(&notice[..len])
+            {
+                session.device_session_end_notice_taken();
+            }
         }
         // What moved under a call that had its own frame to emit, paid
         // here for the same reason: by now it goes to everyone listening,
         // not to an administrator's one-frame exchange.
         if session.take_owed_publications(&mut |frame: &[u8]| emitter.push(frame)) {
-            emitter.flush(&mut ReplySink::host(&arbitration, &rt)).await;
+            emitter
+                .flush(&mut ReplySink::host(&arbitration, &rt, session))
+                .await;
         }
+        // Last, so whatever this pass changed about who receives—a host
+        // that started listening, a session that started over—already
+        // counts, and anything owed the host went ahead of it.
+        #[cfg(feature = "node-msg")]
+        deliver_node_msgs(session, &arbitration, &rt);
     }
 }
 
@@ -2874,9 +3366,45 @@ mod stalled_host_tests {
             assert!(Instant::now() - started < Duration::from_secs(1));
             assert_eq!(stats.get(Counter::HostRxDropped), 1);
             assert_eq!(stats.get(Counter::HostOutDropped), 0);
-            // A dropped reception says nothing about the host's replies.
+            // A dropped reception says nothing about the host's replies,
+            // and is not a frame the host was owed.
+            assert!(!out.stalled(Transport::Usb).load(Ordering::Relaxed));
+            assert!(!out.take_owed_lost(Transport::Usb));
+        });
+    }
+
+    #[test]
+    fn a_discarded_answer_is_owed_and_ends_the_session() {
+        embassy_futures::block_on(async {
+            let out = TransportChannels::<NoopRawMutex>::new();
+            full(&out);
+            out.stalled(Transport::Usb).store(true, Ordering::Relaxed);
+            let mut emitter = Emitter::new();
+            emitter.push(b"answer");
+            assert!(!emitter.flush(&mut usb(&out)).await);
+            assert!(out.take_owed_lost(Transport::Usb));
+            assert!(!out.take_owed_lost(Transport::Usb), "taken once");
+            assert!(!out.take_owed_lost(Transport::Ble));
+
+            // The notice waits for room rather than for the host, and
+            // taking it ends the stall.
+            assert!(!out.offer(Transport::Usb, 1, b"notice"));
+            out.wired.try_receive().unwrap();
+            assert!(out.offer(Transport::Usb, 1, b"notice"));
             assert!(!out.stalled(Transport::Usb).load(Ordering::Relaxed));
         });
+    }
+
+    #[test]
+    fn a_close_request_is_taken_once_and_cleared_by_an_attach() {
+        let out = TransportChannels::<NoopRawMutex>::new();
+        out.request_close(Transport::Ble);
+        assert!(!out.take_close_request(Transport::Usb));
+        assert!(out.take_close_request(Transport::Ble));
+        assert!(!out.take_close_request(Transport::Ble));
+        out.request_close(Transport::Ble);
+        out.attached(Transport::Ble);
+        assert!(!out.take_close_request(Transport::Ble));
     }
 
     #[test]
@@ -2909,6 +3437,109 @@ mod stalled_host_tests {
             assert!(emitter.flush(&mut usb(&out)).await);
             assert!(!out.stalled(Transport::Usb).load(Ordering::Relaxed));
             assert_eq!(stats.get(Counter::HostOutDropped), 2);
+        });
+    }
+
+    fn publication() -> std::vec::Vec<u8> {
+        let mut buf = [0u8; 16];
+        let len =
+            umsh_ulcp::frame::prop_is(&mut buf, 0, umsh_ulcp::ids::prop::DEV_NAME, b"x").unwrap();
+        buf[..len].to_vec()
+    }
+
+    /// An application on a wire is served as a host is: what it was owed
+    /// and not sent ends its session, and what does not fit while it is
+    /// stalled is discarded at once.
+    #[cfg(feature = "uart-link")]
+    #[test]
+    fn a_wire_that_stops_reading_owes_what_it_was_not_sent() {
+        embassy_futures::block_on(async {
+            let out = TransportChannels::<NoopRawMutex>::new();
+            let link = DeviceLink::<NoopRawMutex>::wire();
+            while link.offer(b"queued") {}
+            link.stalled.store(true, Ordering::Relaxed);
+            let mut emitter = Emitter::new();
+            emitter.push(b"answer");
+            emitter.push(&publication());
+            let started = Instant::now();
+            emitter
+                .flush(&mut ReplySink::Device {
+                    link: &link,
+                    destination: None,
+                    out: &out,
+                })
+                .await;
+            emitter.push(&publication());
+            emitter
+                .flush(&mut ReplySink::Transport {
+                    destination: None,
+                    out: &out,
+                    device: Some(&link),
+                })
+                .await;
+            assert!(Instant::now() - started < Duration::from_secs(1));
+            assert!(link.take_owed_lost());
+            assert!(!link.take_owed_lost(), "taken once");
+
+            // The notice waits for room rather than for the reader, and
+            // taking it ends the stall.
+            assert!(!link.offer(b"notice"));
+            assert_eq!(&link.next_frame().await[..], b"queued");
+            assert!(link.offer(b"notice"));
+            assert!(!link.stalled.load(Ordering::Relaxed));
+        });
+    }
+
+    /// A wire that has not yet refused output for long is waited for.
+    #[cfg(feature = "uart-link")]
+    #[test]
+    fn a_wire_is_waited_for_until_it_reads() {
+        embassy_futures::block_on(async {
+            let out = TransportChannels::<NoopRawMutex>::new();
+            let link = DeviceLink::<NoopRawMutex>::wire();
+            while link.offer(b"queued") {}
+            let mut emitter = Emitter::new();
+            emitter.push(&publication());
+            let mut sink = ReplySink::Transport {
+                destination: None,
+                out: &out,
+                device: Some(&link),
+            };
+            let reader = async {
+                embassy_time::Timer::after_millis(20).await;
+                link.next_frame().await
+            };
+            embassy_futures::join::join(emitter.flush(&mut sink), reader).await;
+            assert!(!link.take_owed_lost());
+            assert!(!link.stalled.load(Ordering::Relaxed));
+        });
+    }
+
+    /// A built-in interface hears that publications were dropped, and
+    /// nothing about it ends a session.
+    #[test]
+    fn a_built_in_interface_hears_an_overrun() {
+        embassy_futures::block_on(async {
+            let out = TransportChannels::<NoopRawMutex>::new();
+            let link = DeviceLink::<NoopRawMutex>::new();
+            let mut emitter = Emitter::new();
+            for _ in 0..=DEVICE_LINK_DEPTH {
+                emitter.push(&publication());
+                emitter
+                    .flush(&mut ReplySink::Transport {
+                        destination: None,
+                        out: &out,
+                        device: Some(&link),
+                    })
+                    .await;
+            }
+            #[cfg(feature = "uart-link")]
+            assert!(!link.take_owed_lost());
+            for _ in 0..DEVICE_LINK_DEPTH {
+                assert!(matches!(link.try_receive(), Some(DeviceFrame::Frame(_))));
+            }
+            assert!(matches!(link.try_receive(), Some(DeviceFrame::Overrun)));
+            assert!(link.try_receive().is_none());
         });
     }
 }

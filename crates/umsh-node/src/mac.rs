@@ -177,6 +177,14 @@ pub trait MacBackend: Clone {
         let _ = (id, power_dbm);
     }
 
+    /// Decline new acknowledgment-requested frames whose payload type
+    /// `admits` refuses; see [`umsh_mac::Mac::set_payload_admission`]. A
+    /// backend that cannot decline one admits everything.
+    #[cfg(feature = "payload-admission")]
+    async fn set_payload_admission(&self, admits: Option<fn(u8) -> bool>) {
+        let _ = admits;
+    }
+
     /// Return the live TX frame counter for `from`, if it identifies a registered identity.
     async fn frame_counter(&self, from: LocalIdentityId) -> Option<u32> {
         let _ = from;
@@ -510,6 +518,11 @@ impl<
 
     async fn set_tx_power_dbm(&self, id: LocalIdentityId, power_dbm: Option<i8>) {
         self.set_tx_power_dbm(id, power_dbm).await
+    }
+
+    #[cfg(feature = "payload-admission")]
+    async fn set_payload_admission(&self, admits: Option<fn(u8) -> bool>) {
+        self.set_payload_admission(admits).await
     }
 
     async fn frame_counter(&self, from: LocalIdentityId) -> Option<u32> {

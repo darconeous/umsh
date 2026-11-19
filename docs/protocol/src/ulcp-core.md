@@ -10,11 +10,14 @@ build on it.
 ULCP is inspired by the Spinel protocol from OpenThread, but it is not
 Spinel and does not aim for wire compatibility with it. The protocol
 assumes reliable, in-order delivery of frames, as well as a way to assert
-flow control. The framing mechanism depends on the underlying transport:
+flow control. A frame the transport loses anyway ends the session it
+belonged to (see [Lost Frames](#lost-frames)). The framing mechanism
+depends on the underlying transport:
 
 * Asynchronous serial links (UART, USB-CDC) use
-  [HDLC-Lite](https://github.com/openthread/openthread/blob/thread-reference-20180926/doc/spinel-protocol-src/spinel-framing.md#hdlc-lite-hdlc-lite),
-  exactly as used by Spinel.
+  [HDLC-Lite](https://github.com/openthread/openthread/blob/thread-reference-20180926/doc/spinel-protocol-src/spinel-framing.md#hdlc-lite-hdlc-lite)
+  as Spinel does, with the two rules in
+  [HDLC-Lite on a ULCP Link](#hdlc-lite).
 * BLE uses the GATT frame transport defined in
   [ULCP over BLE](ulcp-ble.md).
 * A reliable, in-order byte stream standing in for a serial link—a TCP
@@ -24,9 +27,11 @@ flow control. The framing mechanism depends on the underlying transport:
 
 In this chapter, the **device** is the side that owns the transceiver and
 the **host** is the side that attaches to it over the local link (see
-[Local Control Protocol](ulcp.md)).
+[Local Control Protocol](ulcp.md)). A **local link** is either that
+connection or the one to the device's [own interface](#device-interface);
+an administrator over the mesh is not on one.
 
-The protocol version is **6.0**. Which subsystems a device implements is
+The protocol version is **6.1**. Which subsystems a device implements is
 discovered through `PROP_CAPS`, never through the version number; see
 [Minimum Requirements](ulcp-conformance.md) for what a device is required
 to implement in order to be a ULCP device at all.
@@ -95,6 +100,12 @@ Figure: Structure of a typical ULCP frame
 Since the size of the frame is part of the framing mechanism, it is omitted
 from the frame.
 
+A frame is at most 300 octets long, header and command identifier
+included, on every link and in both directions. A sender **MUST NOT** send
+a longer one, and a receiver **MUST** be able to take one of that length.
+A transport that carries longer frames, such as the [GATT
+service](ulcp-ble.md#ulcp-gatt-service), does not raise this limit.
+
 ### Frame Header
 
 Each frame has the following format:
@@ -157,7 +168,7 @@ no arguments.
 ## Commands
 
 This chapter defines the commands that operate on the protocol itself—
-resets, liveness, and the property grammar. The remaining commands are
+resets, sessions, liveness, and the property grammar. The remaining commands are
 defined with the subsystem they act on: `CMD_STR_SEND` and `CMD_STR_RECV`
 in [Frame Transport](ulcp-transport.md), `CMD_QUEUE_DRAIN` in
 [Tethered Host Services](ulcp-host.md), `CMD_ANNOUNCE` in
@@ -183,10 +194,12 @@ Id | Mnemonic             | Dir          | Description
 21 | `CMD_PROP_MULTI_GET` | Host->Device | Get several property values
 22 | `CMD_PROP_MULTI_SET` | Host->Device | Set several property values in order
 23 | `CMD_PROP_ARE`       | Device->Host | Multiple property value notification
-24 | `CMD_SESSION_RESET`  | Device->Host | Session state was discarded
+24 | `CMD_SESSION_DID_END` | Device->Host | A serial link's session has ended
 25 | `CMD_I2C_TRANSFER`   | Host->Device | One I2C transaction
 26 | `CMD_I2C_RESULT`     | Device->Host | Read data or scanned addresses
 27 | `CMD_I2C_SCAN`       | Host->Device | Probe a range of I2C addresses
+28 | `CMD_SESSION_START`  | Host->Device | Start a new session on this link
+29 | `CMD_SESSION_DID_START` | Device->Host | The new session has started
 
 The multi-property commands (21–23) are gated by `CAP_CMD_MULTI`,
 `CMD_REBOOT`, `CMD_DFU`, and `CMD_FACTORY_RESET` by `CAP_REBOOT`,
@@ -601,63 +614,144 @@ or `CMD_PROP_MULTI_SET`, with the TID of that command. It **MUST NOT**
 be emitted unsolicited: asynchronous updates use `CMD_PROP_IS` and its
 companions, one property at a time.
 
-### CMD 24: (Device -> Host) `CMD_SESSION_RESET` {#cmd-session-reset}
+### CMD 24: (Device -> Host) `CMD_SESSION_DID_END` {#cmd-session-did-end}
 
 ~~~
   0                   1                   2
  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|1 0| RES | TID |      CMD      |     REASON
+|1 0| RES |  0  |      CMD      |     REASON
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ~~~
-Figure: Structure of `CMD_SESSION_RESET`
+Figure: Structure of `CMD_SESSION_DID_END`
 
-The device has discarded [session state](#state-classes), so every
-session-scoped property is back at its documented default under a host
-that did not ask for it. The TID **MUST** be zero: the frame is always
-unsolicited.
+Reports that the device has ended a [serial link's](#sessions) session.
+The device has discarded the link's [session state](#session-state) and
+will answer no request the link sent before it. Until the link starts a
+new session with [`CMD_SESSION_START`](#cmd-session-start), the device
+sends the link nothing else and discards its requests unanswered. The
+one request it still acts on is a write to
+[`PROP_UART_WINDOW`](#prop-uart-window), which governs the link rather
+than its session: the new session's first frame goes out under it.
+
+The device sends it with TID 0, on the link whose session ended and on
+no other. A connection link's session ends when the connection closes,
+so the command is not sent there, and it is never sent over the
+administrative binding, which has no session.
 
 **REASON** is a packed unsigned integer. It is diagnostic—a host's
 obligation is the same for every value:
 
 Value | Meaning
 ------|----------------------------------
-0     | A host attached
-1     | `CMD_RST`
-2     | `CMD_RESTORE` in its reset form
+0     | A frame sent to the device on the link was [lost](#lost-frames)
+1     | The device discarded a frame it owed the link (see [A Link That Stops Reading](#stalled-host))
 
 Unassigned values are reserved. A host **MUST** treat an unrecognized
-reason as a session reset it does not have a name for, never as a parse
-failure.
+reason as it treats the others, never as a parse failure.
 
-A device **MUST** emit this command whenever it discards session state
-while a host is attached, and **MUST NOT** emit it when no host is
-attached: a detach discards session state with nobody to tell.
+Where the link cannot take the frame when it is due, the device owes it,
+and sends it before anything else once the link takes output again.
 
-The frame **MUST** be emitted before any frame belonging to the new
-session, so a host can tell which session anything it receives came
-from. The completion of the command that caused the discard belongs to
-the exchange that requested it and **MAY** precede the notice; a
-`CMD_RST` is answered by its `STATUS_RESET_SOFTWARE` and then the
-notice. Where a session is instead created by the host's own first
-frame, nothing has been answered yet and the notice comes first.
+A host or application that receives it abandons every request it has
+outstanding on the link. To go on using the link, it starts a new session.
 
-The command **MUST NOT** be emitted over the administrative binding. It
-concerns the local tethered session; an administrator over the mesh is
-not party to it, and the binding carries only what was asked for.
+### CMD 28: (Host -> Device) `CMD_SESSION_START` {#cmd-session-start}
 
-A host **MUST** tolerate the frame at any time while attached. On
-receiving it, a host **MUST** re-establish anything it holds in session
-state and **SHOULD** otherwise resynchronize as it would on a fresh
-attach (see [Attach, Detach, and Synchronization](#attach-sync)).
+~~~
+ 0                   1
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|1 0| RES | TID |      CMD      |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+~~~
+Figure: Structure of `CMD_SESSION_START`
 
-This is deliberately not a [reset code](#reset-codes), and **MUST NOT**
-disturb `PROP_LAST_STATUS`. The two report different losses:
-`STATUS_RESET_POWER_ON` means the host domain went with the session and
-must be reprovisioned in full, whereas a session reset means only session
-state went. A reboot implies a session reset, so recording the narrower
-fact over the broader one would lose the distinction that governs
-recovery.
+Starts a new session on the local link it arrives on, ending the one in
+progress if there is one. On a [serial link](#sessions) it is how a host
+or application opens a session with a boundary it can recognize, and how
+it goes on after its session ends. A connection link's session is its
+connection, so a host there has no need of it, but the device answers it
+there the same way.
+
+The payload **SHOULD** be empty, and the device **MUST** ignore it. A
+host sends it with a non-zero TID, so that a device that does not
+implement it can say so.
+
+The device discards the link's session state, answers no request it
+received on the link before this one, and replies with
+[`CMD_SESSION_DID_START`](#cmd-session-did-start). Nothing outside the
+link's session state changes: the host domain, the device domain, and
+`PROP_LAST_STATUS` are untouched. On a host link this is an attach
+without the transport event. Over the administrative binding, which has
+no session, the device answers `STATUS_NOT_PERMITTED`.
+
+A device of minor version 0 answers it with `STATUS_INVALID_COMMAND` and
+changes nothing. A host that receives this carries on without the
+command.
+
+#### Starting a Session {#starting-a-session}
+
+On a serial link, a host or application:
+
+* **SHOULD** open its session with `CMD_SESSION_START` rather than rely
+  on the session the link already has. A host that has just started
+  cannot otherwise tell whether the link still holds answers owed to an
+  earlier run. A device never requires it: a serial link has a session
+  from the moment the device starts.
+* **MUST** send it to go on using the link after
+  [`CMD_SESSION_DID_END`](#cmd-session-did-end).
+* **MUST** send it when a frame sent to it is [lost](#lost-frames), or
+  when it meets any other session-level error it cannot otherwise
+  recover from. A reply that never comes is one.
+
+Having sent it, a host or application:
+
+* **Ignores every frame until `CMD_SESSION_DID_START` arrives.** Every
+  frame before the reply belongs to the session that ended. The one
+  exception is `PROP_LAST_STATUS` carrying `STATUS_INVALID_COMMAND` and
+  the request's TID, from a device that predates the command.
+* **Sends no other request until then.** The reply is therefore the
+  boundary: every answer after it is to a request sent after it.
+* **Sends the request again** after a short wait if no reply comes, for
+  as long as it takes. A request or its reply can be lost with neither
+  end seeing a damaged frame: the device may still be starting, or the
+  link may have been disconnected.
+* **Ignores a `CMD_SESSION_DID_START` that arrives when it is not waiting
+  for one.** That reply answers a request that was sent again, and the
+  link delivers in order, so the device handled the request before
+  anything the host sent since.
+
+The value of the TID plays no part in this; the reply carries it because
+every answer does.
+
+### CMD 29: (Device -> Host) `CMD_SESSION_DID_START` {#cmd-session-did-start}
+
+~~~
+ 0                   1
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|1 0| RES | TID |      CMD      |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+~~~
+Figure: Structure of `CMD_SESSION_DID_START`
+
+The device's answer to [`CMD_SESSION_START`](#cmd-session-start),
+carrying its TID. The payload is empty. It is the first frame of the new
+session: everything the device sends the link after it belongs to that
+session, and nothing it sent before does.
+
+A host that receives it runs the post-attach procedure again (see
+[Attach, Detach, and Synchronization](#attach-sync)): whatever it held in
+session state went with the session that ended.
+
+None of the three session commands is a [reset code](#reset-codes), and
+none of them disturbs `PROP_LAST_STATUS`. The two report different
+losses: `STATUS_RESET_POWER_ON` means the host domain went with the
+session and must be reprovisioned in full, whereas a session's end costs
+only session state. A reboot ends every session, so recording the
+narrower fact over the broader one would lose the distinction that
+governs recovery.
 
 ## Properties and Streams
 
@@ -785,7 +879,7 @@ See [Status Codes](ulcp-core.md#status-codes) for the complete list of status co
 * Required: **REQUIRED**
 * Scope: Device
 * Value Type: UINT8, UINT8
-* Post-Reset Value: 6, 0
+* Post-Reset Value: 6, 1
 
 Describes the ULCP version information. This property
 contains two fields:
@@ -809,7 +903,12 @@ Figure: `PROP_PROTOCOL_VERSION` Value Format
   number and the minor version that is supported by the host **SHOULD NOT** be
   fatal to the operation of the host.
 
-This document describes major version 6, minor version 0 of this protocol.
+This document describes major version 6, minor version 1 of this protocol.
+
+A host compares the major version alone. Minor version 1 adds
+[`CMD_SESSION_START`](#cmd-session-start); a device of minor version 0
+answers it with `STATUS_INVALID_COMMAND`, and a host that receives this
+carries on without it.
 
 ### PROP 2: `PROP_DEV_VERSION` {#prop-dev-version}
 
@@ -926,11 +1025,17 @@ power cycle.
 
 ### Session State {#session-state}
 
-State that exists only while a host is attached: transaction (TID)
-correlation, transport reassembly buffers, and the session-scoped
-properties `PROP_MAC_PROMISCUOUS` and `PROP_MAC_BACKHAUL`. Session state
-is reset to defaults on every attach. Resetting it never affects radio
-operation.
+State that belongs to one local link's session. Every local link has a
+session (see [Sessions](#sessions)). The attached host's holds transaction (TID) correlation,
+transport reassembly buffers, and the session-scoped properties
+`PROP_MAC_PROMISCUOUS`, `PROP_MAC_BACKHAUL`, and
+[`PROP_NODE_MSG_LISTEN`](ulcp-node-messaging.md#prop-node-msg-listen),
+and exists only while a host is attached. The device's [own
+interface's](#device-interface) holds its transaction correlation and
+transport state alone.
+
+Session state is at its defaults whenever a session begins, and is
+discarded when one ends. Resetting it never affects radio operation.
 
 ### Device Domain {#device-domain}
 
@@ -1023,19 +1128,19 @@ How attach and detach are detected is defined by the transport binding:
   interface.
 * **TCP**—establishment and closure of the connection.
 * **Local socket**—establishment and closure of the connection.
-* **Bare UART**—implementation-defined. A device with no way to detect
-  host presence MAY treat the host as permanently attached, in which case
-  it never enters detached operation and offline assistance
+* **Bare UART**—the transport has no attach event. A device with no way
+  to detect host presence MAY treat the host as permanently attached, in
+  which case it never enters detached operation and offline assistance
   ([Inbound Queueing](ulcp-host.md#inbound-queueing), [Acknowledgement Delegation](ulcp-host.md#ack-delegation)) is unavailable on that
-  transport.
+  transport. Either way, the link has a session from the moment the
+  device starts (see [Sessions](#sessions)).
 
 On attach, the device **MUST** reset session state (see [State Classes](ulcp-core.md#state-classes)) and
 **MUST NOT** modify the device or host domains in any way. In particular,
 the PHY is not disabled and no property outside session state changes
-value. The device **MUST NOT** emit any frame before attach; the first
-frame of the session is the [`CMD_SESSION_RESET`](#cmd-session-reset)
-announcing the session state the attach discarded, with reason `0`, and
-the attach itself produces no other unsolicited notification.
+value. The device **MUST NOT** emit any frame before attach, and the
+attach itself produces no unsolicited notification: a session that
+begins at attach holds nothing from before it.
 
 Because attach no longer implies any known default state, the host
 synchronizes by *fetching*, not by assuming. The following post-attach
@@ -1084,37 +1189,117 @@ Updates* entry describes the changes the device makes for its own
 reasons. A fire-and-forget request (TID 0) on a local binding is not
 answered, and what it changes need not be published.
 
-The same applies to [`CMD_SESSION_RESET`](#cmd-session-reset), which
-reports the one change no property notification can: the session itself
-starting over. A host that receives one runs this procedure again.
+A host that starts a new session runs this procedure again once
+[`CMD_SESSION_DID_START`](#cmd-session-did-start) arrives.
 
 On detach, the device discards session state, keeps operating with the
 current device- and host-domain state, and begins detached operation:
 accepted frames are queued rather than delivered, and acknowledgement
 delegation (if enabled) becomes active.
 
-### A Host That Stops Reading {#stalled-host}
+### Sessions {#sessions}
 
-A host asserts flow control by not reading: the transport's own
-backpressure—notification pacing over BLE, an unread USB endpoint, a full
-TCP window—holds back the device's output. A device serves more than its
-attached host, so it does not let that hold the rest of it back for long:
+Every local link has a session, which holds its [session
+state](#session-state). How a session begins and ends depends on whether
+the link is a connection that either end can close:
+
+* **Connection links**: BLE, a TCP connection the device serves itself,
+  and a [local socket](#local-sockets). A session begins at attach and
+  ends at detach. These transports deliver every frame whole and in
+  order, so when one does not, the transport or the other end has
+  failed, and whichever end finds a [lost frame](#lost-frames) ends the
+  session: a host by detaching, the device by closing the connection.
+* **Serial links**: a UART, USB-CDC, and a stream standing in for a
+  serial link, which the device sees as the serial link it is. Either end
+  can see a damaged frame, and neither can close the link. A session
+  begins at attach where the transport has an attach event, and when the
+  device starts where it has none. It ends at detach, or when the device
+  ends it with [`CMD_SESSION_DID_END`](#cmd-session-did-end), and a host
+  or application starts a new one with
+  [`CMD_SESSION_START`](#cmd-session-start).
+
+A device never requires `CMD_SESSION_START` before it serves a link:
+every link has a session from attach, or from the moment the device
+starts. A session the device has ended stays ended until the link starts
+a new one.
+
+[`CMD_RST`](#cmd-reset) and [`CMD_RESTORE`](ulcp-saved-state.md#cmd-restore)
+in its reset form start the requesting link's session over in place. The
+reset code that completes either one is the first frame of the new
+session, as `CMD_SESSION_DID_START` is.
+
+### A Link That Stops Reading {#stalled-host}
+
+A host, or an application on the device's own interface, asserts flow
+control by not reading: the transport's own backpressure—notification
+pacing over BLE, an unread USB endpoint, a full TCP window, XON and XOFF
+on a [UART](#uart-flow-control)—holds back the device's output. A device
+serves more than one link, so it does not let that hold the rest of it
+back for long:
 
 * A live `CMD_STR_RECV` the transport cannot take at once **MAY** be
   discarded. It is lost as though on the air, and a sender that asked for
   an acknowledgement retransmits. The device counts it in
   [`PROP_STAT_HOST_RX_DROPPED`](ulcp-radio.md#prop-stat-host-rx-dropped).
-* Any other frame for the host **MAY** be discarded once the host has
+* Any other frame for the link **MAY** be discarded once the link has
   refused output for 5 seconds, and from then on until it takes output
-  again. The device counts each in
+  again. The device counts each one discarded for a host in
   [`PROP_STAT_HOST_OUT_DROPPED`](ulcp-radio.md#prop-stat-host-out-dropped).
   A [`CMD_QUEUE_DRAIN`](ulcp-host.md#cmd-queue-drain) cut short this way
   ends without its completion, and the frames it did not deliver stay
   queued.
 
-A host that stops reading for longer than that cannot rely on having
-received every answer and publication since, and **SHOULD** synchronize
-again, as after an attach, once it resumes.
+An answer or a publication discarded this way is a frame the device owed
+the link and did not send, and it ends the link's session (see [Lost
+Frames](#lost-frames)). A live `CMD_STR_RECV` is not owed in this sense
+and ends nothing. A [node
+message](ulcp-node-messaging.md#who-receives) is never discarded this
+way; it waits for the link.
+
+### Lost Frames {#lost-frames}
+
+ULCP assumes the transport delivers every frame whole and in order. When
+it does not, the two ends no longer agree on what has been asked and
+answered: a lost request is never answered, a lost answer leaves its
+request outstanding forever, and a lost publication leaves the reader's
+view of the device wrong. Nothing short of a new session puts them back
+in step.
+
+A frame is **lost** when an end knows a frame was sent to it and its
+transport could not hand that frame to ULCP whole. Why the transport
+failed does not matter, and neither does which transport it is:
+
+* On HDLC-Lite: a frame whose FCS fails, a frame too short to carry one,
+  an aborted escape, or a frame longer than the receiver can hold.
+  [Marked text](#hdlc-lite), fill, and an unescaped XON or XOFF are not
+  frames, and are not lost, and neither is what is left of a [wake
+  preamble](#uart-wake) after a sleep.
+* Over BLE: a frame discarded in [reassembly](ulcp-ble.md#reassembly), for
+  any of the reasons given there, and a reassembled frame the transport
+  could not accept.
+
+A frame that reached ULCP whole and whose contents ULCP does not
+understand—an unknown command, a property a newer protocol version
+defines—is not lost. It is answered as this chapter specifies, and the
+session stands.
+
+An uncorrectable error in a received frame is the same as corruption:
+the frame is lost. Either end that finds a lost frame ends the session,
+in the way its link allows (see [Sessions](#sessions)):
+
+* **On a connection link**, a host detaches and the device closes the
+  connection.
+* **On a serial link**, the device ends the session with
+  [`CMD_SESSION_DID_END`](#cmd-session-did-end) and reason 0. A host or
+  application **MUST** start a new session with
+  [`CMD_SESSION_START`](#cmd-session-start), as it also does for any
+  other session-level error it cannot otherwise recover from (see
+  [Starting a Session](#starting-a-session)).
+
+The device does the same when it does not send a frame it owed a link,
+an answer or a publication, as in [A Link That Stops
+Reading](#stalled-host): it closes the connection of a connection link,
+and ends a serial link's session with `CMD_SESSION_DID_END` and reason 1.
 
 ### Local Sockets {#local-sockets}
 
@@ -1133,27 +1318,170 @@ such as a Unix domain socket:
   to the device reach it—a file in a directory private to those
   processes—which stands in for physical possession.
 
+## HDLC-Lite on a ULCP Link {#hdlc-lite}
+
+Three rules apply to every ULCP link framed with HDLC-Lite—a serial link,
+a stream standing in for one, a local socket—in both directions:
+
+* **XON and XOFF are never frame content.** HDLC-Lite escapes XON
+  (`0x11`) and XOFF (`0x13`) inside a frame so that a link can use them.
+  An unescaped one belongs to no frame: a receiver ignores it wherever it
+  falls, between frames or inside one, and the frame around it is
+  unaffected. What a link does with the two octets is
+  [flow control](#uart-flow-control); a link that does nothing with them
+  still ignores them.
+* **Marked text.** A frame whose first octet is `0x23` (`#`) is marked
+  text, not a ULCP frame. The receiver discards everything up to the next
+  flag octet, with no escape processing and no FCS. This is how a device
+  puts diagnostic text on a link between frames.
+* **Fill.** A frame whose first octet is `0xFF` is fill, not a ULCP
+  frame. The receiver discards everything up to the next flag octet, as
+  for marked text, and it is not a [lost frame](#lost-frames). Fill is
+  what a [wake preamble](#uart-wake) is made of.
+
+Marked text **MUST NOT** contain the flag octet (`0x7E`, `~`), XON, or
+XOFF; a writer replaces them. Nothing else about its content matters.
+
+No frame begins with the marker or with fill: a ULCP header is
+`10000ttt` in binary, and it takes at least two damaged bits to turn one
+into `0x23` and four to turn one into `0xFF`. Marked text is not
+protected. A line whose marker is damaged is read as a
+[lost frame](#lost-frames), and a frame whose header is damaged into the
+marker is skipped; the reply that never comes is what reveals it. Text a
+device cannot mark, such as what a boot loader prints, is read as a lost
+frame too, and it comes with a restart, which ends the session anyway.
+
+These rules belong to ULCP and not to HDLC-Lite in general: the
+[internet bridge tunnel](internet-bridging.md#message-framing) frames
+with HDLC-Lite and carries no marked text.
+
+## Flow Control on a UART {#uart-flow-control}
+
+A ULCP link carried on a UART without hardware flow control uses XON and
+XOFF. This is a property of the transport, whoever is reading: a host
+attached over a UART and an application on the device's
+[own interface](#device-interface) alike. Not reading is no flow control
+on a UART: octets the reader does not take are lost.
+
+No capability announces it. Flow control belongs to the link, not to the
+device, and a reader learns whether its link has it by setting
+[`PROP_UART_WINDOW`](#prop-uart-window), which it does in any case
+before it starts reading. A device that does not implement flow control
+answers `STATUS_PROP_NOT_FOUND`, and its link behaves as though it had
+none.
+
+* The reader controls what the device sends with XON (`0x11`), which
+  permits the device to send, and XOFF (`0x13`), which withdraws the
+  permission, both sent outside frames. The device takes whatever it is
+  sent, [waking](#uart-wake) for it if it sleeps, so it sends neither.
+* With a [window](#prop-uart-window) of *W*, each XON permits *W*
+  further octets on the wire, counted from its receipt and not added to
+  whatever was left of the previous permission. The device then waits for
+  the next XON. At boot the device has no permission.
+* With a window of 0, a permission has no limit, and the device starts
+  permitted. This is plain XON/XOFF; a reader that sends neither octet
+  sees the link behave as though it had no flow control. A serial
+  driver's own software flow control sends the two octets with no
+  [wake preamble](#uart-wake), so it serves only a device known not to
+  sleep.
+* After XOFF, the device sends at most the octets it had already handed
+  to its UART. A device **SHOULD** keep that to 16 octets or fewer. An
+  XOFF that needs a wake preamble reaches the device after it, and the
+  device may send for that long first.
+* A reader that does not know the device's state—one that has just
+  started, say—sends XOFF, sets the window, sends
+  [`CMD_SESSION_START`](#cmd-session-start), and only then sends XON.
+  The device acts on what it receives in order, so the window is in
+  force before the first octet it permits.
+
+A window serves a reader whose buffer is small. Without one, a reader
+with a 64-octet buffer cannot send XOFF in time unless it is polled every
+few milliseconds; with one, it grants only what its buffer holds and
+needs no timing at all. A window also means that a reader that has
+stopped or been disconnected stops receiving by itself.
+
+What the device does with output it is not permitted to send is what it
+does for any link that is not reading (see [A Link That Stops
+Reading](#stalled-host)).
+
+### PROP 5010: `PROP_UART_WINDOW` {#prop-uart-window}
+
+* Type: Single-Value, Read-Write
+* Asynchronous Updates: No
+* Required: **REQUIRED** on a UART link with flow control
+* Scope: Link
+* Value Type: UINT16
+* Units: Octets
+* Post-Reset Value: 0, or the saved value
+
+The window of the UART link the request arrives on, saved with the
+device domain. Each UART link has its own, and only the reader on that
+link reads or sets it. A request from a link that is not a UART, or from
+an administrator over the mesh, is answered with `STATUS_NOT_PERMITTED`.
+Setting the window to the value it already has writes nothing to
+non-volatile storage. A new window takes effect at the next XON.
+
+## Waking a Device on a UART {#uart-wake}
+
+A device may sleep while it listens on a UART and wake on activity on the
+line. Waking costs it the octets that wake it and those that arrive
+before its UART runs again. No capability announces whether a device
+sleeps, so every reader on a UART follows these rules:
+
+* **The reader.** A reader **MUST** send a **wake preamble** ahead of the
+  first frame, XON, or XOFF it sends on the link, and ahead of any it
+  sends after it has sent nothing for 100 ms. The preamble is `0xFF`
+  octets, at least 8 of them and enough to last at least 5 ms, and then a
+  flag: at 115200 baud, 58 octets of `0xFF` and a flag. A reader **MAY**
+  send one ahead of any frame, XON, or XOFF.
+* **Inside a frame.** A preamble ends in a flag, so it never goes inside
+  a frame. A reader **MUST NOT** pause for 100 ms or more inside one.
+* **The device.** A device that sleeps **MUST** stay awake for at least
+  250 ms after the last octet it received, and for as long as it is
+  sending.
+* **After a sleep.** When a device may have slept since it last received,
+  what it receives before the next flag is what is left of a preamble. It
+  is not a frame, it is not a [lost frame](#lost-frames), and it is not
+  XON or XOFF.
+
+The preamble is [fill](#hdlc-lite), so a device that was awake discards
+it. A `0xFF` octet has one falling edge, its start bit, so a UART that
+starts partway through the run aligns on a real octet. It has one rising
+edge, so a device that wakes on a count of edges counts one for each
+octet, and eight is enough for a device that needs several.
+
 ## The Device's Own Interface {#device-interface}
 
-A device with a settings interface of its own—a screen and keyboard, or a
-menu—may administer its own session in process, with the commands a host
-uses. The interface is a binding of its own:
+A device may have an interface of its own, served beside any attached
+host with the commands a host uses. It is either built into the
+device—a screen and keyboard, or a menu—or an **application**: a
+microcontroller wired to the device over a UART, framed with
+[HDLC-Lite](#hdlc-lite) and paced with [XON and
+XOFF](#uart-flow-control). The interface is a binding of its own:
 
 * **Authority.** Whoever is holding the device has physical possession,
   which is a serial link's security binding (see [Provisioning
   Security](#provisioning-security)). The interface may provision key
   material, the device identity's private key included.
-* **Reach.** The device domain. Session state, the host domain, the raw
-  PHY stream, and the receive queue belong to whichever host is tethered,
-  and the device answers the interface's writes to them with
-  `STATUS_NOT_PERMITTED`, as it answers an
+* **Reach.** The device domain, and [node
+  messaging](ulcp-node-messaging.md). The host's session state, the host
+  domain, the raw PHY stream, and the receive queue belong to whichever
+  host is tethered, and the device answers the interface's writes to
+  them with `STATUS_NOT_PERMITTED`, as it answers an
   [administrator's](app-node-management.md#authorization). Node
   management's one host-domain write, the host releasing the device,
   does not extend to the interface.
 * **A local binding.** The device answers every request that carries a
   non-zero TID exactly once.
-* **Not an attach.** Its requests reset no session state, emit no
-  `CMD_SESSION_RESET`, and displace no attached host.
+* **A session of its own.** The interface's session holds its
+  outstanding requests, and it begins and ends apart from the host's. An
+  application's UART is a [serial link](#sessions), whose session begins
+  when the device starts. A built-in interface is carried inside the
+  device, and how it learns of output the device could not deliver is the
+  implementation's.
+* **Not an attach.** Its requests reset nothing of the host's session
+  and displace no attached host. It does not affect what the device
+  advertises over BLE.
 * **Publications.** The interface hears everything the device publishes,
   whether or not a host is attached, including what an attached host or
   an administrator changes. What the interface changes reaches an attached
@@ -1230,6 +1558,7 @@ Id | Name
 24 | `STATUS_NO_DEVICE`
 25 | `STATUS_NACK`
 26 | `STATUS_BUS_ERROR`
+27 | `STATUS_NO_ACK`
 32 | `STATUS_DUTY_LIMIT`
 
 `STATUS_OK`
@@ -1328,6 +1657,12 @@ Id | Name
   error or overrun occurred, a line stayed stuck, or the transaction
   outlasted the device's deadline. The device may attempt bus recovery.
 
+`STATUS_NO_ACK`
+: A [node message](ulcp-node-messaging.md#str-node-msg) that requested an
+  acknowledgement was sent, and none arrived before the device stopped
+  waiting for it. The message may or may not have reached its
+  destination.
+
 `STATUS_CCA_FAILURE`
 : The packet was not sent due to a CCA failure. This status code is only
   emitted when sending data to a packet stream with a TID other than zero.
@@ -1373,11 +1708,10 @@ failure.
 Unexpected or unrequested resets are always an indication of a problem, no
 matter what the code value is.
 
-A session reset is not one of these. Discarding session state costs the
-host what it established there and nothing more, so it is announced by
-[`CMD_SESSION_RESET`](#cmd-session-reset) and leaves `PROP_LAST_STATUS`
-alone. Every reset code above implies a session reset; none of them is
-implied by one.
+The end of a session is not one of these. It costs the host what it
+established in session state and nothing more, so it leaves
+`PROP_LAST_STATUS` alone (see [Sessions](#sessions)). Every reset code
+above ends every session; the end of a session implies none of them.
 
 `STATUS_RESET_POWER_ON`
 : Cold power-on start.
@@ -1459,6 +1793,8 @@ Code | Name                      | Requires                             | Define
 63   | `CAP_LAN_BEARER`          | —                                    | [IP Multicast](ulcp-ip-multicast.md#capabilities)
 64   | `CAP_DISPLAY`             | —                                    | [Device Domain](ulcp-device.md#capabilities)
 65   | `CAP_KEYBOARD`            | —                                    | [Device Domain](ulcp-device.md#capabilities)
+66   | `CAP_SOUND`               | —                                    | [Device Domain](ulcp-device.md#capabilities)
+67   | `CAP_NODE_MSG`            | `CAP_DEV_IDENTITY`                   | [Node Messaging](ulcp-node-messaging.md#capabilities)
 515  | `CAP_PHY_LORA`            | —                                    | [Radio Control](ulcp-radio.md#capabilities)
 
 A device **MUST NOT** advertise a capability without also advertising the

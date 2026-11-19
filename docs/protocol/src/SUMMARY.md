@@ -47,6 +47,7 @@
   - [Bridge Client](ulcp-bridge.md)
   - [IP Multicast](ulcp-ip-multicast.md)
   - [I2C Bus Access](ulcp-i2c.md)
+  - [Node Messaging](ulcp-node-messaging.md)
   - [Minimum Requirements](ulcp-conformance.md)
   - [Command and Property Index](ulcp-index.md)
   - [ULCP over BLE](ulcp-ble.md)

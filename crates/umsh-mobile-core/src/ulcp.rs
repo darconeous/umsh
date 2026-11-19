@@ -2390,13 +2390,17 @@ impl MobileUlcpSession {
                 age_seconds: metadata.age_s,
             }]));
         }
-        if parsed.command() == Some(Cmd::SessionReset) {
+        // A session the device ended. Over BLE a session ends with its
+        // connection, so a current device never sends this here; firmware
+        // older than ULCP 6.1 sent the same command as a session-reset
+        // notice, and it is handled as one.
+        if parsed.command() == Some(Cmd::SessionDidEnd) {
             if parsed.header.tid() != frame::TID_UNSOLICITED {
                 return Err(MobileError::UlcpUnexpectedFrame);
             }
             // The reason is diagnostic, so it is not even read: what
-            // matters is that the device started a session over, and a
-            // reason this session cannot decode does not change that.
+            // matters is that the session is over, and a reason this
+            // session cannot decode does not change that.
             let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
             if state.stage == SessionStage::Idle {
                 return Err(MobileError::UlcpUnexpectedFrame);

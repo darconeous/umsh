@@ -124,6 +124,13 @@ mod defmt_logger {
     defmt::timestamp!("{=u32}", 0u32);
 }
 
+#[cfg(all(feature = "ulcp-uart", not(feature = "board-xiao-nrf52")))]
+compile_error!("`ulcp-uart` is wired for the XIAO nRF52840 kit's D6 and D7 alone");
+#[cfg(all(feature = "ulcp-uart", feature = "ulcp-i2c"))]
+compile_error!(
+    "`ulcp-uart` takes D6 and D7, the header I2C bus: build with `--no-default-features`"
+);
+
 #[cfg(target_os = "none")]
 mod firmware {
     use super::ble_security::{PairingFailureClass, PairingRuntime, pairing_enabled};
@@ -139,7 +146,7 @@ mod firmware {
     use embassy_futures::select::select_array;
     use embassy_futures::select::{Either, Either3, Either4, select, select3, select4};
     use embassy_nrf::bind_interrupts;
-    #[cfg(feature = "cap-gnss")]
+    #[cfg(any(feature = "cap-gnss", feature = "ulcp-uart"))]
     use embassy_nrf::buffered_uarte::BufferedUarte;
     use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
     use embassy_nrf::mode::Async;
@@ -163,7 +170,7 @@ mod firmware {
     #[cfg(all(feature = "cap-battery-saadc", not(feature = "t1000e")))]
     use embassy_nrf::saadc::{ChannelConfig, Config as SaadcConfig, Saadc};
     use embassy_nrf::spim::{Config as SpimConfig, Frequency, Spim};
-    #[cfg(feature = "cap-gnss")]
+    #[cfg(any(feature = "cap-gnss", feature = "ulcp-uart"))]
     use embassy_nrf::uarte::{Baudrate as UarteBaudrate, Config as UarteConfig};
     use embassy_nrf::usb::Driver;
     use embassy_nrf::usb::vbus_detect::SoftwareVbusDetect;
@@ -563,6 +570,10 @@ mod firmware {
             // front-panel menu already drives.
             ble_pairing: true,
             ble_pin: true,
+            uart_links: umsh_ulcp_device::UartLinks {
+                wired_host: false,
+                device: cfg!(feature = "ulcp-uart"),
+            },
             // Every nRF52 board can reset itself through the bootloader
             // register; see the `reboot` hook below.
             reboot: true,
@@ -587,6 +598,10 @@ mod firmware {
             i2c_buses: &[],
             #[cfg(not(feature = "ulcp-i2c"))]
             i2c_devices: &[],
+            #[cfg(feature = "node-msg")]
+            node_msg: Some(umsh_ulcp_runtime::node_msg::CONFIG),
+            #[cfg(not(feature = "node-msg"))]
+            node_msg: None,
         }
     }
 
@@ -1072,6 +1087,36 @@ mod firmware {
     /// Outbound frame queues: `wired` drained by output_task (USB-CDC),
     /// `ble` by the GATT connection writer.
     static OUT_CH: TransportChannels<ThreadModeRawMutex> = TransportChannels::new();
+
+    /// The wired application's way into the session, carried on its UART.
+    #[cfg(feature = "ulcp-uart")]
+    static DEVICE_LINK: driver::DeviceLink<ThreadModeRawMutex> = driver::DeviceLink::wire();
+
+    /// The application UART's rate: 115200 unless the build sets
+    /// `UMSH_ULCP_UART_BAUD` to another rate the UARTE has.
+    #[cfg(feature = "ulcp-uart")]
+    const ULCP_UART_BAUD: UarteBaudrate =
+        match umsh_ulcp_runtime::uart_link::baud(option_env!("UMSH_ULCP_UART_BAUD"), 115_200) {
+            1_200 => UarteBaudrate::Baud1200,
+            2_400 => UarteBaudrate::Baud2400,
+            4_800 => UarteBaudrate::Baud4800,
+            9_600 => UarteBaudrate::Baud9600,
+            14_400 => UarteBaudrate::Baud14400,
+            19_200 => UarteBaudrate::Baud19200,
+            28_800 => UarteBaudrate::Baud28800,
+            31_250 => UarteBaudrate::Baud31250,
+            38_400 => UarteBaudrate::Baud38400,
+            56_000 => UarteBaudrate::Baud56000,
+            57_600 => UarteBaudrate::Baud57600,
+            76_800 => UarteBaudrate::Baud76800,
+            115_200 => UarteBaudrate::Baud115200,
+            230_400 => UarteBaudrate::Baud230400,
+            250_000 => UarteBaudrate::Baud250000,
+            460_800 => UarteBaudrate::Baud460800,
+            921_600 => UarteBaudrate::Baud921600,
+            1_000_000 => UarteBaudrate::Baud1m,
+            _ => panic!("UMSH_ULCP_UART_BAUD is not a rate the UARTE has"),
+        };
 
     type DeviceName = heapless::Vec<u8, { MAX_DEVICE_NAME_LEN }>;
     static DEVICE_NAME: Mutex<ThreadModeRawMutex, DeviceName> = Mutex::new(DeviceName::new());
@@ -2813,6 +2858,19 @@ mod firmware {
         outbound: OutFrame,
         attached: bool,
     ) -> Result<Delivered, trouble_host::Error> {
+        // The driver ended the host's session (it discarded a frame it
+        // owed a host that was not reading); over BLE that closes the
+        // connection, before anything newer goes out.
+        if OUT_CH.take_close_request(Transport::Ble) {
+            debug_log(format_args!(
+                "ble session ended by the driver; disconnecting"
+            ));
+            if let Some(completion) = outbound.completion {
+                completion.complete(false);
+            }
+            conn.raw().disconnect();
+            return Ok(Delivered::Disconnected);
+        }
         if attached
             && (conn.raw().is_bonded_peer()
                 || (outbound.finish_ble_wipe && BLE_WIPE_WAITING_REPLY.load(Ordering::Acquire)))
@@ -3301,16 +3359,27 @@ mod firmware {
                                             break;
                                         }
                                     }
-                                    Err(()) => debug_log(format_args!(
-                                        "gatt frame-in complete staging=FAILED len={}",
-                                        frame.len()
-                                    )),
+                                    Err(()) => {
+                                        debug_log(format_args!(
+                                            "gatt frame-in complete staging=FAILED len={}; disconnecting",
+                                            frame.len()
+                                        ));
+                                        conn.raw().disconnect();
+                                        break;
+                                    }
                                 }
                             }
-                            Some(Err(error)) => debug_log(format_args!(
-                                "gatt frame-in decode=FAILED error={error:?} segment-len={}",
-                                inbound.len()
-                            )),
+                            // A frame lost in reassembly: the connection
+                            // failed to deliver what it exists to deliver,
+                            // so the session ends with it (spec §Sessions).
+                            Some(Err(error)) => {
+                                debug_log(format_args!(
+                                    "gatt frame-in decode=FAILED error={error:?} segment-len={}; disconnecting",
+                                    inbound.len()
+                                ));
+                                conn.raw().disconnect();
+                                break;
+                            }
                             None => debug_log(format_args!(
                                 "gatt frame-in segment accepted segment-len={} complete=false",
                                 inbound.len()
@@ -3857,6 +3926,23 @@ mod firmware {
         }
     }
 
+    /// Writes `parts` as one line of marked text, which an HDLC-Lite host
+    /// skips and a serial terminal shows.
+    async fn write_text(tx: &mut DeviceSender, parts: &[&[u8]]) {
+        let mut octets = hdlc::TextOctets::new(parts);
+        let mut chunk = [0u8; 64];
+        loop {
+            let len = chunk
+                .iter_mut()
+                .zip(&mut octets)
+                .map(|(slot, octet)| *slot = octet)
+                .count();
+            if len == 0 || tx.write_packet(&chunk[..len]).await.is_err() {
+                return;
+            }
+        }
+    }
+
     /// Owns the USB `Sender`, HDLC-encodes frames, and writes USB packets.
     #[embassy_executor::task]
     async fn output_task(
@@ -3865,8 +3951,8 @@ mod firmware {
         panic_report: Option<&'static str>,
     ) {
         // Emit the previous boot's diagnostics (watchdog capture and/or
-        // panic message) as ASCII to the first USB reader. HDLC hosts
-        // resynchronize past it; humans read it with a serial terminal.
+        // panic message) as marked text to the first USB reader. HDLC hosts
+        // skip it; humans read it with a serial terminal.
         // Wait for DTR—the OS CDC driver drains the IN endpoint even
         // with no process attached, so writing before a real opener
         // exists would discard the report into the void.
@@ -3876,9 +3962,7 @@ mod firmware {
             }
             Timer::after_millis(300).await;
             for report in [wdt_report, panic_report].into_iter().flatten() {
-                for chunk in report.as_bytes().chunks(64) {
-                    let _ = tx.write_packet(chunk).await;
-                }
+                write_text(&mut tx, &[report.as_bytes()]).await;
             }
         }
         loop {
@@ -3886,9 +3970,7 @@ mod firmware {
             let outbound = match select(OUT_CH.wired.receive(), DEBUG_CH.receive()).await {
                 Either::First(outbound) => outbound,
                 Either::Second(line) => {
-                    for chunk in line.as_bytes().chunks(64) {
-                        let _ = tx.write_packet(chunk).await;
-                    }
+                    write_text(&mut tx, &[line.as_bytes()]).await;
                     continue;
                 }
             };
@@ -3955,7 +4037,8 @@ mod firmware {
         loop {
             rx.wait_connection().await;
             debug_log(format_args!("usb debug attached"));
-            let mut decoder: hdlc::Decoder<FRAME_IN_MAX> = hdlc::Decoder::new();
+            let mut decoder: hdlc::Decoder<{ hdlc::decoder_capacity(FRAME_IN_MAX) }> =
+                hdlc::Decoder::new();
             let mut local_generation = SESSION_GEN.load(Ordering::Acquire);
             // True while this task's own attach is still unprocessed: the
             // single generation bump it causes must not reset the
@@ -3978,12 +4061,20 @@ mod firmware {
                     Ok(0) | Err(_) => break,
                     Ok(len) => {
                         for &byte in &packet[..len] {
-                            let Some(Ok(bytes)) = decoder.push(byte) else {
-                                continue;
-                            };
-                            let mut frame = heapless::Vec::new();
-                            let _ = frame.extend_from_slice(bytes);
-                            INPUT_CH.send(InEvent::Frame(Transport::Usb, frame)).await;
+                            match decoder.push(byte) {
+                                None => {}
+                                Some(Ok(bytes)) => {
+                                    let mut frame = heapless::Vec::new();
+                                    let _ = frame.extend_from_slice(bytes);
+                                    INPUT_CH.send(InEvent::Frame(Transport::Usb, frame)).await;
+                                }
+                                // A frame the host sent and the decoder
+                                // gave up on ends the host's session.
+                                Some(Err(error)) => {
+                                    debug_log(format_args!("usb frame lost error={error:?}"));
+                                    INPUT_CH.send(InEvent::FrameLost(Transport::Usb)).await;
+                                }
+                            }
                         }
                     }
                 }
@@ -4034,6 +4125,9 @@ mod firmware {
                 ctl: &DEVICE_CTL,
                 out: &OUT_CH,
                 session_gen: &SESSION_GEN,
+                #[cfg(feature = "ulcp-uart")]
+                device: Some(&DEVICE_LINK),
+                #[cfg(not(feature = "ulcp-uart"))]
                 device: None,
                 snapshot: &SNAPSHOT_CTL,
             },
@@ -4273,6 +4367,19 @@ mod firmware {
         umsh_ulcp_runtime::gnss::fix_ui_changed().await;
         #[cfg(not(feature = "cap-gnss"))]
         core::future::pending::<()>().await
+    }
+
+    /// The application wired to the device's own interface, served on its
+    /// UART beside whatever host is attached (spec §The Device's Own
+    /// Interface). The UARTE goes on receiving while the CPU sleeps, so
+    /// the device never sleeps in the link's sense (`()`), though the
+    /// UARTE's clock keeps running.
+    #[cfg(feature = "ulcp-uart")]
+    #[embassy_executor::task]
+    async fn application_uart_task(uart: BufferedUarte<'static>) {
+        let (mut rx, mut tx) = uart.split();
+        umsh_ulcp_runtime::uart_link::serve_device(&mut rx, &mut tx, &DEVICE_LINK, &INPUT_CH, &())
+            .await
     }
 
     /// Drive the board's GNSS receiver.
@@ -7161,6 +7268,39 @@ mod firmware {
         };
         #[cfg(all(feature = "ulcp-i2c", not(feature = "board-wio-tracker-l1")))]
         let host_i2c = board_i2c::Buses::new([primary_i2c], board_i2c::BUSES);
+
+        // The application's UART on D6 (P1.11, TX) and D7 (P1.12, RX), the
+        // pads the header I2C bus takes in the default build. This board
+        // has no GNSS receiver, so UARTE0, TIMER1, and PPI 0/1 with group
+        // 0 are free: MPSL holds TIMER0 and PPI 19/30/31, the softdevice
+        // controller holds 17/18 and 20–29, and the freeze diagnostics
+        // hold TIMER2.
+        #[cfg(feature = "ulcp-uart")]
+        {
+            let mut config = UarteConfig::default();
+            config.baudrate = ULCP_UART_BAUD;
+            static RX: StaticCell<[u8; 256]> = StaticCell::new();
+            static TX: StaticCell<[u8; 64]> = StaticCell::new();
+            let uart = BufferedUarte::new(
+                p.UARTE0,
+                p.TIMER1,
+                p.PPI_CH0,
+                p.PPI_CH1,
+                p.PPI_GROUP0,
+                p.P1_12,
+                p.P1_11,
+                Irqs,
+                config,
+                RX.init([0; 256]),
+                TX.init([0; 64]),
+            );
+            // A bare pad with nothing wired to it is held quiet rather
+            // than left to float into framing errors.
+            pac::P1
+                .pin_cnf(12)
+                .modify(|w| w.set_pull(pac::gpio::vals::Pull::Pullup));
+            spawner.spawn(application_uart_task(uart).unwrap());
+        }
 
         spawner.spawn(
             device_task(

@@ -35,6 +35,7 @@ pub const fn property_name(key: u32) -> Option<&'static str> {
         prop::PHY_T_FRAME => "PROP_PHY_T_FRAME",
         prop::MAC_PROMISCUOUS => "PROP_MAC_PROMISCUOUS",
         prop::MAC_BACKHAUL => "PROP_MAC_BACKHAUL",
+        prop::NODE_MSG_LISTEN => "PROP_NODE_MSG_LISTEN",
         prop::SAVED => "PROP_SAVED",
         prop::DEV_KEY => "PROP_DEV_KEY",
         prop::DEV_PRIVATE_KEY => "PROP_DEV_PRIVATE_KEY",
@@ -175,6 +176,9 @@ pub const fn property_name(key: u32) -> Option<&'static str> {
         prop::LAN_BEARER_GROUP => "PROP_LAN_BEARER_GROUP",
         prop::LAN_BEARER_INGRESS_LIMIT => "PROP_LAN_BEARER_INGRESS_LIMIT",
         prop::LAN_BEARER_STATE => "PROP_LAN_BEARER_STATE",
+        prop::NODE_MSG_TYPES => "PROP_NODE_MSG_TYPES",
+        prop::NODE_MSG_MTU => "PROP_NODE_MSG_MTU",
+        prop::UART_WINDOW => "PROP_UART_WINDOW",
         _ => return None,
     })
 }
@@ -204,6 +208,7 @@ pub const PROPERTIES: &[u32] = &[
     prop::PHY_T_FRAME,
     prop::MAC_PROMISCUOUS,
     prop::MAC_BACKHAUL,
+    prop::NODE_MSG_LISTEN,
     prop::SAVED,
     prop::DEV_KEY,
     prop::DEV_PRIVATE_KEY,
@@ -343,6 +348,9 @@ pub const PROPERTIES: &[u32] = &[
     prop::LAN_BEARER_GROUP,
     prop::LAN_BEARER_INGRESS_LIMIT,
     prop::LAN_BEARER_STATE,
+    prop::NODE_MSG_TYPES,
+    prop::NODE_MSG_MTU,
+    prop::UART_WINDOW,
 ];
 
 /// How a property's octets are meant to be read.
@@ -407,7 +415,7 @@ pub const fn property_type(key: u32) -> Option<PropertyType> {
         prop::PHY_LORA_BW | prop::PHY_T_FRAME => U32,
         prop::PHY_LORA_SF | prop::PHY_LORA_CR => U8,
         prop::PHY_MTU | prop::PHY_LORA_SW => U16,
-        prop::MAC_PROMISCUOUS | prop::MAC_BACKHAUL => Bool,
+        prop::MAC_PROMISCUOUS | prop::MAC_BACKHAUL | prop::NODE_MSG_LISTEN => Bool,
         prop::SAVED => U8,
         prop::DEV_KEY | prop::DEV_PRIVATE_KEY | prop::HOST_KEY => Key32,
         // Multiple-value tables, reported as digests.
@@ -524,6 +532,10 @@ pub const fn property_type(key: u32) -> Option<PropertyType> {
         prop::LAN_BEARER_GROUP => Bytes,
         prop::LAN_BEARER_INGRESS_LIMIT => U16,
         prop::LAN_BEARER_STATE => U8,
+        // Payload types, one octet per item: a list, not a number.
+        prop::NODE_MSG_TYPES => Bytes,
+        prop::NODE_MSG_MTU => U16,
+        prop::UART_WINDOW => U16,
         _ => return None,
     })
 }
@@ -569,6 +581,7 @@ pub const fn capability_name(code: u32) -> Option<&'static str> {
         cap::DISPLAY => "DISPLAY",
         cap::KEYBOARD => "KEYBOARD",
         cap::SOUND => "SOUND",
+        cap::NODE_MSG => "NODE_MSG",
         _ => return None,
     })
 }
@@ -602,7 +615,9 @@ impl fmt::Display for FrameDescription<'_> {
             | Cmd::Clear
             | Cmd::Restore
             | Cmd::FactoryReset
-            | Cmd::Reboot => {
+            | Cmd::Reboot
+            | Cmd::SessionStart
+            | Cmd::SessionDidStart => {
                 write!(out, "{command:?} tid={tid}")
             }
             Cmd::PropGet
@@ -684,7 +699,7 @@ impl fmt::Display for FrameDescription<'_> {
                 ),
                 Err(_) => write!(out, "{command:?} tid={tid} (malformed payload)"),
             },
-            Cmd::SessionReset => match crate::frame::parse_session_reset(frame.payload) {
+            Cmd::SessionDidEnd => match crate::frame::parse_session_did_end(frame.payload) {
                 Ok(reason) => write!(out, "{command:?} tid={tid} {reason:?}"),
                 Err(_) => write!(out, "{command:?} tid={tid} (malformed payload)"),
             },
@@ -942,7 +957,8 @@ mod tests {
         assert_eq!(capability_name(cap::LAN_BEARER), Some("LAN_BEARER"));
         assert_eq!(capability_name(cap::KEYBOARD), Some("KEYBOARD"));
         assert_eq!(capability_name(cap::SOUND), Some("SOUND"));
-        assert_eq!(capability_name(cap::SOUND + 1), None);
+        assert_eq!(capability_name(cap::NODE_MSG), Some("NODE_MSG"));
+        assert_eq!(capability_name(cap::NODE_MSG + 1), None);
     }
 
     #[test]

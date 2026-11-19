@@ -106,12 +106,15 @@ fn a_send_whose_frame_vanished_is_retired_as_abandoned() {
 
     let mut abandoned = None;
     mac.service_pending_ack_timeouts(|_, event| {
-        if let MacEventRef::TxAbandoned { receipt, .. } = event {
-            abandoned = receipt;
+        if let MacEventRef::TxAbandoned {
+            receipt, reason, ..
+        } = event
+        {
+            abandoned = receipt.zip(Some(reason));
         }
     });
 
-    assert_eq!(abandoned, Some(receipt));
+    assert_eq!(abandoned, Some((receipt, crate::TxAbandonReason::Orphaned)));
     assert!(
         mac.identity(local_id)
             .unwrap()
@@ -353,15 +356,21 @@ fn a_frame_whose_reservation_never_commits_is_abandoned() {
     let mut abandoned = None;
     for _ in 0..=crate::coordinator::MAX_COUNTER_HOLDS {
         block_on(mac.drain_tx_queue(&mut |_, event| {
-            if let MacEventRef::TxAbandoned { receipt, .. } = event {
-                abandoned = receipt;
+            if let MacEventRef::TxAbandoned {
+                receipt, reason, ..
+            } = event
+            {
+                abandoned = receipt.zip(Some(reason));
             }
         }))
         .unwrap();
         mac.clock().advance_ms(1_000);
     }
 
-    assert_eq!(abandoned, Some(receipt));
+    assert_eq!(
+        abandoned,
+        Some((receipt, crate::TxAbandonReason::CounterUnavailable))
+    );
     assert!(mac.tx_queue().is_empty());
     assert!(mac.radio().transmitted.is_empty(), "it never aired");
     assert_eq!(mac.counters().tx_abandoned, 1);

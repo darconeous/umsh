@@ -44,6 +44,7 @@ A packet enters this procedure however it reached the node. Most arrive off the 
 6. **Payload type and option validation**
    - If the payload type is not allowed for this packet type (see [Payload and Packet Type Compatibility](payload-format.md#payload-and-packet-type-compatibility)), drop.
    - If the packet carries a [delivery-critical](packet-options.md#forwarding-and-delivery-criticality) option this node does not recognize, or whose value it cannot interpret, drop it and count the drop. The packet is not accepted, delivered, or acknowledged.
+   - If the packet requests an ACK and the node has no room to hold its payload for whatever will consume it, it MAY decline the packet: drop it without acknowledging it and without touching replay state, so that a retransmission is judged as new once there is room. A duplicate of a packet already accepted is still handled as step 7 describes. An acknowledgement therefore never stands for a payload the node had to discard.
 
 7. **Replay and Ack Processing**
    - If the packet carries a [frame signature](security.md#frame-signatures), verify it. A packet whose signature verifies is judged by the [signed-frame counter rules](security.md#signed-frame-counters); one whose signature does not verify continues as an unsigned packet.

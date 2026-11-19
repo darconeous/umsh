@@ -8,13 +8,13 @@
 //! transmit against the combined budget, and records the airtime once
 //! the transmit completes.
 //!
-//! A refused transmit is reported as [`TxError::CadTimeout`]—the one
-//! transmit error the MAC treats as "channel unavailable right now":
-//! it backs off with jitter, retries a bounded number of times, and
-//! then drops the frame. Any other error is a radio fault, which the MAC
-//! drops at once and does not retry. A budget exhausted this hour rarely
-//! recovers within the MAC's short backoff horizon, so a refused frame
-//! is effectively shed—exactly the spec's posture (transmits never
+//! A refused transmit is reported as [`TxError::DutyLimited`], which the
+//! MAC treats as it does a busy channel: it backs off with jitter,
+//! retries a bounded number of times, and then drops the frame, naming
+//! the duty limit as the reason. Any other error is a radio fault, which
+//! the MAC drops at once and does not retry. A budget exhausted this hour
+//! rarely recovers within the MAC's short backoff horizon, so a refused
+//! frame is effectively shed—exactly the spec's posture (transmits never
 //! wait for duty-cycle allowance).
 
 use umsh_hal::{Clock, Radio, RxInfo, TxError, TxOptions};
@@ -62,7 +62,7 @@ impl<R: Radio, C: Clock> Radio for DutyGatedRadio<R, C> {
         let airtime_ms = self
             .ledger
             .admit(self.clock.now_ms(), data.len())
-            .map_err(|_| TxError::CadTimeout)?;
+            .map_err(|_| TxError::DutyLimited)?;
         self.inner.transmit(data, options).await?;
         // Record with the completion timestamp, mirroring the
         // session's on_tx_result accounting. Refusals and failed
@@ -171,7 +171,7 @@ mod tests {
     /// The acceptance shape for the shared ledger: session airtime and
     /// node airtime interleave against one combined budget. The node's
     /// transmit is admitted while the combined figure is under the
-    /// limit, refused as CadTimeout once session traffic exhausts it,
+    /// limit, refused as DutyLimited once session traffic exhausts it,
     /// and node traffic symmetrically starves the session's own check.
     #[test]
     fn interleaved_session_and_node_tx_share_one_budget() {
@@ -202,10 +202,10 @@ mod tests {
         }
         // ...so the session's own pre-check refuses...
         assert!(ledger.would_exceed(now.get(), 100));
-        // ...and the node's next transmit is shed as CadTimeout
+        // ...and the node's next transmit is refused as DutyLimited
         // without reaching the radio or consuming budget.
         let refused = block_on(node.transmit(&[0u8; 32], TxOptions::default()));
-        assert!(matches!(refused, Err(TxError::CadTimeout)));
+        assert!(matches!(refused, Err(TxError::DutyLimited)));
         assert_eq!(node.inner.sent, [32]);
         let usage_after_refusal = ledger.usage(now.get());
 
@@ -219,7 +219,7 @@ mod tests {
         assert!(ledger.would_exceed(now.get(), 100));
         assert!(matches!(
             block_on(node.transmit(&[0u8; 32], TxOptions::default())),
-            Err(TxError::CadTimeout)
+            Err(TxError::DutyLimited)
         ));
         let _ = usage_after_refusal;
     }

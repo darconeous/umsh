@@ -4,6 +4,21 @@
 //! `0x7E` flag bytes, control bytes inside a frame are escaped with
 //! `0x7D` (XOR `0x20`), and each frame carries a trailing 16-bit FCS
 //! (CRC-16/X-25 per RFC 1662), least-significant byte first.
+//!
+//! Three rules from "HDLC-Lite on a ULCP Link" apply on top:
+//!
+//! * An unescaped XON or XOFF is never frame content. The encoder escapes
+//!   both, so one that arrives bare belongs to the link's flow control
+//!   and the decoder skips it wherever it falls.
+//! * A frame whose first octet is [`TEXT_MARKER`] is marked text, and one
+//!   whose first octet is [`FILL`] is fill: the decoder skips either up to
+//!   the next flag, with no escape handling and no FCS. These are ULCP
+//!   rules; [`Decoder::plain`] turns them off for other users of the
+//!   framing, such as the internet bridge tunnel, whose frames may begin
+//!   with either octet.
+//!
+//! Fill is what a wake preamble is made of ("Waking a Device on a UART"):
+//! see [`wake_preamble_len`].
 
 /// Frame delimiter.
 pub const FLAG: u8 = 0x7E;
@@ -12,8 +27,41 @@ pub const ESCAPE: u8 = 0x7D;
 /// XOR applied to escaped bytes.
 pub const ESCAPE_XOR: u8 = 0x20;
 
-const XON: u8 = 0x11;
-const XOFF: u8 = 0x13;
+/// Software flow control: permits the other end to send.
+pub const XON: u8 = 0x11;
+/// Software flow control: withdraws the permission to send.
+pub const XOFF: u8 = 0x13;
+/// First octet of a marked-text line (`#`). No ULCP header can be this
+/// octet, since every header is `10000ttt` in binary.
+pub const TEXT_MARKER: u8 = 0x23;
+/// First octet of fill, and every octet of a wake preamble but its flag.
+/// No ULCP header can be this octet either.
+pub const FILL: u8 = 0xFF;
+
+/// A reader on a UART that has sent nothing for this long sends a wake
+/// preamble before its next octet.
+pub const WAKE_QUIET_MS: u32 = 100;
+/// A device that sleeps stays awake at least this long after the last
+/// octet it received.
+pub const WAKE_HOLD_MS: u32 = 250;
+/// The least time a wake preamble's fill lasts.
+pub const WAKE_PREAMBLE_US: u32 = 5_000;
+/// The fewest [`FILL`] octets in a wake preamble: one rising edge each,
+/// for a device that wakes on a count of them.
+pub const WAKE_PREAMBLE_MIN: usize = 8;
+
+/// The [`FILL`] octets of a wake preamble at `baud` bits per second, 8N1;
+/// the preamble is these followed by one [`FLAG`]. Enough to last
+/// [`WAKE_PREAMBLE_US`], and never fewer than [`WAKE_PREAMBLE_MIN`].
+pub const fn wake_preamble_len(baud: u32) -> usize {
+    // Ten bits to an octet, rounded up.
+    let octets = (WAKE_PREAMBLE_US as u64 * baud as u64).div_ceil(10 * 1_000_000) as usize;
+    if octets > WAKE_PREAMBLE_MIN {
+        octets
+    } else {
+        WAKE_PREAMBLE_MIN
+    }
+}
 
 const fn needs_escape(byte: u8) -> bool {
     matches!(byte, FLAG | ESCAPE | XON | XOFF)
@@ -41,6 +89,12 @@ pub fn crc16(data: &[u8]) -> u16 {
 /// escaped.
 pub const fn max_encoded_len(payload_len: usize) -> usize {
     2 + (payload_len + 2) * 2
+}
+
+/// The [`Decoder`] capacity that takes frames of up to `payload_len`
+/// bytes: the decoder holds each frame's FCS along with it.
+pub const fn decoder_capacity(payload_len: usize) -> usize {
+    payload_len + 2
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -102,18 +156,95 @@ pub enum DecodeError {
     AbortedEscape,
 }
 
+/// Encode one marked-text line, including both delimiting flags, into
+/// `out`. Octets the text must not contain (the flag, XON, and XOFF) are
+/// replaced with `?`. Returns the number of bytes written, or
+/// [`EncodeError::BufferTooSmall`] when `out` cannot hold `text.len() + 3`.
+pub fn encode_text(text: &[u8], out: &mut [u8]) -> Result<usize, EncodeError> {
+    let mut sink = Sink { out, len: 0 };
+    for octet in TextOctets::new(&[text]) {
+        sink.push(octet)?;
+    }
+    Ok(sink.len)
+}
+
+/// The octets of one marked-text line, including both delimiting flags,
+/// made of `parts` in order. The streaming form of [`encode_text`], for a
+/// writer that takes a bounded chunk at a time.
+pub struct TextOctets<'a> {
+    parts: &'a [&'a [u8]],
+    part: usize,
+    at: usize,
+    /// Octets of the opening (flag, marker) already yielded.
+    opened: u8,
+    closed: bool,
+}
+
+impl<'a> TextOctets<'a> {
+    pub const fn new(parts: &'a [&'a [u8]]) -> Self {
+        Self {
+            parts,
+            part: 0,
+            at: 0,
+            opened: 0,
+            closed: false,
+        }
+    }
+}
+
+impl Iterator for TextOctets<'_> {
+    type Item = u8;
+
+    fn next(&mut self) -> Option<u8> {
+        match self.opened {
+            0 => {
+                self.opened = 1;
+                return Some(FLAG);
+            }
+            1 => {
+                self.opened = 2;
+                return Some(TEXT_MARKER);
+            }
+            _ => {}
+        }
+        while let Some(part) = self.parts.get(self.part) {
+            if let Some(&byte) = part.get(self.at) {
+                self.at += 1;
+                return Some(match byte {
+                    FLAG | XON | XOFF => b'?',
+                    other => other,
+                });
+            }
+            self.part += 1;
+            self.at = 0;
+        }
+        if self.closed {
+            return None;
+        }
+        self.closed = true;
+        Some(FLAG)
+    }
+}
+
 /// Streaming decoder with an internal reassembly buffer of `N` bytes.
 ///
-/// `N` bounds the *unescaped* frame size including the two FCS bytes.
+/// `N` bounds the *unescaped* frame size including the two FCS bytes:
+/// size it with [`decoder_capacity`].
 /// Feed received bytes one at a time; a completed frame is returned
 /// with the FCS already verified and stripped. Errors report a
 /// discarded frame; the decoder resynchronizes on the next flag
-/// automatically.
+/// automatically. Bare XON and XOFF octets and (unless built with
+/// [`Decoder::plain`]) marked text and fill are skipped without a report.
 pub struct Decoder<const N: usize> {
     buf: [u8; N],
     len: usize,
     escaped: bool,
     overflow: bool,
+    /// Skipping marked text or fill until the next flag.
+    skipping: bool,
+    /// Whether a frame beginning with [`TEXT_MARKER`] or [`FILL`] is
+    /// skipped: the ULCP rules.
+    ulcp: bool,
 }
 
 impl<const N: usize> Default for Decoder<N> {
@@ -123,12 +254,25 @@ impl<const N: usize> Default for Decoder<N> {
 }
 
 impl<const N: usize> Decoder<N> {
+    /// A decoder for a ULCP link: marked text and fill are skipped.
     pub const fn new() -> Self {
+        Self::with_ulcp_rules(true)
+    }
+
+    /// A decoder for HDLC-Lite outside ULCP, where a frame may begin
+    /// with any octet and none is marked text or fill.
+    pub const fn plain() -> Self {
+        Self::with_ulcp_rules(false)
+    }
+
+    const fn with_ulcp_rules(ulcp: bool) -> Self {
         Self {
             buf: [0; N],
             len: 0,
             escaped: false,
             overflow: false,
+            skipping: false,
+            ulcp,
         }
     }
 
@@ -137,6 +281,7 @@ impl<const N: usize> Decoder<N> {
         self.len = 0;
         self.escaped = false;
         self.overflow = false;
+        self.skipping = false;
     }
 
     /// Process one received byte.
@@ -145,6 +290,16 @@ impl<const N: usize> Decoder<N> {
     /// `Some(Err(_))` when it completed or aborted an invalid one, and
     /// `None` otherwise.
     pub fn push(&mut self, byte: u8) -> Option<Result<&[u8], DecodeError>> {
+        if byte == XON || byte == XOFF {
+            // Flow control, never frame content: it changes nothing here.
+            return None;
+        }
+        if self.skipping {
+            if byte == FLAG {
+                self.skipping = false;
+            }
+            return None;
+        }
         if byte == FLAG {
             let escaped = core::mem::replace(&mut self.escaped, false);
             let overflow = core::mem::replace(&mut self.overflow, false);
@@ -168,6 +323,16 @@ impl<const N: usize> Decoder<N> {
                 return Some(Err(DecodeError::Crc));
             }
             return Some(Ok(&self.buf[..payload_len]));
+        }
+
+        if self.ulcp
+            && (byte == TEXT_MARKER || byte == FILL)
+            && self.len == 0
+            && !self.escaped
+            && !self.overflow
+        {
+            self.skipping = true;
+            return None;
         }
 
         let byte = if byte == ESCAPE {
@@ -348,12 +513,167 @@ mod tests {
     }
 
     #[test]
+    fn decoder_capacity_takes_a_frame_of_that_length() {
+        let payload = [0x5A; 16];
+        let mut wire = [0u8; max_encoded_len(16)];
+        let len = encode_frame(&payload, &mut wire).unwrap();
+        let mut decoder = Decoder::<{ decoder_capacity(16) }>::new();
+        let frame = decode_all(&mut decoder, &wire[..len]).unwrap().unwrap();
+        assert_eq!(frame, payload);
+        // A decoder sized to the frame alone has no room for its FCS.
+        let mut decoder = Decoder::<16>::new();
+        assert_eq!(
+            decode_all(&mut decoder, &wire[..len]),
+            Some(Err(DecodeError::TooLong))
+        );
+    }
+
+    #[test]
     fn escape_then_flag_aborts() {
         let mut decoder = Decoder::<8>::new();
         assert_eq!(decoder.push(FLAG), None);
         assert_eq!(decoder.push(0x42), None);
         assert_eq!(decoder.push(ESCAPE), None);
         assert_eq!(decoder.push(FLAG), Some(Err(DecodeError::AbortedEscape)));
+    }
+
+    #[test]
+    fn bare_xon_and_xoff_leave_a_frame_intact() {
+        let payload = [0x81u8, 0x02, XON, XOFF, 0x00];
+        let mut wire = [0u8; max_encoded_len(5)];
+        let len = encode_frame(&payload, &mut wire).unwrap();
+        let mut noisy = vec![XON];
+        for (i, &byte) in wire[..len].iter().enumerate() {
+            noisy.push(byte);
+            if i % 2 == 1 {
+                noisy.push(if i % 4 == 1 { XOFF } else { XON });
+            }
+        }
+        let mut decoder = Decoder::<16>::new();
+        assert_eq!(decode_all(&mut decoder, &noisy), Some(Ok(payload.to_vec())));
+    }
+
+    #[test]
+    fn marked_text_is_skipped_between_frames() {
+        let mut wire = Vec::new();
+        let mut scratch = [0u8; 64];
+        let len = encode_frame(&[0x01], &mut scratch).unwrap();
+        wire.extend_from_slice(&scratch[..len]);
+        // Longer than the decoder's buffer, and full of octets that would
+        // otherwise be escapes.
+        let text = b"boot: \x7d}}} a line far longer than eight octets";
+        let len = encode_text(text, &mut scratch).unwrap();
+        wire.extend_from_slice(&scratch[..len]);
+        let len = encode_frame(&[0x02], &mut scratch).unwrap();
+        wire.extend_from_slice(&scratch[..len]);
+
+        let mut decoder = Decoder::<8>::new();
+        let outcomes: Vec<_> = wire
+            .iter()
+            .filter_map(|&byte| decoder.push(byte).map(|o| o.map(<[u8]>::to_vec)))
+            .collect();
+        assert_eq!(outcomes, [Ok(vec![0x01]), Ok(vec![0x02])]);
+    }
+
+    #[test]
+    fn a_wake_preamble_is_fill() {
+        let mut wire = vec![FILL; wake_preamble_len(115_200)];
+        wire.push(FLAG);
+        let mut scratch = [0u8; 16];
+        let len = encode_frame(&[0x81, 0x00], &mut scratch).unwrap();
+        wire.extend_from_slice(&scratch[..len]);
+        // What is left of one after a wake cut an octet short.
+        wire.extend_from_slice(&[FILL, 0xFE, FILL, FILL, FLAG]);
+        wire.extend_from_slice(&scratch[..len]);
+
+        let mut decoder = Decoder::<8>::new();
+        let outcomes: Vec<_> = wire
+            .iter()
+            .filter_map(|&byte| decoder.push(byte).map(|o| o.map(<[u8]>::to_vec)))
+            .collect();
+        assert_eq!(outcomes, [Ok(vec![0x81, 0x00]), Ok(vec![0x81, 0x00])]);
+    }
+
+    #[test]
+    fn fill_is_frame_data_outside_ulcp() {
+        let mut decoder = Decoder::<8>::plain();
+        let outcomes: Vec<_> = [FLAG, FILL, FILL, FLAG]
+            .iter()
+            .filter_map(|&byte| decoder.push(byte).map(|o| o.map(<[u8]>::to_vec)))
+            .collect();
+        assert_eq!(outcomes, [Err(DecodeError::Crc)]);
+    }
+
+    #[test]
+    fn the_preamble_lasts_its_time_and_is_never_under_eight_octets() {
+        assert_eq!(wake_preamble_len(921_600), 461);
+        assert_eq!(wake_preamble_len(115_200), 58);
+        assert_eq!(wake_preamble_len(9_600), 8);
+        assert_eq!(wake_preamble_len(1_200), 8);
+    }
+
+    #[test]
+    fn encoded_text_has_no_flag_or_flow_control() {
+        let mut out = [0u8; 16];
+        let len = encode_text(&[b'a', FLAG, XON, XOFF, b'b'], &mut out).unwrap();
+        assert_eq!(
+            &out[..len],
+            &[FLAG, TEXT_MARKER, b'a', b'?', b'?', b'?', b'b', FLAG]
+        );
+    }
+
+    #[test]
+    fn text_in_parts_is_one_line() {
+        let octets: Vec<u8> = TextOctets::new(&[b"ab", b"", &[XON], b"c\r\n"]).collect();
+        assert_eq!(
+            octets,
+            [
+                FLAG,
+                TEXT_MARKER,
+                b'a',
+                b'b',
+                b'?',
+                b'c',
+                b'\r',
+                b'\n',
+                FLAG
+            ]
+        );
+        let empty: Vec<u8> = TextOctets::new(&[]).collect();
+        assert_eq!(empty, [FLAG, TEXT_MARKER, FLAG]);
+    }
+
+    #[test]
+    fn a_full_buffer_takes_no_octet_from_the_text() {
+        let mut octets = TextOctets::new(&[b"abcdef"]);
+        let mut chunk = [0u8; 3];
+        let mut wire = Vec::new();
+        loop {
+            let n = chunk
+                .iter_mut()
+                .zip(&mut octets)
+                .map(|(slot, octet)| *slot = octet)
+                .count();
+            if n == 0 {
+                break;
+            }
+            wire.extend_from_slice(&chunk[..n]);
+        }
+        assert_eq!(wire, b"\x7e#abcdef\x7e");
+    }
+
+    #[test]
+    fn plain_decoder_takes_the_marker_as_data() {
+        let payload = [TEXT_MARKER, 0x05];
+        let mut wire = [0u8; max_encoded_len(2)];
+        let len = encode_frame(&payload, &mut wire).unwrap();
+        let mut decoder = Decoder::<8>::plain();
+        assert_eq!(
+            decode_all(&mut decoder, &wire[..len]),
+            Some(Ok(payload.to_vec()))
+        );
+        let mut decoder = Decoder::<8>::new();
+        assert_eq!(decode_all(&mut decoder, &wire[..len]), None);
     }
 
     #[test]

@@ -55,6 +55,7 @@ fn config() -> SessionConfig {
         ble: true,
         ble_pairing: true,
         ble_pin: true,
+        uart_links: Default::default(),
         reboot: true,
         dev_identity: true,
         messaging: false,
@@ -68,6 +69,7 @@ fn config() -> SessionConfig {
         bridge_client: false,
         i2c_buses: &[],
         i2c_devices: &[],
+        node_msg: None,
     }
 }
 

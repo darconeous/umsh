@@ -232,9 +232,8 @@ enum Sent {
 }
 
 /// The UMSH MAC's channel-access rule: CAD before every attempt, and on
-/// a busy channel—or a refusal from the duty ledger, which arrives the
-/// same way—a random backoff and another try, up to the MAC's attempt
-/// limit.
+/// a busy channel—or a refusal from the duty ledger, treated the same
+/// way—a random backoff and another try, up to the MAC's attempt limit.
 async fn transmit_with_backoff<R: Radio>(
     radio: &mut R,
     frame: &[u8],
@@ -254,10 +253,11 @@ where
         };
         match radio.transmit(frame, options).await {
             Ok(()) => return Sent::Transmitted,
-            Err(TxError::CadTimeout) if attempt < MAX_CAD_ATTEMPTS => {
+            // The duty gate's refusal is waited out like a busy channel.
+            Err(TxError::CadTimeout | TxError::DutyLimited) if attempt < MAX_CAD_ATTEMPTS => {
                 Timer::after_millis(u64::from(busy_backoff_ms(radio.t_frame_ms(), draw()))).await;
             }
-            Err(TxError::CadTimeout) => {}
+            Err(TxError::CadTimeout | TxError::DutyLimited) => {}
             Err(TxError::Io(error)) => {
                 debug_log(format_args!("meshcore: transmit FAILED {error:?}"));
                 return Sent::Failed;

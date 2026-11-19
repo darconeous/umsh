@@ -95,6 +95,18 @@ reseed = ["dep:rand_core", "dep:rand_chacha", "dep:umsh-crypto", "dep:zeroize"]
 # single thread-mode executor whose BLE controller cannot tolerate the
 # critical sections the portable default would take in the radio path.
 node-thread-mode-mutex = []
+# Node messaging (`CAP_NODE_MSG`): a link sends and receives UMSH payloads
+# through the device node, which holds claimed messages for it.
+node-msg = [
+    "device-node",
+    "umsh-ulcp-device/node-msg",
+    "umsh-mac/payload-admission",
+    "umsh-node/payload-admission",
+]
+# A ULCP link on a UART without hardware flow control: HDLC-Lite framing
+# and the reader's XON/XOFF under `PROP_UART_WINDOW`, over any
+# `embedded-io-async` UART.
+uart-link = ["driver", "dep:embedded-io-async", "umsh-ulcp-device/uart-link"]
 # The glue between a staged `CMD_I2C_TRANSFER`/`CMD_I2C_SCAN` and any
 # `embedded-hal-async` bus: operation carving, the probe loop, and the
 # mapping from HAL error kinds to ULCP statuses. The trait, not a HAL, so
@@ -105,6 +117,7 @@ i2c = ["driver", "dep:embedded-hal-async"]
 trouble-host = { version = "0.7", default-features = false, features = ["peripheral", "gatt", "security", "default-packet-pool", "default-packet-pool-mtu-255"], optional = true }
 bt-hci = { version = "0.9", default-features = false, optional = true }
 embedded-io = { version = "0.7", default-features = false, optional = true }
+embedded-io-async = { version = "0.7", default-features = false, optional = true }
 umsh-ulcp = { path = "../umsh-ulcp", optional = true }
 umsh-ulcp-device = { path = "../umsh-ulcp-device", optional = true }
 umsh-crypto = { path = "../umsh-crypto", default-features = false, features = ["software-crypto"], optional = true }

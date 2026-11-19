@@ -587,6 +587,13 @@ impl<
         }
     }
 
+    /// Decline new acknowledgment-requested frames whose payload type
+    /// `admits` refuses; see [`Mac::set_payload_admission`].
+    #[cfg(feature = "payload-admission")]
+    pub async fn set_payload_admission(&self, admits: Option<fn(u8) -> bool>) {
+        self.mac.borrow_mut().await.set_payload_admission(admits);
+    }
+
     /// Cancel a pending ACK-requested send, stopping retransmissions.
     ///
     /// Returns `true` if the pending ACK was found and removed.

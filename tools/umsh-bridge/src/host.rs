@@ -99,6 +99,7 @@ fn session_config() -> SessionConfig {
         ble: false,
         ble_pairing: false,
         ble_pin: false,
+        uart_links: Default::default(),
         // A host interface is a task inside this process; there is no
         // hardware for `CMD_REBOOT` to restart, and restarting the
         // bridge is the operator's business.
@@ -116,6 +117,7 @@ fn session_config() -> SessionConfig {
         // A process has no bus to expose.
         i2c_buses: &[],
         i2c_devices: &[],
+        node_msg: None,
     }
 }
 
@@ -238,11 +240,11 @@ impl HostRelay {
                     continue;
                 }
                 Event::Read(len) => {
-                    // A decode error is the host's problem, not the
-                    // link's: the decoder resynchronizes on the next
-                    // flag, so a garbled frame costs one frame.
+                    // A socket is a connection link: a frame lost on it
+                    // means the connection failed at what it exists to
+                    // do, and the session ends with it (spec §Sessions).
                     if let Err(error) = device.ingest(&buf[..len], self.now_ms()) {
-                        tracing::debug!(iface = %self.name, "{error}");
+                        self.detach(&mut device, &mut current, format!("frame lost: {error}"));
                     }
                     self.drain_transmissions(&mut device);
                 }

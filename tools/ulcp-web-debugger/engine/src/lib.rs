@@ -84,6 +84,7 @@ pub fn web_sim_config() -> umsh_ulcp_simdev::SessionConfig {
         ble: true,
         ble_pairing: true,
         ble_pin: true,
+        uart_links: Default::default(),
         // The simulator restarts by rebuilding its session, which is
         // near enough a power cycle for the debugger to exercise.
         reboot: true,
@@ -109,6 +110,7 @@ pub fn web_sim_config() -> umsh_ulcp_simdev::SessionConfig {
         // raw bus commands are explorable too.
         i2c_buses: umsh_ulcp_simdev::SIMULATED_I2C_BUSES,
         i2c_devices: umsh_ulcp_simdev::SIMULATED_I2C_DEVICES,
+        node_msg: None,
     }
 }
 
@@ -461,6 +463,46 @@ const PROPERTY_SPECS: &[PropertySpec] = &[
         "boolean",
         None,
         Some(umsh_ulcp::ids::cap::HOST_FILTER),
+    ),
+    spec(
+        prop::NODE_MSG_LISTEN,
+        "Host session",
+        "Receive node messages",
+        true,
+        true,
+        "boolean",
+        None,
+        Some(umsh_ulcp::ids::cap::NODE_MSG),
+    ),
+    spec(
+        prop::NODE_MSG_TYPES,
+        "Device",
+        "Payload types delivered over node messaging",
+        true,
+        false,
+        "none",
+        None,
+        Some(umsh_ulcp::ids::cap::NODE_MSG),
+    ),
+    spec(
+        prop::NODE_MSG_MTU,
+        "Device",
+        "Longest node message payload",
+        true,
+        false,
+        "none",
+        Some("octets"),
+        Some(umsh_ulcp::ids::cap::NODE_MSG),
+    ),
+    spec(
+        prop::UART_WINDOW,
+        "Device",
+        "Octets each XON permits on this UART link",
+        true,
+        true,
+        "integer",
+        Some("octets"),
+        None,
     ),
     spec(
         prop::SAVED,
@@ -1532,19 +1574,25 @@ impl DebuggerEngine {
             self.protocol_error("malformed stream payload".into());
             return;
         };
-        let (metadata, metadata_error) = match BufferedRxMeta::decode(payload.metadata) {
-            Ok(meta) => (
-                Some(RxMetadata {
-                    rssi_dbm: meta.rx.rssi_dbm,
-                    lqi: meta.rx.lqi.map(|value| value.get()),
-                    snr_cb: meta.rx.snr_cb,
-                    buffered: meta.flags & RX_FLAG_BUFFERED != 0,
-                    acknowledged: meta.flags & RX_FLAG_ACKED != 0,
-                    age_s: meta.age_s,
-                }),
-                None,
-            ),
-            Err(error) => (None, Some(format!("{error:?}"))),
+        // Each stream has its own metadata; a node message's is not the
+        // radio's.
+        let (metadata, metadata_error) = if payload.stream == stream::NODE_MSG {
+            match umsh_ulcp::node_msg::RecvMeta::parse(payload.metadata) {
+                Ok(meta) => (
+                    Some(RxMetadata {
+                        rssi_dbm: meta.rssi_dbm,
+                        lqi: None,
+                        snr_cb: meta.snr_cb,
+                        buffered: false,
+                        acknowledged: meta.acked,
+                        age_s: 0,
+                    }),
+                    None,
+                ),
+                Err(error) => (None, Some(format!("{error:?}"))),
+            }
+        } else {
+            Self::radio_metadata(payload.metadata)
         };
         let (packet, packet_error) = if payload.stream == stream::PHY_RAW {
             match PacketHeader::parse(payload.data) {
@@ -1563,6 +1611,24 @@ impl DebuggerEngine {
             packet,
             packet_error,
         });
+    }
+
+    /// Decode `STR_PHY_RAW` receive metadata.
+    fn radio_metadata(metadata: &[u8]) -> (Option<RxMetadata>, Option<String>) {
+        match BufferedRxMeta::decode(metadata) {
+            Ok(meta) => (
+                Some(RxMetadata {
+                    rssi_dbm: meta.rx.rssi_dbm,
+                    lqi: meta.rx.lqi.map(|value| value.get()),
+                    snr_cb: meta.rx.snr_cb,
+                    buffered: meta.flags & RX_FLAG_BUFFERED != 0,
+                    acknowledged: meta.flags & RX_FLAG_ACKED != 0,
+                    age_s: meta.age_s,
+                }),
+                None,
+            ),
+            Err(error) => (None, Some(format!("{error:?}"))),
+        }
     }
 
     fn capture_attach_property(&mut self, key: u32, value: &[u8]) {
@@ -1747,6 +1813,7 @@ fn decode_property(key: u32, value: &[u8]) -> Option<DecodedValue> {
         }
         prop::PHY_ENABLED
         | prop::MAC_PROMISCUOUS
+        | prop::NODE_MSG_LISTEN
         | prop::SAVED
         | prop::HOST_AUTO_ACK
         | prop::GNSS_ENABLED
@@ -1835,11 +1902,15 @@ fn decode_property(key: u32, value: &[u8]) -> Option<DecodedValue> {
         prop::PHY_LORA_SF | prop::PHY_LORA_CR if value.len() == 1 => {
             ("uint8", value[0].to_string())
         }
-        prop::PHY_MTU | prop::HOST_RX_QUEUE_COUNT | prop::HOST_RX_QUEUE_CAPACITY
+        prop::PHY_MTU
+        | prop::NODE_MSG_MTU
+        | prop::UART_WINDOW
+        | prop::HOST_RX_QUEUE_COUNT
+        | prop::HOST_RX_QUEUE_CAPACITY
             if value.len() == 2 =>
         {
             let number = u16::from_le_bytes(value.try_into().ok()?);
-            let suffix = if key == prop::PHY_MTU {
+            let suffix = if matches!(key, prop::PHY_MTU | prop::NODE_MSG_MTU | prop::UART_WINDOW) {
                 " octets"
             } else {
                 " frames"
@@ -1944,6 +2015,7 @@ fn editable_property_text(key: u32, value: &[u8]) -> Option<String> {
     match key {
         prop::PHY_ENABLED
         | prop::MAC_PROMISCUOUS
+        | prop::NODE_MSG_LISTEN
         | prop::HOST_AUTO_ACK
         | prop::GNSS_ENABLED
         | prop::GNSS_IDENT_UPDATE
@@ -1987,6 +2059,7 @@ fn encode_property_text(key: u32, value: &str) -> Result<Vec<u8>, String> {
     match key {
         prop::PHY_ENABLED
         | prop::MAC_PROMISCUOUS
+        | prop::NODE_MSG_LISTEN
         | prop::HOST_AUTO_ACK
         | prop::GNSS_ENABLED
         | prop::GNSS_IDENT_UPDATE
@@ -2036,7 +2109,7 @@ fn encode_property_text(key: u32, value: &str) -> Result<Vec<u8>, String> {
             "an 8-bit unsigned integer",
         )?]),
         prop::PHY_LORA_SW => Ok(parse_u16(value)?.to_le_bytes().to_vec()),
-        prop::PHY_DUTY_LIMIT | prop::HOST_RX_QUEUE_CAPACITY => {
+        prop::PHY_DUTY_LIMIT | prop::HOST_RX_QUEUE_CAPACITY | prop::UART_WINDOW => {
             Ok(parse_integer::<u16>(value, "a number from 0 to 65535")?
                 .to_le_bytes()
                 .to_vec())

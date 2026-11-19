@@ -101,6 +101,7 @@ pub fn full_config(
         ble: true,
         ble_pairing: true,
         ble_pin: true,
+        uart_links: Default::default(),
         // A simulated power cycle is a rebuilt session, which is
         // exactly what a host watching this device would see.
         reboot: true,
@@ -115,6 +116,7 @@ pub fn full_config(
         bridge_client: false,
         i2c_buses: SIMULATED_I2C_BUSES,
         i2c_devices: SIMULATED_I2C_DEVICES,
+        node_msg: None,
     }
 }
 
@@ -1007,18 +1009,12 @@ mod tests {
         full_config(Box::leak(Box::new(DutyLedger::new())), None)
     }
 
-    /// Attach and take delivery of the `CMD_SESSION_RESET` the attach
-    /// owes, the way a host does. What it asserts along the way is that
-    /// the notice is the first frame of the session and the only one the
-    /// attach itself produces.
+    /// Attach, asserting along the way that the attach itself produces
+    /// nothing: a session that begins at attach holds nothing from
+    /// before it.
     fn attach(sim: &mut SimulatedDevice) {
         sim.attach();
-        let frame = decode(sim.take_outbound().expect("the attach announces itself"));
-        assert_eq!(
-            Frame::parse(&frame).unwrap().command(),
-            Some(umsh_ulcp::Cmd::SessionReset)
-        );
-        assert!(sim.take_outbound().is_none(), "and nothing else");
+        assert!(sim.take_outbound().is_none(), "the attach emits nothing");
     }
 
     fn decode(wire: Vec<u8>) -> Vec<u8> {

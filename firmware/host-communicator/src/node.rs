@@ -90,6 +90,7 @@ pub fn config(name: &'static str) -> SessionConfig {
         ble: false,
         ble_pairing: false,
         ble_pin: false,
+        uart_links: Default::default(),
         // The process restarts in place.
         reboot: true,
         dev_identity: true,
@@ -103,6 +104,7 @@ pub fn config(name: &'static str) -> SessionConfig {
         bridge_client: false,
         i2c_buses: &[],
         i2c_devices: &[],
+        node_msg: None,
     }
 }
 

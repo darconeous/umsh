@@ -25,10 +25,12 @@ local COMMANDS = {
   [21] = "CMD_PROP_MULTI_GET",
   [22] = "CMD_PROP_MULTI_SET",
   [23] = "CMD_PROP_ARE",
-  [24] = "CMD_SESSION_RESET",
+  [24] = "CMD_SESSION_DID_END",
   [25] = "CMD_I2C_TRANSFER",
   [26] = "CMD_I2C_RESULT",
   [27] = "CMD_I2C_SCAN",
+  [28] = "CMD_SESSION_START",
+  [29] = "CMD_SESSION_DID_START",
 }
 
 M.COMMANDS = COMMANDS
@@ -40,19 +42,19 @@ M.COMMAND_TO_DEVICE = {
   [0] = true, [1] = true, [2] = true, [3] = true, [4] = true, [5] = true,
   [9] = true, [11] = true, [12] = true, [13] = true, [14] = true,
   [15] = true, [16] = true, [17] = true, [19] = true,
-  [21] = true, [22] = true, [25] = true, [27] = true,
+  [21] = true, [22] = true, [25] = true, [27] = true, [28] = true,
 }
 M.COMMAND_TO_HOST = {
   [6] = true, [7] = true, [8] = true, [10] = true, [23] = true, [24] = true,
-  [26] = true,
+  [26] = true, [29] = true,
 }
 
 -- Commands that never ride the Node Management binding in either direction.
--- A session reset concerns the local tethered session; an administrator over
--- the mesh is not party to it, so neither a request nor a response may carry
--- one, and the direction tables alone would only catch the request.
+-- The session commands concern a local link's session; an administrator over
+-- the mesh has none, so neither a request nor a response may carry one, and
+-- the direction tables alone would only catch half of them.
 M.COMMAND_LOCAL_ONLY = {
-  [24] = true,
+  [24] = true, [28] = true, [29] = true,
 }
 
 -- Commands whose payload is a property key followed by a value or item.
@@ -96,6 +98,7 @@ local PROPERTIES = {
   [48] = "PROP_MAC_PROMISCUOUS",
   [49] = "PROP_SAVED",
   [50] = "PROP_MAC_BACKHAUL",
+  [51] = "PROP_NODE_MSG_LISTEN",
   [64] = "PROP_DEV_KEY",
   [65] = "PROP_DEV_PRIVATE_KEY",
   [66] = "PROP_DEV_CHANNEL_KEYS",
@@ -214,16 +217,29 @@ local PROPERTIES = {
   [4993] = "PROP_LAN_BEARER_GROUP",
   [4994] = "PROP_LAN_BEARER_INGRESS_LIMIT",
   [4995] = "PROP_LAN_BEARER_STATE",
+  [5008] = "PROP_NODE_MSG_TYPES",
+  [5009] = "PROP_NODE_MSG_MTU",
+  [5010] = "PROP_UART_WINDOW",
 }
 
-local STREAMS = {[113] = "STR_PHY_RAW"}
+local STREAMS = {[113] = "STR_PHY_RAW", [114] = "STR_NODE_MSG"}
 
--- CMD_SESSION_RESET payload. Unassigned values are reserved rather than
+-- STR_NODE_MSG metadata: kinds, and the options each direction carries.
+local NODE_MSG_KINDS = {
+  [0] = "unicast", [1] = "broadcast", [2] = "blind unicast", [3] = "multicast",
+}
+local NODE_MSG_TX_OPTIONS = {
+  [1] = "TX_OPT_FLOOD_HOPS", [2] = "TX_OPT_SOURCE_ROUTE", [3] = "TX_OPT_TX_POWER",
+}
+local NODE_MSG_RX_OPTIONS = {
+  [1] = "RX_OPT_RSSI", [2] = "RX_OPT_SNR", [3] = "RX_OPT_TRACE",
+}
+
+-- CMD_SESSION_DID_END payload. Unassigned values are reserved rather than
 -- malformed, so an unknown one renders as its number.
-local SESSION_RESET_REASONS = {
-  [0] = "attached",
-  [1] = "CMD_RST",
-  [2] = "CMD_RESTORE",
+local SESSION_END_REASONS = {
+  [0] = "frame lost",
+  [1] = "owed frame discarded",
 }
 
 -- CMD_I2C_TRANSFER operation kinds.
@@ -275,6 +291,7 @@ local CAPABILITIES = {
   [64] = "CAP_DISPLAY",
   [65] = "CAP_KEYBOARD",
   [66] = "CAP_SOUND",
+  [67] = "CAP_NODE_MSG",
 }
 
 local f = {}
@@ -307,9 +324,38 @@ f.rx_flag_self_tx = ProtoField.bool("umsh.ulcp.rx.flags.self_tx", "Self-transmit
 f.rx_age = ProtoField.uint32("umsh.ulcp.rx.age_s", "RX Age (seconds)", base.DEC)
 f.tx_power = ProtoField.int8("umsh.ulcp.tx.power", "TX Power (dBm)", base.DEC)
 f.tx_flags = ProtoField.uint8("umsh.ulcp.tx.flags", "TX Flags", base.HEX)
-f.session_reset_reason = ProtoField.uint32(
-  "umsh.ulcp.session_reset_reason", "Session Reset Reason", base.DEC,
-  SESSION_RESET_REASONS)
+f.node_kind = ProtoField.uint8(
+  "umsh.ulcp.node_msg.kind", "Kind", base.DEC, NODE_MSG_KINDS)
+f.node_tx_flags = ProtoField.uint8("umsh.ulcp.node_msg.tx_flags", "TX Flags", base.HEX)
+f.node_tx_flag_ack = ProtoField.bool(
+  "umsh.ulcp.node_msg.tx_flags.ack", "Acknowledgement requested", 8, nil, 0x01)
+f.node_tx_flag_full_source = ProtoField.bool(
+  "umsh.ulcp.node_msg.tx_flags.full_source", "Full source", 8, nil, 0x02)
+f.node_tx_flag_signed = ProtoField.bool(
+  "umsh.ulcp.node_msg.tx_flags.signed", "Signed", 8, nil, 0x04)
+f.node_rx_flags = ProtoField.uint8("umsh.ulcp.node_msg.rx_flags", "RX Flags", base.HEX)
+f.node_rx_flag_src_key = ProtoField.bool(
+  "umsh.ulcp.node_msg.rx_flags.src_key", "Source is a key", 8, nil, 0x01)
+f.node_rx_flag_sender_auth = ProtoField.bool(
+  "umsh.ulcp.node_msg.rx_flags.sender_auth", "Sender authenticated", 8, nil, 0x02)
+f.node_rx_flag_acked = ProtoField.bool(
+  "umsh.ulcp.node_msg.rx_flags.acked", "Acknowledged", 8, nil, 0x04)
+f.node_rx_flag_gap = ProtoField.bool(
+  "umsh.ulcp.node_msg.rx_flags.gap", "Gap", 8, nil, 0x08)
+f.node_rx_flag_redelivered = ProtoField.bool(
+  "umsh.ulcp.node_msg.rx_flags.redelivered", "Redelivered", 8, nil, 0x10)
+f.node_channel = ProtoField.bytes("umsh.ulcp.node_msg.channel", "Channel")
+f.node_peer = ProtoField.bytes("umsh.ulcp.node_msg.peer", "Peer")
+f.node_source = ProtoField.bytes("umsh.ulcp.node_msg.source", "Source")
+f.node_tx_option = ProtoField.uint32(
+  "umsh.ulcp.node_msg.tx_option", "Option", base.DEC, NODE_MSG_TX_OPTIONS)
+f.node_rx_option = ProtoField.uint32(
+  "umsh.ulcp.node_msg.rx_option", "Option", base.DEC, NODE_MSG_RX_OPTIONS)
+f.node_payload_type = ProtoField.uint8(
+  "umsh.ulcp.node_msg.payload_type", "Payload Type", base.DEC)
+f.session_end_reason = ProtoField.uint32(
+  "umsh.ulcp.session_end_reason", "Session End Reason", base.DEC,
+  SESSION_END_REASONS)
 f.i2c_bus = ProtoField.uint8("umsh.ulcp.i2c.bus", "I2C Bus", base.DEC)
 f.i2c_address = ProtoField.uint8("umsh.ulcp.i2c.address", "I2C Address", base.HEX)
 f.i2c_op = ProtoField.bytes("umsh.ulcp.i2c.op", "I2C Operation")
@@ -351,6 +397,93 @@ end
 
 local function add_malformed(item, message)
   item:add_proto_expert_info(malformed, message)
+end
+
+-- STR_NODE_MSG metadata: kind, flags, the addresses the kind calls for,
+-- then options in the multi-set entry form. `send` selects the CMD_STR_SEND
+-- layout; otherwise it is CMD_STR_RECV's.
+local function dissect_node_msg_metadata(metadata, root, send)
+  if metadata:len() < 2 then
+    add_malformed(root, "truncated node message metadata")
+    return
+  end
+  local kind = metadata(0, 1):uint()
+  root:add(f.node_kind, metadata(0, 1))
+  local flags = metadata(1, 1):uint()
+  local pos = 2
+  if send then
+    local item = root:add(f.node_tx_flags, metadata(1, 1))
+    item:add(f.node_tx_flag_ack, metadata(1, 1))
+    item:add(f.node_tx_flag_full_source, metadata(1, 1))
+    item:add(f.node_tx_flag_signed, metadata(1, 1))
+  else
+    local item = root:add(f.node_rx_flags, metadata(1, 1))
+    item:add(f.node_rx_flag_src_key, metadata(1, 1))
+    item:add(f.node_rx_flag_sender_auth, metadata(1, 1))
+    item:add(f.node_rx_flag_acked, metadata(1, 1))
+    item:add(f.node_rx_flag_gap, metadata(1, 1))
+    item:add(f.node_rx_flag_redelivered, metadata(1, 1))
+  end
+  if NODE_MSG_KINDS[kind] == nil then
+    add_malformed(root, "unknown node message kind")
+    return
+  end
+  local fields = {}
+  if kind & 2 ~= 0 then fields[#fields + 1] = {f.node_channel, 16} end
+  if send then
+    if kind & 1 == 0 then fields[#fields + 1] = {f.node_peer, 32} end
+  else
+    fields[#fields + 1] = {f.node_source, (flags & 1 ~= 0) and 32 or 3}
+  end
+  for _, field in ipairs(fields) do
+    if pos + field[2] > metadata:len() then
+      add_malformed(root, "node message address exceeds frame")
+      return
+    end
+    root:add(field[1], metadata(pos, field[2]))
+    pos = pos + field[2]
+  end
+  local names = send and NODE_MSG_TX_OPTIONS or NODE_MSG_RX_OPTIONS
+  local option_field = send and f.node_tx_option or f.node_rx_option
+  while pos < metadata:len() do
+    local entry_len, consumed = decode_pui(metadata, pos)
+    if not entry_len or pos + consumed + entry_len > metadata:len() then
+      add_malformed(root, "truncated or malformed option")
+      return
+    end
+    local body = pos + consumed
+    local entry = root:add(f.entry, metadata(pos, consumed + entry_len))
+    local key, key_consumed = decode_pui(metadata, body)
+    if not key or key_consumed > entry_len then
+      add_malformed(entry, "truncated or malformed option key")
+      return
+    end
+    entry:add(option_field, metadata(body, key_consumed), key)
+    local value_len = entry_len - key_consumed
+    local value = metadata(body + key_consumed, value_len)
+    local name = names[key] or string.format("OPTION_%d", key)
+    local rendered
+    if value_len > 0 then
+      entry:add(f.property_value, value)
+    end
+    if send and key == 3 and value_len == 1 then
+      rendered = string.format("%d dBm", value:int())
+    elseif not send and key == 1 and value_len == 1 then
+      rendered = value:uint() == 0xFF and "unsupported"
+        or string.format("%d dBm", -value:uint())
+    elseif not send and key == 2 and value_len == 2 then
+      rendered = value:le_int() == -32768 and "unsupported"
+        or string.format("%d cB", value:le_int())
+    elseif key == (send and 2 or 3) then
+      rendered = string.format("%d hints", value_len // 2)
+    elseif value_len == 1 then
+      rendered = string.format("%d", value:uint())
+    else
+      rendered = string.format("%d octets", value_len)
+    end
+    entry:set_text(string.format("%s = %s", name, rendered))
+    pos = body + entry_len
+  end
 end
 
 -- Dissect one ULCP frame into `tree`, returning the summary line.
@@ -555,7 +688,11 @@ local function dissect_frame(buf, pinfo, tree, direction)
         if metadata_offset < buf:len() then
           local metadata = buf(metadata_offset)
           local metadata_item = root:add(f.metadata, metadata)
-          if command == 10 and metadata:len() >= 4 then
+          if stream == 114 then
+            dissect_node_msg_metadata(metadata, metadata_item, command == 9)
+          elseif stream ~= 113 then
+            -- Another stream's metadata is shown as its octets.
+          elseif command == 10 and metadata:len() >= 4 then
             local encoded_rssi = metadata(0, 1):uint()
             if encoded_rssi ~= 0xff then
               metadata_item:add(f.rx_rssi, metadata(0, 1), -encoded_rssi)
@@ -581,6 +718,9 @@ local function dissect_frame(buf, pinfo, tree, direction)
           end
         end
         info = info .. " " .. (STREAMS[stream] or string.format("STR_%d", stream))
+        if stream == 114 and data_length > 0 then
+          data_item:add(f.node_payload_type, data(0, 1))
+        end
         if stream == 113 and data_length > 0 then
           local umsh = Dissector.get("umsh")
           if umsh then pcall(umsh.call, umsh, data:tvb(), pinfo, data_item) end
@@ -670,11 +810,11 @@ local function dissect_frame(buf, pinfo, tree, direction)
   elseif command == 24 then
     local reason, consumed = decode_pui(buf, 2)
     if not reason then
-      add_malformed(root, "truncated or malformed session reset reason")
+      add_malformed(root, "truncated or malformed session end reason")
     else
-      root:add(f.session_reset_reason, buf(2, consumed), reason)
+      root:add(f.session_end_reason, buf(2, consumed), reason)
       info = info .. " " ..
-        (SESSION_RESET_REASONS[reason] or string.format("reason %d", reason))
+        (SESSION_END_REASONS[reason] or string.format("reason %d", reason))
     end
   elseif buf:len() > 2 then
     root:add(f.payload, buf(2))
