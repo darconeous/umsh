@@ -13,7 +13,7 @@ struct PersistenceSmokeTest {
 
         let store = try SQLiteApplicationStore(path: databaseURL.path)
         let initialSchemaVersion = try await store.schemaVersion()
-        precondition(initialSchemaVersion == SQLiteApplicationStore.currentSchemaVersion)
+        precondition(initialSchemaVersion >= 31, "a new store is at or past the baseline")
 
         try await store.insertIdentity(id: "alice", publicAddress: "alice-public")
 
@@ -168,51 +168,27 @@ struct PersistenceSmokeTest {
         )
         try await store.deletePeer(ownerIdentityID: "alice", publicAddress: "device-only-peer")
 
-        // Legacy "primary" identity migration still transfers records intact.
-        try await store.insertIdentity(id: "primary", publicAddress: "legacy-public")
-        try await store.upsertPeer(
-            ownerIdentityID: "primary",
-            publicAddress: "legacy-peer",
-            alias: "Legacy Peer",
-            isSaved: true
-        )
-        try await store.migrateLegacyPrimaryIdentity(
-            to: "legacy-public",
-            publicAddress: "legacy-public"
-        )
-        let migratedNodes = try await store.listNodes(ownerIdentityID: "legacy-public")
-        precondition(migratedNodes.map(\.publicAddress) == ["legacy-peer"])
-
-        // Open an independent, populated historical database. This fixture is
-        // frozen, so future migrations cannot silently change the starting schema.
+        // A file older than the baseline is refused and left as it was:
+        // the Swift migrations that would have upgraded it are gone.
         let historicalURL = root.appendingPathComponent("historical.sqlite")
         try createHistoricalStore(path: historicalURL.path)
-        let reopened = try SQLiteApplicationStore(path: historicalURL.path)
-        let reopenedSchemaVersion = try await reopened.schemaVersion()
-        precondition(reopenedSchemaVersion == SQLiteApplicationStore.currentSchemaVersion)
-        let upgraded = try await reopened.listNodes(ownerIdentityID: "alice")
-        precondition(upgraded.map(\.publicAddress) == ["historical-peer"])
-        precondition(upgraded.allSatisfy(\.isSaved))
-        precondition(upgraded.allSatisfy { !$0.isFavorite && !$0.onDeviceIdentity })
-        precondition(upgraded[0].advertisementAuthenticated)
-        let historicalConversations = try await reopened.listDirectConversations(ownerIdentityID: "alice")
-        precondition(historicalConversations[0].draftText == "Historical draft")
-        precondition(historicalConversations[0].lastMessage?.body == "Historical message")
-        let checkpoints = try await reopened.chatCheckpoints(ownerIdentityID: "alice")
-        precondition(checkpoints.count == 1)
-        precondition(checkpoints[0].conversationAddress == "historical-peer")
-        precondition(checkpoints[0].nextId == 7 && checkpoints[0].epoch == 2)
-        let archive = try await reopened.chatArchive(ownerIdentityID: "alice",
-            lookup: .init(requestId: 0, conversationAddress: "historical-peer", messageId: 6, fragmentIndex: 0))
-        precondition(archive == Data([1, 2, 3]))
-        // Opening an already migrated store must also succeed.
-        _ = try SQLiteApplicationStore(path: historicalURL.path)
+        let historicalBytes = try Data(contentsOf: historicalURL)
+        do {
+            _ = try SQLiteApplicationStore(path: historicalURL.path)
+            preconditionFailure("A v12 store must be refused")
+        } catch ApplicationStoreError.unsupportedSchema(let version) {
+            precondition(version == 12)
+        }
+        let historicalAfter = try Data(contentsOf: historicalURL)
+        precondition(historicalAfter == historicalBytes)
 
         try await checkReplies(store)
         try await checkRepeats(store)
         try await checkClaimedRadios(store)
+        try await checkRemainingCalls(store)
+        try await checkReopenAndErase(store, path: databaseURL.path)
 
-        print("SQLite tier, delete/demote, retention, migration, upgrade, reply, repeat, and claimed-radio checks passed")
+        print("SQLite tier, delete/demote, retention, refusal, reply, repeat, claimed-radio, round-trip, and reopen checks passed")
 
         // Seeding tens of thousands of rows takes long enough that the ordinary
         // smoke run should not pay for it.
@@ -389,6 +365,478 @@ struct PersistenceSmokeTest {
         )
         precondition(rows["Filled in."]?.quote?.original?.ref.id == "200:5")
         precondition(rows["Three hops?"]?.quote?.original?.isDeleted == true)
+    }
+
+    /// The calls the checks above leave out, each written with a different
+    /// value in every argument and read back, so one the store drops or
+    /// crosses with its neighbor shows.
+    private static func checkRemainingCalls(_ store: SQLiteApplicationStore) async throws {
+        let owner = "dana"
+        func at(_ seconds: Double) -> Date { Date(timeIntervalSince1970: 1_780_000_000 + seconds) }
+        func peer(_ address: String) async throws -> StoredNode {
+            node(try await store.listNodes(ownerIdentityID: owner), address)
+        }
+        func transcript(_ address: String) async throws -> [StoredChatMessage] {
+            try await store.chatMessagePage(
+                ownerIdentityID: owner, conversationAddress: address, newest: 100
+            ).messages
+        }
+        func message(
+            session: UInt64, handle: UInt32, address: String,
+            direction: MobileChatDirection = .inbound, messageType: UInt8 = 0,
+            wireId: UInt8, epoch: UInt16 = 0, body: String,
+            senderHint: Data? = nil, regardingHandle: UInt32? = nil,
+            presence: MobileChatPresence = .present, notify: Bool = false,
+            rx: MobileChatRxMetadataRecord? = nil, fragments: UInt8 = 1
+        ) -> MobileChatMutationRecord {
+            MobileChatMutationRecord(
+                sessionId: session, handle: handle, revision: 0, kind: .insert,
+                conversationAddress: address, senderAddress: nil, senderHint: senderHint,
+                direction: direction, messageType: messageType, wireId: wireId, epoch: epoch,
+                clientToken: nil, senderHandle: nil, regardingHandle: regardingHandle,
+                regardingWireId: nil, regardingDirection: nil,
+                regardingSenderHint: nil, regardingUnknown: false, unknownOriginal: false,
+                backgroundColor: nil, textColor: nil,
+                originalHandle: nil, originalWireId: nil, originalDirection: nil,
+                originalSenderHint: nil, body: body, complete: true,
+                presentFragments: UInt16(fragments), fragmentCount: fragments, finalized: true,
+                presence: presence, receivedLate: false, notify: notify, rx: rx,
+                forwardSecret: nil
+            )
+        }
+
+        // Identity.
+        try await store.upsertIdentity(id: owner, publicAddress: "dana-public", createdAt: at(1))
+        try await store.upsertIdentity(id: owner, publicAddress: "dana-public", createdAt: at(2))
+        let known = try await store.knowsIdentity(id: owner, publicAddress: "dana-public")
+        let unknown = try await store.knowsIdentity(id: "nobody", publicAddress: "nobody-public")
+        precondition(known && !unknown)
+        var localName = try await store.localAdvertisedName(ownerIdentityID: owner)
+        precondition(localName == nil)
+        try await store.updateLocalAdvertisedName(ownerIdentityID: owner, name: "Dana")
+        localName = try await store.localAdvertisedName(ownerIdentityID: owner)
+        precondition(localName == "Dana")
+        let otherName = try await store.localAdvertisedName(ownerIdentityID: "alice")
+        precondition(otherName == nil, "a name belongs to one identity")
+
+        // Peers.
+        try await store.upsertPeer(
+            ownerIdentityID: owner, publicAddress: "relay", alias: "Relay",
+            advertisedName: "relay-adv", isSaved: true, nodeKind: "repeater",
+            advertisement: Data([1, 2, 3]), advertisementAuthenticated: true,
+            advertisementReceivedAt: at(10)
+        )
+        try await store.upsertPeer(
+            ownerIdentityID: owner, publicAddress: "friend", alias: "Friend",
+            isSaved: true, nodeKind: "chat"
+        )
+        var relay = try await peer("relay")
+        precondition(relay.alias == "Relay" && relay.advertisedName == "relay-adv")
+        precondition(relay.nodeKind == "repeater" && relay.advertisement == Data([1, 2, 3]))
+        precondition(relay.advertisementAuthenticated && relay.advertisementReceivedAt == at(10))
+        try await store.updateNodeAlias(ownerIdentityID: owner, publicAddress: "relay", alias: "Ridge relay")
+        try await store.setNotifyWhenHeard(ownerIdentityID: owner, publicAddress: "relay", enabled: true)
+        relay = try await peer("relay")
+        var friend = try await peer("friend")
+        precondition(relay.alias == "Ridge relay" && relay.notifyWhenHeard)
+        precondition(friend.alias == "Friend" && !friend.notifyWhenHeard)
+        let wasWatched = try await store.touchLastHeard(
+            ownerIdentityID: owner, publicAddress: "relay", at: at(20)
+        )
+        relay = try await peer("relay")
+        precondition(wasWatched && !relay.notifyWhenHeard && relay.lastHeardAt == at(20))
+
+        // Channels.
+        let named = StoredChannel(
+            id: UUID(), ownerIdentityID: owner, kind: .named, canonicalName: "general",
+            name: "General", alias: nil, channelIDHex: "a1b2", tint: Data([1, 2, 3]),
+            regionCode: Data([0x55, 0x53]), maxFloodHops: 3, joinedPhone: true,
+            joinedDevice: false, notificationsEnabled: true, joinedAt: at(30)
+        )
+        let secret = StoredChannel(
+            id: UUID(), ownerIdentityID: owner, kind: .privateKey, canonicalName: nil,
+            name: nil, alias: "Secret", channelIDHex: "c3d4", tint: Data([9]),
+            regionCode: nil, maxFloodHops: nil, joinedPhone: false,
+            joinedDevice: true, notificationsEnabled: false, joinedAt: nil
+        )
+        func channel(_ id: UUID) async throws -> StoredChannel? {
+            try await store.channels(ownerIdentityID: owner).first { $0.id == id }
+        }
+        try await store.insertChannel(named, keyDigest: "digest-named")
+        try await store.insertChannel(secret, keyDigest: "digest-secret")
+        var readNamed = try await channel(named.id)
+        var readSecret = try await channel(secret.id)
+        precondition(readNamed == named && readSecret == secret)
+        let byDigest = try await store.channel(ownerIdentityID: owner, keyDigest: "digest-secret")
+        let otherOwner = try await store.channel(ownerIdentityID: "alice", keyDigest: "digest-secret")
+        precondition(byDigest == secret && otherOwner == nil)
+        try await store.updateChannelDetails(
+            id: secret.id, alias: "Renamed", regionCode: Data([1, 2]), maxFloodHops: 5,
+            notificationsEnabled: true
+        )
+        try await store.setChannelMembership(id: secret.id, joinedPhone: true, joinedDevice: false)
+        readSecret = try await channel(secret.id)
+        precondition(readSecret?.alias == "Renamed" && readSecret?.regionCode == Data([1, 2]))
+        precondition(readSecret?.maxFloodHops == 5 && readSecret?.notificationsEnabled == true)
+        precondition(readSecret?.joinedPhone == true && readSecret?.joinedDevice == false)
+        precondition(readSecret?.joinedAt != nil, "the phone's first join is dated")
+        readNamed = try await channel(named.id)
+        precondition(readNamed == named, "changing one channel leaves the other")
+
+        // Conversations.
+        let direct = try await store.ensureDirectConversation(ownerIdentityID: owner, peerAddress: "friend")
+        let general = try await store.ensureChannelConversation(
+            ownerIdentityID: owner, channelID: named.id, conversationAddress: "general-address"
+        )
+        let hidden = try await store.ensureChannelConversation(
+            ownerIdentityID: owner, channelID: secret.id, conversationAddress: "secret-address"
+        )
+        try await store.updateChannelDraft(ownerIdentityID: owner, conversationID: general, text: "channel draft")
+        try await store.setDirectConversationNotifications(
+            ownerIdentityID: owner, conversationID: direct, enabled: false
+        )
+        var directs = try await store.listDirectConversations(ownerIdentityID: owner)
+        precondition(directs.map(\.id) == [direct] && directs[0].node.publicAddress == "friend")
+        precondition(!directs[0].notificationsEnabled)
+        var channelConversations = try await store.listChannelConversations(ownerIdentityID: owner)
+        let readGeneral = channelConversations.first { $0.id == general }
+        precondition(Set(channelConversations.map(\.id)) == [general, hidden])
+        precondition(readGeneral?.channelID == named.id)
+        precondition(readGeneral?.conversationAddress == "general-address")
+        precondition(readGeneral?.draftText == "channel draft")
+
+        // Chat: what arrives.
+        let reception = StoredMessageReception(
+            rssiDbm: -101, snrCentibels: -35, lqi: 200, hopCount: 3,
+            routeHints: [Data([1, 2]), Data([3, 4])], sourceAuthenticated: true
+        )
+        _ = try await store.applyChatMutations(ownerIdentityID: owner, mutations: [
+            message(session: 700, handle: 1, address: "friend", wireId: 1, body: "Hello", notify: true,
+                    rx: MobileChatRxMetadataRecord(
+                        rssiDbm: -101, snrCentibels: -35, lqi: 200, hopCount: 3,
+                        routeHints: [Data([1, 2]), Data([3, 4])], sourceAuthenticated: true,
+                        bufferedAgeSeconds: 0
+                    )),
+            message(session: 700, handle: 2, address: "friend", direction: .outbound, wireId: 1,
+                    body: "Hi back"),
+            message(session: 700, handle: 3, address: "friend", messageType: 1, wireId: 2,
+                    body: "+1", regardingHandle: 2, notify: true),
+            message(session: 700, handle: 4, address: "friend", wireId: 3, body: "",
+                    presence: .gapPending),
+            message(session: 710, handle: 1, address: "general-address", wireId: 1,
+                    body: "On the channel", senderHint: Data([0xAA, 0xBB, 0xCC]), notify: true),
+        ])
+        var messages = try await transcript("friend")
+        let hello = messages.first { $0.body == "Hello" }
+        precondition(hello?.sessionID == "700" && hello?.handle == 1 && hello?.wireID == 1)
+        precondition(hello?.reception == reception)
+        precondition(messages.first { $0.body == "Hi back" }?.reactions.map(\.body) == ["+1"])
+        precondition(messages.contains { $0.isGapPlaceholder })
+        let count = try await store.chatMessageCount(ownerIdentityID: owner, conversationAddress: "friend")
+        precondition(count == 3, "a reaction is not a message")
+        let cursor = try await store.chatMessageCursor(
+            ownerIdentityID: owner, conversationAddress: "friend", sessionID: "700", handle: 1
+        )
+        let strayCursor = try await store.chatMessageCursor(
+            ownerIdentityID: owner, conversationAddress: "general-address", sessionID: "700", handle: 1
+        )
+        precondition(cursor == hello?.cursor && strayCursor == nil)
+
+        let directAddress = try await store.conversationAddressForMessage(
+            ownerIdentityID: owner, sessionID: 700, handle: 1
+        )
+        let channelAddress = try await store.conversationAddressForMessage(
+            ownerIdentityID: owner, sessionID: 710, handle: 1
+        )
+        let noAddress = try await store.conversationAddressForMessage(
+            ownerIdentityID: owner, sessionID: 710, handle: 2
+        )
+        precondition(directAddress == "friend" && channelAddress == "general-address" && noAddress == nil)
+        let banner = try await store.chatNotificationTarget(ownerIdentityID: owner, sessionID: 700, handle: 1)
+        let reactionAsMessage = try await store.chatNotificationTarget(
+            ownerIdentityID: owner, sessionID: 700, handle: 3
+        )
+        precondition(banner?.conversationAddress == "friend" && banner?.body == "Hello")
+        precondition(reactionAsMessage == nil)
+        let reacted = try await store.chatReactionNotificationTarget(
+            ownerIdentityID: owner, sessionID: 700, handle: 3
+        )
+        let messageAsReaction = try await store.chatReactionNotificationTarget(
+            ownerIdentityID: owner, sessionID: 700, handle: 1
+        )
+        precondition(reacted?.conversationAddress == "friend" && reacted?.body == "+1")
+        precondition(reacted?.targetBody == "Hi back" && messageAsReaction == nil)
+        var channelBanner = try await store.chatNotificationTarget(
+            ownerIdentityID: owner, sessionID: 710, handle: 1
+        )
+        precondition(channelBanner?.senderHint == Data([0xAA, 0xBB, 0xCC]))
+        precondition(channelBanner?.senderAddress == nil)
+        try await store.applySenderResolution(
+            ownerIdentityID: owner, conversationAddress: "general-address",
+            senderHint: Data([0xAA, 0xBB, 0xCC]), senderAddress: "relay"
+        )
+        channelBanner = try await store.chatNotificationTarget(ownerIdentityID: owner, sessionID: 710, handle: 1)
+        precondition(channelBanner?.senderAddress == "relay")
+
+        try await store.resolveGapsUnavailable(ownerIdentityID: owner, rows: [(sessionID: "700", handle: 4)])
+        messages = try await transcript("friend")
+        precondition(!messages.contains { $0.isGapPlaceholder })
+        precondition(messages.contains { $0.isUnavailable })
+
+        // Chat: what is composed.
+        try await store.commitChatComposeBatch(ownerIdentityID: owner, batch: MobileChatComposeBatchRecord(
+            batchId: 1, checkpoint: .init(conversationAddress: "friend", nextId: 5, epoch: 2),
+            archiveDeletes: [],
+            archives: [
+                .init(conversationAddress: "friend", messageId: 4, fragmentIndex: 0, payload: Data([1, 2, 3])),
+                .init(conversationAddress: "friend", messageId: 4, fragmentIndex: 1, payload: Data([4, 5])),
+            ],
+            mutations: [message(session: 720, handle: 1, address: "friend", direction: .outbound,
+                                wireId: 4, epoch: 2, body: "Composed", fragments: 2)]
+        ))
+        var checkpoints = try await store.chatCheckpoints(ownerIdentityID: owner)
+        precondition(checkpoints.map(\.conversationAddress) == ["friend"])
+        precondition(checkpoints[0].nextId == 5 && checkpoints[0].epoch == 2)
+        let secondFragment = try await store.chatArchive(ownerIdentityID: owner, lookup: .init(
+            requestId: 0, conversationAddress: "friend", messageId: 4, fragmentIndex: 1
+        ))
+        let notArchived = try await store.chatArchive(ownerIdentityID: owner, lookup: .init(
+            requestId: 0, conversationAddress: "friend", messageId: 5, fragmentIndex: 1
+        ))
+        precondition(secondFragment == Data([4, 5]) && notArchived == nil)
+        var frames = try await store.chatResendFrames(
+            ownerIdentityID: owner, conversationAddress: "friend", sessionID: "720", handle: 1, wireID: 4
+        )
+        precondition(frames.map(\.payload) == [Data([1, 2, 3]), Data([4, 5])])
+        precondition(frames.map(\.fragmentIndex) == [0, 1])
+
+        // A resend goes out under a new transmission; word of that one
+        // reaches the message.
+        try await store.applyChatResends(ownerIdentityID: owner, resends: [
+            .init(message: .init(sessionId: 720, handle: 1, wireId: 4, epoch: 2),
+                  deliverySessionId: 800, deliveryHandle: 9, forwardSecret: true),
+        ])
+        _ = try await store.applyChatDeliveries(ownerIdentityID: owner, deliveries: [
+            .init(sessionId: 800, handle: 9, fragmentIndex: 0, state: .acknowledged, viaFlood: false),
+        ])
+        frames = try await store.chatResendFrames(
+            ownerIdentityID: owner, conversationAddress: "friend", sessionID: "720", handle: 1, wireID: 4
+        )
+        precondition(frames.map(\.fragmentIndex) == [1], "an acknowledged fragment is not sent again")
+        messages = try await transcript("friend")
+        precondition(messages.first { $0.body == "Composed" }?.isForwardSecret == true)
+
+        // A compose made durable that the engine could not release is
+        // marked, and can be taken back out.
+        let unreleasedBatch = MobileChatComposeBatchRecord(
+            batchId: 2, checkpoint: .init(conversationAddress: "friend", nextId: 6, epoch: 2),
+            archiveDeletes: [], archives: [],
+            mutations: [message(session: 720, handle: 2, address: "friend", direction: .outbound,
+                                wireId: 5, epoch: 2, body: "Never released")]
+        )
+        try await store.commitChatComposeBatch(ownerIdentityID: owner, batch: unreleasedBatch)
+        try await store.markChatComposeBatchFailed(ownerIdentityID: owner, batch: unreleasedBatch)
+        checkpoints = try await store.chatCheckpoints(ownerIdentityID: owner)
+        precondition(checkpoints[0].nextId == 6)
+        messages = try await transcript("friend")
+        let unreleased = messages.first { $0.body == "Never released" }
+        precondition(unreleased?.deliveryState == "undelivered")
+        precondition(messages.first { $0.body == "Composed" }?.deliveryState != "undelivered")
+        try await store.removeFailedMessage(ownerIdentityID: owner, sessionID: "720", handle: 2)
+        try await store.removeFailedMessage(ownerIdentityID: owner, sessionID: "700", handle: 1)
+        messages = try await transcript("friend")
+        precondition(!messages.contains { $0.body == "Never released" })
+        precondition(messages.contains { $0.body == "Hello" }, "only a failed message can be removed")
+
+        // What a previous process left pending never went out.
+        _ = try await store.applyChatMutations(ownerIdentityID: owner, mutations: [
+            message(session: 730, handle: 1, address: "friend", direction: .outbound, wireId: 6,
+                    body: "Left pending"),
+        ])
+        try await store.settleInterruptedDeliveries(ownerIdentityID: owner)
+        messages = try await transcript("friend")
+        precondition(messages.first { $0.body == "Left pending" }?.deliveryState == "undelivered")
+
+        // Device management cache.
+        let card = StoredManagementCard(
+            capabilities: Data([1, 2]), deviceVersion: "1.0", deviceModel: "T1000",
+            deviceName: "Ridge", fetchedAt: at(40)
+        )
+        try await store.saveManagementCard(ownerIdentityID: owner, publicAddress: "relay", card: card)
+        try await store.saveCachedProperties(
+            ownerIdentityID: owner, publicAddress: "relay", values: [1: Data([1]), 70: Data([7, 0])], at: at(41)
+        )
+        var readCard = try await store.managementCard(ownerIdentityID: owner, publicAddress: "relay")
+        let noCard = try await store.managementCard(ownerIdentityID: owner, publicAddress: "friend")
+        precondition(readCard == card && noCard == nil)
+        var properties = try await store.cachedProperties(
+            ownerIdentityID: owner, publicAddress: "relay", propertyIDs: [1, 70, 5]
+        )
+        precondition(properties == [
+            1: StoredCachedProperty(value: Data([1]), fetchedAt: at(41)),
+            70: StoredCachedProperty(value: Data([7, 0]), fetchedAt: at(41)),
+        ])
+        properties = try await store.cachedProperties(
+            ownerIdentityID: owner, publicAddress: "relay", propertyIDs: [70]
+        )
+        precondition(Array(properties.keys) == [70], "only what was asked for")
+        // Different firmware may hold different properties.
+        try await store.saveManagementCard(ownerIdentityID: owner, publicAddress: "relay", card: StoredManagementCard(
+            capabilities: Data([1, 2]), deviceVersion: "1.1", deviceModel: "T1000",
+            deviceName: "Ridge", fetchedAt: at(42.0006)
+        ))
+        properties = try await store.cachedProperties(
+            ownerIdentityID: owner, publicAddress: "relay", propertyIDs: [1, 70]
+        )
+        precondition(properties.isEmpty)
+        // This cache's stamps go to the nearest millisecond; a message's
+        // (below) drop the fraction. Rows already stored were written so.
+        readCard = try await store.managementCard(ownerIdentityID: owner, publicAddress: "relay")
+        let fetchedAtMilliseconds = readCard.map { ($0.fetchedAt.timeIntervalSince1970 * 1_000).rounded() }
+        precondition(fetchedAtMilliseconds == 1_780_000_042_001)
+        try await store.forgetManagementCache(ownerIdentityID: owner, publicAddress: "relay")
+        readCard = try await store.managementCard(ownerIdentityID: owner, publicAddress: "relay")
+        precondition(readCard == nil)
+
+        // Repeater listings.
+        let full = StoredPeerRepeaterEntry(
+            hint: Data([1, 2]), name: "North", rssiDBm: -90, snrQuarterDB: -12,
+            lastHeardMinutes: 65_535, latitude: 45.125, longitude: -122.25, locationPrecision: 3,
+            regionCodes: [Data([0x55, 0x53]), Data([1, 2])], reportedAt: at(50)
+        )
+        let bare = StoredPeerRepeaterEntry(
+            hint: Data([3, 4, 5]), name: nil, rssiDBm: nil, snrQuarterDB: nil,
+            lastHeardMinutes: nil, latitude: nil, longitude: nil, locationPrecision: nil,
+            regionCodes: [], reportedAt: at(50)
+        )
+        try await store.savePeerRepeaterPage(
+            ownerIdentityID: owner, publicAddress: "relay", entries: [full, bare], total: 5,
+            nextCursor: Data([9]), replacing: true, at: at(51)
+        )
+        var listing = try await store.peerRepeaterListing(ownerIdentityID: owner, publicAddress: "relay")
+        precondition(listing?.total == 5 && listing?.nextCursor == Data([9]) && listing?.asOf == at(51))
+        precondition(listing?.entries.count == 2)
+        precondition(listing?.entries.contains(full) == true && listing?.entries.contains(bare) == true)
+        let third = StoredPeerRepeaterEntry(
+            hint: Data([7, 8]), name: "South", rssiDBm: -70, snrQuarterDB: 20,
+            lastHeardMinutes: 0, latitude: nil, longitude: nil, locationPrecision: nil,
+            regionCodes: [], reportedAt: at(52)
+        )
+        try await store.savePeerRepeaterPage(
+            ownerIdentityID: owner, publicAddress: "relay", entries: [third], total: nil,
+            nextCursor: nil, replacing: false, at: at(53)
+        )
+        listing = try await store.peerRepeaterListing(ownerIdentityID: owner, publicAddress: "relay")
+        precondition(listing?.entries.count == 3 && listing?.nextCursor == nil && listing?.asOf == at(53))
+        let reports = try await store.allPeerRepeaterEntries(ownerIdentityID: owner)
+        precondition(reports.count == 3 && reports.allSatisfy { $0.reporterNodeID == relay.id })
+        precondition(reports.contains { $0.entry == third })
+        let noListing = try await store.peerRepeaterListing(ownerIdentityID: owner, publicAddress: "friend")
+        precondition(noListing == nil)
+
+        // Everything at once.
+        let records = try await store.applicationRecords(ownerIdentityID: owner)
+        precondition(Set(records.peers.map(\.publicAddress)) == ["relay", "friend"])
+        precondition(Set(records.channels.map(\.id)) == [named.id, secret.id])
+        precondition(records.conversations.map(\.id) == [direct])
+        precondition(Set(records.channelConversations.map(\.id)) == [general, hidden])
+        precondition(records.reports.count == 3)
+        let conversationsOnly = try await store.applicationRecords(
+            ownerIdentityID: owner, conversationsOnly: true
+        )
+        precondition(conversationsOnly.conversations.map(\.id) == [direct])
+        precondition(Set(conversationsOnly.channels.map(\.id)) == [named.id, secret.id])
+        precondition(conversationsOnly.peers.isEmpty && conversationsOnly.reports.isEmpty)
+
+        // Staged transcripts.
+        try await store.seedStagedTranscript(
+            ownerIdentityID: owner, conversationAddress: "friend", sessionID: "staging-smoke",
+            messages: [
+                StagedMessage(
+                    handle: 1, body: "Staged inbound", outbound: false, createdAt: at(60.0009),
+                    senderAddress: "friend", reception: reception,
+                    reactions: [StagedReaction(body: "ha", outbound: true, createdAt: at(61))]
+                ),
+                StagedMessage(
+                    handle: 2, body: "Staged reply", outbound: true, createdAt: at(62),
+                    deliveryState: "acknowledged", regarding: .message(1)
+                ),
+            ]
+        )
+        messages = try await transcript("friend")
+        let stagedInbound = messages.first { $0.body == "Staged inbound" }
+        let stagedReply = messages.first { $0.body == "Staged reply" }
+        precondition(stagedInbound?.sessionID == "staging-smoke" && stagedInbound?.reception == reception)
+        precondition(stagedInbound?.createdAtMilliseconds == 1_780_000_060_000)
+        precondition(stagedInbound?.reactions.map(\.body) == ["ha"])
+        precondition(stagedReply?.deliveryState == "acknowledged")
+        precondition(stagedReply?.quote?.original?.body == "Staged inbound")
+        let window = try await store.chatMessageWindow(
+            ownerIdentityID: owner, conversationAddress: "friend", around: "staging-smoke",
+            handle: 1, radius: 1
+        )
+        precondition(window?.messages.contains { $0.body == "Staged inbound" } == true)
+        let before = try await store.chatMessageCount(ownerIdentityID: owner, conversationAddress: "general-address")
+        try await store.seedGeneratedMessages(
+            ownerIdentityID: owner, conversationAddress: "general-address", count: 25
+        )
+        let after = try await store.chatMessageCount(ownerIdentityID: owner, conversationAddress: "general-address")
+        precondition(after == before + 25)
+
+        // Clearing keeps the conversation and its checkpoint; deleting takes
+        // the conversation.
+        try await store.clearConversationMessages(ownerIdentityID: owner, conversationAddress: "friend")
+        messages = try await transcript("friend")
+        checkpoints = try await store.chatCheckpoints(ownerIdentityID: owner)
+        directs = try await store.listDirectConversations(ownerIdentityID: owner)
+        precondition(messages.isEmpty && checkpoints.count == 1 && directs.map(\.id) == [direct])
+        let clearedArchive = try await store.chatArchive(ownerIdentityID: owner, lookup: .init(
+            requestId: 0, conversationAddress: "friend", messageId: 4, fragmentIndex: 1
+        ))
+        precondition(clearedArchive == nil)
+        try await store.deleteDirectConversation(ownerIdentityID: owner, conversationID: direct)
+        directs = try await store.listDirectConversations(ownerIdentityID: owner)
+        friend = try await peer("friend")
+        precondition(directs.isEmpty && friend.isSaved, "deleting a conversation keeps the peer")
+        try await store.deleteChannelConversation(ownerIdentityID: owner, conversationID: hidden)
+        channelConversations = try await store.listChannelConversations(ownerIdentityID: owner)
+        precondition(channelConversations.map(\.id) == [general])
+        try await store.deleteChannel(id: secret.id)
+        let remaining = try await store.channels(ownerIdentityID: owner)
+        precondition(remaining.map(\.id) == [named.id])
+    }
+
+    /// A second connection to the same file reads what the first wrote, and
+    /// erasing through it empties the store without taking the schema.
+    private static func checkReopenAndErase(
+        _ store: SQLiteApplicationStore,
+        path: String
+    ) async throws {
+        let reopened = try SQLiteApplicationStore(path: path)
+        for owner in ["alice", "dana"] {
+            let written = try await store.applicationRecords(ownerIdentityID: owner)
+            let read = try await reopened.applicationRecords(ownerIdentityID: owner)
+            precondition(!written.peers.isEmpty)
+            precondition(read.peers == written.peers && read.channels == written.channels)
+            precondition(read.conversations == written.conversations)
+            precondition(read.channelConversations == written.channelConversations)
+            precondition(read.reports == written.reports)
+        }
+        let page = try await store.chatMessagePage(
+            ownerIdentityID: "alice", conversationAddress: "reply-peer", newest: 100
+        )
+        let reread = try await reopened.chatMessagePage(
+            ownerIdentityID: "alice", conversationAddress: "reply-peer", newest: 100
+        )
+        precondition(!page.messages.isEmpty && reread == page)
+
+        let version = try await reopened.schemaVersion()
+        try await reopened.eraseAllContent()
+        let erasedVersion = try await store.schemaVersion()
+        let erased = try await store.applicationRecords(ownerIdentityID: "alice")
+        let erasedIdentity = try await store.knowsIdentity(id: "alice", publicAddress: "alice-public")
+        precondition(erasedVersion == version)
+        precondition(erased.peers.isEmpty && erased.conversations.isEmpty && !erasedIdentity)
     }
 
     private static func node(_ nodes: [StoredNode], _ address: String) -> StoredNode {

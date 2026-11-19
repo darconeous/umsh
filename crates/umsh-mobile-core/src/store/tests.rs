@@ -10,8 +10,8 @@ fn path_in(directory: &tempfile::TempDir) -> String {
         .to_string()
 }
 
-/// The database's schema objects, in exactly the form
-/// `scripts/ios/store-schema-dump.swift` writes them below its header.
+/// The database's schema objects, in exactly the form `schema_v31.sql`
+/// holds them below its header.
 fn dump(connection: &Connection) -> String {
     let mut out = String::new();
     let mut statement = connection
@@ -36,8 +36,7 @@ fn dump(connection: &Connection) -> String {
 }
 
 /// [`BASELINE`]'s schema objects, without the header that names its
-/// version. The ladder's steps so far rewrite data only, so every version
-/// has this schema.
+/// version. There are no migrations yet, so every version has this schema.
 fn baseline_schema() -> &'static str {
     BASELINE.split_once("do not edit.\n").unwrap().1
 }
@@ -79,9 +78,13 @@ fn the_connection_is_configured_as_the_swift_store_configures_it() {
     let synchronous: i64 = connection
         .pragma_query_value(None, "synchronous", |row| row.get(0))
         .unwrap();
+    let busy_timeout: i64 = connection
+        .pragma_query_value(None, "busy_timeout", |row| row.get(0))
+        .unwrap();
     assert_eq!(journal, "wal");
     assert_eq!(foreign_keys, 1);
     assert_eq!(synchronous, 2);
+    assert_eq!(busy_timeout, 5_000);
 }
 
 #[test]
@@ -168,12 +171,13 @@ fn a_database_below_the_swift_store_s_last_migration_is_refused() {
             .unwrap();
         connection.pragma_update(None, "user_version", 30).unwrap();
     }
+    let before = std::fs::read(&path).unwrap();
     assert_eq!(
         MobileAppStore::open(path.clone()).err(),
         Some(MobileStoreError::UnsupportedSchema { version: 30 })
     );
-    // Refusing leaves it for a Swift-migrating build to finish.
-    assert_eq!(user_version(&raw(&path)).unwrap(), 30);
+    // Refusing writes nothing, not even the journal mode.
+    assert_eq!(std::fs::read(&path).unwrap(), before);
 }
 
 #[test]
@@ -183,14 +187,12 @@ fn a_file_that_is_not_the_store_is_refused_and_left_alone() {
     raw(&path)
         .execute_batch("CREATE TABLE something_else (x)")
         .unwrap();
+    let before = std::fs::read(&path).unwrap();
     assert_eq!(
         MobileAppStore::open(path.clone()).err(),
         Some(MobileStoreError::UnsupportedSchema { version: 0 })
     );
-    let objects: i64 = raw(&path)
-        .query_row("SELECT count(*) FROM sqlite_master", [], |row| row.get(0))
-        .unwrap();
-    assert_eq!(objects, 1);
+    assert_eq!(std::fs::read(&path).unwrap(), before);
 }
 
 #[test]
@@ -510,4 +512,128 @@ fn a_failed_write_carries_sqlite_s_code_and_message() {
         error.to_string(),
         format!("{} ({code}): {detail}", error.diagnostic_code())
     );
+}
+
+/// A database the Swift store wrote before iOS moved onto this one, every
+/// table filled through that store's own calls. It holds what only that
+/// store produced: sort keys folded by Foundation, heard-at times with
+/// fractions of a millisecond, zero-length blobs. That store is gone, so
+/// the file cannot be made again; do not replace it.
+const SWIFT_STORE_V31: &[u8] = include_bytes!("swift_store_v31.sqlite");
+
+#[test]
+fn a_database_the_swift_store_wrote_reads_whole_and_is_left_as_it_was() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = path_in(&directory);
+    std::fs::write(&path, SWIFT_STORE_V31).unwrap();
+    let store = MobileAppStore::open(path.clone()).unwrap();
+    assert_eq!(store.schema_version(), Ok(BASELINE_VERSION));
+    assert_eq!(dump(&store.connection()), baseline_schema());
+    let owner = || "alice".to_string();
+
+    let nodes = store.list_nodes(owner()).unwrap();
+    assert_eq!(nodes.len(), 13);
+    let node = |address: &str| {
+        nodes
+            .iter()
+            .find(|node| node.public_address == address)
+            .unwrap()
+    };
+    let emile = node("peer-a");
+    assert_eq!(emile.alias.as_deref(), Some("Émile Zola"));
+    assert_eq!(emile.node_kind, Some(MobileStoredNodeKind::Chat));
+    assert_eq!(emile.advertisement, Some(vec![9]));
+    // Stored as 1780000021.123056 seconds.
+    assert_eq!(emile.last_heard_at_ms, Some(1_780_000_021_123));
+    let bravo = node("peer-b");
+    assert_eq!(bravo.alias.as_deref(), Some("ÀB ç Straße"));
+    assert_eq!(
+        bravo.system_role,
+        Some(MobileStoredSystemRole::CompanionRadio)
+    );
+    assert_eq!(bravo.node_kind, Some(MobileStoredNodeKind::Repeater));
+    assert!(bravo.is_favorite);
+    assert_eq!(
+        node("peer-c").advertisement_received_at_ms,
+        Some(1_780_000_012_123)
+    );
+
+    let channels = store.channels(owner()).unwrap();
+    assert_eq!(channels.len(), 1);
+    assert_eq!(channels[0].id, "11111111-2222-3333-4444-AAAAAAAAAAAA");
+    assert_eq!(channels[0].tint, [1, 2, 3]);
+    assert_eq!(channels[0].joined_at_ms, Some(1_780_000_030_679));
+
+    let listing = store
+        .peer_repeater_listing(owner(), "peer-b".into())
+        .unwrap()
+        .unwrap();
+    let hints: Vec<_> = listing.entries.iter().map(|e| e.hint.clone()).collect();
+    assert_eq!(hints, [vec![1, 2], vec![3, 4, 5], vec![7, 8]]);
+    assert_eq!(
+        listing.entries[2].region_codes,
+        [vec![0x55, 0x53], vec![1, 2]]
+    );
+    assert_eq!(listing.entries[2].last_heard_minutes, Some(65_535));
+    // The Swift store wrote this listing's cursor as a zero-length blob.
+    let partial = store
+        .peer_repeater_listing(owner(), "peer-c".into())
+        .unwrap()
+        .unwrap();
+    assert_eq!((partial.total, partial.next_cursor), (Some(9), None));
+
+    let checkpoints: Vec<_> = store
+        .chat_checkpoints(owner())
+        .unwrap()
+        .into_iter()
+        .map(|c| (c.conversation_address, c.next_id, c.epoch))
+        .collect();
+    assert_eq!(
+        checkpoints,
+        [
+            ("peer-a".to_string(), 13, 2),
+            ("peer-clear".to_string(), 3, 0)
+        ]
+    );
+
+    let page = store
+        .chat_message_page_newest(owner(), "peer-a".into(), 100)
+        .unwrap();
+    let bodies: Vec<_> = page.messages.iter().map(|m| m.body.as_str()).collect();
+    assert_eq!(
+        bodies,
+        [
+            "Late one",
+            "Hello (rev 1)",
+            "Hi back",
+            "status text",
+            "",
+            "",
+            "Multi fragment",
+            "Unread one",
+            "Composed, edited",
+        ]
+    );
+    let hello = &page.messages[1];
+    let reception = hello.reception.as_ref().unwrap();
+    assert_eq!(reception.rssi_dbm, Some(-101));
+    assert_eq!(reception.route_hints, [vec![1, 2], vec![3, 4]]);
+    assert_eq!(hello.reactions.len(), 1);
+    assert_eq!(hello.reactions[0].body, "<3");
+
+    // A staged transcript's session is a name, not a number.
+    let staged = store
+        .chat_message_page_newest(owner(), "peer-staged".into(), 100)
+        .unwrap();
+    assert_eq!(staged.messages.len(), 7);
+    assert!(
+        staged
+            .messages
+            .iter()
+            .all(|m| m.reference.session_id == "staging-7")
+    );
+
+    drop(store);
+    // Opening and reading wrote nothing to it.
+    assert_eq!(std::fs::read(&path).unwrap(), SWIFT_STORE_V31);
 }

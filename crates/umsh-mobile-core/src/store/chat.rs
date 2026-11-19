@@ -805,9 +805,9 @@ impl MobileAppStore {
     }
 }
 
-/// A nullable blob as the Swift store bound it: an empty value went in as
-/// NULL. Kept so both stores write the same rows, which matters where a
-/// column is matched with `IS` or merged with `COALESCE`.
+/// A nullable blob with nothing in it as NULL, so an absent value has one
+/// stored form. That matters where a column is matched with `IS` or merged
+/// with `COALESCE`. The Swift store wrote a zero-length blob for one.
 pub(super) fn nullable_blob(value: Option<&[u8]>) -> Option<&[u8]> {
     value.filter(|bytes| !bytes.is_empty())
 }

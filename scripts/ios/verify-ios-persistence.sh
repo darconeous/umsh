@@ -7,7 +7,7 @@ build_root="$repo_root/target/ios-persistence"
 core_root="$repo_root/target/ios-mobile-core"
 binary="$build_root/persistence-smoke"
 
-# The store imports UMSHMobileCore for its chat record types, so the module
+# The store is a thin layer over the core's MobileAppStore, so the module
 # must be built from the generated bindings first.
 if [ ! -f "$core_root/host/release/libumsh_mobile_core.dylib" ]; then
     echo "Run scripts/ios/build-mobile-core.sh first" >&2
@@ -28,9 +28,12 @@ swiftc \
     -L "$core_root/host/release" \
     -lumsh_mobile_core
 
+# Built as a debug configuration: the staging seeders exist only there, and
+# the smoke checks them with the rest.
 swiftc \
     -swift-version 6 \
     -parse-as-library \
+    -D DEBUG \
     "$repo_root/apps/ios/UMSH/Services/Persistence/SQLiteApplicationStore.swift" \
     "$script_dir/persistence-smoke.swift" \
     -I "$build_root" \

@@ -4464,10 +4464,6 @@ final class AppRuntime {
     private func prepareApplicationState() async {
         guard let applicationStore, let localIdentity else { return }
         do {
-            try await applicationStore.migrateLegacyPrimaryIdentity(
-                to: localIdentity.id,
-                publicAddress: localIdentity.publicIdentity.canonicalAddress
-            )
             try await applicationStore.upsertIdentity(
                 id: localIdentity.id,
                 publicAddress: localIdentity.publicIdentity.canonicalAddress

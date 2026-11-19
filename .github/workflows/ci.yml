@@ -310,14 +310,6 @@ jobs:
           scripts/ios/verify-radio-recovery.sh
           scripts/ios/verify-radio-session-recovery.sh
 
-      # The Rust store's baseline is the Swift store's schema; until iOS
-      # moves onto the Rust store, a Swift migration must update it too.
-      - name: Check the shared store's baseline matches the Swift schema
-        run: |
-          export CLANG_MODULE_CACHE_PATH="$RUNNER_TEMP/umsh-swift-module-cache"
-          scripts/ios/dump-store-schema.sh
-          git diff --exit-code crates/umsh-mobile-core/src/store/schema_v31.sql
-
       # GitHub rotates the simulators in its macOS images, so pinning a device
       # name is a standing breakage: the image this first ran on had no
       # "iPhone 16" at all (its oldest iPhone was 16e). Resolve a concrete

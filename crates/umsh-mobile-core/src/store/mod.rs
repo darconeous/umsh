@@ -1,15 +1,12 @@
 //! The application store: one SQLite database, one schema, and one set of
 //! queries for both apps.
 //!
-//! The schema starts where the Swift store's 31 migrations end. A new file
+//! The schema starts where the Swift store's 31 migrations ended. A new file
 //! gets that schema in one step (`schema_v31.sql`, dumped from the Swift
-//! store by `scripts/ios/dump-store-schema.sh`, which CI reruns to keep the
-//! two identical). A database the Swift store left at v31 opens as it is.
-//! Anything older was last opened by a build that predates the shared store
-//! and must be opened once by a build that still migrates in Swift; the
-//! Swift migrations are not ported. This store's own migrations start at
-//! v32; there are none yet, so a database this store has opened is still
-//! one the Swift store opens.
+//! store before iOS moved onto this one). A database the Swift store left at
+//! v31 opens as it is. Anything older is refused: the Swift migrations were
+//! not ported, so such a file needs one run of a build that still has them.
+//! This store's own migrations start at v32; there are none yet.
 //!
 //! Instants cross the interface as integer Unix milliseconds. Most columns
 //! store them that way (`*_at_ms`, truncated by the caller). Two node
@@ -189,6 +186,12 @@ impl MobileAppStore {
             Connection::open(&path).map_err(|error| MobileStoreError::OpenFailed {
                 code: sqlite_code(&error),
             })?;
+        // Set first, so the version check below waits out a lock as every
+        // later statement does.
+        connection.busy_timeout(BUSY_TIMEOUT)?;
+        // A file this build cannot open is refused before any setting that
+        // writes to it: switching to WAL rewrites the file's header.
+        openable_version(&connection, ladder_top(MIGRATIONS))?;
         configure(&connection)?;
         migrate(&mut connection, MIGRATIONS)?;
         Ok(Arc::new(Self {
@@ -279,7 +282,8 @@ fn sqlite_code(error: &rusqlite::Error) -> i32 {
     }
 }
 
-/// The connection settings the Swift store uses, in its order.
+/// The connection settings the Swift store used, less the busy timeout,
+/// which `open` sets before its first read.
 fn configure(connection: &Connection) -> Result<(), MobileStoreError> {
     connection.pragma_update(None, "foreign_keys", true)?;
     let mode: String =
@@ -292,7 +296,6 @@ fn configure(connection: &Connection) -> Result<(), MobileStoreError> {
         });
     }
     connection.pragma_update(None, "synchronous", "FULL")?;
-    connection.busy_timeout(BUSY_TIMEOUT)?;
     peers::register_functions(connection)?;
     Ok(())
 }
@@ -315,22 +318,11 @@ fn user_version(connection: &Connection) -> rusqlite::Result<i64> {
 /// transaction, deciding from the version read inside it so two openers
 /// cannot both build the schema.
 fn migrate(connection: &mut Connection, ladder: &[Migration]) -> Result<i64, MobileStoreError> {
-    let current = ladder.last().map_or(BASELINE_VERSION, |step| step.version);
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let mut version = user_version(&transaction)?;
+    let mut version = openable_version(&transaction, ladder_top(ladder))?;
     if version == 0 {
-        // A file with no version is new, unless it already holds anything:
-        // then it is not this store's.
-        let objects: i64 =
-            transaction.query_row("SELECT count(*) FROM sqlite_master", [], |row| row.get(0))?;
-        if objects != 0 {
-            return Err(MobileStoreError::UnsupportedSchema { version });
-        }
         transaction.execute_batch(BASELINE)?;
         version = BASELINE_VERSION;
-    }
-    if !(BASELINE_VERSION..=current).contains(&version) {
-        return Err(MobileStoreError::UnsupportedSchema { version });
     }
     let start = version;
     for step in ladder.iter().filter(|step| step.version > start) {
@@ -343,6 +335,30 @@ fn migrate(connection: &mut Connection, ladder: &[Migration]) -> Result<i64, Mob
     if version != user_version(&transaction)? {
         transaction.pragma_update(None, "user_version", version)?;
         transaction.commit()?;
+    }
+    Ok(version)
+}
+
+/// The version the last step of `ladder` leaves a file at.
+fn ladder_top(ladder: &[Migration]) -> i64 {
+    ladder.last().map_or(BASELINE_VERSION, |step| step.version)
+}
+
+/// The version a file is at, when a build whose ladder ends at `current`
+/// can open it: 0 for a new file, or a version from the baseline to
+/// `current`. Only reads.
+fn openable_version(connection: &Connection, current: i64) -> Result<i64, MobileStoreError> {
+    let version = user_version(connection)?;
+    if version == 0 {
+        // A file with no version is new, unless it already holds anything:
+        // then it is not this store's.
+        let objects: i64 =
+            connection.query_row("SELECT count(*) FROM sqlite_master", [], |row| row.get(0))?;
+        if objects != 0 {
+            return Err(MobileStoreError::UnsupportedSchema { version });
+        }
+    } else if !(BASELINE_VERSION..=current).contains(&version) {
+        return Err(MobileStoreError::UnsupportedSchema { version });
     }
     Ok(version)
 }

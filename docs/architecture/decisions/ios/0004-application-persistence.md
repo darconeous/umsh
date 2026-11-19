@@ -1,6 +1,6 @@
 # ADR 0004: Prototype application state with SQLite
 
-- Status: Accepted for the application schema foundation
+- Status: Superseded by the shared store (see below)
 - Phase: 0
 
 ## Decision
@@ -42,3 +42,12 @@ The executable `scripts/ios/verify-ios-persistence.sh` check demonstrates:
 This accepts direct SQLite as the initial application persistence layer. It
 does not freeze the complete feature schema; later tables still require their
 own migrations and transaction tests.
+
+## Superseded
+
+Application state now lives in the shared core's `MobileAppStore`
+(`crates/umsh-mobile-core/src/store`), which Android uses too. It keeps this
+record's choices: direct SQLite, foreign keys, explicit transactions, and no
+secrets in the database. `SQLiteApplicationStore` is now a Swift adapter over
+it with no SQL of its own. The schema starts at version 31, where the Swift
+migrations ended; a file older than that is refused rather than migrated.

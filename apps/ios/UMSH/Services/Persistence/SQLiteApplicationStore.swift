@@ -1,48 +1,48 @@
 import Foundation
-import SQLite3
 import UMSHMobileCore
 
 enum ApplicationStoreError: Error, Equatable, Sendable {
     case applicationSupportUnavailable
     case openFailed(Int32)
     case recordNotFound
-    /// A result code plus SQLite's own account of it. The code alone says only
-    /// that something was refused; the message names the column, table or
-    /// constraint, which is the difference between a usable report and a guess.
+    /// A channel ID that is not a UUID, or a router hint that is not two
+    /// octets.
+    case invalidArgument
+    /// SQLite's extended result code plus its own account of it. The code
+    /// alone says only that something was refused; the message names the
+    /// column, table or constraint, which is the difference between a usable
+    /// report and a guess.
+    /// Code 0 is a row the store could not read back.
     case sqliteFailure(Int32, message: String)
     case unsupportedSchema(Int32)
-    /// Migrations ran but left the database at a version other than
-    /// ``SQLiteApplicationStore/currentSchemaVersion``—a migration block
-    /// stamped a `user_version` the constant was never raised to match. Fails
-    /// on the first run of the offending build rather than on the second,
-    /// where the store would open once and then be rejected forever after.
-    case schemaVersionMismatch(applied: Int32, expected: Int32)
 }
 
 extension ApplicationStoreError {
+    init(_ error: MobileStoreError) {
+        switch error {
+        case .OpenFailed(let code): self = .openFailed(code)
+        case .UnsupportedSchema(let version): self = .unsupportedSchema(Int32(clamping: version))
+        case .RecordNotFound: self = .recordNotFound
+        case .InvalidArgument: self = .invalidArgument
+        case .Failed(let code, let detail): self = .sqliteFailure(code, message: detail)
+        }
+    }
+
     /// Enough detail to act on in a bug report, without leaking record content.
     var diagnosticDescription: String {
         switch self {
         case .applicationSupportUnavailable:
             "The Application Support directory is unavailable."
         case .openFailed(let code):
-            "sqlite3_open_v2 failed with code \(code)."
+            "Opening the database failed with code \(code)."
         case .recordNotFound:
             "The record being updated no longer exists."
+        case .invalidArgument:
+            "A value passed to the store is malformed."
         case .sqliteFailure(let code, let message):
             "SQLite returned code \(code): \(message)."
         case .unsupportedSchema(let version):
-            """
-            The database is at schema version \(version); this build supports \
-            up to \(SQLiteApplicationStore.currentSchemaVersion). It was \
-            written by a newer build.
-            """
-        case .schemaVersionMismatch(let applied, let expected):
-            """
-            Migrations left the database at schema version \(applied) but this \
-            build declares \(expected). A migration was added without raising \
-            currentSchemaVersion.
-            """
+            "The database is at schema version \(version), which this build cannot open."
         }
     }
 }
@@ -169,8 +169,9 @@ struct StoredManualRoute: Equatable, Sendable {
 /// seen to let it go.
 struct StoredClaimedRadio: Equatable, Sendable {
     /// After this long the radio has stood down on its own, so the record
-    /// lapses: the device lease runs this long from detach.
-    static let lapse: TimeInterval = 12 * 60 * 60
+    /// lapses: the device lease runs this long from detach. The core's
+    /// figure, which its own lapse check uses.
+    static let lapse = TimeInterval(claimedRadioLapseMs()) / 1_000
 
     /// The radio's device address.
     let deviceAddress: String
@@ -563,17 +564,8 @@ struct StagedReaction {
 }
 #endif
 
-/// Maps the engine's presence enum to its stored integer code.
-private func presenceCode(_ presence: MobileChatPresence) -> Int32 {
-    switch presence {
-    case .present: return 0
-    case .gapPending: return 1
-    case .unavailable: return 2
-    case .gapIdle: return 3
-    }
-}
-
-/// Phase 0 direct-SQLite prototype.
+/// Everything the interface lists, read together so a concurrent writer
+/// cannot produce a mixture of old and new lists.
 ///
 /// This store contains public application records only. Private identity and
 /// channel key bytes are never accepted by this API and remain in Keychain.
@@ -585,29 +577,32 @@ struct ApplicationRecords: Sendable {
     let reports: [StoredPeerRepeaterReport]
 }
 
+/// The application database, kept by the shared Rust store
+/// (`MobileAppStore` in `umsh-mobile-core`), which Android uses too.
+///
+/// This actor only adapts: Swift types and `Date`s on this side, the core's
+/// records and millisecond instants on the other. Writes that need the time
+/// are stamped here, from the clock, as the Swift store stamped them.
 actor SQLiteApplicationStore {
-    /// One actor turn and one SQLite read transaction. A concurrent writer
-    /// cannot produce a mixture of old and new lists for the interface.
-    func applicationRecords(ownerIdentityID: String, conversationsOnly: Bool = false) throws -> ApplicationRecords {
-        try transaction(write: false) {
-            ApplicationRecords(
-                peers: conversationsOnly ? [] : try listNodes(ownerIdentityID: ownerIdentityID),
-                channels: try channels(ownerIdentityID: ownerIdentityID),
-                conversations: try listDirectConversations(ownerIdentityID: ownerIdentityID),
-                channelConversations: try listChannelConversations(ownerIdentityID: ownerIdentityID),
-                reports: conversationsOnly ? [] : try allPeerRepeaterEntries(ownerIdentityID: ownerIdentityID)
-            )
-        }
-    }
-    /// Must equal the highest `PRAGMA user_version` any migration block in
-    /// ``migrate(_:)`` stamps. Raise it in the same commit that adds one:
-    /// migrations run when the stored version is *below* their target, but the
-    /// store refuses to open any database above this constant, so a stale value
-    /// lets the new schema apply once and then locks the user out of their own
-    /// data on the next launch. ``migrate(_:)`` checks the two agree.
-    static let currentSchemaVersion: Int32 = 31
+    private let store: MobileAppStore
 
-    nonisolated(unsafe) private let database: OpaquePointer
+    init(path: String) throws {
+        store = try Self.mapped { try MobileAppStore.open(path: path) }
+    }
+
+    /// One read transaction in the core.
+    func applicationRecords(ownerIdentityID: String, conversationsOnly: Bool = false) throws -> ApplicationRecords {
+        let records = try run {
+            try $0.applicationRecords(ownerIdentityId: ownerIdentityID, conversationsOnly: conversationsOnly)
+        }
+        return ApplicationRecords(
+            peers: records.peers.map(StoredNode.init),
+            channels: records.channels.compactMap(StoredChannel.init),
+            conversations: records.conversations.map(StoredDirectConversation.init),
+            channelConversations: records.channelConversations.compactMap(StoredChannelConversation.init),
+            reports: records.reports.map(StoredPeerRepeaterReport.init)
+        )
+    }
 
     static func applicationStore(fileManager: FileManager = .default) throws -> SQLiteApplicationStore {
         try SQLiteApplicationStore(
@@ -668,95 +663,25 @@ actor SQLiteApplicationStore {
     /// is what identity erasure uses to take the real store down with the
     /// key, so it must exist in every configuration.
     func eraseAllContent() throws {
-        let tables = try tableNames()
-        try transaction {
-            // Which order the tables empty in is not something this has to
-            // know: deferring the checks to the commit means the only state
-            // foreign keys are tested against is the final one, where every
-            // table is empty and nothing can dangle.
-            try Self.execute(database, sql: "PRAGMA defer_foreign_keys = ON")
-            for table in tables {
-                try Self.execute(database, sql: "DELETE FROM \"\(table)\"")
-            }
-        }
-    }
-
-    /// The database's own tables, read from the schema rather than listed here
-    /// so a migration that adds one cannot leave a reset quietly incomplete.
-    private func tableNames() throws -> [String] {
-        let statement = try prepare(
-            """
-            SELECT name FROM sqlite_master
-            WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        var names: [String] = []
-        while sqlite3_step(statement) == SQLITE_ROW {
-            names.append(Self.stringColumn(statement, at: 0))
-        }
-        return names
-    }
-
-    init(path: String) throws {
-        var connection: OpaquePointer?
-        let status = sqlite3_open_v2(
-            path,
-            &connection,
-            SQLITE_OPEN_CREATE | SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX,
-            nil
-        )
-        guard status == SQLITE_OK, let connection else {
-            if let connection {
-                sqlite3_close(connection)
-            }
-            throw ApplicationStoreError.openFailed(status)
-        }
-        database = connection
-
-        do {
-            try Self.execute(connection, sql: "PRAGMA foreign_keys = ON")
-            try Self.execute(connection, sql: "PRAGMA journal_mode = WAL")
-            try Self.execute(connection, sql: "PRAGMA synchronous = FULL")
-            sqlite3_busy_timeout(connection, 5_000)
-            try Self.migrate(connection)
-        } catch {
-            sqlite3_close(connection)
-            throw error
-        }
-    }
-
-    deinit {
-        sqlite3_close(database)
+        try run { try $0.eraseAllContent() }
     }
 
     func schemaVersion() throws -> Int32 {
-        try Self.readSchemaVersion(database)
+        Int32(clamping: try run { try $0.schemaVersion() })
     }
 
+    // MARK: Identity and peers
+
     func insertIdentity(id: String, publicAddress: String, createdAt: Date = .now) throws {
-        let statement = try prepare(
-            "INSERT INTO local_identity (id, public_address, created_at_ms) VALUES (?, ?, ?)"
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(id, to: statement, at: 1)
-        try bind(publicAddress, to: statement, at: 2)
-        try check(sqlite3_bind_int64(statement, 3, Int64(createdAt.timeIntervalSince1970 * 1_000)))
-        try stepDone(statement)
+        try run {
+            try $0.insertIdentity(id: id, publicAddress: publicAddress, createdAtMs: createdAt.storeMilliseconds)
+        }
     }
 
     func upsertIdentity(id: String, publicAddress: String, createdAt: Date = .now) throws {
-        let statement = try prepare(
-            """
-            INSERT INTO local_identity (id, public_address, created_at_ms) VALUES (?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET public_address = excluded.public_address
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(id, to: statement, at: 1)
-        try bind(publicAddress, to: statement, at: 2)
-        try check(sqlite3_bind_int64(statement, 3, Int64(createdAt.timeIntervalSince1970 * 1_000)))
-        try stepDone(statement)
+        try run {
+            try $0.upsertIdentity(id: id, publicAddress: publicAddress, createdAtMs: createdAt.storeMilliseconds)
+        }
     }
 
     /// Whether this store already holds records for the given identity.
@@ -767,90 +692,11 @@ actor SQLiteApplicationStore {
     /// The legacy `'primary'` slot counts, since a store written before the
     /// address became the key is still this identity's store.
     func knowsIdentity(id: String, publicAddress: String) throws -> Bool {
-        let statement = try prepare(
-            """
-            SELECT 1 FROM local_identity
-            WHERE id = ? OR (id = 'primary' AND public_address = ?)
-            LIMIT 1
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(id, to: statement, at: 1)
-        try bind(publicAddress, to: statement, at: 2)
-        return sqlite3_step(statement) == SQLITE_ROW
+        try run { try $0.knowsIdentity(id: id, publicAddress: publicAddress) }
     }
 
-    /// Move records created by early builds from the Keychain slot name to the
-    /// identity's stable public address. Migration is deliberately refused if
-    /// the legacy row belongs to a different public key or the destination
-    /// already exists; either case could otherwise transfer records between
-    /// identities.
-    func migrateLegacyPrimaryIdentity(
-        to stableID: String,
-        publicAddress: String
-    ) throws {
-        guard stableID != "primary" else { return }
-        try transaction {
-            // The parent key and its children must change together. SQLite's
-            // immediate foreign keys would reject the transient mismatch, so
-            // defer validation until this transaction commits.
-            try Self.execute(database, sql: "PRAGMA defer_foreign_keys = ON")
-
-            let legacy = try prepare(
-                "SELECT public_address FROM local_identity WHERE id = 'primary'"
-            )
-            defer { sqlite3_finalize(legacy) }
-            guard sqlite3_step(legacy) == SQLITE_ROW,
-                  Self.stringColumn(legacy, at: 0) == publicAddress
-            else { return }
-
-            let destination = try prepare(
-                "SELECT 1 FROM local_identity WHERE id = ? LIMIT 1"
-            )
-            defer { sqlite3_finalize(destination) }
-            try bind(stableID, to: destination, at: 1)
-            guard sqlite3_step(destination) == SQLITE_DONE else { return }
-
-            let identity = try prepare(
-                "UPDATE local_identity SET id = ? WHERE id = 'primary' AND public_address = ?"
-            )
-            defer { sqlite3_finalize(identity) }
-            try bind(stableID, to: identity, at: 1)
-            try bind(publicAddress, to: identity, at: 2)
-            try stepDone(identity)
-
-            let nodes = try prepare(
-                "UPDATE node SET owner_identity_id = ? WHERE owner_identity_id = 'primary'"
-            )
-            defer { sqlite3_finalize(nodes) }
-            try bind(stableID, to: nodes, at: 1)
-            try stepDone(nodes)
-
-            let conversations = try prepare(
-                "UPDATE direct_conversation SET owner_identity_id = ? WHERE owner_identity_id = 'primary'"
-            )
-            defer { sqlite3_finalize(conversations) }
-            try bind(stableID, to: conversations, at: 1)
-            try stepDone(conversations)
-
-            for table in [
-                "chat_stream_checkpoint",
-                "chat_outbound_archive",
-                "chat_message",
-                "chat_applied_mutation",
-                "chat_delivery_fragment",
-            ] {
-                let statement = try prepare(
-                    "UPDATE \(table) SET owner_identity_id = ? WHERE owner_identity_id = 'primary'"
-                )
-                defer { sqlite3_finalize(statement) }
-                try bind(stableID, to: statement, at: 1)
-                try stepDone(statement)
-            }
-
-        }
-    }
-
+    /// `nodeKind` is a ``PeerRole`` raw value and `systemRole` is
+    /// `companion_radio`; anything else is stored as absent.
     func upsertPeer(
         ownerIdentityID: String,
         publicAddress: String,
@@ -864,234 +710,26 @@ actor SQLiteApplicationStore {
         advertisementAuthenticated: Bool = false,
         advertisementReceivedAt: Date? = nil
     ) throws {
-        let statement = try prepare(
-            """
-            INSERT INTO node (
-                owner_identity_id, public_address, alias, alias_search,
-                advertised_name, is_saved, system_role, radio_identifier,
-                node_kind, advertisement, advertisement_authenticated,
-                advertisement_received_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(owner_identity_id, public_address) DO UPDATE SET
-                alias = COALESCE(excluded.alias, node.alias),
-                alias_search = CASE WHEN excluded.alias IS NULL
-                    THEN node.alias_search ELSE excluded.alias_search END,
-                advertised_name = COALESCE(excluded.advertised_name, node.advertised_name),
-                -- A background advertisement upsert must never demote a saved
-                -- peer to the transient tier; only the explicit demote/delete
-                -- setters move a row downward.
-                is_saved = MAX(node.is_saved, excluded.is_saved),
-                system_role = COALESCE(excluded.system_role, node.system_role),
-                radio_identifier = COALESCE(excluded.radio_identifier, node.radio_identifier),
-                node_kind = COALESCE(excluded.node_kind, node.node_kind),
-                advertisement = COALESCE(excluded.advertisement, node.advertisement),
-                -- Provenance belongs to the bundle it describes, so it moves
-                -- only when the bundle does. A call that carries no
-                -- advertisement leaves all three untouched.
-                advertisement_authenticated = CASE WHEN excluded.advertisement IS NULL
-                    THEN node.advertisement_authenticated
-                    ELSE excluded.advertisement_authenticated END,
-                advertisement_received_at = CASE WHEN excluded.advertisement IS NULL
-                    THEN node.advertisement_received_at
-                    ELSE excluded.advertisement_received_at END
-            """
+        let peer = MobilePeerUpsertRecord(
+            alias: alias,
+            advertisedName: advertisedName,
+            isSaved: isSaved,
+            nodeKind: nodeKind.flatMap(MobileStoredNodeKind.init(storedText:)),
+            systemRole: systemRole.flatMap(MobileStoredSystemRole.init(storedText:)),
+            radioIdentifier: radioIdentifier,
+            advertisement: advertisement,
+            advertisementAuthenticated: advertisementAuthenticated,
+            advertisementReceivedAtMs: advertisementReceivedAt?.storeMilliseconds
         )
-        defer { sqlite3_finalize(statement) }
-        try bind(ownerIdentityID, to: statement, at: 1)
-        try bind(publicAddress, to: statement, at: 2)
-        try bindOptional(alias, to: statement, at: 3)
-        try bind(Self.normalizeSearch(alias ?? advertisedName ?? ""), to: statement, at: 4)
-        try bindOptional(advertisedName, to: statement, at: 5)
-        try check(sqlite3_bind_int(statement, 6, isSaved ? 1 : 0))
-        try bindOptional(systemRole, to: statement, at: 7)
-        try bindOptional(radioIdentifier, to: statement, at: 8)
-        try bindOptional(nodeKind, to: statement, at: 9)
-        try bindOptional(advertisement, to: statement, at: 10)
-        try check(sqlite3_bind_int(statement, 11, advertisementAuthenticated ? 1 : 0))
-        try bindOptionalDouble(
-            advertisementReceivedAt?.timeIntervalSince1970,
-            to: statement,
-            at: 12
-        )
-        try stepDone(statement)
+        try run { try $0.upsertPeer(ownerIdentityId: ownerIdentityID, publicAddress: publicAddress, peer: peer) }
     }
 
     func localAdvertisedName(ownerIdentityID: String) throws -> String? {
-        let statement = try prepare(
-            "SELECT advertised_name FROM local_identity WHERE id = ?"
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(ownerIdentityID, to: statement, at: 1)
-        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
-        return Self.optionalStringColumn(statement, at: 0)
+        try run { try $0.localAdvertisedName(ownerIdentityId: ownerIdentityID) }
     }
 
     func updateLocalAdvertisedName(ownerIdentityID: String, name: String?) throws {
-        let statement = try prepare(
-            "UPDATE local_identity SET advertised_name = ? WHERE id = ?"
-        )
-        defer { sqlite3_finalize(statement) }
-        try bindOptional(name, to: statement, at: 1)
-        try bind(ownerIdentityID, to: statement, at: 2)
-        try stepDone(statement)
-        guard sqlite3_changes(database) == 1 else { throw ApplicationStoreError.recordNotFound }
-    }
-
-    // MARK: - Channels
-
-    func channels(ownerIdentityID: String) throws -> [StoredChannel] {
-        let statement = try prepare(
-            """
-            SELECT id, kind, canonical_name, name, alias, channel_id_hex, tint,
-                   region_code, max_flood_hops, joined_phone, joined_device,
-                   notifications_enabled, joined_at_ms
-            FROM channel WHERE owner_identity_id = ?
-            ORDER BY created_at_ms, id
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(ownerIdentityID, to: statement, at: 1)
-
-        var channels: [StoredChannel] = []
-        while sqlite3_step(statement) == SQLITE_ROW {
-            guard
-                let id = UUID(uuidString: Self.stringColumn(statement, at: 0)),
-                let kind = StoredChannelKind(rawValue: Self.stringColumn(statement, at: 1))
-            else {
-                continue
-            }
-            channels.append(
-                StoredChannel(
-                    id: id,
-                    ownerIdentityID: ownerIdentityID,
-                    kind: kind,
-                    canonicalName: Self.optionalStringColumn(statement, at: 2),
-                    name: Self.optionalStringColumn(statement, at: 3),
-                    alias: Self.optionalStringColumn(statement, at: 4),
-                    channelIDHex: Self.stringColumn(statement, at: 5),
-                    tint: Self.dataColumn(statement, at: 6),
-                    regionCode: Self.optionalDataColumn(statement, at: 7),
-                    maxFloodHops: Self.optionalIntColumn(statement, at: 8).map(Int.init),
-                    joinedPhone: sqlite3_column_int(statement, 9) != 0,
-                    joinedDevice: sqlite3_column_int(statement, 10) != 0,
-                    notificationsEnabled: sqlite3_column_int(statement, 11) != 0,
-                    joinedAt: Self.optionalIntColumn(statement, at: 12).map {
-                        Date(timeIntervalSince1970: Double($0) / 1_000)
-                    }
-                )
-            )
-        }
-        return channels
-    }
-
-    /// The channel this identity already holds under `keyDigest`, if any.
-    ///
-    /// Import checks this before inserting so a re-scanned invitation updates
-    /// the existing channel instead of creating a second one for the same key.
-    func channel(ownerIdentityID: String, keyDigest: String) throws -> StoredChannel? {
-        let statement = try prepare(
-            "SELECT id FROM channel WHERE owner_identity_id = ? AND key_digest = ?"
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(ownerIdentityID, to: statement, at: 1)
-        try bind(keyDigest, to: statement, at: 2)
-        guard sqlite3_step(statement) == SQLITE_ROW,
-              let id = UUID(uuidString: Self.stringColumn(statement, at: 0))
-        else {
-            return nil
-        }
-        return try channels(ownerIdentityID: ownerIdentityID).first { $0.id == id }
-    }
-
-    func insertChannel(_ channel: StoredChannel, keyDigest: String) throws {
-        let statement = try prepare(
-            """
-            INSERT INTO channel (
-                id, owner_identity_id, kind, canonical_name, name, alias,
-                channel_id_hex, tint, key_digest, region_code, max_flood_hops,
-                joined_phone, joined_device, notifications_enabled,
-                created_at_ms, joined_at_ms
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        let now = Self.nowMilliseconds()
-        try bind(channel.id.uuidString, to: statement, at: 1)
-        try bind(channel.ownerIdentityID, to: statement, at: 2)
-        try bind(channel.kind.rawValue, to: statement, at: 3)
-        try bindOptional(channel.canonicalName, to: statement, at: 4)
-        try bindOptional(channel.name, to: statement, at: 5)
-        try bindOptional(channel.alias, to: statement, at: 6)
-        try bind(channel.channelIDHex, to: statement, at: 7)
-        try bind(channel.tint, to: statement, at: 8)
-        try bind(keyDigest, to: statement, at: 9)
-        try bindOptional(channel.regionCode, to: statement, at: 10)
-        try bindOptionalInt(channel.maxFloodHops.map(Int64.init), to: statement, at: 11)
-        try check(sqlite3_bind_int(statement, 12, channel.joinedPhone ? 1 : 0))
-        try check(sqlite3_bind_int(statement, 13, channel.joinedDevice ? 1 : 0))
-        try check(sqlite3_bind_int(statement, 14, channel.notificationsEnabled ? 1 : 0))
-        try check(sqlite3_bind_int64(statement, 15, now))
-        try bindOptionalInt(
-            channel.joinedAt.map { Int64($0.timeIntervalSince1970 * 1_000) },
-            to: statement,
-            at: 16
-        )
-        try stepDone(statement)
-    }
-
-    /// Update the parts of a channel the user controls, leaving membership and
-    /// key-derived columns alone.
-    func updateChannelDetails(
-        id: UUID,
-        alias: String?,
-        regionCode: Data?,
-        maxFloodHops: Int?,
-        notificationsEnabled: Bool
-    ) throws {
-        let statement = try prepare(
-            """
-            UPDATE channel
-            SET alias = ?, region_code = ?, max_flood_hops = ?,
-                notifications_enabled = ?
-            WHERE id = ?
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try bindOptional(alias, to: statement, at: 1)
-        try bindOptional(regionCode, to: statement, at: 2)
-        try bindOptionalInt(maxFloodHops.map(Int64.init), to: statement, at: 3)
-        try check(sqlite3_bind_int(statement, 4, notificationsEnabled ? 1 : 0))
-        try bind(id.uuidString, to: statement, at: 5)
-        try stepDone(statement)
-    }
-
-    /// Record which identities have joined. `joinedAt` is stamped the first
-    /// time the phone joins and left alone after.
-    func setChannelMembership(id: UUID, joinedPhone: Bool, joinedDevice: Bool) throws {
-        let statement = try prepare(
-            """
-            UPDATE channel
-            SET joined_phone = ?, joined_device = ?,
-                joined_at_ms = CASE
-                    WHEN ? = 1 AND joined_at_ms IS NULL THEN ? ELSE joined_at_ms
-                END
-            WHERE id = ?
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try check(sqlite3_bind_int(statement, 1, joinedPhone ? 1 : 0))
-        try check(sqlite3_bind_int(statement, 2, joinedDevice ? 1 : 0))
-        try check(sqlite3_bind_int(statement, 3, joinedPhone ? 1 : 0))
-        try check(sqlite3_bind_int64(statement, 4, Self.nowMilliseconds()))
-        try bind(id.uuidString, to: statement, at: 5)
-        try stepDone(statement)
-    }
-
-    func deleteChannel(id: UUID) throws {
-        let statement = try prepare("DELETE FROM channel WHERE id = ?")
-        defer { sqlite3_finalize(statement) }
-        try bind(id.uuidString, to: statement, at: 1)
-        try stepDone(statement)
+        try run { try $0.updateLocalAdvertisedName(ownerIdentityId: ownerIdentityID, name: name) }
     }
 
     func updateNodeAlias(
@@ -1099,34 +737,7 @@ actor SQLiteApplicationStore {
         publicAddress: String,
         alias: String?
     ) throws {
-        try transaction {
-            // The prefix-search key falls back to the advertised name when
-            // the alias is cleared, matching upsertPeer's initial insert.
-            let select = try prepare(
-                """
-                SELECT advertised_name FROM node
-                WHERE owner_identity_id = ? AND public_address = ?
-                """
-            )
-            defer { sqlite3_finalize(select) }
-            try bind(ownerIdentityID, to: select, at: 1)
-            try bind(publicAddress, to: select, at: 2)
-            guard sqlite3_step(select) == SQLITE_ROW else { return }
-            let advertisedName = Self.optionalStringColumn(select, at: 0)
-
-            let update = try prepare(
-                """
-                UPDATE node SET alias = ?, alias_search = ?
-                WHERE owner_identity_id = ? AND public_address = ?
-                """
-            )
-            defer { sqlite3_finalize(update) }
-            try bindOptional(alias, to: update, at: 1)
-            try bind(Self.normalizeSearch(alias ?? advertisedName ?? ""), to: update, at: 2)
-            try bind(ownerIdentityID, to: update, at: 3)
-            try bind(publicAddress, to: update, at: 4)
-            try stepDone(update)
-        }
+        try run { try $0.updateNodeAlias(ownerIdentityId: ownerIdentityID, publicAddress: publicAddress, alias: alias) }
     }
 
     func setPeerFavorite(
@@ -1134,36 +745,15 @@ actor SQLiteApplicationStore {
         publicAddress: String,
         isFavorite: Bool
     ) throws {
-        // Favoriting implies saving: the star lives in the main list, so a
-        // favorite hidden in the transient tier would be unreachable.
-        let statement = try prepare(
-            """
-            UPDATE node SET is_favorite = ?,
-                is_saved = CASE WHEN ? = 1 THEN 1 ELSE is_saved END
-            WHERE owner_identity_id = ? AND public_address = ?
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try check(sqlite3_bind_int(statement, 1, isFavorite ? 1 : 0))
-        try check(sqlite3_bind_int(statement, 2, isFavorite ? 1 : 0))
-        try bind(ownerIdentityID, to: statement, at: 3)
-        try bind(publicAddress, to: statement, at: 4)
-        try stepDone(statement)
+        try run {
+            try $0.setPeerFavorite(ownerIdentityId: ownerIdentityID, publicAddress: publicAddress, isFavorite: isFavorite)
+        }
     }
 
     /// Record a transient node on the local identity, making it visible in
     /// the main Peers list.
     func promotePeerToSaved(ownerIdentityID: String, publicAddress: String) throws {
-        let statement = try prepare(
-            """
-            UPDATE node SET is_saved = 1
-            WHERE owner_identity_id = ? AND public_address = ?
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(ownerIdentityID, to: statement, at: 1)
-        try bind(publicAddress, to: statement, at: 2)
-        try stepDone(statement)
+        try run { try $0.promotePeerToSaved(ownerIdentityId: ownerIdentityID, publicAddress: publicAddress) }
     }
 
     /// Remove a node from the local identity without touching its history:
@@ -1172,119 +762,27 @@ actor SQLiteApplicationStore {
     /// about a saved peer, so they clear with it. Refuses the
     /// companion radio, whose row is system-managed.
     func demotePeerToTransient(ownerIdentityID: String, publicAddress: String) throws {
-        try transaction {
-            let select = try prepare(
-                """
-                SELECT advertised_name FROM node
-                WHERE owner_identity_id = ? AND public_address = ?
-                    AND (system_role IS NULL OR system_role <> 'companion_radio')
-                """
-            )
-            defer { sqlite3_finalize(select) }
-            try bind(ownerIdentityID, to: select, at: 1)
-            try bind(publicAddress, to: select, at: 2)
-            guard sqlite3_step(select) == SQLITE_ROW else { return }
-            let advertisedName = Self.optionalStringColumn(select, at: 0)
-
-            let update = try prepare(
-                """
-                UPDATE node SET is_saved = 0, is_favorite = 0,
-                    alias = NULL, alias_search = ?
-                WHERE owner_identity_id = ? AND public_address = ?
-                """
-            )
-            defer { sqlite3_finalize(update) }
-            try bind(Self.normalizeSearch(advertisedName ?? ""), to: update, at: 1)
-            try bind(ownerIdentityID, to: update, at: 2)
-            try bind(publicAddress, to: update, at: 3)
-            try stepDone(update)
-        }
+        try run { try $0.demotePeerToTransient(ownerIdentityId: ownerIdentityID, publicAddress: publicAddress) }
     }
 
-    /// Delete a peer row outright. Refused—returning `false`—when a
-    /// conversation references it (demote instead, or use
-    /// ``deletePeerAndConversation``) or when the row is the system-managed
-    /// companion radio. Stream checkpoints and counter state survive by
-    /// design: sequence continuity and replay protection outlive the row.
     @discardableResult
     func deletePeer(ownerIdentityID: String, publicAddress: String) throws -> Bool {
-        let statement = try prepare(
-            """
-            DELETE FROM node
-            WHERE owner_identity_id = ?1 AND public_address = ?2
-                AND (system_role IS NULL OR system_role <> 'companion_radio')
-                AND id NOT IN (
-                    SELECT node_id FROM direct_conversation WHERE owner_identity_id = ?1
-                )
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(ownerIdentityID, to: statement, at: 1)
-        try bind(publicAddress, to: statement, at: 2)
-        try stepDone(statement)
-        return sqlite3_changes(database) > 0
+        try run { try $0.deletePeer(ownerIdentityId: ownerIdentityID, publicAddress: publicAddress) }
     }
 
-    /// Delete a peer together with its conversation and local history, in one
-    /// transaction. Stream checkpoints are retained (see
-    /// ``deleteDirectConversation``); the companion radio is refused.
     @discardableResult
     func deletePeerAndConversation(
         ownerIdentityID: String,
         publicAddress: String
     ) throws -> Bool {
-        try transaction {
-            let select = try prepare(
-                """
-                SELECT id FROM node
-                WHERE owner_identity_id = ? AND public_address = ?
-                    AND (system_role IS NULL OR system_role <> 'companion_radio')
-                """
-            )
-            defer { sqlite3_finalize(select) }
-            try bind(ownerIdentityID, to: select, at: 1)
-            try bind(publicAddress, to: select, at: 2)
-            guard sqlite3_step(select) == SQLITE_ROW else { return false }
-            let nodeID = sqlite3_column_int64(select, 0)
-
-            try purgeConversationHistory(
-                ownerIdentityID: ownerIdentityID,
-                conversationAddress: publicAddress
-            )
-
-            let conversation = try prepare(
-                "DELETE FROM direct_conversation WHERE owner_identity_id = ? AND node_id = ?"
-            )
-            defer { sqlite3_finalize(conversation) }
-            try bind(ownerIdentityID, to: conversation, at: 1)
-            try check(sqlite3_bind_int64(conversation, 2, nodeID))
-            try stepDone(conversation)
-
-            let node = try prepare("DELETE FROM node WHERE id = ?")
-            defer { sqlite3_finalize(node) }
-            try check(sqlite3_bind_int64(node, 1, nodeID))
-            try stepDone(node)
-            return true
-        }
+        try run { try $0.deletePeerAndConversation(ownerIdentityId: ownerIdentityID, publicAddress: publicAddress) }
     }
 
     /// Drop every transient row that nothing else depends on: saved peers,
     /// the companion radio, rows on the device identity, rows with a
     /// conversation, and rows carrying a pending watch all stay.
     func clearTransientPeers(ownerIdentityID: String) throws {
-        let statement = try prepare(
-            """
-            DELETE FROM node
-            WHERE owner_identity_id = ?1 AND is_saved = 0 AND on_dev_identity = 0
-                AND system_role IS NULL AND notify_when_heard = 0
-                AND id NOT IN (
-                    SELECT node_id FROM direct_conversation WHERE owner_identity_id = ?1
-                )
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(ownerIdentityID, to: statement, at: 1)
-        try stepDone(statement)
+        try run { try $0.clearTransientPeers(ownerIdentityId: ownerIdentityID) }
     }
 
     /// Keep the transient tier bounded: beyond `cap` rows, the oldest-heard
@@ -1293,24 +791,7 @@ actor SQLiteApplicationStore {
     /// never evicted—a watch that the cap quietly deleted would be a
     /// promise the app stopped keeping without saying so.
     func enforceTransientRetention(ownerIdentityID: String, cap: Int = 256) throws {
-        let statement = try prepare(
-            """
-            DELETE FROM node WHERE id IN (
-                SELECT id FROM node
-                WHERE owner_identity_id = ?1 AND is_saved = 0 AND on_dev_identity = 0
-                    AND system_role IS NULL AND notify_when_heard = 0
-                    AND id NOT IN (
-                        SELECT node_id FROM direct_conversation WHERE owner_identity_id = ?1
-                    )
-                ORDER BY last_heard_at DESC, id DESC
-                LIMIT -1 OFFSET ?2
-            )
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(ownerIdentityID, to: statement, at: 1)
-        try check(sqlite3_bind_int64(statement, 2, Int64(cap)))
-        try stepDone(statement)
+        try run { try $0.enforceTransientRetention(ownerIdentityId: ownerIdentityID, cap: UInt32(clamping: cap)) }
     }
 
     /// Make the local cache of the radio's device-identity peer list match
@@ -1318,20 +799,7 @@ actor SQLiteApplicationStore {
     /// where it no longer holds a key, set where it does, and unknown keys
     /// gain a transient row carrying the flag so lists can show them.
     func reconcileDeviceIdentityPeers(ownerIdentityID: String, addresses: [String]) throws {
-        try transaction {
-            let clear = try prepare(
-                """
-                UPDATE node SET on_dev_identity = 0
-                WHERE owner_identity_id = ? AND on_dev_identity = 1
-                """
-            )
-            defer { sqlite3_finalize(clear) }
-            try bind(ownerIdentityID, to: clear, at: 1)
-            try stepDone(clear)
-            for address in addresses {
-                try markOnDeviceIdentity(ownerIdentityID: ownerIdentityID, publicAddress: address)
-            }
-        }
+        try run { try $0.reconcileDeviceIdentityPeers(ownerIdentityId: ownerIdentityID, addresses: addresses) }
     }
 
     /// Cache one device-identity membership change after a confirmed radio
@@ -1341,36 +809,13 @@ actor SQLiteApplicationStore {
         publicAddress: String,
         isOnDeviceIdentity: Bool
     ) throws {
-        if isOnDeviceIdentity {
-            try markOnDeviceIdentity(ownerIdentityID: ownerIdentityID, publicAddress: publicAddress)
-        } else {
-            let statement = try prepare(
-                """
-                UPDATE node SET on_dev_identity = 0
-                WHERE owner_identity_id = ? AND public_address = ?
-                """
+        try run {
+            try $0.setPeerOnDeviceIdentity(
+                ownerIdentityId: ownerIdentityID,
+                publicAddress: publicAddress,
+                isOnDeviceIdentity: isOnDeviceIdentity
             )
-            defer { sqlite3_finalize(statement) }
-            try bind(ownerIdentityID, to: statement, at: 1)
-            try bind(publicAddress, to: statement, at: 2)
-            try stepDone(statement)
         }
-    }
-
-    /// Set the device-identity flag, creating a transient row when the key
-    /// is not otherwise recorded on this phone.
-    private func markOnDeviceIdentity(ownerIdentityID: String, publicAddress: String) throws {
-        let statement = try prepare(
-            """
-            INSERT INTO node (owner_identity_id, public_address, alias_search, on_dev_identity)
-            VALUES (?, ?, '', 1)
-            ON CONFLICT(owner_identity_id, public_address) DO UPDATE SET on_dev_identity = 1
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(ownerIdentityID, to: statement, at: 1)
-        try bind(publicAddress, to: statement, at: 2)
-        try stepDone(statement)
     }
 
     /// Arm or disarm the one-shot "tell me the next time this node is heard"
@@ -1382,159 +827,24 @@ actor SQLiteApplicationStore {
         publicAddress: String,
         enabled: Bool
     ) throws {
-        let statement = try prepare(
-            """
-            UPDATE node SET notify_when_heard = ?
-            WHERE owner_identity_id = ? AND public_address = ?
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try check(sqlite3_bind_int(statement, 1, enabled ? 1 : 0))
-        try bind(ownerIdentityID, to: statement, at: 2)
-        try bind(publicAddress, to: statement, at: 3)
-        try stepDone(statement)
+        try run { try $0.setNotifyWhenHeard(ownerIdentityId: ownerIdentityID, publicAddress: publicAddress, enabled: enabled) }
     }
 
-    /// Record that we just heard from a peer by any means. No-ops when the
-    /// peer is not yet saved locally—an unknown peer has no row to touch and
-    /// needs no last-heard until it is added.
-    ///
-    /// Returns whether this call is the one that disarmed a pending watch,
-    /// which is the caller's cue to post the notice. The disarm is its own
-    /// conditional write, so two hearings racing through the store cannot
-    /// both come away believing they were first.
+    /// Record that the node was heard at `instant`. Returns whether that
+    /// fired its one-shot watch.
     @discardableResult
     func touchLastHeard(
         ownerIdentityID: String,
         publicAddress: String,
         at instant: Date
     ) throws -> Bool {
-        let disarm = try prepare(
-            """
-            UPDATE node SET notify_when_heard = 0
-            WHERE owner_identity_id = ? AND public_address = ? AND notify_when_heard = 1
-            """
-        )
-        defer { sqlite3_finalize(disarm) }
-        try bind(ownerIdentityID, to: disarm, at: 1)
-        try bind(publicAddress, to: disarm, at: 2)
-        try stepDone(disarm)
-        let firedWatch = sqlite3_changes(database) > 0
-
-        let statement = try prepare(
-            """
-            UPDATE node SET last_heard_at = ?
-            WHERE owner_identity_id = ? AND public_address = ?
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try check(sqlite3_bind_double(statement, 1, instant.timeIntervalSince1970))
-        try bind(ownerIdentityID, to: statement, at: 2)
-        try bind(publicAddress, to: statement, at: 3)
-        try stepDone(statement)
-        return firedWatch
-    }
-
-    /// Resolve the peer a locally-stored message belongs to, keyed by its
-    /// durable `(sessionID, handle)`. Used to attribute delivery acks—which
-    /// carry no address of their own—back to a conversation for last-heard
-    /// bookkeeping.
-    func conversationAddressForMessage(
-        ownerIdentityID: String,
-        sessionID: UInt64,
-        handle: UInt32
-    ) throws -> String? {
-        let statement = try prepare(
-            """
-            SELECT conversation_address FROM chat_message
-            WHERE owner_identity_id = ? AND session_id = ? AND handle = ?
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        // session_id is stored as TEXT (the decimal UInt64), matching how
-        // delivery fragments and message rows are written.
-        try bind(ownerIdentityID, to: statement, at: 1)
-        try bind(String(sessionID), to: statement, at: 2)
-        try check(sqlite3_bind_int64(statement, 3, Int64(handle)))
-        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
-        return Self.optionalStringColumn(statement, at: 0)
-    }
-
-    /// The persisted conversation address, sender, and body of an inbound,
-    /// displayable message, for raising a notification. Returns `nil` for
-    /// outbound rows, tombstones, gap placeholders, unavailable markers, or
-    /// empty bodies—nothing worth alerting the user about. Resolves every
-    /// field from storage so a notify carried on an `UpdateBody` (which omits
-    /// them) still works.
-    func chatNotificationTarget(
-        ownerIdentityID: String,
-        sessionID: UInt64,
-        handle: UInt32
-    ) throws -> ChatNotificationTarget? {
-        let statement = try prepare(
-            """
-            SELECT conversation_address, body, sender_address, sender_hint, sender_handle,
-                message_type = 1
-            FROM chat_message
-            WHERE owner_identity_id = ? AND session_id = ? AND handle = ?
-                AND direction = 0 AND deleted = 0 AND presence = 0 AND body <> ''
-                AND is_reaction = 0
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(ownerIdentityID, to: statement, at: 1)
-        try bind(String(sessionID), to: statement, at: 2)
-        try check(sqlite3_bind_int64(statement, 3, Int64(handle)))
-        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
-        return ChatNotificationTarget(
-            conversationAddress: Self.stringColumn(statement, at: 0),
-            body: Self.stringColumn(statement, at: 1),
-            senderAddress: Self.optionalStringColumn(statement, at: 2),
-            senderHint: Self.optionalDataColumn(statement, at: 3),
-            senderHandle: Self.optionalStringColumn(statement, at: 4),
-            isStatus: sqlite3_column_int(statement, 5) != 0
-        )
-    }
-
-    /// The reaction behind a notifying mutation, when it is one and when it
-    /// lands on a message this phone sent.
-    ///
-    /// Reactions to someone else's message are somebody else's business: in a
-    /// channel they would ping every member for every tapback. A withdrawal
-    /// carries an empty body and is not an event to announce.
-    func chatReactionNotificationTarget(
-        ownerIdentityID: String,
-        sessionID: UInt64,
-        handle: UInt32
-    ) throws -> ChatReactionNotificationTarget? {
-        let statement = try prepare(
-            """
-            SELECT r.conversation_address, r.body, target.body,
-                r.sender_address, r.sender_hint, r.sender_handle
-            FROM chat_message r
-            JOIN chat_message target
-                ON target.owner_identity_id = r.owner_identity_id
-                AND target.session_id = r.regarding_target_session_id
-                AND target.handle = r.regarding_target_handle
-            WHERE r.owner_identity_id = ? AND r.session_id = ? AND r.handle = ?
-                AND r.direction = 0 AND r.deleted = 0 AND r.is_reaction = 1
-                AND r.body <> ''
-                AND target.direction = 1 AND target.deleted = 0
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(ownerIdentityID, to: statement, at: 1)
-        try bind(String(sessionID), to: statement, at: 2)
-        try check(sqlite3_bind_int64(statement, 3, Int64(handle)))
-        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
-        return ChatReactionNotificationTarget(
-            conversationAddress: Self.stringColumn(statement, at: 0),
-            body: Self.stringColumn(statement, at: 1),
-            targetBody: Self.stringColumn(statement, at: 2),
-            senderAddress: Self.optionalStringColumn(statement, at: 3),
-            senderHint: Self.optionalDataColumn(statement, at: 4),
-            senderHandle: Self.optionalStringColumn(statement, at: 5)
-        )
+        try run {
+            try $0.touchLastHeard(
+                ownerIdentityId: ownerIdentityID,
+                publicAddress: publicAddress,
+                atMs: instant.storeMilliseconds
+            )
+        }
     }
 
     func upsertUlcpDevicePeer(
@@ -1543,56 +853,230 @@ actor SQLiteApplicationStore {
         advertisedName: String?,
         radioIdentifier: String
     ) throws {
-        try transaction {
-            let clear = try prepare(
-                """
-                UPDATE node SET system_role = NULL, radio_identifier = NULL
-                WHERE owner_identity_id = ? AND system_role = 'companion_radio'
-                    AND public_address <> ?
-                """
-            )
-            defer { sqlite3_finalize(clear) }
-            try bind(ownerIdentityID, to: clear, at: 1)
-            try bind(publicAddress, to: clear, at: 2)
-            try stepDone(clear)
-            try upsertPeer(
-                ownerIdentityID: ownerIdentityID,
+        try run {
+            try $0.upsertUlcpDevicePeer(
+                ownerIdentityId: ownerIdentityID,
                 publicAddress: publicAddress,
-                alias: nil,
                 advertisedName: advertisedName,
-                isSaved: true,
-                systemRole: "companion_radio",
                 radioIdentifier: radioIdentifier
             )
         }
     }
 
-    // MARK: - Remote management cache
+    func listNodes(ownerIdentityID: String) throws -> [StoredNode] {
+        try run { try $0.listNodes(ownerIdentityId: ownerIdentityID) }.map(StoredNode.init)
+    }
+
+    // MARK: Channels
+
+    func channels(ownerIdentityID: String) throws -> [StoredChannel] {
+        try run { try $0.channels(ownerIdentityId: ownerIdentityID) }.compactMap(StoredChannel.init)
+    }
+
+    /// The channel this identity already holds under `keyDigest`, if any.
+    ///
+    /// Import checks this before inserting so a re-scanned invitation updates
+    /// the existing channel instead of creating a second one for the same key.
+    func channel(ownerIdentityID: String, keyDigest: String) throws -> StoredChannel? {
+        try run { try $0.channel(ownerIdentityId: ownerIdentityID, keyDigest: keyDigest) }
+            .flatMap(StoredChannel.init)
+    }
+
+    func insertChannel(_ channel: StoredChannel, keyDigest: String) throws {
+        try run {
+            try $0.insertChannel(
+                channel: MobileStoredChannelRecord(channel),
+                keyDigest: keyDigest,
+                createdAtMs: Date.now.storeMilliseconds
+            )
+        }
+    }
+
+    /// Update the parts of a channel the user controls, leaving membership and
+    /// key-derived columns alone.
+    func updateChannelDetails(
+        id: UUID,
+        alias: String?,
+        regionCode: Data?,
+        maxFloodHops: Int?,
+        notificationsEnabled: Bool
+    ) throws {
+        try run {
+            try $0.updateChannelDetails(
+                id: id.uuidString,
+                alias: alias,
+                regionCode: regionCode,
+                maxFloodHops: maxFloodHops.map { UInt8(clamping: $0) },
+                notificationsEnabled: notificationsEnabled
+            )
+        }
+    }
+
+    /// Record which identities have joined. `joinedAt` is stamped the first
+    /// time the phone joins and left alone after.
+    func setChannelMembership(id: UUID, joinedPhone: Bool, joinedDevice: Bool) throws {
+        try run {
+            try $0.setChannelMembership(
+                id: id.uuidString,
+                joinedPhone: joinedPhone,
+                joinedDevice: joinedDevice,
+                nowMs: Date.now.storeMilliseconds
+            )
+        }
+    }
+
+    /// Forget a channel. Its transcript stays: delete the conversation first
+    /// with ``deleteChannelConversation(ownerIdentityID:conversationID:)``.
+    func deleteChannel(id: UUID) throws {
+        try run { try $0.deleteChannel(id: id.uuidString) }
+    }
+
+    // MARK: Conversations
+
+    func ensureDirectConversation(
+        ownerIdentityID: String,
+        peerAddress: String
+    ) throws -> Int64 {
+        try run {
+            try $0.ensureDirectConversation(
+                ownerIdentityId: ownerIdentityID,
+                peerAddress: peerAddress,
+                createdAtMs: Date.now.storeMilliseconds
+            )
+        }
+    }
+
+    func listDirectConversations(ownerIdentityID: String) throws -> [StoredDirectConversation] {
+        try run { try $0.listDirectConversations(ownerIdentityId: ownerIdentityID) }
+            .map(StoredDirectConversation.init)
+    }
+
+    /// The channel conversation for a channel, created if this is the first
+    /// time the user has entered it. Channels are joined without a chat; the
+    /// conversation appears when someone asks for one, or when a message
+    /// arrives.
+    func ensureChannelConversation(
+        ownerIdentityID: String,
+        channelID: UUID,
+        conversationAddress: String
+    ) throws -> Int64 {
+        try run {
+            try $0.ensureChannelConversation(
+                ownerIdentityId: ownerIdentityID,
+                channelId: channelID.uuidString,
+                conversationAddress: conversationAddress,
+                createdAtMs: Date.now.storeMilliseconds
+            )
+        }
+    }
+
+    func listChannelConversations(
+        ownerIdentityID: String
+    ) throws -> [StoredChannelConversation] {
+        try run { try $0.listChannelConversations(ownerIdentityId: ownerIdentityID) }
+            .compactMap(StoredChannelConversation.init)
+    }
+
+    /// Remove a channel conversation and its local transcript. Leaving a group
+    /// chat is not leaving the channel: the key stays, so traffic still
+    /// arrives and a later message opens the conversation again.
+    func deleteChannelConversation(ownerIdentityID: String, conversationID: Int64) throws {
+        try run { try $0.deleteChannelConversation(ownerIdentityId: ownerIdentityID, conversationId: conversationID) }
+    }
+
+    /// Erase a conversation's messages while keeping the conversation itself.
+    /// Addressed rather than keyed by row so one call serves both kinds.
+    ///
+    /// Outbound stream checkpoints are kept, for the same reason deleting a
+    /// conversation keeps them: sequence continuity with the far end has to
+    /// outlive the transcript, or the next message would announce a Sequence
+    /// Reset. Archived outbound payloads do go, so a later resend request for
+    /// a cleared message is answered Unavailable—the protocol handles that,
+    /// and keeping erased content on disk would not be acceptable.
+    func clearConversationMessages(
+        ownerIdentityID: String,
+        conversationAddress: String
+    ) throws {
+        try run {
+            try $0.clearConversationMessages(ownerIdentityId: ownerIdentityID, conversationAddress: conversationAddress)
+        }
+    }
+
+    func updateChannelDraft(
+        ownerIdentityID: String,
+        conversationID: Int64,
+        text: String
+    ) throws {
+        try run { try $0.updateChannelDraft(ownerIdentityId: ownerIdentityID, conversationId: conversationID, text: text) }
+    }
+
+    /// Mark everything in a conversation read as of now. Addressed rather than
+    /// keyed by row so one call serves both kinds of conversation.
+    func markConversationRead(ownerIdentityID: String, conversationAddress: String) throws {
+        try run {
+            try $0.markConversationRead(
+                ownerIdentityId: ownerIdentityID,
+                conversationAddress: conversationAddress,
+                readAtMs: Date.now.storeMilliseconds
+            )
+        }
+    }
+
+    /// Fill in the sender of group messages stored before that member's hint
+    /// resolved to a real address. Rows that already name a sender are left
+    /// alone—the first attribution seen for a hint is the one kept.
+    func applySenderResolution(
+        ownerIdentityID: String,
+        conversationAddress: String,
+        senderHint: Data,
+        senderAddress: String
+    ) throws {
+        let resolution = MobileChatSenderResolutionRecord(
+            conversationAddress: conversationAddress,
+            senderHint: senderHint,
+            senderAddress: senderAddress
+        )
+        try run { try $0.applySenderResolution(ownerIdentityId: ownerIdentityID, resolution: resolution) }
+    }
+
+    /// Remove a conversation and its local history. Outbound stream
+    /// checkpoints are deliberately retained: sequence continuity with the
+    /// peer must survive the transcript, or the next message would announce
+    /// a Sequence Reset. Archived outbound payloads go with the history, so
+    /// a late resend request for them is answered Unavailable—the protocol
+    /// handles that; keeping deleted content on disk would not be acceptable.
+    func deleteDirectConversation(ownerIdentityID: String, conversationID: Int64) throws {
+        try run { try $0.deleteDirectConversation(ownerIdentityId: ownerIdentityID, conversationId: conversationID) }
+    }
+
+    /// Turn notifications for one direct conversation on or off.
+    func setDirectConversationNotifications(
+        ownerIdentityID: String,
+        conversationID: Int64,
+        enabled: Bool
+    ) throws {
+        try run {
+            try $0.setDirectConversationNotifications(
+                ownerIdentityId: ownerIdentityID,
+                conversationId: conversationID,
+                enabled: enabled
+            )
+        }
+    }
+
+    func updateDraft(ownerIdentityID: String, conversationID: Int64, text: String) throws {
+        try run { try $0.updateDraft(ownerIdentityId: ownerIdentityID, conversationId: conversationID, text: text) }
+    }
+
+    // MARK: Device management cache
 
     /// What a device last said it is, if this phone has ever asked.
     func managementCard(
         ownerIdentityID: String,
         publicAddress: String
     ) throws -> StoredManagementCard? {
-        let statement = try prepare(
-            """
-            SELECT c.capabilities, c.device_version, c.device_model, c.device_name,
-                   c.fetched_at_ms
-            FROM node_mgmt_card c JOIN node n ON n.id = c.node_id
-            WHERE n.owner_identity_id = ? AND n.public_address = ?
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(ownerIdentityID, to: statement, at: 1)
-        try bind(publicAddress, to: statement, at: 2)
-        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
-        return StoredManagementCard(
-            capabilities: Self.dataColumn(statement, at: 0),
-            deviceVersion: Self.optionalStringColumn(statement, at: 1),
-            deviceModel: Self.optionalStringColumn(statement, at: 2),
-            deviceName: Self.optionalStringColumn(statement, at: 3),
-            fetchedAt: Date(timeIntervalSince1970: Double(sqlite3_column_int64(statement, 4)) / 1000)
-        )
+        try run { try $0.managementCard(ownerIdentityId: ownerIdentityID, publicAddress: publicAddress) }
+            .map(StoredManagementCard.init)
     }
 
     /// Record what a card read found.
@@ -1608,49 +1092,12 @@ actor SQLiteApplicationStore {
         publicAddress: String,
         card: StoredManagementCard
     ) throws {
-        try transaction {
-            guard let nodeID = try nodeIdentifier(
-                ownerIdentityID: ownerIdentityID,
-                publicAddress: publicAddress
-            ) else { return }
-
-            let known = try prepare("SELECT device_version FROM node_mgmt_card WHERE node_id = ?")
-            defer { sqlite3_finalize(known) }
-            try check(sqlite3_bind_int64(known, 1, nodeID))
-            var superseded = false
-            if sqlite3_step(known) == SQLITE_ROW {
-                superseded = Self.optionalStringColumn(known, at: 0) != card.deviceVersion
-            }
-            if superseded {
-                let stale = try prepare("DELETE FROM node_prop_cache WHERE node_id = ?")
-                defer { sqlite3_finalize(stale) }
-                try check(sqlite3_bind_int64(stale, 1, nodeID))
-                try stepDone(stale)
-            }
-
-            let statement = try prepare(
-                """
-                INSERT INTO node_mgmt_card (
-                    node_id, capabilities, device_version, device_model, device_name,
-                    fetched_at_ms
-                )
-                VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(node_id) DO UPDATE SET
-                    capabilities = excluded.capabilities,
-                    device_version = excluded.device_version,
-                    device_model = excluded.device_model,
-                    device_name = excluded.device_name,
-                    fetched_at_ms = excluded.fetched_at_ms
-                """
+        try run {
+            try $0.saveManagementCard(
+                ownerIdentityId: ownerIdentityID,
+                publicAddress: publicAddress,
+                card: MobileStoredManagementCardRecord(card)
             )
-            defer { sqlite3_finalize(statement) }
-            try check(sqlite3_bind_int64(statement, 1, nodeID))
-            try bind(card.capabilities, to: statement, at: 2)
-            try bindOptional(card.deviceVersion, to: statement, at: 3)
-            try bindOptional(card.deviceModel, to: statement, at: 4)
-            try bindOptional(card.deviceName, to: statement, at: 5)
-            try check(sqlite3_bind_int64(statement, 6, Self.milliseconds(card.fetchedAt)))
-            try stepDone(statement)
         }
     }
 
@@ -1658,18 +1105,7 @@ actor SQLiteApplicationStore {
     /// afresh. The card goes too: a refresh that cannot be trusted to be
     /// about the same firmware is not a refresh.
     func forgetManagementCache(ownerIdentityID: String, publicAddress: String) throws {
-        try transaction {
-            guard let nodeID = try nodeIdentifier(
-                ownerIdentityID: ownerIdentityID,
-                publicAddress: publicAddress
-            ) else { return }
-            for table in ["node_prop_cache", "node_mgmt_card"] {
-                let statement = try prepare("DELETE FROM \(table) WHERE node_id = ?")
-                defer { sqlite3_finalize(statement) }
-                try check(sqlite3_bind_int64(statement, 1, nodeID))
-                try stepDone(statement)
-            }
-        }
+        try run { try $0.forgetManagementCache(ownerIdentityId: ownerIdentityID, publicAddress: publicAddress) }
     }
 
     /// What a device was last seen configured as, for the properties asked
@@ -1681,33 +1117,10 @@ actor SQLiteApplicationStore {
         publicAddress: String,
         propertyIDs: [UInt32]
     ) throws -> [UInt32: StoredCachedProperty] {
-        guard !propertyIDs.isEmpty else { return [:] }
-        let placeholders = Array(repeating: "?", count: propertyIDs.count).joined(separator: ", ")
-        let statement = try prepare(
-            """
-            SELECT p.property_id, p.value, p.fetched_at_ms
-            FROM node_prop_cache p JOIN node n ON n.id = p.node_id
-            WHERE n.owner_identity_id = ? AND n.public_address = ?
-                AND p.property_id IN (\(placeholders))
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(ownerIdentityID, to: statement, at: 1)
-        try bind(publicAddress, to: statement, at: 2)
-        for (offset, property) in propertyIDs.enumerated() {
-            try check(sqlite3_bind_int64(statement, Int32(3 + offset), Int64(property)))
+        try run {
+            try $0.cachedProperties(ownerIdentityId: ownerIdentityID, publicAddress: publicAddress, propertyIds: propertyIDs)
         }
-        var cached: [UInt32: StoredCachedProperty] = [:]
-        while sqlite3_step(statement) == SQLITE_ROW {
-            let property = UInt32(sqlite3_column_int64(statement, 0))
-            cached[property] = StoredCachedProperty(
-                value: Self.dataColumn(statement, at: 1),
-                fetchedAt: Date(
-                    timeIntervalSince1970: Double(sqlite3_column_int64(statement, 2)) / 1000
-                )
-            )
-        }
-        return cached
+        .mapValues(StoredCachedProperty.init)
     }
 
     /// Record values a device reported—from a read, or from the echo a
@@ -1719,57 +1132,17 @@ actor SQLiteApplicationStore {
         values: [UInt32: Data],
         at instant: Date
     ) throws {
-        guard !values.isEmpty else { return }
-        try transaction {
-            guard let nodeID = try nodeIdentifier(
-                ownerIdentityID: ownerIdentityID,
-                publicAddress: publicAddress
-            ) else { return }
-            let statement = try prepare(
-                """
-                INSERT INTO node_prop_cache (node_id, property_id, value, fetched_at_ms)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(node_id, property_id) DO UPDATE SET
-                    value = excluded.value,
-                    fetched_at_ms = excluded.fetched_at_ms
-                """
+        try run {
+            try $0.saveCachedProperties(
+                ownerIdentityId: ownerIdentityID,
+                publicAddress: publicAddress,
+                values: values,
+                atMs: instant.roundedStoreMilliseconds
             )
-            defer { sqlite3_finalize(statement) }
-            let stamp = Self.milliseconds(instant)
-            for (property, value) in values {
-                try check(sqlite3_reset(statement))
-                try check(sqlite3_bind_int64(statement, 1, nodeID))
-                try check(sqlite3_bind_int64(statement, 2, Int64(property)))
-                try bind(value, to: statement, at: 3)
-                try check(sqlite3_bind_int64(statement, 4, stamp))
-                try stepDone(statement)
-            }
         }
     }
 
-    // MARK: - Manual routes
-
-    private static let manualRouteColumns = """
-        n.public_address, r.hints, r.hold_until_ms, r.saved_latitude,
-        r.saved_longitude, r.saved_accuracy, r.prompt_settled, r.flood_hops
-        """
-
-    private static func manualRoute(_ statement: OpaquePointer) -> StoredManualRoute {
-        let packed = dataColumn(statement, at: 1)
-        let hints = stride(from: 0, to: packed.count - packed.count % 2, by: 2).map {
-            Data(packed[packed.startIndex + $0 ..< packed.startIndex + $0 + 2])
-        }
-        return StoredManualRoute(
-            publicAddress: stringColumn(statement, at: 0),
-            hints: hints,
-            floodHops: UInt8(clamping: sqlite3_column_int(statement, 7)),
-            holdUntil: Date(timeIntervalSince1970: Double(sqlite3_column_int64(statement, 2)) / 1000),
-            savedLatitude: optionalDoubleColumn(statement, at: 3),
-            savedLongitude: optionalDoubleColumn(statement, at: 4),
-            savedAccuracy: optionalDoubleColumn(statement, at: 5),
-            promptSettled: sqlite3_column_int(statement, 6) != 0
-        )
-    }
+    // MARK: Manual routes
 
     /// The path held for one node, or `nil` when none is held at `now`.
     func manualRoute(
@@ -1777,57 +1150,22 @@ actor SQLiteApplicationStore {
         publicAddress: String,
         now: Date = Date()
     ) throws -> StoredManualRoute? {
-        let statement = try prepare(
-            """
-            SELECT \(Self.manualRouteColumns)
-            FROM node_manual_route r JOIN node n ON n.id = r.node_id
-            WHERE n.owner_identity_id = ? AND n.public_address = ? AND r.hold_until_ms > ?
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(ownerIdentityID, to: statement, at: 1)
-        try bind(publicAddress, to: statement, at: 2)
-        try check(sqlite3_bind_int64(statement, 3, Self.milliseconds(now)))
-        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
-        return Self.manualRoute(statement)
+        try run {
+            try $0.manualRoute(ownerIdentityId: ownerIdentityID, publicAddress: publicAddress, nowMs: now.roundedStoreMilliseconds)
+        }
+        .map(StoredManualRoute.init)
     }
 
     /// Every path still held at `now`, forgetting those whose hold has ended.
     func manualRoutes(ownerIdentityID: String, now: Date = Date()) throws -> [StoredManualRoute] {
-        try transaction {
-            let expired = try prepare(
-                """
-                DELETE FROM node_manual_route
-                WHERE hold_until_ms <= ?
-                  AND node_id IN (SELECT id FROM node WHERE owner_identity_id = ?)
-                """
-            )
-            defer { sqlite3_finalize(expired) }
-            try check(sqlite3_bind_int64(expired, 1, Self.milliseconds(now)))
-            try bind(ownerIdentityID, to: expired, at: 2)
-            try stepDone(expired)
-
-            let statement = try prepare(
-                """
-                SELECT \(Self.manualRouteColumns)
-                FROM node_manual_route r JOIN node n ON n.id = r.node_id
-                WHERE n.owner_identity_id = ?
-                """
-            )
-            defer { sqlite3_finalize(statement) }
-            try bind(ownerIdentityID, to: statement, at: 1)
-            var routes: [StoredManualRoute] = []
-            while sqlite3_step(statement) == SQLITE_ROW {
-                routes.append(Self.manualRoute(statement))
-            }
-            return routes
-        }
+        try run { try $0.manualRoutes(ownerIdentityId: ownerIdentityID, nowMs: now.roundedStoreMilliseconds) }
+            .map(StoredManualRoute.init)
     }
 
     /// Hold `hints` for one node until `holdUntil`, replacing any path held
     /// for it. A new path is a new choice, so a declined offer to switch
     /// away from the old one does not carry over. A node with no row has
-    /// nowhere to keep it.
+    /// nowhere to keep it. Every hint must be two octets.
     func saveManualRoute(
         ownerIdentityID: String,
         publicAddress: String,
@@ -1838,67 +1176,31 @@ actor SQLiteApplicationStore {
         longitude: Double?,
         accuracy: Double?
     ) throws {
-        try transaction {
-            guard let nodeID = try nodeIdentifier(
-                ownerIdentityID: ownerIdentityID,
-                publicAddress: publicAddress
-            ) else { return }
-            let statement = try prepare(
-                """
-                INSERT OR REPLACE INTO node_manual_route (
-                    node_id, hints, hold_until_ms, saved_latitude, saved_longitude,
-                    saved_accuracy, prompt_settled, flood_hops
-                ) VALUES (?, ?, ?, ?, ?, ?, 0, ?)
-                """
+        try run {
+            try $0.saveManualRoute(
+                ownerIdentityId: ownerIdentityID,
+                publicAddress: publicAddress,
+                hints: hints,
+                floodHops: floodHops,
+                holdUntilMs: holdUntil.roundedStoreMilliseconds,
+                latitude: latitude,
+                longitude: longitude,
+                accuracy: accuracy
             )
-            defer { sqlite3_finalize(statement) }
-            try check(sqlite3_bind_int64(statement, 1, nodeID))
-            // A direct path is an empty blob, which empty data would bind as NULL.
-            if hints.isEmpty {
-                try check(sqlite3_bind_zeroblob(statement, 2, 0))
-            } else {
-                try bind(hints.reduce(Data(), +), to: statement, at: 2)
-            }
-            try check(sqlite3_bind_int64(statement, 3, Self.milliseconds(holdUntil)))
-            try bindOptionalDouble(latitude, to: statement, at: 4)
-            try bindOptionalDouble(longitude, to: statement, at: 5)
-            try bindOptionalDouble(accuracy, to: statement, at: 6)
-            try check(sqlite3_bind_int(statement, 7, Int32(floodHops)))
-            try stepDone(statement)
         }
     }
 
     func clearManualRoute(ownerIdentityID: String, publicAddress: String) throws {
-        let statement = try prepare(
-            """
-            DELETE FROM node_manual_route WHERE node_id IN (
-                SELECT id FROM node WHERE owner_identity_id = ? AND public_address = ?
-            )
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(ownerIdentityID, to: statement, at: 1)
-        try bind(publicAddress, to: statement, at: 2)
-        try stepDone(statement)
+        try run { try $0.clearManualRoute(ownerIdentityId: ownerIdentityID, publicAddress: publicAddress) }
     }
 
     /// Remember that the offer to switch away from this node's path was
     /// declined, so it is not made again for the same path.
     func settleManualRoutePrompt(ownerIdentityID: String, publicAddress: String) throws {
-        let statement = try prepare(
-            """
-            UPDATE node_manual_route SET prompt_settled = 1 WHERE node_id IN (
-                SELECT id FROM node WHERE owner_identity_id = ? AND public_address = ?
-            )
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(ownerIdentityID, to: statement, at: 1)
-        try bind(publicAddress, to: statement, at: 2)
-        try stepDone(statement)
+        try run { try $0.settleManualRoutePrompt(ownerIdentityId: ownerIdentityID, publicAddress: publicAddress) }
     }
 
-    // MARK: - Claimed radios
+    // MARK: Claimed radios
 
     /// Note that this phone is attached to the radio at `deviceAddress` as
     /// its host, as of `now`.
@@ -1908,78 +1210,30 @@ actor SQLiteApplicationStore {
         name: String?,
         now: Date = Date()
     ) throws {
-        let statement = try prepare(
-            """
-            INSERT OR REPLACE INTO claimed_radio (
-                owner_identity_id, device_address, name, attached_at_ms
-            ) VALUES (?, ?, ?, ?)
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(ownerIdentityID, to: statement, at: 1)
-        try bind(deviceAddress, to: statement, at: 2)
-        try bindOptional(name, to: statement, at: 3)
-        try check(sqlite3_bind_int64(statement, 4, Self.milliseconds(now)))
-        try stepDone(statement)
+        try run {
+            try $0.recordClaimedRadio(
+                ownerIdentityId: ownerIdentityID,
+                deviceAddress: deviceAddress,
+                name: name,
+                nowMs: now.roundedStoreMilliseconds
+            )
+        }
     }
 
     /// Every radio still recorded as holding this identity, forgetting
     /// those whose record has lapsed by `now`. Most recent first.
     func claimedRadios(ownerIdentityID: String, now: Date = Date()) throws -> [StoredClaimedRadio] {
-        try transaction {
-            let expired = try prepare(
-                """
-                DELETE FROM claimed_radio
-                WHERE owner_identity_id = ? AND attached_at_ms <= ?
-                """
-            )
-            defer { sqlite3_finalize(expired) }
-            try bind(ownerIdentityID, to: expired, at: 1)
-            try check(sqlite3_bind_int64(
-                expired,
-                2,
-                Self.milliseconds(now.addingTimeInterval(-StoredClaimedRadio.lapse))
-            ))
-            try stepDone(expired)
-
-            let statement = try prepare(
-                """
-                SELECT device_address, name, attached_at_ms FROM claimed_radio
-                WHERE owner_identity_id = ?
-                ORDER BY attached_at_ms DESC
-                """
-            )
-            defer { sqlite3_finalize(statement) }
-            try bind(ownerIdentityID, to: statement, at: 1)
-            var radios: [StoredClaimedRadio] = []
-            while sqlite3_step(statement) == SQLITE_ROW {
-                radios.append(StoredClaimedRadio(
-                    deviceAddress: Self.stringColumn(statement, at: 0),
-                    name: Self.optionalStringColumn(statement, at: 1),
-                    attachedAt: Date(
-                        timeIntervalSince1970: Double(sqlite3_column_int64(statement, 2)) / 1000
-                    )
-                ))
-            }
-            return radios
-        }
+        try run { try $0.claimedRadios(ownerIdentityId: ownerIdentityID, nowMs: now.roundedStoreMilliseconds) }
+            .map(StoredClaimedRadio.init)
     }
 
     /// Forget the record of a radio: it let go of this identity, or is no
     /// longer holding it.
     func clearClaimedRadio(ownerIdentityID: String, deviceAddress: String) throws {
-        let statement = try prepare(
-            """
-            DELETE FROM claimed_radio WHERE owner_identity_id = ? AND device_address = ?
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(ownerIdentityID, to: statement, at: 1)
-        try bind(deviceAddress, to: statement, at: 2)
-        try stepDone(statement)
+        try run { try $0.clearClaimedRadio(ownerIdentityId: ownerIdentityID, deviceAddress: deviceAddress) }
     }
 
-    // MARK: - Peer repeater listings
+    // MARK: Repeater listings
 
     /// What a router last said about its neighbors, or `nil` when it was
     /// never asked. Entries come back in the order the router listed them.
@@ -1987,40 +1241,8 @@ actor SQLiteApplicationStore {
         ownerIdentityID: String,
         publicAddress: String
     ) throws -> StoredPeerRepeaterListing? {
-        guard let nodeID = try nodeIdentifier(
-            ownerIdentityID: ownerIdentityID,
-            publicAddress: publicAddress
-        ) else { return nil }
-        let header = try prepare(
-            "SELECT total, next_cursor, as_of_ms FROM node_peer_repeaters WHERE node_id = ?"
-        )
-        defer { sqlite3_finalize(header) }
-        try check(sqlite3_bind_int64(header, 1, nodeID))
-        guard sqlite3_step(header) == SQLITE_ROW else { return nil }
-        let total = Self.optionalIntColumn(header, at: 0).map(Int.init)
-        let nextCursor = Self.optionalDataColumn(header, at: 1)
-        let asOf = Date(timeIntervalSince1970: Double(sqlite3_column_int64(header, 2)) / 1000)
-
-        let rows = try prepare(
-            """
-            SELECT \(Self.peerRepeaterEntryColumns)
-            FROM node_peer_repeater_entry
-            WHERE node_id = ?
-            ORDER BY position
-            """
-        )
-        defer { sqlite3_finalize(rows) }
-        try check(sqlite3_bind_int64(rows, 1, nodeID))
-        var entries: [StoredPeerRepeaterEntry] = []
-        while sqlite3_step(rows) == SQLITE_ROW {
-            entries.append(Self.peerRepeaterEntry(rows))
-        }
-        return StoredPeerRepeaterListing(
-            entries: entries,
-            total: total,
-            nextCursor: nextCursor,
-            asOf: asOf
-        )
+        try run { try $0.peerRepeaterListing(ownerIdentityId: ownerIdentityID, publicAddress: publicAddress) }
+            .map(StoredPeerRepeaterListing.init)
     }
 
     /// Record one page of a router's neighbor listing.
@@ -2040,627 +1262,76 @@ actor SQLiteApplicationStore {
         replacing: Bool,
         at instant: Date
     ) throws {
-        try transaction {
-            guard let nodeID = try nodeIdentifier(
-                ownerIdentityID: ownerIdentityID,
-                publicAddress: publicAddress
-            ) else { return }
-
-            if replacing {
-                let clear = try prepare("DELETE FROM node_peer_repeater_entry WHERE node_id = ?")
-                defer { sqlite3_finalize(clear) }
-                try check(sqlite3_bind_int64(clear, 1, nodeID))
-                try stepDone(clear)
-            }
-
-            let header = try prepare(
-                """
-                INSERT INTO node_peer_repeaters (node_id, total, next_cursor, as_of_ms)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(node_id) DO UPDATE SET
-                    total = excluded.total,
-                    next_cursor = excluded.next_cursor,
-                    as_of_ms = excluded.as_of_ms
-                """
+        try run {
+            try $0.savePeerRepeaterPage(
+                ownerIdentityId: ownerIdentityID,
+                publicAddress: publicAddress,
+                entries: entries.map(MobileStoredPeerRepeaterEntryRecord.init),
+                total: total.map(Int64.init),
+                nextCursor: nextCursor,
+                replacing: replacing,
+                atMs: instant.roundedStoreMilliseconds
             )
-            defer { sqlite3_finalize(header) }
-            try check(sqlite3_bind_int64(header, 1, nodeID))
-            try bindOptionalInt(total.map(Int64.init), to: header, at: 2)
-            try bindOptional(nextCursor, to: header, at: 3)
-            try check(sqlite3_bind_int64(header, 4, Self.milliseconds(instant)))
-            try stepDone(header)
-
-            let nextPosition = try prepare(
-                "SELECT COALESCE(MAX(position), -1) + 1 FROM node_peer_repeater_entry WHERE node_id = ?"
-            )
-            defer { sqlite3_finalize(nextPosition) }
-            try check(sqlite3_bind_int64(nextPosition, 1, nodeID))
-            guard sqlite3_step(nextPosition) == SQLITE_ROW else {
-                throw Self.sqliteFailure(database, sqlite3_errcode(database))
-            }
-            var position = sqlite3_column_int64(nextPosition, 0)
-
-            // A repeated hint keeps the position it already holds; only the
-            // figures move. `excluded.position` would shuffle it to the end.
-            let upsert = try prepare(
-                """
-                INSERT INTO node_peer_repeater_entry (
-                    node_id, hint, position, name, rssi_dbm, snr_quarter_db,
-                    last_heard_min, latitude, longitude, location_precision,
-                    region_codes, reported_at_ms
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(node_id, hint) DO UPDATE SET
-                    name = excluded.name,
-                    rssi_dbm = excluded.rssi_dbm,
-                    snr_quarter_db = excluded.snr_quarter_db,
-                    last_heard_min = excluded.last_heard_min,
-                    latitude = excluded.latitude,
-                    longitude = excluded.longitude,
-                    location_precision = excluded.location_precision,
-                    region_codes = excluded.region_codes,
-                    reported_at_ms = excluded.reported_at_ms
-                """
-            )
-            defer { sqlite3_finalize(upsert) }
-            for entry in entries {
-                try check(sqlite3_reset(upsert))
-                try check(sqlite3_bind_int64(upsert, 1, nodeID))
-                try bind(entry.hint, to: upsert, at: 2)
-                try check(sqlite3_bind_int64(upsert, 3, position))
-                try bindOptional(entry.name, to: upsert, at: 4)
-                try bindOptionalInt(entry.rssiDBm.map(Int64.init), to: upsert, at: 5)
-                try bindOptionalInt(entry.snrQuarterDB.map(Int64.init), to: upsert, at: 6)
-                try bindOptionalInt(entry.lastHeardMinutes.map(Int64.init), to: upsert, at: 7)
-                try bindOptionalDouble(entry.latitude, to: upsert, at: 8)
-                try bindOptionalDouble(entry.longitude, to: upsert, at: 9)
-                try bindOptionalInt(entry.locationPrecision.map(Int64.init), to: upsert, at: 10)
-                try bind(Data(entry.regionCodes.joined()), to: upsert, at: 11)
-                try check(sqlite3_bind_int64(upsert, 12, Self.milliseconds(entry.reportedAt)))
-                try stepDone(upsert)
-                position += 1
-            }
         }
     }
 
     /// Every neighbor any router has reported to this phone, with the row of
     /// the router that said so. What the map draws.
     func allPeerRepeaterEntries(ownerIdentityID: String) throws -> [StoredPeerRepeaterReport] {
-        let statement = try prepare(
-            """
-            SELECT e.node_id, \(Self.peerRepeaterEntryColumns(prefix: "e."))
-            FROM node_peer_repeater_entry e JOIN node n ON n.id = e.node_id
-            WHERE n.owner_identity_id = ?
-            ORDER BY e.node_id, e.position
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(ownerIdentityID, to: statement, at: 1)
-        var reports: [StoredPeerRepeaterReport] = []
-        while sqlite3_step(statement) == SQLITE_ROW {
-            reports.append(
-                StoredPeerRepeaterReport(
-                    reporterNodeID: sqlite3_column_int64(statement, 0),
-                    entry: Self.peerRepeaterEntry(statement, offset: 1)
-                )
-            )
-        }
-        return reports
+        try run { try $0.allPeerRepeaterEntries(ownerIdentityId: ownerIdentityID) }
+            .map(StoredPeerRepeaterReport.init)
     }
 
-    /// The entry columns, in the order `peerRepeaterEntry` reads them.
-    private static let peerRepeaterEntryColumns = peerRepeaterEntryColumns(prefix: "")
+    // MARK: Chat
 
-    private static func peerRepeaterEntryColumns(prefix: String) -> String {
-        [
-            "hint", "name", "rssi_dbm", "snr_quarter_db", "last_heard_min", "latitude",
-            "longitude", "location_precision", "region_codes", "reported_at_ms",
-        ]
-        .map { prefix + $0 }
-        .joined(separator: ", ")
-    }
-
-    private static func peerRepeaterEntry(
-        _ statement: OpaquePointer,
-        offset: Int32 = 0
-    ) -> StoredPeerRepeaterEntry {
-        let codes = dataColumn(statement, at: offset + 8)
-        // Two octets per code, as the wire carries them; a trailing odd
-        // octet is nothing a code could be and is left out.
-        let regionCodes = stride(from: 0, to: codes.count - codes.count % 2, by: 2).map {
-            codes.subdata(in: codes.startIndex + $0 ..< codes.startIndex + $0 + 2)
-        }
-        return StoredPeerRepeaterEntry(
-            hint: dataColumn(statement, at: offset),
-            name: optionalStringColumn(statement, at: offset + 1),
-            rssiDBm: optionalIntColumn(statement, at: offset + 2).map { Int16(clamping: $0) },
-            snrQuarterDB: optionalIntColumn(statement, at: offset + 3).map { Int16(clamping: $0) },
-            lastHeardMinutes: optionalIntColumn(statement, at: offset + 4).map { UInt16(clamping: $0) },
-            latitude: optionalDoubleColumn(statement, at: offset + 5),
-            longitude: optionalDoubleColumn(statement, at: offset + 6),
-            locationPrecision: optionalIntColumn(statement, at: offset + 7).map { UInt8(clamping: $0) },
-            regionCodes: regionCodes,
-            reportedAt: Date(
-                timeIntervalSince1970: Double(sqlite3_column_int64(statement, offset + 9)) / 1000
-            )
-        )
-    }
-
-    /// This phone's row for a peer, or `nil` for one it does not store. A
-    /// peer with no row has nowhere to hang a cache, which is ordinary
-    /// rather than an error: nothing is cached about a stranger.
-    private func nodeIdentifier(ownerIdentityID: String, publicAddress: String) throws -> Int64? {
-        let statement = try prepare(
-            "SELECT id FROM node WHERE owner_identity_id = ? AND public_address = ?"
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(ownerIdentityID, to: statement, at: 1)
-        try bind(publicAddress, to: statement, at: 2)
-        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
-        return sqlite3_column_int64(statement, 0)
-    }
-
-    private static func milliseconds(_ instant: Date) -> Int64 {
-        Int64((instant.timeIntervalSince1970 * 1000).rounded())
-    }
-
-    func listNodes(ownerIdentityID: String) throws -> [StoredNode] {
-        let statement = try prepare(
-            """
-            SELECT \(Self.nodeColumns(prefix: ""))
-            FROM node WHERE owner_identity_id = ?
-            ORDER BY (system_role IS NOT NULL) DESC, alias_search, id
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(ownerIdentityID, to: statement, at: 1)
-        return try readNodes(statement)
-    }
-
-    func ensureDirectConversation(
+    /// Resolve the peer a locally-stored message belongs to, keyed by its
+    /// durable `(sessionID, handle)`. Used to attribute delivery acks—which
+    /// carry no address of their own—back to a conversation for last-heard
+    /// bookkeeping.
+    func conversationAddressForMessage(
         ownerIdentityID: String,
-        peerAddress: String
-    ) throws -> Int64 {
-        let insert = try prepare(
-            """
-            INSERT OR IGNORE INTO direct_conversation (owner_identity_id, node_id, created_at_ms)
-            SELECT ?, id, ? FROM node
-            WHERE owner_identity_id = ? AND public_address = ?
-            """
-        )
-        defer { sqlite3_finalize(insert) }
-        try bind(ownerIdentityID, to: insert, at: 1)
-        try check(sqlite3_bind_int64(insert, 2, Int64(Date.now.timeIntervalSince1970 * 1_000)))
-        try bind(ownerIdentityID, to: insert, at: 3)
-        try bind(peerAddress, to: insert, at: 4)
-        try stepDone(insert)
-
-        let select = try prepare(
-            """
-            SELECT c.id FROM direct_conversation c JOIN node n ON n.id = c.node_id
-            WHERE c.owner_identity_id = ? AND n.public_address = ?
-            """
-        )
-        defer { sqlite3_finalize(select) }
-        try bind(ownerIdentityID, to: select, at: 1)
-        try bind(peerAddress, to: select, at: 2)
-        guard sqlite3_step(select) == SQLITE_ROW else {
-            throw Self.sqliteFailure(database, sqlite3_errcode(database))
+        sessionID: UInt64,
+        handle: UInt32
+    ) throws -> String? {
+        try run {
+            try $0.conversationAddressForMessage(ownerIdentityId: ownerIdentityID, sessionId: sessionID, handle: handle)
         }
-        return sqlite3_column_int64(select, 0)
     }
 
-    /// The last message and unread count a list row needs, as SQL expressions
-    /// against an already-joined conversation.
+    /// The persisted conversation address, sender, and body of an inbound,
+    /// displayable message, for raising a notification. Returns `nil` for
+    /// outbound rows, tombstones, gap placeholders, unavailable markers, or
+    /// empty bodies—nothing worth alerting the user about. Resolves every
+    /// field from storage so a notify carried on an `UpdateBody` (which omits
+    /// them) still works.
+    func chatNotificationTarget(
+        ownerIdentityID: String,
+        sessionID: UInt64,
+        handle: UInt32
+    ) throws -> ChatNotificationTarget? {
+        try run { try $0.chatNotificationTarget(ownerIdentityId: ownerIdentityID, sessionId: sessionID, handle: handle) }
+            .map(ChatNotificationTarget.init)
+    }
+
+    /// The reaction behind a notifying mutation, when it is one and when it
+    /// lands on a message this phone sent.
     ///
-    /// Both are per-conversation index seeks rather than scans: the last message
-    /// resolves a rowid at the end of one index range and then fetches that one
-    /// row, and the unread count starts at the read cursor instead of the
-    /// beginning of history. Deliberately absent is a total message count—it
-    /// is the one aggregate that must walk the whole range, and nothing in a
-    /// list row asks for it.
-    ///
-    /// `owner` and `address` are the outer query's own column references, so
-    /// this reads the same for a direct chat keyed by peer address and a
-    /// channel chat keyed by channel tag.
-    private static func conversationTailColumns(owner: String, address: String) -> String {
-        """
-        lm.created_at_ms, lm.body, lm.direction, lm.deleted,
-        lm.sender_address, lm.sender_hint, lm.message_type = 1,
-        (SELECT COUNT(*) FROM chat_message u
-          WHERE u.owner_identity_id = \(owner)
-            AND u.conversation_address = \(address)
-            AND u.direction = 0 AND u.deleted = 0 AND u.presence = 0
-            AND u.is_reaction = 0 AND u.silent = 0
-            AND u.created_at_ms > c.last_read_at_ms)
-        """
-    }
-
-    private static func conversationTailJoin(owner: String, address: String) -> String {
-        """
-        LEFT JOIN chat_message lm ON lm.rowid = (
-            SELECT m.rowid FROM chat_message m
-            WHERE m.owner_identity_id = \(owner) AND m.conversation_address = \(address)
-                AND m.is_reaction = 0
-            ORDER BY m.created_at_ms DESC, m.rowid DESC
-            LIMIT 1
-        )
-        """
-    }
-
-    /// Reads the seven preview columns and the unread count a tail block selects,
-    /// starting at `offset`. A conversation with no messages has a NULL
-    /// timestamp and no preview.
-    private static func conversationTail(
-        _ statement: OpaquePointer,
-        at offset: Int32
-    ) -> (lastMessage: StoredConversationPreview?, unreadCount: Int) {
-        let unread = Int(sqlite3_column_int64(statement, offset + 7))
-        guard sqlite3_column_type(statement, offset) != SQLITE_NULL else {
-            return (nil, unread)
-        }
-        return (
-            StoredConversationPreview(
-                createdAtMilliseconds: sqlite3_column_int64(statement, offset),
-                body: stringColumn(statement, at: offset + 1),
-                isOutbound: sqlite3_column_int(statement, offset + 2) == 1,
-                isDeleted: sqlite3_column_int(statement, offset + 3) != 0,
-                senderAddress: optionalStringColumn(statement, at: offset + 4),
-                senderHint: optionalDataColumn(statement, at: offset + 5),
-                isStatus: sqlite3_column_int(statement, offset + 6) != 0
-            ),
-            unread
-        )
-    }
-
-    func listDirectConversations(ownerIdentityID: String) throws -> [StoredDirectConversation] {
-        let statement = try prepare(
-            """
-            SELECT c.id, \(Self.nodeColumns(prefix: "n.")),
-                   c.draft_text, c.last_read_at_ms, c.created_at_ms,
-                   c.notifications_enabled,
-                   \(Self.conversationTailColumns(
-                        owner: "c.owner_identity_id",
-                        address: "n.public_address"
-                   ))
-            FROM direct_conversation c JOIN node n ON n.id = c.node_id
-            \(Self.conversationTailJoin(
-                 owner: "c.owner_identity_id",
-                 address: "n.public_address"
-            ))
-            WHERE c.owner_identity_id = ? ORDER BY c.created_at_ms DESC, c.id DESC
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(ownerIdentityID, to: statement, at: 1)
-        var conversations: [StoredDirectConversation] = []
-        while true {
-            switch sqlite3_step(statement) {
-            case SQLITE_ROW:
-                // The conversation's own columns follow the node's.
-                let own = 1 + Self.nodeColumnCount
-                let tail = Self.conversationTail(statement, at: own + 4)
-                conversations.append(
-                    StoredDirectConversation(
-                        id: sqlite3_column_int64(statement, 0),
-                        node: storedNode(statement, offset: 1),
-                        draftText: Self.stringColumn(statement, at: own),
-                        lastReadAtMilliseconds: sqlite3_column_int64(statement, own + 1),
-                        createdAtMilliseconds: sqlite3_column_int64(statement, own + 2),
-                        notificationsEnabled: sqlite3_column_int(statement, own + 3) != 0,
-                        lastMessage: tail.lastMessage,
-                        unreadCount: tail.unreadCount
-                    )
-                )
-            case SQLITE_DONE:
-                return conversations
-            case let code:
-                throw Self.sqliteFailure(database, code)
-            }
-        }
-    }
-
-    /// The channel conversation for a channel, created if this is the first
-    /// time the user has entered it. Channels are joined without a chat; the
-    /// conversation appears when someone asks for one, or when a message
-    /// arrives.
-    func ensureChannelConversation(
+    /// Reactions to someone else's message are somebody else's business: in a
+    /// channel they would ping every member for every tapback. A withdrawal
+    /// carries an empty body and is not an event to announce.
+    func chatReactionNotificationTarget(
         ownerIdentityID: String,
-        channelID: UUID,
-        conversationAddress: String
-    ) throws -> Int64 {
-        let insert = try prepare(
-            """
-            INSERT OR IGNORE INTO channel_conversation (
-                owner_identity_id, channel_id, conversation_address, created_at_ms
-            ) VALUES (?, ?, ?, ?)
-            """
-        )
-        defer { sqlite3_finalize(insert) }
-        try bind(ownerIdentityID, to: insert, at: 1)
-        try bind(channelID.uuidString, to: insert, at: 2)
-        try bind(conversationAddress, to: insert, at: 3)
-        try check(sqlite3_bind_int64(insert, 4, Self.nowMilliseconds()))
-        try stepDone(insert)
-
-        let select = try prepare(
-            "SELECT id FROM channel_conversation WHERE owner_identity_id = ? AND channel_id = ?"
-        )
-        defer { sqlite3_finalize(select) }
-        try bind(ownerIdentityID, to: select, at: 1)
-        try bind(channelID.uuidString, to: select, at: 2)
-        guard sqlite3_step(select) == SQLITE_ROW else {
-            throw Self.sqliteFailure(database, sqlite3_errcode(database))
+        sessionID: UInt64,
+        handle: UInt32
+    ) throws -> ChatReactionNotificationTarget? {
+        try run {
+            try $0.chatReactionNotificationTarget(ownerIdentityId: ownerIdentityID, sessionId: sessionID, handle: handle)
         }
-        return sqlite3_column_int64(select, 0)
-    }
-
-    func listChannelConversations(
-        ownerIdentityID: String
-    ) throws -> [StoredChannelConversation] {
-        let statement = try prepare(
-            """
-            SELECT c.id, c.channel_id, c.conversation_address, c.draft_text,
-                   c.last_read_at_ms, c.created_at_ms,
-                   \(Self.conversationTailColumns(
-                        owner: "c.owner_identity_id",
-                        address: "c.conversation_address"
-                   ))
-            FROM channel_conversation c
-            \(Self.conversationTailJoin(
-                 owner: "c.owner_identity_id",
-                 address: "c.conversation_address"
-            ))
-            WHERE c.owner_identity_id = ?
-            ORDER BY c.created_at_ms DESC, c.id DESC
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(ownerIdentityID, to: statement, at: 1)
-        var conversations: [StoredChannelConversation] = []
-        while true {
-            switch sqlite3_step(statement) {
-            case SQLITE_ROW:
-                guard let channelID = UUID(uuidString: Self.stringColumn(statement, at: 1)) else {
-                    continue
-                }
-                let tail = Self.conversationTail(statement, at: 6)
-                conversations.append(
-                    StoredChannelConversation(
-                        id: sqlite3_column_int64(statement, 0),
-                        channelID: channelID,
-                        conversationAddress: Self.stringColumn(statement, at: 2),
-                        draftText: Self.stringColumn(statement, at: 3),
-                        lastReadAtMilliseconds: sqlite3_column_int64(statement, 4),
-                        createdAtMilliseconds: sqlite3_column_int64(statement, 5),
-                        lastMessage: tail.lastMessage,
-                        unreadCount: tail.unreadCount
-                    )
-                )
-            case SQLITE_DONE:
-                return conversations
-            case let code:
-                throw Self.sqliteFailure(database, code)
-            }
-        }
-    }
-
-    /// Remove a channel conversation and its local transcript. Leaving a group
-    /// chat is not leaving the channel: the key stays, so traffic still
-    /// arrives and a later message opens the conversation again.
-    func deleteChannelConversation(ownerIdentityID: String, conversationID: Int64) throws {
-        try transaction {
-            let select = try prepare(
-                """
-                SELECT conversation_address FROM channel_conversation
-                WHERE id = ? AND owner_identity_id = ?
-                """
-            )
-            defer { sqlite3_finalize(select) }
-            try check(sqlite3_bind_int64(select, 1, conversationID))
-            try bind(ownerIdentityID, to: select, at: 2)
-            guard sqlite3_step(select) == SQLITE_ROW else { return }
-            let address = Self.stringColumn(select, at: 0)
-
-            try purgeConversationHistory(
-                ownerIdentityID: ownerIdentityID,
-                conversationAddress: address
-            )
-
-            let delete = try prepare(
-                "DELETE FROM channel_conversation WHERE id = ? AND owner_identity_id = ?"
-            )
-            defer { sqlite3_finalize(delete) }
-            try check(sqlite3_bind_int64(delete, 1, conversationID))
-            try bind(ownerIdentityID, to: delete, at: 2)
-            try stepDone(delete)
-        }
-    }
-
-    /// Erase a conversation's messages while keeping the conversation itself.
-    /// Addressed rather than keyed by row so one call serves both kinds.
-    ///
-    /// Outbound stream checkpoints are kept, for the same reason deleting a
-    /// conversation keeps them: sequence continuity with the far end has to
-    /// outlive the transcript, or the next message would announce a Sequence
-    /// Reset. Archived outbound payloads do go, so a later resend request for
-    /// a cleared message is answered Unavailable—the protocol handles that,
-    /// and keeping erased content on disk would not be acceptable.
-    func clearConversationMessages(
-        ownerIdentityID: String,
-        conversationAddress: String
-    ) throws {
-        try transaction {
-            try purgeConversationHistory(
-                ownerIdentityID: ownerIdentityID,
-                conversationAddress: conversationAddress
-            )
-        }
-    }
-
-    func updateChannelDraft(
-        ownerIdentityID: String,
-        conversationID: Int64,
-        text: String
-    ) throws {
-        let statement = try prepare(
-            "UPDATE channel_conversation SET draft_text = ? WHERE id = ? AND owner_identity_id = ?"
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(text, to: statement, at: 1)
-        try check(sqlite3_bind_int64(statement, 2, conversationID))
-        try bind(ownerIdentityID, to: statement, at: 3)
-        try stepDone(statement)
-        guard sqlite3_changes(database) == 1 else { throw ApplicationStoreError.recordNotFound }
-    }
-
-    /// Mark everything in a conversation read as of now. Addressed rather than
-    /// keyed by row so one call serves both kinds of conversation.
-    func markConversationRead(ownerIdentityID: String, conversationAddress: String) throws {
-        let now = Self.nowMilliseconds()
-        let direct = try prepare(
-            """
-            UPDATE direct_conversation SET last_read_at_ms = ?
-            WHERE owner_identity_id = ? AND node_id IN (
-                SELECT id FROM node
-                WHERE owner_identity_id = ? AND public_address = ?
-            )
-            """
-        )
-        defer { sqlite3_finalize(direct) }
-        try check(sqlite3_bind_int64(direct, 1, now))
-        try bind(ownerIdentityID, to: direct, at: 2)
-        try bind(ownerIdentityID, to: direct, at: 3)
-        try bind(conversationAddress, to: direct, at: 4)
-        try stepDone(direct)
-
-        let channel = try prepare(
-            """
-            UPDATE channel_conversation SET last_read_at_ms = ?
-            WHERE owner_identity_id = ? AND conversation_address = ?
-            """
-        )
-        defer { sqlite3_finalize(channel) }
-        try check(sqlite3_bind_int64(channel, 1, now))
-        try bind(ownerIdentityID, to: channel, at: 2)
-        try bind(conversationAddress, to: channel, at: 3)
-        try stepDone(channel)
-    }
-
-    /// Fill in the sender of group messages stored before that member's hint
-    /// resolved to a real address. Rows that already name a sender are left
-    /// alone—the first attribution seen for a hint is the one kept.
-    func applySenderResolution(
-        ownerIdentityID: String,
-        conversationAddress: String,
-        senderHint: Data,
-        senderAddress: String
-    ) throws {
-        let statement = try prepare(
-            """
-            UPDATE chat_message SET sender_address = ?
-            WHERE owner_identity_id = ? AND conversation_address = ?
-                AND sender_hint = ? AND sender_address IS NULL
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(senderAddress, to: statement, at: 1)
-        try bind(ownerIdentityID, to: statement, at: 2)
-        try bind(conversationAddress, to: statement, at: 3)
-        try bind(senderHint, to: statement, at: 4)
-        try stepDone(statement)
-    }
-
-    /// Remove a conversation and its local history. Outbound stream
-    /// checkpoints are deliberately retained: sequence continuity with the
-    /// peer must survive the transcript, or the next message would announce
-    /// a Sequence Reset. Archived outbound payloads go with the history, so
-    /// a late resend request for them is answered Unavailable—the protocol
-    /// handles that; keeping deleted content on disk would not be acceptable.
-    func deleteDirectConversation(ownerIdentityID: String, conversationID: Int64) throws {
-        try transaction {
-            let peerSelect = """
-                SELECT n.public_address FROM direct_conversation c
-                JOIN node n ON n.id = c.node_id
-                WHERE c.id = ? AND c.owner_identity_id = ?
-                """
-            let peer = try prepare(peerSelect)
-            defer { sqlite3_finalize(peer) }
-            try check(sqlite3_bind_int64(peer, 1, conversationID))
-            try bind(ownerIdentityID, to: peer, at: 2)
-            guard sqlite3_step(peer) == SQLITE_ROW else { return }
-            let peerAddress = Self.stringColumn(peer, at: 0)
-
-            try purgeConversationHistory(
-                ownerIdentityID: ownerIdentityID,
-                conversationAddress: peerAddress
-            )
-
-            let conversation = try prepare(
-                "DELETE FROM direct_conversation WHERE id = ? AND owner_identity_id = ?"
-            )
-            defer { sqlite3_finalize(conversation) }
-            try check(sqlite3_bind_int64(conversation, 1, conversationID))
-            try bind(ownerIdentityID, to: conversation, at: 2)
-            try stepDone(conversation)
-        }
-    }
-
-    /// Turn notifications for one direct conversation on or off.
-    func setDirectConversationNotifications(
-        ownerIdentityID: String,
-        conversationID: Int64,
-        enabled: Bool
-    ) throws {
-        let statement = try prepare(
-            """
-            UPDATE direct_conversation SET notifications_enabled = ?
-            WHERE id = ? AND owner_identity_id = ?
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try check(sqlite3_bind_int(statement, 1, enabled ? 1 : 0))
-        try check(sqlite3_bind_int64(statement, 2, conversationID))
-        try bind(ownerIdentityID, to: statement, at: 3)
-        try stepDone(statement)
-    }
-
-    func updateDraft(ownerIdentityID: String, conversationID: Int64, text: String) throws {
-        let statement = try prepare(
-            "UPDATE direct_conversation SET draft_text = ? WHERE id = ? AND owner_identity_id = ?"
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(text, to: statement, at: 1)
-        try check(sqlite3_bind_int64(statement, 2, conversationID))
-        try bind(ownerIdentityID, to: statement, at: 3)
-        try stepDone(statement)
-        guard sqlite3_changes(database) == 1 else { throw ApplicationStoreError.recordNotFound }
+        .map(ChatReactionNotificationTarget.init)
     }
 
     func chatCheckpoints(ownerIdentityID: String) throws -> [MobileChatCheckpointRecord] {
-        let statement = try prepare(
-            """
-            SELECT conversation_address, next_id, epoch FROM chat_stream_checkpoint
-            WHERE owner_identity_id = ? ORDER BY updated_at_ms ASC, conversation_address ASC
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(ownerIdentityID, to: statement, at: 1)
-        var records: [MobileChatCheckpointRecord] = []
-        while true {
-            switch sqlite3_step(statement) {
-            case SQLITE_ROW:
-                records.append(
-                    MobileChatCheckpointRecord(
-                        conversationAddress: Self.stringColumn(statement, at: 0),
-                        nextId: UInt8(sqlite3_column_int(statement, 1)),
-                        epoch: UInt16(sqlite3_column_int(statement, 2))
-                    )
-                )
-            case SQLITE_DONE: return records
-            case let code: throw Self.sqliteFailure(database, code)
-            }
-        }
+        try run { try $0.chatCheckpoints(ownerIdentityId: ownerIdentityID) }
     }
 
     /// The checkpoint and exact resend material are one durable commit. The
@@ -2669,224 +1340,44 @@ actor SQLiteApplicationStore {
         ownerIdentityID: String,
         batch: MobileChatComposeBatchRecord
     ) throws {
-        try transaction {
-            try upsertChatCheckpoint(ownerIdentityID: ownerIdentityID, batch.checkpoint)
-            // Retirements first: an edit's replacement payloads must land on a
-            // clean slate so no stale fragment of the superseded content can
-            // ever be served to a resend request.
-            for delete in batch.archiveDeletes {
-                try deleteChatArchive(ownerIdentityID: ownerIdentityID, delete)
-            }
-            for archive in batch.archives {
-                try upsertChatArchive(ownerIdentityID: ownerIdentityID, archive)
-            }
-            // What this phone composes is never a message arriving.
-            for mutation in batch.mutations {
-                try applyChatMutation(ownerIdentityID: ownerIdentityID, mutation, silentTestsIn: nil)
-            }
+        try run {
+            try $0.commitChatComposeBatch(ownerIdentityId: ownerIdentityID, batch: batch, nowMs: Date.now.storeMilliseconds)
         }
     }
 
-    /// Returns the mutations that materialized a new message row—an edit
-    /// whose original this phone never stored arrives as content, not a
-    /// revision (see ``materializeOrphanEdit``). The engine could not flag
-    /// those `notify`, since only the platform knows the original was
-    /// missing; the caller treats them as the message arrivals they are.
-    ///
-    /// `silentTestsIn` names `EMERGENCY`'s conversation while its test
-    /// messages are to arrive silently: one arriving there is kept and shown,
-    /// but never counts as unread.
+    /// Apply one batch of the engine's mutations in one transaction, and
+    /// return those still worth a notification.
     @discardableResult
     func applyChatMutations(
         ownerIdentityID: String,
         mutations: [MobileChatMutationRecord],
         silentTestsIn: String? = nil
     ) throws -> [MobileChatMutationRecord] {
-        var materialized: [MobileChatMutationRecord] = []
-        try transaction {
-            for mutation in mutations {
-                if try applyChatMutation(
-                    ownerIdentityID: ownerIdentityID,
-                    mutation,
-                    silentTestsIn: silentTestsIn
-                ) {
-                    materialized.append(mutation)
-                }
-            }
+        try run {
+            try $0.applyChatMutations(
+                ownerIdentityId: ownerIdentityID,
+                mutations: mutations,
+                nowMs: Date.now.storeMilliseconds,
+                silentTestsIn: silentTestsIn
+            )
         }
-        return materialized
     }
 
-    /// Apply delivery evidence, and report which messages this evidence just
-    /// gave up on.
-    ///
-    /// Only a crossing counts. `delivery_state` is recomputed from the whole
-    /// fragment table on every record, so a message already resolved to a
-    /// failure recomputes to one again on the next fragment, and a
-    /// redelivered batch replays the same records; announcing the state rather
-    /// than the transition would announce one failure many times.
+    /// Apply delivery evidence, and return the messages whose delivery was
+    /// just given up on.
     @discardableResult
     func applyChatDeliveries(
         ownerIdentityID: String,
         deliveries: [MobileChatDeliveryRecord]
     ) throws -> [ChatDeliveryFailure] {
-        var failures: [ChatDeliveryFailure] = []
-        try transaction {
-            for delivery in deliveries {
-                let before = try deliveryState(
-                    ownerIdentityID: ownerIdentityID,
-                    sessionID: delivery.sessionId,
-                    handle: delivery.handle
-                )
-                let fragmentStatement = try prepare(
-                    """
-                    INSERT INTO chat_delivery_fragment (
-                        owner_identity_id, session_id, handle, fragment_index, state, via_flood
-                    ) VALUES (?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(owner_identity_id, session_id, handle, fragment_index)
-                    DO UPDATE SET
-                    via_flood = MAX(chat_delivery_fragment.via_flood, excluded.via_flood),
-                    state = CASE
-                        -- A positive ack is definitive proof the frame landed,
-                        -- whatever was said of it before or after.
-                        WHEN chat_delivery_fragment.state = 'acknowledged'
-                            OR excluded.state = 'acknowledged' THEN 'acknowledged'
-                        -- Otherwise the latest word stands: a fragment sent
-                        -- again is in flight again, whatever became of it
-                        -- the last time.
-                        ELSE excluded.state
-                    END
-                    """
-                )
-                defer { sqlite3_finalize(fragmentStatement) }
-                try bind(ownerIdentityID, to: fragmentStatement, at: 1)
-                try bind(String(delivery.sessionId), to: fragmentStatement, at: 2)
-                try check(sqlite3_bind_int64(fragmentStatement, 3, Int64(delivery.handle)))
-                try check(sqlite3_bind_int(
-                    fragmentStatement,
-                    4,
-                    delivery.fragmentIndex.map(Int32.init) ?? -1
-                ))
-                try bind(
-                    String(describing: delivery.state).lowercased(),
-                    to: fragmentStatement,
-                    at: 5
-                )
-                try check(sqlite3_bind_int(fragmentStatement, 6, delivery.viaFlood ? 1 : 0))
-                try stepDone(fragmentStatement)
-
-                try recomputeDeliveryState(
-                    ownerIdentityID: ownerIdentityID,
-                    deliverySessionID: String(delivery.sessionId),
-                    deliveryHandle: delivery.handle
-                )
-
-                guard !StoredChatMessage.isDeliveryFailure(before),
-                      StoredChatMessage.isDeliveryFailure(try deliveryState(
-                          ownerIdentityID: ownerIdentityID,
-                          sessionID: delivery.sessionId,
-                          handle: delivery.handle
-                      )),
-                      let failure = try failedMessage(
-                          ownerIdentityID: ownerIdentityID,
-                          sessionID: delivery.sessionId,
-                          handle: delivery.handle
-                      )
-                else { continue }
-                failures.append(failure)
-            }
+        try run {
+            try $0.applyChatDeliveries(
+                ownerIdentityId: ownerIdentityID,
+                deliveries: deliveries,
+                nowMs: Date.now.storeMilliseconds
+            )
         }
-        return failures
-    }
-
-    /// Resolve one message's delivery state from the fragment evidence
-    /// currently recorded against the transmission it reports—
-    /// `delivery_session_id`/`delivery_handle`, the row's own compose until an
-    /// edit re-aims it at the edit's frames. The keys given here are always
-    /// transmission keys, never assumed to be a row's primary key.
-    ///
-    /// Every fragment acknowledged wins over any earlier failure, so a
-    /// late-acknowledged message recovers to 'acknowledged'. When that
-    /// recovery crosses from a failed row, flag it "delivered late". Short of
-    /// that, one fragment that never went out where the peer could read it
-    /// ('undelivered') means the message did not arrive, which outranks one
-    /// that went out unacknowledged ('failed') and may have.
-    /// SQLite evaluates every SET right-hand side against the pre-update row,
-    /// so `delivery_state` below reads the old value while the counts read the
-    /// fragments as they now stand.
-    private func recomputeDeliveryState(
-        ownerIdentityID: String,
-        deliverySessionID: String,
-        deliveryHandle: UInt32
-    ) throws {
-        let message = try prepare(
-            """
-            UPDATE chat_message SET
-                -- Restamped while nothing has been sent, so it holds the
-                -- moment the first frame was.
-                delivery_progress_at_ms = CASE
-                    WHEN chat_message.delivery_state = 'pending' THEN ?4
-                    ELSE chat_message.delivery_progress_at_ms
-                END,
-                delivered_flooded = EXISTS (
-                    SELECT 1 FROM chat_delivery_fragment f
-                    WHERE f.owner_identity_id = chat_message.owner_identity_id
-                        AND f.session_id = chat_message.delivery_session_id
-                        AND f.handle = chat_message.delivery_handle
-                        AND f.state = 'acknowledged'
-                        AND f.via_flood = 1
-                ),
-                delivered_late = CASE
-                    WHEN chat_message.delivery_state IN ('failed', 'undelivered')
-                        AND (
-                            SELECT COUNT(*) FROM chat_delivery_fragment f
-                            WHERE f.owner_identity_id = chat_message.owner_identity_id
-                                AND f.session_id = chat_message.delivery_session_id
-                                AND f.handle = chat_message.delivery_handle
-                                AND f.state = 'acknowledged'
-                        ) >= COALESCE(chat_message.fragment_count, 1) THEN 1
-                    ELSE chat_message.delivered_late
-                END,
-                delivery_state = CASE
-                WHEN (
-                    SELECT COUNT(*) FROM chat_delivery_fragment f
-                    WHERE f.owner_identity_id = chat_message.owner_identity_id
-                        AND f.session_id = chat_message.delivery_session_id
-                        AND f.handle = chat_message.delivery_handle
-                        AND f.state = 'acknowledged'
-                ) >= COALESCE(chat_message.fragment_count, 1) THEN 'acknowledged'
-                WHEN EXISTS (
-                    SELECT 1 FROM chat_delivery_fragment f
-                    WHERE f.owner_identity_id = chat_message.owner_identity_id
-                        AND f.session_id = chat_message.delivery_session_id
-                        AND f.handle = chat_message.delivery_handle
-                        AND f.state = 'undelivered'
-                ) THEN 'undelivered'
-                WHEN EXISTS (
-                    SELECT 1 FROM chat_delivery_fragment f
-                    WHERE f.owner_identity_id = chat_message.owner_identity_id
-                        AND f.session_id = chat_message.delivery_session_id
-                        AND f.handle = chat_message.delivery_handle
-                        AND f.state = 'failed'
-                ) THEN 'failed'
-                WHEN EXISTS (
-                    SELECT 1 FROM chat_delivery_fragment f
-                    WHERE f.owner_identity_id = chat_message.owner_identity_id
-                        AND f.session_id = chat_message.delivery_session_id
-                        AND f.handle = chat_message.delivery_handle
-                        AND f.state IN ('sent', 'acknowledged')
-                ) THEN 'sent'
-                ELSE 'pending'
-            END
-            WHERE owner_identity_id = ?1 AND delivery_session_id = ?2 AND delivery_handle = ?3
-            """
-        )
-        defer { sqlite3_finalize(message) }
-        try bind(ownerIdentityID, to: message, at: 1)
-        try bind(deliverySessionID, to: message, at: 2)
-        try check(sqlite3_bind_int64(message, 3, Int64(deliveryHandle)))
-        try check(sqlite3_bind_int64(message, 4, Self.nowMilliseconds()))
-        try stepDone(message)
+        .map(ChatDeliveryFailure.init)
     }
 
     /// Record the repeaters overheard carrying our frames.
@@ -2900,142 +1391,9 @@ actor SQLiteApplicationStore {
         ownerIdentityID: String,
         repeats: [MobileChatRepeatRecord]
     ) throws {
-        guard !repeats.isEmpty else { return }
-        try transaction {
-            for record in repeats {
-                let sessionID = String(record.sessionId)
-                let fragmentIndex = record.fragmentIndex.map(Int32.init) ?? -1
-                let existing = try prepare(
-                    """
-                    SELECT repeaters, anonymous_repeats FROM chat_delivery_fragment
-                    WHERE owner_identity_id = ? AND session_id = ? AND handle = ?
-                        AND fragment_index = ?
-                    """
-                )
-                defer { sqlite3_finalize(existing) }
-                try bind(ownerIdentityID, to: existing, at: 1)
-                try bind(sessionID, to: existing, at: 2)
-                try check(sqlite3_bind_int64(existing, 3, Int64(record.handle)))
-                try check(sqlite3_bind_int(existing, 4, fragmentIndex))
-                var hints: [Data] = []
-                var anonymous: Int64 = 0
-                if sqlite3_step(existing) == SQLITE_ROW {
-                    hints = Self.repeaterHints(Self.optionalDataColumn(existing, at: 0))
-                    anonymous = sqlite3_column_int64(existing, 1)
-                }
-                let before = (hints, anonymous)
-                for repeater in record.repeaters where repeater.bytes.count == 2 {
-                    let hint = Data(repeater.bytes)
-                    if !hints.contains(hint) { hints.append(hint) }
-                }
-                anonymous = max(anonymous, Int64(record.anonymousRepeats))
-                guard before != (hints, anonymous) else { continue }
-
-                // A repeat is heard only of a frame that went out, so a
-                // fragment with no delivery record yet is a sent one.
-                let upsert = try prepare(
-                    """
-                    INSERT INTO chat_delivery_fragment (
-                        owner_identity_id, session_id, handle, fragment_index, state,
-                        repeaters, anonymous_repeats
-                    ) VALUES (?, ?, ?, ?, 'sent', ?, ?)
-                    ON CONFLICT(owner_identity_id, session_id, handle, fragment_index)
-                    DO UPDATE SET
-                        repeaters = excluded.repeaters,
-                        anonymous_repeats = excluded.anonymous_repeats
-                    """
-                )
-                defer { sqlite3_finalize(upsert) }
-                try bind(ownerIdentityID, to: upsert, at: 1)
-                try bind(sessionID, to: upsert, at: 2)
-                try check(sqlite3_bind_int64(upsert, 3, Int64(record.handle)))
-                try check(sqlite3_bind_int(upsert, 4, fragmentIndex))
-                try bind(hints.reduce(Data(), +), to: upsert, at: 5)
-                try check(sqlite3_bind_int64(upsert, 6, anonymous))
-                try stepDone(upsert)
-
-                let progress = try prepare(
-                    """
-                    UPDATE chat_message SET delivery_progress_at_ms = ?
-                    WHERE owner_identity_id = ? AND delivery_session_id = ? AND delivery_handle = ?
-                    """
-                )
-                defer { sqlite3_finalize(progress) }
-                try check(sqlite3_bind_int64(progress, 1, Self.nowMilliseconds()))
-                try bind(ownerIdentityID, to: progress, at: 2)
-                try bind(sessionID, to: progress, at: 3)
-                try check(sqlite3_bind_int64(progress, 4, Int64(record.handle)))
-                try stepDone(progress)
-            }
+        try run {
+            try $0.applyChatRepeats(ownerIdentityId: ownerIdentityID, repeats: repeats, nowMs: Date.now.storeMilliseconds)
         }
-    }
-
-    /// The bytes SQLite's `hex()` spelled out.
-    private static func hexData(_ text: Substring) -> Data {
-        var data = Data()
-        var index = text.startIndex
-        while let next = text.index(index, offsetBy: 2, limitedBy: text.endIndex), index < next {
-            guard let byte = UInt8(text[index..<next], radix: 16) else { return data }
-            data.append(byte)
-            index = next
-        }
-        return data
-    }
-
-    /// Split a stored run of two-byte repeater hints.
-    private static func repeaterHints(_ blob: Data?) -> [Data] {
-        guard let blob else { return [] }
-        let bytes = [UInt8](blob)
-        return stride(from: 0, to: bytes.count - 1, by: 2).map { Data(bytes[$0..<$0 + 2]) }
-    }
-
-    /// The delivery state of whichever row is currently reporting this
-    /// transmission—matched through the delivery pointer, since evidence
-    /// always arrives keyed by the transmission that earned it.
-    private func deliveryState(
-        ownerIdentityID: String,
-        sessionID: UInt64,
-        handle: UInt32
-    ) throws -> String? {
-        let statement = try prepare(
-            """
-            SELECT delivery_state FROM chat_message
-            WHERE owner_identity_id = ? AND delivery_session_id = ? AND delivery_handle = ?
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(ownerIdentityID, to: statement, at: 1)
-        try bind(String(sessionID), to: statement, at: 2)
-        try check(sqlite3_bind_int64(statement, 3, Int64(handle)))
-        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
-        return Self.optionalStringColumn(statement, at: 0)
-    }
-
-    /// What a just-failed message was, when it is one worth a notice. A
-    /// reaction that never landed is not: the user did not write it as a
-    /// message and cannot usefully resend it.
-    private func failedMessage(
-        ownerIdentityID: String,
-        sessionID: UInt64,
-        handle: UInt32
-    ) throws -> ChatDeliveryFailure? {
-        let statement = try prepare(
-            """
-            SELECT conversation_address, body, delivery_state = 'undelivered' FROM chat_message
-            WHERE owner_identity_id = ? AND delivery_session_id = ? AND delivery_handle = ?
-                AND direction = 1 AND deleted = 0 AND is_reaction = 0 AND body <> ''
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(ownerIdentityID, to: statement, at: 1)
-        try bind(String(sessionID), to: statement, at: 2)
-        try check(sqlite3_bind_int64(statement, 3, Int64(handle)))
-        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
-        return ChatDeliveryFailure(
-            conversationAddress: Self.stringColumn(statement, at: 0),
-            body: Self.stringColumn(statement, at: 1),
-            undelivered: sqlite3_column_int(statement, 2) != 0
-        )
     }
 
     /// The compose transaction is already durable at this point, but Rust
@@ -3046,33 +1404,7 @@ actor SQLiteApplicationStore {
         ownerIdentityID: String,
         batch: MobileChatComposeBatchRecord
     ) throws {
-        try transaction {
-            for mutation in batch.mutations {
-                // A new outbound message is keyed by its own compose; an edit
-                // never inserted a row, but the row it revised now points its
-                // delivery tracking at the edit's transmissions—the ones
-                // that just failed to launch. Either way the row the failure
-                // belongs to is the one whose pointer names this mutation.
-                switch mutation.kind {
-                case .insert where mutation.direction == .outbound, .edit:
-                    break
-                default:
-                    continue
-                }
-                let statement = try prepare(
-                    """
-                    UPDATE chat_message SET delivery_state = 'undelivered'
-                    WHERE owner_identity_id = ? AND delivery_session_id = ?
-                        AND delivery_handle = ? AND direction = 1
-                    """
-                )
-                defer { sqlite3_finalize(statement) }
-                try bind(ownerIdentityID, to: statement, at: 1)
-                try bind(String(mutation.sessionId), to: statement, at: 2)
-                try check(sqlite3_bind_int64(statement, 3, Int64(mutation.handle)))
-                try stepDone(statement)
-            }
-        }
+        try run { try $0.markChatComposeBatchFailed(ownerIdentityId: ownerIdentityID, batch: batch) }
     }
 
     /// Remove a failed outbound message outright, because its text just went
@@ -3089,59 +1421,11 @@ actor SQLiteApplicationStore {
         sessionID: String,
         handle: UInt32
     ) throws {
-        try transaction {
-            let fragments = try prepare(
-                """
-                DELETE FROM chat_delivery_fragment
-                WHERE owner_identity_id = ? AND (session_id, handle) = (
-                    SELECT delivery_session_id, delivery_handle FROM chat_message
-                    WHERE owner_identity_id = ? AND session_id = ? AND handle = ?
-                        AND direction = 1 AND delivery_state IN ('failed', 'undelivered')
-                )
-                """
+        try run {
+            try $0.removeFailedMessage(
+                ownerIdentityId: ownerIdentityID,
+                message: MobileStoredChatMessageRefRecord(sessionId: sessionID, handle: handle)
             )
-            defer { sqlite3_finalize(fragments) }
-            try bind(ownerIdentityID, to: fragments, at: 1)
-            try bind(ownerIdentityID, to: fragments, at: 2)
-            try bind(sessionID, to: fragments, at: 3)
-            try check(sqlite3_bind_int64(fragments, 4, Int64(handle)))
-            try stepDone(fragments)
-
-            let reactions = try prepare(
-                """
-                DELETE FROM chat_message
-                WHERE owner_identity_id = ? AND regarding_target_session_id = ?
-                    AND regarding_target_handle = ? AND is_reaction = 1
-                    AND EXISTS (
-                        SELECT 1 FROM chat_message target
-                        WHERE target.owner_identity_id = ?
-                            AND target.session_id = ? AND target.handle = ?
-                            AND target.direction = 1
-                            AND target.delivery_state IN ('failed', 'undelivered')
-                    )
-                """
-            )
-            defer { sqlite3_finalize(reactions) }
-            try bind(ownerIdentityID, to: reactions, at: 1)
-            try bind(sessionID, to: reactions, at: 2)
-            try check(sqlite3_bind_int64(reactions, 3, Int64(handle)))
-            try bind(ownerIdentityID, to: reactions, at: 4)
-            try bind(sessionID, to: reactions, at: 5)
-            try check(sqlite3_bind_int64(reactions, 6, Int64(handle)))
-            try stepDone(reactions)
-
-            let message = try prepare(
-                """
-                DELETE FROM chat_message
-                WHERE owner_identity_id = ? AND session_id = ? AND handle = ?
-                    AND direction = 1 AND delivery_state IN ('failed', 'undelivered')
-                """
-            )
-            defer { sqlite3_finalize(message) }
-            try bind(ownerIdentityID, to: message, at: 1)
-            try bind(sessionID, to: message, at: 2)
-            try check(sqlite3_bind_int64(message, 3, Int64(handle)))
-            try stepDone(message)
         }
     }
 
@@ -3153,22 +1437,7 @@ actor SQLiteApplicationStore {
     /// well have arrived, but its acknowledgment can no longer be heard:
     /// 'failed'. A channel message's 'sent' is already its last word.
     func settleInterruptedDeliveries(ownerIdentityID: String) throws {
-        let statement = try prepare(
-            """
-            UPDATE chat_message SET delivery_state = CASE delivery_state
-                WHEN 'pending' THEN 'undelivered'
-                ELSE 'failed'
-            END
-            WHERE owner_identity_id = ? AND direction = 1
-                AND (
-                    delivery_state = 'pending'
-                    OR (delivery_state = 'sent' AND conversation_address NOT LIKE 'ch:%')
-                )
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(ownerIdentityID, to: statement, at: 1)
-        try stepDone(statement)
+        try run { try $0.settleInterruptedDeliveries(ownerIdentityId: ownerIdentityID) }
     }
 
     /// Resolve gap placeholders as unavailable: the named rows, or every gap
@@ -3178,55 +1447,15 @@ actor SQLiteApplicationStore {
         ownerIdentityID: String,
         rows: [(sessionID: String, handle: UInt32)]? = nil
     ) throws {
-        guard let rows else {
-            let statement = try prepare(
-                """
-                UPDATE chat_message SET presence = 2
-                WHERE owner_identity_id = ? AND presence IN (1, 3)
-                """
-            )
-            defer { sqlite3_finalize(statement) }
-            try bind(ownerIdentityID, to: statement, at: 1)
-            try stepDone(statement)
-            return
-        }
-        try transaction {
-            let statement = try prepare(
-                """
-                UPDATE chat_message SET presence = 2
-                WHERE owner_identity_id = ? AND session_id = ? AND handle = ?
-                    AND presence IN (1, 3)
-                """
-            )
-            defer { sqlite3_finalize(statement) }
-            for row in rows {
-                try check(sqlite3_reset(statement))
-                try bind(ownerIdentityID, to: statement, at: 1)
-                try bind(row.sessionID, to: statement, at: 2)
-                try check(sqlite3_bind_int64(statement, 3, Int64(row.handle)))
-                try stepDone(statement)
-            }
-        }
+        let references = rows?.map { MobileStoredChatMessageRefRecord(sessionId: $0.sessionID, handle: $0.handle) }
+        try run { try $0.resolveGapsUnavailable(ownerIdentityId: ownerIdentityID, rows: references) }
     }
 
     func chatArchive(
         ownerIdentityID: String,
         lookup: MobileChatArchiveLookupRecord
     ) throws -> Data? {
-        let statement = try prepare(
-            """
-            SELECT payload FROM chat_outbound_archive
-            WHERE owner_identity_id = ? AND conversation_address = ?
-                AND message_id = ? AND fragment_index = ?
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(ownerIdentityID, to: statement, at: 1)
-        try bind(lookup.conversationAddress, to: statement, at: 2)
-        try check(sqlite3_bind_int(statement, 3, Int32(lookup.messageId)))
-        try check(sqlite3_bind_int(statement, 4, lookup.fragmentIndex.map(Int32.init) ?? -1))
-        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
-        return Self.dataColumn(statement, at: 0)
+        try run { try $0.chatArchive(ownerIdentityId: ownerIdentityID, lookup: lookup) }
     }
 
     /// What a resend of one of our messages puts back on the air: its
@@ -3241,41 +1470,14 @@ actor SQLiteApplicationStore {
         handle: UInt32,
         wireID: UInt8
     ) throws -> [MobileChatArchiveRecord] {
-        let statement = try prepare(
-            """
-            SELECT a.fragment_index, a.payload FROM chat_outbound_archive a
-            WHERE a.owner_identity_id = ?1 AND a.conversation_address = ?2
-                AND a.message_id = ?5
-                AND NOT EXISTS (
-                    SELECT 1 FROM chat_message m
-                    JOIN chat_delivery_fragment f
-                        ON f.owner_identity_id = m.owner_identity_id
-                        AND f.session_id = m.delivery_session_id
-                        AND f.handle = m.delivery_handle
-                    WHERE m.owner_identity_id = ?1 AND m.session_id = ?3 AND m.handle = ?4
-                        AND f.fragment_index = a.fragment_index
-                        AND f.state = 'acknowledged'
-                )
-            ORDER BY a.fragment_index
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(ownerIdentityID, to: statement, at: 1)
-        try bind(conversationAddress, to: statement, at: 2)
-        try bind(sessionID, to: statement, at: 3)
-        try check(sqlite3_bind_int64(statement, 4, Int64(handle)))
-        try check(sqlite3_bind_int(statement, 5, Int32(wireID)))
-        var frames: [MobileChatArchiveRecord] = []
-        while sqlite3_step(statement) == SQLITE_ROW {
-            let fragment = sqlite3_column_int(statement, 0)
-            frames.append(MobileChatArchiveRecord(
+        try run {
+            try $0.chatResendFrames(
+                ownerIdentityId: ownerIdentityID,
                 conversationAddress: conversationAddress,
-                messageId: wireID,
-                fragmentIndex: fragment < 0 ? nil : UInt8(truncatingIfNeeded: fragment),
-                payload: Self.dataColumn(statement, at: 1)
-            ))
+                message: MobileStoredChatMessageRefRecord(sessionId: sessionID, handle: handle),
+                wireId: wireID
+            )
         }
-        return frames
     }
 
     /// Point each resent message's delivery at the transmission its frames
@@ -3286,81 +1488,12 @@ actor SQLiteApplicationStore {
         ownerIdentityID: String,
         resends: [MobileChatResendRecord]
     ) throws {
-        guard !resends.isEmpty else { return }
-        try transaction {
-            for resend in resends {
-                let row = try prepare(
-                    """
-                    SELECT rowid FROM chat_message
-                    WHERE owner_identity_id = ? AND session_id = ? AND handle = ?
-                        AND direction = 1
-                    """
-                )
-                defer { sqlite3_finalize(row) }
-                try bind(ownerIdentityID, to: row, at: 1)
-                try bind(String(resend.message.sessionId), to: row, at: 2)
-                try check(sqlite3_bind_int64(row, 3, Int64(resend.message.handle)))
-                guard sqlite3_step(row) == SQLITE_ROW else { continue }
-                let target = sqlite3_column_int64(row, 0)
-
-                let secrecy = try prepare(
-                    "UPDATE chat_message SET forward_secret = ? WHERE rowid = ?"
-                )
-                defer { sqlite3_finalize(secrecy) }
-                try check(sqlite3_bind_int(secrecy, 1, resend.forwardSecret ? 1 : 0))
-                try check(sqlite3_bind_int64(secrecy, 2, target))
-                try stepDone(secrecy)
-
-                let deliverySessionID = String(resend.deliverySessionId)
-                try adoptDelivery(
-                    ownerIdentityID: ownerIdentityID,
-                    targetRowid: target,
-                    sessionID: deliverySessionID,
-                    handle: resend.deliveryHandle,
-                    fragmentCount: nil,
-                    keepingAcknowledged: true
-                )
-                try recomputeDeliveryState(
-                    ownerIdentityID: ownerIdentityID,
-                    deliverySessionID: deliverySessionID,
-                    deliveryHandle: resend.deliveryHandle
-                )
-            }
+        try run {
+            try $0.applyChatResends(ownerIdentityId: ownerIdentityID, resends: resends, nowMs: Date.now.storeMilliseconds)
         }
     }
 
-    /// The columns every transcript read selects, in the order
-    /// ``storedChatMessage(_:)`` expects them. `rowid` is last so the reception
-    /// block keeps its offsets.
-    private static let chatMessageColumns = """
-        session_id, handle, body, direction, delivery_state, deleted, created_at_ms,
-        wire_id, epoch, edited, presence, received_late, delivered_late, original_body,
-        sender_address, sender_hint, sender_handle,
-        rx_rssi_dbm, rx_snr_cb, rx_lqi, rx_hop_count,
-        rx_route_hints, rx_source_authenticated, rowid, delivered_flooded,
-        regarding_handle IS NOT NULL OR regarding_wire_id IS NOT NULL OR regarding_unknown <> 0,
-        regarding_target_session_id, regarding_target_handle,
-        delivery_progress_at_ms,
-        (SELECT group_concat(hex(f.repeaters), ',') FROM chat_delivery_fragment f
-            WHERE f.owner_identity_id = chat_message.owner_identity_id
-                AND f.session_id = chat_message.delivery_session_id
-                AND f.handle = chat_message.delivery_handle
-                AND f.repeaters IS NOT NULL
-            ORDER BY f.fragment_index),
-        (SELECT MAX(f.anonymous_repeats) FROM chat_delivery_fragment f
-            WHERE f.owner_identity_id = chat_message.owner_identity_id
-                AND f.session_id = chat_message.delivery_session_id
-                AND f.handle = chat_message.delivery_handle),
-        unknown_original,
-        message_type = 1,
-        COALESCE(forward_secret, 0)
-        """
-
-    /// How many messages a transcript read will accept in one page, whatever
-    /// the caller asks for. A page becomes a live `UITextView` per row on the
-    /// way to the screen, so an unbounded request is a mistake the store can
-    /// see and the caller usually cannot.
-    static let chatMessagePageLimit = 500
+    // MARK: Transcripts
 
     /// The newest `limit` messages in a conversation.
     func chatMessagePage(
@@ -3368,16 +1501,13 @@ actor SQLiteApplicationStore {
         conversationAddress: String,
         newest limit: Int
     ) throws -> StoredChatMessagePage {
-        // Read newest-first so the LIMIT lands at the end of the index range,
-        // then flip: the transcript wants oldest-first.
-        try descendingPage(
-            ownerIdentityID: ownerIdentityID,
-            conversationAddress: conversationAddress,
-            cursorClause: nil,
-            cursor: nil,
-            limit: limit,
-            hasNewer: false
-        )
+        StoredChatMessagePage(try run {
+            try $0.chatMessagePageNewest(
+                ownerIdentityId: ownerIdentityID,
+                conversationAddress: conversationAddress,
+                limit: UInt32(clamping: limit)
+            )
+        })
     }
 
     /// The `limit` messages immediately older than `cursor`.
@@ -3387,15 +1517,14 @@ actor SQLiteApplicationStore {
         before cursor: ChatMessageCursor,
         limit: Int
     ) throws -> StoredChatMessagePage {
-        try descendingPage(
-            ownerIdentityID: ownerIdentityID,
-            conversationAddress: conversationAddress,
-            cursorClause: "AND (created_at_ms, rowid) < (?, ?)",
-            cursor: cursor,
-            limit: limit,
-            // Everything the cursor came from is newer than this page.
-            hasNewer: true
-        )
+        StoredChatMessagePage(try run {
+            try $0.chatMessagePageBefore(
+                ownerIdentityId: ownerIdentityID,
+                conversationAddress: conversationAddress,
+                cursor: MobileStoredChatCursorRecord(cursor),
+                limit: UInt32(clamping: limit)
+            )
+        })
     }
 
     /// The `limit` messages immediately newer than `cursor`—or starting at
@@ -3408,288 +1537,15 @@ actor SQLiteApplicationStore {
         including: Bool = false,
         limit: Int
     ) throws -> StoredChatMessagePage {
-        let bounded = min(max(limit, 1), Self.chatMessagePageLimit)
-        let statement = try prepare(
-            """
-            SELECT \(Self.chatMessageColumns)
-            FROM chat_message
-            WHERE owner_identity_id = ? AND conversation_address = ?
-              AND is_reaction = 0
-              AND (created_at_ms, rowid) \(including ? ">=" : ">") (?, ?)
-            ORDER BY created_at_ms ASC, rowid ASC
-            LIMIT ?
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(ownerIdentityID, to: statement, at: 1)
-        try bind(conversationAddress, to: statement, at: 2)
-        try check(sqlite3_bind_int64(statement, 3, cursor.createdAtMilliseconds))
-        try check(sqlite3_bind_int64(statement, 4, cursor.rowID))
-        // One past the page answers "is there more" without a second statement.
-        try check(sqlite3_bind_int64(statement, 5, Int64(bounded) + 1))
-        var messages = try readChatMessages(statement)
-        let hasNewer = messages.count > bounded
-        if hasNewer { messages.removeLast(messages.count - bounded) }
-        // A forward read sees nothing behind where it started, so ask. Reporting
-        // "no older messages" on a hunch is the one wrong answer with teeth: it
-        // tells the transcript its history is complete and retires the only
-        // affordance that would have proved otherwise.
-        let hasOlder = try messages.first.map {
-            try hasMessages(
-                ownerIdentityID: ownerIdentityID,
+        StoredChatMessagePage(try run {
+            try $0.chatMessagePageAfter(
+                ownerIdentityId: ownerIdentityID,
                 conversationAddress: conversationAddress,
-                before: $0.cursor
+                cursor: MobileStoredChatCursorRecord(cursor),
+                limit: UInt32(clamping: limit),
+                including: including
             )
-        } ?? false
-        return try withAnnotations(
-            ownerIdentityID: ownerIdentityID,
-            StoredChatMessagePage(
-                messages: messages,
-                hasOlder: hasOlder,
-                hasNewer: hasNewer
-            )
-        )
-    }
-
-    #if DEBUG
-    /// Write one staged transcript exactly as described, reactions included.
-    ///
-    /// Separate from ``seedGeneratedMessages`` because the two answer different
-    /// questions: that one wants volume and does not care what it says, this
-    /// one wants a specific conversation to read plausibly in a screenshot, so
-    /// every body, sender and instant is dictated by the caller. Like that one
-    /// it writes straight to the table, since `applyChatMutations` stamps
-    /// `created_at_ms` from the clock and a staged transcript needs its own
-    /// timeline.
-    ///
-    /// Reaction handles are allocated above ``stagedReactionHandleBase`` so they
-    /// cannot collide with the message handles the caller chose.
-    func seedStagedTranscript(
-        ownerIdentityID: String,
-        conversationAddress: String,
-        sessionID: String,
-        messages: [StagedMessage]
-    ) throws {
-        try transaction {
-            let statement = try prepare(
-                """
-                INSERT OR REPLACE INTO chat_message (
-                    owner_identity_id, session_id, handle, conversation_address,
-                    sender_address, sender_hint, sender_handle,
-                    direction, body, deleted, created_at_ms, presence, delivery_state,
-                    rx_rssi_dbm, rx_snr_cb, rx_hop_count, rx_source_authenticated,
-                    is_reaction, regarding_target_session_id, regarding_target_handle,
-                    regarding_handle, regarding_wire_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """
-            )
-            defer { sqlite3_finalize(statement) }
-
-            var reactionHandle = Self.stagedReactionHandleBase
-            for message in messages {
-                try writeStagedRow(
-                    statement,
-                    ownerIdentityID: ownerIdentityID,
-                    conversationAddress: conversationAddress,
-                    sessionID: sessionID,
-                    handle: message.handle,
-                    body: message.isDeleted ? "" : message.body,
-                    isDeleted: message.isDeleted,
-                    outbound: message.outbound,
-                    createdAt: message.createdAt,
-                    senderAddress: message.senderAddress,
-                    senderHint: message.senderHint,
-                    senderHandle: message.senderHandle,
-                    deliveryState: message.deliveryState,
-                    reception: message.reception,
-                    isReaction: false,
-                    regarding: message.regarding
-                )
-                for reaction in message.reactions {
-                    try writeStagedRow(
-                        statement,
-                        ownerIdentityID: ownerIdentityID,
-                        conversationAddress: conversationAddress,
-                        sessionID: sessionID,
-                        handle: reactionHandle,
-                        body: reaction.body,
-                        isDeleted: false,
-                        outbound: reaction.outbound,
-                        createdAt: reaction.createdAt,
-                        senderAddress: reaction.senderAddress,
-                        senderHint: reaction.senderHint,
-                        senderHandle: nil,
-                        deliveryState: reaction.outbound ? "acknowledged" : nil,
-                        reception: nil,
-                        isReaction: true,
-                        regarding: .message(message.handle)
-                    )
-                    reactionHandle += 1
-                }
-            }
-        }
-    }
-
-    /// Handles at or above this belong to staged reaction rows. Far above any
-    /// handle a staged transcript assigns its messages, so the two ranges
-    /// cannot meet however long a staged conversation grows.
-    private static let stagedReactionHandleBase: UInt32 = 1_000_000
-
-    private func writeStagedRow(
-        _ statement: OpaquePointer,
-        ownerIdentityID: String,
-        conversationAddress: String,
-        sessionID: String,
-        handle: UInt32,
-        body: String,
-        isDeleted: Bool,
-        outbound: Bool,
-        createdAt: Date,
-        senderAddress: String?,
-        senderHint: Data?,
-        senderHandle: String?,
-        deliveryState: String?,
-        reception: StoredMessageReception?,
-        isReaction: Bool,
-        regarding: StagedRegarding?
-    ) throws {
-        sqlite3_reset(statement)
-        try bind(ownerIdentityID, to: statement, at: 1)
-        try bind(sessionID, to: statement, at: 2)
-        try check(sqlite3_bind_int64(statement, 3, Int64(handle)))
-        try bind(conversationAddress, to: statement, at: 4)
-        try bindOptional(senderAddress, to: statement, at: 5)
-        try bindOptional(senderHint, to: statement, at: 6)
-        try bindOptional(senderHandle, to: statement, at: 7)
-        try check(sqlite3_bind_int(statement, 8, outbound ? 1 : 0))
-        try bind(body, to: statement, at: 9)
-        try check(sqlite3_bind_int(statement, 10, isDeleted ? 1 : 0))
-        try check(
-            sqlite3_bind_int64(statement, 11, Int64(createdAt.timeIntervalSince1970 * 1_000))
-        )
-        try bindOptional(deliveryState, to: statement, at: 12)
-        try bindOptionalInt(reception?.rssiDbm.map(Int64.init), to: statement, at: 13)
-        try bindOptionalInt(reception?.snrCentibels.map(Int64.init), to: statement, at: 14)
-        try bindOptionalInt(reception?.hopCount.map(Int64.init), to: statement, at: 15)
-        try bindOptionalInt(
-            reception.map { Int64($0.sourceAuthenticated ? 1 : 0) },
-            to: statement,
-            at: 16
-        )
-        try check(sqlite3_bind_int(statement, 17, isReaction ? 1 : 0))
-        // A resolved reference names its target the way a live handle
-        // would; a missing one keeps only the wire coordinates it arrived
-        // with, which is what leaves its target unfound.
-        let target: UInt32? = if case let .message(handle) = regarding { handle } else { nil }
-        try bindOptional(target == nil ? nil : sessionID, to: statement, at: 18)
-        try bindOptionalInt(target.map(Int64.init), to: statement, at: 19)
-        try bindOptionalInt(target.map(Int64.init), to: statement, at: 20)
-        let missing = if case .missing = regarding { true } else { false }
-        try bindOptionalInt(missing ? 0 : nil, to: statement, at: 21)
-        try stepDone(statement)
-    }
-
-    /// Fill a conversation with generated messages, for exercising a transcript
-    /// at a size no test account reaches by hand.
-    ///
-    /// Written straight to the table in one transaction rather than through
-    /// `applyChatMutations`: that path stamps `created_at_ms` from the clock, so
-    /// every seeded row would share a timestamp and the transcript would have no
-    /// spread to page through. Timestamps here run backward from now in
-    /// one-minute steps, in occasional same-millisecond clusters, which is what
-    /// a real batch produces—with a lull of several hours every so often, so
-    /// the seeded transcript spans days and carries the date separators a real
-    /// one does.
-    func seedGeneratedMessages(
-        ownerIdentityID: String,
-        conversationAddress: String,
-        count: Int
-    ) throws {
-        try transaction {
-            let statement = try prepare(
-                """
-                INSERT OR REPLACE INTO chat_message (
-                    owner_identity_id, session_id, handle, conversation_address,
-                    direction, body, deleted, created_at_ms, presence, delivery_state
-                ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, 0, ?)
-                """
-            )
-            defer { sqlite3_finalize(statement) }
-            let sessionID = "9\(Self.nowMilliseconds() % 1_000_000)"
-            // The timeline is laid out first so the newest message still lands
-            // on now: the lulls make the total span depend on the pattern, not
-            // on the count alone.
-            var offsets: [Int64] = []
-            offsets.reserveCapacity(count)
-            var offset: Int64 = 0
-            var clusterRemaining = 0
-            var clusters = 0
-            for index in 0..<count {
-                if clusterRemaining == 0 {
-                    clusterRemaining = 3 + (index % 5)
-                    if index > 0 {
-                        // Counted in clusters rather than messages: cluster
-                        // lengths vary, so a condition on the message index
-                        // lands on a cluster boundary only by coincidence.
-                        offset += clusters % 9 == 0 ? 5 * 3_600_000 : 60_000
-                    }
-                    clusters += 1
-                }
-                clusterRemaining -= 1
-                offsets.append(offset)
-            }
-            let start = Self.nowMilliseconds() - (offsets.last ?? 0)
-            for index in 0..<count {
-                let createdAt = start + offsets[index]
-                let outbound = index % 3 == 0
-                sqlite3_reset(statement)
-                try bind(ownerIdentityID, to: statement, at: 1)
-                try bind(sessionID, to: statement, at: 2)
-                try check(sqlite3_bind_int64(statement, 3, Int64(index)))
-                try bind(conversationAddress, to: statement, at: 4)
-                try check(sqlite3_bind_int(statement, 5, outbound ? 1 : 0))
-                try bind(
-                    "Seeded message \(index + 1) of \(count). "
-                        + String(repeating: "Filler text. ", count: 1 + (index % 6)),
-                    to: statement,
-                    at: 6
-                )
-                try check(sqlite3_bind_int64(statement, 7, createdAt))
-                // "acknowledged" is the app's word for delivered; an unknown
-                // state would caption every seeded bubble "Sending…".
-                try bindOptional(outbound ? "acknowledged" : nil, to: statement, at: 8)
-                try stepDone(statement)
-            }
-        }
-    }
-    #endif
-
-    /// Whether anything sits behind `cursor` in this conversation. One index
-    /// seek, so a forward read can answer for the side it did not look at.
-    private func hasMessages(
-        ownerIdentityID: String,
-        conversationAddress: String,
-        before cursor: ChatMessageCursor
-    ) throws -> Bool {
-        let statement = try prepare(
-            """
-            SELECT 1 FROM chat_message
-            WHERE owner_identity_id = ? AND conversation_address = ?
-              AND is_reaction = 0
-              AND (created_at_ms, rowid) < (?, ?)
-            LIMIT 1
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(ownerIdentityID, to: statement, at: 1)
-        try bind(conversationAddress, to: statement, at: 2)
-        try check(sqlite3_bind_int64(statement, 3, cursor.createdAtMilliseconds))
-        try check(sqlite3_bind_int64(statement, 4, cursor.rowID))
-        switch sqlite3_step(statement) {
-        case SQLITE_ROW: return true
-        case SQLITE_DONE: return false
-        case let code: throw Self.sqliteFailure(database, code)
-        }
+        })
     }
 
     /// The transcript around one message, for opening a search result in
@@ -3702,32 +1558,15 @@ actor SQLiteApplicationStore {
         handle: UInt32,
         radius: Int
     ) throws -> StoredChatMessagePage? {
-        guard let anchor = try chatMessageCursor(
-            ownerIdentityID: ownerIdentityID,
-            conversationAddress: conversationAddress,
-            sessionID: sessionID,
-            handle: handle
-        ) else { return nil }
-        let older = try chatMessagePage(
-            ownerIdentityID: ownerIdentityID,
-            conversationAddress: conversationAddress,
-            before: anchor,
-            limit: radius
-        )
-        // Including the anchor keeps the centered message in the window even
-        // when nothing follows it.
-        let newer = try chatMessagePage(
-            ownerIdentityID: ownerIdentityID,
-            conversationAddress: conversationAddress,
-            after: anchor,
-            including: true,
-            limit: radius + 1
-        )
-        return StoredChatMessagePage(
-            messages: older.messages + newer.messages,
-            hasOlder: older.hasOlder,
-            hasNewer: newer.hasNewer
-        )
+        try run {
+            try $0.chatMessageWindow(
+                ownerIdentityId: ownerIdentityID,
+                conversationAddress: conversationAddress,
+                message: MobileStoredChatMessageRefRecord(sessionId: sessionID, handle: handle),
+                radius: UInt32(clamping: radius)
+            )
+        }
+        .map(StoredChatMessagePage.init)
     }
 
     /// Where a message sits in its conversation's order, by the durable
@@ -3738,27 +1577,14 @@ actor SQLiteApplicationStore {
         sessionID: String,
         handle: UInt32
     ) throws -> ChatMessageCursor? {
-        let statement = try prepare(
-            """
-            SELECT created_at_ms, rowid FROM chat_message
-            WHERE owner_identity_id = ? AND session_id = ? AND handle = ?
-              AND conversation_address = ?
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(ownerIdentityID, to: statement, at: 1)
-        try bind(sessionID, to: statement, at: 2)
-        try check(sqlite3_bind_int64(statement, 3, Int64(handle)))
-        try bind(conversationAddress, to: statement, at: 4)
-        switch sqlite3_step(statement) {
-        case SQLITE_ROW:
-            return ChatMessageCursor(
-                createdAtMilliseconds: sqlite3_column_int64(statement, 0),
-                rowID: sqlite3_column_int64(statement, 1)
+        try run {
+            try $0.chatMessageCursor(
+                ownerIdentityId: ownerIdentityID,
+                conversationAddress: conversationAddress,
+                message: MobileStoredChatMessageRefRecord(sessionId: sessionID, handle: handle)
             )
-        case SQLITE_DONE: return nil
-        case let code: throw Self.sqliteFailure(database, code)
         }
+        .map(ChatMessageCursor.init)
     }
 
     /// How many messages a conversation holds. Deliberately its own call: this
@@ -3768,2324 +1594,601 @@ actor SQLiteApplicationStore {
         ownerIdentityID: String,
         conversationAddress: String
     ) throws -> Int {
-        let statement = try prepare(
-            """
-            SELECT COUNT(*) FROM chat_message
-            WHERE owner_identity_id = ? AND conversation_address = ? AND is_reaction = 0
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(ownerIdentityID, to: statement, at: 1)
-        try bind(conversationAddress, to: statement, at: 2)
-        guard sqlite3_step(statement) == SQLITE_ROW else {
-            throw Self.sqliteFailure(database, sqlite3_errcode(database))
-        }
-        return Int(sqlite3_column_int64(statement, 0))
+        Int(try run { try $0.chatMessageCount(ownerIdentityId: ownerIdentityID, conversationAddress: conversationAddress) })
     }
 
-    /// Both newest-first reads: take the page off the end of the index range,
-    /// then reverse into the transcript's own order.
-    private func descendingPage(
+    #if DEBUG
+    /// Write one staged transcript exactly as described, reactions included.
+    ///
+    /// Separate from ``seedGeneratedMessages`` because the two answer different
+    /// questions: that one wants volume and does not care what it says, this
+    /// one wants a specific conversation to read plausibly in a screenshot, so
+    /// every body, sender and instant is dictated by the caller.
+    func seedStagedTranscript(
         ownerIdentityID: String,
         conversationAddress: String,
-        cursorClause: String?,
-        cursor: ChatMessageCursor?,
-        limit: Int,
-        hasNewer: Bool
-    ) throws -> StoredChatMessagePage {
-        let bounded = min(max(limit, 1), Self.chatMessagePageLimit)
-        let statement = try prepare(
-            """
-            SELECT \(Self.chatMessageColumns)
-            FROM chat_message
-            WHERE owner_identity_id = ? AND conversation_address = ?
-              AND is_reaction = 0
-              \(cursorClause ?? "")
-            ORDER BY created_at_ms DESC, rowid DESC
-            LIMIT ?
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(ownerIdentityID, to: statement, at: 1)
-        try bind(conversationAddress, to: statement, at: 2)
-        var index: Int32 = 3
-        if let cursor {
-            try check(sqlite3_bind_int64(statement, index, cursor.createdAtMilliseconds))
-            try check(sqlite3_bind_int64(statement, index + 1, cursor.rowID))
-            index += 2
-        }
-        try check(sqlite3_bind_int64(statement, index, Int64(bounded) + 1))
-        var messages = try readChatMessages(statement)
-        let hasOlder = messages.count > bounded
-        if hasOlder { messages.removeLast(messages.count - bounded) }
-        return try withAnnotations(
-            ownerIdentityID: ownerIdentityID,
-            StoredChatMessagePage(
-                messages: messages.reversed(),
-                hasOlder: hasOlder,
-                hasNewer: hasNewer
-            )
-        )
-    }
-
-    private func readChatMessages(_ statement: OpaquePointer) throws -> [StoredChatMessage] {
-        var messages: [StoredChatMessage] = []
-        while true {
-            switch sqlite3_step(statement) {
-            case SQLITE_ROW: messages.append(Self.storedChatMessage(statement))
-            case SQLITE_DONE: return messages
-            case let code: throw Self.sqliteFailure(database, code)
-            }
-        }
-    }
-
-    /// Attach what a page's messages carry from other rows: the reactions
-    /// about them, and the quotes of what they reply to.
-    private func withAnnotations(
-        ownerIdentityID: String,
-        _ page: StoredChatMessagePage
-    ) throws -> StoredChatMessagePage {
-        try withQuotes(
-            ownerIdentityID: ownerIdentityID,
-            withReactions(ownerIdentityID: ownerIdentityID, page)
-        )
-    }
-
-    /// Attach the quote each reply carries of its original.
-    ///
-    /// The original may sit anywhere in history, so, like reactions, this is
-    /// a second read keyed by identity. A reply whose original has not been
-    /// found, or is no longer stored, quotes it as unavailable.
-    private func withQuotes(
-        ownerIdentityID: String,
-        _ page: StoredChatMessagePage
-    ) throws -> StoredChatMessagePage {
-        guard page.messages.contains(where: \.isReply) else { return page }
-        let targets = Array(Set(page.messages.compactMap(\.replyTarget)))
-        var originals: [StoredMessageRef: StoredMessageQuote.Original] = [:]
-        for chunk in stride(from: 0, to: targets.count, by: 200).map({ start in
-            targets[start..<min(start + 200, targets.count)]
-        }) {
-            let tuples = Array(repeating: "(?, ?)", count: chunk.count).joined(separator: ", ")
-            let statement = try prepare(
-                """
-                SELECT session_id, handle, body, direction, deleted,
-                    sender_address, sender_hint, sender_handle
-                FROM chat_message
-                WHERE owner_identity_id = ? AND presence = 0
-                    AND (session_id, handle) IN (\(tuples))
-                """
-            )
-            defer { sqlite3_finalize(statement) }
-            try bind(ownerIdentityID, to: statement, at: 1)
-            var index: Int32 = 2
-            for target in chunk {
-                try bind(target.sessionID, to: statement, at: index)
-                try check(sqlite3_bind_int64(statement, index + 1, Int64(target.handle)))
-                index += 2
-            }
-            rows: while true {
-                switch sqlite3_step(statement) {
-                case SQLITE_ROW:
-                    let ref = StoredMessageRef(
-                        sessionID: Self.stringColumn(statement, at: 0),
-                        handle: UInt32(sqlite3_column_int64(statement, 1))
-                    )
-                    originals[ref] = StoredMessageQuote.Original(
-                        ref: ref,
-                        body: Self.stringColumn(statement, at: 2),
-                        outbound: sqlite3_column_int(statement, 3) == 1,
-                        isDeleted: sqlite3_column_int(statement, 4) != 0,
-                        senderAddress: Self.optionalStringColumn(statement, at: 5),
-                        senderHint: Self.optionalDataColumn(statement, at: 6),
-                        senderHandle: Self.optionalStringColumn(statement, at: 7)
-                    )
-                case SQLITE_DONE:
-                    break rows
-                case let code:
-                    throw Self.sqliteFailure(database, code)
-                }
-            }
-        }
-        return StoredChatMessagePage(
-            messages: page.messages.map { message in
-                guard message.isReply else { return message }
-                var message = message
-                message.quote = StoredMessageQuote(
-                    original: message.replyTarget.flatMap { originals[$0] }
-                )
-                return message
-            },
-            hasOlder: page.hasOlder,
-            hasNewer: page.hasNewer
-        )
-    }
-
-    /// Attach each message's reactions.
-    ///
-    /// Reactions are not transcript rows, and the messages they are about may
-    /// sit anywhere in history, so this is a second read keyed by the page's
-    /// own identities rather than anything the page query could join.
-    private func withReactions(
-        ownerIdentityID: String,
-        _ page: StoredChatMessagePage
-    ) throws -> StoredChatMessagePage {
-        guard !page.messages.isEmpty else { return page }
-        let grouped = try reactions(
-            ownerIdentityID: ownerIdentityID,
-            targets: page.messages.map { ($0.sessionID, $0.handle) }
-        )
-        guard !grouped.isEmpty else { return page }
-        return StoredChatMessagePage(
-            messages: page.messages.map { message in
-                var message = message
-                message.reactions = grouped[message.id] ?? []
-                return message
-            },
-            hasOlder: page.hasOlder,
-            hasNewer: page.hasNewer
-        )
-    }
-
-    /// Live reactions for the given messages, keyed by `StoredChatMessage.id`.
-    ///
-    /// A sender has one reaction per message: the newest emote they sent about
-    /// it wins, and if that one has no body it is a withdrawal and they have
-    /// none. Both rules are settled here rather than on the wire, where every
-    /// emote is just another message.
-    private func reactions(
-        ownerIdentityID: String,
-        targets: [(sessionID: String, handle: UInt32)]
-    ) throws -> [String: [StoredMessageReaction]] {
-        // Newest-per-sender needs arrival order, and a withdrawal has to be
-        // able to erase what came before it, so fold rather than aggregate.
-        var newest: [String: [String: StoredMessageReaction]] = [:]
-        var order: [String: [String]] = [:]
-        // Two bound parameters per target, well inside SQLite's limit while
-        // keeping the number of statements small.
-        for chunk in stride(from: 0, to: targets.count, by: 200).map({ start in
-            targets[start..<min(start + 200, targets.count)]
-        }) {
-            let tuples = Array(repeating: "(?, ?)", count: chunk.count).joined(separator: ", ")
-            let statement = try prepare(
-                """
-                SELECT regarding_target_session_id, regarding_target_handle,
-                    body, direction, sender_address, sender_hint,
-                    session_id, handle, wire_id, epoch, created_at_ms, delivery_state,
-                    COALESCE(forward_secret, 0)
-                FROM chat_message
-                WHERE owner_identity_id = ? AND is_reaction = 1 AND deleted = 0
-                    AND (regarding_target_session_id, regarding_target_handle) IN (\(tuples))
-                ORDER BY created_at_ms ASC, rowid ASC
-                """
-            )
-            defer { sqlite3_finalize(statement) }
-            try bind(ownerIdentityID, to: statement, at: 1)
-            var index: Int32 = 2
-            for target in chunk {
-                try bind(target.sessionID, to: statement, at: index)
-                try check(sqlite3_bind_int64(statement, index + 1, Int64(target.handle)))
-                index += 2
-            }
-            rows: while true {
-                switch sqlite3_step(statement) {
-                case SQLITE_ROW:
-                    let key = "\(Self.stringColumn(statement, at: 0))"
-                        + ":\(sqlite3_column_int64(statement, 1))"
-                    let outbound = sqlite3_column_int(statement, 3) == 1
-                    let senderAddress = Self.optionalStringColumn(statement, at: 4)
-                    let senderHint = Self.optionalDataColumn(statement, at: 5)
-                    // Whoever sent it, however little we know about them: our
-                    // own reactions collapse to one sender, and a member we
-                    // cannot name yet is still distinct by hint.
-                    let sender = outbound
-                        ? "me"
-                        : (senderAddress ?? senderHint.map { $0.map { String(format: "%02x", $0) }
-                            .joined() } ?? "peer")
-                    let reaction = StoredMessageReaction(
-                        body: Self.stringColumn(statement, at: 2),
-                        outbound: outbound,
-                        senderAddress: senderAddress,
-                        senderHint: senderHint,
-                        sessionID: Self.stringColumn(statement, at: 6),
-                        handle: UInt32(sqlite3_column_int64(statement, 7)),
-                        wireID: Self.optionalIntColumn(statement, at: 8).map { UInt8($0) },
-                        epoch: Self.optionalIntColumn(statement, at: 9).map { UInt16($0) },
-                        createdAtMilliseconds: sqlite3_column_int64(statement, 10),
-                        deliveryState: Self.optionalStringColumn(statement, at: 11),
-                        forwardSecret: outbound && sqlite3_column_int(statement, 12) != 0
-                    )
-                    if newest[key]?[sender] == nil {
-                        order[key, default: []].append(sender)
-                    }
-                    newest[key, default: [:]][sender] = reaction
-                case SQLITE_DONE:
-                    break rows
-                case let code:
-                    throw Self.sqliteFailure(database, code)
-                }
-            }
-        }
-        return newest.reduce(into: [:]) { result, entry in
-            let live = (order[entry.key] ?? []).compactMap { sender -> StoredMessageReaction? in
-                guard let reaction = entry.value[sender], !reaction.body.isEmpty else { return nil }
-                return reaction
-            }
-            if !live.isEmpty { result[entry.key] = live }
-        }
-    }
-
-    private static func storedChatMessage(_ statement: OpaquePointer) -> StoredChatMessage {
-        StoredChatMessage(
-            sessionID: stringColumn(statement, at: 0),
-            handle: UInt32(sqlite3_column_int64(statement, 1)),
-            body: stringColumn(statement, at: 2),
-            outbound: sqlite3_column_int(statement, 3) == 1,
-            deliveryState: optionalStringColumn(statement, at: 4),
-            isDeleted: sqlite3_column_int(statement, 5) != 0,
-            createdAtMilliseconds: sqlite3_column_int64(statement, 6),
-            wireID: sqlite3_column_type(statement, 7) == SQLITE_NULL
-                ? nil : UInt8(truncatingIfNeeded: sqlite3_column_int64(statement, 7)),
-            epoch: sqlite3_column_type(statement, 8) == SQLITE_NULL
-                ? nil : UInt16(truncatingIfNeeded: sqlite3_column_int64(statement, 8)),
-            isEdited: sqlite3_column_int(statement, 9) != 0,
-            presence: Int(sqlite3_column_int64(statement, 10)),
-            receivedLate: sqlite3_column_int(statement, 11) != 0,
-            deliveredLate: sqlite3_column_int(statement, 12) != 0,
-            originalBody: optionalStringColumn(statement, at: 13),
-            senderAddress: optionalStringColumn(statement, at: 14),
-            senderHint: optionalDataColumn(statement, at: 15),
-            senderHandle: optionalStringColumn(statement, at: 16),
-            reception: reception(statement, at: 17),
-            rowID: sqlite3_column_int64(statement, 23),
-            deliveredFlooded: sqlite3_column_int(statement, 24) != 0,
-            isReply: sqlite3_column_int(statement, 25) != 0,
-            isEditOfUnknown: sqlite3_column_int(statement, 31) != 0,
-            isStatus: sqlite3_column_int(statement, 32) != 0,
-            isForwardSecret: sqlite3_column_int(statement, 33) != 0,
-            replyTarget: optionalStringColumn(statement, at: 26).map { session in
-                StoredMessageRef(
-                    sessionID: session,
-                    handle: UInt32(truncatingIfNeeded: sqlite3_column_int64(statement, 27))
-                )
-            },
-            repeats: repeats(statement, at: 28)
-        )
-    }
-
-    /// The repeaters heard carrying a message, from the progress stamp and
-    /// the per-fragment tallies `chatMessageColumns` folds in. Fragments are
-    /// each heard by much the same repeaters, so named ones are merged and
-    /// anonymous ones are counted as the most any fragment heard.
-    private static func repeats(_ statement: OpaquePointer, at offset: Int32) -> StoredMessageRepeats? {
-        guard sqlite3_column_type(statement, offset) != SQLITE_NULL else { return nil }
-        let progressAt = Date(
-            timeIntervalSince1970: Double(sqlite3_column_int64(statement, offset)) / 1_000
-        )
-        var hints: [Data] = []
-        for run in (optionalStringColumn(statement, at: offset + 1) ?? "").split(separator: ",") {
-            for hint in repeaterHints(hexData(run)) where !hints.contains(hint) {
-                hints.append(hint)
-            }
-        }
-        return StoredMessageRepeats(
-            repeaters: hints,
-            anonymous: Int(sqlite3_column_int64(statement, offset + 2)),
-            progressAt: progressAt
-        )
-    }
-
-    /// Remove a conversation's message history, outbound archive, and
-    /// delivery fragments. Runs inside a caller-held transaction; the
-    /// conversation row itself is the caller's to delete.
-    private func purgeConversationHistory(
-        ownerIdentityID: String,
-        conversationAddress: String
-    ) throws {
-        let fragments = try prepare(
-            """
-            DELETE FROM chat_delivery_fragment
-            WHERE owner_identity_id = ? AND (session_id, handle) IN (
-                SELECT delivery_session_id, delivery_handle FROM chat_message
-                WHERE owner_identity_id = ? AND conversation_address = ?
-            )
-            """
-        )
-        defer { sqlite3_finalize(fragments) }
-        try bind(ownerIdentityID, to: fragments, at: 1)
-        try bind(ownerIdentityID, to: fragments, at: 2)
-        try bind(conversationAddress, to: fragments, at: 3)
-        try stepDone(fragments)
-
-        for table in ["chat_message", "chat_outbound_archive"] {
-            let statement = try prepare(
-                "DELETE FROM \(table) WHERE owner_identity_id = ? AND conversation_address = ?"
-            )
-            defer { sqlite3_finalize(statement) }
-            try bind(ownerIdentityID, to: statement, at: 1)
-            try bind(conversationAddress, to: statement, at: 2)
-            try stepDone(statement)
-        }
-    }
-
-    private func readNodes(_ statement: OpaquePointer) throws -> [StoredNode] {
-        var nodes: [StoredNode] = []
-        while true {
-            switch sqlite3_step(statement) {
-            case SQLITE_ROW: nodes.append(storedNode(statement))
-            case SQLITE_DONE: return nodes
-            case let code: throw Self.sqliteFailure(database, code)
-            }
-        }
-    }
-
-    /// The node columns, in the order `storedNode` reads them.
-    private static let nodeColumnNames = [
-        "id", "owner_identity_id", "public_address", "alias", "advertised_name",
-        "system_role", "node_kind", "advertisement", "advertisement_authenticated",
-        "last_heard_at", "is_saved", "is_favorite", "on_dev_identity", "notify_when_heard",
-        "advertisement_received_at",
-    ]
-
-    private static let nodeColumnCount = Int32(nodeColumnNames.count)
-
-    private static func nodeColumns(prefix: String) -> String {
-        nodeColumnNames.map { prefix + $0 }.joined(separator: ", ")
-    }
-
-    private func storedNode(_ statement: OpaquePointer, offset: Int32 = 0) -> StoredNode {
-        StoredNode(
-            id: sqlite3_column_int64(statement, offset),
-            ownerIdentityID: Self.stringColumn(statement, at: offset + 1),
-            publicAddress: Self.stringColumn(statement, at: offset + 2),
-            alias: Self.optionalStringColumn(statement, at: offset + 3),
-            advertisedName: Self.optionalStringColumn(statement, at: offset + 4),
-            systemRole: Self.optionalStringColumn(statement, at: offset + 5),
-            nodeKind: Self.optionalStringColumn(statement, at: offset + 6),
-            advertisement: Self.optionalDataColumn(statement, at: offset + 7),
-            advertisementAuthenticated: sqlite3_column_int(statement, offset + 8) != 0,
-            lastHeardAt: Self.optionalDateColumn(statement, at: offset + 9),
-            isSaved: sqlite3_column_int(statement, offset + 10) != 0,
-            isFavorite: sqlite3_column_int(statement, offset + 11) != 0,
-            onDeviceIdentity: sqlite3_column_int(statement, offset + 12) != 0,
-            notifyWhenHeard: sqlite3_column_int(statement, offset + 13) != 0,
-            advertisementReceivedAt: Self.optionalDateColumn(statement, at: offset + 14)
-        )
-    }
-
-    private func upsertChatCheckpoint(
-        ownerIdentityID: String,
-        _ checkpoint: MobileChatCheckpointRecord
-    ) throws {
-        let statement = try prepare(
-            """
-            INSERT INTO chat_stream_checkpoint (
-                owner_identity_id, conversation_address, next_id, epoch, updated_at_ms
-            ) VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(owner_identity_id, conversation_address) DO UPDATE SET
-                next_id = excluded.next_id,
-                epoch = excluded.epoch,
-                updated_at_ms = excluded.updated_at_ms
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(ownerIdentityID, to: statement, at: 1)
-        try bind(checkpoint.conversationAddress, to: statement, at: 2)
-        try check(sqlite3_bind_int(statement, 3, Int32(checkpoint.nextId)))
-        try check(sqlite3_bind_int(statement, 4, Int32(checkpoint.epoch)))
-        try check(sqlite3_bind_int64(statement, 5, Self.nowMilliseconds()))
-        try stepDone(statement)
-    }
-
-    /// Remove every archived fragment stored under one message ID (the
-    /// unfragmented entry included): its content was superseded by an edit or
-    /// retracted by a delete and must never be resent.
-    private func deleteChatArchive(
-        ownerIdentityID: String,
-        _ delete: MobileChatArchiveDeleteRecord
-    ) throws {
-        let statement = try prepare(
-            """
-            DELETE FROM chat_outbound_archive
-            WHERE owner_identity_id = ? AND conversation_address = ? AND message_id = ?
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(ownerIdentityID, to: statement, at: 1)
-        try bind(delete.conversationAddress, to: statement, at: 2)
-        try check(sqlite3_bind_int(statement, 3, Int32(delete.messageId)))
-        try stepDone(statement)
-    }
-
-    private func upsertChatArchive(
-        ownerIdentityID: String,
-        _ archive: MobileChatArchiveRecord
-    ) throws {
-        let statement = try prepare(
-            """
-            INSERT INTO chat_outbound_archive (
-                owner_identity_id, conversation_address, message_id, fragment_index, payload
-            ) VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(owner_identity_id, conversation_address, message_id, fragment_index)
-            DO UPDATE SET payload = excluded.payload
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(ownerIdentityID, to: statement, at: 1)
-        try bind(archive.conversationAddress, to: statement, at: 2)
-        try check(sqlite3_bind_int(statement, 3, Int32(archive.messageId)))
-        try check(sqlite3_bind_int(statement, 4, archive.fragmentIndex.map(Int32.init) ?? -1))
-        try bind(archive.payload, to: statement, at: 5)
-        try stepDone(statement)
-    }
-
-    /// Returns whether the mutation materialized a new message row instead of
-    /// revising one—see ``materializeOrphanEdit``.
-    @discardableResult
-    private func applyChatMutation(
-        ownerIdentityID: String,
-        _ mutation: MobileChatMutationRecord,
-        silentTestsIn: String?
-    ) throws -> Bool {
-        let sessionID = String(mutation.sessionId)
-        let ledger = try prepare(
-            """
-            INSERT INTO chat_applied_mutation (owner_identity_id, session_id, handle, revision)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(owner_identity_id, session_id, handle) DO UPDATE SET
-                revision = excluded.revision
-            WHERE excluded.revision > chat_applied_mutation.revision
-            """
-        )
-        defer { sqlite3_finalize(ledger) }
-        try bind(ownerIdentityID, to: ledger, at: 1)
-        try bind(sessionID, to: ledger, at: 2)
-        try check(sqlite3_bind_int64(ledger, 3, Int64(mutation.handle)))
-        try check(sqlite3_bind_int64(ledger, 4, Int64(mutation.revision)))
-        try stepDone(ledger)
-        guard sqlite3_changes(database) > 0 else { return false }
-
-        switch mutation.kind {
-        case .insert:
-            guard let peerAddress = mutation.conversationAddress,
-                  let direction = mutation.direction,
-                  let body = mutation.body
-            else { return false }
-            // An emote—status text about another message—is a reaction
-            // rather than a transcript row of its own; anything else about
-            // another message is a reply to it. Resolve what either is about
-            // now, while the reference is in hand: the target may be named by
-            // a live handle or, far more often, by the wire coordinates of a
-            // row stored in some earlier session.
-            let isRegarding = mutation.regardingHandle != nil || mutation.regardingWireId != nil
-            let isReaction = mutation.messageType == 1 && isRegarding
-            let regardingTarget = isRegarding
-                ? try resolveRegardingTarget(
-                    ownerIdentityID: ownerIdentityID,
-                    sessionID: sessionID,
-                    conversationAddress: peerAddress,
-                    mutation: mutation
-                )
-                : nil
-            let statement = try prepare(
-                """
-                INSERT INTO chat_message (
-                    owner_identity_id, session_id, handle, conversation_address, sender_address,
-                    direction, message_type, wire_id, epoch, client_token,
-                    sender_handle, regarding_handle, background_color, text_color, body,
-                    complete, present_fragments, fragment_count, finalized,
-                    delivery_state, deleted, created_at_ms, presence, received_late,
-                    sender_hint, rx_rssi_dbm, rx_snr_cb, rx_lqi, rx_hop_count,
-                    rx_route_hints, rx_source_authenticated,
-                    is_reaction, regarding_wire_id, regarding_direction, regarding_sender_hint,
-                    regarding_target_session_id, regarding_target_handle,
-                    delivery_session_id, delivery_handle, silent,
-                    regarding_unknown, unknown_original, forward_secret
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?,
-                          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(owner_identity_id, session_id, handle) DO UPDATE SET
-                    body = excluded.body,
-                    complete = excluded.complete,
-                    present_fragments = excluded.present_fragments,
-                    fragment_count = excluded.fragment_count,
-                    finalized = excluded.finalized,
-                    message_type = excluded.message_type,
-                    sender_handle = excluded.sender_handle,
-                    background_color = excluded.background_color,
-                    text_color = excluded.text_color,
-                    presence = excluded.presence,
-                    received_late = MAX(chat_message.received_late, excluded.received_late),
-                    regarding_unknown =
-                        MAX(chat_message.regarding_unknown, excluded.regarding_unknown),
-                    unknown_original =
-                        MAX(chat_message.unknown_original, excluded.unknown_original),
-                    -- A placeholder filled in later carries the metadata of
-                    -- the frame that filled it; keep whichever row has any.
-                    sender_hint = COALESCE(excluded.sender_hint, chat_message.sender_hint),
-                    rx_rssi_dbm = COALESCE(excluded.rx_rssi_dbm, chat_message.rx_rssi_dbm),
-                    rx_snr_cb = COALESCE(excluded.rx_snr_cb, chat_message.rx_snr_cb),
-                    rx_lqi = COALESCE(excluded.rx_lqi, chat_message.rx_lqi),
-                    rx_hop_count = COALESCE(excluded.rx_hop_count, chat_message.rx_hop_count),
-                    rx_route_hints =
-                        COALESCE(excluded.rx_route_hints, chat_message.rx_route_hints),
-                    rx_source_authenticated = COALESCE(
-                        excluded.rx_source_authenticated, chat_message.rx_source_authenticated
-                    ),
-                    -- So does what it is about: a repaired gap may turn out
-                    -- to be a reply or a reaction.
-                    is_reaction = MAX(chat_message.is_reaction, excluded.is_reaction),
-                    regarding_handle =
-                        COALESCE(excluded.regarding_handle, chat_message.regarding_handle),
-                    regarding_wire_id =
-                        COALESCE(excluded.regarding_wire_id, chat_message.regarding_wire_id),
-                    regarding_direction =
-                        COALESCE(excluded.regarding_direction, chat_message.regarding_direction),
-                    regarding_sender_hint = COALESCE(
-                        excluded.regarding_sender_hint, chat_message.regarding_sender_hint
-                    ),
-                    regarding_target_session_id = COALESCE(
-                        excluded.regarding_target_session_id,
-                        chat_message.regarding_target_session_id
-                    ),
-                    regarding_target_handle = COALESCE(
-                        excluded.regarding_target_handle, chat_message.regarding_target_handle
-                    ),
-                    silent = MAX(chat_message.silent, excluded.silent),
-                    forward_secret = COALESCE(excluded.forward_secret, chat_message.forward_secret)
-                """
-            )
-            defer { sqlite3_finalize(statement) }
-            try bind(ownerIdentityID, to: statement, at: 1)
-            try bind(sessionID, to: statement, at: 2)
-            try check(sqlite3_bind_int64(statement, 3, Int64(mutation.handle)))
-            try bind(peerAddress, to: statement, at: 4)
-            try bindOptional(mutation.senderAddress, to: statement, at: 5)
-            try check(sqlite3_bind_int(statement, 6, direction == .outbound ? 1 : 0))
-            try bindOptionalInt(mutation.messageType.map(Int64.init), to: statement, at: 7)
-            try bindOptionalInt(mutation.wireId.map(Int64.init), to: statement, at: 8)
-            try bindOptionalInt(mutation.epoch.map(Int64.init), to: statement, at: 9)
-            try bindOptionalInt(mutation.clientToken.map(Int64.init), to: statement, at: 10)
-            try bindOptional(mutation.senderHandle, to: statement, at: 11)
-            try bindOptionalInt(mutation.regardingHandle.map(Int64.init), to: statement, at: 12)
-            try bindOptional(mutation.backgroundColor, to: statement, at: 13)
-            try bindOptional(mutation.textColor, to: statement, at: 14)
-            try bind(body, to: statement, at: 15)
-            try bindOptionalBool(mutation.complete, to: statement, at: 16)
-            try bindOptionalInt(mutation.presentFragments.map(Int64.init), to: statement, at: 17)
-            try bindOptionalInt(mutation.fragmentCount.map(Int64.init), to: statement, at: 18)
-            try bindOptionalBool(mutation.finalized, to: statement, at: 19)
-            try bindOptional(direction == .outbound ? "pending" : nil, to: statement, at: 20)
-            // A message replayed from the radio's offline queue is stamped
-            // when it was received off the air, not when the drain landed it
-            // here, so a drained backlog sorts and reads correctly.
-            let bufferedAgeMs = Int64(mutation.rx?.bufferedAgeSeconds ?? 0) * 1000
-            try check(sqlite3_bind_int64(statement, 21, Self.nowMilliseconds() - bufferedAgeMs))
-            try check(sqlite3_bind_int(statement, 22, presenceCode(mutation.presence)))
-            try check(sqlite3_bind_int(statement, 23, mutation.receivedLate ? 1 : 0))
-            try bindOptional(mutation.senderHint.map { Data($0) }, to: statement, at: 24)
-            try bindOptionalInt(mutation.rx?.rssiDbm.map(Int64.init), to: statement, at: 25)
-            try bindOptionalInt(mutation.rx?.snrCentibels.map(Int64.init), to: statement, at: 26)
-            try bindOptionalInt(mutation.rx?.lqi.map(Int64.init), to: statement, at: 27)
-            try bindOptionalInt(mutation.rx?.hopCount.map(Int64.init), to: statement, at: 28)
-            try bindOptional(mutation.rx.map { Self.packRouteHints($0.routeHints) },
-                             to: statement, at: 29)
-            try bindOptionalInt(
-                mutation.rx.map { Int64($0.sourceAuthenticated ? 1 : 0) },
-                to: statement,
-                at: 30
-            )
-            try check(sqlite3_bind_int(statement, 31, isReaction ? 1 : 0))
-            try bindOptionalInt(mutation.regardingWireId.map(Int64.init), to: statement, at: 32)
-            try bindOptionalInt(
-                mutation.regardingDirection.map { Int64($0 == .outbound ? 1 : 0) },
-                to: statement,
-                at: 33
-            )
-            try bindOptional(mutation.regardingSenderHint.map { Data($0) }, to: statement, at: 34)
-            try bindOptional(regardingTarget?.sessionID, to: statement, at: 35)
-            try bindOptionalInt(regardingTarget.map { Int64($0.handle) }, to: statement, at: 36)
-            // A fresh row reports its own transmission until an edit re-aims it.
-            try bind(sessionID, to: statement, at: 37)
-            try check(sqlite3_bind_int64(statement, 38, Int64(mutation.handle)))
-            let silent = direction == .inbound && peerAddress == silentTestsIn
-                && isTestMessageBody(body: body)
-            try check(sqlite3_bind_int(statement, 39, silent ? 1 : 0))
-            try check(sqlite3_bind_int(statement, 40, mutation.regardingUnknown ? 1 : 0))
-            try check(sqlite3_bind_int(statement, 41, mutation.unknownOriginal ? 1 : 0))
-            try bindOptionalBool(mutation.forwardSecret, to: statement, at: 42)
-            try stepDone(statement)
-            // A reaction or a reply can outrun the message it is about—
-            // repaired gaps and channel-group reordering both do it. Whenever
-            // a real message lands, adopt whatever was already waiting on it.
-            if !isReaction, let wireID = mutation.wireId {
-                try bindPendingRegarding(
-                    ownerIdentityID: ownerIdentityID,
-                    sessionID: sessionID,
-                    handle: mutation.handle,
-                    conversationAddress: peerAddress,
-                    wireID: wireID,
-                    outbound: direction == .outbound,
-                    senderHint: mutation.senderHint.map { Data($0) }
-                )
-            }
-        case .updateBody:
-            guard let body = mutation.body else { return false }
-            // A fragment-completion or notify-deadline update can carry a late
-            // flag; never clear an existing one, and leave presence untouched.
-            let statement = try prepare(
-                """
-                UPDATE chat_message SET body = ?, complete = ?, present_fragments = ?,
-                    fragment_count = ?, finalized = ?,
-                    received_late = MAX(received_late, ?),
-                    rx_rssi_dbm = COALESCE(?, rx_rssi_dbm),
-                    rx_snr_cb = COALESCE(?, rx_snr_cb),
-                    rx_lqi = COALESCE(?, rx_lqi),
-                    rx_hop_count = COALESCE(?, rx_hop_count),
-                    rx_route_hints = COALESCE(?, rx_route_hints),
-                    rx_source_authenticated = COALESCE(?, rx_source_authenticated),
-                    -- What completes in EMERGENCY's conversation, inbound,
-                    -- as a test message no one asked to hear of.
-                    silent = MAX(silent, direction = 0 AND conversation_address IS ? AND ?)
-                WHERE owner_identity_id = ? AND session_id = ? AND handle = ?
-                """
-            )
-            defer { sqlite3_finalize(statement) }
-            try bind(body, to: statement, at: 1)
-            try bindOptionalBool(mutation.complete, to: statement, at: 2)
-            try bindOptionalInt(mutation.presentFragments.map(Int64.init), to: statement, at: 3)
-            try bindOptionalInt(mutation.fragmentCount.map(Int64.init), to: statement, at: 4)
-            try bindOptionalBool(mutation.finalized, to: statement, at: 5)
-            try check(sqlite3_bind_int(statement, 6, mutation.receivedLate ? 1 : 0))
-            try bindOptionalInt(mutation.rx?.rssiDbm.map(Int64.init), to: statement, at: 7)
-            try bindOptionalInt(mutation.rx?.snrCentibels.map(Int64.init), to: statement, at: 8)
-            try bindOptionalInt(mutation.rx?.lqi.map(Int64.init), to: statement, at: 9)
-            try bindOptionalInt(mutation.rx?.hopCount.map(Int64.init), to: statement, at: 10)
-            try bindOptional(mutation.rx.map { Self.packRouteHints($0.routeHints) },
-                             to: statement, at: 11)
-            try bindOptionalInt(
-                mutation.rx.map { Int64($0.sourceAuthenticated ? 1 : 0) },
-                to: statement,
-                at: 12
-            )
-            try bindOptional(silentTestsIn, to: statement, at: 13)
-            try check(sqlite3_bind_int(statement, 14, isTestMessageBody(body: body) ? 1 : 0))
-            try bind(ownerIdentityID, to: statement, at: 15)
-            try bind(sessionID, to: statement, at: 16)
-            try check(sqlite3_bind_int64(statement, 17, Int64(mutation.handle)))
-            try stepDone(statement)
-        case .edit, .delete:
-            let body = mutation.kind == .delete ? "" : (mutation.body ?? "")
-            let deleted: Int32 = mutation.kind == .delete ? 1 : 0
-            let markEdited: Int32 = mutation.kind == .edit ? 1 : 0
-            guard let target = try editTargetRowid(
-                ownerIdentityID: ownerIdentityID,
-                sessionID: sessionID,
-                mutation: mutation
-            ) else {
-                // The edit names a message this phone never stored. That is
-                // not stray metadata: it is how a resend arrives when both
-                // the original AND the engine's chance to open a gap for it
-                // are gone (a new conversation, or any app relaunch—inbound
-                // stream state is engine RAM). The edit carries the message's
-                // whole current content, so materialize it as the message
-                // rather than throwing the words away. An unresolved delete
-                // stays a no-op: there is nothing to remove.
-                return try materializeOrphanEdit(
-                    ownerIdentityID: ownerIdentityID,
-                    sessionID: sessionID,
-                    mutation: mutation
-                )
-            }
-            // The first edit of the sender's own message captures its
-            // pre-edit text (`body` on the right-hand side reads the
-            // pre-update row) so the sender can still review it; the
-            // resend archive only ever holds the edited content.
-            //
-            // An edit that leaves the text exactly as it stands changed
-            // nothing, and is not annotated as an edit: that is the shape
-            // a resend takes on the wire, and there is no earlier version
-            // of the message for anyone to go back to.
-            //
-            // An edit of mine says whether what the message now reads went
-            // under a session with forward secrecy.
-            let statement = try prepare(
-                """
-                UPDATE chat_message SET
-                    original_body = CASE WHEN ? = 1 AND direction = 1 AND body <> ?
-                        THEN COALESCE(original_body, body)
-                        ELSE original_body END,
-                    body = ?, deleted = ?,
-                    edited = MAX(edited, CASE WHEN ? = 1 AND body <> ? THEN 1 ELSE 0 END),
-                    forward_secret = COALESCE(?, forward_secret)
-                WHERE rowid = ?
-                """
-            )
-            defer { sqlite3_finalize(statement) }
-            try check(sqlite3_bind_int(statement, 1, markEdited))
-            try bind(body, to: statement, at: 2)
-            try bind(body, to: statement, at: 3)
-            try check(sqlite3_bind_int(statement, 4, deleted))
-            try check(sqlite3_bind_int(statement, 5, markEdited))
-            try bind(body, to: statement, at: 6)
-            try bindOptionalBool(mutation.forwardSecret, to: statement, at: 7)
-            try check(sqlite3_bind_int64(statement, 8, target))
-            try stepDone(statement)
-            if mutation.kind == .edit {
-                try adoptDelivery(
-                    ownerIdentityID: ownerIdentityID,
-                    targetRowid: target,
-                    sessionID: sessionID,
-                    handle: mutation.handle,
-                    fragmentCount: mutation.fragmentCount,
-                    keepingAcknowledged: false
-                )
-            }
-        }
-        return false
-    }
-
-    /// Store an inbound edit whose original this phone never had, as the
-    /// message itself.
-    ///
-    /// An edit can reach a receiver holding nothing for it to revise—the
-    /// original never arrived, and no gap placeholder was reserved when the
-    /// edit's own sequence advance established a fresh baseline. The row is
-    /// keyed by the edit mutation's session and handle (its only durable
-    /// identity here) but carries the *original's* wire ID, so later edits,
-    /// deletes, and reactions referencing that ID resolve to it; reactions
-    /// already waiting on it are adopted the way any late-arriving message
-    /// adopts them. Marked received-late—it is one, in the plainest sense—
-    /// and as an edit of something unknown, which is what its bubble says.
-    ///
-    /// Inbound originals only: an unresolved edit of one of our own outbound
-    /// messages describes a message this identity never sent, and stays
-    /// dropped.
-    private func materializeOrphanEdit(
-        ownerIdentityID: String,
         sessionID: String,
-        mutation: MobileChatMutationRecord
-    ) throws -> Bool {
-        guard mutation.kind == .edit,
-              let body = mutation.body, !body.isEmpty,
-              mutation.originalDirection == .inbound,
-              let wireID = mutation.originalWireId,
-              let peerAddress = mutation.conversationAddress
-        else { return false }
-        let statement = try prepare(
-            """
-            INSERT OR IGNORE INTO chat_message (
-                owner_identity_id, session_id, handle, conversation_address,
-                direction, wire_id, sender_hint, body, complete,
-                deleted, created_at_ms, presence, received_late, is_reaction,
-                delivery_session_id, delivery_handle, unknown_original
-            ) VALUES (?, ?, ?, ?, 0, ?, ?, ?, 1, 0, ?, 0, 1, 0, ?, ?, 1)
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(ownerIdentityID, to: statement, at: 1)
-        try bind(sessionID, to: statement, at: 2)
-        try check(sqlite3_bind_int64(statement, 3, Int64(mutation.handle)))
-        try bind(peerAddress, to: statement, at: 4)
-        try check(sqlite3_bind_int(statement, 5, Int32(wireID)))
-        try bindOptional(mutation.originalSenderHint.map { Data($0) }, to: statement, at: 6)
-        try bind(body, to: statement, at: 7)
-        try check(sqlite3_bind_int64(statement, 8, Self.nowMilliseconds()))
-        try bind(sessionID, to: statement, at: 9)
-        try check(sqlite3_bind_int64(statement, 10, Int64(mutation.handle)))
-        try stepDone(statement)
-        guard sqlite3_changes(database) > 0 else { return false }
-        try bindPendingRegarding(
-            ownerIdentityID: ownerIdentityID,
-            sessionID: sessionID,
-            handle: mutation.handle,
-            conversationAddress: peerAddress,
-            wireID: wireID,
-            outbound: false,
-            senderHint: mutation.originalSenderHint.map { Data($0) }
-        )
-        return true
-    }
-
-    /// Which stored row an edit or delete revises.
-    ///
-    /// A live handle names a row this facade session wrote. Otherwise the
-    /// engine exported the original's wire reference, and the row it names is
-    /// the newest with that ID on that stream—wire IDs recycle serially
-    /// within a stream, so the newest epoch/row is the one still
-    /// referenceable.
-    private func editTargetRowid(
-        ownerIdentityID: String,
-        sessionID: String,
-        mutation: MobileChatMutationRecord
-    ) throws -> Int64? {
-        if let original = mutation.originalHandle {
-            let statement = try prepare(
-                """
-                SELECT rowid FROM chat_message
-                WHERE owner_identity_id = ? AND session_id = ? AND handle = ?
-                """
-            )
-            defer { sqlite3_finalize(statement) }
-            try bind(ownerIdentityID, to: statement, at: 1)
-            try bind(sessionID, to: statement, at: 2)
-            try check(sqlite3_bind_int64(statement, 3, Int64(original)))
-            guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
-            return sqlite3_column_int64(statement, 0)
-        }
-        guard let wireID = mutation.originalWireId,
-              let direction = mutation.originalDirection,
-              let peerAddress = mutation.conversationAddress
-        else { return nil }
-        let statement = try prepare(
-            """
-            SELECT rowid FROM chat_message
-            WHERE owner_identity_id = ? AND conversation_address = ?
-                AND direction = ? AND wire_id = ?
-            ORDER BY epoch DESC, created_at_ms DESC, rowid DESC
-            LIMIT 1
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(ownerIdentityID, to: statement, at: 1)
-        try bind(peerAddress, to: statement, at: 2)
-        try check(sqlite3_bind_int(statement, 3, direction == .outbound ? 1 : 0))
-        try check(sqlite3_bind_int(statement, 4, Int32(wireID)))
-        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
-        return sqlite3_column_int64(statement, 0)
-    }
-
-    /// Aim an outbound message's delivery pointer at a new transmission of
-    /// it: an edit's frames, now carrying the row's content, or the frames a
-    /// resend put back on the air.
-    ///
-    /// An edit inserts no row: its mutation revises the original's stored
-    /// body. Its frames, though, are tracked under the edit's own engine
-    /// handle, so without this the row would keep waiting on evidence for a
-    /// transmission nobody is making any more, and an edit that failed could
-    /// never say so. A resend after a restart is tracked under the handle the
-    /// engine took the message back as. Only the pointer moves: the row's
-    /// primary key is its compose identity, which further edits and reactions
-    /// still reference.
-    ///
-    /// An edit's superseded attempt goes with it whole. A resend sends only
-    /// what was not acknowledged, so with `keepingAcknowledged` the fragments
-    /// already acknowledged move to the new pointer and only the rest are
-    /// forgotten, under either pointer: replaying the move lands in the same
-    /// place.
-    ///
-    /// Scoped to outbound rows in SQL rather than checked here: an inbound
-    /// edit only ever revises its own sender's inbound rows, which carry no
-    /// delivery state, and this keeps that invariant local to one statement.
-    ///
-    /// `fragmentCount` is how many frames an edit put in flight—its
-    /// content fragments under its own encoding overhead, so the count the
-    /// original compose stamped no longer describes what is on the air.
-    private func adoptDelivery(
-        ownerIdentityID: String,
-        targetRowid: Int64,
-        sessionID: String,
-        handle: UInt32,
-        fragmentCount: UInt8?,
-        keepingAcknowledged: Bool
+        messages: [StagedMessage]
     ) throws {
-        if keepingAcknowledged {
-            let carried = try prepare(
-                """
-                UPDATE OR REPLACE chat_delivery_fragment SET session_id = ?, handle = ?
-                WHERE owner_identity_id = ? AND state = 'acknowledged'
-                    AND (session_id, handle) = (
-                        SELECT delivery_session_id, delivery_handle FROM chat_message
-                        WHERE rowid = ? AND direction = 1
-                    )
-                """
+        try run {
+            try $0.seedStagedTranscript(
+                ownerIdentityId: ownerIdentityID,
+                conversationAddress: conversationAddress,
+                sessionId: sessionID,
+                messages: messages.map(MobileStagedChatMessageRecord.init)
             )
-            defer { sqlite3_finalize(carried) }
-            try bind(sessionID, to: carried, at: 1)
-            try check(sqlite3_bind_int64(carried, 2, Int64(handle)))
-            try bind(ownerIdentityID, to: carried, at: 3)
-            try check(sqlite3_bind_int64(carried, 4, targetRowid))
-            try stepDone(carried)
         }
-
-        let stale = try prepare(
-            """
-            DELETE FROM chat_delivery_fragment
-            WHERE owner_identity_id = ?1
-                AND (?3 = 0 OR state <> 'acknowledged')
-                AND (
-                    (session_id, handle) = (
-                        SELECT delivery_session_id, delivery_handle FROM chat_message
-                        WHERE rowid = ?2 AND direction = 1
-                    )
-                    OR (?3 = 1 AND session_id = ?4 AND handle = ?5)
-                )
-            """
-        )
-        defer { sqlite3_finalize(stale) }
-        try bind(ownerIdentityID, to: stale, at: 1)
-        try check(sqlite3_bind_int64(stale, 2, targetRowid))
-        try check(sqlite3_bind_int(stale, 3, keepingAcknowledged ? 1 : 0))
-        try bind(sessionID, to: stale, at: 4)
-        try check(sqlite3_bind_int64(stale, 5, Int64(handle)))
-        try stepDone(stale)
-
-        let message = try prepare(
-            """
-            UPDATE chat_message
-            SET delivery_session_id = ?, delivery_handle = ?,
-                delivery_state = 'pending', delivered_late = 0, delivered_flooded = 0,
-                fragment_count = COALESCE(?, fragment_count)
-            WHERE rowid = ? AND direction = 1
-            """
-        )
-        defer { sqlite3_finalize(message) }
-        try bind(sessionID, to: message, at: 1)
-        try check(sqlite3_bind_int64(message, 2, Int64(handle)))
-        try bindOptionalInt(fragmentCount.map(Int64.init), to: message, at: 3)
-        try check(sqlite3_bind_int64(message, 4, targetRowid))
-        try stepDone(message)
     }
 
-    /// Which stored row a reaction or a reply is about.
-    ///
-    /// A live handle names a row this session wrote. Otherwise the reference
-    /// arrives as wire coordinates, and the row it names is the newest
-    /// non-reaction message holding that ID on that stream—wire IDs recycle
-    /// serially, so the newest is the only one still referenceable. `nil`
-    /// when the target has not been stored yet; ``bindPendingRegarding``
-    /// adopts those once it is.
-    ///
-    /// A sender that predates the two-octet form names its own messages in
-    /// the form that means ours, so a one-to-one reference to our own stream
-    /// that matches nothing there means theirs. Inbound rows without a hint
-    /// are one-to-one only. This goes when those senders do.
-    private func resolveRegardingTarget(
-        ownerIdentityID: String,
-        sessionID: String,
-        conversationAddress: String,
-        mutation: MobileChatMutationRecord
-    ) throws -> (sessionID: String, handle: UInt32)? {
-        if let handle = mutation.regardingHandle {
-            return (sessionID, handle)
-        }
-        guard let wireID = mutation.regardingWireId,
-              let direction = mutation.regardingDirection
-        else { return nil }
-        let found = try regardingTargetRow(
-            ownerIdentityID: ownerIdentityID,
-            conversationAddress: conversationAddress,
-            direction: direction,
-            wireID: wireID,
-            senderHint: mutation.regardingSenderHint.map { Data($0) }
-        )
-        guard found == nil, direction == .outbound else { return found }
-        return try regardingTargetRow(
-            ownerIdentityID: ownerIdentityID,
-            conversationAddress: conversationAddress,
-            direction: .inbound,
-            wireID: wireID,
-            senderHint: nil
-        )
-    }
-
-    /// The newest non-reaction row holding `wireID` on one stream.
-    private func regardingTargetRow(
+    /// Fill a conversation with generated messages, for exercising a transcript
+    /// at a size no test account reaches by hand. Instants run back from now,
+    /// with lulls of several hours, so the transcript spans days and carries
+    /// the date separators a real one does.
+    func seedGeneratedMessages(
         ownerIdentityID: String,
         conversationAddress: String,
-        direction: MobileChatDirection,
-        wireID: UInt8,
-        senderHint: Data?
-    ) throws -> (sessionID: String, handle: UInt32)? {
-        // `IS` rather than `=` so a conversation without hints—every direct
-        // one, and our own side of a group—matches null against null.
-        let statement = try prepare(
-            """
-            SELECT session_id, handle FROM chat_message
-            WHERE owner_identity_id = ? AND conversation_address = ?
-                AND direction = ? AND wire_id = ? AND is_reaction = 0
-                AND sender_hint IS ?
-            ORDER BY epoch DESC, created_at_ms DESC, rowid DESC
-            LIMIT 1
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(ownerIdentityID, to: statement, at: 1)
-        try bind(conversationAddress, to: statement, at: 2)
-        try check(sqlite3_bind_int(statement, 3, direction == .outbound ? 1 : 0))
-        try check(sqlite3_bind_int(statement, 4, Int32(wireID)))
-        try bindOptional(senderHint, to: statement, at: 5)
-        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
-        guard let session = sqlite3_column_text(statement, 0) else { return nil }
-        return (String(cString: session), UInt32(sqlite3_column_int64(statement, 1)))
-    }
-
-    /// Adopt reactions and replies that arrived before the message they are
-    /// about.
-    private func bindPendingRegarding(
-        ownerIdentityID: String,
-        sessionID: String,
-        handle: UInt32,
-        conversationAddress: String,
-        wireID: UInt8,
-        outbound: Bool,
-        senderHint: Data?
+        count: Int
     ) throws {
-        let statement = try prepare(
-            """
-            UPDATE chat_message
-            SET regarding_target_session_id = ?, regarding_target_handle = ?
-            WHERE owner_identity_id = ? AND conversation_address = ?
-                AND regarding_target_session_id IS NULL
-                AND regarding_wire_id = ? AND regarding_direction = ?
-                AND regarding_sender_hint IS ?
-                AND NOT (session_id = ? AND handle = ?)
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(sessionID, to: statement, at: 1)
-        try check(sqlite3_bind_int64(statement, 2, Int64(handle)))
-        try bind(ownerIdentityID, to: statement, at: 3)
-        try bind(conversationAddress, to: statement, at: 4)
-        try check(sqlite3_bind_int(statement, 5, Int32(wireID)))
-        try check(sqlite3_bind_int(statement, 6, outbound ? 1 : 0))
-        try bindOptional(senderHint, to: statement, at: 7)
-        try bind(sessionID, to: statement, at: 8)
-        try check(sqlite3_bind_int64(statement, 9, Int64(handle)))
-        try stepDone(statement)
+        try run {
+            try $0.seedGeneratedMessages(
+                ownerIdentityId: ownerIdentityID,
+                conversationAddress: conversationAddress,
+                count: UInt32(clamping: count),
+                nowMs: Date.now.storeMilliseconds
+            )
+        }
+    }
+    #endif
+
+    // MARK: Calling the core
+
+    private func run<T>(_ work: (MobileAppStore) throws -> T) throws -> T {
+        try Self.mapped { try work(store) }
     }
 
-    private func transaction<T>(write: Bool = true, _ operation: () throws -> T) throws -> T {
-        try Self.execute(database, sql: write ? "BEGIN IMMEDIATE" : "BEGIN DEFERRED")
+    private static func mapped<T>(_ work: () throws -> T) throws -> T {
         do {
-            let value = try operation()
-            try Self.execute(database, sql: "COMMIT")
-            return value
-        } catch {
-            try? Self.execute(database, sql: "ROLLBACK")
-            throw error
+            return try work()
+        } catch let error as MobileStoreError {
+            throw ApplicationStoreError(error)
         }
     }
-
-    private func prepare(_ sql: String) throws -> OpaquePointer {
-        var statement: OpaquePointer?
-        let status = sqlite3_prepare_v2(database, sql, -1, &statement, nil)
-        guard status == SQLITE_OK, let statement else {
-            throw Self.sqliteFailure(database, status)
-        }
-        return statement
-    }
-
-    private func bind(_ value: String, to statement: OpaquePointer, at index: Int32) throws {
-        let status = value.withCString { pointer in
-            sqlite3_bind_text(statement, index, pointer, -1, Self.sqliteTransient)
-        }
-        try check(status)
-    }
-
-    private func bind(_ value: Data, to statement: OpaquePointer, at index: Int32) throws {
-        let status = value.withUnsafeBytes { bytes in
-            sqlite3_bind_blob(statement, index, bytes.baseAddress, Int32(bytes.count), Self.sqliteTransient)
-        }
-        try check(status)
-    }
-
-    private func bindOptional(
-        _ value: String?,
-        to statement: OpaquePointer,
-        at index: Int32
-    ) throws {
-        if let value {
-            try bind(value, to: statement, at: index)
-        } else {
-            try check(sqlite3_bind_null(statement, index))
-        }
-    }
-
-    private func bindOptional(
-        _ value: Data?,
-        to statement: OpaquePointer,
-        at index: Int32
-    ) throws {
-        if let value {
-            try bind(value, to: statement, at: index)
-        } else {
-            try check(sqlite3_bind_null(statement, index))
-        }
-    }
-
-    private func bindOptionalInt(
-        _ value: Int64?,
-        to statement: OpaquePointer,
-        at index: Int32
-    ) throws {
-        if let value {
-            try check(sqlite3_bind_int64(statement, index, value))
-        } else {
-            try check(sqlite3_bind_null(statement, index))
-        }
-    }
-
-    private func bindOptionalBool(
-        _ value: Bool?,
-        to statement: OpaquePointer,
-        at index: Int32
-    ) throws {
-        try bindOptionalInt(value.map { $0 ? 1 : 0 }, to: statement, at: index)
-    }
-
-    private func bindOptionalDouble(
-        _ value: Double?,
-        to statement: OpaquePointer,
-        at index: Int32
-    ) throws {
-        if let value {
-            try check(sqlite3_bind_double(statement, index, value))
-        } else {
-            try check(sqlite3_bind_null(statement, index))
-        }
-    }
-
-    private func stepDone(_ statement: OpaquePointer) throws {
-        let status = sqlite3_step(statement)
-        guard status == SQLITE_DONE else {
-            throw Self.sqliteFailure(database, status)
-        }
-    }
-
-    private func check(_ status: Int32) throws {
-        guard status == SQLITE_OK else {
-            throw Self.sqliteFailure(database, status)
-        }
-    }
-
-    /// Pair a result code with SQLite's own description of it, taken while the
-    /// connection still holds it—`sqlite3_errmsg` reports the most recent
-    /// failure, so it has to be read at the throw and not later.
-    private static func sqliteFailure(
-        _ database: OpaquePointer?,
-        _ status: Int32
-    ) -> ApplicationStoreError {
-        let message = database.map { String(cString: sqlite3_errmsg($0)) } ?? "no connection"
-        return .sqliteFailure(status, message: message)
-    }
-
-    private static func migrate(_ database: OpaquePointer) throws {
-        let version = try readSchemaVersion(database)
-        guard version <= currentSchemaVersion else {
-            throw ApplicationStoreError.unsupportedSchema(version)
-        }
-        if version < 1 {
-            try execute(database, sql: "BEGIN IMMEDIATE")
-            do {
-            try execute(
-                database,
-                sql: """
-                CREATE TABLE local_identity (
-                    id TEXT PRIMARY KEY NOT NULL,
-                    public_address TEXT NOT NULL UNIQUE,
-                    created_at_ms INTEGER NOT NULL
-                );
-
-                CREATE TABLE node (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    owner_identity_id TEXT NOT NULL
-                        REFERENCES local_identity(id) ON DELETE CASCADE,
-                    public_address TEXT NOT NULL,
-                    alias TEXT,
-                    alias_search TEXT NOT NULL,
-                    UNIQUE (owner_identity_id, public_address)
-                );
-
-                CREATE INDEX node_owner_alias_search_idx
-                    ON node (owner_identity_id, alias_search, id);
-
-                PRAGMA user_version = 1;
-                """
-            )
-            try execute(database, sql: "COMMIT")
-            } catch {
-                try? execute(database, sql: "ROLLBACK")
-                throw error
-            }
-        }
-
-        if version < 2 {
-            try execute(database, sql: "BEGIN IMMEDIATE")
-            do {
-                try execute(
-                    database,
-                    sql: """
-                    ALTER TABLE node ADD COLUMN advertised_name TEXT;
-                    ALTER TABLE node ADD COLUMN is_contact INTEGER NOT NULL DEFAULT 0;
-                    ALTER TABLE node ADD COLUMN system_role TEXT;
-                    ALTER TABLE node ADD COLUMN radio_identifier TEXT;
-
-                    CREATE TABLE direct_conversation (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        owner_identity_id TEXT NOT NULL
-                            REFERENCES local_identity(id) ON DELETE CASCADE,
-                        node_id INTEGER NOT NULL REFERENCES node(id) ON DELETE RESTRICT,
-                        draft_text TEXT NOT NULL DEFAULT '',
-                        created_at_ms INTEGER NOT NULL,
-                        UNIQUE (owner_identity_id, node_id)
-                    );
-
-                    PRAGMA user_version = 2;
-                    """
-                )
-                try execute(database, sql: "COMMIT")
-            } catch {
-                try? execute(database, sql: "ROLLBACK")
-                throw error
-            }
-        }
-
-
-        if version < 3 {
-            try execute(database, sql: "BEGIN IMMEDIATE")
-            do {
-                try execute(
-                    database,
-                    sql: """
-                    ALTER TABLE node ADD COLUMN node_kind TEXT;
-                    PRAGMA user_version = 3;
-                    """
-                )
-                try execute(database, sql: "COMMIT")
-            } catch {
-                try? execute(database, sql: "ROLLBACK")
-                throw error
-            }
-        }
-
-
-        if version < 4 {
-            try execute(database, sql: "BEGIN IMMEDIATE")
-            do {
-                try execute(
-                    database,
-                    sql: """
-                    CREATE TABLE chat_stream_checkpoint (
-                        owner_identity_id TEXT NOT NULL
-                            REFERENCES local_identity(id) ON DELETE CASCADE,
-                        peer_address TEXT NOT NULL,
-                        next_id INTEGER NOT NULL,
-                        epoch INTEGER NOT NULL,
-                        updated_at_ms INTEGER NOT NULL,
-                        PRIMARY KEY (owner_identity_id, peer_address)
-                    );
-
-                    CREATE TABLE chat_outbound_archive (
-                        owner_identity_id TEXT NOT NULL
-                            REFERENCES local_identity(id) ON DELETE CASCADE,
-                        peer_address TEXT NOT NULL,
-                        message_id INTEGER NOT NULL,
-                        fragment_index INTEGER NOT NULL,
-                        payload BLOB NOT NULL,
-                        PRIMARY KEY (
-                            owner_identity_id, peer_address, message_id, fragment_index
-                        )
-                    );
-
-                    CREATE TABLE chat_message (
-                        owner_identity_id TEXT NOT NULL
-                            REFERENCES local_identity(id) ON DELETE CASCADE,
-                        session_id TEXT NOT NULL,
-                        handle INTEGER NOT NULL,
-                        peer_address TEXT NOT NULL,
-                        sender_address TEXT,
-                        direction INTEGER NOT NULL,
-                        message_type INTEGER,
-                        wire_id INTEGER,
-                        epoch INTEGER,
-                        client_token INTEGER,
-                        sender_handle TEXT,
-                        regarding_handle INTEGER,
-                        background_color BLOB,
-                        text_color BLOB,
-                        body TEXT NOT NULL,
-                        complete INTEGER,
-                        present_fragments INTEGER,
-                        fragment_count INTEGER,
-                        finalized INTEGER,
-                        delivery_state TEXT,
-                        deleted INTEGER NOT NULL DEFAULT 0,
-                        created_at_ms INTEGER NOT NULL,
-                        PRIMARY KEY (owner_identity_id, session_id, handle)
-                    );
-
-                    CREATE INDEX chat_message_conversation_idx
-                        ON chat_message (owner_identity_id, peer_address, created_at_ms);
-
-                    CREATE TABLE chat_applied_mutation (
-                        owner_identity_id TEXT NOT NULL
-                            REFERENCES local_identity(id) ON DELETE CASCADE,
-                        session_id TEXT NOT NULL,
-                        handle INTEGER NOT NULL,
-                        revision INTEGER NOT NULL,
-                        PRIMARY KEY (owner_identity_id, session_id, handle)
-                    );
-
-                    CREATE TABLE chat_delivery_fragment (
-                        owner_identity_id TEXT NOT NULL
-                            REFERENCES local_identity(id) ON DELETE CASCADE,
-                        session_id TEXT NOT NULL,
-                        handle INTEGER NOT NULL,
-                        fragment_index INTEGER NOT NULL,
-                        state TEXT NOT NULL,
-                        PRIMARY KEY (
-                            owner_identity_id, session_id, handle, fragment_index
-                        )
-                    );
-
-                    PRAGMA user_version = 4;
-                    """
-                )
-                try execute(database, sql: "COMMIT")
-            } catch {
-                try? execute(database, sql: "ROLLBACK")
-                throw error
-            }
-        }
-
-        if version < 5 {
-            try execute(database, sql: "BEGIN IMMEDIATE")
-            do {
-                try execute(
-                    database,
-                    sql: """
-                    ALTER TABLE chat_message ADD COLUMN edited INTEGER NOT NULL DEFAULT 0;
-                    PRAGMA user_version = 5;
-                    """
-                )
-                try execute(database, sql: "COMMIT")
-            } catch {
-                try? execute(database, sql: "ROLLBACK")
-                throw error
-            }
-        }
-
-        if version < 6 {
-            try execute(database, sql: "BEGIN IMMEDIATE")
-            do {
-                try execute(
-                    database,
-                    sql: """
-                    ALTER TABLE node ADD COLUMN advertisement BLOB;
-                    PRAGMA user_version = 6;
-                    """
-                )
-                try execute(database, sql: "COMMIT")
-            } catch {
-                try? execute(database, sql: "ROLLBACK")
-                throw error
-            }
-        }
-
-        if version < 7 {
-            try execute(database, sql: "BEGIN IMMEDIATE")
-            do {
-                try execute(
-                    database,
-                    sql: """
-                    ALTER TABLE local_identity ADD COLUMN advertised_name TEXT;
-                    PRAGMA user_version = 7;
-                    """
-                )
-                try execute(database, sql: "COMMIT")
-            } catch {
-                try? execute(database, sql: "ROLLBACK")
-                throw error
-            }
-        }
-
-        if version < 8 {
-            try execute(database, sql: "BEGIN IMMEDIATE")
-            do {
-                try execute(
-                    database,
-                    sql: """
-                    ALTER TABLE node ADD COLUMN last_heard_at REAL;
-                    PRAGMA user_version = 8;
-                    """
-                )
-                try execute(database, sql: "COMMIT")
-            } catch {
-                try? execute(database, sql: "ROLLBACK")
-                throw error
-            }
-        }
-
-        if version < 9 {
-            try execute(database, sql: "BEGIN IMMEDIATE")
-            do {
-                // Ordered-repair transcript metadata: `presence` marks a row as
-                // a real message (0), a reserved gap placeholder (1), or a
-                // permanent loss marker (2); `received_late` flags a backfill
-                // that filled its slot out of order.
-                try execute(
-                    database,
-                    sql: """
-                    ALTER TABLE chat_message ADD COLUMN presence INTEGER NOT NULL DEFAULT 0;
-                    ALTER TABLE chat_message ADD COLUMN received_late INTEGER NOT NULL DEFAULT 0;
-                    PRAGMA user_version = 9;
-                    """
-                )
-                try execute(database, sql: "COMMIT")
-            } catch {
-                try? execute(database, sql: "ROLLBACK")
-                throw error
-            }
-        }
-
-        if version < 10 {
-            try execute(database, sql: "BEGIN IMMEDIATE")
-            do {
-                // An outbound message that failed transport but was later
-                // acknowledged via a resend is "Delivered Late".
-                try execute(
-                    database,
-                    sql: """
-                    ALTER TABLE chat_message ADD COLUMN delivered_late INTEGER NOT NULL DEFAULT 0;
-                    PRAGMA user_version = 10;
-                    """
-                )
-                try execute(database, sql: "COMMIT")
-            } catch {
-                try? execute(database, sql: "ROLLBACK")
-                throw error
-            }
-        }
-
-        if version < 11 {
-            try execute(database, sql: "BEGIN IMMEDIATE")
-            do {
-                // An edited outbound message keeps its pre-edit text here so
-                // the sender can still review what the original said. Only the
-                // first edit captures it; the wire archive holds edited
-                // content only and can never serve the original again.
-                try execute(
-                    database,
-                    sql: """
-                    ALTER TABLE chat_message ADD COLUMN original_body TEXT;
-                    PRAGMA user_version = 11;
-                    """
-                )
-                try execute(database, sql: "COMMIT")
-            } catch {
-                try? execute(database, sql: "ROLLBACK")
-                throw error
-            }
-        }
-
-        if version < 12 {
-            try execute(database, sql: "BEGIN IMMEDIATE")
-            do {
-                // Whether the MAC authenticated the frame that delivered the
-                // stored advertisement. A bundle's own signature is recoverable
-                // from the payload at any time; how it *arrived* is not, and an
-                // Identity Request reply is a MIC-authenticated unicast that
-                // deliberately carries no signature. Without this, such a reply
-                // is indistinguishable on reload from an unsigned broadcast
-                // anyone could have sent. Existing rows default to 0: we have
-                // no record either way, which is what the old display assumed.
-                try execute(
-                    database,
-                    sql: """
-                    ALTER TABLE node
-                        ADD COLUMN advertisement_authenticated INTEGER NOT NULL DEFAULT 0;
-                    PRAGMA user_version = 12;
-                    """
-                )
-                try execute(database, sql: "COMMIT")
-            } catch {
-                try? execute(database, sql: "ROLLBACK")
-                throw error
-            }
-        }
-
-        if version < 13 {
-            try execute(database, sql: "BEGIN IMMEDIATE")
-            do {
-                // The peer tier model: `is_saved` marks a node stored on the
-                // local (phone) identity; rows with 0 are the transient tier—
-                // heard on the air, kept for search/discovery, hidden from the
-                // main list, and evicted by retention. `on_dev_identity` caches
-                // whether the node's key is on the companion radio's device
-                // identity (PROP_DEV_PEERS); the device is the authority.
-                // Every pre-existing row was visible in Peers, so all of
-                // them upgrade as saved—nothing may vanish from the list.
-                try execute(
-                    database,
-                    sql: """
-                    ALTER TABLE node ADD COLUMN is_saved INTEGER NOT NULL DEFAULT 0;
-                    ALTER TABLE node ADD COLUMN is_favorite INTEGER NOT NULL DEFAULT 0;
-                    ALTER TABLE node ADD COLUMN on_dev_identity INTEGER NOT NULL DEFAULT 0;
-                    UPDATE node SET is_saved = 1;
-                    CREATE INDEX node_owner_transient_heard_idx
-                        ON node (owner_identity_id, is_saved, last_heard_at);
-                    PRAGMA user_version = 13;
-                    """
-                )
-                try execute(database, sql: "COMMIT")
-            } catch {
-                try? execute(database, sql: "ROLLBACK")
-                throw error
-            }
-        }
-
-        if version < 14 {
-            try execute(database, sql: "BEGIN IMMEDIATE")
-            do {
-                // `is_contact` distinguished two kinds of saved node and did
-                // nothing else: same storage, same messaging, same retention,
-                // one section header apart. Favorites says "peers I care
-                // about" and can be changed at any time, which is what the
-                // flag was reaching for. Contacts stay saved nodes; the flag
-                // is not promoted to a favorite, because it defaulted on at
-                // import and would star nearly everything.
-                try execute(
-                    database,
-                    sql: """
-                    ALTER TABLE node DROP COLUMN is_contact;
-                    PRAGMA user_version = 14;
-                    """
-                )
-                try execute(database, sql: "COMMIT")
-            } catch {
-                try? execute(database, sql: "ROLLBACK")
-                throw error
-            }
-        }
-
-        if version < 15 {
-            try execute(database, sql: "BEGIN IMMEDIATE")
-            do {
-                // Channel membership. The row is public metadata; the 32-byte
-                // key it describes lives in Keychain under `id`.
-                //
-                // `channel_id_hex` is the two-octet derived identifier, which
-                // is a routing hint and NOT unique—distinct keys may collide
-                // and receivers resolve that by trial decryption—so it
-                // cannot key the table. `key_digest` can: it is a one-way
-                // commitment to the key that makes "already joined" and "same
-                // name, different key" answerable in SQL, without which an
-                // import would have to unlock every stored key to compare.
-                try execute(
-                    database,
-                    sql: """
-                    CREATE TABLE channel (
-                        id TEXT PRIMARY KEY NOT NULL,
-                        owner_identity_id TEXT NOT NULL
-                            REFERENCES local_identity(id) ON DELETE CASCADE,
-                        kind TEXT NOT NULL,
-                        canonical_name TEXT,
-                        name TEXT,
-                        alias TEXT,
-                        channel_id_hex TEXT NOT NULL,
-                        tint BLOB NOT NULL,
-                        key_digest TEXT NOT NULL,
-                        region_code BLOB,
-                        max_flood_hops INTEGER,
-                        joined_phone INTEGER NOT NULL DEFAULT 0,
-                        joined_device INTEGER NOT NULL DEFAULT 0,
-                        notifications_enabled INTEGER NOT NULL DEFAULT 0,
-                        created_at_ms INTEGER NOT NULL,
-                        joined_at_ms INTEGER,
-                        UNIQUE (owner_identity_id, key_digest)
-                    );
-
-                    CREATE INDEX channel_owner_idx ON channel (owner_identity_id, id);
-
-                    PRAGMA user_version = 15;
-                    """
-                )
-                try execute(database, sql: "COMMIT")
-            } catch {
-                try? execute(database, sql: "ROLLBACK")
-                throw error
-            }
-        }
-
-        if version < 16 {
-            try execute(database, sql: "BEGIN IMMEDIATE")
-            do {
-                // Chat is no longer only between two peers, so the column that
-                // identified a transcript's other end is renamed to what it
-                // actually holds: a conversation address, which is a peer's
-                // address for a direct chat and a channel tag for a group.
-                // The facade emits exactly this string, so the rename keeps
-                // one vocabulary from the engine to the table.
-                //
-                // Channel messages also carry what a multicast frame carries
-                // and a unicast does not—a claimed sender hint—plus the
-                // radio metadata of the frame each message arrived on, which
-                // the transcript can now show per message.
-                try execute(
-                    database,
-                    sql: """
-                    ALTER TABLE chat_message RENAME COLUMN peer_address TO conversation_address;
-                    ALTER TABLE chat_stream_checkpoint
-                        RENAME COLUMN peer_address TO conversation_address;
-                    ALTER TABLE chat_outbound_archive
-                        RENAME COLUMN peer_address TO conversation_address;
-
-                    ALTER TABLE chat_message ADD COLUMN sender_hint BLOB;
-                    ALTER TABLE chat_message ADD COLUMN rx_rssi_dbm INTEGER;
-                    ALTER TABLE chat_message ADD COLUMN rx_snr_cb INTEGER;
-                    ALTER TABLE chat_message ADD COLUMN rx_lqi INTEGER;
-                    ALTER TABLE chat_message ADD COLUMN rx_hop_count INTEGER;
-                    ALTER TABLE chat_message ADD COLUMN rx_route_hints BLOB;
-                    ALTER TABLE chat_message ADD COLUMN rx_source_authenticated INTEGER;
-
-                    -- Read cursors. Everything created before this migration
-                    -- counts as read: an install that predates unread counts
-                    -- should not open to a wall of unread badges.
-                    ALTER TABLE direct_conversation
-                        ADD COLUMN last_read_at_ms INTEGER NOT NULL DEFAULT 0;
-                    UPDATE direct_conversation
-                        SET last_read_at_ms = (
-                            SELECT COALESCE(MAX(m.created_at_ms), 0) FROM chat_message m
-                            JOIN node n ON n.public_address = m.conversation_address
-                            WHERE m.owner_identity_id = direct_conversation.owner_identity_id
-                              AND n.id = direct_conversation.node_id
-                        );
-
-                    -- A channel's group conversation. Separate from
-                    -- `direct_conversation` because its other end is a channel
-                    -- rather than a node, and `node_id` there is a hard
-                    -- reference that cannot be made to mean both.
-                    CREATE TABLE channel_conversation (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        owner_identity_id TEXT NOT NULL
-                            REFERENCES local_identity(id) ON DELETE CASCADE,
-                        channel_id TEXT NOT NULL REFERENCES channel(id) ON DELETE CASCADE,
-                        conversation_address TEXT NOT NULL,
-                        draft_text TEXT NOT NULL DEFAULT '',
-                        created_at_ms INTEGER NOT NULL,
-                        last_read_at_ms INTEGER NOT NULL DEFAULT 0,
-                        UNIQUE (owner_identity_id, channel_id)
-                    );
-
-                    CREATE INDEX channel_conversation_address_idx
-                        ON channel_conversation (owner_identity_id, conversation_address);
-
-                    PRAGMA user_version = 16;
-                    """
-                )
-                try execute(database, sql: "COMMIT")
-            } catch {
-                try? execute(database, sql: "ROLLBACK")
-                throw error
-            }
-        }
-
-        if version < 17 {
-            try execute(database, sql: "BEGIN IMMEDIATE")
-            do {
-                // Reactions are emotes: ordinary messages carrying a Regarding
-                // reference, which is why they live in `chat_message` rather
-                // than a table of their own—they are sent, delivered,
-                // acknowledged, and repaired like anything else. What they need
-                // is somewhere to record who they are about, resolved once on
-                // arrival: the wire columns say what the frame claimed, and the
-                // `reaction_target_*` pair says which stored row that turned out
-                // to be. Reactions whose target has not arrived yet keep the
-                // pair null until it does.
-                try execute(
-                    database,
-                    sql: """
-                    ALTER TABLE chat_message ADD COLUMN is_reaction INTEGER NOT NULL DEFAULT 0;
-                    ALTER TABLE chat_message ADD COLUMN regarding_wire_id INTEGER;
-                    ALTER TABLE chat_message ADD COLUMN regarding_direction INTEGER;
-                    ALTER TABLE chat_message ADD COLUMN regarding_sender_hint BLOB;
-                    ALTER TABLE chat_message ADD COLUMN reaction_target_session_id TEXT;
-                    ALTER TABLE chat_message ADD COLUMN reaction_target_handle INTEGER;
-
-                    CREATE INDEX chat_message_reaction_target_idx
-                        ON chat_message (
-                            owner_identity_id,
-                            reaction_target_session_id,
-                            reaction_target_handle
-                        )
-                        WHERE is_reaction = 1;
-
-                    PRAGMA user_version = 17;
-                    """
-                )
-                try execute(database, sql: "COMMIT")
-            } catch {
-                try? execute(database, sql: "ROLLBACK")
-                throw error
-            }
-        }
-
-        if version < 18 {
-            try execute(database, sql: "BEGIN IMMEDIATE")
-            do {
-                // What a device said about itself, kept so that opening its
-                // settings does not have to ask again. A node several flood
-                // hops away answers slowly and at the cost of everyone's
-                // airtime, so the phone asks once and remembers.
-                //
-                // `node_mgmt_card` is what a device *is*: capabilities, the
-                // firmware they belong to, the hardware, the name. Firmware
-                // version is the key the rest hangs from—capabilities
-                // cannot change without it changing too—so a card arriving
-                // with a different version invalidates every cached value
-                // alongside it.
-                //
-                // `node_prop_cache` is what a device was last seen configured
-                // as, verbatim: the bytes the device sent, decoded in Rust
-                // where the wire formats already live. `fetched_at_ms` is
-                // what lets a screen admit its age rather than present a
-                // stale reading as current.
-                try execute(
-                    database,
-                    sql: """
-                    CREATE TABLE node_mgmt_card (
-                        node_id INTEGER PRIMARY KEY REFERENCES node(id) ON DELETE CASCADE,
-                        capabilities BLOB NOT NULL,
-                        device_version TEXT,
-                        device_model TEXT,
-                        device_name TEXT,
-                        fetched_at_ms INTEGER NOT NULL
-                    );
-
-                    CREATE TABLE node_prop_cache (
-                        node_id INTEGER NOT NULL REFERENCES node(id) ON DELETE CASCADE,
-                        property_id INTEGER NOT NULL,
-                        value BLOB NOT NULL,
-                        fetched_at_ms INTEGER NOT NULL,
-                        PRIMARY KEY (node_id, property_id)
-                    ) WITHOUT ROWID;
-
-                    PRAGMA user_version = 18;
-                    """
-                )
-                try execute(database, sql: "COMMIT")
-            } catch {
-                try? execute(database, sql: "ROLLBACK")
-                throw error
-            }
-        }
-
-        if version < 19 {
-            try execute(database, sql: "BEGIN IMMEDIATE")
-            do {
-                // A one-shot watch: tell me the next time this node is heard
-                // from. Armed by hand, disarmed by the hearing itself, so it
-                // is state rather than a preference and belongs on the row it
-                // is about—a watch that did not survive relaunch would be
-                // useless for the thing it is for, which is a node that has
-                // gone quiet and may come back at any hour.
-                try execute(
-                    database,
-                    sql: """
-                    ALTER TABLE node ADD COLUMN notify_when_heard INTEGER NOT NULL DEFAULT 0;
-                    PRAGMA user_version = 19;
-                    """
-                )
-                try execute(database, sql: "COMMIT")
-            } catch {
-                try? execute(database, sql: "ROLLBACK")
-                throw error
-            }
-        }
-
-        if version < 20 {
-            try execute(database, sql: "BEGIN IMMEDIATE")
-            do {
-                // Which transmission a message row reports delivery for. A
-                // row's primary key is its compose identity and never moves—
-                // edits and reactions reference it—but the transmission
-                // carrying its content changes whenever an edit (or a resend,
-                // which airs as one) supersedes the original frames under the
-                // edit's own engine handle. These columns are the pointer the
-                // delivery-evidence machinery follows; they start equal to
-                // the row's own key and are re-aimed at each edit.
-                //
-                // Backfilled for every existing row rather than outbound only:
-                // handles are unique within a facade session regardless of
-                // direction, so an inbound row can never match outbound
-                // evidence, and one uniform rule beats a nullable special case.
-                try execute(
-                    database,
-                    sql: """
-                    ALTER TABLE chat_message ADD COLUMN delivery_session_id TEXT;
-                    ALTER TABLE chat_message ADD COLUMN delivery_handle INTEGER;
-
-                    UPDATE chat_message
-                    SET delivery_session_id = session_id, delivery_handle = handle;
-
-                    CREATE INDEX chat_message_delivery_idx ON chat_message (
-                        owner_identity_id, delivery_session_id, delivery_handle
-                    );
-
-                    PRAGMA user_version = 20;
-                    """
-                )
-                try execute(database, sql: "COMMIT")
-            } catch {
-                try? execute(database, sql: "ROLLBACK")
-                throw error
-            }
-        }
-
-        if version < 21 {
-            try execute(database, sql: "BEGIN IMMEDIATE")
-            do {
-                // Whether a direct conversation may notify. Defaults on,
-                // which is what direct messages did before there was a
-                // switch. Channels have carried the same setting since they
-                // arrived, defaulting off—the asymmetry is deliberate: a
-                // message addressed to you is worth interrupting for, and a
-                // channel's traffic is not until its owner says so.
-                try execute(
-                    database,
-                    sql: """
-                    ALTER TABLE direct_conversation
-                        ADD COLUMN notifications_enabled INTEGER NOT NULL DEFAULT 1;
-
-                    PRAGMA user_version = 21;
-                    """
-                )
-                try execute(database, sql: "COMMIT")
-            } catch {
-                try? execute(database, sql: "ROLLBACK")
-                throw error
-            }
-        }
-
-        if version < 22 {
-            try execute(database, sql: "BEGIN IMMEDIATE")
-            do {
-                // What a router last said about its neighbors, page by page.
-                // Cached for the same reason a device's properties are: every
-                // page is a mesh exchange at everyone's expense, so the
-                // screen opens on what was last heard and asks only when
-                // told to. The header holds where the next page starts; the
-                // entries are keyed by hint so a page the router repeats
-                // updates rows rather than doubling them. Both go with the
-                // node's row.
-                try execute(
-                    database,
-                    sql: """
-                    CREATE TABLE node_peer_repeaters (
-                        node_id INTEGER PRIMARY KEY REFERENCES node(id) ON DELETE CASCADE,
-                        total INTEGER,
-                        next_cursor BLOB,
-                        as_of_ms INTEGER NOT NULL
-                    );
-
-                    CREATE TABLE node_peer_repeater_entry (
-                        node_id INTEGER NOT NULL REFERENCES node(id) ON DELETE CASCADE,
-                        hint BLOB NOT NULL,
-                        position INTEGER NOT NULL,
-                        name TEXT,
-                        rssi_dbm INTEGER,
-                        snr_quarter_db INTEGER,
-                        last_heard_min INTEGER,
-                        latitude REAL,
-                        longitude REAL,
-                        location_precision INTEGER,
-                        region_codes BLOB,
-                        reported_at_ms INTEGER NOT NULL,
-                        PRIMARY KEY (node_id, hint)
-                    ) WITHOUT ROWID;
-
-                    PRAGMA user_version = 22;
-                    """
-                )
-                try execute(database, sql: "COMMIT")
-            } catch {
-                try? execute(database, sql: "ROLLBACK")
-                throw error
-            }
-        }
-
-        if version < 23 {
-            try execute(database, sql: "BEGIN IMMEDIATE")
-            do {
-                // A path the person chose for a node, held against what the
-                // mesh teaches until `hold_until_ms` on the wall clock. The
-                // phone's routing keeps routes only in memory, so this is
-                // what reinstalls the hold when a session starts. Where the
-                // phone stood when the path was saved is what "moved" is
-                // measured from; `prompt_settled` remembers that the offer
-                // to switch away from this path was declined.
-                //
-                // A frame acknowledged through the flood that followed a
-                // missed route is marked, and a message any of whose frames
-                // were is marked too, so the transcript can say so.
-                try execute(
-                    database,
-                    sql: """
-                    CREATE TABLE node_manual_route (
-                        node_id INTEGER PRIMARY KEY REFERENCES node(id) ON DELETE CASCADE,
-                        hints BLOB NOT NULL,
-                        hold_until_ms INTEGER NOT NULL,
-                        saved_latitude REAL,
-                        saved_longitude REAL,
-                        saved_accuracy REAL,
-                        prompt_settled INTEGER NOT NULL DEFAULT 0
-                    );
-
-                    ALTER TABLE chat_delivery_fragment
-                        ADD COLUMN via_flood INTEGER NOT NULL DEFAULT 0;
-                    ALTER TABLE chat_message
-                        ADD COLUMN delivered_flooded INTEGER NOT NULL DEFAULT 0;
-
-                    PRAGMA user_version = 23;
-                    """
-                )
-                try execute(database, sql: "COMMIT")
-            } catch {
-                try? execute(database, sql: "ROLLBACK")
-                throw error
-            }
-        }
-
-        if version < 24 {
-            try execute(database, sql: "BEGIN IMMEDIATE")
-            do {
-                // How far a held path floods past its last repeater. Paths
-                // saved before this had the routing layer's one hop of slack.
-                try execute(
-                    database,
-                    sql: """
-                    ALTER TABLE node_manual_route
-                        ADD COLUMN flood_hops INTEGER NOT NULL DEFAULT 1;
-
-                    PRAGMA user_version = 24;
-                    """
-                )
-                try execute(database, sql: "COMMIT")
-            } catch {
-                try? execute(database, sql: "ROLLBACK")
-                throw error
-            }
-        }
-
-        if version < 25 {
-            try execute(database, sql: "BEGIN IMMEDIATE")
-            do {
-                // When the stored advertisement was heard. Bundles stored
-                // before this have no arrival on record, the same as an
-                // imported one.
-                try execute(
-                    database,
-                    sql: """
-                    ALTER TABLE node ADD COLUMN advertisement_received_at REAL;
-
-                    PRAGMA user_version = 25;
-                    """
-                )
-                try execute(database, sql: "COMMIT")
-            } catch {
-                try? execute(database, sql: "ROLLBACK")
-                throw error
-            }
-        }
-
-        if version < 26 {
-            try execute(database, sql: "BEGIN IMMEDIATE")
-            do {
-                // A reply names the message it answers just as a reaction
-                // does, so the resolved target is the Regarding reference's,
-                // not the reaction's. Replies stored before this kept their
-                // reference unresolved; resolve them the way an arriving
-                // one is. The wire lookup now runs for every reply, so it
-                // gets an index.
-                try execute(
-                    database,
-                    sql: """
-                    ALTER TABLE chat_message
-                        RENAME COLUMN reaction_target_session_id TO regarding_target_session_id;
-                    ALTER TABLE chat_message
-                        RENAME COLUMN reaction_target_handle TO regarding_target_handle;
-
-                    UPDATE chat_message
-                    SET regarding_target_session_id = session_id,
-                        regarding_target_handle = regarding_handle
-                    WHERE is_reaction = 0
-                        AND regarding_target_session_id IS NULL
-                        AND regarding_handle IS NOT NULL;
-
-                    UPDATE chat_message AS reply
-                    SET (regarding_target_session_id, regarding_target_handle) = (
-                        SELECT target.session_id, target.handle FROM chat_message AS target
-                        WHERE target.owner_identity_id = reply.owner_identity_id
-                            AND target.conversation_address = reply.conversation_address
-                            AND target.direction = reply.regarding_direction
-                            AND target.wire_id = reply.regarding_wire_id
-                            AND target.is_reaction = 0
-                            AND target.sender_hint IS reply.regarding_sender_hint
-                            AND target.rowid <> reply.rowid
-                        ORDER BY target.epoch DESC, target.created_at_ms DESC, target.rowid DESC
-                        LIMIT 1
-                    )
-                    WHERE is_reaction = 0
-                        AND regarding_target_session_id IS NULL
-                        AND regarding_wire_id IS NOT NULL;
-
-                    CREATE INDEX chat_message_wire_idx
-                        ON chat_message (owner_identity_id, conversation_address, direction, wire_id);
-
-                    PRAGMA user_version = 26;
-                    """
-                )
-                try execute(database, sql: "COMMIT")
-            } catch {
-                try? execute(database, sql: "ROLLBACK")
-                throw error
-            }
-        }
-
-        if version < 27 {
-            try execute(database, sql: "BEGIN IMMEDIATE")
-            do {
-                // The repeaters overheard carrying each frame: the two-byte
-                // hints of those that named themselves, in the order first
-                // heard, and a count of those that did not. A message keeps
-                // when its delivery last moved, so the transcript can tell a
-                // send still collecting repeats from one gone quiet.
-                try execute(
-                    database,
-                    sql: """
-                    ALTER TABLE chat_delivery_fragment ADD COLUMN repeaters BLOB;
-                    ALTER TABLE chat_delivery_fragment
-                        ADD COLUMN anonymous_repeats INTEGER NOT NULL DEFAULT 0;
-                    ALTER TABLE chat_message ADD COLUMN delivery_progress_at_ms INTEGER;
-
-                    PRAGMA user_version = 27;
-                    """
-                )
-                try execute(database, sql: "COMMIT")
-            } catch {
-                try? execute(database, sql: "ROLLBACK")
-                throw error
-            }
-        }
-
-        if version < 28 {
-            try execute(database, sql: "BEGIN IMMEDIATE")
-            do {
-                // A test message on EMERGENCY that arrived while no one
-                // asked to hear of them: kept and shown, never unread.
-                try execute(
-                    database,
-                    sql: """
-                    ALTER TABLE chat_message ADD COLUMN silent INTEGER NOT NULL DEFAULT 0;
-
-                    PRAGMA user_version = 28;
-                    """
-                )
-                try execute(database, sql: "COMMIT")
-            } catch {
-                try? execute(database, sql: "ROLLBACK")
-                throw error
-            }
-        }
-
-        if version < 29 {
-            try execute(database, sql: "BEGIN IMMEDIATE")
-            do {
-                // A reply whose Regarding could not be read, and a message
-                // that came as an edit of something unknown: each says so.
-                try execute(
-                    database,
-                    sql: """
-                    ALTER TABLE chat_message
-                        ADD COLUMN regarding_unknown INTEGER NOT NULL DEFAULT 0;
-                    ALTER TABLE chat_message
-                        ADD COLUMN unknown_original INTEGER NOT NULL DEFAULT 0;
-
-                    PRAGMA user_version = 29;
-                    """
-                )
-                try execute(database, sql: "COMMIT")
-            } catch {
-                try? execute(database, sql: "ROLLBACK")
-                throw error
-            }
-        }
-
-        if version < 30 {
-            try execute(database, sql: "BEGIN IMMEDIATE")
-            do {
-                // Whether a message of mine went under a session with forward
-                // secrecy. Null where nothing says: inbound, and older rows.
-                try execute(
-                    database,
-                    sql: """
-                    ALTER TABLE chat_message ADD COLUMN forward_secret INTEGER;
-
-                    PRAGMA user_version = 30;
-                    """
-                )
-                try execute(database, sql: "COMMIT")
-            } catch {
-                try? execute(database, sql: "ROLLBACK")
-                throw error
-            }
-        }
-
-        if version < 31 {
-            try execute(database, sql: "BEGIN IMMEDIATE")
-            do {
-                // Radios this phone left holding its identity as their
-                // host, so it can revoke them from wherever it next attaches.
-                // Keyed by device address, which outlives a radio's name and
-                // its Bluetooth identifier.
-                try execute(
-                    database,
-                    sql: """
-                    CREATE TABLE claimed_radio (
-                        owner_identity_id TEXT NOT NULL
-                            REFERENCES local_identity(id) ON DELETE CASCADE,
-                        device_address TEXT NOT NULL,
-                        name TEXT,
-                        attached_at_ms INTEGER NOT NULL,
-                        PRIMARY KEY (owner_identity_id, device_address)
-                    ) WITHOUT ROWID;
-
-                    PRAGMA user_version = 31;
-                    """
-                )
-                try execute(database, sql: "COMMIT")
-            } catch {
-                try? execute(database, sql: "ROLLBACK")
-                throw error
-            }
-        }
-
-        // Every migration above has run, so the database must now sit exactly
-        // at the version this build claims to support. A mismatch means a
-        // migration stamped a `user_version` the constant was not raised to
-        // match, which is invisible on the run that applies it and fatal on
-        // every run after. Fail here, while the mistake is still one commit old.
-        let applied = try readSchemaVersion(database)
-        guard applied == currentSchemaVersion else {
-            throw ApplicationStoreError.schemaVersionMismatch(
-                applied: applied,
-                expected: currentSchemaVersion
-            )
-        }
-    }
-
-    private static func readSchemaVersion(_ database: OpaquePointer) throws -> Int32 {
-        var statement: OpaquePointer?
-        let status = sqlite3_prepare_v2(database, "PRAGMA user_version", -1, &statement, nil)
-        guard status == SQLITE_OK, let statement else {
-            throw Self.sqliteFailure(database, status)
-        }
-        defer { sqlite3_finalize(statement) }
-        guard sqlite3_step(statement) == SQLITE_ROW else {
-            throw Self.sqliteFailure(database, sqlite3_errcode(database))
-        }
-        return sqlite3_column_int(statement, 0)
-    }
-
-    private static func execute(_ database: OpaquePointer, sql: String) throws {
-        let status = sqlite3_exec(database, sql, nil, nil, nil)
-        guard status == SQLITE_OK else {
-            throw Self.sqliteFailure(database, status)
-        }
-    }
-
-    private static func normalizeSearch(_ value: String) -> String {
-        value.folding(
-            options: [.caseInsensitive, .diacriticInsensitive],
-            locale: Locale(identifier: "en_US_POSIX")
-        )
-    }
-
-    /// The radio metadata columns, when the row has any. Presence of the
-    /// authentication flag is what distinguishes "no frame recorded" from a
-    /// frame that simply reported no signal figures.
-    private static func reception(
-        _ statement: OpaquePointer,
-        at offset: Int32
-    ) -> StoredMessageReception? {
-        guard sqlite3_column_type(statement, offset + 5) != SQLITE_NULL else { return nil }
-        return StoredMessageReception(
-            rssiDbm: optionalIntColumn(statement, at: offset).map(Int.init),
-            snrCentibels: optionalIntColumn(statement, at: offset + 1).map(Int.init),
-            lqi: optionalIntColumn(statement, at: offset + 2).map(Int.init),
-            hopCount: optionalIntColumn(statement, at: offset + 3).map(Int.init),
-            routeHints: unpackRouteHints(optionalDataColumn(statement, at: offset + 4)),
-            sourceAuthenticated: sqlite3_column_int(statement, offset + 5) != 0
-        )
-    }
-
-    /// Route hints are fixed-width and ordered, so they store as one blob
-    /// rather than a table of their own.
-    private static func packRouteHints(_ hints: [Data]) -> Data {
-        hints.reduce(into: Data()) { packed, hint in packed.append(hint) }
-    }
-
-    static func unpackRouteHints(_ packed: Data?) -> [Data] {
-        guard let packed, !packed.isEmpty else { return [] }
-        return stride(from: 0, to: packed.count - packed.count % 2, by: 2).map { offset in
-            packed.subdata(in: offset..<(offset + 2))
-        }
-    }
-
-    private static func stringColumn(_ statement: OpaquePointer, at index: Int32) -> String {
-        guard let pointer = sqlite3_column_text(statement, index) else { return "" }
-        return String(cString: pointer)
-    }
-
-    private static func dataColumn(_ statement: OpaquePointer, at index: Int32) -> Data {
-        guard let bytes = sqlite3_column_blob(statement, index) else { return Data() }
-        return Data(bytes: bytes, count: Int(sqlite3_column_bytes(statement, index)))
-    }
-
-    private static func nowMilliseconds() -> Int64 {
-        Int64(Date.now.timeIntervalSince1970 * 1_000)
-    }
-
-    private static func optionalStringColumn(
-        _ statement: OpaquePointer,
-        at index: Int32
-    ) -> String? {
-        guard sqlite3_column_type(statement, index) != SQLITE_NULL else { return nil }
-        return stringColumn(statement, at: index)
-    }
-
-    private static func optionalDataColumn(
-        _ statement: OpaquePointer,
-        at index: Int32
-    ) -> Data? {
-        guard sqlite3_column_type(statement, index) != SQLITE_NULL else { return nil }
-        return dataColumn(statement, at: index)
-    }
-
-    private static func optionalIntColumn(
-        _ statement: OpaquePointer,
-        at index: Int32
-    ) -> Int64? {
-        guard sqlite3_column_type(statement, index) != SQLITE_NULL else { return nil }
-        return sqlite3_column_int64(statement, index)
-    }
-
-    private static func optionalDoubleColumn(
-        _ statement: OpaquePointer,
-        at index: Int32
-    ) -> Double? {
-        guard sqlite3_column_type(statement, index) != SQLITE_NULL else { return nil }
-        return sqlite3_column_double(statement, index)
-    }
-
-    /// Read a REAL column holding a Unix-epoch-seconds instant.
-    private static func optionalDateColumn(
-        _ statement: OpaquePointer,
-        at index: Int32
-    ) -> Date? {
-        guard sqlite3_column_type(statement, index) != SQLITE_NULL else { return nil }
-        return Date(timeIntervalSince1970: sqlite3_column_double(statement, index))
-    }
-
-    private static let sqliteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 }
+
+// MARK: - Conversions
+
+fileprivate extension Date {
+    /// The core's instants are whole milliseconds since the Unix epoch.
+    init(storeMilliseconds milliseconds: Int64) {
+        self.init(timeIntervalSince1970: Double(milliseconds) / 1_000)
+    }
+
+    /// This instant with its fraction of a millisecond cut off. What every
+    /// stamp uses except those below.
+    var storeMilliseconds: Int64 {
+        Int64(timeIntervalSince1970 * 1_000)
+    }
+
+    /// This instant to the nearest millisecond. The management cache,
+    /// manual routes, claimed radios and repeater listings have always been
+    /// stamped and compared this way, so their rows keep meaning the same.
+    var roundedStoreMilliseconds: Int64 {
+        Int64((timeIntervalSince1970 * 1_000).rounded())
+    }
+}
+
+/// Stored as Swift's ``PeerRole`` raw values.
+fileprivate extension MobileStoredNodeKind {
+    init?(storedText: String) {
+        switch storedText {
+        case "repeater": self = .repeater
+        case "chat": self = .chat
+        case "tracker": self = .tracker
+        case "sensor": self = .sensor
+        case "bridge": self = .bridge
+        case "chatRoom": self = .chatRoom
+        case "temporarySession": self = .temporarySession
+        case "unknown": self = .unknown
+        default: return nil
+        }
+    }
+
+    var storedText: String {
+        switch self {
+        case .repeater: "repeater"
+        case .chat: "chat"
+        case .tracker: "tracker"
+        case .sensor: "sensor"
+        case .bridge: "bridge"
+        case .chatRoom: "chatRoom"
+        case .temporarySession: "temporarySession"
+        case .unknown: "unknown"
+        }
+    }
+}
+
+fileprivate extension MobileStoredSystemRole {
+    init?(storedText: String) {
+        switch storedText {
+        case "companion_radio": self = .companionRadio
+        default: return nil
+        }
+    }
+
+    var storedText: String {
+        switch self {
+        case .companionRadio: "companion_radio"
+        }
+    }
+}
+
+fileprivate extension MobileStoredChatDeliveryState {
+    init?(storedText: String) {
+        switch storedText.lowercased() {
+        case "pending": self = .pending
+        case "sent": self = .sent
+        case "acknowledged": self = .acknowledged
+        case "failed": self = .failed
+        case "undelivered": self = .undelivered
+        default: return nil
+        }
+    }
+
+    var storedText: String {
+        switch self {
+        case .pending: "pending"
+        case .sent: "sent"
+        case .acknowledged: "acknowledged"
+        case .failed: "failed"
+        case .undelivered: "undelivered"
+        }
+    }
+}
+
+extension StoredNode {
+    fileprivate init(_ record: MobileStoredNodeRecord) {
+        self.init(
+            id: record.id,
+            ownerIdentityID: record.ownerIdentityId,
+            publicAddress: record.publicAddress,
+            alias: record.alias,
+            advertisedName: record.advertisedName,
+            systemRole: record.systemRole?.storedText,
+            nodeKind: record.nodeKind?.storedText,
+            advertisement: record.advertisement,
+            advertisementAuthenticated: record.advertisementAuthenticated,
+            lastHeardAt: record.lastHeardAtMs.map(Date.init(storeMilliseconds:)),
+            isSaved: record.isSaved,
+            isFavorite: record.isFavorite,
+            onDeviceIdentity: record.onDeviceIdentity,
+            notifyWhenHeard: record.notifyWhenHeard,
+            advertisementReceivedAt: record.advertisementReceivedAtMs.map(Date.init(storeMilliseconds:))
+        )
+    }
+}
+
+extension StoredManagementCard {
+    fileprivate init(_ record: MobileStoredManagementCardRecord) {
+        self.init(
+            capabilities: record.capabilities,
+            deviceVersion: record.deviceVersion,
+            deviceModel: record.deviceModel,
+            deviceName: record.deviceName,
+            fetchedAt: Date(storeMilliseconds: record.fetchedAtMs)
+        )
+    }
+}
+
+extension MobileStoredManagementCardRecord {
+    fileprivate init(_ card: StoredManagementCard) {
+        self.init(
+            capabilities: card.capabilities,
+            deviceVersion: card.deviceVersion,
+            deviceModel: card.deviceModel,
+            deviceName: card.deviceName,
+            fetchedAtMs: card.fetchedAt.roundedStoreMilliseconds
+        )
+    }
+}
+
+extension StoredCachedProperty {
+    fileprivate init(_ record: MobileStoredCachedPropertyRecord) {
+        self.init(value: record.value, fetchedAt: Date(storeMilliseconds: record.fetchedAtMs))
+    }
+}
+
+extension StoredPeerRepeaterEntry {
+    fileprivate init(_ record: MobileStoredPeerRepeaterEntryRecord) {
+        self.init(
+            hint: record.hint,
+            name: record.name,
+            rssiDBm: record.rssiDbm,
+            snrQuarterDB: record.snrQuarterDb,
+            lastHeardMinutes: record.lastHeardMinutes,
+            latitude: record.latitude,
+            longitude: record.longitude,
+            locationPrecision: record.locationPrecision,
+            regionCodes: record.regionCodes,
+            reportedAt: Date(storeMilliseconds: record.reportedAtMs)
+        )
+    }
+}
+
+extension MobileStoredPeerRepeaterEntryRecord {
+    fileprivate init(_ entry: StoredPeerRepeaterEntry) {
+        self.init(
+            hint: entry.hint,
+            name: entry.name,
+            rssiDbm: entry.rssiDBm,
+            snrQuarterDb: entry.snrQuarterDB,
+            lastHeardMinutes: entry.lastHeardMinutes,
+            latitude: entry.latitude,
+            longitude: entry.longitude,
+            locationPrecision: entry.locationPrecision,
+            regionCodes: entry.regionCodes,
+            reportedAtMs: entry.reportedAt.roundedStoreMilliseconds
+        )
+    }
+}
+
+extension StoredPeerRepeaterListing {
+    fileprivate init(_ record: MobileStoredPeerRepeaterListingRecord) {
+        self.init(
+            entries: record.entries.map(StoredPeerRepeaterEntry.init),
+            total: record.total.map { Int($0) },
+            nextCursor: record.nextCursor,
+            asOf: Date(storeMilliseconds: record.asOfMs)
+        )
+    }
+}
+
+extension StoredPeerRepeaterReport {
+    fileprivate init(_ record: MobileStoredPeerRepeaterReportRecord) {
+        self.init(reporterNodeID: record.reporterNodeId, entry: StoredPeerRepeaterEntry(record.entry))
+    }
+}
+
+extension StoredManualRoute {
+    fileprivate init(_ record: MobileStoredManualRouteRecord) {
+        self.init(
+            publicAddress: record.publicAddress,
+            hints: record.hints,
+            floodHops: record.floodHops,
+            holdUntil: Date(storeMilliseconds: record.holdUntilMs),
+            savedLatitude: record.savedLatitude,
+            savedLongitude: record.savedLongitude,
+            savedAccuracy: record.savedAccuracy,
+            promptSettled: record.promptSettled
+        )
+    }
+}
+
+extension StoredClaimedRadio {
+    fileprivate init(_ record: MobileStoredClaimedRadioRecord) {
+        self.init(
+            deviceAddress: record.deviceAddress,
+            name: record.name,
+            attachedAt: Date(storeMilliseconds: record.attachedAtMs)
+        )
+    }
+}
+
+extension StoredConversationPreview {
+    fileprivate init(_ record: MobileStoredConversationPreviewRecord) {
+        self.init(
+            createdAtMilliseconds: record.createdAtMs,
+            body: record.body,
+            isOutbound: record.isOutbound,
+            isDeleted: record.isDeleted,
+            senderAddress: record.senderAddress,
+            senderHint: record.senderHint,
+            isStatus: record.isStatus
+        )
+    }
+}
+
+extension StoredDirectConversation {
+    fileprivate init(_ record: MobileStoredDirectConversationRecord) {
+        self.init(
+            id: record.id,
+            node: StoredNode(record.node),
+            draftText: record.draftText,
+            lastReadAtMilliseconds: record.lastReadAtMs,
+            createdAtMilliseconds: record.createdAtMs,
+            notificationsEnabled: record.notificationsEnabled,
+            lastMessage: record.lastMessage.map(StoredConversationPreview.init),
+            unreadCount: Int(record.unreadCount)
+        )
+    }
+}
+
+extension StoredChannelConversation {
+    /// `nil` when the channel's stored ID is not a UUID.
+    fileprivate init?(_ record: MobileStoredChannelConversationRecord) {
+        guard let channelID = UUID(uuidString: record.channelId) else { return nil }
+        self.init(
+            id: record.id,
+            channelID: channelID,
+            conversationAddress: record.conversationAddress,
+            draftText: record.draftText,
+            lastReadAtMilliseconds: record.lastReadAtMs,
+            createdAtMilliseconds: record.createdAtMs,
+            lastMessage: record.lastMessage.map(StoredConversationPreview.init),
+            unreadCount: Int(record.unreadCount)
+        )
+    }
+}
+
+extension ChatNotificationTarget {
+    fileprivate init(_ record: MobileStoredChatNotificationTargetRecord) {
+        self.init(
+            conversationAddress: record.conversationAddress,
+            body: record.body,
+            senderAddress: record.senderAddress,
+            senderHint: record.senderHint,
+            senderHandle: record.senderHandle,
+            isStatus: record.isStatus
+        )
+    }
+}
+
+extension ChatReactionNotificationTarget {
+    fileprivate init(_ record: MobileStoredChatReactionNotificationTargetRecord) {
+        self.init(
+            conversationAddress: record.conversationAddress,
+            body: record.body,
+            targetBody: record.targetBody,
+            senderAddress: record.senderAddress,
+            senderHint: record.senderHint,
+            senderHandle: record.senderHandle
+        )
+    }
+}
+
+extension ChatDeliveryFailure {
+    fileprivate init(_ record: MobileStoredChatDeliveryFailureRecord) {
+        self.init(conversationAddress: record.conversationAddress, body: record.body, undelivered: record.undelivered)
+    }
+}
+
+extension StoredChannelKind {
+    fileprivate init(_ kind: MobileStoredChannelKind) {
+        switch kind {
+        case .builtin: self = .builtin
+        case .named: self = .named
+        case .privateKey: self = .privateKey
+        }
+    }
+}
+
+extension MobileStoredChannelKind {
+    fileprivate init(_ kind: StoredChannelKind) {
+        switch kind {
+        case .builtin: self = .builtin
+        case .named: self = .named
+        case .privateKey: self = .privateKey
+        }
+    }
+}
+
+extension StoredChannel {
+    /// `nil` when the stored ID is not a UUID.
+    fileprivate init?(_ record: MobileStoredChannelRecord) {
+        guard let id = UUID(uuidString: record.id) else { return nil }
+        self.init(
+            id: id,
+            ownerIdentityID: record.ownerIdentityId,
+            kind: StoredChannelKind(record.kind),
+            canonicalName: record.canonicalName,
+            name: record.name,
+            alias: record.alias,
+            channelIDHex: record.channelIdHex,
+            tint: record.tint,
+            regionCode: record.regionCode,
+            maxFloodHops: record.maxFloodHops.map { Int($0) },
+            joinedPhone: record.joinedPhone,
+            joinedDevice: record.joinedDevice,
+            notificationsEnabled: record.notificationsEnabled,
+            joinedAt: record.joinedAtMs.map(Date.init(storeMilliseconds:))
+        )
+    }
+}
+
+extension MobileStoredChannelRecord {
+    fileprivate init(_ channel: StoredChannel) {
+        self.init(
+            id: channel.id.uuidString,
+            ownerIdentityId: channel.ownerIdentityID,
+            kind: MobileStoredChannelKind(channel.kind),
+            canonicalName: channel.canonicalName,
+            name: channel.name,
+            alias: channel.alias,
+            channelIdHex: channel.channelIDHex,
+            tint: channel.tint,
+            regionCode: channel.regionCode,
+            maxFloodHops: channel.maxFloodHops.map { UInt8(clamping: $0) },
+            joinedPhone: channel.joinedPhone,
+            joinedDevice: channel.joinedDevice,
+            notificationsEnabled: channel.notificationsEnabled,
+            joinedAtMs: channel.joinedAt?.storeMilliseconds
+        )
+    }
+}
+
+extension StoredMessageRef {
+    fileprivate init(_ record: MobileStoredChatMessageRefRecord) {
+        self.init(sessionID: record.sessionId, handle: record.handle)
+    }
+}
+
+extension ChatMessageCursor {
+    fileprivate init(_ record: MobileStoredChatCursorRecord) {
+        self.init(createdAtMilliseconds: record.createdAtMs, rowID: record.rowId)
+    }
+}
+
+extension MobileStoredChatCursorRecord {
+    fileprivate init(_ cursor: ChatMessageCursor) {
+        self.init(createdAtMs: cursor.createdAtMilliseconds, rowId: cursor.rowID)
+    }
+}
+
+extension StoredMessageReception {
+    fileprivate init(_ record: MobileStoredChatReceptionRecord) {
+        self.init(
+            rssiDbm: record.rssiDbm.map { Int($0) },
+            snrCentibels: record.snrCentibels.map { Int($0) },
+            lqi: record.lqi.map { Int($0) },
+            hopCount: record.hopCount.map { Int($0) },
+            routeHints: record.routeHints,
+            sourceAuthenticated: record.sourceAuthenticated
+        )
+    }
+}
+
+extension MobileStoredChatReceptionRecord {
+    fileprivate init(_ reception: StoredMessageReception) {
+        self.init(
+            rssiDbm: reception.rssiDbm.map { Int16(clamping: $0) },
+            snrCentibels: reception.snrCentibels.map { Int16(clamping: $0) },
+            lqi: reception.lqi.map { UInt8(clamping: $0) },
+            hopCount: reception.hopCount.map { UInt8(clamping: $0) },
+            routeHints: reception.routeHints,
+            sourceAuthenticated: reception.sourceAuthenticated
+        )
+    }
+}
+
+extension StoredMessageRepeats {
+    fileprivate init(_ record: MobileStoredChatRepeatsRecord) {
+        self.init(
+            repeaters: record.repeaters,
+            anonymous: Int(record.anonymous),
+            progressAt: Date(storeMilliseconds: record.progressAtMs)
+        )
+    }
+}
+
+extension StoredMessageQuote {
+    fileprivate init(_ record: MobileStoredChatQuoteRecord) {
+        self.init(original: record.original.map { original in
+            Original(
+                ref: StoredMessageRef(original.reference),
+                body: original.body,
+                outbound: original.outbound,
+                isDeleted: original.isDeleted,
+                senderAddress: original.senderAddress,
+                senderHint: original.senderHint,
+                senderHandle: original.senderHandle
+            )
+        })
+    }
+}
+
+extension StoredMessageReaction {
+    fileprivate init(_ record: MobileStoredChatReactionRecord) {
+        self.init(
+            body: record.body,
+            outbound: record.outbound,
+            senderAddress: record.senderAddress,
+            senderHint: record.senderHint,
+            sessionID: record.reference.sessionId,
+            handle: record.reference.handle,
+            wireID: record.wireId,
+            epoch: record.epoch,
+            createdAtMilliseconds: record.createdAtMs,
+            deliveryState: record.deliveryState?.storedText,
+            forwardSecret: record.forwardSecret
+        )
+    }
+}
+
+extension StoredChatMessage {
+    fileprivate init(_ record: MobileStoredChatMessageRecord) {
+        self.init(
+            sessionID: record.reference.sessionId,
+            handle: record.reference.handle,
+            body: record.body,
+            outbound: record.outbound,
+            deliveryState: record.deliveryState?.storedText,
+            isDeleted: record.isDeleted,
+            createdAtMilliseconds: record.createdAtMs,
+            wireID: record.wireId,
+            epoch: record.epoch,
+            isEdited: record.isEdited,
+            presence: Self.presenceCode(record.presence),
+            receivedLate: record.receivedLate,
+            deliveredLate: record.deliveredLate,
+            originalBody: record.originalBody,
+            senderAddress: record.senderAddress,
+            senderHint: record.senderHint,
+            senderHandle: record.senderHandle,
+            reception: record.reception.map(StoredMessageReception.init),
+            rowID: record.rowId,
+            deliveredFlooded: record.deliveredFlooded,
+            reactions: record.reactions.map(StoredMessageReaction.init),
+            isReply: record.isReply,
+            isEditOfUnknown: record.isEditOfUnknown,
+            isStatus: record.isStatus,
+            isForwardSecret: record.isForwardSecret,
+            replyTarget: record.replyTarget.map(StoredMessageRef.init),
+            quote: record.quote.map(StoredMessageQuote.init),
+            repeats: record.repeats.map(StoredMessageRepeats.init)
+        )
+    }
+
+    /// The stored presence code: 0 present, 1 gap under repair, 2
+    /// unavailable, 3 gap waiting for the user.
+    private static func presenceCode(_ presence: MobileChatPresence) -> Int {
+        switch presence {
+        case .present: 0
+        case .gapPending: 1
+        case .unavailable: 2
+        case .gapIdle: 3
+        }
+    }
+}
+
+extension StoredChatMessagePage {
+    fileprivate init(_ record: MobileStoredChatMessagePageRecord) {
+        self.init(
+            messages: record.messages.map(StoredChatMessage.init),
+            hasOlder: record.hasOlder,
+            hasNewer: record.hasNewer
+        )
+    }
+}
+
+#if DEBUG
+extension MobileStagedChatMessageRecord {
+    fileprivate init(_ message: StagedMessage) {
+        self.init(
+            handle: message.handle,
+            body: message.body,
+            outbound: message.outbound,
+            createdAtMs: message.createdAt.storeMilliseconds,
+            senderAddress: message.senderAddress,
+            senderHint: message.senderHint,
+            senderHandle: message.senderHandle,
+            deliveryState: message.deliveryState.flatMap(MobileStoredChatDeliveryState.init(storedText:)),
+            reception: message.reception.map(MobileStoredChatReceptionRecord.init),
+            reactions: message.reactions.map { reaction in
+                MobileStagedChatReactionRecord(
+                    body: reaction.body,
+                    outbound: reaction.outbound,
+                    createdAtMs: reaction.createdAt.storeMilliseconds,
+                    senderAddress: reaction.senderAddress,
+                    senderHint: reaction.senderHint
+                )
+            },
+            regarding: message.regarding.map { regarding in
+                switch regarding {
+                case .message(let handle): .message(handle: handle)
+                case .missing: .missing
+                }
+            },
+            isDeleted: message.isDeleted
+        )
+    }
+}
+#endif
