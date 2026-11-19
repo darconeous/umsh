@@ -43,8 +43,14 @@ entropy-sar-adc = []
 # For images plausibly left in place as infrastructure.
 meshcore-forwarder = ["umsh-ulcp-runtime/meshcore-forwarder"]
 # Node messaging (`CAP_NODE_MSG`): a link sends and receives UMSH
-# payloads through the device node. Off by default.
+# payloads through the device node. On by default only where
+# `ulcp-uart` is.
 node-msg = ["umsh-ulcp-runtime/node-msg"]
+# An application wired to the device's own interface over UART0 on the
+# header's D6 (TX) and D7 (RX), paced by XON and XOFF: node messaging
+# beside USB and BLE. The XIAO ESP32S3 kit alone has the pads, and
+# carries it by default.
+ulcp-uart = ["node-msg", "umsh-ulcp-runtime/uart-link"]
 # The LAN bearer: the device node's frames over IP multicast on the
 # station's network, and the DNS-SD record that describes them. The
 # T-Beam Supreme and the XIAO ESP32S3 carry it by default.

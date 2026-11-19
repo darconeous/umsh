@@ -98,7 +98,11 @@ use esp_hal::spi::Mode;
 use esp_hal::spi::master::{Config as SpiConfig, Spi};
 use esp_hal::time::Rate;
 use esp_hal::timer::timg::TimerGroup;
-#[cfg(any(not(feature = "wired-usb-serial-jtag"), feature = "gnss"))]
+#[cfg(any(
+    not(feature = "wired-usb-serial-jtag"),
+    feature = "gnss",
+    feature = "ulcp-uart"
+))]
 use esp_hal::uart::{Config as UartConfig, Uart};
 #[cfg(feature = "wired-usb-serial-jtag")]
 use esp_hal::usb::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagRx, UsbSerialJtagTx};
@@ -170,7 +174,7 @@ use umsh_ulcp_device::{
 use umsh_ulcp_runtime::driver::{
     self, DeviceEnv, DeviceRuntime, InEvent, InputChannel, TransportChannels,
 };
-#[cfg(not(feature = "wired-usb-serial-jtag"))]
+#[cfg(any(not(feature = "wired-usb-serial-jtag"), feature = "ulcp-uart"))]
 use umsh_ulcp_runtime::uart_link;
 use umsh_ulcp_runtime::{radio_mux, transport_policy};
 #[cfg(not(feature = "input-gate"))]
@@ -295,6 +299,11 @@ compile_error!(
     any(feature = "pmic-axp2101", feature = "board-tlora-pager")
 ))]
 compile_error!("`usb-presence-sof` is for boards that cannot sense VBUS");
+#[cfg(all(feature = "ulcp-uart", not(feature = "board-xiao-esp32s3")))]
+compile_error!("`ulcp-uart` is wired for the XIAO ESP32S3 kit's D6 and D7 alone");
+// One device's own interface: a built-in one or a wired application.
+#[cfg(all(feature = "ulcp-uart", feature = "communicator"))]
+compile_error!("`ulcp-uart` and `communicator` both need the device's own interface");
 #[cfg(not(any(
     feature = "power-off-deep-sleep",
     feature = "pmic-axp2101",
@@ -538,7 +547,7 @@ fn session_config() -> SessionConfig {
         ble_pin: cfg!(feature = "ble"),
         uart_links: UartLinks {
             wired_host: cfg!(not(feature = "wired-usb-serial-jtag")),
-            device: false,
+            device: cfg!(feature = "ulcp-uart"),
         },
         // The SoC restarts on command; see the `reboot` hook below.
         reboot: true,
@@ -671,6 +680,14 @@ static OUT_CH: TransportChannels<CriticalSectionRawMutex> = TransportChannels::n
 /// and everything the session publishes.
 #[cfg(feature = "communicator")]
 static DEVICE_LINK: driver::DeviceLink<CriticalSectionRawMutex> = driver::DeviceLink::new();
+
+/// The wired application's way into the session, carried on its UART.
+#[cfg(feature = "ulcp-uart")]
+static DEVICE_LINK: driver::DeviceLink<CriticalSectionRawMutex> = driver::DeviceLink::wire();
+
+/// The application UART's rate, unless the build sets another.
+#[cfg(feature = "ulcp-uart")]
+const ULCP_UART_BAUD: u32 = uart_link::baud(option_env!("UMSH_ULCP_UART_BAUD"), 115_200);
 
 /// Published session epoch, checked by each transport at framing edges.
 static SESSION_GEN: AtomicU32 = AtomicU32::new(0);
@@ -2606,14 +2623,54 @@ async fn uart_host_task(uart: Uart<'static, Async>, panic_report: Option<heaples
         panic_report,
         sending: None,
     };
-    uart_link::run::<_, _, _, _, FRAME_IN_MAX, UART_RUN_MAX>(
+    uart_link::run::<_, _, _, _, _, FRAME_IN_MAX, UART_RUN_MAX>(
         &mut rx,
         &mut tx,
         &mut inbound,
         &mut outbound,
         &uart_link::WINDOW,
+        &(),
     )
     .await
+}
+
+/// The application wired to the device's own interface, served on its
+/// UART beside whatever host is attached (spec §The Device's Own
+/// Interface).
+///
+/// The board light-sleeps while the link listens (spec §Waking a Device
+/// on a UART). Three rising edges on RX wake it, which the application's
+/// wake preamble supplies, and a receive interrupt at every octet brings
+/// the first one after the wake to the link at once: otherwise the idle
+/// hook could sleep again before the link takes its wake lock, and spend
+/// more of the preamble.
+#[cfg(feature = "ulcp-uart")]
+#[embassy_executor::task]
+async fn application_uart_task(uart: Uart<'static, Async>) {
+    let (mut rx, mut tx) = uart.split();
+    // UART0 can wake this chip, and three edges is the fewest it counts.
+    rx.enable_wakeup(&esp_hal::uart::WakeupConfig::default())
+        .unwrap();
+    let awake = UartAwake(core::cell::RefCell::new(None));
+    uart_link::serve_device(&mut rx, &mut tx, &DEVICE_LINK, &INPUT_CH, &awake).await
+}
+
+/// The wake lock the application UART's link holds while it needs the
+/// board awake.
+#[cfg(feature = "ulcp-uart")]
+struct UartAwake(core::cell::RefCell<Option<esp_hal::rtc_cntl::WakeLock>>);
+
+#[cfg(feature = "ulcp-uart")]
+impl uart_link::Awake for UartAwake {
+    fn hold(&self) {
+        self.0
+            .borrow_mut()
+            .get_or_insert_with(esp_hal::rtc_cntl::WakeLock::new);
+    }
+
+    fn release(&self) {
+        self.0.borrow_mut().take();
+    }
 }
 
 /// The longest run the UART host link sends at once: a frame, with
@@ -3123,9 +3180,9 @@ async fn device_task(
             ctl: &DEVICE_CTL,
             out: &OUT_CH,
             session_gen: &SESSION_GEN,
-            #[cfg(feature = "communicator")]
+            #[cfg(any(feature = "communicator", feature = "ulcp-uart"))]
             device: Some(&DEVICE_LINK),
-            #[cfg(not(feature = "communicator"))]
+            #[cfg(not(any(feature = "communicator", feature = "ulcp-uart")))]
             device: None,
             snapshot: &SNAPSHOT_CTL,
         },
@@ -4365,6 +4422,27 @@ async fn main(spawner: Spawner) {
     spawner.spawn(usb_presence_task().unwrap());
     #[cfg(all(feature = "wired-usb-serial-jtag", not(feature = "usb-presence-sof")))]
     spawner.spawn(usb_vbus_task().unwrap());
+    // The application's UART: UART0 on the header's D6 (TX) and D7 (RX),
+    // free here because the host's wired transport is the native USB
+    // port. The boot ROM prints on D6 at every reset, which the
+    // application reads as a lost frame: the radio has restarted, and
+    // that is the right reading.
+    #[cfg(feature = "ulcp-uart")]
+    spawner.spawn(
+        application_uart_task(
+            Uart::new(
+                peripherals.UART0,
+                UartConfig::default()
+                    .with_baudrate(ULCP_UART_BAUD)
+                    .with_rx(esp_hal::uart::RxConfig::default().with_fifo_full_threshold(1)),
+            )
+            .unwrap()
+            .with_rx(peripherals.GPIO44)
+            .with_tx(peripherals.GPIO43)
+            .into_async(),
+        )
+        .unwrap(),
+    );
 
     #[cfg(feature = "vext")]
     vext.enable().await;

@@ -919,6 +919,16 @@ pub struct SerialFrameLink<IO> {
     withheld: bool,
     /// An XON is due and has not been written yet.
     xon_owed: bool,
+    /// The line rate, when the stream is a serial port.
+    baud: Option<u32>,
+    /// The fill octets of a wake preamble, once the device is paced as on
+    /// a UART (spec §Waking a Device on a UART); 0 sends none.
+    wake_fill: usize,
+    /// When octets last went to the stream.
+    sent_at: Option<Instant>,
+    /// Octets the receive path handed over and the stream has not taken:
+    /// an XON, and the preamble ahead of it.
+    owed_out: Vec<u8>,
 }
 
 impl<IO> SerialFrameLink<IO> {
@@ -934,7 +944,34 @@ impl<IO> SerialFrameLink<IO> {
             since_xon: 0,
             withheld: false,
             xon_owed: false,
+            baud: None,
+            wake_fill: 0,
+            sent_at: None,
+            owed_out: Vec::new(),
         }
+    }
+
+    /// The stream is a serial port at `baud`. Once the device is paced
+    /// ([`FrameLink::pace`]), the link is a UART reader's, and it sends a
+    /// wake preamble sized for this rate after every quiet.
+    pub fn with_baud(mut self, baud: u32) -> Self {
+        self.baud = Some(baud);
+        self
+    }
+
+    /// Start the next octets to go out: what the receive path still owes
+    /// the stream, then a wake preamble if one is due.
+    fn outgoing(&mut self) -> Vec<u8> {
+        let mut out = core::mem::take(&mut self.owed_out);
+        let quiet = Duration::from_millis(hdlc::WAKE_QUIET_MS.into());
+        if self.wake_fill > 0 && self.sent_at.is_none_or(|at| at.elapsed() >= quiet) {
+            out.resize(out.len() + self.wake_fill, hdlc::FILL);
+            out.push(hdlc::FLAG);
+        }
+        // Handed over no later than it goes out, so the quiet is never
+        // counted short.
+        self.sent_at = Some(Instant::now());
+        out
     }
 
     /// Recover the underlying byte stream.
@@ -948,9 +985,12 @@ where
     IO: AsyncRead + AsyncWrite + Unpin,
 {
     async fn send_frame(&mut self, frame: &[u8]) -> Result<(), UlcpError> {
-        let mut wire = vec![0u8; hdlc::max_encoded_len(frame.len())];
-        let len = hdlc::encode_frame(frame, &mut wire).expect("buffer sized with max_encoded_len");
-        self.io.write_all(&wire[..len]).await?;
+        let mut wire = self.outgoing();
+        let start = wire.len();
+        wire.resize(start + hdlc::max_encoded_len(frame.len()), 0);
+        let len = hdlc::encode_frame(frame, &mut wire[start..])
+            .expect("buffer sized with max_encoded_len");
+        self.io.write_all(&wire[..start + len]).await?;
         self.io.flush().await?;
         Ok(())
     }
@@ -981,13 +1021,22 @@ where
             {
                 self.xon_owed = true;
             }
-            if self.xon_owed
-                && !self.withheld
-                && let core::task::Poll::Ready(Ok(1)) =
-                    core::pin::Pin::new(&mut self.io).poll_write(cx, &[hdlc::XON])
-            {
+            if self.xon_owed && !self.withheld {
+                let mut out = self.outgoing();
+                out.push(hdlc::XON);
+                self.owed_out = out;
                 self.xon_owed = false;
                 self.since_xon = 0;
+            }
+            if !self.owed_out.is_empty() {
+                while let core::task::Poll::Ready(Ok(written @ 1..)) =
+                    core::pin::Pin::new(&mut self.io).poll_write(cx, &self.owed_out)
+                {
+                    self.owed_out.drain(..written);
+                    if self.owed_out.is_empty() {
+                        break;
+                    }
+                }
                 let _ = core::pin::Pin::new(&mut self.io).poll_flush(cx);
             }
             let mut read_buf = ReadBuf::new(&mut self.read_buf);
@@ -1012,7 +1061,9 @@ where
     }
 
     async fn send_flow(&mut self, octet: u8) -> Result<(), UlcpError> {
-        self.io.write_all(&[octet]).await?;
+        let mut out = self.outgoing();
+        out.push(octet);
+        self.io.write_all(&out).await?;
         self.io.flush().await?;
         if octet == hdlc::XON {
             self.xon_owed = false;
@@ -1024,6 +1075,7 @@ where
     fn pace(&mut self, window: u16) {
         self.window = window;
         self.since_xon = 0;
+        self.wake_fill = self.baud.map_or(0, hdlc::wake_preamble_len);
     }
 
     fn withhold_xon(&mut self, withheld: bool) {
@@ -4032,6 +4084,9 @@ where
             // the request. The set asks for no answer: one would come
             // before the boundary and be discarded.
             if let Some(window) = window {
+                // Paced first: on a UART that is also what puts a wake
+                // preamble ahead of the XOFF.
+                self.link.pace(window);
                 self.link.send_flow(hdlc::XOFF).await?;
                 let mut buf = [0u8; 16];
                 let len = frame::prop_set(
@@ -4048,8 +4103,7 @@ where
             let len = frame::session_start(&mut buf, tid)
                 .map_err(|_| UlcpError::Protocol("frame encode"))?;
             self.send_raw(&buf[..len]).await?;
-            if let Some(window) = window {
-                self.link.pace(window);
+            if window.is_some() {
                 self.link.send_flow(hdlc::XON).await?;
             }
             let resend_at = (Instant::now() + SESSION_START_RESEND).min(deadline);
@@ -4465,7 +4519,7 @@ impl UlcpDevice<SerialFrameLink<tokio_serial::SerialStream>> {
         let stream = tokio_serial::new(path.as_ref(), baud_rate)
             .open_native_async()
             .map_err(|error| UlcpError::Io(error.into()))?;
-        Self::new(SerialFrameLink::new(stream), config).await
+        Self::new(SerialFrameLink::new(stream).with_baud(baud_rate), config).await
     }
 }
 
@@ -6396,6 +6450,40 @@ mod tests {
         });
         radio.open_session().await.unwrap();
         assert_eq!(device.await.unwrap(), ["XOFF", "SET", "START", "XON"]);
+    }
+
+    /// A UART reader's link sends a wake preamble before its first octet
+    /// and after every quiet, and not otherwise; a stream that is not a
+    /// serial port never does.
+    #[tokio::test]
+    async fn a_uart_link_wakes_the_device_after_a_quiet() {
+        use tokio::io::AsyncReadExt;
+        let (client, mut server) = tokio::io::duplex(4096);
+        let mut link = SerialFrameLink::new(client).with_baud(115_200);
+        link.pace(0);
+        let mut preamble = vec![hdlc::FILL; hdlc::wake_preamble_len(115_200)];
+        preamble.push(hdlc::FLAG);
+        let mut read = [0u8; 256];
+
+        link.send_flow(hdlc::XOFF).await.unwrap();
+        let len = server.read(&mut read).await.unwrap();
+        assert_eq!(read[..len], [&preamble[..], &[hdlc::XOFF]].concat());
+
+        link.send_flow(hdlc::XON).await.unwrap();
+        let len = server.read(&mut read).await.unwrap();
+        assert_eq!(read[..len], [hdlc::XON]);
+
+        tokio::time::sleep(Duration::from_millis(hdlc::WAKE_QUIET_MS.into())).await;
+        link.send_flow(hdlc::XON).await.unwrap();
+        let len = server.read(&mut read).await.unwrap();
+        assert_eq!(read[..len], [&preamble[..], &[hdlc::XON]].concat());
+
+        let (client, mut server) = tokio::io::duplex(4096);
+        let mut link = SerialFrameLink::new(client);
+        link.pace(0);
+        link.send_flow(hdlc::XOFF).await.unwrap();
+        let len = server.read(&mut read).await.unwrap();
+        assert_eq!(read[..len], [hdlc::XOFF]);
     }
 
     /// A paced link grants another window once half the last is used,

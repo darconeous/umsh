@@ -138,7 +138,8 @@ pub struct ToolArgs {
 
     /// Pace a radio on a UART with XON and XOFF, permitting this many
     /// octets at a time; 0 for plain XON/XOFF, with no limit. Only for a
-    /// radio whose serial port is a UART.
+    /// radio whose serial port is a UART, and needed to wake one that
+    /// sleeps.
     #[arg(long, value_name = "OCTETS", global = true)]
     uart_window: Option<u16>,
 

@@ -82,6 +82,14 @@ The radio features:
 
 At least one of `ble` and `wifi` is required: the TRNG needs a live radio.
 
+`ulcp-uart` serves a microcontroller wired to the device over UART0 on the
+XIAO ESP32S3 kit's D6 (TX) and D7 (RX), as the device's own interface, with
+node messaging. It is on by default in `xiao-esp32s3`, beside USB and BLE,
+and no other board has it. The link runs at 115200 8N1 unless the build sets
+`UMSH_ULCP_UART_BAUD`, paced by XON and XOFF. The board light-sleeps while it
+listens and wakes on the application's wake preamble. See the [image's
+README](firmware/xiao-esp32s3/README.md).
+
 Each `board-*` feature is a list of what the board has, and the shared
 sources test for those capabilities rather than for board names:
 

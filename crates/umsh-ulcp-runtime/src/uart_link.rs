@@ -21,16 +21,27 @@
 //! elsewhere: an XON waits for the session to act on every frame that
 //! came before it, so a window set ahead of an XON is the window that XON
 //! grants.
+//!
+//! A device that sleeps while the link listens (spec §Waking a Device on
+//! a UART) says so with its [`Awake`]: the link keeps it awake for
+//! [`hdlc::WAKE_HOLD_MS`] after what it receives, while it writes, and
+//! while the session is taking a frame, and
+//! after the device may have slept, discards what is left of the reader's
+//! wake preamble.
 
 use core::cell::Cell;
+use core::future::Future;
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use embassy_futures::join::join;
+use embassy_futures::join::join3;
 use embassy_futures::select::select;
-use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex};
+use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex, RawMutex};
 use embassy_sync::signal::Signal;
+use embassy_time::{Duration, Instant, Timer};
 use embedded_io_async::{Read, Write};
 use umsh_ulcp::hdlc::{self, Decoder};
+
+use crate::driver::{DeviceLink, FRAME_IN_MAX, FRAME_OUT_MAX, FrameBuf, InEvent, InputChannel};
 
 /// The most octets handed to the UART at once, and so the most that can
 /// follow an XOFF onto the wire.
@@ -89,6 +100,12 @@ impl Window {
     pub(crate) fn acted_on(&self, frames: u32) -> bool {
         // Both counts wrap; the session is never 2^31 frames behind.
         self.acted.load(Ordering::Acquire).wrapping_sub(frames) < u32::MAX / 2
+    }
+
+    /// Frames acted on so far.
+    #[cfg(test)]
+    pub(crate) fn acted(&self) -> u32 {
+        self.acted.load(Ordering::Acquire)
     }
 
     /// The window, waiting for its first publication.
@@ -196,8 +213,35 @@ pub trait UartOutbound {
     }
 }
 
+/// What keeps a device that sleeps awake for its UART link.
+///
+/// The device's UART must wake it on activity on the RX line, and the
+/// first octet after a wake must reach the link before the device can
+/// sleep again (a receive interrupt at one octet does it). `()` is a
+/// device that does not sleep while the link listens.
+pub trait Awake {
+    /// Whether the device sleeps while the link listens.
+    const SLEEPS: bool = true;
+
+    /// Keep the device awake until [`release`](Self::release).
+    fn hold(&self);
+
+    /// Let the device sleep again.
+    fn release(&self);
+}
+
+impl Awake for () {
+    const SLEEPS: bool = false;
+    fn hold(&self) {}
+    fn release(&self) {}
+}
+
+/// How long a device that sleeps stays awake after it last received.
+const WAKE_HOLD: Duration = Duration::from_millis(hdlc::WAKE_HOLD_MS as u64);
+
 /// What the link's two halves share: the receive half hears the reader's
-/// XON and XOFF, and the send half is bound by them.
+/// XON and XOFF, and the send half is bound by them. On a device that
+/// sleeps, both tell the hold what the link is doing.
 struct Pace<'a> {
     window: &'a Window,
     flow: Cell<Flow>,
@@ -208,6 +252,16 @@ struct Pace<'a> {
     xon_after: Cell<Option<u32>>,
     /// The receive half heard an XON.
     heard: Signal<NoopRawMutex, ()>,
+    /// When the receive half last received.
+    received_at: Cell<Instant>,
+    /// How many halves are doing what the device must stay awake for:
+    /// the send half writing, the receive half handing the session a
+    /// frame.
+    busy: Cell<u8>,
+    /// The link has let the device sleep since it last received.
+    slept: Cell<bool>,
+    /// Either half did something the hold needs to know.
+    stirred: Signal<NoopRawMutex, ()>,
 }
 
 impl Pace<'_> {
@@ -260,6 +314,21 @@ impl Pace<'_> {
         flow.spend(octets);
         self.flow.set(flow);
     }
+
+    /// Octets arrived, or the UART reported losing some. Returns whether
+    /// the link let the device sleep before them.
+    fn received(&self) -> bool {
+        self.received_at.set(Instant::now());
+        self.stirred.signal(());
+        self.slept.replace(false)
+    }
+
+    /// A half began or ended something the device must stay awake for.
+    fn busy(&self, busy: bool) {
+        let halves = self.busy.get();
+        self.busy.set(if busy { halves + 1 } else { halves - 1 });
+        self.stirred.signal(());
+    }
 }
 
 /// Serve a UART link until the end of time.
@@ -269,17 +338,19 @@ impl Pace<'_> {
 /// The two directions run side by side and neither is ever cancelled, so
 /// nothing here asks the UART's reads or writes to be cancel-safe, and a
 /// session that is slow to take a frame does not stop the link's output.
-pub async fn run<R, W, I, O, const FRAME: usize, const WIRE: usize>(
+pub async fn run<R, W, I, O, A, const FRAME: usize, const WIRE: usize>(
     rx: &mut R,
     tx: &mut W,
     inbound: &mut I,
     outbound: &mut O,
     window: &Window,
+    awake: &A,
 ) where
     R: Read,
     W: Write,
     I: UartInbound,
     O: UartOutbound,
+    A: Awake,
 {
     let pace = Pace {
         window,
@@ -287,17 +358,117 @@ pub async fn run<R, W, I, O, const FRAME: usize, const WIRE: usize>(
         delivered: Cell::new(0),
         xon_after: Cell::new(None),
         heard: Signal::new(),
+        received_at: Cell::new(Instant::MIN),
+        busy: Cell::new(0),
+        // Nothing has kept the device awake for the link yet.
+        slept: Cell::new(true),
+        stirred: Signal::new(),
     };
-    // The receive half first: `join` polls in order, so what has arrived
+    // The receive half first: `join3` polls in order, so what has arrived
     // is read before the send half decides on its next chunk.
-    join(
-        receive::<_, _, FRAME>(rx, inbound, &pace),
-        send::<_, _, WIRE>(tx, outbound, &pace),
+    join3(
+        receive::<_, _, A, FRAME>(rx, inbound, &pace),
+        send::<_, _, A, WIRE>(tx, outbound, &pace),
+        hold(awake, &pace),
     )
     .await;
 }
 
-async fn receive<R: Read, I: UartInbound, const FRAME: usize>(
+/// An application UART's baud rate: `setting`, which a firmware passes as
+/// `option_env!("UMSH_ULCP_UART_BAUD")`, or `default` when the build sets
+/// none. Meant for a `const`, so a setting that is not a number fails the
+/// build rather than the link.
+pub const fn baud(setting: Option<&str>, default: u32) -> u32 {
+    let Some(setting) = setting else {
+        return default;
+    };
+    let digits = setting.as_bytes();
+    assert!(!digits.is_empty(), "UMSH_ULCP_UART_BAUD is empty");
+    let mut rate: u32 = 0;
+    let mut index = 0;
+    while index < digits.len() {
+        let digit = digits[index];
+        assert!(
+            digit.is_ascii_digit(),
+            "UMSH_ULCP_UART_BAUD is not a number of bits per second"
+        );
+        let next = match rate.checked_mul(10) {
+            Some(rate) => rate.checked_add((digit - b'0') as u32),
+            None => None,
+        };
+        let Some(next) = next else {
+            panic!("UMSH_ULCP_UART_BAUD is out of range");
+        };
+        rate = next;
+        index += 1;
+    }
+    assert!(rate != 0, "UMSH_ULCP_UART_BAUD is zero");
+    rate
+}
+
+/// Serve the device's own interface on a UART until the end of time: an
+/// application wired to the device (spec §The Device's Own Interface).
+///
+/// Frames from the application go to the driver as
+/// [`InEvent::Device`]; what the driver answers and publishes comes back
+/// on `link`, which must be a [`DeviceLink::wire`]. The UART's session
+/// begins when the device starts, so there is nothing to attach.
+pub async fn serve_device<R, W, M, A>(
+    rx: &mut R,
+    tx: &mut W,
+    link: &DeviceLink<M>,
+    input: &InputChannel<M>,
+    awake: &A,
+) where
+    R: Read,
+    W: Write,
+    M: RawMutex,
+    A: Awake,
+{
+    run::<_, _, _, _, _, FRAME_IN_MAX, { hdlc::max_encoded_len(FRAME_OUT_MAX) }>(
+        rx,
+        tx,
+        &mut DeviceIn { input },
+        &mut DeviceOut { link },
+        &WINDOW,
+        awake,
+    )
+    .await
+}
+
+struct DeviceIn<'a, M: RawMutex> {
+    input: &'a InputChannel<M>,
+}
+
+impl<M: RawMutex> UartInbound for DeviceIn<'_, M> {
+    async fn frame(&mut self, frame: &[u8]) {
+        // The decoder holds no more than a frame buffer does.
+        if let Ok(frame) = FrameBuf::from_slice(frame) {
+            self.input.send(InEvent::Device(frame)).await;
+        }
+    }
+
+    async fn lost(&mut self) {
+        self.input.send(InEvent::DeviceFrameLost).await;
+    }
+}
+
+struct DeviceOut<'a, M: RawMutex> {
+    link: &'a DeviceLink<M>,
+}
+
+impl<M: RawMutex> UartOutbound for DeviceOut<'_, M> {
+    async fn next(&mut self, wire: &mut [u8]) -> usize {
+        loop {
+            // Every frame the driver queues fits the wire buffer.
+            if let Ok(len) = hdlc::encode_frame(&self.link.next_frame().await, wire) {
+                return len;
+            }
+        }
+    }
+}
+
+async fn receive<R: Read, I: UartInbound, A: Awake, const FRAME: usize>(
     rx: &mut R,
     inbound: &mut I,
     pace: &Pace<'_>,
@@ -307,18 +478,34 @@ async fn receive<R: Read, I: UartInbound, const FRAME: usize>(
     // After the UART lost octets: the rest of the frame they were in is
     // the same loss, already reported, so it is skipped to the next flag.
     let mut skipping = false;
+    // After the device may have slept: what comes before the next flag is
+    // what is left of the reader's wake preamble, the octet the wake cut
+    // short included. No frame, no loss, and no XON or XOFF.
+    let mut waking = false;
     loop {
         if inbound.resync() {
             decoder.reset();
         }
-        let Ok(len) = rx.read(&mut received).await else {
-            // The UART lost octets, so whatever frame they were in.
+        let read = rx.read(&mut received).await;
+        if A::SLEEPS && pace.received() {
             decoder.reset();
-            skipping = true;
-            inbound.lost().await;
+            skipping = false;
+            waking = true;
+        }
+        let Ok(len) = read else {
+            if !waking {
+                // The UART lost octets, so whatever frame they were in.
+                decoder.reset();
+                skipping = true;
+                handing::<A, _>(pace, inbound.lost()).await;
+            }
             continue;
         };
         for &octet in &received[..len] {
+            if waking {
+                waking = octet != hdlc::FLAG;
+                continue;
+            }
             pace.receive(octet);
             if skipping {
                 skipping = octet != hdlc::FLAG;
@@ -328,15 +515,30 @@ async fn receive<R: Read, I: UartInbound, const FRAME: usize>(
                 None => {}
                 Some(Ok(frame)) => {
                     pace.delivered.set(pace.delivered.get().wrapping_add(1));
-                    inbound.frame(frame).await;
+                    handing::<A, _>(pace, inbound.frame(frame)).await;
                 }
-                Some(Err(_)) => inbound.lost().await,
+                Some(Err(_)) => handing::<A, _>(pace, inbound.lost()).await,
             }
         }
     }
 }
 
-async fn send<W: Write, O: UartOutbound, const WIRE: usize>(
+/// Hand the session a frame or a loss, which it may be slow to take. A
+/// device that sleeps stays awake meanwhile, and its hold then runs from
+/// when the receive half can read again: octets that arrived during the
+/// wait are the reader's, not what a sleep left.
+async fn handing<A: Awake, T>(pace: &Pace<'_>, to_session: impl Future<Output = T>) -> T {
+    if !A::SLEEPS {
+        return to_session.await;
+    }
+    pace.busy(true);
+    let taken = to_session.await;
+    pace.received_at.set(Instant::now());
+    pace.busy(false);
+    taken
+}
+
+async fn send<W: Write, O: UartOutbound, A: Awake, const WIRE: usize>(
     tx: &mut W,
     outbound: &mut O,
     pace: &Pace<'_>,
@@ -352,30 +554,74 @@ async fn send<W: Write, O: UartOutbound, const WIRE: usize>(
                 break;
             }
             let end = len.min(sent + CHUNK.min(allowance));
-            match tx.write(&wire[sent..end]).await {
+            // Awake while the octets go out, and not while the reader
+            // withholds permission: that can last for hours.
+            if A::SLEEPS {
+                pace.busy(true);
+            }
+            let wrote = match tx.write(&wire[sent..end]).await {
                 Ok(written) if written > 0 => {
                     pace.spend(written);
                     sent += written;
+                    tx.flush().await.is_ok()
                 }
                 // The UART refused octets; the run is abandoned.
-                _ => break,
+                _ => false,
+            };
+            if A::SLEEPS {
+                pace.busy(false);
             }
-            if tx.flush().await.is_err() {
+            if !wrote {
                 break;
             }
         }
     }
 }
 
+/// Keep a device that sleeps awake for [`WAKE_HOLD`] after the link last
+/// received and while either half is busy, and let it sleep otherwise.
+async fn hold<A: Awake>(awake: &A, pace: &Pace<'_>) {
+    if !A::SLEEPS {
+        return;
+    }
+    loop {
+        pace.stirred.wait().await;
+        awake.hold();
+        loop {
+            if pace.busy.get() > 0 {
+                pace.stirred.wait().await;
+                continue;
+            }
+            let until = pace.received_at.get().saturating_add(WAKE_HOLD);
+            if Instant::now() >= until {
+                break;
+            }
+            select(Timer::at(until), pace.stirred.wait()).await;
+        }
+        pace.slept.set(true);
+        awake.release();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
     use std::collections::VecDeque;
     use std::future::Future;
     use std::rc::Rc;
     use std::task::{Context, Poll, Waker};
     use umsh_ulcp::hdlc::{XOFF, XON};
+
+    #[test]
+    fn a_build_sets_the_baud_rate_or_takes_the_default() {
+        const SET: u32 = baud(Some("460800"), 115_200);
+        assert_eq!(SET, 460_800);
+        assert_eq!(baud(None, 115_200), 115_200);
+        for bad in ["", "0", "115k", "99999999999"] {
+            assert!(std::panic::catch_unwind(|| baud(Some(bad), 115_200)).is_err());
+        }
+    }
 
     #[test]
     fn a_window_of_zero_starts_permitted_and_any_other_does_not() {
@@ -572,14 +818,133 @@ mod tests {
     }
 
     fn link(pipes: &Pipes, window: &'static Window) -> Link<impl Future<Output = ()>> {
+        link_awake(pipes, window, &())
+    }
+
+    fn link_awake<A: Awake>(
+        pipes: &Pipes,
+        window: &'static Window,
+        awake: &'static A,
+    ) -> Link<impl Future<Output = ()>> {
         let (mut rx, mut tx) = (pipes.clone(), pipes.clone());
         let (mut inbound, mut outbound) = (pipes.clone(), pipes.clone());
         Link {
             task: Box::pin(async move {
-                run::<_, _, _, _, 600, 600>(&mut rx, &mut tx, &mut inbound, &mut outbound, window)
-                    .await
+                run::<_, _, _, _, _, 600, 600>(
+                    &mut rx,
+                    &mut tx,
+                    &mut inbound,
+                    &mut outbound,
+                    window,
+                    awake,
+                )
+                .await
             }),
         }
+    }
+
+    /// A device that sleeps, as its `Awake` sees it.
+    #[derive(Default)]
+    struct Sleeper {
+        held: Cell<bool>,
+    }
+
+    impl Awake for Sleeper {
+        fn hold(&self) {
+            self.held.set(true);
+        }
+
+        fn release(&self) {
+            self.held.set(false);
+        }
+    }
+
+    fn sleeper() -> &'static Sleeper {
+        Box::leak(Box::default())
+    }
+
+    /// What a wake leaves of a preamble: a lost read, an octet cut short,
+    /// and one that reads as XOFF, before the fill and its flag.
+    #[test]
+    fn after_a_sleep_what_is_left_of_a_preamble_is_no_frame() {
+        let pipes = Pipes::default();
+        let awake = sleeper();
+        let mut link = link_awake(&pipes, window(0), awake);
+        pipes.0.borrow_mut().overrun = true;
+        link.settle();
+        assert!(awake.held.get());
+        pipes.feed(&[0xFE, XOFF, hdlc::FILL, hdlc::FILL, hdlc::FLAG]);
+        pipes.feed(&encoded(&[0x81, 0x05]));
+        pipes.queue(&[0x81, 0x02]);
+        link.settle();
+        let wires = pipes.0.borrow();
+        assert_eq!(wires.lost, 0);
+        assert_eq!(wires.frames, [vec![0x81, 0x05]]);
+        assert_eq!(wires.writes.concat(), encoded(&[0x81, 0x02]), "no XOFF");
+    }
+
+    /// A session slow to take a frame keeps the device awake past the hold,
+    /// so what the reader sent meanwhile is read as sent and not as what a
+    /// sleep left.
+    #[test]
+    fn a_session_slow_to_take_a_frame_keeps_the_device_awake() {
+        let pipes = Pipes::default();
+        let awake = sleeper();
+        let mut link = link_awake(&pipes, window(0), awake);
+        pipes.0.borrow_mut().input_full = true;
+        pipes.feed(&[hdlc::FILL, hdlc::FLAG]);
+        pipes.feed(&encoded(&[0x81, 0x05]));
+        link.settle();
+        std::thread::sleep(std::time::Duration::from_millis(
+            u64::from(hdlc::WAKE_HOLD_MS) + 20,
+        ));
+        // No flag ahead of it: a link that had slept would discard it.
+        pipes.feed(&encoded(&[0x82, 0x05])[1..]);
+        link.settle();
+        assert!(awake.held.get());
+        pipes.0.borrow_mut().input_full = false;
+        link.settle();
+        assert!(awake.held.get(), "the hold runs from when it can read");
+        assert_eq!(pipes.0.borrow().lost, 0);
+        assert_eq!(
+            pipes.0.borrow().frames,
+            [vec![0x81, 0x05], vec![0x82, 0x05]]
+        );
+    }
+
+    /// Awake for the hold after receiving, not while the reader withholds
+    /// permission, and after the hold the link reads a sleep's leftovers
+    /// as such. A device that does not sleep reads them as a lost frame.
+    #[test]
+    fn the_hold_runs_out_and_the_link_expects_a_wake() {
+        let pipes = Pipes::default();
+        let awake = sleeper();
+        let mut sleeping = link_awake(&pipes, window(8), awake);
+        assert!(!awake.held.get(), "asleep until something arrives");
+        pipes.feed(&encoded(&[0x81, 0x05]));
+        pipes.queue(&[0x81, 0x02]);
+        sleeping.settle();
+        assert!(awake.held.get());
+        std::thread::sleep(std::time::Duration::from_millis(
+            u64::from(hdlc::WAKE_HOLD_MS) + 20,
+        ));
+        sleeping.settle();
+        assert!(
+            !awake.held.get(),
+            "waiting for XON is not a reason to stay up"
+        );
+        pipes.feed(&[0x42, 0x42]);
+        pipes.feed(&encoded(&[0x82, 0x05]));
+        sleeping.settle();
+        assert_eq!(pipes.0.borrow().lost, 0);
+        assert_eq!(pipes.0.borrow().frames.len(), 2);
+
+        let pipes = Pipes::default();
+        let mut link = link(&pipes, window(8));
+        pipes.feed(&[0x42, 0x42]);
+        pipes.feed(&encoded(&[0x82, 0x05]));
+        link.settle();
+        assert_eq!(pipes.0.borrow().lost, 1);
     }
 
     fn window(octets: u16) -> &'static Window {

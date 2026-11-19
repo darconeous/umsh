@@ -22,12 +22,12 @@ ulcp-i2c = ["umsh-ulcp-runtime/i2c", "umsh-bsp-xiao-nrf52/ulcp-i2c"]
 # The 32.768 kHz crystal is fitted (schematic X1 + 10 pF loading caps, and
 # both upstream firmwares define USE_LFXO), so this board does NOT take
 # `lfclk-rc`. The DCC inductor is fitted, so it takes `dcdc-reg1`.
-default = ["board-xiao-nrf52"]
+default = ["board-xiao-nrf52", "ulcp-i2c"]
 board-techo = ["display-epd", "button-nav", "system-off-techo", "led-active-low", "led-rgb", "cap-battery-saadc", "cap-gnss"]
 board-t1000e = ["ulcp-i2c", "t1000e", "cap-battery-saadc", "cap-gnss", "gnss-holds-the-clock", "cap-illuminance"]
 board-sensecap-solar = ["ulcp-i2c", "cap-battery-saadc", "power-button", "cap-gnss", "meshcore-forwarder"]
 board-wio-tracker-l1 = ["display-oled", "dpad-nav", "system-off-wio", "cap-battery-saadc", "cap-buzzer", "cap-gnss", "gnss-holds-the-clock"]
-board-xiao-nrf52 = ["ulcp-i2c", "cap-battery-saadc", "led-active-low", "led-rgb", "meshcore-forwarder", "dcdc-reg1"]
+board-xiao-nrf52 = ["cap-battery-saadc", "led-active-low", "led-rgb", "meshcore-forwarder", "dcdc-reg1"]
 t1000e = []
 cap-battery-saadc = []
 # An ambient light sensor is fitted. Advertises `CAP_ILLUMINANCE` and
@@ -43,6 +43,12 @@ meshcore-forwarder = ["umsh-ulcp-runtime/meshcore-forwarder"]
 # Node messaging (`CAP_NODE_MSG`): a link sends and receives UMSH
 # payloads through the device node. Off by default.
 node-msg = ["umsh-ulcp-runtime/node-msg"]
+# An application wired to the device's own interface over UARTE0 on the
+# XIAO's D6 (TX) and D7 (RX), paced by XON and XOFF: node messaging
+# beside USB and BLE. Those pads are the header I2C bus otherwise, so it
+# is off by default: build with `--no-default-features --features
+# board-xiao-nrf52,ulcp-uart`.
+ulcp-uart = ["node-msg", "umsh-ulcp-runtime/uart-link"]
 # The GNSS receiver's own backup domain is this board's only real-time
 # clock, so the boot path reads the time back out of the receiver.
 gnss-holds-the-clock = []

@@ -5,16 +5,20 @@
 //! `0x7D` (XOR `0x20`), and each frame carries a trailing 16-bit FCS
 //! (CRC-16/X-25 per RFC 1662), least-significant byte first.
 //!
-//! Two rules from "HDLC-Lite on a ULCP Link" apply on top:
+//! Three rules from "HDLC-Lite on a ULCP Link" apply on top:
 //!
 //! * An unescaped XON or XOFF is never frame content. The encoder escapes
 //!   both, so one that arrives bare belongs to the link's flow control
 //!   and the decoder skips it wherever it falls.
-//! * A frame whose first octet is [`TEXT_MARKER`] is marked text: the
-//!   decoder skips it up to the next flag, with no escape handling and no
-//!   FCS. This is a ULCP rule; [`Decoder::plain`] turns it off for other
-//!   users of the framing, such as the internet bridge tunnel, whose
-//!   frames may begin with that octet.
+//! * A frame whose first octet is [`TEXT_MARKER`] is marked text, and one
+//!   whose first octet is [`FILL`] is fill: the decoder skips either up to
+//!   the next flag, with no escape handling and no FCS. These are ULCP
+//!   rules; [`Decoder::plain`] turns them off for other users of the
+//!   framing, such as the internet bridge tunnel, whose frames may begin
+//!   with either octet.
+//!
+//! Fill is what a wake preamble is made of ("Waking a Device on a UART"):
+//! see [`wake_preamble_len`].
 
 /// Frame delimiter.
 pub const FLAG: u8 = 0x7E;
@@ -30,6 +34,34 @@ pub const XOFF: u8 = 0x13;
 /// First octet of a marked-text line (`#`). No ULCP header can be this
 /// octet, since every header is `10000ttt` in binary.
 pub const TEXT_MARKER: u8 = 0x23;
+/// First octet of fill, and every octet of a wake preamble but its flag.
+/// No ULCP header can be this octet either.
+pub const FILL: u8 = 0xFF;
+
+/// A reader on a UART that has sent nothing for this long sends a wake
+/// preamble before its next octet.
+pub const WAKE_QUIET_MS: u32 = 100;
+/// A device that sleeps stays awake at least this long after the last
+/// octet it received.
+pub const WAKE_HOLD_MS: u32 = 250;
+/// The least time a wake preamble's fill lasts.
+pub const WAKE_PREAMBLE_US: u32 = 5_000;
+/// The fewest [`FILL`] octets in a wake preamble: one rising edge each,
+/// for a device that wakes on a count of them.
+pub const WAKE_PREAMBLE_MIN: usize = 8;
+
+/// The [`FILL`] octets of a wake preamble at `baud` bits per second, 8N1;
+/// the preamble is these followed by one [`FLAG`]. Enough to last
+/// [`WAKE_PREAMBLE_US`], and never fewer than [`WAKE_PREAMBLE_MIN`].
+pub const fn wake_preamble_len(baud: u32) -> usize {
+    // Ten bits to an octet, rounded up.
+    let octets = (WAKE_PREAMBLE_US as u64 * baud as u64).div_ceil(10 * 1_000_000) as usize;
+    if octets > WAKE_PREAMBLE_MIN {
+        octets
+    } else {
+        WAKE_PREAMBLE_MIN
+    }
+}
 
 const fn needs_escape(byte: u8) -> bool {
     matches!(byte, FLAG | ESCAPE | XON | XOFF)
@@ -195,16 +227,17 @@ impl Iterator for TextOctets<'_> {
 /// with the FCS already verified and stripped. Errors report a
 /// discarded frame; the decoder resynchronizes on the next flag
 /// automatically. Bare XON and XOFF octets and (unless built with
-/// [`Decoder::plain`]) marked text are skipped without a report.
+/// [`Decoder::plain`]) marked text and fill are skipped without a report.
 pub struct Decoder<const N: usize> {
     buf: [u8; N],
     len: usize,
     escaped: bool,
     overflow: bool,
-    /// Skipping a marked-text line until the next flag.
-    text: bool,
-    /// Whether a frame beginning with [`TEXT_MARKER`] is marked text.
-    marked_text: bool,
+    /// Skipping marked text or fill until the next flag.
+    skipping: bool,
+    /// Whether a frame beginning with [`TEXT_MARKER`] or [`FILL`] is
+    /// skipped: the ULCP rules.
+    ulcp: bool,
 }
 
 impl<const N: usize> Default for Decoder<N> {
@@ -214,25 +247,25 @@ impl<const N: usize> Default for Decoder<N> {
 }
 
 impl<const N: usize> Decoder<N> {
-    /// A decoder for a ULCP link: marked text is skipped.
+    /// A decoder for a ULCP link: marked text and fill are skipped.
     pub const fn new() -> Self {
-        Self::with_marked_text(true)
+        Self::with_ulcp_rules(true)
     }
 
     /// A decoder for HDLC-Lite outside ULCP, where a frame may begin
-    /// with any octet and none is marked text.
+    /// with any octet and none is marked text or fill.
     pub const fn plain() -> Self {
-        Self::with_marked_text(false)
+        Self::with_ulcp_rules(false)
     }
 
-    const fn with_marked_text(marked_text: bool) -> Self {
+    const fn with_ulcp_rules(ulcp: bool) -> Self {
         Self {
             buf: [0; N],
             len: 0,
             escaped: false,
             overflow: false,
-            text: false,
-            marked_text,
+            skipping: false,
+            ulcp,
         }
     }
 
@@ -241,7 +274,7 @@ impl<const N: usize> Decoder<N> {
         self.len = 0;
         self.escaped = false;
         self.overflow = false;
-        self.text = false;
+        self.skipping = false;
     }
 
     /// Process one received byte.
@@ -254,9 +287,9 @@ impl<const N: usize> Decoder<N> {
             // Flow control, never frame content: it changes nothing here.
             return None;
         }
-        if self.text {
+        if self.skipping {
             if byte == FLAG {
-                self.text = false;
+                self.skipping = false;
             }
             return None;
         }
@@ -285,13 +318,13 @@ impl<const N: usize> Decoder<N> {
             return Some(Ok(&self.buf[..payload_len]));
         }
 
-        if self.marked_text
-            && byte == TEXT_MARKER
+        if self.ulcp
+            && (byte == TEXT_MARKER || byte == FILL)
             && self.len == 0
             && !self.escaped
             && !self.overflow
         {
-            self.text = true;
+            self.skipping = true;
             return None;
         }
 
@@ -517,6 +550,43 @@ mod tests {
             .filter_map(|&byte| decoder.push(byte).map(|o| o.map(<[u8]>::to_vec)))
             .collect();
         assert_eq!(outcomes, [Ok(vec![0x01]), Ok(vec![0x02])]);
+    }
+
+    #[test]
+    fn a_wake_preamble_is_fill() {
+        let mut wire = vec![FILL; wake_preamble_len(115_200)];
+        wire.push(FLAG);
+        let mut scratch = [0u8; 16];
+        let len = encode_frame(&[0x81, 0x00], &mut scratch).unwrap();
+        wire.extend_from_slice(&scratch[..len]);
+        // What is left of one after a wake cut an octet short.
+        wire.extend_from_slice(&[FILL, 0xFE, FILL, FILL, FLAG]);
+        wire.extend_from_slice(&scratch[..len]);
+
+        let mut decoder = Decoder::<8>::new();
+        let outcomes: Vec<_> = wire
+            .iter()
+            .filter_map(|&byte| decoder.push(byte).map(|o| o.map(<[u8]>::to_vec)))
+            .collect();
+        assert_eq!(outcomes, [Ok(vec![0x81, 0x00]), Ok(vec![0x81, 0x00])]);
+    }
+
+    #[test]
+    fn fill_is_frame_data_outside_ulcp() {
+        let mut decoder = Decoder::<8>::plain();
+        let outcomes: Vec<_> = [FLAG, FILL, FILL, FLAG]
+            .iter()
+            .filter_map(|&byte| decoder.push(byte).map(|o| o.map(<[u8]>::to_vec)))
+            .collect();
+        assert_eq!(outcomes, [Err(DecodeError::Crc)]);
+    }
+
+    #[test]
+    fn the_preamble_lasts_its_time_and_is_never_under_eight_octets() {
+        assert_eq!(wake_preamble_len(921_600), 461);
+        assert_eq!(wake_preamble_len(115_200), 58);
+        assert_eq!(wake_preamble_len(9_600), 8);
+        assert_eq!(wake_preamble_len(1_200), 8);
     }
 
     #[test]

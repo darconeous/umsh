@@ -1265,8 +1265,9 @@ failed does not matter, and neither does which transport it is:
 
 * On HDLC-Lite: a frame whose FCS fails, a frame too short to carry one,
   an aborted escape, or a frame longer than the receiver can hold.
-  [Marked text](#hdlc-lite) and an unescaped XON or XOFF are not frames,
-  and are not lost.
+  [Marked text](#hdlc-lite), fill, and an unescaped XON or XOFF are not
+  frames, and are not lost, and neither is what is left of a [wake
+  preamble](#uart-wake) after a sleep.
 * Over BLE: a frame discarded in [reassembly](ulcp-ble.md#reassembly), for
   any of the reasons given there, and a reassembled frame the transport
   could not accept.
@@ -1313,7 +1314,7 @@ such as a Unix domain socket:
 
 ## HDLC-Lite on a ULCP Link {#hdlc-lite}
 
-Two rules apply to every ULCP link framed with HDLC-Lite—a serial link,
+Three rules apply to every ULCP link framed with HDLC-Lite—a serial link,
 a stream standing in for one, a local socket—in both directions:
 
 * **XON and XOFF are never frame content.** HDLC-Lite escapes XON
@@ -1327,13 +1328,18 @@ a stream standing in for one, a local socket—in both directions:
   text, not a ULCP frame. The receiver discards everything up to the next
   flag octet, with no escape processing and no FCS. This is how a device
   puts diagnostic text on a link between frames.
+* **Fill.** A frame whose first octet is `0xFF` is fill, not a ULCP
+  frame. The receiver discards everything up to the next flag octet, as
+  for marked text, and it is not a [lost frame](#lost-frames). Fill is
+  what a [wake preamble](#uart-wake) is made of.
 
 Marked text **MUST NOT** contain the flag octet (`0x7E`, `~`), XON, or
 XOFF; a writer replaces them. Nothing else about its content matters.
 
-No frame begins with the marker: a ULCP header is `10000ttt` in binary,
-and it takes at least two damaged bits to turn one into `0x23`. Marked
-text is not protected. A line whose marker is damaged is read as a
+No frame begins with the marker or with fill: a ULCP header is
+`10000ttt` in binary, and it takes at least two damaged bits to turn one
+into `0x23` and four to turn one into `0xFF`. Marked text is not
+protected. A line whose marker is damaged is read as a
 [lost frame](#lost-frames), and a frame whose header is damaged into the
 marker is skipped; the reply that never comes is what reveals it. Text a
 device cannot mark, such as what a boot loader prints, is read as a lost
@@ -1360,23 +1366,27 @@ none.
 
 * The reader controls what the device sends with XON (`0x11`), which
   permits the device to send, and XOFF (`0x13`), which withdraws the
-  permission, both sent outside frames. The device always reads, so it
-  sends neither.
+  permission, both sent outside frames. The device takes whatever it is
+  sent, [waking](#uart-wake) for it if it sleeps, so it sends neither.
 * With a [window](#prop-uart-window) of *W*, each XON permits *W*
   further octets on the wire, counted from its receipt and not added to
   whatever was left of the previous permission. The device then waits for
   the next XON. At boot the device has no permission.
 * With a window of 0, a permission has no limit, and the device starts
-  permitted. This is plain XON/XOFF, which a serial driver's own software
-  flow control can run unaided; a reader that sends neither octet sees the
-  link behave as though it had no flow control.
+  permitted. This is plain XON/XOFF; a reader that sends neither octet
+  sees the link behave as though it had no flow control. A serial
+  driver's own software flow control sends the two octets with no
+  [wake preamble](#uart-wake), so it serves only a device known not to
+  sleep.
 * After XOFF, the device sends at most the octets it had already handed
-  to its UART. A device **SHOULD** keep that to 16 octets or fewer.
+  to its UART. A device **SHOULD** keep that to 16 octets or fewer. An
+  XOFF that needs a wake preamble reaches the device after it, and the
+  device may send for that long first.
 * A reader that does not know the device's state—one that has just
   started, say—sends XOFF, sets the window, sends
   [`CMD_SESSION_START`](#cmd-session-start), and only then sends XON.
-  The device always reads, so the window is in force before the first
-  octet it permits.
+  The device acts on what it receives in order, so the window is in
+  force before the first octet it permits.
 
 A window serves a reader whose buffer is small. Without one, a reader
 with a 64-octet buffer cannot send XOFF in time unless it is polled every
@@ -1404,6 +1414,35 @@ link reads or sets it. A request from a link that is not a UART, or from
 an administrator over the mesh, is answered with `STATUS_NOT_PERMITTED`.
 Setting the window to the value it already has writes nothing to
 non-volatile storage. A new window takes effect at the next XON.
+
+## Waking a Device on a UART {#uart-wake}
+
+A device may sleep while it listens on a UART and wake on activity on the
+line. Waking costs it the octets that wake it and those that arrive
+before its UART runs again. No capability announces whether a device
+sleeps, so every reader on a UART follows these rules:
+
+* **The reader.** A reader **MUST** send a **wake preamble** ahead of the
+  first frame, XON, or XOFF it sends on the link, and ahead of any it
+  sends after it has sent nothing for 100 ms. The preamble is `0xFF`
+  octets, at least 8 of them and enough to last at least 5 ms, and then a
+  flag: at 115200 baud, 58 octets of `0xFF` and a flag. A reader **MAY**
+  send one ahead of any frame, XON, or XOFF.
+* **Inside a frame.** A preamble ends in a flag, so it never goes inside
+  a frame. A reader **MUST NOT** pause for 100 ms or more inside one.
+* **The device.** A device that sleeps **MUST** stay awake for at least
+  250 ms after the last octet it received, and for as long as it is
+  sending.
+* **After a sleep.** When a device may have slept since it last received,
+  what it receives before the next flag is what is left of a preamble. It
+  is not a frame, it is not a [lost frame](#lost-frames), and it is not
+  XON or XOFF.
+
+The preamble is [fill](#hdlc-lite), so a device that was awake discards
+it. A `0xFF` octet has one falling edge, its start bit, so a UART that
+starts partway through the run aligns on a real octet. It has one rising
+edge, so a device that wakes on a count of edges counts one for each
+octet, and eight is enough for a device that needs several.
 
 ## The Device's Own Interface {#device-interface}
 

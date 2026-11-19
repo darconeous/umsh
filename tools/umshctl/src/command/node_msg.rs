@@ -154,8 +154,21 @@ async fn send(app: &mut App, args: SendArgs) -> Result<()> {
 
 async fn listen(app: &mut App, args: ListenArgs) -> Result<()> {
     let device = app.device()?;
+    if device.is_remote() {
+        bail!("node messages are delivered to a wired link, never over the mesh");
+    }
     let claimed = device.get_prop(prop::NODE_MSG_TYPES).await?;
-    device.set_prop(prop::NODE_MSG_LISTEN, &[1]).await?;
+    // Listening is a host's to ask for. The device's own interface, an
+    // application wired to the device, is refused it, and receives
+    // whenever no host is listening.
+    let listening = match device.set_prop(prop::NODE_MSG_LISTEN, &[1]).await {
+        Ok(_) => true,
+        Err(UlcpError::Status(Status::NOT_PERMITTED)) => {
+            note("this is the device's own interface: it receives while no host listens");
+            false
+        }
+        Err(error) => return Err(anyhow!(error)),
+    };
     if claimed.is_empty() {
         note("no payload types are claimed; claim text with `set node-msg-types 03`");
     } else {
@@ -191,7 +204,7 @@ async fn listen(app: &mut App, args: ListenArgs) -> Result<()> {
     };
     // Session state, but a REPL keeps its session: the next command
     // should not find messages it did not ask for.
-    if outcome.is_ok() {
+    if outcome.is_ok() && listening {
         device.set_prop(prop::NODE_MSG_LISTEN, &[0]).await?;
     }
     outcome

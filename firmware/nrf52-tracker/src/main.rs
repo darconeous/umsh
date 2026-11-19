@@ -124,6 +124,13 @@ mod defmt_logger {
     defmt::timestamp!("{=u32}", 0u32);
 }
 
+#[cfg(all(feature = "ulcp-uart", not(feature = "board-xiao-nrf52")))]
+compile_error!("`ulcp-uart` is wired for the XIAO nRF52840 kit's D6 and D7 alone");
+#[cfg(all(feature = "ulcp-uart", feature = "ulcp-i2c"))]
+compile_error!(
+    "`ulcp-uart` takes D6 and D7, the header I2C bus: build with `--no-default-features`"
+);
+
 #[cfg(target_os = "none")]
 mod firmware {
     use super::ble_security::{PairingFailureClass, PairingRuntime, pairing_enabled};
@@ -139,7 +146,7 @@ mod firmware {
     use embassy_futures::select::select_array;
     use embassy_futures::select::{Either, Either3, Either4, select, select3, select4};
     use embassy_nrf::bind_interrupts;
-    #[cfg(feature = "cap-gnss")]
+    #[cfg(any(feature = "cap-gnss", feature = "ulcp-uart"))]
     use embassy_nrf::buffered_uarte::BufferedUarte;
     use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
     use embassy_nrf::mode::Async;
@@ -163,7 +170,7 @@ mod firmware {
     #[cfg(all(feature = "cap-battery-saadc", not(feature = "t1000e")))]
     use embassy_nrf::saadc::{ChannelConfig, Config as SaadcConfig, Saadc};
     use embassy_nrf::spim::{Config as SpimConfig, Frequency, Spim};
-    #[cfg(feature = "cap-gnss")]
+    #[cfg(any(feature = "cap-gnss", feature = "ulcp-uart"))]
     use embassy_nrf::uarte::{Baudrate as UarteBaudrate, Config as UarteConfig};
     use embassy_nrf::usb::Driver;
     use embassy_nrf::usb::vbus_detect::SoftwareVbusDetect;
@@ -563,7 +570,10 @@ mod firmware {
             // front-panel menu already drives.
             ble_pairing: true,
             ble_pin: true,
-            uart_links: Default::default(),
+            uart_links: umsh_ulcp_device::UartLinks {
+                wired_host: false,
+                device: cfg!(feature = "ulcp-uart"),
+            },
             // Every nRF52 board can reset itself through the bootloader
             // register; see the `reboot` hook below.
             reboot: true,
@@ -1077,6 +1087,36 @@ mod firmware {
     /// Outbound frame queues: `wired` drained by output_task (USB-CDC),
     /// `ble` by the GATT connection writer.
     static OUT_CH: TransportChannels<ThreadModeRawMutex> = TransportChannels::new();
+
+    /// The wired application's way into the session, carried on its UART.
+    #[cfg(feature = "ulcp-uart")]
+    static DEVICE_LINK: driver::DeviceLink<ThreadModeRawMutex> = driver::DeviceLink::wire();
+
+    /// The application UART's rate: 115200 unless the build sets
+    /// `UMSH_ULCP_UART_BAUD` to another rate the UARTE has.
+    #[cfg(feature = "ulcp-uart")]
+    const ULCP_UART_BAUD: UarteBaudrate =
+        match umsh_ulcp_runtime::uart_link::baud(option_env!("UMSH_ULCP_UART_BAUD"), 115_200) {
+            1_200 => UarteBaudrate::Baud1200,
+            2_400 => UarteBaudrate::Baud2400,
+            4_800 => UarteBaudrate::Baud4800,
+            9_600 => UarteBaudrate::Baud9600,
+            14_400 => UarteBaudrate::Baud14400,
+            19_200 => UarteBaudrate::Baud19200,
+            28_800 => UarteBaudrate::Baud28800,
+            31_250 => UarteBaudrate::Baud31250,
+            38_400 => UarteBaudrate::Baud38400,
+            56_000 => UarteBaudrate::Baud56000,
+            57_600 => UarteBaudrate::Baud57600,
+            76_800 => UarteBaudrate::Baud76800,
+            115_200 => UarteBaudrate::Baud115200,
+            230_400 => UarteBaudrate::Baud230400,
+            250_000 => UarteBaudrate::Baud250000,
+            460_800 => UarteBaudrate::Baud460800,
+            921_600 => UarteBaudrate::Baud921600,
+            1_000_000 => UarteBaudrate::Baud1m,
+            _ => panic!("UMSH_ULCP_UART_BAUD is not a rate the UARTE has"),
+        };
 
     type DeviceName = heapless::Vec<u8, { MAX_DEVICE_NAME_LEN }>;
     static DEVICE_NAME: Mutex<ThreadModeRawMutex, DeviceName> = Mutex::new(DeviceName::new());
@@ -4084,6 +4124,9 @@ mod firmware {
                 ctl: &DEVICE_CTL,
                 out: &OUT_CH,
                 session_gen: &SESSION_GEN,
+                #[cfg(feature = "ulcp-uart")]
+                device: Some(&DEVICE_LINK),
+                #[cfg(not(feature = "ulcp-uart"))]
                 device: None,
                 snapshot: &SNAPSHOT_CTL,
             },
@@ -4323,6 +4366,19 @@ mod firmware {
         umsh_ulcp_runtime::gnss::fix_ui_changed().await;
         #[cfg(not(feature = "cap-gnss"))]
         core::future::pending::<()>().await
+    }
+
+    /// The application wired to the device's own interface, served on its
+    /// UART beside whatever host is attached (spec §The Device's Own
+    /// Interface). The UARTE goes on receiving while the CPU sleeps, so
+    /// the device never sleeps in the link's sense (`()`), though the
+    /// UARTE's clock keeps running.
+    #[cfg(feature = "ulcp-uart")]
+    #[embassy_executor::task]
+    async fn application_uart_task(uart: BufferedUarte<'static>) {
+        let (mut rx, mut tx) = uart.split();
+        umsh_ulcp_runtime::uart_link::serve_device(&mut rx, &mut tx, &DEVICE_LINK, &INPUT_CH, &())
+            .await
     }
 
     /// Drive the board's GNSS receiver.
@@ -7211,6 +7267,39 @@ mod firmware {
         };
         #[cfg(all(feature = "ulcp-i2c", not(feature = "board-wio-tracker-l1")))]
         let host_i2c = board_i2c::Buses::new([primary_i2c], board_i2c::BUSES);
+
+        // The application's UART on D6 (P1.11, TX) and D7 (P1.12, RX), the
+        // pads the header I2C bus takes in the default build. This board
+        // has no GNSS receiver, so UARTE0, TIMER1, and PPI 0/1 with group
+        // 0 are free: MPSL holds TIMER0 and PPI 19/30/31, the softdevice
+        // controller holds 17/18 and 20–29, and the freeze diagnostics
+        // hold TIMER2.
+        #[cfg(feature = "ulcp-uart")]
+        {
+            let mut config = UarteConfig::default();
+            config.baudrate = ULCP_UART_BAUD;
+            static RX: StaticCell<[u8; 256]> = StaticCell::new();
+            static TX: StaticCell<[u8; 64]> = StaticCell::new();
+            let uart = BufferedUarte::new(
+                p.UARTE0,
+                p.TIMER1,
+                p.PPI_CH0,
+                p.PPI_CH1,
+                p.PPI_GROUP0,
+                p.P1_12,
+                p.P1_11,
+                Irqs,
+                config,
+                RX.init([0; 256]),
+                TX.init([0; 64]),
+            );
+            // A bare pad with nothing wired to it is held quiet rather
+            // than left to float into framing errors.
+            pac::P1
+                .pin_cnf(12)
+                .modify(|w| w.set_pull(pac::gpio::vals::Pull::Pullup));
+            spawner.spawn(application_uart_task(uart).unwrap());
+        }
 
         spawner.spawn(
             device_task(

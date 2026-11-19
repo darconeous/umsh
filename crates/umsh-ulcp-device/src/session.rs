@@ -213,8 +213,13 @@ pub const MAX_IDENT_PRECISION: u8 = gnss::MAX_LOCATION_LEN as u8;
 /// XOFF under `PROP_UART_WINDOW` (spec §Flow Control on a UART). With
 /// neither, the property is unknown.
 ///
-/// Acted on only in a build with the `uart-window` feature. Without it
-/// the session has no flow control and no window, whatever this says.
+/// An application on the device's own interface is on a serial link, so
+/// its session can end, as an attached host's can (spec §Sessions); a
+/// built-in interface's never does.
+///
+/// Acted on only in a build with the `uart-link` feature. Without it
+/// the session has no flow control, no window, and no session for the
+/// interface to end, whatever this says.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct UartLinks {
     /// The wired host transport is such a UART, as behind the Heltecs'
@@ -1271,7 +1276,7 @@ struct DeviceDomain {
     node_msg_types: NodeMsgTypes,
     /// `PROP_UART_WINDOW`: the octets each XON permits on the UART link.
     /// No board has more than one, so one value serves.
-    #[cfg(feature = "uart-window")]
+    #[cfg(feature = "uart-link")]
     uart_window: u16,
     /// `PROP_MAC_REPEATER_MODE`: whether, and how eagerly, the device
     /// identity's on-board MAC forwards overheard routable frames; one of
@@ -1449,7 +1454,7 @@ impl DeviceDomain {
             admins: DevAdminTable::default(),
             #[cfg(feature = "node-msg")]
             node_msg_types: NodeMsgTypes::default(),
-            #[cfg(feature = "uart-window")]
+            #[cfg(feature = "uart-link")]
             uart_window: 0,
             repeater_mode: repeater_mode::OFF,
             repeater_regions: RepeaterRegions::default(),
@@ -2977,7 +2982,7 @@ const SAVED_SCHEMA: &[SavedProperty] = &[
     saved(prop::LAN_BEARER_INGRESS_LIMIT, ApplyPhase::Config, false),
     #[cfg(feature = "node-msg")]
     saved(prop::NODE_MSG_TYPES, ApplyPhase::Config, true),
-    #[cfg(feature = "uart-window")]
+    #[cfg(feature = "uart-link")]
     saved(prop::UART_WINDOW, ApplyPhase::Config, false),
 ];
 
@@ -3094,7 +3099,7 @@ struct SavedState {
     dev_admins: DevAdminTable,
     #[cfg(feature = "node-msg")]
     node_msg_types: NodeMsgTypes,
-    #[cfg(feature = "uart-window")]
+    #[cfg(feature = "uart-link")]
     uart_window: u16,
     repeater_mode: u8,
     repeater_regions: RepeaterRegions,
@@ -3161,7 +3166,7 @@ impl SavedState {
             dev_admins: device.admins,
             #[cfg(feature = "node-msg")]
             node_msg_types: device.node_msg_types,
-            #[cfg(feature = "uart-window")]
+            #[cfg(feature = "uart-link")]
             uart_window: device.uart_window,
             repeater_mode: device.repeater_mode,
             repeater_regions: device.repeater_regions,
@@ -3229,7 +3234,7 @@ impl SavedState {
             dev_admins: DevAdminTable::default(),
             #[cfg(feature = "node-msg")]
             node_msg_types: NodeMsgTypes::default(),
-            #[cfg(feature = "uart-window")]
+            #[cfg(feature = "uart-link")]
             uart_window: 0,
             repeater_mode: repeater_mode::OFF,
             repeater_regions: RepeaterRegions::default(),
@@ -3427,7 +3432,7 @@ impl SavedState {
                 }
                 Ok(())
             }
-            #[cfg(feature = "uart-window")]
+            #[cfg(feature = "uart-link")]
             prop::UART_WINDOW => encoder.put(number, &self.uart_window.to_le_bytes()),
             prop::TZ_RULE => encoder.put(number, self.tz_rule.text()),
             prop::TIME_24H => encoder.put(number, &[self.time_24h as u8]),
@@ -3663,7 +3668,7 @@ impl SavedState {
                 let payload_type: [u8; 1] = value.try_into().map_err(|_| Unheld)?;
                 held(self.node_msg_types.insert(payload_type))?;
             }
-            #[cfg(feature = "uart-window")]
+            #[cfg(feature = "uart-link")]
             prop::UART_WINDOW => self.uart_window = parse_u16(value).map_err(invalid)?,
             prop::TZ_RULE => self.tz_rule = ZoneRule::parse(value).map_err(invalid)?,
             prop::TIME_24H => self.time_24h = parse_bool(value).map_err(invalid)?,
@@ -3920,7 +3925,7 @@ pub struct Session<A: AesProvider, S: Sha256Provider, const TX: usize = 1> {
     link_secure: bool,
     /// Whether the attached host's link is a UART: it attached over the
     /// wired transport and [`UartLinks::wired_host`] says that is one.
-    #[cfg(feature = "uart-window")]
+    #[cfg(feature = "uart-link")]
     host_on_uart: bool,
     /// RAM mirror of the durably saved snapshot (`None` when nothing
     /// is saved). Post-reset values and `CMD_RESTORE` come from here;
@@ -4041,18 +4046,14 @@ pub struct Session<A: AesProvider, S: Sha256Provider, const TX: usize = 1> {
     /// `PROP_HOST_KEY`, and so may empty it. Held for the exchange, like
     /// [`binding`](Self::binding).
     mesh_requester_hosts: bool,
-    /// A `CMD_SESSION_DID_END` the attached host has not been sent yet.
-    ///
-    /// The driver ends the session from outside a host exchange—a frame
-    /// its transport lost, or one it owed and discarded—and drains the
-    /// debt at the tail of its loop. Kept until the transport takes the
-    /// frame, and dropped on detach, so it never fires into the next
-    /// session.
-    session_end_pending: Option<SessionEndReason>,
-    /// The host's session has ended and no `CMD_SESSION_START` has
-    /// arrived since: every other request from the host is discarded
-    /// unanswered, and the driver sends the host nothing but the notice.
-    session_ended: bool,
+    /// The attached host's session, as a serial link ends it. Reset on
+    /// attach and detach, so a notice owed never fires into the next
+    /// host's session.
+    host_serial: SerialSession,
+    /// The session of an application on the device's own interface,
+    /// which is a serial link from the moment the device starts.
+    #[cfg(feature = "uart-link")]
+    device_serial: SerialSession,
     /// A reset code an administrator's `CMD_RST` or `CMD_RESTORE` produced.
     /// The exchange's one frame carries no publication, yet the reset
     /// started the attached host's session over, and the code is that
@@ -4086,8 +4087,8 @@ pub enum Binding {
     /// which is not a listed administrator. Its one permitted write is an
     /// empty `PROP_HOST_KEY`: a host revoking a radio it left behind.
     Host,
-    /// The device's own settings interface, in process: a screen and
-    /// keyboard on the device itself.
+    /// The device's own settings interface: a screen and keyboard on the
+    /// device itself, or an application wired to it over a UART.
     ///
     /// A local binding in every respect but one. It answers each request
     /// with a non-zero TID exactly once, and a TID-0 request is
@@ -4096,6 +4097,47 @@ pub enum Binding {
     /// domain, as an administrator does, because the session and host
     /// domains belong to whichever host is tethered.
     Device,
+}
+
+/// How the device ends a serial link's session (spec §Sessions): the link
+/// hears nothing but `CMD_SESSION_DID_END` until it sends
+/// `CMD_SESSION_START`.
+#[derive(Clone, Copy)]
+struct SerialSession {
+    /// Ended, and no `CMD_SESSION_START` has arrived since: every other
+    /// request on the link is discarded unanswered.
+    ended: bool,
+    /// The `CMD_SESSION_DID_END` the link is owed. The driver ends a
+    /// session from outside the link's exchanges—a frame its transport
+    /// lost, or one it owed and discarded—and pays the debt at the tail
+    /// of its loop, once the link has room for it.
+    owed: Option<SessionEndReason>,
+}
+
+impl SerialSession {
+    const LIVE: Self = Self {
+        ended: false,
+        owed: None,
+    };
+
+    const fn ended(&self) -> bool {
+        self.ended
+    }
+
+    fn end(&mut self, reason: SessionEndReason) {
+        self.ended = true;
+        // The first reason is the one the link hears; a second loss
+        // before the notice goes out changes nothing it will do.
+        self.owed.get_or_insert(reason);
+    }
+
+    fn notice(&self, buf: &mut [u8; 8]) -> Option<usize> {
+        frame::session_did_end(buf, self.owed?).ok()
+    }
+
+    fn notice_taken(&mut self) {
+        self.owed = None;
+    }
 }
 
 /// Largest multi-property request the session accepts, and the most it
@@ -4235,7 +4277,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             attached: false,
             device_interface: false,
             link_secure: false,
-            #[cfg(feature = "uart-window")]
+            #[cfg(feature = "uart-link")]
             host_on_uart: false,
             saved: None,
             saved_unwritten: false,
@@ -4266,8 +4308,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             multi: None,
             binding: Binding::Local,
             mesh_requester_hosts: false,
-            session_end_pending: None,
-            session_ended: false,
+            host_serial: SerialSession::LIVE,
+            #[cfg(feature = "uart-link")]
+            device_serial: SerialSession::LIVE,
             owed_reset_status: None,
             #[cfg(feature = "node-msg")]
             node_msg: NodeMsgState::new(),
@@ -4650,7 +4693,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     prop::DEV_ADMINS => self.device.admins = saved.dev_admins,
                     #[cfg(feature = "node-msg")]
                     prop::NODE_MSG_TYPES => self.device.node_msg_types = saved.node_msg_types,
-                    #[cfg(feature = "uart-window")]
+                    #[cfg(feature = "uart-link")]
                     prop::UART_WINDOW => self.device.uart_window = saved.uart_window,
                     prop::DEV_NAME => {
                         self.device.name = saved.name;
@@ -4794,15 +4837,14 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// session learns whether the host's link is a UART, which only that
     /// host may then read or set the window of.
     pub fn attach_over(&mut self, link: HostLink, link_secure: bool) {
-        #[cfg(feature = "uart-window")]
+        #[cfg(feature = "uart-link")]
         {
             self.host_on_uart = link == HostLink::Wired && self.config.uart_links.wired_host;
         }
-        #[cfg(not(feature = "uart-window"))]
+        #[cfg(not(feature = "uart-link"))]
         let _ = link;
         self.discard_session_state();
-        self.session_end_pending = None;
-        self.session_ended = false;
+        self.host_serial = SerialSession::LIVE;
         self.attached = true;
         self.link_secure = link_secure;
         self.host.lease_deadline_ms = None;
@@ -4820,11 +4862,10 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     pub fn detach(&mut self, now_ms: u64) {
         self.multi = None;
         self.session = SessionState::default();
-        self.session_end_pending = None;
-        self.session_ended = false;
+        self.host_serial = SerialSession::LIVE;
         self.attached = false;
         self.link_secure = false;
-        #[cfg(feature = "uart-window")]
+        #[cfg(feature = "uart-link")]
         {
             self.host_on_uart = false;
         }
@@ -4942,24 +4983,21 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// owed the host. Session state is discarded, every request until
     /// `CMD_SESSION_START` is discarded unanswered, and the host is owed
     /// a `CMD_SESSION_DID_END`, which the driver drains through
-    /// [`Session::take_session_end_notice`]. Nothing to end with no host
+    /// [`Session::session_end_notice`]. Nothing to end with no host
     /// attached.
     pub fn end_session(&mut self, reason: SessionEndReason) {
         if !self.attached {
             return;
         }
         self.discard_session_state();
-        self.session_ended = true;
-        // The first reason is the one the host hears; a second loss
-        // before the notice goes out changes nothing it will do.
-        self.session_end_pending.get_or_insert(reason);
+        self.host_serial.end(reason);
     }
 
     /// Whether the attached host's session is running, rather than ended
     /// and waiting for `CMD_SESSION_START`. While it is not, the driver
     /// sends the host nothing but the owed notice.
     pub const fn host_session_live(&self) -> bool {
-        !self.session_ended
+        !self.host_serial.ended()
     }
 
     /// The owed `CMD_SESSION_DID_END`, encoded into `buf`, or `None` when
@@ -4967,13 +5005,60 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// [`Session::session_end_notice_taken`]: a host that has stopped
     /// reading is told once it reads again.
     pub fn session_end_notice(&self, buf: &mut [u8; 8]) -> Option<usize> {
-        let reason = self.session_end_pending?;
-        frame::session_did_end(buf, reason).ok()
+        self.host_serial.notice(buf)
     }
 
     /// The host's transport took the owed `CMD_SESSION_DID_END`.
     pub fn session_end_notice_taken(&mut self) {
-        self.session_end_pending = None;
+        self.host_serial.notice_taken();
+    }
+
+    /// End the session of the application on the device's own interface
+    /// (spec §Sessions), as [`Session::end_session`] ends a host's. The
+    /// sends it awaits are forgotten, and every request until
+    /// `CMD_SESSION_START` is discarded unanswered. A built-in interface
+    /// is not on a serial link, and its session never ends.
+    #[cfg(feature = "uart-link")]
+    pub fn end_device_session(&mut self, reason: SessionEndReason) {
+        if !self.config.uart_links.device {
+            return;
+        }
+        #[cfg(feature = "node-msg")]
+        self.node_msg.forget(Binding::Device);
+        self.device_serial.end(reason);
+    }
+
+    /// Whether the session of the device's own interface is running.
+    /// While it is not, the driver sends the interface nothing but the
+    /// owed notice. Always, for an interface whose session cannot end.
+    pub const fn device_session_live(&self) -> bool {
+        #[cfg(feature = "uart-link")]
+        return !self.device_serial.ended();
+        #[cfg(not(feature = "uart-link"))]
+        true
+    }
+
+    /// The `CMD_SESSION_DID_END` owed the device's own interface, as
+    /// [`Session::session_end_notice`] gives the host's.
+    #[cfg(feature = "uart-link")]
+    pub fn device_session_end_notice(&self, buf: &mut [u8; 8]) -> Option<usize> {
+        self.device_serial.notice(buf)
+    }
+
+    /// The device's own interface took the owed `CMD_SESSION_DID_END`.
+    #[cfg(feature = "uart-link")]
+    pub fn device_session_end_notice_taken(&mut self) {
+        self.device_serial.notice_taken();
+    }
+
+    /// Whether the session of the link the frame in flight arrived on has
+    /// ended.
+    fn link_session_ended(&self) -> bool {
+        match self.binding {
+            Binding::Local => self.host_serial.ended(),
+            Binding::Device => !self.device_session_live(),
+            Binding::Admin | Binding::Host => false,
+        }
     }
 
     /// `CMD_SESSION_START` from the binding in flight.
@@ -4982,15 +5067,18 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         match binding {
             Binding::Local => {
                 self.discard_session_state();
-                self.session_ended = false;
                 // A notice still owed belongs to the session this ends.
-                self.session_end_pending = None;
+                self.host_serial = SerialSession::LIVE;
             }
             // The interface's session holds nothing in the session but
             // its exchange, which this one is, and the sends it awaits.
             Binding::Device => {
                 #[cfg(feature = "node-msg")]
                 self.node_msg.forget(Binding::Device);
+                #[cfg(feature = "uart-link")]
+                {
+                    self.device_serial = SerialSession::LIVE;
+                }
             }
             Binding::Admin | Binding::Host => {
                 self.complete(tid, Status::NOT_PERMITTED, emit);
@@ -5185,7 +5273,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
 
     /// Whether the frame in flight arrived on a UART link, whose window
     /// its reader alone may read or set.
-    #[cfg(feature = "uart-window")]
+    #[cfg(feature = "uart-link")]
     fn on_uart(&self) -> bool {
         match self.binding {
             Binding::Local => self.attached && self.host_on_uart,
@@ -5225,7 +5313,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// A new window from the reader of the UART link the frame in flight
     /// arrived on. Answers nothing itself: an ended session takes a
     /// window too, and says nothing about it.
-    #[cfg(feature = "uart-window")]
+    #[cfg(feature = "uart-link")]
     fn take_uart_window(&mut self, value: &[u8]) -> Result<u16, Status> {
         if !self.on_uart() {
             return Err(Status::NOT_PERMITTED);
@@ -5262,14 +5350,11 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         }
         // An ended session hears nothing but the request that starts the
         // next one (spec §CMD_SESSION_DID_END).
-        if self.binding == Binding::Local
-            && self.session_ended
-            && received.command() != Some(Cmd::SessionStart)
-        {
+        if self.link_session_ended() && received.command() != Some(Cmd::SessionStart) {
             // Bar one: the window governs the link rather than its
             // session, and a reader starting over sets it before
             // CMD_SESSION_START. Acted on, and answered with nothing.
-            #[cfg(feature = "uart-window")]
+            #[cfg(feature = "uart-link")]
             if received.command() == Some(Cmd::PropSet)
                 && let Ok(payload) = PropPayload::parse(received.payload)
                 && payload.key == prop::UART_WINDOW
@@ -6307,7 +6392,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             return None;
         }
         // The link's own, and only its reader's (spec §PROP_UART_WINDOW).
-        #[cfg(feature = "uart-window")]
+        #[cfg(feature = "uart-link")]
         if key == prop::UART_WINDOW {
             if self.on_uart() {
                 let window = self.device.uart_window.to_le_bytes();
@@ -8244,7 +8329,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             self.complete(tid, Status::NOT_PERMITTED, emit);
             return None;
         }
-        #[cfg(feature = "uart-window")]
+        #[cfg(feature = "uart-link")]
         if key == prop::UART_WINDOW {
             match self.take_uart_window(value) {
                 Ok(window) => self.send_prop_is(tid, key, &window.to_le_bytes(), emit),
@@ -9629,7 +9714,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         let send = slot.take()?;
         // An answer to a host whose session has ended would be the
         // ended session's.
-        if send.binding == Binding::Local && (!self.attached || self.session_ended) {
+        if send.binding == Binding::Local && (!self.attached || self.host_serial.ended()) {
             return None;
         }
         self.send_status(send.tid, status, emit);
@@ -9645,35 +9730,35 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// The link that receives node messages now (spec §Who Receives):
     /// the attached host if it set `PROP_NODE_MSG_LISTEN` and its session
     /// is live, otherwise the device's own interface if the device has
-    /// one, as `device_interface` says. `None` when no link does, or the
-    /// device does not serve node messaging.
+    /// one, as `device_interface` says, and its session is live. `None`
+    /// when no link does, or the device does not serve node messaging.
     #[cfg(feature = "node-msg")]
     pub fn node_msg_receiver(&self, device_interface: bool) -> Option<Binding> {
         if !self.has_node_msg() {
             None
-        } else if self.attached && !self.session_ended && self.session.node_msg_listen {
+        } else if self.attached && !self.host_serial.ended() && self.session.node_msg_listen {
             Some(Binding::Local)
         } else {
-            device_interface.then_some(Binding::Device)
+            (device_interface && self.device_session_live()).then_some(Binding::Device)
         }
     }
 
     /// Which of the device's local links are UARTs paced by their reader.
-    #[cfg(feature = "uart-window")]
+    #[cfg(feature = "uart-link")]
     pub fn uart_links(&self) -> UartLinks {
         self.config.uart_links
     }
 
     /// `PROP_UART_WINDOW`, for the UART link task: the octets each XON
     /// permits, 0 for no limit. `None` on a device with no UART link.
-    #[cfg(feature = "uart-window")]
+    #[cfg(feature = "uart-link")]
     pub fn uart_window(&self) -> Option<u16> {
         self.has_uart_window().then_some(self.device.uart_window)
     }
 
     /// Whether the device has a UART link paced by its reader, and so
     /// `PROP_UART_WINDOW`.
-    #[cfg(feature = "uart-window")]
+    #[cfg(feature = "uart-link")]
     fn has_uart_window(&self) -> bool {
         self.config.uart_links.any()
     }
@@ -9865,7 +9950,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             || (!self.config.host_custody && is_custody_property(key));
         // On a board with no UART link. A build without flow control does
         // not know the property at all.
-        #[cfg(feature = "uart-window")]
+        #[cfg(feature = "uart-link")]
         let absent = absent || (key == prop::UART_WINDOW && !self.has_uart_window());
         if absent {
             self.complete(tid, Status::PROP_NOT_FOUND, emit);
@@ -9877,7 +9962,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         if is_custody_property(key) {
             return self.config.host_custody;
         }
-        #[cfg(feature = "uart-window")]
+        #[cfg(feature = "uart-link")]
         if key == prop::UART_WINDOW {
             return self.has_uart_window();
         }
@@ -22636,7 +22721,7 @@ mod tests {
 
     /// Without flow control built in, the window is unknown whatever the
     /// board says about its links.
-    #[cfg(not(feature = "uart-window"))]
+    #[cfg(not(feature = "uart-link"))]
     #[test]
     fn a_build_without_flow_control_has_no_uart_window() {
         let config = SessionConfig {
@@ -22657,7 +22742,7 @@ mod tests {
         assert!(!is_saved(prop::UART_WINDOW));
     }
 
-    #[cfg(feature = "uart-window")]
+    #[cfg(feature = "uart-link")]
     mod uart_window {
         use super::*;
 
@@ -22822,6 +22907,91 @@ mod tests {
             session.detach(0);
             session.attach(true);
             expect_status(&get_status(&mut session)[0], 1, Status::NOT_PERMITTED);
+        }
+
+        const APPLICATION: UartLinks = UartLinks {
+            wired_host: false,
+            device: true,
+        };
+
+        /// The `CMD_SESSION_DID_END` owed the device's own interface, if
+        /// any, decoded and paid.
+        fn take_device_notice(session: &mut TestSession) -> Option<SessionEndReason> {
+            let mut buf = [0u8; 8];
+            let len = session.device_session_end_notice(&mut buf)?;
+            session.device_session_end_notice_taken();
+            let parsed = Frame::parse(&buf[..len]).unwrap();
+            assert_eq!(parsed.command(), Some(Cmd::SessionDidEnd));
+            Some(frame::parse_session_did_end(parsed.payload).unwrap())
+        }
+
+        /// An application's UART is a serial link: its session ends as a
+        /// host's does, apart from the host's, and it hears nothing but
+        /// the start of the next one, bar the window it sets first.
+        #[test]
+        fn an_application_s_session_ends_and_starts_apart_from_the_host_s() {
+            let mut session = session_with(APPLICATION);
+            session.attach_over(HostLink::Wired, true);
+            assert!(session.device_session_live());
+            assert_eq!(take_device_notice(&mut session), None);
+
+            session.end_device_session(SessionEndReason::OwedFrameDiscarded);
+            session.end_device_session(SessionEndReason::FrameLost);
+            assert!(!session.device_session_live());
+            assert!(session.host_session_live());
+            assert_eq!(
+                take_device_notice(&mut session),
+                Some(SessionEndReason::OwedFrameDiscarded)
+            );
+            assert_eq!(take_device_notice(&mut session), None, "paid once");
+
+            let mut buf = [0u8; 16];
+            let len = frame::nop(&mut buf, 2).unwrap();
+            assert!(device(&mut session, &buf[..len]).0.is_empty());
+            let len = frame::prop_set(&mut buf, 3, prop::UART_WINDOW, &[32, 0]).unwrap();
+            assert!(device(&mut session, &buf[..len]).0.is_empty());
+            assert_eq!(session.uart_window(), Some(32));
+            // The host is served as ever.
+            let len = frame::nop(&mut buf, 4).unwrap();
+            expect_status(&dispatch(&mut session, &buf[..len], 0).0[0], 4, Status::OK);
+
+            let len = frame::session_start(&mut buf, 5).unwrap();
+            let (emitted, effect) = device(&mut session, &buf[..len]);
+            assert_eq!(
+                Frame::parse(&emitted[0]).unwrap().command(),
+                Some(Cmd::SessionDidStart)
+            );
+            assert_eq!(
+                effect,
+                Some(Effect::SessionStarted {
+                    binding: Binding::Device
+                })
+            );
+            assert!(session.device_session_live());
+            let len = frame::nop(&mut buf, 6).unwrap();
+            expect_status(&device(&mut session, &buf[..len]).0[0], 6, Status::OK);
+        }
+
+        /// A notice still owed when the application starts over belongs
+        /// to the session that start ended.
+        #[test]
+        fn a_start_drops_the_notice_still_owed() {
+            let mut session = session_with(APPLICATION);
+            session.end_device_session(SessionEndReason::FrameLost);
+            let mut buf = [0u8; 4];
+            let len = frame::session_start(&mut buf, 1).unwrap();
+            device(&mut session, &buf[..len]);
+            assert_eq!(take_device_notice(&mut session), None);
+        }
+
+        /// A built-in interface is carried inside the device, not on a
+        /// serial link: there is no session of its to end.
+        #[test]
+        fn a_built_in_interface_s_session_never_ends() {
+            let mut session = session_with(WIRED_HOST);
+            session.end_device_session(SessionEndReason::FrameLost);
+            assert!(session.device_session_live());
+            assert_eq!(take_device_notice(&mut session), None);
         }
     }
 
@@ -23018,6 +23188,38 @@ mod tests {
             let plain: TestSession =
                 Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
             assert_eq!(plain.node_msg_receiver(true), None);
+        }
+
+        /// An application whose session has ended receives nothing, and
+        /// the outcome of a send it made reaches nobody, until it starts
+        /// a new session.
+        #[cfg(feature = "uart-link")]
+        #[test]
+        fn an_application_s_ended_session_receives_nothing() {
+            let config = SessionConfig {
+                node_msg: Some(NodeMsgConfig {
+                    reserved_types: RESERVED,
+                }),
+                uart_links: UartLinks {
+                    wired_host: false,
+                    device: true,
+                },
+                ..test_config()
+            };
+            let mut session: TestSession =
+                Session::new(config, Status::RESET_POWER_ON, test_engine());
+            let (_, effect) = device(&mut session, &send_frame(4, &[3], &unicast()));
+            let id = sent_id(effect);
+            assert_eq!(session.node_msg_receiver(true), Some(Binding::Device));
+
+            session.end_device_session(SessionEndReason::FrameLost);
+            assert_eq!(session.node_msg_receiver(true), None);
+            assert_eq!(result(&mut session, id, Status::OK).1, None);
+
+            let mut buf = [0u8; 4];
+            let len = frame::session_start(&mut buf, 1).unwrap();
+            device(&mut session, &buf[..len]);
+            assert_eq!(session.node_msg_receiver(true), Some(Binding::Device));
         }
 
         #[test]

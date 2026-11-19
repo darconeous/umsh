@@ -901,15 +901,123 @@ fn the_uart_window_is_published_for_the_link_task() {
         InEvent::Frame(transport, FrameBuf::from_slice(&buf[..len]).unwrap())
     };
 
+    let _alone = UART_TESTS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     step(None);
     assert_eq!(WINDOW.get(), Some(0));
+    let before = WINDOW.acted();
     step(Some(InEvent::Attached(Transport::Ble)));
     step(Some(set_window(Transport::Ble, 16)));
     assert_eq!(WINDOW.get(), Some(0));
     step(Some(InEvent::Attached(Transport::Usb)));
-    assert!(!WINDOW.acted_on(1), "nothing from the UART yet");
+    assert_eq!(WINDOW.acted(), before, "nothing from the UART yet");
     step(Some(set_window(Transport::Usb, 32)));
     assert_eq!(WINDOW.get(), Some(32));
-    assert!(WINDOW.acted_on(1));
-    assert!(!WINDOW.acted_on(2));
+    assert_eq!(WINDOW.acted(), before.wrapping_add(1));
+}
+
+/// The UART link tests share the board's one window.
+#[cfg(feature = "uart-link")]
+static UART_TESTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// An application wired to the device's own interface is on a serial
+/// link: a frame lost on its UART ends its session, which owes it the
+/// notice and nothing else, publications included, until it starts the
+/// next one. The host is untouched.
+#[cfg(feature = "uart-link")]
+#[test]
+fn a_lost_frame_ends_the_application_s_session() {
+    use umsh_ulcp::{Cmd, Frame, frame};
+    use umsh_ulcp_device::UartLinks;
+
+    let _alone = UART_TESTS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let link: &'static DeviceLink<NoopRawMutex> = Box::leak(Box::new(DeviceLink::wire()));
+    let rt = DeviceRuntime {
+        input: Box::leak(Box::new(InputChannel::<NoopRawMutex>::new())),
+        radio: Box::leak(Box::new(Channels::<NoopRawMutex, 1, 1>::new())),
+        ctl: Box::leak(Box::new(DeviceControl::new())),
+        out: Box::leak(Box::new(TransportChannels::new())),
+        session_gen: Box::leak(Box::new(AtomicU32::new(0))),
+        device: Some(link),
+        snapshot: Box::leak(Box::new(SnapshotControl::new())),
+    };
+    let input = rt.input;
+    let out = rt.out;
+    let env = Env {
+        events: Rc::new(RefCell::new(std::vec::Vec::new())),
+        older: None,
+        restore_gate: Box::leak(Box::new(Signal::new())),
+        name_gate: None,
+        dfu_result: Err(Status::UNIMPLEMENTED),
+    };
+    let mut session: TestSession = Session::new(
+        SessionConfig {
+            uart_links: UartLinks {
+                wired_host: false,
+                device: true,
+            },
+            ..config("Application")
+        },
+        Status::RESET_POWER_ON,
+        CryptoEngine::new(SoftwareAes, SoftwareSha256),
+    );
+    let mut storage = [0; SNAPSHOT_MAX];
+    let mut run = core::pin::pin!(run_with_storage(
+        &mut session,
+        &mut storage,
+        None,
+        Some([0x55; 32]),
+        rt,
+        env
+    ));
+    let mut cx = Context::from_waker(Waker::noop());
+    let mut step = |event: Option<InEvent>| {
+        if let Some(event) = event {
+            assert!(input.try_send(event).is_ok());
+        }
+        assert!(run.as_mut().poll(&mut cx).is_pending());
+    };
+    let from_application = |bytes: &[u8]| InEvent::Device(FrameBuf::from_slice(bytes).unwrap());
+    let next = || match link.try_receive() {
+        Some(DeviceFrame::Frame(frame)) => Some(frame),
+        Some(DeviceFrame::Overrun) => panic!("a wire never hears an overrun"),
+        None => None,
+    };
+    let command = |bytes: &[u8]| Frame::parse(bytes).unwrap().command();
+    let mut buf = [0u8; 16];
+
+    step(None);
+    step(Some(InEvent::Attached(Transport::Usb)));
+    while out.wired.try_receive().is_ok() {}
+    let len = frame::nop(&mut buf, 1).unwrap();
+    step(Some(from_application(&buf[..len])));
+    assert!(next().is_some(), "the application is answered");
+
+    step(Some(InEvent::DeviceFrameLost));
+    let notice = next().expect("the application is told");
+    let parsed = Frame::parse(&notice).unwrap();
+    assert_eq!(parsed.command(), Some(Cmd::SessionDidEnd));
+    assert_eq!(
+        frame::parse_session_did_end(parsed.payload),
+        Ok(SessionEndReason::FrameLost)
+    );
+
+    // Nothing more until it starts over: no answer, no publication.
+    let len = frame::nop(&mut buf, 2).unwrap();
+    step(Some(from_application(&buf[..len])));
+    step(Some(InEvent::Toggle(Setting::Bluetooth)));
+    assert!(next().is_none());
+    assert!(
+        out.wired.try_receive().is_ok(),
+        "the host still hears the change"
+    );
+
+    let len = frame::session_start(&mut buf, 3).unwrap();
+    step(Some(from_application(&buf[..len])));
+    assert_eq!(command(&next().unwrap()), Some(Cmd::SessionDidStart));
+    step(Some(InEvent::Toggle(Setting::Bluetooth)));
+    assert_eq!(command(&next().unwrap()), Some(Cmd::PropIs));
 }

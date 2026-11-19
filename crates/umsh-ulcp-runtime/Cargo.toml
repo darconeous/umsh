@@ -106,7 +106,7 @@ node-msg = [
 # A ULCP link on a UART without hardware flow control: HDLC-Lite framing
 # and the reader's XON/XOFF under `PROP_UART_WINDOW`, over any
 # `embedded-io-async` UART.
-uart-link = ["driver", "dep:embedded-io-async", "umsh-ulcp-device/uart-window"]
+uart-link = ["driver", "dep:embedded-io-async", "umsh-ulcp-device/uart-link"]
 # The glue between a staged `CMD_I2C_TRANSFER`/`CMD_I2C_SCAN` and any
 # `embedded-hal-async` bus: operation carving, the probe loop, and the
 # mapping from HAL error kinds to ULCP statuses. The trait, not a HAL, so

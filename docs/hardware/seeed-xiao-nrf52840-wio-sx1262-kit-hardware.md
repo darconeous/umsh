@@ -854,6 +854,28 @@ weak: they suffice for short wiring at 100 kHz, but a long run or a heavily
 loaded bus still wants external 4.7 kΩ resistors, which simply sit in
 parallel with them.
 
+### Application UART
+
+The same pads can instead carry ULCP to a microcontroller wired to the
+header: the device's own interface, served beside a host on USB or BLE. It
+is I²C or the UART, never both, so the UART is a build of its own:
+`cargo build --release --no-default-features --features
+board-xiao-nrf52,ulcp-uart` from `firmware/xiao-nrf52`. The shipping image
+keeps the I²C bus.
+
+| Function | Pin | XIAO label |
+|---|---|---|
+| TX | `P1.11` | `D6` |
+| RX | `P1.12` | `D7` |
+
+UARTE0 at 115200 8N1 unless the build sets `UMSH_ULCP_UART_BAUD` to another
+rate the UARTE has, with HDLC-Lite framing and XON/XOFF pacing under
+`PROP_UART_WINDOW`. RX is pulled up, so the pads may be left unwired. The
+kit has no GNSS, so the UARTE, TIMER1, and PPI channels 0 and 1 the GNSS
+boards use are free here. A listening UARTE keeps the high-frequency clock
+running while the CPU sleeps; the idle current this costs has not been
+measured.
+
 MeshCore also declares `PIN_LSM6DS3TR_C_POWER (15)` and the PDM microphone pins,
 inherited from the Sense variant. **The kit's XIAO nRF52840 has neither the IMU
 nor the microphone**—those pins (`P1.08`, `P0.27`, `P0.07`, `P0.11`, `P1.10`,

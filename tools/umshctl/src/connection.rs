@@ -656,7 +656,9 @@ async fn open_serial(port: &str, baud: u32) -> Result<AnyLink> {
     let stream = tokio_serial::new(port, baud)
         .open_native_async()
         .with_context(|| format!("opening {port}"))?;
-    Ok(AnyLink::Serial(umsh::ulcp::SerialFrameLink::new(stream)))
+    Ok(AnyLink::Serial(
+        umsh::ulcp::SerialFrameLink::new(stream).with_baud(baud),
+    ))
 }
 
 #[cfg(not(feature = "serial-radio"))]
@@ -693,11 +695,25 @@ async fn attach_tapped(link: AnyLink, tap: FrameTap) -> Result<UlcpDevice<Sessio
     Ok(device)
 }
 
+/// A radio on a UART may sleep, and only a paced link sends what wakes
+/// it (spec §Waking a Device on a UART): say so when an attach over a
+/// serial port that was not paced hears nothing.
+fn uart_hint(target: &Target, error: anyhow::Error) -> anyhow::Error {
+    let silent = matches!(error.downcast_ref(), Some(UlcpError::Timeout));
+    if silent && matches!(target, Target::Serial { .. }) && UART_WINDOW.get().is_none() {
+        error.context("no answer: a radio whose serial port is a UART needs --uart-window")
+    } else {
+        error
+    }
+}
+
 /// Open, attach, and name a device in one step.
 pub async fn connect(target: Target, trace: bool) -> Result<Session> {
     let tap = new_tap();
     let link = open(&target).await?;
-    let mut device = attach_tapped(link, tap.clone()).await?;
+    let mut device = attach_tapped(link, tap.clone())
+        .await
+        .map_err(|error| uart_hint(&target, error))?;
     if trace {
         install_trace(&mut device);
     }
