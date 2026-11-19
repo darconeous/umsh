@@ -208,7 +208,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     var snapshot = RadioSnapshot.idle
     var continuations: [UUID: AsyncStream<RadioSnapshot>.Continuation] = [:]
     var frameContinuations: [UUID: AsyncStream<RadioReceivedFrame>.Continuation] = [:]
-    var chatContinuations: [UUID: AsyncStream<RadioChatUpdate>.Continuation] = [:]
+    var chatContinuations: [UUID: AsyncStream<MobileChatChangesRecord>.Continuation] = [:]
     var advertisementContinuations:
         [UUID: AsyncStream<RadioAdvertisementEvent>.Continuation] = [:]
     var peerHeardContinuations:
@@ -274,8 +274,6 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     /// line in the log but must not read as a protocol violation—that would
     /// tear down a link whose only fault was being slow.
     var abandonedRawTransactions: Set<UInt8> = []
-    var lastYieldedChatBatchID: UInt64?
-    var lastChatBatchYield = DispatchTime.distantFuture
     var autoEnableAttemptedGeneration: UInt64?
     var autoClaimAttemptedGeneration: UInt64?
     var hostKeyRestartAttemptedGeneration: UInt64?
@@ -322,13 +320,12 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
         }
     }
 
-    func chatUpdates() async -> AsyncStream<RadioChatUpdate> {
+    func chatChanges() async -> AsyncStream<MobileChatChangesRecord> {
         await withCheckedContinuation { result in
             sessionQueue.async { [self] in
-                // The Rust facade replays an unacknowledged batch on every
-                // poll, so a dropped element is always re-delivered; only the
-                // newest pending batch needs to sit in the buffer.
-                let stream = AsyncStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
+                // Every report counts: each names what changed since the
+                // last, so none may be dropped.
+                let stream = AsyncStream(bufferingPolicy: .unbounded) { continuation in
                     let id = UUID()
                     chatContinuations[id] = continuation
                     continuation.onTermination = { [weak self] _ in
@@ -677,10 +674,6 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
                 meshSession = session
                 meshPumpGeneration = UUID()
                 meshPumpScheduled = false
-                // Batch IDs restart per session; the delivery gate must not
-                // suppress a fresh session's first batches.
-                lastYieldedChatBatchID = nil
-                lastChatBatchYield = .distantFuture
                 // Addresses belong to the session that answers to them, and
                 // so do an exchange and sessions with forward secrecy.
                 publishLocalDestinationHints([])
@@ -690,7 +683,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
                     session.setFrameTimeMs(frameMs: latestFrameTimeMs)
                 }
                 // Push, not poll: the Rust worker announces pending updates
-                // (outbound frames, ping/advertisement events, chat batches)
+                // (outbound frames, ping/advertisement events, chat changes)
                 // through this listener, so no polling cadence exists. If
                 // data is already pending, the listener fires immediately.
                 session?.setWakeListener(listener: MeshSessionWakeListener(session: self))
@@ -1680,11 +1673,50 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
 
     func prepareChat(
         peers: [MobilePeerRegistrationRecord],
-        checkpoints: [MobileChatCheckpointRecord]
+        checkpoints: [MobileChatCheckpointRecord],
+        store: MobileAppStore,
+        ownerIdentityID: String,
+        silentTestsIn: String?
     ) async throws {
         let session = try await currentMeshSession()
+        // The store first: what arrives is kept whether or not the peers
+        // and streams below can be set up.
+        try Self.attachChatStore(
+            to: session,
+            store: store,
+            ownerIdentityID: ownerIdentityID,
+            silentTestsIn: silentTestsIn
+        )
         try await session.registerPeers(peers: peers)
         try await session.restoreChat(checkpoints: checkpoints)
+    }
+
+    /// A session keeps its store for life, and a reattach finds it already
+    /// there.
+    static func attachChatStore(
+        to session: MobileMeshSession,
+        store: MobileAppStore,
+        ownerIdentityID: String,
+        silentTestsIn: String?
+    ) throws {
+        do {
+            try session.attachChatStore(
+                store: store,
+                ownerIdentityId: ownerIdentityID,
+                silentTestsIn: silentTestsIn
+            )
+        } catch MobileMeshError.OperationInProgress {
+        }
+    }
+
+    func sendChat(conversationAddress: String, request: MobileChatSendRequest) async throws {
+        let session = try await currentMeshSession()
+        try await session.sendChat(conversationAddress: conversationAddress, request: request)
+    }
+
+    func setChatSilentTestsIn(_ conversationAddress: String?) async throws {
+        let session = try await currentMeshSession()
+        try session.setChatSilentTestsIn(conversationAddress: conversationAddress)
     }
 
     func registerChatPeers(_ peers: [MobilePeerRegistrationRecord]) async throws {
@@ -1695,79 +1727,6 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     func removeChatPeers(_ peerAddresses: [String]) async throws {
         let session = try await currentMeshSession()
         try await session.removePeers(peerAddresses: peerAddresses)
-    }
-
-    func composeTyped(
-        conversationAddress: String,
-        clientToken: UInt32,
-        text: String,
-        forwardSecret: Bool?
-    ) async throws -> MobileChatComposeBatchRecord {
-        let session = try await currentMeshSession()
-        return try await session.composeTyped(
-            conversationAddress: conversationAddress,
-            clientToken: clientToken,
-            text: text,
-            forwardSecret: forwardSecret
-        )
-    }
-
-    func composeStatus(
-        conversationAddress: String,
-        clientToken: UInt32,
-        body: String
-    ) async throws -> MobileChatComposeBatchRecord {
-        let session = try await currentMeshSession()
-        return try await session.composeStatus(
-            conversationAddress: conversationAddress,
-            clientToken: clientToken,
-            body: body
-        )
-    }
-
-    func composeText(
-        conversationAddress: String,
-        clientToken: UInt32,
-        body: String
-    ) async throws -> MobileChatComposeBatchRecord {
-        let session = try await currentMeshSession()
-        return try await session.composeText(
-            conversationAddress: conversationAddress,
-            clientToken: clientToken,
-            body: body
-        )
-    }
-
-    func composeEdit(
-        conversationAddress: String,
-        clientToken: UInt32,
-        original: MobileChatOriginalRef,
-        body: String
-    ) async throws -> MobileChatComposeBatchRecord {
-        let session = try await currentMeshSession()
-        return try await session.composeEdit(
-            conversationAddress: conversationAddress,
-            clientToken: clientToken,
-            original: original,
-            body: body
-        )
-    }
-
-    func composeAgain(
-        conversationAddress: String,
-        clientToken: UInt32,
-        body: String,
-        status: Bool,
-        forwardSecret: Bool
-    ) async throws -> MobileChatComposeBatchRecord {
-        let session = try await currentMeshSession()
-        return try await session.composeAgain(
-            conversationAddress: conversationAddress,
-            clientToken: clientToken,
-            body: body,
-            status: status,
-            forwardSecret: forwardSecret
-        )
     }
 
     func resendChat(
@@ -1785,81 +1744,9 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
         )
     }
 
-    func composeDelete(
-        conversationAddress: String,
-        clientToken: UInt32,
-        original: MobileChatOriginalRef
-    ) async throws -> MobileChatComposeBatchRecord {
-        let session = try await currentMeshSession()
-        return try await session.composeDelete(
-            conversationAddress: conversationAddress,
-            clientToken: clientToken,
-            original: original
-        )
-    }
-
     func requestChatRepair(sessionID: UInt64, handle: UInt32) async throws -> Bool {
         let session = try await currentMeshSession()
         return try await session.requestChatRepair(sessionId: sessionID, handle: handle)
-    }
-
-    func composeReaction(
-        conversationAddress: String,
-        clientToken: UInt32,
-        target: MobileChatRegardingRef,
-        body: String
-    ) async throws -> MobileChatComposeBatchRecord {
-        let session = try await currentMeshSession()
-        return try await session.composeReaction(
-            conversationAddress: conversationAddress,
-            clientToken: clientToken,
-            target: target,
-            body: body
-        )
-    }
-
-    func composeReply(
-        conversationAddress: String,
-        clientToken: UInt32,
-        target: MobileChatRegardingRef,
-        body: String,
-        forwardSecret: Bool?
-    ) async throws -> MobileChatComposeBatchRecord {
-        let session = try await currentMeshSession()
-        return try await session.composeReply(
-            conversationAddress: conversationAddress,
-            clientToken: clientToken,
-            target: target,
-            body: body,
-            forwardSecret: forwardSecret
-        )
-    }
-
-    func commitChatBatch(_ batchID: UInt64) async throws {
-        let session = try await currentMeshSession()
-        try await session.commitChatBatch(batchId: batchID)
-    }
-
-    func rejectChatBatch(
-        _ batchID: UInt64,
-        checkpoints: [MobileChatCheckpointRecord]
-    ) async throws {
-        let session = try await currentMeshSession()
-        try await session.rejectChatBatch(batchId: batchID, checkpoints: checkpoints)
-    }
-
-    func applyChatArchiveResult(
-        requestID: UInt32,
-        kind: MobileChatArchiveResultKind,
-        payload: Data
-    ) async throws {
-        let session = try await currentMeshSession()
-        try session.applyChatArchiveResult(requestId: requestID, kind: kind, payload: payload)
-    }
-
-    func acknowledgeChatBatch(_ batchID: UInt64) async throws {
-        let session = try await currentMeshSession()
-        try session.acknowledgeChatBatch(batchId: batchID)
     }
 
     func refresh() async throws -> RadioSnapshot {
@@ -2555,8 +2442,8 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     }
 
     /// Coalesced immediate drain of the Rust session. There is no polling
-    /// cadence: pumps are triggered by the session's wake listener, by
-    /// inbound BLE data, and by the one-shot chat-batch redelivery timer.
+    /// cadence: pumps are triggered by the session's wake listener and by
+    /// inbound BLE data.
     func scheduleMeshPump() {
         guard !meshPumpScheduled else { return }
         meshPumpScheduled = true
@@ -2565,18 +2452,6 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
             guard let self else { return }
             self.meshPumpScheduled = false
             guard self.meshPumpGeneration == generation else { return }
-            self.pumpMeshSession()
-        }
-    }
-
-    /// One-shot delayed pump so an unacknowledged chat batch is redelivered.
-    /// Deliberately bypasses the immediate-pump coalescing flag: a pending
-    /// delayed pump must never absorb (and thereby delay) a wake-triggered
-    /// immediate pump.
-    func scheduleChatBatchRedelivery() {
-        let generation = meshPumpGeneration
-        sessionQueue.asyncAfter(deadline: .now() + 2.1) { [weak self] in
-            guard let self, self.meshPumpGeneration == generation else { return }
             self.pumpMeshSession()
         }
     }
@@ -2643,6 +2518,14 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
                     powerDbm: $0.powerDbm
                 )
             })
+            // Ahead of anything that can throw: the poll has taken these,
+            // and they are not offered again. The core stores its own
+            // chat; what it changed is all that comes out.
+            if let changes = update.chatChanges {
+                for continuation in chatContinuations.values {
+                    continuation.yield(changes)
+                }
+            }
             try startRawTransmits()
             for event in update.pingEvents {
                 guard let waiter = pingWaiters.removeValue(forKey: event.operationId) else {
@@ -2715,40 +2598,6 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
                 )
                 for continuation in peerHeardContinuations.values {
                     continuation.yield(heard)
-                }
-            }
-            // A batch id is issued only for a batch that has events in it, so
-            // its presence is the whole condition. Testing the event lists
-            // instead would drop any batch made only of a kind this check
-            // forgot—and a batch that is never delivered is never
-            // acknowledged, which stalls every later batch behind it.
-            if let chatBatchID = update.chatBatchId {
-                // The facade replays a batch until it is acknowledged, and a
-                // wake-triggered pump can run several times in quick
-                // succession. Deliver a given batch once; if the consumer
-                // fails to acknowledge it, the one-shot redelivery pump
-                // re-yields it every couple of seconds until it does.
-                let now = DispatchTime.now()
-                let isRetryDue = lastChatBatchYield < now
-                    && now.uptimeNanoseconds - lastChatBatchYield.uptimeNanoseconds
-                        > 2_000_000_000
-                if chatBatchID != lastYieldedChatBatchID || isRetryDue {
-                    lastYieldedChatBatchID = chatBatchID
-                    lastChatBatchYield = now
-                    let chatUpdate = RadioChatUpdate(
-                        batchID: chatBatchID,
-                        mutations: update.chatMutations,
-                        resends: update.chatResends,
-                        deliveries: update.chatDeliveries,
-                        repeats: update.chatRepeats,
-                        archiveLookups: update.chatArchiveLookups,
-                        senderResolutions: update.chatSenderResolutions,
-                        diagnostics: update.chatDiagnostics
-                    )
-                    for continuation in chatContinuations.values {
-                        continuation.yield(chatUpdate)
-                    }
-                    scheduleChatBatchRedelivery()
                 }
             }
         } catch {

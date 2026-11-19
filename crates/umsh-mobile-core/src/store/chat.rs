@@ -161,15 +161,7 @@ impl MobileAppStore {
         session_id: u64,
         handle: u32,
     ) -> Result<Option<String>, MobileStoreError> {
-        Ok(self
-            .connection()
-            .query_row(
-                "SELECT conversation_address FROM chat_message
-                WHERE owner_identity_id = ? AND session_id = ? AND handle = ?",
-                params![owner_identity_id, session_id.to_string(), handle],
-                |row| row.get(0),
-            )
-            .optional()?)
+        conversation_address_for_message(&self.connection(), &owner_identity_id, session_id, handle)
     }
 
     /// The stored conversation, sender, and body of an inbound message a
@@ -183,33 +175,7 @@ impl MobileAppStore {
         session_id: u64,
         handle: u32,
     ) -> Result<Option<MobileStoredChatNotificationTargetRecord>, MobileStoreError> {
-        Ok(self
-            .connection()
-            .query_row(
-                &format!(
-                    "SELECT conversation_address, body, sender_address, sender_hint,
-                        sender_handle, {is_status}
-                    FROM chat_message
-                    WHERE owner_identity_id = ? AND session_id = ? AND handle = ?
-                        AND direction = 0 AND deleted = 0 AND presence = 0 AND body <> ''
-                        AND is_reaction = 0",
-                    is_status = is_status_sql("message_type"),
-                ),
-                params![owner_identity_id, session_id.to_string(), handle],
-                |row| {
-                    Ok(MobileStoredChatNotificationTargetRecord {
-                        conversation_address: row.get(0)?,
-                        body: row.get(1)?,
-                        sender_address: row.get(2)?,
-                        sender_hint: row.get(3)?,
-                        sender_handle: row.get(4)?,
-                        // NULL when the message has no type, which is not
-                        // status.
-                        is_status: row.get::<_, Option<i64>>(5)?.unwrap_or(0) != 0,
-                    })
-                },
-            )
-            .optional()?)
+        chat_notification_target(&self.connection(), &owner_identity_id, session_id, handle)
     }
 
     /// The reaction behind a notifying mutation, when it is one and it
@@ -224,33 +190,12 @@ impl MobileAppStore {
         session_id: u64,
         handle: u32,
     ) -> Result<Option<MobileStoredChatReactionNotificationTargetRecord>, MobileStoreError> {
-        Ok(self
-            .connection()
-            .query_row(
-                "SELECT r.conversation_address, r.body, target.body,
-                    r.sender_address, r.sender_hint, r.sender_handle
-                FROM chat_message r
-                JOIN chat_message target
-                    ON target.owner_identity_id = r.owner_identity_id
-                    AND target.session_id = r.regarding_target_session_id
-                    AND target.handle = r.regarding_target_handle
-                WHERE r.owner_identity_id = ? AND r.session_id = ? AND r.handle = ?
-                    AND r.direction = 0 AND r.deleted = 0 AND r.is_reaction = 1
-                    AND r.body <> ''
-                    AND target.direction = 1 AND target.deleted = 0",
-                params![owner_identity_id, session_id.to_string(), handle],
-                |row| {
-                    Ok(MobileStoredChatReactionNotificationTargetRecord {
-                        conversation_address: row.get(0)?,
-                        body: row.get(1)?,
-                        target_body: row.get(2)?,
-                        sender_address: row.get(3)?,
-                        sender_hint: row.get(4)?,
-                        sender_handle: row.get(5)?,
-                    })
-                },
-            )
-            .optional()?)
+        chat_reaction_notification_target(
+            &self.connection(),
+            &owner_identity_id,
+            session_id,
+            handle,
+        )
     }
 
     /// Fill in the sender of group messages stored before that member's
@@ -261,18 +206,7 @@ impl MobileAppStore {
         owner_identity_id: String,
         resolution: MobileChatSenderResolutionRecord,
     ) -> Result<(), MobileStoreError> {
-        self.connection().execute(
-            "UPDATE chat_message SET sender_address = ?
-            WHERE owner_identity_id = ? AND conversation_address = ?
-                AND sender_hint = ? AND sender_address IS NULL",
-            params![
-                resolution.sender_address,
-                owner_identity_id,
-                resolution.conversation_address,
-                nullable_blob(Some(resolution.sender_hint.as_slice())),
-            ],
-        )?;
-        Ok(())
+        apply_sender_resolution(&self.connection(), &owner_identity_id, &resolution)
     }
 
     /// Every outbound stream's checkpoint, least recently written first:
@@ -352,19 +286,13 @@ impl MobileAppStore {
         silent_tests_in: Option<String>,
     ) -> Result<Vec<MobileChatMutationRecord>, MobileStoreError> {
         self.write(|transaction| {
-            let mut materialized = Vec::new();
-            for mutation in mutations {
-                if apply_mutation(
-                    transaction,
-                    &owner_identity_id,
-                    &mutation,
-                    silent_tests_in.as_deref(),
-                    now_ms,
-                )? {
-                    materialized.push(mutation);
-                }
-            }
-            Ok(materialized)
+            apply_mutations(
+                transaction,
+                &owner_identity_id,
+                &mutations,
+                silent_tests_in.as_deref(),
+                now_ms,
+            )
         })
     }
 
@@ -384,49 +312,7 @@ impl MobileAppStore {
         now_ms: i64,
     ) -> Result<Vec<MobileStoredChatDeliveryFailureRecord>, MobileStoreError> {
         self.write(|transaction| {
-            let owner = owner_identity_id.as_str();
-            let mut failures = Vec::new();
-            for delivery in &deliveries {
-                let session_id = delivery.session_id.to_string();
-                let before = delivery_state(transaction, owner, &session_id, delivery.handle)?;
-                transaction.execute(
-                    "INSERT INTO chat_delivery_fragment (
-                        owner_identity_id, session_id, handle, fragment_index, state, via_flood
-                    ) VALUES (?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(owner_identity_id, session_id, handle, fragment_index)
-                    DO UPDATE SET
-                    via_flood = MAX(chat_delivery_fragment.via_flood, excluded.via_flood),
-                    state = CASE
-                        -- A positive ack is definitive proof the frame landed,
-                        -- whatever was said of it before or after.
-                        WHEN chat_delivery_fragment.state = 'acknowledged'
-                            OR excluded.state = 'acknowledged' THEN 'acknowledged'
-                        -- Otherwise the latest word stands: a fragment sent
-                        -- again is in flight again, whatever became of it the
-                        -- last time.
-                        ELSE excluded.state
-                    END",
-                    params![
-                        owner,
-                        session_id,
-                        delivery.handle,
-                        fragment_code(delivery.fragment_index),
-                        MobileStoredChatDeliveryState::from(delivery.state).as_str(),
-                        delivery.via_flood,
-                    ],
-                )?;
-                recompute_delivery_state(transaction, owner, &session_id, delivery.handle, now_ms)?;
-                let after = delivery_state(transaction, owner, &session_id, delivery.handle)?;
-                if is_failure(before) || !is_failure(after) {
-                    continue;
-                }
-                if let Some(failure) =
-                    failed_message(transaction, owner, &session_id, delivery.handle)?
-                {
-                    failures.push(failure);
-                }
-            }
-            Ok(failures)
+            apply_deliveries(transaction, &owner_identity_id, &deliveries, now_ms)
         })
     }
 
@@ -448,65 +334,7 @@ impl MobileAppStore {
         if repeats.is_empty() {
             return Ok(());
         }
-        self.write(|transaction| {
-            let owner = owner_identity_id.as_str();
-            for record in &repeats {
-                let session_id = record.session_id.to_string();
-                let fragment = fragment_code(record.fragment_index);
-                let (mut hints, mut anonymous) = transaction
-                    .query_row(
-                        "SELECT repeaters, anonymous_repeats FROM chat_delivery_fragment
-                        WHERE owner_identity_id = ? AND session_id = ? AND handle = ?
-                            AND fragment_index = ?",
-                        params![owner, session_id, record.handle, fragment],
-                        |row| {
-                            Ok((
-                                split_hints(row.get::<_, Option<Vec<u8>>>(0)?.as_deref()),
-                                row.get::<_, i64>(1)?,
-                            ))
-                        },
-                    )
-                    .optional()?
-                    .unwrap_or_default();
-                let before = (hints.clone(), anonymous);
-                for repeater in &record.repeaters {
-                    if repeater.bytes.len() == 2 && !hints.contains(&repeater.bytes) {
-                        hints.push(repeater.bytes.clone());
-                    }
-                }
-                anonymous = anonymous.max(i64::from(record.anonymous_repeats));
-                if before == (hints.clone(), anonymous) {
-                    continue;
-                }
-                // A repeat is heard only of a frame that went out, so a fragment
-                // with no delivery record yet is a sent one.
-                let packed = hints.concat();
-                transaction.execute(
-                    "INSERT INTO chat_delivery_fragment (
-                        owner_identity_id, session_id, handle, fragment_index, state,
-                        repeaters, anonymous_repeats
-                    ) VALUES (?, ?, ?, ?, 'sent', ?, ?)
-                    ON CONFLICT(owner_identity_id, session_id, handle, fragment_index)
-                    DO UPDATE SET
-                        repeaters = excluded.repeaters,
-                        anonymous_repeats = excluded.anonymous_repeats",
-                    params![
-                        owner,
-                        session_id,
-                        record.handle,
-                        fragment,
-                        nullable_blob(Some(packed.as_slice())),
-                        anonymous,
-                    ],
-                )?;
-                transaction.execute(
-                    "UPDATE chat_message SET delivery_progress_at_ms = ?
-                    WHERE owner_identity_id = ? AND delivery_session_id = ? AND delivery_handle = ?",
-                    params![now_ms, owner, session_id, record.handle],
-                )?;
-            }
-            Ok(())
-        })
+        self.write(|transaction| apply_repeats(transaction, &owner_identity_id, &repeats, now_ms))
     }
 
     /// Mark what a compose wrote undelivered, in one transaction, after the
@@ -666,21 +494,7 @@ impl MobileAppStore {
         owner_identity_id: String,
         lookup: MobileChatArchiveLookupRecord,
     ) -> Result<Option<Vec<u8>>, MobileStoreError> {
-        Ok(self
-            .connection()
-            .query_row(
-                "SELECT payload FROM chat_outbound_archive
-                WHERE owner_identity_id = ? AND conversation_address = ?
-                    AND message_id = ? AND fragment_index = ?",
-                params![
-                    owner_identity_id,
-                    lookup.conversation_address,
-                    lookup.message_id,
-                    fragment_code(lookup.fragment_index),
-                ],
-                |row| row.get(0),
-            )
-            .optional()?)
+        chat_archive(&self.connection(), &owner_identity_id, &lookup)
     }
 
     /// What a resend of one of our messages puts back on the air: its
@@ -759,50 +573,327 @@ impl MobileAppStore {
         if resends.is_empty() {
             return Ok(());
         }
-        self.write(|transaction| {
-            let owner = owner_identity_id.as_str();
-            for resend in &resends {
-                let Some(target) = transaction
-                    .query_row(
-                        "SELECT rowid FROM chat_message
-                        WHERE owner_identity_id = ? AND session_id = ? AND handle = ?
-                            AND direction = 1",
-                        params![
-                            owner,
-                            resend.message.session_id.to_string(),
-                            resend.message.handle
-                        ],
-                        |row| row.get::<_, i64>(0),
-                    )
-                    .optional()?
-                else {
-                    continue;
-                };
-                transaction.execute(
-                    "UPDATE chat_message SET forward_secret = ? WHERE rowid = ?",
-                    params![resend.forward_secret, target],
-                )?;
-                let delivery_session_id = resend.delivery_session_id.to_string();
-                adopt_delivery(
-                    transaction,
-                    owner,
-                    target,
-                    &delivery_session_id,
-                    resend.delivery_handle,
-                    None,
-                    true,
-                )?;
-                recompute_delivery_state(
-                    transaction,
-                    owner,
-                    &delivery_session_id,
-                    resend.delivery_handle,
-                    now_ms,
-                )?;
-            }
-            Ok(())
-        })
+        self.write(|transaction| apply_resends(transaction, &owner_identity_id, &resends, now_ms))
     }
+}
+
+/// See [`MobileAppStore::conversation_address_for_message`].
+pub(super) fn conversation_address_for_message(
+    connection: &Connection,
+    owner_identity_id: &str,
+    session_id: u64,
+    handle: u32,
+) -> Result<Option<String>, MobileStoreError> {
+    Ok(connection
+        .query_row(
+            "SELECT conversation_address FROM chat_message
+            WHERE owner_identity_id = ? AND session_id = ? AND handle = ?",
+            params![owner_identity_id, session_id.to_string(), handle],
+            |row| row.get(0),
+        )
+        .optional()?)
+}
+
+/// See [`MobileAppStore::chat_notification_target`].
+pub(super) fn chat_notification_target(
+    connection: &Connection,
+    owner_identity_id: &str,
+    session_id: u64,
+    handle: u32,
+) -> Result<Option<MobileStoredChatNotificationTargetRecord>, MobileStoreError> {
+    Ok(connection
+        .query_row(
+            &format!(
+                "SELECT conversation_address, body, sender_address, sender_hint,
+                    sender_handle, {is_status}
+                FROM chat_message
+                WHERE owner_identity_id = ? AND session_id = ? AND handle = ?
+                    AND direction = 0 AND deleted = 0 AND presence = 0 AND body <> ''
+                    AND is_reaction = 0",
+                is_status = is_status_sql("message_type"),
+            ),
+            params![owner_identity_id, session_id.to_string(), handle],
+            |row| {
+                Ok(MobileStoredChatNotificationTargetRecord {
+                    conversation_address: row.get(0)?,
+                    body: row.get(1)?,
+                    sender_address: row.get(2)?,
+                    sender_hint: row.get(3)?,
+                    sender_handle: row.get(4)?,
+                    // NULL when the message has no type, which is not
+                    // status.
+                    is_status: row.get::<_, Option<i64>>(5)?.unwrap_or(0) != 0,
+                })
+            },
+        )
+        .optional()?)
+}
+
+/// See [`MobileAppStore::chat_reaction_notification_target`].
+pub(super) fn chat_reaction_notification_target(
+    connection: &Connection,
+    owner_identity_id: &str,
+    session_id: u64,
+    handle: u32,
+) -> Result<Option<MobileStoredChatReactionNotificationTargetRecord>, MobileStoreError> {
+    Ok(connection
+        .query_row(
+            "SELECT r.conversation_address, r.body, target.body,
+                r.sender_address, r.sender_hint, r.sender_handle
+            FROM chat_message r
+            JOIN chat_message target
+                ON target.owner_identity_id = r.owner_identity_id
+                AND target.session_id = r.regarding_target_session_id
+                AND target.handle = r.regarding_target_handle
+            WHERE r.owner_identity_id = ? AND r.session_id = ? AND r.handle = ?
+                AND r.direction = 0 AND r.deleted = 0 AND r.is_reaction = 1
+                AND r.body <> ''
+                AND target.direction = 1 AND target.deleted = 0",
+            params![owner_identity_id, session_id.to_string(), handle],
+            |row| {
+                Ok(MobileStoredChatReactionNotificationTargetRecord {
+                    conversation_address: row.get(0)?,
+                    body: row.get(1)?,
+                    target_body: row.get(2)?,
+                    sender_address: row.get(3)?,
+                    sender_hint: row.get(4)?,
+                    sender_handle: row.get(5)?,
+                })
+            },
+        )
+        .optional()?)
+}
+
+/// See [`MobileAppStore::apply_sender_resolution`].
+pub(super) fn apply_sender_resolution(
+    connection: &Connection,
+    owner_identity_id: &str,
+    resolution: &MobileChatSenderResolutionRecord,
+) -> Result<(), MobileStoreError> {
+    connection.execute(
+        "UPDATE chat_message SET sender_address = ?
+        WHERE owner_identity_id = ? AND conversation_address = ?
+            AND sender_hint = ? AND sender_address IS NULL",
+        params![
+            resolution.sender_address,
+            owner_identity_id,
+            resolution.conversation_address,
+            nullable_blob(Some(resolution.sender_hint.as_slice())),
+        ],
+    )?;
+    Ok(())
+}
+
+/// See [`MobileAppStore::apply_chat_mutations`]. Part of the caller's
+/// transaction.
+pub(super) fn apply_mutations(
+    transaction: &Connection,
+    owner_identity_id: &str,
+    mutations: &[MobileChatMutationRecord],
+    silent_tests_in: Option<&str>,
+    now_ms: i64,
+) -> Result<Vec<MobileChatMutationRecord>, MobileStoreError> {
+    let mut materialized = Vec::new();
+    for mutation in mutations {
+        if apply_mutation(
+            transaction,
+            owner_identity_id,
+            mutation,
+            silent_tests_in,
+            now_ms,
+        )? {
+            materialized.push(mutation.clone());
+        }
+    }
+    Ok(materialized)
+}
+
+/// See [`MobileAppStore::apply_chat_deliveries`]. Part of the caller's
+/// transaction.
+pub(super) fn apply_deliveries(
+    transaction: &Connection,
+    owner: &str,
+    deliveries: &[MobileChatDeliveryRecord],
+    now_ms: i64,
+) -> Result<Vec<MobileStoredChatDeliveryFailureRecord>, MobileStoreError> {
+    let mut failures = Vec::new();
+    for delivery in deliveries {
+        let session_id = delivery.session_id.to_string();
+        let before = delivery_state(transaction, owner, &session_id, delivery.handle)?;
+        transaction.execute(
+            "INSERT INTO chat_delivery_fragment (
+                owner_identity_id, session_id, handle, fragment_index, state, via_flood
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(owner_identity_id, session_id, handle, fragment_index)
+            DO UPDATE SET
+            via_flood = MAX(chat_delivery_fragment.via_flood, excluded.via_flood),
+            state = CASE
+                -- A positive ack is definitive proof the frame landed,
+                -- whatever was said of it before or after.
+                WHEN chat_delivery_fragment.state = 'acknowledged'
+                    OR excluded.state = 'acknowledged' THEN 'acknowledged'
+                -- Otherwise the latest word stands: a fragment sent
+                -- again is in flight again, whatever became of it the
+                -- last time.
+                ELSE excluded.state
+            END",
+            params![
+                owner,
+                session_id,
+                delivery.handle,
+                fragment_code(delivery.fragment_index),
+                MobileStoredChatDeliveryState::from(delivery.state).as_str(),
+                delivery.via_flood,
+            ],
+        )?;
+        recompute_delivery_state(transaction, owner, &session_id, delivery.handle, now_ms)?;
+        let after = delivery_state(transaction, owner, &session_id, delivery.handle)?;
+        if is_failure(before) || !is_failure(after) {
+            continue;
+        }
+        if let Some(failure) = failed_message(transaction, owner, &session_id, delivery.handle)? {
+            failures.push(failure);
+        }
+    }
+    Ok(failures)
+}
+
+/// See [`MobileAppStore::apply_chat_repeats`]. Part of the caller's
+/// transaction.
+pub(super) fn apply_repeats(
+    transaction: &Connection,
+    owner: &str,
+    repeats: &[MobileChatRepeatRecord],
+    now_ms: i64,
+) -> Result<(), MobileStoreError> {
+    for record in repeats {
+        let session_id = record.session_id.to_string();
+        let fragment = fragment_code(record.fragment_index);
+        let (mut hints, mut anonymous) = transaction
+            .query_row(
+                "SELECT repeaters, anonymous_repeats FROM chat_delivery_fragment
+                WHERE owner_identity_id = ? AND session_id = ? AND handle = ?
+                    AND fragment_index = ?",
+                params![owner, session_id, record.handle, fragment],
+                |row| {
+                    Ok((
+                        split_hints(row.get::<_, Option<Vec<u8>>>(0)?.as_deref()),
+                        row.get::<_, i64>(1)?,
+                    ))
+                },
+            )
+            .optional()?
+            .unwrap_or_default();
+        let before = (hints.clone(), anonymous);
+        for repeater in &record.repeaters {
+            if repeater.bytes.len() == 2 && !hints.contains(&repeater.bytes) {
+                hints.push(repeater.bytes.clone());
+            }
+        }
+        anonymous = anonymous.max(i64::from(record.anonymous_repeats));
+        if before == (hints.clone(), anonymous) {
+            continue;
+        }
+        // A repeat is heard only of a frame that went out, so a fragment
+        // with no delivery record yet is a sent one.
+        let packed = hints.concat();
+        transaction.execute(
+            "INSERT INTO chat_delivery_fragment (
+                owner_identity_id, session_id, handle, fragment_index, state,
+                repeaters, anonymous_repeats
+            ) VALUES (?, ?, ?, ?, 'sent', ?, ?)
+            ON CONFLICT(owner_identity_id, session_id, handle, fragment_index)
+            DO UPDATE SET
+                repeaters = excluded.repeaters,
+                anonymous_repeats = excluded.anonymous_repeats",
+            params![
+                owner,
+                session_id,
+                record.handle,
+                fragment,
+                nullable_blob(Some(packed.as_slice())),
+                anonymous,
+            ],
+        )?;
+        transaction.execute(
+            "UPDATE chat_message SET delivery_progress_at_ms = ?
+            WHERE owner_identity_id = ? AND delivery_session_id = ? AND delivery_handle = ?",
+            params![now_ms, owner, session_id, record.handle],
+        )?;
+    }
+    Ok(())
+}
+
+/// See [`MobileAppStore::chat_archive`].
+pub(super) fn chat_archive(
+    connection: &Connection,
+    owner_identity_id: &str,
+    lookup: &MobileChatArchiveLookupRecord,
+) -> Result<Option<Vec<u8>>, MobileStoreError> {
+    Ok(connection
+        .query_row(
+            "SELECT payload FROM chat_outbound_archive
+            WHERE owner_identity_id = ? AND conversation_address = ?
+                AND message_id = ? AND fragment_index = ?",
+            params![
+                owner_identity_id,
+                lookup.conversation_address,
+                lookup.message_id,
+                fragment_code(lookup.fragment_index),
+            ],
+            |row| row.get(0),
+        )
+        .optional()?)
+}
+
+/// See [`MobileAppStore::apply_chat_resends`]. Part of the caller's
+/// transaction.
+pub(super) fn apply_resends(
+    transaction: &Connection,
+    owner: &str,
+    resends: &[MobileChatResendRecord],
+    now_ms: i64,
+) -> Result<(), MobileStoreError> {
+    for resend in resends {
+        let Some(target) = transaction
+            .query_row(
+                "SELECT rowid FROM chat_message
+                WHERE owner_identity_id = ? AND session_id = ? AND handle = ?
+                    AND direction = 1",
+                params![
+                    owner,
+                    resend.message.session_id.to_string(),
+                    resend.message.handle
+                ],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?
+        else {
+            continue;
+        };
+        transaction.execute(
+            "UPDATE chat_message SET forward_secret = ? WHERE rowid = ?",
+            params![resend.forward_secret, target],
+        )?;
+        let delivery_session_id = resend.delivery_session_id.to_string();
+        adopt_delivery(
+            transaction,
+            owner,
+            target,
+            &delivery_session_id,
+            resend.delivery_handle,
+            None,
+            true,
+        )?;
+        recompute_delivery_state(
+            transaction,
+            owner,
+            &delivery_session_id,
+            resend.delivery_handle,
+            now_ms,
+        )?;
+    }
+    Ok(())
 }
 
 /// A nullable blob with nothing in it as NULL, so an absent value has one

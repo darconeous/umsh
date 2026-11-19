@@ -4,7 +4,8 @@ import UMSHMobileCore
 protocol RadioConnection: AnyObject, Sendable {
     func snapshots() async -> AsyncStream<RadioSnapshot>
     func receivedFrames() async -> AsyncStream<RadioReceivedFrame>
-    func chatUpdates() async -> AsyncStream<RadioChatUpdate>
+    /// What the core's stored chat changed, as it changes.
+    func chatChanges() async -> AsyncStream<MobileChatChangesRecord>
     func advertisementEvents() async -> AsyncStream<RadioAdvertisementEvent>
     /// Every frame the mesh accepted, reported as presence only. This is the
     /// sole signal a beacon produces, so it is what keeps "last heard" honest
@@ -404,98 +405,40 @@ protocol RadioConnection: AnyObject, Sendable {
     /// End a hold by switching to the path learned while it was held.
     /// Returns whether there was one to switch to.
     func adoptLearnedPeerRoute(peerAddress: String) async throws -> Bool
+    /// Keep the session's chat in `store` for `ownerIdentityID` from now
+    /// on, then register the chat peers and resume each outbound stream
+    /// from its checkpoint. `silentTestsIn` is where
+    /// ``setChatSilentTestsIn(_:)`` starts.
     func prepareChat(
         peers: [MobilePeerRegistrationRecord],
-        checkpoints: [MobileChatCheckpointRecord]
+        checkpoints: [MobileChatCheckpointRecord],
+        store: MobileAppStore,
+        ownerIdentityID: String,
+        silentTestsIn: String?
     ) async throws
     func registerChatPeers(_ peers: [MobilePeerRegistrationRecord]) async throws
     /// Drop these peers from the phone MAC's peer registry (idempotent;
     /// unknown peers are ignored). Best-effort: the store is the authority
     /// and `prepareChat` rebuilds the registry on the next attach.
     func removeChatPeers(_ peerAddresses: [String]) async throws
-    /// Typed text, to a peer under forward secrecy or never under it as
-    /// `forwardSecret` says the composer showed it, or, when nil, as a
-    /// session is held.
-    func composeTyped(
-        conversationAddress: String,
-        clientToken: UInt32,
-        text: String,
-        forwardSecret: Bool?
-    ) async throws -> MobileChatComposeBatchRecord
-    func composeStatus(
-        conversationAddress: String,
-        clientToken: UInt32,
-        body: String
-    ) async throws -> MobileChatComposeBatchRecord
-    func composeText(
-        conversationAddress: String,
-        clientToken: UInt32,
-        body: String
-    ) async throws -> MobileChatComposeBatchRecord
-    func composeEdit(
-        conversationAddress: String,
-        clientToken: UInt32,
-        original: MobileChatOriginalRef,
-        body: String
-    ) async throws -> MobileChatComposeBatchRecord
-    /// A failed message's words as a new message, under forward secrecy or
-    /// never under it, as the user chose; a session is asked for when one
-    /// is to be had and none is.
-    func composeAgain(
-        conversationAddress: String,
-        clientToken: UInt32,
-        body: String,
-        status: Bool,
-        forwardSecret: Bool
-    ) async throws -> MobileChatComposeBatchRecord
+    /// Send a message, kept in the store before anything goes on the air.
+    /// The send runs to its end even if the caller stops waiting.
+    func sendChat(conversationAddress: String, request: MobileChatSendRequest) async throws
+    /// The conversation whose test messages arrive without counting as
+    /// unread, or `nil` for none.
+    func setChatSilentTestsIn(_ conversationAddress: String?) async throws
     /// Send a message that was not delivered again as itself, from the
-    /// frames archived for its unacknowledged fragments. A resend record in
-    /// the next chat batch, ahead of any word of them, says where that word
-    /// comes. Throws `ChatResendNotInPlace` when its stream has moved past it.
+    /// frames archived for its unacknowledged fragments. Throws
+    /// `ChatResendNotInPlace` when its stream has moved past it.
     func resendChat(
         conversationAddress: String,
         original: MobileChatOriginalRef,
         frames: [MobileChatArchiveRecord],
         forwardSecret: Bool
     ) async throws
-    func composeDelete(
-        conversationAddress: String,
-        clientToken: UInt32,
-        original: MobileChatOriginalRef
-    ) async throws -> MobileChatComposeBatchRecord
     /// Ask for a missing message the engine is holding for the user. False
     /// when it no longer holds that gap.
     func requestChatRepair(sessionID: UInt64, handle: UInt32) async throws -> Bool
-    /// React to a message, or withdraw a reaction with an empty body. The
-    /// target may be either party's message, usually one stored before this
-    /// launch, so it is named by wire coordinates rather than a live handle.
-    func composeReaction(
-        conversationAddress: String,
-        clientToken: UInt32,
-        target: MobileChatRegardingRef,
-        body: String
-    ) async throws -> MobileChatComposeBatchRecord
-    /// Send text in reply to a message, named the same way a reaction's
-    /// target is. Where it can no longer be named, the text goes plain.
-    /// Forward secrecy as for ``composeTyped(conversationAddress:clientToken:text:forwardSecret:)``.
-    func composeReply(
-        conversationAddress: String,
-        clientToken: UInt32,
-        target: MobileChatRegardingRef,
-        body: String,
-        forwardSecret: Bool?
-    ) async throws -> MobileChatComposeBatchRecord
-    func commitChatBatch(_ batchID: UInt64) async throws
-    func rejectChatBatch(
-        _ batchID: UInt64,
-        checkpoints: [MobileChatCheckpointRecord]
-    ) async throws
-    func applyChatArchiveResult(
-        requestID: UInt32,
-        kind: MobileChatArchiveResultKind,
-        payload: Data
-    ) async throws
-    func acknowledgeChatBatch(_ batchID: UInt64) async throws
     func disconnect() async
     /// Unbind from the remembered radio entirely: revoke any standing connect
     /// and clear the persisted `connectedUUID`. The app stops offering
@@ -562,20 +505,6 @@ struct RadioPeerHeardEvent: Equatable, Sendable {
         let candidates = peers.filter { $0.identity.hint.bytes == nodeHint }
         return candidates.count == 1 ? candidates[0] : nil
     }
-}
-
-struct RadioChatUpdate: Sendable {
-    let batchID: UInt64
-    let mutations: [MobileChatMutationRecord]
-    /// Messages of ours sent again in place, applied before `deliveries`.
-    let resends: [MobileChatResendRecord]
-    let deliveries: [MobileChatDeliveryRecord]
-    /// Repeaters overheard carrying our messages, a whole tally per fragment.
-    let repeats: [MobileChatRepeatRecord]
-    let archiveLookups: [MobileChatArchiveLookupRecord]
-    /// Channel members whose claimed hint has resolved to a real address.
-    let senderResolutions: [MobileChatSenderResolutionRecord]
-    let diagnostics: [String]
 }
 
 struct RadioPingReply: Equatable, Sendable {

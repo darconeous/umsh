@@ -20,7 +20,7 @@ actor FakeRadioConnection: RadioConnection {
     private var snapshot: RadioSnapshot
     private var continuations: [UUID: AsyncStream<RadioSnapshot>.Continuation] = [:]
     private var frameContinuations: [UUID: AsyncStream<RadioReceivedFrame>.Continuation] = [:]
-    private var chatContinuations: [UUID: AsyncStream<RadioChatUpdate>.Continuation] = [:]
+    private var chatContinuations: [UUID: AsyncStream<MobileChatChangesRecord>.Continuation] = [:]
     /// Lets a preview exercise reset: the canned route is reported once and
     /// then reads as forgotten, as a real one would.
     private var routeCleared = false
@@ -40,9 +40,6 @@ actor FakeRadioConnection: RadioConnection {
     /// concurrent pumps cannot interleave a batch.
     private var airOutbox: [Data] = []
     private var airDrainer: Task<Void, Never>?
-    private var lastYieldedChatBatchID: UInt64?
-    private var lastChatBatchYield: ContinuousClock.Instant?
-    private var chatRedelivery: Task<Void, Never>?
     /// The device the remote-management screens manage. Writes land on it,
     /// so a preview can change a setting and see the change stick.
     private var managedDevice = FakeManagedDevice()
@@ -145,7 +142,7 @@ actor FakeRadioConnection: RadioConnection {
         }
     }
 
-    func chatUpdates() -> AsyncStream<RadioChatUpdate> {
+    func chatChanges() -> AsyncStream<MobileChatChangesRecord> {
         AsyncStream { continuation in
             let id = UUID()
             chatContinuations[id] = continuation
@@ -1097,11 +1094,31 @@ actor FakeRadioConnection: RadioConnection {
 
     func prepareChat(
         peers: [MobilePeerRegistrationRecord],
-        checkpoints: [MobileChatCheckpointRecord]
+        checkpoints: [MobileChatCheckpointRecord],
+        store: MobileAppStore,
+        ownerIdentityID: String,
+        silentTestsIn: String?
     ) async throws {
         guard let meshSession else { return }
+        try UlcpRadioSession.attachChatStore(
+            to: meshSession,
+            store: store,
+            ownerIdentityID: ownerIdentityID,
+            silentTestsIn: silentTestsIn
+        )
         try await meshSession.registerPeers(peers: peers)
         try await meshSession.restoreChat(checkpoints: checkpoints)
+    }
+
+    func sendChat(conversationAddress: String, request: MobileChatSendRequest) async throws {
+        guard let meshSession else { throw RadioConnectionError.incompatibleProtocol }
+        try await meshSession.sendChat(conversationAddress: conversationAddress, request: request)
+        pump()
+    }
+
+    func setChatSilentTestsIn(_ conversationAddress: String?) async throws {
+        guard let meshSession else { return }
+        try meshSession.setChatSilentTestsIn(conversationAddress: conversationAddress)
     }
 
     func registerChatPeers(_ peers: [MobilePeerRegistrationRecord]) async throws {
@@ -1128,79 +1145,6 @@ actor FakeRadioConnection: RadioConnection {
         try await meshSession.setChatDisplayName(name: name)
     }
 
-    func composeTyped(
-        conversationAddress: String,
-        clientToken: UInt32,
-        text: String,
-        forwardSecret: Bool?
-    ) async throws -> MobileChatComposeBatchRecord {
-        guard let meshSession else { throw RadioConnectionError.incompatibleProtocol }
-        return try await meshSession.composeTyped(
-            conversationAddress: conversationAddress,
-            clientToken: clientToken,
-            text: text,
-            forwardSecret: forwardSecret
-        )
-    }
-
-    func composeStatus(
-        conversationAddress: String,
-        clientToken: UInt32,
-        body: String
-    ) async throws -> MobileChatComposeBatchRecord {
-        guard let meshSession else { throw RadioConnectionError.incompatibleProtocol }
-        return try await meshSession.composeStatus(
-            conversationAddress: conversationAddress,
-            clientToken: clientToken,
-            body: body
-        )
-    }
-
-    func composeText(
-        conversationAddress: String,
-        clientToken: UInt32,
-        body: String
-    ) async throws -> MobileChatComposeBatchRecord {
-        guard let meshSession else { throw RadioConnectionError.incompatibleProtocol }
-        return try await meshSession.composeText(
-            conversationAddress: conversationAddress,
-            clientToken: clientToken,
-            body: body
-        )
-    }
-
-    func composeEdit(
-        conversationAddress: String,
-        clientToken: UInt32,
-        original: MobileChatOriginalRef,
-        body: String
-    ) async throws -> MobileChatComposeBatchRecord {
-        guard let meshSession else { throw RadioConnectionError.incompatibleProtocol }
-        return try await meshSession.composeEdit(
-            conversationAddress: conversationAddress,
-            clientToken: clientToken,
-            original: original,
-            body: body
-        )
-    }
-
-    func composeAgain(
-        conversationAddress: String,
-        clientToken: UInt32,
-        body: String,
-        status: Bool,
-        forwardSecret: Bool
-    ) async throws -> MobileChatComposeBatchRecord {
-        guard let meshSession else { throw RadioConnectionError.incompatibleProtocol }
-        return try await meshSession.composeAgain(
-            conversationAddress: conversationAddress,
-            clientToken: clientToken,
-            body: body,
-            status: status,
-            forwardSecret: forwardSecret
-        )
-    }
-
     func resendChat(
         conversationAddress: String,
         original: MobileChatOriginalRef,
@@ -1216,88 +1160,9 @@ actor FakeRadioConnection: RadioConnection {
         )
     }
 
-    func composeDelete(
-        conversationAddress: String,
-        clientToken: UInt32,
-        original: MobileChatOriginalRef
-    ) async throws -> MobileChatComposeBatchRecord {
-        guard let meshSession else { throw RadioConnectionError.incompatibleProtocol }
-        return try await meshSession.composeDelete(
-            conversationAddress: conversationAddress,
-            clientToken: clientToken,
-            original: original
-        )
-    }
-
     func requestChatRepair(sessionID: UInt64, handle: UInt32) async throws -> Bool {
         guard let meshSession else { throw RadioConnectionError.incompatibleProtocol }
         return try await meshSession.requestChatRepair(sessionId: sessionID, handle: handle)
-    }
-
-    func composeReaction(
-        conversationAddress: String,
-        clientToken: UInt32,
-        target: MobileChatRegardingRef,
-        body: String
-    ) async throws -> MobileChatComposeBatchRecord {
-        guard let meshSession else { throw RadioConnectionError.incompatibleProtocol }
-        return try await meshSession.composeReaction(
-            conversationAddress: conversationAddress,
-            clientToken: clientToken,
-            target: target,
-            body: body
-        )
-    }
-
-    func composeReply(
-        conversationAddress: String,
-        clientToken: UInt32,
-        target: MobileChatRegardingRef,
-        body: String,
-        forwardSecret: Bool?
-    ) async throws -> MobileChatComposeBatchRecord {
-        guard let meshSession else { throw RadioConnectionError.incompatibleProtocol }
-        return try await meshSession.composeReply(
-            conversationAddress: conversationAddress,
-            clientToken: clientToken,
-            target: target,
-            body: body,
-            forwardSecret: forwardSecret
-        )
-    }
-
-    func commitChatBatch(_ batchID: UInt64) async throws {
-        guard let meshSession else { return }
-        try await meshSession.commitChatBatch(batchId: batchID)
-        pump()
-    }
-
-    func rejectChatBatch(
-        _ batchID: UInt64,
-        checkpoints: [MobileChatCheckpointRecord]
-    ) async throws {
-        guard let meshSession else { return }
-        try await meshSession.rejectChatBatch(batchId: batchID, checkpoints: checkpoints)
-    }
-
-    func applyChatArchiveResult(
-        requestID: UInt32,
-        kind: MobileChatArchiveResultKind,
-        payload: Data
-    ) async throws {
-        guard let meshSession else { return }
-        try meshSession.applyChatArchiveResult(
-            requestId: requestID,
-            kind: kind,
-            payload: payload
-        )
-        pump()
-    }
-
-    func acknowledgeChatBatch(_ batchID: UInt64) async throws {
-        guard let meshSession else { return }
-        try meshSession.acknowledgeChatBatch(batchId: batchID)
-        pump()
     }
 
     func disconnect() async {
@@ -1377,7 +1242,8 @@ actor FakeRadioConnection: RadioConnection {
 
     /// Drain the Rust session the way a real radio link would: transmitted
     /// frames complete instantly (a fake radio's airtime is free), traffic
-    /// goes to the air, and chat batches surface to the app.
+    /// goes to the air, and what the stored chat changed surfaces to the
+    /// app.
     func pump() {
         guard let meshSession else { return }
         let update = meshSession.pollUpdate()
@@ -1400,7 +1266,7 @@ actor FakeRadioConnection: RadioConnection {
         if let addresses = update.forwardSecretConversations {
             publishForwardSecretConversations(Set(addresses))
         }
-        yieldChatUpdate(from: update)
+        yieldChatChanges(from: update)
     }
 
     private func queueForAir(_ frames: [Data]) {
@@ -1439,34 +1305,12 @@ actor FakeRadioConnection: RadioConnection {
         pump()
     }
 
-    /// Same delivery discipline as the real connection: a batch is yielded
-    /// once, then re-yielded every couple of seconds until the app
-    /// acknowledges it—an unacknowledged batch stalls every batch behind it.
-    private func yieldChatUpdate(from update: MobileMeshSessionUpdateRecord) {
-        guard let batchID = update.chatBatchId else { return }
-        let now = ContinuousClock.now
-        let retryDue = lastChatBatchYield.map { now - $0 > .seconds(2) } ?? true
-        guard batchID != lastYieldedChatBatchID || retryDue else { return }
-        lastYieldedChatBatchID = batchID
-        lastChatBatchYield = now
-        let chatUpdate = RadioChatUpdate(
-            batchID: batchID,
-            mutations: update.chatMutations,
-            resends: update.chatResends,
-            deliveries: update.chatDeliveries,
-            repeats: update.chatRepeats,
-            archiveLookups: update.chatArchiveLookups,
-            senderResolutions: update.chatSenderResolutions,
-            diagnostics: update.chatDiagnostics
-        )
+    /// The core stores its own chat; what it changed is all that comes
+    /// out.
+    private func yieldChatChanges(from update: MobileMeshSessionUpdateRecord) {
+        guard let changes = update.chatChanges else { return }
         for continuation in chatContinuations.values {
-            continuation.yield(chatUpdate)
-        }
-        chatRedelivery?.cancel()
-        chatRedelivery = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(2.5))
-            guard !Task.isCancelled else { return }
-            await self?.pump()
+            continuation.yield(changes)
         }
     }
 

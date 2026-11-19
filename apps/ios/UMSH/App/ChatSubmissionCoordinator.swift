@@ -1,8 +1,10 @@
 import Foundation
 import UMSHMobileCore
 
-/// The compose transaction: persist before releasing frames to the radio.
-/// Once released, a cleanup failure is a submitted message with a warning,
+/// A send, then the draft. The core keeps the message before releasing it
+/// to the radio and finishes the send even if the view leaves, so all that
+/// is left here is the draft: cleared only once the message is submitted.
+/// A cleanup failure after that is a submitted message with a warning,
 /// never a failed send that invites the caller to send it twice.
 @MainActor
 struct ChatSubmissionCoordinator {
@@ -11,53 +13,46 @@ struct ChatSubmissionCoordinator {
         case failed(AppOperationError)
     }
 
-    let persist: (MobileChatComposeBatchRecord) async throws -> Void
-    let reject: (UInt64) async throws -> Void
-    let release: (UInt64) async throws -> Void
-    let markFailed: (MobileChatComposeBatchRecord) async throws -> Void
-
     func submit(
-        compose: () async throws -> MobileChatComposeBatchRecord,
+        send: () async throws -> Void,
         didChange: () async -> Void,
         clearDraft: () async throws -> Void
     ) async -> Outcome {
-        let batch: MobileChatComposeBatchRecord
         do {
             try Task.checkCancellation()
-            batch = try await compose()
-        } catch is CancellationError { return .failed(.cancelled) }
-        catch let error as MobileMeshError { return .failed(Self.composeError(error)) }
-        catch { return .failed(.operation("The message could not be composed: \(error)")) }
-
-        do {
-            try Task.checkCancellation()
-            try await persist(batch)
+            try await send()
+        } catch is CancellationError {
+            return .failed(.cancelled)
+        } catch let error as MobileChatSendError {
+            // Some failures leave a stored message behind, marked failed.
+            await didChange()
+            return .failed(Self.sendError(error))
         } catch {
-            // Cleanup remains necessary even when the caller was canceled.
-            do { try await reject(batch.batchId) }
-            catch {
-                return .failed(.operation("The message was not sent. Its pending radio operation could not be reset. Reconnect before retrying."))
-            }
-            return .failed(AppOperationError.storage(error))
+            return .failed(.operation("The message could not be sent: \(error)"))
         }
         await didChange()
-        // After persistence, finish the transaction even if the view leaves.
-        // No cancellation check may strand a durable compose batch here.
-        do { try await release(batch.batchId) }
-        catch {
-            do { try await markFailed(batch) }
-            catch {
-                await didChange()
-                return .failed(.persistence("The message could not be queued, and its failure could not be saved. Reconnect and check the transcript before retrying."))
-            }
-            await didChange()
-            return .failed(.operation("The message could not be queued for transmission: \(error)"))
-        }
         do { try await clearDraft() }
         catch {
             return .submitted(warning: .persistence("The message was submitted, but the draft could not be cleared. Do not resend it."))
         }
         return .submitted()
+    }
+
+    nonisolated static func sendError(_ error: MobileChatSendError) -> AppOperationError {
+        switch error {
+        case let .NotComposed(error):
+            composeError(error)
+        case .NotSaved:
+            .persistence("Changes could not be saved. Please try again.")
+        case .NotSavedOrReset:
+            .operation("The message was not sent. Its pending radio operation could not be reset. Reconnect before retrying.")
+        case let .NotQueued(error):
+            .operation("The message could not be queued for transmission: \(error)")
+        case .NotQueuedOrRecorded:
+            .persistence("The message could not be queued, and its failure could not be saved. Reconnect and check the transcript before retrying.")
+        case .NoStore:
+            .unavailable("Connect a companion radio configured for this phone before sending.")
+        }
     }
 
     nonisolated static func composeError(_ error: MobileMeshError) -> AppOperationError {

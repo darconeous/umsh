@@ -239,37 +239,6 @@ struct StoredChannelConversation: Equatable, Sendable {
     let unreadCount: Int
 }
 
-/// What a notification needs to describe an arrived message, resolved from
-/// storage rather than from the mutation that triggered it.
-struct ChatNotificationTarget: Equatable, Sendable {
-    let conversationAddress: String
-    let body: String
-    /// The sender's full address, when known. A group message from a member
-    /// whose hint has not resolved yet has none.
-    let senderAddress: String?
-    /// The sender's claimed hint, for a group message.
-    let senderHint: Data?
-    /// The name the sender attached to the message.
-    let senderHandle: String?
-    /// Status text, which reads as its sender's name followed by its body.
-    let isStatus: Bool
-}
-
-/// An inbound reaction worth telling the user about: who put what on which
-/// message of theirs.
-struct ChatReactionNotificationTarget: Equatable, Sendable {
-    let conversationAddress: String
-    /// The reaction body as it arrived—a wire token like `<3`, rendered to
-    /// a glyph for display.
-    let body: String
-    /// What the reaction is on, so the notice can quote it the way a chat app
-    /// quotes the message a tapback landed on.
-    let targetBody: String
-    let senderAddress: String?
-    let senderHint: Data?
-    let senderHandle: String?
-}
-
 /// An outbound message whose delivery has just been given up on.
 struct ChatDeliveryFailure: Equatable, Sendable {
     let conversationAddress: String
@@ -585,6 +554,9 @@ struct ApplicationRecords: Sendable {
 /// are stamped here, from the clock, as the Swift store stamped them.
 actor SQLiteApplicationStore {
     private let store: MobileAppStore
+
+    /// The core's store itself, for a mesh session to keep its chat in.
+    nonisolated var coreStore: MobileAppStore { store }
 
     init(path: String) throws {
         store = try Self.mapped { try MobileAppStore.open(path: path) }
@@ -1022,23 +994,6 @@ actor SQLiteApplicationStore {
         }
     }
 
-    /// Fill in the sender of group messages stored before that member's hint
-    /// resolved to a real address. Rows that already name a sender are left
-    /// alone—the first attribution seen for a hint is the one kept.
-    func applySenderResolution(
-        ownerIdentityID: String,
-        conversationAddress: String,
-        senderHint: Data,
-        senderAddress: String
-    ) throws {
-        let resolution = MobileChatSenderResolutionRecord(
-            conversationAddress: conversationAddress,
-            senderHint: senderHint,
-            senderAddress: senderAddress
-        )
-        try run { try $0.applySenderResolution(ownerIdentityId: ownerIdentityID, resolution: resolution) }
-    }
-
     /// Remove a conversation and its local history. Outbound stream
     /// checkpoints are deliberately retained: sequence continuity with the
     /// peer must survive the transcript, or the next message would announce
@@ -1284,127 +1239,8 @@ actor SQLiteApplicationStore {
 
     // MARK: Chat
 
-    /// Resolve the peer a locally-stored message belongs to, keyed by its
-    /// durable `(sessionID, handle)`. Used to attribute delivery acks—which
-    /// carry no address of their own—back to a conversation for last-heard
-    /// bookkeeping.
-    func conversationAddressForMessage(
-        ownerIdentityID: String,
-        sessionID: UInt64,
-        handle: UInt32
-    ) throws -> String? {
-        try run {
-            try $0.conversationAddressForMessage(ownerIdentityId: ownerIdentityID, sessionId: sessionID, handle: handle)
-        }
-    }
-
-    /// The persisted conversation address, sender, and body of an inbound,
-    /// displayable message, for raising a notification. Returns `nil` for
-    /// outbound rows, tombstones, gap placeholders, unavailable markers, or
-    /// empty bodies—nothing worth alerting the user about. Resolves every
-    /// field from storage so a notify carried on an `UpdateBody` (which omits
-    /// them) still works.
-    func chatNotificationTarget(
-        ownerIdentityID: String,
-        sessionID: UInt64,
-        handle: UInt32
-    ) throws -> ChatNotificationTarget? {
-        try run { try $0.chatNotificationTarget(ownerIdentityId: ownerIdentityID, sessionId: sessionID, handle: handle) }
-            .map(ChatNotificationTarget.init)
-    }
-
-    /// The reaction behind a notifying mutation, when it is one and when it
-    /// lands on a message this phone sent.
-    ///
-    /// Reactions to someone else's message are somebody else's business: in a
-    /// channel they would ping every member for every tapback. A withdrawal
-    /// carries an empty body and is not an event to announce.
-    func chatReactionNotificationTarget(
-        ownerIdentityID: String,
-        sessionID: UInt64,
-        handle: UInt32
-    ) throws -> ChatReactionNotificationTarget? {
-        try run {
-            try $0.chatReactionNotificationTarget(ownerIdentityId: ownerIdentityID, sessionId: sessionID, handle: handle)
-        }
-        .map(ChatReactionNotificationTarget.init)
-    }
-
     func chatCheckpoints(ownerIdentityID: String) throws -> [MobileChatCheckpointRecord] {
         try run { try $0.chatCheckpoints(ownerIdentityId: ownerIdentityID) }
-    }
-
-    /// The checkpoint and exact resend material are one durable commit. The
-    /// caller may release the corresponding Rust batch only after this returns.
-    func commitChatComposeBatch(
-        ownerIdentityID: String,
-        batch: MobileChatComposeBatchRecord
-    ) throws {
-        try run {
-            try $0.commitChatComposeBatch(ownerIdentityId: ownerIdentityID, batch: batch, nowMs: Date.now.storeMilliseconds)
-        }
-    }
-
-    /// Apply one batch of the engine's mutations in one transaction, and
-    /// return those still worth a notification.
-    @discardableResult
-    func applyChatMutations(
-        ownerIdentityID: String,
-        mutations: [MobileChatMutationRecord],
-        silentTestsIn: String? = nil
-    ) throws -> [MobileChatMutationRecord] {
-        try run {
-            try $0.applyChatMutations(
-                ownerIdentityId: ownerIdentityID,
-                mutations: mutations,
-                nowMs: Date.now.storeMilliseconds,
-                silentTestsIn: silentTestsIn
-            )
-        }
-    }
-
-    /// Apply delivery evidence, and return the messages whose delivery was
-    /// just given up on.
-    @discardableResult
-    func applyChatDeliveries(
-        ownerIdentityID: String,
-        deliveries: [MobileChatDeliveryRecord]
-    ) throws -> [ChatDeliveryFailure] {
-        try run {
-            try $0.applyChatDeliveries(
-                ownerIdentityId: ownerIdentityID,
-                deliveries: deliveries,
-                nowMs: Date.now.storeMilliseconds
-            )
-        }
-        .map(ChatDeliveryFailure.init)
-    }
-
-    /// Record the repeaters overheard carrying our frames.
-    ///
-    /// Each record is one transmission's whole tally, and a fragment sent
-    /// again starts a fresh one, so a fragment keeps the union of the
-    /// repeaters every transmission of it named, and the most any of them
-    /// heard anonymously. A message's delivery is stamped as having moved
-    /// whenever one of its fragments gains a repeater.
-    func applyChatRepeats(
-        ownerIdentityID: String,
-        repeats: [MobileChatRepeatRecord]
-    ) throws {
-        try run {
-            try $0.applyChatRepeats(ownerIdentityId: ownerIdentityID, repeats: repeats, nowMs: Date.now.storeMilliseconds)
-        }
-    }
-
-    /// The compose transaction is already durable at this point, but Rust
-    /// could not release its held transmissions (for example because the
-    /// fail-closed counter store became unavailable). Keep the optimistic row
-    /// honest instead of leaving it pending forever.
-    func markChatComposeBatchFailed(
-        ownerIdentityID: String,
-        batch: MobileChatComposeBatchRecord
-    ) throws {
-        try run { try $0.markChatComposeBatchFailed(ownerIdentityId: ownerIdentityID, batch: batch) }
     }
 
     /// Remove a failed outbound message outright, because its text just went
@@ -1451,13 +1287,6 @@ actor SQLiteApplicationStore {
         try run { try $0.resolveGapsUnavailable(ownerIdentityId: ownerIdentityID, rows: references) }
     }
 
-    func chatArchive(
-        ownerIdentityID: String,
-        lookup: MobileChatArchiveLookupRecord
-    ) throws -> Data? {
-        try run { try $0.chatArchive(ownerIdentityId: ownerIdentityID, lookup: lookup) }
-    }
-
     /// What a resend of one of our messages puts back on the air: its
     /// archived fragments, less those already acknowledged under its current
     /// delivery pointer. Empty when nothing is archived under the wire ID the
@@ -1477,19 +1306,6 @@ actor SQLiteApplicationStore {
                 message: MobileStoredChatMessageRefRecord(sessionId: sessionID, handle: handle),
                 wireId: wireID
             )
-        }
-    }
-
-    /// Point each resent message's delivery at the transmission its frames
-    /// went out under again, ahead of any word of them, and record whether
-    /// they go under forward secrecy. What was acknowledged stays so; what
-    /// was last said of the rest no longer holds.
-    func applyChatResends(
-        ownerIdentityID: String,
-        resends: [MobileChatResendRecord]
-    ) throws {
-        try run {
-            try $0.applyChatResends(ownerIdentityId: ownerIdentityID, resends: resends, nowMs: Date.now.storeMilliseconds)
         }
     }
 
@@ -1919,34 +1735,8 @@ extension StoredChannelConversation {
     }
 }
 
-extension ChatNotificationTarget {
-    fileprivate init(_ record: MobileStoredChatNotificationTargetRecord) {
-        self.init(
-            conversationAddress: record.conversationAddress,
-            body: record.body,
-            senderAddress: record.senderAddress,
-            senderHint: record.senderHint,
-            senderHandle: record.senderHandle,
-            isStatus: record.isStatus
-        )
-    }
-}
-
-extension ChatReactionNotificationTarget {
-    fileprivate init(_ record: MobileStoredChatReactionNotificationTargetRecord) {
-        self.init(
-            conversationAddress: record.conversationAddress,
-            body: record.body,
-            targetBody: record.targetBody,
-            senderAddress: record.senderAddress,
-            senderHint: record.senderHint,
-            senderHandle: record.senderHandle
-        )
-    }
-}
-
 extension ChatDeliveryFailure {
-    fileprivate init(_ record: MobileStoredChatDeliveryFailureRecord) {
+    init(_ record: MobileStoredChatDeliveryFailureRecord) {
         self.init(conversationAddress: record.conversationAddress, body: record.body, undelivered: record.undelivered)
     }
 }

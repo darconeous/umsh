@@ -150,7 +150,7 @@ under `scripts/ios/verify-*.sh`; the persistence check loads a frozen, populated
 version-12 SQL fixture from commit `94502d422`.
 
 `AppRuntime` composes identity decisions (`IdentityOperations`), draft writes
-(`ConversationDraftStore`), submission transactions (`ChatSubmissionCoordinator`),
+(`ConversationDraftStore`), a send and its draft (`ChatSubmissionCoordinator`),
 and storage-to-view mapping (`ApplicationStateLoader`). The runtime still owns
 observable application state and the process's companion connection. A full
 reload is authoritative and publishes only after every read succeeds. Sending

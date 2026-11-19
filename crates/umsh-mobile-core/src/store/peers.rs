@@ -492,17 +492,7 @@ impl MobileAppStore {
         at_ms: i64,
     ) -> Result<bool, MobileStoreError> {
         self.write(|transaction| {
-            let fired_watch = transaction.execute(
-                "UPDATE node SET notify_when_heard = 0
-                WHERE owner_identity_id = ? AND public_address = ? AND notify_when_heard = 1",
-                params![owner_identity_id, public_address],
-            )? > 0;
-            transaction.execute(
-                "UPDATE node SET last_heard_at = ?
-                WHERE owner_identity_id = ? AND public_address = ?",
-                params![seconds(at_ms), owner_identity_id, public_address],
-            )?;
-            Ok(fired_watch)
+            touch_last_heard(transaction, &owner_identity_id, &public_address, at_ms)
         })
     }
 
@@ -548,6 +538,27 @@ impl MobileAppStore {
     ) -> Result<Vec<MobileStoredNodeRecord>, MobileStoreError> {
         list_nodes(&self.connection(), &owner_identity_id)
     }
+}
+
+/// See [`MobileAppStore::touch_last_heard`]. Part of the caller's
+/// transaction.
+pub(super) fn touch_last_heard(
+    transaction: &Connection,
+    owner_identity_id: &str,
+    public_address: &str,
+    at_ms: i64,
+) -> Result<bool, MobileStoreError> {
+    let fired_watch = transaction.execute(
+        "UPDATE node SET notify_when_heard = 0
+        WHERE owner_identity_id = ? AND public_address = ? AND notify_when_heard = 1",
+        params![owner_identity_id, public_address],
+    )? > 0;
+    transaction.execute(
+        "UPDATE node SET last_heard_at = ?
+        WHERE owner_identity_id = ? AND public_address = ?",
+        params![seconds(at_ms), owner_identity_id, public_address],
+    )?;
+    Ok(fired_watch)
 }
 
 pub(super) fn list_nodes(

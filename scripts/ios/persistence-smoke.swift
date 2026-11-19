@@ -1416,3 +1416,123 @@ extension PersistenceSmokeTest {
         return String(format: "%.2f ms", milliseconds)
     }
 }
+
+/// The core stores chat itself as it comes, so the app has no calls for
+/// these. The smoke still writes and reads its chat fixtures through them,
+/// straight on the core's store.
+extension SQLiteApplicationStore {
+    private static var nowMilliseconds: Int64 {
+        Int64(Date.now.timeIntervalSince1970 * 1_000)
+    }
+
+    @discardableResult
+    func applyChatMutations(
+        ownerIdentityID: String,
+        mutations: [MobileChatMutationRecord],
+        silentTestsIn: String? = nil
+    ) throws -> [MobileChatMutationRecord] {
+        try coreStore.applyChatMutations(
+            ownerIdentityId: ownerIdentityID,
+            mutations: mutations,
+            nowMs: Self.nowMilliseconds,
+            silentTestsIn: silentTestsIn
+        )
+    }
+
+    @discardableResult
+    func applyChatDeliveries(
+        ownerIdentityID: String,
+        deliveries: [MobileChatDeliveryRecord]
+    ) throws -> [ChatDeliveryFailure] {
+        try coreStore.applyChatDeliveries(
+            ownerIdentityId: ownerIdentityID,
+            deliveries: deliveries,
+            nowMs: Self.nowMilliseconds
+        )
+        .map(ChatDeliveryFailure.init)
+    }
+
+    func applyChatRepeats(ownerIdentityID: String, repeats: [MobileChatRepeatRecord]) throws {
+        try coreStore.applyChatRepeats(
+            ownerIdentityId: ownerIdentityID,
+            repeats: repeats,
+            nowMs: Self.nowMilliseconds
+        )
+    }
+
+    func applyChatResends(ownerIdentityID: String, resends: [MobileChatResendRecord]) throws {
+        try coreStore.applyChatResends(
+            ownerIdentityId: ownerIdentityID,
+            resends: resends,
+            nowMs: Self.nowMilliseconds
+        )
+    }
+
+    func applySenderResolution(
+        ownerIdentityID: String,
+        conversationAddress: String,
+        senderHint: Data,
+        senderAddress: String
+    ) throws {
+        try coreStore.applySenderResolution(
+            ownerIdentityId: ownerIdentityID,
+            resolution: MobileChatSenderResolutionRecord(
+                conversationAddress: conversationAddress,
+                senderHint: senderHint,
+                senderAddress: senderAddress
+            )
+        )
+    }
+
+    func commitChatComposeBatch(ownerIdentityID: String, batch: MobileChatComposeBatchRecord) throws {
+        try coreStore.commitChatComposeBatch(
+            ownerIdentityId: ownerIdentityID,
+            batch: batch,
+            nowMs: Self.nowMilliseconds
+        )
+    }
+
+    func markChatComposeBatchFailed(ownerIdentityID: String, batch: MobileChatComposeBatchRecord) throws {
+        try coreStore.markChatComposeBatchFailed(ownerIdentityId: ownerIdentityID, batch: batch)
+    }
+
+    func conversationAddressForMessage(
+        ownerIdentityID: String,
+        sessionID: UInt64,
+        handle: UInt32
+    ) throws -> String? {
+        try coreStore.conversationAddressForMessage(
+            ownerIdentityId: ownerIdentityID,
+            sessionId: sessionID,
+            handle: handle
+        )
+    }
+
+    func chatNotificationTarget(
+        ownerIdentityID: String,
+        sessionID: UInt64,
+        handle: UInt32
+    ) throws -> MobileStoredChatNotificationTargetRecord? {
+        try coreStore.chatNotificationTarget(
+            ownerIdentityId: ownerIdentityID,
+            sessionId: sessionID,
+            handle: handle
+        )
+    }
+
+    func chatReactionNotificationTarget(
+        ownerIdentityID: String,
+        sessionID: UInt64,
+        handle: UInt32
+    ) throws -> MobileStoredChatReactionNotificationTargetRecord? {
+        try coreStore.chatReactionNotificationTarget(
+            ownerIdentityId: ownerIdentityID,
+            sessionId: sessionID,
+            handle: handle
+        )
+    }
+
+    func chatArchive(ownerIdentityID: String, lookup: MobileChatArchiveLookupRecord) throws -> Data? {
+        try coreStore.chatArchive(ownerIdentityId: ownerIdentityID, lookup: lookup)
+    }
+}

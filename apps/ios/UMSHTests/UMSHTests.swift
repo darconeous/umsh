@@ -220,36 +220,36 @@ private final class TestRadioLink: UlcpFrameLink {
 
 @Suite @MainActor
 struct ChatSubmissionTests {
-    private let batch = MobileChatComposeBatchRecord(batchId: 1,
-        checkpoint: .init(conversationAddress: "peer", nextId: 1, epoch: 0),
-        archiveDeletes: [], archives: [], mutations: [])
-
-    @Test func failedPersistenceRejectsWithoutSendingOrClearingDraft() async {
+    @Test func unsavedMessageKeepsDraft() async {
         var calls: [String] = []
-        let coordinator = ChatSubmissionCoordinator(
-            persist: { _ in calls.append("persist"); throw TestFailure.unavailable },
-            reject: { _ in calls.append("reject") }, release: { _ in calls.append("send") },
-            markFailed: { _ in calls.append("markFailed") })
-        let result = await coordinator.submit(compose: { batch }, didChange: {}, clearDraft: { calls.append("clear") })
-        #expect(calls == ["persist", "reject"])
+        let result = await ChatSubmissionCoordinator().submit(
+            send: { calls.append("send"); throw MobileChatSendError.NotSaved(error: .RecordNotFound) },
+            didChange: {}, clearDraft: { calls.append("clear") })
+        #expect(calls == ["send"])
         if case .failed(.persistence) = result {} else { Issue.record("Expected persistence failure") }
     }
 
-    @Test func failedReleaseKeepsDraftAndMarksMessageFailed() async {
+    @Test func unqueuedMessageKeepsDraftAndRedraws() async {
         var calls: [String] = []
-        let coordinator = ChatSubmissionCoordinator(persist: { _ in calls.append("persist") },
-            reject: { _ in calls.append("reject") },
-            release: { _ in calls.append("send"); throw TestFailure.unavailable },
-            markFailed: { _ in calls.append("markFailed") })
-        let result = await coordinator.submit(compose: { batch }, didChange: {}, clearDraft: { calls.append("clear") })
-        #expect(calls == ["persist", "send", "markFailed"])
+        let result = await ChatSubmissionCoordinator().submit(
+            send: { calls.append("send"); throw MobileChatSendError.NotQueued(error: .SendFailed) },
+            didChange: { calls.append("redraw") }, clearDraft: { calls.append("clear") })
+        #expect(calls == ["send", "redraw"])
         if case .failed(.operation) = result {} else { Issue.record("Expected release failure") }
     }
 
+    @Test func sentMessageRedrawsThenClearsDraft() async {
+        var calls: [String] = []
+        let result = await ChatSubmissionCoordinator().submit(
+            send: { calls.append("send") },
+            didChange: { calls.append("redraw") }, clearDraft: { calls.append("clear") })
+        #expect(calls == ["send", "redraw", "clear"])
+        #expect(result == .submitted())
+    }
+
     @Test func cleanupFailureDoesNotReportSubmittedMessageAsFailed() async {
-        let coordinator = ChatSubmissionCoordinator(persist: { _ in }, reject: { _ in },
-            release: { _ in }, markFailed: { _ in })
-        let result = await coordinator.submit(compose: { batch }, didChange: {}, clearDraft: { throw TestFailure.unavailable })
+        let result = await ChatSubmissionCoordinator().submit(
+            send: {}, didChange: {}, clearDraft: { throw TestFailure.unavailable })
         if case .submitted(warning: .persistence) = result {} else { Issue.record("Expected submitted with warning") }
     }
 }

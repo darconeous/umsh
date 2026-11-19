@@ -37,10 +37,10 @@ pub use mobile_chat::{
     MobileChatOriginalRef,
 };
 pub use mobile_mesh::{
-    MobileMeshAdvertisementRecord, MobileMeshError, MobileMeshOutboundFrameRecord,
-    MobileMeshPeerHeardRecord, MobileMeshPingEventRecord, MobileMeshPingOutcome,
-    MobileMeshRouteKind, MobileMeshRouteRecord, MobileMeshRxRecord, MobileMeshSession,
-    MobileMeshSessionUpdateRecord,
+    MobileChatSendError, MobileChatSendRequest, MobileMeshAdvertisementRecord, MobileMeshError,
+    MobileMeshOutboundFrameRecord, MobileMeshPeerHeardRecord, MobileMeshPingEventRecord,
+    MobileMeshPingOutcome, MobileMeshRouteKind, MobileMeshRouteRecord, MobileMeshRxRecord,
+    MobileMeshSession, MobileMeshSessionUpdateRecord,
 };
 pub use regions::{
     MobileRegionDatabase, MobileRegionError, MobileRegionLookupRecord, MobileRegionMatchRecord,
@@ -48,9 +48,10 @@ pub use regions::{
     MobileRegionProposalRecord, MobileRegionRecord,
 };
 pub use store::{
-    MobileAppStore, MobileApplicationRecords, MobilePeerUpsertRecord,
-    MobileStagedChatMessageRecord, MobileStagedChatReactionRecord, MobileStagedChatRegarding,
-    MobileStoreError, MobileStoredCachedPropertyRecord, MobileStoredChannelConversationRecord,
+    MobileAppStore, MobileApplicationRecords, MobileChatChangesRecord,
+    MobileChatNotificationRecord, MobilePeerUpsertRecord, MobileStagedChatMessageRecord,
+    MobileStagedChatReactionRecord, MobileStagedChatRegarding, MobileStoreError,
+    MobileStoredCachedPropertyRecord, MobileStoredChannelConversationRecord,
     MobileStoredChannelKind, MobileStoredChannelRecord, MobileStoredChatCursorRecord,
     MobileStoredChatDeliveryFailureRecord, MobileStoredChatDeliveryState,
     MobileStoredChatMessagePageRecord, MobileStoredChatMessageRecord,
@@ -92,7 +93,7 @@ uniffi::setup_scaffolding!();
 ///
 /// Increment this when a binding-visible operation, record, or error contract
 /// changes incompatibly. It is independent of the UMSH wire version.
-pub const MOBILE_API_VERSION: u16 = 79;
+pub const MOBILE_API_VERSION: u16 = 80;
 
 /// Stable error categories consumed by platform adapters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Error)]

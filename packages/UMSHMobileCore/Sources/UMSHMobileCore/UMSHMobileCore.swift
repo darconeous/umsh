@@ -3562,6 +3562,16 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
     func askToExchange(device: UInt32) async throws  -> Bool
 
     /**
+     * Keep this session's chat in `store`, for the identity
+     * `owner_identity_id`. From now on every chat effect is stored as it
+     * comes, what waited for a store first, and polls report what it
+     * changed instead of handing out batches. `silent_tests_in` is where
+     * [`Self::set_chat_silent_tests_in`] starts. Fails with
+     * `OperationInProgress` when a store is already attached.
+     */
+    func attachChatStore(store: MobileAppStore, ownerIdentityId: String, silentTestsIn: String?) throws
+
+    /**
      * Ask a device across the mesh to announce itself now
      * (`CMD_ANNOUNCE`).
      *
@@ -4037,6 +4047,14 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
     func sendBeacon() async throws
 
     /**
+     * Send a message into a conversation, addressed by a peer's address
+     * or a channel's conversation address. The message is stored before
+     * anything goes on the air, and the send runs to its end even if the
+     * caller stops waiting. Needs a store attached.
+     */
+    func sendChat(conversationAddress: String, request: MobileChatSendRequest) async throws
+
+    /**
      * Set the position this phone's identity carries, or `None` to stop
      * sharing one.
      *
@@ -4067,6 +4085,13 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
      * carry it: the recipient authenticated us by key. Empty clears it.
      */
     func setChatDisplayName(name: String) async throws
+
+    /**
+     * The conversation whose test messages are to arrive silently: never
+     * counted as unread. `EMERGENCY`'s, while the user has not asked to
+     * hear of them; `None` otherwise.
+     */
+    func setChatSilentTestsIn(conversationAddress: String?) throws
 
     func setDiscoverable(enabled: Bool, name: String?) async throws
 
@@ -4309,6 +4334,25 @@ open func askToExchange(device: UInt32)async throws  -> Bool  {
             liftFunc: FfiConverterBool.lift,
             errorHandler: FfiConverterTypeMobileMeshError_lift
         )
+}
+
+    /**
+     * Keep this session's chat in `store`, for the identity
+     * `owner_identity_id`. From now on every chat effect is stored as it
+     * comes, what waited for a store first, and polls report what it
+     * changed instead of handing out batches. `silent_tests_in` is where
+     * [`Self::set_chat_silent_tests_in`] starts. Fails with
+     * `OperationInProgress` when a store is already attached.
+     */
+open func attachChatStore(store: MobileAppStore, ownerIdentityId: String, silentTestsIn: String?)throws   {try rustCallWithError(FfiConverterTypeMobileMeshError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilemeshsession_attach_chat_store(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileAppStore_lower(store),
+        FfiConverterString.lower(ownerIdentityId),
+        FfiConverterOptionString.lower(silentTestsIn),uniffiCallStatus
+    )
+}
 }
 
     /**
@@ -5425,6 +5469,28 @@ open func sendBeacon()async throws   {
 }
 
     /**
+     * Send a message into a conversation, addressed by a peer's address
+     * or a channel's conversation address. The message is stored before
+     * anything goes on the air, and the send runs to its end even if the
+     * caller stops waiting. Needs a store attached.
+     */
+open func sendChat(conversationAddress: String, request: MobileChatSendRequest)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemeshsession_send_chat(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(conversationAddress),FfiConverterTypeMobileChatSendRequest_lower(request)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileChatSendError_lift
+        )
+}
+
+    /**
      * Set the position this phone's identity carries, or `None` to stop
      * sharing one.
      *
@@ -5482,6 +5548,20 @@ open func setChatDisplayName(name: String)async throws   {
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeMobileMeshError_lift
         )
+}
+
+    /**
+     * The conversation whose test messages are to arrive silently: never
+     * counted as unread. `EMERGENCY`'s, while the user has not asked to
+     * hear of them; `None` otherwise.
+     */
+open func setChatSilentTestsIn(conversationAddress: String?)throws   {try rustCallWithError(FfiConverterTypeMobileMeshError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilemeshsession_set_chat_silent_tests_in(
+            self.uniffiCloneHandle(),
+        FfiConverterOptionString.lower(conversationAddress),uniffiCallStatus
+    )
+}
 }
 
 open func setDiscoverable(enabled: Bool, name: String?)async throws   {
@@ -8780,6 +8860,119 @@ public func FfiConverterTypeMobileChatArchiveRecord_lower(_ value: MobileChatArc
 }
 
 
+/**
+ * What stored chat effects changed, for the app to show.
+ */
+public struct MobileChatChangesRecord: Equatable, Hashable {
+    /**
+     * The conversations whose transcripts changed.
+     */
+    public var conversations: [String]
+    /**
+     * Something changed that could not be placed in a conversation, so any
+     * transcript may be out of date.
+     */
+    public var allConversations: Bool
+    /**
+     * Arrivals worth telling the user about, in the order they arrived.
+     * Whether one is shown is the app's to decide.
+     */
+    public var notifications: [MobileChatNotificationRecord]
+    /**
+     * Messages of ours that were just given up on.
+     */
+    public var deliveryFailures: [MobileStoredChatDeliveryFailureRecord]
+    /**
+     * Peers whose watch for being heard was just set off.
+     */
+    public var heardWatches: [String]
+    /**
+     * For the log.
+     */
+    public var diagnostics: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The conversations whose transcripts changed.
+         */conversations: [String],
+        /**
+         * Something changed that could not be placed in a conversation, so any
+         * transcript may be out of date.
+         */allConversations: Bool,
+        /**
+         * Arrivals worth telling the user about, in the order they arrived.
+         * Whether one is shown is the app's to decide.
+         */notifications: [MobileChatNotificationRecord],
+        /**
+         * Messages of ours that were just given up on.
+         */deliveryFailures: [MobileStoredChatDeliveryFailureRecord],
+        /**
+         * Peers whose watch for being heard was just set off.
+         */heardWatches: [String],
+        /**
+         * For the log.
+         */diagnostics: [String]) {
+        self.conversations = conversations
+        self.allConversations = allConversations
+        self.notifications = notifications
+        self.deliveryFailures = deliveryFailures
+        self.heardWatches = heardWatches
+        self.diagnostics = diagnostics
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileChatChangesRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileChatChangesRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileChatChangesRecord {
+        return
+            try MobileChatChangesRecord(
+                conversations: FfiConverterSequenceString.read(from: &buf),
+                allConversations: FfiConverterBool.read(from: &buf),
+                notifications: FfiConverterSequenceTypeMobileChatNotificationRecord.read(from: &buf),
+                deliveryFailures: FfiConverterSequenceTypeMobileStoredChatDeliveryFailureRecord.read(from: &buf),
+                heardWatches: FfiConverterSequenceString.read(from: &buf),
+                diagnostics: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileChatChangesRecord, into buf: inout [UInt8]) {
+        FfiConverterSequenceString.write(value.conversations, into: &buf)
+        FfiConverterBool.write(value.allConversations, into: &buf)
+        FfiConverterSequenceTypeMobileChatNotificationRecord.write(value.notifications, into: &buf)
+        FfiConverterSequenceTypeMobileStoredChatDeliveryFailureRecord.write(value.deliveryFailures, into: &buf)
+        FfiConverterSequenceString.write(value.heardWatches, into: &buf)
+        FfiConverterSequenceString.write(value.diagnostics, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileChatChangesRecord_lift(_ buf: RustBuffer) throws -> MobileChatChangesRecord {
+    return try FfiConverterTypeMobileChatChangesRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileChatChangesRecord_lower(_ value: MobileChatChangesRecord) -> RustBuffer {
+    return FfiConverterTypeMobileChatChangesRecord.lower(value)
+}
+
+
 public struct MobileChatCheckpointRecord: Equatable, Hashable {
     public var conversationAddress: String
     public var nextId: UInt8
@@ -11319,6 +11512,12 @@ public struct MobileMeshSessionUpdateRecord: Equatable, Hashable {
     public var chatSenderResolutions: [MobileChatSenderResolutionRecord]
     public var chatDiagnostics: [String]
     /**
+     * With a store attached, what the chat effects stored since the last
+     * poll changed, when they changed anything; the batch fields above
+     * are then always empty.
+     */
+    public var chatChanges: MobileChatChangesRecord?
+    /**
      * The 3-byte node hints of the addresses this phone answers to besides
      * its own, when they changed since the last poll: one per session with
      * forward secrecy. The radio's receive filter must admit each of them
@@ -11369,6 +11568,11 @@ public struct MobileMeshSessionUpdateRecord: Equatable, Hashable {
          * platform should upgrade rows it stored anonymously under that hint.
          */chatSenderResolutions: [MobileChatSenderResolutionRecord], chatDiagnostics: [String],
         /**
+         * With a store attached, what the chat effects stored since the last
+         * poll changed, when they changed anything; the batch fields above
+         * are then always empty.
+         */chatChanges: MobileChatChangesRecord?,
+        /**
          * The 3-byte node hints of the addresses this phone answers to besides
          * its own, when they changed since the last poll: one per session with
          * forward secrecy. The radio's receive filter must admit each of them
@@ -11396,6 +11600,7 @@ public struct MobileMeshSessionUpdateRecord: Equatable, Hashable {
         self.chatArchiveLookups = chatArchiveLookups
         self.chatSenderResolutions = chatSenderResolutions
         self.chatDiagnostics = chatDiagnostics
+        self.chatChanges = chatChanges
         self.localDestinationHints = localDestinationHints
         self.forwardSecretConversations = forwardSecretConversations
         self.meet = meet
@@ -11430,6 +11635,7 @@ public struct FfiConverterTypeMobileMeshSessionUpdateRecord: FfiConverterRustBuf
                 chatArchiveLookups: FfiConverterSequenceTypeMobileChatArchiveLookupRecord.read(from: &buf),
                 chatSenderResolutions: FfiConverterSequenceTypeMobileChatSenderResolutionRecord.read(from: &buf),
                 chatDiagnostics: FfiConverterSequenceString.read(from: &buf),
+                chatChanges: FfiConverterOptionTypeMobileChatChangesRecord.read(from: &buf),
                 localDestinationHints: FfiConverterOptionSequenceData.read(from: &buf),
                 forwardSecretConversations: FfiConverterOptionSequenceString.read(from: &buf),
                 meet: FfiConverterOptionTypeMobileMeetStateRecord.read(from: &buf)
@@ -11450,6 +11656,7 @@ public struct FfiConverterTypeMobileMeshSessionUpdateRecord: FfiConverterRustBuf
         FfiConverterSequenceTypeMobileChatArchiveLookupRecord.write(value.chatArchiveLookups, into: &buf)
         FfiConverterSequenceTypeMobileChatSenderResolutionRecord.write(value.chatSenderResolutions, into: &buf)
         FfiConverterSequenceString.write(value.chatDiagnostics, into: &buf)
+        FfiConverterOptionTypeMobileChatChangesRecord.write(value.chatChanges, into: &buf)
         FfiConverterOptionSequenceData.write(value.localDestinationHints, into: &buf)
         FfiConverterOptionSequenceString.write(value.forwardSecretConversations, into: &buf)
         FfiConverterOptionTypeMobileMeetStateRecord.write(value.meet, into: &buf)
@@ -20932,6 +21139,81 @@ public func FfiConverterTypeMobileChatMutationKind_lower(_ value: MobileChatMuta
 
 
 /**
+ * An arrival worth telling the user about.
+ */
+
+public enum MobileChatNotificationRecord: Equatable, Hashable {
+
+    case message(target: MobileStoredChatNotificationTargetRecord
+    )
+    case reaction(target: MobileStoredChatReactionNotificationTargetRecord
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileChatNotificationRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileChatNotificationRecord: FfiConverterRustBuffer {
+    typealias SwiftType = MobileChatNotificationRecord
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileChatNotificationRecord {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .message(target: try FfiConverterTypeMobileStoredChatNotificationTargetRecord.read(from: &buf)
+        )
+
+        case 2: return .reaction(target: try FfiConverterTypeMobileStoredChatReactionNotificationTargetRecord.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileChatNotificationRecord, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case let .message(target):
+            writeInt(&buf, Int32(1))
+            FfiConverterTypeMobileStoredChatNotificationTargetRecord.write(target, into: &buf)
+
+
+        case let .reaction(target):
+            writeInt(&buf, Int32(2))
+            FfiConverterTypeMobileStoredChatReactionNotificationTargetRecord.write(target, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileChatNotificationRecord_lift(_ buf: RustBuffer) throws -> MobileChatNotificationRecord {
+    return try FfiConverterTypeMobileChatNotificationRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileChatNotificationRecord_lower(_ value: MobileChatNotificationRecord) -> RustBuffer {
+    return FfiConverterTypeMobileChatNotificationRecord.lower(value)
+}
+
+
+
+/**
  * Ordered-slot presence of a transcript row (mirrors the engine's
  * [`Presence`]). A `GapPending` row is a reserved spinner placeholder; a
  * `GapIdle` row is a missing message waiting for the user to ask for it
@@ -21014,6 +21296,322 @@ public func FfiConverterTypeMobileChatPresence_lift(_ buf: RustBuffer) throws ->
 #endif
 public func FfiConverterTypeMobileChatPresence_lower(_ value: MobileChatPresence) -> RustBuffer {
     return FfiConverterTypeMobileChatPresence.lower(value)
+}
+
+
+
+/**
+ * Why a send did not go out. Each says what became of the message.
+ */
+public
+enum MobileChatSendError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
+
+
+
+    /**
+     * The session would not make the message. Nothing was kept.
+     */
+    case NotComposed(error: MobileMeshError
+    )
+    /**
+     * The message could not be kept, so it was not sent.
+     */
+    case NotSaved(error: MobileStoreError
+    )
+    /**
+     * The message could not be kept, and the session could not take it
+     * back either: its streams stand ahead of what is stored until the
+     * next session.
+     */
+    case NotSavedOrReset(error: MobileStoreError
+    )
+    /**
+     * The message was kept, but could not be queued; it is stored as not
+     * delivered.
+     */
+    case NotQueued(error: MobileMeshError
+    )
+    /**
+     * The message was kept, but could not be queued, and that could not be
+     * stored either: it may read as sending until the next session.
+     */
+    case NotQueuedOrRecorded(error: MobileMeshError
+    )
+    /**
+     * The session has no store to keep the message in.
+     */
+    case NoStore
+
+
+
+
+
+
+    public var errorDescription: String? {
+        String(reflecting: self)
+    }
+
+}
+
+#if compiler(>=6)
+extension MobileChatSendError: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileChatSendError: FfiConverterRustBuffer {
+    typealias SwiftType = MobileChatSendError
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileChatSendError {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+
+
+
+        case 1: return .NotComposed(
+            error: try FfiConverterTypeMobileMeshError.read(from: &buf)
+            )
+        case 2: return .NotSaved(
+            error: try FfiConverterTypeMobileStoreError.read(from: &buf)
+            )
+        case 3: return .NotSavedOrReset(
+            error: try FfiConverterTypeMobileStoreError.read(from: &buf)
+            )
+        case 4: return .NotQueued(
+            error: try FfiConverterTypeMobileMeshError.read(from: &buf)
+            )
+        case 5: return .NotQueuedOrRecorded(
+            error: try FfiConverterTypeMobileMeshError.read(from: &buf)
+            )
+        case 6: return .NoStore
+
+         default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileChatSendError, into buf: inout [UInt8]) {
+        switch value {
+
+
+
+
+
+        case let .NotComposed(error):
+            writeInt(&buf, Int32(1))
+            FfiConverterTypeMobileMeshError.write(error, into: &buf)
+
+
+        case let .NotSaved(error):
+            writeInt(&buf, Int32(2))
+            FfiConverterTypeMobileStoreError.write(error, into: &buf)
+
+
+        case let .NotSavedOrReset(error):
+            writeInt(&buf, Int32(3))
+            FfiConverterTypeMobileStoreError.write(error, into: &buf)
+
+
+        case let .NotQueued(error):
+            writeInt(&buf, Int32(4))
+            FfiConverterTypeMobileMeshError.write(error, into: &buf)
+
+
+        case let .NotQueuedOrRecorded(error):
+            writeInt(&buf, Int32(5))
+            FfiConverterTypeMobileMeshError.write(error, into: &buf)
+
+
+        case .NoStore:
+            writeInt(&buf, Int32(6))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileChatSendError_lift(_ buf: RustBuffer) throws -> MobileChatSendError {
+    return try FfiConverterTypeMobileChatSendError.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileChatSendError_lower(_ value: MobileChatSendError) -> RustBuffer {
+    return FfiConverterTypeMobileChatSendError.lower(value)
+}
+
+
+/**
+ * A message to send, as the user asked for it.
+ */
+
+public enum MobileChatSendRequest: Equatable, Hashable {
+
+    /**
+     * Text as the user typed it into a conversation: a `/me ` prefix
+     * makes it status text. To a peer it goes under a session with
+     * forward secrecy, or never under one, as `forward_secret` says the
+     * composer showed it; without, under one only when one is held.
+     */
+    case typed(text: String, forwardSecret: Bool?
+    )
+    /**
+     * Status text, its body taken as it stands.
+     */
+    case status(body: String
+    )
+    /**
+     * A message, its body taken as it stands.
+     */
+    case text(body: String
+    )
+    /**
+     * A failed message's words as a new message, as the user chose.
+     */
+    case again(body: String, status: Bool, forwardSecret: Bool
+    )
+    /**
+     * An edit of a message of ours.
+     */
+    case edit(original: MobileChatOriginalRef, body: String
+    )
+    /**
+     * A message of ours taken back.
+     */
+    case delete(original: MobileChatOriginalRef
+    )
+    /**
+     * A reaction to either party's message; an empty body withdraws it.
+     */
+    case reaction(target: MobileChatRegardingRef, body: String
+    )
+    /**
+     * A reply to either party's message, under forward secrecy as
+     * [`Self::Typed`] goes.
+     */
+    case reply(target: MobileChatRegardingRef, body: String, forwardSecret: Bool?
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileChatSendRequest: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileChatSendRequest: FfiConverterRustBuffer {
+    typealias SwiftType = MobileChatSendRequest
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileChatSendRequest {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .typed(text: try FfiConverterString.read(from: &buf), forwardSecret: try FfiConverterOptionBool.read(from: &buf)
+        )
+
+        case 2: return .status(body: try FfiConverterString.read(from: &buf)
+        )
+
+        case 3: return .text(body: try FfiConverterString.read(from: &buf)
+        )
+
+        case 4: return .again(body: try FfiConverterString.read(from: &buf), status: try FfiConverterBool.read(from: &buf), forwardSecret: try FfiConverterBool.read(from: &buf)
+        )
+
+        case 5: return .edit(original: try FfiConverterTypeMobileChatOriginalRef.read(from: &buf), body: try FfiConverterString.read(from: &buf)
+        )
+
+        case 6: return .delete(original: try FfiConverterTypeMobileChatOriginalRef.read(from: &buf)
+        )
+
+        case 7: return .reaction(target: try FfiConverterTypeMobileChatRegardingRef.read(from: &buf), body: try FfiConverterString.read(from: &buf)
+        )
+
+        case 8: return .reply(target: try FfiConverterTypeMobileChatRegardingRef.read(from: &buf), body: try FfiConverterString.read(from: &buf), forwardSecret: try FfiConverterOptionBool.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileChatSendRequest, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case let .typed(text,forwardSecret):
+            writeInt(&buf, Int32(1))
+            FfiConverterString.write(text, into: &buf)
+            FfiConverterOptionBool.write(forwardSecret, into: &buf)
+
+
+        case let .status(body):
+            writeInt(&buf, Int32(2))
+            FfiConverterString.write(body, into: &buf)
+
+
+        case let .text(body):
+            writeInt(&buf, Int32(3))
+            FfiConverterString.write(body, into: &buf)
+
+
+        case let .again(body,status,forwardSecret):
+            writeInt(&buf, Int32(4))
+            FfiConverterString.write(body, into: &buf)
+            FfiConverterBool.write(status, into: &buf)
+            FfiConverterBool.write(forwardSecret, into: &buf)
+
+
+        case let .edit(original,body):
+            writeInt(&buf, Int32(5))
+            FfiConverterTypeMobileChatOriginalRef.write(original, into: &buf)
+            FfiConverterString.write(body, into: &buf)
+
+
+        case let .delete(original):
+            writeInt(&buf, Int32(6))
+            FfiConverterTypeMobileChatOriginalRef.write(original, into: &buf)
+
+
+        case let .reaction(target,body):
+            writeInt(&buf, Int32(7))
+            FfiConverterTypeMobileChatRegardingRef.write(target, into: &buf)
+            FfiConverterString.write(body, into: &buf)
+
+
+        case let .reply(target,body,forwardSecret):
+            writeInt(&buf, Int32(8))
+            FfiConverterTypeMobileChatRegardingRef.write(target, into: &buf)
+            FfiConverterString.write(body, into: &buf)
+            FfiConverterOptionBool.write(forwardSecret, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileChatSendRequest_lift(_ buf: RustBuffer) throws -> MobileChatSendRequest {
+    return try FfiConverterTypeMobileChatSendRequest.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileChatSendRequest_lower(_ value: MobileChatSendRequest) -> RustBuffer {
+    return FfiConverterTypeMobileChatSendRequest.lower(value)
 }
 
 
@@ -25016,6 +25614,30 @@ fileprivate struct FfiConverterOptionData: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeMobileChatChangesRecord: FfiConverterRustBuffer {
+    typealias SwiftType = MobileChatChangesRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileChatChangesRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileChatChangesRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeMobileChatRxMetadataRecord: FfiConverterRustBuffer {
     typealias SwiftType = MobileChatRxMetadataRecord?
 
@@ -27611,6 +28233,31 @@ fileprivate struct FfiConverterSequenceTypeUlcpWifiScanResultRecord: FfiConverte
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeMobileChatNotificationRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileChatNotificationRecord]
+
+    public static func write(_ value: [MobileChatNotificationRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileChatNotificationRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileChatNotificationRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileChatNotificationRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileChatNotificationRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceOptionUInt16: FfiConverterRustBuffer {
     typealias SwiftType = [UInt16?]
 
@@ -29013,6 +29660,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_ask_to_exchange() != 26172) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_attach_chat_store() != 38462) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_announce() != 57918) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -29178,10 +29828,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_send_beacon() != 41898) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_send_chat() != 43968) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_set_advertised_location() != 2088) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_set_chat_display_name() != 37726) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_set_chat_silent_tests_in() != 1215) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_set_discoverable() != 2082) {

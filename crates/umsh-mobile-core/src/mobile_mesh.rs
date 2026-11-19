@@ -11,11 +11,11 @@ use core::{
     task::{Context, Poll},
 };
 use std::{
-    collections::{BTreeMap, BTreeSet, VecDeque},
+    collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
     fmt,
     rc::Rc,
     sync::{
-        Arc, Mutex, PoisonError,
+        Arc, Mutex, OnceLock, PoisonError,
         atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
         mpsc as std_mpsc,
     },
@@ -23,7 +23,7 @@ use std::{
 };
 
 use embedded_hal_async::delay::DelayNs;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{Notify, mpsc, oneshot};
 use umsh_core::{ChannelKey, ChannelTag, NodeHint, PayloadType, PublicKey};
 use umsh_crypto::{
     CryptoEngine, NodeIdentity,
@@ -60,8 +60,14 @@ use crate::mobile_chat::{
     MobileChatRepeatRecord, MobileChatResendRecord, MobileChatRxMetadataRecord,
     MobileChatSenderResolutionRecord, MobileChatState, NotInPlace,
 };
+use crate::store::{MobileAppStore, MobileChatChangesRecord};
 use crate::ulcp::{MobileAnnouncementRecord, UlcpPropertyFrameRecord, UlcpSyncRecord};
 use crate::{MobileCounterStore, MobileError, MobileIdentity};
+
+mod chat_store;
+
+use chat_store::{ChatStore, ChatStoreCommand};
+pub use chat_store::{MobileChatSendError, MobileChatSendRequest};
 
 const MAX_FRAME_SIZE: usize = 256;
 const DEFAULT_FRAME_TIME_MS: u32 = 800;
@@ -790,6 +796,9 @@ struct NotifyingSender<T> {
     wake: Arc<WakeSignal>,
     dropped: Arc<Dropped>,
     kind: usize,
+    /// Also told of each value queued, for a consumer other than the
+    /// platform: the chat store.
+    ready: Option<Arc<Notify>>,
 }
 
 impl<T> Clone for NotifyingSender<T> {
@@ -799,6 +808,7 @@ impl<T> Clone for NotifyingSender<T> {
             wake: self.wake.clone(),
             dropped: self.dropped.clone(),
             kind: self.kind,
+            ready: self.ready.clone(),
         }
     }
 }
@@ -806,8 +816,14 @@ impl<T> Clone for NotifyingSender<T> {
 impl<T> NotifyingSender<T> {
     fn send(&self, value: T) -> Result<(), std_mpsc::TrySendError<T>> {
         let sent = self.tx.try_send(value);
-        if let Err(std_mpsc::TrySendError::Full(_)) = sent {
-            self.dropped.count(self.kind);
+        match &sent {
+            Ok(()) => {
+                if let Some(ready) = &self.ready {
+                    ready.notify_one();
+                }
+            }
+            Err(std_mpsc::TrySendError::Full(_)) => self.dropped.count(self.kind),
+            Err(std_mpsc::TrySendError::Disconnected(_)) => {}
         }
         // Even a drop wakes the platform: it is behind, and should drain.
         self.wake.notify();
@@ -828,6 +844,7 @@ fn notifying_channel<T>(
         wake: wake.clone(),
         dropped: dropped.clone(),
         kind,
+        ready: None,
     };
     (sender, Mutex::new(rx))
 }
@@ -938,6 +955,10 @@ pub struct MobileMeshSessionUpdateRecord {
     /// platform should upgrade rows it stored anonymously under that hint.
     pub chat_sender_resolutions: Vec<MobileChatSenderResolutionRecord>,
     pub chat_diagnostics: Vec<String>,
+    /// With a store attached, what the chat effects stored since the last
+    /// poll changed, when they changed anything; the batch fields above
+    /// are then always empty.
+    pub chat_changes: Option<MobileChatChangesRecord>,
     /// The 3-byte node hints of the addresses this phone answers to besides
     /// its own, when they changed since the last poll: one per session with
     /// forward secrecy. The radio's receive filter must admit each of them
@@ -1323,6 +1344,21 @@ impl PendingChatEventBatch {
             }
         }
         batch
+    }
+
+    /// Its effects, for the chat store to take, with its diagnostics.
+    fn into_effects(self) -> (crate::store::ChatBatchEffects, Vec<String>) {
+        (
+            crate::store::ChatBatchEffects {
+                mutations: self.mutations,
+                resends: self.resends,
+                deliveries: self.deliveries,
+                repeats: self.repeats,
+                archive_lookups: self.archive_lookups,
+                sender_resolutions: self.sender_resolutions,
+            },
+            self.diagnostics,
+        )
     }
 
     /// Whether a poll at `now` hands it out: the first time, and again once
@@ -1765,6 +1801,16 @@ pub struct MobileMeshSession {
     frame_ms: Arc<AtomicU32>,
     chat_events: Mutex<std_mpsc::Receiver<MobileChatWorkerEvent>>,
     pending_chat_events: Mutex<Option<PendingChatEventBatch>>,
+    /// Told whenever the worker reports a chat effect.
+    chat_ready: Arc<Notify>,
+    /// Set once a store is attached: from then on chat effects are stored
+    /// here rather than handed to the platform in batches.
+    chat_store: OnceLock<ChatStore>,
+    /// What stored chat effects changed since the last poll.
+    chat_changes: Mutex<Option<MobileChatChangesRecord>>,
+    /// The key digest of each registered channel, by the address of its
+    /// group conversation: how a stored channel row is found from traffic.
+    channel_digests: Mutex<HashMap<String, String>>,
     dropped: Arc<Dropped>,
     next_chat_batch_id: Mutex<u64>,
     next_operation_id: Mutex<u64>,
@@ -2712,6 +2758,10 @@ impl MobileMeshSession {
                 Ok((decode_channel_key(channel.key)?, hops))
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let digests = channels
+            .iter()
+            .map(|(key, _)| (channel_conversation(key), channel_key_digest(key)))
+            .collect::<Vec<_>>();
         let (response, result) = oneshot::channel();
         self.commands
             .send(WorkerCommand::RegisterChannels { channels, response })
@@ -2719,13 +2769,19 @@ impl MobileMeshSession {
             .map_err(|_| MobileMeshError::SessionUnavailable)?;
         result
             .await
-            .map_err(|_| MobileMeshError::SessionUnavailable)?
+            .map_err(|_| MobileMeshError::SessionUnavailable)??;
+        self.channel_digests
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .extend(digests);
+        Ok(())
     }
 
     /// Drop channel keys from the live MAC, so its traffic is no longer
     /// decrypted. Idempotent, like [`Self::remove_peers`].
     pub async fn remove_channels(&self, keys: Vec<Vec<u8>>) -> Result<(), MobileMeshError> {
         let keys = decode_channel_keys(keys)?;
+        let addresses = keys.iter().map(channel_conversation).collect::<Vec<_>>();
         let (response, result) = oneshot::channel();
         self.commands
             .send(WorkerCommand::RemoveChannels { keys, response })
@@ -2733,7 +2789,15 @@ impl MobileMeshSession {
             .map_err(|_| MobileMeshError::SessionUnavailable)?;
         result
             .await
-            .map_err(|_| MobileMeshError::SessionUnavailable)?
+            .map_err(|_| MobileMeshError::SessionUnavailable)??;
+        let mut digests = self
+            .channel_digests
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        for address in addresses {
+            digests.remove(&address);
+        }
+        Ok(())
     }
 
     pub fn receive(&self, frame: MobileMeshRxRecord) -> Result<(), MobileMeshError> {
@@ -2992,6 +3056,63 @@ impl MobileMeshSession {
         .await
     }
 
+    /// Keep this session's chat in `store`, for the identity
+    /// `owner_identity_id`. From now on every chat effect is stored as it
+    /// comes, what waited for a store first, and polls report what it
+    /// changed instead of handing out batches. `silent_tests_in` is where
+    /// [`Self::set_chat_silent_tests_in`] starts. Fails with
+    /// `OperationInProgress` when a store is already attached.
+    pub fn attach_chat_store(
+        self: Arc<Self>,
+        store: Arc<MobileAppStore>,
+        owner_identity_id: String,
+        silent_tests_in: Option<String>,
+    ) -> Result<(), MobileMeshError> {
+        self.attach_chat_store_retrying_after(
+            store,
+            owner_identity_id,
+            silent_tests_in,
+            chat_store::RETRY_DELAY,
+        )
+    }
+
+    /// The conversation whose test messages are to arrive silently: never
+    /// counted as unread. `EMERGENCY`'s, while the user has not asked to
+    /// hear of them; `None` otherwise.
+    pub fn set_chat_silent_tests_in(
+        &self,
+        conversation_address: Option<String>,
+    ) -> Result<(), MobileMeshError> {
+        self.chat_store
+            .get()
+            .ok_or(MobileMeshError::SessionUnavailable)?
+            .send(ChatStoreCommand::SilentTestsIn(conversation_address))
+    }
+
+    /// Send a message into a conversation, addressed by a peer's address
+    /// or a channel's conversation address. The message is stored before
+    /// anything goes on the air, and the send runs to its end even if the
+    /// caller stops waiting. Needs a store attached.
+    pub async fn send_chat(
+        &self,
+        conversation_address: String,
+        request: MobileChatSendRequest,
+    ) -> Result<(), MobileChatSendError> {
+        let unavailable = MobileChatSendError::NotComposed {
+            error: MobileMeshError::SessionUnavailable,
+        };
+        let store = self.chat_store.get().ok_or(MobileChatSendError::NoStore)?;
+        let (response, result) = oneshot::channel();
+        store
+            .send(ChatStoreCommand::Send {
+                conversation_address,
+                request: request.into(),
+                response,
+            })
+            .map_err(|_| unavailable.clone())?;
+        result.await.map_err(|_| unavailable)?
+    }
+
     pub async fn commit_chat_batch(&self, batch_id: u64) -> Result<(), MobileMeshError> {
         let (response, result) = oneshot::channel();
         self.commands
@@ -3153,11 +3274,29 @@ impl MobileMeshSession {
         let forward_secret_conversations = self.forward_secret_conversations.take();
         let meet = self.meet_states.take();
         let mut update_chat = None;
-        {
-            let mut pending = self
-                .pending_chat_events
+        // Whether a store is attached is read under the batch's lock: the
+        // attach holds it while it takes the batch over.
+        let mut pending = self
+            .pending_chat_events
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let chat_changes = if self.chat_store.get().is_some() {
+            // The chat store takes the effects, and reports what they
+            // changed; what the queues dropped goes out with that.
+            let mut changes = self
+                .chat_changes
                 .lock()
-                .unwrap_or_else(PoisonError::into_inner);
+                .unwrap_or_else(PoisonError::into_inner)
+                .take();
+            let diagnostics = self.dropped.report();
+            if !diagnostics.is_empty() {
+                changes
+                    .get_or_insert_with(MobileChatChangesRecord::default)
+                    .diagnostics
+                    .extend(diagnostics);
+            }
+            changes
+        } else {
             if pending.is_none() {
                 let events = self
                     .chat_events
@@ -3190,7 +3329,9 @@ impl MobileMeshSession {
                     batch.diagnostics.clone(),
                 ));
             }
-        }
+            None
+        };
+        drop(pending);
         let (
             chat_batch_id,
             chat_mutations,
@@ -3236,6 +3377,7 @@ impl MobileMeshSession {
             chat_archive_lookups,
             chat_sender_resolutions,
             chat_diagnostics,
+            chat_changes,
             local_destination_hints,
             forward_secret_conversations,
             meet,
@@ -3282,6 +3424,56 @@ impl MobileMeshSession {
         let current = *next;
         *next = next.wrapping_add(1).max(1);
         Ok(current)
+    }
+
+    fn attach_chat_store_retrying_after(
+        self: Arc<Self>,
+        store: Arc<MobileAppStore>,
+        owner_identity_id: String,
+        silent_tests_in: Option<String>,
+        retry_delay: Duration,
+    ) -> Result<(), MobileMeshError> {
+        // Held from here until the store is in place: a poll decides under
+        // this lock whether it forms a batch, so none is formed that the
+        // store never takes.
+        let mut pending = self
+            .pending_chat_events
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if self.chat_store.get().is_some() {
+            return Err(MobileMeshError::OperationInProgress);
+        }
+        // A batch handed out before the store came is the store's now.
+        let waiting = pending.take().map(PendingChatEventBatch::into_effects);
+        let chat_store = ChatStore::start(
+            &self,
+            store,
+            owner_identity_id,
+            silent_tests_in,
+            self.chat_ready.clone(),
+            retry_delay,
+            waiting,
+        )?;
+        self.chat_store
+            .set(chat_store)
+            .map_err(|_| MobileMeshError::OperationInProgress)?;
+        drop(pending);
+        // Whatever waited for the store is stored now.
+        self.chat_ready.notify_one();
+        Ok(())
+    }
+
+    /// Add what stored chat effects changed to what the next poll reports.
+    fn publish_chat_changes(&self, changes: MobileChatChangesRecord) {
+        if changes.is_empty() {
+            return;
+        }
+        self.chat_changes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get_or_insert_with(MobileChatChangesRecord::default)
+            .merge(changes);
+        self.wake.notify();
     }
 
     async fn compose_chat(
@@ -3352,8 +3544,10 @@ impl MobileMeshSession {
             notifying_channel(REPORT_DEPTH, &wake, &dropped, Dropped::MANAGEMENT);
         let (advertisement_tx, advertisements) =
             notifying_channel(REPORT_DEPTH, &wake, &dropped, Dropped::ADVERTISEMENTS);
-        let (chat_event_tx, chat_events) =
+        let (mut chat_event_tx, chat_events) =
             notifying_channel(CHAT_EVENT_DEPTH, &wake, &dropped, Dropped::CHAT);
+        let chat_ready = Arc::new(Notify::new());
+        chat_event_tx.ready = Some(chat_ready.clone());
         let peer_heard = Arc::new(HeardSlot::new(&wake, &dropped));
         let local_hints = Arc::new(Slot::new(&wake));
         let forward_secret_conversations = Arc::new(Slot::new(&wake));
@@ -3440,6 +3634,10 @@ impl MobileMeshSession {
             frame_ms,
             chat_events,
             pending_chat_events: Mutex::new(None),
+            chat_ready,
+            chat_store: OnceLock::new(),
+            chat_changes: Mutex::new(None),
+            channel_digests: Mutex::new(HashMap::new()),
             dropped,
             next_chat_batch_id: Mutex::new(1),
             next_operation_id: Mutex::new(1),
@@ -5863,6 +6061,26 @@ fn decode_channel_key(key: Vec<u8>) -> Result<ChannelKey, MobileMeshError> {
 
 fn decode_channel_keys(keys: Vec<Vec<u8>>) -> Result<Vec<ChannelKey>, MobileMeshError> {
     keys.into_iter().map(decode_channel_key).collect()
+}
+
+/// The address of a channel's group conversation.
+fn channel_conversation(key: &ChannelKey) -> String {
+    crate::mobile_chat::channel_address(crate::channel_tag(key))
+}
+
+/// The digest a stored channel row is found by: the key's SHA-256, in
+/// lowercase hex.
+fn channel_key_digest(key: &ChannelKey) -> String {
+    use std::fmt::Write as _;
+    use umsh_crypto::Sha256Provider as _;
+
+    SoftwareSha256
+        .hash(&[&key.0])
+        .iter()
+        .fold(String::with_capacity(64), |mut text, byte| {
+            let _ = write!(text, "{byte:02x}");
+            text
+        })
 }
 
 /// The canonical fixed-width Base58 rendering of a peer key, matching what

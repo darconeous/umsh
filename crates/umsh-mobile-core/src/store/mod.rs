@@ -36,6 +36,7 @@ use rusqlite::{Connection, Transaction, TransactionBehavior};
 
 mod channels;
 mod chat;
+mod chat_batch;
 mod claimed_radios;
 mod conversations;
 mod management;
@@ -51,6 +52,8 @@ pub use chat::{
     MobileStoredChatMessageRefRecord, MobileStoredChatNotificationTargetRecord,
     MobileStoredChatReactionNotificationTargetRecord,
 };
+pub(crate) use chat_batch::{ChatBatchContext, ChatBatchEffects};
+pub use chat_batch::{MobileChatChangesRecord, MobileChatNotificationRecord};
 pub use claimed_radios::{MobileStoredClaimedRadioRecord, claimed_radio_lapse_ms};
 pub use conversations::{
     MobileApplicationRecords, MobileStoredChannelConversationRecord,

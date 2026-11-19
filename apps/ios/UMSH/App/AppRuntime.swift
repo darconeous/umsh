@@ -24,11 +24,6 @@ final class AppRuntime {
     /// composing, transmitting and applying happen on separate schedules, so
     /// a stuck message is only diagnosable from the sequence.
     private static let chatLogger = Logger(subsystem: "com.voria.umsh.ios", category: "Chat")
-    /// How many times to retry a chat batch before dropping it. Three attempts
-    /// over the redelivery pump's two-second period is long enough to ride out
-    /// a busy moment and short enough that a wedged session recovers while the
-    /// user is still looking at it.
-    private static let chatBatchAttemptLimit = 3
 
     init(
         radioConnection: any RadioConnection,
@@ -295,6 +290,7 @@ final class AppRuntime {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.rearmSchedules()
+                Task { await self.pushChatSilentTests() }
                 // Compared with what the radio last held, so an unrelated
                 // write costs a comparison.
                 if let held = self.coordinator.lastReconciledTestMessageAlerts,
@@ -389,9 +385,9 @@ final class AppRuntime {
     }
 
     func consumeChatUpdates() async {
-        for await update in await radioConnection.chatUpdates() {
+        for await changes in await radioConnection.chatChanges() {
             guard !Task.isCancelled else { break }
-            await applyChatUpdate(update)
+            await applyChatChanges(changes)
         }
     }
 
@@ -2441,6 +2437,7 @@ final class AppRuntime {
             addresses[channel.id] = address
         }
         coordinator.channelAddresses = addresses
+        await pushChatSilentTests()
     }
 
     /// Reconcile the device's channel list into the local cache flags, and
@@ -2582,14 +2579,11 @@ final class AppRuntime {
         _ body: String,
         forwardSecret: Bool? = nil
     ) async -> MessageSendResult {
-        await performChatCompose(conversation, clearsDraft: true) { clientToken in
-            try await radioConnection.composeTyped(
-                conversationAddress: conversation.conversationAddress,
-                clientToken: clientToken,
-                text: body,
-                forwardSecret: forwardSecret
-            )
-        }
+        await performChatCompose(
+            conversation,
+            clearsDraft: true,
+            .typed(text: body, forwardSecret: forwardSecret)
+        )
     }
 
     /// Send a reply typed into a notification, on the phone or a paired
@@ -2687,14 +2681,11 @@ final class AppRuntime {
         guard message.isWithinReviseWindow else {
             return .failed("This message is too old to edit.")
         }
-        return await performChatCompose(conversation, clearsDraft: false) { clientToken in
-            try await radioConnection.composeEdit(
-                conversationAddress: conversation.conversationAddress,
-                clientToken: clientToken,
-                original: originalRef(message),
-                body: newBody
-            )
-        }
+        return await performChatCompose(
+            conversation,
+            clearsDraft: false,
+            .edit(original: originalRef(message), body: newBody)
+        )
     }
 
     /// Put a message delivery gave up on back on the air, as itself.
@@ -2781,15 +2772,11 @@ final class AppRuntime {
         guard message.isDeliveryFailed else {
             return .failed("Only a message that was not delivered can be resent.")
         }
-        let result = await performChatCompose(conversation, clearsDraft: false) { clientToken in
-            try await radioConnection.composeAgain(
-                conversationAddress: conversation.conversationAddress,
-                clientToken: clientToken,
-                body: message.body,
-                status: message.isStatus,
-                forwardSecret: forwardSecret
-            )
-        }
+        let result = await performChatCompose(
+            conversation,
+            clearsDraft: false,
+            .again(body: message.body, status: message.isStatus, forwardSecret: forwardSecret)
+        )
         guard case .sent = result else { return result }
         if let applicationStore, let localIdentity {
             do {
@@ -2815,13 +2802,11 @@ final class AppRuntime {
         _ conversation: ConversationListItem,
         _ message: ChatMessageSummary
     ) async -> MessageSendResult {
-        await performChatCompose(conversation, clearsDraft: false) { clientToken in
-            try await radioConnection.composeDelete(
-                conversationAddress: conversation.conversationAddress,
-                clientToken: clientToken,
-                original: originalRef(message)
-            )
-        }
+        await performChatCompose(
+            conversation,
+            clearsDraft: false,
+            .delete(original: originalRef(message))
+        )
     }
 
     /// React to a message, or withdraw the reaction already on it when the
@@ -2838,14 +2823,11 @@ final class AppRuntime {
         }
         let withdrawing = message.myReaction?.glyph == glyph
         let body = withdrawing ? "" : ReactionEmoji.token(for: glyph)
-        return await performChatCompose(conversation, clearsDraft: false) { clientToken in
-            try await radioConnection.composeReaction(
-                conversationAddress: conversation.conversationAddress,
-                clientToken: clientToken,
-                target: regardingRef(message),
-                body: body
-            )
-        }
+        return await performChatCompose(
+            conversation,
+            clearsDraft: false,
+            .reaction(target: regardingRef(message), body: body)
+        )
     }
 
     /// Send `body` in reply to `message`. Where the original can no longer
@@ -2858,15 +2840,11 @@ final class AppRuntime {
         _ body: String,
         _ forwardSecret: Bool
     ) async -> MessageSendResult {
-        await performChatCompose(conversation, clearsDraft: true) { clientToken in
-            try await radioConnection.composeReply(
-                conversationAddress: conversation.conversationAddress,
-                clientToken: clientToken,
-                target: regardingRef(message),
-                body: body,
-                forwardSecret: forwardSecret
-            )
-        }
+        await performChatCompose(
+            conversation,
+            clearsDraft: true,
+            .reply(target: regardingRef(message), body: body, forwardSecret: forwardSecret)
+        )
     }
 
     /// Ask for missing messages no repair is under way for, one request
@@ -2976,10 +2954,10 @@ final class AppRuntime {
     private func performChatCompose(
         _ conversation: ConversationListItem,
         clearsDraft: Bool,
-        compose: (UInt32) async throws -> MobileChatComposeBatchRecord
+        _ request: MobileChatSendRequest
     ) async -> MessageSendResult {
         if let refusal = chatSendRefusal(conversation) { return refusal }
-        guard let applicationStore, let localIdentity else {
+        guard applicationStore != nil, let localIdentity else {
             return .failed("The local identity or message database is unavailable.")
         }
         let owner = localIdentity.id
@@ -2989,17 +2967,13 @@ final class AppRuntime {
         case let .channel(item): draftKey = .init(owner: owner, kind: .channel, id: item.id)
         }
         let submittedDraft = drafts.latestText(for: draftKey) ?? conversation.draftText
-        let submission = ChatSubmissionCoordinator(
-            persist: { try await applicationStore.commitChatComposeBatch(ownerIdentityID: owner, batch: $0) },
-            reject: { batchID in
-                let checkpoints = try await applicationStore.chatCheckpoints(ownerIdentityID: owner)
-                try await self.radioConnection.rejectChatBatch(batchID, checkpoints: checkpoints)
+        let outcome = await ChatSubmissionCoordinator().submit(
+            send: {
+                try await self.radioConnection.sendChat(
+                    conversationAddress: conversation.conversationAddress,
+                    request: request
+                )
             },
-            release: { try await self.radioConnection.commitChatBatch($0) },
-            markFailed: { try await applicationStore.markChatComposeBatchFailed(ownerIdentityID: owner, batch: $0) }
-        )
-        let outcome = await submission.submit(
-            compose: { try await compose(UInt32.random(in: 1...UInt32.max)) },
             didChange: {
                 self.coordinator.bumpChatRevisions([conversation.conversationAddress])
                 await self.reloadConversationState()
@@ -3280,49 +3254,6 @@ final class AppRuntime {
     /// row already in storage. Deliveries arrive per fragment, so identical
     /// handles are collapsed first: each distinct message is worth one lookup,
     /// not one per fragment.
-    private func noteChatMessagesChanged(by update: RadioChatUpdate) async {
-        guard let applicationStore, let localIdentity else { return }
-        var addresses = Set(update.mutations.compactMap(\.conversationAddress))
-        addresses.formUnion(update.senderResolutions.map(\.conversationAddress))
-
-        var unresolved: Set<ChatMessageKey> = []
-        for mutation in update.mutations where mutation.conversationAddress == nil {
-            unresolved.insert(ChatMessageKey(sessionID: mutation.sessionId, handle: mutation.handle))
-        }
-        for resend in update.resends {
-            unresolved.insert(ChatMessageKey(
-                sessionID: resend.message.sessionId,
-                handle: resend.message.handle
-            ))
-        }
-        for delivery in update.deliveries {
-            unresolved.insert(ChatMessageKey(sessionID: delivery.sessionId, handle: delivery.handle))
-        }
-        for repeats in update.repeats {
-            unresolved.insert(ChatMessageKey(sessionID: repeats.sessionId, handle: repeats.handle))
-        }
-        var unresolvable = false
-        for key in unresolved {
-            if let address = try? await applicationStore.conversationAddressForMessage(
-                ownerIdentityID: localIdentity.id,
-                sessionID: key.sessionID,
-                handle: key.handle
-            ) {
-                addresses.insert(address)
-            } else {
-                unresolvable = true
-            }
-        }
-        if unresolvable {
-            // A change to a message this phone cannot place. Refreshing every
-            // open transcript costs one bounded query; not refreshing the right
-            // one leaves it showing something that is no longer true.
-            addresses.formUnion(conversations.map(\.conversationAddress))
-            addresses.formUnion(channelConversations.map(\.conversationAddress))
-        }
-        coordinator.bumpChatRevisions(addresses)
-    }
-
     #if DEBUG
     /// Rewrite the staged mesh, when this root is the staging one.
     ///
@@ -3947,6 +3878,11 @@ final class AppRuntime {
             at: instant
         )) ?? false
         guard firedWatch else { return }
+        postPeerHeard(peerAddress)
+    }
+
+    /// Tell the user a peer they were waiting on was heard.
+    private func postPeerHeard(_ peerAddress: String) {
         let peer = peers.first { $0.identity.canonicalAddress == peerAddress }
         notificationService.postPeerHeard(
             peerAddress: peerAddress,
@@ -3989,224 +3925,89 @@ final class AppRuntime {
                     known[$0]?.meshRegistration
                         ?? MobilePeerRegistrationRecord(address: $0, mobile: false)
                 },
-                checkpoints: checkpoints
+                checkpoints: checkpoints,
+                store: applicationStore.coreStore,
+                ownerIdentityID: localIdentity.id,
+                // With the store, so what waited for it is stored under
+                // the same setting as what follows.
+                silentTestsIn: chatSilentTestsAddress
             )
         } catch {
             // Chat stays unavailable until the durable state can be restored.
         }
+        // Whatever the attach held, the core is told once more: a session
+        // that already had its store kept the setting it had.
+        coordinator.chatSilentTestsIn = nil
+        await pushChatSilentTests()
     }
 
-    private func applyChatUpdate(_ update: RadioChatUpdate) async {
-        guard let applicationStore, let localIdentity else { return }
+    /// The conversation whose test messages arrive without counting as
+    /// unread: `EMERGENCY`'s, unless the user asked to hear of them.
+    private var chatSilentTestsAddress: String? {
+        testMessageAlerts ? nil : emergencyConversationAddress
+    }
+
+    /// Tell the core ``chatSilentTestsAddress``. Sent only when it changed.
+    private func pushChatSilentTests() async {
+        let address = chatSilentTestsAddress
+        guard coordinator.chatSilentTestsIn != .some(address) else { return }
+        do {
+            try await radioConnection.setChatSilentTestsIn(address)
+            coordinator.chatSilentTestsIn = .some(address)
+        } catch {
+            // No session yet: `prepareChatState` sends it with the store.
+        }
+    }
+
+    /// Show what the core's stored chat changed: redraw the transcripts it
+    /// names, and say out loud what it says is worth telling.
+    private func applyChatChanges(_ changes: MobileChatChangesRecord) async {
         // A background BLE wake gives a short grace window; the assertion
-        // keeps iOS from suspending us between persisting the batch and
-        // acknowledging it. Worst case on expiry is a duplicate re-apply,
-        // which the store tolerates.
-        let assertion = UIApplication.shared.beginBackgroundTask(withName: "umsh.chat.apply")
+        // keeps iOS from suspending us before the notifications are posted.
+        let assertion = UIApplication.shared.beginBackgroundTask(withName: "umsh.chat.changes")
         defer {
             if assertion != .invalid {
                 UIApplication.shared.endBackgroundTask(assertion)
             }
         }
-        for diagnostic in update.diagnostics {
+        for diagnostic in changes.diagnostics {
             Self.chatLogger.warning("Core chat diagnostic: \(diagnostic, privacy: .public)")
         }
         Self.chatLogger.debug(
             """
-            Chat batch \(update.batchID, privacy: .public) arrived: \
-            \(update.mutations.count, privacy: .public) mutation(s), \
-            \(update.deliveries.count, privacy: .public) delivery(s), \
-            \(update.archiveLookups.count, privacy: .public) archive lookup(s), \
-            \(update.senderResolutions.count, privacy: .public) sender resolution(s)
+            Chat stored: \(changes.conversations.count, privacy: .public) conversation(s)\
+            \(changes.allConversations ? " and possibly others" : "", privacy: .public), \
+            \(changes.notifications.count, privacy: .public) notification(s), \
+            \(changes.deliveryFailures.count, privacy: .public) delivery failure(s)
             """
         )
-        for delivery in update.deliveries {
-            Self.chatLogger.debug(
-                """
-                Delivery handle \(delivery.handle, privacy: .public)\
-                \(delivery.fragmentIndex.map { " fragment \($0)" } ?? "", privacy: .public) \
-                → \(String(describing: delivery.state), privacy: .public)
-                """
-            )
+        postDeliveryFailureNotifications(changes.deliveryFailures.map(ChatDeliveryFailure.init))
+        for address in changes.heardWatches {
+            postPeerHeard(address)
         }
-        do {
-            // Edits whose originals this phone never stored come back from the
-            // store as materialized message rows. The engine could not flag
-            // them `notify`, so they join the notification pass by hand.
-            var materialized: [MobileChatMutationRecord] = []
-            if !update.mutations.isEmpty {
-                materialized = try await applicationStore.applyChatMutations(
-                    ownerIdentityID: localIdentity.id,
-                    mutations: update.mutations,
-                    silentTestsIn: testMessageAlerts ? nil : emergencyConversationAddress
-                )
-                for address in Set(update.mutations.compactMap(\.conversationAddress)) {
-                    if Self.isChannelAddress(address) {
-                        // A group message opens its conversation the same way
-                        // a direct one does: the user joined the channel, so
-                        // traffic in it is expected.
-                        guard let channel = channels.first(where: {
-                            coordinator.channelAddresses[$0.id] == address
-                        }) else { continue }
-                        _ = try await applicationStore.ensureChannelConversation(
-                            ownerIdentityID: localIdentity.id,
-                            channelID: channel.id,
-                            conversationAddress: address
-                        )
-                    } else {
-                        _ = try await applicationStore.ensureDirectConversation(
-                            ownerIdentityID: localIdentity.id,
-                            peerAddress: address
-                        )
-                    }
-                }
-            }
-            for resolution in update.senderResolutions {
-                try? await applicationStore.applySenderResolution(
-                    ownerIdentityID: localIdentity.id,
-                    conversationAddress: resolution.conversationAddress,
-                    senderHint: Data(resolution.senderHint),
-                    senderAddress: resolution.senderAddress
-                )
-            }
-            // Ahead of the deliveries: a resend's frames are reported under
-            // the handle it names, and what was last said of them before no
-            // longer holds.
-            try await applicationStore.applyChatResends(
-                ownerIdentityID: localIdentity.id,
-                resends: update.resends
-            )
-            if !update.deliveries.isEmpty {
-                let failures = try await applicationStore.applyChatDeliveries(
-                    ownerIdentityID: localIdentity.id,
-                    deliveries: update.deliveries
-                )
-                postDeliveryFailureNotifications(failures)
-            }
-            try await applicationStore.applyChatRepeats(
-                ownerIdentityID: localIdentity.id,
-                repeats: update.repeats
-            )
-            await noteChatMessagesChanged(by: update)
-            for lookup in update.archiveLookups {
-                let payload = try? await applicationStore.chatArchive(
-                    ownerIdentityID: localIdentity.id,
-                    lookup: lookup
-                )
-                // Answering someone else's repair request is best effort: it
-                // travels over the radio link, which can be gone. Letting that
-                // failure escape would leave the batch unacknowledged and stall
-                // every later update behind a frame we cannot resend anyway.
-                do {
-                    try await radioConnection.applyChatArchiveResult(
-                        requestID: lookup.requestId,
-                        kind: payload == nil ? .unknown : .found,
-                        payload: payload ?? Data()
-                    )
-                } catch {
-                    Self.chatLogger.warning(
-                        """
-                        Archive lookup \(lookup.requestId, privacy: .public) went unanswered: \
-                        \(String(describing: error), privacy: .public)
-                        """
-                    )
-                }
-            }
-            // Last-heard evidence beyond chat inserts: an inbound message and a
-            // delivery ack both prove we heard from the peer. Deliveries carry
-            // no address, so resolve them from the acked message's conversation.
-            var heardFrom: Set<String> = []
-            for mutation in update.mutations where mutation.direction == .inbound {
-                // In a channel the conversation is not a peer; the sender is,
-                // once their hint has resolved to a real address.
-                if let address = mutation.senderAddress {
-                    heardFrom.insert(address)
-                } else if let address = mutation.conversationAddress,
-                          !Self.isChannelAddress(address) {
-                    heardFrom.insert(address)
-                }
-            }
-            for delivery in update.deliveries where delivery.state == .acknowledged {
-                if let address = try? await applicationStore.conversationAddressForMessage(
-                    ownerIdentityID: localIdentity.id,
-                    sessionID: delivery.sessionId,
-                    handle: delivery.handle
-                ), !Self.isChannelAddress(address) {
-                    heardFrom.insert(address)
-                }
-            }
-            let heardAt = Date()
-            for peerAddress in heardFrom {
-                await touchLastHeard(peerAddress, at: heardAt)
-            }
-            try await radioConnection.acknowledgeChatBatch(update.batchID)
-            coordinator.chatBatchFailures = nil
-            Self.chatLogger.debug(
-                "Applied chat batch \(update.batchID, privacy: .public)"
-            )
-            // The reload is what carries the revisions bumped above to an
-            // open transcript, so a batch of repeats alone needs it too.
-            if !update.mutations.isEmpty || !update.deliveries.isEmpty || !update.repeats.isEmpty {
-                await reloadApplicationState()
-            }
-            await postNotifications(
-                for: update.mutations + materialized.map { record in
-                    var flagged = record
-                    flagged.notify = true
-                    return flagged
-                }
-            )
-        } catch {
-            // Effects remain idempotent, so the core re-offering this batch is
-            // a real chance to recover from a transient failure.
-            let attempts = coordinator.chatBatchFailures.map {
-                $0.id == update.batchID ? $0.count + 1 : 1
-            } ?? 1
-            coordinator.chatBatchFailures = (id: update.batchID, count: attempts)
-            Self.chatLogger.error(
-                """
-                Could not apply chat batch \(update.batchID, privacy: .public) \
-                (attempt \(attempts, privacy: .public) of \(Self.chatBatchAttemptLimit, privacy: .public), \
-                \(update.mutations.count, privacy: .public) mutation(s), \
-                \(update.deliveries.count, privacy: .public) delivery(s)): \
-                \(String(describing: error), privacy: .public)
-                """
-            )
-            guard attempts >= Self.chatBatchAttemptLimit else { return }
-            // The core holds one batch at a time and will not release the next
-            // until this one is acknowledged. Dropping a batch loses the
-            // updates it carried—stale rows, a message stuck on "Sending"—
-            // but keeping it would freeze every conversation for the rest of
-            // the session, which is the worse of the two.
-            Self.chatLogger.fault(
-                """
-                Abandoning chat batch \(update.batchID, privacy: .public) after \
-                \(attempts, privacy: .public) failed attempts; its updates are lost. \
-                Conversation state may be stale until the next session.
-                """
-            )
-            try? await radioConnection.acknowledgeChatBatch(update.batchID)
-            coordinator.chatBatchFailures = nil
+        var addresses = Set(changes.conversations)
+        if changes.allConversations {
+            // A change this phone cannot place. Refreshing every open
+            // transcript costs one bounded query; not refreshing the right
+            // one leaves it showing something that is no longer true.
+            addresses.formUnion(conversations.map(\.conversationAddress))
+            addresses.formUnion(channelConversations.map(\.conversationAddress))
+        }
+        if !addresses.isEmpty {
+            coordinator.bumpChatRevisions(addresses)
+            // The reload is what carries the bumped revisions to an open
+            // transcript.
             await reloadApplicationState()
         }
+        await postNotifications(for: changes.notifications)
     }
 
-    /// Notify whenever the engine flags a mutation `notify == true`—the
-    /// single, authoritative signal covering single-frame arrivals, fragment
-    /// completion, the 30 s fragment deadline, and late backfills. Never fires
-    /// for local echoes, placeholders, or control frames (the engine never
-    /// sets `notify` on those). The flag can ride an `UpdateBody` (which omits
-    /// peer/body), so the target is resolved from durable storage by handle.
-    /// Runs only after the batch reached storage; the willPresent delegate
-    /// suppresses the banner when that conversation is visible in the
-    /// foreground. A redelivered batch can repeat a banner; accepted worst case.
-    private func postNotifications(for mutations: [MobileChatMutationRecord]) async {
-        var subjects: [ChatNotificationSubject] = []
-        for mutation in mutations where mutation.notify {
-            if let target = await notificationSubject(for: mutation), !isSilentTest(target) {
-                subjects.append(target)
-            }
-        }
+    /// Raise the notifications the core found worth raising: arrivals it
+    /// has already stored, each read back from storage. The willPresent
+    /// delegate suppresses the banner when that conversation is visible in
+    /// the foreground.
+    private func postNotifications(for notifications: [MobileChatNotificationRecord]) async {
+        let subjects = notifications.map(Self.notificationSubject).filter { !isSilentTest($0) }
         // A batch carrying several messages for one conversation gets one
         // banner rather than several. Drained backlogs arrive exactly this
         // way, and live traffic almost never does.
@@ -4359,37 +4160,29 @@ final class AppRuntime {
     /// Which of the two it turns out to be is settled here, against durable
     /// storage, because the flag can ride an `UpdateBody` that carries
     /// neither peer nor body.
-    private func notificationSubject(
-        for mutation: MobileChatMutationRecord
-    ) async -> ChatNotificationSubject? {
-        guard let applicationStore, let localIdentity else { return nil }
-        if let text = try? await applicationStore.chatNotificationTarget(
-            ownerIdentityID: localIdentity.id,
-            sessionID: mutation.sessionId,
-            handle: mutation.handle
-        ) {
-            return ChatNotificationSubject(
-                conversationAddress: text.conversationAddress,
-                body: text.body,
-                senderAddress: text.senderAddress,
-                senderHint: text.senderHint,
-                senderHandle: text.senderHandle,
-                isStatus: text.isStatus
+    private static func notificationSubject(
+        _ notification: MobileChatNotificationRecord
+    ) -> ChatNotificationSubject {
+        switch notification {
+        case let .message(target):
+            ChatNotificationSubject(
+                conversationAddress: target.conversationAddress,
+                body: target.body,
+                senderAddress: target.senderAddress,
+                senderHint: target.senderHint,
+                senderHandle: target.senderHandle,
+                isStatus: target.isStatus
+            )
+        case let .reaction(target):
+            ChatNotificationSubject(
+                conversationAddress: target.conversationAddress,
+                body: reactionLine(target.body, on: target.targetBody),
+                senderAddress: target.senderAddress,
+                senderHint: target.senderHint,
+                senderHandle: target.senderHandle,
+                isStatus: false
             )
         }
-        guard let reaction = try? await applicationStore.chatReactionNotificationTarget(
-            ownerIdentityID: localIdentity.id,
-            sessionID: mutation.sessionId,
-            handle: mutation.handle
-        ) else { return nil }
-        return ChatNotificationSubject(
-            conversationAddress: reaction.conversationAddress,
-            body: Self.reactionLine(reaction.body, on: reaction.targetBody),
-            senderAddress: reaction.senderAddress,
-            senderHint: reaction.senderHint,
-            senderHandle: reaction.senderHandle,
-            isStatus: false
-        )
     }
 
     /// A reaction, said out loud: what was done, the glyph it renders as, and
@@ -4985,7 +4778,9 @@ private final class AppStateCoordinator {
     /// hands out one batch at a time and holds it until acknowledged, so a
     /// batch that can never be applied would otherwise stall every later
     /// chat update—delivery receipts included—for the whole session.
-    var chatBatchFailures: (id: UInt64, count: Int)?
+    /// The silent-tests conversation last sent to the core; `nil` until one
+    /// has been.
+    var chatSilentTestsIn: String??
     /// How many times each conversation's stored messages have changed.
     ///
     /// An open transcript holds a bounded window rather than the whole history,
