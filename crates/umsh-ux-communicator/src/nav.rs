@@ -285,7 +285,7 @@ pub mod keys {
     pub const CAPITALIZE: FocusKey = FocusKey(0x1700_0000);
     pub const PERIOD: FocusKey = FocusKey(0x1700_0001);
     pub const KEYBOARD_LIGHT: FocusKey = FocusKey(0x1700_0002);
-    /// Radio's Transmit power row, and the field it opens.
+    /// LoRa's Transmit power row, and the field it opens.
     pub const TRANSMIT_POWER: FocusKey = FocusKey(0x0E00_0001);
     pub const POWER_FIELD: FocusKey = FocusKey(0x1800_0000);
     /// Radio's LoRa row, and the LoRa screen's rows after its Profile.
@@ -2072,7 +2072,7 @@ impl State {
         }
     }
 
-    /// Sets the transmit power typed, and returns to Radio. A power the
+    /// Sets the transmit power typed, and returns to LoRa. A power the
     /// radio cannot use leaves the field as it is, to be corrected.
     pub fn submit_transmit_power(&mut self) {
         let Some(dbm) = self

@@ -312,8 +312,6 @@ fn radio(
     profile: &str,
 ) -> impl View<Rgb565, State> + use<> {
     let airtime = super::statistics::airtime_text(settings.airtime);
-    let mut power: String<24> = String::new();
-    _ = core::fmt::write(&mut power, format_args!("{} dBm", settings.transmit_power));
     VStack::new((
         header(m, "Radio", None, None),
         super::list(
@@ -333,15 +331,6 @@ fn radio(
                     keys::LORA,
                     State::open_lora,
                     End::value_chevron(profile),
-                    false,
-                    ROW,
-                ),
-                row(
-                    m,
-                    "Transmit power",
-                    keys::TRANSMIT_POWER,
-                    State::open_transmit_power,
-                    End::value_chevron(&power),
                     false,
                     ROW,
                 ),

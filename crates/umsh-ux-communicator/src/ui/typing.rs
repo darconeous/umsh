@@ -222,7 +222,7 @@ pub fn settings(
 /// The radio's transmit power, typed in dBm. Enter sets it.
 pub fn transmit_power(m: &'static Metrics, text: &PowerText) -> impl View<Rgb565, State> + use<> {
     VStack::new((
-        header(m, "Radio", None, None),
+        header(m, "LoRa", None, None),
         label::<16>(
             "Transmit power",
             &font::BOLD,

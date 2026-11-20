@@ -3380,7 +3380,7 @@ fn transmit_power_is_typed_in_symbol_lock() {
         return;
     }
     let mut app = app!();
-    open_radio(&mut app);
+    open_lora(&mut app);
     turn_to(&mut app, keys::TRANSMIT_POWER);
     run(&mut app, &[Input::Press]);
     assert_eq!(focus(app.state()), Some(keys::POWER_FIELD));
@@ -3413,7 +3413,7 @@ fn transmit_power_is_typed_in_symbol_lock() {
 #[test]
 fn transmit_power_opens_being_edited() {
     let mut app = app!();
-    open_radio(&mut app);
+    open_lora(&mut app);
     turn_to(&mut app, keys::TRANSMIT_POWER);
     run(&mut app, &[Input::Press]);
     assert!(app.state().keyboard.active());
@@ -3436,7 +3436,7 @@ fn a_keyboard_with_its_own_symbols_types_transmit_power_as_it_is() {
         return;
     }
     let mut app = app!();
-    open_radio(&mut app);
+    open_lora(&mut app);
     turn_to(&mut app, keys::TRANSMIT_POWER);
     app.state_mut().untracked().keyboard.take_asked();
     run(&mut app, &[Input::Press]);
@@ -3483,7 +3483,7 @@ fn transmit_power_takes_only_a_number() {
         return;
     }
     let mut app = app!();
-    open_radio(&mut app);
+    open_lora(&mut app);
     turn_to(&mut app, keys::TRANSMIT_POWER);
     run(&mut app, &[Input::Press]);
     let tap = |modifier| {

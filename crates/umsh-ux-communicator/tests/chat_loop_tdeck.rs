@@ -198,7 +198,7 @@ fn a_finger_that_moves_away_is_not_held() {
 fn tapping_transmit_power_opens_it_being_edited() {
     use input::TouchPhase::{Ended, Started};
     let mut app = app!();
-    open_radio(&mut app);
+    open_lora(&mut app);
     turn_to(&mut app, keys::TRANSMIT_POWER);
     let row = middle_of(&mut app, keys::TRANSMIT_POWER);
     apply_touch(&mut app, Started, row, tick(100));

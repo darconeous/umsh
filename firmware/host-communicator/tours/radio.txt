@@ -15,6 +15,8 @@ turn 2
 press
 shot bandwidth
 backspace
-turn -1
+turn 4
+shot lora-power
+turn -5
 press
 shot frequency

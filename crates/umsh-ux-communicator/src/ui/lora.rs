@@ -1,5 +1,5 @@
 //! LoRa: the radio's profile, and each parameter a profile sets, which can
-//! also be set one at a time. Settings no profile has read as Custom.
+//! also be set one at a time, transmit power among them. Settings no profile has read as Custom.
 //! Changes apply at once; Backspace goes back.
 
 use buoyant::event::{Key, KeyResponse};
@@ -25,6 +25,8 @@ const CHOICE_ROWS: usize = 10;
 pub fn view(state: &State, settings: &RadioSettings) -> impl View<Rgb565, State> + use<> {
     let m = state.metrics();
     let limit = settings.transmit_limit.map(limit_name);
+    let mut power: String<16> = String::new();
+    _ = core::fmt::write(&mut power, format_args!("{} dBm", settings.transmit_power));
     VStack::new((
         header(m, "LoRa", None, None),
         super::list(
@@ -71,6 +73,15 @@ pub fn view(state: &State, settings: &RadioSettings) -> impl View<Rgb565, State>
                     keys::CODING_RATE,
                     |s: &mut State| s.open_lora_choice(LoraChoice::CodingRate),
                     End::value_chevron(&coding_rate_name(settings.coding_rate)),
+                    false,
+                    ROW,
+                ),
+                row(
+                    m,
+                    "Transmit power",
+                    keys::TRANSMIT_POWER,
+                    State::open_transmit_power,
+                    End::value_chevron(&power),
                     false,
                     ROW,
                 ),
