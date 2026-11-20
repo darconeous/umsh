@@ -179,6 +179,11 @@ async fn interface(
     let mut costs = Costs::default();
     // The panel's brightness level and the keyboard light, as last set.
     let mut lights = (brightness_level(node.brightness()), node.keyboard().light);
+    // The directions the trackball acts in, as last set.
+    #[cfg(feature = "board-tdeck")]
+    let mut directions = node.directions();
+    #[cfg(feature = "board-tdeck")]
+    crate::board_input::set_directions(directions);
     let _ = display.set_brightness(Brightness::level(lights.0)).await;
     display.set_keyboard_light(lights.1);
     let mut animating = draw(&mut display, app, start, &mut costs).await;
@@ -361,6 +366,11 @@ async fn interface(
             lights = set;
             let _ = display.set_brightness(Brightness::level(lights.0)).await;
             display.set_keyboard_light(lights.1);
+        }
+        #[cfg(feature = "board-tdeck")]
+        if node.directions() != directions {
+            directions = node.directions();
+            crate::board_input::set_directions(directions);
         }
         match transition {
             Some(Transition::Woke) => {

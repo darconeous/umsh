@@ -18,6 +18,8 @@ use umsh_ulcp::profiles::VETTED;
 use umsh_ulcp_admin::LocalPort;
 use umsh_ux_communicator::avatar::AvatarStyle;
 use umsh_ux_communicator::heapless::{String, Vec};
+#[cfg(feature = "directional")]
+use umsh_ux_communicator::model::Directions;
 use umsh_ux_communicator::model::{
     About, ChannelChats, ChannelEntry, ChatId, ChatSummary, Chats, ClockSettings, ClockSource,
     ContactUri, Details, EventQueue, Forwarding, Heard, Invite, KeyboardSettings, MAX_HEARD,
@@ -911,6 +913,18 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
         });
     }
 
+    #[cfg(feature = "directional")]
+    fn directions(&self) -> Directions {
+        self.settings.borrow().directions()
+    }
+
+    #[cfg(feature = "directional")]
+    fn set_directions(&self, directions: Directions) {
+        self.change(Setting::Directions, |settings| {
+            settings.set_directions(directions)
+        });
+    }
+
     fn brightness(&self) -> u8 {
         self.settings.borrow().brightness()
     }
@@ -921,7 +935,7 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
         });
     }
 
-    fn auto_lock(&self) -> Option<u16> {
+    fn auto_lock(&self) -> u16 {
         self.settings.borrow().auto_lock()
     }
 
@@ -965,19 +979,34 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
         self.settings.borrow().sound_enabled()
     }
 
+    #[cfg(feature = "sound")]
     fn set_sound_enabled(&self, on: bool) {
         self.change(Setting::Sound, |settings| settings.set_sound_enabled(on));
     }
 
+    #[cfg(feature = "sound")]
     fn sound_volume(&self) -> u8 {
         self.settings.borrow().sound_volume()
     }
 
+    #[cfg(feature = "sound")]
     fn set_sound_volume(&self, volume: u8) {
         self.change(Setting::Volume, |settings| {
             settings.set_sound_volume(volume)
         });
     }
+
+    // Without a sounder there is no sound to turn on or make louder.
+    #[cfg(not(feature = "sound"))]
+    fn set_sound_enabled(&self, _: bool) {}
+
+    #[cfg(not(feature = "sound"))]
+    fn sound_volume(&self) -> u8 {
+        umsh_ulcp::ids::DEFAULT_SOUND_VOLUME
+    }
+
+    #[cfg(not(feature = "sound"))]
+    fn set_sound_volume(&self, _: u8) {}
 
     fn setup_complete(&self) -> bool {
         self.settings.borrow().setup_complete().unwrap_or(true)

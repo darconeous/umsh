@@ -399,7 +399,7 @@ fn the_lock_control_locks_then_darkens_then_lights() {
     use umsh_ux_communicator::lock::attention_config;
     use umsh_ux_display_tracker::attention::{Attention, DisplayKind, Transition};
     let mut app = app!();
-    let mut attention = Attention::new(DisplayKind::Emissive, attention_config(false, None), 0);
+    let mut attention = Attention::new(DisplayKind::Emissive, attention_config(false, 30), 0);
     // Lit and unlocked, it locks and stays lit.
     assert_eq!(app.state_mut().lock_control(&mut attention, 10), None);
     assert!(app.state().lock.locked);
@@ -424,14 +424,14 @@ fn auto_lock_sets_how_long_the_panel_stays_lit() {
     use umsh_ux_communicator::lock::attention_config;
     use umsh_ux_display_tracker::attention::AttentionConfig;
     let secs = |s| Some(Duration::from_secs(s));
-    assert_eq!(attention_config(false, Some(60)).timeout, secs(60));
-    assert_eq!(attention_config(false, None).timeout, secs(30));
+    assert_eq!(attention_config(false, 60).timeout, secs(60));
+    assert_eq!(attention_config(false, 30).timeout, secs(30));
     // Never, unless locked: a locked screen is only glanced at.
-    assert_eq!(attention_config(false, Some(0)).timeout, None);
-    assert_eq!(attention_config(true, Some(0)), AttentionConfig::LOCKED);
-    assert_eq!(attention_config(true, Some(60)), AttentionConfig::LOCKED);
+    assert_eq!(attention_config(false, 0).timeout, None);
+    assert_eq!(attention_config(true, 0), AttentionConfig::LOCKED);
+    assert_eq!(attention_config(true, 60), AttentionConfig::LOCKED);
     // Locked, no longer than Auto-Lock says.
-    assert_eq!(attention_config(true, Some(10)).timeout, secs(10));
+    assert_eq!(attention_config(true, 10).timeout, secs(10));
 }
 
 #[test]
@@ -457,7 +457,7 @@ fn backspace_on_the_lock_screen_darkens_it_as_the_lock_control_does() {
     use umsh_ux_communicator::lock::attention_config;
     use umsh_ux_display_tracker::attention::{Attention, DisplayKind, Transition};
     let mut app = app!();
-    let mut attention = Attention::new(DisplayKind::Emissive, attention_config(false, None), 0);
+    let mut attention = Attention::new(DisplayKind::Emissive, attention_config(false, 30), 0);
     // Unlocked, it is Back, and asks nothing of the panel.
     run(&mut app, &[Input::Backspace]);
     assert!(!app.state().lock.wants_dark());
@@ -4066,7 +4066,7 @@ fn brightness_turns_while_pressed_and_auto_lock_picks_from_its_choices() {
     assert_eq!(focus(app.state()), Some(keys::auto_lock_choice(1)));
     turn_to(&mut app, keys::auto_lock_choice(0));
     run(&mut app, &[Input::Press]);
-    assert_eq!(app.state().node.auto_lock(), Some(0));
+    assert_eq!(app.state().node.auto_lock(), 0);
     assert_eq!(focus(app.state()), Some(keys::AUTO_LOCK));
 }
 

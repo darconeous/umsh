@@ -15,7 +15,7 @@ use buoyant::focus::FocusKey;
 use umsh_ux_display_tracker::attention::{Attention, AttentionConfig, Transition};
 
 use crate::board::Unlock;
-use crate::model::{DEFAULT_AUTO_LOCK_S, State};
+use crate::model::State;
 
 /// How many detents down unlock.
 pub const UNLOCK_STEPS: u8 = 5;
@@ -48,8 +48,8 @@ pub struct Lock {
 /// unlocked, and while locked no longer than that, as a locked screen is
 /// lit only to glance at.
 #[must_use]
-pub fn attention_config(locked: bool, auto_lock: Option<u16>) -> AttentionConfig {
-    let timeout = match auto_lock.unwrap_or(DEFAULT_AUTO_LOCK_S) {
+pub fn attention_config(locked: bool, auto_lock: u16) -> AttentionConfig {
+    let timeout = match auto_lock {
         0 => None,
         seconds => Some(core::time::Duration::from_secs(u64::from(seconds))),
     };

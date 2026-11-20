@@ -519,17 +519,6 @@ fn session_config() -> SessionConfig {
             feature = "board-tlora-pager",
             not(feature = "motion-qualification")
         )),
-        // The communicator owns the screen's settings and the keyboard,
-        // and applies what these hold.
-        #[cfg(feature = "communicator")]
-        display: Some(umsh_ulcp_device::DisplayConfig {
-            brightness: umsh_ux_communicator::model::brightness_at(5),
-            timeout_s: umsh_ux_communicator::model::DEFAULT_AUTO_LOCK_S,
-        }),
-        #[cfg(not(feature = "communicator"))]
-        display: None,
-        keyboard: cfg!(feature = "communicator"),
-        sound: cfg!(any(feature = "board-tlora-pager", feature = "board-tdeck")),
         // No image here cues a message it holds for an absent host, so
         // none may hold one: the Pager and T-Deck have speakers but play
         // no queue cue.

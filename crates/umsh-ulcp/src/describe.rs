@@ -137,6 +137,7 @@ pub const fn property_name(key: u32) -> Option<&'static str> {
         prop::DISPLAY_BRIGHTNESS => "PROP_DISPLAY_BRIGHTNESS",
         prop::KEYBOARD_LIGHT => "PROP_KEYBOARD_LIGHT",
         prop::KEYBOARD_AIDS => "PROP_KEYBOARD_AIDS",
+        prop::DIRECTIONS_ENABLED => "PROP_DIRECTIONS_ENABLED",
         prop::DISPLAY_TIMEOUT => "PROP_DISPLAY_TIMEOUT",
         prop::SOUND_ENABLED => "PROP_SOUND_ENABLED",
         prop::SOUND_VOLUME => "PROP_SOUND_VOLUME",
@@ -307,6 +308,7 @@ pub const PROPERTIES: &[u32] = &[
     prop::DISPLAY_BRIGHTNESS,
     prop::KEYBOARD_LIGHT,
     prop::KEYBOARD_AIDS,
+    prop::DIRECTIONS_ENABLED,
     prop::DISPLAY_TIMEOUT,
     prop::SOUND_ENABLED,
     prop::SOUND_VOLUME,
@@ -453,6 +455,7 @@ pub const fn property_type(key: u32) -> Option<PropertyType> {
         prop::KEYBOARD_LIGHT => Bool,
         // A bitmap, shown as its octet.
         prop::KEYBOARD_AIDS => U8,
+        prop::DIRECTIONS_ENABLED => U8,
         prop::DISPLAY_TIMEOUT => U16,
         prop::SOUND_ENABLED => Bool,
         prop::SOUND_VOLUME => U8,
@@ -578,9 +581,6 @@ pub const fn capability_name(code: u32) -> Option<&'static str> {
         cap::I2C => "I2C",
         cap::MESHCORE_FORWARDER => "MESHCORE_FORWARDER",
         cap::LAN_BEARER => "LAN_BEARER",
-        cap::DISPLAY => "DISPLAY",
-        cap::KEYBOARD => "KEYBOARD",
-        cap::SOUND => "SOUND",
         cap::NODE_MSG => "NODE_MSG",
         _ => return None,
     })
@@ -783,8 +783,8 @@ mod tests {
         assert_eq!(property_type(4878), Some(PropertyType::Bool));
         assert_eq!(property_name(4879), Some("PROP_KEYBOARD_AIDS"));
         assert_eq!(property_type(4879), Some(PropertyType::U8));
-        assert_eq!(capability_name(64), Some("DISPLAY"));
-        assert_eq!(capability_name(65), Some("KEYBOARD"));
+        assert_eq!(property_name(4895), Some("PROP_DIRECTIONS_ENABLED"));
+        assert_eq!(property_type(4895), Some(PropertyType::U8));
         assert_eq!(property_name(4890), Some("PROP_DISPLAY_TIMEOUT"));
         assert_eq!(property_type(4890), Some(PropertyType::U16));
     }
@@ -796,7 +796,6 @@ mod tests {
         assert!(PROPERTIES.contains(&4891));
         assert_eq!(property_name(4892), Some("PROP_SOUND_VOLUME"));
         assert_eq!(property_type(4892), Some(PropertyType::U8));
-        assert_eq!(capability_name(66), Some("SOUND"));
     }
 
     #[test]
@@ -955,8 +954,10 @@ mod tests {
             Some("MESHCORE_FORWARDER")
         );
         assert_eq!(capability_name(cap::LAN_BEARER), Some("LAN_BEARER"));
-        assert_eq!(capability_name(cap::KEYBOARD), Some("KEYBOARD"));
-        assert_eq!(capability_name(cap::SOUND), Some("SOUND"));
+        // Retired codes have no name either.
+        for retired in 64..=66 {
+            assert_eq!(capability_name(retired), None);
+        }
         assert_eq!(capability_name(cap::NODE_MSG), Some("NODE_MSG"));
         assert_eq!(capability_name(cap::NODE_MSG + 1), None);
     }

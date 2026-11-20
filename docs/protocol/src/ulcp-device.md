@@ -95,9 +95,6 @@ Code | Name               | Requires           | Grants
 59   | `CAP_DISPLAY_MOTION_WAKE` | — | Orientation-qualified display wake and `PROP_DISPLAY_MOTION_WAKE_ENABLED`
 61 | `CAP_TEMPERATURE` | — | `PROP_TEMPERATURES` and `PROP_TEMPERATURE_NAMES`; the inventory may initially be empty
 62 | `CAP_MESHCORE_FORWARDER` | `CAP_REPEATER` | [MeshCore forwarding](#meshcore-forwarding): `PROP_MESHCORE_FORWARDING_ENABLED`, `PROP_MESHCORE_REGION_POLICY`, `PROP_MESHCORE_REGIONS`; with `CAP_STATS`, the [MeshCore counters](ulcp-radio.md#prop-stat-meshcore-seen)
-64 | `CAP_DISPLAY` | — | A screen of the device's own: [`PROP_DISPLAY_BRIGHTNESS`](#prop-display-brightness), [`PROP_DISPLAY_TIMEOUT`](#prop-display-timeout)
-65 | `CAP_KEYBOARD` | — | A keyboard of the device's own: [`PROP_KEYBOARD_LIGHT`](#prop-keyboard-light), [`PROP_KEYBOARD_AIDS`](#prop-keyboard-aids), [`PROP_SETUP_COMPLETE`](#prop-setup-complete)
-66 | `CAP_SOUND` | — | A sounder the device plays optional sounds on: [`PROP_SOUND_ENABLED`](#prop-sound-enabled), [`PROP_SOUND_VOLUME`](#prop-sound-volume)
 
 `CAP_ADVERT` requires `CAP_DEV_IDENTITY` because what an advertisement
 carries *is* the device identity, and a beacon's source address names
@@ -277,6 +274,7 @@ Id | Mnemonic                    | Commands                 | Description
 4892 | `PROP_SOUND_VOLUME`       | Get, Set, Is             | How loud optional sounds are played
 4893 | `PROP_SETUP_COMPLETE`     | Get, Set, Is             | Whether the device has been set up through its own interface
 4894 | `PROP_TEST_MESSAGE_ALERTS` | Get, Set, Is            | Whether test messages on `EMERGENCY` call for attention
+4895 | `PROP_DIRECTIONS_ENABLED` | Get, Set, Is             | Directions a directional control acts in
 4866 | `PROP_TIME`               | Get, Set, Is             | Wall clock, or empty when unknown
 4888 | `PROP_TZ_RULE`            | Get, Set, Is             | Local time zone, as a POSIX TZ rule
 4889 | `PROP_TIME_24H`           | Get, Set, Is             | Whether shown clocks use 24-hour time
@@ -2199,13 +2197,14 @@ may not qualify. This does not identify every kind of bed or pocket movement.
 
 A device with a screen and keyboard of its own exposes their settings in
 the device domain, so they are saved with the rest of its configuration
-and reachable from wherever it is administered.
+and reachable from wherever it is administered. A device without a screen
+answers `STATUS_PROP_NOT_FOUND` for the screen's, and one without a
+keyboard for the keyboard's.
 
 ### PROP 4877: `PROP_DISPLAY_BRIGHTNESS` {#prop-display-brightness}
 
 * Type: Single-Value, Read-Write
 * Asynchronous Updates: Yes
-* Required: `CAP_DISPLAY`
 * Value Type: UINT8
 * Post-Reset Value: device-defined, or restored from saved state
 
@@ -2221,7 +2220,6 @@ reports the value written.
 
 * Type: Single-Value, Read-Write
 * Asynchronous Updates: Yes
-* Required: `CAP_DISPLAY`
 * Value Type: UINT16
 * Post-Reset Value: device-defined, or restored from saved state
 
@@ -2248,7 +2246,6 @@ with that.
 
 * Type: Single-Value, Read-Write
 * Asynchronous Updates: Yes
-* Required: `CAP_KEYBOARD`
 * Value Type: BOOL
 * Post-Reset Value: 1 (true), or restored from saved state
 
@@ -2259,7 +2256,6 @@ keyboard dark either way.
 
 * Type: Single-Value, Read-Write
 * Asynchronous Updates: Yes
-* Required: `CAP_KEYBOARD`
 * Value Type: UINT8
 * Post-Reset Value: 3 (every aid), or restored from saved state
 
@@ -2277,18 +2273,50 @@ All three properties are included in `CMD_SAVE`, and are asynchronous
 because the device's own controls change them (see [Changes Made at the
 Device](ulcp-saved-state.md#changes-made-at-the-device)).
 
+## Directional Control
+
+A device with a directional control of its own, such as a trackball, a
+joystick, or a pad of arrow keys, says which of its directions it acts on.
+A device without one answers `STATUS_PROP_NOT_FOUND`.
+
+### PROP 4895: `PROP_DIRECTIONS_ENABLED` {#prop-directions-enabled}
+
+* Type: Single-Value, Read-Write
+* Asynchronous Updates: Yes
+* Value Type: UINT8
+* Post-Reset Value: 15 (every direction), or restored from saved state
+
+The directions the control acts in, as a bitmap:
+
+Bit | Name | Direction
+---|---|---
+0 (`0x01`) | `DIRECTION_UP` | Up
+1 (`0x02`) | `DIRECTION_DOWN` | Down
+2 (`0x04`) | `DIRECTION_LEFT` | Left
+3 (`0x08`) | `DIRECTION_RIGHT` | Right
+
+The device ignores the control in a direction whose bit is clear, as
+though it had not been moved that way. Whatever else the control does,
+such as being pressed, is unaffected.
+
+The other bits are reserved and **MUST** be zero. A write that sets one is
+answered `STATUS_INVALID_ARGUMENT`.
+
+The property is included in `CMD_SAVE`, and is asynchronous because the
+device's own controls change it (see [Changes Made at the
+Device](ulcp-saved-state.md#changes-made-at-the-device)).
+
 ## Sound
 
 A device with a sounder of its own exposes whether it plays optional
 sounds, and how loud, in the device domain, so the choice is saved with
 the rest of its configuration and reachable from wherever it is
-administered.
+administered. A device without one answers `STATUS_PROP_NOT_FOUND`.
 
 ### PROP 4891: `PROP_SOUND_ENABLED` {#prop-sound-enabled}
 
 * Type: Single-Value, Read-Write
 * Asynchronous Updates: Yes
-* Required: `CAP_SOUND`
 * Value Type: BOOL
 * Post-Reset Value: 1 (true), or restored from saved state
 
@@ -2303,7 +2331,6 @@ a [locate alert](#prop-alert) sounds whatever this property says.
 
 * Type: Single-Value, Read-Write
 * Asynchronous Updates: Yes
-* Required: `CAP_SOUND`
 * Value Type: UINT8
 * Post-Reset Value: device-defined, or restored from saved state
 
@@ -2323,13 +2350,13 @@ Device](ulcp-saved-state.md#changes-made-at-the-device)).
 
 A device with a messaging interface of its own says whether it has been
 set up through that interface, so a host can tell a device new from the
-box, or from a factory reset, from one already in use.
+box, or from a factory reset, from one already in use. A device without
+one answers `STATUS_PROP_NOT_FOUND`.
 
 ### PROP 4893: `PROP_SETUP_COMPLETE` {#prop-setup-complete}
 
 * Type: Single-Value, Read-Write
 * Asynchronous Updates: Yes
-* Required: `CAP_KEYBOARD`
 * Value Type: BOOL
 * Post-Reset Value: 0 (false), or restored from saved state
 

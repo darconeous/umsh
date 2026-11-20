@@ -25,14 +25,14 @@ window = ["dep:sdl2", "dep:umsh-ux-display-tracker"]
 
 [dependencies]
 umsh-ux-communicator = { path = "../../crates/umsh-ux-communicator", features = ["fixture"] }
-umsh-communicator = { path = "../../crates/umsh-communicator", features = ["software-crypto", "flash"] }
+umsh-communicator = { path = "../../crates/umsh-communicator", features = ["software-crypto", "flash", "sound"] }
 embedded-storage-async = "0.4.1"
 umsh-ulcp-admin = { path = "../../crates/umsh-ulcp-admin", features = ["driver"] }
 umsh-ulcp = { path = "../../crates/umsh-ulcp" }
 umsh-ulcp-device = { path = "../../crates/umsh-ulcp-device" }
 umsh-ulcp-simdev = { path = "../../crates/umsh-ulcp-simdev", features = ["host"] }
 # The Pager's session driver, radio multiplexer, and device node.
-umsh-ulcp-runtime = { path = "../../crates/umsh-ulcp-runtime", features = ["device-node", "communicator"] }
+umsh-ulcp-runtime = { path = "../../crates/umsh-ulcp-runtime", features = ["device-node", "communicator", "sound"] }
 umsh-journal-store = { path = "../../crates/umsh-journal-store" }
 umsh-radio-loraphy = { path = "../../crates/umsh-radio-loraphy" }
 umsh-hal = { path = "../../crates/umsh-hal", features = ["embassy"] }

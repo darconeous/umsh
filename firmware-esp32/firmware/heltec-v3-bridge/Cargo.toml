@@ -105,6 +105,8 @@ board-tlora-pager = [
     "gnss",
     "external-rtc",
     "battery-cutoff",
+    "umsh-ulcp-runtime/sound",
+    "umsh-communicator?/sound",
 ]
 board-xiao-esp32s3 = [
     "ulcp-i2c",
@@ -126,6 +128,10 @@ board-tdeck = [
     "gnss",
     "gnss-uart-standby",
     "gnss-holds-the-clock",
+    "umsh-ulcp-runtime/directional",
+    "umsh-communicator?/directional",
+    "umsh-ulcp-runtime/sound",
+    "umsh-communicator?/sound",
 ]
 board-tbeam-supreme = [
     "ulcp-i2c",

@@ -19,6 +19,9 @@ repository.workspace = true
 # The mockup's chats, for a device with nothing behind it yet. It reads
 # typed addresses as a node would, and offers the vetted radio profiles.
 fixture = ["dep:umsh-core", "dep:umsh-ulcp"]
+# A trackball, or another directional control, whose directions can be
+# turned off: the Trackball screen under Device.
+directional = []
 
 [dependencies]
 # The fork carries a prerendered anti-aliased font backend, line-limited

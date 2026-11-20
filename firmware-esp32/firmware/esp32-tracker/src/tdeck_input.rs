@@ -13,7 +13,7 @@ use super::*;
 use crate::input_gate::{
     self, CHANGED, control, finish_gesture, hold, note_activity, send, start_gesture, wake_display,
 };
-use core::cell::RefCell;
+use core::cell::{Cell, RefCell};
 use embassy_sync::watch::Watch;
 use embassy_time::TimeoutError;
 use esp_hal::gpio::{Flex, Io};
@@ -28,7 +28,7 @@ use umsh_tdeck_peripherals::keyboard::{self as keys, Key};
 use umsh_tdeck_peripherals::trackball::{Direction, Trackball};
 use umsh_ux_communicator::input::{Arrow, Input as UiItem, TouchPhase};
 use umsh_ux_communicator::keyboard::Latch;
-use umsh_ux_communicator::model::KeyboardFirmware;
+use umsh_ux_communicator::model::{Directions, KeyboardFirmware};
 use umsh_ux_display_tracker::input_power::{Gesture, Mode};
 use umsh_ux_tracker::debounce::{Debounce, PressLatch};
 
@@ -77,6 +77,8 @@ struct Ball {
     /// Up, Right, Down, Left.
     pins: [Input<'static>; 4],
     decoder: Trackball,
+    /// Whether rolls are captured: the panel is lit.
+    listening: bool,
 }
 const DIRECTIONS: [Direction; 4] = [
     Direction::Up,
@@ -86,6 +88,52 @@ const DIRECTIONS: [Direction; 4] = [
 ];
 static BALL: critical_section::Mutex<RefCell<Option<Ball>>> =
     critical_section::Mutex::new(RefCell::new(None));
+/// The directions whose rolls count. A pin whose direction is off is not
+/// listened to at all, so a failing sensor neither moves anything nor
+/// keeps the panel lit. None until the interface has read the setting.
+static ENABLED: critical_section::Mutex<Cell<Directions>> =
+    critical_section::Mutex::new(Cell::new(Directions(0)));
+
+/// The setting's bit for rolls toward `direction`.
+const fn bit(direction: Direction) -> Directions {
+    match direction {
+        Direction::Up => Directions::UP,
+        Direction::Right => Directions::RIGHT,
+        Direction::Down => Directions::DOWN,
+        Direction::Left => Directions::LEFT,
+    }
+}
+
+/// Sets the directions the trackball acts in.
+pub(crate) fn set_directions(enabled: Directions) {
+    critical_section::with(|cs| {
+        if ENABLED.borrow(cs).replace(enabled) == enabled {
+            return;
+        }
+        if let Some(ball) = BALL.borrow_ref_mut(cs).as_mut() {
+            let on = ball.listening;
+            ball.listen(on, enabled);
+        }
+    });
+}
+
+impl Ball {
+    /// Captures rolls in the directions `enabled` names, or stops,
+    /// starting the roll count over either way.
+    fn listen(&mut self, on: bool, enabled: Directions) {
+        self.listening = on;
+        self.decoder = Trackball::default();
+        for (pin, direction) in self.pins.iter_mut().zip(DIRECTIONS) {
+            if on && enabled.contains(bit(direction)) {
+                pin.clear_interrupt();
+                pin.listen(Event::AnyEdge);
+            } else {
+                pin.unlisten();
+                pin.clear_interrupt();
+            }
+        }
+    }
+}
 
 pub fn init_trackball(
     io: peripherals::IO_MUX<'static>,
@@ -106,6 +154,7 @@ pub fn init_trackball(
             Input::new(left, config),
         ],
         decoder: Trackball::default(),
+        listening: false,
     };
     critical_section::with(|cs| BALL.borrow_ref_mut(cs).replace(ball));
     listen(true);
@@ -118,16 +167,9 @@ fn listen(on: bool) {
         if let Some(line) = TOUCH_LINE.borrow_ref_mut(cs).as_mut() {
             line.listen(on);
         }
-        let mut slot = BALL.borrow_ref_mut(cs);
-        let Some(ball) = slot.as_mut() else { return };
-        ball.decoder = Trackball::default();
-        for pin in &mut ball.pins {
-            if on {
-                pin.clear_interrupt();
-                pin.listen(Event::AnyEdge);
-            } else {
-                pin.unlisten();
-            }
+        let enabled = ENABLED.borrow(cs).get();
+        if let Some(ball) = BALL.borrow_ref_mut(cs).as_mut() {
+            ball.listen(on, enabled);
         }
     });
     // Lit, whatever the controller holds is read at once; dark, the

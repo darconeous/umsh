@@ -24,6 +24,18 @@ uart-link = []
 # A device with chats of its own, and a store to keep its peers in, holds
 # more of them.
 communicator = []
+# A directional control of the device's own, such as a trackball
+# (`PROP_DIRECTIONS_ENABLED`).
+directional = []
+# A screen of the device's own (`PROP_DISPLAY_BRIGHTNESS`,
+# `PROP_DISPLAY_TIMEOUT`).
+display = []
+# A keyboard of the device's own, and the interface it is set up through
+# (`PROP_KEYBOARD_LIGHT`, `PROP_KEYBOARD_AIDS`, `PROP_SETUP_COMPLETE`).
+keyboard = []
+# A sounder the device plays optional sounds on (`PROP_SOUND_ENABLED`,
+# `PROP_SOUND_VOLUME`).
+sound = []
 
 [dependencies]
 ed25519-dalek = { workspace = true, optional = true }

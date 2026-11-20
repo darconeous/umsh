@@ -488,22 +488,19 @@ pub mod prop {
     /// The screen's brightness (`PROP_DISPLAY_BRIGHTNESS`)—UINT8, 255
     /// the brightest. 0 is the dimmest level that is not off; an e-paper
     /// front light is off at 0 and the screen stays readable. Saved.
-    /// Requires `CAP_DISPLAY`.
     pub const DISPLAY_BRIGHTNESS: u32 = 4877;
     /// Whether the keyboard is lit while the screen is
-    /// (`PROP_KEYBOARD_LIGHT`)—BOOL. Saved. Requires `CAP_KEYBOARD`.
+    /// (`PROP_KEYBOARD_LIGHT`)—BOOL. Saved.
     pub const KEYBOARD_LIGHT: u32 = 4878;
     /// The typing aids in effect (`PROP_KEYBOARD_AIDS`)—UINT8 bitmap of
     /// [`keyboard_aids`](super::keyboard_aids) flags; the reserved bits
-    /// are zero. Saved. Requires `CAP_KEYBOARD`.
+    /// are zero. Saved.
     pub const KEYBOARD_AIDS: u32 = 4879;
     /// How long the screen stays lit without input while it is in use
     /// (`PROP_DISPLAY_TIMEOUT`)—UINT16 seconds, 0 for never. Saved.
-    /// Requires `CAP_DISPLAY`.
     pub const DISPLAY_TIMEOUT: u32 = 4890;
     /// Whether the device plays its optional sounds
-    /// (`PROP_SOUND_ENABLED`)—BOOL, default true. Saved. Requires
-    /// `CAP_SOUND`.
+    /// (`PROP_SOUND_ENABLED`)—BOOL, default true. Saved.
     ///
     /// Optional sounds are notifications and feedback cues. A locate
     /// alert sounds whatever this says (`PROP_ALERT`), and haptics and
@@ -512,11 +509,10 @@ pub mod prop {
     /// How loud the device plays its optional sounds
     /// (`PROP_SOUND_VOLUME`)—UINT8, 255 the loudest. 0 is the quietest
     /// level that is not silent; silence is `PROP_SOUND_ENABLED`'s.
-    /// Saved. Requires `CAP_SOUND`.
+    /// Saved.
     pub const SOUND_VOLUME: u32 = 4892;
     /// Whether the device has been set up through its own interface
-    /// (`PROP_SETUP_COMPLETE`)—BOOL, default false. Saved. Requires
-    /// `CAP_KEYBOARD`.
+    /// (`PROP_SETUP_COMPLETE`)—BOOL, default false. Saved.
     ///
     /// The device sets it when its first-run setup finishes. While it is
     /// clear, unlocking the device's interface opens that setup.
@@ -530,6 +526,12 @@ pub mod prop {
     /// device with its own interface neither counts it unread nor alerts
     /// for it.
     pub const TEST_MESSAGE_ALERTS: u32 = 4894;
+    /// The directions the device's directional control acts in
+    /// (`PROP_DIRECTIONS_ENABLED`)—UINT8 bitmap of
+    /// [`directions`](super::directions) flags; the reserved bits are
+    /// zero. A direction whose bit is clear is ignored. Saved. A device
+    /// without a directional control answers `STATUS_PROP_NOT_FOUND`.
+    pub const DIRECTIONS_ENABLED: u32 = 4895;
 
     /// Whether the Wi-Fi station is up (`PROP_WIFI_ENABLED`), BOOL,
     /// default 0. Requires `CAP_WIFI`.
@@ -1002,16 +1004,6 @@ pub mod cap {
     /// [`REPEATER`] forwards between the group and its LoRa radio, and has
     /// `PROP_LAN_BEARER_ENABLED` and `PROP_LAN_BEARER_INGRESS_LIMIT` too.
     pub const LAN_BEARER: u32 = 63;
-    /// `CAP_DISPLAY`: the device has a screen of its own, with its
-    /// settings (`PROP_DISPLAY_BRIGHTNESS`, `PROP_DISPLAY_TIMEOUT`).
-    pub const DISPLAY: u32 = 64;
-    /// `CAP_KEYBOARD`: the device has a keyboard of its own
-    /// (`PROP_KEYBOARD_LIGHT`, `PROP_KEYBOARD_AIDS`), and with it an
-    /// interface it is set up through (`PROP_SETUP_COMPLETE`).
-    pub const KEYBOARD: u32 = 65;
-    /// `CAP_SOUND`: the device has a sounder it plays optional sounds on
-    /// (`PROP_SOUND_ENABLED`, `PROP_SOUND_VOLUME`).
-    pub const SOUND: u32 = 66;
     /// `CAP_NODE_MSG`: node messaging (`STR_NODE_MSG`,
     /// `PROP_NODE_MSG_LISTEN`, `PROP_NODE_MSG_TYPES`,
     /// `PROP_NODE_MSG_MTU`). Requires [`DEV_IDENTITY`].
@@ -1026,6 +1018,20 @@ pub mod keyboard_aids {
     pub const PERIOD: u8 = 0x02;
     /// Every flag defined; the rest are reserved and zero.
     pub const ALL: u8 = CAPITALIZE | PERIOD;
+}
+
+/// `PROP_DIRECTIONS_ENABLED` flags.
+pub mod directions {
+    pub const UP: u8 = 0x01;
+    pub const DOWN: u8 = 0x02;
+    pub const LEFT: u8 = 0x04;
+    pub const RIGHT: u8 = 0x08;
+    /// Up and down.
+    pub const VERTICAL: u8 = UP | DOWN;
+    /// Left and right.
+    pub const HORIZONTAL: u8 = LEFT | RIGHT;
+    /// Every flag defined; the rest are reserved and zero.
+    pub const ALL: u8 = VERTICAL | HORIZONTAL;
 }
 
 /// Whether a property is writable by a mesh administrator.
@@ -1086,6 +1092,12 @@ pub fn device_writable(key: u32) -> bool {
 
 /// `PROP_SOUND_VOLUME` after a reset.
 pub const DEFAULT_SOUND_VOLUME: u8 = 191;
+
+/// `PROP_DISPLAY_BRIGHTNESS` after a reset.
+pub const DEFAULT_DISPLAY_BRIGHTNESS: u8 = 113;
+
+/// `PROP_DISPLAY_TIMEOUT` after a reset, in seconds.
+pub const DEFAULT_DISPLAY_TIMEOUT_S: u16 = 30;
 
 /// Shortest `PROP_DISPLAY_TIMEOUT` a device keeps, in seconds, other than
 /// 0 (never): a shorter one is raised to this.

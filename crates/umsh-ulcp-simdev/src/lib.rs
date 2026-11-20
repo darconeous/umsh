@@ -46,8 +46,8 @@ use umsh_ulcp_device::{AnnounceRequest, Effect};
 use soft::{DeviceSession, SoftDevice, SoftPlatform};
 
 pub use umsh_ulcp_device::{
-    AlertConfig, BatteryFields, DisplayConfig, DutyLedger, GnssConfig, IpConfig, LanBearerRole,
-    RadioRxInfo, RadioSettings, SessionConfig, TimeConfig, WifiConfig,
+    AlertConfig, BatteryFields, DutyLedger, GnssConfig, IpConfig, LanBearerRole, RadioRxInfo,
+    RadioSettings, SessionConfig, TimeConfig, WifiConfig,
 };
 
 /// A configuration offering everything [`SimulatedPlatform`] can serve.
@@ -89,12 +89,6 @@ pub fn full_config(
         time: Some(TimeConfig),
         gnss: Some(GnssConfig::DEFAULT),
         display_motion_wake: false,
-        display: Some(DisplayConfig {
-            brightness: 128,
-            timeout_s: 30,
-        }),
-        keyboard: true,
-        sound: true,
         host_custody: true,
         illuminance: true,
         temperatures: true,

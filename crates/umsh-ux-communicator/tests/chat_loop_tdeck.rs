@@ -587,3 +587,138 @@ fn the_picker_takes_taps_and_strokes() {
     assert!(app.state().picker.is_none());
     assert_eq!(draft(app.state(), TRAIL_CREW), "A#");
 }
+
+use umsh_ux_communicator::model::volume_level;
+
+/// Where the steps of the level row `key` lie on screen: the middle of
+/// the step for each level, from the first, and the row's middle height.
+fn level_steps<V, F>(app: &mut App<V, State, F>, key: FocusKey) -> ([i16; 10], i16)
+where
+    V: ViewLayout<State>,
+    V::FocusTree: DefaultFocus,
+    V::Renderables: AnimatedJoin,
+    F: Fn(&State) -> V,
+{
+    let was = focus(app.state());
+    app.focus(key);
+    let row = app
+        .focus_shape()
+        .bounding_box()
+        .expect("the row is on screen");
+    if let Some(was) = was {
+        app.focus(was);
+    }
+    let steps = ui::level_steps(row.origin.x + row.size.width as i32).map(|x| x as i16);
+    (steps, (row.origin.y + row.size.height as i32 / 2) as i16)
+}
+
+#[test]
+fn a_tap_on_a_volume_step_sets_that_level() {
+    use input::TouchPhase::{Ended, Started};
+    let mut app = app!();
+    app.state_mut().open_sounds();
+    app.finalize_view();
+    let (steps, y) = level_steps(&mut app, keys::VOLUME);
+    apply_touch(&mut app, Started, (steps[2], y), tick(100));
+    apply_touch(&mut app, Ended, (steps[2], y), tick(50));
+    assert_eq!(volume_level(app.state().node.sound_volume()), 3);
+    assert_eq!(app.state_mut().take_cue(), Some(Cue::Direct));
+}
+
+#[test]
+fn a_finger_slid_across_the_volume_sets_it_as_it_goes() {
+    use input::TouchPhase::{Ended, Moved, Started};
+    let mut app = app!();
+    app.state_mut().open_sounds();
+    app.finalize_view();
+    let (steps, y) = level_steps(&mut app, keys::VOLUME);
+    let before = app.state().node.sound_volume();
+    apply_touch(&mut app, Started, (steps[0], y), tick(100));
+    // Down and not yet moved, nothing changes.
+    assert_eq!(app.state().node.sound_volume(), before);
+    apply_touch(&mut app, Moved, (steps[9], y), tick(20));
+    assert_eq!(volume_level(app.state().node.sound_volume()), 10);
+    // Past the last step, the last level.
+    apply_touch(&mut app, Moved, (steps[9] + 20, y), tick(20));
+    assert_eq!(volume_level(app.state().node.sound_volume()), 10);
+    apply_touch(&mut app, Moved, (steps[4], y), tick(20));
+    assert_eq!(volume_level(app.state().node.sound_volume()), 5);
+    apply_touch(&mut app, Ended, (steps[4], y), tick(20));
+    assert_eq!(volume_level(app.state().node.sound_volume()), 5);
+    assert!(matches!(
+        app.state().screen(),
+        Screen::Device {
+            page: DevicePage::Sounds { .. },
+            ..
+        }
+    ));
+}
+
+#[test]
+fn a_touch_on_the_volume_that_the_list_scrolls_sets_nothing() {
+    use input::TouchPhase::{Ended, Moved, Started};
+    let mut app = app!();
+    app.state_mut().open_sounds();
+    app.finalize_view();
+    let (steps, y) = level_steps(&mut app, keys::VOLUME);
+    let before = app.state().node.sound_volume();
+    apply_touch(&mut app, Started, (steps[2], y), tick(100));
+    // Across, short of the list giving the touch up.
+    apply_touch(&mut app, Moved, (steps[2] + 7, y), tick(20));
+    assert_eq!(app.state().node.sound_volume(), before);
+    // Then down: the list takes it.
+    apply_touch(&mut app, Moved, (steps[2] + 7, y + 5), tick(20));
+    apply_touch(&mut app, Moved, (steps[7], y + 5), tick(20));
+    apply_touch(&mut app, Ended, (steps[7], y + 5), tick(20));
+    assert_eq!(app.state().node.sound_volume(), before);
+}
+
+/// A finger that has gone far enough across to set the level keeps it
+/// when it goes on to move up: the list has given the touch up by then.
+#[test]
+fn a_touch_that_sets_the_volume_keeps_it() {
+    use input::TouchPhase::{Ended, Moved, Started};
+    let mut app = app!();
+    app.state_mut().open_sounds();
+    app.finalize_view();
+    let (steps, y) = level_steps(&mut app, keys::VOLUME);
+    let before = app.state().node.sound_volume();
+    apply_touch(&mut app, Started, (steps[2], y), tick(100));
+    apply_touch(&mut app, Moved, (steps[2] + 8, y), tick(20));
+    assert_ne!(app.state().node.sound_volume(), before);
+    apply_touch(&mut app, Moved, (steps[2] + 8, y - 10), tick(20));
+    apply_touch(&mut app, Moved, (steps[7], y - 10), tick(20));
+    apply_touch(&mut app, Ended, (steps[7], y - 10), tick(20));
+    assert_eq!(volume_level(app.state().node.sound_volume()), 8);
+}
+
+#[test]
+fn a_finger_slid_across_brightness_sets_it() {
+    use input::TouchPhase::{Ended, Moved, Started};
+    let mut app = app!();
+    open_category(&mut app, keys::DISPLAY);
+    let (steps, y) = level_steps(&mut app, keys::BRIGHTNESS);
+    apply_touch(&mut app, Started, (steps[9], y), tick(100));
+    apply_touch(&mut app, Moved, (steps[1], y), tick(20));
+    apply_touch(&mut app, Ended, (steps[1], y), tick(20));
+    assert_eq!(brightness_level(app.state().node.brightness()), 2);
+}
+
+#[cfg(feature = "directional")]
+#[test]
+fn the_trackball_screen_turns_each_axis_off_and_on() {
+    use umsh_ux_communicator::model::Directions;
+    let mut app = app!();
+    open_category(&mut app, keys::TRACKBALL);
+    assert_eq!(focus(app.state()), Some(keys::TRACKBALL_VERTICAL));
+    let directions = |app: &App<_, State, _>| app.state().node.directions();
+    run(&mut app, &[Input::Press]);
+    assert_eq!(directions(&app), Directions::HORIZONTAL);
+    // Across, the other axis's switch, still worked by left and right.
+    run(&mut app, &[Input::Turn(1)]);
+    assert_eq!(focus(app.state()), Some(keys::TRACKBALL_HORIZONTAL));
+    run(&mut app, &[Input::Move(Arrow::Left)]);
+    assert_eq!(directions(&app), Directions(0));
+    run(&mut app, &[Input::Press, Input::Turn(-1), Input::Press]);
+    assert_eq!(directions(&app), Directions::ALL);
+}

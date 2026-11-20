@@ -10,6 +10,12 @@ description = "ULCP property client: a cached model of a device's settings, over
 # The port into the firmware ULCP driver's in-process request event, for
 # a device that administers its own session.
 driver = ["dep:umsh-ulcp-runtime", "dep:embassy-sync"]
+# `PROP_DIRECTIONS_ENABLED`, for a device built with a directional control.
+directional = []
+# The screen, keyboard, and sounder settings, for a device built with them.
+display = []
+keyboard = []
+sound = []
 
 [dependencies]
 umsh-ulcp = { path = "../umsh-ulcp" }

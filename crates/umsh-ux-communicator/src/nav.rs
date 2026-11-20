@@ -12,6 +12,8 @@ use heapless::String;
 use crate::avatar::Title;
 pub use crate::clock_settings::{ClockPage, DateParts, Part, ZoneFind};
 use crate::keyboard::Field;
+#[cfg(feature = "directional")]
+use crate::model::Directions;
 use crate::model::{
     AUTO_LOCK_CHOICES, BANDWIDTHS, CODING_RATES, ChannelAccess, ChannelEntry, ChatId, ChatKind,
     ChatSummary, Details, Exchange, Found, FoundKind, Invite, KeyboardSettings, LoraChoice,
@@ -199,6 +201,7 @@ pub mod keys {
     pub const STATISTICS: FocusKey = FocusKey(DEVICE | 12);
     pub const ABOUT: FocusKey = FocusKey(DEVICE | 13);
     pub const SOUNDS: FocusKey = FocusKey(DEVICE | 14);
+    pub const TRACKBALL: FocusKey = FocusKey(DEVICE | 17);
     /// A Device screen with nothing in it to focus, as a whole: turning
     /// scrolls it.
     pub const READING: FocusKey = FocusKey(0x2800_0000);
@@ -274,6 +277,9 @@ pub mod keys {
     /// The Sounds screen's rows, in order.
     pub const SOUNDS_ENABLED: FocusKey = FocusKey(0x2A00_0000);
     pub const VOLUME: FocusKey = FocusKey(0x2A00_0001);
+    /// The Trackball screen's switches, in order.
+    pub const TRACKBALL_VERTICAL: FocusKey = FocusKey(0x2F00_0000);
+    pub const TRACKBALL_HORIZONTAL: FocusKey = FocusKey(0x2F00_0001);
     /// The Clock screen's rows, in order.
     pub const CLOCK_AUTOMATIC: FocusKey = FocusKey(0x1A00_0000);
     pub const CLOCK_TIME: FocusKey = FocusKey(0x1A00_0001);
@@ -613,6 +619,8 @@ pub enum DevicePage {
     LoraChoice { choice: LoraChoice },
     /// The keyboard's settings.
     Keyboard { settings: KeyboardSettings },
+    /// The directions the trackball acts in.
+    Trackball,
     /// The radio's transmit power, being typed.
     TransmitPower { text: PowerText },
     /// The clock's settings, and the screens they open.
@@ -1908,10 +1916,10 @@ impl State {
         if let Some(adjusting) = self.adjusting_mut() {
             *adjusting = false;
         }
-        let current = self
-            .node
-            .auto_lock()
-            .and_then(|seconds| AUTO_LOCK_CHOICES.iter().position(|&c| c == seconds))
+        let seconds = self.node.auto_lock();
+        let current = AUTO_LOCK_CHOICES
+            .iter()
+            .position(|&c| c == seconds)
             .unwrap_or(0);
         _ = self.screens.push(Screen::Device {
             page: DevicePage::AutoLock,
@@ -2095,6 +2103,28 @@ impl State {
             },
             focus: FocusState::requesting(keys::CAPITALIZE),
         });
+    }
+
+    /// Shows the directions the trackball acts in.
+    pub fn open_trackball(&mut self) {
+        _ = self.screens.push(Screen::Device {
+            page: DevicePage::Trackball,
+            focus: FocusState::requesting(keys::TRACKBALL_VERTICAL),
+        });
+    }
+
+    /// Turns rolling up and down on, or off.
+    #[cfg(feature = "directional")]
+    pub fn toggle_trackball_vertical(&mut self) {
+        let directions = self.node.directions().toggled(Directions::VERTICAL);
+        self.node.set_directions(directions);
+    }
+
+    /// Turns rolling left and right on, or off.
+    #[cfg(feature = "directional")]
+    pub fn toggle_trackball_horizontal(&mut self) {
+        let directions = self.node.directions().toggled(Directions::HORIZONTAL);
+        self.node.set_directions(directions);
     }
 
     /// Changes the keyboard's settings by `change`, and shows them.

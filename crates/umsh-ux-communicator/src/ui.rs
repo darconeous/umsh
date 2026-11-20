@@ -39,6 +39,7 @@ mod gamma;
 mod identity;
 mod indicators;
 mod join;
+mod level_drag;
 mod links;
 mod lock;
 mod lora;
@@ -58,10 +59,12 @@ mod share_contact;
 mod sounds;
 mod statistics;
 mod status;
+mod trackball;
 mod typing;
 mod wifi;
 
 pub use gamma::GammaTest;
+pub use setting::level_steps;
 pub use typing::{picker_geometry, picker_spot};
 
 /// How much of the content past the focused row a list keeps in view, so

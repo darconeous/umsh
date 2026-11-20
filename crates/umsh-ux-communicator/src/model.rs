@@ -811,6 +811,40 @@ pub struct KeyboardSettings {
     pub light: bool,
 }
 
+/// The directions a directional control, such as a trackball, acts in: a
+/// bit each, laid out as `PROP_DIRECTIONS_ENABLED` lays them out.
+#[cfg(feature = "directional")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Directions(pub u8);
+
+#[cfg(feature = "directional")]
+impl Directions {
+    pub const UP: Self = Self(0x01);
+    pub const DOWN: Self = Self(0x02);
+    pub const LEFT: Self = Self(0x04);
+    pub const RIGHT: Self = Self(0x08);
+    pub const VERTICAL: Self = Self(Self::UP.0 | Self::DOWN.0);
+    pub const HORIZONTAL: Self = Self(Self::LEFT.0 | Self::RIGHT.0);
+    pub const ALL: Self = Self(Self::VERTICAL.0 | Self::HORIZONTAL.0);
+
+    /// Whether it acts in every direction `other` names.
+    #[must_use]
+    pub const fn contains(self, other: Self) -> bool {
+        self.0 & other.0 == other.0
+    }
+
+    /// With every direction `other` names turned off if all of them were
+    /// on, and on otherwise.
+    #[must_use]
+    pub const fn toggled(self, other: Self) -> Self {
+        if self.contains(other) {
+            Self(self.0 & !other.0)
+        } else {
+            Self(self.0 | other.0)
+        }
+    }
+}
+
 /// The firmware on a keyboard with a controller of its own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum KeyboardFirmware {
@@ -916,10 +950,6 @@ pub const fn volume_level(volume: u8) -> u8 {
 pub const fn volume_at(level: u8) -> u8 {
     value_at(level)
 }
-
-/// How long the screen stays lit without input, in seconds, until a
-/// device says otherwise.
-pub const DEFAULT_AUTO_LOCK_S: u16 = 30;
 
 /// The times Auto-Lock offers, in seconds, in the order listed: 0 is
 /// never.
@@ -1623,6 +1653,7 @@ pub enum Setting {
     Forwarding,
     ShareLocation,
     Keyboard,
+    Directions,
     Brightness,
     Clock,
     Time,
@@ -2118,6 +2149,16 @@ pub trait Node {
 
     fn set_keyboard(&self, settings: KeyboardSettings);
 
+    /// The directions the device's directional control acts in: every one
+    /// where the node does not say.
+    #[cfg(feature = "directional")]
+    fn directions(&self) -> Directions {
+        Directions::ALL
+    }
+
+    #[cfg(feature = "directional")]
+    fn set_directions(&self, _directions: Directions) {}
+
     /// The screen's brightness: 0 is the dimmest that is not dark, and 255
     /// the brightest.
     fn brightness(&self) -> u8;
@@ -2125,9 +2166,8 @@ pub trait Node {
     fn set_brightness(&self, brightness: u8);
 
     /// How long the screen stays lit without input while the interface is
-    /// unlocked, in seconds; 0 is never. `None` where the device does not
-    /// say.
-    fn auto_lock(&self) -> Option<u16>;
+    /// unlocked, in seconds; 0 is never.
+    fn auto_lock(&self) -> u16;
 
     fn set_auto_lock(&self, seconds: u16);
 
@@ -3237,6 +3277,28 @@ impl State {
         let level = stepped(self.node.sound_volume(), steps);
         self.node.set_sound_volume(volume_at(level));
         self.chime(Cue::Direct);
+    }
+
+    /// Sets the volume to `level`, from 1 to [`LEVELS`], and plays a
+    /// direct message's sound at it if that changed it. Returns whether it
+    /// did.
+    pub fn set_volume_level(&mut self, level: u8) -> bool {
+        let changed = volume_level(self.node.sound_volume()) != level;
+        if changed {
+            self.node.set_sound_volume(volume_at(level));
+            self.chime(Cue::Direct);
+        }
+        changed
+    }
+
+    /// Sets the screen's brightness to `level`, from 1 to [`LEVELS`].
+    /// Returns whether that changed it.
+    pub fn set_brightness_level(&mut self, level: u8) -> bool {
+        let changed = brightness_level(self.node.brightness()) != level;
+        if changed {
+            self.node.set_brightness(brightness_at(level));
+        }
+        changed
     }
 
     /// Turns the screen's brightness by `detents` levels, and shows it:

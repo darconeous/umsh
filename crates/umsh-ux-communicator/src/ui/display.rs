@@ -7,7 +7,7 @@ use buoyant::view::prelude::*;
 use embedded_graphics::pixelcolor::Rgb565;
 use heapless::String;
 
-use super::setting::{End, marked_row, page, row};
+use super::setting::{End, level_row, marked_row, page, row};
 use crate::board::Metrics;
 use crate::model::{AUTO_LOCK_CHOICES, State, brightness_level};
 use crate::nav::{DevicePage, keys};
@@ -27,40 +27,36 @@ pub fn screen(state: &State, page: &DevicePage) -> impl View<Rgb565, State> + us
     })
 }
 
-/// Brightness, Auto-Lock where the device has it, and Gamma.
+/// Brightness, Auto-Lock, and Gamma.
 fn view(state: &State) -> impl View<Rgb565, State> + use<> {
     let m = state.metrics();
     let level = brightness_level(state.node.brightness());
     let active = state.adjusting_brightness();
-    let auto_lock = state.node.auto_lock().map(auto_lock_name);
+    let auto_lock = auto_lock_name(state.node.auto_lock());
     page(
         m,
         "Display",
         VStack::new((
-            row(
+            level_row(
                 m,
                 "Brightness",
                 keys::BRIGHTNESS,
                 State::press_brightness,
-                End::Level {
-                    level,
-                    active,
-                    step: |s, steps| _ = s.step_brightness(steps),
-                },
+                level,
+                active,
+                |s, steps| _ = s.step_brightness(steps),
+                State::set_brightness_level,
+                ROW,
+            ),
+            row(
+                m,
+                "Auto-Lock",
+                keys::AUTO_LOCK,
+                State::open_auto_lock,
+                End::value_chevron(&auto_lock),
                 false,
                 ROW,
             ),
-            auto_lock.map(|name| {
-                row(
-                    m,
-                    "Auto-Lock",
-                    keys::AUTO_LOCK,
-                    State::open_auto_lock,
-                    End::value_chevron(&name),
-                    false,
-                    ROW,
-                )
-            }),
             row(
                 m,
                 "Gamma",
@@ -94,11 +90,7 @@ fn auto_lock(state: &State) -> impl View<Rgb565, State> + use<> {
 }
 
 /// The choice at `index`, checked when it is `current`.
-fn choice(
-    m: &'static Metrics,
-    index: usize,
-    current: Option<u16>,
-) -> impl View<Rgb565, State> + use<> {
+fn choice(m: &'static Metrics, index: usize, current: u16) -> impl View<Rgb565, State> + use<> {
     let seconds = AUTO_LOCK_CHOICES[index];
     marked_row(
         m,
@@ -108,7 +100,7 @@ fn choice(
         End::Nothing,
         false,
         ROW,
-        Some(current == Some(seconds)),
+        Some(current == seconds),
     )
 }
 

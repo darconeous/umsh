@@ -85,11 +85,21 @@ Id  | Mnemonic                | Required
 44  | `PROP_PHY_T_FRAME`      | Always (new implementations)
 113 | `STR_PHY_RAW`           | Always
 
-`PROP_DEV_MODEL` (4) and `PROP_UPTIME` (6) are the two properties that are
-neither always required nor capability-gated. Firmware built for a specific
-board **SHOULD** implement the first, and a device with a monotonic clock
-**SHOULD** implement the second; anything else omits them. A host discovers
-both by asking.
+Some properties are neither always required nor capability-gated:
+
+* `PROP_DEV_MODEL` (4). Firmware built for a specific board **SHOULD**
+  implement it.
+* `PROP_UPTIME` (6). A device with a monotonic clock **SHOULD** implement
+  it.
+* The settings of the device's own interface: its screen
+  (`PROP_DISPLAY_BRIGHTNESS`, `PROP_DISPLAY_TIMEOUT`), its keyboard
+  (`PROP_KEYBOARD_LIGHT`, `PROP_KEYBOARD_AIDS`, `PROP_SETUP_COMPLETE`), its
+  sounder (`PROP_SOUND_ENABLED`, `PROP_SOUND_VOLUME`), and its directional
+  control (`PROP_DIRECTIONS_ENABLED`). A device implements those for the
+  parts it has.
+
+A device that does not implement one of these answers
+`STATUS_PROP_NOT_FOUND`, and a host discovers each by asking.
 
 Every other property is gated by a capability. A device that does not
 advertise the capability does not implement the property, and rejects it
@@ -114,7 +124,7 @@ requires.
 Subsystem | Capabilities
 ---|---
 [Radio Control](ulcp-radio.md) beyond the required properties | `CAP_PHY_LORA`, `CAP_PHY_DUTY_LIMIT`, `CAP_STATS`
-[Device Domain](ulcp-device.md) | `CAP_DEV_IDENTITY`, `CAP_DEV_NAME`, `CAP_BATTERY`, `CAP_REPEATER`, `CAP_IDENT`, `CAP_ALERT`, `CAP_TIME`, `CAP_GNSS`, `CAP_ADVERT`, `CAP_ILLUMINANCE`, `CAP_DISPLAY_MOTION_WAKE`, `CAP_DISPLAY`, `CAP_KEYBOARD`
+[Device Domain](ulcp-device.md) | `CAP_DEV_IDENTITY`, `CAP_DEV_NAME`, `CAP_BATTERY`, `CAP_REPEATER`, `CAP_IDENT`, `CAP_ALERT`, `CAP_TIME`, `CAP_GNSS`, `CAP_ADVERT`, `CAP_ILLUMINANCE`, `CAP_DISPLAY_MOTION_WAKE`
 [Saved State](ulcp-saved-state.md) | `CAP_SAVE`
 [Tethered Host Services](ulcp-host.md) | `CAP_HOST_FILTER`, `CAP_HOST_KEYS`, `CAP_HOST_RX_QUEUE`, `CAP_HOST_AUTO_ACK`, `CAP_MAC_BACKHAUL`
 [Wi-Fi](ulcp-wifi.md) | `CAP_WIFI_SCAN`, `CAP_WIFI`, `CAP_WIFI_AP`
@@ -143,6 +153,9 @@ A conforming host:
   [`PROP_PHY_TX_POWER`](ulcp-radio.md#prop-phy-tx-power), which a device
   clamps to what its radio can reach. A host that shows the value to a user
   shows the reported one.
+* **MUST** take `STATUS_PROP_NOT_FOUND` for a property that is neither
+  always required nor capability-gated as the device not having it, not as
+  a failed attach.
 * **MUST NOT** treat a failed capability-gated property read as a failed
   attach. A device advertising a capability implements its properties, so
   a refusal is a device fault—but what is unknown is the setting, not the

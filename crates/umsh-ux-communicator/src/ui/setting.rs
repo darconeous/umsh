@@ -16,12 +16,17 @@ use crate::nav::keys;
 use crate::{font, icon, theme};
 
 const INSET: u32 = 12;
+/// Between a row's focus outline and the list's edge.
+const ROW_MARGIN: u32 = 4;
+/// Between the end of a row's content and its focus outline.
+const END_INSET: u32 = 10;
 const RADIUS: u16 = 8;
 /// A settings screen's rows.
 const ROW: u32 = 36;
 /// A level's steps.
 const STEP_WIDTH: u32 = 7;
 const STEP_HEIGHT: u32 = 12;
+const STEP_GAP: u32 = 2;
 /// The switch, and its knob's inset.
 const SWITCH_WIDTH: u32 = 40;
 const SWITCH_HEIGHT: u32 = 22;
@@ -142,8 +147,8 @@ pub(super) fn marked_row<A: Fn(&mut State) + Clone>(
         // animation: its knob slides.
         HStack::new((Lazy::new(look, row_look), switch.map(switch_look)))
             .with_spacing(8)
-            .padding(Edges::Leading, INSET - 4)
-            .padding(Edges::Trailing, 10)
+            .padding(Edges::Leading, INSET - ROW_MARGIN)
+            .padding(Edges::Trailing, END_INSET)
             .frame()
             .with_height(height - 2)
             .background(
@@ -157,7 +162,7 @@ pub(super) fn marked_row<A: Fn(&mut State) + Clone>(
                     ))
                 }),
             )
-            .padding(Edges::Horizontal, 4)
+            .padding(Edges::Horizontal, ROW_MARGIN)
             .padding(Edges::Vertical, 1)
             .overlay(
                 Alignment::Bottom,
@@ -190,6 +195,49 @@ pub(super) fn marked_row<A: Fn(&mut State) + Clone>(
     })
 }
 
+/// A row whose end is a level, as [`row`] draws it, whose steps a finger
+/// also slides across to set the level with `set`.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn level_row<A: Fn(&mut State) + Clone>(
+    m: &'static Metrics,
+    name: &'static str,
+    key: FocusKey,
+    act: A,
+    level: u8,
+    active: bool,
+    step: fn(&mut State, i8),
+    set: fn(&mut State, u8) -> bool,
+    height: u32,
+) -> impl View<Rgb565, State> + use<A> {
+    row(
+        m,
+        name,
+        key,
+        act,
+        End::Level {
+            level,
+            active,
+            step,
+        },
+        false,
+        height,
+    )
+    .overlay(
+        Alignment::Trailing,
+        // The steps end the row's margin and end inset from its edge: the
+        // reach the drag area takes, either side of them.
+        super::level_drag::LevelDrag::new(STEP_WIDTH, STEP_GAP, ROW_MARGIN + END_INSET, set),
+    )
+}
+
+/// Where a level row's steps lie across: the middle of each, from the
+/// first, in a row whose focus outline ends at `end`.
+pub fn level_steps(end: i32) -> [i32; LEVELS as usize] {
+    let (step, gap) = (STEP_WIDTH as i32, STEP_GAP as i32);
+    let first = end - END_INSET as i32 - i32::from(LEVELS) * (step + gap) + gap;
+    core::array::from_fn(|i| first + i as i32 * (step + gap) + step / 2)
+}
+
 /// A row that only reads out `value`, `height` tall. It takes no focus:
 /// turning passes it by, and the list scrolls to show it.
 pub(super) fn readout(
@@ -209,11 +257,11 @@ pub(super) fn readout(
         m,
     };
     Lazy::new(look, row_look)
-        .padding(Edges::Leading, INSET - 4)
-        .padding(Edges::Trailing, 10)
+        .padding(Edges::Leading, INSET - ROW_MARGIN)
+        .padding(Edges::Trailing, END_INSET)
         .frame()
         .with_height(height - 2)
-        .padding(Edges::Horizontal, 4)
+        .padding(Edges::Horizontal, ROW_MARGIN)
         .padding(Edges::Vertical, 1)
         .overlay(
             Alignment::Bottom,
@@ -315,7 +363,7 @@ fn level_look(level: u8, active: bool) -> impl View<Rgb565, ()> + use<> {
         step(8),
         step(9),
     ))
-    .with_spacing(2)
+    .with_spacing(STEP_GAP)
 }
 
 /// A screen under Device: its header, and `rows` in a list. Backspace goes

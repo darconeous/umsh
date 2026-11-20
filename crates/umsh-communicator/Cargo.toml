@@ -17,6 +17,11 @@ node = [
     "dep:umsh-ux-communicator",
     "dep:umsh-ulcp",
     "dep:umsh-ulcp-admin",
+    # A communicator always has a screen and a keyboard of its own. These
+    # turn on reading their settings; the device's own session serves them
+    # with `umsh-ulcp-runtime/communicator`, which a firmware enables too.
+    "umsh-ulcp-admin/display",
+    "umsh-ulcp-admin/keyboard",
     "dep:umsh-node",
     "dep:umsh-mac",
     "dep:umsh-uri",
@@ -24,6 +29,13 @@ node = [
     "dep:embassy-futures",
     "umsh-text/node",
 ]
+# A trackball whose directions can be turned off (`PROP_DIRECTIONS_ENABLED`).
+# The device's session serves it with `umsh-ulcp-runtime/directional`.
+directional = ["node", "umsh-ux-communicator/directional", "umsh-ulcp-admin/directional"]
+# A sounder the communicator plays its cues on (`PROP_SOUND_ENABLED`,
+# `PROP_SOUND_VOLUME`). The device's session serves them with
+# `umsh-ulcp-runtime/sound`.
+sound = ["node", "umsh-ulcp-admin/sound"]
 # `FlashMapStore`: the store kept in a `sequential-storage` map on flash.
 flash = ["dep:sequential-storage", "dep:embedded-storage-async"]
 # `ChannelCrypto::software`: the node's channel derivations on the software

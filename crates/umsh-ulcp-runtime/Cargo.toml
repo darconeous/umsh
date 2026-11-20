@@ -40,11 +40,14 @@ radio = [
 # The persisted frame-counter map, the two-page journal handles, and the
 # device node's counter store—over `umsh-journal-store`.
 counters = ["dep:umsh-journal-store", "dep:umsh-hal", "dep:heapless"]
-# A device with its own messaging interface: its device identity is its
-# person's messaging identity, advertised as a chat node, and its device
-# node is sized for chat traffic and the peers it talks with.
+# A device with its own messaging interface, on a screen and keyboard of
+# its own: its device identity is its person's messaging identity,
+# advertised as a chat node, and its device node is sized for chat
+# traffic and the peers it talks with.
 communicator = [
     "device-link",
+    "display",
+    "keyboard",
     "umsh-journal-store?/chat-peers",
     "umsh-ulcp-device/communicator",
 ]
@@ -115,6 +118,12 @@ node-msg = [
 # and the reader's XON/XOFF under `PROP_UART_WINDOW`, over any
 # `embedded-io-async` UART.
 uart-link = ["device-link", "dep:embedded-io-async", "umsh-ulcp-device/uart-link"]
+# A directional control of the device's own, such as a trackball.
+directional = ["umsh-ulcp-device/directional"]
+# A screen, a keyboard, and a sounder of the device's own.
+display = ["umsh-ulcp-device/display"]
+keyboard = ["umsh-ulcp-device/keyboard"]
+sound = ["umsh-ulcp-device/sound"]
 # The glue between a staged `CMD_I2C_TRANSFER`/`CMD_I2C_SCAN` and any
 # `embedded-hal-async` bus: operation carving, the probe loop, and the
 # mapping from HAL error kinds to ULCP statuses. The trait, not a HAL, so

@@ -4,11 +4,9 @@
 
 use umsh_communicator::{Clock, CommunicatorNode, FlashMapStore};
 use umsh_ulcp::profiles;
-use umsh_ulcp_device::{DisplayConfig, LanBearerRole, RadioSettings, SessionConfig, TimeConfig};
+use umsh_ulcp_device::{LanBearerRole, RadioSettings, SessionConfig, TimeConfig};
 use umsh_ux_communicator::board::Board;
-use umsh_ux_communicator::model::{
-    ClockSource, DEFAULT_AUTO_LOCK_S, Node as _, State, brightness_at,
-};
+use umsh_ux_communicator::model::{ClockSource, Node as _, State};
 
 use crate::board::{DUTY, Port, STATS};
 use crate::flash::FileFlash;
@@ -76,12 +74,6 @@ pub fn config(name: &'static str) -> SessionConfig {
         time: Some(TimeConfig),
         gnss: None,
         display_motion_wake: false,
-        display: Some(DisplayConfig {
-            brightness: brightness_at(5),
-            timeout_s: DEFAULT_AUTO_LOCK_S,
-        }),
-        keyboard: true,
-        sound: true,
         // Plays no queue cue, so it may not hold messages for an absent
         // host.
         host_custody: false,

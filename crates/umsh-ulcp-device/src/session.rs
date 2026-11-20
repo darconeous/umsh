@@ -29,11 +29,20 @@ use umsh_ulcp::frame::{
 };
 use umsh_ulcp::gnss::{self, GnssSnapshot};
 use umsh_ulcp::i2c::{self, BusInfo, DeviceInfo, ScanRequest, TransferRequest};
+#[cfg(feature = "sound")]
+use umsh_ulcp::ids::DEFAULT_SOUND_VOLUME;
+#[cfg(feature = "directional")]
+use umsh_ulcp::ids::directions;
+#[cfg(feature = "keyboard")]
+use umsh_ulcp::ids::keyboard_aids;
 use umsh_ulcp::ids::{
-    self, DEFAULT_ADVERT_INTERVAL_S, DEFAULT_BEACON_INTERVAL_S, DEFAULT_SOUND_VOLUME,
-    MAX_AUTO_ANNOUNCE_INTERVAL_S, MIN_AUTO_ANNOUNCE_INTERVAL_S, MIN_DISPLAY_TIMEOUT_S,
-    admin_writable, cap, device_writable, keyboard_aids, meshcore_region_policy, prop,
-    repeater_mode, stream,
+    self, DEFAULT_ADVERT_INTERVAL_S, DEFAULT_BEACON_INTERVAL_S, MAX_AUTO_ANNOUNCE_INTERVAL_S,
+    MIN_AUTO_ANNOUNCE_INTERVAL_S, admin_writable, cap, device_writable, meshcore_region_policy,
+    prop, repeater_mode, stream,
+};
+#[cfg(feature = "display")]
+use umsh_ulcp::ids::{
+    DEFAULT_DISPLAY_BRIGHTNESS, DEFAULT_DISPLAY_TIMEOUT_S, MIN_DISPLAY_TIMEOUT_S,
 };
 use umsh_ulcp::ip;
 use umsh_ulcp::items::{self, Filter, ItemError, REGION_CODE_LEN};
@@ -189,16 +198,6 @@ impl GnssConfig {
     };
 }
 
-/// That this board has a screen of its own (`CAP_DISPLAY`), and its
-/// settings after a reset.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct DisplayConfig {
-    /// Post-reset value of `PROP_DISPLAY_BRIGHTNESS`.
-    pub brightness: u8,
-    /// Post-reset value of `PROP_DISPLAY_TIMEOUT`, in seconds; 0 is never.
-    pub timeout_s: u16,
-}
-
 /// Post-reset value of `PROP_GNSS_IDENT_PRECISION`: a ~38 × 19 m cell,
 /// fine enough to place a node on a street and coarse enough not to place
 /// it in a room.
@@ -315,22 +314,6 @@ pub struct SessionConfig {
     pub temperatures: bool,
     /// Orientation-qualified display wake; enabled by default when supported.
     pub display_motion_wake: bool,
-    /// `None`: the device has no screen whose settings it exposes;
-    /// `CAP_DISPLAY` is absent and `PROP_DISPLAY_BRIGHTNESS` and
-    /// `PROP_DISPLAY_TIMEOUT` are unknown. `Some`: the capability is
-    /// advertised, with the settings after a reset.
-    pub display: Option<DisplayConfig>,
-    /// Whether the device has a keyboard of its own. When set,
-    /// `CAP_KEYBOARD` is advertised and `PROP_KEYBOARD_LIGHT`,
-    /// `PROP_KEYBOARD_AIDS`, and `PROP_SETUP_COMPLETE` exist: lit, with
-    /// every aid on, and not set up after a reset. Otherwise all three
-    /// are unknown.
-    pub keyboard: bool,
-    /// Whether the device has a sounder it plays optional sounds on. When
-    /// set, `CAP_SOUND` is advertised and `PROP_SOUND_ENABLED` and
-    /// `PROP_SOUND_VOLUME` exist, on and at `DEFAULT_SOUND_VOLUME` after a
-    /// reset; otherwise both are unknown.
-    pub sound: bool,
     /// Whether the device may hold messages for its tethered host: the
     /// inbound queue, the host's keys, and delegated acknowledgement. When
     /// set, `CAP_HOST_RX_QUEUE`, `CAP_HOST_KEYS`, and `CAP_HOST_AUTO_ACK`
@@ -1373,21 +1356,29 @@ struct DeviceDomain {
     /// [`GnssConfig::default_enabled`].
     gnss_enabled: bool,
     display_motion_wake_enabled: bool,
-    /// `PROP_DISPLAY_BRIGHTNESS`. Meaningful only under
-    /// [`Config::display`].
+    /// `PROP_DISPLAY_BRIGHTNESS`.
+    #[cfg(feature = "display")]
     display_brightness: u8,
-    /// `PROP_DISPLAY_TIMEOUT`, in seconds. Meaningful only under
-    /// [`Config::display`].
+    /// `PROP_DISPLAY_TIMEOUT`, in seconds.
+    #[cfg(feature = "display")]
     display_timeout: u16,
-    /// `PROP_KEYBOARD_LIGHT`. Meaningful only under [`Config::keyboard`].
+    /// `PROP_KEYBOARD_LIGHT`.
+    #[cfg(feature = "keyboard")]
     keyboard_light: bool,
     /// `PROP_KEYBOARD_AIDS`, holding only defined flags.
+    #[cfg(feature = "keyboard")]
     keyboard_aids: u8,
-    /// `PROP_SOUND_ENABLED`. Meaningful only under [`Config::sound`].
+    /// `PROP_DIRECTIONS_ENABLED`, holding only defined flags.
+    #[cfg(feature = "directional")]
+    directions_enabled: u8,
+    /// `PROP_SOUND_ENABLED`.
+    #[cfg(feature = "sound")]
     sound_enabled: bool,
-    /// `PROP_SOUND_VOLUME`. Meaningful only under [`Config::sound`].
+    /// `PROP_SOUND_VOLUME`.
+    #[cfg(feature = "sound")]
     sound_volume: u8,
-    /// `PROP_SETUP_COMPLETE`. Meaningful only under [`Config::keyboard`].
+    /// `PROP_SETUP_COMPLETE`.
+    #[cfg(feature = "keyboard")]
     setup_complete: bool,
     /// `PROP_TEST_MESSAGE_ALERTS`: whether test messages on `EMERGENCY`
     /// earn a receipt cue like any other message.
@@ -1477,12 +1468,21 @@ impl DeviceDomain {
             time_24h: true,
             gnss_enabled: config.gnss.is_some_and(|gnss| gnss.default_enabled),
             display_motion_wake_enabled: config.display_motion_wake,
-            display_brightness: config.display.map_or(u8::MAX, |d| d.brightness),
-            display_timeout: config.display.map_or(0, |d| d.timeout_s),
+            #[cfg(feature = "display")]
+            display_brightness: DEFAULT_DISPLAY_BRIGHTNESS,
+            #[cfg(feature = "display")]
+            display_timeout: DEFAULT_DISPLAY_TIMEOUT_S,
+            #[cfg(feature = "keyboard")]
             keyboard_light: true,
+            #[cfg(feature = "keyboard")]
             keyboard_aids: keyboard_aids::ALL,
+            #[cfg(feature = "directional")]
+            directions_enabled: directions::ALL,
+            #[cfg(feature = "sound")]
             sound_enabled: true,
+            #[cfg(feature = "sound")]
             sound_volume: DEFAULT_SOUND_VOLUME,
+            #[cfg(feature = "keyboard")]
             setup_complete: false,
             test_message_alerts: false,
             gnss_ident_update: false,
@@ -2947,8 +2947,11 @@ const SAVED_SCHEMA: &[SavedProperty] = &[
     saved(prop::GNSS_TIME_TRUST, ApplyPhase::Config, false),
     saved(prop::BLE_ENABLED, ApplyPhase::Config, false),
     saved(prop::DISPLAY_MOTION_WAKE_ENABLED, ApplyPhase::Config, false),
+    #[cfg(feature = "display")]
     saved(prop::DISPLAY_BRIGHTNESS, ApplyPhase::Config, false),
+    #[cfg(feature = "keyboard")]
     saved(prop::KEYBOARD_LIGHT, ApplyPhase::Config, false),
+    #[cfg(feature = "keyboard")]
     saved(prop::KEYBOARD_AIDS, ApplyPhase::Config, false),
     // The station's configuration and none of its behavior: whether it
     // is on and the networks it knows, credentials included, which is
@@ -2958,11 +2961,17 @@ const SAVED_SCHEMA: &[SavedProperty] = &[
     saved(prop::WIFI_NETWORKS, ApplyPhase::Keys, true),
     saved(prop::TZ_RULE, ApplyPhase::Config, false),
     saved(prop::TIME_24H, ApplyPhase::Config, false),
+    #[cfg(feature = "display")]
     saved(prop::DISPLAY_TIMEOUT, ApplyPhase::Config, false),
+    #[cfg(feature = "sound")]
     saved(prop::SOUND_ENABLED, ApplyPhase::Config, false),
+    #[cfg(feature = "sound")]
     saved(prop::SOUND_VOLUME, ApplyPhase::Config, false),
+    #[cfg(feature = "keyboard")]
     saved(prop::SETUP_COMPLETE, ApplyPhase::Config, false),
     saved(prop::TEST_MESSAGE_ALERTS, ApplyPhase::Config, false),
+    #[cfg(feature = "directional")]
+    saved(prop::DIRECTIONS_ENABLED, ApplyPhase::Config, false),
     saved(prop::IPV4_CONFIG, ApplyPhase::Config, false),
     saved(prop::IPV6_CONFIG, ApplyPhase::Config, false),
     saved(prop::IP_DNS, ApplyPhase::Config, true),
@@ -3122,12 +3131,21 @@ struct SavedState {
     time_24h: bool,
     gnss_enabled: bool,
     display_motion_wake_enabled: bool,
+    #[cfg(feature = "display")]
     display_brightness: u8,
+    #[cfg(feature = "display")]
     display_timeout: u16,
+    #[cfg(feature = "keyboard")]
     keyboard_light: bool,
+    #[cfg(feature = "keyboard")]
     keyboard_aids: u8,
+    #[cfg(feature = "directional")]
+    directions_enabled: u8,
+    #[cfg(feature = "sound")]
     sound_enabled: bool,
+    #[cfg(feature = "sound")]
     sound_volume: u8,
+    #[cfg(feature = "keyboard")]
     setup_complete: bool,
     test_message_alerts: bool,
     gnss_ident_update: bool,
@@ -3189,12 +3207,21 @@ impl SavedState {
             time_24h: device.time_24h,
             gnss_enabled: device.gnss_enabled,
             display_motion_wake_enabled: device.display_motion_wake_enabled,
+            #[cfg(feature = "display")]
             display_brightness: device.display_brightness,
+            #[cfg(feature = "display")]
             display_timeout: device.display_timeout,
+            #[cfg(feature = "keyboard")]
             keyboard_light: device.keyboard_light,
+            #[cfg(feature = "keyboard")]
             keyboard_aids: device.keyboard_aids,
+            #[cfg(feature = "directional")]
+            directions_enabled: device.directions_enabled,
+            #[cfg(feature = "sound")]
             sound_enabled: device.sound_enabled,
+            #[cfg(feature = "sound")]
             sound_volume: device.sound_volume,
+            #[cfg(feature = "keyboard")]
             setup_complete: device.setup_complete,
             test_message_alerts: device.test_message_alerts,
             gnss_ident_update: device.gnss_ident_update,
@@ -3261,12 +3288,21 @@ impl SavedState {
             // snapshot saved while it was on would restore it off.
             gnss_enabled: config.gnss.is_some_and(|gnss| gnss.default_enabled),
             display_motion_wake_enabled: config.display_motion_wake,
-            display_brightness: config.display.map_or(u8::MAX, |d| d.brightness),
-            display_timeout: config.display.map_or(0, |d| d.timeout_s),
+            #[cfg(feature = "display")]
+            display_brightness: DEFAULT_DISPLAY_BRIGHTNESS,
+            #[cfg(feature = "display")]
+            display_timeout: DEFAULT_DISPLAY_TIMEOUT_S,
+            #[cfg(feature = "keyboard")]
             keyboard_light: true,
+            #[cfg(feature = "keyboard")]
             keyboard_aids: keyboard_aids::ALL,
+            #[cfg(feature = "directional")]
+            directions_enabled: directions::ALL,
+            #[cfg(feature = "sound")]
             sound_enabled: true,
+            #[cfg(feature = "sound")]
             sound_volume: DEFAULT_SOUND_VOLUME,
+            #[cfg(feature = "keyboard")]
             setup_complete: false,
             test_message_alerts: false,
             gnss_ident_update: false,
@@ -3410,12 +3446,21 @@ impl SavedState {
             prop::DISPLAY_MOTION_WAKE_ENABLED => {
                 encoder.put(number, &[self.display_motion_wake_enabled as u8])
             }
+            #[cfg(feature = "display")]
             prop::DISPLAY_BRIGHTNESS => encoder.put(number, &[self.display_brightness]),
+            #[cfg(feature = "display")]
             prop::DISPLAY_TIMEOUT => encoder.put(number, &self.display_timeout.to_le_bytes()),
+            #[cfg(feature = "keyboard")]
             prop::KEYBOARD_LIGHT => encoder.put(number, &[self.keyboard_light as u8]),
+            #[cfg(feature = "keyboard")]
             prop::KEYBOARD_AIDS => encoder.put(number, &[self.keyboard_aids]),
+            #[cfg(feature = "directional")]
+            prop::DIRECTIONS_ENABLED => encoder.put(number, &[self.directions_enabled]),
+            #[cfg(feature = "sound")]
             prop::SOUND_ENABLED => encoder.put(number, &[self.sound_enabled as u8]),
+            #[cfg(feature = "sound")]
             prop::SOUND_VOLUME => encoder.put(number, &[self.sound_volume]),
+            #[cfg(feature = "keyboard")]
             prop::SETUP_COMPLETE => encoder.put(number, &[self.setup_complete as u8]),
             prop::TEST_MESSAGE_ALERTS => encoder.put(number, &[self.test_message_alerts as u8]),
             prop::PHY_DUTY_LIMIT => encoder.put(number, &self.duty_limit.to_le_bytes()),
@@ -3640,22 +3685,34 @@ impl SavedState {
             prop::DISPLAY_MOTION_WAKE_ENABLED => {
                 self.display_motion_wake_enabled = parse_bool(value).map_err(invalid)?
             }
+            #[cfg(feature = "display")]
             prop::DISPLAY_BRIGHTNESS => {
                 self.display_brightness = parse_u8(value).map_err(invalid)?
             }
+            #[cfg(feature = "display")]
             prop::DISPLAY_TIMEOUT => {
                 self.display_timeout = parse_display_timeout(value).map_err(invalid)?
             }
+            #[cfg(feature = "keyboard")]
             prop::KEYBOARD_LIGHT => self.keyboard_light = parse_bool(value).map_err(invalid)?,
+            #[cfg(feature = "sound")]
             prop::SOUND_ENABLED => self.sound_enabled = parse_bool(value).map_err(invalid)?,
+            #[cfg(feature = "sound")]
             prop::SOUND_VOLUME => self.sound_volume = parse_u8(value).map_err(invalid)?,
+            #[cfg(feature = "keyboard")]
             prop::SETUP_COMPLETE => self.setup_complete = parse_bool(value).map_err(invalid)?,
             prop::TEST_MESSAGE_ALERTS => {
                 self.test_message_alerts = parse_bool(value).map_err(invalid)?
             }
             // Aids a newer firmware saved are dropped, not the snapshot.
+            #[cfg(feature = "keyboard")]
             prop::KEYBOARD_AIDS => {
                 self.keyboard_aids = parse_u8(value).map_err(invalid)? & keyboard_aids::ALL
+            }
+            // Likewise directions.
+            #[cfg(feature = "directional")]
+            prop::DIRECTIONS_ENABLED => {
+                self.directions_enabled = parse_u8(value).map_err(invalid)? & directions::ALL
             }
             prop::PHY_DUTY_LIMIT => self.duty_limit = parse_u16(value).map_err(invalid)?,
             prop::DEV_ADMINS => {
@@ -4757,14 +4814,25 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     prop::DISPLAY_MOTION_WAKE_ENABLED => {
                         self.device.display_motion_wake_enabled = saved.display_motion_wake_enabled
                     }
+                    #[cfg(feature = "display")]
                     prop::DISPLAY_BRIGHTNESS => {
                         self.device.display_brightness = saved.display_brightness
                     }
+                    #[cfg(feature = "display")]
                     prop::DISPLAY_TIMEOUT => self.device.display_timeout = saved.display_timeout,
+                    #[cfg(feature = "keyboard")]
                     prop::KEYBOARD_LIGHT => self.device.keyboard_light = saved.keyboard_light,
+                    #[cfg(feature = "keyboard")]
                     prop::KEYBOARD_AIDS => self.device.keyboard_aids = saved.keyboard_aids,
+                    #[cfg(feature = "directional")]
+                    prop::DIRECTIONS_ENABLED => {
+                        self.device.directions_enabled = saved.directions_enabled
+                    }
+                    #[cfg(feature = "sound")]
                     prop::SOUND_ENABLED => self.device.sound_enabled = saved.sound_enabled,
+                    #[cfg(feature = "sound")]
                     prop::SOUND_VOLUME => self.device.sound_volume = saved.sound_volume,
+                    #[cfg(feature = "keyboard")]
                     prop::SETUP_COMPLETE => self.device.setup_complete = saved.setup_complete,
                     prop::TEST_MESSAGE_ALERTS => {
                         self.device.test_message_alerts = saved.test_message_alerts
@@ -6611,37 +6679,40 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         self.config.display_motion_wake && self.device.display_motion_wake_enabled
     }
 
-    /// `PROP_DISPLAY_BRIGHTNESS`, from 0 to 255; `None` on a board whose
-    /// brightness is not adjustable.
-    pub fn display_brightness(&self) -> Option<u8> {
-        self.config.display.map(|_| self.device.display_brightness)
+    /// `PROP_DISPLAY_BRIGHTNESS`, from 0 to 255.
+    #[cfg(feature = "display")]
+    pub fn display_brightness(&self) -> u8 {
+        self.device.display_brightness
     }
 
-    /// `PROP_DISPLAY_TIMEOUT`, in seconds, 0 for never; `None` on a board
-    /// without a screen whose settings it exposes.
-    pub fn display_timeout(&self) -> Option<u16> {
-        self.config.display.map(|_| self.device.display_timeout)
+    /// `PROP_DISPLAY_TIMEOUT`, in seconds, 0 for never.
+    #[cfg(feature = "display")]
+    pub fn display_timeout(&self) -> u16 {
+        self.device.display_timeout
     }
 
-    /// `PROP_KEYBOARD_LIGHT`; false on a board without a keyboard.
+    /// `PROP_KEYBOARD_LIGHT`.
+    #[cfg(feature = "keyboard")]
     pub fn keyboard_light(&self) -> bool {
-        self.config.keyboard && self.device.keyboard_light
+        self.device.keyboard_light
     }
 
-    /// `PROP_SOUND_ENABLED`; false on a board without a sounder.
+    /// `PROP_SOUND_ENABLED`.
+    #[cfg(feature = "sound")]
     pub fn sound_enabled(&self) -> bool {
-        self.config.sound && self.device.sound_enabled
+        self.device.sound_enabled
     }
 
-    /// `PROP_SOUND_VOLUME`, 255 the loudest; `None` on a board without a
-    /// sounder.
-    pub fn sound_volume(&self) -> Option<u8> {
-        self.config.sound.then_some(self.device.sound_volume)
+    /// `PROP_SOUND_VOLUME`, 255 the loudest.
+    #[cfg(feature = "sound")]
+    pub fn sound_volume(&self) -> u8 {
+        self.device.sound_volume
     }
 
-    /// `PROP_SETUP_COMPLETE`; false on a board without a keyboard.
+    /// `PROP_SETUP_COMPLETE`.
+    #[cfg(feature = "keyboard")]
     pub fn setup_complete(&self) -> bool {
-        self.config.keyboard && self.device.setup_complete
+        self.device.setup_complete
     }
 
     /// `PROP_TEST_MESSAGE_ALERTS`.
@@ -6649,14 +6720,10 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         self.device.test_message_alerts
     }
 
-    /// `PROP_KEYBOARD_AIDS`, as [`keyboard_aids`] flags; none on a board
-    /// without a keyboard.
+    /// `PROP_KEYBOARD_AIDS`, as [`keyboard_aids`] flags.
+    #[cfg(feature = "keyboard")]
     pub fn keyboard_aids(&self) -> u8 {
-        if self.config.keyboard {
-            self.device.keyboard_aids
-        } else {
-            0
-        }
+        self.device.keyboard_aids
     }
 
     pub fn toggle_display_motion_wake(&mut self, emit: &mut dyn FnMut(&[u8])) -> Option<bool> {
@@ -8922,32 +8989,38 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 self.bump_dev_domain();
                 Ok(false)
             }
-            prop::DISPLAY_BRIGHTNESS if self.config.display.is_some() => {
+            #[cfg(feature = "display")]
+            prop::DISPLAY_BRIGHTNESS => {
                 self.device.display_brightness = parse_u8(value)?;
                 self.bump_dev_domain();
                 Ok(false)
             }
-            prop::DISPLAY_TIMEOUT if self.config.display.is_some() => {
+            #[cfg(feature = "display")]
+            prop::DISPLAY_TIMEOUT => {
                 self.device.display_timeout = parse_display_timeout(value)?;
                 self.bump_dev_domain();
                 Ok(false)
             }
-            prop::KEYBOARD_LIGHT if self.config.keyboard => {
+            #[cfg(feature = "keyboard")]
+            prop::KEYBOARD_LIGHT => {
                 self.device.keyboard_light = parse_bool(value)?;
                 self.bump_dev_domain();
                 Ok(false)
             }
-            prop::SOUND_ENABLED if self.config.sound => {
+            #[cfg(feature = "sound")]
+            prop::SOUND_ENABLED => {
                 self.device.sound_enabled = parse_bool(value)?;
                 self.bump_dev_domain();
                 Ok(false)
             }
-            prop::SOUND_VOLUME if self.config.sound => {
+            #[cfg(feature = "sound")]
+            prop::SOUND_VOLUME => {
                 self.device.sound_volume = parse_u8(value)?;
                 self.bump_dev_domain();
                 Ok(false)
             }
-            prop::SETUP_COMPLETE if self.config.keyboard => {
+            #[cfg(feature = "keyboard")]
+            prop::SETUP_COMPLETE => {
                 self.device.setup_complete = parse_bool(value)?;
                 self.bump_dev_domain();
                 Ok(false)
@@ -8957,8 +9030,15 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 self.bump_dev_domain();
                 Ok(false)
             }
-            prop::KEYBOARD_AIDS if self.config.keyboard => {
+            #[cfg(feature = "keyboard")]
+            prop::KEYBOARD_AIDS => {
                 self.device.keyboard_aids = parse_keyboard_aids(value)?;
+                self.bump_dev_domain();
+                Ok(false)
+            }
+            #[cfg(feature = "directional")]
+            prop::DIRECTIONS_ENABLED => {
+                self.device.directions_enabled = parse_directions(value)?;
                 self.bump_dev_domain();
                 Ok(false)
             }
@@ -10007,17 +10087,24 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         if key == prop::DISPLAY_MOTION_WAKE_ENABLED {
             return self.config.display_motion_wake;
         }
+        #[cfg(feature = "display")]
         if matches!(key, prop::DISPLAY_BRIGHTNESS | prop::DISPLAY_TIMEOUT) {
-            return self.config.display.is_some();
+            return true;
         }
+        #[cfg(feature = "keyboard")]
         if matches!(
             key,
             prop::KEYBOARD_LIGHT | prop::KEYBOARD_AIDS | prop::SETUP_COMPLETE
         ) {
-            return self.config.keyboard;
+            return true;
         }
+        #[cfg(feature = "directional")]
+        if key == prop::DIRECTIONS_ENABLED {
+            return true;
+        }
+        #[cfg(feature = "sound")]
         if matches!(key, prop::SOUND_ENABLED | prop::SOUND_VOLUME) {
-            return self.config.sound;
+            return true;
         }
         if matches!(key, prop::TEMPERATURES | prop::TEMPERATURE_NAMES) {
             return self.config.temperatures;
@@ -10204,15 +10291,6 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 }
                 if self.config.display_motion_wake {
                     len += pui::encode(cap::DISPLAY_MOTION_WAKE, &mut out[len..]).unwrap_or(0);
-                }
-                if self.config.display.is_some() {
-                    len += pui::encode(cap::DISPLAY, &mut out[len..]).unwrap_or(0);
-                }
-                if self.config.keyboard {
-                    len += pui::encode(cap::KEYBOARD, &mut out[len..]).unwrap_or(0);
-                }
-                if self.config.sound {
-                    len += pui::encode(cap::SOUND, &mut out[len..]).unwrap_or(0);
                 }
                 if self.config.temperatures {
                     len += pui::encode(cap::TEMPERATURE, &mut out[len..]).unwrap_or(0);
@@ -10424,27 +10502,33 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 out[0] = self.device.display_motion_wake_enabled as u8;
                 1
             }
-            prop::DISPLAY_BRIGHTNESS if self.config.display.is_some() => {
+            #[cfg(feature = "display")]
+            prop::DISPLAY_BRIGHTNESS => {
                 out[0] = self.device.display_brightness;
                 1
             }
-            prop::DISPLAY_TIMEOUT if self.config.display.is_some() => {
+            #[cfg(feature = "display")]
+            prop::DISPLAY_TIMEOUT => {
                 out[..2].copy_from_slice(&self.device.display_timeout.to_le_bytes());
                 2
             }
-            prop::KEYBOARD_LIGHT if self.config.keyboard => {
+            #[cfg(feature = "keyboard")]
+            prop::KEYBOARD_LIGHT => {
                 out[0] = self.device.keyboard_light as u8;
                 1
             }
-            prop::SOUND_ENABLED if self.config.sound => {
+            #[cfg(feature = "sound")]
+            prop::SOUND_ENABLED => {
                 out[0] = self.device.sound_enabled as u8;
                 1
             }
-            prop::SOUND_VOLUME if self.config.sound => {
+            #[cfg(feature = "sound")]
+            prop::SOUND_VOLUME => {
                 out[0] = self.device.sound_volume;
                 1
             }
-            prop::SETUP_COMPLETE if self.config.keyboard => {
+            #[cfg(feature = "keyboard")]
+            prop::SETUP_COMPLETE => {
                 out[0] = self.device.setup_complete as u8;
                 1
             }
@@ -10452,8 +10536,14 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 out[0] = self.device.test_message_alerts as u8;
                 1
             }
-            prop::KEYBOARD_AIDS if self.config.keyboard => {
+            #[cfg(feature = "keyboard")]
+            prop::KEYBOARD_AIDS => {
                 out[0] = self.device.keyboard_aids;
+                1
+            }
+            #[cfg(feature = "directional")]
+            prop::DIRECTIONS_ENABLED => {
+                out[0] = self.device.directions_enabled;
                 1
             }
             prop::GNSS_ENABLED if self.config.gnss.is_some() => {
@@ -10996,6 +11086,7 @@ fn parse_u8(value: &[u8]) -> Result<u8, Status> {
 
 /// A `PROP_DISPLAY_TIMEOUT` write: seconds, raised to the shortest a
 /// device keeps, or 0 for never.
+#[cfg(feature = "display")]
 fn parse_display_timeout(value: &[u8]) -> Result<u16, Status> {
     parse_u16(value).map(|seconds| match seconds {
         0 => 0,
@@ -11004,9 +11095,20 @@ fn parse_display_timeout(value: &[u8]) -> Result<u16, Status> {
 }
 
 /// A `PROP_KEYBOARD_AIDS` write: one octet whose reserved bits are zero.
+#[cfg(feature = "keyboard")]
 fn parse_keyboard_aids(value: &[u8]) -> Result<u8, Status> {
     match parse_u8(value)? {
         aids if aids & !keyboard_aids::ALL == 0 => Ok(aids),
+        _ => Err(Status::INVALID_ARGUMENT),
+    }
+}
+
+/// A `PROP_DIRECTIONS_ENABLED` write: one octet whose reserved bits are
+/// zero.
+#[cfg(feature = "directional")]
+fn parse_directions(value: &[u8]) -> Result<u8, Status> {
+    match parse_u8(value)? {
+        enabled if enabled & !directions::ALL == 0 => Ok(enabled),
         _ => Err(Status::INVALID_ARGUMENT),
     }
 }
@@ -11263,9 +11365,6 @@ mod tests {
             time: Some(TimeConfig),
             gnss: Some(GnssConfig::DEFAULT),
             display_motion_wake: false,
-            display: None,
-            keyboard: false,
-            sound: false,
             host_custody: true,
             illuminance: true,
             temperatures: false,
@@ -11371,33 +11470,23 @@ mod tests {
         assert!(!get(&mut unsupported, prop::CAPS).contains(&(cap::DISPLAY_MOTION_WAKE as u8)));
     }
 
+    #[cfg(feature = "display")]
     #[test]
-    fn display_and_keyboard_settings_are_saved_device_settings() {
-        let config = SessionConfig {
-            display: Some(DisplayConfig {
-                brightness: 113,
-                timeout_s: 30,
-            }),
-            keyboard: true,
-            ..test_config()
-        };
+    fn display_settings_are_saved_device_settings() {
+        let config = test_config();
         let mut session = Session::new(config, Status::RESET_POWER_ON, test_engine());
         session.attach(true);
-        let caps = get(&mut session, prop::CAPS);
-        assert!(caps.contains(&(cap::DISPLAY as u8)));
-        assert!(caps.contains(&(cap::KEYBOARD as u8)));
-        assert_eq!(get(&mut session, prop::DISPLAY_BRIGHTNESS), [113]);
+        assert_eq!(
+            get(&mut session, prop::DISPLAY_BRIGHTNESS),
+            [DEFAULT_DISPLAY_BRIGHTNESS]
+        );
         assert_eq!(
             get(&mut session, prop::DISPLAY_TIMEOUT),
-            30u16.to_le_bytes()
+            DEFAULT_DISPLAY_TIMEOUT_S.to_le_bytes()
         );
-        assert_eq!(get(&mut session, prop::KEYBOARD_LIGHT), [1]);
-        assert_eq!(get(&mut session, prop::KEYBOARD_AIDS), [keyboard_aids::ALL]);
 
         set(&mut session, prop::DISPLAY_BRIGHTNESS, &[0]);
-        set(&mut session, prop::KEYBOARD_LIGHT, &[0]);
-        set(&mut session, prop::KEYBOARD_AIDS, &[keyboard_aids::PERIOD]);
-        assert_eq!(session.display_brightness(), Some(0));
+        assert_eq!(session.display_brightness(), 0);
         // Too short a timeout is raised to the shortest kept.
         set(&mut session, prop::DISPLAY_TIMEOUT, &3u16.to_le_bytes());
         assert_eq!(
@@ -11406,9 +11495,41 @@ mod tests {
         );
         // 0 is never, and kept as written.
         set(&mut session, prop::DISPLAY_TIMEOUT, &0u16.to_le_bytes());
-        assert_eq!(session.display_timeout(), Some(0));
+        assert_eq!(session.display_timeout(), 0);
         set(&mut session, prop::DISPLAY_TIMEOUT, &120u16.to_le_bytes());
-        assert_eq!(session.display_timeout(), Some(120));
+        assert_eq!(session.display_timeout(), 120);
+
+        save(&mut session);
+        let mut bytes = [0; SNAPSHOT_MAX];
+        let len = session.encode_snapshot(&mut bytes).unwrap();
+        let mut booted: TestSession = Session::new(config, Status::RESET_POWER_ON, test_engine());
+        booted.restore_at_boot(&bytes[..len]).unwrap();
+        assert_eq!(booted.display_brightness(), 0);
+        assert_eq!(booted.display_timeout(), 120);
+        booted.reset(Status::RESET_SOFTWARE, &mut |_| {});
+        assert_eq!(booted.display_brightness(), 0);
+
+        // A snapshot from before these existed restores the defaults.
+        let old = strip_snapshot_options(
+            &bytes[..len],
+            &[prop::DISPLAY_BRIGHTNESS, prop::DISPLAY_TIMEOUT],
+        );
+        booted.restore_at_boot(&old).unwrap();
+        assert_eq!(booted.display_brightness(), DEFAULT_DISPLAY_BRIGHTNESS);
+        assert_eq!(booted.display_timeout(), DEFAULT_DISPLAY_TIMEOUT_S);
+    }
+
+    #[cfg(feature = "keyboard")]
+    #[test]
+    fn keyboard_settings_are_saved_device_settings() {
+        let config = test_config();
+        let mut session = Session::new(config, Status::RESET_POWER_ON, test_engine());
+        session.attach(true);
+        assert_eq!(get(&mut session, prop::KEYBOARD_LIGHT), [1]);
+        assert_eq!(get(&mut session, prop::KEYBOARD_AIDS), [keyboard_aids::ALL]);
+
+        set(&mut session, prop::KEYBOARD_LIGHT, &[0]);
+        set(&mut session, prop::KEYBOARD_AIDS, &[keyboard_aids::PERIOD]);
         assert!(!session.keyboard_light());
         assert_eq!(session.keyboard_aids(), keyboard_aids::PERIOD);
 
@@ -11423,59 +11544,93 @@ mod tests {
         let len = session.encode_snapshot(&mut bytes).unwrap();
         let mut booted: TestSession = Session::new(config, Status::RESET_POWER_ON, test_engine());
         booted.restore_at_boot(&bytes[..len]).unwrap();
-        assert_eq!(booted.display_brightness(), Some(0));
-        assert_eq!(booted.display_timeout(), Some(120));
         assert!(!booted.keyboard_light());
         assert_eq!(booted.keyboard_aids(), keyboard_aids::PERIOD);
-        booted.reset(Status::RESET_SOFTWARE, &mut |_| {});
-        assert_eq!(booted.display_brightness(), Some(0));
 
         // A snapshot from before these existed restores the defaults.
-        let old = strip_snapshot_options(
-            &bytes[..len],
-            &[
-                prop::DISPLAY_BRIGHTNESS,
-                prop::DISPLAY_TIMEOUT,
-                prop::KEYBOARD_LIGHT,
-                prop::KEYBOARD_AIDS,
-            ],
-        );
+        let old =
+            strip_snapshot_options(&bytes[..len], &[prop::KEYBOARD_LIGHT, prop::KEYBOARD_AIDS]);
         booted.restore_at_boot(&old).unwrap();
-        assert_eq!(booted.display_brightness(), Some(113));
-        assert_eq!(booted.display_timeout(), Some(30));
         assert!(booted.keyboard_light());
         assert_eq!(booted.keyboard_aids(), keyboard_aids::ALL);
+    }
 
+    /// Each board-feature property is unknown in a build without its
+    /// feature.
+    #[test]
+    fn board_feature_properties_are_unknown_without_their_feature() {
         let mut bare = test_session();
-        assert_eq!(bare.display_brightness(), None);
-        assert_eq!(bare.display_timeout(), None);
-        assert!(!bare.keyboard_light());
-        assert_eq!(bare.keyboard_aids(), 0);
-        let caps = get(&mut bare, prop::CAPS);
-        assert!(!caps.contains(&(cap::DISPLAY as u8)));
-        assert!(!caps.contains(&(cap::KEYBOARD as u8)));
-        for key in [
-            prop::DISPLAY_BRIGHTNESS,
-            prop::DISPLAY_TIMEOUT,
+        #[allow(unused_mut)]
+        let mut absent: Vec<u32> = Vec::new();
+        #[cfg(not(feature = "display"))]
+        absent.extend([prop::DISPLAY_BRIGHTNESS, prop::DISPLAY_TIMEOUT]);
+        #[cfg(not(feature = "keyboard"))]
+        absent.extend([
             prop::KEYBOARD_LIGHT,
             prop::KEYBOARD_AIDS,
-        ] {
+            prop::SETUP_COMPLETE,
+        ]);
+        #[cfg(not(feature = "sound"))]
+        absent.extend([prop::SOUND_ENABLED, prop::SOUND_VOLUME]);
+        #[cfg(not(feature = "directional"))]
+        absent.push(prop::DIRECTIONS_ENABLED);
+        for key in absent {
             let (emitted, _) = set(&mut bare, key, &[1]);
             let (_, _, value) = parse_prop_is(&emitted[0]);
             assert_eq!(pui::decode(&value).unwrap().0, Status::PROP_NOT_FOUND.0);
         }
     }
 
+    #[cfg(feature = "directional")]
     #[test]
-    fn sound_is_a_saved_device_setting() {
-        let config = SessionConfig {
-            sound: true,
-            host_custody: true,
-            ..test_config()
-        };
+    fn directions_enabled_is_a_saved_device_setting() {
+        let config = test_config();
         let mut session = Session::new(config, Status::RESET_POWER_ON, test_engine());
         session.attach(true);
-        assert!(get(&mut session, prop::CAPS).contains(&(cap::SOUND as u8)));
+        let enabled = |session: &mut TestSession| get(session, prop::DIRECTIONS_ENABLED);
+        assert_eq!(enabled(&mut session), [directions::ALL]);
+
+        set(
+            &mut session,
+            prop::DIRECTIONS_ENABLED,
+            &[directions::HORIZONTAL],
+        );
+        assert_eq!(enabled(&mut session), [directions::HORIZONTAL]);
+        // Every direction off is a setting like any other.
+        set(&mut session, prop::DIRECTIONS_ENABLED, &[0]);
+        assert_eq!(enabled(&mut session), [0]);
+        set(
+            &mut session,
+            prop::DIRECTIONS_ENABLED,
+            &[directions::HORIZONTAL],
+        );
+
+        // A reserved direction is refused, and those in force stay.
+        let (emitted, _) = set(&mut session, prop::DIRECTIONS_ENABLED, &[0x10]);
+        let (_, _, value) = parse_prop_is(&emitted[0]);
+        assert_eq!(pui::decode(&value).unwrap().0, Status::INVALID_ARGUMENT.0);
+        assert_eq!(enabled(&mut session), [directions::HORIZONTAL]);
+
+        save(&mut session);
+        let mut bytes = [0; SNAPSHOT_MAX];
+        let len = session.encode_snapshot(&mut bytes).unwrap();
+        let mut booted: TestSession = Session::new(config, Status::RESET_POWER_ON, test_engine());
+        booted.restore_at_boot(&bytes[..len]).unwrap();
+        booted.attach(true);
+        assert_eq!(enabled(&mut booted), [directions::HORIZONTAL]);
+
+        // A snapshot from before it existed restores every direction.
+        let old = strip_snapshot_options(&bytes[..len], &[prop::DIRECTIONS_ENABLED]);
+        booted.restore_at_boot(&old).unwrap();
+        assert_eq!(enabled(&mut booted), [directions::ALL]);
+    }
+
+    #[cfg(feature = "sound")]
+    #[test]
+    fn sound_is_a_saved_device_setting() {
+        let config = test_config();
+        let mut session = Session::new(config, Status::RESET_POWER_ON, test_engine());
+        session.attach(true);
         assert_eq!(get(&mut session, prop::SOUND_ENABLED), [1]);
         assert!(session.sound_enabled());
 
@@ -11488,7 +11643,7 @@ mod tests {
         assert!(!session.sound_enabled());
         assert_eq!(get(&mut session, prop::SOUND_ENABLED), [0]);
         set(&mut session, prop::SOUND_VOLUME, &[40]);
-        assert_eq!(session.sound_volume(), Some(40));
+        assert_eq!(session.sound_volume(), 40);
 
         save(&mut session);
         let mut bytes = [0; SNAPSHOT_MAX];
@@ -11496,7 +11651,7 @@ mod tests {
         let mut booted: TestSession = Session::new(config, Status::RESET_POWER_ON, test_engine());
         booted.restore_at_boot(&bytes[..len]).unwrap();
         assert!(!booted.sound_enabled());
-        assert_eq!(booted.sound_volume(), Some(40));
+        assert_eq!(booted.sound_volume(), 40);
         booted.reset(Status::RESET_SOFTWARE, &mut |_| {});
         assert!(!booted.sound_enabled());
 
@@ -11504,25 +11659,13 @@ mod tests {
         let old = strip_snapshot_options(&bytes[..len], &[prop::SOUND_ENABLED, prop::SOUND_VOLUME]);
         booted.restore_at_boot(&old).unwrap();
         assert!(booted.sound_enabled());
-        assert_eq!(booted.sound_volume(), Some(DEFAULT_SOUND_VOLUME));
-
-        let mut bare = test_session();
-        assert!(!bare.sound_enabled());
-        assert_eq!(bare.sound_volume(), None);
-        assert!(!get(&mut bare, prop::CAPS).contains(&(cap::SOUND as u8)));
-        for key in [prop::SOUND_ENABLED, prop::SOUND_VOLUME] {
-            let (emitted, _) = set(&mut bare, key, &[1]);
-            let (_, _, value) = parse_prop_is(&emitted[0]);
-            assert_eq!(pui::decode(&value).unwrap().0, Status::PROP_NOT_FOUND.0);
-        }
+        assert_eq!(booted.sound_volume(), DEFAULT_SOUND_VOLUME);
     }
 
+    #[cfg(feature = "keyboard")]
     #[test]
     fn setup_is_a_saved_device_setting() {
-        let config = SessionConfig {
-            keyboard: true,
-            ..test_config()
-        };
+        let config = test_config();
         let mut session = Session::new(config, Status::RESET_POWER_ON, test_engine());
         session.attach(true);
         assert_eq!(get(&mut session, prop::SETUP_COMPLETE), [0]);
@@ -11545,22 +11688,14 @@ mod tests {
         let old = strip_snapshot_options(&bytes[..len], &[prop::SETUP_COMPLETE]);
         booted.restore_at_boot(&old).unwrap();
         assert!(!booted.setup_complete());
-
-        let mut bare = test_session();
-        assert!(!bare.setup_complete());
-        let (emitted, _) = set(&mut bare, prop::SETUP_COMPLETE, &[1]);
-        let (_, _, value) = parse_prop_is(&emitted[0]);
-        assert_eq!(pui::decode(&value).unwrap().0, Status::PROP_NOT_FOUND.0);
     }
 
     /// A factory reset leaves the device not set up: the wipe takes the
     /// snapshot with it, and so does `CMD_CLEAR` followed by `CMD_RST`.
+    #[cfg(feature = "keyboard")]
     #[test]
     fn a_factory_reset_leaves_the_device_not_set_up() {
-        let config = SessionConfig {
-            keyboard: true,
-            ..test_config()
-        };
+        let config = test_config();
         let mut session: TestSession = Session::new(config, Status::RESET_POWER_ON, test_engine());
         session.attach(true);
         set(&mut session, prop::SETUP_COMPLETE, &[1]);
@@ -21406,6 +21541,7 @@ mod tests {
     // ─── Wi-Fi and IP ────────────────────────────────────────────────
 
     /// A network entry in its item form, credential included.
+    #[cfg(feature = "wifi")]
     fn network_item(ssid: &[u8], credential: &[u8]) -> Vec<u8> {
         let mut buf = [0u8; wifi::NETWORK_ENTRY_MAX_LEN];
         let len = wifi::NetworkEntry {
@@ -21843,6 +21979,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "wifi")]
     fn owed_publications(session: &mut TestSession) -> Vec<Vec<u8>> {
         let mut frames = Vec::new();
         session.take_owed_publications(&mut |frame: &[u8]| frames.push(frame.to_vec()));

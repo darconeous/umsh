@@ -70,6 +70,8 @@ pub fn view(state: &State) -> impl View<Rgb565, State> + use<> {
                     .node
                     .sound_enabled()
                     .map(|_| category("Sounds", keys::SOUNDS, State::open_sounds, "")),
+                cfg!(feature = "directional")
+                    .then(|| category("Trackball", keys::TRACKBALL, State::open_trackball, "")),
                 state.node.bluetooth_enabled().map(|_| {
                     category(
                         "Bluetooth",
@@ -258,6 +260,7 @@ pub fn page(state: &State, page: &DevicePage) -> impl View<Rgb565, State> + use<
         | DevicePage::Gnss
         | DevicePage::Battery
         | DevicePage::Sounds { .. }
+        | DevicePage::Trackball
         | DevicePage::Display { .. }
         | DevicePage::AutoLock
         | DevicePage::Gamma { .. }
@@ -297,6 +300,7 @@ fn board_page(state: &State, page: &DevicePage) -> impl View<Rgb565, State> + us
         DevicePage::Gnss => super::links::gnss(state),
         DevicePage::Battery => super::battery::view(state),
         DevicePage::Sounds { .. } => super::sounds::view(state),
+        DevicePage::Trackball => super::trackball::view(state),
         DevicePage::Display { .. } | DevicePage::AutoLock | DevicePage::Gamma { .. } => super::display::screen(state, page),
         DevicePage::Statistics => super::statistics::view(state),
         DevicePage::About => super::about::view(state),

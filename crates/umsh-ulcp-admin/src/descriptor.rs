@@ -332,52 +332,67 @@ pub const COVERED: &[Descriptor] = &[
         1,
     ),
     // The screen and the keyboard.
+    #[cfg(feature = "display")]
     scalar(
         prop::DISPLAY_BRIGHTNESS,
         PropertyType::U8,
-        Some(cap::DISPLAY),
+        None,
         Access::ReadWrite,
         1,
     ),
+    #[cfg(feature = "display")]
     scalar(
         prop::DISPLAY_TIMEOUT,
         PropertyType::U16,
-        Some(cap::DISPLAY),
+        None,
         Access::ReadWrite,
         2,
     ),
+    #[cfg(feature = "keyboard")]
     scalar(
         prop::KEYBOARD_LIGHT,
         PropertyType::Bool,
-        Some(cap::KEYBOARD),
+        None,
         Access::ReadWrite,
         1,
     ),
+    #[cfg(feature = "keyboard")]
     scalar(
         prop::KEYBOARD_AIDS,
         PropertyType::U8,
-        Some(cap::KEYBOARD),
+        None,
         Access::ReadWrite,
         1,
     ),
+    #[cfg(feature = "directional")]
+    scalar(
+        prop::DIRECTIONS_ENABLED,
+        PropertyType::U8,
+        None,
+        Access::ReadWrite,
+        1,
+    ),
+    #[cfg(feature = "sound")]
     scalar(
         prop::SOUND_ENABLED,
         PropertyType::Bool,
-        Some(cap::SOUND),
+        None,
         Access::ReadWrite,
         1,
     ),
+    #[cfg(feature = "sound")]
     scalar(
         prop::SOUND_VOLUME,
         PropertyType::U8,
-        Some(cap::SOUND),
+        None,
         Access::ReadWrite,
         1,
     ),
+    #[cfg(feature = "keyboard")]
     scalar(
         prop::SETUP_COMPLETE,
         PropertyType::Bool,
-        Some(cap::KEYBOARD),
+        None,
         Access::ReadWrite,
         1,
     ),

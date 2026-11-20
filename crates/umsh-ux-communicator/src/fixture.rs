@@ -10,15 +10,15 @@ use crate::board::Board;
 use crate::model::{
     About, BatteryReading, Bluetooth, BluetoothReading, Card, ChannelAccess, ChannelChats,
     ChannelEntry, Charge, ChatId, ChatKind, ChatSummary, Chats, ClockSettings, ClockSource,
-    Contact, ContactUri, DEFAULT_AUTO_LOCK_S, Delivery, Details, Direction, EventQueue, Exchange,
-    ExchangeEnd, Fix, Forwarding, GaugeReading, Gnss, GnssReading, Heard, Invite, KeyboardFirmware,
-    KeyboardSettings, Leg, Links, MAX_CHATS, MAX_HEARD, MAX_NEARBY_NETWORKS, MAX_PATH,
-    MAX_SAVED_NETWORKS, MESSAGE_LEN, MeetState, Member, Message, MessageId, NearbyDevice, NearbyId,
-    NearbyNetwork, Neighbor, Node, NodeEvent, Parts, PeerDetail, PeerEntry, PeerId, PeerRoute,
-    PeerSummary, PingReply, PingView, Presence, Profile, Quote, RadioSettings, Reacted, Reaction,
-    Reactions, Reactor, Repeater, RouteKind, Rule, SavedNetwork, Sender, Setting, ShareUri,
-    Shareable, Signal, Ssid, State, Statistics, StatusStrip, TRANSMIT_POWER, Via, WifiReading,
-    WifiSecurity, WifiStatus, brightness_at, route_text, word_match,
+    Contact, ContactUri, Delivery, Details, Direction, EventQueue, Exchange, ExchangeEnd, Fix,
+    Forwarding, GaugeReading, Gnss, GnssReading, Heard, Invite, KeyboardFirmware, KeyboardSettings,
+    Leg, Links, MAX_CHATS, MAX_HEARD, MAX_NEARBY_NETWORKS, MAX_PATH, MAX_SAVED_NETWORKS,
+    MESSAGE_LEN, MeetState, Member, Message, MessageId, NearbyDevice, NearbyId, NearbyNetwork,
+    Neighbor, Node, NodeEvent, Parts, PeerDetail, PeerEntry, PeerId, PeerRoute, PeerSummary,
+    PingReply, PingView, Presence, Profile, Quote, RadioSettings, Reacted, Reaction, Reactions,
+    Reactor, Repeater, RouteKind, Rule, SavedNetwork, Sender, Setting, ShareUri, Shareable, Signal,
+    Ssid, State, Statistics, StatusStrip, TRANSMIT_POWER, Via, WifiReading, WifiSecurity,
+    WifiStatus, route_text, word_match,
 };
 use crate::models;
 use crate::picker::RecentText;
@@ -765,6 +765,8 @@ pub struct Store {
     share_location: Cell<bool>,
     transmit_power: Cell<i8>,
     keyboard: Cell<KeyboardSettings>,
+    #[cfg(feature = "directional")]
+    directions: Cell<crate::model::Directions>,
     /// The character picker's recent picks, as kept.
     picks: RefCell<RecentText>,
     clock: Cell<ClockSettings>,
@@ -1020,9 +1022,11 @@ impl Store {
                 period: true,
                 light: true,
             }),
+            #[cfg(feature = "directional")]
+            directions: Cell::new(crate::model::Directions::ALL),
             picks: RefCell::new(RecentText::new()),
-            brightness: Cell::new(brightness_at(5)),
-            auto_lock: Cell::new(DEFAULT_AUTO_LOCK_S),
+            brightness: Cell::new(umsh_ulcp::ids::DEFAULT_DISPLAY_BRIGHTNESS),
+            auto_lock: Cell::new(umsh_ulcp::ids::DEFAULT_DISPLAY_TIMEOUT_S),
             statistics_read: Cell::new(0),
             bluetooth: Cell::new(true),
             sound: Cell::new(true),
@@ -3003,6 +3007,19 @@ impl Node for Store {
         });
     }
 
+    #[cfg(feature = "directional")]
+    fn directions(&self) -> crate::model::Directions {
+        self.directions.get()
+    }
+
+    #[cfg(feature = "directional")]
+    fn set_directions(&self, directions: crate::model::Directions) {
+        self.setting(Setting::Directions, || {
+            self.directions.set(directions);
+            true
+        });
+    }
+
     fn brightness(&self) -> u8 {
         self.brightness.get()
     }
@@ -3214,8 +3231,8 @@ impl Node for Store {
         });
     }
 
-    fn auto_lock(&self) -> Option<u16> {
-        Some(self.auto_lock.get())
+    fn auto_lock(&self) -> u16 {
+        self.auto_lock.get()
     }
 
     fn set_auto_lock(&self, seconds: u16) {

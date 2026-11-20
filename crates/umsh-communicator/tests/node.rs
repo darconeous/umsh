@@ -385,12 +385,13 @@ fn brightness_and_the_keyboard_are_device_settings() {
     assert_ne!(sim.borrow().saved_snapshot().unwrap(), &before[..]);
 }
 
+#[cfg(feature = "sound")]
 #[test]
 fn sound_is_a_saved_device_setting() {
     let sim = device();
     let (node, clock) = node(&sim);
     assert_eq!(node.sound_enabled(), Some(true));
-    assert_eq!(node.sound_volume(), 191);
+    assert_eq!(node.sound_volume(), umsh_ulcp::ids::DEFAULT_SOUND_VOLUME);
     let before = sim.borrow().saved_snapshot().unwrap().to_vec();
     node.set_sound_enabled(false);
     node.set_sound_volume(40);
@@ -400,6 +401,15 @@ fn sound_is_a_saved_device_setting() {
     assert_eq!(node.sound_enabled(), Some(false));
     assert_eq!(node.sound_volume(), 40);
     assert_ne!(sim.borrow().saved_snapshot().unwrap(), &before[..]);
+}
+
+/// Built without a sounder, the communicator has no sound to offer.
+#[cfg(not(feature = "sound"))]
+#[test]
+fn without_a_sounder_there_is_no_sound() {
+    let sim = device();
+    let (node, _) = node(&sim);
+    assert_eq!(node.sound_enabled(), None);
 }
 
 #[test]
@@ -420,16 +430,16 @@ fn a_new_device_is_not_set_up_until_setup_finishes() {
 fn auto_lock_is_a_device_setting_and_0_is_never() {
     let sim = device();
     let (node, clock) = node(&sim);
-    assert_eq!(node.auto_lock(), Some(30));
+    assert_eq!(node.auto_lock(), 30);
     node.set_auto_lock(0);
     clock.set(1_000);
     node.pump();
-    assert_eq!(node.auto_lock(), Some(0));
+    assert_eq!(node.auto_lock(), 0);
     // The device raises too short a time to the shortest it keeps.
     node.set_auto_lock(3);
     clock.set(2_000);
     node.pump();
-    assert_eq!(node.auto_lock(), Some(10));
+    assert_eq!(node.auto_lock(), 10);
 }
 
 #[test]

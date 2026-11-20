@@ -81,9 +81,6 @@ fn session_config() -> SessionConfig {
             charge_state: true,
         }),
         display_motion_wake: false,
-        display: None,
-        keyboard: false,
-        sound: false,
         host_custody: true,
         // A simulated device has nothing to flash or beep with, so it
         // does not advertise CAP_ALERT.

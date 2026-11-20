@@ -1270,55 +1270,67 @@ impl Model {
 
     /// `PROP_DISPLAY_BRIGHTNESS`, from 0 (the dimmest that is not off) to
     /// 255.
+    #[cfg(feature = "display")]
     pub fn brightness(&self) -> Option<u8> {
         self.u8(prop::DISPLAY_BRIGHTNESS)
     }
 
+    #[cfg(feature = "display")]
     pub fn set_brightness(&mut self, brightness: u8) -> Result<WriteId, Refusal> {
         self.set(prop::DISPLAY_BRIGHTNESS, &[brightness])
     }
 
     /// `PROP_DISPLAY_TIMEOUT`, in seconds, 0 for never.
+    #[cfg(feature = "display")]
     pub fn display_timeout(&self) -> Option<u16> {
         self.u16(prop::DISPLAY_TIMEOUT)
     }
 
+    #[cfg(feature = "display")]
     pub fn set_display_timeout(&mut self, seconds: u16) -> Result<WriteId, Refusal> {
         self.set(prop::DISPLAY_TIMEOUT, &seconds.to_le_bytes())
     }
 
     /// `PROP_KEYBOARD_LIGHT`.
+    #[cfg(feature = "keyboard")]
     pub fn keyboard_light(&self) -> Option<bool> {
         self.bool(prop::KEYBOARD_LIGHT)
     }
 
+    #[cfg(feature = "keyboard")]
     pub fn set_keyboard_light(&mut self, lit: bool) -> Result<WriteId, Refusal> {
         self.set(prop::KEYBOARD_LIGHT, &[u8::from(lit)])
     }
 
     /// `PROP_SOUND_ENABLED`.
+    #[cfg(feature = "sound")]
     pub fn sound_enabled(&self) -> Option<bool> {
         self.bool(prop::SOUND_ENABLED)
     }
 
+    #[cfg(feature = "sound")]
     pub fn set_sound_enabled(&mut self, enabled: bool) -> Result<WriteId, Refusal> {
         self.set(prop::SOUND_ENABLED, &[u8::from(enabled)])
     }
 
     /// `PROP_SOUND_VOLUME`, 255 the loudest.
+    #[cfg(feature = "sound")]
     pub fn sound_volume(&self) -> Option<u8> {
         self.u8(prop::SOUND_VOLUME)
     }
 
+    #[cfg(feature = "sound")]
     pub fn set_sound_volume(&mut self, volume: u8) -> Result<WriteId, Refusal> {
         self.set(prop::SOUND_VOLUME, &[volume])
     }
 
     /// `PROP_SETUP_COMPLETE`.
+    #[cfg(feature = "keyboard")]
     pub fn setup_complete(&self) -> Option<bool> {
         self.bool(prop::SETUP_COMPLETE)
     }
 
+    #[cfg(feature = "keyboard")]
     pub fn set_setup_complete(&mut self, complete: bool) -> Result<WriteId, Refusal> {
         self.set(prop::SETUP_COMPLETE, &[u8::from(complete)])
     }
@@ -1333,12 +1345,25 @@ impl Model {
     }
 
     /// `PROP_KEYBOARD_AIDS`, as [`umsh_ulcp::ids::keyboard_aids`] flags.
+    #[cfg(feature = "keyboard")]
     pub fn keyboard_aids(&self) -> Option<u8> {
         self.u8(prop::KEYBOARD_AIDS)
     }
 
+    #[cfg(feature = "keyboard")]
     pub fn set_keyboard_aids(&mut self, aids: u8) -> Result<WriteId, Refusal> {
         self.set(prop::KEYBOARD_AIDS, &[aids])
+    }
+
+    /// `PROP_DIRECTIONS_ENABLED`, as [`umsh_ulcp::ids::directions`] flags.
+    #[cfg(feature = "directional")]
+    pub fn directions_enabled(&self) -> Option<u8> {
+        self.u8(prop::DIRECTIONS_ENABLED)
+    }
+
+    #[cfg(feature = "directional")]
+    pub fn set_directions_enabled(&mut self, enabled: u8) -> Result<WriteId, Refusal> {
+        self.set(prop::DIRECTIONS_ENABLED, &[enabled])
     }
 
     /// `PROP_DEV_PEERS`: the device identity's saved peers.

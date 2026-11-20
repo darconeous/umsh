@@ -146,9 +146,9 @@ Id   | Mnemonic                                                                 
 4874 | [`PROP_BLE_PAIRING`](ulcp-ble.md#prop-ble-pairing)                                    | Get, Set, Is               | `CAP_BLE`
 4875 | [`PROP_DISPLAY_MOTION_WAKE_ENABLED`](ulcp-device.md#prop-display-motion-wake-enabled) | Get, Set, Is | `CAP_DISPLAY_MOTION_WAKE`
 4876 | [`PROP_TEMPERATURE_NAMES`](ulcp-device.md#prop-temperature-names) | Get | `CAP_TEMPERATURE`
-4877 | [`PROP_DISPLAY_BRIGHTNESS`](ulcp-device.md#prop-display-brightness)                   | Get, Set, Is               | `CAP_DISPLAY`
-4878 | [`PROP_KEYBOARD_LIGHT`](ulcp-device.md#prop-keyboard-light)                           | Get, Set, Is               | `CAP_KEYBOARD`
-4879 | [`PROP_KEYBOARD_AIDS`](ulcp-device.md#prop-keyboard-aids)                             | Get, Set, Is               | `CAP_KEYBOARD`
+4877 | [`PROP_DISPLAY_BRIGHTNESS`](ulcp-device.md#prop-display-brightness)                   | Get, Set, Is               | —
+4878 | [`PROP_KEYBOARD_LIGHT`](ulcp-device.md#prop-keyboard-light)                           | Get, Set, Is               | —
+4879 | [`PROP_KEYBOARD_AIDS`](ulcp-device.md#prop-keyboard-aids)                             | Get, Set, Is               | —
 4880 | [`PROP_WIFI_ENABLED`](ulcp-wifi.md#prop-wifi-enabled)                                 | Get, Set, Is               | `CAP_WIFI`
 4881 | [`PROP_WIFI_NETWORKS`](ulcp-wifi.md#prop-wifi-networks)                               | Get, Set, Insert, Remove   | `CAP_WIFI`
 4882 | [`PROP_WIFI_NETWORK`](ulcp-wifi.md#prop-wifi-network)                                 | Get, Set, Is               | `CAP_WIFI`
@@ -159,11 +159,12 @@ Id   | Mnemonic                                                                 
 4887 | [`PROP_WIFI_MAC`](ulcp-wifi.md#prop-wifi-mac)                                         | Get                        | `CAP_WIFI`
 4888 | [`PROP_TZ_RULE`](ulcp-device.md#prop-tz-rule)                                         | Get, Set, Is               | `CAP_TIME`
 4889 | [`PROP_TIME_24H`](ulcp-device.md#prop-time-24h)                                       | Get, Set, Is               | `CAP_TIME`
-4890 | [`PROP_DISPLAY_TIMEOUT`](ulcp-device.md#prop-display-timeout)                         | Get, Set, Is               | `CAP_DISPLAY`
-4891 | [`PROP_SOUND_ENABLED`](ulcp-device.md#prop-sound-enabled)                             | Get, Set, Is               | `CAP_SOUND`
-4892 | [`PROP_SOUND_VOLUME`](ulcp-device.md#prop-sound-volume)                               | Get, Set, Is               | `CAP_SOUND`
-4893 | [`PROP_SETUP_COMPLETE`](ulcp-device.md#prop-setup-complete)                           | Get, Set, Is               | `CAP_KEYBOARD`
+4890 | [`PROP_DISPLAY_TIMEOUT`](ulcp-device.md#prop-display-timeout)                         | Get, Set, Is               | —
+4891 | [`PROP_SOUND_ENABLED`](ulcp-device.md#prop-sound-enabled)                             | Get, Set, Is               | —
+4892 | [`PROP_SOUND_VOLUME`](ulcp-device.md#prop-sound-volume)                               | Get, Set, Is               | —
+4893 | [`PROP_SETUP_COMPLETE`](ulcp-device.md#prop-setup-complete)                           | Get, Set, Is               | —
 4894 | [`PROP_TEST_MESSAGE_ALERTS`](ulcp-device.md#prop-test-message-alerts)                 | Get, Set, Is               | —
+4895 | [`PROP_DIRECTIONS_ENABLED`](ulcp-device.md#prop-directions-enabled)                   | Get, Set, Is               | —
 4896 | [`PROP_IPV4_STATE`](ulcp-ip.md#prop-ipv4-state)                                       | Get, Is                    | `CAP_IPV4`
 4897 | [`PROP_IPV4_CONFIG`](ulcp-ip.md#prop-ipv4-config)                                     | Get, Set                   | `CAP_IPV4`
 4898 | [`PROP_IPV4_ADDRESS`](ulcp-ip.md#prop-ipv4-address)                                   | Get, Is                    | `CAP_IPV4`
@@ -250,9 +251,6 @@ Code | Name                      | Defined in
 61   | `CAP_TEMPERATURE` | [Device Domain](ulcp-device.md#capabilities)
 62   | `CAP_MESHCORE_FORWARDER`  | [Device Domain](ulcp-device.md#capabilities)
 63   | `CAP_LAN_BEARER`          | [IP Multicast](ulcp-ip-multicast.md#capabilities)
-64   | `CAP_DISPLAY`             | [Device Domain](ulcp-device.md#capabilities)
-65   | `CAP_KEYBOARD`            | [Device Domain](ulcp-device.md#capabilities)
-66   | `CAP_SOUND`               | [Device Domain](ulcp-device.md#capabilities)
 67   | `CAP_NODE_MSG`            | [Node Messaging](ulcp-node-messaging.md#capabilities)
 515  | `CAP_PHY_LORA`            | [Radio Control](ulcp-radio.md#capabilities)
 
@@ -299,6 +297,7 @@ Filter types | 0 `FILTER_DEST_HINT`, 1 `FILTER_CHANNEL_ID`, 2 `FILTER_PKT_TYPE` 
 Charge states | 0 discharging, 1 charging, 2 charged, 3 not charging | [`PROP_BATTERY`](ulcp-device.md#prop-battery)
 Alert states | 0 `ALERT_NONE`, 1 `ALERT_LOCATE` | [`PROP_ALERT`](ulcp-device.md#prop-alert)
 Keyboard aids | bit 0 `KEYBOARD_AID_CAPITALIZE`, bit 1 `KEYBOARD_AID_PERIOD` | [`PROP_KEYBOARD_AIDS`](ulcp-device.md#prop-keyboard-aids)
+Directions | bit 0 `DIRECTION_UP`, bit 1 `DIRECTION_DOWN`, bit 2 `DIRECTION_LEFT`, bit 3 `DIRECTION_RIGHT` | [`PROP_DIRECTIONS_ENABLED`](ulcp-device.md#prop-directions-enabled)
 Fix quality | 0 none, 1 two-dimensional, 2 three-dimensional | [`PROP_GNSS_FIX`](ulcp-device.md#prop-gnss-fix)
 Repeater modes | 0 off, 1 on, 2 adaptive | [`PROP_MAC_REPEATER_MODE`](ulcp-device.md#prop-mac-repeater-mode)
 Repeater states | 0 off, 1 forwarding, 2 standby, 3 engaged, 4 withheld | [`PROP_MAC_REPEATER_STATE`](ulcp-device.md#prop-mac-repeater-state)

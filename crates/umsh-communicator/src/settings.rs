@@ -32,7 +32,14 @@
 
 use umsh_core::ChannelTag;
 use umsh_ulcp::Status;
-use umsh_ulcp::ids::{DEFAULT_SOUND_VOLUME, cap, keyboard_aids, prop, repeater_mode, saved};
+#[cfg(feature = "sound")]
+use umsh_ulcp::ids::DEFAULT_SOUND_VOLUME;
+#[cfg(feature = "directional")]
+use umsh_ulcp::ids::directions;
+use umsh_ulcp::ids::{
+    DEFAULT_DISPLAY_BRIGHTNESS, DEFAULT_DISPLAY_TIMEOUT_S, cap, keyboard_aids, prop, repeater_mode,
+    saved,
+};
 use umsh_ulcp::ip::FamilyState;
 use umsh_ulcp::profiles::VETTED;
 use umsh_ulcp::wifi::{LinkReason, LinkState, NetworkEntry, SecurityMode};
@@ -42,10 +49,12 @@ use umsh_ulcp_admin::{
 };
 use umsh_ux_communicator::avatar::{AvatarStyle, PeerShape};
 use umsh_ux_communicator::heapless::{Deque, String, Vec};
+#[cfg(feature = "directional")]
+use umsh_ux_communicator::model::Directions;
 use umsh_ux_communicator::model::{
-    ClockSettings, DEFAULT_AUTO_LOCK_S, Forwarding, KeyboardSettings, MAX_NEARBY_NETWORKS,
-    NearbyNetwork, NodeEvent, Profile, RadioSettings, Rule, SavedNetwork, Setting, ShareUri, Ssid,
-    Statistics, WifiReading, WifiSecurity, WifiStatus, brightness_at,
+    ClockSettings, Forwarding, KeyboardSettings, MAX_NEARBY_NETWORKS, NearbyNetwork, NodeEvent,
+    Profile, RadioSettings, Rule, SavedNetwork, Setting, ShareUri, Ssid, Statistics, WifiReading,
+    WifiSecurity, WifiStatus,
 };
 
 use crate::chat::address;
@@ -89,9 +98,6 @@ const STATISTICS: [u32; 15] = [
 
 /// How often the Wi-Fi signal is read while it is watched.
 pub const WIFI_READ_MS: u64 = 5_000;
-
-/// The screen's brightness until the device reports it.
-pub const DEFAULT_BRIGHTNESS: u8 = brightness_at(5);
 
 /// How many recent writes are remembered by the setting they changed. The
 /// local link answers in milliseconds, far sooner than this many changes
@@ -393,11 +399,13 @@ impl<P: LocalPort> Settings<P> {
         self.written(Setting::Bluetooth, write)
     }
 
+    #[cfg(feature = "sound")]
     pub fn set_sound_enabled(&mut self, on: bool) -> bool {
         let write = self.model.set_sound_enabled(on);
         self.written(Setting::Sound, write)
     }
 
+    #[cfg(feature = "sound")]
     pub fn set_sound_volume(&mut self, volume: u8) -> bool {
         let write = self.model.set_sound_volume(volume);
         self.written(Setting::Volume, write)
@@ -467,6 +475,19 @@ impl<P: LocalPort> Settings<P> {
             (prop::KEYBOARD_LIGHT, &[u8::from(settings.light)]),
         ]);
         self.written(Setting::Keyboard, write)
+    }
+
+    #[cfg(feature = "directional")]
+    pub fn set_directions(&mut self, enabled: Directions) -> bool {
+        // The interface's directions are the property's bits as they are.
+        const _: () = assert!(
+            Directions::UP.0 == directions::UP
+                && Directions::DOWN.0 == directions::DOWN
+                && Directions::LEFT.0 == directions::LEFT
+                && Directions::RIGHT.0 == directions::RIGHT
+        );
+        let write = self.model.set_directions_enabled(enabled.0);
+        self.written(Setting::Directions, write)
     }
 
     pub fn set_clock_automatic(&mut self, on: bool) -> bool {
@@ -906,11 +927,10 @@ impl<P: LocalPort> Settings<P> {
 
     /// Whether the device plays its sounds, where it has a sounder.
     pub fn sound_enabled(&self) -> Option<bool> {
-        self.model
-            .has_cap(cap::SOUND)?
-            .then(|| self.bool(prop::SOUND_ENABLED).unwrap_or(true))
+        cfg!(feature = "sound").then(|| self.bool(prop::SOUND_ENABLED).unwrap_or(true))
     }
 
+    #[cfg(feature = "sound")]
     pub fn sound_volume(&self) -> u8 {
         self.u8(prop::SOUND_VOLUME).unwrap_or(DEFAULT_SOUND_VOLUME)
     }
@@ -955,18 +975,23 @@ impl<P: LocalPort> Settings<P> {
         }
     }
 
+    /// The directions the device's directional control acts in: every
+    /// one until the device has said.
+    #[cfg(feature = "directional")]
+    pub fn directions(&self) -> Directions {
+        Directions(self.u8(prop::DIRECTIONS_ENABLED).unwrap_or(directions::ALL))
+    }
+
     pub fn brightness(&self) -> u8 {
         self.u8(prop::DISPLAY_BRIGHTNESS)
-            .unwrap_or(DEFAULT_BRIGHTNESS)
+            .unwrap_or(DEFAULT_DISPLAY_BRIGHTNESS)
     }
 
     /// How long the screen stays lit without input, in seconds, 0 for
-    /// never, where the device has a screen of its own.
-    pub fn auto_lock(&self) -> Option<u16> {
-        self.model.has_cap(cap::DISPLAY)?.then(|| {
-            self.u16(prop::DISPLAY_TIMEOUT)
-                .unwrap_or(DEFAULT_AUTO_LOCK_S)
-        })
+    /// never.
+    pub fn auto_lock(&self) -> u16 {
+        self.u16(prop::DISPLAY_TIMEOUT)
+            .unwrap_or(DEFAULT_DISPLAY_TIMEOUT_S)
     }
 
     /// Wi-Fi as it stands, read into `reading`. While a scan has cleared
@@ -1167,6 +1192,7 @@ const fn matters(setting: Setting) -> bool {
     !matches!(
         setting,
         Setting::Keyboard
+            | Setting::Directions
             | Setting::Brightness
             | Setting::Volume
             | Setting::AutoLock

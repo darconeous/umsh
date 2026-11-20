@@ -1791,9 +1791,6 @@ Code | Name                      | Requires                             | Define
 61   | `CAP_TEMPERATURE` | — | [Device Domain](ulcp-device.md#capabilities)
 62   | `CAP_MESHCORE_FORWARDER`  | `CAP_REPEATER`                       | [Device Domain](ulcp-device.md#capabilities)
 63   | `CAP_LAN_BEARER`          | —                                    | [IP Multicast](ulcp-ip-multicast.md#capabilities)
-64   | `CAP_DISPLAY`             | —                                    | [Device Domain](ulcp-device.md#capabilities)
-65   | `CAP_KEYBOARD`            | —                                    | [Device Domain](ulcp-device.md#capabilities)
-66   | `CAP_SOUND`               | —                                    | [Device Domain](ulcp-device.md#capabilities)
 67   | `CAP_NODE_MSG`            | `CAP_DEV_IDENTITY`                   | [Node Messaging](ulcp-node-messaging.md#capabilities)
 515  | `CAP_PHY_LORA`            | —                                    | [Radio Control](ulcp-radio.md#capabilities)
 

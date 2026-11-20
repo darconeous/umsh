@@ -4,7 +4,7 @@
 use buoyant::view::prelude::*;
 use embedded_graphics::pixelcolor::Rgb565;
 
-use super::setting::{End, page, row};
+use super::setting::{End, level_row, page, row};
 use crate::model::{State, volume_level};
 use crate::nav::keys;
 
@@ -28,17 +28,15 @@ pub fn view(state: &State) -> impl View<Rgb565, State> + use<> {
                 false,
                 ROW,
             ),
-            row(
+            level_row(
                 m,
                 "Volume",
                 keys::VOLUME,
                 State::press_volume,
-                End::Level {
-                    level,
-                    active,
-                    step: State::step_volume,
-                },
-                false,
+                level,
+                active,
+                State::step_volume,
+                State::set_volume_level,
                 ROW,
             ),
         ))

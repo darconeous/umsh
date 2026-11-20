@@ -92,12 +92,26 @@ jobs:
       - name: cargo test (umsh-ulcp-runtime device-link)
         run: cargo test --locked -p umsh-ulcp-runtime --features gnss,device-node,device-link
 
+      # The board features. The workspace build has the device session
+      # serve all of them (the simulated device does), so the session is
+      # also tested without them; and the communicator reads the trackball
+      # and the sounder only with features no host crate turns on.
+      - name: cargo test (umsh-ulcp-device without board features)
+        run: cargo test --locked -p umsh-ulcp-device --lib
+      - name: cargo test (board features)
+        run: cargo test --locked -p umsh-ulcp-device -p umsh-ux-communicator -p umsh-communicator --features umsh-communicator/directional,umsh-communicator/sound
+
       - name: cargo clippy
         run: cargo clippy --all-targets -- -D warnings
 
       # The same feature gap as the test run above.
       - name: cargo clippy (umsh-ulcp-runtime gnss, device-node)
         run: cargo clippy -p umsh-ulcp-runtime --all-targets --features gnss,device-node -- -D warnings
+
+      - name: cargo clippy (umsh-ulcp-device without board features)
+        run: cargo clippy -p umsh-ulcp-device --all-targets -- -D warnings
+      - name: cargo clippy (board features)
+        run: cargo clippy -p umsh-ulcp-device -p umsh-ux-communicator -p umsh-communicator --all-targets --features umsh-communicator/directional,umsh-communicator/sound -- -D warnings
 
       # `+stable` because the nightly fuzz/rust-toolchain.toml pins carries no
       # clippy component.
