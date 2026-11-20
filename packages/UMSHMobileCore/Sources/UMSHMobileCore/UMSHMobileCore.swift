@@ -6037,13 +6037,14 @@ public protocol MobileRadioDriverProtocol: AnyObject, Sendable {
     func reconcileHostPeerKeys(entries: [HostPeerKeyEntryRecord]) async throws
 
     /**
-     * Read the radio's state anew.
+     * Read the radio's state anew. Joins a full read already running or
+     * waiting.
      */
     func refresh() async throws  -> MobileRadioStateRecord
 
     /**
-     * Read the radio's positioning properties anew. Joins a refresh
-     * already running.
+     * Read the radio's positioning properties anew. Joins a positioning
+     * read already running or waiting.
      */
     func refreshPositioning() async throws  -> MobileRadioStateRecord
 
@@ -6647,7 +6648,8 @@ open func reconcileHostPeerKeys(entries: [HostPeerKeyEntryRecord])async throws  
 }
 
     /**
-     * Read the radio's state anew.
+     * Read the radio's state anew. Joins a full read already running or
+     * waiting.
      */
 open func refresh()async throws  -> MobileRadioStateRecord  {
     return
@@ -6666,8 +6668,8 @@ open func refresh()async throws  -> MobileRadioStateRecord  {
 }
 
     /**
-     * Read the radio's positioning properties anew. Joins a refresh
-     * already running.
+     * Read the radio's positioning properties anew. Joins a positioning
+     * read already running or waiting.
      */
 open func refreshPositioning()async throws  -> MobileRadioStateRecord  {
     return
@@ -7462,9 +7464,11 @@ public func FfiConverterTypeMobileRegionDatabase_lower(_ value: MobileRegionData
 public protocol MobileUlcpSessionProtocol: AnyObject, Sendable {
 
     /**
-     * Abandon raw transactions whose GATT writes were rejected locally.
-     * Their late correlated responses are ignored once; the attachment and
-     * all non-raw session state remain intact.
+     * Abandon raw transactions the caller stopped waiting for: their
+     * writes failed locally, or the radio never reported them. A late
+     * answer is refused as unexpected, and the identifier is not reused
+     * while another is free. The attachment and all non-raw session state
+     * remain intact.
      */
     func abandonRawTransmits(transactionIds: Data)  -> UlcpSessionUpdateRecord
 
@@ -8030,9 +8034,11 @@ public static func administrativeLazy() -> MobileUlcpSession  {
 
 
     /**
-     * Abandon raw transactions whose GATT writes were rejected locally.
-     * Their late correlated responses are ignored once; the attachment and
-     * all non-raw session state remain intact.
+     * Abandon raw transactions the caller stopped waiting for: their
+     * writes failed locally, or the radio never reported them. A late
+     * answer is refused as unexpected, and the identifier is not reused
+     * while another is free. The attachment and all non-raw session state
+     * remain intact.
      */
 open func abandonRawTransmits(transactionIds: Data) -> UlcpSessionUpdateRecord  {
     return try!  FfiConverterTypeUlcpSessionUpdateRecord_lift(try! rustCall() {
@@ -25036,7 +25042,7 @@ enum MobileRadioError: Swift.Error, Equatable, Hashable, Foundation.LocalizedErr
      */
     case RadioUnavailable
     /**
-     * Another operation of this kind is still running.
+     * Too many operations are already waiting for the radio.
      */
     case OperationInProgress
     /**
@@ -25069,7 +25075,8 @@ enum MobileRadioError: Swift.Error, Equatable, Hashable, Foundation.LocalizedErr
      */
     case UnrecognizedAnswer
     /**
-     * The radio did not answer in time. It may or may not have acted.
+     * The radio did not answer in time, or the operation waited too long
+     * for its turn. In the first case it may or may not have acted.
      */
     case TimedOut
     /**
@@ -32949,10 +32956,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_reconcile_host_peer_keys() != 57253) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_refresh() != 59097) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_refresh() != 26162) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_refresh_positioning() != 49538) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_refresh_positioning() != 6555) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_release_host() != 41505) {
@@ -33297,7 +33304,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilehdlcdecoder_reset() != 13551) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_abandon_raw_transmits() != 18682) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_abandon_raw_transmits() != 33936) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_announce() != 59264) {

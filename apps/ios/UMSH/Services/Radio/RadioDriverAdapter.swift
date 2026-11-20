@@ -1456,10 +1456,9 @@ extension RadioDriverAdapter {
         try await deviceTable { try await $0.drainQueue() }
     }
 
-    /// One table edit at a time, resolved by the update that carries its
-    /// outcome. The driver wants an otherwise idle attach, so an edit
-    /// racing other traffic reports `operationInProgress` rather than
-    /// interleaving.
+    /// A table edit, resolved by the update that carries its outcome. The
+    /// driver queues it behind other exchanges and mesh traffic, and
+    /// reports `operationInProgress` only when its queue is full.
     private func deviceTable(
         _ edit: (MobileRadioDriver) async throws -> Void
     ) async throws {

@@ -237,7 +237,7 @@ pub struct MobileRadioDriverUpdateRecord {
 pub enum MobileRadioError {
     /// No radio is attached, or it is not in a state to take this.
     RadioUnavailable,
-    /// Another operation of this kind is still running.
+    /// Too many operations are already waiting for the radio.
     OperationInProgress,
     /// This phone's identity is not known to the driver yet.
     IdentityUnavailable,
@@ -257,7 +257,8 @@ pub enum MobileRadioError {
     },
     /// The radio answered in a form the session did not expect.
     UnrecognizedAnswer,
-    /// The radio did not answer in time. It may or may not have acted.
+    /// The radio did not answer in time, or the operation waited too long
+    /// for its turn. In the first case it may or may not have acted.
     TimedOut,
     /// The ULCP session would not start the operation.
     Refused { error: MobileError },

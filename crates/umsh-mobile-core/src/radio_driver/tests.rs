@@ -9,15 +9,17 @@ use umsh_ulcp_simdev::{DutyLedger, SimulatedPlatform, full_config};
 
 use super::core::{
     Command, DriverCore, Effect, Event, FATAL_FAULT_BUDGET_REFILL_MS, HOST_RELEASE_TIMEOUT_MS,
-    MAXIMUM_FRAMES_AWAITING_MESH_SESSION, MAXIMUM_RAW_TRANSMIT_BUSY_RETRIES,
-    MESH_FRAME_LIFETIME_MS, Now, RAW_TRANSMIT_BUSY_RETRY_MS, RAW_TRANSMIT_TIMEOUT_MS,
+    MAXIMUM_FRAMES_AWAITING_MESH_SESSION, MAXIMUM_QUEUED_EXCHANGES,
+    MAXIMUM_RAW_TRANSMIT_BUSY_RETRIES, MESH_FRAME_LIFETIME_MS, Now, QUEUED_EXCHANGE_TIMEOUT_MS,
+    RAW_TRANSMIT_BUSY_RETRY_MS, RAW_TRANSMIT_TIMEOUT_MS, RefreshKind,
 };
 use super::{
     MobileRadioError, MobileRadioPhase, MobileRadioProblem, MobileRadioStateRecord,
     MobileRadioTransportPhase, MobileRadioTransportStateRecord,
 };
+use crate::ulcp::UlcpLocalManagementEventRecord;
 use crate::{
-    MobileMeshOutboundFrameRecord, MobileUlcpSession, UlcpDfuMode, UlcpHostOwnership,
+    MobileError, MobileMeshOutboundFrameRecord, MobileUlcpSession, UlcpDfuMode, UlcpHostOwnership,
     UlcpRadioSettingsRecord,
 };
 
@@ -263,6 +265,54 @@ impl Bench {
         self.handle(Event::Command(command(reply)));
         outcome
     }
+
+    fn refresh(
+        &mut self,
+        kind: RefreshKind,
+    ) -> oneshot::Receiver<Result<MobileRadioStateRecord, MobileRadioError>> {
+        self.command(|reply| Command::Refresh {
+            kind,
+            call: Box::new(move |session| match kind {
+                RefreshKind::Full => session.refresh(),
+                RefreshKind::Positioning => session.refresh_positioning(),
+            }),
+            reply,
+        })
+    }
+
+    /// Start a local management exchange that reads the radio's name.
+    fn fetch(
+        &mut self,
+    ) -> oneshot::Receiver<Result<UlcpLocalManagementEventRecord, MobileRadioError>> {
+        self.command(|reply| Command::LocalManagement {
+            dfu: false,
+            call: Box::new(|session| session.begin_property_fetch(vec![prop::DEV_NAME])),
+            reply,
+        })
+    }
+
+    /// Hand the core the device's answers a round at a time until
+    /// `receiver` is answered. An exchange may take several rounds.
+    fn deliver_until<T: std::fmt::Debug>(
+        &mut self,
+        receiver: &mut oneshot::Receiver<Result<T, MobileRadioError>>,
+    ) -> Option<Result<(), MobileRadioError>> {
+        for _ in 0..32 {
+            if let Some(result) = answered(receiver) {
+                return Some(result);
+            }
+            self.deliver();
+        }
+        answered(receiver)
+    }
+}
+
+/// Whether an exchange's caller has been answered, and how, without
+/// giving up the receiver.
+fn answered<T: std::fmt::Debug>(
+    receiver: &mut oneshot::Receiver<Result<T, MobileRadioError>>,
+) -> Option<Result<(), MobileRadioError>> {
+    receiver.try_recv().ok().map(|result| result.map(|_| ()))
 }
 
 fn outcome<T: std::fmt::Debug>(
@@ -452,6 +502,7 @@ fn a_mesh_frame_waits_out_a_control_exchange() {
     let mut bench = Bench::attached();
     bench.holding = true;
     let refreshed = bench.command(|reply| Command::Refresh {
+        kind: RefreshKind::Full,
         call: Box::new(|session| session.refresh()),
         reply,
     });
@@ -505,27 +556,32 @@ fn a_write_failure_reported_after_the_link_went_changes_nothing() {
 fn a_silent_radio_fails_its_callers_and_the_link_at_the_deadline() {
     let mut bench = Bench::attached();
     bench.carrying = false;
-    let refreshed = bench.command(|reply| Command::Refresh {
-        call: Box::new(|session| session.refresh()),
-        reply,
-    });
-    let joined = bench.command(|reply| Command::Refresh {
-        call: Box::new(|session| session.refresh_positioning()),
-        reply,
-    });
+    let refreshed = bench.refresh(RefreshKind::Full);
+    let joined = bench.refresh(RefreshKind::Full);
+    let mut positioning = bench.refresh(RefreshKind::Positioning);
     let configured = bench.command(|reply| Command::Configure {
         call: Box::new(|session| session.refresh()),
         reply,
     });
-    assert_eq!(
-        outcome(configured),
-        Some(Err(MobileRadioError::OperationInProgress))
-    );
     bench.advance(super::core::CONTROL_DEADLINE_MS - 1);
     assert!(bench.invalidations().is_empty());
+    assert!(
+        positioning.try_recv().is_err(),
+        "a positioning read waits behind a full one rather than joining it"
+    );
     bench.advance(1);
+    // The exchange that stalled timed out; those behind it go with the
+    // session it ended.
     assert_eq!(outcome(refreshed), Some(Err(MobileRadioError::TimedOut)));
     assert_eq!(outcome(joined), Some(Err(MobileRadioError::TimedOut)));
+    assert_eq!(
+        outcome(positioning).map(|result| result.map(|_| ())),
+        Some(Err(MobileRadioError::RadioUnavailable))
+    );
+    assert_eq!(
+        outcome(configured),
+        Some(Err(MobileRadioError::RadioUnavailable))
+    );
     assert_eq!(bench.invalidations(), [true]);
     assert_eq!(bench.state().phase, MobileRadioPhase::Reconnecting);
     assert_eq!(bench.state().problem, None);
@@ -696,6 +752,7 @@ fn an_ordinary_disconnect_fails_waiters_and_mesh_frames() {
     let mut bench = Bench::attached();
     bench.carrying = false;
     let refreshed = bench.command(|reply| Command::Refresh {
+        kind: RefreshKind::Full,
         call: Box::new(|session| session.refresh()),
         reply,
     });
@@ -734,6 +791,7 @@ fn any_word_from_the_radio_clears_the_banner() {
     }));
     assert!(bench.state().problem.is_some());
     let refreshed = bench.command(|reply| Command::Refresh {
+        kind: RefreshKind::Full,
         call: Box::new(|session| session.refresh()),
         reply,
     });
@@ -882,51 +940,394 @@ fn local_management_holds_its_slot_until_the_exchange_ends() {
     let mut bench = Bench::attached();
     bench.carrying = false;
     let mut held = ask(&mut bench);
-    assert_eq!(
-        outcome(ask(&mut bench)),
-        Some(Err(MobileRadioError::OperationInProgress))
-    );
+    let mut behind = ask(&mut bench);
     assert!(held.try_recv().is_err(), "still waiting on the radio");
+    assert!(behind.try_recv().is_err(), "waiting its turn");
 
-    // The link going ends the exchange, and frees the slot.
+    // The link going ends the exchange, and the one queued behind it.
     bench.cut();
     bench.report(MobileRadioTransportPhase::Reconnecting);
     assert_eq!(outcome(held), Some(Err(MobileRadioError::RadioUnavailable)));
+    assert_eq!(
+        outcome(behind),
+        Some(Err(MobileRadioError::RadioUnavailable))
+    );
     bench.connect(true);
     assert!(matches!(outcome(ask(&mut bench)), Some(Ok(_))));
 }
 
 #[test]
-fn one_control_exchange_runs_at_a_time() {
+fn exchanges_wait_their_turn_and_run_in_order() {
     let mut bench = Bench::attached();
     bench.holding = true;
-    let fetching = bench.command(|reply| Command::LocalManagement {
-        dfu: false,
-        call: Box::new(|session| session.begin_property_fetch(vec![prop::DEV_NAME])),
+    let mut fetching = bench.fetch();
+    let mut settings = transmitter_settings(&bench);
+    settings.transmit_power_dbm = 10;
+    let mut configured = bench.command(|reply| Command::Configure {
+        call: Box::new(move |session| session.configure(settings)),
         reply,
     });
-    let busy = Some(Err(MobileRadioError::OperationInProgress));
-    let configured = bench.command(|reply| Command::Configure {
-        call: Box::new(|session| session.refresh()),
-        reply,
-    });
-    assert_eq!(outcome(configured), busy);
-    let refreshed = bench.command(|reply| Command::Refresh {
-        call: Box::new(|session| session.refresh()),
-        reply,
-    });
-    assert_eq!(outcome(refreshed).map(|result| result.map(|_| ())), busy);
-    let edited = bench.command(|reply| Command::DeviceTable {
+    let mut refreshed = bench.refresh(RefreshKind::Full);
+    let mut edited = bench.command(|reply| Command::DeviceTable {
         requires_device_identity: true,
         call: Box::new(|session| session.insert_device_peer(vec![9; 32])),
         reply,
     });
-    assert_eq!(outcome(edited), busy);
+    assert_eq!(answered(&mut configured), None);
+    assert_eq!(answered(&mut refreshed), None);
+    assert_eq!(answered(&mut edited), None);
 
-    // The exchange that was running ends as it would have.
+    // Each starts once the one before it has ended: run side by side, the
+    // session would refuse all but the first.
+    assert_eq!(bench.deliver_until(&mut fetching), Some(Ok(())));
+    assert_eq!(answered(&mut refreshed), None);
+    assert_eq!(bench.deliver_until(&mut configured), Some(Ok(())));
+    assert_eq!(answered(&mut edited), None);
+    assert_eq!(bench.deliver_until(&mut refreshed), Some(Ok(())));
+    assert_eq!(bench.deliver_until(&mut edited), Some(Ok(())));
+    assert_eq!(bench.state().problem, None);
+    assert_eq!(
+        bench
+            .state()
+            .provisioning
+            .as_ref()
+            .unwrap()
+            .transmit_power_dbm,
+        10
+    );
+}
+
+#[test]
+fn an_exchange_that_ends_inside_its_call_still_gives_the_mesh_its_turn() {
+    let mut bench = Bench::attached();
+    bench.device.defer_tx();
+    bench.holding = true;
+    let mut fetching = bench.fetch();
+    let mut refused = bench.command(|reply| Command::Configure {
+        call: Box::new(|_| Err(MobileError::InvalidUlcpFrame)),
+        reply,
+    });
+    let mut refreshed = bench.refresh(RefreshKind::Full);
+    bench.transmit(1);
     bench.holding = false;
     bench.deliver();
-    assert!(matches!(outcome(fetching), Some(Ok(_))));
+    assert_eq!(answered(&mut fetching), Some(Ok(())));
+    assert_eq!(
+        bench.raw_sends.len(),
+        1,
+        "the frame's turn, after the fetch"
+    );
+
+    // The refused exchange ends inside its call. The frame taken during
+    // the last turn goes before the refresh, not after it.
+    bench.transmit(2);
+    bench.complete_tx(TxOutcome::Sent);
+    assert!(matches!(
+        answered(&mut refused),
+        Some(Err(MobileRadioError::Refused { .. }))
+    ));
+    assert_eq!(bench.raw_sends.len(), 2);
+    assert_eq!(answered(&mut refreshed), None);
+    bench.complete_tx(TxOutcome::Sent);
+    assert_eq!(bench.completions(), [(1, true), (2, true)]);
+    assert_eq!(answered(&mut refreshed), Some(Ok(())));
+}
+
+#[test]
+fn a_skipped_exchange_lets_the_frames_it_held_back_go() {
+    let mut bench = Bench::attached();
+    bench.device.defer_tx();
+    bench.transmit(1);
+    let leaving = bench.refresh(RefreshKind::Full);
+    bench.transmit(2);
+    assert_eq!(bench.raw_sends.len(), 1, "held back behind the refresh");
+    drop(leaving);
+    bench.complete_tx(TxOutcome::Sent);
+    assert_eq!(
+        bench.raw_sends.len(),
+        2,
+        "the refresh is skipped and the frame goes"
+    );
+    bench.complete_tx(TxOutcome::Sent);
+    assert_eq!(bench.completions(), [(1, true), (2, true)]);
+}
+
+#[test]
+fn an_attachs_backlog_goes_before_an_exchange_queued_during_it() {
+    let mut bench = Bench::new();
+    bench.handle(Event::HostKey(Some(HOST_KEY)));
+    bench.handle(Event::MeshSessionArrived);
+    bench.transmit(1);
+    bench.device.defer_tx();
+    bench.holding = true;
+    bench.connect(true);
+    assert_ne!(bench.state().phase, MobileRadioPhase::Attached);
+    let mut refreshed = bench.refresh(RefreshKind::Full);
+
+    bench.holding = false;
+    bench.deliver();
+    assert_eq!(bench.state().phase, MobileRadioPhase::Attached);
+    assert!(
+        bench.state().provisioning.as_ref().unwrap().phy_enabled,
+        "the transmitter went on first"
+    );
+    assert_eq!(bench.raw_sends.len(), 1, "then the backlog");
+    assert_eq!(answered(&mut refreshed), None, "then the exchange");
+    bench.complete_tx(TxOutcome::Sent);
+    assert_eq!(bench.completions(), [(1, true)]);
+    assert_eq!(answered(&mut refreshed), Some(Ok(())));
+}
+
+#[test]
+fn an_exchange_waits_for_a_mesh_frame_on_the_air() {
+    let mut bench = Bench::attached();
+    bench.device.defer_tx();
+    bench.transmit(1);
+    let mut refreshed = bench.refresh(RefreshKind::Full);
+    assert_eq!(answered(&mut refreshed), None, "the frame is in flight");
+
+    // A busy answer leaves the frame holding its place.
+    bench.complete_tx(TxOutcome::ChannelBusy);
+    assert_eq!(answered(&mut refreshed), None, "waiting out the retry");
+    bench.advance(RAW_TRANSMIT_BUSY_RETRY_MS);
+    assert_eq!(bench.raw_sends.len(), 2);
+    assert_eq!(answered(&mut refreshed), None);
+    bench.complete_tx(TxOutcome::Sent);
+    assert_eq!(bench.completions(), [(1, true)]);
+    assert_eq!(answered(&mut refreshed), Some(Ok(())));
+}
+
+#[test]
+fn waiting_frames_go_between_exchanges_and_a_late_frame_waits_for_one() {
+    let mut bench = Bench::attached();
+    bench.device.defer_tx();
+    bench.holding = true;
+    let mut first = bench.refresh(RefreshKind::Full);
+    let mut second = bench.refresh(RefreshKind::Positioning);
+    bench.transmit(1);
+    assert!(
+        bench.raw_sends.is_empty(),
+        "nothing starts under an exchange"
+    );
+
+    // The first exchange ends: the frame waiting then goes before the
+    // second exchange.
+    assert_eq!(bench.deliver_until(&mut first), Some(Ok(())));
+    assert_eq!(bench.raw_sends.len(), 1);
+    assert_eq!(answered(&mut second), None);
+
+    // A frame taken during the mesh's turn waits for the next exchange.
+    bench.transmit(2);
+    assert_eq!(bench.raw_sends.len(), 1);
+    bench.complete_tx(TxOutcome::Sent);
+    assert_eq!(bench.completions(), [(1, true)]);
+    assert_eq!(bench.raw_sends.len(), 1, "the second exchange goes first");
+    assert_eq!(answered(&mut second), None, "and is under way");
+    bench.holding = false;
+    bench.deliver();
+    assert_eq!(answered(&mut second), Some(Ok(())));
+    assert_eq!(bench.raw_sends.len(), 2);
+    bench.complete_tx(TxOutcome::Sent);
+    assert_eq!(bench.completions(), [(2, true)]);
+}
+
+#[test]
+fn a_busy_mesh_does_not_starve_an_exchange() {
+    let mut bench = Bench::attached();
+    bench.device.defer_tx();
+    bench.transmit(1);
+    let mut refreshed = bench.refresh(RefreshKind::Full);
+    bench.holding = true;
+    for id in 2..10 {
+        bench.transmit(id);
+    }
+    bench.complete_tx(TxOutcome::Sent);
+    assert_eq!(bench.completions(), [(1, true)]);
+    assert_eq!(
+        bench.raw_sends.len(),
+        1,
+        "the exchange starts as soon as the frame in flight is done"
+    );
+    bench.holding = false;
+    bench.deliver();
+    assert_eq!(answered(&mut refreshed), Some(Ok(())));
+    assert_eq!(bench.raw_sends.len(), 2, "then the frames have their turn");
+}
+
+#[test]
+fn a_claim_holds_the_radio_until_the_attach_it_starts_has_settled() {
+    let mut bench = Bench::new();
+    bench.handle(Event::HostKey(Some(HOST_KEY)));
+    bench.connect(false);
+    assert_eq!(bench.state().phase, MobileRadioPhase::AwaitingHost);
+    bench.holding = true;
+    let mut claimed = bench.command(|reply| Command::Claim { reply });
+    let mut refreshed = bench.refresh(RefreshKind::Full);
+    let mut again = bench.command(|reply| Command::Claim { reply });
+    assert_eq!(answered(&mut claimed), Some(Ok(())), "answered once sent");
+    assert_eq!(answered(&mut refreshed), None);
+
+    // The refresh starts only once the claim's attach has settled, which
+    // the session would otherwise refuse. The second claim finds the radio
+    // already this phone's.
+    bench.holding = false;
+    bench.deliver();
+    assert_eq!(bench.state().phase, MobileRadioPhase::Attached);
+    assert_eq!(bench.state().host, UlcpHostOwnership::Ours);
+    assert_eq!(answered(&mut refreshed), Some(Ok(())));
+    assert_eq!(
+        answered(&mut again),
+        Some(Err(MobileRadioError::TakeoverNotAllowed))
+    );
+}
+
+#[test]
+fn a_caller_that_stopped_waiting_is_skipped() {
+    let mut bench = Bench::attached();
+    bench.holding = true;
+    let mut fetching = bench.fetch();
+    let gone = bench.command(|reply| Command::Configure {
+        call: Box::new(|_| panic!("a skipped exchange never runs")),
+        reply,
+    });
+    drop(gone);
+    let mut staying = bench.refresh(RefreshKind::Full);
+    let leaving = bench.refresh(RefreshKind::Full);
+    drop(leaving);
+    bench.holding = false;
+    bench.deliver();
+    assert_eq!(answered(&mut fetching), Some(Ok(())));
+    assert_eq!(
+        answered(&mut staying),
+        Some(Ok(())),
+        "a refresh runs while any caller still waits"
+    );
+}
+
+#[test]
+fn a_refresh_joins_its_own_kind_only() {
+    let mut bench = Bench::attached();
+    bench.carrying = false;
+    let mut positioning = bench.refresh(RefreshKind::Positioning);
+    let mut full = bench.refresh(RefreshKind::Full);
+    let mut joined = bench.refresh(RefreshKind::Full);
+    let mut also_positioning = bench.refresh(RefreshKind::Positioning);
+    // The positioning read stalls. Its joined caller times out with it;
+    // the full refreshes were waiting behind it, not on its answer.
+    bench.advance(super::core::CONTROL_DEADLINE_MS);
+    assert_eq!(
+        answered(&mut positioning),
+        Some(Err(MobileRadioError::TimedOut))
+    );
+    assert_eq!(
+        answered(&mut also_positioning),
+        Some(Err(MobileRadioError::TimedOut))
+    );
+    let unavailable = Some(Err(MobileRadioError::RadioUnavailable));
+    assert_eq!(answered(&mut full), unavailable);
+    assert_eq!(answered(&mut joined), unavailable);
+}
+
+#[test]
+fn the_queue_is_bounded() {
+    let mut bench = Bench::attached();
+    bench.holding = true;
+    let _running = bench.fetch();
+    let mut waiting: Vec<_> = (0..MAXIMUM_QUEUED_EXCHANGES)
+        .map(|_| bench.fetch())
+        .collect();
+    assert!(
+        waiting
+            .iter_mut()
+            .all(|receiver| answered(receiver).is_none()),
+        "every one up to the bound is taken"
+    );
+    let mut over = bench.fetch();
+    assert_eq!(
+        answered(&mut over),
+        Some(Err(MobileRadioError::OperationInProgress))
+    );
+}
+
+#[test]
+fn an_exchange_waits_its_turn_only_so_long() {
+    let mut bench = Bench::attached();
+    bench.device.defer_tx();
+    // A long mesh turn: frames waiting when the fetch ends, each of which
+    // finds the channel busy until it is given up.
+    bench.holding = true;
+    let mut fetching = bench.fetch();
+    for id in 1..=20 {
+        bench.transmit(id);
+    }
+    let mut refreshed = bench.refresh(RefreshKind::Full);
+    let queued_at = bench.clock_ms;
+    bench.holding = false;
+    assert_eq!(bench.deliver_until(&mut fetching), Some(Ok(())));
+    while answered(&mut refreshed).is_none() {
+        assert!(bench.clock_ms < queued_at + 2 * QUEUED_EXCHANGE_TIMEOUT_MS);
+        bench.complete_tx(TxOutcome::ChannelBusy);
+        bench.advance(RAW_TRANSMIT_BUSY_RETRY_MS);
+        if let Some(result) = answered(&mut refreshed) {
+            assert_eq!(result, Err(MobileRadioError::TimedOut));
+            assert!(bench.clock_ms >= queued_at + QUEUED_EXCHANGE_TIMEOUT_MS);
+            return;
+        }
+    }
+    panic!("answered without timing out");
+}
+
+#[test]
+fn an_exchange_queued_behind_a_silent_frame_runs_once_it_is_given_up() {
+    let mut bench = Bench::attached();
+    bench.device.defer_tx();
+    bench.transmit(1);
+    bench.advance(5);
+    let mut refreshed = bench.refresh(RefreshKind::Full);
+    bench.advance(RAW_TRANSMIT_TIMEOUT_MS - 6);
+    assert_eq!(answered(&mut refreshed), None);
+    bench.advance(1);
+    assert_eq!(bench.completions(), [(1, false)]);
+    assert_eq!(answered(&mut refreshed), Some(Ok(())));
+}
+
+#[test]
+fn an_exchange_runs_after_a_raw_transmit_the_radio_never_reported() {
+    let mut bench = Bench::attached();
+    bench.device.defer_tx();
+    bench.transmit(1);
+    bench.advance(RAW_TRANSMIT_TIMEOUT_MS);
+    assert_eq!(bench.completions(), [(1, false)]);
+
+    // The radio answers about the abandoned frame while the refresh's
+    // reads are out. Its late answer reaches none of them.
+    bench.device.complete_tx(TxOutcome::Sent, bench.clock_ms);
+    bench.holding = true;
+    let mut refreshed = bench.refresh(RefreshKind::Full);
+    bench.holding = false;
+    bench.deliver();
+    assert_eq!(answered(&mut refreshed), Some(Ok(())));
+    assert!(bench.invalidations().is_empty());
+    assert_eq!(bench.state().phase, MobileRadioPhase::Attached);
+    assert_eq!(bench.state().problem, None);
+}
+
+#[test]
+fn releasing_the_host_fails_the_exchanges_it_goes_ahead_of() {
+    let mut bench = Bench::attached();
+    bench.holding = true;
+    let mut fetching = bench.fetch();
+    let mut refreshed = bench.refresh(RefreshKind::Full);
+    let (reply, _released) = oneshot::channel();
+    bench.handle(Event::Command(Command::ReleaseHost { reply }));
+    assert_eq!(
+        answered(&mut fetching),
+        Some(Err(MobileRadioError::RadioUnavailable))
+    );
+    assert_eq!(
+        answered(&mut refreshed),
+        Some(Err(MobileRadioError::RadioUnavailable))
+    );
 }
 
 #[test]

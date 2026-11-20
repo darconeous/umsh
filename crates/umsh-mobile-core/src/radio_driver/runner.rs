@@ -11,7 +11,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use tokio::sync::oneshot;
 
-use super::core::{Command, DriverCore, Effect, Event, Now, Reply, SessionCall};
+use super::core::{Command, DriverCore, Effect, Event, Now, RefreshKind, Reply, SessionCall};
 use super::{
     MobileRadioDriverUpdateRecord, MobileRadioError, MobileRadioProblem, MobileRadioStateRecord,
     MobileRadioTransportStateRecord,
@@ -325,19 +325,22 @@ impl MobileRadioDriver {
         self.request(|reply| Command::Attached { reply }).await
     }
 
-    /// Read the radio's state anew.
+    /// Read the radio's state anew. Joins a full read already running or
+    /// waiting.
     pub async fn refresh(&self) -> Result<MobileRadioStateRecord, MobileRadioError> {
         self.request(|reply| Command::Refresh {
+            kind: RefreshKind::Full,
             call: Box::new(|session| session.refresh()),
             reply,
         })
         .await
     }
 
-    /// Read the radio's positioning properties anew. Joins a refresh
-    /// already running.
+    /// Read the radio's positioning properties anew. Joins a positioning
+    /// read already running or waiting.
     pub async fn refresh_positioning(&self) -> Result<MobileRadioStateRecord, MobileRadioError> {
         self.request(|reply| Command::Refresh {
+            kind: RefreshKind::Positioning,
             call: Box::new(|session| session.refresh_positioning()),
             reply,
         })

@@ -7,8 +7,15 @@
 //! the core resolves the sending end. Everything else it wants done—link
 //! calls, mesh session calls, publications—it returns as [`Effect`]s, in
 //! the order they must happen.
+//!
+//! The ULCP session runs one control exchange at a time, and a mesh frame
+//! in flight counts as outstanding. So callers' exchanges queue here, and
+//! the radio passes between them and the mesh in turns: when an exchange
+//! ends, the mesh frames waiting at that moment go before the next one
+//! starts. A busy mesh cannot starve an exchange, and a run of exchanges
+//! cannot hold a frame for more than one of them.
 
-use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
 
 use tokio::sync::oneshot;
@@ -79,6 +86,14 @@ pub(crate) const MAXIMUM_FRAMES_AWAITING_MESH_SESSION: usize = 32;
 /// what the MAC has already given up on.
 pub(crate) const MESH_FRAME_LIFETIME_MS: u64 =
     crate::mobile_mesh::TRANSMIT_COMPLETION_TIMEOUT.as_millis() as u64;
+/// Callers' exchanges that may wait behind the one running. More than
+/// this is a caller in a loop, not a busy radio.
+pub(crate) const MAXIMUM_QUEUED_EXCHANGES: usize = 16;
+/// How long an exchange may wait for its turn before its caller is told
+/// it timed out. A queued exchange has no control deadline of its own
+/// until it starts, and the mesh turns ahead of it are bounded only frame
+/// by frame.
+pub(crate) const QUEUED_EXCHANGE_TIMEOUT_MS: u64 = 30_000;
 
 /// The time an event happens at.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -138,8 +153,10 @@ pub(crate) enum Command {
     Attached {
         reply: Reply<MobileRadioStateRecord>,
     },
-    /// Read the radio's state anew. Joins a read already running.
+    /// Read the radio's state anew. Joins a read of the same kind that is
+    /// running or queued.
     Refresh {
+        kind: RefreshKind,
         call: SessionCall,
         reply: Reply<MobileRadioStateRecord>,
     },
@@ -165,10 +182,99 @@ pub(crate) enum Command {
         call: SessionCall,
         reply: Reply<UlcpLocalManagementEventRecord>,
     },
-    /// Write this phone's host key into the radio.
+    /// Write this phone's host key into the radio. Answered once sent; the
+    /// exchange it starts holds the radio until the attach that follows
+    /// has settled.
     Claim { reply: Reply<()> },
     /// Clear this phone's host key from the radio before letting it go.
     ReleaseHost { reply: oneshot::Sender<()> },
+}
+
+/// What a refresh reads. A caller joins only a read of its own kind: a
+/// positioning read does not answer for the whole state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RefreshKind {
+    Full,
+    Positioning,
+}
+
+/// A caller's control exchange, waiting for its turn.
+enum Exchange {
+    Refresh {
+        kind: RefreshKind,
+        call: SessionCall,
+        waiters: Vec<Reply<MobileRadioStateRecord>>,
+    },
+    Configure {
+        call: SessionCall,
+        reply: Reply<()>,
+    },
+    DeviceTable {
+        requires_device_identity: bool,
+        call: SessionCall,
+        reply: Reply<()>,
+    },
+    LocalManagement {
+        dfu: bool,
+        call: SessionCall,
+        reply: Reply<UlcpLocalManagementEventRecord>,
+    },
+    Claim {
+        reply: Reply<()>,
+    },
+}
+
+impl Exchange {
+    /// The callers of a refresh of `kind`, for another to join.
+    fn refresh_waiters_of(
+        &mut self,
+        kind: RefreshKind,
+    ) -> Option<&mut Vec<Reply<MobileRadioStateRecord>>> {
+        match self {
+            Self::Refresh {
+                kind: queued,
+                waiters,
+                ..
+            } if *queued == kind => Some(waiters),
+            _ => None,
+        }
+    }
+
+    /// Whether every caller has stopped waiting. A Kotlin caller whose
+    /// coroutine was cancelled closes its end; a Swift caller never does.
+    fn abandoned(&self) -> bool {
+        match self {
+            Self::Refresh { waiters, .. } => waiters.iter().all(oneshot::Sender::is_closed),
+            Self::Configure { reply, .. }
+            | Self::DeviceTable { reply, .. }
+            | Self::Claim { reply } => reply.is_closed(),
+            Self::LocalManagement { reply, .. } => reply.is_closed(),
+        }
+    }
+
+    /// Answer every caller with `error`.
+    fn fail(self, error: MobileRadioError) {
+        match self {
+            Self::Refresh { waiters, .. } => {
+                for waiter in waiters {
+                    let _ = waiter.send(Err(error.clone()));
+                }
+            }
+            Self::Configure { reply, .. }
+            | Self::DeviceTable { reply, .. }
+            | Self::Claim { reply } => {
+                let _ = reply.send(Err(error));
+            }
+            Self::LocalManagement { reply, .. } => {
+                let _ = reply.send(Err(error));
+            }
+        }
+    }
+}
+
+struct QueuedExchange {
+    exchange: Exchange,
+    queued_at_ms: u64,
 }
 
 /// What the core wants done, in order.
@@ -227,6 +333,8 @@ struct MeshFrame {
     session: u64,
     /// When the driver took the frame, for [`MESH_FRAME_LIFETIME_MS`].
     taken_at_ms: u64,
+    /// The order the driver took frames in, for the mesh's turns.
+    sequence: u64,
     busy_retries: u32,
 }
 
@@ -406,12 +514,22 @@ pub(crate) struct DriverCore {
     attach_waiters: Vec<Reply<MobileRadioStateRecord>>,
     /// The session on this link reached attached with nothing outstanding.
     attach_settled: bool,
-    refresh_in_progress: bool,
+    /// The refresh running, by kind, and its callers.
+    running_refresh: Option<RefreshKind>,
     refresh_waiters: Vec<Reply<MobileRadioStateRecord>>,
     configuration: Option<Reply<()>>,
     device_table: Option<Reply<()>>,
     local_management: Option<LocalManagement>,
     host_release: Option<HostRelease>,
+    /// Callers' exchanges waiting for their turn, oldest first.
+    exchanges: VecDeque<QueuedExchange>,
+    /// Control work ended, or a queued entry left, since the mesh last had
+    /// a turn: the frames waiting go before the next exchange.
+    mesh_turn_owed: bool,
+    /// Mesh frames taken before this belong to the mesh's turn: they were
+    /// waiting when the last exchange ended, and go before the next.
+    mesh_turn_ends_before: u64,
+    next_frame_sequence: u64,
 
     /// Each outstanding control transaction keeps the deadline it was
     /// given when first seen; unsolicited traffic and raw transmits
@@ -425,9 +543,6 @@ pub(crate) struct DriverCore {
     /// Mesh frames for the radio as it is now.
     pending_raw: VecDeque<MeshFrame>,
     in_flight: BTreeMap<u8, InFlight>,
-    /// Transactions the watchdog gave up on. A radio answering after the
-    /// deadline is late, not wrong.
-    abandoned_raw: HashSet<u8>,
     /// When a busy raw transmit is to be tried again, and under which
     /// generation.
     raw_retry: Option<(u64, u64)>,
@@ -472,17 +587,20 @@ impl DriverCore {
             attach_announced: None,
             attach_waiters: Vec::new(),
             attach_settled: false,
-            refresh_in_progress: false,
+            running_refresh: None,
             refresh_waiters: Vec::new(),
             configuration: None,
             device_table: None,
             local_management: None,
             host_release: None,
+            exchanges: VecDeque::new(),
+            mesh_turn_owed: false,
+            mesh_turn_ends_before: 0,
+            next_frame_sequence: 0,
             control_deadlines: BTreeMap::new(),
             backlog: VecDeque::new(),
             pending_raw: VecDeque::new(),
             in_flight: BTreeMap::new(),
-            abandoned_raw: HashSet::new(),
             raw_retry: None,
             auto_enable_generation: None,
             auto_claim_generation: None,
@@ -537,6 +655,9 @@ impl DriverCore {
     /// Act on every deadline that has passed by `now`.
     pub(crate) fn tick(&mut self, now: Now) -> Vec<Effect> {
         let at = now.monotonic_ms;
+        // First, so an exchange that has waited its limit is answered as
+        // such rather than started by whatever else this tick frees.
+        self.expire_queued_exchanges(at);
         if self
             .host_release
             .as_ref()
@@ -585,6 +706,10 @@ impl DriverCore {
             self.in_flight.values().map(|f| f.deadline_ms).min(),
             self.raw_retry.map(|(due, _)| due),
             self.host_release.as_ref().map(|r| r.deadline_ms),
+            // The oldest entry is the first to expire.
+            self.exchanges
+                .front()
+                .map(|queued| queued.queued_at_ms + QUEUED_EXCHANGE_TIMEOUT_MS),
         ]
         .into_iter()
         .flatten()
@@ -595,11 +720,16 @@ impl DriverCore {
         self.control_deadlines.values().copied().min()
     }
 
-    /// Run deferred work, publish the state if it changed, and hand over
-    /// the effects.
+    /// Run deferred work, pass the radio between exchanges and the mesh,
+    /// publish the state if it changed, and hand over the effects.
     fn finish(&mut self, now: Now) -> Vec<Effect> {
-        while let Some(work) = self.deferred.pop_front() {
-            self.run_deferred(work, now);
+        loop {
+            while let Some(work) = self.deferred.pop_front() {
+                self.run_deferred(work, now);
+            }
+            if !self.take_turns(now) {
+                break;
+            }
         }
         if self.published != self.state {
             self.published = self.state.clone();
@@ -611,6 +741,104 @@ impl DriverCore {
 
     fn diagnose(&mut self, line: String) {
         self.effects.push(Effect::Diagnostic(line));
+    }
+
+    // ------------------------------------------------------------------
+    // Turns between control exchanges and mesh frames
+    // ------------------------------------------------------------------
+
+    /// One step of passing the radio between callers' exchanges and the
+    /// mesh. Returns whether it did anything, so the caller asks again.
+    ///
+    /// When control work ends—the attach and what follows it, or a
+    /// caller's exchange—the mesh frames waiting at that moment form a
+    /// turn and go first. The next queued exchange starts once the radio
+    /// has nothing outstanding and that turn is done.
+    fn take_turns(&mut self, now: Now) -> bool {
+        if self.control_busy() {
+            self.mesh_turn_owed = true;
+            return false;
+        }
+        if self.mesh_turn_owed {
+            self.mesh_turn_owed = false;
+            self.mesh_turn_ends_before = self.next_frame_sequence;
+            self.pump_raw_transmits(now);
+            return true;
+        }
+        if !self.mesh_idle_for_exchange() {
+            return false;
+        }
+        let Some(queued) = self.exchanges.pop_front() else {
+            return false;
+        };
+        if queued.exchange.abandoned() {
+            self.diagnose("queued exchange skipped: its caller stopped waiting".to_owned());
+        } else {
+            self.start_exchange(queued.exchange, now);
+        }
+        // Whatever became of the entry—it ran, ended inside its own call,
+        // was skipped, or could no longer run—the frames it held back get
+        // their turn before the next.
+        self.mesh_turn_owed = true;
+        true
+    }
+
+    /// Whether the radio is held for a control exchange.
+    fn control_busy(&self) -> bool {
+        self.exchange_running() || !self.control_deadlines.is_empty()
+    }
+
+    /// Whether the mesh leaves the radio free for an exchange: the link is
+    /// up, no mesh frame is in flight or waiting out a busy retry, and the
+    /// mesh's turn is done. Control work is the caller's to check.
+    fn mesh_idle_for_exchange(&self) -> bool {
+        self.link_up
+            && self.in_flight.is_empty()
+            && self.raw_retry.is_none()
+            && !self.mesh_turn_pending()
+    }
+
+    /// Whether frames of the mesh's turn are still waiting and can go.
+    fn mesh_turn_pending(&self) -> bool {
+        self.state.phase == MobileRadioPhase::Attached
+            && self
+                .pending_raw
+                .front()
+                .is_some_and(|frame| self.frame_goes_first(frame))
+    }
+
+    /// Whether `frame` may go now: always with no exchange waiting, and
+    /// otherwise only ahead of it.
+    fn frame_may_go(&self, frame: &MeshFrame) -> bool {
+        self.exchanges.is_empty() || self.frame_goes_first(frame)
+    }
+
+    /// Whether `frame` goes ahead of a waiting exchange: it is part of the
+    /// mesh's turn, or it was on the air and is waiting out a busy retry,
+    /// which keeps the place it had.
+    fn frame_goes_first(&self, frame: &MeshFrame) -> bool {
+        frame.busy_retries > 0 || frame.sequence < self.mesh_turn_ends_before
+    }
+
+    /// Fail the entries that have waited their limit. Entries are in
+    /// arrival order, so they expire from the front. A caller who joined a
+    /// queued refresh shares that entry's clock.
+    fn expire_queued_exchanges(&mut self, at: u64) {
+        while let Some(queued) = self
+            .exchanges
+            .pop_front_if(|queued| queued.queued_at_ms + QUEUED_EXCHANGE_TIMEOUT_MS <= at)
+        {
+            queued.exchange.fail(MobileRadioError::TimedOut);
+            // The frames it held back get their turn.
+            self.mesh_turn_owed = true;
+        }
+    }
+
+    /// Fail every queued exchange's callers.
+    fn fail_queued_exchanges(&mut self, error: &MobileRadioError) {
+        for queued in self.exchanges.drain(..) {
+            queued.exchange.fail(error.clone());
+        }
     }
 
     // ------------------------------------------------------------------
@@ -1159,17 +1387,11 @@ impl DriverCore {
         result: UlcpRawTransmitResultRecord,
         now: Now,
     ) -> Result<(), ApplyError> {
+        // A frame given up on was abandoned in the session too, which
+        // refuses its late answer before it reaches here. One the session
+        // still expected and the driver does not know is a disagreement.
         let Some(mut in_flight) = self.in_flight.remove(&result.transaction_id) else {
-            if !self.abandoned_raw.remove(&result.transaction_id) {
-                return Err(ApplyError::UnknownRawTransaction(result.transaction_id));
-            }
-            // The watchdog already failed this frame. The radio is late,
-            // not wrong: keep the link.
-            self.diagnose(format!(
-                "raw transmit answered after its deadline: transaction {} ({})",
-                result.transaction_id, result.status_name
-            ));
-            return Ok(());
+            return Err(ApplyError::UnknownRawTransaction(result.transaction_id));
         };
         match result.disposition {
             UlcpRawTransmitDisposition::Sent => self.complete_mesh_frame(&in_flight.frame, true),
@@ -1261,7 +1483,7 @@ impl DriverCore {
                 });
             }
         }
-        if self.refresh_in_progress {
+        if self.running_refresh.is_some() {
             self.finish_refresh(rejection.clone().map_or(Ok(()), Err));
         }
         if let Some(reply) = self.configuration.take() {
@@ -1365,22 +1587,28 @@ impl DriverCore {
                 ));
             }
         }
-        let queue = if ready {
-            &mut self.pending_raw
-        } else {
-            &mut self.backlog
-        };
-        queue.extend(frames.into_iter().map(|frame| MeshFrame {
-            id: frame.id,
-            data: frame.data,
-            nocca: frame.nocca,
-            power_dbm: frame.power_dbm,
-            session,
-            taken_at_ms: now.monotonic_ms,
-            busy_retries: 0,
-        }));
+        let taken: Vec<MeshFrame> = frames
+            .into_iter()
+            .map(|frame| {
+                let sequence = self.next_frame_sequence;
+                self.next_frame_sequence += 1;
+                MeshFrame {
+                    id: frame.id,
+                    data: frame.data,
+                    nocca: frame.nocca,
+                    power_dbm: frame.power_dbm,
+                    session,
+                    taken_at_ms: now.monotonic_ms,
+                    sequence,
+                    busy_retries: 0,
+                }
+            })
+            .collect();
         if ready {
+            self.pending_raw.extend(taken);
             self.pump_raw_transmits(now);
+        } else {
+            self.backlog.extend(taken);
         }
     }
 
@@ -1409,6 +1637,10 @@ impl DriverCore {
         while self.in_flight.len() < MAXIMUM_RAW_TRANSMITS_IN_FLIGHT
             && self.raw_retry.is_none()
             && self.control_deadlines.is_empty()
+            && self
+                .pending_raw
+                .front()
+                .is_some_and(|frame| self.frame_may_go(frame))
             && let Some(frame) = self.pending_raw.pop_front()
         {
             if frame.expired(now) {
@@ -1440,9 +1672,6 @@ impl DriverCore {
                     return Err(CallError::Session(cause));
                 }
             };
-            // This transaction ID belongs to a live submission now,
-            // whatever an earlier use of it was abandoned for.
-            self.abandoned_raw.remove(&transaction_id);
             self.in_flight.insert(
                 transaction_id,
                 InFlight {
@@ -1462,6 +1691,10 @@ impl DriverCore {
 
     /// Give up on a frame the radio took and never reported. The link is
     /// left alone; only this frame's ticket fails, which releases the MAC.
+    ///
+    /// The session gives up on it too. Otherwise it would go on expecting
+    /// the answer, and refuse every exchange that needs nothing outstanding
+    /// until the link dropped.
     fn raw_transmit_timed_out(&mut self, transaction_id: u8, now: Now) {
         let Some(in_flight) = self.in_flight.remove(&transaction_id) else {
             return;
@@ -1472,7 +1705,7 @@ impl DriverCore {
             in_flight.frame.id,
             in_flight.frame.data.len(),
         ));
-        self.abandoned_raw.insert(transaction_id);
+        let _ = self.session.abandon_raw_transmits(vec![transaction_id]);
         self.complete_mesh_frame(&in_flight.frame, false);
         self.state.problem = Some(MobileRadioProblem::TransmissionUnreported);
         self.pump_raw_transmits(now);
@@ -1496,9 +1729,6 @@ impl DriverCore {
     /// later send queues behind it. Any path that walks away from the
     /// frames it carried comes through here.
     fn abandon_outstanding_mesh_frames(&mut self) {
-        // A restarted session issues transaction IDs from the start again,
-        // so entries kept here would swallow a real protocol violation.
-        self.abandoned_raw.clear();
         if self.pending_raw.is_empty() && self.in_flight.is_empty() {
             return;
         }
@@ -1552,13 +1782,30 @@ impl DriverCore {
     fn command(&mut self, command: Command, now: Now) {
         match command {
             Command::Attached { reply } => self.await_attach(reply),
-            Command::Refresh { call, reply } => self.refresh(call, reply, now),
-            Command::Configure { call, reply } => self.configure(call, reply, now),
+            Command::Refresh { kind, call, reply } => self.refresh(kind, call, reply, now),
+            Command::Configure { call, reply } => {
+                self.enqueue(Exchange::Configure { call, reply }, now);
+            }
             Command::DeviceTable {
                 requires_device_identity,
                 call,
                 reply,
-            } => self.device_table(requires_device_identity, call, reply, now),
+            } => self.enqueue(
+                Exchange::DeviceTable {
+                    requires_device_identity,
+                    call,
+                    reply,
+                },
+                now,
+            ),
+            Command::LocalManagement { dfu, call, reply } => {
+                self.enqueue(Exchange::LocalManagement { dfu, call, reply }, now);
+            }
+            Command::Claim { reply } => self.enqueue(Exchange::Claim { reply }, now),
+            Command::ReleaseHost { reply } => self.release_host(reply, now),
+            // Sent at once, queue or not, so a misbehaving radio can always
+            // be reset. One that expects an answer holds the next queued
+            // exchange until it comes.
             Command::Immediate {
                 call,
                 abandon_binding,
@@ -1580,25 +1827,6 @@ impl DriverCore {
                 }
                 let _ = reply.send(Ok(()));
             }
-            Command::LocalManagement { dfu, call, reply } => {
-                if !self.link_up || self.state.phase != MobileRadioPhase::Attached {
-                    let _ = reply.send(Err(MobileRadioError::RadioUnavailable));
-                    return;
-                }
-                if self.exchange_running() {
-                    let _ = reply.send(Err(MobileRadioError::OperationInProgress));
-                    return;
-                }
-                self.local_management = Some(LocalManagement { reply, dfu });
-                // An exchange with nothing to ask completes inside the call.
-                if let Err(error) = self.call(call, now) {
-                    self.finish_local_management(Err(error.for_caller()));
-                }
-            }
-            Command::Claim { reply } => {
-                let _ = reply.send(self.claim(now));
-            }
-            Command::ReleaseHost { reply } => self.release_host(reply, now),
         }
     }
 
@@ -1621,116 +1849,190 @@ impl DriverCore {
         self.apply(update, now).map_err(CallError::Apply)
     }
 
-    fn refresh(&mut self, call: SessionCall, reply: Reply<MobileRadioStateRecord>, now: Now) {
-        if !self.link_up {
-            let _ = reply.send(Err(MobileRadioError::RadioUnavailable));
-            return;
-        }
-        // A positioning read and a full refresh share their waiters: both
-        // end on the same event, and a caller polling one joins the other
-        // rather than starving it.
-        if self.refresh_in_progress {
+    /// A refresh joins one of its own kind, running or queued, and
+    /// otherwise waits its turn.
+    fn refresh(
+        &mut self,
+        kind: RefreshKind,
+        call: SessionCall,
+        reply: Reply<MobileRadioStateRecord>,
+        now: Now,
+    ) {
+        if self.running_refresh == Some(kind) {
             self.refresh_waiters.push(reply);
             return;
         }
-        if self.exchange_running() {
-            let _ = reply.send(Err(MobileRadioError::OperationInProgress));
+        if let Some(waiters) = self
+            .exchanges
+            .iter_mut()
+            .find_map(|queued| queued.exchange.refresh_waiters_of(kind))
+        {
+            waiters.push(reply);
             return;
         }
-        self.refresh_waiters.push(reply);
-        self.refresh_in_progress = true;
-        if let Err(error) = self.call(call, now) {
-            self.finish_refresh(Err(error.for_caller()));
+        self.enqueue(
+            Exchange::Refresh {
+                kind,
+                call,
+                waiters: vec![reply],
+            },
+            now,
+        );
+    }
+
+    /// Take a caller's exchange: refused at once if it could not run now,
+    /// or if too many already wait, and otherwise queued. It starts when
+    /// its turn comes (`take_turns`), at once if nothing is in the way.
+    fn enqueue(&mut self, exchange: Exchange, now: Now) {
+        if let Err(error) = self.precondition(&exchange) {
+            exchange.fail(error);
+            return;
+        }
+        if self.exchanges.len() >= MAXIMUM_QUEUED_EXCHANGES {
+            self.diagnose(format!(
+                "exchange refused: {MAXIMUM_QUEUED_EXCHANGES} already waiting"
+            ));
+            exchange.fail(MobileRadioError::OperationInProgress);
+            return;
+        }
+        self.exchanges.push_back(QueuedExchange {
+            exchange,
+            queued_at_ms: now.monotonic_ms,
+        });
+    }
+
+    /// What an exchange needs of the radio, checked when it arrives and
+    /// again when it starts, with the same errors either way.
+    fn precondition(&self, exchange: &Exchange) -> Result<(), MobileRadioError> {
+        match exchange {
+            Exchange::Refresh { .. } | Exchange::Configure { .. } => {
+                if !self.link_up {
+                    return Err(MobileRadioError::RadioUnavailable);
+                }
+            }
+            Exchange::LocalManagement { .. } => {
+                if !self.link_up || self.state.phase != MobileRadioPhase::Attached {
+                    return Err(MobileRadioError::RadioUnavailable);
+                }
+            }
+            Exchange::DeviceTable {
+                requires_device_identity,
+                ..
+            } => {
+                // A tethered radio's tables are this phone's to edit once
+                // it holds the radio. An administered radio's are its own
+                // domain, whoever its host is.
+                if !self.link_up
+                    || self.state.phase != MobileRadioPhase::Attached
+                    || (!self.administrative && self.state.host != UlcpHostOwnership::Ours)
+                {
+                    return Err(MobileRadioError::RadioUnavailable);
+                }
+                if *requires_device_identity
+                    && !self
+                        .state
+                        .provisioning
+                        .as_ref()
+                        .is_some_and(|provisioning| provisioning.supports_device_identity)
+                {
+                    return Err(MobileRadioError::Unsupported);
+                }
+            }
+            Exchange::Claim { .. } => {
+                self.claim_precondition()?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Start a queued exchange whose turn has come.
+    fn start_exchange(&mut self, exchange: Exchange, now: Now) {
+        if let Err(error) = self.precondition(&exchange) {
+            self.diagnose(format!("queued exchange no longer possible: {error}"));
+            exchange.fail(error);
+            return;
+        }
+        match exchange {
+            Exchange::Refresh {
+                kind,
+                call,
+                waiters,
+            } => {
+                self.running_refresh = Some(kind);
+                self.refresh_waiters = waiters;
+                if let Err(error) = self.call(call, now) {
+                    self.finish_refresh(Err(error.for_caller()));
+                }
+            }
+            Exchange::Configure { call, reply } => {
+                self.configuration = Some(reply);
+                if let Err(error) = self.call(call, now)
+                    && let Some(reply) = self.configuration.take()
+                {
+                    let _ = reply.send(Err(error.for_caller()));
+                }
+            }
+            // Resolved by the update that carries its outcome.
+            Exchange::DeviceTable { call, reply, .. } => {
+                self.device_table = Some(reply);
+                if let Err(error) = self.call(call, now)
+                    && let Some(reply) = self.device_table.take()
+                {
+                    let _ = reply.send(Err(error.for_caller()));
+                }
+            }
+            Exchange::LocalManagement { dfu, call, reply } => {
+                self.local_management = Some(LocalManagement { reply, dfu });
+                // An exchange with nothing to ask completes inside the call.
+                if let Err(error) = self.call(call, now) {
+                    self.finish_local_management(Err(error.for_caller()));
+                }
+            }
+            // Answered once sent. The attach that follows holds the radio
+            // through its control transactions, so nothing queued starts
+            // until it has settled.
+            Exchange::Claim { reply } => {
+                let _ = reply.send(self.claim(now));
+            }
         }
     }
 
     /// Whether a caller's control exchange is still running. The ULCP
     /// session runs one at a time, and refuses another until it ends.
     fn exchange_running(&self) -> bool {
-        self.refresh_in_progress
+        self.running_refresh.is_some()
             || self.configuration.is_some()
             || self.device_table.is_some()
             || self.local_management.is_some()
     }
 
-    fn configure(&mut self, call: SessionCall, reply: Reply<()>, now: Now) {
-        if !self.link_up {
-            let _ = reply.send(Err(MobileRadioError::RadioUnavailable));
-            return;
-        }
-        if self.exchange_running() {
-            let _ = reply.send(Err(MobileRadioError::OperationInProgress));
-            return;
-        }
-        self.configuration = Some(reply);
-        if let Err(error) = self.call(call, now)
-            && let Some(reply) = self.configuration.take()
-        {
-            let _ = reply.send(Err(error.for_caller()));
-        }
-    }
-
-    /// One table edit at a time, resolved by the update that carries its
-    /// outcome. The session wants an otherwise idle attach, so an edit
-    /// racing another operation is refused rather than interleaved.
-    fn device_table(
-        &mut self,
-        requires_device_identity: bool,
-        call: SessionCall,
-        reply: Reply<()>,
-        now: Now,
-    ) {
-        // A tethered radio's tables are this phone's to edit once it holds
-        // the radio. An administered radio's are its own domain, whoever
-        // its host is.
-        if !self.link_up
-            || self.state.phase != MobileRadioPhase::Attached
-            || (!self.administrative && self.state.host != UlcpHostOwnership::Ours)
-        {
-            let _ = reply.send(Err(MobileRadioError::RadioUnavailable));
-            return;
-        }
-        if requires_device_identity
-            && !self
-                .state
-                .provisioning
-                .as_ref()
-                .is_some_and(|provisioning| provisioning.supports_device_identity)
-        {
-            let _ = reply.send(Err(MobileRadioError::Unsupported));
-            return;
-        }
-        if self.exchange_running() {
-            let _ = reply.send(Err(MobileRadioError::OperationInProgress));
-            return;
-        }
-        self.device_table = Some(reply);
-        if let Err(error) = self.call(call, now)
-            && let Some(reply) = self.device_table.take()
-        {
-            let _ = reply.send(Err(error.for_caller()));
-        }
-    }
-
-    fn claim(&mut self, now: Now) -> Result<(), MobileRadioError> {
+    /// The host key a claim would write, or why there can be none now.
+    fn claim_precondition(&self) -> Result<[u8; 32], MobileRadioError> {
         let Some(host_key) = self.host_key.filter(|_| self.link_up) else {
-            self.diagnose(format!(
-                "claim: refused; link up={} host key={}",
-                self.link_up,
-                self.host_key.is_some()
-            ));
             return Err(MobileRadioError::IdentityUnavailable);
         };
         if !matches!(
             self.state.host,
             UlcpHostOwnership::Unclaimed | UlcpHostOwnership::OtherHost
         ) {
-            self.diagnose(format!(
-                "claim: refused from host state {:?}",
-                self.state.host
-            ));
             return Err(MobileRadioError::TakeoverNotAllowed);
         }
+        Ok(host_key)
+    }
+
+    fn claim(&mut self, now: Now) -> Result<(), MobileRadioError> {
+        let host_key = match self.claim_precondition() {
+            Ok(host_key) => host_key,
+            Err(error) => {
+                self.diagnose(format!(
+                    "claim: refused ({error}); link up={} host key={} host state {:?}",
+                    self.link_up,
+                    self.host_key.is_some(),
+                    self.state.host
+                ));
+                return Err(error);
+            }
+        };
         self.diagnose(format!(
             "claim: writing host key from host state {:?}",
             self.state.host
@@ -1748,6 +2050,10 @@ impl DriverCore {
     /// Hand the radio back before letting it go: clear this phone's host
     /// key, so the radio stops queueing for a phone that has left. Ends
     /// when the radio answers, the link goes, or the deadline passes.
+    ///
+    /// It goes ahead of everything. The radio is being let go, so the
+    /// exchange running and those queued are failed rather than left
+    /// waiting for a link that is about to drop.
     fn release_host(&mut self, reply: oneshot::Sender<()>, now: Now) {
         if let Some(release) = &mut self.host_release {
             release.waiters.push(reply);
@@ -1757,6 +2063,7 @@ impl DriverCore {
             let _ = reply.send(());
             return;
         }
+        self.finish_pending_operations();
         self.host_release = Some(HostRelease {
             waiters: vec![reply],
             device_key: self.state.device_key.clone(),
@@ -1774,7 +2081,7 @@ impl DriverCore {
     // ------------------------------------------------------------------
 
     fn finish_refresh(&mut self, outcome: Result<(), MobileRadioError>) {
-        self.refresh_in_progress = false;
+        self.running_refresh = None;
         for reply in self.refresh_waiters.drain(..) {
             let _ = reply.send(outcome.clone().map(|()| self.state.clone()));
         }
@@ -1813,9 +2120,9 @@ impl DriverCore {
 
     /// Release callers waiting on a control exchange the radio stopped
     /// answering. Timed out, not rejected: nobody knows whether the radio
-    /// acted.
+    /// acted. Those queued behind it are failed with the session it ends.
     fn finish_stranded_operations(&mut self) {
-        if self.refresh_in_progress || !self.refresh_waiters.is_empty() {
+        if self.running_refresh.is_some() || !self.refresh_waiters.is_empty() {
             self.finish_refresh(Err(MobileRadioError::TimedOut));
         }
         if let Some(reply) = self.configuration.take() {
@@ -1827,8 +2134,10 @@ impl DriverCore {
         self.finish_local_management(Err(MobileRadioError::TimedOut));
     }
 
+    /// Fail the exchange running and every one queued: the radio will not
+    /// answer them.
     fn finish_pending_operations(&mut self) {
-        if self.refresh_in_progress || !self.refresh_waiters.is_empty() {
+        if self.running_refresh.is_some() || !self.refresh_waiters.is_empty() {
             self.finish_refresh(Err(MobileRadioError::RadioUnavailable));
         }
         if let Some(reply) = self.configuration.take() {
@@ -1838,6 +2147,7 @@ impl DriverCore {
             let _ = reply.send(Err(MobileRadioError::RadioUnavailable));
         }
         self.finish_local_management(Err(MobileRadioError::RadioUnavailable));
+        self.fail_queued_exchanges(&MobileRadioError::RadioUnavailable);
     }
 }
 

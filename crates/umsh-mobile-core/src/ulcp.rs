@@ -1124,6 +1124,16 @@ struct UlcpSessionState {
     stage: SessionStage,
     tids: TidAllocator,
     expected: HashMap<u8, ExpectedResponse>,
+    /// Raw transmits given up on before the radio answered, longest ago
+    /// first. Their answers may still come, so their identifiers are not
+    /// handed out again while others are free: a late answer must not land
+    /// on a transaction that reused one. The answer arriving frees it.
+    ///
+    /// One whose answer never comes stays until the session starts over,
+    /// and makes each later round of reads one request smaller. It takes
+    /// several frames the radio never answered, on one link, for that to
+    /// be felt.
+    abandoned_tids: VecDeque<u8>,
     selected_host_key: Option<[u8; 32]>,
     radio_host_key: Option<Vec<u8>>,
     host_key_unsupported: bool,
@@ -1184,6 +1194,7 @@ impl Default for UlcpSessionState {
             stage: SessionStage::Idle,
             tids: TidAllocator::new(),
             expected: HashMap::new(),
+            abandoned_tids: VecDeque::new(),
             selected_host_key: None,
             radio_host_key: None,
             host_key_unsupported: false,
@@ -1439,7 +1450,7 @@ impl MobileUlcpSession {
             return Err(MobileError::UnsupportedCapability);
         }
         let value = encode_alert_state(state)?;
-        let tid = session.allocate_tid();
+        let tid = session.allocate_unused_tid()?;
         session
             .expected
             .insert(tid, ExpectedResponse::Property(prop::ALERT));
@@ -1485,7 +1496,7 @@ impl MobileUlcpSession {
     pub fn enter_dfu(&self, mode: UlcpDfuMode) -> Result<UlcpSessionUpdateRecord, MobileError> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         state.begin_local_management()?;
-        let tid = state.allocate_management_tid()?;
+        let tid = state.allocate_unused_tid()?;
         let mut buf = [0; 3];
         let len = frame::dfu(&mut buf, tid, Some(mode.into()))
             .map_err(|_| MobileError::InvalidUlcpFrame)?;
@@ -1523,7 +1534,7 @@ impl MobileUlcpSession {
         let value = epoch_seconds
             .map(|epoch| epoch.to_le_bytes().to_vec())
             .unwrap_or_default();
-        let tid = session.allocate_tid();
+        let tid = session.allocate_unused_tid()?;
         session
             .expected
             .insert(tid, ExpectedResponse::Property(prop::TIME));
@@ -2305,15 +2316,7 @@ impl MobileUlcpSession {
         if state.stage != SessionStage::Attached || !raw_pipeline_active || data.is_empty() {
             return Err(MobileError::InvalidUlcpFrame);
         }
-        let mut available_tid = None;
-        for _ in 0..usize::from(frame::TID_MAX) {
-            let candidate = state.allocate_tid();
-            if !state.expected.contains_key(&candidate) {
-                available_tid = Some(candidate);
-                break;
-            }
-        }
-        let tid = available_tid.ok_or(MobileError::InvalidUlcpFrame)?;
+        let tid = state.allocate_unused_tid()?;
         state.expected.insert(tid, ExpectedResponse::RawTransmit);
         let mut metadata = [0u8; umsh_ulcp::TxMeta::WIRE_LEN];
         let flags = if nocca {
@@ -2497,10 +2500,14 @@ impl MobileUlcpSession {
         // watchdog stopped waiting for—or a device answering twice. Tearing
         // the link down over it would turn a stray frame into a lost
         // session, and reconnecting would not stop the device sending it.
-        let expected = state
-            .expected
-            .remove(&response.transaction_id)
-            .ok_or(MobileError::UlcpUnexpectedFrame)?;
+        let Some(expected) = state.expected.remove(&response.transaction_id) else {
+            // A late answer to an abandoned raw transmit frees its
+            // identifier: nothing more is coming on it.
+            state
+                .abandoned_tids
+                .retain(|&tid| tid != response.transaction_id);
+            return Err(MobileError::UlcpUnexpectedFrame);
+        };
         let completed_control =
             (!matches!(expected, ExpectedResponse::RawTransmit)).then_some(response.transaction_id);
         // From here on, an answer that is not the form its request predicted
@@ -3232,9 +3239,11 @@ impl MobileUlcpSession {
         state.update(Vec::new())
     }
 
-    /// Abandon raw transactions whose GATT writes were rejected locally.
-    /// Their late correlated responses are ignored once; the attachment and
-    /// all non-raw session state remain intact.
+    /// Abandon raw transactions the caller stopped waiting for: their
+    /// writes failed locally, or the radio never reported them. A late
+    /// answer is refused as unexpected, and the identifier is not reused
+    /// while another is free. The attachment and all non-raw session state
+    /// remain intact.
     pub fn abandon_raw_transmits(&self, transaction_ids: Vec<u8>) -> UlcpSessionUpdateRecord {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         for tid in transaction_ids {
@@ -3243,6 +3252,8 @@ impl MobileUlcpSession {
                 Some(ExpectedResponse::RawTransmit)
             ) {
                 state.expected.remove(&tid);
+                state.abandoned_tids.retain(|&abandoned| abandoned != tid);
+                state.abandoned_tids.push_back(tid);
             }
         }
         state.update(Vec::new())
@@ -3330,19 +3341,67 @@ fn dev_key_table_name(property: u32) -> &'static str {
 }
 
 impl UlcpSessionState {
+    /// The next transaction identifier that is free outright: no
+    /// outstanding exchange is using it, and no late answer may still come
+    /// on it.
+    fn free_tid(&mut self) -> Option<u8> {
+        (0..frame::TID_MAX).find_map(|_| {
+            let tid = self.tids.allocate();
+            (!self.expected.contains_key(&tid) && !self.abandoned_tids.contains(&tid))
+                .then_some(tid)
+        })
+    }
+
+    /// An identifier for the next request of a round of reads: one free
+    /// outright, or for the round's first request any not in use, so a
+    /// round always asks something. `None` ends the round; what is left
+    /// goes in the next.
+    fn round_tid(&mut self, first: bool) -> Result<Option<u8>, MobileError> {
+        if let Some(tid) = self.free_tid() {
+            return Ok(Some(tid));
+        }
+        if first {
+            return self.allocate_unused_tid().map(Some);
+        }
+        Ok(None)
+    }
+
+    /// The next transaction identifier no outstanding exchange is using.
+    /// One free outright comes first; with none, the longest-abandoned;
+    /// with nothing free at all, the next in the cycle, in use or not. A
+    /// request that can run beside another exchange uses
+    /// `allocate_unused_tid`, which refuses rather than reuse one.
     fn allocate_tid(&mut self) -> u8 {
+        if let Some(tid) = self.free_tid() {
+            return tid;
+        }
+        if let Some(index) = self
+            .abandoned_tids
+            .iter()
+            .position(|tid| !self.expected.contains_key(tid))
+            && let Some(tid) = self.abandoned_tids.remove(index)
+        {
+            return tid;
+        }
         self.tids.allocate()
     }
 
     /// Ask for the next round of queued reads: one request per entry, as
-    /// many as the transaction space holds. A round goes out only once the
-    /// last is answered, so the identifiers it takes are all free.
+    /// many as there are free identifiers. A round goes out only once the
+    /// last is answered. It passes over an identifier whose late answer
+    /// may still come, so a round is smaller while one is abandoned, but
+    /// it always asks at least one thing.
     fn issue_reads(&mut self, outbound: &mut Vec<Vec<u8>>) -> Result<(), MobileError> {
-        for _ in 0..usize::from(frame::TID_MAX) {
+        for index in 0..usize::from(frame::TID_MAX) {
+            if self.read_queue.is_empty() {
+                break;
+            }
+            let Some(tid) = self.round_tid(index == 0)? else {
+                break;
+            };
             let Some(keys) = self.read_queue.pop_front() else {
                 break;
             };
-            let tid = self.allocate_tid();
             outbound.push(if let [key] = keys[..] {
                 self.expected.insert(tid, ExpectedResponse::Property(key));
                 ulcp_prop_get(tid, key)?
@@ -3711,20 +3770,16 @@ impl UlcpSessionState {
         Ok(())
     }
 
-    /// A transaction identifier no outstanding exchange is using.
-    ///
-    /// The allocator cycles blindly, which is safe for the staged bulk
-    /// reads—they only run with nothing outstanding—but a management
-    /// round can coexist with a live one-off like an alert write, and
-    /// must not reuse its identifier.
-    fn allocate_management_tid(&mut self) -> Result<u8, MobileError> {
-        for _ in 0..usize::from(frame::TID_MAX) {
-            let tid = self.tids.allocate();
-            if !self.expected.contains_key(&tid) {
-                return Ok(tid);
-            }
+    /// A transaction identifier no outstanding exchange is using, or an
+    /// error when every one is. For requests that can run beside another
+    /// exchange: a raw transmit, a management round, an alert or time
+    /// write sent while a read round is out.
+    fn allocate_unused_tid(&mut self) -> Result<u8, MobileError> {
+        let tid = self.allocate_tid();
+        if self.expected.contains_key(&tid) {
+            return Err(MobileError::InvalidUlcpFrame);
         }
-        Err(MobileError::InvalidUlcpFrame)
+        Ok(tid)
     }
 
     /// Record one answer for the local management operation in flight.
@@ -3751,13 +3806,13 @@ impl UlcpSessionState {
             // One write at a time: the plan's order is load-bearing (the
             // PHY bracket), and a device applies what it is asked in the
             // order asked only if it is asked in that order.
-            let tid = self.allocate_management_tid()?;
+            let tid = self.allocate_unused_tid()?;
             self.expected
                 .insert(tid, ExpectedResponse::ManagementSet(property));
             outbound.push(ulcp_prop_set(tid, property, value)?);
             self.management = Some(op);
         } else if let Some((property, mutation, value)) = op.item_queue.pop_front() {
-            let tid = self.allocate_management_tid()?;
+            let tid = self.allocate_unused_tid()?;
             self.expected
                 .insert(tid, ExpectedResponse::ManagementItem(property));
             outbound.push(match mutation {
@@ -3767,11 +3822,16 @@ impl UlcpSessionState {
             self.management = Some(op);
         } else if !op.fetch_queue.is_empty() {
             let budget = usize::from(frame::TID_MAX).saturating_sub(self.expected.len());
-            for _ in 0..budget {
+            for index in 0..budget {
+                if op.fetch_queue.is_empty() {
+                    break;
+                }
+                let Some(tid) = self.round_tid(index == 0)? else {
+                    break;
+                };
                 let Some(keys) = op.fetch_queue.pop_front() else {
                     break;
                 };
-                let tid = self.allocate_management_tid()?;
                 outbound.push(if let [key] = keys[..] {
                     self.expected
                         .insert(tid, ExpectedResponse::ManagementGet(key));
@@ -7980,6 +8040,53 @@ impl MobileHdlcDecoder {
 mod tests {
     use super::*;
     use umsh_ulcp::PropPayload;
+
+    /// An identifier whose late answer may still come is handed out only
+    /// once every other free one is taken, and its answer arriving frees
+    /// it.
+    #[test]
+    fn an_abandoned_transaction_identifier_is_reused_last() {
+        let mut state = UlcpSessionState::default();
+        let abandoned = state.allocate_tid();
+        state.abandoned_tids.push_back(abandoned);
+        let mut taken = Vec::new();
+        for _ in 0..frame::TID_MAX {
+            let tid = state.allocate_tid();
+            state.expected.insert(tid, ExpectedResponse::RawTransmit);
+            taken.push(tid);
+        }
+        assert_eq!(taken.last(), Some(&abandoned), "{taken:?}");
+        assert!(!taken[..taken.len() - 1].contains(&abandoned));
+        assert!(state.abandoned_tids.is_empty());
+
+        // A round of reads passes over it while others are free.
+        let mut state = UlcpSessionState::default();
+        state.abandoned_tids.push_back(2);
+        state.read_queue = (0..frame::TID_MAX)
+            .map(|index| vec![prop::DEV_NAME + u32::from(index)])
+            .collect();
+        state.issue_reads(&mut Vec::new()).unwrap();
+        assert!(!state.expected.contains_key(&2));
+        assert_eq!(
+            state.read_queue.len(),
+            1,
+            "one read waits for the next round"
+        );
+
+        // Its late answer frees it.
+        let late = property_response(2, prop::LAST_STATUS, &[0]);
+        let session = MobileUlcpSession::new();
+        {
+            let mut inner = session.inner.lock().unwrap();
+            inner.stage = SessionStage::Attached;
+            inner.abandoned_tids.push_back(2);
+        }
+        assert!(matches!(
+            session.consume(late),
+            Err(MobileError::UlcpUnexpectedFrame)
+        ));
+        assert!(session.inner.lock().unwrap().abandoned_tids.is_empty());
+    }
 
     fn response(property_id: u32, value: &[u8]) -> UlcpPropertyFrameRecord {
         UlcpPropertyFrameRecord {
