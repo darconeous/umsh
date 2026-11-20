@@ -679,10 +679,126 @@ pub struct RadioSettings {
     pub transmit_power: i8,
     /// How much of this hour's airtime is spent, in tenths of a percent.
     pub airtime: u16,
+    /// The center frequency, in kHz.
+    pub frequency_khz: u32,
+    /// The LoRa bandwidth, in Hz.
+    pub bandwidth_hz: u32,
+    pub spreading_factor: u8,
+    /// The coding rate's denominator: 5 for 4/5 through 8 for 4/8.
+    pub coding_rate: u8,
+    /// The share of the hour the radio may transmit, as
+    /// [`TRANSMIT_LIMITS`] gives it; `None` where it has no limit to set.
+    pub transmit_limit: Option<u16>,
 }
 
 /// The transmit powers the radio can be set to, in dBm.
 pub const TRANSMIT_POWER: core::ops::RangeInclusive<i8> = -9..=22;
+
+/// The LoRa bandwidths the radio can be set to, in Hz, and what each is
+/// called.
+pub const BANDWIDTHS: [(u32, &str); 10] = [
+    (7_810, "7.8 kHz"),
+    (10_420, "10.4 kHz"),
+    (15_630, "15.6 kHz"),
+    (20_830, "20.8 kHz"),
+    (31_250, "31.25 kHz"),
+    (41_670, "41.7 kHz"),
+    (62_500, "62.5 kHz"),
+    (125_000, "125 kHz"),
+    (250_000, "250 kHz"),
+    (500_000, "500 kHz"),
+];
+
+/// The spreading factors the radio can be set to, and what each is called.
+pub const SPREADING_FACTORS: [(u8, &str); 8] = [
+    (5, "SF5"),
+    (6, "SF6"),
+    (7, "SF7"),
+    (8, "SF8"),
+    (9, "SF9"),
+    (10, "SF10"),
+    (11, "SF11"),
+    (12, "SF12"),
+];
+
+/// The coding rates the radio can be set to, by denominator, and what each
+/// is called.
+pub const CODING_RATES: [(u8, &str); 4] = [(5, "4/5"), (6, "4/6"), (7, "4/7"), (8, "4/8")];
+
+/// The transmit limits offered, as shares of the hour out of `u16::MAX`,
+/// and what each is called. `u16::MAX` is no limit.
+pub const TRANSMIT_LIMITS: [(u16, &str); 5] = [
+    (u16::MAX, "Off"),
+    (13_107, "20%"),
+    (6_553, "10%"),
+    (655, "1%"),
+    (65, "0.1%"),
+];
+
+/// A LoRa setting chosen from a list of its values.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LoraChoice {
+    Bandwidth,
+    SpreadingFactor,
+    CodingRate,
+    TransmitLimit,
+}
+
+impl LoraChoice {
+    /// What the setting is called.
+    #[must_use]
+    pub const fn title(self) -> &'static str {
+        match self {
+            Self::Bandwidth => "Bandwidth",
+            Self::SpreadingFactor => "Spreading factor",
+            Self::CodingRate => "Coding rate",
+            Self::TransmitLimit => "Transmit limit",
+        }
+    }
+
+    /// How many values it is chosen from.
+    #[must_use]
+    pub const fn count(self) -> usize {
+        match self {
+            Self::Bandwidth => BANDWIDTHS.len(),
+            Self::SpreadingFactor => SPREADING_FACTORS.len(),
+            Self::CodingRate => CODING_RATES.len(),
+            Self::TransmitLimit => TRANSMIT_LIMITS.len(),
+        }
+    }
+
+    /// What the value at `index` is called, below [`LoraChoice::count`].
+    #[must_use]
+    pub fn name(self, index: usize) -> Option<&'static str> {
+        match self {
+            Self::Bandwidth => BANDWIDTHS.get(index).map(|&(_, name)| name),
+            Self::SpreadingFactor => SPREADING_FACTORS.get(index).map(|&(_, name)| name),
+            Self::CodingRate => CODING_RATES.get(index).map(|&(_, name)| name),
+            Self::TransmitLimit => TRANSMIT_LIMITS.get(index).map(|&(_, name)| name),
+        }
+    }
+
+    /// Where the radio's value sits among the values; `None` when it is
+    /// none of them.
+    #[must_use]
+    pub fn position(self, settings: &RadioSettings) -> Option<usize> {
+        match self {
+            Self::Bandwidth => BANDWIDTHS
+                .iter()
+                .position(|&(hz, _)| hz == settings.bandwidth_hz),
+            Self::SpreadingFactor => SPREADING_FACTORS
+                .iter()
+                .position(|&(sf, _)| sf == settings.spreading_factor),
+            Self::CodingRate => CODING_RATES
+                .iter()
+                .position(|&(cr, _)| cr == settings.coding_rate),
+            Self::TransmitLimit => {
+                let limit = settings.transmit_limit?;
+                TRANSMIT_LIMITS.iter().position(|&(l, _)| l == limit)
+            }
+        }
+    }
+}
 
 /// The keyboard's settings.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1523,6 +1639,11 @@ pub enum Setting {
     /// A network could not be saved: the device keeps no more.
     WifiFull,
     IpMulticast,
+    Frequency,
+    Bandwidth,
+    SpreadingFactor,
+    CodingRate,
+    TransmitLimit,
 }
 
 /// What changed in the node without the interface asking. An event names
@@ -1974,6 +2095,24 @@ pub trait Node {
 
     /// Sets the radio's transmit power, within [`TRANSMIT_POWER`].
     fn set_transmit_power(&self, dbm: i8);
+
+    /// Sets the radio's center frequency, in kHz. The device refuses one
+    /// it cannot tune to.
+    fn set_frequency(&self, khz: u32);
+
+    /// Sets the radio's LoRa bandwidth, one of [`BANDWIDTHS`], in Hz.
+    fn set_bandwidth(&self, hz: u32);
+
+    /// Sets the radio's spreading factor, one of [`SPREADING_FACTORS`].
+    fn set_spreading_factor(&self, sf: u8);
+
+    /// Sets the radio's coding rate by its denominator, one of
+    /// [`CODING_RATES`].
+    fn set_coding_rate(&self, denominator: u8);
+
+    /// Sets the share of the hour the radio may transmit, out of
+    /// `u16::MAX`, where it has a limit to set.
+    fn set_transmit_limit(&self, limit: u16);
 
     fn keyboard(&self) -> KeyboardSettings;
 

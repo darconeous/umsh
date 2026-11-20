@@ -828,6 +828,7 @@ impl State {
             keys::PEER_FIELD => self.peer_text_mut().map(of),
             keys::CHANNEL_FIELD => self.channel_text_mut().map(of),
             keys::POWER_FIELD => self.power_text_mut().map(of),
+            keys::FREQUENCY_FIELD => self.frequency_text_mut().map(of),
             _ => None,
         }
     }

@@ -275,6 +275,50 @@ fn the_profile_picker_reads_vetted_and_custom() {
     );
 }
 
+/// Each parameter a profile sets can be set alone, reaching the device;
+/// settings no profile has read as Custom.
+#[test]
+fn each_lora_parameter_is_set_on_the_device() {
+    let sim = device();
+    let (node, clock) = node(&sim);
+    events(&node);
+    node.set_frequency(915_125);
+    node.set_bandwidth(125_000);
+    node.set_spreading_factor(11);
+    node.set_coding_rate(8);
+    node.set_transmit_limit(6_553);
+    clock.set(1_000);
+    node.pump();
+    assert!(
+        !events(&node)
+            .iter()
+            .any(|event| matches!(event, NodeEvent::SettingRefused(_)))
+    );
+    // What reads now is what the device echoed back.
+    let radio = node.radio();
+    assert_eq!(radio.profile, Profile::Custom);
+    assert_eq!(
+        (
+            radio.frequency_khz,
+            radio.bandwidth_hz,
+            radio.spreading_factor,
+            radio.coding_rate,
+            radio.transmit_limit,
+        ),
+        (915_125, 125_000, 11, 8, Some(6_553))
+    );
+
+    // One the device cannot use, it refuses, and the radio keeps its own.
+    node.set_bandwidth(200_000);
+    clock.set(2_000);
+    node.pump();
+    assert_eq!(
+        events(&node),
+        [NodeEvent::SettingRefused(Setting::Bandwidth)]
+    );
+    assert_eq!(node.radio().bandwidth_hz, 125_000);
+}
+
 #[test]
 fn a_refused_change_reads_back_what_the_device_kept() {
     // A radio that cannot reach the band above 900 MHz.

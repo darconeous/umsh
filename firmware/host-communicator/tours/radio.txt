@@ -1,9 +1,20 @@
-# Radio, and its profiles.
+# Radio, its LoRa settings, and their lists.
 backspace
 turn 2
 press
 turn 2
 press
 shot radio
+turn 1
+press
+shot lora
 press
 shot profiles
+backspace
+turn 2
+press
+shot bandwidth
+backspace
+turn -1
+press
+shot frequency

@@ -756,7 +756,11 @@ pub struct Store {
     name: RefCell<Option<String<24>>>,
     /// The radio's settings.
     radio_enabled: Cell<bool>,
-    profile: Cell<Profile>,
+    frequency_khz: Cell<u32>,
+    bandwidth_hz: Cell<u32>,
+    spreading_factor: Cell<u8>,
+    coding_rate: Cell<u8>,
+    transmit_limit: Cell<u16>,
     forwarding: Cell<Forwarding>,
     share_location: Cell<bool>,
     transmit_power: Cell<i8>,
@@ -998,7 +1002,11 @@ impl Store {
             peer_order: RefCell::new(Vec::new()),
             name: RefCell::new(None),
             radio_enabled: Cell::new(true),
-            profile: Cell::new(Profile::Vetted(0)),
+            frequency_khz: Cell::new(VETTED[0].freq_khz),
+            bandwidth_hz: Cell::new(VETTED[0].bw_hz),
+            spreading_factor: Cell::new(VETTED[0].sf),
+            coding_rate: Cell::new(VETTED[0].cr_denom),
+            transmit_limit: Cell::new(VETTED[0].duty_limit),
             forwarding: Cell::new(Forwarding::On),
             share_location: Cell::new(false),
             transmit_power: Cell::new(22),
@@ -1726,8 +1734,27 @@ impl Store {
     /// The radio is set, by other means than this interface, to settings
     /// no profile has: as an attached host could set it.
     pub fn set_custom_radio(&self) {
-        self.profile.set(Profile::Custom);
+        self.coding_rate
+            .set(if self.coding_rate.get() == 8 { 7 } else { 8 });
+        self.frequency_khz.set(902_125);
         self.queue(NodeEvent::SettingsChanged);
+    }
+
+    /// Takes the profile at `index`'s parameters, as the device does.
+    fn adopt(&self, index: usize) -> bool {
+        let Some(profile) = VETTED.get(index) else {
+            return false;
+        };
+        self.frequency_khz.set(profile.freq_khz);
+        self.bandwidth_hz.set(profile.bw_hz);
+        self.spreading_factor.set(profile.sf);
+        self.coding_rate.set(profile.cr_denom);
+        if let Some(dbm) = profile.tx_power_dbm {
+            self.transmit_power
+                .set(dbm.clamp(*TRANSMIT_POWER.start(), *TRANSMIT_POWER.end()));
+        }
+        self.transmit_limit.set(profile.duty_limit);
+        true
     }
 
     /// What is known of the channel member `name`.
@@ -2866,23 +2893,79 @@ impl Node for Store {
     }
 
     fn set_profile(&self, index: usize) {
-        self.setting(Setting::Profile, || {
-            let vetted = index < VETTED.len();
-            if vetted {
-                self.profile.set(Profile::Vetted(index));
-            }
-            vetted
-        });
+        self.setting(Setting::Profile, || self.adopt(index));
     }
 
     fn radio(&self) -> RadioSettings {
+        let (freq, bw, sf, cr) = (
+            self.frequency_khz.get(),
+            self.bandwidth_hz.get(),
+            self.spreading_factor.get(),
+            self.coding_rate.get(),
+        );
         RadioSettings {
             enabled: self.radio_enabled.get(),
-            profile: self.profile.get(),
+            profile: VETTED
+                .iter()
+                .position(|profile| profile.interoperates_with(freq, bw, sf, cr))
+                .map_or(Profile::Custom, Profile::Vetted),
             forwarding: self.forwarding.get(),
             transmit_power: self.transmit_power.get(),
             airtime: 34,
+            frequency_khz: freq,
+            bandwidth_hz: bw,
+            spreading_factor: sf,
+            coding_rate: cr,
+            transmit_limit: Some(self.transmit_limit.get()),
         }
+    }
+
+    fn set_frequency(&self, khz: u32) {
+        self.setting(Setting::Frequency, || {
+            // An SX1262's tuning range: the device refuses the rest.
+            let tunable = (150_000..=960_000).contains(&khz);
+            if tunable {
+                self.frequency_khz.set(khz);
+            }
+            tunable
+        });
+    }
+
+    fn set_bandwidth(&self, hz: u32) {
+        self.setting(Setting::Bandwidth, || {
+            let supported = umsh_ulcp::profiles::SUPPORTED_BANDWIDTHS_HZ.contains(&hz);
+            if supported {
+                self.bandwidth_hz.set(hz);
+            }
+            supported
+        });
+    }
+
+    fn set_spreading_factor(&self, sf: u8) {
+        self.setting(Setting::SpreadingFactor, || {
+            let supported = (5..=12).contains(&sf);
+            if supported {
+                self.spreading_factor.set(sf);
+            }
+            supported
+        });
+    }
+
+    fn set_coding_rate(&self, denominator: u8) {
+        self.setting(Setting::CodingRate, || {
+            let supported = (5..=8).contains(&denominator);
+            if supported {
+                self.coding_rate.set(denominator);
+            }
+            supported
+        });
+    }
+
+    fn set_transmit_limit(&self, limit: u16) {
+        self.setting(Setting::TransmitLimit, || {
+            self.transmit_limit.set(limit);
+            true
+        });
     }
 
     fn set_radio_enabled(&self, on: bool) {
@@ -3589,6 +3672,19 @@ mod tests {
         std::boxed::Box::leak(std::boxed::Box::new(
             Store::new(&std::alloc::System).with_long_history(),
         ))
+    }
+
+    /// The bandwidths offered are the ones a device accepts, and every
+    /// vetted profile's parameters are among those offered.
+    #[test]
+    fn the_lora_choices_are_what_a_device_takes() {
+        use crate::model::{BANDWIDTHS, CODING_RATES, SPREADING_FACTORS};
+        let offered: std::vec::Vec<u32> = BANDWIDTHS.iter().map(|&(hz, _)| hz).collect();
+        assert_eq!(offered, umsh_ulcp::profiles::SUPPORTED_BANDWIDTHS_HZ);
+        for profile in VETTED {
+            assert!(SPREADING_FACTORS.iter().any(|&(sf, _)| sf == profile.sf));
+            assert!(CODING_RATES.iter().any(|&(cr, _)| cr == profile.cr_denom));
+        }
     }
 
     /// The long history reads by row, its runs on their way again a row

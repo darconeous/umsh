@@ -241,14 +241,17 @@ fn confirmation(m: &'static Metrics, confirm: DeviceConfirm) -> impl View<Rgb565
 pub fn page(state: &State, page: &DevicePage) -> impl View<Rgb565, State> + use<> {
     let m = state.metrics();
     match_view!(page, {
-        DevicePage::Radio { settings } => radio(m, settings, state.profile_name(settings)),
+        DevicePage::Radio { .. }
+        | DevicePage::Lora { .. }
+        | DevicePage::Profiles
+        | DevicePage::TransmitPower { .. }
+        | DevicePage::Frequency { .. }
+        | DevicePage::LoraChoice { .. } => radio_page(state, page),
         DevicePage::Identity { name } => super::identity::view(state, name),
         DevicePage::Share { what } => super::share::view(state, *what),
         DevicePage::Channels => super::channels::view(state),
         DevicePage::AddChannel { text } => super::add_channel::view(state, text),
-        DevicePage::Profiles => super::profile::view(state, "Profile"),
         DevicePage::Keyboard { settings } => super::typing::settings(m, settings, state.keyboard_firmware),
-        DevicePage::TransmitPower { text } => super::typing::transmit_power(m, text),
         DevicePage::Clock { page } => super::clock::page(state, page),
         DevicePage::Wifi { .. }
         | DevicePage::Bluetooth { .. }
@@ -261,6 +264,27 @@ pub fn page(state: &State, page: &DevicePage) -> impl View<Rgb565, State> + use<
         | DevicePage::Statistics
         | DevicePage::About
         | DevicePage::Credits => board_page(state, page),
+    })
+}
+
+/// Radio, or a screen it opens. Apart from [`page`], whose arms
+/// `match_view!` limits.
+fn radio_page(state: &State, page: &DevicePage) -> impl View<Rgb565, State> + use<> {
+    let m = state.metrics();
+    match_view!(page, {
+        DevicePage::Lora { settings } => super::lora::view(state, settings),
+        DevicePage::Profiles => super::profile::view(state, "Profile"),
+        DevicePage::TransmitPower { text } => super::typing::transmit_power(m, text),
+        DevicePage::Frequency { text } => super::typing::frequency(m, text),
+        DevicePage::LoraChoice { choice } => super::lora::choices(state, *choice),
+        // Radio, the only other `page` sends here.
+        _ => {
+            let settings = match page {
+                DevicePage::Radio { settings } => settings.clone(),
+                _ => state.node.radio(),
+            };
+            radio(m, &settings, state.profile_name(&settings))
+        },
     })
 }
 
@@ -305,9 +329,9 @@ fn radio(
                 ),
                 row(
                     m,
-                    "Profile",
-                    keys::PROFILE,
-                    State::open_profiles,
+                    "LoRa",
+                    keys::LORA,
+                    State::open_lora,
                     End::value_chevron(profile),
                     false,
                     ROW,

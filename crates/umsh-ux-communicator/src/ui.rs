@@ -41,6 +41,7 @@ mod indicators;
 mod join;
 mod links;
 mod lock;
+mod lora;
 mod member;
 mod nearby;
 mod path;

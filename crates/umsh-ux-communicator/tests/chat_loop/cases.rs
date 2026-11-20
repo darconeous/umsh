@@ -21,6 +21,7 @@ use umsh_ux_communicator::model::{
 use umsh_ux_communicator::nav::{ChatMenu, DevicePage, MemberFrom, Screen, Unsent, keys};
 use umsh_ux_communicator::model::Cue;
 use umsh_ux_communicator::model::WifiStatus;
+use umsh_ux_communicator::model::{LoraChoice, SPREADING_FACTORS, TRANSMIT_LIMITS};
 use umsh_ux_communicator::model::{Leg, PeerRoute, PingView, RouteKind};
 use umsh_ux_communicator::{fixture, ui, zones};
 
@@ -2338,10 +2339,10 @@ fn forget_asks_first_and_cancel_keeps_the_peer() {
 fn radio(state: &State) -> &umsh_ux_communicator::model::RadioSettings {
     match state.screen() {
         Screen::Device {
-            page: DevicePage::Radio { settings },
+            page: DevicePage::Radio { settings } | DevicePage::Lora { settings },
             ..
         } => settings,
-        other => panic!("expected Radio, got {other:?}"),
+        other => panic!("expected Radio or LoRa, got {other:?}"),
     }
 }
 
@@ -2355,7 +2356,27 @@ where
 {
     open_category(app, keys::RADIO);
     assert_eq!(focus(app.state()), Some(keys::RADIO_ENABLED));
-    turn_to(app, keys::PROFILE);
+    turn_to(app, keys::LORA);
+}
+
+/// Opens Device › Radio › LoRa from the Chats list, at its Profile.
+fn open_lora<V, F>(app: &mut App<V, State, F>)
+where
+    V: ViewLayout<State>,
+    V::FocusTree: DefaultFocus,
+    V::Renderables: AnimatedJoin,
+    F: Fn(&State) -> V,
+{
+    open_radio(app);
+    run(app, &[Input::Press]);
+    assert!(matches!(
+        app.state().screen(),
+        Screen::Device {
+            page: DevicePage::Lora { .. },
+            ..
+        }
+    ));
+    assert_eq!(focus(app.state()), Some(keys::PROFILE));
 }
 
 fn on_profiles(state: &State) -> bool {
@@ -2371,7 +2392,7 @@ fn on_profiles(state: &State) -> bool {
 #[test]
 fn a_profile_is_chosen_from_the_list_and_backspace_cancels() {
     let mut app = app!();
-    open_radio(&mut app);
+    open_lora(&mut app);
     assert_eq!(radio(app.state()).profile, Profile::Vetted(0));
     run(&mut app, &[Input::Press]);
     assert!(on_profiles(app.state()));
@@ -2388,7 +2409,10 @@ fn a_profile_is_chosen_from_the_list_and_backspace_cancels() {
     assert_eq!(focus(app.state()), Some(keys::profile(2)));
     run(&mut app, &[Input::Backspace]);
 
-    // Back returns to Radio's category, and again to the rail.
+    // Back returns to Radio's LoRa, to Radio's category, and again to the
+    // rail.
+    run(&mut app, &[Input::Backspace]);
+    assert_eq!(focus(app.state()), Some(keys::LORA));
     run(&mut app, &[Input::Backspace]);
     assert_eq!(focus(app.state()), Some(keys::RADIO));
     run(&mut app, &[Input::Backspace]);
@@ -2400,7 +2424,7 @@ fn every_profile_of_a_long_list_can_be_reached() {
     let mut app = app!();
     let count = app.state().node.profile_count();
     assert!(count > 12, "the list is longer than its window");
-    open_radio(&mut app);
+    open_lora(&mut app);
     run(&mut app, &[Input::Press]);
     // One detent at a time down the whole list, and past its end.
     for _ in 0..count {
@@ -2422,7 +2446,7 @@ fn every_profile_of_a_long_list_can_be_reached() {
 fn settings_no_profile_has_read_as_custom() {
     let store = store();
     let mut app = app!(store);
-    open_radio(&mut app);
+    open_lora(&mut app);
     store.set_custom_radio();
     input::events(&mut app, 0);
     assert_eq!(radio(app.state()).profile, Profile::Custom);
@@ -2432,6 +2456,103 @@ fn settings_no_profile_has_read_as_custom() {
     assert_eq!(focus(app.state()), Some(keys::profile(0)));
     run(&mut app, &[Input::Turn(1), Input::Press]);
     assert_eq!(radio(app.state()).profile, Profile::Vetted(1));
+}
+
+fn on_lora_choice(state: &State) -> Option<LoraChoice> {
+    match state.screen() {
+        Screen::Device {
+            page: DevicePage::LoraChoice { choice },
+            ..
+        } => Some(*choice),
+        _ => None,
+    }
+}
+
+#[test]
+fn a_parameter_is_chosen_from_its_list_and_the_radio_reads_as_custom() {
+    let mut app = app!();
+    open_lora(&mut app);
+    let sf = radio(app.state()).spreading_factor;
+    turn_to(&mut app, keys::SPREADING_FACTOR);
+    run(&mut app, &[Input::Press]);
+    assert_eq!(
+        on_lora_choice(app.state()),
+        Some(LoraChoice::SpreadingFactor)
+    );
+    // The list opens at the radio's own.
+    let at = SPREADING_FACTORS.iter().position(|&(s, _)| s == sf).unwrap();
+    assert_eq!(focus(app.state()), Some(keys::lora_choice(at)));
+    // Backspace leaves it as it was.
+    run(&mut app, &[Input::Turn(1), Input::Backspace]);
+    assert_eq!(radio(app.state()).spreading_factor, sf);
+    assert_eq!(focus(app.state()), Some(keys::SPREADING_FACTOR));
+
+    run(&mut app, &[Input::Press, Input::Turn(1), Input::Press]);
+    assert_eq!(radio(app.state()).spreading_factor, sf + 1);
+    assert_eq!(radio(app.state()).profile, Profile::Custom);
+    assert_eq!(focus(app.state()), Some(keys::SPREADING_FACTOR));
+
+    // A profile sets it back.
+    turn_to(&mut app, keys::PROFILE);
+    run(&mut app, &[Input::Press, Input::Press]);
+    assert_eq!(radio(app.state()).profile, Profile::Vetted(0));
+    assert_eq!(radio(app.state()).spreading_factor, sf);
+}
+
+/// What types `digits` into a number field on this board's keyboard.
+fn digits(digits: &str) -> Vec<Input> {
+    match BOARD.controls.keyboard {
+        KeyboardKind::Legends => digits
+            .chars()
+            .map(|d| key(char::from(b"pqwertyuio"[d.to_digit(10).unwrap() as usize])))
+            .collect(),
+        _ => typed(digits),
+    }
+}
+
+#[test]
+fn frequency_is_typed_in_kilohertz() {
+    let mut app = app!();
+    open_lora(&mut app);
+    let khz = radio(app.state()).frequency_khz;
+    turn_to(&mut app, keys::FREQUENCY);
+    run(&mut app, &[Input::Press]);
+    assert_eq!(focus(app.state()), Some(keys::FREQUENCY_FIELD));
+    let erase = vec![Input::Backspace; khz.to_string().len()];
+    run(&mut app, &erase);
+    // Nothing that is a frequency: the field stays to be corrected.
+    run(&mut app, &digits("0"));
+    run(&mut app, &[Input::Enter]);
+    assert_eq!(focus(app.state()), Some(keys::FREQUENCY_FIELD));
+    run(&mut app, &digits("9"));
+    run(&mut app, &[Input::Backspace, Input::Backspace]);
+    run(&mut app, &digits("915125"));
+    run(&mut app, &[Input::Enter]);
+    assert_eq!(focus(app.state()), Some(keys::FREQUENCY));
+    assert_eq!(radio(app.state()).frequency_khz, 915_125);
+    assert_eq!(radio(app.state()).profile, Profile::Custom);
+
+    // One the radio cannot tune to, it refuses, and the frequency stays.
+    run(&mut app, &[Input::Press]);
+    run(&mut app, &[Input::Backspace; 6]);
+    run(&mut app, &digits("2400000"));
+    run(&mut app, &[Input::Enter]);
+    input::events(&mut app, 0);
+    assert_eq!(focus(app.state()), Some(keys::FREQUENCY));
+    assert_eq!(radio(app.state()).frequency_khz, 915_125);
+}
+
+#[test]
+fn transmit_limit_is_chosen_from_its_list() {
+    let mut app = app!();
+    open_lora(&mut app);
+    turn_to(&mut app, keys::TRANSMIT_LIMIT);
+    run(&mut app, &[Input::Press]);
+    assert_eq!(on_lora_choice(app.state()), Some(LoraChoice::TransmitLimit));
+    assert_eq!(focus(app.state()), Some(keys::lora_choice(0)));
+    run(&mut app, &[Input::Turn(2), Input::Press]);
+    assert_eq!(radio(app.state()).transmit_limit, Some(TRANSMIT_LIMITS[2].0));
+    assert_eq!(focus(app.state()), Some(keys::TRANSMIT_LIMIT));
 }
 
 #[test]

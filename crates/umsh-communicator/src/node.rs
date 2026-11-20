@@ -875,6 +875,32 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
         });
     }
 
+    fn set_frequency(&self, khz: u32) {
+        self.change(Setting::Frequency, |settings| settings.set_frequency(khz));
+    }
+
+    fn set_bandwidth(&self, hz: u32) {
+        self.change(Setting::Bandwidth, |settings| settings.set_bandwidth(hz));
+    }
+
+    fn set_spreading_factor(&self, sf: u8) {
+        self.change(Setting::SpreadingFactor, |settings| {
+            settings.set_spreading_factor(sf)
+        });
+    }
+
+    fn set_coding_rate(&self, denominator: u8) {
+        self.change(Setting::CodingRate, |settings| {
+            settings.set_coding_rate(denominator)
+        });
+    }
+
+    fn set_transmit_limit(&self, limit: u16) {
+        self.change(Setting::TransmitLimit, |settings| {
+            settings.set_transmit_limit(limit)
+        });
+    }
+
     fn keyboard(&self) -> KeyboardSettings {
         self.settings.borrow().keyboard()
     }

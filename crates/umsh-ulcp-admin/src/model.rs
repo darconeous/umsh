@@ -1126,6 +1126,27 @@ impl Model {
         self.set_many(&entries)
     }
 
+    /// `PROP_PHY_FREQ`, in kHz.
+    pub fn set_freq_khz(&mut self, khz: u32) -> Result<WriteId, Refusal> {
+        self.set(prop::PHY_FREQ, &khz.to_le_bytes())
+    }
+
+    /// `PROP_PHY_LORA_BW`, in Hz.
+    pub fn set_lora_bw_hz(&mut self, hz: u32) -> Result<WriteId, Refusal> {
+        self.set(prop::PHY_LORA_BW, &hz.to_le_bytes())
+    }
+
+    /// `PROP_PHY_LORA_SF`.
+    pub fn set_lora_sf(&mut self, sf: u8) -> Result<WriteId, Refusal> {
+        self.set(prop::PHY_LORA_SF, &[sf])
+    }
+
+    /// `PROP_PHY_LORA_CR`, as the coding rate's denominator: 5 for 4/5
+    /// through 8 for 4/8.
+    pub fn set_lora_cr(&mut self, cr_denom: u8) -> Result<WriteId, Refusal> {
+        self.set(prop::PHY_LORA_CR, &[cr_denom])
+    }
+
     /// `PROP_PHY_TX_POWER`, in dBm.
     pub fn tx_power_dbm(&self) -> Option<i8> {
         match self.value(prop::PHY_TX_POWER)? {

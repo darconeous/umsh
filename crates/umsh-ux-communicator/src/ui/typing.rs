@@ -1,5 +1,5 @@
-//! What the keyboard brings to the screen: its settings, a field that
-//! takes a number, the character picker, and the glances that show a
+//! What the keyboard brings to the screen: its settings, the fields that
+//! take a number, the character picker, and the glances that show a
 //! setting a key changed.
 
 use buoyant::event::{Key, KeyResponse};
@@ -17,7 +17,7 @@ use super::{label, line};
 use crate::board::{Board, Metrics};
 use crate::keyboard::Field;
 use crate::model::{Glance, KeyboardFirmware, KeyboardSettings, LEVELS, State};
-use crate::nav::{PowerText, keys};
+use crate::nav::{FrequencyText, PowerText, keys};
 use crate::picker::{COLUMNS, FILTER, Geometry, Pick, ROWS, Shown, Spot, TABS, Tab};
 use crate::{font, icon, theme};
 
@@ -242,6 +242,34 @@ pub fn transmit_power(m: &'static Metrics, text: &PowerText) -> impl View<Rgb565
             .overlay(
                 Alignment::Trailing,
                 line("dBm", &font::MEDIUM, m.secondary, theme::TEXT_TERTIARY)
+                    .padding(Edges::Trailing, 12),
+            )
+            .padding(Edges::Horizontal, INSET),
+    ))
+    .with_spacing(0)
+    .flex_infinite_height(VerticalAlignment::Top)
+    .bound_focus(BoundaryBehavior::Stop)
+    .on_key(back)
+}
+
+/// The radio's center frequency, typed in kHz. Enter sets it.
+pub fn frequency(m: &'static Metrics, text: &FrequencyText) -> impl View<Rgb565, State> + use<> {
+    VStack::new((
+        header(m, "LoRa", None, None),
+        label::<16>("Frequency", &font::BOLD, m.small, theme::TEXT_SECONDARY)
+            .padding(Edges::Leading, 10)
+            .flex_infinite_width(HorizontalAlignment::Leading)
+            .frame()
+            .with_height(LABEL),
+        TextField::new(text, &font::REGULAR, State::frequency_text_mut)
+            .with_font_size(m.body)
+            .on_submit(State::submit_frequency)
+            .on_active(State::field_active)
+            .with_label(|status, area| field_look(status, area, power_width(m)))
+            .focus_key(keys::FREQUENCY_FIELD)
+            .overlay(
+                Alignment::Trailing,
+                line("kHz", &font::MEDIUM, m.secondary, theme::TEXT_TERTIARY)
                     .padding(Edges::Trailing, 12),
             )
             .padding(Edges::Horizontal, INSET),

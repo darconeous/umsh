@@ -354,6 +354,35 @@ impl<P: LocalPort> Settings<P> {
         self.written(Setting::TransmitPower, write)
     }
 
+    pub fn set_frequency(&mut self, khz: u32) -> bool {
+        let write = self.model.set_freq_khz(khz);
+        self.written(Setting::Frequency, write)
+    }
+
+    pub fn set_bandwidth(&mut self, hz: u32) -> bool {
+        let write = self.model.set_lora_bw_hz(hz);
+        self.written(Setting::Bandwidth, write)
+    }
+
+    pub fn set_spreading_factor(&mut self, sf: u8) -> bool {
+        let write = self.model.set_lora_sf(sf);
+        self.written(Setting::SpreadingFactor, write)
+    }
+
+    pub fn set_coding_rate(&mut self, denominator: u8) -> bool {
+        let write = self.model.set_lora_cr(denominator);
+        self.written(Setting::CodingRate, write)
+    }
+
+    /// Sets the duty-cycle limit, where the device has one.
+    pub fn set_transmit_limit(&mut self, limit: u16) -> bool {
+        if self.model.has_cap(cap::PHY_DUTY_LIMIT) != Some(true) {
+            return false;
+        }
+        let write = self.model.set_duty_limit(limit);
+        self.written(Setting::TransmitLimit, write)
+    }
+
     pub fn set_radio_enabled(&mut self, on: bool) -> bool {
         let write = self.model.set_radio_enabled(on);
         self.written(Setting::Radio, write)
@@ -828,12 +857,13 @@ impl<P: LocalPort> Settings<P> {
     }
 
     pub fn radio(&self) -> RadioSettings {
-        let profile = match (
+        let (freq, bw, sf, cr) = (
             self.u32(prop::PHY_FREQ),
             self.u32(prop::PHY_LORA_BW),
             self.u8(prop::PHY_LORA_SF),
             self.u8(prop::PHY_LORA_CR),
-        ) {
+        );
+        let profile = match (freq, bw, sf, cr) {
             (Some(freq), Some(bw), Some(sf), Some(cr)) => VETTED
                 .iter()
                 .position(|profile| profile.interoperates_with(freq, bw, sf, cr))
@@ -855,6 +885,15 @@ impl<P: LocalPort> Settings<P> {
                 _ => 0,
             },
             airtime,
+            frequency_khz: freq.unwrap_or(0),
+            bandwidth_hz: bw.unwrap_or(0),
+            spreading_factor: sf.unwrap_or(0),
+            coding_rate: cr.unwrap_or(0),
+            transmit_limit: if self.model.has_cap(cap::PHY_DUTY_LIMIT) == Some(true) {
+                self.u16(prop::PHY_DUTY_LIMIT)
+            } else {
+                None
+            },
         }
     }
 

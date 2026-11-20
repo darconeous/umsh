@@ -13,10 +13,11 @@ use crate::avatar::Title;
 pub use crate::clock_settings::{ClockPage, DateParts, Part, ZoneFind};
 use crate::keyboard::Field;
 use crate::model::{
-    AUTO_LOCK_CHOICES, ChannelAccess, ChannelEntry, ChatId, ChatKind, ChatSummary, Details,
-    Exchange, Found, FoundKind, Invite, KeyboardSettings, MAX_FOUND, MAX_PATH, MAX_REPEATERS,
-    Member, MessageId, NearbyId, PeerDetail, PeerEntry, PeerId, PingView, Profile, RadioSettings,
-    Reaction, Repeater, Section, Shareable, State, TRANSMIT_POWER, word_match,
+    AUTO_LOCK_CHOICES, BANDWIDTHS, CODING_RATES, ChannelAccess, ChannelEntry, ChatId, ChatKind,
+    ChatSummary, Details, Exchange, Found, FoundKind, Invite, KeyboardSettings, LoraChoice,
+    MAX_FOUND, MAX_PATH, MAX_REPEATERS, Member, MessageId, NearbyId, PeerDetail, PeerEntry, PeerId,
+    PingView, Profile, RadioSettings, Reaction, Repeater, SPREADING_FACTORS, Section, Shareable,
+    State, TRANSMIT_LIMITS, TRANSMIT_POWER, word_match,
 };
 use crate::ui::GammaTest;
 pub use crate::wifi_settings::{NetworkText, PasswordText, WifiPage};
@@ -36,6 +37,8 @@ pub type NameText = EditBuffer<String<24>>;
 pub type FindText = EditBuffer<String<24>>;
 /// A transmit power in dBm, as it is typed.
 pub type PowerText = EditBuffer<String<4>>;
+/// A frequency in kHz, as it is typed.
+pub type FrequencyText = EditBuffer<String<8>>;
 
 /// How long a repeater asked who it is is waited on, in milliseconds.
 const IDENTIFY_WAIT_MS: u64 = 15_000;
@@ -84,6 +87,7 @@ pub mod keys {
     const AUTO_LOCK_ROW: u32 = 0x2400_0000;
     const PATH: u32 = 0x2B00_0000;
     const WIFI_ROW: u32 = 0x2E00_0000;
+    const LORA_CHOICE_ROW: u32 = 0x2F00_0000;
     /// Nearby networks' rows, after the saved ones'.
     const WIFI_NEARBY: u32 = 0x100;
 
@@ -284,6 +288,15 @@ pub mod keys {
     /// Radio's Transmit power row, and the field it opens.
     pub const TRANSMIT_POWER: FocusKey = FocusKey(0x0E00_0001);
     pub const POWER_FIELD: FocusKey = FocusKey(0x1800_0000);
+    /// Radio's LoRa row, and the LoRa screen's rows after its Profile.
+    pub const LORA: FocusKey = FocusKey(0x0E00_0006);
+    pub const FREQUENCY: FocusKey = FocusKey(0x0E00_0007);
+    pub const BANDWIDTH: FocusKey = FocusKey(0x0E00_0008);
+    pub const SPREADING_FACTOR: FocusKey = FocusKey(0x0E00_0009);
+    pub const CODING_RATE: FocusKey = FocusKey(0x0E00_000A);
+    pub const TRANSMIT_LIMIT: FocusKey = FocusKey(0x0E00_000B);
+    /// The field Frequency opens.
+    pub const FREQUENCY_FIELD: FocusKey = FocusKey(0x1800_0001);
 
     /// The text field `key` names, as the keyboard treats it.
     #[must_use]
@@ -295,7 +308,7 @@ pub mod keys {
             FIND_FIELD | PEER_FIELD | CHANNEL_FIELD | WIFI_PASSWORD_FIELD | WIFI_NAME_FIELD => {
                 Some(Field::Literal)
             }
-            POWER_FIELD => Some(Field::Number),
+            POWER_FIELD | FREQUENCY_FIELD => Some(Field::Number),
             _ => None,
         }
     }
@@ -321,7 +334,8 @@ pub mod keys {
     /// Restart's confirmation.
     pub const RESTART_CONFIRM: FocusKey = FocusKey(0x1600_0006);
     pub const RESTART_CANCEL: FocusKey = FocusKey(0x1600_0007);
-    /// The Radio screen's switch, its Profile, and Forwarding.
+    /// The Radio screen's switch and Forwarding, and the LoRa screen's
+    /// Profile.
     pub const RADIO_ENABLED: FocusKey = FocusKey(0x0E00_0005);
     pub const PROFILE: FocusKey = FocusKey(0x0E00_0000);
     pub const FORWARDING: FocusKey = FocusKey(0x0E00_0002);
@@ -405,6 +419,13 @@ pub mod keys {
         } else {
             None
         }
+    }
+
+    /// One of a LoRa setting's values in the list of them, by its place
+    /// there.
+    #[must_use]
+    pub const fn lora_choice(index: usize) -> FocusKey {
+        FocusKey(LORA_CHOICE_ROW | (index as u32 & !KIND))
     }
 
     /// The place of the radio profile whose row `key` names.
@@ -582,8 +603,14 @@ pub enum DevicePage {
     Channels,
     /// A channel's name or invitation, being typed.
     AddChannel { text: ChannelText },
+    /// The LoRa settings: the profile, and each parameter it sets.
+    Lora { settings: RadioSettings },
     /// The radio profiles the radio can be set to.
     Profiles,
+    /// The radio's center frequency, being typed.
+    Frequency { text: FrequencyText },
+    /// The values a LoRa setting can be set to, the radio's own checked.
+    LoraChoice { choice: LoraChoice },
     /// The keyboard's settings.
     Keyboard { settings: KeyboardSettings },
     /// The radio's transmit power, being typed.
@@ -1974,7 +2001,7 @@ impl State {
         for screen in &mut self.screens {
             match screen {
                 Screen::Device {
-                    page: DevicePage::Radio { settings },
+                    page: DevicePage::Radio { settings } | DevicePage::Lora { settings },
                     ..
                 } => *settings = node.radio(),
                 Screen::Device {
@@ -2094,6 +2121,91 @@ impl State {
     pub fn set_keyboard_light(&mut self, lit: bool) {
         if self.node.keyboard().light != lit {
             self.change_keyboard(|s| s.light = lit);
+        }
+    }
+
+    /// Opens the LoRa settings, at their Profile.
+    pub fn open_lora(&mut self) {
+        _ = self.screens.push(Screen::Device {
+            page: DevicePage::Lora {
+                settings: self.node.radio(),
+            },
+            focus: FocusState::requesting(keys::PROFILE),
+        });
+    }
+
+    /// Opens Frequency, its field being edited, in kHz: a number already
+    /// in it is there to be changed, so Backspace erases.
+    pub fn open_frequency(&mut self) {
+        let mut text = FrequencyText::default();
+        let mut khz: String<8> = String::new();
+        _ = core::fmt::write(
+            &mut khz,
+            format_args!("{}", self.node.radio().frequency_khz),
+        );
+        for c in khz.chars() {
+            text.insert(c);
+        }
+        _ = self.screens.push(Screen::Device {
+            page: DevicePage::Frequency { text },
+            focus: FocusState::requesting(keys::FREQUENCY_FIELD),
+        });
+        self.edit_opened = true;
+    }
+
+    pub fn frequency_text_mut(&mut self) -> Option<&mut FrequencyText> {
+        match self.screens.last_mut() {
+            Some(Screen::Device {
+                page: DevicePage::Frequency { text },
+                ..
+            }) => Some(text),
+            _ => None,
+        }
+    }
+
+    /// Sets the frequency typed, and returns to LoRa. What is not a
+    /// frequency leaves the field as it is, to be corrected; one the radio
+    /// cannot tune to the device refuses.
+    pub fn submit_frequency(&mut self) {
+        let Some(khz) = self
+            .frequency_text_mut()
+            .and_then(|text| text.text().trim().parse::<u32>().ok())
+            .filter(|&khz| khz > 0)
+        else {
+            return;
+        };
+        self.node.set_frequency(khz);
+        self.back();
+        self.refresh_settings();
+    }
+
+    /// Shows the values `choice` can be set to, the radio's own focused.
+    pub fn open_lora_choice(&mut self, choice: LoraChoice) {
+        let current = choice.position(&self.node.radio()).unwrap_or(0);
+        _ = self.screens.push(Screen::Device {
+            page: DevicePage::LoraChoice { choice },
+            focus: FocusState::requesting(keys::lora_choice(current)),
+        });
+    }
+
+    /// Sets `choice` to its value at `index`, and returns to LoRa.
+    pub fn choose_lora(&mut self, choice: LoraChoice, index: usize) {
+        let node = self.node;
+        let set = match choice {
+            LoraChoice::Bandwidth => BANDWIDTHS.get(index).map(|&(hz, _)| node.set_bandwidth(hz)),
+            LoraChoice::SpreadingFactor => SPREADING_FACTORS
+                .get(index)
+                .map(|&(sf, _)| node.set_spreading_factor(sf)),
+            LoraChoice::CodingRate => CODING_RATES
+                .get(index)
+                .map(|&(cr, _)| node.set_coding_rate(cr)),
+            LoraChoice::TransmitLimit => TRANSMIT_LIMITS
+                .get(index)
+                .map(|&(limit, _)| node.set_transmit_limit(limit)),
+        };
+        if set.is_some() {
+            self.back();
+            self.refresh_settings();
         }
     }
 
