@@ -1100,7 +1100,7 @@ actor FakeRadioConnection: RadioConnection {
         silentTestsIn: String?
     ) async throws {
         guard let meshSession else { return }
-        try UlcpRadioSession.attachChatStore(
+        try RadioDriverAdapter.attachChatStore(
             to: meshSession,
             store: store,
             ownerIdentityID: ownerIdentityID,

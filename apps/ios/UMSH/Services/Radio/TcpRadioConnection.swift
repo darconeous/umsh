@@ -60,7 +60,7 @@ struct TcpEndpoint: Equatable {
 /// There is nothing to discover: the endpoint the user typed *is* the
 /// radio. Attach is the connection opening and detach is it closing,
 /// which is the transport binding the spec gives for TCP.
-final class TcpRadioConnection: UlcpRadioSession, RadioConnection, UlcpFrameLink, @unchecked
+final class TcpRadioConnection: RadioDriverAdapter, RadioConnection, UlcpFrameLink, @unchecked
     Sendable {
     /// How long to wait before dialing again after the socket drops.
     /// Short, because the usual cause is the bridge being restarted by
@@ -72,7 +72,14 @@ final class TcpRadioConnection: UlcpRadioSession, RadioConnection, UlcpFrameLink
     private var connection: NWConnection?
     /// False once the user disconnects, so a deliberate teardown does
     /// not immediately dial again.
-    private var wantsConnection = false
+    private var wantsConnection = false {
+        didSet { if !wantsConnection { lastProblem = nil } }
+    }
+    /// Why the standing attempt has not worked yet. Reported with every
+    /// dial, so the failure stays on screen through the retry rather than
+    /// flashing away and back every two seconds. Cleared by a connection
+    /// that opens, and with the attempt itself.
+    private var lastProblem: MobileRadioProblem?
 
     init(endpoint: TcpEndpoint) {
         self.endpoint = endpoint
@@ -81,7 +88,9 @@ final class TcpRadioConnection: UlcpRadioSession, RadioConnection, UlcpFrameLink
             qos: .userInitiated
         ))
         adopt(link: self)
-        snapshot.localIdentifier = endpoint.identifier
+        sessionQueue.async { [self] in
+            reportTransport(.idle, name: nil)
+        }
     }
 
     // ------------------------------------------------------------------
@@ -117,7 +126,7 @@ final class TcpRadioConnection: UlcpRadioSession, RadioConnection, UlcpFrameLink
             sessionQueue.async { [self] in
                 Self.logger.notice("action: user pressed Disconnect")
                 wantsConnection = false
-                teardown(problem: nil)
+                teardown(problem: nil, reporting: true)
                 result.resume()
             }
         }
@@ -163,19 +172,7 @@ final class TcpRadioConnection: UlcpRadioSession, RadioConnection, UlcpFrameLink
     // UlcpFrameLink
     // ------------------------------------------------------------------
 
-    var linkIsReady: Bool { connection?.state == .ready }
-
     var linkID: UUID? { endpoint.identifier }
-
-    var linkName: String? { snapshot.name ?? endpoint.text }
-
-    /// The endpoint names exactly one radio, so whatever answers on it
-    /// is the radio this connection is bound to.
-    var linkIsBoundRadio: Bool { true }
-
-    /// The endpoint is the binding, so a redial is always available for
-    /// as long as the user wants this connection.
-    var linkCanReconnect: Bool { wantsConnection }
 
     func linkSend(frame: Data, rawTransactionID: UInt8?) {
         guard let connection, connection.state == .ready else { return }
@@ -183,19 +180,17 @@ final class TcpRadioConnection: UlcpRadioSession, RadioConnection, UlcpFrameLink
         do {
             wire = try UMSHMobileCore.ulcpHdlcEncode(frame: frame)
         } catch {
-            terminateConnectionForFatalProtocolError(
-                "The ULCP session produced an unsendable frame",
-                name: linkName
-            )
+            driver.linkFault(problem: RadioTransportProblem.unsendableFrame.problem)
             return
         }
         connection.send(content: wire, completion: .contentProcessed { [weak self] error in
             guard let self, let error else { return }
             // A stream has no per-write recovery worth modeling: if the
-            // socket refused a frame, the link is gone. `teardown` fails
-            // every outstanding ticket, this frame's included.
+            // socket refused a frame, the link is gone, and the driver
+            // fails every outstanding ticket with it, this frame's
+            // included.
             self.sessionQueue.async {
-                self.teardown(problem: "The connection to the radio failed: \(error)")
+                self.teardown(problem: .bridgeFailed, error: error)
             }
         })
     }
@@ -205,12 +200,12 @@ final class TcpRadioConnection: UlcpRadioSession, RadioConnection, UlcpFrameLink
     }
 
     func linkInvalidate(retrying: Bool) {
-        // Giving up has to stop the redial as well. `teardown` rearms it
-        // from `wantsConnection` alone, so a fault left standing would
-        // otherwise reconnect to a radio this session has just declared
-        // unusable, every two seconds, for as long as the app runs.
+        // Giving up has to stop the redial as well, or a fault left
+        // standing would reconnect to a radio the driver has just
+        // declared unusable, every two seconds, for as long as the app
+        // runs.
         if !retrying { wantsConnection = false }
-        teardown(problem: nil, preservingPublishedFailure: true)
+        teardown(problem: nil, reporting: true)
     }
 
     /// Nothing to remember: the endpoint is the binding.
@@ -224,7 +219,7 @@ final class TcpRadioConnection: UlcpRadioSession, RadioConnection, UlcpFrameLink
 
     func linkDidEnterDfu() {
         wantsConnection = false
-        teardown(problem: nil)
+        teardown(problem: nil, reporting: true)
     }
 
     // ------------------------------------------------------------------
@@ -245,29 +240,22 @@ final class TcpRadioConnection: UlcpRadioSession, RadioConnection, UlcpFrameLink
             using: NWParameters(tls: nil, tcp: options)
         )
         self.connection = connection
-        // Publishes over the standing snapshot rather than a fresh one, so a
-        // failure stays on screen through the retry. Clearing it for the dial
-        // and re-publishing it on the failure two seconds later made the
-        // whole interface pulse with the banner. The message stands until a
-        // session update—which only a live connection produces—clears it,
-        // or a new failure replaces it.
-        snapshot.linkState = .connecting
-        snapshot.name = endpoint.text
-        snapshot.localIdentifier = endpoint.identifier
-        publish(snapshot)
+        reportTransport(.connecting, name: endpoint.text, problem: lastProblem)
 
         connection.stateUpdateHandler = { [weak self] state in
             guard let self else { return }
             switch state {
             case .ready:
                 Self.logger.notice("bridged radio connected")
+                self.lastProblem = nil
                 self.decoder.reset()
                 self.receiveNext(on: connection)
                 // Connection established is attach, so the ULCP
-                // handshake starts here.
-                self.linkDidBecomeReady()
+                // handshake starts here. The endpoint names exactly one
+                // radio, so whatever answers is the bound one.
+                self.reportLinkReady(boundRadio: true)
             case .failed(let error):
-                self.teardown(problem: "The radio bridge is unreachable: \(error)")
+                self.teardown(problem: .bridgeUnreachable, error: error)
             case .cancelled:
                 break
             case .waiting(let error):
@@ -277,7 +265,7 @@ final class TcpRadioConnection: UlcpRadioSession, RadioConnection, UlcpFrameLink
                 // forever. Since the usual cause is a bridge that has
                 // not been started yet (or was restarted by hand), take
                 // the connection down and dial again ourselves.
-                self.teardown(problem: "Waiting for the radio bridge: \(error)")
+                self.teardown(problem: .bridgeWaiting, error: error)
             default:
                 break
             }
@@ -295,53 +283,55 @@ final class TcpRadioConnection: UlcpRadioSession, RadioConnection, UlcpFrameLink
             guard let self, self.connection === connection else { return }
             if let content, !content.isEmpty {
                 for frame in self.decoder.push(bytes: content) {
-                    self.linkDidReceive(frame: frame)
+                    self.driver.linkReceived(frame: frame)
                 }
             }
             if let error {
-                self.teardown(problem: "The connection to the radio failed: \(error)")
+                self.teardown(problem: .bridgeFailed, error: error)
                 return
             }
             // The bridge closing the socket is a detach.
             guard !isComplete else {
-                self.teardown(problem: "The radio bridge closed the connection")
+                self.teardown(problem: .bridgeClosed)
                 return
             }
             self.receiveNext(on: connection)
         }
     }
 
-    /// Drop the socket and release everything waiting on it, then dial
+    /// Drop the socket, report where that leaves the radio, and dial
     /// again if the user has not asked to be disconnected.
-    private func teardown(problem: String?, preservingPublishedFailure: Bool = false) {
+    ///
+    /// `reporting` reports even with no socket to drop: the driver asked
+    /// for this teardown and settles its fault on the report.
+    private func teardown(
+        problem: RadioTransportProblem?,
+        error: (any Error)? = nil,
+        reporting: Bool = false
+    ) {
+        if let error {
+            Self.logger.error(
+                "bridged radio: \(BluetoothErrorText.diagnostic(error), privacy: .public)"
+            )
+        }
         let hadConnection = connection != nil
         connection?.stateUpdateHandler = nil
         connection?.cancel()
         connection = nil
         decoder.reset()
+        if let problem, wantsConnection {
+            lastProblem = problem.problem
+        }
 
-        if preservingPublishedFailure {
-            // The session has already published why it gave up; an
-            // ordinary disconnect notice would overwrite it.
-            sessionDidLoseLink()
-        } else if hadConnection {
+        if hadConnection || reporting {
             if wantsConnection {
                 // The dial two seconds out is part of the same standing
-                // attempt, so this publishes one steady state—connecting,
+                // attempt, so this reports one steady state—connecting,
                 // and here is why it has not worked—rather than flapping
-                // through disconnected and back on every retry. With the
-                // message unchanged the snapshot is unchanged, and the
-                // interface holds perfectly still.
-                sessionDidLoseLink()
-                snapshot.linkState = .connecting
-                snapshot.name = endpoint.text
-                snapshot.localIdentifier = endpoint.identifier
-                if let problem {
-                    snapshot.problemDescription = problem
-                }
-                publish(snapshot)
+                // through disconnected and back on every retry.
+                reportTransport(.connecting, name: endpoint.text, problem: lastProblem)
             } else {
-                linkDidClose(problem: problem)
+                reportTransport(.idle, name: endpoint.text, problem: problem?.problem)
             }
         }
 

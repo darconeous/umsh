@@ -308,7 +308,6 @@ jobs:
           scripts/ios/verify-radio-accessories.sh
           scripts/ios/verify-radio-host-state.sh
           scripts/ios/verify-radio-recovery.sh
-          scripts/ios/verify-radio-session-recovery.sh
 
       # GitHub rotates the simulators in its macOS images, so pinning a device
       # name is a standing breakage: the image this first ran on had no

@@ -202,9 +202,9 @@ Focused Rust tests cover mode parsing, direct/administrative TIDs,
 preparation refusal, unchanged snapshots, completion ordering and expiry,
 stale tokens, retained-reply invalidation, BLE segmentation/disconnection,
 local mesh transmission receipts and CAD abandonment, and client parsing
-and response handling. The iOS recovery smoke harness exercises confirmed
-entry followed immediately by disconnect, retained ordinary connections,
-unsupported firmware, and ambiguous failure messages.
+and response handling. The mobile core's radio driver tests exercise
+confirmed entry followed immediately by disconnect, retained ordinary
+connections, unsupported firmware, and ambiguous failure messages.
 
 Validation commands include:
 
@@ -216,7 +216,7 @@ cargo test -p umshctl --bin umshctl dfu
 cargo test -p umsh --features tokio-support --test ulcp_full_protocol --test ulcp_over_mesh dfu
 scripts/ios/build-mobile-core.sh
 scripts/ios/verify-device-management.sh
-scripts/ios/verify-radio-session-recovery.sh
+cargo test -p umsh-mobile-core --lib radio_driver
 make build-techo build-t1000e build-sensecap-solar build-wio-tracker-l1 build-xiao-nrf52
 make build-heltec-v2 build-heltec-v3
 make docs

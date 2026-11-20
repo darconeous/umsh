@@ -104,17 +104,3 @@ struct RadioActivationRecovery {
     }
     mutating func reset() { attempts = 0 }
 }
-
-/// Each control transaction keeps its original deadline until Rust retires it.
-/// Unsolicited traffic and raw LoRa transmissions cannot extend that deadline.
-struct RadioControlDeadlines {
-    private var deadlines: [UInt8: TimeInterval] = [:]
-    var next: TimeInterval? { deadlines.values.min() }
-    mutating func update(pending: [UInt8], completed: UInt8? = nil, now: TimeInterval) {
-        if let completed { deadlines.removeValue(forKey: completed) }
-        let pending = Set(pending)
-        deadlines = deadlines.filter { pending.contains($0.key) }
-        for id in pending where deadlines[id] == nil { deadlines[id] = now + 8 }
-    }
-    mutating func reset() { deadlines.removeAll() }
-}

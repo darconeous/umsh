@@ -125,15 +125,40 @@ struct DraftTests {
 
 @Suite
 struct BoundaryTests {
-    @Test func deviceOutcomeUsesTypedKindInsteadOfDiagnosticText() {
-        let session = UlcpRadioSession(sessionQueue: DispatchQueue(label: "test.outcomes"))
-        let full = UlcpOperationErrorRecord(kind: .capacity, operation: "renamed",
-            statusCode: 0, statusName: "renamed diagnostic")
-        #expect(session.devicePeerOutcome(full) as? DevicePeerError == .deviceFull)
-        for kind in [UlcpOperationFailureKind.saveFailed, .alreadyApplied, .itemMissing] {
-            let applied = UlcpOperationErrorRecord(kind: kind, operation: "renamed",
-                statusCode: 0, statusName: "renamed diagnostic")
-            #expect(session.devicePeerOutcome(applied) == nil)
+    @Test func driverErrorsReachTableEditsAsTheirOwnCopy() {
+        func mapped(_ error: MobileRadioError) -> DevicePeerError? {
+            RadioDriverAdapter.devicePeerError(error) as? DevicePeerError
+        }
+        #expect(mapped(.DeviceFull) == .deviceFull)
+        #expect(mapped(.Unsupported) == .unsupported)
+        #expect(mapped(.RadioUnavailable) == .radioUnavailable)
+        #expect(mapped(.UnrecognizedAnswer) == .unrecognizedAnswer)
+        #expect(mapped(.OperationRejected(operation: "renamed", statusCode: 5,
+            statusName: "STATUS_NAME")) == .failed("STATUS_NAME"))
+        #expect(RadioDriverAdapter.devicePeerError(.OperationInProgress)
+            as? RadioConnectionError == .operationInProgress)
+    }
+
+    @Test func aRefusedConfigurationThrowsTheSessionsOwnCause() {
+        let refused = RadioDriverAdapter.connectionError(.Refused(error: .UlcpUnexpectedFrame))
+        #expect(refused as? MobileError == .UlcpUnexpectedFrame)
+        #expect(RadioDriverAdapter.connectionError(.TimedOut)
+            as? RadioConnectionError == .operationTimedOut)
+        #expect(RadioDriverAdapter.managementError(.TimedOut)
+            as? RemoteManagementError == .noAnswer)
+        #expect(RadioDriverAdapter.managementError(.Refused(error: .UlcpUnexpectedFrame))
+            as? RemoteManagementError == .unavailable)
+    }
+
+    @Test func transportProblemsKeepTheirCodes() {
+        for problem in RadioTransportProblem.allCases {
+            guard case let .transport(domain, code) = problem.problem else {
+                Issue.record("Expected a transport problem")
+                continue
+            }
+            #expect(domain == RadioTransportProblem.domain)
+            #expect(RadioTransportProblem(rawValue: code) == problem)
+            #expect(problem.problem.text == problem.text)
         }
     }
 
@@ -152,17 +177,6 @@ struct BoundaryTests {
         #expect(RustMeshEngine.inputError(.AddressOverflow) == .invalidAddress)
     }
 
-    @Test func reusedControlIDGetsANewDeadline() {
-        var deadlines = RadioControlDeadlines()
-        deadlines.update(pending: [1], now: 10)
-        deadlines.update(pending: [1], now: 15)
-        #expect(deadlines.next == 18)
-        deadlines.update(pending: [1], completed: 1, now: 17)
-        #expect(deadlines.next == 25)
-        deadlines.reset()
-        #expect(deadlines.next == nil)
-    }
-
     @Test func cancellationBeforeRegistrationResumesExactlyOnce() async {
         let waiter = RadioOperationWaiter<Int>()
         waiter.cancel()
@@ -173,49 +187,6 @@ struct BoundaryTests {
             } as Int
         }
     }
-
-    @Test func localOperationCancellationRetainsSlotUntilDisconnect() async throws {
-        let queue = DispatchQueue(label: "test.local-management")
-        let session = UlcpRadioSession(sessionQueue: queue)
-        let link = TestRadioLink()
-        let (events, started) = AsyncStream<Void>.makeStream()
-        queue.sync {
-            session.adopt(link: link)
-            session.snapshot.linkState = .attached
-            session.snapshot.hostState = .matchesCurrentIdentity
-        }
-        let operation = Task {
-            try await session.performLocalManagement { core in
-                started.yield(())
-                started.finish()
-                return try core.begin(selectedHostKey: nil)
-            }
-        }
-        for await _ in events { break }
-        operation.cancel()
-        await #expect(throws: CancellationError.self) { try await operation.value }
-        queue.sync {
-            #expect(session.localManagementWaiter != nil)
-            session.sessionDidLoseLink()
-            #expect(session.localManagementWaiter == nil)
-            #expect(session.ulcpSession.reset().pendingControlTransactions.isEmpty)
-        }
-    }
-}
-
-private final class TestRadioLink: UlcpFrameLink {
-    var linkIsReady = true
-    let linkID: UUID? = UUID()
-    let linkName: String? = "Test"
-    var linkIsBoundRadio: Bool { true }
-    var linkCanReconnect: Bool { true }
-    func linkSend(frame: Data, rawTransactionID: UInt8?) {}
-    func linkResetFraming() {}
-    func linkInvalidate(retrying: Bool) { linkIsReady = false }
-    func linkDidAttach() {}
-    func linkDidReportName(_ name: String) {}
-    func linkAbandonBinding() {}
-    func linkDidEnterDfu() {}
 }
 
 @Suite @MainActor

@@ -304,7 +304,7 @@ project file first, since it is often being edited concurrently.
 closures, wired at all three construction sites (`AppRuntime`'s mesh
 and companion backends, `DeviceSetupFlowView`'s bench backend) to the
 new core operations. `RadioConnection` gains the corresponding local
-and remote members, implemented in `UlcpRadioSession`,
+and remote members, implemented in `RadioDriverAdapter`,
 `AdministrativeDeviceSession`, and `FakeRadioConnection`.
 
 `ManageDeviceModel`:

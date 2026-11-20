@@ -86,7 +86,8 @@
 		100000000000000000000050 /* UMSH/PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000050 /* UMSH/PrivacyInfo.xcprivacy */; };
 		100000000000000000000051 /* UMSH/Features/Conversations/MessageReactions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000051 /* UMSH/Features/Conversations/MessageReactions.swift */; };
 		100000000000000000000052 /* UMSH/Features/Conversations/ConversationSecurity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000052 /* UMSH/Features/Conversations/ConversationSecurity.swift */; };
-		100000000000000000000053 /* UMSH/Services/Radio/UlcpRadioSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000053 /* UMSH/Services/Radio/UlcpRadioSession.swift */; };
+		100000000000000000000053 /* UMSH/Services/Radio/RadioDriverAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000053 /* UMSH/Services/Radio/RadioDriverAdapter.swift */; };
+		D5A000000000000000000002 /* UMSH/Services/Radio/RadioProblem.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5A000000000000000000001 /* UMSH/Services/Radio/RadioProblem.swift */; };
 		100000000000000000000054 /* UMSH/Services/Radio/TcpRadioConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000054 /* UMSH/Services/Radio/TcpRadioConnection.swift */; };
 		100000000000000000000055 /* UMSH/Services/Regions/RegionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000055 /* UMSH/Services/Regions/RegionService.swift */; };
 		100000000000000000000056 /* UMSH/Features/Regions/RegionSuggestionSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000056 /* UMSH/Features/Regions/RegionSuggestionSheet.swift */; };
@@ -255,7 +256,8 @@
 		200000000000000000000050 /* UMSH/PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = UMSH/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		200000000000000000000051 /* UMSH/Features/Conversations/MessageReactions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Conversations/MessageReactions.swift; sourceTree = "<group>"; };
 		200000000000000000000052 /* UMSH/Features/Conversations/ConversationSecurity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Conversations/ConversationSecurity.swift; sourceTree = "<group>"; };
-		200000000000000000000053 /* UMSH/Services/Radio/UlcpRadioSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/Radio/UlcpRadioSession.swift; sourceTree = "<group>"; };
+		200000000000000000000053 /* UMSH/Services/Radio/RadioDriverAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/Radio/RadioDriverAdapter.swift; sourceTree = "<group>"; };
+		D5A000000000000000000001 /* UMSH/Services/Radio/RadioProblem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/Radio/RadioProblem.swift; sourceTree = "<group>"; };
 		200000000000000000000054 /* UMSH/Services/Radio/TcpRadioConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/Radio/TcpRadioConnection.swift; sourceTree = "<group>"; };
 		200000000000000000000055 /* UMSH/Services/Regions/RegionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/Regions/RegionService.swift; sourceTree = "<group>"; };
 		200000000000000000000056 /* UMSH/Features/Regions/RegionSuggestionSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Regions/RegionSuggestionSheet.swift; sourceTree = "<group>"; };
@@ -468,7 +470,8 @@
 				E1A000000000000000000001 /* UMSHLanRadio/LanRadioProvider.swift */,
 				E1A000000000000000000002 /* UMSHLanRadio/Info.plist */,
 				E1A000000000000000000003 /* UMSHLanRadio/UMSHLanRadio.entitlements */,
-				200000000000000000000053 /* UMSH/Services/Radio/UlcpRadioSession.swift */,
+				200000000000000000000053 /* UMSH/Services/Radio/RadioDriverAdapter.swift */,
+				D5A000000000000000000001 /* UMSH/Services/Radio/RadioProblem.swift */,
 				20000000000000000000001A /* UMSH/Services/Radio/RadioGatt.swift */,
 				A55000000000000000000002 /* UMSH/Services/Radio/RadioAccessories.swift */,
 				A55000000000000000000004 /* UMSH/Services/Radio/RadioAccessoryInventory.swift */,
@@ -809,7 +812,8 @@
 				1000000000000000000000E3 /* UMSH/Services/Radio/VirtualRadioConnection.swift in Sources */,
 				1000000000000000000000E4 /* UMSH/Services/Radio/VirtualRadioPaths.swift in Sources */,
 				1000000000000000000000E5 /* UMSH/Services/Radio/LanRadioRegistration.swift in Sources */,
-				100000000000000000000053 /* UMSH/Services/Radio/UlcpRadioSession.swift in Sources */,
+				100000000000000000000053 /* UMSH/Services/Radio/RadioDriverAdapter.swift in Sources */,
+				D5A000000000000000000002 /* UMSH/Services/Radio/RadioProblem.swift in Sources */,
 				10000000000000000000001A /* UMSH/Services/Radio/RadioGatt.swift in Sources */,
 				A55000000000000000000001 /* UMSH/Services/Radio/RadioAccessories.swift in Sources */,
 				A55000000000000000000003 /* UMSH/Services/Radio/RadioAccessoryInventory.swift in Sources */,

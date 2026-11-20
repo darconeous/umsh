@@ -19,7 +19,7 @@ import UMSHMobileCore
 /// the app is doing, and the app reaches it over the extension's local
 /// socket: connecting attaches and closing detaches. Either way it keeps
 /// running across a detach, acknowledging and queueing.
-final class VirtualRadioConnection: UlcpRadioSession, RadioConnection, UlcpFrameLink,
+final class VirtualRadioConnection: RadioDriverAdapter, RadioConnection, UlcpFrameLink,
     @unchecked Sendable {
     /// Where the device runs.
     enum Hosting {
@@ -53,7 +53,13 @@ final class VirtualRadioConnection: UlcpRadioSession, RadioConnection, UlcpFrame
     private var generation = 0
     /// False once the user disconnects, so a deliberate teardown does
     /// not immediately start again.
-    private var wantsConnection = false
+    private var wantsConnection = false {
+        didSet { if !wantsConnection { lastProblem = nil } }
+    }
+    /// Why the standing attempt has not worked yet, reported with every
+    /// try so the failure stays on screen through the retry. Cleared by
+    /// an attach, and with the attempt itself.
+    private var lastProblem: MobileRadioProblem?
 
     init(hosting: Hosting = .inProcess(stateDirectory: VirtualRadioPaths.stateDirectory)) {
         self.hosting = hosting
@@ -62,7 +68,9 @@ final class VirtualRadioConnection: UlcpRadioSession, RadioConnection, UlcpFrame
             qos: .userInitiated
         ))
         adopt(link: self)
-        snapshot.localIdentifier = Self.identifier
+        sessionQueue.async { [self] in
+            reportTransport(.idle, name: nil)
+        }
     }
 
     // ------------------------------------------------------------------
@@ -98,7 +106,7 @@ final class VirtualRadioConnection: UlcpRadioSession, RadioConnection, UlcpFrame
             sessionQueue.async { [self] in
                 Self.logger.notice("action: user pressed Disconnect")
                 wantsConnection = false
-                detach(problem: nil)
+                detach(problem: nil, reporting: true)
                 result.resume()
             }
         }
@@ -143,15 +151,7 @@ final class VirtualRadioConnection: UlcpRadioSession, RadioConnection, UlcpFrame
     // UlcpFrameLink
     // ------------------------------------------------------------------
 
-    var linkIsReady: Bool { attached }
-
     var linkID: UUID? { identifier }
-
-    var linkName: String? { snapshot.name ?? Self.displayName }
-
-    var linkIsBoundRadio: Bool { true }
-
-    var linkCanReconnect: Bool { wantsConnection }
 
     func linkSend(frame: Data, rawTransactionID: UInt8?) {
         guard attached else { return }
@@ -159,10 +159,7 @@ final class VirtualRadioConnection: UlcpRadioSession, RadioConnection, UlcpFrame
         do {
             wire = try UMSHMobileCore.ulcpHdlcEncode(frame: frame)
         } catch {
-            terminateConnectionForFatalProtocolError(
-                "The ULCP session produced an unsendable frame",
-                name: linkName
-            )
+            driver.linkFault(problem: RadioTransportProblem.unsendableFrame.problem)
             return
         }
         if let radio {
@@ -172,7 +169,7 @@ final class VirtualRadioConnection: UlcpRadioSession, RadioConnection, UlcpFrame
                 guard let self, error != nil else { return }
                 // A refused write means the socket is gone.
                 self.sessionQueue.async {
-                    self.detach(problem: "The local network radio stopped")
+                    self.detach(problem: .localRadioStopped)
                 }
             })
         }
@@ -184,7 +181,7 @@ final class VirtualRadioConnection: UlcpRadioSession, RadioConnection, UlcpFrame
 
     func linkInvalidate(retrying: Bool) {
         if !retrying { wantsConnection = false }
-        detach(problem: nil, preservingPublishedFailure: true)
+        detach(problem: nil, reporting: true)
     }
 
     func linkDidAttach() {}
@@ -197,7 +194,7 @@ final class VirtualRadioConnection: UlcpRadioSession, RadioConnection, UlcpFrame
 
     func linkDidEnterDfu() {
         wantsConnection = false
-        detach(problem: nil)
+        detach(problem: nil, reporting: true)
     }
 
     // ------------------------------------------------------------------
@@ -207,12 +204,7 @@ final class VirtualRadioConnection: UlcpRadioSession, RadioConnection, UlcpFrame
     private func startAttaching() {
         wantsConnection = true
         guard !attached, socket == nil else { return }
-        // Publishes over the standing snapshot, so a failure stays on
-        // screen through the retry.
-        snapshot.linkState = .connecting
-        snapshot.name = Self.displayName
-        snapshot.localIdentifier = identifier
-        publish(snapshot)
+        reportTransport(.connecting, name: Self.displayName, problem: lastProblem)
         switch hosting {
         case .inProcess(let stateDirectory):
             attachInProcess(stateDirectory: stateDirectory)
@@ -237,8 +229,8 @@ final class VirtualRadioConnection: UlcpRadioSession, RadioConnection, UlcpFrame
                     listener: VirtualRadioListener()
                 )
             } catch {
-                snapshot.problemDescription = Self.describe(error)
-                publish(snapshot)
+                lastProblem = Self.problem(starting: error).problem
+                reportTransport(.connecting, name: Self.displayName, problem: lastProblem)
                 scheduleRetry()
                 return
             }
@@ -246,8 +238,9 @@ final class VirtualRadioConnection: UlcpRadioSession, RadioConnection, UlcpFrame
         decoder.reset()
         generation &+= 1
         attached = true
+        lastProblem = nil
         radio?.attach(sink: VirtualRadioSink(connection: self, generation: generation))
-        linkDidBecomeReady()
+        reportLinkReady(boundRadio: true)
     }
 
     private func connectSocket(path: String) {
@@ -259,13 +252,14 @@ final class VirtualRadioConnection: UlcpRadioSession, RadioConnection, UlcpFrame
             case .ready:
                 self.decoder.reset()
                 self.attached = true
+                self.lastProblem = nil
                 self.receiveNext(on: connection)
                 // Connecting is attaching, so the ULCP handshake starts
                 // here.
-                self.linkDidBecomeReady()
+                self.reportLinkReady(boundRadio: true)
             case .failed, .waiting:
                 // No extension listening: try again shortly.
-                self.detach(problem: "The local network radio is not running")
+                self.detach(problem: .localRadioNotRunning)
             default:
                 break
             }
@@ -283,13 +277,13 @@ final class VirtualRadioConnection: UlcpRadioSession, RadioConnection, UlcpFrame
             guard let self, self.socket === connection else { return }
             if let content, !content.isEmpty {
                 for frame in self.decoder.push(bytes: content) {
-                    self.linkDidReceive(frame: frame)
+                    self.driver.linkReceived(frame: frame)
                 }
             }
             // The extension closing the socket is a detach: it stopped,
             // or another connection replaced this one.
             if error != nil || isComplete {
-                self.detach(problem: "The local network radio closed the connection")
+                self.detach(problem: .localRadioClosed)
                 return
             }
             self.receiveNext(on: connection)
@@ -297,8 +291,12 @@ final class VirtualRadioConnection: UlcpRadioSession, RadioConnection, UlcpFrame
     }
 
     /// Detach from the device, which carries on queueing wherever it is
-    /// hosted, then try again if the user still wants this radio.
-    private func detach(problem: String?, preservingPublishedFailure: Bool = false) {
+    /// hosted, report where that leaves the radio, then try again if the
+    /// user still wants this radio.
+    ///
+    /// `reporting` reports even with nothing to detach from: the driver
+    /// asked for this teardown and settles its fault on the report.
+    private func detach(problem: RadioTransportProblem?, reporting: Bool = false) {
         let wasUp = attached || socket != nil
         if attached, radio != nil {
             radio?.detach()
@@ -309,22 +307,18 @@ final class VirtualRadioConnection: UlcpRadioSession, RadioConnection, UlcpFrame
         socket?.cancel()
         socket = nil
         decoder.reset()
-        guard wasUp else { return }
-        if preservingPublishedFailure {
-            sessionDidLoseLink()
-        } else if wantsConnection {
-            // The retry is part of the same standing attempt, so this
-            // publishes one steady state rather than flapping.
-            sessionDidLoseLink()
-            snapshot.linkState = .connecting
-            snapshot.name = Self.displayName
-            snapshot.localIdentifier = identifier
-            if let problem { snapshot.problemDescription = problem }
-            publish(snapshot)
-        } else {
-            linkDidClose(problem: problem)
+        if let problem, wantsConnection {
+            lastProblem = problem.problem
         }
-        if wantsConnection { scheduleRetry() }
+        guard wasUp || reporting else { return }
+        if wantsConnection {
+            // The retry is part of the same standing attempt, so this
+            // reports one steady state rather than flapping.
+            reportTransport(.connecting, name: Self.displayName, problem: lastProblem)
+            scheduleRetry()
+        } else {
+            reportTransport(.idle, name: Self.displayName, problem: problem?.problem)
+        }
     }
 
     private func scheduleRetry() {
@@ -334,12 +328,10 @@ final class VirtualRadioConnection: UlcpRadioSession, RadioConnection, UlcpFrame
         }
     }
 
-    private static func describe(_ error: Error) -> String {
+    private static func problem(starting error: any Error) -> RadioTransportProblem {
         switch error as? MobileVirtualRadioError {
-        case .StateInUse:
-            "The local network radio is in use elsewhere"
-        default:
-            "The local network radio could not start"
+        case .StateInUse: .localRadioInUse
+        default: .localRadioUnavailable
         }
     }
 
@@ -348,7 +340,7 @@ final class VirtualRadioConnection: UlcpRadioSession, RadioConnection, UlcpFrame
         sessionQueue.async { [self] in
             guard attached, generation == self.generation else { return }
             for frame in decoder.push(bytes: bytes) {
-                linkDidReceive(frame: frame)
+                driver.linkReceived(frame: frame)
             }
         }
     }

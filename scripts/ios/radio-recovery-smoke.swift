@@ -57,29 +57,6 @@ struct RadioRecoverySmokeTest {
         precondition(link.advance(from: .characteristics, to: .subscribing))
         precondition(link.deadlineSeconds == 60)
 
-        var control = RadioControlDeadlines()
-        control.update(pending: [1, 2], now: 100)
-        precondition(control.next == 108)
-        // Incoming battery notifications don't answer the missing request.
-        for now in [101.0, 104, 107] {
-            control.update(pending: [1, 2], now: now)
-            precondition(control.next == 108)
-        }
-        // A response can start more work without extending another request.
-        control.update(pending: [2, 3], now: 107)
-        precondition(control.next == 108)
-        control.update(pending: [3], now: 107.5)
-        precondition(control.next == 115)
-        control.update(pending: [], now: 108) // only raw PHY TX remains
-        precondition(control.next == nil)
-        control.update(pending: [4], now: 109) // control + slow PHY TX
-        precondition(control.next == 117)
-        control.reset() // timeout retires the session, not only Swift callers
-        control.update(pending: [1], now: 120)
-        precondition(control.next == 128)
-        control.update(pending: [1], completed: 1, now: 127)
-        precondition(control.next == 135, "Immediate transaction ID reuse gets a fresh deadline")
-
         var recovery = RadioActivationRecovery()
         precondition(recovery.nextDelay() == 1)
         precondition(recovery.nextDelay() == 2)
@@ -87,6 +64,6 @@ struct RadioRecoverySmokeTest {
         precondition(recovery.nextDelay() == nil)
         recovery.reset() // foreground visit or manual Reconnect
         precondition(recovery.nextDelay() == 1)
-        print("BLE lifecycle, stale-callback tickets, control deadlines, and accessory recovery checks passed")
+        print("BLE lifecycle, stale-callback tickets, and accessory recovery checks passed")
     }
 }

@@ -122,11 +122,11 @@ have eight-second deadlines. Unrelated notifications and slow LoRa transmissions
 do not extend a control reply deadline. A radio that is simply out of range keeps
 its pending connection request without periodic scans or reconnect attempts.
 
-Run `scripts/ios/verify-radio-recovery.sh` for lifecycle and deadline checks.
-After rebuilding mobile-core, run `scripts/ios/verify-radio-session-recovery.sh`
-to exercise the actual ULCP session with a fake transport, including missing
-answers and teardown with delayed work. The Rust mobile session tests cover the
-outstanding control-transaction reports used by those deadlines. Physical iPhone
+Run `scripts/ios/verify-radio-recovery.sh` for the Bluetooth lifecycle checks.
+The ULCP session, its control deadlines, and fault recovery run in the mobile
+core's radio driver; `cargo test -p umsh-mobile-core --lib radio_driver`
+exercises them against a simulated radio, including missing answers and
+teardown with delayed work. Physical iPhone
 checks remain necessary for Bluetooth resets, dropped callbacks, Service Changed,
 AccessorySetupKit invalidation, and background reconnection.
 

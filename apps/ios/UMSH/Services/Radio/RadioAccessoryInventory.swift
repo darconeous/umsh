@@ -167,6 +167,31 @@ struct RadioPickerUpdates {
     mutating func retryReady() { retryScheduled = false }
 }
 
+/// What stands between the saved radios and a connection.
+enum RadioAccessoryBlock: Equatable, Sendable {
+    /// The saved radios could not be loaded, in the system's words.
+    case unavailable(String)
+    case loading
+    case setupOpen
+    case setupUnfinished
+    case needed
+
+    var text: String {
+        switch self {
+        case let .unavailable(text):
+            text
+        case .loading:
+            String(localized: "Loading saved radios…")
+        case .setupOpen:
+            String(localized: "Complete or cancel the open radio setup dialog.")
+        case .setupUnfinished:
+            String(localized: "This saved radio needs setup. Tap Finish Radio Setup to continue.")
+        case .needed:
+            String(localized: "Add a radio to enable access.")
+        }
+    }
+}
+
 /// An accessory authorization is not evidence of radio proximity or a usable bond.
 struct RadioAccessoryInventory: Sendable {
     var revision: UInt64 = 0
@@ -188,16 +213,19 @@ struct RadioAccessoryInventory: Sendable {
     }
     var canScan: Bool { canCreateCentral && appIsActive }
 
-    /// Only a known legacy entry needs user setup. Activation and an already
-    /// open system picker are different waits, with different recovery actions.
-    var connectionBlockDescription: String? {
-        if let problem { return problem }
-        if !ready { return "Loading saved radios…" }
-        if pickerActive { return "Complete or cancel the open radio setup dialog." }
-        if migrationID != nil { return "This saved radio needs setup. Tap Finish Radio Setup to continue." }
-        if needsRadioSetup { return "Add a radio to enable access." }
+    /// Why no central can be made yet. Only a known legacy entry needs user
+    /// setup. Activation and an already open system picker are different
+    /// waits, with different recovery actions.
+    var connectionBlock: RadioAccessoryBlock? {
+        if let problem { return .unavailable(problem) }
+        if !ready { return .loading }
+        if pickerActive { return .setupOpen }
+        if migrationID != nil { return .setupUnfinished }
+        if needsRadioSetup { return .needed }
         return nil
     }
+
+    var connectionBlockDescription: String? { connectionBlock?.text }
 
     func permitsConnection(to id: UUID) -> Bool {
         canCreateCentral && authorizedIDs.contains(id)
