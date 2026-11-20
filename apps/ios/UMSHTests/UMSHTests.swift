@@ -1,3 +1,4 @@
+import CoreBluetooth
 import Foundation
 import SQLite3
 import Testing
@@ -159,6 +160,38 @@ struct BoundaryTests {
             #expect(domain == RadioTransportProblem.domain)
             #expect(RadioTransportProblem(rawValue: code) == problem)
             #expect(problem.problem.text == problem.text)
+        }
+    }
+
+    @Test func anAdministeredLinkFailsWithTheErrorItsSetupStepNeeds() {
+        func failure(_ problem: MobileRadioProblem?) -> RadioConnectionError {
+            AdministrativeDeviceSession.connectionFailure(problem)
+        }
+        let unpaired = MobileRadioProblem.transport(
+            domain: CBATTErrorDomain,
+            code: Int64(CBATTError.insufficientEncryption.rawValue)
+        )
+        if case .pairingRequired = failure(unpaired) {} else {
+            Issue.record("A missing pairing is a setup step")
+        }
+        if case .pairingRequired = failure(RadioTransportProblem.accessRemoved.problem) {} else {
+            Issue.record("Access removed in Settings is a setup step")
+        }
+        if case .bluetoothUnavailable = failure(RadioTransportProblem.bluetoothOff.problem) {} else {
+            Issue.record("Expected Bluetooth unavailable")
+        }
+        for gone in [nil, RadioTransportProblem.linkLost.problem,
+                     RadioTransportProblem.connectionIncomplete.problem,
+                     MobileRadioProblem.synchronizationStalled] {
+            if case .radioNotFound = failure(gone) {} else {
+                Issue.record("Expected radio not found for \(String(describing: gone))")
+            }
+        }
+        for broken in [MobileRadioProblem.invalidFrame,
+                       RadioTransportProblem.serviceMissing.problem] {
+            if case .incompatibleProtocol = failure(broken) {} else {
+                Issue.record("Expected an incompatible protocol for \(broken)")
+            }
         }
     }
 

@@ -21,8 +21,8 @@ use crate::mobile_mesh::{
     WakeSignal,
 };
 use crate::ulcp::{
-    MobileAnnouncementRecord, UlcpAdvertSettingsRecord, UlcpGnssSettingsRecord,
-    UlcpItemMutationRecord, UlcpLocalManagementEventRecord,
+    MobileAnnouncementRecord, UlcpAdvertSettingsRecord, UlcpDeviceConfigRecord,
+    UlcpGnssSettingsRecord, UlcpItemMutationRecord, UlcpLocalManagementEventRecord,
 };
 use crate::{
     MobileMeshSession, MobileUlcpSession, UlcpAlertState, UlcpDfuMode, UlcpRadioSettingsRecord,
@@ -180,6 +180,24 @@ impl MobileRadioDriver {
         Self::start(link, MobileUlcpSession::new())
     }
 
+    /// A driver for a radio this phone administers but does not tether to.
+    /// It never claims the radio, never turns its transmitter on, and never
+    /// reconnects: a fault ends the session. `lazy_inspection` attaches
+    /// without reading the radio whole, for a screen that reads what it
+    /// shows (`MobileUlcpSession::administrative_lazy`).
+    #[uniffi::constructor]
+    pub fn administrative(
+        link: Arc<dyn RadioLink>,
+        lazy_inspection: bool,
+    ) -> Result<Arc<Self>, MobileRadioError> {
+        let session = if lazy_inspection {
+            MobileUlcpSession::administrative_lazy()
+        } else {
+            MobileUlcpSession::administrative()
+        };
+        Self::start(link, session)
+    }
+
     /// Register the listener told of new updates. If one is already
     /// waiting, it is told at once.
     pub fn set_listener(&self, listener: Arc<dyn MobileRadioDriverListener>) {
@@ -292,6 +310,21 @@ impl MobileRadioDriver {
 
     // --- Operations on the radio. ---
 
+    /// Wait for the attach to finish. Answers with the state once the
+    /// session is attached with nothing outstanding; with the radio's
+    /// refusal if it refused part of the attach; and with `LinkFailed` if
+    /// the link comes to rest or fails first. Waits through the
+    /// transport's connecting phases, so a caller may ask before the link
+    /// is ready, once the transport has reported that it is connecting.
+    ///
+    /// A tethered radio can park short of attached, awaiting a host or a
+    /// claim, with the link up. The wait then lasts until something moves
+    /// it on or the link goes, so a caller that cannot wait that long
+    /// brings its own deadline.
+    pub async fn attached(&self) -> Result<MobileRadioStateRecord, MobileRadioError> {
+        self.request(|reply| Command::Attached { reply }).await
+    }
+
     /// Read the radio's state anew.
     pub async fn refresh(&self) -> Result<MobileRadioStateRecord, MobileRadioError> {
         self.request(|reply| Command::Refresh {
@@ -317,6 +350,17 @@ impl MobileRadioDriver {
     ) -> Result<(), MobileRadioError> {
         self.configuration(Box::new(move |session| session.configure(settings)))
             .await
+    }
+
+    /// Write a whole device configuration and have the radio save it.
+    pub async fn configure_device(
+        &self,
+        configuration: UlcpDeviceConfigRecord,
+    ) -> Result<(), MobileRadioError> {
+        self.configuration(Box::new(move |session| {
+            session.configure_device(configuration)
+        }))
+        .await
     }
 
     pub async fn configure_positioning(

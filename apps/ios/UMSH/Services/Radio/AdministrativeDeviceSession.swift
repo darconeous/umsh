@@ -52,6 +52,40 @@ struct AdministeredDeviceSnapshot: Equatable, Sendable {
     )
 }
 
+extension AdministeredDeviceSnapshot {
+    /// The device as the driver publishes it.
+    init(_ state: MobileRadioStateRecord) {
+        let identity = state.deviceKey.flatMap {
+            try? UMSHMobileCore.inspectPublicIdentityBytes(publicKey: $0)
+        }
+        self.init(
+            linkState: RadioLinkState(state.phase),
+            identifier: state.linkId.flatMap(UUID.init(uuidString:)),
+            name: state.name,
+            deviceIdentity: identity.map {
+                MeshPublicIdentity(
+                    canonicalAddress: $0.canonicalAddress,
+                    hint: MeshNodeHint(bytes: $0.hint.bytes, text: $0.hint.text)
+                )
+            },
+            hostState: RadioHostState(state.host),
+            sync: state.provisioning,
+            batteryPercentage: state.battery?.percentage.map(Int.init),
+            batteryVoltageMillivolts: state.battery?.voltageMv.map(Int.init),
+            chargeState: state.battery?.chargeState.map(RadioChargeState.init),
+            alert: state.alert.map(RadioAlertState.init),
+            clock: state.clock.map {
+                RadioClock(
+                    date: $0.epochSeconds.map { Date(timeIntervalSince1970: TimeInterval($0)) },
+                    readAt: Date(unixMilliseconds: $0.readAtMs)
+                )
+            },
+            position: state.position.map(RadioPosition.init),
+            problemDescription: state.problem?.text
+        )
+    }
+}
+
 /// A foreground BLE session for configuring a UMSH device this phone does
 /// not tether to.
 ///
@@ -64,14 +98,18 @@ struct AdministeredDeviceSnapshot: Equatable, Sendable {
 /// - It persists **nothing**. No remembered identifier, no auto-connect
 ///   intent, no standing connect left armed for a device that wanders back
 ///   into range next Tuesday.
-/// - It never claims. The Rust session is
-///   `MobileUlcpSession.administrative()`, which refuses `claim` outright,
-///   so a phone commissioning ten repeaters cannot leave its host key on
-///   any of them.
+/// - It never claims. Each connect runs an administrative
+///   `MobileRadioDriver`, whose session refuses `claim` outright and which
+///   never turns the transmitter on, so a phone commissioning ten repeaters
+///   leaves each as it found it.
 ///
-/// A dropped link is therefore terminal, not provisional: the session
-/// reports "connection lost" and the user retries. That is the whole
-/// recovery model.
+/// A dropped link is therefore terminal, not provisional: the driver of an
+/// administrative session has no reconnects to offer, so a fault shows as a
+/// failure and the user retries. That is the whole recovery model.
+///
+/// The driver runs the ULCP session and owns the device's state; this class
+/// owns discovery, the GATT attach, segmenting and write pacing, and the
+/// accessory permission.
 final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
     private static let logger = Logger(subsystem: "com.voria.umsh.ios", category: "AdminDevice")
 
@@ -80,12 +118,6 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
     /// pairing prompt in front of the user, and someone reading a PIN off
     /// an e-paper display is not in a hurry.
     private static let attachTimeoutSeconds: TimeInterval = 60
-    /// Budget for one post-attach exchange. No user gesture is involved, the
-    /// link is already up, and the device has already proved it answers—so
-    /// this is short. It exists because a wedged device holds the link open
-    /// while answering nothing, and CoreBluetooth has no failure to report;
-    /// without a deadline the caller waits forever.
-    private static let operationTimeoutSeconds: TimeInterval = 20
     /// How long a device may go unheard before it leaves the scan list.
     private static let discoveryStaleSeconds: UInt64 = 6
 
@@ -117,13 +149,18 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
     private var selectionGeneration = UUID()
     private var lastCachedConfiguredName: String?
     private var peripheral: CBPeripheral?
+    /// What to call the device in transport reports: its advertised name
+    /// until it reports its own.
+    private var deviceName: String?
     private var frameIn: CBCharacteristic?
     private var frameOut: CBCharacteristic?
 
     private let reassembler = MobileGattReassembler()
-    /// Recreated per connect, in the attach mode that connect asks for—
-    /// see `connect(_:lazyAttach:)`.
-    private var ulcpSession = MobileUlcpSession.administrative()
+    /// The driver for the device being administered, made per connect in
+    /// the inspection mode that connect asks for—see
+    /// `connect(_:lazyAttach:)`—and stopped when the session lets go.
+    private var driver: MobileRadioDriver?
+    private var linkBridge: DriverLinkBridge?
     private var selectedHostKey: Data?
 
     private var snapshot = AdministeredDeviceSnapshot.idle
@@ -139,32 +176,13 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
     private var pendingWrites: [Data] = []
     private var writeInProgress = false
 
-    /// The caller awaiting the attach. Like `operationWaiter` below it resumes
-    /// *with* the configuration the device reported, rather than leaving the
-    /// caller to look for it on `snapshots()`: that stream is drained by a
-    /// separate task with no ordering against this continuation, so a caller
-    /// reading the mirror could still see the state from before the attach.
-    private var attachWaiter: CheckedContinuation<UlcpSyncRecord?, any Error>?
+    /// A connect is waiting for its attach. One at a time.
+    private var attachPending = false
     private var attachGeneration = UUID()
-    /// The caller awaiting a post-attach exchange—a configuration write or
-    /// a re-read. Both complete on the same condition (the session is back
-    /// at `attached` with nothing outstanding), so one waiter serves both
-    /// and also enforces that only one runs at a time.
-    ///
-    /// It resumes *with* the device state observed at completion rather than
-    /// leaving the caller to read `snapshots()`: that stream is drained by a
-    /// separate task with no ordering against this continuation, so a caller
-    /// comparing what it wrote against a snapshot could be comparing against
-    /// the previous one.
-    private var operationWaiter: CheckedContinuation<UlcpSyncRecord?, any Error>?
-    private var operationGeneration = UUID()
-    /// The caller awaiting a local management exchange—a property fetch,
-    /// write pass, or save—resolved by the session update carrying its
-    /// completion rather than by the attached-and-idle condition, because
-    /// its result is the event, not the sync record.
-    private var managementWaiter:
-        CheckedContinuation<UlcpLocalManagementEventRecord, any Error>?
-    private var managementGeneration = UUID()
+    /// This session reported a fault and the driver's invalidation has not
+    /// arrived yet. The link is finished: nothing on it may progress toward
+    /// ready.
+    private var faultReported = false
     private var propertyPushContinuations:
         [UUID: AsyncStream<UlcpPropertyPushRecord>.Continuation] = [:]
 
@@ -180,7 +198,8 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
         }
     }
 
-    /// Abandoning the flow must release its connection and registry claim.
+    /// Abandoning the flow must release its connection, registry claim,
+    /// and driver.
     deinit {
         accessoryTask?.cancel()
         if let identifier = peripheral?.identifier {
@@ -189,6 +208,7 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
         if let peripheral, let central, peripheral.state != .disconnected {
             central.cancelPeripheralConnection(peripheral)
         }
+        driver?.stop()
     }
 
     private func applyAccessoryInventory(_ inventory: RadioAccessoryInventory) {
@@ -198,7 +218,7 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
             discoveryRequested = true
         }
         if let id = peripheral?.identifier, inventory.removedIDs.contains(id) {
-            fail("Access to this radio was removed in Settings.", error: RadioConnectionError.pairingRequired)
+            fault(RadioTransportProblem.accessRemoved.problem)
         }
         yieldDiscoveryList()
         if inventory.canScan, discoveryRequested { startDiscoveryOnQueue() }
@@ -224,6 +244,12 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
         }
     }
 
+    private func onQueue<T: Sendable>(_ body: @escaping @Sendable () -> T) async -> T {
+        await withCheckedContinuation { (result: CheckedContinuation<T, Never>) in
+            queue.async { result.resume(returning: body()) }
+        }
+    }
+
     // MARK: - Identity
 
     /// Supply the phone identity used to classify the device's host key.
@@ -233,30 +259,25 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
         let hostKey = try identity.map {
             try UMSHMobileCore.publicIdentityBytes(address: $0.canonicalAddress)
         }
-        await withCheckedContinuation { result in
-            queue.async { [self] in
-                selectedHostKey = hostKey
-                result.resume()
-            }
+        await onQueue { [self] in
+            selectedHostKey = hostKey
+            try? driver?.setHostKey(hostKey: hostKey)
         }
     }
 
     // MARK: - Snapshots
 
     func snapshots() async -> AsyncStream<AdministeredDeviceSnapshot> {
-        await withCheckedContinuation { result in
-            queue.async { [self] in
-                let stream = AsyncStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
-                    let id = UUID()
-                    continuations[id] = continuation
-                    continuation.yield(snapshot)
-                    continuation.onTermination = { [weak self] _ in
-                        self?.queue.async { [weak self] in
-                            self?.continuations[id] = nil
-                        }
+        await onQueue { [self] in
+            AsyncStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
+                let id = UUID()
+                continuations[id] = continuation
+                continuation.yield(snapshot)
+                continuation.onTermination = { [weak self] _ in
+                    self?.queue.async { [weak self] in
+                        self?.continuations[id] = nil
                     }
                 }
-                result.resume(returning: stream)
             }
         }
     }
@@ -270,34 +291,27 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
     /// already tethered to—the two links would contend for the same
     /// peripheral.
     func discover(companionIdentifier: UUID? = nil) async -> AsyncStream<[DiscoveredRadio]> {
-        await withCheckedContinuation { result in
-            queue.async { [self] in
-                self.companionIdentifier = companionIdentifier
-                let stream = AsyncStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
-                    let id = UUID()
-                    discoveryContinuations[id] = continuation
-                    continuation.yield(currentDiscoveryList())
-                    continuation.onTermination = { [weak self] _ in
-                        self?.queue.async { [weak self] in
-                            self?.discoveryContinuations[id] = nil
-                            if self?.discoveryContinuations.isEmpty == true { self?.stopDiscoveryOnQueue() }
-                        }
+        await onQueue { [self] in
+            self.companionIdentifier = companionIdentifier
+            let stream = AsyncStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
+                let id = UUID()
+                discoveryContinuations[id] = continuation
+                continuation.yield(currentDiscoveryList())
+                continuation.onTermination = { [weak self] _ in
+                    self?.queue.async { [weak self] in
+                        self?.discoveryContinuations[id] = nil
+                        if self?.discoveryContinuations.isEmpty == true { self?.stopDiscoveryOnQueue() }
                     }
                 }
-                Self.logger.notice("action: opened administrative device discovery")
-                startDiscoveryOnQueue()
-                result.resume(returning: stream)
             }
+            Self.logger.notice("action: opened administrative device discovery")
+            startDiscoveryOnQueue()
+            return stream
         }
     }
 
     func stopDiscovery() async {
-        await withCheckedContinuation { result in
-            queue.async { [self] in
-                stopDiscoveryOnQueue()
-                result.resume()
-            }
-        }
+        await onQueue { [self] in stopDiscoveryOnQueue() }
     }
 
     private func startDiscoveryOnQueue() {
@@ -456,122 +470,183 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
     @discardableResult
     func connect(_ id: UUID, lazyAttach: Bool = false) async throws -> UlcpSyncRecord? {
         let selection = UUID()
-        await withCheckedContinuation { result in
-            queue.async { [self] in
-                selectionGeneration = selection
-                result.resume()
-            }
-        }
+        await onQueue { [self] in selectionGeneration = selection }
         if RadioAccessories.usesSystemPicker {
             let inventory = try await RadioAccessories.shared.prepareSelection(id)
             try await waitForBluetooth(inventory)
         }
         try Task.checkCancellation()
-        return try await withCheckedThrowingContinuation {
-            (result: CheckedContinuation<UlcpSyncRecord?, any Error>) in
+        let driver = try await withCheckedThrowingContinuation {
+            (result: CheckedContinuation<MobileRadioDriver, any Error>) in
             queue.async { [self] in
-                guard selectionGeneration == selection else {
-                    result.resume(throwing: CancellationError())
-                    return
+                do {
+                    result.resume(returning: try beginConnect(id, selection: selection, lazyAttach: lazyAttach))
+                } catch {
+                    result.resume(throwing: error)
                 }
-                if RadioAccessories.usesSystemPicker && !accessoryInventory.permitsConnection(to: id) {
-                    result.resume(throwing: RadioConnectionError.pairingRequired)
-                    return
-                }
-                guard let central, central.state == .poweredOn else {
-                    result.resume(throwing: RadioConnectionError.bluetoothUnavailable)
-                    return
-                }
-                guard attachWaiter == nil, operationWaiter == nil else {
-                    result.resume(throwing: RadioConnectionError.operationInProgress)
-                    return
-                }
-                // A fresh Rust session in the requested attach mode; the
-                // teardown below releases whatever the previous one held.
-                ulcpSession = lazyAttach
-                    ? MobileUlcpSession.administrativeLazy()
-                    : MobileUlcpSession.administrative()
-                // The advertised name is live; `CBPeripheral.name` is a cache
-                // iOS does not refresh when a device is renamed.
-                let advertisedName = accessoryInventory.radios.first(where: { $0.id == id })?.name
-                    ?? discovered[id]?.name
-                let target = discovered[id]?.peripheral
-                    ?? central.retrievePeripherals(withIdentifiers: [id]).first
-                guard let target else {
-                    result.resume(throwing: RadioConnectionError.radioNotFound)
-                    return
-                }
-                Self.logger.notice(
-                    "action: administer device \(id, privacy: .public)"
-                )
-                stopDiscoveryOnQueue()
-                teardownPeripheral()
-
-                peripheral = target
-                target.delegate = self
-                // Claim the peripheral before connecting, so a companion
-                // sweep racing this connect cannot revoke it mid-flight.
-                AdminSessionRegistry.shared.register(target.identifier)
-                attachWaiter = result
-                attachGeneration = UUID()
-                publish(state: .connecting, name: advertisedName ?? target.name, identifier: target.identifier)
-                central.connect(target)
-                scheduleAttachTimeout(generation: attachGeneration)
             }
         }
+        // The driver resolves this once the attach's inspection has landed:
+        // a caller needs a device, not a link. The state it answers with is
+        // the one the attach ended on, so the configuration cannot be from
+        // before it.
+        do {
+            let state = try await driver.attached()
+            await onQueue { [self] in finishAttach(of: driver) }
+            return state.provisioning
+        } catch let error as MobileRadioError {
+            await onQueue { [self] in finishAttach(of: driver) }
+            throw Self.attachError(error)
+        }
+    }
+
+    /// Start connecting on the queue, and hand back the driver whose attach
+    /// the caller waits on. It reports the transport connecting first, so
+    /// the attach is not judged over before it began.
+    private func beginConnect(
+        _ id: UUID,
+        selection: UUID,
+        lazyAttach: Bool
+    ) throws -> MobileRadioDriver {
+        guard selectionGeneration == selection else { throw CancellationError() }
+        if RadioAccessories.usesSystemPicker && !accessoryInventory.permitsConnection(to: id) {
+            throw RadioConnectionError.pairingRequired
+        }
+        guard let central, central.state == .poweredOn else {
+            throw RadioConnectionError.bluetoothUnavailable
+        }
+        guard !attachPending else { throw RadioConnectionError.operationInProgress }
+        // The advertised name is live; `CBPeripheral.name` is a cache
+        // iOS does not refresh when a device is renamed.
+        let advertisedName = accessoryInventory.radios.first(where: { $0.id == id })?.name
+            ?? discovered[id]?.name
+        let target = discovered[id]?.peripheral
+            ?? central.retrievePeripherals(withIdentifiers: [id]).first
+        guard let target else { throw RadioConnectionError.radioNotFound }
+        Self.logger.notice("action: administer device \(id, privacy: .public)")
+        stopDiscoveryOnQueue()
+        releasePeripheral()
+        retireDriver()
+
+        let driver = try startDriver(lazyInspection: lazyAttach)
+        peripheral = target
+        target.delegate = self
+        // Claim the peripheral before connecting, so a companion sweep
+        // racing this connect cannot revoke it mid-flight.
+        AdminSessionRegistry.shared.register(target.identifier)
+        attachPending = true
+        attachGeneration = UUID()
+        deviceName = advertisedName ?? target.name
+        reportTransport(.connecting, name: deviceName)
+        central.connect(target)
+        scheduleAttachTimeout(generation: attachGeneration)
+        return driver
+    }
+
+    private func finishAttach(of driver: MobileRadioDriver) {
+        guard self.driver === driver else { return }
+        attachPending = false
+        attachGeneration = UUID()
     }
 
     private func scheduleAttachTimeout(generation: UUID) {
         queue.asyncAfter(deadline: .now() + Self.attachTimeoutSeconds) { [weak self] in
-            guard let self, self.attachGeneration == generation,
-                  self.attachWaiter != nil else { return }
+            guard let self, self.attachGeneration == generation, self.attachPending else { return }
             Self.logger.error("administrative attach timed out")
-            self.fail(
-                "The device did not finish connecting",
-                error: RadioConnectionError.radioNotFound
-            )
+            self.fault(RadioTransportProblem.connectionIncomplete.problem)
         }
     }
 
     /// End the session and release the peripheral. Idempotent.
     func disconnect() async {
-        await withCheckedContinuation { result in
-            queue.async { [self] in
-                Self.logger.notice("action: ended administrative session")
-                selectionGeneration = UUID()
-                let waiters = bluetoothWaiters.values
-                bluetoothWaiters.removeAll()
-                for waiter in waiters { waiter.resume(throwing: CancellationError()) }
-                stopDiscoveryOnQueue()
-                finishPendingOperations(throwing: RadioConnectionError.radioNotFound)
-                if let peripheral, let central, peripheral.state != .disconnected {
-                    central.cancelPeripheralConnection(peripheral)
-                }
-                teardownPeripheral()
-                publish(AdministeredDeviceSnapshot.idle)
-                result.resume()
+        await onQueue { [self] in
+            Self.logger.notice("action: ended administrative session")
+            selectionGeneration = UUID()
+            let waiters = bluetoothWaiters.values
+            bluetoothWaiters.removeAll()
+            for waiter in waiters { waiter.resume(throwing: CancellationError()) }
+            stopDiscoveryOnQueue()
+            if let peripheral, let central, peripheral.state != .disconnected {
+                central.cancelPeripheralConnection(peripheral)
             }
+            releasePeripheral()
+            // Stopping the driver fails whatever was waiting on it.
+            retireDriver()
+            publish(AdministeredDeviceSnapshot.idle)
         }
     }
 
-    /// Release every CoreBluetooth and ULCP resource for the current
-    /// device, including its registry claim. Does not itself cancel the
+    /// Release every CoreBluetooth resource for the current device,
+    /// including its registry claim. Does not itself cancel the
     /// connection—callers decide whether the link is being torn down or
     /// has already dropped.
-    private func teardownPeripheral() {
+    private func releasePeripheral() {
         if let identifier = peripheral?.identifier {
             AdminSessionRegistry.shared.deregister(identifier)
         }
         peripheral?.delegate = nil
         peripheral = nil
+        deviceName = nil
         lastCachedConfiguredName = nil
         frameIn = nil
         frameOut = nil
-        reassembler.reset()
-        _ = ulcpSession.reset()
-        pendingWrites.removeAll()
-        writeInProgress = false
+        linkResetFraming()
+        faultReported = false
         attachGeneration = UUID()
+    }
+
+    /// The driver for the next connect, in the inspection mode it asks for.
+    private func startDriver(lazyInspection: Bool) throws -> MobileRadioDriver {
+        let bridge = DriverLinkBridge(queue: queue)
+        bridge.link = self
+        let driver: MobileRadioDriver
+        do {
+            driver = try MobileRadioDriver.administrative(link: bridge, lazyInspection: lazyInspection)
+        } catch {
+            // Only fails when the system will not start a thread.
+            throw RadioConnectionError.radioNotFound
+        }
+        driver.setListener(listener: AdministrativeDriverListener(session: self, driver: driver))
+        try? driver.setHostKey(hostKey: selectedHostKey)
+        self.driver = driver
+        linkBridge = bridge
+        return driver
+    }
+
+    /// Stop the current driver and cut it off from the link, so nothing
+    /// it says late reaches the next device.
+    private func retireDriver() {
+        linkBridge?.link = nil
+        linkBridge = nil
+        driver?.clearListener()
+        driver?.stop()
+        driver = nil
+        attachPending = false
+    }
+
+    /// Tell the driver where the transport stands while it carries no
+    /// frames.
+    private func reportTransport(_ phase: MobileRadioTransportPhase, name: String?) {
+        driver?.transportChanged(state: MobileRadioTransportStateRecord(
+            phase: phase,
+            name: name,
+            linkId: peripheral?.identifier.uuidString,
+            problem: nil
+        ))
+    }
+
+    /// The link is finished for `problem`. The driver shows the failure
+    /// and says so through `linkInvalidate`, which ends the session.
+    private func fault(_ problem: MobileRadioProblem) {
+        guard !faultReported, let driver else { return }
+        faultReported = true
+        driver.linkFault(problem: problem)
+    }
+
+    /// Whether a callback about `peripheral` is still this session's to
+    /// act on.
+    private func owns(_ peripheral: CBPeripheral) -> Bool {
+        self.peripheral === peripheral && !faultReported
     }
 
     // MARK: - Configuration
@@ -579,7 +654,7 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
     /// Write a complete device configuration and wait for the radio to
     /// persist it. Rust owns the write ordering and the trailing save.
     func configureDevice(_ configuration: UlcpDeviceConfigRecord) async throws {
-        _ = try await perform { session in try session.configureDevice(configuration: configuration) }
+        try await operation { try await $0.configureDevice(configuration: configuration) }
     }
 
     /// Let a node manage this device over the mesh, or stop it from doing
@@ -592,10 +667,10 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
         Self.logger.notice(
             "action: user \(present ? "added" : "removed", privacy: .public) an administrator"
         )
-        _ = try await perform { session in
+        try await tableEdit { driver in
             present
-                ? try session.insertDeviceAdmin(publicKey: publicKey)
-                : try session.removeDeviceAdmin(publicKey: publicKey)
+                ? try await driver.insertDeviceAdmin(publicKey: publicKey)
+                : try await driver.removeDeviceAdmin(publicKey: publicKey)
         }
     }
 
@@ -607,10 +682,10 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
         Self.logger.notice(
             "action: user \(present ? "added" : "removed", privacy: .public) a device peer"
         )
-        _ = try await perform { session in
+        try await tableEdit { driver in
             present
-                ? try session.insertDevicePeer(publicKey: publicKey)
-                : try session.removeDevicePeer(publicKey: publicKey)
+                ? try await driver.insertDevicePeer(publicKey: publicKey)
+                : try await driver.removeDevicePeer(publicKey: publicKey)
         }
     }
 
@@ -619,9 +694,10 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
     /// Live behavior rather than configuration: it is never part of a
     /// configuration write, never saved, and it outlives this session—
     /// an alert left running keeps running after the setup sheet closes.
+    /// Done once sent; the device's answer arrives on `snapshots()`.
     func setAlert(_ state: RadioAlertState) async throws {
         Self.logger.notice("action: user set locate alert to \(state.rawValue, privacy: .public)")
-        _ = try await perform { session in try session.setAlert(state: state.wire) }
+        try await operation { try await $0.setAlert(state: state.wire) }
     }
 
     /// Set—or clear—the device's wall clock (`PROP_TIME`).
@@ -633,7 +709,7 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
         Self.logger.notice(
             "action: user \(epochSeconds == nil ? "cleared" : "set", privacy: .public) the device clock"
         )
-        _ = try await perform { session in try session.setTime(epochSeconds: epochSeconds) }
+        try await operation { try await $0.setTime(epochSeconds: epochSeconds) }
     }
 
     /// Re-read the device's authoritative configuration and return it.
@@ -643,7 +719,7 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
     /// after the trailing `CMD_SAVE`, which is a different question.
     @discardableResult
     func refresh() async throws -> UlcpSyncRecord? {
-        try await perform { session in try session.refresh() }
+        try await operation { try await $0.refresh() }.provisioning
     }
 
     /// Sample where the device is, and how well it knows.
@@ -655,7 +731,7 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
     /// screen would show the reading taken at attach forever.
     @discardableResult
     func refreshPositioning() async throws -> UlcpSyncRecord? {
-        try await perform { session in try session.refreshPositioning() }
+        try await operation { try await $0.refreshPositioning() }.provisioning
     }
 
     // MARK: - Local management
@@ -668,10 +744,8 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
         _ propertyIDs: [UInt32]
     ) async throws -> [MobileMeshManagementAnswerRecord] {
         guard !propertyIDs.isEmpty else { return [] }
-        let event = try await performManagement { session in
-            try session.beginPropertyFetch(propertyIds: propertyIDs)
-        }
-        return event.answers
+        return try await management { try await $0.fetchProperties(propertyIds: propertyIDs) }
+            .answers
     }
 
     /// Write properties to the attached device, in the given order, and
@@ -680,10 +754,7 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
         _ writes: [MobileMeshPropertyWriteRecord]
     ) async throws -> [MobileMeshManagementAnswerRecord] {
         guard !writes.isEmpty else { return [] }
-        let event = try await performManagement { session in
-            try session.beginPropertyWrites(writes: writes)
-        }
-        return event.answers
+        return try await management { try await $0.writeProperties(writes: writes) }.answers
     }
 
     /// Add or replace one Wi-Fi network on the attached device, or forget
@@ -698,8 +769,8 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
         Self.logger.notice(
             "action: user \(present ? "stored" : "forgot", privacy: .public) a Wi-Fi network"
         )
-        let event = try await performManagement { session in
-            try session.beginPropertyItems(
+        let event = try await management {
+            try await $0.editPropertyItems(
                 propertyId: ulcpManagedPropertyIds().wifiNetworks,
                 mutations: [
                     UlcpItemMutationRecord(
@@ -732,9 +803,7 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
 
     /// Persist the attached device's live configuration.
     func saveDevice() async throws {
-        let event = try await performManagement { session in
-            try session.beginSave()
-        }
+        let event = try await management { try await $0.save() }
         if let status = event.statusCode, status != 0 {
             throw RemoteManagementError.refused(status: status)
         }
@@ -746,9 +815,7 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
     /// the announcement, and a device without `CAP_ADVERT` says it cannot.
     func announce(_ request: MobileAnnouncementRecord) async throws {
         Self.logger.notice("action: user asked the device to announce itself")
-        let event = try await performManagement { session in
-            try session.announce(request: request)
-        }
+        let event = try await management { try await $0.announce(request: request) }
         if let status = event.statusCode, status != 0 {
             throw RemoteManagementError.refused(status: status)
         }
@@ -778,177 +845,251 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
     /// Restart the attached device, or return it to a blank factory state.
     ///
     /// Neither is answered: the device acts and the link drops, so there is
-    /// no exchange to run to completion and `performManagement` would only
-    /// wait out its deadline. The frame goes and the caller treats the
-    /// disconnect that follows as the confirmation.
+    /// no exchange to run to completion. The frame goes and the caller
+    /// treats the disconnect that follows as the confirmation.
     func reset(scope: MobileMeshResetScope) async throws {
-        try await withCheckedThrowingContinuation { (result: CheckedContinuation<Void, any Error>) in
-            queue.async { [self] in
-                guard let peripheral, peripheral.state == .connected else {
-                    result.resume(throwing: RemoteManagementError.unavailable)
-                    return
-                }
-                do {
-                    let update: UlcpSessionUpdateRecord = switch scope {
-                    case .reboot: try ulcpSession.reboot()
-                    case .factory: try ulcpSession.factoryReset()
-                    case .protocol, .restore:
-                        throw RemoteManagementError.unavailable
-                    }
-                    try applySessionUpdate(update, from: peripheral)
-                    result.resume()
-                } catch {
-                    result.resume(throwing: RemoteManagementError.unavailable)
-                }
-            }
+        switch scope {
+        case .reboot:
+            try await management { try await $0.reboot() }
+        case .factory:
+            try await management { try await $0.factoryReset() }
+        case .protocol, .restore:
+            throw RemoteManagementError.unavailable
         }
     }
 
     func enterDfu(mode: UlcpDfuMode) async throws {
         try await DfuEntryError.perform {
-            let event = try await self.performManagement { session in
-                try session.enterDfu(mode: mode)
-            }
-            return event.statusCode
+            try await self.management { try await $0.enterDfu(mode: mode) }.statusCode
         }
         await disconnect()
     }
 
     /// Values the attached device announces on its own, verbatim.
     func propertyPushes() async -> AsyncStream<UlcpPropertyPushRecord> {
-        await withCheckedContinuation { result in
-            queue.async { [self] in
-                let stream = AsyncStream(bufferingPolicy: .bufferingNewest(16)) { continuation in
-                    let id = UUID()
-                    propertyPushContinuations[id] = continuation
-                    continuation.onTermination = { [weak self] _ in
-                        self?.queue.async { [weak self] in
-                            self?.propertyPushContinuations[id] = nil
-                        }
+        await onQueue { [self] in
+            AsyncStream(bufferingPolicy: .bufferingNewest(16)) { continuation in
+                let id = UUID()
+                propertyPushContinuations[id] = continuation
+                continuation.onTermination = { [weak self] _ in
+                    self?.queue.async { [weak self] in
+                        self?.propertyPushContinuations[id] = nil
                     }
                 }
-                result.resume(returning: stream)
             }
         }
     }
 
-    /// Run one local management exchange to completion, under the same
-    /// per-operation deadline as everything else here. Errors wear
-    /// `RemoteManagementError` so the management screens read this
-    /// session and the mesh with the same copy.
-    private func performManagement(
-        _ start: @escaping @Sendable (MobileUlcpSession) throws -> UlcpSessionUpdateRecord
-    ) async throws -> UlcpLocalManagementEventRecord {
-        try await withCheckedThrowingContinuation {
-            (result: CheckedContinuation<UlcpLocalManagementEventRecord, any Error>) in
-            queue.async { [self] in
-                guard let peripheral, peripheral.state == .connected else {
-                    result.resume(throwing: RemoteManagementError.unavailable)
-                    return
-                }
-                guard managementWaiter == nil, operationWaiter == nil, attachWaiter == nil
-                else {
-                    result.resume(throwing: RemoteManagementError.unavailable)
-                    return
-                }
-                managementWaiter = result
-                managementGeneration = UUID()
-                scheduleManagementTimeout(generation: managementGeneration)
-                do {
-                    // An immediate completion—a save with nothing to ask—
-                    // resolves the waiter inside this call.
-                    try applySessionUpdate(start(ulcpSession), from: peripheral)
-                } catch {
-                    finishManagement(throwing: RemoteManagementError.unavailable)
-                }
+    /// Run one exchange through the current driver. Errors wear
+    /// `RadioConnectionError`, as they always have here.
+    private func operation<T>(
+        _ body: (MobileRadioDriver) async throws -> T
+    ) async throws -> T {
+        try await run(
+            mapping: RadioDriverAdapter.connectionError,
+            missing: RadioConnectionError.radioNotFound,
+            body
+        )
+    }
+
+    /// Edit one of the device's key tables through the current driver.
+    /// Errors wear `DevicePeerError`, as the companion's edits of the same
+    /// tables do, so a full table or a device without an identity says so.
+    private func tableEdit(
+        _ body: (MobileRadioDriver) async throws -> Void
+    ) async throws {
+        try await run(
+            mapping: RadioDriverAdapter.devicePeerError,
+            missing: DevicePeerError.radioUnavailable,
+            body
+        )
+    }
+
+    /// Run one local management exchange through the current driver.
+    /// Errors wear `RemoteManagementError` so the management screens read
+    /// this session and the mesh with the same copy.
+    private func management<T>(
+        _ body: (MobileRadioDriver) async throws -> T
+    ) async throws -> T {
+        try await run(
+            mapping: RadioDriverAdapter.managementError,
+            missing: RemoteManagementError.unavailable,
+            body
+        )
+    }
+
+    private func run<T>(
+        mapping: (MobileRadioError) -> any Error,
+        missing: any Error,
+        _ body: (MobileRadioDriver) async throws -> T
+    ) async throws -> T {
+        guard let driver = await onQueue({ [self] in driver }) else { throw missing }
+        do {
+            return try await body(driver)
+        } catch let error as MobileRadioError {
+            throw mapping(error)
+        }
+    }
+
+    // MARK: - What the driver publishes
+
+    fileprivate func driverDidAnnounceUpdate(_ driver: MobileRadioDriver) {
+        queue.async { [weak self] in
+            guard let self, self.driver === driver else { return }
+            let update = driver.pollUpdate()
+            for line in update.diagnostics {
+                Self.logger.notice("driver: \(line, privacy: .public)")
             }
-        }
-    }
-
-    private func scheduleManagementTimeout(generation: UUID) {
-        queue.asyncAfter(deadline: .now() + Self.operationTimeoutSeconds) { [weak self] in
-            guard let self, self.managementGeneration == generation,
-                  self.managementWaiter != nil else { return }
-            Self.logger.error("administrative management exchange timed out")
-            self.finishManagement(throwing: RemoteManagementError.noAnswer)
-        }
-    }
-
-    private func finishManagement(with event: UlcpLocalManagementEventRecord) {
-        guard let waiter = managementWaiter else { return }
-        managementWaiter = nil
-        managementGeneration = UUID()
-        waiter.resume(returning: event)
-    }
-
-    private func finishManagement(throwing error: any Error) {
-        guard let waiter = managementWaiter else { return }
-        managementWaiter = nil
-        managementGeneration = UUID()
-        waiter.resume(throwing: error)
-    }
-
-    /// Run one post-attach exchange to completion, answering with the device
-    /// state as of that completion.
-    private func perform(
-        _ start: @escaping @Sendable (MobileUlcpSession) throws -> UlcpSessionUpdateRecord
-    ) async throws -> UlcpSyncRecord? {
-        try await withCheckedThrowingContinuation {
-            (result: CheckedContinuation<UlcpSyncRecord?, any Error>) in
-            queue.async { [self] in
-                guard let peripheral, peripheral.state == .connected else {
-                    result.resume(throwing: RadioConnectionError.radioNotFound)
-                    return
-                }
-                guard operationWaiter == nil, attachWaiter == nil, managementWaiter == nil
-                else {
-                    result.resume(throwing: RadioConnectionError.operationInProgress)
-                    return
-                }
-                operationWaiter = result
-                operationGeneration = UUID()
-                scheduleOperationTimeout(generation: operationGeneration)
-                do {
-                    try applySessionUpdate(start(ulcpSession), from: peripheral)
-                } catch {
-                    finishOperation(throwing: error)
+            if let state = update.state {
+                publish(AdministeredDeviceSnapshot(state))
+            }
+            for push in update.pushedProperties {
+                for continuation in propertyPushContinuations.values {
+                    continuation.yield(push)
                 }
             }
         }
     }
 
-    // MARK: - ULCP plumbing
+    private func publish(_ next: AdministeredDeviceSnapshot) {
+        snapshot = next
+        for continuation in continuations.values {
+            continuation.yield(next)
+        }
+    }
 
-    private func beginSynchronization(on peripheral: CBPeripheral) {
-        guard let frameIn, frameIn.properties.contains(.write) else {
-            fail(
-                "The device has no writable ULCP endpoint",
-                error: RadioConnectionError.incompatibleProtocol
-            )
+    // MARK: - Errors
+
+    /// Why the attach did not finish, in the terms callers act on.
+    private static func attachError(_ error: MobileRadioError) -> any Error {
+        switch error {
+        case let .LinkFailed(problem):
+            connectionFailure(problem)
+        case .Stopped:
+            RadioConnectionError.radioNotFound
+        default:
+            RadioDriverAdapter.connectionError(error)
+        }
+    }
+
+    /// A failed link, in the terms callers act on. A missing pairing is a
+    /// setup step, not a protocol incompatibility, and the two lead the
+    /// user somewhere different.
+    static func connectionFailure(_ problem: MobileRadioProblem?) -> RadioConnectionError {
+        guard let problem else { return .radioNotFound }
+        switch problem {
+        case let .transport(domain, code) where domain == RadioTransportProblem.domain:
+            switch RadioTransportProblem(rawValue: code) {
+            case .accessRemoved:
+                return .pairingRequired
+            case .bluetoothUnauthorized, .bluetoothUnsupported, .bluetoothOff,
+                 .bluetoothResetting, .bluetoothStarting, .bluetoothUnavailable:
+                return .bluetoothUnavailable
+            case .linkLost, .connectionFailed, .connectionIncomplete, .none:
+                return .radioNotFound
+            default:
+                return .incompatibleProtocol
+            }
+        case let .transport(domain, code):
+            let error = NSError(domain: domain, code: Int(code))
+            return BluetoothErrorText.isPairingFailure(error) ? .pairingRequired : .incompatibleProtocol
+        case .synchronizationStalled, .disconnected:
+            return .radioNotFound
+        default:
+            return .incompatibleProtocol
+        }
+    }
+}
+
+// MARK: - UlcpFrameLink
+
+extension AdministrativeDeviceSession: UlcpFrameLink {
+    var linkID: UUID? { peripheral?.identifier }
+
+    /// Segment the frame and queue every ATT value, then start the queue
+    /// if it was idle. GATT writes go one at a time, each with a response.
+    func linkSend(frame: Data, rawTransactionID: UInt8?) {
+        guard !faultReported, let peripheral else { return }
+        guard peripheral.state == .connected, frameIn != nil else {
+            fault(RadioTransportProblem.linkLost.problem)
             return
         }
+        // ULCP GATT SAR needs ordinary single-write values; the
+        // without-response maximum is the negotiated ATT payload bound even
+        // though each segment is deliberately written with a response.
+        let maximumLength = UInt16(
+            min(peripheral.maximumWriteValueLength(for: .withoutResponse), Int(UInt16.max))
+        )
+        do {
+            let segments = try UMSHMobileCore.ulcpGattSegments(
+                frame: frame,
+                maximumValueLength: maximumLength
+            )
+            pendingWrites.append(contentsOf: segments.map(\.value))
+        } catch {
+            fault(RadioTransportProblem.unsendableFrame.problem)
+            return
+        }
+        writeNext(on: peripheral)
+    }
+
+    func linkResetFraming() {
         reassembler.reset()
         pendingWrites.removeAll()
         writeInProgress = false
-        do {
-            try applySessionUpdate(
-                ulcpSession.begin(selectedHostKey: selectedHostKey),
-                from: peripheral
-            )
-        } catch {
-            fail(
-                "The ULCP session could not start",
-                error: RadioConnectionError.incompatibleProtocol,
-                detail: "cause=\(UlcpFrameDiagnostic.cause(error)) stage=begin"
-            )
-        }
     }
 
-    private func receive(_ value: Data, from peripheral: CBPeripheral) {
-        let frame: Data
+    /// No reconnect: the session ends here, and the driver shows why.
+    func linkInvalidate(retrying: Bool) {
+        let name = deviceName
+        if let peripheral, let central, central.state == .poweredOn,
+           peripheral.state != .disconnected {
+            central.cancelPeripheralConnection(peripheral)
+        }
+        releasePeripheral()
+        // A failure with no problem of its own is the fault's. The device
+        // is let go, so the failure names no device to return to.
+        reportTransport(.failed, name: name)
+    }
+
+    /// Nothing is remembered: an administered device is not the phone's.
+    func linkDidAttach() {}
+
+    func linkDidReportName(_ name: String) {
+        deviceName = name
+        guard RadioAccessories.usesSystemPicker, name != lastCachedConfiguredName,
+              let id = peripheral?.identifier else { return }
+        lastCachedConfiguredName = name
+        Task { await RadioAccessories.shared.rememberConfiguredName(name, for: id) }
+    }
+
+    func linkAbandonBinding() {}
+
+    /// `enterDfu` ends the session itself once the device confirms.
+    func linkDidEnterDfu() {}
+
+    private func writeNext(on peripheral: CBPeripheral) {
+        guard !writeInProgress, !pendingWrites.isEmpty, let frameIn else { return }
+        writeInProgress = true
+        peripheral.writeValue(pendingWrites.removeFirst(), for: frameIn, type: .withResponse)
+    }
+
+    /// The GATT attach is done: the link carries frames, and the driver
+    /// starts the ULCP session over it.
+    fileprivate func beginSynchronization(on peripheral: CBPeripheral) {
+        guard let frameIn, frameIn.properties.contains(.write) else {
+            fault(RadioTransportProblem.endpointUnwritable.problem)
+            return
+        }
+        linkResetFraming()
+        // The one radio this session reaches is the one the user chose.
+        driver?.linkReady(boundRadio: true)
+    }
+
+    fileprivate func receive(_ value: Data) {
         do {
-            guard let reassembled = try reassembler.push(segment: value) else { return }
-            frame = reassembled
+            guard let frame = try reassembler.push(segment: value) else { return }
+            driver?.linkReceived(frame: frame)
         } catch {
             // A frame lost in reassembly ends the session, and over BLE the
             // session is the connection, for the reasons
@@ -960,275 +1101,7 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
                 detail: "cause=\(UlcpFrameDiagnostic.cause(error)) segment=\(value.count)B",
                 bytes: value
             )
-            return
         }
-        do {
-            try applySessionUpdate(ulcpSession.consume(frame: frame), from: peripheral)
-        } catch MobileError.UlcpUnexpectedCommand {
-            // Unhandled but well formed: ignored here for the same reason
-            // the tethered session ignores it—see `linkDidReceive`.
-            Self.logger.notice(
-                """
-                administrative session: ignoring unhandled command \
-                \(UlcpFrameDiagnostic.structure(frame), privacy: .public)
-                """
-            )
-        } catch MobileError.UlcpUnexpectedFrame {
-            // A frame nothing is waiting on, refused by Rust before any
-            // state changed: ignored for the reasons `linkDidReceive`
-            // gives in the tethered session.
-            Self.logger.notice(
-                """
-                administrative session: ignoring frame nothing is waiting on \
-                \(UlcpFrameDiagnostic.structure(frame), privacy: .public)
-                """
-            )
-        } catch {
-            fail(
-                "The device sent an invalid ULCP frame",
-                error: RadioConnectionError.incompatibleProtocol,
-                detail: """
-                    cause=\(UlcpFrameDiagnostic.cause(error)) \
-                    frame=[\(UlcpFrameDiagnostic.structure(frame))]
-                    """,
-                bytes: frame
-            )
-        }
-    }
-
-    private func applySessionUpdate(
-        _ update: UlcpSessionUpdateRecord,
-        from peripheral: CBPeripheral
-    ) throws {
-        snapshot.linkState = switch update.snapshot.phase {
-        case .idle: .attaching
-        case .synchronizing: .synchronizing
-        // An administrative session never parks awaiting a host decision
-        // or releases a host key—Rust does not emit those phases for this
-        // attach mode—but the switch has to be total.
-        case .awaitingHost: .awaitingHost
-        case .claiming: .provisioning
-        case .configuring: .configuring
-        case .attached: .attached
-        case .releasing: .disconnecting
-        }
-        snapshot.hostState = switch update.snapshot.hostOwnership {
-        case .unknown: .unknown
-        case .localIdentityUnavailable: .localIdentityUnavailable
-        case .unsupported: .unsupported
-        case .unclaimed: .unclaimed
-        case .ours: .matchesCurrentIdentity
-        case .otherHost: .belongsToAnotherIdentity
-        }
-        snapshot.identifier = peripheral.identifier
-        snapshot.name = update.snapshot.deviceName ?? snapshot.name ?? peripheral.name
-        if RadioAccessories.usesSystemPicker, let name = update.snapshot.deviceName,
-           name != lastCachedConfiguredName {
-            lastCachedConfiguredName = name
-            let id = peripheral.identifier
-            Task { await RadioAccessories.shared.rememberConfiguredName(name, for: id) }
-        }
-        if let deviceKey = update.snapshot.deviceKey {
-            let identity = try UMSHMobileCore.inspectPublicIdentityBytes(publicKey: deviceKey)
-            snapshot.deviceIdentity = MeshPublicIdentity(
-                canonicalAddress: identity.canonicalAddress,
-                hint: MeshNodeHint(bytes: identity.hint.bytes, text: identity.hint.text)
-            )
-        } else {
-            snapshot.deviceIdentity = nil
-        }
-        if let battery = update.snapshot.battery {
-            snapshot.batteryPercentage = battery.percentage.map(Int.init)
-            snapshot.batteryVoltageMillivolts = battery.voltageMv.map(Int.init)
-            snapshot.chargeState = battery.chargeState.map(RadioChargeState.init)
-        }
-        // Carried on every update, unlike battery: the device ends an alert
-        // on its own—a button press or its deadline—so the control has
-        // to follow the device rather than what was last asked for.
-        snapshot.alert = update.snapshot.alert.map(RadioAlertState.init)
-        // Stamped on arrival, like battery: an epoch says nothing without
-        // the instant it was read.
-        if let time = update.snapshot.time {
-            snapshot.clock = RadioClock(
-                date: time.epochSeconds.map { Date(timeIntervalSince1970: TimeInterval($0)) },
-                readAt: .now
-            )
-        }
-        snapshot.position = update.snapshot.gnss.map(RadioPosition.init)
-        if let provisioning = update.snapshot.provisioning {
-            snapshot.sync = provisioning
-        }
-        snapshot.problemDescription = nil
-
-        let operationErrorMessage = update.operationError.map {
-            "\($0.operation) failed: \($0.statusName) (\($0.statusCode))"
-        }
-        if let operationErrorMessage {
-            Self.logger.error(
-                "ULCP operation rejected: \(operationErrorMessage, privacy: .public)"
-            )
-            snapshot.problemDescription = operationErrorMessage
-        }
-        // An answer Rust could not use—see the tethered session. The device
-        // acted; the reply was not the form this app predicted.
-        let mismatch = update.mismatchedResponse
-        if let mismatch {
-            Self.logger.error(
-                """
-                ULCP answer not understood: \(mismatch.operation, privacy: .public) \
-                answered with property 0x\(String(mismatch.propertyId, radix: 16), privacy: .public) \
-                command \(mismatch.command, privacy: .public)
-                """
-            )
-            snapshot.problemDescription = RadioConnectionError.unrecognizedAnswerDescription
-        }
-
-        if let event = update.managementEvent {
-            finishManagement(with: event)
-        }
-        for push in update.pushedProperties {
-            for continuation in propertyPushContinuations.values {
-                continuation.yield(push)
-            }
-        }
-
-        for frame in update.outboundFrames {
-            try enqueue(frame: frame, on: peripheral)
-        }
-        writeNext(on: peripheral)
-        publish(snapshot)
-
-        guard !update.waitingForResponses, update.snapshot.phase == .attached else { return }
-        let rejection = operationErrorMessage.map(RadioConnectionError.operationRejected)
-            ?? mismatch.map { _ in RadioConnectionError.unrecognizedAnswer }
-        // The attach is only complete once whatever this session's inspection
-        // asks for has landed: a caller needs a device, not a link.
-        finishAttach(throwing: rejection)
-        finishOperation(throwing: rejection)
-    }
-
-    private func enqueue(frame: Data, on peripheral: CBPeripheral) throws {
-        // ULCP GATT SAR needs ordinary single-write values; the
-        // without-response maximum is the negotiated ATT payload bound even
-        // though each segment is deliberately written with a response.
-        let maximumLength = UInt16(
-            min(peripheral.maximumWriteValueLength(for: .withoutResponse), Int(UInt16.max))
-        )
-        let segments = try UMSHMobileCore.ulcpGattSegments(
-            frame: frame,
-            maximumValueLength: maximumLength
-        )
-        pendingWrites.append(contentsOf: segments.map(\.value))
-    }
-
-    private func writeNext(on peripheral: CBPeripheral) {
-        guard !writeInProgress, !pendingWrites.isEmpty, let frameIn else { return }
-        writeInProgress = true
-        peripheral.writeValue(pendingWrites.removeFirst(), for: frameIn, type: .withResponse)
-    }
-
-    // MARK: - Completion and failure
-
-    private func publish(
-        state: RadioLinkState,
-        name: String? = nil,
-        identifier: UUID? = nil
-    ) {
-        var next = AdministeredDeviceSnapshot.idle
-        next.linkState = state
-        next.name = name
-        next.identifier = identifier
-        publish(next)
-    }
-
-    private func publish(_ next: AdministeredDeviceSnapshot) {
-        snapshot = next
-        for continuation in continuations.values {
-            continuation.yield(next)
-        }
-    }
-
-    private func finishAttach(throwing error: (any Error)?) {
-        guard let waiter = attachWaiter else { return }
-        attachWaiter = nil
-        attachGeneration = UUID()
-        if let error {
-            waiter.resume(throwing: error)
-        } else {
-            waiter.resume(returning: snapshot.sync)
-        }
-    }
-
-    /// Give up on an exchange the device never answered, without tearing the
-    /// session down: the link is still up and the device may well answer the
-    /// next thing asked of it. What it did with this request is unknown, which
-    /// is what `operationTimedOut` says and a rejection would not.
-    private func scheduleOperationTimeout(generation: UUID) {
-        queue.asyncAfter(deadline: .now() + Self.operationTimeoutSeconds) { [weak self] in
-            guard let self, self.operationGeneration == generation,
-                  self.operationWaiter != nil else { return }
-            Self.logger.error("administrative operation timed out")
-            self.finishOperation(throwing: RadioConnectionError.operationTimedOut)
-        }
-    }
-
-    private func finishOperation(throwing error: (any Error)?) {
-        guard let waiter = operationWaiter else { return }
-        operationWaiter = nil
-        operationGeneration = UUID()
-        if let error {
-            waiter.resume(throwing: error)
-        } else {
-            waiter.resume(returning: snapshot.sync)
-        }
-    }
-
-    private func finishPendingOperations(throwing error: any Error) {
-        finishAttach(throwing: error)
-        finishOperation(throwing: error)
-        finishManagement(throwing: RemoteManagementError.unavailable)
-    }
-
-    /// Why a CoreBluetooth failure happened, in the terms callers act on.
-    /// A missing pairing is a setup step, not a protocol incompatibility,
-    /// and the two lead the user somewhere different.
-    private static func failureReason(_ error: any Error) -> RadioConnectionError {
-        BluetoothErrorText.isPairingFailure(error) ? .pairingRequired : .incompatibleProtocol
-    }
-
-    /// Terminal failure for this session. There is no reconnect ladder: the
-    /// user is standing in front of the device and retrying is one tap.
-    ///
-    /// `detail` names a protocol-layer cause the way `underlying` names a
-    /// CoreBluetooth one, and `bytes` are the octets behind it. Neither
-    /// reaches the UI: `message` is the only part a user sees.
-    private func fail(
-        _ message: String,
-        error: any Error,
-        underlying: (any Error)? = nil,
-        detail: String? = nil,
-        bytes: Data? = nil
-    ) {
-        let octets = bytes.map { UlcpFrameDiagnostic.hex($0) } ?? "none"
-        Self.logger.error(
-            """
-            administrative session failed: \(message, privacy: .public) \
-            cause=\(underlying.map(BluetoothErrorText.diagnostic) ?? "none", privacy: .public) \
-            \(detail ?? "detail unrecorded", privacy: .public) \
-            octets=\(octets, privacy: .private)
-            """
-        )
-        let name = snapshot.name ?? peripheral?.name
-        if let peripheral, let central, peripheral.state != .disconnected {
-            central.cancelPeripheralConnection(peripheral)
-        }
-        finishPendingOperations(throwing: error)
-        teardownPeripheral()
-        var failed = AdministeredDeviceSnapshot.idle
-        failed.linkState = .failed
-        failed.name = name
-        failed.problemDescription = message
-        publish(failed)
     }
 }
 
@@ -1246,11 +1119,8 @@ extension AdministrativeDeviceSession: CBCentralManagerDelegate {
                 stopDiscoveryOnQueue()
                 discoveryRequested = true
             }
-            if attachWaiter != nil || peripheral != nil {
-                fail(
-                    "Bluetooth is unavailable",
-                    error: RadioConnectionError.bluetoothUnavailable
-                )
+            if peripheral != nil {
+                fault(RadioTransportProblem.bluetoothUnavailable.problem)
             }
             return
         }
@@ -1268,11 +1138,11 @@ extension AdministrativeDeviceSession: CBCentralManagerDelegate {
     }
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
-        guard self.peripheral === peripheral else { return }
+        guard owns(peripheral) else { return }
         Self.logger.notice(
             "event: administrative didConnect \(peripheral.identifier, privacy: .public)"
         )
-        publish(state: .attaching, name: snapshot.name ?? peripheral.name, identifier: peripheral.identifier)
+        reportTransport(.attaching, name: deviceName)
         peripheral.discoverServices([RadioGatt.service])
     }
 
@@ -1281,14 +1151,10 @@ extension AdministrativeDeviceSession: CBCentralManagerDelegate {
         didFailToConnect peripheral: CBPeripheral,
         error: (any Error)?
     ) {
-        guard self.peripheral === peripheral else { return }
+        guard owns(peripheral) else { return }
         // No re-arm: an administrative connect is a foreground action that
         // either worked or did not.
-        fail(
-            error.map(BluetoothErrorText.describe) ?? "The device connection failed",
-            error: error.map(Self.failureReason) ?? RadioConnectionError.radioNotFound,
-            underlying: error
-        )
+        fault(error.map(MobileRadioProblem.system) ?? RadioTransportProblem.connectionFailed.problem)
     }
 
     func centralManager(
@@ -1296,14 +1162,14 @@ extension AdministrativeDeviceSession: CBCentralManagerDelegate {
         didDisconnectPeripheral peripheral: CBPeripheral,
         error: (any Error)?
     ) {
-        guard self.peripheral === peripheral else { return }
+        guard owns(peripheral) else { return }
         Self.logger.notice(
             """
             event: administrative didDisconnect \(peripheral.identifier, privacy: .public) \
             error=\(error?.localizedDescription ?? "none", privacy: .public)
             """
         )
-        fail("Connection lost", error: RadioConnectionError.radioNotFound)
+        fault(RadioTransportProblem.linkLost.problem)
     }
 }
 
@@ -1320,7 +1186,7 @@ extension AdministrativeDeviceSession: CBPeripheralDelegate {
         _ peripheral: CBPeripheral,
         didModifyServices invalidatedServices: [CBService]
     ) {
-        guard self.peripheral === peripheral,
+        guard owns(peripheral),
               invalidatedServices.contains(where: { $0.uuid == RadioGatt.service })
         else { return }
         Self.logger.notice(
@@ -1328,24 +1194,20 @@ extension AdministrativeDeviceSession: CBPeripheralDelegate {
         )
         frameIn = nil
         frameOut = nil
-        pendingWrites.removeAll()
-        writeInProgress = false
-        publish(state: .attaching, name: snapshot.name, identifier: peripheral.identifier)
+        linkResetFraming()
+        reportTransport(.attaching, name: deviceName)
         peripheral.discoverServices([RadioGatt.service])
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: (any Error)?) {
-        guard self.peripheral === peripheral else { return }
+        guard owns(peripheral) else { return }
         if let error {
-            fail(BluetoothErrorText.describe(error), error: Self.failureReason(error), underlying: error)
+            fault(.system(error))
             return
         }
         guard let service = peripheral.services?
             .first(where: { $0.uuid == RadioGatt.service }) else {
-            fail(
-                "The device does not expose the ULCP service",
-                error: RadioConnectionError.incompatibleProtocol
-            )
+            fault(RadioTransportProblem.serviceMissing.problem)
             return
         }
         peripheral.discoverCharacteristics([RadioGatt.frameIn, RadioGatt.frameOut], for: service)
@@ -1356,23 +1218,20 @@ extension AdministrativeDeviceSession: CBPeripheralDelegate {
         didDiscoverCharacteristicsFor service: CBService,
         error: (any Error)?
     ) {
-        guard self.peripheral === peripheral else { return }
+        guard owns(peripheral) else { return }
         if let error {
-            fail(BluetoothErrorText.describe(error), error: Self.failureReason(error), underlying: error)
+            fault(.system(error))
             return
         }
         frameIn = service.characteristics?.first { $0.uuid == RadioGatt.frameIn }
         frameOut = service.characteristics?.first { $0.uuid == RadioGatt.frameOut }
         guard frameIn != nil, let frameOut else {
-            fail(
-                "The device has an incompatible ULCP service",
-                error: RadioConnectionError.incompatibleProtocol
-            )
+            fault(RadioTransportProblem.serviceIncompatible.problem)
             return
         }
         // Enabling notifications is what triggers the system pairing prompt
         // on an unbonded device, so the link state says so.
-        publish(state: .pairing, name: snapshot.name ?? peripheral.name, identifier: peripheral.identifier)
+        reportTransport(.pairing, name: deviceName)
         peripheral.setNotifyValue(true, for: frameOut)
     }
 
@@ -1381,17 +1240,13 @@ extension AdministrativeDeviceSession: CBPeripheralDelegate {
         didUpdateNotificationStateFor characteristic: CBCharacteristic,
         error: (any Error)?
     ) {
-        guard self.peripheral === peripheral,
-              characteristic.uuid == RadioGatt.frameOut else { return }
+        guard owns(peripheral), characteristic.uuid == RadioGatt.frameOut else { return }
         if let error {
-            fail(BluetoothErrorText.describe(error), error: Self.failureReason(error), underlying: error)
+            fault(.system(error))
             return
         }
         guard characteristic.isNotifying else {
-            fail(
-                "The device refused the ULCP attachment",
-                error: RadioConnectionError.incompatibleProtocol
-            )
+            fault(RadioTransportProblem.attachmentRefused.problem)
             return
         }
         beginSynchronization(on: peripheral)
@@ -1402,16 +1257,11 @@ extension AdministrativeDeviceSession: CBPeripheralDelegate {
         didWriteValueFor characteristic: CBCharacteristic,
         error: (any Error)?
     ) {
-        guard self.peripheral === peripheral,
-              characteristic.uuid == RadioGatt.frameIn else { return }
+        guard owns(peripheral), characteristic.uuid == RadioGatt.frameIn else { return }
         writeInProgress = false
         if let error {
             pendingWrites.removeAll()
-            fail(
-                "\(BluetoothErrorText.describe(error))",
-                error: Self.failureReason(error),
-                underlying: error
-            )
+            fault(.system(error))
             return
         }
         writeNext(on: peripheral)
@@ -1422,18 +1272,32 @@ extension AdministrativeDeviceSession: CBPeripheralDelegate {
         didUpdateValueFor characteristic: CBCharacteristic,
         error: (any Error)?
     ) {
-        guard self.peripheral === peripheral,
-              characteristic.uuid == RadioGatt.frameOut else { return }
+        guard owns(peripheral), characteristic.uuid == RadioGatt.frameOut else { return }
         if let error {
-            fail(
-                "\(BluetoothErrorText.describe(error))",
-                error: Self.failureReason(error),
-                underlying: error
-            )
+            fault(.system(error))
             return
         }
         // An empty value carries no segment header; the reassembler
         // discards it and resets, as it does any other invalid segment.
-        receive(characteristic.value ?? Data(), from: peripheral)
+        receive(characteristic.value ?? Data())
+    }
+}
+
+/// Tells the session that its driver has an update. Runs on the driver's
+/// thread; holds both weakly, so neither a retired session nor a retired
+/// driver is kept alive, and an update from a driver the session has
+/// replaced is recognized as such.
+private final class AdministrativeDriverListener: MobileRadioDriverListener, @unchecked Sendable {
+    private weak var session: AdministrativeDeviceSession?
+    private weak var driver: MobileRadioDriver?
+
+    init(session: AdministrativeDeviceSession, driver: MobileRadioDriver) {
+        self.session = session
+        self.driver = driver
+    }
+
+    func onUpdatePending() {
+        guard let driver else { return }
+        session?.driverDidAnnounceUpdate(driver)
     }
 }

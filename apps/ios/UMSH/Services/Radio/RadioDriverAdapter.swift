@@ -1648,7 +1648,7 @@ extension RadioDriverAdapter {
     /// refused throws the session's own cause, as it always has.
     static func connectionError(_ error: MobileRadioError) -> any Error {
         switch error {
-        case .RadioUnavailable, .Stopped:
+        case .RadioUnavailable, .Stopped, .LinkFailed:
             RadioConnectionError.radioNotFound
         case .OperationInProgress:
             RadioConnectionError.operationInProgress
@@ -1679,7 +1679,7 @@ extension RadioDriverAdapter {
     /// those screens show.
     static func devicePeerError(_ error: MobileRadioError) -> any Error {
         switch error {
-        case .RadioUnavailable, .Stopped:
+        case .RadioUnavailable, .Stopped, .LinkFailed:
             DevicePeerError.radioUnavailable
         case .Unsupported:
             DevicePeerError.unsupported
@@ -1700,7 +1700,7 @@ extension RadioDriverAdapter {
     /// For a command the radio acts on at once.
     static func immediateError(_ error: MobileRadioError) -> any Error {
         switch error {
-        case .RadioUnavailable, .Stopped: RadioConnectionError.radioNotFound
+        case .RadioUnavailable, .Stopped, .LinkFailed: RadioConnectionError.radioNotFound
         default: RadioConnectionError.incompatibleProtocol
         }
     }
@@ -1710,7 +1710,7 @@ extension RadioDriverAdapter {
         switch error {
         case .IdentityUnavailable: RadioConnectionError.identityUnavailable
         case .TakeoverNotAllowed: RadioConnectionError.takeoverNotAllowed
-        case .Stopped: RadioConnectionError.radioNotFound
+        case .Stopped, .LinkFailed: RadioConnectionError.radioNotFound
         default: RadioConnectionError.incompatibleProtocol
         }
     }
@@ -1764,7 +1764,7 @@ extension RadioSnapshot {
     }
 }
 
-private extension Date {
+extension Date {
     init(unixMilliseconds: UInt64) {
         self.init(timeIntervalSince1970: TimeInterval(unixMilliseconds) / 1_000)
     }
@@ -1863,10 +1863,11 @@ extension RadioProvisioningSummary {
 /// Carries the driver's link calls onto the transport's queue, in the
 /// order the driver made them. Holds the transport weakly: the driver
 /// holds this for as long as it runs, and the transport holds the driver.
-private final class DriverLinkBridge: RadioLink, @unchecked Sendable {
+final class DriverLinkBridge: RadioLink, @unchecked Sendable {
     private let queue: DispatchQueue
-    /// Set once, by `adopt(link:)`, before the transport reports anything
-    /// the driver could answer.
+    /// Set before the transport reports anything the driver could answer.
+    /// Cleared to cut off a driver being retired, so a late call from it
+    /// cannot reach the link that replaced it.
     weak var link: (any UlcpFrameLink)?
 
     init(queue: DispatchQueue) {

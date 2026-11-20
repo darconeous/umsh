@@ -47,13 +47,22 @@ struct Bench {
 
 impl Bench {
     fn new() -> Self {
+        Self::over(MobileUlcpSession::new())
+    }
+
+    /// A bench administering its radio rather than tethering to it.
+    fn administrative() -> Self {
+        Self::over(MobileUlcpSession::administrative())
+    }
+
+    fn over(session: std::sync::Arc<MobileUlcpSession>) -> Self {
         let duty = Box::leak(Box::new(DutyLedger::new()));
         // A radio with a device identity of its own, as a provisioned one
         // has.
         let mut platform = SimulatedPlatform::new();
         platform.store_identity(Some(&[1; 32])).unwrap();
         Self {
-            core: DriverCore::new(MobileUlcpSession::new()),
+            core: DriverCore::new(session),
             device: SoftDevice::new(full_config(duty, None), platform),
             decoder: hdlc::Decoder::new(),
             clock_ms: 0,
@@ -888,6 +897,39 @@ fn local_management_holds_its_slot_until_the_exchange_ends() {
 }
 
 #[test]
+fn one_control_exchange_runs_at_a_time() {
+    let mut bench = Bench::attached();
+    bench.holding = true;
+    let fetching = bench.command(|reply| Command::LocalManagement {
+        dfu: false,
+        call: Box::new(|session| session.begin_property_fetch(vec![prop::DEV_NAME])),
+        reply,
+    });
+    let busy = Some(Err(MobileRadioError::OperationInProgress));
+    let configured = bench.command(|reply| Command::Configure {
+        call: Box::new(|session| session.refresh()),
+        reply,
+    });
+    assert_eq!(outcome(configured), busy);
+    let refreshed = bench.command(|reply| Command::Refresh {
+        call: Box::new(|session| session.refresh()),
+        reply,
+    });
+    assert_eq!(outcome(refreshed).map(|result| result.map(|_| ())), busy);
+    let edited = bench.command(|reply| Command::DeviceTable {
+        requires_device_identity: true,
+        call: Box::new(|session| session.insert_device_peer(vec![9; 32])),
+        reply,
+    });
+    assert_eq!(outcome(edited), busy);
+
+    // The exchange that was running ends as it would have.
+    bench.holding = false;
+    bench.deliver();
+    assert!(matches!(outcome(fetching), Some(Ok(_))));
+}
+
+#[test]
 fn a_full_table_answers_its_caller_without_a_banner() {
     let mut bench = Bench::attached();
     let mut last = None;
@@ -976,6 +1018,201 @@ fn transmitter_settings(bench: &Bench) -> UlcpRadioSettingsRecord {
         coding_rate_denom: provisioning.coding_rate_denom,
         duty_cycle_limit: provisioning.duty_cycle_limit,
     }
+}
+
+// ----------------------------------------------------------------------
+// Waiting for the attach, and administrative mode
+// ----------------------------------------------------------------------
+
+type AttachOutcome = oneshot::Receiver<Result<MobileRadioStateRecord, MobileRadioError>>;
+
+fn await_attach(bench: &mut Bench) -> AttachOutcome {
+    bench.command(|reply| Command::Attached { reply })
+}
+
+fn attached_phase(receiver: AttachOutcome) -> Option<Result<MobileRadioPhase, MobileRadioError>> {
+    outcome(receiver).map(|result| result.map(|state| state.phase))
+}
+
+#[test]
+fn the_attach_is_awaited_through_the_transport_and_answered_once_settled() {
+    let mut bench = Bench::administrative();
+    bench.report(MobileRadioTransportPhase::Connecting);
+    let mut early = await_attach(&mut bench);
+    bench.report(MobileRadioTransportPhase::Pairing);
+    assert!(early.try_recv().is_err(), "still connecting");
+    bench.connect(true);
+    assert_eq!(attached_phase(early), Some(Ok(MobileRadioPhase::Attached)));
+    // Asked afterwards, answered at once.
+    assert_eq!(
+        attached_phase(await_attach(&mut bench)),
+        Some(Ok(MobileRadioPhase::Attached))
+    );
+}
+
+#[test]
+fn a_tethered_attach_is_awaited_through_a_reconnect() {
+    let mut bench = Bench::attached();
+    assert!(bench.fault_and_report(MobileRadioTransportPhase::Reconnecting));
+    let mut waiting = await_attach(&mut bench);
+    assert!(waiting.try_recv().is_err(), "reconnecting");
+    bench.connect(true);
+    assert_eq!(
+        attached_phase(waiting),
+        Some(Ok(MobileRadioPhase::Attached))
+    );
+}
+
+#[test]
+fn an_attach_that_never_comes_fails_its_waiters_with_the_reason() {
+    let mut bench = Bench::administrative();
+
+    // The transport gives up.
+    bench.report(MobileRadioTransportPhase::Connecting);
+    let abandoned = await_attach(&mut bench);
+    bench.report(MobileRadioTransportPhase::Idle);
+    let nothing = Some(Err(MobileRadioError::LinkFailed { problem: None }));
+    assert_eq!(attached_phase(abandoned), nothing);
+    assert_eq!(attached_phase(await_attach(&mut bench)), nothing, "at rest");
+
+    // The transport fails, and says why.
+    bench.report(MobileRadioTransportPhase::Connecting);
+    let refused = await_attach(&mut bench);
+    let pairing = MobileRadioProblem::Transport {
+        domain: "bench".to_owned(),
+        code: 5,
+    };
+    bench.handle(Event::Transport(MobileRadioTransportStateRecord {
+        phase: MobileRadioTransportPhase::Failed,
+        name: None,
+        link_id: None,
+        problem: Some(pairing.clone()),
+    }));
+    assert_eq!(
+        attached_phase(refused),
+        Some(Err(MobileRadioError::LinkFailed {
+            problem: Some(pairing)
+        }))
+    );
+
+    // The radio goes silent part-way through.
+    bench.report(MobileRadioTransportPhase::Connecting);
+    let stalled = await_attach(&mut bench);
+    bench.handle(Event::LinkReady { bound_radio: true });
+    bench.advance(super::core::CONTROL_DEADLINE_MS);
+    assert_eq!(
+        attached_phase(stalled),
+        Some(Err(MobileRadioError::LinkFailed {
+            problem: Some(MobileRadioProblem::SynchronizationStalled)
+        }))
+    );
+}
+
+#[test]
+fn an_administered_radio_is_left_as_it_is_found() {
+    let mut bench = Bench::administrative();
+    bench.handle(Event::HostKey(Some(HOST_KEY)));
+    bench.connect(true);
+    let state = bench.state();
+    assert_eq!(state.phase, MobileRadioPhase::Attached);
+    assert_eq!(state.host, UlcpHostOwnership::Unclaimed, "never claimed");
+    assert!(
+        !state.provisioning.as_ref().unwrap().phy_enabled,
+        "the transmitter stays as it was"
+    );
+    assert_eq!(state.problem, None);
+}
+
+#[test]
+fn an_administered_radio_holding_this_phones_key_keeps_its_transmitter_off() {
+    // Claimed as the phone's own, then switched off by hand.
+    let mut bench = Bench::attached();
+    let mut settings = transmitter_settings(&bench);
+    settings.phy_enabled = false;
+    let configured = bench.command(|reply| Command::Configure {
+        call: Box::new(move |session| session.configure(settings)),
+        reply,
+    });
+    assert_eq!(outcome(configured), Some(Ok(())));
+
+    // Administered now, over the same radio, which still holds the key.
+    bench.cut();
+    bench.core = DriverCore::new(MobileUlcpSession::administrative());
+    bench.handle(Event::HostKey(Some(HOST_KEY)));
+    bench.connect(true);
+    let state = bench.state();
+    assert_eq!(state.phase, MobileRadioPhase::Attached);
+    assert_eq!(state.host, UlcpHostOwnership::Ours);
+    assert!(!state.provisioning.as_ref().unwrap().phy_enabled);
+}
+
+#[test]
+fn an_unsaved_table_edit_fails_only_on_an_administered_radio() {
+    use super::core::device_table_outcome;
+    use crate::ulcp::{UlcpOperationErrorRecord, UlcpOperationFailureKind};
+    let failure = |kind| UlcpOperationErrorRecord {
+        kind,
+        operation: "insert device admin".to_owned(),
+        status_code: 1,
+        status_name: "FAILURE".to_owned(),
+    };
+    let unsaved = failure(UlcpOperationFailureKind::SaveFailed);
+    assert_eq!(device_table_outcome(Some(&unsaved), false), None);
+    assert_eq!(
+        device_table_outcome(Some(&unsaved), true),
+        Some(MobileRadioError::OperationRejected {
+            operation: "insert device admin".to_owned(),
+            status_code: 1,
+            status_name: "FAILURE".to_owned(),
+        })
+    );
+    for administrative in [false, true] {
+        for satisfied in [
+            UlcpOperationFailureKind::AlreadyApplied,
+            UlcpOperationFailureKind::ItemMissing,
+        ] {
+            assert_eq!(
+                device_table_outcome(Some(&failure(satisfied)), administrative),
+                None
+            );
+        }
+        assert_eq!(
+            device_table_outcome(
+                Some(&failure(UlcpOperationFailureKind::Capacity)),
+                administrative
+            ),
+            Some(MobileRadioError::DeviceFull)
+        );
+    }
+}
+
+#[test]
+fn an_administrative_fault_ends_the_session() {
+    let mut bench = Bench::administrative();
+    bench.connect(true);
+    // Not even a deliberate attempt buys a reconnect.
+    bench.handle(Event::ResetRecoveryBudget);
+    assert!(!bench.fault_and_report(MobileRadioTransportPhase::Disconnecting));
+    assert_eq!(bench.state().phase, MobileRadioPhase::Failed);
+    bench.report(MobileRadioTransportPhase::Idle);
+    assert_eq!(bench.state().phase, MobileRadioPhase::Failed);
+    assert_eq!(
+        bench.state().problem,
+        Some(MobileRadioProblem::InvalidFrame)
+    );
+}
+
+#[test]
+fn an_administered_radios_tables_are_edited_whoever_its_host_is() {
+    let mut bench = Bench::administrative();
+    bench.connect(true);
+    assert_eq!(bench.state().host, UlcpHostOwnership::Unclaimed);
+    let edited = bench.command(|reply| Command::DeviceTable {
+        requires_device_identity: true,
+        call: Box::new(|session| session.insert_device_admin(vec![9; 32])),
+        reply,
+    });
+    assert_eq!(outcome(edited), Some(Ok(())));
 }
 
 /// The driver whole, on its own thread, over a soft device that answers

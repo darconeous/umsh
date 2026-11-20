@@ -5926,6 +5926,21 @@ public protocol MobileRadioDriverProtocol: AnyObject, Sendable {
     func announce(request: MobileAnnouncementRecord) async throws  -> UlcpLocalManagementEventRecord
 
     /**
+     * Wait for the attach to finish. Answers with the state once the
+     * session is attached with nothing outstanding; with the radio's
+     * refusal if it refused part of the attach; and with `LinkFailed` if
+     * the link comes to rest or fails first. Waits through the
+     * transport's connecting phases, so a caller may ask before the link
+     * is ready, once the transport has reported that it is connecting.
+     *
+     * A tethered radio can park short of attached, awaiting a host or a
+     * claim, with the link up. The wait then lasts until something moves
+     * it on or the link goes, so a caller that cannot wait that long
+     * brings its own deadline.
+     */
+    func attached() async throws  -> MobileRadioStateRecord
+
+    /**
      * Write this phone's host key into the radio, replacing whatever host
      * it had.
      */
@@ -5936,6 +5951,11 @@ public protocol MobileRadioDriverProtocol: AnyObject, Sendable {
     func configure(settings: UlcpRadioSettingsRecord) async throws
 
     func configureAdvertising(advert: UlcpAdvertSettingsRecord?) async throws
+
+    /**
+     * Write a whole device configuration and have the radio save it.
+     */
+    func configureDevice(configuration: UlcpDeviceConfigRecord) async throws
 
     func configurePositioning(gnss: UlcpGnssSettingsRecord?, tzRule: String?, time24h: Bool?) async throws
 
@@ -6172,6 +6192,23 @@ public convenience init(link: RadioLink)throws  {
     }
 
 
+    /**
+     * A driver for a radio this phone administers but does not tether to.
+     * It never claims the radio, never turns its transmitter on, and never
+     * reconnects: a fault ends the session. `lazy_inspection` attaches
+     * without reading the radio whole, for a screen that reads what it
+     * shows (`MobileUlcpSession::administrative_lazy`).
+     */
+public static func administrative(link: RadioLink, lazyInspection: Bool)throws  -> MobileRadioDriver  {
+    return try  FfiConverterTypeMobileRadioDriver_lift(try rustCallWithError(FfiConverterTypeMobileRadioError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_constructor_mobileradiodriver_administrative(
+        FfiConverterTypeRadioLink_lower(link),
+        FfiConverterBool.lower(lazyInspection),uniffiCallStatus
+    )
+})
+}
+
 
 
 open func announce(request: MobileAnnouncementRecord)async throws  -> UlcpLocalManagementEventRecord  {
@@ -6186,6 +6223,35 @@ open func announce(request: MobileAnnouncementRecord)async throws  -> UlcpLocalM
             completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeUlcpLocalManagementEventRecord_lift,
+            errorHandler: FfiConverterTypeMobileRadioError_lift
+        )
+}
+
+    /**
+     * Wait for the attach to finish. Answers with the state once the
+     * session is attached with nothing outstanding; with the radio's
+     * refusal if it refused part of the attach; and with `LinkFailed` if
+     * the link comes to rest or fails first. Waits through the
+     * transport's connecting phases, so a caller may ask before the link
+     * is ready, once the transport has reported that it is connecting.
+     *
+     * A tethered radio can park short of attached, awaiting a host or a
+     * claim, with the link up. The wait then lasts until something moves
+     * it on or the link goes, so a caller that cannot wait that long
+     * brings its own deadline.
+     */
+open func attached()async throws  -> MobileRadioStateRecord  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobileradiodriver_attached(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeMobileRadioStateRecord_lift,
             errorHandler: FfiConverterTypeMobileRadioError_lift
         )
 }
@@ -6240,6 +6306,25 @@ open func configureAdvertising(advert: UlcpAdvertSettingsRecord?)async throws   
             rustFutureFunc: {
                 uniffi_umsh_mobile_core_fn_method_mobileradiodriver_configure_advertising(
                         self.uniffiCloneHandle(),FfiConverterOptionTypeUlcpAdvertSettingsRecord.lower(advert)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileRadioError_lift
+        )
+}
+
+    /**
+     * Write a whole device configuration and have the radio save it.
+     */
+open func configureDevice(configuration: UlcpDeviceConfigRecord)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobileradiodriver_configure_device(
+                        self.uniffiCloneHandle(),FfiConverterTypeUlcpDeviceConfigRecord_lower(configuration)
                 )
             },
             pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
@@ -25000,6 +25085,12 @@ enum MobileRadioError: Swift.Error, Equatable, Hashable, Foundation.LocalizedErr
      * The driver has stopped.
      */
     case Stopped
+    /**
+     * The link came to rest or failed before the attach finished, with
+     * the problem the state shows, if any.
+     */
+    case LinkFailed(problem: MobileRadioProblem?
+    )
 
 
 
@@ -25048,6 +25139,9 @@ public struct FfiConverterTypeMobileRadioError: FfiConverterRustBuffer {
             )
         case 12: return .InvalidArgument
         case 13: return .Stopped
+        case 14: return .LinkFailed(
+            problem: try FfiConverterOptionTypeMobileRadioProblem.read(from: &buf)
+            )
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -25114,6 +25208,11 @@ public struct FfiConverterTypeMobileRadioError: FfiConverterRustBuffer {
 
         case .Stopped:
             writeInt(&buf, Int32(13))
+
+
+        case let .LinkFailed(problem):
+            writeInt(&buf, Int32(14))
+            FfiConverterOptionTypeMobileRadioProblem.write(problem, into: &buf)
 
         }
     }
@@ -32775,6 +32874,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_announce() != 64350) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_attached() != 49375) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_claim() != 11978) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -32785,6 +32887,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_configure_advertising() != 34964) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_configure_device() != 20816) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_configure_positioning() != 6363) {
@@ -33325,6 +33430,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_constructor_mobilemeshsession_start() != 64273) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_constructor_mobileradiodriver_administrative() != 18886) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_constructor_mobileradiodriver_new() != 20844) {

@@ -265,6 +265,9 @@ pub enum MobileRadioError {
     InvalidArgument,
     /// The driver has stopped.
     Stopped,
+    /// The link came to rest or failed before the attach finished, with
+    /// the problem the state shows, if any.
+    LinkFailed { problem: Option<MobileRadioProblem> },
 }
 
 impl fmt::Display for MobileRadioError {
@@ -290,6 +293,7 @@ impl fmt::Display for MobileRadioError {
             Self::Refused { error } => write!(formatter, "RADIO_REFUSED: {error}"),
             Self::InvalidArgument => formatter.write_str("RADIO_INVALID_ARGUMENT"),
             Self::Stopped => formatter.write_str("RADIO_DRIVER_STOPPED"),
+            Self::LinkFailed { problem } => write!(formatter, "RADIO_LINK_FAILED: {problem:?}"),
         }
     }
 }

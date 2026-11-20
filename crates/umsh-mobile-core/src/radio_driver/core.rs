@@ -23,8 +23,8 @@ use crate::ulcp::{
 };
 use crate::{
     MobileError, MobileMeshOutboundFrameRecord, MobileMeshRxRecord, MobileUlcpSession,
-    UlcpHostOwnership, UlcpRadioSettingsRecord, UlcpReceivedFrameRecord, UlcpSessionPhase,
-    UlcpSessionUpdateRecord, describe_ulcp_frame,
+    UlcpAttachMode, UlcpHostOwnership, UlcpRadioSettingsRecord, UlcpReceivedFrameRecord,
+    UlcpSessionPhase, UlcpSessionUpdateRecord, describe_ulcp_frame,
 };
 
 /// The length of a radio's device key: an Ed25519 public key.
@@ -133,6 +133,11 @@ pub(crate) enum Event {
 
 /// A request from the app.
 pub(crate) enum Command {
+    /// Wait for the attach to finish: answered with the state once the
+    /// session is attached with nothing outstanding, or with why not.
+    Attached {
+        reply: Reply<MobileRadioStateRecord>,
+    },
     /// Read the radio's state anew. Joins a read already running.
     Refresh {
         call: SessionCall,
@@ -372,6 +377,10 @@ impl CallError {
 
 pub(crate) struct DriverCore {
     session: Arc<MobileUlcpSession>,
+    /// The session administers a radio rather than tethering to it. Such a
+    /// session never reconnects, claims, or turns the transmitter on, and
+    /// edits the radio's own tables whoever its host is.
+    administrative: bool,
     /// The state as it stands; published when it differs from `published`.
     state: MobileRadioStateRecord,
     published: MobileRadioStateRecord,
@@ -393,6 +402,10 @@ pub(crate) struct DriverCore {
     /// The generation `DidAttach` was last sent for.
     attach_announced: Option<u64>,
 
+    /// Callers waiting for the attach to finish.
+    attach_waiters: Vec<Reply<MobileRadioStateRecord>>,
+    /// The session on this link reached attached with nothing outstanding.
+    attach_settled: bool,
     refresh_in_progress: bool,
     refresh_waiters: Vec<Reply<MobileRadioStateRecord>>,
     configuration: Option<Reply<()>>,
@@ -436,8 +449,10 @@ pub(crate) struct DriverCore {
 impl DriverCore {
     pub(crate) fn new(session: Arc<MobileUlcpSession>) -> Self {
         let state = MobileRadioStateRecord::idle();
+        let administrative = session.attach_mode() == UlcpAttachMode::Administrative;
         Self {
             session,
+            administrative,
             transport: MobileRadioTransportStateRecord {
                 phase: MobileRadioTransportPhase::Idle,
                 name: None,
@@ -450,11 +465,13 @@ impl DriverCore {
             bound_radio: false,
             generation: 0,
             host_key: None,
-            fault_retries_remaining: FATAL_FAULT_RETRY_BUDGET,
+            fault_retries_remaining: Self::fault_retry_budget(administrative),
             attached_at_ms: None,
             fault: None,
             reported_name: None,
             attach_announced: None,
+            attach_waiters: Vec::new(),
+            attach_settled: false,
             refresh_in_progress: false,
             refresh_waiters: Vec::new(),
             configuration: None,
@@ -483,6 +500,16 @@ impl DriverCore {
         &self.state
     }
 
+    /// Reconnects a fatal fault is worth. An administrative session has
+    /// none: the user is at the radio, and trying again is theirs to do.
+    fn fault_retry_budget(administrative: bool) -> u8 {
+        if administrative {
+            0
+        } else {
+            FATAL_FAULT_RETRY_BUDGET
+        }
+    }
+
     /// Act on one event.
     pub(crate) fn handle(&mut self, event: Event, now: Now) -> Vec<Effect> {
         match event {
@@ -495,7 +522,9 @@ impl DriverCore {
             } => self.link_writes_failed(raw_transaction_ids, problem),
             Event::LinkFault(problem) => self.fatal(problem, now),
             Event::ReportProblem(problem) => self.state.problem = Some(problem),
-            Event::ResetRecoveryBudget => self.fault_retries_remaining = FATAL_FAULT_RETRY_BUDGET,
+            Event::ResetRecoveryBudget => {
+                self.fault_retries_remaining = Self::fault_retry_budget(self.administrative);
+            }
             Event::HostKey(key) => self.set_host_key(key, now),
             Event::MeshSessionLeaving => self.mesh_session_leaving(),
             Event::MeshSessionArrived => self.mesh_session_arrived(),
@@ -632,6 +661,28 @@ impl DriverCore {
         }
         self.state = state;
         self.transport = report;
+        if Self::rests(self.state.phase) {
+            self.fail_attach_waiters();
+        }
+    }
+
+    /// Whether a transport in `phase` has stopped trying to reach the
+    /// radio.
+    fn rests(phase: MobileRadioPhase) -> bool {
+        matches!(
+            phase,
+            MobileRadioPhase::Idle | MobileRadioPhase::Unavailable | MobileRadioPhase::Failed
+        )
+    }
+
+    /// Tell everyone waiting for the attach that it is not coming, with
+    /// whatever the state says went wrong.
+    fn fail_attach_waiters(&mut self) {
+        for reply in self.attach_waiters.drain(..) {
+            let _ = reply.send(Err(MobileRadioError::LinkFailed {
+                problem: self.state.problem.clone(),
+            }));
+        }
     }
 
     /// The link is coming back after `fault`: spend the reconnect the
@@ -754,7 +805,7 @@ impl DriverCore {
             .is_some_and(|at| now.monotonic_ms.saturating_sub(at) >= FATAL_FAULT_BUDGET_REFILL_MS)
         {
             // A fault after a session that held is a new incident.
-            self.fault_retries_remaining = FATAL_FAULT_RETRY_BUDGET;
+            self.fault_retries_remaining = Self::fault_retry_budget(self.administrative);
         }
         let retry = self.fault_retries_remaining > 0;
         self.diagnose(format!(
@@ -771,6 +822,9 @@ impl DriverCore {
             MobileRadioPhase::Failed
         };
         self.state.problem = (!retry).then(|| problem.clone());
+        if !retry {
+            self.fail_attach_waiters();
+        }
         self.fault = Some(Fault {
             problem,
             retry_offered: retry,
@@ -799,6 +853,7 @@ impl DriverCore {
         self.control_deadlines.clear();
         self.raw_retry = None;
         self.attach_announced = None;
+        self.attach_settled = false;
     }
 
     fn begin_synchronization(&mut self, now: Now) {
@@ -1032,10 +1087,13 @@ impl DriverCore {
     /// What the driver does on its own account once the session settles,
     /// each at most once per session generation.
     fn automatic_work(&mut self, update: &UlcpSessionUpdateRecord) -> Vec<Deferred> {
-        let snapshot = &update.snapshot;
-        if update.waiting_for_responses {
+        // An administrative session leaves the radio as it finds it. A
+        // radio being set up may have its transmitter off on purpose, and
+        // the session refuses a claim outright.
+        if self.administrative || update.waiting_for_responses {
             return Vec::new();
         }
+        let snapshot = &update.snapshot;
         let generation = self.generation;
         let mut work = Vec::new();
         // An attach is meant to give a usable radio: turn the transmitter
@@ -1192,6 +1250,17 @@ impl DriverCore {
                 status_name: error.status_name.clone(),
             })
             .or_else(|| mismatch.clone());
+        // The attach is over once whatever its inspection asked has
+        // landed: a caller waiting on it needs a radio, not a link.
+        if !self.attach_settled {
+            self.attach_settled = true;
+            for reply in self.attach_waiters.drain(..) {
+                let _ = reply.send(match &rejection {
+                    Some(error) => Err(error.clone()),
+                    None => Ok(self.state.clone()),
+                });
+            }
+        }
         if self.refresh_in_progress {
             self.finish_refresh(rejection.clone().map_or(Ok(()), Err));
         }
@@ -1199,7 +1268,9 @@ impl DriverCore {
             let _ = reply.send(rejection.map_or(Ok(()), Err));
         }
         if let Some(reply) = self.device_table.take() {
-            let outcome = device_table_outcome(update.operation_error.as_ref()).or(mismatch);
+            let outcome =
+                device_table_outcome(update.operation_error.as_ref(), self.administrative)
+                    .or(mismatch);
             let _ = reply.send(outcome.map_or(Ok(()), Err));
         }
     }
@@ -1480,6 +1551,7 @@ impl DriverCore {
 
     fn command(&mut self, command: Command, now: Now) {
         match command {
+            Command::Attached { reply } => self.await_attach(reply),
             Command::Refresh { call, reply } => self.refresh(call, reply, now),
             Command::Configure { call, reply } => self.configure(call, reply, now),
             Command::DeviceTable {
@@ -1513,7 +1585,7 @@ impl DriverCore {
                     let _ = reply.send(Err(MobileRadioError::RadioUnavailable));
                     return;
                 }
-                if self.local_management.is_some() {
+                if self.exchange_running() {
                     let _ = reply.send(Err(MobileRadioError::OperationInProgress));
                     return;
                 }
@@ -1530,6 +1602,20 @@ impl DriverCore {
         }
     }
 
+    /// Answer at once if the attach is over, or if the transport has
+    /// stopped trying; otherwise wait through whatever it is doing.
+    fn await_attach(&mut self, reply: Reply<MobileRadioStateRecord>) {
+        if self.link_up && self.attach_settled {
+            let _ = reply.send(Ok(self.state.clone()));
+        } else if !self.link_up && Self::rests(self.state.phase) {
+            let _ = reply.send(Err(MobileRadioError::LinkFailed {
+                problem: self.state.problem.clone(),
+            }));
+        } else {
+            self.attach_waiters.push(reply);
+        }
+    }
+
     fn call(&mut self, call: SessionCall, now: Now) -> Result<(), CallError> {
         let update = call(&self.session).map_err(CallError::Session)?;
         self.apply(update, now).map_err(CallError::Apply)
@@ -1540,21 +1626,31 @@ impl DriverCore {
             let _ = reply.send(Err(MobileRadioError::RadioUnavailable));
             return;
         }
-        if self.configuration.is_some() {
-            let _ = reply.send(Err(MobileRadioError::OperationInProgress));
-            return;
-        }
         // A positioning read and a full refresh share their waiters: both
         // end on the same event, and a caller polling one joins the other
         // rather than starving it.
-        self.refresh_waiters.push(reply);
         if self.refresh_in_progress {
+            self.refresh_waiters.push(reply);
             return;
         }
+        if self.exchange_running() {
+            let _ = reply.send(Err(MobileRadioError::OperationInProgress));
+            return;
+        }
+        self.refresh_waiters.push(reply);
         self.refresh_in_progress = true;
         if let Err(error) = self.call(call, now) {
             self.finish_refresh(Err(error.for_caller()));
         }
+    }
+
+    /// Whether a caller's control exchange is still running. The ULCP
+    /// session runs one at a time, and refuses another until it ends.
+    fn exchange_running(&self) -> bool {
+        self.refresh_in_progress
+            || self.configuration.is_some()
+            || self.device_table.is_some()
+            || self.local_management.is_some()
     }
 
     fn configure(&mut self, call: SessionCall, reply: Reply<()>, now: Now) {
@@ -1562,7 +1658,7 @@ impl DriverCore {
             let _ = reply.send(Err(MobileRadioError::RadioUnavailable));
             return;
         }
-        if self.configuration.is_some() || self.refresh_in_progress {
+        if self.exchange_running() {
             let _ = reply.send(Err(MobileRadioError::OperationInProgress));
             return;
         }
@@ -1584,9 +1680,12 @@ impl DriverCore {
         reply: Reply<()>,
         now: Now,
     ) {
+        // A tethered radio's tables are this phone's to edit once it holds
+        // the radio. An administered radio's are its own domain, whoever
+        // its host is.
         if !self.link_up
             || self.state.phase != MobileRadioPhase::Attached
-            || self.state.host != UlcpHostOwnership::Ours
+            || (!self.administrative && self.state.host != UlcpHostOwnership::Ours)
         {
             let _ = reply.send(Err(MobileRadioError::RadioUnavailable));
             return;
@@ -1601,7 +1700,7 @@ impl DriverCore {
             let _ = reply.send(Err(MobileRadioError::Unsupported));
             return;
         }
-        if self.device_table.is_some() || self.configuration.is_some() || self.refresh_in_progress {
+        if self.exchange_running() {
             let _ = reply.send(Err(MobileRadioError::OperationInProgress));
             return;
         }
@@ -1744,19 +1843,27 @@ impl DriverCore {
 
 /// A finished table edit's outcome for its caller. `ALREADY` and
 /// `ITEM_NOT_FOUND` are successes: the radio holds, or lacks, the key as
-/// asked. A failed chained save leaves the edit live, and the state's
-/// `saved` reports persistence.
-fn device_table_outcome(error: Option<&UlcpOperationErrorRecord>) -> Option<MobileRadioError> {
+/// asked.
+///
+/// A failed chained save leaves the edit live. On the phone's own radio
+/// that is a success, and the state's `saved` reports persistence. An
+/// administered radio is being set up to be left alone, and nothing else
+/// saves it, so there the edit failed.
+pub(crate) fn device_table_outcome(
+    error: Option<&UlcpOperationErrorRecord>,
+    administrative: bool,
+) -> Option<MobileRadioError> {
     let error = error?;
     match error.kind {
-        UlcpOperationFailureKind::SaveFailed
-        | UlcpOperationFailureKind::AlreadyApplied
-        | UlcpOperationFailureKind::ItemMissing => None,
+        UlcpOperationFailureKind::AlreadyApplied | UlcpOperationFailureKind::ItemMissing => None,
+        UlcpOperationFailureKind::SaveFailed if !administrative => None,
         UlcpOperationFailureKind::Capacity => Some(MobileRadioError::DeviceFull),
-        UlcpOperationFailureKind::Rejected => Some(MobileRadioError::OperationRejected {
-            operation: error.operation.clone(),
-            status_code: error.status_code,
-            status_name: error.status_name.clone(),
-        }),
+        UlcpOperationFailureKind::SaveFailed | UlcpOperationFailureKind::Rejected => {
+            Some(MobileRadioError::OperationRejected {
+                operation: error.operation.clone(),
+                status_code: error.status_code,
+                status_name: error.status_name.clone(),
+            })
+        }
     }
 }

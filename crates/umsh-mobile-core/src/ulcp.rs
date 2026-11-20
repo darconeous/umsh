@@ -1537,9 +1537,7 @@ impl MobileUlcpSession {
         settings: UlcpRadioSettingsRecord,
     ) -> Result<UlcpSessionUpdateRecord, MobileError> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        if state.stage != SessionStage::Attached {
-            return Err(MobileError::InvalidUlcpFrame);
-        }
+        state.require_idle_attach()?;
         validate_radio_settings(&settings, DeviceCapabilities::read(&state)?)?;
 
         state.expected.clear();
@@ -1562,9 +1560,7 @@ impl MobileUlcpSession {
         configuration: UlcpDeviceConfigRecord,
     ) -> Result<UlcpSessionUpdateRecord, MobileError> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        if state.stage != SessionStage::Attached {
-            return Err(MobileError::InvalidUlcpFrame);
-        }
+        state.require_idle_attach()?;
         let capabilities = DeviceCapabilities::read(&state)?;
         validate_radio_settings(&configuration.radio, capabilities)?;
         let device_values = validate_device_settings(&configuration, capabilities)?;
@@ -1599,9 +1595,7 @@ impl MobileUlcpSession {
         time_24h: Option<bool>,
     ) -> Result<UlcpSessionUpdateRecord, MobileError> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        if state.stage != SessionStage::Attached {
-            return Err(MobileError::InvalidUlcpFrame);
-        }
+        state.require_idle_attach()?;
         let values = positioning_values(
             gnss,
             tz_rule.as_deref(),
@@ -1632,9 +1626,7 @@ impl MobileUlcpSession {
         advert: Option<UlcpAdvertSettingsRecord>,
     ) -> Result<UlcpSessionUpdateRecord, MobileError> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        if state.stage != SessionStage::Attached {
-            return Err(MobileError::InvalidUlcpFrame);
-        }
+        state.require_idle_attach()?;
         let values = advert_values(advert, DeviceCapabilities::read(&state)?)?;
         // A radio that announces nothing on its own has nothing here to
         // configure, which is a caller mistake rather than a no-op.
@@ -3698,14 +3690,22 @@ impl UlcpSessionState {
     /// own transaction, and a settings screen that could only work on a
     /// quiet mesh would rarely work at all.
     fn begin_local_management(&mut self) -> Result<(), MobileError> {
-        if self.stage != SessionStage::Attached || self.management.is_some() {
+        if self.management.is_some() {
             return Err(MobileError::InvalidUlcpFrame);
         }
+        self.require_idle_attach()
+    }
+
+    /// Refuse to start an exchange over one still outstanding. Raw
+    /// transmits run alongside and do not count. Starting anyway would
+    /// abandon the outstanding exchange: its answer would match nothing,
+    /// and its caller would wait for good.
+    fn require_idle_attach(&self) -> Result<(), MobileError> {
         let busy = self
             .expected
             .values()
             .any(|expected| !matches!(expected, ExpectedResponse::RawTransmit));
-        if busy {
+        if self.stage != SessionStage::Attached || busy {
             return Err(MobileError::InvalidUlcpFrame);
         }
         Ok(())
@@ -9350,6 +9350,35 @@ mod tests {
                 min_snr_db: Some(-7),
             })
         );
+    }
+
+    #[test]
+    fn a_configuration_waits_for_the_exchange_already_outstanding() {
+        let session = MobileUlcpSession::administrative();
+        attach_commissionable(&session, None, Vec::new());
+        let fetch = session.begin_property_fetch(vec![prop::DEV_NAME]).unwrap();
+        let (fetch_tid, _) = property_request(&fetch.outbound_frames[0]);
+        let radio = UlcpRadioSettingsRecord {
+            device_name: None,
+            phy_enabled: true,
+            frequency_khz: 915_000,
+            transmit_power_dbm: 14,
+            bandwidth_hz: None,
+            spreading_factor: None,
+            coding_rate_denom: None,
+            duty_cycle_limit: None,
+        };
+        assert!(matches!(
+            session.configure(radio.clone()),
+            Err(MobileError::InvalidUlcpFrame)
+        ));
+
+        // The fetch is still the session's, and its answer ends it.
+        let fetched = session
+            .consume(property_response(fetch_tid, prop::DEV_NAME, b"Radio"))
+            .unwrap();
+        assert!(fetched.management_event.is_some());
+        assert!(session.configure(radio).is_ok());
     }
 
     #[test]

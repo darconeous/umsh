@@ -50,6 +50,10 @@ enum RadioTransportProblem: Int64, CaseIterable, Sendable {
     case localRadioInUse
     case localRadioUnavailable
 
+    // An administered radio
+    case accessRemoved
+    case connectionIncomplete
+
     static let domain = "com.voria.umsh.radio-transport"
 
     var problem: MobileRadioProblem {
@@ -77,7 +81,7 @@ enum RadioTransportProblem: Int64, CaseIterable, Sendable {
         case .writeModeUnsupported:
             String(localized: "The radio requires an unsupported write mode")
         case .connectionFailed:
-            String(localized: "The companion radio connection failed")
+            String(localized: "The radio connection failed")
         case .noRadioFound:
             String(localized: "No companion radio was found")
         case .noSavedRadio:
@@ -126,6 +130,10 @@ enum RadioTransportProblem: Int64, CaseIterable, Sendable {
             String(localized: "The local network radio is in use elsewhere")
         case .localRadioUnavailable:
             String(localized: "The local network radio could not start")
+        case .accessRemoved:
+            String(localized: "Access to this radio was removed in Settings")
+        case .connectionIncomplete:
+            String(localized: "The radio did not finish connecting")
         }
     }
 }
