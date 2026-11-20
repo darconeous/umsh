@@ -203,8 +203,8 @@ pub async fn run<P: SoftPlatform>(
     loop {
         // A host's write may have moved the group or switched the PHY.
         membership.follow(&mut device, base);
-        // Whatever the device has to say goes out first: the attach's
-        // own notice, then each reply in turn.
+        // Whatever the device has to say goes out first, each reply in
+        // turn.
         while let Some(wire) = device.take_outbound() {
             if let Some(sink) = &mut sink {
                 sink(wire);
@@ -400,9 +400,13 @@ mod tests {
         )
     }
 
-    /// The device answers only while attached, announces each attach with
-    /// a session reset, and a second attach takes the link from the
-    /// first.
+    /// The tag of the first frame in `wire`.
+    fn tid(wire: &[u8]) -> u8 {
+        frame::Frame::parse(&frames(wire)[0]).unwrap().header.tid()
+    }
+
+    /// The device answers only while attached, an attach itself says
+    /// nothing, and a second attach takes the link from the first.
     #[tokio::test(flavor = "current_thread")]
     async fn bytes_reach_the_device_only_while_attached() {
         let dir = scratch("attach");
@@ -414,17 +418,22 @@ mod tests {
             .unwrap();
         let (event, mut first) = attach();
         host.try_send(event).unwrap();
+        let len = frame::prop_get(&mut request, 2, prop::PROTOCOL_VERSION).unwrap();
         host.try_send(HostEvent::Bytes(encoded(&request[..len])))
             .unwrap();
 
-        // The session reset, then the one answer: the request sent
-        // before the attach went nowhere.
-        assert!(next(&mut first).await.is_some());
-        assert!(next(&mut first).await.is_some());
+        // The first thing heard is the answer to the request sent after
+        // the attach: the one sent before it went nowhere.
+        let wire = next(&mut first).await.expect("the device answers");
+        assert_eq!(tid(&wire), 2);
 
         let (event, mut second) = attach();
         host.try_send(event).unwrap();
-        assert!(next(&mut second).await.is_some());
+        let len = frame::prop_get(&mut request, 3, prop::PROTOCOL_VERSION).unwrap();
+        host.try_send(HostEvent::Bytes(encoded(&request[..len])))
+            .unwrap();
+        let wire = next(&mut second).await.expect("the device answers");
+        assert_eq!(tid(&wire), 3);
         // The first host's sink is gone.
         assert_eq!(next(&mut first).await, None);
 
@@ -452,7 +461,6 @@ mod tests {
         let len = frame::prop_get(&mut request, 1, prop::LAN_BEARER_STATE).unwrap();
         host.try_send(HostEvent::Bytes(encoded(&request[..len])))
             .unwrap();
-        next(&mut out).await;
         assert_eq!(next_value(&mut out).await, State::Disabled as u8);
 
         // Switching the PHY on joins the group, and the host hears it.
@@ -503,15 +511,15 @@ mod tests {
                 _ => panic!("the device is silent"),
             }
         };
-        let mut first = UnixStream::connect(&path).await.unwrap();
-        // The session reset.
-        assert!(!read_some(&mut first).await.is_empty());
         let mut request = [0u8; 16];
         let len = frame::prop_get(&mut request, 1, prop::PROTOCOL_VERSION).unwrap();
-        first.write_all(&encoded(&request[..len])).await.unwrap();
+        let request = encoded(&request[..len]);
+        let mut first = UnixStream::connect(&path).await.unwrap();
+        first.write_all(&request).await.unwrap();
         assert!(!read_some(&mut first).await.is_empty());
 
         let mut second = UnixStream::connect(&path).await.unwrap();
+        second.write_all(&request).await.unwrap();
         assert!(!read_some(&mut second).await.is_empty());
         // Closed: end of stream.
         assert!(read_some(&mut first).await.is_empty());
