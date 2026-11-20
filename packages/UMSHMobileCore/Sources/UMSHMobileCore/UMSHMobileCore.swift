@@ -9538,6 +9538,362 @@ public func FfiConverterTypeRadioLink_lower(_ value: RadioLink) -> UInt64 {
 
 
 
+
+
+/**
+ * The platform's secret storage, for channel keys.
+ *
+ * An account is a channel's ID in uppercase hyphenated form; the vault
+ * compares accounts without regard to case. Every call is synchronous and
+ * made on the caller's thread, never while the core holds a lock, and an
+ * implementation must not hop to another thread to answer it.
+ */
+public protocol SecretVault: AnyObject, Sendable {
+
+    /**
+     * The secret filed under `account`, or none when there is none.
+     * `Unavailable` when the vault cannot tell, which is never the same
+     * as having none.
+     */
+    func load(account: String) throws  -> Data?
+
+    /**
+     * File `secret` under `account`, replacing what was there.
+     */
+    func store(account: String, secret: Data) throws
+
+    /**
+     * Forget the secret under `account`. Forgetting one that is not there
+     * succeeds.
+     */
+    func delete(account: String) throws
+
+    /**
+     * Forget every secret the vault holds, including any whose channel the
+     * store no longer lists.
+     */
+    func deleteAll() throws
+
+}
+/**
+ * The platform's secret storage, for channel keys.
+ *
+ * An account is a channel's ID in uppercase hyphenated form; the vault
+ * compares accounts without regard to case. Every call is synchronous and
+ * made on the caller's thread, never while the core holds a lock, and an
+ * implementation must not hop to another thread to answer it.
+ */
+open class SecretVaultImpl: SecretVault, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_umsh_mobile_core_fn_clone_secretvault(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_umsh_mobile_core_fn_free_secretvault(handle, $0) }
+    }
+
+
+
+
+    /**
+     * The secret filed under `account`, or none when there is none.
+     * `Unavailable` when the vault cannot tell, which is never the same
+     * as having none.
+     */
+open func load(account: String)throws  -> Data?  {
+    return try  FfiConverterOptionData.lift(try rustCallWithError(FfiConverterTypeSecretVaultError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_secretvault_load(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(account),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * File `secret` under `account`, replacing what was there.
+     */
+open func store(account: String, secret: Data)throws   {try rustCallWithError(FfiConverterTypeSecretVaultError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_secretvault_store(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(account),
+        FfiConverterData.lower(secret),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Forget the secret under `account`. Forgetting one that is not there
+     * succeeds.
+     */
+open func delete(account: String)throws   {try rustCallWithError(FfiConverterTypeSecretVaultError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_secretvault_delete(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(account),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Forget every secret the vault holds, including any whose channel the
+     * store no longer lists.
+     */
+open func deleteAll()throws   {try rustCallWithError(FfiConverterTypeSecretVaultError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_secretvault_delete_all(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+
+
+
+}
+
+
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+fileprivate struct UniffiCallbackInterfaceSecretVault {
+
+    // Create the VTable using a series of closures.
+    // Swift automatically converts these into C callback functions.
+    //
+    // Store the vtable directly.
+    static let vtable: UniffiVTableCallbackInterfaceSecretVault = UniffiVTableCallbackInterfaceSecretVault(
+        uniffiFree: { (uniffiHandle: UInt64) -> () in
+            do {
+                try FfiConverterTypeSecretVault.handleMap.remove(handle: uniffiHandle)
+            } catch {
+                print("Uniffi callback interface SecretVault: handle missing in uniffiFree")
+            }
+        },
+        uniffiClone: { (uniffiHandle: UInt64) -> UInt64 in
+            do {
+                return try FfiConverterTypeSecretVault.handleMap.clone(handle: uniffiHandle)
+            } catch {
+                fatalError("Uniffi callback interface SecretVault: handle missing in uniffiClone")
+            }
+        },
+        load: { (
+            uniffiHandle: UInt64,
+            account: RustBuffer,
+            uniffiOutReturn: UnsafeMutablePointer<RustBuffer>,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> Data? in
+                guard let uniffiObj = try? FfiConverterTypeSecretVault.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return try uniffiObj.load(
+                     account: try FfiConverterString.lift(account)
+                )
+            }
+
+
+            let writeReturn = { uniffiOutReturn.pointee = FfiConverterOptionData.lower($0) }
+            uniffiTraitInterfaceCallWithError(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn,
+                lowerError: FfiConverterTypeSecretVaultError_lower
+            )
+        },
+        store: { (
+            uniffiHandle: UInt64,
+            account: RustBuffer,
+            secret: RustBuffer,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterTypeSecretVault.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return try uniffiObj.store(
+                     account: try FfiConverterString.lift(account),
+                     secret: try FfiConverterData.lift(secret)
+                )
+            }
+
+
+            let writeReturn = { () }
+            uniffiTraitInterfaceCallWithError(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn,
+                lowerError: FfiConverterTypeSecretVaultError_lower
+            )
+        },
+        delete: { (
+            uniffiHandle: UInt64,
+            account: RustBuffer,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterTypeSecretVault.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return try uniffiObj.delete(
+                     account: try FfiConverterString.lift(account)
+                )
+            }
+
+
+            let writeReturn = { () }
+            uniffiTraitInterfaceCallWithError(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn,
+                lowerError: FfiConverterTypeSecretVaultError_lower
+            )
+        },
+        deleteAll: { (
+            uniffiHandle: UInt64,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterTypeSecretVault.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return try uniffiObj.deleteAll(
+                )
+            }
+
+
+            let writeReturn = { () }
+            uniffiTraitInterfaceCallWithError(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn,
+                lowerError: FfiConverterTypeSecretVaultError_lower
+            )
+        }
+    )
+
+    // Rust stores this pointer for future callback invocations, so it must live
+    // for the process lifetime (not just for the init function call).
+    //
+    // `nonisolated(unsafe)` is needed under Swift 6 strict concurrency.
+    // This is safe because the pointee is initialized once during static init
+    // and never mutated by either side of the FFI.  Its fields are C function pointers.
+    nonisolated(unsafe) static let vtablePtr: UnsafePointer<UniffiVTableCallbackInterfaceSecretVault> = {
+        let ptr = UnsafeMutablePointer<UniffiVTableCallbackInterfaceSecretVault>.allocate(capacity: 1)
+        ptr.initialize(to: vtable)
+        return UnsafePointer(ptr)
+    }()
+}
+
+private func uniffiCallbackInitSecretVault() {
+    uniffi_umsh_mobile_core_fn_init_callback_vtable_secretvault(UniffiCallbackInterfaceSecretVault.vtablePtr)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSecretVault: FfiConverter {
+    fileprivate static let handleMap = UniffiHandleMap<SecretVault>()
+
+    typealias FfiType = UInt64
+    typealias SwiftType = SecretVault
+
+    public static func lift(_ handle: UInt64) throws -> SecretVault {
+        if ((handle & 1) == 0) {
+            // Rust-generated handle, construct a new class that uses the handle to implement the
+            // interface
+            return SecretVaultImpl(unsafeFromHandle: handle)
+        } else {
+            // Swift-generated handle, get the object from the handle map
+            return try handleMap.remove(handle: handle)
+        }
+    }
+
+    public static func lower(_ value: SecretVault) -> UInt64 {
+         if let rustImpl = value as? SecretVaultImpl {
+             // Rust-implemented object.  Clone the handle and return it
+            return rustImpl.uniffiCloneHandle()
+         } else {
+            // Swift object, generate a new vtable handle and return that.
+            return handleMap.insert(obj: value)
+         }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SecretVault {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: SecretVault, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSecretVault_lift(_ handle: UInt64) throws -> SecretVault {
+    return try FfiConverterTypeSecretVault.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSecretVault_lower(_ value: SecretVault) -> UInt64 {
+    return FfiConverterTypeSecretVault.lower(value)
+}
+
+
+
+
 /**
  * Safe, non-mutating preview of a channel the user is about to join.
  *
@@ -24600,6 +24956,94 @@ public func FfiConverterTypeMobileStagedChatRegarding_lower(_ value: MobileStage
 
 
 /**
+ * Why the staged mesh could not be written.
+ */
+public
+enum MobileStagingError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
+
+
+
+    case Store(error: MobileStoreError
+    )
+    case Vault(error: SecretVaultError
+    )
+
+
+
+
+
+
+    public var errorDescription: String? {
+        String(reflecting: self)
+    }
+
+}
+
+#if compiler(>=6)
+extension MobileStagingError: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileStagingError: FfiConverterRustBuffer {
+    typealias SwiftType = MobileStagingError
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileStagingError {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+
+
+
+        case 1: return .Store(
+            error: try FfiConverterTypeMobileStoreError.read(from: &buf)
+            )
+        case 2: return .Vault(
+            error: try FfiConverterTypeSecretVaultError.read(from: &buf)
+            )
+
+         default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileStagingError, into buf: inout [UInt8]) {
+        switch value {
+
+
+
+
+
+        case let .Store(error):
+            writeInt(&buf, Int32(1))
+            FfiConverterTypeMobileStoreError.write(error, into: &buf)
+
+
+        case let .Vault(error):
+            writeInt(&buf, Int32(2))
+            FfiConverterTypeSecretVaultError.write(error, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStagingError_lift(_ buf: RustBuffer) throws -> MobileStagingError {
+    return try FfiConverterTypeMobileStagingError.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStagingError_lower(_ value: MobileStagingError) -> RustBuffer {
+    return FfiConverterTypeMobileStagingError.lower(value)
+}
+
+
+/**
  * Why the store could not do what was asked.
  *
  * Errors reach logs and support bundles, so none carries what a caller
@@ -25482,6 +25926,94 @@ public func FfiConverterTypeSavedSnapshotRecord_lower(_ value: SavedSnapshotReco
     return FfiConverterTypeSavedSnapshotRecord.lower(value)
 }
 
+
+
+/**
+ * Why the vault could not do what it was asked.
+ */
+public
+enum SecretVaultError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
+
+
+
+    /**
+     * Protected data cannot be read yet: the device has not been unlocked
+     * since it started, or the vault has not finished preparing its
+     * storage. A later call may succeed.
+     */
+    case Unavailable
+    /**
+     * The platform refused the operation.
+     */
+    case Failed
+
+
+
+
+
+
+    public var errorDescription: String? {
+        String(reflecting: self)
+    }
+
+}
+
+#if compiler(>=6)
+extension SecretVaultError: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSecretVaultError: FfiConverterRustBuffer {
+    typealias SwiftType = SecretVaultError
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SecretVaultError {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+
+
+
+        case 1: return .Unavailable
+        case 2: return .Failed
+
+         default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: SecretVaultError, into buf: inout [UInt8]) {
+        switch value {
+
+
+
+
+
+        case .Unavailable:
+            writeInt(&buf, Int32(1))
+
+
+        case .Failed:
+            writeInt(&buf, Int32(2))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSecretVaultError_lift(_ buf: RustBuffer) throws -> SecretVaultError {
+    return try FfiConverterTypeSecretVaultError.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSecretVaultError_lower(_ value: SecretVaultError) -> RustBuffer {
+    return FfiConverterTypeSecretVaultError.lower(value)
+}
 
 
 /**
@@ -29743,6 +30275,19 @@ public func channelIdentifier(key: Data)throws  -> Data  {
 })
 }
 /**
+ * A one-way commitment to a channel key: lowercase hex SHA-256. The store
+ * keeps it to recognize a key it already holds without ever seeing the
+ * key itself.
+ */
+public func channelKeyDigest(key: Data) -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_channel_key_digest(
+        FfiConverterData.lower(key),uniffiCallStatus
+    )
+})
+}
+/**
  * Decode a persisted advertised-identity payload for display.
  *
  * `address` is the canonical Base58 address of the node the payload claims
@@ -30091,6 +30636,30 @@ public func ulcpRecordsFromAnswers(answers: [MobileMeshManagementAnswerRecord]) 
         FfiConverterSequenceTypeMobileMeshManagementAnswerRecord.lower(answers),uniffiCallStatus
     )
 })
+}
+/**
+ * Write the staged mesh into `store` for `owner_identity_id`, with its
+ * channel keys in `vault`.
+ *
+ * Meant for a store of its own, so nothing here can reach a real
+ * account's history. Run on every launch of that store: the timeline is
+ * written relative to `now_ms`, which is what keeps the newest message
+ * reading "4 minutes ago" in a screenshot taken next month. Every write is
+ * keyed, so repeating it replaces rather than accumulates.
+ */
+public func seedStaging(store: MobileAppStore, vault: SecretVault, ownerIdentityId: String, nowMs: Int64)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_func_seed_staging(FfiConverterTypeMobileAppStore_lower(store),FfiConverterTypeSecretVault_lower(vault),FfiConverterString.lower(ownerIdentityId),FfiConverterInt64.lower(nowMs)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileStagingError_lift
+        )
 }
 /**
  * How long a claimed-radio record lasts after the last attach, in
@@ -30780,6 +31349,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_channel_identifier() != 21731) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_func_channel_key_digest() != 30400) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_func_decode_node_identity() != 44653) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -30850,6 +31422,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_records_from_answers() != 35471) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_func_seed_staging() != 55224) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_claimed_radio_lapse_ms() != 17480) {
@@ -31365,6 +31940,18 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobileregiondatabase_region_count() != 10598) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_method_secretvault_load() != 61720) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_secretvault_store() != 49391) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_secretvault_delete() != 11167) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_secretvault_delete_all() != 26864) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_erase_all_content() != 17594) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -31759,6 +32346,7 @@ private let initializationResult: InitializationResult = {
     uniffiCallbackInitMobileVirtualRadioListener()
     uniffiCallbackInitMobileWireSink()
     uniffiCallbackInitRadioLink()
+    uniffiCallbackInitSecretVault()
     return InitializationResult.ok
 }()
 

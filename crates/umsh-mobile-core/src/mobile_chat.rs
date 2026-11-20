@@ -1388,7 +1388,7 @@ fn parse_channel_tag(value: &str) -> Option<ChannelTag> {
     Some(ChannelTag(bytes))
 }
 
-fn hex(bytes: &[u8]) -> String {
+pub(crate) fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 

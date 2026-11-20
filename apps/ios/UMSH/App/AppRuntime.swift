@@ -1,5 +1,4 @@
 import CoreLocation
-import CryptoKit
 import Foundation
 import Observation
 import OSLog
@@ -940,7 +939,7 @@ final class AppRuntime {
             setDeviceMembership: setChannelDeviceMembership,
             invitation: channelInvitation,
             revealKey: { channel in
-                try? await self.channelKeyVault.loadKey(channelID: channel.id)
+                try? self.channelKeyVault.loadKey(channelID: channel.id)
             },
             enterConversation: { channel in
                 enterConversation(await self.startChannelConversation(channel))
@@ -1196,7 +1195,7 @@ final class AppRuntime {
         orphanedIdentity = nil
 
         try? await identityVault.eraseIdentity()
-        try? await channelKeyVault.deleteAllKeys()
+        try? channelKeyVault.deleteAll()
         Self.eraseCounterReservations()
         notificationService.withdrawAllDelivered()
 
@@ -1743,7 +1742,7 @@ final class AppRuntime {
             let preview = trimmed.lowercased().hasPrefix("umsh:")
                 ? try await meshEngine.inspectChannelURI(trimmed)
                 : try await meshEngine.inspectChannelName(trimmed)
-            let digest = Self.keyDigest(preview.key)
+            let digest = channelKeyDigest(key: preview.key)
             let existing = try await storedChannel(keyDigest: digest)
             let resolvedName = preview.displayName ?? preview.canonicalName
             // Two channels may share a name with different keys, which is
@@ -1771,7 +1770,7 @@ final class AppRuntime {
         details: ChannelDetails
     ) async -> ChannelActionOutcome {
         guard let applicationStore, let localIdentity else { return .failed }
-        let digest = Self.keyDigest(preview.key)
+        let digest = channelKeyDigest(key: preview.key)
         do {
             if let existing = try await storedChannel(keyDigest: digest) {
                 _ = await updateChannelDetails(existing, details: details)
@@ -1785,7 +1784,7 @@ final class AppRuntime {
             let id = UUID()
             // The key goes to the Keychain first: a row whose key cannot be
             // read is a channel that silently does nothing.
-            try await channelKeyVault.storeKey(preview.key, channelID: id)
+            try channelKeyVault.storeKey(preview.key, channelID: id)
             let channel = StoredChannel(
                 id: id,
                 ownerIdentityID: localIdentity.id,
@@ -1807,7 +1806,7 @@ final class AppRuntime {
             do {
                 try await applicationStore.insertChannel(channel, keyDigest: digest)
             } catch {
-                try? await channelKeyVault.deleteKey(channelID: id)
+                try? channelKeyVault.deleteKey(channelID: id)
                 throw error
             }
             let registered = await registerChannels([
@@ -1815,7 +1814,7 @@ final class AppRuntime {
             ])
             guard registered else {
                 try? await applicationStore.deleteChannel(id: id)
-                try? await channelKeyVault.deleteKey(channelID: id)
+                try? channelKeyVault.deleteKey(channelID: id)
                 return .phoneFull
             }
             // Derived here, from the key in hand, because the address map is
@@ -1865,7 +1864,7 @@ final class AppRuntime {
     /// or built-in channel keeps its row so it can be offered again.
     private func leaveChannel(_ channel: ChannelSummary) async -> ChannelActionOutcome {
         guard let applicationStore, let localIdentity else { return .failed }
-        let key = try? await channelKeyVault.loadKey(channelID: channel.id)
+        let key = try? channelKeyVault.loadKey(channelID: channel.id)
         if let key {
             try? await radioConnection.removeChannels([key])
         }
@@ -1895,7 +1894,7 @@ final class AppRuntime {
                 )
             } else {
                 try await applicationStore.deleteChannel(id: channel.id)
-                try? await channelKeyVault.deleteKey(channelID: channel.id)
+                try? channelKeyVault.deleteKey(channelID: channel.id)
             }
             await reloadApplicationState()
             await reconcileHostChannels()
@@ -1911,7 +1910,7 @@ final class AppRuntime {
         joined: Bool
     ) async -> ChannelActionOutcome {
         guard let applicationStore,
-              let key = try? await channelKeyVault.loadKey(channelID: channel.id)
+              let key = try? channelKeyVault.loadKey(channelID: channel.id)
         else { return .failed }
         if joined {
             guard await registerChannels([
@@ -1956,7 +1955,7 @@ final class AppRuntime {
         joined: Bool
     ) async -> ChannelActionOutcome {
         guard let applicationStore,
-              let key = try? await channelKeyVault.loadKey(channelID: channel.id)
+              let key = try? channelKeyVault.loadKey(channelID: channel.id)
         else { return .failed }
         do {
             if joined {
@@ -2002,7 +2001,7 @@ final class AppRuntime {
             // restates it. A channel the phone has not joined has no entry
             // to restate; joining registers it with whatever is stored.
             if channel.joinedPhone, details.maxFloodHops != channel.maxFloodHops,
-               let key = try? await channelKeyVault.loadKey(channelID: channel.id) {
+               let key = try? channelKeyVault.loadKey(channelID: channel.id) {
                 _ = await registerChannels([
                     ChannelRegistration(key: key, maxFloodHops: details.maxFloodHops),
                 ])
@@ -2062,7 +2061,7 @@ final class AppRuntime {
     /// not the folded form. Recipients percent-decode first and canonicalize
     /// after, so casing travels without changing which channel is meant.
     private func channelInvitation(_ channel: ChannelSummary) async -> String? {
-        guard let key = try? await channelKeyVault.loadKey(channelID: channel.id) else {
+        guard let key = try? channelKeyVault.loadKey(channelID: channel.id) else {
             return nil
         }
         // The alias is this phone's label and stays here; what goes out is the
@@ -2122,7 +2121,7 @@ final class AppRuntime {
         // Deterministic priority, so a radio that cannot hold every key holds
         // the same ones each time rather than whichever arrived first.
         for channel in channels.filter(\.joinedPhone).sorted(by: Self.hostChannelPriority) {
-            if let key = try? await channelKeyVault.loadKey(channelID: channel.id) {
+            if let key = try? channelKeyVault.loadKey(channelID: channel.id) {
                 keys.append(key)
             }
         }
@@ -2246,7 +2245,7 @@ final class AppRuntime {
             .sorted(by: Self.hostChannelPriority)
             .prefix(Int(ulcpMaxHostMutedChannels()))
         {
-            guard let key = try? await channelKeyVault.loadKey(channelID: channel.id),
+            guard let key = try? channelKeyVault.loadKey(channelID: channel.id),
                   let identifier = try? UMSHMobileCore.channelIdentifier(key: key)
             else { continue }
             mutedChannels.append(identifier)
@@ -2358,14 +2357,14 @@ final class AppRuntime {
         // the channels are labeled.
         for name in ["Public", "EMERGENCY"] {
             guard let preview = try? await meshEngine.inspectChannelName(name) else { continue }
-            let digest = Self.keyDigest(preview.key)
+            let digest = channelKeyDigest(key: preview.key)
             guard (try? await applicationStore.channel(
                 ownerIdentityID: localIdentity.id,
                 keyDigest: digest
             )) ?? nil == nil else { continue }
             let id = UUID()
             do {
-                try await channelKeyVault.storeKey(preview.key, channelID: id)
+                try channelKeyVault.storeKey(preview.key, channelID: id)
                 try await applicationStore.insertChannel(
                     StoredChannel(
                         id: id,
@@ -2386,7 +2385,7 @@ final class AppRuntime {
                     keyDigest: digest
                 )
             } catch {
-                try? await channelKeyVault.deleteKey(channelID: id)
+                try? channelKeyVault.deleteKey(channelID: id)
             }
         }
     }
@@ -2397,7 +2396,7 @@ final class AppRuntime {
     private func replayChannelMembership() async {
         var registrations: [ChannelRegistration] = []
         for channel in channels where channel.joinedPhone {
-            if let key = try? await channelKeyVault.loadKey(channelID: channel.id) {
+            if let key = try? channelKeyVault.loadKey(channelID: channel.id) {
                 registrations.append(
                     ChannelRegistration(key: key, maxFloodHops: channel.maxFloodHops)
                 )
@@ -2431,7 +2430,7 @@ final class AppRuntime {
     private func refreshChannelAddresses() async {
         var addresses: [UUID: String] = [:]
         for channel in channels where channel.joinedPhone {
-            guard let key = try? await channelKeyVault.loadKey(channelID: channel.id),
+            guard let key = try? channelKeyVault.loadKey(channelID: channel.id),
                   let address = try? await meshEngine.channelConversationAddress(key: key)
             else { continue }
             addresses[channel.id] = address
@@ -2460,7 +2459,7 @@ final class AppRuntime {
         // identifier from each key this phone holds and matching.
         var identified: Set<Data> = []
         for channel in channels {
-            guard let key = try? await channelKeyVault.loadKey(channelID: channel.id),
+            guard let key = try? channelKeyVault.loadKey(channelID: channel.id),
                   let derived = try? await meshEngine.channelIdentifier(key: key)
             else { continue }
             let onDevice = identifiers.contains(derived)
@@ -2482,12 +2481,6 @@ final class AppRuntime {
     }
 
 
-
-    /// One-way commitment to a channel key, used to recognize a key the store
-    /// already holds without the store ever seeing the key itself.
-    private static func keyDigest(_ key: Data) -> String {
-        hex(Data(SHA256.hash(data: key)))
-    }
 
     private static func hex(_ data: Data) -> String {
         data.map { String(format: "%02x", $0) }.joined()
@@ -3041,7 +3034,7 @@ final class AppRuntime {
         _ preview: MeshChannelPreview
     ) async -> ChannelConversationSummary? {
         await refreshChannelAddresses()
-        guard let channel = (try? await storedChannel(keyDigest: Self.keyDigest(preview.key)))
+        guard let channel = (try? await storedChannel(keyDigest: channelKeyDigest(key: preview.key)))
             ?? nil
         else { return nil }
 
@@ -3264,13 +3257,12 @@ final class AppRuntime {
     private func seedStagedContentIfNeeded() async {
         guard isStaging, let applicationStore, let localIdentity else { return }
         do {
-            try await StagingSeeder(
-                store: applicationStore,
-                meshEngine: meshEngine,
-                channelKeyVault: channelKeyVault,
-                ownerIdentityID: localIdentity.id,
-                ownerAddress: localIdentity.publicIdentity.canonicalAddress
-            ).seed()
+            try await seedStaging(
+                store: applicationStore.coreStore,
+                vault: channelKeyVault,
+                ownerIdentityId: localIdentity.id,
+                nowMs: Date.now.storeMilliseconds
+            )
             // The staged crew channel needs no registration here: bootstrap's
             // own reload picks up the row this just wrote, and the
             // `replayChannelMembership` that follows derives its address and

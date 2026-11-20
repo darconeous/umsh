@@ -482,53 +482,6 @@ struct StoredMessageReception: Hashable, Sendable {
     let sourceAuthenticated: Bool
 }
 
-#if DEBUG
-/// One message a staged transcript is to contain, stated outright.
-///
-/// Everything a real message derives from the wire is dictated here instead,
-/// because the point of a staged transcript is that it reads a particular way:
-/// who said what, when, and what it looked like arriving.
-struct StagedMessage {
-    let handle: UInt32
-    let body: String
-    let outbound: Bool
-    let createdAt: Date
-    /// Who sent it, for a channel message. Nil in a direct conversation,
-    /// where the conversation address already answers it.
-    var senderAddress: String? = nil
-    var senderHint: Data? = nil
-    /// The name the sender put in the message itself, as a group message
-    /// carries it.
-    var senderHandle: String? = nil
-    /// Outbound messages only.
-    var deliveryState: MobileStoredChatDeliveryState? = nil
-    var reception: StoredMessageReception? = nil
-    var reactions: [StagedReaction] = []
-    /// What it replies to, when it is a reply.
-    var regarding: StagedRegarding? = nil
-    /// Taken back by its sender: a tombstone, with nothing left to say.
-    var isDeleted = false
-}
-
-/// What a staged reply answers.
-enum StagedRegarding {
-    /// Another message of the same staged transcript, by handle.
-    case message(UInt32)
-    /// One this phone never stored.
-    case missing
-}
-
-/// One reaction about a ``StagedMessage``. Its handle is allocated by the
-/// writer, since nothing outside refers to a reaction by name.
-struct StagedReaction {
-    let body: String
-    let outbound: Bool
-    let createdAt: Date
-    var senderAddress: String? = nil
-    var senderHint: Data? = nil
-}
-#endif
-
 /// Everything the interface lists, read together so a concurrent writer
 /// cannot produce a mixture of old and new lists.
 ///
@@ -1408,28 +1361,6 @@ actor SQLiteApplicationStore {
     }
 
     #if DEBUG
-    /// Write one staged transcript exactly as described, reactions included.
-    ///
-    /// Separate from ``seedGeneratedMessages`` because the two answer different
-    /// questions: that one wants volume and does not care what it says, this
-    /// one wants a specific conversation to read plausibly in a screenshot, so
-    /// every body, sender and instant is dictated by the caller.
-    func seedStagedTranscript(
-        ownerIdentityID: String,
-        conversationAddress: String,
-        sessionID: String,
-        messages: [StagedMessage]
-    ) throws {
-        try run {
-            try $0.seedStagedTranscript(
-                ownerIdentityId: ownerIdentityID,
-                conversationAddress: conversationAddress,
-                sessionId: sessionID,
-                messages: messages.map(MobileStagedChatMessageRecord.init)
-            )
-        }
-    }
-
     /// Fill a conversation with generated messages, for exercising a transcript
     /// at a size no test account reaches by hand. Instants run back from now,
     /// with lulls of several hours, so the transcript spans days and carries
@@ -1467,16 +1398,18 @@ actor SQLiteApplicationStore {
 
 // MARK: - Conversions
 
-fileprivate extension Date {
-    /// The core's instants are whole milliseconds since the Unix epoch.
-    init(storeMilliseconds milliseconds: Int64) {
-        self.init(timeIntervalSince1970: Double(milliseconds) / 1_000)
-    }
-
-    /// This instant with its fraction of a millisecond cut off. What every
-    /// stamp uses except those below.
+extension Date {
+    /// This instant as the core takes one: whole milliseconds since the Unix
+    /// epoch, with any fraction cut off. What every stamp uses except those
+    /// below.
     var storeMilliseconds: Int64 {
         Int64(timeIntervalSince1970 * 1_000)
+    }
+}
+
+fileprivate extension Date {
+    init(storeMilliseconds milliseconds: Int64) {
+        self.init(timeIntervalSince1970: Double(milliseconds) / 1_000)
     }
 
     /// This instant to the nearest millisecond. The management cache,
@@ -1762,19 +1695,6 @@ extension StoredMessageReception {
     }
 }
 
-extension MobileStoredChatReceptionRecord {
-    fileprivate init(_ reception: StoredMessageReception) {
-        self.init(
-            rssiDbm: reception.rssiDbm.map { Int16(clamping: $0) },
-            snrCentibels: reception.snrCentibels.map { Int16(clamping: $0) },
-            lqi: reception.lqi.map { UInt8(clamping: $0) },
-            hopCount: reception.hopCount.map { UInt8(clamping: $0) },
-            routeHints: reception.routeHints,
-            sourceAuthenticated: reception.sourceAuthenticated
-        )
-    }
-}
-
 extension StoredMessageRepeats {
     fileprivate init(_ record: MobileStoredChatRepeatsRecord) {
         self.init(
@@ -1864,36 +1784,3 @@ extension StoredChatMessagePage {
     }
 }
 
-#if DEBUG
-extension MobileStagedChatMessageRecord {
-    fileprivate init(_ message: StagedMessage) {
-        self.init(
-            handle: message.handle,
-            body: message.body,
-            outbound: message.outbound,
-            createdAtMs: message.createdAt.storeMilliseconds,
-            senderAddress: message.senderAddress,
-            senderHint: message.senderHint,
-            senderHandle: message.senderHandle,
-            deliveryState: message.deliveryState,
-            reception: message.reception.map(MobileStoredChatReceptionRecord.init),
-            reactions: message.reactions.map { reaction in
-                MobileStagedChatReactionRecord(
-                    body: reaction.body,
-                    outbound: reaction.outbound,
-                    createdAtMs: reaction.createdAt.storeMilliseconds,
-                    senderAddress: reaction.senderAddress,
-                    senderHint: reaction.senderHint
-                )
-            },
-            regarding: message.regarding.map { regarding in
-                switch regarding {
-                case .message(let handle): .message(handle: handle)
-                case .missing: .missing
-                }
-            },
-            isDeleted: message.isDeleted
-        )
-    }
-}
-#endif

@@ -94,6 +94,43 @@ class CoreSmokeTest {
         store.close()
     }
 
+    /** The core reaches Kotlin's vault, and a throw from it comes back typed. */
+    @Test
+    fun stagingSeedsThroughTheVault() = runBlocking {
+        val secrets = mutableMapOf<String, ByteArray>()
+        val vault = object : SecretVault {
+            override fun load(account: String) = secrets[account.uppercase()]
+            override fun store(account: String, secret: ByteArray) {
+                secrets[account.uppercase()] = secret
+            }
+            override fun delete(account: String) {
+                secrets.remove(account.uppercase())
+            }
+            override fun deleteAll() = secrets.clear()
+        }
+        MobileAppStore.open(temp.newFolder().resolve("staging.sqlite").path).use { store ->
+            store.insertIdentity("me", "me-public", 1L)
+            seedStaging(store, vault, "me", 1_790_000_000_000L)
+            assertEquals(7, store.listNodes("me").size)
+            // The vault holds a key for each channel, filed under its ID.
+            assertEquals(secrets.keys, store.channels("me").map { it.id }.toSet())
+        }
+
+        val locked = object : SecretVault {
+            override fun load(account: String): ByteArray? = throw SecretVaultException.Unavailable()
+            override fun store(account: String, secret: ByteArray) = throw SecretVaultException.Unavailable()
+            override fun delete(account: String) = throw SecretVaultException.Unavailable()
+            override fun deleteAll() = throw SecretVaultException.Unavailable()
+        }
+        MobileAppStore.open(temp.newFolder().resolve("locked.sqlite").path).use { store ->
+            store.insertIdentity("me", "me-public", 1L)
+            val thrown = runCatching { seedStaging(store, locked, "me", 1_790_000_000_000L) }
+            val error = thrown.exceptionOrNull() as MobileStagingException.Vault
+            assertTrue(error.error is SecretVaultException.Unavailable)
+            assertTrue(store.channels("me").isEmpty())
+        }
+    }
+
     @Test
     fun workerWakesKotlin() = runBlocking {
         MobileMeshSession.start(identity(65), MobileCounterStore(temp.newFolder().path)).use { session ->

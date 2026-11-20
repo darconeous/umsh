@@ -22,6 +22,8 @@ mod mobile_chat;
 mod mobile_mesh;
 mod radio_driver;
 mod regions;
+mod secret_vault;
+mod staging;
 mod store;
 mod time_zone;
 mod ulcp;
@@ -55,6 +57,8 @@ pub use regions::{
     MobileRegionMembership, MobileRegionOutcomeRecord, MobileRegionPositionRecord,
     MobileRegionProposalRecord, MobileRegionRecord,
 };
+pub use secret_vault::{SecretVault, SecretVaultError};
+pub use staging::{MobileStagingError, seed_staging};
 pub use store::{
     MobileAppStore, MobileApplicationRecords, MobileChatChangesRecord,
     MobileChatNotificationRecord, MobilePeerUpsertRecord, MobileStagedChatMessageRecord,
@@ -101,7 +105,7 @@ uniffi::setup_scaffolding!();
 ///
 /// Increment this when a binding-visible operation, record, or error contract
 /// changes incompatibly. It is independent of the UMSH wire version.
-pub const MOBILE_API_VERSION: u16 = 83;
+pub const MOBILE_API_VERSION: u16 = 84;
 
 /// Stable error categories consumed by platform adapters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Error)]
@@ -530,6 +534,16 @@ fn channel_tint(key: &umsh_core::ChannelKey) -> Vec<u8> {
         .to_vec()
 }
 
+/// A one-way commitment to a channel key: lowercase hex SHA-256. The store
+/// keeps it to recognize a key it already holds without ever seeing the
+/// key itself.
+#[uniffi::export]
+pub fn channel_key_digest(key: Vec<u8>) -> String {
+    use umsh_crypto::{Sha256Provider, software::SoftwareSha256};
+
+    mobile_chat::hex(&SoftwareSha256.hash(&[&key]))
+}
+
 /// The tag a channel's conversation is keyed by.
 ///
 /// Same derivation as the identifier and the tint, run to sixteen bytes: wide
@@ -751,7 +765,14 @@ pub async fn sign_node_identity_bundle(
     secret_key.zeroize();
     let signer = SoftwareIdentity::from_secret_bytes(&bytes);
     bytes.zeroize();
+    signed_node_identity_bundle(&signer, profile).await
+}
 
+/// The bundle `profile` describes, signed by `signer`.
+pub(crate) async fn signed_node_identity_bundle(
+    signer: &SoftwareIdentity,
+    profile: NodeIdentityProfileRecord,
+) -> Result<Vec<u8>, MobileError> {
     let name = profile
         .name
         .map(|name| umsh_grapheme::cut(&name, 24).to_owned())
@@ -1571,6 +1592,15 @@ mod tests {
         assert_eq!(
             inspect_public_identity_bytes(vec![0; 31]).unwrap_err(),
             MobileError::InvalidPublicKeyLength
+        );
+    }
+
+    #[test]
+    fn channel_key_digest_is_lowercase_hex_sha256() {
+        // Stored rows carry this exact form, as the Swift store wrote it.
+        assert_eq!(
+            channel_key_digest(vec![0; 32]),
+            "66687aadf862bd776c8fc18b8e9f8e20089714856ee233b3902a591d0d5f2925"
         );
     }
 

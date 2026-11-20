@@ -234,6 +234,16 @@ struct PersistenceSmokeTest {
     ) async throws {
         let owner = "dana"
         func at(_ seconds: Double) -> Date { Date(timeIntervalSince1970: 1_780_000_000 + seconds) }
+        func ms(_ seconds: Int64) -> Int64 { (1_780_000_000 + seconds) * 1_000 }
+        /// Rows written as staging writes them, straight to the core store.
+        func stage(
+            _ address: String, session: String, _ messages: [MobileStagedChatMessageRecord]
+        ) throws {
+            try store.coreStore.seedStagedTranscript(
+                ownerIdentityId: owner, conversationAddress: address, sessionId: session,
+                messages: messages
+            )
+        }
         func peer(_ address: String) async throws -> StoredNode {
             node(try await store.listNodes(ownerIdentityID: owner), address)
         }
@@ -277,8 +287,9 @@ struct PersistenceSmokeTest {
         var friend = try await peer("friend")
         precondition(relay.alias == "Ridge relay" && relay.notifyWhenHeard)
         precondition(friend.alias == "Friend" && !friend.notifyWhenHeard)
+        // A fraction of a millisecond is cut off, not rounded.
         let wasWatched = try await store.touchLastHeard(
-            ownerIdentityID: owner, publicAddress: "relay", at: at(20)
+            ownerIdentityID: owner, publicAddress: "relay", at: at(20.0009)
         )
         relay = try await peer("relay")
         precondition(wasWatched && !relay.notifyWhenHeard && relay.lastHeardAt == at(20))
@@ -349,21 +360,23 @@ struct PersistenceSmokeTest {
             rssiDbm: -101, snrCentibels: -35, lqi: 200, hopCount: 3,
             routeHints: [Data([1, 2]), Data([3, 4])], sourceAuthenticated: true
         )
-        try await store.seedStagedTranscript(
-            ownerIdentityID: owner, conversationAddress: "friend", sessionID: "700",
-            messages: [
-                StagedMessage(
-                    handle: 1, body: "Hello", outbound: false, createdAt: at(70),
-                    reception: reception
-                ),
-                StagedMessage(
-                    handle: 2, body: "Hi back", outbound: true, createdAt: at(71),
-                    deliveryState: .acknowledged,
-                    reactions: [StagedReaction(body: "+1", outbound: false, createdAt: at(72))]
-                ),
-                StagedMessage(handle: 4, body: "", outbound: false, createdAt: at(73)),
-            ]
+        let coreReception = MobileStoredChatReceptionRecord(
+            rssiDbm: reception.rssiDbm.map(Int16.init), snrCentibels: reception.snrCentibels.map(Int16.init),
+            lqi: reception.lqi.map(UInt8.init), hopCount: reception.hopCount.map(UInt8.init),
+            routeHints: reception.routeHints, sourceAuthenticated: reception.sourceAuthenticated
         )
+        try stage("friend", session: "700", [
+            MobileStagedChatMessageRecord(
+                handle: 1, body: "Hello", outbound: false, createdAtMs: ms(70),
+                reception: coreReception
+            ),
+            MobileStagedChatMessageRecord(
+                handle: 2, body: "Hi back", outbound: true, createdAtMs: ms(71),
+                deliveryState: .acknowledged,
+                reactions: [MobileStagedChatReactionRecord(body: "+1", outbound: false, createdAtMs: ms(72))]
+            ),
+            MobileStagedChatMessageRecord(handle: 4, body: "", outbound: false, createdAtMs: ms(73)),
+        ])
         try execute(path, "UPDATE chat_message SET presence = 1 WHERE session_id = '700' AND handle = 4")
         var messages = try await transcript("friend")
         let hello = messages.first { $0.body == "Hello" }
@@ -406,19 +419,16 @@ struct PersistenceSmokeTest {
         precondition(frames.map(\.fragmentIndex) == [0, 1])
 
         // A message that failed can be taken back out; no other can.
-        try await store.seedStagedTranscript(
-            ownerIdentityID: owner, conversationAddress: "friend", sessionID: "720",
-            messages: [
-                StagedMessage(
-                    handle: 2, body: "Never released", outbound: true, createdAt: at(74),
-                    deliveryState: .undelivered
-                ),
-                StagedMessage(
-                    handle: 3, body: "Left pending", outbound: true, createdAt: at(75),
-                    deliveryState: .pending
-                ),
-            ]
-        )
+        try stage("friend", session: "720", [
+            MobileStagedChatMessageRecord(
+                handle: 2, body: "Never released", outbound: true, createdAtMs: ms(74),
+                deliveryState: .undelivered
+            ),
+            MobileStagedChatMessageRecord(
+                handle: 3, body: "Left pending", outbound: true, createdAtMs: ms(75),
+                deliveryState: .pending
+            ),
+        ])
         try await store.removeFailedMessage(ownerIdentityID: owner, sessionID: "720", handle: 2)
         try await store.removeFailedMessage(ownerIdentityID: owner, sessionID: "700", handle: 1)
         messages = try await transcript("friend")
@@ -522,20 +532,17 @@ struct PersistenceSmokeTest {
         precondition(conversationsOnly.peers.isEmpty && conversationsOnly.reports.isEmpty)
 
         // Staged transcripts.
-        try await store.seedStagedTranscript(
-            ownerIdentityID: owner, conversationAddress: "friend", sessionID: "staging-smoke",
-            messages: [
-                StagedMessage(
-                    handle: 1, body: "Staged inbound", outbound: false, createdAt: at(60.0009),
-                    senderAddress: "friend", reception: reception,
-                    reactions: [StagedReaction(body: "ha", outbound: true, createdAt: at(61))]
-                ),
-                StagedMessage(
-                    handle: 2, body: "Staged reply", outbound: true, createdAt: at(62),
-                    deliveryState: .acknowledged, regarding: .message(1)
-                ),
-            ]
-        )
+        try stage("friend", session: "staging-smoke", [
+            MobileStagedChatMessageRecord(
+                handle: 1, body: "Staged inbound", outbound: false, createdAtMs: ms(60),
+                senderAddress: "friend", reception: coreReception,
+                reactions: [MobileStagedChatReactionRecord(body: "ha", outbound: true, createdAtMs: ms(61))]
+            ),
+            MobileStagedChatMessageRecord(
+                handle: 2, body: "Staged reply", outbound: true, createdAtMs: ms(62),
+                deliveryState: .acknowledged, regarding: .message(handle: 1)
+            ),
+        ])
         messages = try await transcript("friend")
         let stagedInbound = messages.first { $0.body == "Staged inbound" }
         let stagedReply = messages.first { $0.body == "Staged reply" }
