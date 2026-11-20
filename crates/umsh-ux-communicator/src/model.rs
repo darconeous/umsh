@@ -3279,16 +3279,19 @@ impl State {
         self.chime(Cue::Direct);
     }
 
-    /// Sets the volume to `level`, from 1 to [`LEVELS`], and plays a
-    /// direct message's sound at it if that changed it. Returns whether it
-    /// did.
+    /// Sets the volume to `level`, from 1 to [`LEVELS`], without a sound.
+    /// Returns whether that changed it.
     pub fn set_volume_level(&mut self, level: u8) -> bool {
         let changed = volume_level(self.node.sound_volume()) != level;
         if changed {
             self.node.set_sound_volume(volume_at(level));
-            self.chime(Cue::Direct);
         }
         changed
+    }
+
+    /// Plays a direct message's sound at the volume, to hear it by.
+    pub fn play_volume(&mut self) {
+        self.chime(Cue::Direct);
     }
 
     /// Sets the screen's brightness to `level`, from 1 to [`LEVELS`].

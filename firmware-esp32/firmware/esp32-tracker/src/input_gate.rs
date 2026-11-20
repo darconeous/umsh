@@ -37,12 +37,24 @@ static INPUT_OVERFLOW: AtomicBool = AtomicBool::new(false);
 /// raises it, and locks on timeout alone.
 pub(crate) static LOCK: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
-/// Where navigation goes once the display is ready for it.
+/// Room in the interface's queue that touch moves leave free, so that a
+/// touch's start and end always fit.
+#[cfg(feature = "communicator")]
+const TOUCH_MOVE_RESERVE: usize = 2;
+
+/// Where navigation goes once the display is ready for it. A touch move
+/// the interface has no room for is dropped, not counted as an overflow:
+/// a finger reports faster than a slow frame takes moves in, and the next
+/// move, or the touch's end, carries a newer point.
 fn forward(item: Item) -> bool {
     #[cfg(feature = "communicator")]
-    let sent = communicator::INPUT
-        .try_send(board_input::to_input(item))
-        .is_ok();
+    let sent = {
+        let input = board_input::to_input(item);
+        if input.is_touch_move() && communicator::INPUT.free_capacity() <= TOUCH_MOVE_RESERVE {
+            return true;
+        }
+        communicator::INPUT.try_send(input).is_ok()
+    };
     #[cfg(not(feature = "communicator"))]
     let sent = UI_INPUT_CH.try_send(item).is_ok();
     sent

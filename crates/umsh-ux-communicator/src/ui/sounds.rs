@@ -37,6 +37,7 @@ pub fn view(state: &State) -> impl View<Rgb565, State> + use<> {
                 active,
                 State::step_volume,
                 State::set_volume_level,
+                State::play_volume,
                 ROW,
             ),
         ))

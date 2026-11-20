@@ -81,22 +81,23 @@ pub enum Input {
 }
 
 impl Input {
+    /// Whether this is a finger moving on the screen: a point that the
+    /// next move, or the touch's end, replaces.
+    #[must_use]
+    pub const fn is_touch_move(&self) -> bool {
+        matches!(
+            self,
+            Self::Touch {
+                phase: TouchPhase::Moved,
+                ..
+            }
+        )
+    }
+
     /// Whether this can leave its layout to `next`, queued right behind
     /// it: a touch move followed by another.
     const fn lays_out_with(&self, next: &Self) -> bool {
-        matches!(
-            (self, next),
-            (
-                Self::Touch {
-                    phase: TouchPhase::Moved,
-                    ..
-                },
-                Self::Touch {
-                    phase: TouchPhase::Moved,
-                    ..
-                },
-            )
-        )
+        self.is_touch_move() && next.is_touch_move()
     }
 }
 

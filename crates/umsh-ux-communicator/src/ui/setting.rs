@@ -196,7 +196,8 @@ pub(super) fn marked_row<A: Fn(&mut State) + Clone>(
 }
 
 /// A row whose end is a level, as [`row`] draws it, whose steps a finger
-/// also slides across to set the level with `set`.
+/// also slides across to set the level with `set`, and then `done` once
+/// the finger lifts.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn level_row<A: Fn(&mut State) + Clone>(
     m: &'static Metrics,
@@ -207,6 +208,7 @@ pub(super) fn level_row<A: Fn(&mut State) + Clone>(
     active: bool,
     step: fn(&mut State, i8),
     set: fn(&mut State, u8) -> bool,
+    done: fn(&mut State),
     height: u32,
 ) -> impl View<Rgb565, State> + use<A> {
     row(
@@ -226,7 +228,7 @@ pub(super) fn level_row<A: Fn(&mut State) + Clone>(
         Alignment::Trailing,
         // The steps end the row's margin and end inset from its edge: the
         // reach the drag area takes, either side of them.
-        super::level_drag::LevelDrag::new(STEP_WIDTH, STEP_GAP, ROW_MARGIN + END_INSET, set),
+        super::level_drag::LevelDrag::new(STEP_WIDTH, STEP_GAP, ROW_MARGIN + END_INSET, set, done),
     )
 }
 

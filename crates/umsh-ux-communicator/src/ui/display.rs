@@ -46,6 +46,7 @@ fn view(state: &State) -> impl View<Rgb565, State> + use<> {
                 active,
                 |s, steps| _ = s.step_brightness(steps),
                 State::set_brightness_level,
+                |_| {},
                 ROW,
             ),
             row(

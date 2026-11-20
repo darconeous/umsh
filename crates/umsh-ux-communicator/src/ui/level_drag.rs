@@ -7,6 +7,8 @@
 //!
 //! The level is set only once the finger has moved [`SLOP`] across, or
 //! lifts: a touch that goes on to scroll the list it is in changes nothing.
+//! A touch that changed the level is followed through when it ends, once:
+//! the volume chimes then, not at every level a finger slides over.
 
 use buoyant::environment::LayoutEnvironment;
 use buoyant::event::{Event, EventContext, EventResult, TouchResult};
@@ -33,14 +35,16 @@ use crate::model::{LEVELS, State};
 const SLOP: i32 = 8;
 
 /// The steps of a level, each `step` wide and `gap` apart, taken as touched
-/// as far as `reach` either side, and the level each sets with `set`, which
-/// says whether that changed it.
+/// as far as `reach` either side; the level each sets with `set`, which
+/// says whether that changed it; and `done`, for when a touch that changed
+/// it ends.
 #[derive(Clone, Copy)]
 pub(super) struct LevelDrag {
     step: u32,
     gap: u32,
     reach: u32,
     set: fn(&mut State, u8) -> bool,
+    done: fn(&mut State),
 }
 
 impl LevelDrag {
@@ -49,12 +53,14 @@ impl LevelDrag {
         gap: u32,
         reach: u32,
         set: fn(&mut State, u8) -> bool,
+        done: fn(&mut State),
     ) -> Self {
         Self {
             step,
             gap,
             reach,
             set,
+            done,
         }
     }
 
@@ -74,21 +80,31 @@ impl LevelDrag {
     }
 
     /// Sets the level under `x`, for an area at `area`, and has the view
-    /// built again if that changed it.
-    fn set_at(&self, area: &Rectangle, x: i32, state: &mut State, context: &EventContext) {
-        if (self.set)(state, self.level_at(area, x)) {
+    /// built again if that changed it. Returns whether it did.
+    fn set_at(&self, area: &Rectangle, x: i32, state: &mut State, context: &EventContext) -> bool {
+        let changed = (self.set)(state, self.level_at(area, x));
+        if changed {
             context.request_view_rebuild();
+        }
+        changed
+    }
+
+    /// Follows `held` through as its touch ends.
+    fn end(&self, held: Held, state: &mut State) {
+        if held.changed {
+            (self.done)(state);
         }
     }
 }
 
-/// A touch on the steps: where it started, and whether it has moved far
-/// enough across to be setting the level.
+/// A touch on the steps: where it started, whether it has moved far
+/// enough across to be setting the level, and whether it has changed it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Held {
     id: u8,
     start_x: i32,
     sliding: bool,
+    changed: bool,
 }
 
 impl ViewMarker for LevelDrag {
@@ -183,6 +199,7 @@ impl ViewLayout<State> for LevelDrag {
                         id: touch.id,
                         start_x: point.x,
                         sliding: false,
+                        changed: false,
                     });
                     return TouchResult::Handled;
                 }
@@ -199,21 +216,23 @@ impl ViewLayout<State> for LevelDrag {
                 };
                 held.sliding |= (point.x - held.start_x).abs() >= SLOP;
                 if held.sliding {
-                    self.set_at(&area, point.x, captures, context);
+                    held.changed |= self.set_at(&area, point.x, captures, context);
                 }
                 TouchResult::Handled
             }
             Phase::Ended => {
-                if state.take().is_none() {
+                let Some(mut held) = state.take() else {
                     return TouchResult::Deferred;
-                }
-                self.set_at(&area, point.x, captures, context);
+                };
+                held.changed |= self.set_at(&area, point.x, captures, context);
+                self.end(held, captures);
                 TouchResult::Handled
             }
             Phase::Cancelled => {
-                if state.take().is_none() {
+                let Some(held) = state.take() else {
                     return TouchResult::Deferred;
-                }
+                };
+                self.end(held, captures);
                 TouchResult::Handled
             }
             Phase::Hovering(_) => TouchResult::Deferred,

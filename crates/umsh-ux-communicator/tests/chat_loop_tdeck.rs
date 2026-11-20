@@ -643,8 +643,11 @@ fn a_finger_slid_across_the_volume_sets_it_as_it_goes() {
     assert_eq!(volume_level(app.state().node.sound_volume()), 10);
     apply_touch(&mut app, Moved, (steps[4], y), tick(20));
     assert_eq!(volume_level(app.state().node.sound_volume()), 5);
+    // Silent while the finger slides, it chimes once as it lifts.
+    assert_eq!(app.state_mut().take_cue(), None);
     apply_touch(&mut app, Ended, (steps[4], y), tick(20));
     assert_eq!(volume_level(app.state().node.sound_volume()), 5);
+    assert_eq!(app.state_mut().take_cue(), Some(Cue::Direct));
     assert!(matches!(
         app.state().screen(),
         Screen::Device {
@@ -671,10 +674,26 @@ fn a_touch_on_the_volume_that_the_list_scrolls_sets_nothing() {
     apply_touch(&mut app, Moved, (steps[7], y + 5), tick(20));
     apply_touch(&mut app, Ended, (steps[7], y + 5), tick(20));
     assert_eq!(app.state().node.sound_volume(), before);
+    assert_eq!(app.state_mut().take_cue(), None);
 }
 
 /// A finger that has gone far enough across to set the level keeps it
 /// when it goes on to move up: the list has given the touch up by then.
+/// A tap on the step already set changes nothing, and so plays nothing.
+#[test]
+fn a_tap_on_the_volume_already_set_is_silent() {
+    use input::TouchPhase::{Ended, Started};
+    let mut app = app!();
+    app.state_mut().open_sounds();
+    app.finalize_view();
+    let (steps, y) = level_steps(&mut app, keys::VOLUME);
+    let level = volume_level(app.state().node.sound_volume());
+    let at = steps[usize::from(level) - 1];
+    apply_touch(&mut app, Started, (at, y), tick(100));
+    apply_touch(&mut app, Ended, (at, y), tick(50));
+    assert_eq!(app.state_mut().take_cue(), None);
+}
+
 #[test]
 fn a_touch_that_sets_the_volume_keeps_it() {
     use input::TouchPhase::{Ended, Moved, Started};
