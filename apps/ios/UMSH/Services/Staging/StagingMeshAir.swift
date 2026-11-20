@@ -15,10 +15,15 @@ import UMSHMobileCore
 /// staged peer, and everything a peer transmits reaches only the phone.
 /// Peers never hear each other, which is what keeps a fabricated mesh of
 /// non-repeating chat nodes from needing a channel-access model.
+///
+/// Each staged peer keeps its chat in a store of its own, in memory, as the
+/// app keeps the phone's: that is where it answers a request to send
+/// something again from, and where it finds what the phone last said.
 actor StagingMeshAir: FakeRadioAir {
     private struct Peer {
         let name: String
         let session: MobileMeshSession
+        let store: MobileAppStore
         /// How the phone hears this peer, and how this peer hears the phone.
         /// Fixed per node so a staged conversation reads the same every run.
         let rssiDBm: Int16
@@ -26,9 +31,8 @@ actor StagingMeshAir: FakeRadioAir {
         let linkQuality: UInt8
     }
 
-    /// The most recent message the phone sent that a peer could react to,
-    /// as that peer's own session knows it.
-    private var lastHeard: [Int: MobileChatRegardingRef] = [:]
+    /// The identity each staged peer's store keeps its chat under.
+    private static let peerOwner = "staged-peer"
     private var peers: [Peer]?
     private var buildTask: Task<[Peer], Never>?
     private var phoneAddress: String?
@@ -41,15 +45,6 @@ actor StagingMeshAir: FakeRadioAir {
     private var pressedSame = false
     /// The next frames a staged peer transmits never reach the phone.
     private var losesNextTransmission = false
-    /// What each staged peer has sent, kept the way the app's store keeps the
-    /// phone's, so the peer can answer a request to send it again.
-    private var archives: [Int: [ArchiveKey: Data]] = [:]
-
-    private struct ArchiveKey: Hashable {
-        let conversationAddress: String
-        let messageID: UInt8
-        let fragmentIndex: UInt8?
-    }
 
     func attach(onAir: @escaping @Sendable ([MobileMeshRxRecord]) -> Void) {
         self.onAir = onAir
@@ -124,42 +119,14 @@ actor StagingMeshAir: FakeRadioAir {
         return Data(bytes)
     }
 
-    /// Drain one staged peer: complete its transmissions, feed them to the
-    /// phone, and consume its chat inbox—staged peers have no app above
-    /// them, so acknowledging a batch is what reading it means here.
+    /// Drain one staged peer: complete its transmissions and feed them to
+    /// the phone. Its chat keeps itself, in the peer's own store.
     private func pumpPeer(_ index: Int) {
         guard let peers, peers.indices.contains(index) else { return }
         let peer = peers[index]
         let update = peer.session.pollUpdate()
-        for lookup in update.chatArchiveLookups {
-            let payload = archives[index]?[ArchiveKey(
-                conversationAddress: lookup.conversationAddress,
-                messageID: lookup.messageId,
-                fragmentIndex: lookup.fragmentIndex
-            )]
-            try? peer.session.applyChatArchiveResult(
-                requestId: lookup.requestId,
-                kind: payload == nil ? .unknown : .found,
-                payload: payload ?? Data()
-            )
-        }
-        for mutation in update.chatMutations
-        where mutation.kind == .insert && mutation.direction == .inbound
-            && mutation.messageType == 0 {
-            lastHeard[index] = MobileChatRegardingRef(
-                sessionId: mutation.sessionId,
-                handle: mutation.handle,
-                wireId: mutation.wireId,
-                direction: .inbound,
-                senderHint: mutation.senderHint.map { Data($0) },
-                epoch: mutation.epoch
-            )
-        }
         for frame in update.outboundFrames {
             try? peer.session.completeOutboundFrame(frameId: frame.id, transmitted: true)
-        }
-        if let batchID = update.chatBatchId {
-            try? peer.session.acknowledgeChatBatch(batchId: batchID)
         }
         if index == 0, let meet = update.meet {
             followMeet(meet, session: peer.session)
@@ -168,8 +135,6 @@ actor StagingMeshAir: FakeRadioAir {
             losesNextTransmission = false
             return
         }
-        // An answered lookup puts its resend on the air in the next update.
-        defer { if !update.chatArchiveLookups.isEmpty { pumpPeer(index) } }
         guard !update.outboundFrames.isEmpty, let onAir else { return }
         onAir(
             update.outboundFrames.map {
@@ -213,21 +178,10 @@ actor StagingMeshAir: FakeRadioAir {
             return
         }
         do {
-            // Compose only stages the batch; the commit is what releases it
-            // to the session for transmission, same as the app's send path.
-            let batch = try await peers[index].session.composeText(
+            try await peers[index].session.sendChat(
                 conversationAddress: address,
-                clientToken: UInt32.random(in: 1...UInt32.max),
-                body: body
+                request: .text(body: body)
             )
-            for archive in batch.archives {
-                archives[index, default: [:]][ArchiveKey(
-                    conversationAddress: archive.conversationAddress,
-                    messageID: archive.messageId,
-                    fragmentIndex: archive.fragmentIndex
-                )] = archive.payload
-            }
-            try await peers[index].session.commitChatBatch(batchId: batch.batchId)
             logger.notice("Staged peer \(peers[index].name, privacy: .public) sent a message")
         } catch {
             logger.warning(
@@ -253,25 +207,21 @@ actor StagingMeshAir: FakeRadioAir {
     /// Have a staged peer react to the last thing the phone said to it.
     ///
     /// Reactions are the other half of an inbound notification and travel the
-    /// same real path: a compose, a commit, a frame, and the phone's own core
-    /// resolving what the emote is about.
+    /// same real path: a send, a frame, and the phone's own core resolving
+    /// what the emote is about.
     func reactFromPeer(body: String) async {
         let logger = Logger(subsystem: "com.voria.umsh.ios", category: "Staging")
         let peers = await ensurePeers()
-        guard let index = peers.indices.first else { return }
-        guard let target = lastHeard[index] else {
+        guard let index = peers.indices.first, let phoneAddress else { return }
+        guard let target = lastHeard(by: peers[index], from: phoneAddress) else {
             logger.warning("Staged reaction dropped: the phone has not said anything yet")
             return
         }
-        guard let phoneAddress else { return }
         do {
-            let batch = try await peers[index].session.composeReaction(
+            try await peers[index].session.sendChat(
                 conversationAddress: phoneAddress,
-                clientToken: UInt32.random(in: 1...UInt32.max),
-                target: target,
-                body: body
+                request: .reaction(target: target, body: body)
             )
-            try await peers[index].session.commitChatBatch(batchId: batch.batchId)
             logger.notice("Staged peer \(peers[index].name, privacy: .public) reacted")
         } catch {
             logger.warning(
@@ -287,21 +237,16 @@ actor StagingMeshAir: FakeRadioAir {
     func replyFromPeer(body: String) async {
         let logger = Logger(subsystem: "com.voria.umsh.ios", category: "Staging")
         let peers = await ensurePeers()
-        guard let index = peers.indices.first else { return }
-        guard let target = lastHeard[index] else {
+        guard let index = peers.indices.first, let phoneAddress else { return }
+        guard let target = lastHeard(by: peers[index], from: phoneAddress) else {
             logger.warning("Staged reply dropped: the phone has not said anything yet")
             return
         }
-        guard let phoneAddress else { return }
         do {
-            let batch = try await peers[index].session.composeReply(
+            try await peers[index].session.sendChat(
                 conversationAddress: phoneAddress,
-                clientToken: UInt32.random(in: 1...UInt32.max),
-                target: target,
-                body: body,
-                forwardSecret: nil
+                request: .reply(target: target, body: body, forwardSecret: nil)
             )
-            try await peers[index].session.commitChatBatch(batchId: batch.batchId)
             logger.notice("Staged peer \(peers[index].name, privacy: .public) replied")
         } catch {
             logger.warning(
@@ -309,6 +254,27 @@ actor StagingMeshAir: FakeRadioAir {
             )
         }
         pumpPeer(index)
+    }
+
+    /// The newest message `peer` has from the phone, as its own store names
+    /// it.
+    private func lastHeard(by peer: Peer, from phoneAddress: String) -> MobileChatRegardingRef? {
+        guard
+            let page = try? peer.store.chatMessagePageNewest(
+                ownerIdentityId: Self.peerOwner,
+                conversationAddress: phoneAddress,
+                limit: 50
+            ),
+            let message = page.messages.last(where: { !$0.outbound })
+        else { return nil }
+        return MobileChatRegardingRef(
+            sessionId: UInt64(message.reference.sessionId) ?? 0,
+            handle: message.reference.handle,
+            wireId: message.wireId,
+            direction: .inbound,
+            senderHint: message.senderHint,
+            epoch: message.epoch
+        )
     }
 
     /// Have the first staged peer open Add Peer as a T-LoRa Pager would, so
@@ -387,6 +353,17 @@ actor StagingMeshAir: FakeRadioAir {
                     identity: identity,
                     counterStore: store
                 )
+                let chatStore = try MobileAppStore.open(path: ":memory:")
+                try chatStore.upsertIdentity(
+                    id: Self.peerOwner,
+                    publicAddress: identity.publicIdentity().canonicalAddress,
+                    createdAtMs: 0
+                )
+                try session.attachChatStore(
+                    store: chatStore,
+                    ownerIdentityId: Self.peerOwner,
+                    silentTestsIn: nil
+                )
                 try await session.setChatDisplayName(name: node.name)
                 if !channelKeys.isEmpty {
                     try await session.registerChannels(
@@ -407,6 +384,7 @@ actor StagingMeshAir: FakeRadioAir {
                     Peer(
                         name: node.name,
                         session: session,
+                        store: chatStore,
                         rssiDBm: -52 - 6 * Int16(built.count),
                         snrCentibels: 74 - 9 * Int16(built.count),
                         linkQuality: 214 - 13 * UInt8(built.count)

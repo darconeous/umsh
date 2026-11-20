@@ -19,7 +19,6 @@ protocol FakeRadioAir: Sendable {
 actor FakeRadioConnection: RadioConnection {
     private var snapshot: RadioSnapshot
     private var continuations: [UUID: AsyncStream<RadioSnapshot>.Continuation] = [:]
-    private var frameContinuations: [UUID: AsyncStream<RadioReceivedFrame>.Continuation] = [:]
     private var chatContinuations: [UUID: AsyncStream<MobileChatChangesRecord>.Continuation] = [:]
     /// Lets a preview exercise reset: the canned route is reported once and
     /// then reads as forgotten, as a real one would.
@@ -128,16 +127,6 @@ actor FakeRadioConnection: RadioConnection {
             continuation.yield(initial)
             continuation.onTermination = { [weak self] _ in
                 Task { await self?.removeContinuation(id) }
-            }
-        }
-    }
-
-    func receivedFrames() -> AsyncStream<RadioReceivedFrame> {
-        AsyncStream { continuation in
-            let id = UUID()
-            frameContinuations[id] = continuation
-            continuation.onTermination = { [weak self] _ in
-                Task { await self?.removeFrameContinuation(id) }
             }
         }
     }
@@ -1289,18 +1278,6 @@ actor FakeRadioConnection: RadioConnection {
         guard let meshSession else { return }
         for record in records {
             try? meshSession.receive(frame: record)
-            let frame = RadioReceivedFrame(
-                data: record.data,
-                rssiDBm: record.rssiDbm.map(Int.init),
-                linkQuality: record.lqi,
-                signalToNoiseCentibels: record.snrCb.map(Int.init),
-                wasBuffered: false,
-                wasAcknowledgedByRadio: false,
-                ageSeconds: 0
-            )
-            for continuation in frameContinuations.values {
-                continuation.yield(frame)
-            }
         }
         pump()
     }
@@ -1321,18 +1298,8 @@ actor FakeRadioConnection: RadioConnection {
         }
     }
 
-    func publish(_ frame: RadioReceivedFrame) {
-        for continuation in frameContinuations.values {
-            continuation.yield(frame)
-        }
-    }
-
     private func removeContinuation(_ id: UUID) {
         continuations[id] = nil
-    }
-
-    private func removeFrameContinuation(_ id: UUID) {
-        frameContinuations[id] = nil
     }
 
     private func removeChatContinuation(_ id: UUID) {
@@ -1852,5 +1819,18 @@ private extension FixedWidthInteger {
     /// The octets ULCP puts this on the air as.
     var littleEndianData: Data {
         withUnsafeBytes(of: littleEndian) { Data($0) }
+    }
+}
+
+private extension MobileMeshManagementAnswerRecord {
+    /// An answer as the core would report it, with its refusal read from
+    /// the status.
+    init(propertyId: UInt32, value: Data?, statusCode: UInt32?) {
+        self.init(
+            propertyId: propertyId,
+            value: value,
+            statusCode: statusCode,
+            refusal: ulcpManagementRefusal(status: statusCode)
+        )
     }
 }

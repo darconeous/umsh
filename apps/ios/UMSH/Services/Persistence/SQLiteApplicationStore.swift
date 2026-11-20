@@ -53,8 +53,8 @@ struct StoredNode: Equatable, Sendable {
     let publicAddress: String
     let alias: String?
     let advertisedName: String?
-    let systemRole: String?
-    let nodeKind: String?
+    let systemRole: MobileStoredSystemRole?
+    let nodeKind: MobileStoredNodeKind?
     /// Raw advertised-identity payload bytes (node-identity.md wire form),
     /// decoded for display through the Rust facade on load.
     let advertisement: Data?
@@ -299,7 +299,7 @@ struct StoredChatMessage: Equatable, Sendable, Identifiable {
     let handle: UInt32
     let body: String
     let outbound: Bool
-    let deliveryState: String?
+    let deliveryState: MobileStoredChatDeliveryState?
     let isDeleted: Bool
     let createdAtMilliseconds: Int64
     /// Durable wire identity for referencing this message (edit/delete)
@@ -307,9 +307,8 @@ struct StoredChatMessage: Equatable, Sendable, Identifiable {
     let wireID: UInt8?
     let epoch: UInt16?
     let isEdited: Bool
-    /// Ordered-repair presence: 0 = present, 1 = gap under repair, 2 =
-    /// unavailable, 3 = gap waiting for the user.
-    let presence: Int
+    /// Whether the message is here, or a gap in its place.
+    let presence: MobileChatPresence
     /// The message filled a reserved gap slot out of order.
     let receivedLate: Bool
     /// An outbound message that failed transport but was later acknowledged
@@ -355,22 +354,19 @@ struct StoredChatMessage: Equatable, Sendable, Identifiable {
     /// been sent.
     var repeats: StoredMessageRepeats?
 
-    var isGapPlaceholder: Bool { presence == 1 || presence == 3 }
+    var isGapPlaceholder: Bool { presence == .gapPending || presence == .gapIdle }
     /// A gap no repair is under way for, which waits for the user to ask.
-    var isGapIdle: Bool { presence == 3 }
-    var isUnavailable: Bool { presence == 2 }
+    var isGapIdle: Bool { presence == .gapIdle }
+    var isUnavailable: Bool { presence == .unavailable }
 
     var cursor: ChatMessageCursor {
         ChatMessageCursor(createdAtMilliseconds: createdAtMilliseconds, rowID: rowID)
     }
 
-    /// Whether a stored delivery state is a failure: 'undelivered' (it did
-    /// not arrive) or 'failed' (it went out unacknowledged and may have).
-    static func isDeliveryFailure(_ state: String?) -> Bool {
-        switch state?.lowercased() {
-        case "failed", "undelivered": true
-        default: false
-        }
+    /// Whether a delivery state is a failure: undelivered (it did not
+    /// arrive) or failed (it went out unacknowledged and may have).
+    static func isDeliveryFailure(_ state: MobileStoredChatDeliveryState?) -> Bool {
+        state == .failed || state == .undelivered
     }
 }
 
@@ -468,7 +464,7 @@ struct StoredMessageReaction: Hashable, Sendable {
     let wireID: UInt8?
     let epoch: UInt16?
     let createdAtMilliseconds: Int64
-    let deliveryState: String?
+    let deliveryState: MobileStoredChatDeliveryState?
     /// Mine, and it went under a session with forward secrecy.
     var forwardSecret = false
 }
@@ -504,8 +500,8 @@ struct StagedMessage {
     /// The name the sender put in the message itself, as a group message
     /// carries it.
     var senderHandle: String? = nil
-    /// `acknowledged`, `sent`, `failed`, or nil. Outbound messages only.
-    var deliveryState: String? = nil
+    /// Outbound messages only.
+    var deliveryState: MobileStoredChatDeliveryState? = nil
     var reception: StoredMessageReception? = nil
     var reactions: [StagedReaction] = []
     /// What it replies to, when it is a reply.
@@ -667,16 +663,14 @@ actor SQLiteApplicationStore {
         try run { try $0.knowsIdentity(id: id, publicAddress: publicAddress) }
     }
 
-    /// `nodeKind` is a ``PeerRole`` raw value and `systemRole` is
-    /// `companion_radio`; anything else is stored as absent.
     func upsertPeer(
         ownerIdentityID: String,
         publicAddress: String,
         alias: String?,
         advertisedName: String? = nil,
         isSaved: Bool = false,
-        nodeKind: String? = nil,
-        systemRole: String? = nil,
+        nodeKind: MobileStoredNodeKind? = nil,
+        systemRole: MobileStoredSystemRole? = nil,
         radioIdentifier: String? = nil,
         advertisement: Data? = nil,
         advertisementAuthenticated: Bool = false,
@@ -686,8 +680,8 @@ actor SQLiteApplicationStore {
             alias: alias,
             advertisedName: advertisedName,
             isSaved: isSaved,
-            nodeKind: nodeKind.flatMap(MobileStoredNodeKind.init(storedText:)),
-            systemRole: systemRole.flatMap(MobileStoredSystemRole.init(storedText:)),
+            nodeKind: nodeKind,
+            systemRole: systemRole,
             radioIdentifier: radioIdentifier,
             advertisement: advertisement,
             advertisementAuthenticated: advertisementAuthenticated,
@@ -1493,74 +1487,6 @@ fileprivate extension Date {
     }
 }
 
-/// Stored as Swift's ``PeerRole`` raw values.
-fileprivate extension MobileStoredNodeKind {
-    init?(storedText: String) {
-        switch storedText {
-        case "repeater": self = .repeater
-        case "chat": self = .chat
-        case "tracker": self = .tracker
-        case "sensor": self = .sensor
-        case "bridge": self = .bridge
-        case "chatRoom": self = .chatRoom
-        case "temporarySession": self = .temporarySession
-        case "unknown": self = .unknown
-        default: return nil
-        }
-    }
-
-    var storedText: String {
-        switch self {
-        case .repeater: "repeater"
-        case .chat: "chat"
-        case .tracker: "tracker"
-        case .sensor: "sensor"
-        case .bridge: "bridge"
-        case .chatRoom: "chatRoom"
-        case .temporarySession: "temporarySession"
-        case .unknown: "unknown"
-        }
-    }
-}
-
-fileprivate extension MobileStoredSystemRole {
-    init?(storedText: String) {
-        switch storedText {
-        case "companion_radio": self = .companionRadio
-        default: return nil
-        }
-    }
-
-    var storedText: String {
-        switch self {
-        case .companionRadio: "companion_radio"
-        }
-    }
-}
-
-fileprivate extension MobileStoredChatDeliveryState {
-    init?(storedText: String) {
-        switch storedText.lowercased() {
-        case "pending": self = .pending
-        case "sent": self = .sent
-        case "acknowledged": self = .acknowledged
-        case "failed": self = .failed
-        case "undelivered": self = .undelivered
-        default: return nil
-        }
-    }
-
-    var storedText: String {
-        switch self {
-        case .pending: "pending"
-        case .sent: "sent"
-        case .acknowledged: "acknowledged"
-        case .failed: "failed"
-        case .undelivered: "undelivered"
-        }
-    }
-}
-
 extension StoredNode {
     fileprivate init(_ record: MobileStoredNodeRecord) {
         self.init(
@@ -1569,8 +1495,8 @@ extension StoredNode {
             publicAddress: record.publicAddress,
             alias: record.alias,
             advertisedName: record.advertisedName,
-            systemRole: record.systemRole?.storedText,
-            nodeKind: record.nodeKind?.storedText,
+            systemRole: record.systemRole,
+            nodeKind: record.nodeKind,
             advertisement: record.advertisement,
             advertisementAuthenticated: record.advertisementAuthenticated,
             lastHeardAt: record.lastHeardAtMs.map(Date.init(storeMilliseconds:)),
@@ -1887,7 +1813,7 @@ extension StoredMessageReaction {
             wireID: record.wireId,
             epoch: record.epoch,
             createdAtMilliseconds: record.createdAtMs,
-            deliveryState: record.deliveryState?.storedText,
+            deliveryState: record.deliveryState,
             forwardSecret: record.forwardSecret
         )
     }
@@ -1900,13 +1826,13 @@ extension StoredChatMessage {
             handle: record.reference.handle,
             body: record.body,
             outbound: record.outbound,
-            deliveryState: record.deliveryState?.storedText,
+            deliveryState: record.deliveryState,
             isDeleted: record.isDeleted,
             createdAtMilliseconds: record.createdAtMs,
             wireID: record.wireId,
             epoch: record.epoch,
             isEdited: record.isEdited,
-            presence: Self.presenceCode(record.presence),
+            presence: record.presence,
             receivedLate: record.receivedLate,
             deliveredLate: record.deliveredLate,
             originalBody: record.originalBody,
@@ -1925,17 +1851,6 @@ extension StoredChatMessage {
             quote: record.quote.map(StoredMessageQuote.init),
             repeats: record.repeats.map(StoredMessageRepeats.init)
         )
-    }
-
-    /// The stored presence code: 0 present, 1 gap under repair, 2
-    /// unavailable, 3 gap waiting for the user.
-    private static func presenceCode(_ presence: MobileChatPresence) -> Int {
-        switch presence {
-        case .present: 0
-        case .gapPending: 1
-        case .unavailable: 2
-        case .gapIdle: 3
-        }
     }
 }
 
@@ -1960,7 +1875,7 @@ extension MobileStagedChatMessageRecord {
             senderAddress: message.senderAddress,
             senderHint: message.senderHint,
             senderHandle: message.senderHandle,
-            deliveryState: message.deliveryState.flatMap(MobileStoredChatDeliveryState.init(storedText:)),
+            deliveryState: message.deliveryState,
             reception: message.reception.map(MobileStoredChatReceptionRecord.init),
             reactions: message.reactions.map { reaction in
                 MobileStagedChatReactionRecord(

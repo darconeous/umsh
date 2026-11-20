@@ -6,7 +6,7 @@ struct PeerSummary: Identifiable, Hashable, Sendable {
     let identity: MeshPublicIdentity
     let alias: String?
     let advertisedName: String?
-    let systemRole: String?
+    let systemRole: MobileStoredSystemRole?
     /// The role last recorded for this node, so the answer survives a restart
     /// and so a device configured through this phone reads correctly before it
     /// has ever been heard on the air. Superseded by a live advertisement.
@@ -40,7 +40,7 @@ struct PeerSummary: Identifiable, Hashable, Sendable {
         alias ?? advertisedName ?? (isUlcpDevice ? "Companion radio" : identity.hint.text)
     }
 
-    var isUlcpDevice: Bool { systemRole == "companion_radio" }
+    var isUlcpDevice: Bool { systemRole == .companionRadio }
 
     /// What this node says it is. A live advertisement wins over the stored
     /// role, so the answer tracks the node rather than whatever was true when
@@ -219,6 +219,35 @@ enum PeerRole: String, CaseIterable, Hashable, Sendable, Identifiable {
         return role == .unknown
             ? String(localized: "Role \(code)", comment: "A node role this app has no name for, by its number.")
             : role.label
+    }
+}
+
+extension PeerRole {
+    /// The role as the store keeps it.
+    init(_ kind: MobileStoredNodeKind) {
+        self = switch kind {
+        case .repeater: .repeater
+        case .chat: .chat
+        case .tracker: .tracker
+        case .sensor: .sensor
+        case .bridge: .bridge
+        case .chatRoom: .chatRoom
+        case .temporarySession: .temporarySession
+        case .unknown: .unknown
+        }
+    }
+
+    var storedKind: MobileStoredNodeKind {
+        switch self {
+        case .repeater: .repeater
+        case .chat: .chat
+        case .tracker: .tracker
+        case .sensor: .sensor
+        case .bridge: .bridge
+        case .chatRoom: .chatRoom
+        case .temporarySession: .temporarySession
+        case .unknown: .unknown
+        }
     }
 }
 
@@ -429,7 +458,7 @@ struct ChatMessageSummary: Identifiable, Hashable, Sendable {
     let id: String
     let body: String
     let isOutbound: Bool
-    let deliveryState: String?
+    let deliveryState: MobileStoredChatDeliveryState?
     let isDeleted: Bool
     let isEdited: Bool
     /// Facade session that recorded the message plus its engine handle;
@@ -531,7 +560,7 @@ struct ChatMessageSummary: Identifiable, Hashable, Sendable {
 
     /// One of ours that never went out where its peer could read it, as
     /// opposed to one that went out and drew no acknowledgment.
-    var isUndelivered: Bool { isOutbound && deliveryState?.lowercased() == "undelivered" }
+    var isUndelivered: Bool { isOutbound && deliveryState == .undelivered }
 }
 
 /// A reply's quote of the message it answers, as that message reads now.

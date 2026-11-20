@@ -161,7 +161,6 @@ class RadioDriverAdapter: NSObject, @unchecked Sendable {
     /// The radio as last published, mapped for the app.
     private(set) var snapshot = RadioSnapshot.idle
     var continuations: [UUID: AsyncStream<RadioSnapshot>.Continuation] = [:]
-    var frameContinuations: [UUID: AsyncStream<RadioReceivedFrame>.Continuation] = [:]
     var chatContinuations: [UUID: AsyncStream<MobileChatChangesRecord>.Continuation] = [:]
     var advertisementContinuations:
         [UUID: AsyncStream<RadioAdvertisementEvent>.Continuation] = [:]
@@ -211,23 +210,6 @@ class RadioDriverAdapter: NSObject, @unchecked Sendable {
                     continuation.onTermination = { [weak self] _ in
                         self?.sessionQueue.async { [weak self] in
                             self?.continuations[id] = nil
-                        }
-                    }
-                }
-                result.resume(returning: stream)
-            }
-        }
-    }
-
-    func receivedFrames() async -> AsyncStream<RadioReceivedFrame> {
-        await withCheckedContinuation { result in
-            sessionQueue.async { [self] in
-                let stream = AsyncStream(bufferingPolicy: .bufferingNewest(64)) { continuation in
-                    let id = UUID()
-                    frameContinuations[id] = continuation
-                    continuation.onTermination = { [weak self] _ in
-                        self?.sessionQueue.async { [weak self] in
-                            self?.frameContinuations[id] = nil
                         }
                     }
                 }
@@ -472,25 +454,8 @@ class RadioDriverAdapter: NSObject, @unchecked Sendable {
 
     private func drainDriver() {
         let update = driver.pollUpdate()
-        for line in update.diagnostics {
-            Self.logger.notice("driver: \(line, privacy: .public)")
-        }
         if let state = update.state {
             apply(state)
-        }
-        for received in update.receivedFrames {
-            let frame = RadioReceivedFrame(
-                data: received.data,
-                rssiDBm: received.rssiDbm.map(Int.init),
-                linkQuality: received.lqi,
-                signalToNoiseCentibels: received.snrCb.map(Int.init),
-                wasBuffered: received.wasBuffered,
-                wasAcknowledgedByRadio: received.wasAcknowledged,
-                ageSeconds: received.ageSeconds
-            )
-            for continuation in frameContinuations.values {
-                continuation.yield(frame)
-            }
         }
         for push in update.pushedProperties {
             for continuation in propertyPushContinuations.values {
@@ -508,16 +473,8 @@ class RadioDriverAdapter: NSObject, @unchecked Sendable {
     }
 
     private func apply(_ state: MobileRadioStateRecord) {
+        // The driver logs its own transitions.
         let next = RadioSnapshot(state)
-        if next.linkState != snapshot.linkState || next.hostState != snapshot.hostState {
-            Self.logger.notice(
-                """
-                radio: \(String(describing: self.snapshot.linkState), privacy: .public)→\
-                \(String(describing: next.linkState), privacy: .public) \
-                host \(String(describing: next.hostState), privacy: .public)
-                """
-            )
-        }
         snapshot = next
         for continuation in continuations.values {
             continuation.yield(next)
@@ -1095,9 +1052,7 @@ class RadioDriverAdapter: NSObject, @unchecked Sendable {
         let event = try await performManagement { session in
             try session.beginManagementReset(peerAddress: peerAddress, scope: scope)
         }
-        if let status = event.statusCode {
-            try Self.requireSuccess(status)
-        }
+        try Self.require(refusal: event.refusal)
     }
 
     func clearRemoteBluetoothBonds(peerAddress: String) async throws {
@@ -1126,14 +1081,14 @@ class RadioDriverAdapter: NSObject, @unchecked Sendable {
         let event = try await performManagement { session in
             try session.beginManagementAnnounce(peerAddress: peerAddress, request: request)
         }
-        try Self.requireSuccess(event.statusCode)
+        try Self.require(refusal: event.refusal)
     }
 
     func saveRemoteDevice(peerAddress: String) async throws {
         let event = try await performManagement { session in
             try session.beginManagementSave(peerAddress: peerAddress)
         }
-        try Self.requireSuccess(event.statusCode)
+        try Self.require(refusal: event.refusal)
     }
 
     func setRemoteDeviceAdmin(
@@ -1196,19 +1151,10 @@ class RadioDriverAdapter: NSObject, @unchecked Sendable {
         try Self.requireTableEdit(event)
     }
 
-    /// Read the answer to a one-entry table edit.
-    ///
-    /// The device answers with the list as it now stands, or with a status
-    /// where that list belonged. `ALREADY` and `ITEM_NOT_FOUND` are the
-    /// request already satisfied, as on the bench path.
+    /// Read the answer to a one-entry table edit: the list as it now
+    /// stands, or a status where that list belonged.
     private static func requireTableEdit(_ event: MobileMeshManagementEventRecord) throws {
-        guard let answer = event.answers.first else {
-            try requireSuccess(event.statusCode)
-            return
-        }
-        if let status = answer.statusCode {
-            try requireSuccess(status)
-        }
+        try require(refusal: event.answers.first?.refusal ?? event.refusal)
     }
 
     func setRemoteAlert(
@@ -1222,12 +1168,10 @@ class RadioDriverAdapter: NSObject, @unchecked Sendable {
             )
         }
         guard let answer = event.answers.first else {
-            try Self.requireSuccess(event.statusCode)
+            try Self.require(refusal: event.refusal)
             throw RemoteManagementError.unreadable
         }
-        if let status = answer.statusCode {
-            try Self.requireSuccess(status)
-        }
+        try Self.require(refusal: answer.refusal)
         // A write is echoed with what the device is now doing, and that is
         // the answer worth showing: a device may refuse to start an alert
         // it has no way to make, and one already running restarts its own
@@ -1238,18 +1182,10 @@ class RadioDriverAdapter: NSObject, @unchecked Sendable {
         return RadioAlertState(reported)
     }
 
-    /// Treat as success anything that leaves the device holding what was
-    /// asked for.
-    ///
-    /// `ALREADY` and `ITEM_NOT_FOUND` are a complaint about a request that
-    /// was already satisfied—the same reading the driver gives them on the
-    /// local link, and for the same reason: an operator asked for a state,
-    /// not for a change.
-    static func requireSuccess(_ status: UInt32?) throws {
-        guard let status, status != 0 else { return }
-        let name = ulcpStatusName(status: status)
-        guard !name.hasSuffix("ALREADY"), !name.hasSuffix("ITEM_NOT_FOUND") else { return }
-        throw RemoteManagementError.refused(status: status)
+    /// Throw the device's refusal, if it refused. The core decides what
+    /// counts as one.
+    static func require(refusal: UInt32?) throws {
+        if let refusal { throw RemoteManagementError.refused(status: refusal) }
     }
 
     /// Run one node-management exchange to completion.
@@ -1512,7 +1448,7 @@ extension RadioDriverAdapter {
         // says—busy, a channel it does not hold—reaches the screen that
         // asked, the way it does over the mesh.
         let event = try await localManagement { try await $0.announce(request: request) }
-        try Self.requireSuccess(event.statusCode)
+        try Self.require(refusal: event.refusal)
     }
 
     func enterDfu(mode: UlcpDfuMode) async throws {
@@ -1549,12 +1485,8 @@ extension RadioDriverAdapter {
         try await mutateWifiNetworks(.remove, value: ssid)
     }
 
-    /// Run one edit of the radio's own network table and read its answer.
-    ///
-    /// The device answers an insert or a remove with the item it changed,
-    /// or with a status where that item belonged. `ALREADY` and
-    /// `ITEM_NOT_FOUND` are the request already satisfied, as everywhere
-    /// else a table is edited an item at a time.
+    /// Run one edit of the radio's own network table and read its answer:
+    /// the item it changed, or a status where that item belonged.
     private func mutateWifiNetworks(
         _ mutation: UlcpItemMutation,
         value: Data
@@ -1565,19 +1497,13 @@ extension RadioDriverAdapter {
                 mutations: [UlcpItemMutationRecord(mutation: mutation, value: value)]
             )
         }
-        guard let answer = event.answers.first else {
-            try Self.requireSuccess(event.statusCode)
-            return
-        }
-        if let status = answer.statusCode {
-            try Self.requireSuccess(status)
-        }
+        try Self.require(refusal: event.answers.first?.refusal ?? event.refusal)
     }
 
     /// Persist the companion radio's live configuration.
     func saveCompanionDevice() async throws {
         let event = try await localManagement { try await $0.save() }
-        try Self.requireSuccess(event.statusCode)
+        try Self.require(refusal: event.refusal)
     }
 
     func clearBluetoothBonds() async throws {

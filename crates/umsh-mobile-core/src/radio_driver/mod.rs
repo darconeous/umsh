@@ -22,7 +22,7 @@ use std::fmt;
 
 use crate::{
     MobileError, UlcpAlertState, UlcpBatteryRecord, UlcpGnssRecord, UlcpHostOwnership,
-    UlcpReceivedFrameRecord, UlcpSyncRecord, ulcp::UlcpPropertyPushRecord,
+    UlcpSyncRecord, ulcp::UlcpPropertyPushRecord,
 };
 
 pub use runner::{MobileRadioDriver, MobileRadioDriverListener, RadioLink};
@@ -220,16 +220,10 @@ impl MobileRadioStateRecord {
 pub struct MobileRadioDriverUpdateRecord {
     /// The radio's state, when it changed.
     pub state: Option<MobileRadioStateRecord>,
-    /// Mesh frames the radio received, newest kept when the platform falls
-    /// behind. They have already gone to the mesh session.
-    pub received_frames: Vec<UlcpReceivedFrameRecord>,
     /// Values the radio announced on its own, verbatim.
     pub pushed_properties: Vec<UlcpPropertyPushRecord>,
     /// The device keys of radios that confirmed they let go of this phone.
     pub host_releases: Vec<Vec<u8>>,
-    /// Lines for the log: faults, late answers, frames ignored. Never
-    /// shown to the user.
-    pub diagnostics: Vec<String>,
 }
 
 /// Why a driver operation did not complete.

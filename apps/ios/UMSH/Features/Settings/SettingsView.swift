@@ -854,7 +854,7 @@ struct RadioDetailView: View {
                                 identity: deviceIdentity,
                                 alias: nil,
                                 advertisedName: snapshot.name,
-                                systemRole: "companion_radio",
+                                systemRole: .companionRadio,
                                 storedRole: .unknown
                             ),
                             radioSnapshot: $snapshot,

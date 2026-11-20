@@ -77,13 +77,21 @@ class CoreSmokeTest {
     }
 
     @Test
-    fun asyncComposeCrossesTheBoundary() = runBlocking {
-        MobileMeshSession.start(identity(21), MobileCounterStore(temp.newFolder().path)).use { session ->
+    fun asyncSendCrossesTheBoundary() = runBlocking {
+        val own = identity(21)
+        val store = MobileAppStore.open(temp.newFolder().resolve("application.sqlite").path)
+        store.insertIdentity("me", own.publicIdentity().canonicalAddress, 1L)
+        MobileMeshSession.start(own, MobileCounterStore(temp.newFolder().path)).use { session ->
             val peer = identity(22).publicIdentity().canonicalAddress
             session.registerPeers(listOf(MobilePeerRegistrationRecord(peer, false)))
-            val batch = session.composeText(peer, 77u, "hello from Kotlin")
-            assertEquals("hello from Kotlin", batch.mutations.single().body)
+            session.attachChatStore(store, "me", null)
+            session.sendChat(peer, MobileChatSendRequest.Text("hello from Kotlin"))
+            assertEquals(
+                "hello from Kotlin",
+                store.chatMessagePageNewest("me", peer, 10u).messages.single().body,
+            )
         }
+        store.close()
     }
 
     @Test

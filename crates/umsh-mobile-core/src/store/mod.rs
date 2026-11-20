@@ -6,13 +6,10 @@
 //! store before iOS moved onto this one). A database the Swift store left at
 //! v31 opens as it is. Anything older is refused: the Swift migrations were
 //! not ported, so such a file needs one run of a build that still has them.
-//! This store's own migrations start at v32; there are none yet.
+//! This store's own migrations start at v32.
 //!
-//! Instants cross the interface as integer Unix milliseconds. Most columns
-//! store them that way (`*_at_ms`, truncated by the caller). Two node
-//! columns, `last_heard_at` and `advertisement_received_at`, are REAL Unix
-//! seconds, as the Swift store wrote them: they are converted at this
-//! boundary and read back rounded to the millisecond.
+//! Instants are integer Unix milliseconds (`*_at_ms`, truncated by the
+//! caller), in the columns and across the interface.
 //!
 //! Every write of more than one statement goes through
 //! [`MobileAppStore::write`], and every read of more than one through
@@ -88,14 +85,14 @@ const BASELINE: &str = include_str!("schema_v31.sql");
 /// `version - 1` to `version`.
 struct Migration {
     version: i64,
-    /// May call the functions [`configure`] registers.
     sql: &'static str,
 }
 
-/// This store's migrations, in order, starting at v32. None yet: the first
-/// one ends the Swift store's ability to open the file, so it waits for a
-/// change the schema needs.
-const MIGRATIONS: &[Migration] = &[];
+/// This store's migrations, in order, starting at v32.
+const MIGRATIONS: &[Migration] = &[Migration {
+    version: 32,
+    sql: include_str!("migration_v32.sql"),
+}];
 
 /// How long a statement waits on another connection's lock before failing.
 const BUSY_TIMEOUT: Duration = Duration::from_millis(5_000);
@@ -217,7 +214,7 @@ impl MobileAppStore {
     /// `sqlite_sequence` is SQLite's own and is left: row IDs carry on from
     /// where they were.
     pub fn erase_all_content(&self) -> Result<(), MobileStoreError> {
-        self.write(|transaction| {
+        self.erase(|transaction| {
             // Which order the tables empty in is not something this has to
             // know: with the checks deferred to the commit, the only state the
             // foreign keys are tested against is the final one, where every
@@ -251,6 +248,27 @@ impl MobileAppStore {
         work: impl FnOnce(&Transaction<'_>) -> Result<T, MobileStoreError>,
     ) -> Result<T, MobileStoreError> {
         self.transact(TransactionBehavior::Immediate, work)
+    }
+
+    /// A write that erases content the user asked to be rid of. With
+    /// `secure_delete` on, the rows it deletes are overwritten in the
+    /// database; the checkpoint after it moves that into the file and
+    /// empties the write-ahead log, which still holds the old pages.
+    fn erase<T>(
+        &self,
+        work: impl FnOnce(&Transaction<'_>) -> Result<T, MobileStoreError>,
+    ) -> Result<T, MobileStoreError> {
+        let value = self.write(work)?;
+        // The erase itself is committed; a checkpoint another connection's
+        // reader holds back is retried by the next one, so it is logged
+        // rather than failed.
+        if let Err(error) = self
+            .connection()
+            .pragma_update(None, "wal_checkpoint", "TRUNCATE")
+        {
+            log::warn!("erase: the write-ahead log was not checkpointed: {error}");
+        }
+        Ok(value)
     }
 
     /// Run `work` as one read transaction, so its statements all see the
@@ -299,7 +317,10 @@ fn configure(connection: &Connection) -> Result<(), MobileStoreError> {
         });
     }
     connection.pragma_update(None, "synchronous", "FULL")?;
-    peers::register_functions(connection)?;
+    // Deleted content is overwritten, not left in free pages. The SQLite
+    // Android bundles is built with it off, and Apple's only zeroes what
+    // costs no extra I/O.
+    connection.pragma_update(None, "secure_delete", true)?;
     Ok(())
 }
 

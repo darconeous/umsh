@@ -28,12 +28,9 @@ use crate::{
     MobileMeshSession, MobileUlcpSession, UlcpAlertState, UlcpDfuMode, UlcpRadioSettingsRecord,
 };
 
-/// Received frames kept for a platform that falls behind, newest kept.
-const RECEIVED_FRAMES_KEPT: usize = 64;
-/// Property pushes kept likewise. Pushes are sparse and each is whole.
+/// Property pushes kept for a platform that falls behind, newest kept.
+/// Pushes are sparse and each is whole.
 const PUSHES_KEPT: usize = 16;
-/// Log lines kept likewise.
-const DIAGNOSTICS_KEPT: usize = 256;
 
 /// The transport under a driver: one link carrying whole ULCP frames.
 ///
@@ -125,16 +122,10 @@ impl Shared {
                 update.state = batch.state;
             }
             keep_newest(
-                &mut update.received_frames,
-                batch.received_frames,
-                RECEIVED_FRAMES_KEPT,
-            );
-            keep_newest(
                 &mut update.pushed_properties,
                 batch.pushed_properties,
                 PUSHES_KEPT,
             );
-            keep_newest(&mut update.diagnostics, batch.diagnostics, DIAGNOSTICS_KEPT);
             update.host_releases.extend(batch.host_releases);
         }
         self.wake.notify();
@@ -784,9 +775,10 @@ impl Runner {
                     if let Some(session) = &self.mesh_session
                         && let Err(error) = session.receive(record)
                     {
-                        batch
-                            .diagnostics
-                            .push(format!("mesh session refused a frame: {error}"));
+                        log::warn!(
+                            target: self.core.log_target(),
+                            "mesh session refused a frame: {error}"
+                        );
                     }
                 }
                 Effect::MeshComplete {
@@ -798,9 +790,10 @@ impl Runner {
                     if let Some(session) = &self.mesh_session
                         && let Err(error) = session.complete_outbound_frame(frame_id, transmitted)
                     {
-                        batch
-                            .diagnostics
-                            .push(format!("could not complete mesh frame {frame_id}: {error}"));
+                        log::warn!(
+                            target: self.core.log_target(),
+                            "could not complete mesh frame {frame_id}: {error}"
+                        );
                     }
                 }
                 Effect::MeshFailOutbound => {
@@ -814,10 +807,8 @@ impl Runner {
                     }
                 }
                 Effect::State(state) => batch.state = Some(*state),
-                Effect::Received(frame) => batch.received_frames.push(frame),
                 Effect::Pushed(push) => batch.pushed_properties.push(push),
                 Effect::HostReleased(key) => batch.host_releases.push(key),
-                Effect::Diagnostic(line) => batch.diagnostics.push(line),
             }
         }
         if batch != MobileRadioDriverUpdateRecord::default() {

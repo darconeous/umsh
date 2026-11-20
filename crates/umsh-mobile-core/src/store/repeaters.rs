@@ -114,7 +114,7 @@ impl MobileAppStore {
                 total,
                 // No cursor means the listing is complete, and an empty one
                 // says no more than that.
-                next_cursor: blob_or_null(next_cursor),
+                next_cursor,
                 as_of_ms,
             }))
         })
@@ -263,9 +263,7 @@ fn stored_entry(
     })
 }
 
-/// A blob with nothing in it as none, so an absent value has one form. The
-/// Swift store wrote a zero-length blob for one, which is why what is read
-/// goes through this as well as what is written.
+/// A blob with nothing in it as none, so an absent value has one form.
 fn blob_or_null(value: Option<Vec<u8>>) -> Option<Vec<u8>> {
     value.filter(|bytes| !bytes.is_empty())
 }

@@ -35,10 +35,23 @@ fn dump(connection: &Connection) -> String {
     out
 }
 
-/// [`BASELINE`]'s schema objects, without the header that names its
-/// version. There are no migrations yet, so every version has this schema.
-fn baseline_schema() -> &'static str {
-    BASELINE.split_once("do not edit.\n").unwrap().1
+/// The schema objects a database holds after `steps` of the ladder: the
+/// Swift store's baseline with those migrations after it.
+fn schema_after(steps: &[Migration]) -> String {
+    let connection = Connection::open_in_memory().unwrap();
+    connection.execute_batch(BASELINE).unwrap();
+    for step in steps {
+        connection.execute_batch(step.sql).unwrap();
+    }
+    dump(&connection)
+}
+
+fn baseline_schema() -> String {
+    schema_after(&[])
+}
+
+fn current_schema() -> String {
+    schema_after(MIGRATIONS)
 }
 
 /// The version a database ends at once the store opens it.
@@ -53,14 +66,14 @@ fn raw(path: &str) -> Connection {
 }
 
 #[test]
-fn a_new_file_gets_exactly_the_swift_schema() {
+fn a_new_file_gets_the_swift_schema_and_every_migration() {
     let directory = tempfile::tempdir().unwrap();
     let path = path_in(&directory);
     let store = MobileAppStore::open(path.clone()).unwrap();
     assert_eq!(store.schema_version(), Ok(current_version()));
     // Same CREATE text for every object means the same columns, types,
-    // defaults, constraints, and indexes as a Swift-migrated database.
-    assert_eq!(dump(&store.connection()), baseline_schema());
+    // defaults, constraints, and indexes as a migrated Swift database.
+    assert_eq!(dump(&store.connection()), current_schema());
 }
 
 #[test]
@@ -85,10 +98,15 @@ fn the_connection_is_configured_as_the_swift_store_configures_it() {
     assert_eq!(foreign_keys, 1);
     assert_eq!(synchronous, 2);
     assert_eq!(busy_timeout, 5_000);
+    // Set, not left to how the platform's SQLite was built.
+    let secure_delete: i64 = connection
+        .pragma_query_value(None, "secure_delete", |row| row.get(0))
+        .unwrap();
+    assert_eq!(secure_delete, 1);
 }
 
 #[test]
-fn a_database_the_swift_store_left_at_v31_opens_with_its_schema_and_data() {
+fn a_database_the_swift_store_left_at_v31_migrates_with_its_data() {
     let directory = tempfile::tempdir().unwrap();
     let path = path_in(&directory);
     {
@@ -109,7 +127,7 @@ fn a_database_the_swift_store_left_at_v31_opens_with_its_schema_and_data() {
     let store = MobileAppStore::open(path).unwrap();
     assert_eq!(store.schema_version(), Ok(current_version()));
     let connection = store.connection();
-    assert_eq!(dump(&connection), baseline_schema());
+    assert_eq!(dump(&connection), current_schema());
     let address: String = connection
         .query_row(
             "SELECT public_address FROM local_identity WHERE id = 'alice'",
@@ -136,7 +154,7 @@ fn reopening_keeps_the_schema_and_the_data() {
             .unwrap();
     }
     let store = MobileAppStore::open(path).unwrap();
-    assert_eq!(dump(&store.connection()), baseline_schema());
+    assert_eq!(dump(&store.connection()), current_schema());
     let count: i64 = store
         .connection()
         .query_row("SELECT count(*) FROM local_identity", [], |row| row.get(0))
@@ -467,7 +485,39 @@ fn erasing_empties_every_table_whatever_order_the_schema_lists_them_in() {
     // The schema and its version stay. (The dump orders by name, so the
     // layout reads as the baseline's.)
     assert_eq!(user_version(&connection).unwrap(), current_version());
-    assert_eq!(dump(&connection), baseline_schema());
+    assert_eq!(dump(&connection), current_schema());
+}
+
+#[test]
+fn erased_content_is_gone_from_the_files() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = path_in(&directory);
+    let store = MobileAppStore::open(path.clone()).unwrap();
+    let marker = "erased-content-marker";
+    store
+        .connection()
+        .execute(
+            "INSERT INTO local_identity (id, public_address, created_at_ms, advertised_name)
+             VALUES ('alice', 'alice-address', 0, ?)",
+            [marker],
+        )
+        .unwrap();
+    // Into the database file itself, not only the log.
+    store
+        .connection()
+        .pragma_update(None, "wal_checkpoint", "TRUNCATE")
+        .unwrap();
+
+    store.erase_all_content().unwrap();
+    for file in [path.clone(), format!("{path}-wal")] {
+        let bytes = std::fs::read(&file).unwrap_or_default();
+        assert!(
+            !bytes
+                .windows(marker.len())
+                .any(|window| window == marker.as_bytes()),
+            "{file} still holds the erased text"
+        );
+    }
 }
 
 #[test]
@@ -516,19 +566,20 @@ fn a_failed_write_carries_sqlite_s_code_and_message() {
 
 /// A database the Swift store wrote before iOS moved onto this one, every
 /// table filled through that store's own calls. It holds what only that
-/// store produced: sort keys folded by Foundation, heard-at times with
-/// fractions of a millisecond, zero-length blobs. That store is gone, so
-/// the file cannot be made again; do not replace it.
+/// store produced, which the v32 migration converts: sort keys folded by
+/// Foundation, heard-at times in seconds with fractions of a millisecond,
+/// zero-length blobs. That store is gone, so the file cannot be made
+/// again; do not replace it.
 const SWIFT_STORE_V31: &[u8] = include_bytes!("swift_store_v31.sqlite");
 
 #[test]
-fn a_database_the_swift_store_wrote_reads_whole_and_is_left_as_it_was() {
+fn a_database_the_swift_store_wrote_migrates_and_reads_whole() {
     let directory = tempfile::tempdir().unwrap();
     let path = path_in(&directory);
     std::fs::write(&path, SWIFT_STORE_V31).unwrap();
     let store = MobileAppStore::open(path.clone()).unwrap();
-    assert_eq!(store.schema_version(), Ok(BASELINE_VERSION));
-    assert_eq!(dump(&store.connection()), baseline_schema());
+    assert_eq!(store.schema_version(), Ok(current_version()));
+    assert_eq!(dump(&store.connection()), current_schema());
     let owner = || "alice".to_string();
 
     let nodes = store.list_nodes(owner()).unwrap();
@@ -632,8 +683,4 @@ fn a_database_the_swift_store_wrote_reads_whole_and_is_left_as_it_was() {
             .iter()
             .all(|m| m.reference.session_id == "staging-7")
     );
-
-    drop(store);
-    // Opening and reading wrote nothing to it.
-    assert_eq!(std::fs::read(&path).unwrap(), SWIFT_STORE_V31);
 }

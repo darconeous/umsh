@@ -61,7 +61,7 @@ use crate::mobile_chat::{
     MobileChatSenderResolutionRecord, MobileChatState, NotInPlace,
 };
 use crate::store::{MobileAppStore, MobileChatChangesRecord};
-use crate::ulcp::{MobileAnnouncementRecord, UlcpPropertyFrameRecord, UlcpSyncRecord};
+use crate::ulcp::{MobileAnnouncementRecord, UlcpPropertyFrameRecord, UlcpSyncRecord, refusal};
 use crate::{MobileCounterStore, MobileError, MobileIdentity};
 
 mod chat_store;
@@ -299,6 +299,10 @@ pub struct MobileMeshManagementAnswerRecord {
     /// The status that stood in place of a value: refused, absent, or out
     /// of an administrator's reach.
     pub status_code: Option<u32>,
+    /// `status_code` when it refuses the request. `ALREADY` and
+    /// `ITEM_NOT_FOUND` are not refusals: the device holds what was asked
+    /// for.
+    pub refusal: Option<u32>,
 }
 
 /// One report from an operation started with a `begin_management_*` call.
@@ -316,6 +320,8 @@ pub struct MobileMeshManagementEventRecord {
     /// The status when the device answered the whole exchange with one—
     /// what a save or a whole-table write reports.
     pub status_code: Option<u32>,
+    /// `status_code` when it refuses the request, as for an answer.
+    pub refusal: Option<u32>,
     /// Octets the device has yet to return of the answer it is part-way
     /// through, as of the last frame it sent.
     pub remaining_octets: Option<u32>,
@@ -742,8 +748,9 @@ impl<L: ?Sized + UpdateListener> WakeSignal<L> {
 const OUTBOUND_DEPTH: usize = 64;
 /// Ping, management and advertisement reports waiting for `poll_update`.
 const REPORT_DEPTH: usize = 256;
-/// Chat effects waiting to form a batch. They wait while a batch is out
-/// and unacknowledged, so this is deep.
+/// Chat effects waiting for the chat store. They wait for one to be
+/// attached, and while it retries a batch it could not store, so this is
+/// deep.
 const CHAT_EVENT_DEPTH: usize = 4096;
 /// Distinct senders heard between two polls.
 const HEARD_MAX: usize = 256;
@@ -753,7 +760,7 @@ const COMMAND_DEPTH: usize = 256;
 const INBOUND_DEPTH: usize = 64;
 
 /// What fell off the session's bounded queues because the platform or the
-/// worker fell behind, by queue, until a chat batch reports it.
+/// worker fell behind, by queue, until a poll logs it.
 struct Dropped {
     counts: [AtomicU64; Dropped::KINDS.len()],
 }
@@ -786,8 +793,7 @@ impl Dropped {
         self.counts[kind].fetch_add(1, Ordering::Relaxed);
     }
 
-    /// One diagnostic for each queue that dropped anything since the last
-    /// report.
+    /// A line for each queue that dropped anything since the last report.
     fn report(&self) -> Vec<String> {
         self.counts
             .iter()
@@ -997,28 +1003,9 @@ pub struct MobileMeshSessionUpdateRecord {
     pub management_events: Vec<MobileMeshManagementEventRecord>,
     pub advertisement_events: Vec<MobileMeshAdvertisementRecord>,
     pub peer_heard_events: Vec<MobileMeshPeerHeardRecord>,
-    /// Chat effects remain in the facade until Swift durably applies them and
-    /// acknowledges this batch. Until then the batch is handed out again
-    /// by a poll at least a second after the last that carried it, or by
-    /// the first poll after a new wake listener; a poll in between carries
-    /// no batch.
-    pub chat_batch_id: Option<u64>,
-    pub chat_mutations: Vec<MobileChatMutationRecord>,
-    /// Messages of ours sent again in place, applied before
-    /// `chat_deliveries`: word of their frames comes after.
-    pub chat_resends: Vec<MobileChatResendRecord>,
-    pub chat_deliveries: Vec<MobileChatDeliveryRecord>,
-    /// Repeaters overheard carrying our messages, a whole tally per
-    /// fragment each time it grows.
-    pub chat_repeats: Vec<MobileChatRepeatRecord>,
-    pub chat_archive_lookups: Vec<MobileChatArchiveLookupRecord>,
-    /// Channel members whose claimed hint has resolved to a full address. The
-    /// platform should upgrade rows it stored anonymously under that hint.
-    pub chat_sender_resolutions: Vec<MobileChatSenderResolutionRecord>,
-    pub chat_diagnostics: Vec<String>,
-    /// With a store attached, what the chat effects stored since the last
-    /// poll changed, when they changed anything; the batch fields above
-    /// are then always empty.
+    /// What the chat effects stored since the last poll changed, when they
+    /// changed anything. Chat waits for a store to be attached
+    /// (`attach_chat_store`).
     pub chat_changes: Option<MobileChatChangesRecord>,
     /// The 3-byte node hints of the addresses this phone answers to besides
     /// its own, when they changed since the last poll: one per session with
@@ -1354,85 +1341,6 @@ enum MobileChatWorkerEvent {
     Delivery(MobileChatDeliveryRecord),
     Repeats(MobileChatRepeatRecord),
     ArchiveLookup(MobileChatArchiveLookupRecord),
-    Diagnostic(String),
-}
-
-/// How soon a chat batch the platform holds unacknowledged is handed out
-/// again. A poll sooner than this leaves it out, so a burst of wakes does
-/// not copy a large batch over and over.
-const CHAT_REDELIVERY: Duration = Duration::from_secs(1);
-
-/// A chat batch out with the platform, sorted by kind as the update
-/// record carries it.
-struct PendingChatEventBatch {
-    id: u64,
-    mutations: Vec<MobileChatMutationRecord>,
-    resends: Vec<MobileChatResendRecord>,
-    deliveries: Vec<MobileChatDeliveryRecord>,
-    repeats: Vec<MobileChatRepeatRecord>,
-    archive_lookups: Vec<MobileChatArchiveLookupRecord>,
-    sender_resolutions: Vec<MobileChatSenderResolutionRecord>,
-    diagnostics: Vec<String>,
-    /// When a poll last handed it out; `None` until one has, or since a
-    /// new wake listener came.
-    handed_out: Option<std::time::Instant>,
-}
-
-impl PendingChatEventBatch {
-    fn new(id: u64, events: Vec<MobileChatWorkerEvent>, diagnostics: Vec<String>) -> Self {
-        let mut batch = Self {
-            id,
-            mutations: Vec::new(),
-            resends: Vec::new(),
-            deliveries: Vec::new(),
-            repeats: Vec::new(),
-            archive_lookups: Vec::new(),
-            sender_resolutions: Vec::new(),
-            diagnostics,
-            handed_out: None,
-        };
-        for event in events {
-            match event {
-                MobileChatWorkerEvent::Mutation(record) => batch.mutations.push(record),
-                MobileChatWorkerEvent::Resent(record) => batch.resends.push(record),
-                MobileChatWorkerEvent::Delivery(record) => batch.deliveries.push(record),
-                MobileChatWorkerEvent::Repeats(record) => batch.repeats.push(record),
-                MobileChatWorkerEvent::ArchiveLookup(record) => batch.archive_lookups.push(record),
-                MobileChatWorkerEvent::SenderResolution(record) => {
-                    batch.sender_resolutions.push(record);
-                }
-                MobileChatWorkerEvent::Diagnostic(record) => batch.diagnostics.push(record),
-            }
-        }
-        batch
-    }
-
-    /// Its effects, for the chat store to take, with its diagnostics.
-    fn into_effects(self) -> (crate::store::ChatBatchEffects, Vec<String>) {
-        (
-            crate::store::ChatBatchEffects {
-                mutations: self.mutations,
-                resends: self.resends,
-                deliveries: self.deliveries,
-                repeats: self.repeats,
-                archive_lookups: self.archive_lookups,
-                sender_resolutions: self.sender_resolutions,
-            },
-            self.diagnostics,
-        )
-    }
-
-    /// Whether a poll at `now` hands it out: the first time, and again once
-    /// [`CHAT_REDELIVERY`] has passed without an acknowledgment.
-    fn due(&mut self, now: std::time::Instant) -> bool {
-        let due = self
-            .handed_out
-            .is_none_or(|at| now.duration_since(at) >= CHAT_REDELIVERY);
-        if due {
-            self.handed_out = Some(now);
-        }
-        due
-    }
 }
 
 #[derive(Debug)]
@@ -1863,12 +1771,12 @@ pub struct MobileMeshSession {
     /// The longest frame's airtime at the radio's settings, in ms; 0 until
     /// the platform reports it.
     frame_ms: Arc<AtomicU32>,
+    /// Chat effects, waiting for the chat store.
     chat_events: Mutex<std_mpsc::Receiver<MobileChatWorkerEvent>>,
-    pending_chat_events: Mutex<Option<PendingChatEventBatch>>,
     /// Told whenever the worker reports a chat effect.
     chat_ready: Arc<Notify>,
-    /// Set once a store is attached: from then on chat effects are stored
-    /// here rather than handed to the platform in batches.
+    /// Set once a store is attached, which takes the chat effects from
+    /// then on.
     chat_store: OnceLock<ChatStore>,
     /// What stored chat effects changed since the last poll.
     chat_changes: Mutex<Option<MobileChatChangesRecord>>,
@@ -1876,7 +1784,6 @@ pub struct MobileMeshSession {
     /// group conversation: how a stored channel row is found from traffic.
     channel_digests: Mutex<HashMap<String, String>>,
     dropped: Arc<Dropped>,
-    next_chat_batch_id: Mutex<u64>,
     next_operation_id: Mutex<u64>,
     wake: Arc<WakeSignal>,
 }
@@ -2920,88 +2827,6 @@ impl MobileMeshSession {
             .map_err(|_| MobileMeshError::SessionUnavailable)
     }
 
-    /// Compose a new message as the user typed it into a conversation: a
-    /// `/me ` prefix makes it status text. A reply does not come this way.
-    /// To a peer it goes under a session with forward secrecy or never
-    /// under one, as `forward_secret` says the composer showed it; with
-    /// none held, it asks for one and waits for it. Without
-    /// `forward_secret`, it goes under one only when one is held.
-    pub async fn compose_typed(
-        &self,
-        conversation_address: String,
-        client_token: u32,
-        text: String,
-        forward_secret: Option<bool>,
-    ) -> Result<MobileChatComposeBatchRecord, MobileMeshError> {
-        self.compose_chat(
-            conversation_address,
-            client_token,
-            ChatComposeRequest::Typed {
-                text,
-                forward_secret,
-            },
-        )
-        .await
-    }
-
-    /// Compose status text into a conversation, its body taken as it stands.
-    pub async fn compose_status(
-        &self,
-        conversation_address: String,
-        client_token: u32,
-        body: String,
-    ) -> Result<MobileChatComposeBatchRecord, MobileMeshError> {
-        self.compose_chat(
-            conversation_address,
-            client_token,
-            ChatComposeRequest::Status { body },
-        )
-        .await
-    }
-
-    /// Compose a message into a conversation, addressed either by a peer's
-    /// address or by a channel's conversation address, its body taken as it
-    /// stands.
-    pub async fn compose_text(
-        &self,
-        conversation_address: String,
-        client_token: u32,
-        body: String,
-    ) -> Result<MobileChatComposeBatchRecord, MobileMeshError> {
-        self.compose_chat(
-            conversation_address,
-            client_token,
-            ChatComposeRequest::Text { body },
-        )
-        .await
-    }
-
-    /// Compose a failed message's words again as a new message, as status
-    /// text or not, under a session with forward secrecy or never under one,
-    /// as the user chose: for a message that can no longer be sent again in
-    /// place ([`Self::resend_chat`]). With `forward_secret` and no session
-    /// held with the conversation's peer, one is asked for, and the message
-    /// waits for it.
-    pub async fn compose_again(
-        &self,
-        conversation_address: String,
-        client_token: u32,
-        body: String,
-        status: bool,
-        forward_secret: bool,
-    ) -> Result<MobileChatComposeBatchRecord, MobileMeshError> {
-        self.compose_chat(
-            conversation_address,
-            client_token,
-            ChatComposeRequest::Again {
-                body,
-                status,
-                forward_secret,
-            },
-        )
-        .await
-    }
-
     /// Send a message of ours that was not delivered again, as itself: the
     /// frames the platform archived for those of its fragments not yet
     /// acknowledged go again under its wire ID, so a peer that had it keeps
@@ -3011,8 +2836,8 @@ impl MobileMeshSession {
     /// one, as `forward_secret` says; with it and no session held, one is
     /// asked for, and the frames wait for it.
     ///
-    /// A [`MobileChatResendRecord`] in the next chat batch, ahead of any
-    /// word of the frames, says where that word comes. Fails with
+    /// The stored message's delivery is pointed at the frames'
+    /// transmission before any word of them comes. Fails with
     /// `ChatResendNotInPlace` when the message's stream has moved past it.
     pub async fn resend_chat(
         &self,
@@ -3037,93 +2862,10 @@ impl MobileMeshSession {
             .map_err(|_| MobileMeshError::SessionUnavailable)?
     }
 
-    /// Compose an edit of a previously sent message. The original may come
-    /// from an earlier app launch: its persisted `(wire_id, epoch)` is used
-    /// when the facade session no longer holds a live handle, and the engine
-    /// rejects it (`ChatComposeFailed`) if stream continuity was lost since.
-    pub async fn compose_edit(
-        &self,
-        conversation_address: String,
-        client_token: u32,
-        original: MobileChatOriginalRef,
-        body: String,
-    ) -> Result<MobileChatComposeBatchRecord, MobileMeshError> {
-        self.compose_chat(
-            conversation_address,
-            client_token,
-            ChatComposeRequest::Edit { original, body },
-        )
-        .await
-    }
-
-    /// Compose a deletion (empty edit on the wire) of a previously sent
-    /// message. Same original-reference rules as [`Self::compose_edit`].
-    pub async fn compose_delete(
-        &self,
-        conversation_address: String,
-        client_token: u32,
-        original: MobileChatOriginalRef,
-    ) -> Result<MobileChatComposeBatchRecord, MobileMeshError> {
-        self.compose_chat(
-            conversation_address,
-            client_token,
-            ChatComposeRequest::Delete { original },
-        )
-        .await
-    }
-
-    /// React to a message with a short emote body, or withdraw an earlier
-    /// reaction by passing an empty body. A sender has at most one live
-    /// reaction per message: sending another simply supersedes it, so there
-    /// is nothing to edit or delete.
-    ///
-    /// Unlike an edit, the target may be a message the peer sent, and usually
-    /// one persisted before this launch; the reference carries the direction
-    /// and (for channel groups) the sender hint needed to name it.
-    pub async fn compose_reaction(
-        &self,
-        conversation_address: String,
-        client_token: u32,
-        target: MobileChatRegardingRef,
-        body: String,
-    ) -> Result<MobileChatComposeBatchRecord, MobileMeshError> {
-        self.compose_chat(
-            conversation_address,
-            client_token,
-            ChatComposeRequest::Reaction { target, body },
-        )
-        .await
-    }
-
-    /// Send a text message in reply to `target`, which, as for a reaction,
-    /// may be either party's message and one persisted before this launch.
-    /// Where the original can no longer be named, the text goes as a plain
-    /// message. It goes under forward secrecy as
-    /// [`Self::compose_typed`] says.
-    pub async fn compose_reply(
-        &self,
-        conversation_address: String,
-        client_token: u32,
-        target: MobileChatRegardingRef,
-        body: String,
-        forward_secret: Option<bool>,
-    ) -> Result<MobileChatComposeBatchRecord, MobileMeshError> {
-        self.compose_chat(
-            conversation_address,
-            client_token,
-            ChatComposeRequest::Reply {
-                target,
-                body,
-                forward_secret,
-            },
-        )
-        .await
-    }
-
     /// Keep this session's chat in `store`, for the identity
     /// `owner_identity_id`. From now on every chat effect is stored as it
     /// comes, what waited for a store first, and polls report what it
-    /// changed instead of handing out batches. `silent_tests_in` is where
+    /// changed. `silent_tests_in` is where
     /// [`Self::set_chat_silent_tests_in`] starts. Fails with
     /// `OperationInProgress` when a store is already attached.
     pub fn attach_chat_store(
@@ -3177,36 +2919,6 @@ impl MobileMeshSession {
         result.await.map_err(|_| unavailable)?
     }
 
-    pub async fn commit_chat_batch(&self, batch_id: u64) -> Result<(), MobileMeshError> {
-        let (response, result) = oneshot::channel();
-        self.commands
-            .send(WorkerCommand::CommitChatBatch { batch_id, response })
-            .await
-            .map_err(|_| MobileMeshError::SessionUnavailable)?;
-        result
-            .await
-            .map_err(|_| MobileMeshError::SessionUnavailable)?
-    }
-
-    pub async fn reject_chat_batch(
-        &self,
-        batch_id: u64,
-        checkpoints: Vec<MobileChatCheckpointRecord>,
-    ) -> Result<(), MobileMeshError> {
-        let (response, result) = oneshot::channel();
-        self.commands
-            .send(WorkerCommand::RejectChatBatch {
-                batch_id,
-                checkpoints,
-                response,
-            })
-            .await
-            .map_err(|_| MobileMeshError::SessionUnavailable)?;
-        result
-            .await
-            .map_err(|_| MobileMeshError::SessionUnavailable)?
-    }
-
     /// Ask again for a message missing from a conversation, or the missing
     /// part of one, as the user chose to: `handle`, from a record of
     /// `session_id`, is the gap's placeholder (presence `GapIdle`) or the
@@ -3229,36 +2941,6 @@ impl MobileMeshSession {
         result
             .await
             .map_err(|_| MobileMeshError::SessionUnavailable)
-    }
-
-    pub fn apply_chat_archive_result(
-        &self,
-        request_id: u32,
-        kind: MobileChatArchiveResultKind,
-        payload: Vec<u8>,
-    ) -> Result<(), MobileMeshError> {
-        self.commands
-            .try_send(WorkerCommand::ChatArchiveResult {
-                request_id,
-                kind,
-                payload,
-            })
-            .map_err(command_refused)
-    }
-
-    pub fn acknowledge_chat_batch(&self, batch_id: u64) -> Result<(), MobileMeshError> {
-        let mut pending = self
-            .pending_chat_events
-            .lock()
-            .map_err(|_| MobileMeshError::SessionUnavailable)?;
-        if pending.as_ref().is_some_and(|batch| batch.id == batch_id) {
-            *pending = None;
-            // Events that queued while this batch was outstanding could not
-            // form a new batch; poke the listener so the platform drains
-            // again now that the slot is free.
-            self.wake.notify();
-        }
-        Ok(())
     }
 
     /// Fail every chat transmission currently owned by the mobile radio
@@ -3286,17 +2968,6 @@ impl MobileMeshSession {
     /// has new data for `poll_update`. If data is already pending, the
     /// listener fires immediately.
     pub fn set_wake_listener(&self, listener: Arc<dyn MobileMeshWakeListener>) {
-        // A new listener has seen no batch: the next poll hands out the one
-        // pending, however recently another listener was given it.
-        if let Some(batch) = self
-            .pending_chat_events
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .as_mut()
-        {
-            batch.handed_out = None;
-            self.wake.notify();
-        }
         self.wake.set_listener(Some(listener));
     }
 
@@ -3337,110 +3008,20 @@ impl MobileMeshSession {
         let local_destination_hints = self.local_hints.take();
         let forward_secret_conversations = self.forward_secret_conversations.take();
         let meet = self.meet_states.take();
-        let mut update_chat = None;
-        // Whether a store is attached is read under the batch's lock: the
-        // attach holds it while it takes the batch over.
-        let mut pending = self
-            .pending_chat_events
+        for line in self.dropped.report() {
+            log::warn!("{line}");
+        }
+        let chat_changes = self
+            .chat_changes
             .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        let chat_changes = if self.chat_store.get().is_some() {
-            // The chat store takes the effects, and reports what they
-            // changed; what the queues dropped goes out with that.
-            let mut changes = self
-                .chat_changes
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .take();
-            let diagnostics = self.dropped.report();
-            if !diagnostics.is_empty() {
-                changes
-                    .get_or_insert_with(MobileChatChangesRecord::default)
-                    .diagnostics
-                    .extend(diagnostics);
-            }
-            changes
-        } else {
-            if pending.is_none() {
-                let events = self
-                    .chat_events
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .try_iter()
-                    .collect::<Vec<_>>();
-                let diagnostics = self.dropped.report();
-                if !events.is_empty() || !diagnostics.is_empty() {
-                    let mut next = self
-                        .next_chat_batch_id
-                        .lock()
-                        .unwrap_or_else(PoisonError::into_inner);
-                    let id = *next;
-                    *next = next.wrapping_add(1).max(1);
-                    *pending = Some(PendingChatEventBatch::new(id, events, diagnostics));
-                }
-            }
-            if let Some(batch) = pending.as_mut()
-                && batch.due(std::time::Instant::now())
-            {
-                update_chat = Some((
-                    batch.id,
-                    batch.mutations.clone(),
-                    batch.resends.clone(),
-                    batch.deliveries.clone(),
-                    batch.repeats.clone(),
-                    batch.archive_lookups.clone(),
-                    batch.sender_resolutions.clone(),
-                    batch.diagnostics.clone(),
-                ));
-            }
-            None
-        };
-        drop(pending);
-        let (
-            chat_batch_id,
-            chat_mutations,
-            chat_resends,
-            chat_deliveries,
-            chat_repeats,
-            chat_archive_lookups,
-            chat_sender_resolutions,
-            chat_diagnostics,
-        ) = match update_chat {
-            Some((
-                id,
-                mutations,
-                resends,
-                deliveries,
-                repeats,
-                lookups,
-                resolutions,
-                diagnostics,
-            )) => (
-                Some(id),
-                mutations,
-                resends,
-                deliveries,
-                repeats,
-                lookups,
-                resolutions,
-                diagnostics,
-            ),
-            None => Default::default(),
-        };
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
         MobileMeshSessionUpdateRecord {
             outbound_frames,
             ping_events,
             management_events,
             advertisement_events,
             peer_heard_events,
-            chat_batch_id,
-            chat_mutations,
-            chat_resends,
-            chat_deliveries,
-            chat_repeats,
-            chat_archive_lookups,
-            chat_sender_resolutions,
-            chat_diagnostics,
             chat_changes,
             local_destination_hints,
             forward_secret_conversations,
@@ -3540,18 +3121,9 @@ impl MobileMeshSession {
         silent_tests_in: Option<String>,
         retry_delay: Duration,
     ) -> Result<(), MobileMeshError> {
-        // Held from here until the store is in place: a poll decides under
-        // this lock whether it forms a batch, so none is formed that the
-        // store never takes.
-        let mut pending = self
-            .pending_chat_events
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
         if self.chat_store.get().is_some() {
             return Err(MobileMeshError::OperationInProgress);
         }
-        // A batch handed out before the store came is the store's now.
-        let waiting = pending.take().map(PendingChatEventBatch::into_effects);
         let chat_store = ChatStore::start(
             &self,
             store,
@@ -3559,12 +3131,10 @@ impl MobileMeshSession {
             silent_tests_in,
             self.chat_ready.clone(),
             retry_delay,
-            waiting,
         )?;
         self.chat_store
             .set(chat_store)
             .map_err(|_| MobileMeshError::OperationInProgress)?;
-        drop(pending);
         // Whatever waited for the store is stored now.
         self.chat_ready.notify_one();
         Ok(())
@@ -3581,6 +3151,55 @@ impl MobileMeshSession {
             .get_or_insert_with(MobileChatChangesRecord::default)
             .merge(changes);
         self.wake.notify();
+    }
+
+    /// Release a stored compose batch's frames to the radio.
+    async fn commit_chat_batch(&self, batch_id: u64) -> Result<(), MobileMeshError> {
+        let (response, result) = oneshot::channel();
+        self.commands
+            .send(WorkerCommand::CommitChatBatch { batch_id, response })
+            .await
+            .map_err(|_| MobileMeshError::SessionUnavailable)?;
+        result
+            .await
+            .map_err(|_| MobileMeshError::SessionUnavailable)?
+    }
+
+    /// Give up on a compose batch the store could not keep, rebuilding
+    /// the engine from the store's checkpoints.
+    async fn reject_chat_batch(
+        &self,
+        batch_id: u64,
+        checkpoints: Vec<MobileChatCheckpointRecord>,
+    ) -> Result<(), MobileMeshError> {
+        let (response, result) = oneshot::channel();
+        self.commands
+            .send(WorkerCommand::RejectChatBatch {
+                batch_id,
+                checkpoints,
+                response,
+            })
+            .await
+            .map_err(|_| MobileMeshError::SessionUnavailable)?;
+        result
+            .await
+            .map_err(|_| MobileMeshError::SessionUnavailable)?
+    }
+
+    /// Answer a repair request with what the store holds.
+    fn apply_chat_archive_result(
+        &self,
+        request_id: u32,
+        kind: MobileChatArchiveResultKind,
+        payload: Vec<u8>,
+    ) -> Result<(), MobileMeshError> {
+        self.commands
+            .try_send(WorkerCommand::ChatArchiveResult {
+                request_id,
+                kind,
+                payload,
+            })
+            .map_err(command_refused)
     }
 
     async fn compose_chat(
@@ -3745,13 +3364,11 @@ impl MobileMeshSession {
             meet_states,
             frame_ms,
             chat_events,
-            pending_chat_events: Mutex::new(None),
             chat_ready,
             chat_store: OnceLock::new(),
             chat_changes: Mutex::new(None),
             channel_digests: Mutex::new(HashMap::new()),
             dropped,
-            next_chat_batch_id: Mutex::new(1),
             next_operation_id: Mutex::new(1),
             wake,
         }))
@@ -4024,6 +3641,7 @@ impl<M: MacBackend> ManagementJob<M> {
             outcome,
             answers: Vec::new(),
             status_code: None,
+            refusal: refusal(None),
             remaining_octets: self.manager.remaining(),
             properties_remaining: match &self.plan {
                 ManagementPlan::Fetch(crawl) => Some(crawl.pending.len() as u32),
@@ -4128,6 +3746,7 @@ impl<M: MacBackend> ManagementJob<M> {
                 }
             }
         }
+        event.refusal = refusal(event.status_code);
         event
     }
 
@@ -4178,6 +3797,7 @@ fn answer_record(
         property_id,
         value: answer.value().map(<[u8]>::to_vec),
         status_code: answer.status().map(|status| status.0),
+        refusal: refusal(answer.status().map(|status| status.0)),
     }
 }
 
@@ -4194,6 +3814,7 @@ fn emit_management_end(
         outcome,
         answers: Vec::new(),
         status_code: None,
+        refusal: refusal(None),
         remaining_octets: None,
         properties_remaining: None,
     });
@@ -4532,7 +4153,6 @@ async fn run_worker(
     });
     let inbound_text = Rc::new(RefCell::new(Vec::<InboundText>::new()));
     let inbound_text_callback = inbound_text.clone();
-    let echo_events = chat_events.clone();
     let text_subscription = node.on_receive(move |packet| {
         match node_adapter::inbound_text(packet, &local_key, &well_known) {
             None => false,
@@ -4543,9 +4163,7 @@ async fn run_worker(
                     Some(hops) => format!("after {hops} hop(s)"),
                     None => "over a source route".to_string(),
                 };
-                let _ = echo_events.send(MobileChatWorkerEvent::Diagnostic(format!(
-                    "own multicast relayed back {distance}"
-                )));
+                log::debug!("own multicast relayed back {distance}");
                 true
             }
             Some(Inbound::Refused(refusal)) => {
@@ -4561,9 +4179,7 @@ async fn run_worker(
                         "a public-channel text frame: missing its full source key"
                     }
                 };
-                let _ = echo_events.send(MobileChatWorkerEvent::Diagnostic(format!(
-                    "dropped {reason}"
-                )));
+                log::info!("dropped {reason}");
                 false
             }
             Some(Inbound::Text(text)) => {
@@ -4737,9 +4353,7 @@ async fn run_worker(
         match handle.service_counter_persistence().await {
             Ok(_) => true,
             Err(error) => {
-                let _ = chat_events.send(MobileChatWorkerEvent::Diagnostic(format!(
-                    "frame counter persistence failed: {error}"
-                )));
+                log::warn!("frame counter persistence failed: {error}");
                 false
             }
         }
@@ -5366,11 +4980,6 @@ async fn run_worker(
                                                 MobileChatWorkerEvent::Delivery(delivery),
                                             );
                                         }
-                                        for diagnostic in composed.diagnostics {
-                                            let _ = chat_events.send(
-                                                MobileChatWorkerEvent::Diagnostic(diagnostic),
-                                            );
-                                        }
                                         Ok(composed.record)
                                     }
                                     Err(ComposeFailure::Pending) => {
@@ -5472,13 +5081,8 @@ async fn run_worker(
                             let now_ms = handle.now_ms().await;
                             let result =
                                 match chat.reject(batch_id, &checkpoints, chat_seeds(), now_ms) {
-                                    Some((drain, diagnostics)) => {
+                                    Some(drain) => {
                                         publish_chat_drain(drain, &mut chat_queue, &chat_events);
-                                        for diagnostic in diagnostics {
-                                            let _ = chat_events.send(
-                                                MobileChatWorkerEvent::Diagnostic(diagnostic),
-                                            );
-                                        }
                                         Ok(())
                                     }
                                     None => Err(MobileMeshError::ChatBatchMissing),
@@ -5735,7 +5339,7 @@ async fn run_worker(
                     }
                     chat.facade.tick(now_ms);
                     for stall in chat_queue.service(&mut chat.facade, now_ms) {
-                        let _ = chat_events.send(MobileChatWorkerEvent::Diagnostic(format!(
+                        log::warn!(
                             "transmission {} has not left the radio after {}s \
                              ({}/{} window slots used, {} more waiting)",
                             stall.transmission_id,
@@ -5743,7 +5347,7 @@ async fn run_worker(
                             stall.occupied,
                             stall.window,
                             stall.pending,
-                        )));
+                        );
                     }
                     publish_chat_drain(chat.drain(), &mut chat_queue, &chat_events);
                     let sent = pump_chat(
@@ -6087,9 +5691,6 @@ fn publish_chat_drain(
     for resolution in drain.resolutions {
         let _ = events.send(MobileChatWorkerEvent::SenderResolution(resolution));
     }
-    for diagnostic in drain.diagnostics {
-        let _ = events.send(MobileChatWorkerEvent::Diagnostic(diagnostic));
-    }
 }
 
 fn rx_record(rx: &RxSummary) -> MobileChatRxMetadataRecord {
@@ -6232,6 +5833,7 @@ fn emit_ping_outcome(
 mod tests {
     use super::*;
     use crate::MobileChatDeliveryState;
+    use crate::store::ChatBatchEffects;
     use std::time::Instant;
     use umsh_crypto::NodeIdentity;
 
@@ -6312,6 +5914,49 @@ mod tests {
         MobilePeerRegistrationRecord {
             address,
             mobile: false,
+        }
+    }
+
+    /// The chat effects the worker has reported since the last call, as a
+    /// store would take them. For a session with no store attached.
+    fn chat_effects(session: &MobileMeshSession) -> ChatBatchEffects {
+        chat_store::effects(
+            session
+                .chat_events
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .try_iter()
+                .collect(),
+        )
+    }
+
+    /// Composing without a store, for the tests of the session and its
+    /// engine: what the chat store does, without the storing.
+    impl MobileMeshSession {
+        async fn compose_typed(
+            &self,
+            conversation_address: String,
+            client_token: u32,
+            text: String,
+            forward_secret: Option<bool>,
+        ) -> Result<MobileChatComposeBatchRecord, MobileMeshError> {
+            let request = ChatComposeRequest::Typed {
+                text,
+                forward_secret,
+            };
+            self.compose_chat(conversation_address, client_token, request)
+                .await
+        }
+
+        async fn compose_text(
+            &self,
+            conversation_address: String,
+            client_token: u32,
+            body: String,
+        ) -> Result<MobileChatComposeBatchRecord, MobileMeshError> {
+            let request = ChatComposeRequest::Text { body };
+            self.compose_chat(conversation_address, client_token, request)
+                .await
         }
     }
 
@@ -8723,6 +8368,7 @@ mod tests {
                 .unwrap();
             }
             let bob_update = bob.poll_update();
+            let bob_chat = chat_effects(&bob);
             for frame in bob_update.outbound_frames.iter().cloned() {
                 bob.complete_outbound_frame(frame.id, true).unwrap();
                 alice
@@ -8737,7 +8383,7 @@ mod tests {
                     })
                     .unwrap();
             }
-            if let Some(mutation) = bob_update.chat_mutations.first() {
+            if let Some(mutation) = bob_chat.mutations.first() {
                 assert_eq!(mutation.body.as_deref(), Some("hello from Rust"));
                 assert_eq!(
                     mutation.sender_address.as_deref(),
@@ -8747,23 +8393,6 @@ mod tests {
                     mutation.direction,
                     Some(crate::MobileChatDirection::Inbound)
                 );
-                let batch_id = bob_update.chat_batch_id.expect("owned chat batch");
-                // A poll straight after is not handed the batch again...
-                let again = bob.poll_update();
-                assert_eq!(again.chat_batch_id, None);
-                assert!(again.chat_mutations.is_empty());
-                // ...but a new listener is, whole.
-                let (signal, _wakes) = std_mpsc::channel();
-                bob.set_wake_listener(Arc::new(TestWakeListener { signal }));
-                let replayed = bob.poll_update();
-                assert_eq!(
-                    replayed.chat_batch_id,
-                    Some(batch_id),
-                    "unacknowledged chat effects must be replayed"
-                );
-                assert_eq!(replayed.chat_mutations, bob_update.chat_mutations);
-                bob.acknowledge_chat_batch(batch_id).unwrap();
-                assert!(bob.poll_update().chat_mutations.is_empty());
                 break;
             }
             assert!(Instant::now() < deadline, "chat frame did not arrive");
@@ -8816,6 +8445,7 @@ mod tests {
         let mut sender_delivered = false;
         loop {
             let alice_update = alice.poll_update();
+            let alice_chat = chat_effects(&alice);
             let alice_frames = alice_update.outbound_frames;
             assert!(
                 alice_frames.len() <= 1,
@@ -8835,14 +8465,12 @@ mod tests {
                 })
                 .unwrap();
             }
-            sender_delivered |= alice_update
-                .chat_deliveries
+            sender_delivered |= alice_chat
+                .deliveries
                 .iter()
                 .any(|delivery| delivery.state == MobileChatDeliveryState::Acknowledged);
-            if let Some(batch_id) = alice_update.chat_batch_id {
-                alice.acknowledge_chat_batch(batch_id).unwrap();
-            }
             let bob_update = bob.poll_update();
+            let bob_chat = chat_effects(&bob);
             for frame in bob_update.outbound_frames.iter().cloned() {
                 return_lengths.push(frame.data.len());
                 bob.complete_outbound_frame(frame.id, true).unwrap();
@@ -8858,16 +8486,13 @@ mod tests {
                     })
                     .unwrap();
             }
-            if let Some(mutation) = bob_update
-                .chat_mutations
+            if let Some(mutation) = bob_chat
+                .mutations
                 .iter()
                 .find(|mutation| mutation.complete == Some(true))
             {
                 assert_eq!(mutation.body.as_deref(), Some(body.as_str()));
                 receiver_complete = true;
-            }
-            if let Some(batch_id) = bob_update.chat_batch_id {
-                bob.acknowledge_chat_batch(batch_id).unwrap();
             }
             if receiver_complete && sender_delivered {
                 assert!(
@@ -8908,18 +8533,16 @@ mod tests {
 
         let deadline = Instant::now() + Duration::from_secs(2);
         loop {
-            let update = session.poll_update();
+            session.poll_update();
+            let chat = chat_effects(&session);
             // Unconfirmed, or undelivered if it never left for the radio.
-            if update.chat_deliveries.iter().any(|delivery| {
+            if chat.deliveries.iter().any(|delivery| {
                 matches!(
                     delivery.state,
                     MobileChatDeliveryState::Failed | MobileChatDeliveryState::Undelivered
                 )
             }) {
                 break;
-            }
-            if let Some(batch_id) = update.chat_batch_id {
-                session.acknowledge_chat_batch(batch_id).unwrap();
             }
             assert!(
                 Instant::now() < deadline,
@@ -8970,6 +8593,7 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             let alice_update = alice.poll_update();
+            let alice_chat = chat_effects(&alice);
             for frame in alice_update.outbound_frames {
                 alice.complete_outbound_frame(frame.id, true).unwrap();
                 bob.receive(MobileMeshRxRecord {
@@ -8983,13 +8607,10 @@ mod tests {
                 })
                 .unwrap();
             }
-            let acked = alice_update
-                .chat_deliveries
+            let acked = alice_chat
+                .deliveries
                 .iter()
                 .any(|delivery| delivery.state == MobileChatDeliveryState::Acknowledged);
-            if let Some(batch_id) = alice_update.chat_batch_id {
-                alice.acknowledge_chat_batch(batch_id).unwrap();
-            }
             let bob_update = bob.poll_update();
             for frame in bob_update.outbound_frames.iter().cloned() {
                 bob.complete_outbound_frame(frame.id, true).unwrap();
@@ -9004,9 +8625,6 @@ mod tests {
                         age_seconds: 0,
                     })
                     .unwrap();
-            }
-            if let Some(batch_id) = bob_update.chat_batch_id {
-                bob.acknowledge_chat_batch(batch_id).unwrap();
             }
             if acked {
                 break;
@@ -9031,9 +8649,6 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             let update = alice.poll_update();
-            if let Some(batch_id) = update.chat_batch_id {
-                alice.acknowledge_chat_batch(batch_id).unwrap();
-            }
             if !update.outbound_frames.is_empty() {
                 break;
             }
@@ -9053,17 +8668,15 @@ mod tests {
         let quiet_deadline = fail_at + Duration::from_millis(1_000);
         while Instant::now() < quiet_deadline {
             let update = alice.poll_update();
+            let chat = chat_effects(&alice);
             assert!(
                 update.outbound_frames.is_empty(),
                 "fragments queued behind a failed batch were still dispatched"
             );
-            saw_failed |= update
-                .chat_deliveries
+            saw_failed |= chat
+                .deliveries
                 .iter()
                 .any(|delivery| delivery.state == MobileChatDeliveryState::Failed);
-            if let Some(batch_id) = update.chat_batch_id {
-                alice.acknowledge_chat_batch(batch_id).unwrap();
-            }
             std::thread::sleep(Duration::from_millis(10));
         }
         assert!(saw_failed, "batch failure never reported to the transcript");
@@ -9077,9 +8690,6 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             let update = alice.poll_update();
-            if let Some(batch_id) = update.chat_batch_id {
-                alice.acknowledge_chat_batch(batch_id).unwrap();
-            }
             if !update.outbound_frames.is_empty() {
                 break;
             }
@@ -9145,6 +8755,7 @@ mod tests {
             || !alice_states.contains(&MobileChatDeliveryState::Sent)
         {
             let alice_update = alice.poll_update();
+            let alice_chat = chat_effects(&alice);
             for frame in alice_update.outbound_frames {
                 alice.complete_outbound_frame(frame.id, true).unwrap();
                 bob.receive(MobileMeshRxRecord {
@@ -9158,32 +8769,22 @@ mod tests {
                 })
                 .unwrap();
             }
-            alice_states.extend(
-                alice_update
-                    .chat_deliveries
-                    .iter()
-                    .map(|delivery| delivery.state),
-            );
-            if let Some(batch_id) = alice_update.chat_batch_id {
-                alice.acknowledge_chat_batch(batch_id).unwrap();
-            }
+            alice_states.extend(alice_chat.deliveries.iter().map(|delivery| delivery.state));
 
             let bob_update = bob.poll_update();
+            let bob_chat = chat_effects(&bob);
             for frame in bob_update.outbound_frames {
                 bob.complete_outbound_frame(frame.id, true).unwrap();
             }
-            if let Some(record) = bob_update
-                .chat_mutations
+            if let Some(record) = bob_chat
+                .mutations
                 .iter()
                 .find(|mutation| mutation.body.as_deref() == Some("regroup at the ridge"))
             {
                 received = Some(record.clone());
             }
-            if let Some(record) = bob_update.chat_sender_resolutions.first() {
+            if let Some(record) = bob_chat.sender_resolutions.first() {
                 resolution = Some(record.clone());
-            }
-            if let Some(batch_id) = bob_update.chat_batch_id {
-                bob.acknowledge_chat_batch(batch_id).unwrap();
             }
             assert!(
                 Instant::now() < deadline,
@@ -9374,25 +8975,23 @@ mod tests {
         })
         .unwrap();
 
+        crate::logging::capture::install();
         let mut refusal = None;
         let deadline = Instant::now() + Duration::from_secs(10);
         while refusal.is_none() {
-            let update = bob.poll_update();
+            bob.poll_update();
+            let chat = chat_effects(&bob);
             assert!(
-                !update
-                    .chat_mutations
+                !chat
+                    .mutations
                     .iter()
                     .any(|mutation| mutation.body.as_deref() == Some(body)),
                 "an encrypted emergency frame reached the transcript"
             );
-            refusal = update
-                .chat_diagnostics
-                .iter()
-                .find(|line| line.contains("emergency-channel"))
-                .cloned();
-            if let Some(batch_id) = update.chat_batch_id {
-                bob.acknowledge_chat_batch(batch_id).unwrap();
-            }
+            refusal = crate::logging::capture::containing("dropped")
+                .into_iter()
+                .map(|record| record.message)
+                .find(|line| line.contains("emergency-channel"));
             assert!(
                 Instant::now() < deadline,
                 "the encrypted copy was not refused"
@@ -9415,14 +9014,12 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(10);
         let mut received = false;
         while !received {
-            let update = bob.poll_update();
-            received = update
-                .chat_mutations
+            bob.poll_update();
+            let chat = chat_effects(&bob);
+            received = chat
+                .mutations
                 .iter()
                 .any(|mutation| mutation.body.as_deref() == Some(body));
-            if let Some(batch_id) = update.chat_batch_id {
-                bob.acknowledge_chat_batch(batch_id).unwrap();
-            }
             assert!(Instant::now() < deadline, "the readable copy never arrived");
             std::thread::sleep(Duration::from_millis(5));
         }
@@ -9642,9 +9239,6 @@ mod tests {
             for outbound in &update.outbound_frames {
                 alice.complete_outbound_frame(outbound.id, true).unwrap();
             }
-            if let Some(batch_id) = update.chat_batch_id {
-                alice.acknowledge_chat_batch(batch_id).unwrap();
-            }
             update
         };
         let reported = |expected: Vec<String>| {
@@ -9741,6 +9335,7 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(10);
         while !(asked && sent) {
             let update = poll();
+            let chat = chat_effects(&alice);
             if !committed && update.forward_secret_conversations == Some(Vec::new()) {
                 alice.commit_chat_batch(batch.batch_id).await.unwrap();
                 committed = true;
@@ -9759,7 +9354,7 @@ mod tests {
                         )
                 });
             }
-            for delivery in update.chat_deliveries.iter().filter(|d| d.handle == handle) {
+            for delivery in chat.deliveries.iter().filter(|d| d.handle == handle) {
                 assert_ne!(delivery.state, MobileChatDeliveryState::Undelivered);
                 sent |= delivery.state == MobileChatDeliveryState::Sent;
             }
@@ -9824,8 +9419,8 @@ mod tests {
         alice.fail_outbound_transmissions().unwrap();
         let handle = original.handle;
         // Unconfirmed, or undelivered if it never left for the radio.
-        poll_until(&alice, "the message never failed", |update| {
-            update.chat_deliveries.iter().any(|delivery| {
+        poll_until(&alice, "the message never failed", |_, chat| {
+            chat.deliveries.iter().any(|delivery| {
                 delivery.handle == handle
                     && matches!(
                         delivery.state,
@@ -9836,12 +9431,12 @@ mod tests {
         (alice, carol, long_term, original, batch.archives)
     }
 
-    /// Polls `alice` until `done` holds of an update, airing what goes out
-    /// and taking each chat batch.
+    /// Polls `alice` until `done` holds of an update and the chat effects
+    /// with it, airing what goes out.
     fn poll_until(
         alice: &MobileMeshSession,
         what: &str,
-        mut done: impl FnMut(&MobileMeshSessionUpdateRecord) -> bool,
+        mut done: impl FnMut(&MobileMeshSessionUpdateRecord, &ChatBatchEffects) -> bool,
     ) {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
@@ -9851,10 +9446,7 @@ mod tests {
                 // complete.
                 let _ = alice.complete_outbound_frame(outbound.id, true);
             }
-            if let Some(batch_id) = update.chat_batch_id {
-                alice.acknowledge_chat_batch(batch_id).unwrap();
-            }
-            if done(&update) {
+            if done(&update, &chat_effects(alice)) {
                 return;
             }
             assert!(Instant::now() < deadline, "{what}");
@@ -9900,15 +9492,15 @@ mod tests {
             .unwrap();
         let mut told = false;
         let mut resent = None;
-        poll_until(&alice, "the message never went again", |update| {
-            if let Some(record) = update.chat_resends.first() {
+        poll_until(&alice, "the message never went again", |update, chat| {
+            if let Some(record) = chat.resends.first() {
                 assert_eq!(record.message, original);
                 assert_eq!(record.delivery_handle, handle, "this session's handle");
                 assert!(!record.forward_secret);
                 told = true;
             }
             assert!(
-                told || !update.chat_deliveries.iter().any(|d| d.handle == handle),
+                told || !chat.deliveries.iter().any(|d| d.handle == handle),
                 "word of it came before the platform was told"
             );
             for outbound in &update.outbound_frames {
@@ -9946,8 +9538,8 @@ mod tests {
             .unwrap();
         let mut asked = false;
         let mut sent = false;
-        poll_until(&alice, "no session was asked for", |update| {
-            for record in &update.chat_resends {
+        poll_until(&alice, "no session was asked for", |update, chat| {
+            for record in &chat.resends {
                 assert!(record.forward_secret);
             }
             for outbound in &update.outbound_frames {
@@ -9964,7 +9556,7 @@ mod tests {
                         )
                 });
             }
-            sent |= update.chat_deliveries.iter().any(|delivery| {
+            sent |= chat.deliveries.iter().any(|delivery| {
                 delivery.handle == handle && delivery.state == MobileChatDeliveryState::Sent
             });
             asked && sent
@@ -10193,25 +9785,23 @@ mod tests {
         };
         bob.receive(rx(forged.as_bytes().to_vec())).unwrap();
 
+        crate::logging::capture::install();
         let mut refusal = None;
         let deadline = Instant::now() + Duration::from_secs(10);
         while refusal.is_none() {
-            let update = bob.poll_update();
+            bob.poll_update();
+            let chat = chat_effects(&bob);
             assert!(
-                !update
-                    .chat_mutations
+                !chat
+                    .mutations
                     .iter()
                     .any(|mutation| mutation.body.as_deref() == Some(body)),
                 "a hint-only public frame reached the transcript"
             );
-            refusal = update
-                .chat_diagnostics
-                .iter()
-                .find(|line| line.contains("public-channel"))
-                .cloned();
-            if let Some(batch_id) = update.chat_batch_id {
-                bob.acknowledge_chat_batch(batch_id).unwrap();
-            }
+            refusal = crate::logging::capture::containing("dropped")
+                .into_iter()
+                .map(|record| record.message)
+                .find(|line| line.contains("public-channel"));
             assert!(
                 Instant::now() < deadline,
                 "the hint-only copy was not refused"
@@ -10223,14 +9813,12 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(10);
         let mut received = false;
         while !received {
-            let update = bob.poll_update();
-            received = update
-                .chat_mutations
+            bob.poll_update();
+            let chat = chat_effects(&bob);
+            received = chat
+                .mutations
                 .iter()
                 .any(|mutation| mutation.body.as_deref() == Some(body));
-            if let Some(batch_id) = update.chat_batch_id {
-                bob.acknowledge_chat_batch(batch_id).unwrap();
-            }
             assert!(Instant::now() < deadline, "the full-key copy never arrived");
             std::thread::sleep(Duration::from_millis(5));
         }
@@ -10318,6 +9906,7 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(40);
         while assembled.as_deref() != Some(body.as_str()) {
             let alice_update = alice.poll_update();
+            let alice_chat = chat_effects(&alice);
             for frame in alice_update.outbound_frames {
                 alice.complete_outbound_frame(frame.id, true).unwrap();
                 sent += 1;
@@ -10337,7 +9926,7 @@ mod tests {
                 })
                 .unwrap();
             }
-            for lookup in &alice_update.chat_archive_lookups {
+            for lookup in &alice_chat.archive_lookups {
                 match archives.get(&(lookup.message_id, lookup.fragment_index)) {
                     Some(payload) => alice
                         .apply_chat_archive_result(
@@ -10355,11 +9944,9 @@ mod tests {
                         .unwrap(),
                 }
             }
-            if let Some(batch_id) = alice_update.chat_batch_id {
-                alice.acknowledge_chat_batch(batch_id).unwrap();
-            }
 
             let bob_update = bob.poll_update();
+            let bob_chat = chat_effects(&bob);
             for frame in bob_update.outbound_frames {
                 bob.complete_outbound_frame(frame.id, true).unwrap();
                 repairs += 1;
@@ -10375,14 +9962,11 @@ mod tests {
                     })
                     .unwrap();
             }
-            for mutation in &bob_update.chat_mutations {
+            for mutation in &bob_chat.mutations {
                 partial.get_or_insert((mutation.session_id, mutation.handle));
                 if let Some(text) = mutation.body.as_deref() {
                     assembled = Some(text.to_owned());
                 }
-            }
-            if let Some(batch_id) = bob_update.chat_batch_id {
-                bob.acknowledge_chat_batch(batch_id).unwrap();
             }
             // Asking is refused until the stalled fragment is up for repair.
             if !asked && let Some((session_id, handle)) = partial {
@@ -10439,6 +10023,7 @@ mod tests {
             || Instant::now() < deadline.min(Instant::now() + Duration::from_millis(1))
         {
             let update = session.poll_update();
+            let chat = chat_effects(&session);
             for frame in update.outbound_frames {
                 session.complete_outbound_frame(frame.id, true).unwrap();
                 session
@@ -10455,15 +10040,11 @@ mod tests {
                 echoed += 1;
             }
             inbound.extend(
-                update
-                    .chat_mutations
+                chat.mutations
                     .iter()
                     .filter(|mutation| mutation.direction == Some(MobileChatDirection::Inbound))
                     .cloned(),
             );
-            if let Some(batch_id) = update.chat_batch_id {
-                session.acknowledge_chat_batch(batch_id).unwrap();
-            }
             if echoed > 0 && Instant::now() > deadline {
                 break;
             }
@@ -10471,19 +10052,16 @@ mod tests {
             if echoed > 0 {
                 // Give the echo every chance to be (wrongly) transcribed.
                 for _ in 0..20 {
-                    let update = session.poll_update();
+                    session.poll_update();
+                    let chat = chat_effects(&session);
                     inbound.extend(
-                        update
-                            .chat_mutations
+                        chat.mutations
                             .iter()
                             .filter(|mutation| {
                                 mutation.direction == Some(MobileChatDirection::Inbound)
                             })
                             .cloned(),
                     );
-                    if let Some(batch_id) = update.chat_batch_id {
-                        session.acknowledge_chat_batch(batch_id).unwrap();
-                    }
                     std::thread::sleep(Duration::from_millis(5));
                 }
                 break;
@@ -10534,6 +10112,7 @@ mod tests {
         let mut inbound = Vec::new();
         while Instant::now() < deadline {
             let update = session.poll_update();
+            let chat = chat_effects(&session);
             for frame in update.outbound_frames {
                 session.complete_outbound_frame(frame.id, true).unwrap();
                 session
@@ -10549,15 +10128,11 @@ mod tests {
                     .unwrap();
             }
             inbound.extend(
-                update
-                    .chat_mutations
+                chat.mutations
                     .iter()
                     .filter(|mutation| mutation.direction == Some(MobileChatDirection::Inbound))
                     .cloned(),
             );
-            if let Some(batch_id) = update.chat_batch_id {
-                session.acknowledge_chat_batch(batch_id).unwrap();
-            }
             if !inbound.is_empty() {
                 break;
             }
@@ -10693,10 +10268,8 @@ mod tests {
                 })
                 .unwrap();
             }
-            if let Some(batch_id) = alice_update.chat_batch_id {
-                alice.acknowledge_chat_batch(batch_id).unwrap();
-            }
             let bob_update = bob.poll_update();
+            let bob_chat = chat_effects(&bob);
             for frame in bob_update.outbound_frames {
                 bob.complete_outbound_frame(frame.id, true).unwrap();
                 alice
@@ -10711,14 +10284,11 @@ mod tests {
                     })
                     .unwrap();
             }
-            let found = bob_update
-                .chat_mutations
+            let found = bob_chat
+                .mutations
                 .iter()
                 .find(|mutation| mutation.body.as_deref() == Some("still here"))
                 .cloned();
-            if let Some(batch_id) = bob_update.chat_batch_id {
-                bob.acknowledge_chat_batch(batch_id).unwrap();
-            }
             if let Some(found) = found {
                 break found;
             }
@@ -10746,28 +10316,6 @@ mod tests {
         assert_eq!(rx.rssi_dbm, Some(-55));
         assert_eq!(rx.snr_centibels, Some(75));
         assert!(rx.source_authenticated);
-    }
-
-    /// A batch id is issued exactly when the batch has events in it, and never
-    /// otherwise. The platform reads the id as its whole signal to apply and
-    /// acknowledge, so a batch made of only one kind of event—a lone sender
-    /// resolution, say—must still be announced. One batch left
-    /// unacknowledged holds the slot for the rest of the session, and every
-    /// delivery receipt behind it never arrives: messages transmit fine and
-    /// stay on "Sending" forever, in every conversation at once.
-    fn assert_batch_id_matches_events(update: &MobileMeshSessionUpdateRecord) {
-        let has_events = !update.chat_mutations.is_empty()
-            || !update.chat_deliveries.is_empty()
-            || !update.chat_repeats.is_empty()
-            || !update.chat_archive_lookups.is_empty()
-            || !update.chat_sender_resolutions.is_empty()
-            || !update.chat_diagnostics.is_empty();
-        assert_eq!(
-            update.chat_batch_id.is_some(),
-            has_events,
-            "batch id {:?} disagrees with the batch's contents",
-            update.chat_batch_id
-        );
     }
 
     /// A repeater overheard carrying a channel message is reported against
@@ -10801,7 +10349,7 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(10);
         while repeats.is_none() {
             let update = alice.poll_update();
-            assert_batch_id_matches_events(&update);
+            let chat = chat_effects(&alice);
             for frame in update.outbound_frames {
                 alice.complete_outbound_frame(frame.id, true).unwrap();
                 if echoed {
@@ -10826,14 +10374,11 @@ mod tests {
                     })
                     .unwrap();
             }
-            repeats = update
-                .chat_repeats
+            repeats = chat
+                .repeats
                 .iter()
                 .find(|record| record.handle == handle)
                 .cloned();
-            if let Some(batch_id) = update.chat_batch_id {
-                alice.acknowledge_chat_batch(batch_id).unwrap();
-            }
             assert!(Instant::now() < deadline, "no repeat was reported");
             std::thread::sleep(Duration::from_millis(5));
         }
@@ -10898,7 +10443,6 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(15);
         while assembled.as_deref() != Some(body.as_str()) {
             let alice_update = alice.poll_update();
-            assert_batch_id_matches_events(&alice_update);
             for frame in alice_update.outbound_frames {
                 alice.complete_outbound_frame(frame.id, true).unwrap();
                 transmitted += 1;
@@ -10913,12 +10457,9 @@ mod tests {
                 })
                 .unwrap();
             }
-            if let Some(batch_id) = alice_update.chat_batch_id {
-                alice.acknowledge_chat_batch(batch_id).unwrap();
-            }
 
             let bob_update = bob.poll_update();
-            assert_batch_id_matches_events(&bob_update);
+            let bob_chat = chat_effects(&bob);
             for frame in bob_update.outbound_frames {
                 bob.complete_outbound_frame(frame.id, true).unwrap();
                 // Bob has nothing to say on his own account: anything he
@@ -10936,13 +10477,10 @@ mod tests {
                     })
                     .unwrap();
             }
-            for mutation in &bob_update.chat_mutations {
+            for mutation in &bob_chat.mutations {
                 if let Some(text) = mutation.body.as_deref() {
                     assembled = Some(text.to_owned());
                 }
-            }
-            if let Some(batch_id) = bob_update.chat_batch_id {
-                bob.acknowledge_chat_batch(batch_id).unwrap();
             }
             assert!(
                 Instant::now() < deadline,

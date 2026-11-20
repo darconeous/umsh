@@ -547,7 +547,7 @@ final class AppRuntime {
                 publicAddress: contact.peerAddress,
                 alias: nil,
                 advertisedName: identity?.name,
-                nodeKind: identity.map { PeerRole(roleCode: $0.roleCode).rawValue },
+                nodeKind: identity.map { PeerRole(roleCode: $0.roleCode).storedKind },
                 advertisement: contact.identityBundle,
                 advertisementAuthenticated: false,
                 advertisementReceivedAt: Date()
@@ -976,7 +976,7 @@ final class AppRuntime {
                 advertisedName: identity.name,
                 // The node's own statement of what it is, refreshed on every
                 // bundle so the recorded role tracks the node.
-                nodeKind: PeerRole(roleCode: identity.roleCode).rawValue,
+                nodeKind: PeerRole(roleCode: identity.roleCode).storedKind,
                 advertisement: advertisement.payload,
                 advertisementAuthenticated: advertisement.sourceAuthenticated,
                 advertisementReceivedAt: heardAt
@@ -1523,7 +1523,7 @@ final class AppRuntime {
                 // imported payload is only ever handed over with a verified
                 // signature, so it needs no MAC authentication to be believed.
                 isSaved: true,
-                nodeKind: preview.identity.map { PeerRole(roleCode: $0.roleCode).rawValue },
+                nodeKind: preview.identity.map { PeerRole(roleCode: $0.roleCode).storedKind },
                 advertisement: preview.identityPayload
             )
             if startConversation {
@@ -1572,7 +1572,7 @@ final class AppRuntime {
                 publicAddress: address,
                 alias: nil,
                 advertisedName: preview.identity?.name,
-                nodeKind: preview.identity.map { PeerRole(roleCode: $0.roleCode).rawValue },
+                nodeKind: preview.identity.map { PeerRole(roleCode: $0.roleCode).storedKind },
                 advertisement: preview.identityPayload
             )
             // No retention pass here: a row never heard is the oldest-heard
@@ -1602,7 +1602,7 @@ final class AppRuntime {
                 alias: nil,
                 advertisedName: name,
                 isSaved: true,
-                nodeKind: role.rawValue
+                nodeKind: role.storedKind
             )
             await reloadApplicationState()
             return true
@@ -3969,9 +3969,6 @@ final class AppRuntime {
             if assertion != .invalid {
                 UIApplication.shared.endBackgroundTask(assertion)
             }
-        }
-        for diagnostic in changes.diagnostics {
-            Self.chatLogger.warning("Core chat diagnostic: \(diagnostic, privacy: .public)")
         }
         Self.chatLogger.debug(
             """

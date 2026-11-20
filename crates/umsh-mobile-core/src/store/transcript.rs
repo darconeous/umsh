@@ -342,12 +342,6 @@ fn message_columns() -> String {
             OR regarding_unknown <> 0) AS is_reply,
         regarding_target_session_id, regarding_target_handle,
         delivery_progress_at_ms,
-        (SELECT group_concat(hex(f.repeaters), ',') FROM chat_delivery_fragment f
-            WHERE f.owner_identity_id = chat_message.owner_identity_id
-                AND f.session_id = chat_message.delivery_session_id
-                AND f.handle = chat_message.delivery_handle
-                AND f.repeaters IS NOT NULL
-            ORDER BY f.fragment_index) AS repeater_runs,
         (SELECT MAX(f.anonymous_repeats) FROM chat_delivery_fragment f
             WHERE f.owner_identity_id = chat_message.owner_identity_id
                 AND f.session_id = chat_message.delivery_session_id
@@ -612,39 +606,18 @@ fn reception(row: &rusqlite::Row<'_>) -> rusqlite::Result<Option<MobileStoredCha
     }))
 }
 
-/// The repeaters heard carrying a message, from the progress stamp and the
-/// per-fragment tallies [`message_columns`] folds in. Fragments are each
-/// heard by much the same repeaters, so named ones are merged and
-/// anonymous ones are counted as the most any fragment heard.
+/// The repeats heard of a message, from the progress stamp and the most
+/// anonymous repeats any fragment heard. The named repeaters are attached
+/// with the page's other annotations, by [`attach_repeaters`].
 fn repeats(row: &rusqlite::Row<'_>) -> rusqlite::Result<Option<MobileStoredChatRepeatsRecord>> {
     let Some(progress_at_ms) = row.get::<_, Option<i64>>("delivery_progress_at_ms")? else {
         return Ok(None);
     };
-    let mut repeaters: Vec<Vec<u8>> = Vec::new();
-    let runs = row
-        .get::<_, Option<String>>("repeater_runs")?
-        .unwrap_or_default();
-    for run in runs.split(',').filter(|run| !run.is_empty()) {
-        for hint in split_hints(Some(&hex_bytes(run))) {
-            if !repeaters.contains(&hint) {
-                repeaters.push(hint);
-            }
-        }
-    }
     Ok(Some(MobileStoredChatRepeatsRecord {
-        repeaters,
+        repeaters: Vec::new(),
         anonymous: row.get::<_, Option<i64>>("anonymous_repeats")?.unwrap_or(0),
         progress_at_ms,
     }))
-}
-
-/// The bytes SQLite's `hex()` spelled out, up to the first pair that is
-/// not hex.
-fn hex_bytes(text: &str) -> Vec<u8> {
-    text.as_bytes()
-        .chunks_exact(2)
-        .map_while(|pair| u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok())
-        .collect()
 }
 
 /// Attach what a page's messages carry from other rows: the reactions
@@ -656,7 +629,63 @@ fn with_annotations(
 ) -> Result<MobileStoredChatMessagePageRecord, MobileStoreError> {
     attach_reactions(connection, owner_identity_id, &mut page.messages)?;
     attach_quotes(connection, owner_identity_id, &mut page.messages)?;
+    attach_repeaters(connection, owner_identity_id, &mut page.messages)?;
     Ok(page)
+}
+
+/// Attach the repeaters each of our messages was heard through, from its
+/// delivery's fragments. Fragments are each heard by much the same
+/// repeaters, so they are merged, in fragment order and then the order
+/// each fragment first heard them.
+fn attach_repeaters(
+    connection: &Connection,
+    owner_identity_id: &str,
+    messages: &mut [MobileStoredChatMessageRecord],
+) -> Result<(), MobileStoreError> {
+    let targets: Vec<&MobileStoredChatMessageRefRecord> = messages
+        .iter()
+        .filter(|message| message.repeats.is_some())
+        .map(|message| &message.reference)
+        .collect();
+    let mut heard: HashMap<MobileStoredChatMessageRefRecord, Vec<Vec<u8>>> = HashMap::new();
+    for chunk in targets.chunks(ANNOTATION_CHUNK) {
+        let mut statement = connection.prepare(&format!(
+            "SELECT m.session_id, m.handle, f.repeaters
+            FROM chat_message m
+            JOIN chat_delivery_fragment f
+                ON f.owner_identity_id = m.owner_identity_id
+                AND f.session_id = m.delivery_session_id
+                AND f.handle = m.delivery_handle
+            WHERE m.owner_identity_id = ? AND f.repeaters IS NOT NULL
+                AND (m.session_id, m.handle) IN ({tuples})
+            ORDER BY f.fragment_index",
+            tuples = vec!["(?, ?)"; chunk.len()].join(", "),
+        ))?;
+        let mut rows = statement.query(params_from_iter(identity_arguments(
+            owner_identity_id,
+            chunk,
+        )))?;
+        while let Some(row) = rows.next()? {
+            let reference = MobileStoredChatMessageRefRecord {
+                session_id: row.get(0)?,
+                handle: row.get(1)?,
+            };
+            let repeaters = heard.entry(reference).or_default();
+            for hint in split_hints(row.get::<_, Option<Vec<u8>>>(2)?.as_deref()) {
+                if !repeaters.contains(&hint) {
+                    repeaters.push(hint);
+                }
+            }
+        }
+    }
+    for message in messages.iter_mut() {
+        if let (Some(repeats), Some(repeaters)) =
+            (message.repeats.as_mut(), heard.remove(&message.reference))
+        {
+            repeats.repeaters = repeaters;
+        }
+    }
+    Ok(())
 }
 
 /// Attach the quote each reply carries of its original.

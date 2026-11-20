@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import UMSHMobileCore
 @testable import UMSH
 
 private let english = Locale(identifier: "en_US")
@@ -8,7 +9,7 @@ private let german = Locale(identifier: "de_DE")
 private func node(
     capabilities: MeshNodeCapabilities? = nil,
     role: PeerRole = .chat,
-    systemRole: String? = nil
+    systemRole: MobileStoredSystemRole? = nil
 ) -> PeerSummary {
     PeerSummary(
         id: 1,
@@ -78,7 +79,7 @@ struct PeerVerbTests {
 
     @Test func theCompanionRadioOffersPingAndManageAlone() {
         #expect(
-            PeerVerb.offered(for: node(systemRole: "companion_radio"), availability: everything)
+            PeerVerb.offered(for: node(systemRole: .companionRadio), availability: everything)
                 == [.ping, .manage]
         )
     }

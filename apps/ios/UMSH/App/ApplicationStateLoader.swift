@@ -39,7 +39,7 @@ struct ApplicationStateLoader {
                 alias: stored.alias,
                 advertisedName: stored.advertisedName,
                 systemRole: stored.systemRole,
-                storedRole: stored.nodeKind.flatMap(PeerRole.init(rawValue:)) ?? .unknown,
+                storedRole: stored.nodeKind.map(PeerRole.init) ?? .unknown,
                 advertisedIdentity: advertisedIdentity,
                 advertisedIdentityAuthenticated: stored.advertisementAuthenticated,
                 advertisedIdentityReceivedAt: stored.advertisementReceivedAt,

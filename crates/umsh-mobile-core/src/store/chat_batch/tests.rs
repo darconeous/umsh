@@ -96,10 +96,10 @@ fn notifying(mutation: MobileChatMutationRecord) -> MobileChatMutationRecord {
     }
 }
 
-fn last_heard(store: &MobileAppStore, address: &str) -> Option<f64> {
+fn last_heard(store: &MobileAppStore, address: &str) -> Option<i64> {
     scalar(
         store,
-        &format!("SELECT last_heard_at FROM node WHERE public_address = '{address}'"),
+        &format!("SELECT last_heard_at_ms FROM node WHERE public_address = '{address}'"),
     )
 }
 

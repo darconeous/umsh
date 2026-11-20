@@ -783,6 +783,36 @@ fn an_ordinary_disconnect_fails_waiters_and_mesh_frames() {
 }
 
 #[test]
+fn every_transport_problem_is_logged() {
+    crate::logging::capture::install();
+    // Each problem names itself, so its line is told from every other
+    // test's.
+    let problem = |domain: &str| MobileRadioProblem::Transport {
+        domain: domain.to_owned(),
+        code: 1,
+    };
+    let logged = |domain: &str| !crate::logging::capture::containing(domain).is_empty();
+    let mut bench = Bench::attached();
+    bench.handle(Event::ReportProblem(problem("logged-report")));
+    assert!(logged("logged-report"), "a reported problem");
+    bench.handle(Event::LinkWritesFailed {
+        raw_transaction_ids: Vec::new(),
+        problem: problem("logged-writes"),
+    });
+    assert!(logged("logged-writes"), "failed writes");
+    bench.handle(Event::Transport(MobileRadioTransportStateRecord {
+        phase: MobileRadioTransportPhase::Idle,
+        name: None,
+        link_id: None,
+        problem: Some(problem("logged-transport")),
+    }));
+    assert!(
+        logged("logged-transport"),
+        "a transport that settles on a problem"
+    );
+}
+
+#[test]
 fn any_word_from_the_radio_clears_the_banner() {
     let mut bench = Bench::attached();
     bench.handle(Event::ReportProblem(MobileRadioProblem::Transport {
@@ -822,12 +852,6 @@ fn frames_received_before_a_mesh_session_wait_for_it() {
         bench.device.inject_radio_rx(frame, &info, bench.clock_ms);
     }
     bench.deliver();
-    let received = bench
-        .take_effects()
-        .into_iter()
-        .filter(|effect| matches!(effect, Effect::Received(_)))
-        .count();
-    assert_eq!(received, MAXIMUM_FRAMES_AWAITING_MESH_SESSION + 2);
 
     bench.handle(Event::MeshSessionArrived);
     let replayed: Vec<_> = bench
@@ -1766,7 +1790,6 @@ mod runner {
         assert!(*wakes.0.lock().unwrap() > 0);
         let update = driver.poll_update();
         assert_eq!(update.state.unwrap().phase, MobileRadioPhase::Attached);
-        assert!(!update.diagnostics.is_empty());
         assert_eq!(*link.attached.lock().unwrap(), 1);
 
         let refreshed = driver.refresh().await.unwrap();
@@ -1858,4 +1881,41 @@ mod runner {
         // Nothing to release.
         driver.release_host().await;
     }
+}
+
+/// An exchange's caller hears what its own transactions were answered
+/// with. Here the radio refuses a table edit, and a command sent beside it
+/// is answered after: the edit ends on that answer, and still fails.
+#[test]
+fn an_exchange_ends_with_its_own_answer_not_one_beside_it() {
+    let mut bench = Bench::attached();
+    for index in 1..=u8::MAX {
+        let key = [index; 32].to_vec();
+        let filled = outcome(bench.command(|reply| Command::DeviceTable {
+            requires_device_identity: true,
+            call: Box::new(move |session| session.insert_device_peer(key)),
+            reply,
+        }));
+        if filled != Some(Ok(())) {
+            break;
+        }
+    }
+
+    bench.holding = true;
+    let mut edited = bench.command(|reply| Command::DeviceTable {
+        requires_device_identity: true,
+        call: Box::new(|session| session.insert_device_peer(vec![0; 32])),
+        reply,
+    });
+    let mut timed = bench.command(|reply| Command::Immediate {
+        call: Box::new(|session| session.set_time(Some(1_800_000_000))),
+        abandon_binding: false,
+        reply,
+    });
+    assert_eq!(answered(&mut timed), Some(Ok(())));
+    bench.holding = false;
+    assert_eq!(
+        bench.deliver_until(&mut edited),
+        Some(Err(MobileRadioError::DeviceFull))
+    );
 }

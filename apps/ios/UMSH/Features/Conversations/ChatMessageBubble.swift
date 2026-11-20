@@ -1,6 +1,7 @@
 import Combine
 import SwiftUI
 import UIKit
+import UMSHMobileCore
 
 /// When the conversation picked up again after a lull.
 ///
@@ -705,7 +706,7 @@ struct ChatMessageBubble: View, @MainActor Equatable {
     /// own.
     private var captionSettlesAt: Date? {
         guard message.isOutbound, expectsAcknowledgment,
-              message.deliveryState?.lowercased() == "sent",
+              message.deliveryState == .sent,
               let progressAt = message.repeats?.progressAt
         else { return nil }
         return progressAt.addingTimeInterval(RepeatCaption.settle)
@@ -713,18 +714,18 @@ struct ChatMessageBubble: View, @MainActor Equatable {
 
     private func deliveryLabel(at now: Date) -> String? {
         guard let state = message.deliveryState else { return nil }
-        switch state.lowercased() {
-        case "undelivered":
+        switch state {
+        case .undelivered:
             return String(
                 localized: "Not Delivered",
                 comment: "Delivery caption: our message never went out where its recipient could read it."
             )
-        case "failed":
+        case .failed:
             return String(
                 localized: "Unconfirmed",
                 comment: "Delivery caption: our message went out, but no acknowledgment came back."
             )
-        case "acknowledged":
+        case .acknowledged:
             // A recovery from failure is noteworthy on its own row, unlike a
             // routine "Delivered" which only annotates the newest message.
             if message.isDeliveredLate { return "Delivered Late" }
@@ -732,7 +733,7 @@ struct ChatMessageBubble: View, @MainActor Equatable {
             // every row it happened to, since it says the path is failing.
             if message.isDeliveredFlooded { return "Delivered · Flooded" }
             return isMostRecentOutbound ? "Delivered" : nil
-        case "sent":
+        case .sent:
             let repeats = RepeatCaption.text(
                 lead: message.repeats?.lead,
                 count: message.repeats?.count ?? 0
@@ -748,7 +749,7 @@ struct ChatMessageBubble: View, @MainActor Equatable {
                 return repeats
             }
             return isMostRecentOutbound ? repeats : nil
-        default: return "Sending…"
+        case .pending: return "Sending…"
         }
     }
 }

@@ -41,8 +41,6 @@ pub struct MobileChatChangesRecord {
     pub delivery_failures: Vec<MobileStoredChatDeliveryFailureRecord>,
     /// Peers whose watch for being heard was just set off.
     pub heard_watches: Vec<String>,
-    /// For the log.
-    pub diagnostics: Vec<String>,
 }
 
 /// An arrival worth telling the user about.
@@ -72,7 +70,6 @@ impl MobileChatChangesRecord {
                 self.heard_watches.push(address);
             }
         }
-        self.diagnostics.extend(later.diagnostics);
     }
 
     pub(crate) fn is_empty(&self) -> bool {
@@ -200,7 +197,6 @@ fn apply_batch(
             notifications,
             delivery_failures,
             heard_watches,
-            diagnostics: Vec::new(),
         },
         archive_answers,
     })

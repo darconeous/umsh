@@ -164,6 +164,10 @@ pub(super) struct ChatStore {
     /// a send does then.
     #[cfg(test)]
     refuse_release: Arc<std::sync::atomic::AtomicBool>,
+    /// How many times a batch could not be stored, for the tests of the
+    /// retries.
+    #[cfg(test)]
+    failed_attempts: Arc<std::sync::atomic::AtomicU32>,
 }
 
 impl ChatStore {
@@ -176,24 +180,23 @@ impl ChatStore {
         silent_tests_in: Option<String>,
         ready: Arc<Notify>,
         retry_delay: Duration,
-        waiting: Option<(ChatBatchEffects, Vec<String>)>,
     ) -> Result<Self, MobileMeshError> {
         let (commands, receiver) = mpsc::unbounded_channel();
         #[cfg(test)]
         let refuse_release = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        #[cfg(test)]
+        let failed_attempts = Arc::new(std::sync::atomic::AtomicU32::new(0));
         let storer = Storer {
             session: Arc::downgrade(session),
             store,
             owner_identity_id,
             silent_tests_in,
             retry_delay,
-            held: waiting.map(|(effects, diagnostics)| HeldBatch {
-                effects,
-                diagnostics,
-                attempts: 0,
-            }),
+            held: None,
             #[cfg(test)]
             refuse_release: refuse_release.clone(),
+            #[cfg(test)]
+            failed_attempts: failed_attempts.clone(),
         };
         std::thread::Builder::new()
             .name("umsh-chat-store".to_owned())
@@ -211,6 +214,8 @@ impl ChatStore {
             commands,
             #[cfg(test)]
             refuse_release,
+            #[cfg(test)]
+            failed_attempts,
         })
     }
 
@@ -224,7 +229,6 @@ impl ChatStore {
 /// A batch taken from the worker and not yet stored.
 struct HeldBatch {
     effects: ChatBatchEffects,
-    diagnostics: Vec<String>,
     attempts: u32,
 }
 
@@ -238,6 +242,8 @@ struct Storer {
     held: Option<HeldBatch>,
     #[cfg(test)]
     refuse_release: Arc<std::sync::atomic::AtomicBool>,
+    #[cfg(test)]
+    failed_attempts: Arc<std::sync::atomic::AtomicU32>,
 }
 
 impl Storer {
@@ -313,27 +319,22 @@ impl Storer {
             };
             match self.store.apply_chat_batch(&context, &held.effects) {
                 Ok(applied) => {
-                    let Some(held) = self.held.take() else {
-                        return true;
-                    };
+                    self.held = None;
                     for (request_id, payload) in applied.archive_answers {
                         answer_lookup(session, request_id, payload);
                     }
-                    let mut changes = applied.changes;
-                    changes.diagnostics = held.diagnostics;
-                    session.publish_chat_changes(changes);
+                    session.publish_chat_changes(applied.changes);
                 }
                 Err(error) => {
                     held.attempts += 1;
+                    #[cfg(test)]
+                    self.failed_attempts
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     if held.attempts < ATTEMPT_LIMIT {
-                        session.publish_chat_changes(MobileChatChangesRecord {
-                            diagnostics: vec![format!(
-                                "could not store a chat batch (attempt {} of {ATTEMPT_LIMIT}): \
-                                 {error}",
-                                held.attempts,
-                            )],
-                            ..MobileChatChangesRecord::default()
-                        });
+                        log::warn!(
+                            "could not store a chat batch (attempt {} of {ATTEMPT_LIMIT}): {error}",
+                            held.attempts,
+                        );
                         return false;
                     }
                     let Some(held) = self.held.take() else {
@@ -343,17 +344,15 @@ impl Storer {
                     for lookup in &held.effects.archive_lookups {
                         answer_lookup(session, lookup.request_id, None);
                     }
-                    let mut diagnostics = held.diagnostics;
-                    diagnostics.push(format!(
+                    log::error!(
                         "gave up storing a chat batch after {} attempts ({error}): \
                          {} message changes and {} delivery reports are lost",
                         held.attempts,
                         held.effects.mutations.len(),
                         held.effects.deliveries.len(),
-                    ));
+                    );
                     session.publish_chat_changes(MobileChatChangesRecord {
                         all_conversations: true,
-                        diagnostics,
                         ..MobileChatChangesRecord::default()
                     });
                 }
@@ -439,8 +438,15 @@ async fn sleep_until(deadline: Option<tokio::time::Instant>) {
 }
 
 fn held_batch(events: Vec<MobileChatWorkerEvent>) -> HeldBatch {
+    HeldBatch {
+        effects: effects(events),
+        attempts: 0,
+    }
+}
+
+/// The worker's chat events, sorted by kind.
+pub(super) fn effects(events: Vec<MobileChatWorkerEvent>) -> ChatBatchEffects {
     let mut effects = ChatBatchEffects::default();
-    let mut diagnostics = Vec::new();
     for event in events {
         match event {
             MobileChatWorkerEvent::Mutation(record) => effects.mutations.push(record),
@@ -451,14 +457,9 @@ fn held_batch(events: Vec<MobileChatWorkerEvent>) -> HeldBatch {
             MobileChatWorkerEvent::SenderResolution(record) => {
                 effects.sender_resolutions.push(record);
             }
-            MobileChatWorkerEvent::Diagnostic(record) => diagnostics.push(record),
         }
     }
-    HeldBatch {
-        effects,
-        diagnostics,
-        attempts: 0,
-    }
+    effects
 }
 
 /// Answer a repair request with what the store holds. Best effort: the
@@ -596,10 +597,6 @@ mod tests {
         );
         for (from, to, changed) in [(alice, bob, &mut changes.0), (bob, alice, &mut changes.1)] {
             let update = from.poll_update();
-            assert_eq!(
-                update.chat_batch_id, None,
-                "a stored session hands out no batch"
-            );
             for frame in update.outbound_frames {
                 from.complete_outbound_frame(frame.id, true).unwrap();
                 to.receive(rx(frame.data)).unwrap();
@@ -609,6 +606,46 @@ mod tests {
             }
         }
         changes
+    }
+
+    /// How many times `session`'s chat store could not store a batch.
+    fn failed_attempts(session: &MobileMeshSession) -> u32 {
+        session
+            .chat_store
+            .get()
+            .unwrap()
+            .failed_attempts
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Whether the newest message in the store's conversation with `peer`
+    /// is acknowledged.
+    fn acknowledged(store: &MobileAppStore, peer: &str) -> bool {
+        store
+            .chat_message_page_newest(OWNER.to_owned(), peer.to_owned(), 1)
+            .unwrap()
+            .messages
+            .first()
+            .is_some_and(|message| {
+                message.delivery_state == Some(MobileStoredChatDeliveryState::Acknowledged)
+            })
+    }
+
+    /// Carry frames between `alice`, who has a store, and `bob`, who has
+    /// none yet, until Alice's newest message to Bob is acknowledged: Bob
+    /// has heard it, and holds it for a store.
+    fn deliver_to_storeless(
+        alice: &MobileMeshSession,
+        alice_store: &MobileAppStore,
+        bob: &MobileMeshSession,
+        bob_address: &str,
+    ) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !acknowledged(alice_store, bob_address) {
+            assert!(Instant::now() < deadline, "the message did not arrive");
+            exchange(alice, bob);
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
 
     #[tokio::test]
@@ -757,12 +794,7 @@ mod tests {
         loop {
             let (_, bob_now) = exchange(&alice, &bob);
             bob_changes.merge(bob_now);
-            if !known
-                && bob_changes
-                    .diagnostics
-                    .iter()
-                    .any(|line| line.starts_with("could not store a chat batch (attempt 1"))
-            {
+            if !known && failed_attempts(&bob) == 1 {
                 // Between the first try and the second.
                 know(&bob_store, &bob_address, &alice_address);
                 known = true;
@@ -777,13 +809,7 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
         assert!(known);
-        assert!(
-            !bob_changes
-                .diagnostics
-                .iter()
-                .any(|line| line.starts_with("gave up")),
-            "{bob_changes:?}"
-        );
+        assert_eq!(failed_attempts(&bob), 1, "stored on the second try");
         assert_eq!(bob_changes.notifications.len(), 1);
         let received = bob_store
             .chat_message_page_newest(OWNER.to_owned(), alice_address, 10)
@@ -835,23 +861,19 @@ mod tests {
             .unwrap();
         let deadline = Instant::now() + Duration::from_secs(10);
         let mut bob_changes = MobileChatChangesRecord::default();
-        while !bob_changes
-            .diagnostics
-            .iter()
-            .any(|line| line.starts_with("gave up storing a chat batch after 3 attempts"))
-        {
+        while !bob_changes.all_conversations {
             assert!(Instant::now() < deadline, "the batch was never given up");
             let (_, bob_now) = exchange(&alice, &bob);
             bob_changes.merge(bob_now);
             std::thread::sleep(Duration::from_millis(5));
         }
         // Every transcript may now be out of date.
-        assert!(bob_changes.all_conversations);
+        assert_eq!(failed_attempts(&bob), ATTEMPT_LIMIT);
         assert!(bob_changes.notifications.is_empty());
     }
 
     #[tokio::test]
-    async fn a_batch_handed_out_before_the_store_came_is_stored() {
+    async fn what_arrives_before_the_store_comes_is_stored() {
         let directory = tempfile::tempdir().unwrap();
         let (alice_identity, bob_identity) = (identity(69), identity(70));
         let (alice_address, bob_address) = (address(&alice_identity), address(&bob_identity));
@@ -871,7 +893,7 @@ mod tests {
         let bob = session(directory.path(), &bob_identity, &alice_address).await;
         alice
             .clone()
-            .attach_chat_store(alice_store, OWNER.to_owned(), None)
+            .attach_chat_store(alice_store.clone(), OWNER.to_owned(), None)
             .unwrap();
         alice
             .send_chat(
@@ -882,30 +904,8 @@ mod tests {
             )
             .await
             .unwrap();
-        // Bob has no store yet, so his poll hands the message out as a
-        // batch, which nothing acknowledges.
+        deliver_to_storeless(&alice, &alice_store, &bob, &bob_address);
         let deadline = Instant::now() + Duration::from_secs(10);
-        loop {
-            for frame in alice.poll_update().outbound_frames {
-                alice.complete_outbound_frame(frame.id, true).unwrap();
-                bob.receive(rx(frame.data)).unwrap();
-            }
-            let update = bob.poll_update();
-            for frame in update.outbound_frames {
-                bob.complete_outbound_frame(frame.id, true).unwrap();
-                alice.receive(rx(frame.data)).unwrap();
-            }
-            if update.chat_batch_id.is_some()
-                && update
-                    .chat_mutations
-                    .iter()
-                    .any(|mutation| mutation.body.as_deref() == Some("early"))
-            {
-                break;
-            }
-            assert!(Instant::now() < deadline, "the message did not arrive");
-            std::thread::sleep(Duration::from_millis(5));
-        }
         bob.clone()
             .attach_chat_store(bob_store.clone(), OWNER.to_owned(), None)
             .unwrap();
@@ -1073,7 +1073,7 @@ mod tests {
         let bob = session(directory.path(), &bob_identity, &alice_address).await;
         alice
             .clone()
-            .attach_chat_store(alice_store, OWNER.to_owned(), None)
+            .attach_chat_store(alice_store.clone(), OWNER.to_owned(), None)
             .unwrap();
         alice
             .send_chat(
@@ -1085,22 +1085,8 @@ mod tests {
             .await
             .unwrap();
         // The message reaches Bob before he has a store.
+        deliver_to_storeless(&alice, &alice_store, &bob, &bob_address);
         let deadline = Instant::now() + Duration::from_secs(10);
-        loop {
-            for frame in alice.poll_update().outbound_frames {
-                alice.complete_outbound_frame(frame.id, true).unwrap();
-                bob.receive(rx(frame.data)).unwrap();
-            }
-            let update = bob.poll_update();
-            for frame in update.outbound_frames {
-                bob.complete_outbound_frame(frame.id, true).unwrap();
-            }
-            if update.chat_batch_id.is_some() {
-                break;
-            }
-            assert!(Instant::now() < deadline, "the message did not arrive");
-            std::thread::sleep(Duration::from_millis(5));
-        }
         bob.clone()
             .attach_chat_store(
                 bob_store.clone(),

@@ -1,8 +1,6 @@
 //! The local identity rows and the peers (`node` rows) each identity knows.
 
-use rusqlite::functions::FunctionFlags;
 use rusqlite::{Connection, OptionalExtension, params};
-use unicode_normalization::{UnicodeNormalization, char::canonical_combining_class};
 
 use super::{MobileAppStore, MobileStoreError};
 
@@ -257,28 +255,12 @@ impl MobileAppStore {
         public_address: String,
         alias: Option<String>,
     ) -> Result<(), MobileStoreError> {
-        self.write(|transaction| {
-            // The sort key falls back to the advertised name when the
-            // alias is cleared, matching upsert_peer's initial insert.
-            let Some(advertised_name) = transaction
-                .query_row(
-                    "SELECT advertised_name FROM node
-                    WHERE owner_identity_id = ? AND public_address = ?",
-                    params![owner_identity_id, public_address],
-                    |row| row.get::<_, Option<String>>(0),
-                )
-                .optional()?
-            else {
-                return Ok(());
-            };
-            let search = search_key(alias.as_deref(), advertised_name.as_deref());
-            transaction.execute(
-                "UPDATE node SET alias = ?, alias_search = ?
-                WHERE owner_identity_id = ? AND public_address = ?",
-                params![alias, search, owner_identity_id, public_address],
-            )?;
-            Ok(())
-        })
+        self.connection().execute(
+            "UPDATE node SET alias = ?
+            WHERE owner_identity_id = ? AND public_address = ?",
+            params![alias, owner_identity_id, public_address],
+        )?;
+        Ok(())
     }
 
     pub fn set_peer_favorite(
@@ -323,31 +305,13 @@ impl MobileAppStore {
         owner_identity_id: String,
         public_address: String,
     ) -> Result<(), MobileStoreError> {
-        self.write(|transaction| {
-            let Some(advertised_name) = transaction
-                .query_row(
-                    "SELECT advertised_name FROM node
-                    WHERE owner_identity_id = ? AND public_address = ?
-                        AND (system_role IS NULL OR system_role <> ?)",
-                    params![owner_identity_id, public_address, COMPANION_RADIO],
-                    |row| row.get::<_, Option<String>>(0),
-                )
-                .optional()?
-            else {
-                return Ok(());
-            };
-            transaction.execute(
-                "UPDATE node SET is_saved = 0, is_favorite = 0,
-                    alias = NULL, alias_search = ?
-                WHERE owner_identity_id = ? AND public_address = ?",
-                params![
-                    search_key(None, advertised_name.as_deref()),
-                    owner_identity_id,
-                    public_address
-                ],
-            )?;
-            Ok(())
-        })
+        self.connection().execute(
+            "UPDATE node SET is_saved = 0, is_favorite = 0, alias = NULL
+            WHERE owner_identity_id = ? AND public_address = ?
+                AND (system_role IS NULL OR system_role <> ?)",
+            params![owner_identity_id, public_address, COMPANION_RADIO],
+        )?;
+        Ok(())
     }
 
     /// Delete a peer row outright. Refused—returning `false`—when a
@@ -408,7 +372,7 @@ impl MobileAppStore {
                     AND id NOT IN (
                         SELECT node_id FROM direct_conversation WHERE owner_identity_id = ?1
                     )
-                ORDER BY last_heard_at DESC, id DESC
+                ORDER BY last_heard_at_ms DESC, id DESC
                 LIMIT -1 OFFSET ?2
             )",
             params![owner_identity_id, cap],
@@ -554,9 +518,9 @@ pub(super) fn touch_last_heard(
         params![owner_identity_id, public_address],
     )? > 0;
     transaction.execute(
-        "UPDATE node SET last_heard_at = ?
+        "UPDATE node SET last_heard_at_ms = ?
         WHERE owner_identity_id = ? AND public_address = ?",
-        params![seconds(at_ms), owner_identity_id, public_address],
+        params![at_ms, owner_identity_id, public_address],
     )?;
     Ok(fired_watch)
 }
@@ -567,7 +531,7 @@ pub(super) fn list_nodes(
 ) -> Result<Vec<MobileStoredNodeRecord>, MobileStoreError> {
     let mut statement = connection.prepare(&format!(
         "SELECT {} FROM node WHERE owner_identity_id = ?
-        ORDER BY (system_role IS NOT NULL) DESC, alias_search, id",
+        ORDER BY (system_role IS NOT NULL) DESC, id",
         node_columns("")
     ))?;
     let nodes = statement
@@ -604,12 +568,12 @@ const NODE_COLUMNS: [&str; 15] = [
     "node_kind",
     "advertisement",
     "advertisement_authenticated",
-    "last_heard_at",
+    "last_heard_at_ms",
     "is_saved",
     "is_favorite",
     "on_dev_identity",
     "notify_when_heard",
-    "advertisement_received_at",
+    "advertisement_received_at_ms",
 ];
 
 /// How many columns [`stored_node`] reads.
@@ -646,12 +610,12 @@ pub(super) fn stored_node(
             .and_then(MobileStoredNodeKind::parse),
         advertisement: row.get(offset + 7)?,
         advertisement_authenticated: row.get::<_, i64>(offset + 8)? != 0,
-        last_heard_at_ms: row.get::<_, Option<f64>>(offset + 9)?.map(milliseconds),
+        last_heard_at_ms: row.get(offset + 9)?,
         is_saved: row.get::<_, i64>(offset + 10)? != 0,
         is_favorite: row.get::<_, i64>(offset + 11)? != 0,
         on_device_identity: row.get::<_, i64>(offset + 12)? != 0,
         notify_when_heard: row.get::<_, i64>(offset + 13)? != 0,
-        advertisement_received_at_ms: row.get::<_, Option<f64>>(offset + 14)?.map(milliseconds),
+        advertisement_received_at_ms: row.get(offset + 14)?,
     })
 }
 
@@ -663,19 +627,13 @@ fn upsert_peer(
 ) -> Result<(), MobileStoreError> {
     connection.execute(
         "INSERT INTO node (
-            owner_identity_id, public_address, alias, alias_search,
+            owner_identity_id, public_address, alias,
             advertised_name, is_saved, system_role, radio_identifier,
             node_kind, advertisement, advertisement_authenticated,
-            advertisement_received_at
-        ) VALUES (?1, ?2, ?3, umsh_search_key(?3, ?4), ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+            advertisement_received_at_ms
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
         ON CONFLICT(owner_identity_id, public_address) DO UPDATE SET
             alias = COALESCE(excluded.alias, node.alias),
-            -- From the values this update leaves, so a name heard later
-            -- moves an alias-less peer in the sort. (The Swift store kept
-            -- the old key whenever the update carried no alias.)
-            alias_search = umsh_search_key(
-                COALESCE(excluded.alias, node.alias),
-                COALESCE(excluded.advertised_name, node.advertised_name)),
             advertised_name = COALESCE(excluded.advertised_name, node.advertised_name),
             -- A background advertisement upsert must never demote a saved
             -- peer to the transient tier; only the explicit demote/delete
@@ -691,9 +649,9 @@ fn upsert_peer(
             advertisement_authenticated = CASE WHEN excluded.advertisement IS NULL
                 THEN node.advertisement_authenticated
                 ELSE excluded.advertisement_authenticated END,
-            advertisement_received_at = CASE WHEN excluded.advertisement IS NULL
-                THEN node.advertisement_received_at
-                ELSE excluded.advertisement_received_at END",
+            advertisement_received_at_ms = CASE WHEN excluded.advertisement IS NULL
+                THEN node.advertisement_received_at_ms
+                ELSE excluded.advertisement_received_at_ms END",
         params![
             owner_identity_id,
             public_address,
@@ -705,7 +663,7 @@ fn upsert_peer(
             peer.node_kind.map(MobileStoredNodeKind::as_str),
             peer.advertisement,
             peer.advertisement_authenticated,
-            peer.advertisement_received_at_ms.map(seconds),
+            peer.advertisement_received_at_ms,
         ],
     )?;
     Ok(())
@@ -719,72 +677,12 @@ fn mark_on_device_identity(
     public_address: &str,
 ) -> Result<(), MobileStoreError> {
     connection.execute(
-        "INSERT INTO node (owner_identity_id, public_address, alias_search, on_dev_identity)
-        VALUES (?, ?, '', 1)
+        "INSERT INTO node (owner_identity_id, public_address, on_dev_identity)
+        VALUES (?, ?, 1)
         ON CONFLICT(owner_identity_id, public_address) DO UPDATE SET on_dev_identity = 1",
         params![owner_identity_id, public_address],
     )?;
     Ok(())
-}
-
-/// The key a node row keeps in `alias_search`, which [`list_nodes`] orders
-/// by: its alias or, without one, its advertised name, folded. Every write
-/// that changes either column derives the key here, in Rust or through
-/// `umsh_search_key` in SQL.
-///
-/// Nothing searches by the column, whatever its name says. It is a base
-/// order only: the platforms sort names by the reader's locale themselves.
-pub(super) fn search_key(alias: Option<&str>, advertised_name: Option<&str>) -> String {
-    fold_search(alias.or(advertised_name).unwrap_or(""))
-}
-
-/// The form `alias_search` holds: canonical decomposition with every mark
-/// of a nonzero combining class (accents, cedillas, tone marks) removed,
-/// lowercased with a single sigma, then recomposed. Close to the fold the
-/// Swift store wrote with Foundation, so rows either store wrote sort
-/// together.
-///
-/// Marks of combining class zero, such as most vowel signs of Indic
-/// scripts, stay. Recomposing keeps text without marks in its usual form
-/// (a Hangul syllable stays one character rather than its jamo).
-pub(super) fn fold_search(value: &str) -> String {
-    let unmarked: String = value
-        .nfd()
-        .filter(|c| canonical_combining_class(*c) == 0)
-        .collect();
-    // Lowercasing writes a word-final Σ as ς; one sigma keeps a prefix
-    // typed mid-word matching the whole word's key.
-    unmarked
-        .to_lowercase()
-        .nfc()
-        .map(|c| if c == 'ς' { 'σ' } else { c })
-        .collect()
-}
-
-/// Make [`search_key`] callable from SQL on `connection`, as
-/// `umsh_search_key(alias, advertised_name)`.
-pub(super) fn register_functions(connection: &Connection) -> rusqlite::Result<()> {
-    connection.create_scalar_function(
-        "umsh_search_key",
-        2,
-        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
-        |context| {
-            let alias = context.get::<Option<String>>(0)?;
-            let advertised_name = context.get::<Option<String>>(1)?;
-            Ok(search_key(alias.as_deref(), advertised_name.as_deref()))
-        },
-    )
-}
-
-/// A REAL Unix-seconds column's value for an instant in milliseconds.
-fn seconds(milliseconds: i64) -> f64 {
-    milliseconds as f64 / 1_000.0
-}
-
-/// An instant in milliseconds from a REAL Unix-seconds column. Rounded, so
-/// a value written by [`seconds`] reads back exactly.
-fn milliseconds(seconds: f64) -> i64 {
-    (seconds * 1_000.0).round() as i64
 }
 
 #[cfg(test)]

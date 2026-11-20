@@ -30,14 +30,14 @@ umsh-ulcp-device = { path = "../umsh-ulcp-device" }
 umsh-ulcp-simdev = { path = "../umsh-ulcp-simdev", features = ["lan"] }
 embedded-hal-async.workspace = true
 lwuri.workspace = true
+# The core logs through the `log` facade; the platform installs the logger.
+# `kv` carries the private values as fields of their own.
+log = { version = "0.4.29", features = ["kv"] }
 rand = { workspace = true, features = ["std", "thread_rng", "sys_rng"] }
 # The application store. Exactly the version `umsh-regiondb` uses:
 # `libsqlite3-sys` declares `links = "sqlite3"`, so the graph holds one.
-rusqlite = { version = "0.32", default-features = false, features = ["functions"] }
+rusqlite = { version = "0.32", default-features = false }
 tokio = { version = "1", features = ["macros", "net", "rt", "sync", "time"] }
-# The store's search fold (NFD, then combining marks stripped), the same on
-# both platforms rather than each OS's own.
-unicode-normalization = "0.1"
 uniffi = "=0.32.0"
 zeroize.workspace = true
 

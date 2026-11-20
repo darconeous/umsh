@@ -781,32 +781,14 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
             )
         }
         // The device answers with the item it changed, or with a status
-        // where that item belonged. `ALREADY` and `ITEM_NOT_FOUND` are the
-        // request already satisfied, as on every other table edit.
-        guard let answer = event.answers.first else {
-            try Self.requireTableEdit(event.statusCode)
-            return
-        }
-        try Self.requireTableEdit(answer.statusCode)
-    }
-
-    /// Accept the outcome of a one-item table edit, or say why not.
-    ///
-    /// The device already holding the entry, or already lacking it, is the
-    /// request satisfied rather than refused, so both read as success.
-    private static func requireTableEdit(_ status: UInt32?) throws {
-        guard let status, status != 0 else { return }
-        let name = ulcpStatusName(status: status)
-        guard !name.hasSuffix("ALREADY"), !name.hasSuffix("ITEM_NOT_FOUND") else { return }
-        throw RemoteManagementError.refused(status: status)
+        // where that item belonged.
+        try RadioDriverAdapter.require(refusal: event.answers.first?.refusal ?? event.refusal)
     }
 
     /// Persist the attached device's live configuration.
     func saveDevice() async throws {
         let event = try await management { try await $0.save() }
-        if let status = event.statusCode, status != 0 {
-            throw RemoteManagementError.refused(status: status)
-        }
+        try RadioDriverAdapter.require(refusal: event.refusal)
     }
 
     /// Ask the attached device to announce itself now.
@@ -816,9 +798,7 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
     func announce(_ request: MobileAnnouncementRecord) async throws {
         Self.logger.notice("action: user asked the device to announce itself")
         let event = try await management { try await $0.announce(request: request) }
-        if let status = event.statusCode, status != 0 {
-            throw RemoteManagementError.refused(status: status)
-        }
+        try RadioDriverAdapter.require(refusal: event.refusal)
     }
 
     /// Forget every host paired with the attached device—the bond count
@@ -937,9 +917,6 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
         queue.async { [weak self] in
             guard let self, self.driver === driver else { return }
             let update = driver.pollUpdate()
-            for line in update.diagnostics {
-                Self.logger.notice("driver: \(line, privacy: .public)")
-            }
             if let state = update.state {
                 publish(AdministeredDeviceSnapshot(state))
             }

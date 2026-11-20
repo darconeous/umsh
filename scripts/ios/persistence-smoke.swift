@@ -182,13 +182,11 @@ struct PersistenceSmokeTest {
         let historicalAfter = try Data(contentsOf: historicalURL)
         precondition(historicalAfter == historicalBytes)
 
-        try await checkReplies(store)
-        try await checkRepeats(store)
         try await checkClaimedRadios(store)
-        try await checkRemainingCalls(store)
+        try await checkRemainingCalls(store, path: databaseURL.path)
         try await checkReopenAndErase(store, path: databaseURL.path)
 
-        print("SQLite tier, delete/demote, retention, refusal, reply, repeat, claimed-radio, round-trip, and reopen checks passed")
+        print("SQLite tier, delete/demote, retention, refusal, claimed-radio, round-trip, and reopen checks passed")
 
         // Seeding tens of thousands of rows takes long enough that the ordinary
         // smoke run should not pay for it.
@@ -227,150 +225,13 @@ struct PersistenceSmokeTest {
         precondition(radios.isEmpty)
     }
 
-    /// The repeaters heard carrying a message fold across its fragments and
-    /// across each fragment's transmissions: named ones merged, anonymous
-    /// ones counted as the most any fragment heard.
-    private static func checkRepeats(_ store: SQLiteApplicationStore) async throws {
-        let peer = "repeat-peer"
-        _ = try await store.applyChatMutations(ownerIdentityID: "alice", mutations: [
-            MobileChatMutationRecord(
-                sessionId: 300, handle: 1, revision: 0, kind: .insert,
-                conversationAddress: peer, senderAddress: nil, senderHint: nil,
-                direction: .outbound, messageType: 0, wireId: 1, epoch: 0,
-                clientToken: nil, senderHandle: nil, regardingHandle: nil,
-                regardingWireId: nil, regardingDirection: nil,
-                regardingSenderHint: nil, regardingUnknown: false, unknownOriginal: false,
-                backgroundColor: nil, textColor: nil,
-                originalHandle: nil, originalWireId: nil, originalDirection: nil,
-                originalSenderHint: nil, body: "Anyone on the ridge?", complete: true,
-                presentFragments: 2, fragmentCount: 2, finalized: true, presence: .present,
-                receivedLate: false, notify: false, rx: nil, forwardSecret: nil
-            ),
-        ])
-        func stored() async throws -> StoredChatMessage {
-            let page = try await store.chatMessagePage(
-                ownerIdentityID: "alice", conversationAddress: peer, newest: 10
-            )
-            return page.messages[0]
-        }
-        let unsent = try await stored()
-        precondition(unsent.repeats == nil, "nothing sent, so no repeats yet")
-
-        try await store.applyChatDeliveries(ownerIdentityID: "alice", deliveries: [
-            .init(sessionId: 300, handle: 1, fragmentIndex: 0, state: .sent, viaFlood: false),
-        ])
-        let sent = try await stored()
-        precondition(sent.deliveryState == "sent")
-        precondition(sent.repeats?.count == 0, "sending stamps the message's progress")
-
-        let ridge = RouterHintRecord(bytes: Data([0x01, 0x02]), text: "ridge")
-        let butte = RouterHintRecord(bytes: Data([0x03, 0x04]), text: "butte")
-        let peak = RouterHintRecord(bytes: Data([0x05, 0x06]), text: "peak")
-        try await store.applyChatRepeats(ownerIdentityID: "alice", repeats: [
-            .init(sessionId: 300, handle: 1, fragmentIndex: 0, repeaters: [ridge],
-                  anonymousRepeats: 1),
-            .init(sessionId: 300, handle: 1, fragmentIndex: 1, repeaters: [ridge, butte],
-                  anonymousRepeats: 0),
-            // A resend of the first fragment tallies afresh.
-            .init(sessionId: 300, handle: 1, fragmentIndex: 0, repeaters: [peak],
-                  anonymousRepeats: 0),
-        ])
-        let repeats = try await stored().repeats
-        precondition(repeats?.repeaters.first == Data([0x01, 0x02]))
-        precondition(Set(repeats?.repeaters ?? []) == [
-            Data([0x01, 0x02]), Data([0x03, 0x04]), Data([0x05, 0x06]),
-        ])
-        precondition(repeats?.anonymous == 1)
-        precondition(repeats?.count == 4)
-    }
-
-    /// A reply quotes its original as that reads now: found by live handle or
-    /// by wire coordinates, adopted when it arrives after the reply, shown as
-    /// deleted once taken back, and unavailable when it never comes.
-    private static func checkReplies(_ store: SQLiteApplicationStore) async throws {
-        let peer = "reply-peer"
-        func message(
-            session: UInt64,
-            handle: UInt32,
-            revision: UInt32 = 0,
-            kind: MobileChatMutationKind = .insert,
-            direction: MobileChatDirection = .inbound,
-            wireId: UInt8? = nil,
-            body: String? = nil,
-            regardingHandle: UInt32? = nil,
-            regardingWireId: UInt8? = nil,
-            originalHandle: UInt32? = nil,
-            presence: MobileChatPresence = .present
-        ) -> MobileChatMutationRecord {
-            MobileChatMutationRecord(
-                sessionId: session, handle: handle, revision: revision, kind: kind,
-                conversationAddress: peer, senderAddress: nil, senderHint: nil,
-                direction: direction, messageType: 0, wireId: wireId, epoch: 0,
-                clientToken: nil, senderHandle: nil, regardingHandle: regardingHandle,
-                regardingWireId: regardingWireId,
-                regardingDirection: regardingWireId == nil ? nil : .inbound,
-                regardingSenderHint: nil, regardingUnknown: false, unknownOriginal: false,
-                backgroundColor: nil, textColor: nil,
-                originalHandle: originalHandle, originalWireId: nil, originalDirection: nil,
-                originalSenderHint: nil, body: body, complete: true, presentFragments: 1,
-                fragmentCount: 1, finalized: true, presence: presence, receivedLate: false,
-                notify: false, rx: nil, forwardSecret: nil
-            )
-        }
-        func page() async throws -> [String: StoredChatMessage] {
-            let page = try await store.chatMessagePage(
-                ownerIdentityID: "alice",
-                conversationAddress: peer,
-                newest: 100
-            )
-            return Dictionary(uniqueKeysWithValues: page.messages.map { ($0.body, $0) })
-        }
-
-        _ = try await store.applyChatMutations(ownerIdentityID: "alice", mutations: [
-            message(session: 100, handle: 1, wireId: 5, body: "Is the repeater up?"),
-            // Same session: named by its live handle.
-            message(session: 100, handle: 2, direction: .outbound, wireId: 1,
-                    body: "Since this morning.", regardingHandle: 1),
-        ])
-        _ = try await store.applyChatMutations(ownerIdentityID: "alice", mutations: [
-            // A later session: named by wire coordinates.
-            message(session: 200, handle: 1, wireId: 6, body: "Three hops?", regardingWireId: 5),
-            // Ahead of its original.
-            message(session: 200, handle: 2, wireId: 8, body: "Bring the antenna.",
-                    regardingWireId: 7),
-            // Never answered by anything stored.
-            message(session: 200, handle: 3, wireId: 9, body: "Ten minutes late.",
-                    regardingWireId: 77),
-            // A gap that turns out to be a reply once repaired.
-            message(session: 200, handle: 4, wireId: 10, body: "", presence: .gapPending),
-        ])
-        var rows = try await page()
-        precondition(rows["Since this morning."]?.quote?.original?.body == "Is the repeater up?")
-        precondition(rows["Three hops?"]?.quote?.original?.ref.id == "100:1")
-        precondition(rows["Bring the antenna."]?.isReply == true)
-        precondition(rows["Bring the antenna."]?.quote?.original == nil)
-        precondition(rows["Ten minutes late."]?.quote == .unavailable)
-        precondition(rows["Is the repeater up?"]?.quote == nil, "an original is not a reply")
-
-        _ = try await store.applyChatMutations(ownerIdentityID: "alice", mutations: [
-            message(session: 200, handle: 5, wireId: 7, body: "The antenna is in the truck."),
-            message(session: 200, handle: 4, revision: 1, wireId: 10, body: "Filled in.",
-                    regardingWireId: 7),
-            message(session: 100, handle: 6, kind: .delete, originalHandle: 1),
-        ])
-        rows = try await page()
-        precondition(
-            rows["Bring the antenna."]?.quote?.original?.body == "The antenna is in the truck.",
-            "a reply that outran its original adopts it"
-        )
-        precondition(rows["Filled in."]?.quote?.original?.ref.id == "200:5")
-        precondition(rows["Three hops?"]?.quote?.original?.isDeleted == true)
-    }
-
     /// The calls the checks above leave out, each written with a different
     /// value in every argument and read back, so one the store drops or
     /// crosses with its neighbor shows.
-    private static func checkRemainingCalls(_ store: SQLiteApplicationStore) async throws {
+    private static func checkRemainingCalls(
+        _ store: SQLiteApplicationStore,
+        path: String
+    ) async throws {
         let owner = "dana"
         func at(_ seconds: Double) -> Date { Date(timeIntervalSince1970: 1_780_000_000 + seconds) }
         func peer(_ address: String) async throws -> StoredNode {
@@ -381,30 +242,6 @@ struct PersistenceSmokeTest {
                 ownerIdentityID: owner, conversationAddress: address, newest: 100
             ).messages
         }
-        func message(
-            session: UInt64, handle: UInt32, address: String,
-            direction: MobileChatDirection = .inbound, messageType: UInt8 = 0,
-            wireId: UInt8, epoch: UInt16 = 0, body: String,
-            senderHint: Data? = nil, regardingHandle: UInt32? = nil,
-            presence: MobileChatPresence = .present, notify: Bool = false,
-            rx: MobileChatRxMetadataRecord? = nil, fragments: UInt8 = 1
-        ) -> MobileChatMutationRecord {
-            MobileChatMutationRecord(
-                sessionId: session, handle: handle, revision: 0, kind: .insert,
-                conversationAddress: address, senderAddress: nil, senderHint: senderHint,
-                direction: direction, messageType: messageType, wireId: wireId, epoch: epoch,
-                clientToken: nil, senderHandle: nil, regardingHandle: regardingHandle,
-                regardingWireId: nil, regardingDirection: nil,
-                regardingSenderHint: nil, regardingUnknown: false, unknownOriginal: false,
-                backgroundColor: nil, textColor: nil,
-                originalHandle: nil, originalWireId: nil, originalDirection: nil,
-                originalSenderHint: nil, body: body, complete: true,
-                presentFragments: UInt16(fragments), fragmentCount: fragments, finalized: true,
-                presence: presence, receivedLate: false, notify: notify, rx: rx,
-                forwardSecret: nil
-            )
-        }
-
         // Identity.
         try await store.upsertIdentity(id: owner, publicAddress: "dana-public", createdAt: at(1))
         try await store.upsertIdentity(id: owner, publicAddress: "dana-public", createdAt: at(2))
@@ -422,17 +259,17 @@ struct PersistenceSmokeTest {
         // Peers.
         try await store.upsertPeer(
             ownerIdentityID: owner, publicAddress: "relay", alias: "Relay",
-            advertisedName: "relay-adv", isSaved: true, nodeKind: "repeater",
+            advertisedName: "relay-adv", isSaved: true, nodeKind: .repeater,
             advertisement: Data([1, 2, 3]), advertisementAuthenticated: true,
             advertisementReceivedAt: at(10)
         )
         try await store.upsertPeer(
             ownerIdentityID: owner, publicAddress: "friend", alias: "Friend",
-            isSaved: true, nodeKind: "chat"
+            isSaved: true, nodeKind: .chat
         )
         var relay = try await peer("relay")
         precondition(relay.alias == "Relay" && relay.advertisedName == "relay-adv")
-        precondition(relay.nodeKind == "repeater" && relay.advertisement == Data([1, 2, 3]))
+        precondition(relay.nodeKind == .repeater && relay.advertisement == Data([1, 2, 3]))
         precondition(relay.advertisementAuthenticated && relay.advertisementReceivedAt == at(10))
         try await store.updateNodeAlias(ownerIdentityID: owner, publicAddress: "relay", alias: "Ridge relay")
         try await store.setNotifyWhenHeard(ownerIdentityID: owner, publicAddress: "relay", enabled: true)
@@ -505,30 +342,32 @@ struct PersistenceSmokeTest {
         precondition(readGeneral?.conversationAddress == "general-address")
         precondition(readGeneral?.draftText == "channel draft")
 
-        // Chat: what arrives.
+        // Chat. The core writes what arrives and what is sent as it comes,
+        // so these rows go in as staging writes them, with raw SQL for the
+        // states staging does not make.
         let reception = StoredMessageReception(
             rssiDbm: -101, snrCentibels: -35, lqi: 200, hopCount: 3,
             routeHints: [Data([1, 2]), Data([3, 4])], sourceAuthenticated: true
         )
-        _ = try await store.applyChatMutations(ownerIdentityID: owner, mutations: [
-            message(session: 700, handle: 1, address: "friend", wireId: 1, body: "Hello", notify: true,
-                    rx: MobileChatRxMetadataRecord(
-                        rssiDbm: -101, snrCentibels: -35, lqi: 200, hopCount: 3,
-                        routeHints: [Data([1, 2]), Data([3, 4])], sourceAuthenticated: true,
-                        bufferedAgeSeconds: 0
-                    )),
-            message(session: 700, handle: 2, address: "friend", direction: .outbound, wireId: 1,
-                    body: "Hi back"),
-            message(session: 700, handle: 3, address: "friend", messageType: 1, wireId: 2,
-                    body: "+1", regardingHandle: 2, notify: true),
-            message(session: 700, handle: 4, address: "friend", wireId: 3, body: "",
-                    presence: .gapPending),
-            message(session: 710, handle: 1, address: "general-address", wireId: 1,
-                    body: "On the channel", senderHint: Data([0xAA, 0xBB, 0xCC]), notify: true),
-        ])
+        try await store.seedStagedTranscript(
+            ownerIdentityID: owner, conversationAddress: "friend", sessionID: "700",
+            messages: [
+                StagedMessage(
+                    handle: 1, body: "Hello", outbound: false, createdAt: at(70),
+                    reception: reception
+                ),
+                StagedMessage(
+                    handle: 2, body: "Hi back", outbound: true, createdAt: at(71),
+                    deliveryState: .acknowledged,
+                    reactions: [StagedReaction(body: "+1", outbound: false, createdAt: at(72))]
+                ),
+                StagedMessage(handle: 4, body: "", outbound: false, createdAt: at(73)),
+            ]
+        )
+        try execute(path, "UPDATE chat_message SET presence = 1 WHERE session_id = '700' AND handle = 4")
         var messages = try await transcript("friend")
         let hello = messages.first { $0.body == "Hello" }
-        precondition(hello?.sessionID == "700" && hello?.handle == 1 && hello?.wireID == 1)
+        precondition(hello?.sessionID == "700" && hello?.handle == 1)
         precondition(hello?.reception == reception)
         precondition(messages.first { $0.body == "Hi back" }?.reactions.map(\.body) == ["+1"])
         precondition(messages.contains { $0.isGapPlaceholder })
@@ -542,106 +381,44 @@ struct PersistenceSmokeTest {
         )
         precondition(cursor == hello?.cursor && strayCursor == nil)
 
-        let directAddress = try await store.conversationAddressForMessage(
-            ownerIdentityID: owner, sessionID: 700, handle: 1
-        )
-        let channelAddress = try await store.conversationAddressForMessage(
-            ownerIdentityID: owner, sessionID: 710, handle: 1
-        )
-        let noAddress = try await store.conversationAddressForMessage(
-            ownerIdentityID: owner, sessionID: 710, handle: 2
-        )
-        precondition(directAddress == "friend" && channelAddress == "general-address" && noAddress == nil)
-        let banner = try await store.chatNotificationTarget(ownerIdentityID: owner, sessionID: 700, handle: 1)
-        let reactionAsMessage = try await store.chatNotificationTarget(
-            ownerIdentityID: owner, sessionID: 700, handle: 3
-        )
-        precondition(banner?.conversationAddress == "friend" && banner?.body == "Hello")
-        precondition(reactionAsMessage == nil)
-        let reacted = try await store.chatReactionNotificationTarget(
-            ownerIdentityID: owner, sessionID: 700, handle: 3
-        )
-        let messageAsReaction = try await store.chatReactionNotificationTarget(
-            ownerIdentityID: owner, sessionID: 700, handle: 1
-        )
-        precondition(reacted?.conversationAddress == "friend" && reacted?.body == "+1")
-        precondition(reacted?.targetBody == "Hi back" && messageAsReaction == nil)
-        var channelBanner = try await store.chatNotificationTarget(
-            ownerIdentityID: owner, sessionID: 710, handle: 1
-        )
-        precondition(channelBanner?.senderHint == Data([0xAA, 0xBB, 0xCC]))
-        precondition(channelBanner?.senderAddress == nil)
-        try await store.applySenderResolution(
-            ownerIdentityID: owner, conversationAddress: "general-address",
-            senderHint: Data([0xAA, 0xBB, 0xCC]), senderAddress: "relay"
-        )
-        channelBanner = try await store.chatNotificationTarget(ownerIdentityID: owner, sessionID: 710, handle: 1)
-        precondition(channelBanner?.senderAddress == "relay")
-
         try await store.resolveGapsUnavailable(ownerIdentityID: owner, rows: [(sessionID: "700", handle: 4)])
         messages = try await transcript("friend")
         precondition(!messages.contains { $0.isGapPlaceholder })
         precondition(messages.contains { $0.isUnavailable })
 
-        // Chat: what is composed.
-        try await store.commitChatComposeBatch(ownerIdentityID: owner, batch: MobileChatComposeBatchRecord(
-            batchId: 1, checkpoint: .init(conversationAddress: "friend", nextId: 5, epoch: 2),
-            archiveDeletes: [],
-            archives: [
-                .init(conversationAddress: "friend", messageId: 4, fragmentIndex: 0, payload: Data([1, 2, 3])),
-                .init(conversationAddress: "friend", messageId: 4, fragmentIndex: 1, payload: Data([4, 5])),
-            ],
-            mutations: [message(session: 720, handle: 1, address: "friend", direction: .outbound,
-                                wireId: 4, epoch: 2, body: "Composed", fragments: 2)]
-        ))
+        // A stream's checkpoint, and what a resend of a message puts back
+        // on the air.
+        try execute(path, """
+            INSERT INTO chat_stream_checkpoint
+                (owner_identity_id, conversation_address, next_id, epoch, updated_at_ms)
+                VALUES ('dana', 'friend', 5, 2, 1);
+            INSERT INTO chat_outbound_archive
+                (owner_identity_id, conversation_address, message_id, fragment_index, payload)
+                VALUES ('dana', 'friend', 4, 0, x'010203'), ('dana', 'friend', 4, 1, x'0405');
+            """)
         var checkpoints = try await store.chatCheckpoints(ownerIdentityID: owner)
         precondition(checkpoints.map(\.conversationAddress) == ["friend"])
         precondition(checkpoints[0].nextId == 5 && checkpoints[0].epoch == 2)
-        let secondFragment = try await store.chatArchive(ownerIdentityID: owner, lookup: .init(
-            requestId: 0, conversationAddress: "friend", messageId: 4, fragmentIndex: 1
-        ))
-        let notArchived = try await store.chatArchive(ownerIdentityID: owner, lookup: .init(
-            requestId: 0, conversationAddress: "friend", messageId: 5, fragmentIndex: 1
-        ))
-        precondition(secondFragment == Data([4, 5]) && notArchived == nil)
-        var frames = try await store.chatResendFrames(
+        let frames = try await store.chatResendFrames(
             ownerIdentityID: owner, conversationAddress: "friend", sessionID: "720", handle: 1, wireID: 4
         )
         precondition(frames.map(\.payload) == [Data([1, 2, 3]), Data([4, 5])])
         precondition(frames.map(\.fragmentIndex) == [0, 1])
 
-        // A resend goes out under a new transmission; word of that one
-        // reaches the message.
-        try await store.applyChatResends(ownerIdentityID: owner, resends: [
-            .init(message: .init(sessionId: 720, handle: 1, wireId: 4, epoch: 2),
-                  deliverySessionId: 800, deliveryHandle: 9, forwardSecret: true),
-        ])
-        _ = try await store.applyChatDeliveries(ownerIdentityID: owner, deliveries: [
-            .init(sessionId: 800, handle: 9, fragmentIndex: 0, state: .acknowledged, viaFlood: false),
-        ])
-        frames = try await store.chatResendFrames(
-            ownerIdentityID: owner, conversationAddress: "friend", sessionID: "720", handle: 1, wireID: 4
+        // A message that failed can be taken back out; no other can.
+        try await store.seedStagedTranscript(
+            ownerIdentityID: owner, conversationAddress: "friend", sessionID: "720",
+            messages: [
+                StagedMessage(
+                    handle: 2, body: "Never released", outbound: true, createdAt: at(74),
+                    deliveryState: .undelivered
+                ),
+                StagedMessage(
+                    handle: 3, body: "Left pending", outbound: true, createdAt: at(75),
+                    deliveryState: .pending
+                ),
+            ]
         )
-        precondition(frames.map(\.fragmentIndex) == [1], "an acknowledged fragment is not sent again")
-        messages = try await transcript("friend")
-        precondition(messages.first { $0.body == "Composed" }?.isForwardSecret == true)
-
-        // A compose made durable that the engine could not release is
-        // marked, and can be taken back out.
-        let unreleasedBatch = MobileChatComposeBatchRecord(
-            batchId: 2, checkpoint: .init(conversationAddress: "friend", nextId: 6, epoch: 2),
-            archiveDeletes: [], archives: [],
-            mutations: [message(session: 720, handle: 2, address: "friend", direction: .outbound,
-                                wireId: 5, epoch: 2, body: "Never released")]
-        )
-        try await store.commitChatComposeBatch(ownerIdentityID: owner, batch: unreleasedBatch)
-        try await store.markChatComposeBatchFailed(ownerIdentityID: owner, batch: unreleasedBatch)
-        checkpoints = try await store.chatCheckpoints(ownerIdentityID: owner)
-        precondition(checkpoints[0].nextId == 6)
-        messages = try await transcript("friend")
-        let unreleased = messages.first { $0.body == "Never released" }
-        precondition(unreleased?.deliveryState == "undelivered")
-        precondition(messages.first { $0.body == "Composed" }?.deliveryState != "undelivered")
         try await store.removeFailedMessage(ownerIdentityID: owner, sessionID: "720", handle: 2)
         try await store.removeFailedMessage(ownerIdentityID: owner, sessionID: "700", handle: 1)
         messages = try await transcript("friend")
@@ -649,13 +426,9 @@ struct PersistenceSmokeTest {
         precondition(messages.contains { $0.body == "Hello" }, "only a failed message can be removed")
 
         // What a previous process left pending never went out.
-        _ = try await store.applyChatMutations(ownerIdentityID: owner, mutations: [
-            message(session: 730, handle: 1, address: "friend", direction: .outbound, wireId: 6,
-                    body: "Left pending"),
-        ])
         try await store.settleInterruptedDeliveries(ownerIdentityID: owner)
         messages = try await transcript("friend")
-        precondition(messages.first { $0.body == "Left pending" }?.deliveryState == "undelivered")
+        precondition(messages.first { $0.body == "Left pending" }?.deliveryState == .undelivered)
 
         // Device management cache.
         let card = StoredManagementCard(
@@ -759,7 +532,7 @@ struct PersistenceSmokeTest {
                 ),
                 StagedMessage(
                     handle: 2, body: "Staged reply", outbound: true, createdAt: at(62),
-                    deliveryState: "acknowledged", regarding: .message(1)
+                    deliveryState: .acknowledged, regarding: .message(1)
                 ),
             ]
         )
@@ -769,7 +542,7 @@ struct PersistenceSmokeTest {
         precondition(stagedInbound?.sessionID == "staging-smoke" && stagedInbound?.reception == reception)
         precondition(stagedInbound?.createdAtMilliseconds == 1_780_000_060_000)
         precondition(stagedInbound?.reactions.map(\.body) == ["ha"])
-        precondition(stagedReply?.deliveryState == "acknowledged")
+        precondition(stagedReply?.deliveryState == .acknowledged)
         precondition(stagedReply?.quote?.original?.body == "Staged inbound")
         let window = try await store.chatMessageWindow(
             ownerIdentityID: owner, conversationAddress: "friend", around: "staging-smoke",
@@ -790,10 +563,10 @@ struct PersistenceSmokeTest {
         checkpoints = try await store.chatCheckpoints(ownerIdentityID: owner)
         directs = try await store.listDirectConversations(ownerIdentityID: owner)
         precondition(messages.isEmpty && checkpoints.count == 1 && directs.map(\.id) == [direct])
-        let clearedArchive = try await store.chatArchive(ownerIdentityID: owner, lookup: .init(
-            requestId: 0, conversationAddress: "friend", messageId: 4, fragmentIndex: 1
-        ))
-        precondition(clearedArchive == nil)
+        let clearedFrames = try await store.chatResendFrames(
+            ownerIdentityID: owner, conversationAddress: "friend", sessionID: "720", handle: 1, wireID: 4
+        )
+        precondition(clearedFrames.isEmpty, "clearing takes the archive")
         try await store.deleteDirectConversation(ownerIdentityID: owner, conversationID: direct)
         directs = try await store.listDirectConversations(ownerIdentityID: owner)
         friend = try await peer("friend")
@@ -823,10 +596,10 @@ struct PersistenceSmokeTest {
             precondition(read.reports == written.reports)
         }
         let page = try await store.chatMessagePage(
-            ownerIdentityID: "alice", conversationAddress: "reply-peer", newest: 100
+            ownerIdentityID: "dana", conversationAddress: "general-address", newest: 100
         )
         let reread = try await reopened.chatMessagePage(
-            ownerIdentityID: "alice", conversationAddress: "reply-peer", newest: 100
+            ownerIdentityID: "dana", conversationAddress: "general-address", newest: 100
         )
         precondition(!page.messages.isEmpty && reread == page)
 
@@ -844,6 +617,17 @@ struct PersistenceSmokeTest {
             preconditionFailure("Missing expected node \(address)")
         }
         return found
+    }
+
+    /// Run `sql` straight on the file at `path`.
+    private static func execute(_ path: String, _ sql: String) throws {
+        var connection: OpaquePointer?
+        precondition(sqlite3_open(path, &connection) == SQLITE_OK)
+        defer { sqlite3_close(connection) }
+        precondition(
+            sqlite3_exec(connection, sql, nil, nil, nil) == SQLITE_OK,
+            "SQL failed: \(String(cString: sqlite3_errmsg(connection)))"
+        )
     }
 
     private static func createHistoricalStore(path: String) throws {
@@ -935,12 +719,8 @@ extension PersistenceSmokeTest {
             conversationAddress: benchmarkChannelAddress
         )
 
-        // Seeding goes through raw SQL rather than `applyChatMutations`, for two
-        // reasons that both invalidate the measurement otherwise: that path
-        // stamps `created_at_ms` from the clock, so every seeded row would land
-        // in the same handful of milliseconds and the keyset sweep would degrade
-        // to one timestamp bucket; and with `synchronous = FULL` a transaction
-        // per row takes minutes.
+        // Seeding goes through raw SQL, in one transaction: with
+        // `synchronous = FULL` a transaction per row takes minutes.
         var connection: OpaquePointer?
         precondition(sqlite3_open(databaseURL.path, &connection) == SQLITE_OK, "bench open failed")
         defer { sqlite3_close(connection) }
@@ -1414,125 +1194,5 @@ extension PersistenceSmokeTest {
             Double(parts.seconds) * 1_000
             + Double(parts.attoseconds) / 1_000_000_000_000_000
         return String(format: "%.2f ms", milliseconds)
-    }
-}
-
-/// The core stores chat itself as it comes, so the app has no calls for
-/// these. The smoke still writes and reads its chat fixtures through them,
-/// straight on the core's store.
-extension SQLiteApplicationStore {
-    private static var nowMilliseconds: Int64 {
-        Int64(Date.now.timeIntervalSince1970 * 1_000)
-    }
-
-    @discardableResult
-    func applyChatMutations(
-        ownerIdentityID: String,
-        mutations: [MobileChatMutationRecord],
-        silentTestsIn: String? = nil
-    ) throws -> [MobileChatMutationRecord] {
-        try coreStore.applyChatMutations(
-            ownerIdentityId: ownerIdentityID,
-            mutations: mutations,
-            nowMs: Self.nowMilliseconds,
-            silentTestsIn: silentTestsIn
-        )
-    }
-
-    @discardableResult
-    func applyChatDeliveries(
-        ownerIdentityID: String,
-        deliveries: [MobileChatDeliveryRecord]
-    ) throws -> [ChatDeliveryFailure] {
-        try coreStore.applyChatDeliveries(
-            ownerIdentityId: ownerIdentityID,
-            deliveries: deliveries,
-            nowMs: Self.nowMilliseconds
-        )
-        .map(ChatDeliveryFailure.init)
-    }
-
-    func applyChatRepeats(ownerIdentityID: String, repeats: [MobileChatRepeatRecord]) throws {
-        try coreStore.applyChatRepeats(
-            ownerIdentityId: ownerIdentityID,
-            repeats: repeats,
-            nowMs: Self.nowMilliseconds
-        )
-    }
-
-    func applyChatResends(ownerIdentityID: String, resends: [MobileChatResendRecord]) throws {
-        try coreStore.applyChatResends(
-            ownerIdentityId: ownerIdentityID,
-            resends: resends,
-            nowMs: Self.nowMilliseconds
-        )
-    }
-
-    func applySenderResolution(
-        ownerIdentityID: String,
-        conversationAddress: String,
-        senderHint: Data,
-        senderAddress: String
-    ) throws {
-        try coreStore.applySenderResolution(
-            ownerIdentityId: ownerIdentityID,
-            resolution: MobileChatSenderResolutionRecord(
-                conversationAddress: conversationAddress,
-                senderHint: senderHint,
-                senderAddress: senderAddress
-            )
-        )
-    }
-
-    func commitChatComposeBatch(ownerIdentityID: String, batch: MobileChatComposeBatchRecord) throws {
-        try coreStore.commitChatComposeBatch(
-            ownerIdentityId: ownerIdentityID,
-            batch: batch,
-            nowMs: Self.nowMilliseconds
-        )
-    }
-
-    func markChatComposeBatchFailed(ownerIdentityID: String, batch: MobileChatComposeBatchRecord) throws {
-        try coreStore.markChatComposeBatchFailed(ownerIdentityId: ownerIdentityID, batch: batch)
-    }
-
-    func conversationAddressForMessage(
-        ownerIdentityID: String,
-        sessionID: UInt64,
-        handle: UInt32
-    ) throws -> String? {
-        try coreStore.conversationAddressForMessage(
-            ownerIdentityId: ownerIdentityID,
-            sessionId: sessionID,
-            handle: handle
-        )
-    }
-
-    func chatNotificationTarget(
-        ownerIdentityID: String,
-        sessionID: UInt64,
-        handle: UInt32
-    ) throws -> MobileStoredChatNotificationTargetRecord? {
-        try coreStore.chatNotificationTarget(
-            ownerIdentityId: ownerIdentityID,
-            sessionId: sessionID,
-            handle: handle
-        )
-    }
-
-    func chatReactionNotificationTarget(
-        ownerIdentityID: String,
-        sessionID: UInt64,
-        handle: UInt32
-    ) throws -> MobileStoredChatReactionNotificationTargetRecord? {
-        try coreStore.chatReactionNotificationTarget(
-            ownerIdentityId: ownerIdentityID,
-            sessionId: sessionID,
-            handle: handle
-        )
-    }
-
-    func chatArchive(ownerIdentityID: String, lookup: MobileChatArchiveLookupRecord) throws -> Data? {
-        try coreStore.chatArchive(ownerIdentityId: ownerIdentityID, lookup: lookup)
     }
 }

@@ -768,6 +768,23 @@ pub struct UlcpLocalManagementEventRecord {
     /// save, `CMD_ANNOUNCE` on an announcement. `None` on fetches, on
     /// writes, and on a save the device has no `CAP_SAVE` to answer.
     pub status_code: Option<u32>,
+    /// `status_code` when it refuses the request, as for an answer.
+    pub refusal: Option<u32>,
+}
+
+/// A management status that refuses the request. An operator asks for a
+/// state, not a change, so `ALREADY` and `ITEM_NOT_FOUND`, which say the
+/// device already holds or lacks what was asked for, are not refusals.
+///
+/// Exported for code that stands in for a device, such as a staging fake;
+/// the records the core produces carry it already.
+#[uniffi::export(name = "ulcp_management_refusal")]
+pub fn refusal(status: Option<u32>) -> Option<u32> {
+    status.filter(|&status| {
+        status != umsh_ulcp::Status::OK.0
+            && status != umsh_ulcp::Status::ALREADY.0
+            && status != umsh_ulcp::Status::ITEM_NOT_FOUND.0
+    })
 }
 
 /// Work produced by the Rust ULCP session. Frames are complete ULCP
@@ -1817,6 +1834,7 @@ impl MobileUlcpSession {
             state.management_event = Some(UlcpLocalManagementEventRecord {
                 answers: Vec::new(),
                 status_code: None,
+                refusal: refusal(None),
             });
             return Ok(state.update(Vec::new()));
         }
@@ -3102,6 +3120,7 @@ impl MobileUlcpSession {
                         property_id: property,
                         value: None,
                         status_code: Some(status_code),
+                        refusal: refusal(Some(status_code)),
                     });
                 } else if response.property_id != property || response.command != Cmd::PropIs as u8
                 {
@@ -3118,6 +3137,7 @@ impl MobileUlcpSession {
                         property_id: property,
                         value: Some(response.value.clone()),
                         status_code: None,
+                        refusal: refusal(None),
                     });
                 }
                 state.continue_local_management(&mut outbound)?;
@@ -3133,6 +3153,7 @@ impl MobileUlcpSession {
                         property_id: property,
                         value: None,
                         status_code: Some(status_code),
+                        refusal: refusal(Some(status_code)),
                     });
                 } else if response.property_id != property || response.command != Cmd::PropIs as u8
                 {
@@ -3150,6 +3171,7 @@ impl MobileUlcpSession {
                         property_id: property,
                         value: Some(response.value.clone()),
                         status_code: None,
+                        refusal: refusal(None),
                     });
                 }
                 state.continue_local_management(&mut outbound)?;
@@ -3167,6 +3189,7 @@ impl MobileUlcpSession {
                         property_id: property,
                         value: None,
                         status_code: Some(status_code),
+                        refusal: refusal(Some(status_code)),
                     });
                 } else if response.property_id != property
                     || !matches!(
@@ -3187,6 +3210,7 @@ impl MobileUlcpSession {
                         property_id: property,
                         value: Some(response.value.clone()),
                         status_code: None,
+                        refusal: refusal(None),
                     });
                 }
                 state.continue_local_management(&mut outbound)?;
@@ -3848,6 +3872,7 @@ impl UlcpSessionState {
             self.management_event = Some(UlcpLocalManagementEventRecord {
                 answers: op.answers,
                 status_code: op.command_status,
+                refusal: refusal(op.command_status),
             });
             self.refresh_attached_snapshot(None);
         }
@@ -3890,6 +3915,7 @@ impl UlcpSessionState {
                     property_id: key,
                     value: Some(value.to_vec()),
                     status_code: None,
+                    refusal: refusal(None),
                 }
             }
             umsh_ulcp::reply::Answer::Refused(status) => {
@@ -3898,6 +3924,7 @@ impl UlcpSessionState {
                     property_id: key,
                     value: None,
                     status_code: Some(status.0),
+                    refusal: refusal(Some(status.0)),
                 }
             }
         };
@@ -8044,6 +8071,19 @@ mod tests {
     /// An identifier whose late answer may still come is handed out only
     /// once every other free one is taken, and its answer arriving frees
     /// it.
+    #[test]
+    fn only_a_status_that_leaves_the_request_unmet_is_a_refusal() {
+        use umsh_ulcp::Status;
+        assert_eq!(refusal(None), None);
+        assert_eq!(refusal(Some(Status::OK.0)), None);
+        assert_eq!(refusal(Some(Status::ALREADY.0)), None);
+        assert_eq!(refusal(Some(Status::ITEM_NOT_FOUND.0)), None);
+        assert_eq!(
+            refusal(Some(Status::INVALID_STATE.0)),
+            Some(Status::INVALID_STATE.0)
+        );
+    }
+
     #[test]
     fn an_abandoned_transaction_identifier_is_reused_last() {
         let mut state = UlcpSessionState::default();
@@ -14609,11 +14649,13 @@ mod tests {
                     property_id: prop::DEV_NAME,
                     value: Some(b"Ridge".to_vec()),
                     status_code: None,
+                    refusal: refusal(None),
                 },
                 MobileMeshManagementAnswerRecord {
                     property_id: prop::GNSS_ENABLED,
                     value: None,
                     status_code: Some(umsh_ulcp::Status::PROP_NOT_FOUND.0),
+                    refusal: refusal(Some(umsh_ulcp::Status::PROP_NOT_FOUND.0)),
                 },
             ],
             "a refusal is that property's answer, not the operation's failure"
@@ -14766,11 +14808,13 @@ mod tests {
                     property_id: prop::DEV_NAME,
                     value: None,
                     status_code: Some(umsh_ulcp::Status::INVALID_ARGUMENT.0),
+                    refusal: refusal(Some(umsh_ulcp::Status::INVALID_ARGUMENT.0)),
                 },
                 MobileMeshManagementAnswerRecord {
                     property_id: prop::IDENT_MOBILE,
                     value: Some(vec![1]),
                     status_code: None,
+                    refusal: refusal(None),
                 },
             ],
         );

@@ -15,8 +15,11 @@
 //! starts. A busy mesh cannot starve an exchange, and a run of exchanges
 //! cannot hold a frame for more than one of them.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::fmt;
 use std::sync::Arc;
+
+use log::Level;
 
 use tokio::sync::oneshot;
 
@@ -313,10 +316,8 @@ pub(crate) enum Effect {
     MeshFrameTime(u32),
     /// The radio's state changed.
     State(Box<MobileRadioStateRecord>),
-    Received(UlcpReceivedFrameRecord),
     Pushed(UlcpPropertyPushRecord),
     HostReleased(Vec<u8>),
-    Diagnostic(String),
 }
 
 /// One mesh frame on its way to the radio.
@@ -535,6 +536,20 @@ pub(crate) struct DriverCore {
     /// given when first seen; unsolicited traffic and raw transmits
     /// cannot extend it.
     control_deadlines: BTreeMap<u8, u64>,
+    /// The control transactions the running exchange started, the stages
+    /// its answers led to among them: what answers it.
+    exchange_transactions: BTreeSet<u8>,
+    /// Those started beside it, by an immediate command or the driver's
+    /// own work. Their answers are not the exchange's.
+    side_transactions: BTreeSet<u8>,
+    /// A call beside the exchange is being applied.
+    calling_aside: bool,
+    /// The call that starts an exchange is being applied.
+    starting_exchange: bool,
+    /// The last refusal among the running exchange's answers.
+    exchange_refusal: Option<UlcpOperationErrorRecord>,
+    /// One of the running exchange's answers could not be used.
+    exchange_mismatch: bool,
 
     /// Mesh frames taken while the radio could not carry them. They wait
     /// for the next attach, as they would have in the mesh session's own
@@ -598,6 +613,12 @@ impl DriverCore {
             mesh_turn_ends_before: 0,
             next_frame_sequence: 0,
             control_deadlines: BTreeMap::new(),
+            exchange_transactions: BTreeSet::new(),
+            side_transactions: BTreeSet::new(),
+            calling_aside: false,
+            starting_exchange: false,
+            exchange_refusal: None,
+            exchange_mismatch: false,
             backlog: VecDeque::new(),
             pending_raw: VecDeque::new(),
             in_flight: BTreeMap::new(),
@@ -639,7 +660,10 @@ impl DriverCore {
                 problem,
             } => self.link_writes_failed(raw_transaction_ids, problem),
             Event::LinkFault(problem) => self.fatal(problem, now),
-            Event::ReportProblem(problem) => self.state.problem = Some(problem),
+            Event::ReportProblem(problem) => {
+                self.log(Level::Warn, format_args!("transport problem: {problem:?}"));
+                self.state.problem = Some(problem);
+            }
             Event::ResetRecoveryBudget => {
                 self.fault_retries_remaining = Self::fault_retry_budget(self.administrative);
             }
@@ -663,7 +687,10 @@ impl DriverCore {
             .as_ref()
             .is_some_and(|release| release.deadline_ms <= at)
         {
-            self.diagnose("release: the radio did not answer in time".to_owned());
+            self.log(
+                Level::Warn,
+                format_args!("release: the radio did not answer in time"),
+            );
             self.finish_host_release(false);
         }
         let expired: Vec<u8> = self
@@ -687,12 +714,15 @@ impl DriverCore {
             .control_deadline()
             .is_some_and(|deadline| deadline <= at)
         {
-            self.diagnose(format!(
-                "ulcp: no response for {}s, parked at {:?} host {:?}",
-                CONTROL_DEADLINE_MS / 1000,
-                self.state.phase,
-                self.state.host,
-            ));
+            self.log(
+                Level::Warn,
+                format_args!(
+                    "ulcp: no response for {}s, parked at {:?} host {:?}",
+                    CONTROL_DEADLINE_MS / 1000,
+                    self.state.phase,
+                    self.state.host,
+                ),
+            );
             self.finish_stranded_operations();
             self.fatal(MobileRadioProblem::SynchronizationStalled, now);
         }
@@ -739,8 +769,20 @@ impl DriverCore {
         std::mem::take(&mut self.effects)
     }
 
-    fn diagnose(&mut self, line: String) {
-        self.effects.push(Effect::Diagnostic(line));
+    /// Where this driver's log lines go: the companion link's, or an
+    /// administrative session's.
+    pub(crate) fn log_target(&self) -> &'static str {
+        if self.administrative {
+            "umsh_mobile_core::radio_driver::administrative"
+        } else {
+            "umsh_mobile_core::radio_driver"
+        }
+    }
+
+    /// The lines carry no address, location, or message text: frame kinds,
+    /// transaction IDs, lengths, phases, and status names.
+    fn log(&self, level: Level, line: fmt::Arguments<'_>) {
+        log::log!(target: self.log_target(), level, "{line}");
     }
 
     // ------------------------------------------------------------------
@@ -772,7 +814,10 @@ impl DriverCore {
             return false;
         };
         if queued.exchange.abandoned() {
-            self.diagnose("queued exchange skipped: its caller stopped waiting".to_owned());
+            self.log(
+                Level::Info,
+                format_args!("queued exchange skipped: its caller stopped waiting"),
+            );
         } else {
             self.start_exchange(queued.exchange, now);
         }
@@ -887,6 +932,17 @@ impl DriverCore {
                 Teardown::Superseded => {}
             }
         }
+        // The phase and the problem only: the name is the radio's own,
+        // which its owner may have chosen.
+        if state.phase != self.state.phase || state.problem != self.state.problem {
+            self.log(
+                Level::Info,
+                format_args!(
+                    "transport: {:?}→{:?} problem {:?}",
+                    self.state.phase, state.phase, state.problem
+                ),
+            );
+        }
         self.state = state;
         self.transport = report;
         if Self::rests(self.state.phase) {
@@ -919,10 +975,13 @@ impl DriverCore {
     fn spend_offered_retry(&mut self, fault: &Fault) {
         if fault.retry_offered && !fault.settled {
             self.fault_retries_remaining = self.fault_retries_remaining.saturating_sub(1);
-            self.diagnose(format!(
-                "fault: reconnecting; {} retries left",
-                self.fault_retries_remaining
-            ));
+            self.log(
+                Level::Warn,
+                format_args!(
+                    "fault: reconnecting; {} retries left",
+                    self.fault_retries_remaining
+                ),
+            );
         }
     }
 
@@ -957,10 +1016,13 @@ impl DriverCore {
                 // unsolicited notification from newer firmware—is not a
                 // broken link. Ignoring it costs at most one operation
                 // that times out; tearing the link down costs the session.
-                self.diagnose(format!(
-                    "ulcp: ignoring unhandled command {}",
-                    describe_ulcp_frame(frame)
-                ));
+                self.log(
+                    Level::Info,
+                    format_args!(
+                        "ulcp: ignoring unhandled command {}",
+                        describe_ulcp_frame(frame)
+                    ),
+                );
                 return;
             }
             Err(MobileError::UlcpUnexpectedFrame) => {
@@ -969,26 +1031,35 @@ impl DriverCore {
                 // The session refuses it before touching any state, so
                 // ignoring it orphans nothing, while closing the link would
                 // turn a stray frame into a lost session.
-                self.diagnose(format!(
-                    "ulcp: ignoring frame nothing is waiting on {}",
-                    describe_ulcp_frame(frame)
-                ));
+                self.log(
+                    Level::Info,
+                    format_args!(
+                        "ulcp: ignoring frame nothing is waiting on {}",
+                        describe_ulcp_frame(frame)
+                    ),
+                );
                 return;
             }
             Err(cause) => {
-                self.diagnose(format!(
-                    "fatal: invalid frame cause={cause} frame=[{}]",
-                    describe_ulcp_frame(frame)
-                ));
+                self.log(
+                    Level::Warn,
+                    format_args!(
+                        "fatal: invalid frame cause={cause} frame=[{}]",
+                        describe_ulcp_frame(frame)
+                    ),
+                );
                 self.fatal(MobileRadioProblem::InvalidFrame, now);
                 return;
             }
         };
         if let Err(error) = self.apply(update, now) {
-            self.diagnose(format!(
-                "fatal: unusable value cause={error} frame=[{}]",
-                describe_ulcp_frame(frame)
-            ));
+            self.log(
+                Level::Warn,
+                format_args!(
+                    "fatal: unusable value cause={error} frame=[{}]",
+                    describe_ulcp_frame(frame)
+                ),
+            );
             self.fatal(MobileRadioProblem::UnusableValue, now);
         }
     }
@@ -1003,6 +1074,13 @@ impl DriverCore {
             // the link was let go.
             return;
         }
+        self.log(
+            Level::Warn,
+            format_args!(
+                "link writes failed: {} raw transmits, {problem:?}",
+                transaction_ids.len()
+            ),
+        );
         self.pending_raw.clear();
         for transaction_id in &transaction_ids {
             self.in_flight.remove(transaction_id);
@@ -1025,7 +1103,10 @@ impl DriverCore {
         if !self.link_up && self.fault.as_ref().is_some_and(|fault| !fault.settled) {
             // The link is already being torn down for a fault; whatever
             // else went wrong with it is the same incident.
-            self.diagnose(format!("fault while settling another: {problem:?}"));
+            self.log(
+                Level::Warn,
+                format_args!("fault while settling another: {problem:?}"),
+            );
             return;
         }
         if self
@@ -1036,10 +1117,13 @@ impl DriverCore {
             self.fault_retries_remaining = Self::fault_retry_budget(self.administrative);
         }
         let retry = self.fault_retries_remaining > 0;
-        self.diagnose(format!(
-            "fatal ULCP fault: {problem:?}; retries left {}",
-            self.fault_retries_remaining
-        ));
+        self.log(
+            Level::Warn,
+            format_args!(
+                "fatal ULCP fault: {problem:?}; retries left {}",
+                self.fault_retries_remaining
+            ),
+        );
         self.link_up = false;
         self.retire_session();
         // A retry shows as the reconnect it is: a failure the app is
@@ -1079,6 +1163,7 @@ impl DriverCore {
         self.auto_enable_generation = None;
         self.auto_claim_generation = None;
         self.control_deadlines.clear();
+        self.side_transactions.clear();
         self.raw_retry = None;
         self.attach_announced = None;
         self.attach_settled = false;
@@ -1099,7 +1184,10 @@ impl DriverCore {
             .map_err(CallError::Session)
             .and_then(|update| self.apply(update, now).map_err(CallError::Apply));
         if let Err(error) = result {
-            self.diagnose(format!("fatal: the session could not start: {error}"));
+            self.log(
+                Level::Warn,
+                format_args!("fatal: the session could not start: {error}"),
+            );
             self.fatal(MobileRadioProblem::SessionStartFailed, now);
         }
     }
@@ -1206,7 +1294,7 @@ impl DriverCore {
         };
         self.state.host = snapshot.host_ownership;
         if self.state.phase != previous_phase || self.state.host != previous_host {
-            self.diagnose(format!(
+            self.log(Level::Info, format_args!(
                 "ulcp: {previous_phase:?}→{:?} host {previous_host:?}→{:?} generation={} waiting={}",
                 self.state.phase,
                 self.state.host,
@@ -1288,10 +1376,13 @@ impl DriverCore {
     /// for that screen, not a radio problem.
     fn note_refusals(&mut self, update: &UlcpSessionUpdateRecord) {
         if let Some(error) = &update.operation_error {
-            self.diagnose(format!(
-                "ulcp: operation rejected: {} {} ({})",
-                error.operation, error.status_name, error.status_code
-            ));
+            self.log(
+                Level::Warn,
+                format_args!(
+                    "ulcp: operation rejected: {} {} ({})",
+                    error.operation, error.status_name, error.status_code
+                ),
+            );
             if self.device_table.is_none() {
                 self.state.problem = Some(MobileRadioProblem::OperationRejected {
                     operation: error.operation.clone(),
@@ -1302,10 +1393,13 @@ impl DriverCore {
         }
         // The radio acted, and the two disagree about the reply's shape.
         if let Some(mismatch) = &update.mismatched_response {
-            self.diagnose(format!(
-                "ulcp: answer not understood: {} answered with property {:#x} command {}",
-                mismatch.operation, mismatch.property_id, mismatch.command
-            ));
+            self.log(
+                Level::Warn,
+                format_args!(
+                    "ulcp: answer not understood: {} answered with property {:#x} command {}",
+                    mismatch.operation, mismatch.property_id, mismatch.command
+                ),
+            );
             if self.device_table.is_none() {
                 self.state.problem = Some(MobileRadioProblem::UnrecognizedAnswer);
             }
@@ -1407,10 +1501,13 @@ impl DriverCore {
             }
             UlcpRawTransmitDisposition::Retry | UlcpRawTransmitDisposition::Rejected => {
                 self.complete_mesh_frame(&in_flight.frame, false);
-                self.diagnose(format!(
-                    "raw transmit rejected: {} ({})",
-                    result.status_name, result.status_code
-                ));
+                self.log(
+                    Level::Warn,
+                    format_args!(
+                        "raw transmit rejected: {} ({})",
+                        result.status_name, result.status_code
+                    ),
+                );
                 self.state.problem = Some(match result.disposition {
                     UlcpRawTransmitDisposition::Retry => MobileRadioProblem::RadioBusy,
                     _ => MobileRadioProblem::TransmissionRejected {
@@ -1423,10 +1520,10 @@ impl DriverCore {
         Ok(())
     }
 
-    /// Hand a frame the radio received to the mesh session, and publish it.
+    /// Hand a frame the radio received to the mesh session.
     fn deliver_received(&mut self, received: UlcpReceivedFrameRecord) {
         let record = MobileMeshRxRecord {
-            data: received.data.clone(),
+            data: received.data,
             rssi_dbm: received.rssi_dbm,
             lqi: received.lqi,
             snr_cb: received.snr_cb,
@@ -1444,11 +1541,17 @@ impl DriverCore {
                 self.frames_awaiting_mesh_session.pop_front();
             }
         }
-        self.effects.push(Effect::Received(received));
     }
 
     /// Answer the callers whose operation this update settles.
+    ///
+    /// An exchange ends once nothing is outstanding: the session holds an
+    /// exchange's next stage while anything is, an immediate command
+    /// included. What it ends with is only what its own transactions were
+    /// answered with, so an answer to a command sent beside it never
+    /// reaches its caller.
     fn finish_waiters(&mut self, update: &UlcpSessionUpdateRecord) {
+        let answered_aside = self.attribute_transactions(update);
         if update.waiting_for_responses {
             return;
         }
@@ -1459,23 +1562,20 @@ impl DriverCore {
         if snapshot.phase != UlcpSessionPhase::Attached {
             return;
         }
-        let mismatch = update
-            .mismatched_response
-            .as_ref()
-            .map(|_| MobileRadioError::UnrecognizedAnswer);
-        let rejection = update
-            .operation_error
-            .as_ref()
-            .map(|error| MobileRadioError::OperationRejected {
-                operation: error.operation.clone(),
-                status_code: error.status_code,
-                status_name: error.status_name.clone(),
-            })
-            .or_else(|| mismatch.clone());
         // The attach is over once whatever its inspection asked has
         // landed: a caller waiting on it needs a radio, not a link.
         if !self.attach_settled {
             self.attach_settled = true;
+            let rejection = if answered_aside {
+                None
+            } else {
+                update.operation_error.as_ref().map(rejected).or_else(|| {
+                    update
+                        .mismatched_response
+                        .as_ref()
+                        .map(|_| MobileRadioError::UnrecognizedAnswer)
+                })
+            };
             for reply in self.attach_waiters.drain(..) {
                 let _ = reply.send(match &rejection {
                     Some(error) => Err(error.clone()),
@@ -1483,6 +1583,11 @@ impl DriverCore {
                 });
             }
         }
+        let refusal = self.exchange_refusal.take();
+        let mismatch = std::mem::take(&mut self.exchange_mismatch)
+            .then_some(MobileRadioError::UnrecognizedAnswer);
+        self.exchange_transactions.clear();
+        let rejection = refusal.as_ref().map(rejected).or_else(|| mismatch.clone());
         if self.running_refresh.is_some() {
             self.finish_refresh(rejection.clone().map_or(Ok(()), Err));
         }
@@ -1490,11 +1595,39 @@ impl DriverCore {
             let _ = reply.send(rejection.map_or(Ok(()), Err));
         }
         if let Some(reply) = self.device_table.take() {
-            let outcome =
-                device_table_outcome(update.operation_error.as_ref(), self.administrative)
-                    .or(mismatch);
+            let outcome = device_table_outcome(refusal.as_ref(), self.administrative).or(mismatch);
             let _ = reply.send(outcome.map_or(Ok(()), Err));
         }
+    }
+
+    /// Sort the control transactions `update` answered and started between
+    /// the running exchange and the work beside it, and keep what answered
+    /// the exchange. Returns whether it answered work beside the exchange.
+    fn attribute_transactions(&mut self, update: &UlcpSessionUpdateRecord) -> bool {
+        let completed = update.completed_control_transaction;
+        let answered_exchange = completed.is_some_and(|id| self.exchange_transactions.remove(&id));
+        let answered_aside = completed.is_some_and(|id| self.side_transactions.remove(&id));
+        // Pending now and not before, or reissued under the ID just
+        // answered.
+        let started = update
+            .pending_control_transactions
+            .iter()
+            .copied()
+            .filter(|id| Some(*id) == completed || !self.control_deadlines.contains_key(id));
+        if self.calling_aside {
+            self.side_transactions.extend(started);
+        } else if self.exchange_running() {
+            // A stage the session held for an answer to work beside the
+            // exchange is the exchange's all the same.
+            self.exchange_transactions.extend(started);
+        }
+        if answered_exchange || (self.starting_exchange && !self.calling_aside) {
+            if let Some(refusal) = &update.operation_error {
+                self.exchange_refusal = Some(refusal.clone());
+            }
+            self.exchange_mismatch |= update.mismatched_response.is_some();
+        }
+        answered_aside
     }
 
     /// Keep one deadline per outstanding control transaction: the one it
@@ -1524,13 +1657,13 @@ impl DriverCore {
                 {
                     return;
                 }
-                let result = self
-                    .session
-                    .configure(settings)
-                    .map_err(CallError::Session)
-                    .and_then(|update| self.apply(update, now).map_err(CallError::Apply));
+                let result =
+                    self.call_aside(Box::new(move |session| session.configure(settings)), now);
                 if result.is_err() {
-                    self.diagnose("could not enable the radio's transmitter".to_owned());
+                    self.log(
+                        Level::Warn,
+                        format_args!("could not enable the radio's transmitter"),
+                    );
                     self.state.problem = Some(MobileRadioProblem::AutoEnableFailed);
                 }
             }
@@ -1542,10 +1675,12 @@ impl DriverCore {
                 {
                     return;
                 }
-                self.diagnose(
-                    "radio parked without a phone identity that has since arrived; \
+                self.log(
+                    Level::Info,
+                    format_args!(
+                        "radio parked without a phone identity that has since arrived; \
                      synchronizing again"
-                        .to_owned(),
+                    ),
                 );
                 self.begin_synchronization(now);
             }
@@ -1553,7 +1688,10 @@ impl DriverCore {
                 if generation != self.generation || !self.link_up {
                     return;
                 }
-                self.diagnose("bound radio awaiting a host; claiming".to_owned());
+                self.log(
+                    Level::Info,
+                    format_args!("bound radio awaiting a host; claiming"),
+                );
                 // A refused claim reports through the state.
                 let _ = self.claim(now);
             }
@@ -1581,10 +1719,13 @@ impl DriverCore {
             self.backlog.retain(|frame| !frame.expired(now));
             let discarded = held - self.backlog.len();
             if discarded > 0 {
-                self.diagnose(format!(
-                    "{discarded} mesh frames discarded: they waited {}s for the radio",
-                    MESH_FRAME_LIFETIME_MS / 1000
-                ));
+                self.log(
+                    Level::Warn,
+                    format_args!(
+                        "{discarded} mesh frames discarded: they waited {}s for the radio",
+                        MESH_FRAME_LIFETIME_MS / 1000
+                    ),
+                );
             }
         }
         let taken: Vec<MeshFrame> = frames
@@ -1627,7 +1768,10 @@ impl DriverCore {
             let Some(dropped) = self.pending_raw.pop_front() else {
                 return;
             };
-            self.diagnose(format!("raw transmit could not start: {error}"));
+            self.log(
+                Level::Warn,
+                format_args!("raw transmit could not start: {error}"),
+            );
             self.complete_mesh_frame(&dropped, false);
             self.state.problem = Some(MobileRadioProblem::TransmissionUnsendable);
         }
@@ -1646,11 +1790,14 @@ impl DriverCore {
             if frame.expired(now) {
                 // The mesh session has already counted it failed, so there
                 // is no ticket left to fail.
-                self.diagnose(format!(
-                    "mesh frame {} discarded: it waited {}s for the radio",
-                    frame.id,
-                    MESH_FRAME_LIFETIME_MS / 1000
-                ));
+                self.log(
+                    Level::Warn,
+                    format_args!(
+                        "mesh frame {} discarded: it waited {}s for the radio",
+                        frame.id,
+                        MESH_FRAME_LIFETIME_MS / 1000
+                    ),
+                );
                 continue;
             }
             // A frame that does not start goes back to the front, where
@@ -1699,7 +1846,7 @@ impl DriverCore {
         let Some(in_flight) = self.in_flight.remove(&transaction_id) else {
             return;
         };
-        self.diagnose(format!(
+        self.log(Level::Warn, format_args!(
             "raw transmit timed out after {}s: transaction {transaction_id} mesh frame {} {} bytes",
             RAW_TRANSMIT_TIMEOUT_MS / 1000,
             in_flight.frame.id,
@@ -1732,11 +1879,14 @@ impl DriverCore {
         if self.pending_raw.is_empty() && self.in_flight.is_empty() {
             return;
         }
-        self.diagnose(format!(
-            "abandoning mesh frames: queued={} in flight={}",
-            self.pending_raw.len(),
-            self.in_flight.len()
-        ));
+        self.log(
+            Level::Info,
+            format_args!(
+                "abandoning mesh frames: queued={} in flight={}",
+                self.pending_raw.len(),
+                self.in_flight.len()
+            ),
+        );
         self.pending_raw.clear();
         self.in_flight.clear();
         if self.mesh_session.is_some() {
@@ -1815,7 +1965,7 @@ impl DriverCore {
                     let _ = reply.send(Err(MobileRadioError::RadioUnavailable));
                     return;
                 }
-                if let Err(error) = self.call(call, now) {
+                if let Err(error) = self.call_aside(call, now) {
                     let _ = reply.send(Err(error.for_caller()));
                     return;
                 }
@@ -1847,6 +1997,23 @@ impl DriverCore {
     fn call(&mut self, call: SessionCall, now: Now) -> Result<(), CallError> {
         let update = call(&self.session).map_err(CallError::Session)?;
         self.apply(update, now).map_err(CallError::Apply)
+    }
+
+    /// Start a caller's exchange: what the call starts is the exchange's.
+    fn call_for_exchange(&mut self, call: SessionCall, now: Now) -> Result<(), CallError> {
+        self.starting_exchange = true;
+        let result = self.call(call, now);
+        self.starting_exchange = false;
+        result
+    }
+
+    /// Send something beside any exchange running: what it starts, and what
+    /// answers it, are not the exchange's.
+    fn call_aside(&mut self, call: SessionCall, now: Now) -> Result<(), CallError> {
+        self.calling_aside = true;
+        let result = self.call(call, now);
+        self.calling_aside = false;
+        result
     }
 
     /// A refresh joins one of its own kind, running or queued, and
@@ -1889,9 +2056,10 @@ impl DriverCore {
             return;
         }
         if self.exchanges.len() >= MAXIMUM_QUEUED_EXCHANGES {
-            self.diagnose(format!(
-                "exchange refused: {MAXIMUM_QUEUED_EXCHANGES} already waiting"
-            ));
+            self.log(
+                Level::Warn,
+                format_args!("exchange refused: {MAXIMUM_QUEUED_EXCHANGES} already waiting"),
+            );
             exchange.fail(MobileRadioError::OperationInProgress);
             return;
         }
@@ -1948,7 +2116,10 @@ impl DriverCore {
     /// Start a queued exchange whose turn has come.
     fn start_exchange(&mut self, exchange: Exchange, now: Now) {
         if let Err(error) = self.precondition(&exchange) {
-            self.diagnose(format!("queued exchange no longer possible: {error}"));
+            self.log(
+                Level::Warn,
+                format_args!("queued exchange no longer possible: {error}"),
+            );
             exchange.fail(error);
             return;
         }
@@ -1960,13 +2131,13 @@ impl DriverCore {
             } => {
                 self.running_refresh = Some(kind);
                 self.refresh_waiters = waiters;
-                if let Err(error) = self.call(call, now) {
+                if let Err(error) = self.call_for_exchange(call, now) {
                     self.finish_refresh(Err(error.for_caller()));
                 }
             }
             Exchange::Configure { call, reply } => {
                 self.configuration = Some(reply);
-                if let Err(error) = self.call(call, now)
+                if let Err(error) = self.call_for_exchange(call, now)
                     && let Some(reply) = self.configuration.take()
                 {
                     let _ = reply.send(Err(error.for_caller()));
@@ -1975,7 +2146,7 @@ impl DriverCore {
             // Resolved by the update that carries its outcome.
             Exchange::DeviceTable { call, reply, .. } => {
                 self.device_table = Some(reply);
-                if let Err(error) = self.call(call, now)
+                if let Err(error) = self.call_for_exchange(call, now)
                     && let Some(reply) = self.device_table.take()
                 {
                     let _ = reply.send(Err(error.for_caller()));
@@ -1984,7 +2155,7 @@ impl DriverCore {
             Exchange::LocalManagement { dfu, call, reply } => {
                 self.local_management = Some(LocalManagement { reply, dfu });
                 // An exchange with nothing to ask completes inside the call.
-                if let Err(error) = self.call(call, now) {
+                if let Err(error) = self.call_for_exchange(call, now) {
                     self.finish_local_management(Err(error.for_caller()));
                 }
             }
@@ -2024,20 +2195,26 @@ impl DriverCore {
         let host_key = match self.claim_precondition() {
             Ok(host_key) => host_key,
             Err(error) => {
-                self.diagnose(format!(
-                    "claim: refused ({error}); link up={} host key={} host state {:?}",
-                    self.link_up,
-                    self.host_key.is_some(),
-                    self.state.host
-                ));
+                self.log(
+                    Level::Warn,
+                    format_args!(
+                        "claim: refused ({error}); link up={} host key={} host state {:?}",
+                        self.link_up,
+                        self.host_key.is_some(),
+                        self.state.host
+                    ),
+                );
                 return Err(error);
             }
         };
-        self.diagnose(format!(
-            "claim: writing host key from host state {:?}",
-            self.state.host
-        ));
-        self.call(
+        self.log(
+            Level::Info,
+            format_args!(
+                "claim: writing host key from host state {:?}",
+                self.state.host
+            ),
+        );
+        self.call_aside(
             Box::new(move |session| session.claim(host_key.to_vec())),
             now,
         )
@@ -2069,9 +2246,12 @@ impl DriverCore {
             device_key: self.state.device_key.clone(),
             deadline_ms: now.monotonic_ms + HOST_RELEASE_TIMEOUT_MS,
         });
-        self.diagnose("release: clearing the radio's host key".to_owned());
-        if let Err(error) = self.call(Box::new(|session| session.release()), now) {
-            self.diagnose(format!("release: not sent ({error})"));
+        self.log(
+            Level::Info,
+            format_args!("release: clearing the radio's host key"),
+        );
+        if let Err(error) = self.call_aside(Box::new(|session| session.release()), now) {
+            self.log(Level::Warn, format_args!("release: not sent ({error})"));
             self.finish_host_release(false);
         }
     }
@@ -2122,6 +2302,7 @@ impl DriverCore {
     /// answering. Timed out, not rejected: nobody knows whether the radio
     /// acted. Those queued behind it are failed with the session it ends.
     fn finish_stranded_operations(&mut self) {
+        self.forget_exchange_answers();
         if self.running_refresh.is_some() || !self.refresh_waiters.is_empty() {
             self.finish_refresh(Err(MobileRadioError::TimedOut));
         }
@@ -2134,9 +2315,17 @@ impl DriverCore {
         self.finish_local_management(Err(MobileRadioError::TimedOut));
     }
 
+    /// The running exchange ends without its answers.
+    fn forget_exchange_answers(&mut self) {
+        self.exchange_transactions.clear();
+        self.exchange_refusal = None;
+        self.exchange_mismatch = false;
+    }
+
     /// Fail the exchange running and every one queued: the radio will not
     /// answer them.
     fn finish_pending_operations(&mut self) {
+        self.forget_exchange_answers();
         if self.running_refresh.is_some() || !self.refresh_waiters.is_empty() {
             self.finish_refresh(Err(MobileRadioError::RadioUnavailable));
         }
@@ -2148,6 +2337,15 @@ impl DriverCore {
         }
         self.finish_local_management(Err(MobileRadioError::RadioUnavailable));
         self.fail_queued_exchanges(&MobileRadioError::RadioUnavailable);
+    }
+}
+
+/// A refusal, as the caller hears it.
+fn rejected(error: &UlcpOperationErrorRecord) -> MobileRadioError {
+    MobileRadioError::OperationRejected {
+        operation: error.operation.clone(),
+        status_code: error.status_code,
+        status_name: error.status_name.clone(),
     }
 }
 

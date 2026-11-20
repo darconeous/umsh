@@ -273,7 +273,7 @@ struct StagingSeeder {
                 alias: nil,
                 advertisedName: entry.node.name,
                 isSaved: entry.node.isSaved,
-                nodeKind: entry.node.role.rawValue,
+                nodeKind: entry.node.role.storedKind,
                 advertisement: entry.bundle,
                 // The bundle carries a signature that verifies, so this only
                 // has to be true for the unsigned case; set it anyway so the
@@ -584,7 +584,7 @@ struct StagingSeeder {
                 senderAddress: sender?.address,
                 senderHint: sender?.hint,
                 senderHandle: line.speaker.flatMap(senderHandleFor),
-                deliveryState: line.isOutbound ? "acknowledged" : nil,
+                deliveryState: line.isOutbound ? .acknowledged : nil,
                 reception: line.isOutbound ? nil : reception(for: index),
                 reactions: line.reactions.map { reaction in
                     let from = reaction.from.flatMap(resolve)

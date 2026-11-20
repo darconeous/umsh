@@ -57,6 +57,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate, ObservableObject {
             return
         }
         #endif
+        // Before any radio is built, so the core's first lines are logged.
+        SystemLogger.install()
         let mode = Self.desiredMode(UserDefaults.standard)
         currentMode = mode
         // The radio and the runtime are both built here, before `super.init`

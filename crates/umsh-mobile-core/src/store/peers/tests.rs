@@ -56,17 +56,6 @@ fn addresses(store: &MobileAppStore) -> Vec<String> {
         .collect()
 }
 
-fn alias_search(store: &MobileAppStore, address: &str) -> String {
-    store
-        .connection()
-        .query_row(
-            "SELECT alias_search FROM node WHERE owner_identity_id = ? AND public_address = ?",
-            params![OWNER, address],
-            |row| row.get(0),
-        )
-        .unwrap()
-}
-
 /// What `ensureDirectConversation` writes, which this domain only needs to
 /// exist.
 fn add_conversation(store: &MobileAppStore, address: &str) {
@@ -374,72 +363,36 @@ fn an_upsert_adds_what_it_knows_and_keeps_what_it_does_not() {
 }
 
 #[test]
-fn the_search_key_follows_the_alias_and_falls_back_to_the_name() {
+fn an_alias_is_set_kept_and_cleared() {
     let (_directory, store) = open();
-    // Inserted without an alias: the key is the advertised name's.
-    upsert(&store, "peer", named(None, Some("Ångström")));
-    assert_eq!(alias_search(&store, "peer"), "angstrom");
-    // A name heard later moves an alias-less peer (the Swift store kept
-    // the old key here).
-    upsert(&store, "peer", named(None, Some("Renamed")));
-    assert_eq!(alias_search(&store, "peer"), "renamed");
-    // An alias takes over the key.
-    upsert(&store, "peer", named(Some("Ridge MÉDIC"), None));
-    assert_eq!(alias_search(&store, "peer"), "ridge medic");
+    upsert(&store, "peer", named(Some("Ridge Medic"), Some("Name")));
     // A new name does not displace the alias.
     upsert(&store, "peer", named(None, Some("Other")));
-    assert_eq!(alias_search(&store, "peer"), "ridge medic");
+    assert_eq!(node(&store, "peer").alias.as_deref(), Some("Ridge Medic"));
 
     store
         .update_node_alias(OWNER.into(), "peer".into(), Some("Zoë".into()))
         .unwrap();
     assert_eq!(node(&store, "peer").alias.as_deref(), Some("Zoë"));
-    assert_eq!(alias_search(&store, "peer"), "zoe");
-    // Clearing the alias falls back to the advertised name.
     store
         .update_node_alias(OWNER.into(), "peer".into(), None)
         .unwrap();
     assert_eq!(node(&store, "peer").alias, None);
-    assert_eq!(alias_search(&store, "peer"), "other");
     // A missing row is not an error.
     store
         .update_node_alias(OWNER.into(), "nobody".into(), Some("x".into()))
         .unwrap();
 
-    // Demoting clears the alias and keys on the name.
+    // Demoting clears the alias.
     store
         .update_node_alias(OWNER.into(), "peer".into(), Some("Alias".into()))
         .unwrap();
     store
         .demote_peer_to_transient(OWNER.into(), "peer".into())
         .unwrap();
-    assert_eq!(alias_search(&store, "peer"), "other");
-
-    // A row the device identity created has an empty key until it learns
-    // a name.
-    store
-        .reconcile_device_identity_peers(OWNER.into(), vec!["device".into()])
-        .unwrap();
-    assert_eq!(alias_search(&store, "device"), "");
-    upsert(&store, "device", named(None, Some("Tracker")));
-    assert_eq!(alias_search(&store, "device"), "tracker");
-}
-
-#[test]
-fn the_fold_strips_accents_but_keeps_spacing_vowel_signs() {
-    assert_eq!(fold_search("Ångström"), "angstrom");
-    assert_eq!(fold_search("Zoe\u{308}"), "zoe");
-    // Devanagari: the vowel signs in कि and का are spacing marks that make
-    // different syllables, so the two must not fold together.
-    assert_ne!(fold_search("कि"), fold_search("का"));
-    assert_eq!(fold_search("का"), "का");
-    // The nukta is a combining mark below the letter, like an accent.
-    assert_eq!(fold_search("क\u{93C}"), "क");
-    assert_eq!(fold_search("한국"), "한국");
-    // Lowercasing makes a word-final Σ a final sigma; the key keeps one
-    // sigma so a prefix ending mid-word still matches.
-    assert_eq!(fold_search("ΟΔΥΣΣΕΥΣ"), "οδυσσευσ");
-    assert!(fold_search("Οδυσσευς").starts_with(&fold_search("ΟΔΥΣ")));
+    let demoted = node(&store, "peer");
+    assert_eq!(demoted.alias, None);
+    assert!(!demoted.is_saved);
 }
 
 #[test]
@@ -581,7 +534,6 @@ fn the_companion_radio_role_belongs_to_one_row() {
     );
     assert!(radio.is_saved);
     assert_eq!(radio.advertised_name.as_deref(), Some("Tracker"));
-    assert_eq!(alias_search(&store, "radio-a"), "tracker");
 
     store
         .upsert_ulcp_device_peer(OWNER.into(), "radio-b".into(), None, "BBBB".into())
@@ -614,7 +566,7 @@ fn the_companion_radio_role_belongs_to_one_row() {
 }
 
 #[test]
-fn nodes_list_system_rows_first_then_by_search_key_then_id() {
+fn nodes_list_system_rows_first_then_by_id() {
     let (_directory, store) = open();
     store
         .insert_identity("bob".into(), "bob-public".into(), 1)
@@ -629,10 +581,10 @@ fn nodes_list_system_rows_first_then_by_search_key_then_id() {
     store
         .upsert_peer("bob".into(), "bobs-peer".into(), named(Some("A"), None))
         .unwrap();
-    // "alpha" and "Álpha" fold to one key; the id breaks the tie.
+    // The platforms sort names by the reader's locale.
     assert_eq!(
         addresses(&store),
-        ["radio", "alpha-2", "alpha-1", "bravo", "zulu"]
+        ["radio", "zulu", "alpha-2", "alpha-1", "bravo"]
     );
 }
 
@@ -646,7 +598,7 @@ fn a_peer_needs_its_identity() {
 }
 
 #[test]
-fn heard_instants_are_real_seconds_on_disk_and_milliseconds_across() {
+fn heard_instants_are_milliseconds() {
     let (_directory, store) = open();
     upsert(
         &store,
@@ -660,98 +612,40 @@ fn heard_instants_are_real_seconds_on_disk_and_milliseconds_across() {
     store
         .touch_last_heard(OWNER.into(), "peer".into(), 1_700_000_001_999)
         .unwrap();
-    let (heard, received): (f64, f64) = store
-        .connection()
-        .query_row(
-            "SELECT last_heard_at, advertisement_received_at FROM node",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .unwrap();
-    assert_eq!(heard, 1_700_000_001.999);
-    assert_eq!(received, 1_700_000_000.123);
     let stored = node(&store, "peer");
     assert_eq!(stored.last_heard_at_ms, Some(1_700_000_001_999));
     assert_eq!(stored.advertisement_received_at_ms, Some(1_700_000_000_123));
-
-    // What the Swift store wrote: a Date's full-precision seconds.
-    store
-        .connection()
-        .execute(
-            "UPDATE node SET last_heard_at = 1700000002.12349, \
-             advertisement_received_at = 1700000002.12351",
-            [],
-        )
-        .unwrap();
-    let stored = node(&store, "peer");
-    assert_eq!(stored.last_heard_at_ms, Some(1_700_000_002_123));
-    assert_eq!(stored.advertisement_received_at_ms, Some(1_700_000_002_124));
-}
-
-// The search fold
-
-#[test]
-fn the_fold_strips_marks_and_case() {
-    assert_eq!(fold_search("Ridge Médic"), "ridge medic");
-    assert_eq!(fold_search("ÅNGSTRÖM"), "angstrom");
-    // Precomposed and decomposed spellings fold alike.
-    assert_eq!(fold_search("Zoe\u{0308}"), fold_search("Zoë"));
-    assert_eq!(fold_search("Zoë"), "zoe");
-    assert_eq!(fold_search("İstanbul"), "istanbul");
-    assert_eq!(fold_search("Ελληνικά"), "ελληνικα");
-    // One sigma throughout, final or not.
-    assert_eq!(fold_search("ΣΊΣΥΦΟΣ"), "σισυφοσ");
-    // Text without marks keeps its composed form.
-    assert_eq!(fold_search("한국"), "한국");
-    // Lowercasing makes a word-final Σ a final sigma; the key keeps one
-    // sigma so a prefix ending mid-word still matches.
-    assert_eq!(fold_search("ΟΔΥΣΣΕΥΣ"), "οδυσσευσ");
-    assert!(fold_search("Οδυσσευς").starts_with(&fold_search("ΟΔΥΣ")));
-    assert_eq!(fold_search("東京"), "東京");
-    // A lowercase map, not a full case fold.
-    assert_eq!(fold_search("Straße"), "straße");
-    assert_eq!(fold_search(""), "");
 }
 
 // Files the Swift store wrote
 
-/// A database as the Swift store leaves it at v31, holding `rows` of
-/// `(public_address, alias, advertised_name, alias_search)`.
-fn swift_v31(path: &str, rows: &[(&str, Option<&str>, Option<&str>, &str)]) {
-    let connection = Connection::open(path).unwrap();
-    connection.execute_batch(BASELINE).unwrap();
-    connection
-        .pragma_update(None, "user_version", BASELINE_VERSION)
-        .unwrap();
-    connection
-        .execute(
-            "INSERT INTO local_identity (id, public_address, created_at_ms) \
-             VALUES ('alice', 'alice-public', 1)",
-            [],
-        )
-        .unwrap();
-    for (address, alias, advertised_name, search) in rows {
+#[test]
+fn a_swift_store_migrates_its_nodes() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = path_in(&directory);
+    {
+        let connection = Connection::open(&path).unwrap();
+        connection.execute_batch(BASELINE).unwrap();
         connection
-            .execute(
-                "INSERT INTO node (owner_identity_id, public_address, alias, \
-                 advertised_name, alias_search) VALUES ('alice', ?, ?, ?, ?)",
-                params![address, alias, advertised_name, search],
+            .pragma_update(None, "user_version", BASELINE_VERSION)
+            .unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO local_identity (id, public_address, created_at_ms)
+                    VALUES ('alice', 'alice-public', 1);
+                -- What the Swift store wrote: a Date's full-precision
+                -- seconds, and a folded sort key.
+                INSERT INTO node (owner_identity_id, public_address, alias, alias_search,
+                    last_heard_at, advertisement_received_at)
+                    VALUES ('alice', 'peer', 'Straße', 'strasse',
+                        1700000002.12349, 1700000002.12351);",
             )
             .unwrap();
     }
-}
-
-#[test]
-fn a_swift_store_opens_unchanged() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = path_in(&directory);
-    // A key the store's own fold would not have written.
-    swift_v31(&path, &[("strasse", Some("Straße"), None, "strasse")]);
     let store = MobileAppStore::open(path).unwrap();
-    // Opening writes nothing, so the Swift store can still open the file.
-    assert_eq!(store.schema_version(), Ok(BASELINE_VERSION));
-    assert_eq!(alias_search(&store, "strasse"), "strasse");
-    // The next write to the row keys it with the store's fold.
-    upsert(&store, "strasse", named(Some("Straße"), None));
-    assert_eq!(alias_search(&store, "strasse"), "straße");
+    assert_eq!(store.schema_version(), Ok(32));
+    let stored = node(&store, "peer");
+    assert_eq!(stored.alias.as_deref(), Some("Straße"));
+    assert_eq!(stored.last_heard_at_ms, Some(1_700_000_002_123));
+    assert_eq!(stored.advertisement_received_at_ms, Some(1_700_000_002_124));
 }

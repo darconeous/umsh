@@ -19,8 +19,8 @@ use umsh_text::chat::{
 };
 use umsh_text::engine::sequence::MessageHandle;
 use umsh_text::engine::{
-    ArchiveKey, CompletionStatus, ComposeIntent, ComposeRef, DeliveryState, Direction,
-    EngineConfig, Presence, RegardingRef, ResolvedRef, StreamCheckpoint,
+    ArchiveKey, CompletionStatus, ComposeIntent, ComposeRef, DeliveryState, Diagnostic, Direction,
+    EngineConfig, Event, Presence, RegardingRef, ResolvedRef, StreamCheckpoint,
 };
 use umsh_text::model::{ConversationKey, SenderScope, WireRef};
 use umsh_text::node_adapter::{TransmitPolicy, TransmitQueue, with_flood_reach};
@@ -58,13 +58,13 @@ pub struct MobileChatArchiveRecord {
 /// these *before* the batch's archive upserts so an edit's replacement
 /// payloads land on a clean slate and the superseded content can never be
 /// served to a resend request again.
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MobileChatArchiveDeleteRecord {
     pub conversation_address: String,
     pub message_id: u8,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MobileChatMutationKind {
     Insert,
     UpdateBody,
@@ -96,7 +96,7 @@ pub enum MobileChatPresence {
 /// The engine is transport-agnostic and carries none of this, so the facade
 /// attaches it alongside the mutation the frame produced. Absent on records
 /// that came from a timer, a compose, or a repair drain.
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MobileChatRxMetadataRecord {
     pub rssi_dbm: Option<i16>,
     pub snr_centibels: Option<i16>,
@@ -127,14 +127,14 @@ pub struct MobileChatRxMetadataRecord {
 /// renders those as anonymous members until a frame carries the full key;
 /// this record lets it upgrade the rows it already stored, keyed by
 /// conversation and hint.
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MobileChatSenderResolutionRecord {
     pub conversation_address: String,
     pub sender_hint: Vec<u8>,
     pub sender_address: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MobileChatMutationRecord {
     /// A facade-session namespace prevents the engine's process-local u32
     /// handles from colliding after restart.
@@ -240,7 +240,7 @@ pub struct MobileChatRegardingRef {
     pub epoch: Option<u16>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MobileChatDeliveryState {
     /// It went on the air, or the session setup it waits on did.
     Sent,
@@ -258,7 +258,7 @@ pub enum MobileChatDeliveryState {
 /// any word of those frames: the platform forgets what it last heard of
 /// every fragment not yet acknowledged, and points the message's delivery
 /// at the new handle.
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MobileChatResendRecord {
     /// The message, as the platform named it to send again.
     pub message: MobileChatOriginalRef,
@@ -268,7 +268,7 @@ pub struct MobileChatResendRecord {
     pub forward_secret: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MobileChatDeliveryRecord {
     pub session_id: u64,
     pub handle: u32,
@@ -282,7 +282,7 @@ pub struct MobileChatDeliveryRecord {
 /// The repeaters overheard carrying one fragment of a message of ours, as
 /// tallied so far. Each record holds the whole tally, so a later one
 /// supersedes an earlier one for the same fragment.
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MobileChatRepeatRecord {
     pub session_id: u64,
     pub handle: u32,
@@ -293,7 +293,7 @@ pub struct MobileChatRepeatRecord {
     pub anonymous_repeats: u16,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MobileChatArchiveLookupRecord {
     pub request_id: u32,
     pub conversation_address: String,
@@ -301,7 +301,7 @@ pub struct MobileChatArchiveLookupRecord {
     pub fragment_index: Option<u8>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MobileChatArchiveResultKind {
     Found,
     Deleted,
@@ -309,7 +309,7 @@ pub enum MobileChatArchiveResultKind {
     Unknown,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MobileChatComposeBatchRecord {
     pub batch_id: u64,
     pub checkpoint: MobileChatCheckpointRecord,
@@ -325,7 +325,6 @@ pub struct MobileChatComposeBatchRecord {
 pub(crate) struct ComposedChatBatch {
     pub record: MobileChatComposeBatchRecord,
     pub deliveries: Vec<MobileChatDeliveryRecord>,
-    pub diagnostics: Vec<String>,
 }
 
 /// Why a compose produced no batch.
@@ -349,7 +348,6 @@ pub(crate) struct ChatDrain {
     pub repeats: Vec<MobileChatRepeatRecord>,
     pub lookups: Vec<MobileChatArchiveLookupRecord>,
     pub resolutions: Vec<MobileChatSenderResolutionRecord>,
-    pub diagnostics: Vec<String>,
 }
 
 /// The worker's chat state: the facade, the batch Swift is storing, and what
@@ -529,14 +527,9 @@ impl MobileChatState {
         self.facade.channels()
     }
 
-    pub fn restore(
-        &mut self,
-        checkpoints: &[MobileChatCheckpointRecord],
-        now_ms: u64,
-    ) -> Vec<String> {
-        let (restored, diagnostics) = self.checkpoints(checkpoints);
+    pub fn restore(&mut self, checkpoints: &[MobileChatCheckpointRecord], now_ms: u64) {
+        let restored = self.checkpoints(checkpoints);
         self.facade.restore(&restored, now_ms);
-        diagnostics
     }
 
     /// Compose a new message as the user typed it, which may make it status
@@ -842,19 +835,18 @@ impl MobileChatState {
 
     /// Give up on the batch Swift could not store, rebuilding the engine from
     /// the checkpoints it still holds. Returns the drain that fails the
-    /// batch's frames, and diagnostics for checkpoints that no longer
-    /// resolve.
+    /// batch's frames.
     pub fn reject(
         &mut self,
         batch_id: u64,
         checkpoints: &[MobileChatCheckpointRecord],
         seeds: Seeds,
         now_ms: u64,
-    ) -> Option<(ChatDrain, Vec<String>)> {
+    ) -> Option<ChatDrain> {
         let batch = self.pending.take_if(|batch| batch.id() == batch_id)?;
-        let (restored, diagnostics) = self.checkpoints(checkpoints);
+        let restored = self.checkpoints(checkpoints);
         let drain = self.facade.reject(batch, &restored, seeds, now_ms).ok()?;
-        Some((drain_records(drain), diagnostics))
+        Some(drain_records(drain))
     }
 
     pub fn drain(&mut self) -> ChatDrain {
@@ -869,12 +861,10 @@ impl MobileChatState {
         parse_conversation_address(value, self.facade.channels())
     }
 
-    fn checkpoints(
-        &self,
-        records: &[MobileChatCheckpointRecord],
-    ) -> (Vec<StreamCheckpoint>, Vec<String>) {
+    /// The checkpoints that still resolve; one that does not is logged and
+    /// passed over.
+    fn checkpoints(&self, records: &[MobileChatCheckpointRecord]) -> Vec<StreamCheckpoint> {
         let mut restored = Vec::new();
-        let mut diagnostics = Vec::new();
         for record in records {
             match self.parse_conversation_address(&record.conversation_address) {
                 Some(conversation) => restored.push(StreamCheckpoint {
@@ -882,13 +872,13 @@ impl MobileChatState {
                     next_id: record.next_id,
                     epoch: record.epoch,
                 }),
-                None => diagnostics.push(format!(
-                    "chat checkpoint for unknown conversation {}",
-                    record.conversation_address
-                )),
+                None => log::warn!(
+                    conversation:% = record.conversation_address;
+                    "chat checkpoint for an unknown conversation"
+                ),
             }
         }
-        (restored, diagnostics)
+        restored
     }
 
     /// Resolve the platform's persisted identity of a regarding target to an
@@ -1007,14 +997,13 @@ impl MobileChatState {
             }
         }
         let mut deliveries = Vec::new();
-        let mut diagnostics = Vec::new();
         for output in &batch.outputs {
             match output {
                 ChatOutput::Delivery(delivery) => {
                     deliveries.push(delivery_record(session_id, delivery));
                 }
-                ChatOutput::Event(event) => diagnostics.push(format!("{event:?}")),
-                ChatOutput::Diagnostic(diagnostic) => diagnostics.push(format!("{diagnostic:?}")),
+                ChatOutput::Event(event) => log_event(event),
+                ChatOutput::Diagnostic(diagnostic) => log_diagnostic(diagnostic),
                 _ => {}
             }
         }
@@ -1050,11 +1039,7 @@ impl MobileChatState {
             mutations,
         };
         self.pending = Some(batch);
-        Ok(ComposedChatBatch {
-            record,
-            deliveries,
-            diagnostics,
-        })
+        Ok(ComposedChatBatch { record, deliveries })
     }
 }
 
@@ -1069,7 +1054,6 @@ fn drain_records(drain: Drain) -> ChatDrain {
         repeats: Vec::new(),
         lookups: Vec::new(),
         resolutions: Vec::new(),
-        diagnostics: Vec::new(),
     };
     for output in drain.outputs {
         match output {
@@ -1096,13 +1080,22 @@ fn drain_records(drain: Drain) -> ChatDrain {
             }
             // Only a compose stores archives, and its batch carries them.
             ChatOutput::StoreArchive(_) | ChatOutput::DeleteArchive(_) => {}
-            ChatOutput::Event(event) => records.diagnostics.push(format!("{event:?}")),
-            ChatOutput::Diagnostic(diagnostic) => {
-                records.diagnostics.push(format!("{diagnostic:?}"));
-            }
+            ChatOutput::Event(event) => log_event(&event),
+            ChatOutput::Diagnostic(diagnostic) => log_diagnostic(&diagnostic),
         }
     }
     records
+}
+
+/// An engine event the records do not carry. What it names can identify a
+/// conversation, so all of it is private.
+fn log_event(event: &Event) {
+    log::debug!(event:? = event; "chat event");
+}
+
+/// Something the engine passed over, for the record.
+fn log_diagnostic(diagnostic: &Diagnostic) {
+    log::debug!(diagnostic:? = diagnostic; "chat diagnostic");
 }
 
 fn delivery_record(session_id: u64, delivery: &Delivery) -> MobileChatDeliveryRecord {
@@ -1466,12 +1459,7 @@ mod tests {
         assert_eq!(checkpoint.conversation_address, channel_address(tag));
 
         let (mut restarted, _) = state_with_channel();
-        assert!(
-            restarted
-                .restore(std::slice::from_ref(&checkpoint), 0)
-                .is_empty(),
-            "a checkpoint for a held channel restores without complaint"
-        );
+        restarted.restore(std::slice::from_ref(&checkpoint), 0);
         // Continuity proves the restore landed on the same stream: a cold
         // engine would hand out the ID the first message already used.
         let next = restarted
@@ -1501,13 +1489,17 @@ mod tests {
             .record
             .checkpoint;
 
-        let diagnostics = empty_state().restore(std::slice::from_ref(&checkpoint), 0);
-        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
-        assert!(
-            diagnostics[0].contains(&checkpoint.conversation_address),
-            "the diagnostic must name the conversation: {}",
-            diagnostics[0]
-        );
+        crate::logging::capture::install();
+        empty_state().restore(std::slice::from_ref(&checkpoint), 0);
+        let named = crate::logging::capture::containing("unknown conversation")
+            .into_iter()
+            .any(|record| {
+                record
+                    .private_fields
+                    .iter()
+                    .any(|field| field.value == checkpoint.conversation_address)
+            });
+        assert!(named, "the log must name the conversation, privately");
     }
 
     /// The full restart round trip at the facade level: the persisted
@@ -1540,7 +1532,7 @@ mod tests {
             first.session_id(),
             "sessions must not collide"
         );
-        let _ = restarted.restore(std::slice::from_ref(&checkpoint), 0);
+        restarted.restore(std::slice::from_ref(&checkpoint), 0);
         let edited = restarted
             .compose_edit(direct(), 8, &original, "v2", MAX_FRAME, 1)
             .expect("wire-referenced edit composes after restart");
@@ -1741,7 +1733,7 @@ mod tests {
         let checkpoint = composed.record.checkpoint;
 
         let mut restarted = empty_state();
-        let _ = restarted.restore(std::slice::from_ref(&checkpoint), 0);
+        restarted.restore(std::slice::from_ref(&checkpoint), 0);
         let reacted = restarted
             .compose_reaction(direct(), 8, &target, "<3", MAX_FRAME, 1)
             .expect("wire-referenced reaction composes after restart");
@@ -1948,7 +1940,7 @@ mod tests {
             Some(ComposeFailure::Pending)
         );
         let old_session = state.session_id();
-        let (drain, diagnostics) = state
+        let drain = state
             .reject(
                 lost.record.batch_id,
                 std::slice::from_ref(&checkpoint),
@@ -1956,7 +1948,6 @@ mod tests {
                 2,
             )
             .expect("the pending batch is rejected");
-        assert!(diagnostics.is_empty(), "{diagnostics:?}");
         assert_eq!(drain.deliveries.len(), 1);
         assert_eq!(drain.deliveries[0].session_id, old_session);
         // Nothing of it went.

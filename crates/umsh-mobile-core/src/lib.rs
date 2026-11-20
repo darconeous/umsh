@@ -16,6 +16,7 @@ use umsh_uri::UmshUri;
 use zeroize::Zeroize;
 
 mod counter_store;
+mod logging;
 mod meet;
 mod mobile_chat;
 mod mobile_mesh;
@@ -27,6 +28,7 @@ mod ulcp;
 mod virtual_radio;
 
 pub use counter_store::{CounterStoreError, MobileCounterStore};
+pub use logging::{MobileLogField, MobileLogLevel, MobileLogRecord, MobileLogger, set_logger};
 pub use meet::{
     MobileMeetContactRecord, MobileMeetDeviceRecord, MobileMeetEnd, MobileMeetExchange,
     MobileMeetStateRecord,
@@ -99,7 +101,7 @@ uniffi::setup_scaffolding!();
 ///
 /// Increment this when a binding-visible operation, record, or error contract
 /// changes incompatibly. It is independent of the UMSH wire version.
-pub const MOBILE_API_VERSION: u16 = 82;
+pub const MOBILE_API_VERSION: u16 = 83;
 
 /// Stable error categories consumed by platform adapters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Error)]

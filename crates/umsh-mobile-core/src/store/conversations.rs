@@ -233,7 +233,7 @@ impl MobileAppStore {
         owner_identity_id: String,
         conversation_id: i64,
     ) -> Result<(), MobileStoreError> {
-        self.write(|transaction| {
+        self.erase(|transaction| {
             let Some(address) = transaction
                 .query_row(
                     "SELECT conversation_address FROM channel_conversation
@@ -270,7 +270,7 @@ impl MobileAppStore {
         owner_identity_id: String,
         conversation_address: String,
     ) -> Result<(), MobileStoreError> {
-        self.write(|transaction| {
+        self.erase(|transaction| {
             purge_conversation_history(transaction, &owner_identity_id, &conversation_address)?;
             Ok(())
         })
@@ -335,7 +335,7 @@ impl MobileAppStore {
         owner_identity_id: String,
         conversation_id: i64,
     ) -> Result<(), MobileStoreError> {
-        self.write(|transaction| {
+        self.erase(|transaction| {
             let Some(peer_address) = transaction
                 .query_row(
                     "SELECT n.public_address FROM direct_conversation c
@@ -368,7 +368,7 @@ impl MobileAppStore {
         owner_identity_id: String,
         public_address: String,
     ) -> Result<bool, MobileStoreError> {
-        self.write(|transaction| {
+        self.erase(|transaction| {
             let Some(node_id) = transaction
                 .query_row(
                     "SELECT id FROM node

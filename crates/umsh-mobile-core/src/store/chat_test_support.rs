@@ -6,11 +6,21 @@ use std::sync::Arc;
 use rusqlite::types::FromSql;
 
 use crate::mobile_chat::{
-    MobileChatDeliveryRecord, MobileChatDeliveryState, MobileChatDirection, MobileChatMutationKind,
-    MobileChatMutationRecord, MobileChatPresence,
+    MobileChatArchiveLookupRecord, MobileChatDeliveryRecord, MobileChatDeliveryState,
+    MobileChatDirection, MobileChatMutationKind, MobileChatMutationRecord, MobileChatPresence,
+    MobileChatRepeatRecord, MobileChatResendRecord, MobileChatSenderResolutionRecord,
 };
 
-use super::{MobileAppStore, MobileStoredChatMessageRecord, MobileStoredChatMessageRefRecord};
+use super::chat::{
+    MobileStoredChatDeliveryFailureRecord, MobileStoredChatNotificationTargetRecord,
+    MobileStoredChatReactionNotificationTargetRecord, apply_deliveries, apply_mutations,
+    apply_repeats, apply_resends, apply_sender_resolution, chat_archive, chat_notification_target,
+    chat_reaction_notification_target, conversation_address_for_message,
+};
+use super::{
+    MobileAppStore, MobileStoreError, MobileStoredChatMessageRecord,
+    MobileStoredChatMessageRefRecord,
+};
 
 pub(super) const OWNER: &str = "alice";
 /// The instant the tests apply things at.
@@ -190,4 +200,109 @@ pub(super) fn scalar<T: FromSql>(store: &MobileAppStore, sql: &str) -> T {
         .connection()
         .query_row(sql, [], |row| row.get(0))
         .unwrap()
+}
+
+/// The per-kind writes the chat store makes in one transaction, one at a
+/// time, for the tests of each.
+impl MobileAppStore {
+    pub(crate) fn conversation_address_for_message(
+        &self,
+        owner_identity_id: String,
+        session_id: u64,
+        handle: u32,
+    ) -> Result<Option<String>, MobileStoreError> {
+        conversation_address_for_message(&self.connection(), &owner_identity_id, session_id, handle)
+    }
+
+    pub(crate) fn chat_notification_target(
+        &self,
+        owner_identity_id: String,
+        session_id: u64,
+        handle: u32,
+    ) -> Result<Option<MobileStoredChatNotificationTargetRecord>, MobileStoreError> {
+        chat_notification_target(&self.connection(), &owner_identity_id, session_id, handle)
+    }
+
+    pub(crate) fn chat_reaction_notification_target(
+        &self,
+        owner_identity_id: String,
+        session_id: u64,
+        handle: u32,
+    ) -> Result<Option<MobileStoredChatReactionNotificationTargetRecord>, MobileStoreError> {
+        chat_reaction_notification_target(
+            &self.connection(),
+            &owner_identity_id,
+            session_id,
+            handle,
+        )
+    }
+
+    pub(crate) fn apply_sender_resolution(
+        &self,
+        owner_identity_id: String,
+        resolution: MobileChatSenderResolutionRecord,
+    ) -> Result<(), MobileStoreError> {
+        apply_sender_resolution(&self.connection(), &owner_identity_id, &resolution)
+    }
+
+    pub(crate) fn apply_chat_mutations(
+        &self,
+        owner_identity_id: String,
+        mutations: Vec<MobileChatMutationRecord>,
+        now_ms: i64,
+        silent_tests_in: Option<String>,
+    ) -> Result<Vec<MobileChatMutationRecord>, MobileStoreError> {
+        self.write(|transaction| {
+            apply_mutations(
+                transaction,
+                &owner_identity_id,
+                &mutations,
+                silent_tests_in.as_deref(),
+                now_ms,
+            )
+        })
+    }
+
+    pub(crate) fn apply_chat_deliveries(
+        &self,
+        owner_identity_id: String,
+        deliveries: Vec<MobileChatDeliveryRecord>,
+        now_ms: i64,
+    ) -> Result<Vec<MobileStoredChatDeliveryFailureRecord>, MobileStoreError> {
+        self.write(|transaction| {
+            apply_deliveries(transaction, &owner_identity_id, &deliveries, now_ms)
+        })
+    }
+
+    pub(crate) fn apply_chat_repeats(
+        &self,
+        owner_identity_id: String,
+        repeats: Vec<MobileChatRepeatRecord>,
+        now_ms: i64,
+    ) -> Result<(), MobileStoreError> {
+        if repeats.is_empty() {
+            return Ok(());
+        }
+        self.write(|transaction| apply_repeats(transaction, &owner_identity_id, &repeats, now_ms))
+    }
+
+    pub(crate) fn chat_archive(
+        &self,
+        owner_identity_id: String,
+        lookup: MobileChatArchiveLookupRecord,
+    ) -> Result<Option<Vec<u8>>, MobileStoreError> {
+        chat_archive(&self.connection(), &owner_identity_id, &lookup)
+    }
+
+    pub(crate) fn apply_chat_resends(
+        &self,
+        owner_identity_id: String,
+        resends: Vec<MobileChatResendRecord>,
+        now_ms: i64,
+    ) -> Result<(), MobileStoreError> {
+        if resends.is_empty() {
+            return Ok(());
+        }
+        self.write(|transaction| apply_resends(transaction, &owner_identity_id, &resends, now_ms))
+    }
 }

@@ -152,63 +152,6 @@ pub struct MobileStoredChatDeliveryFailureRecord {
 
 #[uniffi::export]
 impl MobileAppStore {
-    /// The conversation a stored message belongs to, by its durable
-    /// identity. What attributes a delivery acknowledgment, which carries
-    /// no address of its own, back to a peer.
-    pub fn conversation_address_for_message(
-        &self,
-        owner_identity_id: String,
-        session_id: u64,
-        handle: u32,
-    ) -> Result<Option<String>, MobileStoreError> {
-        conversation_address_for_message(&self.connection(), &owner_identity_id, session_id, handle)
-    }
-
-    /// The stored conversation, sender, and body of an inbound message a
-    /// person reads, for raising a notification. `None` for outbound rows,
-    /// tombstones, gap placeholders, unavailable markers, reactions, and
-    /// empty bodies. Everything is read from storage, so a notify carried
-    /// on an `UpdateBody`, which omits all of it, still works.
-    pub fn chat_notification_target(
-        &self,
-        owner_identity_id: String,
-        session_id: u64,
-        handle: u32,
-    ) -> Result<Option<MobileStoredChatNotificationTargetRecord>, MobileStoreError> {
-        chat_notification_target(&self.connection(), &owner_identity_id, session_id, handle)
-    }
-
-    /// The reaction behind a notifying mutation, when it is one and it
-    /// lands on a message this phone sent.
-    ///
-    /// Reactions to someone else's message are somebody else's business: in
-    /// a channel they would ping every member for every tapback. A
-    /// withdrawal carries an empty body and is not an event to announce.
-    pub fn chat_reaction_notification_target(
-        &self,
-        owner_identity_id: String,
-        session_id: u64,
-        handle: u32,
-    ) -> Result<Option<MobileStoredChatReactionNotificationTargetRecord>, MobileStoreError> {
-        chat_reaction_notification_target(
-            &self.connection(),
-            &owner_identity_id,
-            session_id,
-            handle,
-        )
-    }
-
-    /// Fill in the sender of group messages stored before that member's
-    /// hint resolved to a full address. Rows that already name a sender are
-    /// left alone: the first attribution seen for a hint is the one kept.
-    pub fn apply_sender_resolution(
-        &self,
-        owner_identity_id: String,
-        resolution: MobileChatSenderResolutionRecord,
-    ) -> Result<(), MobileStoreError> {
-        apply_sender_resolution(&self.connection(), &owner_identity_id, &resolution)
-    }
-
     /// Every outbound stream's checkpoint, least recently written first:
     /// what a new mesh session resumes each stream from.
     pub fn chat_checkpoints(
@@ -230,153 +173,6 @@ impl MobileAppStore {
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(checkpoints)
-    }
-
-    /// Make a compose durable: its stream checkpoint, the exact payloads a
-    /// resend would serve, and the rows it writes, in one transaction. The
-    /// caller releases the engine's batch only after this returns. Rows are
-    /// stamped `now_ms`, as is the checkpoint.
-    pub fn commit_chat_compose_batch(
-        &self,
-        owner_identity_id: String,
-        batch: MobileChatComposeBatchRecord,
-        now_ms: i64,
-    ) -> Result<(), MobileStoreError> {
-        self.write(|transaction| {
-            let owner = owner_identity_id.as_str();
-            upsert_checkpoint(transaction, owner, &batch.checkpoint, now_ms)?;
-            // Retirements first: an edit's replacement payloads must land on a
-            // clean slate, so no stale fragment of the superseded content can
-            // ever be served to a resend request.
-            for delete in &batch.archive_deletes {
-                delete_archive(transaction, owner, delete)?;
-            }
-            for archive in &batch.archives {
-                upsert_archive(transaction, owner, archive)?;
-            }
-            // What this phone composes is never a message arriving, so nothing
-            // here is silent.
-            for mutation in &batch.mutations {
-                apply_mutation(transaction, owner, mutation, None, now_ms)?;
-            }
-            Ok(())
-        })
-    }
-
-    /// Apply what the engine reported, in one transaction, and return the
-    /// mutations that materialized a new message row: an edit whose
-    /// original this phone never stored arrives as content rather than a
-    /// revision (see `materialize_orphan_edit`). The engine could not flag
-    /// those `notify`, since only the store knows the original was missing;
-    /// the caller treats them as the arrivals they are.
-    ///
-    /// A mutation at or below the revision already applied for its message
-    /// changes nothing, so a redelivered batch is harmless.
-    ///
-    /// `silent_tests_in` names `EMERGENCY`'s conversation while its test
-    /// messages are to arrive silently: one arriving there is kept and
-    /// shown, but never counts as unread. New rows are stamped `now_ms`,
-    /// less any time the frame spent queued on the radio.
-    #[uniffi::method(default(silent_tests_in = None))]
-    pub fn apply_chat_mutations(
-        &self,
-        owner_identity_id: String,
-        mutations: Vec<MobileChatMutationRecord>,
-        now_ms: i64,
-        silent_tests_in: Option<String>,
-    ) -> Result<Vec<MobileChatMutationRecord>, MobileStoreError> {
-        self.write(|transaction| {
-            apply_mutations(
-                transaction,
-                &owner_identity_id,
-                &mutations,
-                silent_tests_in.as_deref(),
-                now_ms,
-            )
-        })
-    }
-
-    /// Apply delivery evidence, in one transaction, and report which
-    /// messages it just gave up on.
-    ///
-    /// Only a crossing counts. `delivery_state` is recomputed from every
-    /// fragment on each record, so a message already resolved to a failure
-    /// recomputes to one again on the next fragment, and a redelivered
-    /// batch replays the same records; announcing the state rather than the
-    /// transition would announce one failure many times. `now_ms` stamps
-    /// the moment a message's first frame is heard of going out.
-    pub fn apply_chat_deliveries(
-        &self,
-        owner_identity_id: String,
-        deliveries: Vec<MobileChatDeliveryRecord>,
-        now_ms: i64,
-    ) -> Result<Vec<MobileStoredChatDeliveryFailureRecord>, MobileStoreError> {
-        self.write(|transaction| {
-            apply_deliveries(transaction, &owner_identity_id, &deliveries, now_ms)
-        })
-    }
-
-    /// Record the repeaters overheard carrying our frames, in one
-    /// transaction.
-    ///
-    /// Each record is one transmission's whole tally, and a fragment sent
-    /// again starts a fresh one, so a fragment keeps the union of the
-    /// repeaters every transmission of it named (two-byte hints only), and
-    /// the most any of them heard anonymously. A message's delivery is
-    /// stamped `now_ms` as having moved whenever one of its fragments gains
-    /// a repeater; a tally that adds nothing writes nothing.
-    pub fn apply_chat_repeats(
-        &self,
-        owner_identity_id: String,
-        repeats: Vec<MobileChatRepeatRecord>,
-        now_ms: i64,
-    ) -> Result<(), MobileStoreError> {
-        if repeats.is_empty() {
-            return Ok(());
-        }
-        self.write(|transaction| apply_repeats(transaction, &owner_identity_id, &repeats, now_ms))
-    }
-
-    /// Mark what a compose wrote undelivered, in one transaction, after the
-    /// compose was made durable but the engine could not release its
-    /// transmissions (the fail-closed counter store became unavailable,
-    /// say). Keeps the optimistic row honest instead of leaving it pending
-    /// forever.
-    pub fn mark_chat_compose_batch_failed(
-        &self,
-        owner_identity_id: String,
-        batch: MobileChatComposeBatchRecord,
-    ) -> Result<(), MobileStoreError> {
-        self.write(|transaction| {
-            for mutation in &batch.mutations {
-                // A new outbound message is keyed by its own compose; an edit
-                // never inserted a row, but the row it revised now points its
-                // delivery at the edit's transmissions, the ones that just
-                // failed to launch. Either way the row the failure belongs to is
-                // the one whose pointer names this mutation.
-                let applies = match mutation.kind {
-                    MobileChatMutationKind::Insert => {
-                        mutation.direction == Some(MobileChatDirection::Outbound)
-                    }
-                    MobileChatMutationKind::Edit => true,
-                    MobileChatMutationKind::UpdateBody | MobileChatMutationKind::Delete => false,
-                };
-                if !applies {
-                    continue;
-                }
-                transaction.execute(
-                    "UPDATE chat_message SET delivery_state = 'undelivered'
-                    WHERE owner_identity_id = ? AND delivery_session_id = ?
-                        AND delivery_handle = ? AND direction = 1",
-                    params![
-                        owner_identity_id,
-                        mutation.session_id.to_string(),
-                        mutation.handle
-                    ],
-                )?;
-            }
-            Ok(())
-        })
     }
 
     /// Remove a failed outbound message outright, in one transaction,
@@ -487,16 +283,6 @@ impl MobileAppStore {
         })
     }
 
-    /// The archived payload a repair request asks for, if it is still
-    /// held.
-    pub fn chat_archive(
-        &self,
-        owner_identity_id: String,
-        lookup: MobileChatArchiveLookupRecord,
-    ) -> Result<Option<Vec<u8>>, MobileStoreError> {
-        chat_archive(&self.connection(), &owner_identity_id, &lookup)
-    }
-
     /// What a resend of one of our messages puts back on the air: its
     /// archived fragments, in order, less those already acknowledged under
     /// its current delivery pointer. Empty when nothing is archived under
@@ -558,26 +344,86 @@ impl MobileAppStore {
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(frames)
     }
+}
 
-    /// Point each resent message's delivery at the transmission its frames
-    /// went out under again, ahead of any word of them, and record whether
-    /// they go under forward secrecy; one transaction. What was
-    /// acknowledged stays so; what was last said of the rest no longer
-    /// holds. A resend naming no outbound row is skipped.
-    pub fn apply_chat_resends(
+impl MobileAppStore {
+    /// Make a compose durable: its stream checkpoint, the exact payloads a
+    /// resend would serve, and the rows it writes, in one transaction. The
+    /// caller releases the engine's batch only after this returns. Rows are
+    /// stamped `now_ms`, as is the checkpoint.
+    pub(crate) fn commit_chat_compose_batch(
         &self,
         owner_identity_id: String,
-        resends: Vec<MobileChatResendRecord>,
+        batch: MobileChatComposeBatchRecord,
         now_ms: i64,
     ) -> Result<(), MobileStoreError> {
-        if resends.is_empty() {
-            return Ok(());
-        }
-        self.write(|transaction| apply_resends(transaction, &owner_identity_id, &resends, now_ms))
+        self.write(|transaction| {
+            let owner = owner_identity_id.as_str();
+            upsert_checkpoint(transaction, owner, &batch.checkpoint, now_ms)?;
+            // Retirements first: an edit's replacement payloads must land on a
+            // clean slate, so no stale fragment of the superseded content can
+            // ever be served to a resend request.
+            for delete in &batch.archive_deletes {
+                delete_archive(transaction, owner, delete)?;
+            }
+            for archive in &batch.archives {
+                upsert_archive(transaction, owner, archive)?;
+            }
+            // What this phone composes is never a message arriving, so nothing
+            // here is silent.
+            for mutation in &batch.mutations {
+                apply_mutation(transaction, owner, mutation, None, now_ms)?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Mark what a compose wrote undelivered, in one transaction, after the
+    /// compose was made durable but the engine could not release its
+    /// transmissions (the fail-closed counter store became unavailable,
+    /// say). Keeps the optimistic row honest instead of leaving it pending
+    /// forever.
+    pub(crate) fn mark_chat_compose_batch_failed(
+        &self,
+        owner_identity_id: String,
+        batch: MobileChatComposeBatchRecord,
+    ) -> Result<(), MobileStoreError> {
+        self.write(|transaction| {
+            for mutation in &batch.mutations {
+                // A new outbound message is keyed by its own compose; an edit
+                // never inserted a row, but the row it revised now points its
+                // delivery at the edit's transmissions, the ones that just
+                // failed to launch. Either way the row the failure belongs to is
+                // the one whose pointer names this mutation.
+                let applies = match mutation.kind {
+                    MobileChatMutationKind::Insert => {
+                        mutation.direction == Some(MobileChatDirection::Outbound)
+                    }
+                    MobileChatMutationKind::Edit => true,
+                    MobileChatMutationKind::UpdateBody | MobileChatMutationKind::Delete => false,
+                };
+                if !applies {
+                    continue;
+                }
+                transaction.execute(
+                    "UPDATE chat_message SET delivery_state = 'undelivered'
+                    WHERE owner_identity_id = ? AND delivery_session_id = ?
+                        AND delivery_handle = ? AND direction = 1",
+                    params![
+                        owner_identity_id,
+                        mutation.session_id.to_string(),
+                        mutation.handle
+                    ],
+                )?;
+            }
+            Ok(())
+        })
     }
 }
 
-/// See [`MobileAppStore::conversation_address_for_message`].
+/// The conversation a stored message belongs to, by its durable
+/// identity. What attributes a delivery acknowledgment, which carries
+/// no address of its own, back to a peer.
 pub(super) fn conversation_address_for_message(
     connection: &Connection,
     owner_identity_id: &str,
@@ -594,7 +440,11 @@ pub(super) fn conversation_address_for_message(
         .optional()?)
 }
 
-/// See [`MobileAppStore::chat_notification_target`].
+/// The stored conversation, sender, and body of an inbound message a
+/// person reads, for raising a notification. `None` for outbound rows,
+/// tombstones, gap placeholders, unavailable markers, reactions, and
+/// empty bodies. Everything is read from storage, so a notify carried
+/// on an `UpdateBody`, which omits all of it, still works.
 pub(super) fn chat_notification_target(
     connection: &Connection,
     owner_identity_id: &str,
@@ -629,7 +479,12 @@ pub(super) fn chat_notification_target(
         .optional()?)
 }
 
-/// See [`MobileAppStore::chat_reaction_notification_target`].
+/// The reaction behind a notifying mutation, when it is one and it
+/// lands on a message this phone sent.
+///
+/// Reactions to someone else's message are somebody else's business: in
+/// a channel they would ping every member for every tapback. A
+/// withdrawal carries an empty body and is not an event to announce.
 pub(super) fn chat_reaction_notification_target(
     connection: &Connection,
     owner_identity_id: &str,
@@ -664,7 +519,9 @@ pub(super) fn chat_reaction_notification_target(
         .optional()?)
 }
 
-/// See [`MobileAppStore::apply_sender_resolution`].
+/// Fill in the sender of group messages stored before that member's
+/// hint resolved to a full address. Rows that already name a sender are
+/// left alone: the first attribution seen for a hint is the one kept.
 pub(super) fn apply_sender_resolution(
     connection: &Connection,
     owner_identity_id: &str,
@@ -684,8 +541,22 @@ pub(super) fn apply_sender_resolution(
     Ok(())
 }
 
-/// See [`MobileAppStore::apply_chat_mutations`]. Part of the caller's
-/// transaction.
+/// Apply what the engine reported, in one transaction, and return the
+/// mutations that materialized a new message row: an edit whose
+/// original this phone never stored arrives as content rather than a
+/// revision (see `materialize_orphan_edit`). The engine could not flag
+/// those `notify`, since only the store knows the original was missing;
+/// the caller treats them as the arrivals they are.
+///
+/// A mutation at or below the revision already applied for its message
+/// changes nothing, so a redelivered batch is harmless.
+///
+/// `silent_tests_in` names `EMERGENCY`'s conversation while its test
+/// messages are to arrive silently: one arriving there is kept and
+/// shown, but never counts as unread. New rows are stamped `now_ms`,
+/// less any time the frame spent queued on the radio.
+///
+/// Part of the caller's transaction.
 pub(super) fn apply_mutations(
     transaction: &Connection,
     owner_identity_id: &str,
@@ -708,8 +579,17 @@ pub(super) fn apply_mutations(
     Ok(materialized)
 }
 
-/// See [`MobileAppStore::apply_chat_deliveries`]. Part of the caller's
-/// transaction.
+/// Apply delivery evidence, in one transaction, and report which
+/// messages it just gave up on.
+///
+/// Only a crossing counts. `delivery_state` is recomputed from every
+/// fragment on each record, so a message already resolved to a failure
+/// recomputes to one again on the next fragment, and a redelivered
+/// batch replays the same records; announcing the state rather than the
+/// transition would announce one failure many times. `now_ms` stamps
+/// the moment a message's first frame is heard of going out.
+///
+/// Part of the caller's transaction.
 pub(super) fn apply_deliveries(
     transaction: &Connection,
     owner: &str,
@@ -758,8 +638,17 @@ pub(super) fn apply_deliveries(
     Ok(failures)
 }
 
-/// See [`MobileAppStore::apply_chat_repeats`]. Part of the caller's
+/// Record the repeaters overheard carrying our frames, in one
 /// transaction.
+///
+/// Each record is one transmission's whole tally, and a fragment sent
+/// again starts a fresh one, so a fragment keeps the union of the
+/// repeaters every transmission of it named (two-byte hints only), and
+/// the most any of them heard anonymously. A message's delivery is
+/// stamped `now_ms` as having moved whenever one of its fragments gains
+/// a repeater; a tally that adds nothing writes nothing.
+///
+/// Part of the caller's transaction.
 pub(super) fn apply_repeats(
     transaction: &Connection,
     owner: &str,
@@ -824,7 +713,8 @@ pub(super) fn apply_repeats(
     Ok(())
 }
 
-/// See [`MobileAppStore::chat_archive`].
+/// The archived payload a repair request asks for, if it is still
+/// held.
 pub(super) fn chat_archive(
     connection: &Connection,
     owner_identity_id: &str,
@@ -846,8 +736,13 @@ pub(super) fn chat_archive(
         .optional()?)
 }
 
-/// See [`MobileAppStore::apply_chat_resends`]. Part of the caller's
-/// transaction.
+/// Point each resent message's delivery at the transmission its frames
+/// went out under again, ahead of any word of them, and record whether
+/// they go under forward secrecy; one transaction. What was
+/// acknowledged stays so; what was last said of the rest no longer
+/// holds. A resend naming no outbound row is skipped.
+///
+/// Part of the caller's transaction.
 pub(super) fn apply_resends(
     transaction: &Connection,
     owner: &str,

@@ -678,13 +678,6 @@ fn a_message_reads_back_every_column_it_was_stored_with() {
     );
 }
 
-#[test]
-fn hex_bytes_stops_at_the_first_pair_that_is_not_hex() {
-    assert_eq!(hex_bytes("0A0b"), [0x0A, 0x0B]);
-    assert_eq!(hex_bytes("0AZZ0B"), [0x0A]);
-    assert_eq!(hex_bytes("0A0"), [0x0A]);
-}
-
 /// A stored figure its field cannot hold reads as absent rather than
 /// wrapped, and a reference whose handle no message can have names
 /// nothing; the rest of the row still reads.
