@@ -5919,6 +5919,1212 @@ public func FfiConverterTypeMobileMeshWakeListener_lower(_ value: MobileMeshWake
 
 
 /**
+ * The radio driver for one transport.
+ */
+public protocol MobileRadioDriverProtocol: AnyObject, Sendable {
+
+    func announce(request: MobileAnnouncementRecord) async throws  -> UlcpLocalManagementEventRecord
+
+    /**
+     * Write this phone's host key into the radio, replacing whatever host
+     * it had.
+     */
+    func claim() async throws
+
+    func clearListener()
+
+    func configure(settings: UlcpRadioSettingsRecord) async throws
+
+    func configureAdvertising(advert: UlcpAdvertSettingsRecord?) async throws
+
+    func configurePositioning(gnss: UlcpGnssSettingsRecord?, tzRule: String?, time24h: Bool?) async throws
+
+    /**
+     * Ask the radio for the frames it queued while no host was attached.
+     */
+    func drainQueue() async throws
+
+    /**
+     * Edit the items of one of the radio's tables.
+     */
+    func editPropertyItems(propertyId: UInt32, mutations: [UlcpItemMutationRecord]) async throws  -> UlcpLocalManagementEventRecord
+
+    /**
+     * Enter DFU. On the radio's confirmation the transport is told to
+     * stop reconnecting (`RadioLink::did_enter_dfu`).
+     */
+    func enterDfu(mode: UlcpDfuMode) async throws  -> UlcpLocalManagementEventRecord
+
+    /**
+     * Erase the radio. It reboots blank and drops the link itself, so the
+     * binding goes and the link stays up long enough to carry the
+     * command.
+     */
+    func factoryReset() async throws
+
+    /**
+     * Read named properties from the radio.
+     */
+    func fetchProperties(propertyIds: [UInt32]) async throws  -> UlcpLocalManagementEventRecord
+
+    func insertDeviceAdmin(publicKey: Data) async throws
+
+    func insertDeviceChannelKey(channelKey: Data) async throws
+
+    func insertDevicePeer(publicKey: Data) async throws
+
+    /**
+     * The transport found the link unusable on its own account—an
+     * attach that never finished, an endpoint it cannot write. The driver
+     * treats it as any fatal fault, and invalidates the link.
+     */
+    func linkFault(problem: MobileRadioProblem)
+
+    /**
+     * The transport carries frames now. `bound_radio` says whether the
+     * radio on the other end is the one the app is bound to; a transport
+     * that reaches exactly one radio always is.
+     */
+    func linkReady(boundRadio: Bool)
+
+    /**
+     * One complete ULCP frame arrived.
+     */
+    func linkReceived(frame: Data)
+
+    /**
+     * Writes carrying these raw transmits failed while the link stayed up.
+     */
+    func linkWritesFailed(rawTransactionIds: Data, problem: MobileRadioProblem)
+
+    /**
+     * Everything that changed since the last poll.
+     */
+    func pollUpdate()  -> MobileRadioDriverUpdateRecord
+
+    /**
+     * Restart the radio. The binding stays: the radio coming back is the
+     * same radio, and reconnecting to it is the point.
+     */
+    func reboot() async throws
+
+    func reconcileHostChannelKeys(keys: [Data]) async throws
+
+    func reconcileHostDestinationHints(hints: [Data]) async throws
+
+    func reconcileHostMutes(channelIdentifiers: [Data], peerKeys: [Data]) async throws
+
+    func reconcileHostPeerKeys(entries: [HostPeerKeyEntryRecord]) async throws
+
+    /**
+     * Read the radio's state anew.
+     */
+    func refresh() async throws  -> MobileRadioStateRecord
+
+    /**
+     * Read the radio's positioning properties anew. Joins a refresh
+     * already running.
+     */
+    func refreshPositioning() async throws  -> MobileRadioStateRecord
+
+    /**
+     * Clear this phone's host key from the radio before letting it go, so
+     * it stops queueing for a phone that has left. Returns when the radio
+     * answers, the link goes, or two seconds pass; a radio holding another
+     * host's key, or none, has nothing to release.
+     */
+    func releaseHost() async
+
+    func removeDeviceAdmin(publicKey: Data) async throws
+
+    func removeDeviceChannelKey(channelKey: Data) async throws
+
+    func removeDevicePeer(publicKey: Data) async throws
+
+    /**
+     * The transport failed at something without losing the link.
+     */
+    func reportProblem(problem: MobileRadioProblem)
+
+    /**
+     * A deliberate new attempt, made by the user: the fault budget starts
+     * over. An automatic reconnect must not call this, or a failing radio
+     * would refill its budget forever.
+     */
+    func resetRecoveryBudget()
+
+    /**
+     * Persist the radio's live configuration.
+     */
+    func save() async throws  -> UlcpLocalManagementEventRecord
+
+    func setAlert(state: UlcpAlertState) async throws
+
+    func setHostAutoAck(enabled: Bool) async throws
+
+    /**
+     * This phone's host key: its identity's public key, once unlocked.
+     */
+    func setHostKey(hostKey: Data?) throws
+
+    /**
+     * Register the listener told of new updates. If one is already
+     * waiting, it is told at once.
+     */
+    func setListener(listener: MobileRadioDriverListener)
+
+    func setTime(epochSeconds: UInt32?) async throws
+
+    /**
+     * The radio's state as last published.
+     */
+    func state()  -> MobileRadioStateRecord
+
+    /**
+     * Stop the driver for good. Its thread ends and lets go of the link
+     * and the mesh session; calls waiting on it, and any made afterwards,
+     * fail as stopped. Dropping the driver stops it too, but a platform
+     * that frees objects late should not leave a thread waiting on that.
+     */
+    func stop()
+
+    /**
+     * The transport carries no frames, and stands here.
+     */
+    func transportChanged(state: MobileRadioTransportStateRecord)
+
+    /**
+     * The mesh session whose frames this radio carries, or none. Frames
+     * received while there is none are kept, a bounded few, for the next.
+     */
+    func useMeshSession(session: MobileMeshSession?) async throws
+
+    /**
+     * Write properties to the radio, in the given order.
+     */
+    func writeProperties(writes: [MobileMeshPropertyWriteRecord]) async throws  -> UlcpLocalManagementEventRecord
+
+}
+/**
+ * The radio driver for one transport.
+ */
+open class MobileRadioDriver: MobileRadioDriverProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_umsh_mobile_core_fn_clone_mobileradiodriver(self.handle, $0) }
+    }
+    /**
+     * A driver for the phone's own radio over `link`. The link reports
+     * its state with `transport_changed` and `link_ready`.
+     */
+public convenience init(link: RadioLink)throws  {
+    let handle =
+        try rustCallWithError(FfiConverterTypeMobileRadioError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_constructor_mobileradiodriver_new(
+        FfiConverterTypeRadioLink_lower(link),uniffiCallStatus
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_umsh_mobile_core_fn_free_mobileradiodriver(handle, $0) }
+    }
+
+
+
+
+open func announce(request: MobileAnnouncementRecord)async throws  -> UlcpLocalManagementEventRecord  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobileradiodriver_announce(
+                        self.uniffiCloneHandle(),FfiConverterTypeMobileAnnouncementRecord_lower(request)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeUlcpLocalManagementEventRecord_lift,
+            errorHandler: FfiConverterTypeMobileRadioError_lift
+        )
+}
+
+    /**
+     * Write this phone's host key into the radio, replacing whatever host
+     * it had.
+     */
+open func claim()async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobileradiodriver_claim(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileRadioError_lift
+        )
+}
+
+open func clearListener()  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileradiodriver_clear_listener(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+
+open func configure(settings: UlcpRadioSettingsRecord)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobileradiodriver_configure(
+                        self.uniffiCloneHandle(),FfiConverterTypeUlcpRadioSettingsRecord_lower(settings)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileRadioError_lift
+        )
+}
+
+open func configureAdvertising(advert: UlcpAdvertSettingsRecord?)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobileradiodriver_configure_advertising(
+                        self.uniffiCloneHandle(),FfiConverterOptionTypeUlcpAdvertSettingsRecord.lower(advert)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileRadioError_lift
+        )
+}
+
+open func configurePositioning(gnss: UlcpGnssSettingsRecord?, tzRule: String?, time24h: Bool?)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobileradiodriver_configure_positioning(
+                        self.uniffiCloneHandle(),FfiConverterOptionTypeUlcpGnssSettingsRecord.lower(gnss),FfiConverterOptionString.lower(tzRule),FfiConverterOptionBool.lower(time24h)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileRadioError_lift
+        )
+}
+
+    /**
+     * Ask the radio for the frames it queued while no host was attached.
+     */
+open func drainQueue()async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobileradiodriver_drain_queue(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileRadioError_lift
+        )
+}
+
+    /**
+     * Edit the items of one of the radio's tables.
+     */
+open func editPropertyItems(propertyId: UInt32, mutations: [UlcpItemMutationRecord])async throws  -> UlcpLocalManagementEventRecord  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobileradiodriver_edit_property_items(
+                        self.uniffiCloneHandle(),FfiConverterUInt32.lower(propertyId),FfiConverterSequenceTypeUlcpItemMutationRecord.lower(mutations)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeUlcpLocalManagementEventRecord_lift,
+            errorHandler: FfiConverterTypeMobileRadioError_lift
+        )
+}
+
+    /**
+     * Enter DFU. On the radio's confirmation the transport is told to
+     * stop reconnecting (`RadioLink::did_enter_dfu`).
+     */
+open func enterDfu(mode: UlcpDfuMode)async throws  -> UlcpLocalManagementEventRecord  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobileradiodriver_enter_dfu(
+                        self.uniffiCloneHandle(),FfiConverterTypeUlcpDfuMode_lower(mode)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeUlcpLocalManagementEventRecord_lift,
+            errorHandler: FfiConverterTypeMobileRadioError_lift
+        )
+}
+
+    /**
+     * Erase the radio. It reboots blank and drops the link itself, so the
+     * binding goes and the link stays up long enough to carry the
+     * command.
+     */
+open func factoryReset()async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobileradiodriver_factory_reset(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileRadioError_lift
+        )
+}
+
+    /**
+     * Read named properties from the radio.
+     */
+open func fetchProperties(propertyIds: [UInt32])async throws  -> UlcpLocalManagementEventRecord  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobileradiodriver_fetch_properties(
+                        self.uniffiCloneHandle(),FfiConverterSequenceUInt32.lower(propertyIds)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeUlcpLocalManagementEventRecord_lift,
+            errorHandler: FfiConverterTypeMobileRadioError_lift
+        )
+}
+
+open func insertDeviceAdmin(publicKey: Data)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobileradiodriver_insert_device_admin(
+                        self.uniffiCloneHandle(),FfiConverterData.lower(publicKey)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileRadioError_lift
+        )
+}
+
+open func insertDeviceChannelKey(channelKey: Data)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobileradiodriver_insert_device_channel_key(
+                        self.uniffiCloneHandle(),FfiConverterData.lower(channelKey)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileRadioError_lift
+        )
+}
+
+open func insertDevicePeer(publicKey: Data)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobileradiodriver_insert_device_peer(
+                        self.uniffiCloneHandle(),FfiConverterData.lower(publicKey)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileRadioError_lift
+        )
+}
+
+    /**
+     * The transport found the link unusable on its own account—an
+     * attach that never finished, an endpoint it cannot write. The driver
+     * treats it as any fatal fault, and invalidates the link.
+     */
+open func linkFault(problem: MobileRadioProblem)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileradiodriver_link_fault(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileRadioProblem_lower(problem),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * The transport carries frames now. `bound_radio` says whether the
+     * radio on the other end is the one the app is bound to; a transport
+     * that reaches exactly one radio always is.
+     */
+open func linkReady(boundRadio: Bool)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileradiodriver_link_ready(
+            self.uniffiCloneHandle(),
+        FfiConverterBool.lower(boundRadio),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * One complete ULCP frame arrived.
+     */
+open func linkReceived(frame: Data)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileradiodriver_link_received(
+            self.uniffiCloneHandle(),
+        FfiConverterData.lower(frame),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Writes carrying these raw transmits failed while the link stayed up.
+     */
+open func linkWritesFailed(rawTransactionIds: Data, problem: MobileRadioProblem)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileradiodriver_link_writes_failed(
+            self.uniffiCloneHandle(),
+        FfiConverterData.lower(rawTransactionIds),
+        FfiConverterTypeMobileRadioProblem_lower(problem),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Everything that changed since the last poll.
+     */
+open func pollUpdate() -> MobileRadioDriverUpdateRecord  {
+    return try!  FfiConverterTypeMobileRadioDriverUpdateRecord_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileradiodriver_poll_update(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Restart the radio. The binding stays: the radio coming back is the
+     * same radio, and reconnecting to it is the point.
+     */
+open func reboot()async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobileradiodriver_reboot(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileRadioError_lift
+        )
+}
+
+open func reconcileHostChannelKeys(keys: [Data])async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobileradiodriver_reconcile_host_channel_keys(
+                        self.uniffiCloneHandle(),FfiConverterSequenceData.lower(keys)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileRadioError_lift
+        )
+}
+
+open func reconcileHostDestinationHints(hints: [Data])async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobileradiodriver_reconcile_host_destination_hints(
+                        self.uniffiCloneHandle(),FfiConverterSequenceData.lower(hints)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileRadioError_lift
+        )
+}
+
+open func reconcileHostMutes(channelIdentifiers: [Data], peerKeys: [Data])async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobileradiodriver_reconcile_host_mutes(
+                        self.uniffiCloneHandle(),FfiConverterSequenceData.lower(channelIdentifiers),FfiConverterSequenceData.lower(peerKeys)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileRadioError_lift
+        )
+}
+
+open func reconcileHostPeerKeys(entries: [HostPeerKeyEntryRecord])async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobileradiodriver_reconcile_host_peer_keys(
+                        self.uniffiCloneHandle(),FfiConverterSequenceTypeHostPeerKeyEntryRecord.lower(entries)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileRadioError_lift
+        )
+}
+
+    /**
+     * Read the radio's state anew.
+     */
+open func refresh()async throws  -> MobileRadioStateRecord  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobileradiodriver_refresh(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeMobileRadioStateRecord_lift,
+            errorHandler: FfiConverterTypeMobileRadioError_lift
+        )
+}
+
+    /**
+     * Read the radio's positioning properties anew. Joins a refresh
+     * already running.
+     */
+open func refreshPositioning()async throws  -> MobileRadioStateRecord  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobileradiodriver_refresh_positioning(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeMobileRadioStateRecord_lift,
+            errorHandler: FfiConverterTypeMobileRadioError_lift
+        )
+}
+
+    /**
+     * Clear this phone's host key from the radio before letting it go, so
+     * it stops queueing for a phone that has left. Returns when the radio
+     * answers, the link goes, or two seconds pass; a radio holding another
+     * host's key, or none, has nothing to release.
+     */
+open func releaseHost()async   {
+    return
+        try!  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobileradiodriver_release_host(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: nil
+
+        )
+}
+
+open func removeDeviceAdmin(publicKey: Data)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobileradiodriver_remove_device_admin(
+                        self.uniffiCloneHandle(),FfiConverterData.lower(publicKey)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileRadioError_lift
+        )
+}
+
+open func removeDeviceChannelKey(channelKey: Data)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobileradiodriver_remove_device_channel_key(
+                        self.uniffiCloneHandle(),FfiConverterData.lower(channelKey)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileRadioError_lift
+        )
+}
+
+open func removeDevicePeer(publicKey: Data)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobileradiodriver_remove_device_peer(
+                        self.uniffiCloneHandle(),FfiConverterData.lower(publicKey)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileRadioError_lift
+        )
+}
+
+    /**
+     * The transport failed at something without losing the link.
+     */
+open func reportProblem(problem: MobileRadioProblem)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileradiodriver_report_problem(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileRadioProblem_lower(problem),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * A deliberate new attempt, made by the user: the fault budget starts
+     * over. An automatic reconnect must not call this, or a failing radio
+     * would refill its budget forever.
+     */
+open func resetRecoveryBudget()  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileradiodriver_reset_recovery_budget(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Persist the radio's live configuration.
+     */
+open func save()async throws  -> UlcpLocalManagementEventRecord  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobileradiodriver_save(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeUlcpLocalManagementEventRecord_lift,
+            errorHandler: FfiConverterTypeMobileRadioError_lift
+        )
+}
+
+open func setAlert(state: UlcpAlertState)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobileradiodriver_set_alert(
+                        self.uniffiCloneHandle(),FfiConverterTypeUlcpAlertState_lower(state)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileRadioError_lift
+        )
+}
+
+open func setHostAutoAck(enabled: Bool)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobileradiodriver_set_host_auto_ack(
+                        self.uniffiCloneHandle(),FfiConverterBool.lower(enabled)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileRadioError_lift
+        )
+}
+
+    /**
+     * This phone's host key: its identity's public key, once unlocked.
+     */
+open func setHostKey(hostKey: Data?)throws   {try rustCallWithError(FfiConverterTypeMobileRadioError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileradiodriver_set_host_key(
+            self.uniffiCloneHandle(),
+        FfiConverterOptionData.lower(hostKey),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Register the listener told of new updates. If one is already
+     * waiting, it is told at once.
+     */
+open func setListener(listener: MobileRadioDriverListener)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileradiodriver_set_listener(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileRadioDriverListener_lower(listener),uniffiCallStatus
+    )
+}
+}
+
+open func setTime(epochSeconds: UInt32?)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobileradiodriver_set_time(
+                        self.uniffiCloneHandle(),FfiConverterOptionUInt32.lower(epochSeconds)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileRadioError_lift
+        )
+}
+
+    /**
+     * The radio's state as last published.
+     */
+open func state() -> MobileRadioStateRecord  {
+    return try!  FfiConverterTypeMobileRadioStateRecord_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileradiodriver_state(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Stop the driver for good. Its thread ends and lets go of the link
+     * and the mesh session; calls waiting on it, and any made afterwards,
+     * fail as stopped. Dropping the driver stops it too, but a platform
+     * that frees objects late should not leave a thread waiting on that.
+     */
+open func stop()  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileradiodriver_stop(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * The transport carries no frames, and stands here.
+     */
+open func transportChanged(state: MobileRadioTransportStateRecord)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileradiodriver_transport_changed(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileRadioTransportStateRecord_lower(state),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * The mesh session whose frames this radio carries, or none. Frames
+     * received while there is none are kept, a bounded few, for the next.
+     */
+open func useMeshSession(session: MobileMeshSession?)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobileradiodriver_use_mesh_session(
+                        self.uniffiCloneHandle(),FfiConverterOptionTypeMobileMeshSession.lower(session)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileRadioError_lift
+        )
+}
+
+    /**
+     * Write properties to the radio, in the given order.
+     */
+open func writeProperties(writes: [MobileMeshPropertyWriteRecord])async throws  -> UlcpLocalManagementEventRecord  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobileradiodriver_write_properties(
+                        self.uniffiCloneHandle(),FfiConverterSequenceTypeMobileMeshPropertyWriteRecord.lower(writes)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeUlcpLocalManagementEventRecord_lift,
+            errorHandler: FfiConverterTypeMobileRadioError_lift
+        )
+}
+
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRadioDriver: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = MobileRadioDriver
+
+    public static func lift(_ handle: UInt64) throws -> MobileRadioDriver {
+        return MobileRadioDriver(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: MobileRadioDriver) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRadioDriver {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: MobileRadioDriver, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRadioDriver_lift(_ handle: UInt64) throws -> MobileRadioDriver {
+    return try FfiConverterTypeMobileRadioDriver.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRadioDriver_lower(_ value: MobileRadioDriver) -> UInt64 {
+    return FfiConverterTypeMobileRadioDriver.lower(value)
+}
+
+
+
+
+
+
+/**
+ * Told that `MobileRadioDriver::poll_update` has something new.
+ *
+ * Called on the driver's thread; implementations only schedule a drain on
+ * their own executor and return. Calls are coalesced: one per
+ * pending-to-drained cycle.
+ */
+public protocol MobileRadioDriverListener: AnyObject, Sendable {
+
+    func onUpdatePending()
+
+}
+/**
+ * Told that `MobileRadioDriver::poll_update` has something new.
+ *
+ * Called on the driver's thread; implementations only schedule a drain on
+ * their own executor and return. Calls are coalesced: one per
+ * pending-to-drained cycle.
+ */
+open class MobileRadioDriverListenerImpl: MobileRadioDriverListener, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_umsh_mobile_core_fn_clone_mobileradiodriverlistener(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_umsh_mobile_core_fn_free_mobileradiodriverlistener(handle, $0) }
+    }
+
+
+
+
+open func onUpdatePending()  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileradiodriverlistener_on_update_pending(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+
+
+
+}
+
+
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+fileprivate struct UniffiCallbackInterfaceMobileRadioDriverListener {
+
+    // Create the VTable using a series of closures.
+    // Swift automatically converts these into C callback functions.
+    //
+    // Store the vtable directly.
+    static let vtable: UniffiVTableCallbackInterfaceMobileRadioDriverListener = UniffiVTableCallbackInterfaceMobileRadioDriverListener(
+        uniffiFree: { (uniffiHandle: UInt64) -> () in
+            do {
+                try FfiConverterTypeMobileRadioDriverListener.handleMap.remove(handle: uniffiHandle)
+            } catch {
+                print("Uniffi callback interface MobileRadioDriverListener: handle missing in uniffiFree")
+            }
+        },
+        uniffiClone: { (uniffiHandle: UInt64) -> UInt64 in
+            do {
+                return try FfiConverterTypeMobileRadioDriverListener.handleMap.clone(handle: uniffiHandle)
+            } catch {
+                fatalError("Uniffi callback interface MobileRadioDriverListener: handle missing in uniffiClone")
+            }
+        },
+        onUpdatePending: { (
+            uniffiHandle: UInt64,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterTypeMobileRadioDriverListener.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.onUpdatePending(
+                )
+            }
+
+
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        }
+    )
+
+    // Rust stores this pointer for future callback invocations, so it must live
+    // for the process lifetime (not just for the init function call).
+    //
+    // `nonisolated(unsafe)` is needed under Swift 6 strict concurrency.
+    // This is safe because the pointee is initialized once during static init
+    // and never mutated by either side of the FFI.  Its fields are C function pointers.
+    nonisolated(unsafe) static let vtablePtr: UnsafePointer<UniffiVTableCallbackInterfaceMobileRadioDriverListener> = {
+        let ptr = UnsafeMutablePointer<UniffiVTableCallbackInterfaceMobileRadioDriverListener>.allocate(capacity: 1)
+        ptr.initialize(to: vtable)
+        return UnsafePointer(ptr)
+    }()
+}
+
+private func uniffiCallbackInitMobileRadioDriverListener() {
+    uniffi_umsh_mobile_core_fn_init_callback_vtable_mobileradiodriverlistener(UniffiCallbackInterfaceMobileRadioDriverListener.vtablePtr)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRadioDriverListener: FfiConverter {
+    fileprivate static let handleMap = UniffiHandleMap<MobileRadioDriverListener>()
+
+    typealias FfiType = UInt64
+    typealias SwiftType = MobileRadioDriverListener
+
+    public static func lift(_ handle: UInt64) throws -> MobileRadioDriverListener {
+        if ((handle & 1) == 0) {
+            // Rust-generated handle, construct a new class that uses the handle to implement the
+            // interface
+            return MobileRadioDriverListenerImpl(unsafeFromHandle: handle)
+        } else {
+            // Swift-generated handle, get the object from the handle map
+            return try handleMap.remove(handle: handle)
+        }
+    }
+
+    public static func lower(_ value: MobileRadioDriverListener) -> UInt64 {
+         if let rustImpl = value as? MobileRadioDriverListenerImpl {
+             // Rust-implemented object.  Clone the handle and return it
+            return rustImpl.uniffiCloneHandle()
+         } else {
+            // Swift object, generate a new vtable handle and return that.
+            return handleMap.insert(obj: value)
+         }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRadioDriverListener {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: MobileRadioDriverListener, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRadioDriverListener_lift(_ handle: UInt64) throws -> MobileRadioDriverListener {
+    return try FfiConverterTypeMobileRadioDriverListener.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRadioDriverListener_lower(_ value: MobileRadioDriverListener) -> UInt64 {
+    return FfiConverterTypeMobileRadioDriverListener.lower(value)
+}
+
+
+
+
+
+
+/**
  * An opened region database.
  *
  * Read-only, and cheap to hold open for the life of the app. The lock
@@ -8178,6 +9384,485 @@ public func FfiConverterTypeMobileWireSink_lift(_ handle: UInt64) throws -> Mobi
 #endif
 public func FfiConverterTypeMobileWireSink_lower(_ value: MobileWireSink) -> UInt64 {
     return FfiConverterTypeMobileWireSink.lower(value)
+}
+
+
+
+
+
+
+/**
+ * The transport under a driver: one link carrying whole ULCP frames.
+ *
+ * Every call is fire-and-forget: it is made on the driver's thread, and
+ * the implementation hops to its own queue and returns. None reads native
+ * state back. The driver holds the link until it is stopped
+ * (`MobileRadioDriver::stop`).
+ */
+public protocol RadioLink: AnyObject, Sendable {
+
+    /**
+     * Queue one complete ULCP frame. `raw_transaction_id` tags the write
+     * carrying a raw transmit, so a transport that learns of a write
+     * failure can fail that transmit alone
+     * (`MobileRadioDriver::link_writes_failed`).
+     */
+    func send(frame: Data, rawTransactionId: UInt8?)
+
+    /**
+     * Discard partly framed input and anything queued to send: a session
+     * is starting, and nothing from the one before may merge into it.
+     */
+    func resetFraming()
+
+    /**
+     * Tear the transport down: the session behind it can no longer be
+     * trusted. With `retry`, the driver would spend a reconnect on this,
+     * and the transport takes its ordinary link-loss path if it can. The
+     * state it reports next decides what the user sees.
+     */
+    func invalidate(retry: Bool)
+
+    /**
+     * The radio attached. Where the transport remembers which radio the
+     * app is bound to, this is when.
+     */
+    func didAttach()
+
+    /**
+     * The bound radio reported its own name, which outranks whatever the
+     * transport had cached.
+     */
+    func didReportName(name: String)
+
+    /**
+     * The radio is erasing itself and will reboot. Drop the binding, but
+     * leave the link up: the command still has to reach the radio.
+     */
+    func abandonBinding()
+
+    /**
+     * The radio confirmed it is entering DFU. Stop reconnecting to it,
+     * and keep the binding.
+     */
+    func didEnterDfu()
+
+}
+/**
+ * The transport under a driver: one link carrying whole ULCP frames.
+ *
+ * Every call is fire-and-forget: it is made on the driver's thread, and
+ * the implementation hops to its own queue and returns. None reads native
+ * state back. The driver holds the link until it is stopped
+ * (`MobileRadioDriver::stop`).
+ */
+open class RadioLinkImpl: RadioLink, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_umsh_mobile_core_fn_clone_radiolink(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_umsh_mobile_core_fn_free_radiolink(handle, $0) }
+    }
+
+
+
+
+    /**
+     * Queue one complete ULCP frame. `raw_transaction_id` tags the write
+     * carrying a raw transmit, so a transport that learns of a write
+     * failure can fail that transmit alone
+     * (`MobileRadioDriver::link_writes_failed`).
+     */
+open func send(frame: Data, rawTransactionId: UInt8?)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_radiolink_send(
+            self.uniffiCloneHandle(),
+        FfiConverterData.lower(frame),
+        FfiConverterOptionUInt8.lower(rawTransactionId),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Discard partly framed input and anything queued to send: a session
+     * is starting, and nothing from the one before may merge into it.
+     */
+open func resetFraming()  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_radiolink_reset_framing(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Tear the transport down: the session behind it can no longer be
+     * trusted. With `retry`, the driver would spend a reconnect on this,
+     * and the transport takes its ordinary link-loss path if it can. The
+     * state it reports next decides what the user sees.
+     */
+open func invalidate(retry: Bool)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_radiolink_invalidate(
+            self.uniffiCloneHandle(),
+        FfiConverterBool.lower(retry),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * The radio attached. Where the transport remembers which radio the
+     * app is bound to, this is when.
+     */
+open func didAttach()  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_radiolink_did_attach(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * The bound radio reported its own name, which outranks whatever the
+     * transport had cached.
+     */
+open func didReportName(name: String)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_radiolink_did_report_name(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(name),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * The radio is erasing itself and will reboot. Drop the binding, but
+     * leave the link up: the command still has to reach the radio.
+     */
+open func abandonBinding()  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_radiolink_abandon_binding(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * The radio confirmed it is entering DFU. Stop reconnecting to it,
+     * and keep the binding.
+     */
+open func didEnterDfu()  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_radiolink_did_enter_dfu(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+
+
+
+}
+
+
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+fileprivate struct UniffiCallbackInterfaceRadioLink {
+
+    // Create the VTable using a series of closures.
+    // Swift automatically converts these into C callback functions.
+    //
+    // Store the vtable directly.
+    static let vtable: UniffiVTableCallbackInterfaceRadioLink = UniffiVTableCallbackInterfaceRadioLink(
+        uniffiFree: { (uniffiHandle: UInt64) -> () in
+            do {
+                try FfiConverterTypeRadioLink.handleMap.remove(handle: uniffiHandle)
+            } catch {
+                print("Uniffi callback interface RadioLink: handle missing in uniffiFree")
+            }
+        },
+        uniffiClone: { (uniffiHandle: UInt64) -> UInt64 in
+            do {
+                return try FfiConverterTypeRadioLink.handleMap.clone(handle: uniffiHandle)
+            } catch {
+                fatalError("Uniffi callback interface RadioLink: handle missing in uniffiClone")
+            }
+        },
+        send: { (
+            uniffiHandle: UInt64,
+            frame: RustBuffer,
+            rawTransactionId: RustBuffer,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterTypeRadioLink.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.send(
+                     frame: try FfiConverterData.lift(frame),
+                     rawTransactionId: try FfiConverterOptionUInt8.lift(rawTransactionId)
+                )
+            }
+
+
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        resetFraming: { (
+            uniffiHandle: UInt64,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterTypeRadioLink.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.resetFraming(
+                )
+            }
+
+
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        invalidate: { (
+            uniffiHandle: UInt64,
+            retry: Int8,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterTypeRadioLink.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.invalidate(
+                     retry: try FfiConverterBool.lift(retry)
+                )
+            }
+
+
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        didAttach: { (
+            uniffiHandle: UInt64,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterTypeRadioLink.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.didAttach(
+                )
+            }
+
+
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        didReportName: { (
+            uniffiHandle: UInt64,
+            name: RustBuffer,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterTypeRadioLink.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.didReportName(
+                     name: try FfiConverterString.lift(name)
+                )
+            }
+
+
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        abandonBinding: { (
+            uniffiHandle: UInt64,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterTypeRadioLink.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.abandonBinding(
+                )
+            }
+
+
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        didEnterDfu: { (
+            uniffiHandle: UInt64,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterTypeRadioLink.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.didEnterDfu(
+                )
+            }
+
+
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        }
+    )
+
+    // Rust stores this pointer for future callback invocations, so it must live
+    // for the process lifetime (not just for the init function call).
+    //
+    // `nonisolated(unsafe)` is needed under Swift 6 strict concurrency.
+    // This is safe because the pointee is initialized once during static init
+    // and never mutated by either side of the FFI.  Its fields are C function pointers.
+    nonisolated(unsafe) static let vtablePtr: UnsafePointer<UniffiVTableCallbackInterfaceRadioLink> = {
+        let ptr = UnsafeMutablePointer<UniffiVTableCallbackInterfaceRadioLink>.allocate(capacity: 1)
+        ptr.initialize(to: vtable)
+        return UnsafePointer(ptr)
+    }()
+}
+
+private func uniffiCallbackInitRadioLink() {
+    uniffi_umsh_mobile_core_fn_init_callback_vtable_radiolink(UniffiCallbackInterfaceRadioLink.vtablePtr)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRadioLink: FfiConverter {
+    fileprivate static let handleMap = UniffiHandleMap<RadioLink>()
+
+    typealias FfiType = UInt64
+    typealias SwiftType = RadioLink
+
+    public static func lift(_ handle: UInt64) throws -> RadioLink {
+        if ((handle & 1) == 0) {
+            // Rust-generated handle, construct a new class that uses the handle to implement the
+            // interface
+            return RadioLinkImpl(unsafeFromHandle: handle)
+        } else {
+            // Swift-generated handle, get the object from the handle map
+            return try handleMap.remove(handle: handle)
+        }
+    }
+
+    public static func lower(_ value: RadioLink) -> UInt64 {
+         if let rustImpl = value as? RadioLinkImpl {
+             // Rust-implemented object.  Clone the handle and return it
+            return rustImpl.uniffiCloneHandle()
+         } else {
+            // Swift object, generate a new vtable handle and return that.
+            return handleMap.insert(obj: value)
+         }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RadioLink {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: RadioLink, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRadioLink_lift(_ handle: UInt64) throws -> RadioLink {
+    return try FfiConverterTypeRadioLink.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRadioLink_lower(_ value: RadioLink) -> UInt64 {
+    return FfiConverterTypeRadioLink.lower(value)
 }
 
 
@@ -11986,6 +13671,415 @@ public func FfiConverterTypeMobileQueuedNoticeRecord_lift(_ buf: RustBuffer) thr
 #endif
 public func FfiConverterTypeMobileQueuedNoticeRecord_lower(_ value: MobileQueuedNoticeRecord) -> RustBuffer {
     return FfiConverterTypeMobileQueuedNoticeRecord.lower(value)
+}
+
+
+/**
+ * A reading of the radio's clock and when it was taken.
+ */
+public struct MobileRadioClockRecord: Equatable, Hashable {
+    /**
+     * Seconds since the Unix epoch, or `None` when the radio does not
+     * know the time.
+     */
+    public var epochSeconds: UInt32?
+    /**
+     * When the reading arrived, in milliseconds since the Unix epoch.
+     */
+    public var readAtMs: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Seconds since the Unix epoch, or `None` when the radio does not
+         * know the time.
+         */epochSeconds: UInt32?,
+        /**
+         * When the reading arrived, in milliseconds since the Unix epoch.
+         */readAtMs: UInt64) {
+        self.epochSeconds = epochSeconds
+        self.readAtMs = readAtMs
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRadioClockRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRadioClockRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRadioClockRecord {
+        return
+            try MobileRadioClockRecord(
+                epochSeconds: FfiConverterOptionUInt32.read(from: &buf),
+                readAtMs: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileRadioClockRecord, into buf: inout [UInt8]) {
+        FfiConverterOptionUInt32.write(value.epochSeconds, into: &buf)
+        FfiConverterUInt64.write(value.readAtMs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRadioClockRecord_lift(_ buf: RustBuffer) throws -> MobileRadioClockRecord {
+    return try FfiConverterTypeMobileRadioClockRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRadioClockRecord_lower(_ value: MobileRadioClockRecord) -> RustBuffer {
+    return FfiConverterTypeMobileRadioClockRecord.lower(value)
+}
+
+
+/**
+ * What changed since the last `MobileRadioDriver::poll_update`.
+ */
+public struct MobileRadioDriverUpdateRecord: Equatable, Hashable {
+    /**
+     * The radio's state, when it changed.
+     */
+    public var state: MobileRadioStateRecord?
+    /**
+     * Mesh frames the radio received, newest kept when the platform falls
+     * behind. They have already gone to the mesh session.
+     */
+    public var receivedFrames: [UlcpReceivedFrameRecord]
+    /**
+     * Values the radio announced on its own, verbatim.
+     */
+    public var pushedProperties: [UlcpPropertyPushRecord]
+    /**
+     * The device keys of radios that confirmed they let go of this phone.
+     */
+    public var hostReleases: [Data]
+    /**
+     * Lines for the log: faults, late answers, frames ignored. Never
+     * shown to the user.
+     */
+    public var diagnostics: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The radio's state, when it changed.
+         */state: MobileRadioStateRecord?,
+        /**
+         * Mesh frames the radio received, newest kept when the platform falls
+         * behind. They have already gone to the mesh session.
+         */receivedFrames: [UlcpReceivedFrameRecord],
+        /**
+         * Values the radio announced on its own, verbatim.
+         */pushedProperties: [UlcpPropertyPushRecord],
+        /**
+         * The device keys of radios that confirmed they let go of this phone.
+         */hostReleases: [Data],
+        /**
+         * Lines for the log: faults, late answers, frames ignored. Never
+         * shown to the user.
+         */diagnostics: [String]) {
+        self.state = state
+        self.receivedFrames = receivedFrames
+        self.pushedProperties = pushedProperties
+        self.hostReleases = hostReleases
+        self.diagnostics = diagnostics
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRadioDriverUpdateRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRadioDriverUpdateRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRadioDriverUpdateRecord {
+        return
+            try MobileRadioDriverUpdateRecord(
+                state: FfiConverterOptionTypeMobileRadioStateRecord.read(from: &buf),
+                receivedFrames: FfiConverterSequenceTypeUlcpReceivedFrameRecord.read(from: &buf),
+                pushedProperties: FfiConverterSequenceTypeUlcpPropertyPushRecord.read(from: &buf),
+                hostReleases: FfiConverterSequenceData.read(from: &buf),
+                diagnostics: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileRadioDriverUpdateRecord, into buf: inout [UInt8]) {
+        FfiConverterOptionTypeMobileRadioStateRecord.write(value.state, into: &buf)
+        FfiConverterSequenceTypeUlcpReceivedFrameRecord.write(value.receivedFrames, into: &buf)
+        FfiConverterSequenceTypeUlcpPropertyPushRecord.write(value.pushedProperties, into: &buf)
+        FfiConverterSequenceData.write(value.hostReleases, into: &buf)
+        FfiConverterSequenceString.write(value.diagnostics, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRadioDriverUpdateRecord_lift(_ buf: RustBuffer) throws -> MobileRadioDriverUpdateRecord {
+    return try FfiConverterTypeMobileRadioDriverUpdateRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRadioDriverUpdateRecord_lower(_ value: MobileRadioDriverUpdateRecord) -> RustBuffer {
+    return FfiConverterTypeMobileRadioDriverUpdateRecord.lower(value)
+}
+
+
+/**
+ * Everything the app shows about a radio. Not `Eq`: a position is
+ * degrees.
+ */
+public struct MobileRadioStateRecord: Equatable, Hashable {
+    public var phase: MobileRadioPhase
+    /**
+     * The radio's own name once it reports one, the transport's until
+     * then.
+     */
+    public var name: String?
+    /**
+     * The transport's identifier for the radio, as it last reported it.
+     */
+    public var linkId: String?
+    public var host: UlcpHostOwnership
+    /**
+     * The radio's own public key, when it has a device identity.
+     */
+    public var deviceKey: Data?
+    /**
+     * The latest battery reading, kept until a newer one arrives.
+     */
+    public var battery: UlcpBatteryRecord?
+    /**
+     * When `battery` arrived, in milliseconds since the Unix epoch.
+     */
+    public var batteryReadAtMs: UInt64?
+    /**
+     * What the radio is doing to make itself findable, as it reports it
+     * now.
+     */
+    public var alert: UlcpAlertState?
+    /**
+     * The latest clock reading, kept until a newer one arrives.
+     */
+    public var clock: MobileRadioClockRecord?
+    /**
+     * Where the radio's receiver puts it, as it reports it now.
+     */
+    public var position: UlcpGnssRecord?
+    public var provisioning: UlcpSyncRecord?
+    /**
+     * What to tell the user, until the radio next answers.
+     */
+    public var problem: MobileRadioProblem?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(phase: MobileRadioPhase,
+        /**
+         * The radio's own name once it reports one, the transport's until
+         * then.
+         */name: String?,
+        /**
+         * The transport's identifier for the radio, as it last reported it.
+         */linkId: String?, host: UlcpHostOwnership,
+        /**
+         * The radio's own public key, when it has a device identity.
+         */deviceKey: Data?,
+        /**
+         * The latest battery reading, kept until a newer one arrives.
+         */battery: UlcpBatteryRecord?,
+        /**
+         * When `battery` arrived, in milliseconds since the Unix epoch.
+         */batteryReadAtMs: UInt64?,
+        /**
+         * What the radio is doing to make itself findable, as it reports it
+         * now.
+         */alert: UlcpAlertState?,
+        /**
+         * The latest clock reading, kept until a newer one arrives.
+         */clock: MobileRadioClockRecord?,
+        /**
+         * Where the radio's receiver puts it, as it reports it now.
+         */position: UlcpGnssRecord?, provisioning: UlcpSyncRecord?,
+        /**
+         * What to tell the user, until the radio next answers.
+         */problem: MobileRadioProblem?) {
+        self.phase = phase
+        self.name = name
+        self.linkId = linkId
+        self.host = host
+        self.deviceKey = deviceKey
+        self.battery = battery
+        self.batteryReadAtMs = batteryReadAtMs
+        self.alert = alert
+        self.clock = clock
+        self.position = position
+        self.provisioning = provisioning
+        self.problem = problem
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRadioStateRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRadioStateRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRadioStateRecord {
+        return
+            try MobileRadioStateRecord(
+                phase: FfiConverterTypeMobileRadioPhase.read(from: &buf),
+                name: FfiConverterOptionString.read(from: &buf),
+                linkId: FfiConverterOptionString.read(from: &buf),
+                host: FfiConverterTypeUlcpHostOwnership.read(from: &buf),
+                deviceKey: FfiConverterOptionData.read(from: &buf),
+                battery: FfiConverterOptionTypeUlcpBatteryRecord.read(from: &buf),
+                batteryReadAtMs: FfiConverterOptionUInt64.read(from: &buf),
+                alert: FfiConverterOptionTypeUlcpAlertState.read(from: &buf),
+                clock: FfiConverterOptionTypeMobileRadioClockRecord.read(from: &buf),
+                position: FfiConverterOptionTypeUlcpGnssRecord.read(from: &buf),
+                provisioning: FfiConverterOptionTypeUlcpSyncRecord.read(from: &buf),
+                problem: FfiConverterOptionTypeMobileRadioProblem.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileRadioStateRecord, into buf: inout [UInt8]) {
+        FfiConverterTypeMobileRadioPhase.write(value.phase, into: &buf)
+        FfiConverterOptionString.write(value.name, into: &buf)
+        FfiConverterOptionString.write(value.linkId, into: &buf)
+        FfiConverterTypeUlcpHostOwnership.write(value.host, into: &buf)
+        FfiConverterOptionData.write(value.deviceKey, into: &buf)
+        FfiConverterOptionTypeUlcpBatteryRecord.write(value.battery, into: &buf)
+        FfiConverterOptionUInt64.write(value.batteryReadAtMs, into: &buf)
+        FfiConverterOptionTypeUlcpAlertState.write(value.alert, into: &buf)
+        FfiConverterOptionTypeMobileRadioClockRecord.write(value.clock, into: &buf)
+        FfiConverterOptionTypeUlcpGnssRecord.write(value.position, into: &buf)
+        FfiConverterOptionTypeUlcpSyncRecord.write(value.provisioning, into: &buf)
+        FfiConverterOptionTypeMobileRadioProblem.write(value.problem, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRadioStateRecord_lift(_ buf: RustBuffer) throws -> MobileRadioStateRecord {
+    return try FfiConverterTypeMobileRadioStateRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRadioStateRecord_lower(_ value: MobileRadioStateRecord) -> RustBuffer {
+    return FfiConverterTypeMobileRadioStateRecord.lower(value)
+}
+
+
+/**
+ * The transport's state, as native code reports it.
+ */
+public struct MobileRadioTransportStateRecord: Equatable, Hashable {
+    public var phase: MobileRadioTransportPhase
+    /**
+     * What to call the radio until it reports its own name.
+     */
+    public var name: String?
+    /**
+     * The transport's identifier for the radio. Opaque to the driver,
+     * which only hands it back in the state it publishes.
+     */
+    public var linkId: String?
+    public var problem: MobileRadioProblem?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(phase: MobileRadioTransportPhase,
+        /**
+         * What to call the radio until it reports its own name.
+         */name: String?,
+        /**
+         * The transport's identifier for the radio. Opaque to the driver,
+         * which only hands it back in the state it publishes.
+         */linkId: String?, problem: MobileRadioProblem?) {
+        self.phase = phase
+        self.name = name
+        self.linkId = linkId
+        self.problem = problem
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRadioTransportStateRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRadioTransportStateRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRadioTransportStateRecord {
+        return
+            try MobileRadioTransportStateRecord(
+                phase: FfiConverterTypeMobileRadioTransportPhase.read(from: &buf),
+                name: FfiConverterOptionString.read(from: &buf),
+                linkId: FfiConverterOptionString.read(from: &buf),
+                problem: FfiConverterOptionTypeMobileRadioProblem.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileRadioTransportStateRecord, into buf: inout [UInt8]) {
+        FfiConverterTypeMobileRadioTransportPhase.write(value.phase, into: &buf)
+        FfiConverterOptionString.write(value.name, into: &buf)
+        FfiConverterOptionString.write(value.linkId, into: &buf)
+        FfiConverterOptionTypeMobileRadioProblem.write(value.problem, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRadioTransportStateRecord_lift(_ buf: RustBuffer) throws -> MobileRadioTransportStateRecord {
+    return try FfiConverterTypeMobileRadioTransportStateRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRadioTransportStateRecord_lower(_ value: MobileRadioTransportStateRecord) -> RustBuffer {
+    return FfiConverterTypeMobileRadioTransportStateRecord.lower(value)
 }
 
 
@@ -22845,6 +24939,730 @@ public func FfiConverterTypeMobileQueuedClass_lower(_ value: MobileQueuedClass) 
 
 
 /**
+ * Why a driver operation did not complete.
+ */
+public
+enum MobileRadioError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
+
+
+
+    /**
+     * No radio is attached, or it is not in a state to take this.
+     */
+    case RadioUnavailable
+    /**
+     * Another operation of this kind is still running.
+     */
+    case OperationInProgress
+    /**
+     * This phone's identity is not known to the driver yet.
+     */
+    case IdentityUnavailable
+    /**
+     * The radio's host is not one this phone may replace.
+     */
+    case TakeoverNotAllowed
+    /**
+     * The radio and this app disagree about the protocol.
+     */
+    case IncompatibleProtocol
+    /**
+     * The radio lacks the capability this needs.
+     */
+    case Unsupported
+    /**
+     * The radio's table is full.
+     */
+    case DeviceFull
+    /**
+     * The radio refused. The names are diagnostic labels.
+     */
+    case OperationRejected(operation: String, statusCode: UInt32, statusName: String
+    )
+    /**
+     * The radio answered in a form the session did not expect.
+     */
+    case UnrecognizedAnswer
+    /**
+     * The radio did not answer in time. It may or may not have acted.
+     */
+    case TimedOut
+    /**
+     * The ULCP session would not start the operation.
+     */
+    case Refused(error: MobileError
+    )
+    /**
+     * An argument was malformed: a key of the wrong length.
+     */
+    case InvalidArgument
+    /**
+     * The driver has stopped.
+     */
+    case Stopped
+
+
+
+
+
+
+    public var errorDescription: String? {
+        String(reflecting: self)
+    }
+
+}
+
+#if compiler(>=6)
+extension MobileRadioError: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRadioError: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRadioError
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRadioError {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+
+
+
+        case 1: return .RadioUnavailable
+        case 2: return .OperationInProgress
+        case 3: return .IdentityUnavailable
+        case 4: return .TakeoverNotAllowed
+        case 5: return .IncompatibleProtocol
+        case 6: return .Unsupported
+        case 7: return .DeviceFull
+        case 8: return .OperationRejected(
+            operation: try FfiConverterString.read(from: &buf),
+            statusCode: try FfiConverterUInt32.read(from: &buf),
+            statusName: try FfiConverterString.read(from: &buf)
+            )
+        case 9: return .UnrecognizedAnswer
+        case 10: return .TimedOut
+        case 11: return .Refused(
+            error: try FfiConverterTypeMobileError.read(from: &buf)
+            )
+        case 12: return .InvalidArgument
+        case 13: return .Stopped
+
+         default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileRadioError, into buf: inout [UInt8]) {
+        switch value {
+
+
+
+
+
+        case .RadioUnavailable:
+            writeInt(&buf, Int32(1))
+
+
+        case .OperationInProgress:
+            writeInt(&buf, Int32(2))
+
+
+        case .IdentityUnavailable:
+            writeInt(&buf, Int32(3))
+
+
+        case .TakeoverNotAllowed:
+            writeInt(&buf, Int32(4))
+
+
+        case .IncompatibleProtocol:
+            writeInt(&buf, Int32(5))
+
+
+        case .Unsupported:
+            writeInt(&buf, Int32(6))
+
+
+        case .DeviceFull:
+            writeInt(&buf, Int32(7))
+
+
+        case let .OperationRejected(operation,statusCode,statusName):
+            writeInt(&buf, Int32(8))
+            FfiConverterString.write(operation, into: &buf)
+            FfiConverterUInt32.write(statusCode, into: &buf)
+            FfiConverterString.write(statusName, into: &buf)
+
+
+        case .UnrecognizedAnswer:
+            writeInt(&buf, Int32(9))
+
+
+        case .TimedOut:
+            writeInt(&buf, Int32(10))
+
+
+        case let .Refused(error):
+            writeInt(&buf, Int32(11))
+            FfiConverterTypeMobileError.write(error, into: &buf)
+
+
+        case .InvalidArgument:
+            writeInt(&buf, Int32(12))
+
+
+        case .Stopped:
+            writeInt(&buf, Int32(13))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRadioError_lift(_ buf: RustBuffer) throws -> MobileRadioError {
+    return try FfiConverterTypeMobileRadioError.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRadioError_lower(_ value: MobileRadioError) -> RustBuffer {
+    return FfiConverterTypeMobileRadioError.lower(value)
+}
+
+
+/**
+ * The phase a radio is in, transport and protocol together.
+ */
+
+public enum MobileRadioPhase: Equatable, Hashable {
+
+    case idle
+    case unavailable
+    case scanning
+    case discovered
+    case connecting
+    case pairing
+    case attaching
+    case reconnecting
+    case waitingForRadio
+    case synchronizing
+    case awaitingHost
+    /**
+     * Writing this phone's host key into the radio.
+     */
+    case provisioning
+    case configuring
+    case attached
+    case disconnecting
+    case failed
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRadioPhase: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRadioPhase: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRadioPhase
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRadioPhase {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .idle
+
+        case 2: return .unavailable
+
+        case 3: return .scanning
+
+        case 4: return .discovered
+
+        case 5: return .connecting
+
+        case 6: return .pairing
+
+        case 7: return .attaching
+
+        case 8: return .reconnecting
+
+        case 9: return .waitingForRadio
+
+        case 10: return .synchronizing
+
+        case 11: return .awaitingHost
+
+        case 12: return .provisioning
+
+        case 13: return .configuring
+
+        case 14: return .attached
+
+        case 15: return .disconnecting
+
+        case 16: return .failed
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileRadioPhase, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .idle:
+            writeInt(&buf, Int32(1))
+
+
+        case .unavailable:
+            writeInt(&buf, Int32(2))
+
+
+        case .scanning:
+            writeInt(&buf, Int32(3))
+
+
+        case .discovered:
+            writeInt(&buf, Int32(4))
+
+
+        case .connecting:
+            writeInt(&buf, Int32(5))
+
+
+        case .pairing:
+            writeInt(&buf, Int32(6))
+
+
+        case .attaching:
+            writeInt(&buf, Int32(7))
+
+
+        case .reconnecting:
+            writeInt(&buf, Int32(8))
+
+
+        case .waitingForRadio:
+            writeInt(&buf, Int32(9))
+
+
+        case .synchronizing:
+            writeInt(&buf, Int32(10))
+
+
+        case .awaitingHost:
+            writeInt(&buf, Int32(11))
+
+
+        case .provisioning:
+            writeInt(&buf, Int32(12))
+
+
+        case .configuring:
+            writeInt(&buf, Int32(13))
+
+
+        case .attached:
+            writeInt(&buf, Int32(14))
+
+
+        case .disconnecting:
+            writeInt(&buf, Int32(15))
+
+
+        case .failed:
+            writeInt(&buf, Int32(16))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRadioPhase_lift(_ buf: RustBuffer) throws -> MobileRadioPhase {
+    return try FfiConverterTypeMobileRadioPhase.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRadioPhase_lower(_ value: MobileRadioPhase) -> RustBuffer {
+    return FfiConverterTypeMobileRadioPhase.lower(value)
+}
+
+
+
+/**
+ * Why the radio is not doing what it should, or what went wrong with the
+ * last thing it was asked. Codes, never text: native code words them.
+ */
+
+public enum MobileRadioProblem: Equatable, Hashable {
+
+    /**
+     * The link went away on its own.
+     */
+    case disconnected
+    /**
+     * The radio sent a frame the ULCP session could not read.
+     */
+    case invalidFrame
+    /**
+     * The radio sent a value the session could not use.
+     */
+    case unusableValue
+    /**
+     * The ULCP session could not start.
+     */
+    case sessionStartFailed
+    /**
+     * A control exchange went unanswered past its deadline.
+     */
+    case synchronizationStalled
+    /**
+     * The radio could not take this phone's host key.
+     */
+    case claimFailed
+    /**
+     * The radio refused an operation. The names are diagnostic labels.
+     */
+    case operationRejected(operation: String, statusCode: UInt32, statusName: String
+    )
+    /**
+     * The radio answered in a form the session did not expect.
+     */
+    case unrecognizedAnswer
+    /**
+     * The radio stayed busy through every retry of a transmission.
+     */
+    case radioBusy
+    /**
+     * The radio refused a transmission.
+     */
+    case transmissionRejected(statusCode: UInt32, statusName: String
+    )
+    /**
+     * The radio took a transmission and never said what became of it.
+     */
+    case transmissionUnreported
+    /**
+     * The ULCP session could not start a transmission.
+     */
+    case transmissionUnsendable
+    /**
+     * The radio's transmitter could not be turned on automatically.
+     */
+    case autoEnableFailed
+    /**
+     * A problem the transport reported in its own terms, which native
+     * code names and words: an operating-system error's domain and code,
+     * or a code of the transport's own.
+     */
+    case transport(domain: String, code: Int64
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRadioProblem: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRadioProblem: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRadioProblem
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRadioProblem {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .disconnected
+
+        case 2: return .invalidFrame
+
+        case 3: return .unusableValue
+
+        case 4: return .sessionStartFailed
+
+        case 5: return .synchronizationStalled
+
+        case 6: return .claimFailed
+
+        case 7: return .operationRejected(operation: try FfiConverterString.read(from: &buf), statusCode: try FfiConverterUInt32.read(from: &buf), statusName: try FfiConverterString.read(from: &buf)
+        )
+
+        case 8: return .unrecognizedAnswer
+
+        case 9: return .radioBusy
+
+        case 10: return .transmissionRejected(statusCode: try FfiConverterUInt32.read(from: &buf), statusName: try FfiConverterString.read(from: &buf)
+        )
+
+        case 11: return .transmissionUnreported
+
+        case 12: return .transmissionUnsendable
+
+        case 13: return .autoEnableFailed
+
+        case 14: return .transport(domain: try FfiConverterString.read(from: &buf), code: try FfiConverterInt64.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileRadioProblem, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .disconnected:
+            writeInt(&buf, Int32(1))
+
+
+        case .invalidFrame:
+            writeInt(&buf, Int32(2))
+
+
+        case .unusableValue:
+            writeInt(&buf, Int32(3))
+
+
+        case .sessionStartFailed:
+            writeInt(&buf, Int32(4))
+
+
+        case .synchronizationStalled:
+            writeInt(&buf, Int32(5))
+
+
+        case .claimFailed:
+            writeInt(&buf, Int32(6))
+
+
+        case let .operationRejected(operation,statusCode,statusName):
+            writeInt(&buf, Int32(7))
+            FfiConverterString.write(operation, into: &buf)
+            FfiConverterUInt32.write(statusCode, into: &buf)
+            FfiConverterString.write(statusName, into: &buf)
+
+
+        case .unrecognizedAnswer:
+            writeInt(&buf, Int32(8))
+
+
+        case .radioBusy:
+            writeInt(&buf, Int32(9))
+
+
+        case let .transmissionRejected(statusCode,statusName):
+            writeInt(&buf, Int32(10))
+            FfiConverterUInt32.write(statusCode, into: &buf)
+            FfiConverterString.write(statusName, into: &buf)
+
+
+        case .transmissionUnreported:
+            writeInt(&buf, Int32(11))
+
+
+        case .transmissionUnsendable:
+            writeInt(&buf, Int32(12))
+
+
+        case .autoEnableFailed:
+            writeInt(&buf, Int32(13))
+
+
+        case let .transport(domain,code):
+            writeInt(&buf, Int32(14))
+            FfiConverterString.write(domain, into: &buf)
+            FfiConverterInt64.write(code, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRadioProblem_lift(_ buf: RustBuffer) throws -> MobileRadioProblem {
+    return try FfiConverterTypeMobileRadioProblem.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRadioProblem_lower(_ value: MobileRadioProblem) -> RustBuffer {
+    return FfiConverterTypeMobileRadioProblem.lower(value)
+}
+
+
+
+/**
+ * Where the transport stands while it carries no frames. Once the link
+ * carries frames (`MobileRadioDriver::link_ready`) the ULCP session's
+ * phase takes over.
+ */
+
+public enum MobileRadioTransportPhase: Equatable, Hashable {
+
+    case idle
+    /**
+     * The medium itself is unavailable: Bluetooth off or not permitted.
+     */
+    case unavailable
+    case scanning
+    case discovered
+    case connecting
+    case pairing
+    /**
+     * Connected, and finding the radio's ULCP endpoint.
+     */
+    case attaching
+    /**
+     * The link was lost and the transport is bringing it back.
+     */
+    case reconnecting
+    /**
+     * The transport waits for the radio to appear.
+     */
+    case waitingForRadio
+    case disconnecting
+    case failed
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRadioTransportPhase: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRadioTransportPhase: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRadioTransportPhase
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRadioTransportPhase {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .idle
+
+        case 2: return .unavailable
+
+        case 3: return .scanning
+
+        case 4: return .discovered
+
+        case 5: return .connecting
+
+        case 6: return .pairing
+
+        case 7: return .attaching
+
+        case 8: return .reconnecting
+
+        case 9: return .waitingForRadio
+
+        case 10: return .disconnecting
+
+        case 11: return .failed
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileRadioTransportPhase, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .idle:
+            writeInt(&buf, Int32(1))
+
+
+        case .unavailable:
+            writeInt(&buf, Int32(2))
+
+
+        case .scanning:
+            writeInt(&buf, Int32(3))
+
+
+        case .discovered:
+            writeInt(&buf, Int32(4))
+
+
+        case .connecting:
+            writeInt(&buf, Int32(5))
+
+
+        case .pairing:
+            writeInt(&buf, Int32(6))
+
+
+        case .attaching:
+            writeInt(&buf, Int32(7))
+
+
+        case .reconnecting:
+            writeInt(&buf, Int32(8))
+
+
+        case .waitingForRadio:
+            writeInt(&buf, Int32(9))
+
+
+        case .disconnecting:
+            writeInt(&buf, Int32(10))
+
+
+        case .failed:
+            writeInt(&buf, Int32(11))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRadioTransportPhase_lift(_ buf: RustBuffer) throws -> MobileRadioTransportPhase {
+    return try FfiConverterTypeMobileRadioTransportPhase.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRadioTransportPhase_lower(_ value: MobileRadioTransportPhase) -> RustBuffer {
+    return FfiConverterTypeMobileRadioTransportPhase.lower(value)
+}
+
+
+
+/**
  * Anything that can go wrong opening or consulting a region database.
  */
 public
@@ -25614,6 +28432,30 @@ fileprivate struct FfiConverterOptionData: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeMobileMeshSession: FfiConverterRustBuffer {
+    typealias SwiftType = MobileMeshSession?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileMeshSession.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileMeshSession.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeMobileChatChangesRecord: FfiConverterRustBuffer {
     typealias SwiftType = MobileChatChangesRecord?
 
@@ -25750,6 +28592,54 @@ fileprivate struct FfiConverterOptionTypeMobileMeshSharedLocationRecord: FfiConv
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeMobileMeshSharedLocationRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileRadioClockRecord: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRadioClockRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileRadioClockRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileRadioClockRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileRadioStateRecord: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRadioStateRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileRadioStateRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileRadioStateRecord.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -26590,6 +29480,30 @@ fileprivate struct FfiConverterOptionTypeMobileMeshRouteKind: FfiConverterRustBu
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeMobileMeshRouteKind.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileRadioProblem: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRadioProblem?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileRadioProblem.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileRadioProblem.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -29858,6 +32772,159 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshwakelistener_on_update_pending() != 41919) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_announce() != 64350) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_claim() != 11978) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_clear_listener() != 17695) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_configure() != 54973) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_configure_advertising() != 34964) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_configure_positioning() != 6363) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_drain_queue() != 1559) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_edit_property_items() != 689) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_enter_dfu() != 44496) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_factory_reset() != 23516) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_fetch_properties() != 12016) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_insert_device_admin() != 17305) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_insert_device_channel_key() != 30834) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_insert_device_peer() != 64328) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_link_fault() != 63570) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_link_ready() != 23656) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_link_received() != 17051) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_link_writes_failed() != 30071) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_poll_update() != 17696) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_reboot() != 35463) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_reconcile_host_channel_keys() != 24639) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_reconcile_host_destination_hints() != 27091) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_reconcile_host_mutes() != 52247) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_reconcile_host_peer_keys() != 57253) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_refresh() != 59097) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_refresh_positioning() != 49538) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_release_host() != 41505) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_remove_device_admin() != 37913) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_remove_device_channel_key() != 56499) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_remove_device_peer() != 31102) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_report_problem() != 41347) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_reset_recovery_budget() != 62615) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_save() != 38047) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_set_alert() != 1165) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_set_host_auto_ack() != 59479) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_set_host_key() != 64681) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_set_listener() != 53343) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_set_time() != 23419) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_state() != 39264) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_stop() != 32232) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_transport_changed() != 52755) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_use_mesh_session() != 47467) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriver_write_properties() != 11616) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileradiodriverlistener_on_update_pending() != 19616) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_radiolink_send() != 46767) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_radiolink_reset_framing() != 19229) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_radiolink_invalidate() != 41992) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_radiolink_did_attach() != 26103) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_radiolink_did_report_name() != 35574) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_radiolink_abandon_binding() != 26933) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_radiolink_did_enter_dfu() != 12214) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_method_mobileregiondatabase_dataset_version() != 20011) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -30260,6 +33327,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_constructor_mobilemeshsession_start() != 64273) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_constructor_mobileradiodriver_new() != 20844) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_constructor_mobileregiondatabase_open() != 34206) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -30289,8 +33359,10 @@ private let initializationResult: InitializationResult = {
     }
 
     uniffiCallbackInitMobileMeshWakeListener()
+    uniffiCallbackInitMobileRadioDriverListener()
     uniffiCallbackInitMobileVirtualRadioListener()
     uniffiCallbackInitMobileWireSink()
+    uniffiCallbackInitRadioLink()
     return InitializationResult.ok
 }()
 

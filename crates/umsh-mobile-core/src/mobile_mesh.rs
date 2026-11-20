@@ -676,23 +676,34 @@ pub trait MobileMeshWakeListener: Send + Sync {
     fn on_update_pending(&self);
 }
 
-/// Coalescing wake flag shared between the worker's producer channels and
-/// `poll_update`. `notify` fires the listener only on the false-to-true
-/// transition; `drained` re-arms it.
-struct WakeSignal {
-    pending: AtomicBool,
-    listener: Mutex<Option<Arc<dyn MobileMeshWakeListener>>>,
+/// A platform listener told that a `poll_update` has something for it.
+pub(crate) trait UpdateListener: Send + Sync {
+    fn update_pending(&self);
 }
 
-impl WakeSignal {
-    fn new() -> Self {
+impl UpdateListener for dyn MobileMeshWakeListener {
+    fn update_pending(&self) {
+        self.on_update_pending();
+    }
+}
+
+/// Coalescing wake flag shared between the producers of an object's
+/// updates and its `poll_update`. `notify` fires the listener only on the
+/// false-to-true transition; `drained` re-arms it.
+pub(crate) struct WakeSignal<L: ?Sized + UpdateListener = dyn MobileMeshWakeListener> {
+    pending: AtomicBool,
+    listener: Mutex<Option<Arc<L>>>,
+}
+
+impl<L: ?Sized + UpdateListener> WakeSignal<L> {
+    pub(crate) fn new() -> Self {
         Self {
             pending: AtomicBool::new(false),
             listener: Mutex::new(None),
         }
     }
 
-    fn notify(&self) {
+    pub(crate) fn notify(&self) {
         if self.pending.swap(true, Ordering::AcqRel) {
             return;
         }
@@ -702,15 +713,15 @@ impl WakeSignal {
             .ok()
             .and_then(|slot| slot.as_ref().cloned());
         if let Some(listener) = listener {
-            listener.on_update_pending();
+            listener.update_pending();
         }
     }
 
-    fn drained(&self) {
+    pub(crate) fn drained(&self) {
         self.pending.store(false, Ordering::Release);
     }
 
-    fn set_listener(&self, listener: Option<Arc<dyn MobileMeshWakeListener>>) {
+    pub(crate) fn set_listener(&self, listener: Option<Arc<L>>) {
         let already_pending = {
             let Ok(mut slot) = self.listener.lock() else {
                 return;
@@ -721,7 +732,7 @@ impl WakeSignal {
         // Data enqueued before registration must not wait for the next
         // protocol event to surface.
         if already_pending && let Some(listener) = listener {
-            listener.on_update_pending();
+            listener.update_pending();
         }
     }
 }
@@ -797,8 +808,58 @@ struct NotifyingSender<T> {
     dropped: Arc<Dropped>,
     kind: usize,
     /// Also told of each value queued, for a consumer other than the
-    /// platform: the chat store.
-    ready: Option<Arc<Notify>>,
+    /// platform: the chat store, or the radio driver.
+    ready: Option<Arc<dyn QueueConsumer>>,
+}
+
+/// A consumer of one of the session's queues other than the platform's
+/// `poll_update`.
+trait QueueConsumer: Send + Sync {
+    /// A value was queued, or dropped because the queue was full. Returns
+    /// whether this consumer drains the queue, so the platform need not be
+    /// woken for it.
+    fn queued(&self) -> bool;
+}
+
+/// The chat store's wakeup. The platform is woken as well: it reads what
+/// the store changed.
+impl QueueConsumer for Notify {
+    fn queued(&self) -> bool {
+        self.notify_one();
+        false
+    }
+}
+
+/// Told when the session has outbound frames for a radio driver.
+pub(crate) trait MeshOutboundListener: Send + Sync {
+    /// Called on the worker thread; must only schedule a drain and return.
+    fn outbound_ready(&self);
+}
+
+/// Where outbound frames go: to the platform's `poll_update`, or, once a
+/// radio driver is attached, to that driver alone.
+struct OutboundRoute {
+    driver: Mutex<Option<Arc<dyn MeshOutboundListener>>>,
+}
+
+impl OutboundRoute {
+    fn driver(&self) -> Option<Arc<dyn MeshOutboundListener>> {
+        self.driver
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+}
+
+impl QueueConsumer for OutboundRoute {
+    fn queued(&self) -> bool {
+        // Called outside the lock: the listener crosses to another thread.
+        let Some(driver) = self.driver() else {
+            return false;
+        };
+        driver.outbound_ready();
+        true
+    }
 }
 
 impl<T> Clone for NotifyingSender<T> {
@@ -816,17 +877,17 @@ impl<T> Clone for NotifyingSender<T> {
 impl<T> NotifyingSender<T> {
     fn send(&self, value: T) -> Result<(), std_mpsc::TrySendError<T>> {
         let sent = self.tx.try_send(value);
-        match &sent {
-            Ok(()) => {
-                if let Some(ready) = &self.ready {
-                    ready.notify_one();
-                }
-            }
-            Err(std_mpsc::TrySendError::Full(_)) => self.dropped.count(self.kind),
-            Err(std_mpsc::TrySendError::Disconnected(_)) => {}
+        if let Err(std_mpsc::TrySendError::Full(_)) = &sent {
+            self.dropped.count(self.kind);
         }
+        let consumed = match &sent {
+            Err(std_mpsc::TrySendError::Disconnected(_)) => false,
+            _ => self.ready.as_ref().is_some_and(|ready| ready.queued()),
+        };
         // Even a drop wakes the platform: it is behind, and should drain.
-        self.wake.notify();
+        if !consumed {
+            self.wake.notify();
+        }
         sent
     }
 }
@@ -1497,7 +1558,7 @@ impl BridgeTransmitCompletions {
 /// radio result. The platform's own ULCP exchange gives up well before
 /// this; past it, the report is not coming—a lost completion, a stalled
 /// bridge—and holding the wait would wedge the MAC behind one frame.
-const TRANSMIT_COMPLETION_TIMEOUT: Duration = Duration::from_secs(35);
+pub(crate) const TRANSMIT_COMPLETION_TIMEOUT: Duration = Duration::from_secs(35);
 
 struct BridgeRadio {
     inbound: mpsc::Receiver<InboundFrame>,
@@ -1788,6 +1849,9 @@ pub struct MobileMeshSession {
     local_key: PublicKey,
     commands: mpsc::Sender<WorkerCommand>,
     outbound: Mutex<std_mpsc::Receiver<MobileMeshOutboundFrameRecord>>,
+    /// Whether a radio driver takes the outbound frames instead of
+    /// `poll_update`.
+    outbound_route: Arc<OutboundRoute>,
     transmit_completions: Arc<BridgeTransmitCompletions>,
     events: Mutex<std_mpsc::Receiver<MobileMeshPingEventRecord>>,
     management: Mutex<std_mpsc::Receiver<MobileMeshManagementEventRecord>>,
@@ -3244,12 +3308,12 @@ impl MobileMeshSession {
         // Re-arm before draining: anything enqueued mid-drain triggers a
         // fresh notification rather than being silently swallowed.
         self.wake.drained();
-        let outbound_frames: Vec<_> = self
-            .outbound
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .try_iter()
-            .collect();
+        // A radio driver, when one is attached, takes the frames itself.
+        let outbound_frames = if self.outbound_route.driver().is_some() {
+            Vec::new()
+        } else {
+            self.take_outbound_frames()
+        };
         let ping_events: Vec<_> = self
             .events
             .lock()
@@ -3386,6 +3450,49 @@ impl MobileMeshSession {
 }
 
 impl MobileMeshSession {
+    /// Hand this session's outbound frames to a radio driver instead of
+    /// `poll_update`, taking them from whichever driver had them. The
+    /// driver is told at once, for frames queued before it arrived.
+    pub(crate) fn route_outbound_to(&self, driver: Arc<dyn MeshOutboundListener>) {
+        *self
+            .outbound_route
+            .driver
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(driver.clone());
+        driver.outbound_ready();
+    }
+
+    /// Hand the outbound frames back to `poll_update`, if `driver` is
+    /// still the one taking them. A driver the session has since been
+    /// taken from must not undo the route of the one that has it now.
+    pub(crate) fn stop_routing_outbound_to(&self, driver: &Arc<dyn MeshOutboundListener>) {
+        {
+            let mut current = self
+                .outbound_route
+                .driver
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if !current
+                .as_ref()
+                .is_some_and(|current| std::ptr::addr_eq(Arc::as_ptr(current), Arc::as_ptr(driver)))
+            {
+                return;
+            }
+            *current = None;
+        }
+        // Frames the driver left queued are the platform's to drain now.
+        self.wake.notify();
+    }
+
+    /// Every outbound frame queued so far.
+    pub(crate) fn take_outbound_frames(&self) -> Vec<MobileMeshOutboundFrameRecord> {
+        self.outbound
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .try_iter()
+            .collect()
+    }
+
     async fn meet(&self, request: MeetRequest) -> Result<bool, MobileMeshError> {
         let (response, result) = oneshot::channel();
         self.commands
@@ -3537,8 +3644,12 @@ impl MobileMeshSession {
         let (commands, command_rx) = mpsc::channel(COMMAND_DEPTH);
         let wake = Arc::new(WakeSignal::new());
         let dropped = Arc::new(Dropped::new());
-        let (outbound_tx, outbound) =
+        let (mut outbound_tx, outbound) =
             notifying_channel(OUTBOUND_DEPTH, &wake, &dropped, Dropped::OUTBOUND);
+        let outbound_route = Arc::new(OutboundRoute {
+            driver: Mutex::new(None),
+        });
+        outbound_tx.ready = Some(outbound_route.clone());
         let (event_tx, events) = notifying_channel(REPORT_DEPTH, &wake, &dropped, Dropped::PINGS);
         let (management_tx, management) =
             notifying_channel(REPORT_DEPTH, &wake, &dropped, Dropped::MANAGEMENT);
@@ -3623,6 +3734,7 @@ impl MobileMeshSession {
             local_key,
             commands,
             outbound,
+            outbound_route,
             transmit_completions,
             events,
             management,

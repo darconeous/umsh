@@ -19,6 +19,7 @@ mod counter_store;
 mod meet;
 mod mobile_chat;
 mod mobile_mesh;
+mod radio_driver;
 mod regions;
 mod store;
 mod time_zone;
@@ -41,6 +42,11 @@ pub use mobile_mesh::{
     MobileMeshOutboundFrameRecord, MobileMeshPeerHeardRecord, MobileMeshPingEventRecord,
     MobileMeshPingOutcome, MobileMeshRouteKind, MobileMeshRouteRecord, MobileMeshRxRecord,
     MobileMeshSession, MobileMeshSessionUpdateRecord,
+};
+pub use radio_driver::{
+    MobileRadioClockRecord, MobileRadioDriver, MobileRadioDriverListener,
+    MobileRadioDriverUpdateRecord, MobileRadioError, MobileRadioPhase, MobileRadioProblem,
+    MobileRadioStateRecord, MobileRadioTransportPhase, MobileRadioTransportStateRecord, RadioLink,
 };
 pub use regions::{
     MobileRegionDatabase, MobileRegionError, MobileRegionLookupRecord, MobileRegionMatchRecord,
@@ -93,7 +99,7 @@ uniffi::setup_scaffolding!();
 ///
 /// Increment this when a binding-visible operation, record, or error contract
 /// changes incompatibly. It is independent of the UMSH wire version.
-pub const MOBILE_API_VERSION: u16 = 80;
+pub const MOBILE_API_VERSION: u16 = 81;
 
 /// Stable error categories consumed by platform adapters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Error)]
