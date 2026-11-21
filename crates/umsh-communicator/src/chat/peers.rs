@@ -407,6 +407,7 @@ impl<S: ChatStore> Chats<S> {
                 .map(long_age)
                 .unwrap_or_default(),
             forward_secrecy: kept.forward_secrecy,
+            forwards: forwards(&kept),
             alias: kept.alias.as_deref().map(cut),
             advertised: kept.name.as_deref().map(cut),
         })
@@ -912,7 +913,8 @@ impl<S: ChatStore> Chats<S> {
                 .heard_ago(key, kept.as_ref(), now_ms, wall)
                 .map(short_age)
                 .unwrap_or_default(),
-            saved: kept.is_some_and(|kept| kept.saved),
+            saved: kept.as_ref().is_some_and(|kept| kept.saved),
+            forwards: kept.as_ref().is_some_and(forwards),
         }
     }
 
@@ -1011,7 +1013,7 @@ impl<S: ChatStore> Chats<S> {
 
 /// How a node is drawn: its hint's color, its address's first characters,
 /// and the shape of what it says it is.
-fn avatar(key: &PublicKey, kept: Option<&PeerRecord>) -> AvatarStyle {
+pub(super) fn avatar(key: &PublicKey, kept: Option<&PeerRecord>) -> AvatarStyle {
     let lettering = address(&key.0);
     AvatarStyle::peer(
         key.hint().0,
@@ -1022,7 +1024,7 @@ fn avatar(key: &PublicKey, kept: Option<&PeerRecord>) -> AvatarStyle {
 
 /// What a node is called: its alias or its name, else its address's
 /// first characters.
-fn name(key: &PublicKey, kept: Option<&PeerRecord>) -> String<32> {
+pub(super) fn name(key: &PublicKey, kept: Option<&PeerRecord>) -> String<32> {
     match kept.and_then(PeerRecord::shown_name) {
         Some(name) => cut(name),
         None => cut(address(&key.0).get(..4).unwrap_or_default()),
@@ -1031,7 +1033,7 @@ fn name(key: &PublicKey, kept: Option<&PeerRecord>) -> String<32> {
 
 /// Whether a node forwards others' traffic, by the identity it is kept
 /// with.
-fn forwards(kept: &PeerRecord) -> bool {
+pub(super) fn forwards(kept: &PeerRecord) -> bool {
     let Some(&[role, capabilities]) = kept.identity.get(..2) else {
         return false;
     };

@@ -45,6 +45,7 @@ mod lock;
 mod lora;
 mod member;
 mod nearby;
+mod neighbors;
 mod path;
 mod peer;
 mod peers;
@@ -189,6 +190,7 @@ fn screens(state: &State) -> impl View<Rgb565, State> + use<> {
             Screen::Peer { .. }
             | Screen::ShareContact { .. }
             | Screen::Route { .. }
+            | Screen::Neighbors { .. }
             | Screen::Ping { .. }
             | Screen::Channel { .. } => peer_or_channel(state),
             Screen::Device { page, .. } => device::page(state, page),
@@ -234,6 +236,7 @@ fn peer_or_channel(state: &State) -> impl View<Rgb565, State> + use<> {
         Screen::Ping { peer, earlier, .. } => state
             .peer(*peer)
             .map(|summary| ping::view(state, *peer, &summary, earlier)),
+        Screen::Neighbors { router, .. } => neighbors::view(state, router),
         // A channel's, the only other screen sent here.
         _ => channel_screen(state),
     })

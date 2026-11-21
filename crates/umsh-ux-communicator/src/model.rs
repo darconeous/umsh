@@ -532,6 +532,9 @@ pub struct PeerDetail {
     pub alias: Option<String<32>>,
     /// What they call themselves, when they have said.
     pub advertised: Option<String<32>>,
+    /// They say they forward others' frames: they can be asked what they
+    /// hear.
+    pub forwards: bool,
 }
 
 /// A node heard nearby but not saved, as Find shows it.
@@ -1067,6 +1070,9 @@ pub struct Member {
     pub heard: String<6>,
     /// They are among my peers.
     pub saved: bool,
+    /// They say they forward others' frames: they can be asked what they
+    /// hear.
+    pub forwards: bool,
 }
 
 /// How many devices Nearby lists.
@@ -1528,6 +1534,69 @@ pub struct Repeater {
     pub address: Option<SharedText>,
 }
 
+/// The most repeaters a router's listing holds.
+pub const MAX_LISTED: usize = 16;
+
+/// What a router reports hearing, as far as it has been read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Listing {
+    /// How many repeaters are held.
+    pub count: u8,
+    /// How many the router said it hears.
+    pub total: Option<u8>,
+    /// The router has more to give.
+    pub more: bool,
+    /// How long ago the top of it was read; `None` before it has been.
+    pub read_ms_ago: Option<u64>,
+    /// What is being asked for.
+    pub asking: Option<ListingAsk>,
+    /// The last ask went unanswered.
+    pub no_answer: bool,
+    /// The router's own router hint: an ask about a repeater it hears goes
+    /// by way of it.
+    pub hint: [u8; 2],
+}
+
+/// What a router is asked for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ListingAsk {
+    /// The top of its listing, again.
+    Top,
+    /// The page after the last one held.
+    More,
+}
+
+/// A repeater a router reports hearing.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Listed {
+    /// The node it most plausibly is, by name, else its hint.
+    pub name: String<24>,
+    pub avatar: AvatarStyle,
+    /// The address of the node it most plausibly is, when one is known.
+    pub address: Option<String<44>>,
+    /// The router hint it forwards under.
+    pub hint: [u8; 2],
+    /// How the router heard it; `None` when over a link with no radio.
+    pub signal: Option<Signal>,
+    /// How many minutes ago the router last heard it.
+    pub heard_min: Option<u16>,
+    /// How far it is from the router, when both placed themselves.
+    pub distance_m: Option<u32>,
+}
+
+/// How far apart two places are, each a latitude and longitude in
+/// degrees, in meters, along the earth's surface.
+#[must_use]
+pub fn meters_between(a: (f32, f32), b: (f32, f32)) -> u32 {
+    const EARTH_RADIUS_M: f32 = 6_371_000.0;
+    let (lat_a, lat_b) = (a.0.to_radians(), b.0.to_radians());
+    let half_lat = (lat_b - lat_a) / 2.0;
+    let half_lon = (b.1 - a.1).to_radians() / 2.0;
+    let haversine = libm::sinf(half_lat) * libm::sinf(half_lat)
+        + libm::cosf(lat_a) * libm::cosf(lat_b) * libm::sinf(half_lon) * libm::sinf(half_lon);
+    (2.0 * EARTH_RADIUS_M * libm::asinf(libm::sqrtf(haversine.clamp(0.0, 1.0)))) as u32
+}
+
 /// The most repeaters a path names: as many as a source route can.
 pub const MAX_PATH: usize = 15;
 
@@ -1745,6 +1814,8 @@ pub enum NodeEvent {
     PingSettled(PeerId),
     /// The route to a saved peer changed.
     RouteChanged(PeerId),
+    /// What a router reports hearing changed, or how asking it goes.
+    ListingChanged,
     /// Settings were applied, as set or adjusted.
     SettingsChanged,
     /// A setting was refused, and stays as it was.
@@ -1780,6 +1851,7 @@ impl NodeEvent {
             Self::MeetChanged => (12, 0),
             Self::Settled { message, .. } => (13, message),
             Self::RouteChanged(peer) => (14, peer),
+            Self::ListingChanged => (15, 0),
         }
     }
 }
@@ -2012,6 +2084,20 @@ pub trait Node {
     /// lets a message flood `flood_hops` past the last of them. No hints is
     /// a direct route. The change comes as [`NodeEvent::RouteChanged`].
     fn hold_route(&self, peer: PeerId, hints: &[[u8; 2]], flood_hops: u8, hold_ms: u32);
+
+    /// What the router at `address` reports hearing, as last read; `None`
+    /// when it has not been asked.
+    fn listing(&self, address: &str) -> Option<Listing>;
+
+    /// The `index`th repeater the router at `address` reports hearing, the
+    /// one it heard most recently first.
+    fn listed(&self, address: &str, index: usize) -> Option<Listed>;
+
+    /// Asks the router at `address` for the top of what it hears, or, when
+    /// `more`, the page after the last one held. How it goes comes as
+    /// [`NodeEvent::ListingChanged`]. The listings of the routers at
+    /// `shown`, whose screens are open, are kept.
+    fn ask_listing(&self, address: &str, more: bool, shown: &[&str]);
 
     /// The clock's settings as they stand.
     fn clock(&self) -> ClockSettings;
@@ -2814,6 +2900,8 @@ impl State {
             NodeEvent::PingSettled(peer) => self.refresh_ping(Some(peer)),
             // The route screen reads the node as it is drawn.
             NodeEvent::RouteChanged(_) => self.refresh_peer(),
+            // So does the Neighbors screen.
+            NodeEvent::ListingChanged => {}
             NodeEvent::SettingRefused(Setting::WifiFull) => {
                 self.banner = Some(Banner {
                     notice: Notice::WifiFull,

@@ -109,15 +109,29 @@ pub fn view(
                 false,
                 ROW,
             ),
-            row(
-                m,
-                "Ping",
-                keys::PEER_PING,
-                State::open_ping,
-                End::Chevron,
-                false,
-                ROW,
-            ),
+            VStack::new((
+                detail.forwards.then(|| {
+                    row(
+                        m,
+                        "Neighbors",
+                        keys::PEER_NEIGHBORS,
+                        State::open_neighbors,
+                        End::Chevron,
+                        false,
+                        ROW,
+                    )
+                }),
+                row(
+                    m,
+                    "Ping",
+                    keys::PEER_PING,
+                    State::open_ping,
+                    End::Chevron,
+                    false,
+                    ROW,
+                ),
+            ))
+            .with_spacing(0),
             row(
                 m,
                 "Refresh identity",

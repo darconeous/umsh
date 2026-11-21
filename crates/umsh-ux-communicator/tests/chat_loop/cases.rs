@@ -15,7 +15,7 @@ use umsh_ux_communicator::picker::Pick;
 use umsh_ux_communicator::model::{
     BatteryReading, ChannelAccess, Charge, GaugeReading, ChannelEntry, ChatKind, ClockSource, Delivery, Details, Direction, Ending, Exchange,
     ExchangeEnd, FoundKind,
-    Glance, Node as _, NodeEvent, Notice, Presence, Profile, Reaction, Rule, Section, Shareable, State,
+    Glance, ListingAsk, Node as _, NodeEvent, Notice, Presence, Profile, Reaction, Rule, Section, Shareable, State,
     brightness_level,
 };
 use umsh_ux_communicator::nav::{
@@ -5105,4 +5105,151 @@ fn wifi_turned_off_is_only_its_switches() {
     assert_eq!(focus(app.state()), Some(keys::WIFI_IP_MULTICAST));
     run(&mut app, &[Input::Turn(-1), Input::Press]);
     assert_eq!(app.state().wifi.current, b"Okafor-5G");
+}
+
+/// The router the Neighbors screen shown lists for, and what it holds.
+fn shown_listing(state: &State) -> (String, Option<umsh_ux_communicator::model::Listing>) {
+    let Screen::Neighbors { router, .. } = state.screen() else {
+        panic!("expected neighbors, got {:?}", state.screen());
+    };
+    (router.to_string(), state.node.listing(router))
+}
+
+/// Answers what the fixture was asked, as a board's loop wakes for it.
+fn answer<V, F>(app: &mut App<V, State, F>, store: &fixture::Store)
+where
+    V: ViewLayout<State>,
+    V::FocusTree: DefaultFocus,
+    V::Renderables: AnimatedJoin,
+    F: Fn(&State) -> V,
+{
+    let at = store.next_deadline().expect("an answer is due");
+    store.advance(at);
+    input::events(app, at);
+}
+
+/// Riverbend Camp's page, from the details of my answer.
+fn open_riverbend<V, F>(app: &mut App<V, State, F>)
+where
+    V: ViewLayout<State>,
+    V::FocusTree: DefaultFocus,
+    V::Renderables: AnimatedJoin,
+    F: Fn(&State) -> V,
+{
+    answer_details(app);
+    scroll_to(app, keys::repeater(0));
+    run(app, &[Input::Press]);
+    let (member, _) = shown_member(app.state());
+    assert_eq!(member.sender.name.as_str(), "Riverbend Camp");
+    assert!(member.forwards);
+}
+
+#[test]
+fn neighbors_reads_nothing_until_refreshed_then_loads_more() {
+    let store = store();
+    let mut app = app!(store);
+    open_riverbend(&mut app);
+    turn_to(&mut app, keys::MEMBER_NEIGHBORS);
+    run(&mut app, &[Input::Press]);
+    // Opening asks for nothing.
+    let (_, listing) = shown_listing(app.state());
+    assert_eq!(listing, None);
+    assert_eq!(focus(app.state()), Some(keys::NEIGHBORS_REFRESH));
+
+    run(&mut app, &[Input::Press]);
+    let (_, listing) = shown_listing(app.state());
+    assert_eq!(listing.unwrap().asking, Some(ListingAsk::Top));
+    // The spinner keeps the screen coming back while it waits.
+    assert!(app.state().next_deadline().is_some());
+    answer(&mut app, store);
+    let (router, listing) = shown_listing(app.state());
+    let listing = listing.unwrap();
+    assert_eq!((listing.count, listing.total), (3, Some(5)));
+    assert!(listing.more && listing.asking.is_none());
+    let known = app.state().node.listed(&router, 1).unwrap();
+    assert_eq!(known.name.as_str(), "Ridge Runner");
+    assert!(known.address.is_some());
+
+    turn_to(&mut app, keys::NEIGHBORS_MORE);
+    run(&mut app, &[Input::Press]);
+    assert_eq!(
+        shown_listing(app.state()).1.unwrap().asking,
+        Some(ListingAsk::More)
+    );
+    answer(&mut app, store);
+    let listing = shown_listing(app.state()).1.unwrap();
+    assert_eq!(listing.count, 5);
+    assert!(!listing.more);
+    // A known row opens its node.
+    turn_to(&mut app, keys::neighbor(1));
+    run(&mut app, &[Input::Press]);
+    assert_eq!(
+        shown_member(app.state()).0.sender.name.as_str(),
+        "Ridge Runner"
+    );
+}
+
+#[test]
+fn a_bare_hint_among_neighbors_is_asked_who_it_is_and_its_own_go_unanswered() {
+    let store = store();
+    let mut app = app!(store);
+    open_riverbend(&mut app);
+    turn_to(&mut app, keys::MEMBER_NEIGHBORS);
+    run(&mut app, &[Input::Press, Input::Press]);
+    answer(&mut app, store);
+    let (router, _) = shown_listing(app.state());
+    let bare = app.state().node.listed(&router, 0).unwrap();
+    assert_eq!(bare.address, None);
+
+    turn_to(&mut app, keys::neighbor(0));
+    run(&mut app, &[Input::Press]);
+    assert_eq!(app.state().identifying().as_slice(), [bare.hint]);
+    answer(&mut app, store);
+    let named = app.state().node.listed(&router, 0).unwrap();
+    assert_eq!(named.name.as_str(), "Bald Knob");
+    assert!(named.address.is_some());
+
+    // Bald Knob forwards too, and does not answer.
+    run(&mut app, &[Input::Press]);
+    assert_eq!(shown_member(app.state()).0.sender.name.as_str(), "Bald Knob");
+    turn_to(&mut app, keys::MEMBER_NEIGHBORS);
+    run(&mut app, &[Input::Press, Input::Press]);
+    answer(&mut app, store);
+    let listing = shown_listing(app.state()).1.unwrap();
+    assert!(listing.no_answer && listing.asking.is_none());
+    assert_eq!(listing.count, 0);
+    assert_eq!(focus(app.state()), Some(keys::NEIGHBORS_REFRESH));
+}
+
+#[test]
+fn a_walk_through_neighbors_past_the_stack_replaces_the_page_shown() {
+    let store = store();
+    let mut app = app!(store);
+    open_riverbend(&mut app);
+    turn_to(&mut app, keys::MEMBER_NEIGHBORS);
+    run(&mut app, &[Input::Press, Input::Press]);
+    answer(&mut app, store);
+    let (riverbend, _) = shown_listing(app.state());
+    // Bald Knob, once it is known, forwards too.
+    turn_to(&mut app, keys::neighbor(0));
+    run(&mut app, &[Input::Press]);
+    answer(&mut app, store);
+    run(&mut app, &[Input::Press]);
+    assert_eq!(shown_member(app.state()).0.sender.name.as_str(), "Bald Knob");
+    let full = app.state().screens.len();
+    assert_eq!(full, app.state().screens.capacity());
+
+    // Its Neighbors takes the place of its page.
+    turn_to(&mut app, keys::MEMBER_NEIGHBORS);
+    run(&mut app, &[Input::Press]);
+    assert_eq!(app.state().screens.len(), full);
+    let (bald_knob, _) = shown_listing(app.state());
+    assert_ne!(bald_knob, riverbend);
+    assert!(matches!(
+        &app.state().screens[full - 2],
+        Screen::Neighbors { router, .. } if router.as_str() == riverbend
+    ));
+    // The listing of the screen beneath is kept while others are asked.
+    run(&mut app, &[Input::Press]);
+    assert!(app.state().node.listing(&riverbend).is_some());
 }

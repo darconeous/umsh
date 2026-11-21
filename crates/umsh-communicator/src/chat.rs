@@ -50,6 +50,7 @@ use crate::store::ChatStore;
 use crate::task::Command;
 
 mod channels;
+mod neighbors;
 mod peers;
 mod repeats;
 mod routes;
@@ -226,6 +227,10 @@ pub(crate) struct Chats<S> {
     reading: BTreeSet<[u8; 32]>,
     /// Sessions with forward secrecy, asked for or held, by peer.
     secrecy: BTreeMap<[u8; 32], peers::Session>,
+    /// What routers report hearing, by router.
+    routers: BTreeMap<[u8; 32], neighbors::Router>,
+    /// The nonce of the last Peer Repeaters Request.
+    nonce: u16,
     /// What the chats ask of the device node besides sending frames.
     commands: VecDeque<Command>,
     /// The saved peers, as last taken from the device.
@@ -271,6 +276,8 @@ impl<S: ChatStore> Chats<S> {
             routes: BTreeMap::new(),
             reading: BTreeSet::new(),
             secrecy: BTreeMap::new(),
+            routers: BTreeMap::new(),
+            nonce: 0,
             commands: VecDeque::new(),
             saved: Vec::new(),
             body: RefCell::new(vec![0; BODY_MAX]),
@@ -560,6 +567,7 @@ impl<S: ChatStore> Chats<S> {
         self.lapse_links(now_ms, events);
         self.lapse_repeats(now_ms, events);
         self.lapse_holds(now_ms, events);
+        self.lapse_listings(now_ms, events);
     }
 
     /// Asks again for `message` in `chat`, a message missing here or one
@@ -1577,7 +1585,8 @@ impl<S: ChatStore> Chats<S> {
                 .and_then(|key| self.heard_ago(&key, kept.as_ref(), now_ms, wall))
                 .map(short_age)
                 .unwrap_or_default(),
-            saved: kept.is_some_and(|kept| kept.saved),
+            saved: kept.as_ref().is_some_and(|kept| kept.saved),
+            forwards: kept.as_ref().is_some_and(peers::forwards),
         })
     }
 

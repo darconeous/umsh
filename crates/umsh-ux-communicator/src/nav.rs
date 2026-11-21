@@ -17,9 +17,9 @@ use crate::model::Directions;
 use crate::model::{
     AUTO_LOCK_CHOICES, BANDWIDTHS, CODING_RATES, ChannelAccess, ChannelEntry, ChatId, ChatKind,
     ChatSummary, Details, Exchange, Found, FoundKind, Invite, KeyboardSettings, LoraChoice,
-    MAX_FOUND, MAX_PATH, MAX_REPEATERS, Member, MessageId, NearbyId, PeerDetail, PeerEntry, PeerId,
-    PingView, Profile, RadioSettings, Reaction, Repeater, RouteKind, SPREADING_FACTORS, Section,
-    Shareable, State, TRANSMIT_LIMITS, TRANSMIT_POWER, word_match,
+    MAX_FOUND, MAX_PATH, MAX_REPEATERS, MAX_SCREENS, Member, MessageId, NearbyId, PeerDetail,
+    PeerEntry, PeerId, PingView, Profile, RadioSettings, Reaction, Repeater, RouteKind,
+    SPREADING_FACTORS, Section, Shareable, State, TRANSMIT_LIMITS, TRANSMIT_POWER, word_match,
 };
 use crate::ui::GammaTest;
 pub use crate::wifi_settings::{NetworkText, PasswordText, WifiPage};
@@ -87,6 +87,7 @@ pub mod keys {
     const ZONE_ROW: u32 = 0x1C00_0000;
     const NEARBY: u32 = 0x2000_0000;
     const AUTO_LOCK_ROW: u32 = 0x2400_0000;
+    const NEIGHBOR: u32 = 0x2200_0000;
     const PATH: u32 = 0x2B00_0000;
     const WIFI_ROW: u32 = 0x2E00_0000;
     const LORA_CHOICE_ROW: u32 = 0x2F00_0000;
@@ -148,6 +149,12 @@ pub mod keys {
     pub const LEAVE_SAVE: FocusKey = FocusKey(0x2C00_000A);
     pub const LEAVE_DISCARD: FocusKey = FocusKey(0x2C00_000B);
     pub const LEAVE_KEEP: FocusKey = FocusKey(0x2C00_000C);
+    /// Neighbors on a repeater's page, and Load more and Refresh under
+    /// the list.
+    pub const MEMBER_NEIGHBORS: FocusKey = FocusKey(0x0700_0003);
+    pub const PEER_NEIGHBORS: FocusKey = FocusKey(0x0C00_0002);
+    pub const NEIGHBORS_MORE: FocusKey = FocusKey(0x2500_0000);
+    pub const NEIGHBORS_REFRESH: FocusKey = FocusKey(0x2500_0001);
     /// A chat's menu, which holding the wheel on its row opens: its peer
     /// or channel, and Delete or Leave; and their confirmation.
     pub const CHAT_SHOW: FocusKey = FocusKey(0x1D00_0000);
@@ -389,6 +396,12 @@ pub mod keys {
     #[must_use]
     pub const fn rail(section: Section) -> FocusKey {
         FocusKey(RAIL | section as u32)
+    }
+
+    /// A repeater a router reports hearing, by its place in the listing.
+    #[must_use]
+    pub const fn neighbor(index: usize) -> FocusKey {
+        FocusKey(NEIGHBOR | (index as u32 & !KIND))
     }
 
     /// One of Find's results, by its place among them.
@@ -759,6 +772,12 @@ pub enum Screen {
         asked: Asked,
         focus: FocusState,
     },
+    /// The repeaters the router at `router` reports hearing, as last read.
+    Neighbors {
+        router: String<44>,
+        asked: Asked,
+        focus: FocusState,
+    },
     /// Pings to a saved peer, and the path the latest answer took. How the
     /// latest went is the node's.
     Ping {
@@ -961,6 +980,7 @@ impl Screen {
             | Self::Peer { focus, .. }
             | Self::ShareContact { focus, .. }
             | Self::Route { focus, .. }
+            | Self::Neighbors { focus, .. }
             | Self::Ping { focus, .. }
             | Self::Channel { focus, .. }
             | Self::Device { focus, .. }
@@ -999,18 +1019,20 @@ impl Screen {
     /// The unknown repeaters this screen has asked who they are.
     fn asked(&self) -> Option<&Asked> {
         match self {
-            Self::Details { asked, .. } | Self::Route { asked, .. } | Self::Ping { asked, .. } => {
-                Some(asked)
-            }
+            Self::Details { asked, .. }
+            | Self::Route { asked, .. }
+            | Self::Neighbors { asked, .. }
+            | Self::Ping { asked, .. } => Some(asked),
             _ => None,
         }
     }
 
     fn asked_mut(&mut self) -> Option<&mut Asked> {
         match self {
-            Self::Details { asked, .. } | Self::Route { asked, .. } | Self::Ping { asked, .. } => {
-                Some(asked)
-            }
+            Self::Details { asked, .. }
+            | Self::Route { asked, .. }
+            | Self::Neighbors { asked, .. }
+            | Self::Ping { asked, .. } => Some(asked),
             _ => None,
         }
     }
@@ -1028,6 +1050,7 @@ impl Screen {
             | Self::Peer { focus, .. }
             | Self::ShareContact { focus, .. }
             | Self::Route { focus, .. }
+            | Self::Neighbors { focus, .. }
             | Self::Ping { focus, .. }
             | Self::Channel { focus, .. }
             | Self::Device { focus, .. }
@@ -1301,6 +1324,7 @@ impl State {
     /// Shows `member`, known by address: their page when they are saved,
     /// else their sheet on Message.
     pub(crate) fn show_known(&mut self, member: Member) {
+        self.room_for_screen();
         if member.saved
             && let Some(peer) = member
                 .address
@@ -3504,6 +3528,108 @@ impl State {
         }
     }
 
+    /// Makes room on a full stack for one more screen, by letting go of the
+    /// one shown: a walk from node to node through their Neighbors would
+    /// otherwise stop where the stack does. A conversation is kept.
+    // Not `leave`: the screen pushed next is settled in its place, and
+    // `leave`'s frame would sit on the deepest path the stack check walks.
+    fn room_for_screen(&mut self) {
+        if self.screens.is_full()
+            && !matches!(self.screens.last(), Some(Screen::Conversation { .. }))
+        {
+            self.screens.pop();
+        }
+    }
+
+    /// Shows what the node whose page is shown reports hearing, as last
+    /// read: opening asks for nothing.
+    pub fn open_neighbors(&mut self) {
+        let router = match self.screens.last() {
+            Some(Screen::Member { member, .. }) => member.address.clone(),
+            Some(Screen::Peer { detail, .. }) => Some(detail.address.clone()),
+            _ => None,
+        };
+        let Some(router) = router else {
+            return;
+        };
+        let first = if self
+            .node
+            .listing(&router)
+            .is_some_and(|listing| listing.count > 0)
+        {
+            keys::neighbor(0)
+        } else {
+            keys::NEIGHBORS_REFRESH
+        };
+        self.room_for_screen();
+        _ = self.screens.push(Screen::Neighbors {
+            router,
+            asked: Asked::new(),
+            focus: FocusState::requesting(first),
+        });
+    }
+
+    /// Asks the router shown for the top of what it hears again.
+    pub fn refresh_neighbors(&mut self) {
+        self.ask_listing(false);
+    }
+
+    /// Asks the router shown for the page after the last one held.
+    pub fn more_neighbors(&mut self) {
+        self.ask_listing(true);
+    }
+
+    /// Asks the router shown for a page of what it hears, keeping the
+    /// listings of every Neighbors screen open.
+    fn ask_listing(&self, more: bool) {
+        let Some(Screen::Neighbors { router, .. }) = self.screens.last() else {
+            return;
+        };
+        let shown: heapless::Vec<&str, MAX_SCREENS> = self
+            .screens
+            .iter()
+            .filter_map(|screen| match screen {
+                Screen::Neighbors { router, .. } => Some(router.as_str()),
+                _ => None,
+            })
+            .collect();
+        self.node.ask_listing(router, more, &shown);
+    }
+
+    /// Opens the node the repeater at `index` in the listing shown most
+    /// plausibly is, or asks who it is, of the nodes in earshot of the
+    /// router, when no known node could be.
+    pub fn press_neighbor(&mut self, index: usize) {
+        let uptime = self.uptime;
+        let node = self.node;
+        let Some(Screen::Neighbors { router, asked, .. }) = self.screens.last_mut() else {
+            return;
+        };
+        let Some(listed) = node.listed(router, index) else {
+            return;
+        };
+        if let Some(address) = listed.address {
+            if let Some(member) = node.known_member(&address) {
+                self.show_known(member);
+            }
+            return;
+        }
+        let Some(listing) = node.listing(router) else {
+            return;
+        };
+        let hint = listed.hint;
+        if asked
+            .iter()
+            .any(|&(asked, until)| asked == hint && until > uptime)
+        {
+            return;
+        }
+        asked.retain(|&(asked, until)| asked != hint && until > uptime);
+        if asked.push((hint, uptime + IDENTIFY_WAIT_MS)).is_ok() {
+            node.identify_repeater(hint, &[listing.hint]);
+        }
+    }
+
     /// Opens the node the repeater at `index` on the screen shown most
     /// plausibly is, or asks who it is when no known node could be. A
     /// repeater on a path is asked by way of the repeaters before it.
@@ -3587,6 +3713,15 @@ impl State {
         if let Screen::Ping {
             settled_at: None, ..
         } = screen
+        {
+            return Some(step);
+        }
+        // A listing asked for spins in its row until it is answered.
+        if let Screen::Neighbors { router, .. } = screen
+            && self
+                .node
+                .listing(router)
+                .is_some_and(|listing| listing.asking.is_some())
         {
             return Some(step);
         }

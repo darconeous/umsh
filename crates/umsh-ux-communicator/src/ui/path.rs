@@ -370,7 +370,7 @@ fn reading<C>(m: &'static Metrics, leg: Leg) -> impl View<Rgb565, C> + use<C> {
 
 /// Of four bars, how strongly a hop was heard, by its signal-to-noise
 /// ratio.
-fn lit(signal: Signal) -> u8 {
+pub(super) fn lit(signal: Signal) -> u8 {
     match signal.snr {
         50.. => 4,
         0.. => 3,
@@ -380,7 +380,7 @@ fn lit(signal: Signal) -> u8 {
 }
 
 /// Green for a hop heard well, amber, then red as it fades.
-fn bar_color(lit: u8) -> Rgb565 {
+pub(super) fn bar_color(lit: u8) -> Rgb565 {
     match lit {
         3.. => theme::GREEN,
         2 => theme::AMBER,

@@ -86,6 +86,12 @@ pub enum Arrival {
     },
     /// A session with forward secrecy began, ended, or could not be had.
     Secrecy { peer: PublicKey, change: Secrecy },
+    /// A page of the repeaters `router` reports hearing: the body of its
+    /// Peer Repeaters Response, read by the chats.
+    Neighbors {
+        router: PublicKey,
+        body: NeighborsBody,
+    },
     /// A contact-exchange frame, after its payload-type byte, from the
     /// session key `from`.
     #[cfg(feature = "software-crypto")]
@@ -100,6 +106,22 @@ pub enum Arrival {
     #[cfg(feature = "software-crypto")]
     MeetOpened(Option<(PublicKey, [u8; 32])>),
 }
+
+/// The longest Peer Repeaters Response body kept. A device node writes at
+/// most 160 bytes; a longer one, from a responder that writes more, is
+/// dropped.
+pub const NEIGHBORS_BODY: usize = 168;
+
+/// A Peer Repeaters Response body, held inline: the tap that reads it runs
+/// in the device node's task, whose heap is internal memory.
+pub type NeighborsBody = umsh_ux_communicator::heapless::Vec<u8, NEIGHBORS_BODY, u8>;
+
+/// The longest paging cursor kept. A device node writes three bytes; a
+/// longer one ends the listing where it is.
+pub const NEIGHBORS_CURSOR: usize = 8;
+
+/// Where the next page of a listing starts, as its router wrote it.
+pub type NeighborsCursor = umsh_ux_communicator::heapless::Vec<u8, NEIGHBORS_CURSOR, u8>;
 
 /// A route chosen by hand, while the device node holds it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -159,6 +181,16 @@ pub enum Command {
         hints: heapless::Vec<RouterHint, { CachedRoute::MAX_HINTS }>,
         flood_hops: u8,
         hold_ms: u32,
+    },
+    /// Ask `router` for a page of the repeaters it hears, starting at
+    /// `cursor`, or at the top. `nonce` pairs the answer with this ask.
+    /// By way of `route` with no flood past it, or as the device node
+    /// sends to `router` when it is empty.
+    AskNeighbors {
+        router: PublicKey,
+        nonce: u16,
+        cursor: Option<NeighborsCursor>,
+        route: heapless::Vec<RouterHint, { CachedRoute::MAX_HINTS }>,
     },
     /// Ask a channel for the identity of whoever holds a hint.
     AskChannel {
@@ -242,6 +274,14 @@ impl<R: RawMutex> Inbox<R> {
             queue.push_back(arrival);
         });
         self.ready.signal(());
+    }
+
+    /// Counts an arrival dropped before it was queued.
+    fn drop_other(&self) {
+        self.arrivals.lock(|arrivals| {
+            let drops = &mut arrivals.borrow_mut().drops.others;
+            *drops = drops.saturating_add(1);
+        });
     }
 
     /// What the inbox has dropped for want of room.
@@ -338,6 +378,16 @@ where
             });
         }),
         node.on_ping_timeout(move |peer| inbox.push(Arrival::PingTimeout { peer })),
+        node.on_mac_command(move |from, command| {
+            if let umsh_node::OwnedMacCommand::PeerRepeatersResponse { body } = command {
+                // One too long for the slot is dropped as the inbox drops
+                // what it has no room for.
+                match NeighborsBody::from_slice(body) {
+                    Ok(body) => inbox.push(Arrival::Neighbors { router: from, body }),
+                    Err(_) => inbox.drop_other(),
+                }
+            }
+        }),
         node.on_transmitted(|_| inbox.wake()),
         node.on_ack_received(|_, _| inbox.wake()),
         node.on_ack_timeout(|_, _| inbox.wake()),
@@ -505,6 +555,30 @@ async fn execute<P: LocalPort, S: ChatStore, M: MacBackend>(
             hint,
             options,
         } => ask_channel(mesh, &channel, &hint, &options).await,
+        Command::AskNeighbors {
+            router,
+            nonce,
+            cursor,
+            route,
+        } => {
+            // By full key, in case the router has not registered us; and
+            // along a route given, flooding no further, as a ping along
+            // one does.
+            let options = SendOptions::default().with_full_source();
+            let options = if route.is_empty() {
+                Some(options)
+            } else {
+                options
+                    .try_with_source_route(&route)
+                    .ok()
+                    .map(|options| options.with_trace().with_route_slack(0))
+            };
+            if let (Some(options), Ok(connection)) = (options, mesh.peer(router).await) {
+                _ = connection
+                    .request_peer_repeaters(nonce, cursor.as_deref(), &options)
+                    .await;
+            }
+        }
         Command::AskRepeater { hint, route } => {
             let filter = umsh_node::IdentityFilter {
                 hint_prefix: Some(&hint.0),

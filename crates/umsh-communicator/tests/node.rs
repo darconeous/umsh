@@ -40,8 +40,8 @@ use umsh_ulcp::profiles::VETTED;
 use umsh_ulcp_simdev::{SessionConfig, SimulatedDevice, TimeConfig};
 use umsh_ux_communicator::model::{
     ChannelAccess, ChannelEntry, ChatKind, Chats, Delivery, Direction, Forwarding,
-    KeyboardSettings, Leg, MESSAGE_LEN, Node, NodeEvent, PeerEntry, PeerSummary, PingView,
-    Presence, Profile, Reaction, RouteKind, Rule, Setting, Shareable, Signal,
+    KeyboardSettings, Leg, ListingAsk, MESSAGE_LEN, Node, NodeEvent, PeerEntry, PeerSummary,
+    PingView, Presence, Profile, Reaction, RouteKind, Rule, Setting, Shareable, Signal,
 };
 
 /// 14:32 UTC, when the test clock starts.
@@ -3118,4 +3118,109 @@ fn a_repeater_is_asked_by_way_of_those_before_it() {
     };
     assert_eq!(hint, RouterHint([0xB2, 0x02]));
     assert_eq!(route, [RouterHint([0xA1, 0x01])]);
+}
+
+/// A router's listing is asked for a page at a time. A page answers only
+/// the ask waiting, a later page adds what the listing does not already
+/// hold, and an ask left unanswered says so and keeps what was read.
+#[test]
+fn a_routers_listing_is_read_a_page_at_a_time() {
+    use umsh_communicator::task::NeighborsBody;
+    use umsh_node::mac_command::{PeerRepeaterEntry, PeerRepeatersResponseBuilder};
+    let sim = device();
+    let (node, clock) = started(&sim);
+    let router = PublicKey([0x52; 32]);
+    let address = address_of(&router);
+    assert_eq!(node.listing(&address), None);
+
+    let asked = |more: bool| {
+        let sent = Cell::new(None);
+        node.ask_listing(&address, more, &[]);
+        assert!(asks(&node, |c| match c {
+            Command::AskNeighbors {
+                router: to,
+                nonce,
+                cursor,
+                route,
+            } if *to == router && route.is_empty() => {
+                sent.set(Some((*nonce, cursor.as_deref().map(<[u8]>::to_vec))));
+                true
+            }
+            _ => false,
+        }));
+        sent.take().unwrap()
+    };
+    let page = |nonce: u16, cursor: Option<&[u8]>, entries: &[PeerRepeaterEntry<'_>]| {
+        let mut builder = PeerRepeatersResponseBuilder::new(160).nonce(nonce).total(3);
+        if let Some(cursor) = cursor {
+            builder = builder.cursor(cursor);
+        }
+        for entry in entries {
+            assert!(builder.try_push(entry).unwrap());
+        }
+        Arrival::Neighbors {
+            router,
+            body: NeighborsBody::from_slice(&builder.build().unwrap()).unwrap(),
+        }
+    };
+    let ridge = PeerRepeaterEntry {
+        hint: &[0xAA, 0xBB, 0xCC],
+        name: Some("Ridge"),
+        rssi_snr: Some((-97, Snr::from_decibels(-7))),
+        last_heard_min: Some(12),
+        ..PeerRepeaterEntry::default()
+    };
+    let bare = PeerRepeaterEntry {
+        hint: &[0x11, 0x22],
+        ..PeerRepeaterEntry::default()
+    };
+    let last = PeerRepeaterEntry {
+        hint: &[0x33, 0x44],
+        ..PeerRepeaterEntry::default()
+    };
+
+    clock.set(10_000);
+    let (nonce, cursor) = asked(false);
+    assert_eq!(cursor, None);
+    assert_eq!(
+        node.listing(&address).unwrap().asking,
+        Some(ListingAsk::Top)
+    );
+    // A page answering another ask is not this one's.
+    node.arrive(page(nonce.wrapping_add(1), None, &[ridge]));
+    assert_eq!(node.listing(&address).unwrap().count, 0);
+    node.arrive(page(nonce, Some(&[0, 0, 2]), &[ridge, bare]));
+    let listing = node.listing(&address).unwrap();
+    assert_eq!((listing.count, listing.total), (2, Some(3)));
+    assert!(listing.more && listing.asking.is_none());
+    assert_eq!(listing.read_ms_ago, Some(0));
+    let first = node.listed(&address, 0).unwrap();
+    assert_eq!(first.name.as_str(), "Ridge");
+    assert_eq!(first.address, None);
+    assert_eq!(first.hint, [0xAA, 0xBB]);
+    assert_eq!(
+        first.signal,
+        Some(Signal {
+            rssi: -97,
+            snr: -70
+        })
+    );
+    assert_eq!(first.heard_min, Some(12));
+
+    // A cursor gone stale starts over: what is held is not held twice.
+    let (nonce, cursor) = asked(true);
+    assert_eq!(cursor.as_deref(), Some(&[0, 0, 2][..]));
+    node.arrive(page(nonce, None, &[bare, last]));
+    let listing = node.listing(&address).unwrap();
+    assert_eq!(listing.count, 3);
+    assert!(!listing.more);
+    assert_eq!(node.listed(&address, 2).unwrap().hint, [0x33, 0x44]);
+
+    // Unanswered, the ask gives up and the listing stays.
+    asked(false);
+    clock.set(40_001);
+    node.tick();
+    let listing = node.listing(&address).unwrap();
+    assert!(listing.no_answer && listing.asking.is_none());
+    assert_eq!(listing.count, 3);
 }

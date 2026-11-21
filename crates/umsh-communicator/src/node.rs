@@ -22,10 +22,10 @@ use umsh_ux_communicator::heapless::{String, Vec};
 use umsh_ux_communicator::model::Directions;
 use umsh_ux_communicator::model::{
     About, ChannelChats, ChannelEntry, ChatId, ChatSummary, Chats, ClockSettings, ClockSource,
-    ContactUri, Details, EventQueue, Forwarding, Heard, Invite, KeyboardSettings, MAX_HEARD,
-    MAX_PATH, MeetState, Member, Message, MessageId, NearbyId, Neighbor, Node, NodeEvent,
-    PeerDetail, PeerEntry, PeerId, PeerRoute, PeerSummary, PingView, RadioSettings, Reaction,
-    Repeater, Setting, ShareUri, Shareable, Statistics, WifiReading, WifiSecurity,
+    ContactUri, Details, EventQueue, Forwarding, Heard, Invite, KeyboardSettings, Listed, Listing,
+    MAX_HEARD, MAX_PATH, MeetState, Member, Message, MessageId, NearbyId, Neighbor, Node,
+    NodeEvent, PeerDetail, PeerEntry, PeerId, PeerRoute, PeerSummary, PingView, RadioSettings,
+    Reaction, Repeater, Setting, ShareUri, Shareable, Statistics, WifiReading, WifiSecurity,
 };
 use umsh_ux_communicator::picker::RecentText;
 use umsh_ux_communicator::text::TextHeap;
@@ -193,6 +193,9 @@ impl<P: LocalPort, S: ChatStore> CommunicatorNode<P, S> {
         };
         self.with_chats(|chats, now_ms, time, events| match arrival {
             Arrival::Text(inbound) => chats.receive(inbound, now_ms, time, events),
+            Arrival::Neighbors { router, body } => {
+                chats.neighbors_page(router, &body, now_ms, events)
+            }
             Arrival::Identity {
                 key,
                 identity,
@@ -655,6 +658,21 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
         self.chats
             .borrow_mut()
             .identify_repeater(RouterHint(hint), &before);
+        self.wake();
+    }
+
+    fn listing(&self, address: &str) -> Option<Listing> {
+        self.chats.borrow().listing(address, self.clock.now_ms())
+    }
+
+    fn listed(&self, address: &str, index: usize) -> Option<Listed> {
+        self.chats.borrow().listed(address, index)
+    }
+
+    fn ask_listing(&self, address: &str, more: bool, shown: &[&str]) {
+        self.with_chats(|chats, now_ms, _, events| {
+            chats.ask_listing(address, more, shown, now_ms, events);
+        });
         self.wake();
     }
 

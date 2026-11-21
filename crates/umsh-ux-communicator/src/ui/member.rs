@@ -91,6 +91,15 @@ pub fn view(
                         End::Nothing,
                     )
                 }),
+                (known && member.forwards).then(|| {
+                    action(
+                        m,
+                        "Neighbors",
+                        keys::MEMBER_NEIGHBORS,
+                        State::open_neighbors,
+                        End::Chevron,
+                    )
+                }),
                 // Once known, the address under the head shows the hint.
                 (!known).then(|| row(m, "Hint", &member.hint, false)),
                 (!known).then(|| row(m, "Address", "Not yet known", true)),
