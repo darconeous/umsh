@@ -15,8 +15,9 @@
 //! - [`host::HostPlatform`]: a real device with no radio of its own, such
 //!   as a LAN virtual radio. State persists in files, identities come
 //!   from the operating system's generator, and the clock is the system's.
-//! - [`lan`]: that device with the LAN bearer's group as its PHY, driven
-//!   for as long as its owner runs it.
+//! - [`driven`]: a soft device run for as long as its owner runs it, on
+//!   a medium the owner chooses.
+//! - [`lan`]: that device with the LAN bearer's group as its PHY.
 //!
 //! The [`SessionConfig`] is the caller's: it names the device and
 //! declares its capability surface. A simulated device has no node
@@ -24,6 +25,8 @@
 //! [`SessionConfig::mac_node`] unset—a backhaul would connect the host
 //! to nothing.
 
+#[cfg(feature = "driven")]
+pub mod driven;
 #[cfg(feature = "host")]
 pub mod host;
 #[cfg(feature = "lan")]

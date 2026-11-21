@@ -34,7 +34,9 @@ use umsh_ulcp_device::{
     SavedStatus, Session, SessionConfig, TxOutcome,
 };
 
-pub(crate) const WIRE_CAPACITY: usize = umsh_ulcp::gatt::MAX_FRAME;
+/// What an HDLC-Lite decoder holds of one frame: the largest ULCP frame
+/// and its two-octet FCS.
+pub(crate) const WIRE_CAPACITY: usize = umsh_ulcp::gatt::MAX_FRAME + 2;
 
 /// The device session a soft device runs.
 pub type DeviceSession = Session<SoftwareAes, SoftwareSha256>;

@@ -7033,6 +7033,383 @@ public func FfiConverterTypeMobileRegionDatabase_lower(_ value: MobileRegionData
 
 
 /**
+ * The staged mesh: a radio for the phone, and the peers around it.
+ *
+ * The staging controls are its methods, and each acts through the first
+ * staged peer, the one that speaks. Dropping the air, or calling
+ * [`Self::stop`], ends the radio and the peers.
+ */
+public protocol MobileStagingAirProtocol: AnyObject, Sendable {
+
+    /**
+     * Bring the staged radio's link up, as a transport connecting to it.
+     */
+    func connect()
+
+    /**
+     * Take the staged radio's link down. The radio carries on detached.
+     */
+    func disconnect()
+
+    /**
+     * The speaking peer opens Add Peer as a T-LoRa Pager would, so it
+     * shows on the phone's Nearby. `asking`, it asks the phone to exchange
+     * once it lists it. It agrees when asked, presses Same a moment after
+     * the code shows, and closes Add Peer once the attempt is over.
+     */
+    func peerOpensAddPeer(asking: Bool) async throws
+
+    /**
+     * The speaking peer reacts to the last thing the phone said to it.
+     */
+    func peerReacts(body: String) async throws
+
+    /**
+     * The speaking peer replies to the last thing the phone said to it.
+     */
+    func peerReplies(body: String) async throws
+
+    /**
+     * The speaking peer says `body` to the phone, or with `on_channel` to
+     * the staged named channel. Returns once it has transmitted.
+     */
+    func peerSays(body: String, onChannel: Bool) async throws
+
+    /**
+     * The speaking peer says three things on the staged named channel, the
+     * second of which the phone never hears. The third opens a gap for
+     * it, which a resend request from the phone fills; the first lets the
+     * phone know where the peer's messages stand.
+     */
+    func peerSaysLosingOne(first: String, lost: String, last: String) async throws
+
+    /**
+     * The staged radio's driver, for the app to use as its radio.
+     */
+    func radio()  -> MobileRadioDriver
+
+    /**
+     * Stand the peers up afresh, with no frame counters: for a phone whose
+     * identity is starting over.
+     */
+    func reset() async throws
+
+    /**
+     * While `failing`, every transmission the staged radio makes fails.
+     */
+    func setTransmissionsFailing(failing: Bool)
+
+    /**
+     * Stop the air. The radio's link goes down, and the radio and the
+     * peers end. It cannot be started again; make another.
+     */
+    func stop()
+
+}
+/**
+ * The staged mesh: a radio for the phone, and the peers around it.
+ *
+ * The staging controls are its methods, and each acts through the first
+ * staged peer, the one that speaks. Dropping the air, or calling
+ * [`Self::stop`], ends the radio and the peers.
+ */
+open class MobileStagingAir: MobileStagingAirProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_umsh_mobile_core_fn_clone_mobilestagingair(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_umsh_mobile_core_fn_free_mobilestagingair(handle, $0) }
+    }
+
+
+    /**
+     * Start the staged mesh, keeping each peer's frame counters under
+     * `state_dir`. The radio waits detached until [`Self::connect`].
+     */
+public static func start(stateDir: String)throws  -> MobileStagingAir  {
+    return try  FfiConverterTypeMobileStagingAir_lift(try rustCallWithError(FfiConverterTypeMobileStagingAirError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_constructor_mobilestagingair_start(
+        FfiConverterString.lower(stateDir),uniffiCallStatus
+    )
+})
+}
+
+
+
+    /**
+     * Bring the staged radio's link up, as a transport connecting to it.
+     */
+open func connect()  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilestagingair_connect(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Take the staged radio's link down. The radio carries on detached.
+     */
+open func disconnect()  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilestagingair_disconnect(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * The speaking peer opens Add Peer as a T-LoRa Pager would, so it
+     * shows on the phone's Nearby. `asking`, it asks the phone to exchange
+     * once it lists it. It agrees when asked, presses Same a moment after
+     * the code shows, and closes Add Peer once the attempt is over.
+     */
+open func peerOpensAddPeer(asking: Bool)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilestagingair_peer_opens_add_peer(
+                        self.uniffiCloneHandle(),FfiConverterBool.lower(asking)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileStagingAirError_lift
+        )
+}
+
+    /**
+     * The speaking peer reacts to the last thing the phone said to it.
+     */
+open func peerReacts(body: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilestagingair_peer_reacts(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(body)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileStagingAirError_lift
+        )
+}
+
+    /**
+     * The speaking peer replies to the last thing the phone said to it.
+     */
+open func peerReplies(body: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilestagingair_peer_replies(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(body)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileStagingAirError_lift
+        )
+}
+
+    /**
+     * The speaking peer says `body` to the phone, or with `on_channel` to
+     * the staged named channel. Returns once it has transmitted.
+     */
+open func peerSays(body: String, onChannel: Bool)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilestagingair_peer_says(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(body),FfiConverterBool.lower(onChannel)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileStagingAirError_lift
+        )
+}
+
+    /**
+     * The speaking peer says three things on the staged named channel, the
+     * second of which the phone never hears. The third opens a gap for
+     * it, which a resend request from the phone fills; the first lets the
+     * phone know where the peer's messages stand.
+     */
+open func peerSaysLosingOne(first: String, lost: String, last: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilestagingair_peer_says_losing_one(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(first),FfiConverterString.lower(lost),FfiConverterString.lower(last)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileStagingAirError_lift
+        )
+}
+
+    /**
+     * The staged radio's driver, for the app to use as its radio.
+     */
+open func radio() -> MobileRadioDriver  {
+    return try!  FfiConverterTypeMobileRadioDriver_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilestagingair_radio(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Stand the peers up afresh, with no frame counters: for a phone whose
+     * identity is starting over.
+     */
+open func reset()async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilestagingair_reset(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileStagingAirError_lift
+        )
+}
+
+    /**
+     * While `failing`, every transmission the staged radio makes fails.
+     */
+open func setTransmissionsFailing(failing: Bool)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilestagingair_set_transmissions_failing(
+            self.uniffiCloneHandle(),
+        FfiConverterBool.lower(failing),uniffiCallStatus
+    )
+}
+}
+
+    /**
+     * Stop the air. The radio's link goes down, and the radio and the
+     * peers end. It cannot be started again; make another.
+     */
+open func stop()  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilestagingair_stop(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileStagingAir: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = MobileStagingAir
+
+    public static func lift(_ handle: UInt64) throws -> MobileStagingAir {
+        return MobileStagingAir(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: MobileStagingAir) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileStagingAir {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: MobileStagingAir, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStagingAir_lift(_ handle: UInt64) throws -> MobileStagingAir {
+    return try FfiConverterTypeMobileStagingAir.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStagingAir_lower(_ value: MobileStagingAir) -> UInt64 {
+    return FfiConverterTypeMobileStagingAir.lower(value)
+}
+
+
+
+
+
+
+/**
  * Stateful mobile host session for the ULCP.
  *
  * This is the protocol boundary: it consumes complete reassembled ULCP
@@ -24955,6 +25332,144 @@ public func FfiConverterTypeMobileStagedChatRegarding_lower(_ value: MobileStage
 
 
 
+public
+enum MobileStagingAirError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
+
+
+
+    /**
+     * The air's state directory could not be created.
+     */
+    case StateUnavailable
+    /**
+     * The air's worker could not be started.
+     */
+    case WorkerUnavailable
+    /**
+     * The air has stopped.
+     */
+    case Stopped
+    /**
+     * No staged peer could be stood up.
+     */
+    case PeerUnavailable
+    /**
+     * The phone has not tethered the staged radio, so no peer knows it.
+     */
+    case NoPhone
+    /**
+     * The phone has said nothing to the speaking peer to answer.
+     */
+    case NothingToAnswer
+    /**
+     * The speaking peer's session refused.
+     */
+    case Refused
+    /**
+     * The speaking peer took what it was told to say and did not transmit
+     * it in time.
+     */
+    case NotTransmitted
+
+
+
+
+
+
+    public var errorDescription: String? {
+        String(reflecting: self)
+    }
+
+}
+
+#if compiler(>=6)
+extension MobileStagingAirError: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileStagingAirError: FfiConverterRustBuffer {
+    typealias SwiftType = MobileStagingAirError
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileStagingAirError {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+
+
+
+        case 1: return .StateUnavailable
+        case 2: return .WorkerUnavailable
+        case 3: return .Stopped
+        case 4: return .PeerUnavailable
+        case 5: return .NoPhone
+        case 6: return .NothingToAnswer
+        case 7: return .Refused
+        case 8: return .NotTransmitted
+
+         default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileStagingAirError, into buf: inout [UInt8]) {
+        switch value {
+
+
+
+
+
+        case .StateUnavailable:
+            writeInt(&buf, Int32(1))
+
+
+        case .WorkerUnavailable:
+            writeInt(&buf, Int32(2))
+
+
+        case .Stopped:
+            writeInt(&buf, Int32(3))
+
+
+        case .PeerUnavailable:
+            writeInt(&buf, Int32(4))
+
+
+        case .NoPhone:
+            writeInt(&buf, Int32(5))
+
+
+        case .NothingToAnswer:
+            writeInt(&buf, Int32(6))
+
+
+        case .Refused:
+            writeInt(&buf, Int32(7))
+
+
+        case .NotTransmitted:
+            writeInt(&buf, Int32(8))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStagingAirError_lift(_ buf: RustBuffer) throws -> MobileStagingAirError {
+    return try FfiConverterTypeMobileStagingAirError.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileStagingAirError_lower(_ value: MobileStagingAirError) -> RustBuffer {
+    return FfiConverterTypeMobileStagingAirError.lower(value)
+}
+
+
 /**
  * Why the staged mesh could not be written.
  */
@@ -31952,6 +32467,39 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_secretvault_delete_all() != 26864) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilestagingair_connect() != 24765) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilestagingair_disconnect() != 34474) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilestagingair_peer_opens_add_peer() != 50764) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilestagingair_peer_reacts() != 54789) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilestagingair_peer_replies() != 25919) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilestagingair_peer_says() != 20571) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilestagingair_peer_says_losing_one() != 7529) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilestagingair_radio() != 40582) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilestagingair_reset() != 15463) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilestagingair_set_transmissions_failing() != 59180) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilestagingair_stop() != 33025) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_erase_all_content() != 17594) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -32313,6 +32861,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_constructor_mobileregiondatabase_open() != 34206) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_constructor_mobilestagingair_start() != 23756) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_constructor_mobileappstore_open() != 2451) {

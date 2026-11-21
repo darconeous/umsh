@@ -29,8 +29,10 @@ umsh-lan-bearer = { path = "../umsh-lan-bearer", optional = true, features = ["t
 [features]
 # A file-backed platform for a real soft device on a host.
 host = ["dep:rand"]
+# A soft device run on a medium of its owner's choosing.
+driven = ["dep:tokio"]
 # A LAN virtual radio: a host soft device whose PHY is the LAN bearer.
-lan = ["host", "dep:tokio", "dep:umsh-lan-bearer"]
+lan = ["host", "driven", "dep:umsh-lan-bearer"]
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt", "sync", "time"] }

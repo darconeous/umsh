@@ -16,12 +16,12 @@
 
 use std::fmt;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tokio::sync::{mpsc, oneshot};
 use umsh_lan_bearer::socket::LanConfig;
 use umsh_ulcp_device::{QueuedClass, QueuedNotice};
+use umsh_ulcp_simdev::driven::{self, SpawnError};
 use umsh_ulcp_simdev::host::{HostPlatform, StateLock};
 use umsh_ulcp_simdev::lan::{self, HostEvent};
 use umsh_ulcp_simdev::soft::SoftDevice;
@@ -115,10 +115,6 @@ pub trait MobileWireSink: Send + Sync {
 #[derive(uniffi::Object)]
 pub struct MobileVirtualRadio {
     events: mpsc::Sender<HostEvent>,
-    /// Host events dropped because the device fell [`lan::HOST_EVENT_DEPTH`]
-    /// behind. Bytes lost this way cost the frames they were part of,
-    /// which the host's own retries cover.
-    dropped: AtomicU64,
     /// Dropped to stop the device.
     stop: Mutex<Option<oneshot::Sender<()>>>,
 }
@@ -189,10 +185,13 @@ impl MobileVirtualRadio {
 
 impl MobileVirtualRadio {
     /// Hand the device a host event without waiting: these are called on
-    /// the platform's threads, which may be the one a sink reports on.
+    /// the platform's threads, which may be the one a sink reports on. An
+    /// event dropped because the device fell [`lan::HOST_EVENT_DEPTH`]
+    /// behind costs what it carried; the host's own retries cover lost
+    /// bytes.
     fn send(&self, event: HostEvent) {
-        if let Err(mpsc::error::TrySendError::Full(_)) = self.events.try_send(event) {
-            self.dropped.fetch_add(1, Ordering::Relaxed);
+        if let Err(mpsc::error::TrySendError::Full(event)) = self.events.try_send(event) {
+            log::warn!(event = event.kind(); "the virtual radio fell behind and dropped a host event");
         }
     }
 
@@ -210,73 +209,62 @@ impl MobileVirtualRadio {
 
         let (events, host_events) = mpsc::channel(lan::HOST_EVENT_DEPTH);
         let socket_events = events.clone();
-        let (stop, stopped) = oneshot::channel::<()>();
-        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
-        std::thread::Builder::new()
-            .name("umsh-virtual-radio".to_owned())
-            .spawn(move || {
-                let runtime = match tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                {
-                    Ok(runtime) => runtime,
-                    Err(_) => {
-                        let _ = ready_tx.send(Err(MobileVirtualRadioError::WorkerUnavailable));
-                        return;
-                    }
-                };
-                // The socket binds to this runtime's reactor, so it is
-                // made here rather than by the caller.
-                let local = match &socket {
-                    Some(path) => match runtime.block_on(async { lan::bind_local_socket(path) }) {
-                        Ok(local) => Some(local),
-                        Err(_) => {
-                            let _ = ready_tx.send(Err(MobileVirtualRadioError::SocketUnavailable));
-                            return;
-                        }
-                    },
-                    None => None,
-                };
-                let mut device = SoftDevice::new(lan::session_config(DEV_VERSION), platform);
-                if enable_phy && !device.session().settings().enabled {
-                    let _ = device.session_mut().toggle_radio(&mut |_| {});
-                }
-                let _ = ready_tx.send(Ok(()));
-                runtime.block_on(async move {
-                    // Boxed so the session lives on the heap, not this
-                    // thread's stack.
-                    let running = Box::pin(lan::run(
-                        device,
-                        LanConfig::lan(),
-                        host_events,
-                        move |notice| listener.on_queued(notice.into()),
-                    ));
-                    let serving = async move {
-                        if let Some(local) = local {
-                            lan::serve(local, socket_events).await;
-                        }
-                        std::future::pending::<()>().await
-                    };
-                    tokio::select! {
-                        () = running => {}
-                        () = serving => {}
-                        _ = stopped => {}
-                    }
+        let stop = driven::spawn("umsh-virtual-radio", move || {
+            // The socket binds to the worker's reactor, so it is made there
+            // rather than by the caller.
+            let local = socket
+                .as_deref()
+                .map(lan::bind_local_socket)
+                .transpose()
+                .map_err(|_| MobileVirtualRadioError::SocketUnavailable)?;
+            let held = Held {
+                socket,
+                _lock: lock,
+            };
+            let mut device = SoftDevice::new(lan::session_config(DEV_VERSION), platform);
+            if enable_phy && !device.session().settings().enabled {
+                let _ = device.session_mut().toggle_radio(&mut |_| {});
+            }
+            Ok(async move {
+                let _held = held;
+                let running = lan::run(device, LanConfig::lan(), host_events, move |notice| {
+                    listener.on_queued(notice.into())
                 });
-                if let Some(path) = socket {
-                    let _ = std::fs::remove_file(path);
+                let serving = async move {
+                    if let Some(local) = local {
+                        lan::serve(local, socket_events).await;
+                    }
+                    std::future::pending::<()>().await
+                };
+                tokio::select! {
+                    () = running => {}
+                    () = serving => {}
                 }
-                drop(lock);
             })
-            .map_err(|_| MobileVirtualRadioError::WorkerUnavailable)?;
-        ready_rx
-            .recv()
-            .map_err(|_| MobileVirtualRadioError::WorkerUnavailable)??;
+        })
+        .map_err(|error| match error {
+            SpawnError::Worker => MobileVirtualRadioError::WorkerUnavailable,
+            SpawnError::Start(error) => error,
+        })?;
         Ok(Arc::new(Self {
             events,
-            dropped: AtomicU64::new(0),
             stop: Mutex::new(Some(stop)),
         }))
+    }
+}
+
+/// What a running virtual radio holds until it stops: its state, and the
+/// socket it serves on, which goes with it.
+struct Held {
+    socket: Option<PathBuf>,
+    _lock: StateLock,
+}
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        if let Some(path) = &self.socket {
+            let _ = std::fs::remove_file(path);
+        }
     }
 }
 
@@ -331,7 +319,8 @@ mod tests {
         let encoded_len = hdlc::encode_frame(&request[..len], &mut encoded).unwrap();
         radio.receive(encoded[..encoded_len].to_vec());
 
-        let mut decoder = hdlc::Decoder::<512>::new();
+        // The largest frame and its two-octet FCS.
+        let mut decoder = hdlc::Decoder::<{ umsh_ulcp::gatt::MAX_FRAME + 2 }>::new();
         let mut frames = Vec::new();
         while frames.is_empty() {
             let bytes = wire

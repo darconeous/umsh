@@ -14,8 +14,11 @@
 //! same IDs. Always compiled; whether to offer staging is the platform's
 //! decision.
 
+mod air;
+
 use std::sync::Arc;
 
+pub use air::{MobileStagingAir, MobileStagingAirError};
 use umsh_core::ChannelKey;
 use umsh_crypto::{
     Sha256Provider,

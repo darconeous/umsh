@@ -58,7 +58,7 @@ pub use regions::{
     MobileRegionProposalRecord, MobileRegionRecord,
 };
 pub use secret_vault::{SecretVault, SecretVaultError};
-pub use staging::{MobileStagingError, seed_staging};
+pub use staging::{MobileStagingAir, MobileStagingAirError, MobileStagingError, seed_staging};
 pub use store::{
     MobileAppStore, MobileApplicationRecords, MobileChatChangesRecord,
     MobileChatNotificationRecord, MobilePeerUpsertRecord, MobileStagedChatMessageRecord,

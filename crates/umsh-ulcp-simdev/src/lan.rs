@@ -19,7 +19,7 @@
 //! anything else that carries HDLC-Lite.
 
 use std::io;
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::net::{Ipv4Addr, SocketAddrV4};
 use std::path::Path;
 use std::time::Duration;
 
@@ -33,8 +33,9 @@ use umsh_lan_bearer::socket::{LanConfig, LanSocket};
 use umsh_lan_bearer::{Datagram, MAX_FRAME};
 use umsh_ulcp::lan::State;
 use umsh_ulcp::profiles;
-use umsh_ulcp_device::QueuedNotice;
+use umsh_ulcp_device::{QueuedNotice, TxOutcome};
 
+use crate::driven::{self, Heard, Medium};
 use crate::soft::{SoftDevice, SoftPlatform};
 use crate::{DutyLedger, RadioRxInfo, RadioSettings, SessionConfig};
 
@@ -105,40 +106,45 @@ pub fn session_config(dev_version: &'static str) -> SessionConfig {
     }
 }
 
-/// Where an attached host's bytes go: one HDLC-Lite frame per call.
-pub type WireSink = Box<dyn FnMut(Vec<u8>) + Send>;
-
-/// What a host does on its side of the link.
-pub enum HostEvent {
-    /// A link came up, taking the device's replies at its sink. A host
-    /// that attaches while another is attached replaces it: the earlier
-    /// sink is dropped and hears nothing more, not even what was owed to
-    /// its session.
-    Attach(WireSink),
-    /// Bytes from the host, in HDLC-Lite.
-    Bytes(Vec<u8>),
-    /// The link went down.
-    Detach,
-}
+pub use crate::driven::{HOST_EVENT_DEPTH, HostEvent, WireSink};
 
 /// How long to wait before trying the group again when it could not be
 /// joined, as when the host has no network yet.
 const REJOIN_DELAY: Duration = Duration::from_secs(2);
 
-/// The device's membership in its group.
-#[derive(Default)]
-struct Membership {
+/// The LAN bearer's multicast group as a device's medium: the group is
+/// the device's own `PROP_LAN_BEARER_GROUP`, joined while its PHY is on,
+/// on the interface and with the loopback `base` names.
+///
+/// A send that fails, or finds no group, is a frame lost on the medium,
+/// which the protocol above already tolerates; the device is told it was
+/// sent. What arrives is unmeasured, since nothing here measured it.
+pub struct LanGroup {
+    base: LanConfig,
     /// The group last tried, or `None` while the PHY is off.
     group: Option<SocketAddrV4>,
     socket: Option<LanSocket>,
     /// When to try `group` again, after it could not be joined.
     retry_at: Option<Instant>,
+    datagram: Box<[u8; MAX_FRAME + 1]>,
 }
 
-impl Membership {
+impl LanGroup {
+    pub fn new(base: LanConfig) -> Self {
+        Self {
+            base,
+            group: None,
+            socket: None,
+            retry_at: None,
+            datagram: Box::new([0; MAX_FRAME + 1]),
+        }
+    }
+}
+
+impl Medium for LanGroup {
     /// Join the group the device asks for, if it is not already joined,
     /// and report the outcome as the bearer's state.
-    fn follow<P: SoftPlatform>(&mut self, device: &mut SoftDevice<P>, base: LanConfig) {
+    fn follow<P: SoftPlatform>(&mut self, device: &mut SoftDevice<P>) {
         let session = device.session();
         let wanted = session.settings().enabled.then(|| {
             let group = session.lan_bearer_config().group();
@@ -153,7 +159,7 @@ impl Membership {
         self.retry_at = None;
         let state = match wanted {
             None => State::Disabled,
-            Some(group) => match LanSocket::bind(LanConfig { group, ..base }) {
+            Some(group) => match LanSocket::bind(LanConfig { group, ..self.base }) {
                 Ok(socket) => {
                     self.socket = Some(socket);
                     State::Active
@@ -167,94 +173,44 @@ impl Membership {
         device.set_lan_bearer_state(state);
     }
 
-    async fn recv(&self, buf: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
-        match &self.socket {
-            Some(socket) => socket.recv(buf).await,
-            None => std::future::pending().await,
+    async fn transmit(&mut self, frame: &[u8]) -> TxOutcome {
+        if let Some(socket) = &self.socket {
+            let _ = socket.send(frame).await;
         }
+        TxOutcome::Sent
+    }
+
+    async fn hear(&mut self) -> Option<Heard> {
+        let socket = match (&self.socket, self.retry_at) {
+            (Some(socket), _) => socket,
+            (None, Some(at)) => {
+                tokio::time::sleep_until(at).await;
+                // Due: the next `follow` tries the group again.
+                self.retry_at = None;
+                return None;
+            }
+            (None, None) => std::future::pending().await,
+        };
+        let (len, _) = socket.recv(&mut self.datagram[..]).await.ok()?;
+        let frame = &self.datagram[..len];
+        (umsh_lan_bearer::classify(frame) == Datagram::Umsh).then(|| Heard {
+            frame: frame.to_vec(),
+            info: RadioRxInfo::default(),
+        })
     }
 }
 
-/// Host events waiting for the device: a host that writes faster than
-/// the device reads waits for room.
-pub const HOST_EVENT_DEPTH: usize = 64;
-
-/// Run `device` until the sender of `host` is dropped, joining its group
-/// on the interface and with the loopback `base` names, and telling
-/// `queued` of each frame queued while no host is attached.
-///
-/// The device starts detached; a [`HostEvent::Attach`] attaches it.
-/// Bytes that arrive while detached belong to no session and are
-/// dropped.
+/// Run `device` on its LAN group until the sender of `host` is dropped,
+/// joining the group on the interface and with the loopback `base` names,
+/// and telling `queued` of each frame queued while no host is attached.
+/// See [`driven::run`].
 pub async fn run<P: SoftPlatform>(
-    mut device: SoftDevice<P>,
+    device: SoftDevice<P>,
     base: LanConfig,
-    mut host: mpsc::Receiver<HostEvent>,
-    mut queued: impl FnMut(QueuedNotice),
+    host: mpsc::Receiver<HostEvent>,
+    queued: impl FnMut(QueuedNotice),
 ) {
-    let started = Instant::now();
-    let now_ms = || started.elapsed().as_millis() as u64;
-    let mut sink: Option<WireSink> = None;
-    let mut membership = Membership::default();
-    let mut datagram = [0u8; MAX_FRAME + 1];
-    loop {
-        // A host's write may have moved the group or switched the PHY.
-        membership.follow(&mut device, base);
-        // Whatever the device has to say goes out first, each reply in
-        // turn.
-        while let Some(wire) = device.take_outbound() {
-            if let Some(sink) = &mut sink {
-                sink(wire);
-            }
-        }
-        for frame in device.take_transmitted() {
-            // A send that fails, or finds no group, is a frame lost on
-            // the medium, which the protocol above already tolerates.
-            if let Some(socket) = &membership.socket {
-                let _ = socket.send(&frame).await;
-            }
-        }
-        tokio::select! {
-            event = host.recv() => match event {
-                None => break,
-                Some(HostEvent::Attach(next)) => {
-                    if sink.replace(next).is_some() {
-                        device.detach();
-                    }
-                    device.attach();
-                }
-                Some(HostEvent::Detach) => {
-                    if sink.take().is_some() {
-                        device.detach();
-                    }
-                }
-                // A garbled frame costs one frame: the decoder
-                // resynchronizes on the next flag.
-                Some(HostEvent::Bytes(bytes)) if sink.is_some() => {
-                    let _ = device.ingest(&bytes, now_ms());
-                }
-                Some(HostEvent::Bytes(_)) => {}
-            },
-            () = tokio::time::sleep_until(membership.retry_at.unwrap_or_else(Instant::now)),
-                if membership.retry_at.is_some() =>
-            {
-                membership.retry_at = None;
-            }
-            received = membership.recv(&mut datagram) => {
-                if let Ok((len, _)) = received
-                    && umsh_lan_bearer::classify(&datagram[..len]) == Datagram::Umsh
-                {
-                    device.inject_radio_rx(&datagram[..len], &RadioRxInfo::default(), now_ms());
-                    if let Some(notice) = device.session_mut().take_queued_notice() {
-                        queued(notice);
-                    }
-                }
-            }
-        }
-    }
-    if sink.is_some() {
-        device.detach();
-    }
+    driven::run(device, LanGroup::new(base), host, queued).await;
 }
 
 /// Make the local socket a host attaches through at `path`, replacing
