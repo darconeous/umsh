@@ -300,6 +300,9 @@ pub(crate) struct LocalNodeState {
     /// answers questions about them.
     peer_repeaters: PeerRepeaterTable,
     peer_repeaters_responder: PeerRepeatersResponder,
+    /// The one acknowledged Peer Repeaters page this node may have in
+    /// flight. See [`LocalNode::answer_peer_repeaters_request`].
+    peer_repeaters_page: Option<SendProgressTicket>,
     #[cfg(feature = "software-crypto")]
     pub(crate) pfs: PfsSessionManager,
     /// The session identity of a contact exchange in progress.
@@ -342,6 +345,7 @@ impl LocalNodeState {
             identity_responder: None,
             peer_repeaters: PeerRepeaterTable::new(),
             peer_repeaters_responder: PeerRepeatersResponder::Off,
+            peer_repeaters_page: None,
             #[cfg(feature = "software-crypto")]
             pfs: PfsSessionManager::new(),
             #[cfg(feature = "software-crypto")]
@@ -1022,7 +1026,7 @@ impl<M: MacBackend> LocalNode<M> {
             ..SendOptions::default()
         };
         let receipt = self
-            .send_response(to, channel, payload, &options)
+            .send_response(to, channel, payload, options)
             .await?
             .ok_or(NodeError::Untracked)?;
         Ok(self.register_non_ack_send(self.identity_id, receipt))
@@ -1040,23 +1044,29 @@ impl<M: MacBackend> LocalNode<M> {
     /// took care to hide. `channel` is `Some` only when the request was itself
     /// a blind unicast—take it from the received packet's
     /// [`channel`](crate::ReceivedPacketRef::channel).
+    ///
+    /// The send is always a [reply](SendOptions::reply): anyone can earn one
+    /// by asking, so its acknowledgment raises the asker's standing no
+    /// higher. `options` is taken by value so that marking it costs no
+    /// second copy held across the send.
     pub async fn send_response(
         &self,
         to: &PublicKey,
         channel: Option<ChannelKey>,
         payload: &[u8],
-        options: &SendOptions,
+        options: SendOptions,
     ) -> Result<Option<umsh_mac::SendReceipt>, crate::MacBackendError<M::SendError, M::CapacityError>>
     {
+        let options = options.as_reply();
         match channel {
             Some(channel) => {
                 self.mac
-                    .send_blind_unicast(self.identity_id, to, &channel, payload, options)
+                    .send_blind_unicast(self.identity_id, to, &channel, payload, &options)
                     .await
             }
             None => {
                 self.mac
-                    .send_unicast(self.identity_id, to, payload, options)
+                    .send_unicast(self.identity_id, to, payload, &options)
                     .await
             }
         }
@@ -1129,7 +1139,7 @@ impl<M: MacBackend> LocalNode<M> {
         // its place, so the unicast below has somewhere to go.
         let _ = self.mac.ensure_unproven_peer(&plan.to).await;
         let _ = self
-            .send_response(&plan.to, plan.channel, &plan.framed, &options)
+            .send_response(&plan.to, plan.channel, &plan.framed, options)
             .await;
     }
 
@@ -1311,12 +1321,15 @@ impl<M: MacBackend> LocalNode<M> {
     ///
     /// Evaluated here rather than in the synchronous receive dispatch because
     /// the answer needs the MAC's observations, which only an async borrow
-    /// reaches.
+    /// reaches. `request_hops` is how many radio links the request crossed
+    /// ([`ReceivedPacketRef::hop_count`](crate::ReceivedPacketRef::hop_count)),
+    /// when it says.
     pub(crate) async fn answer_peer_repeaters_request(
         &self,
         to: PublicKey,
         channel: Option<ChannelKey>,
         request: &[u8],
+        request_hops: Option<u8>,
     ) {
         if !self.answers_peer_repeaters_request(&to) {
             return;
@@ -1387,9 +1400,43 @@ impl<M: MacBackend> LocalNode<M> {
             return;
         };
         let _ = self.mac.ensure_unproven_peer(&to).await;
-        let _ = self
-            .send_response(&to, channel, &framed[..len + 1], &SendOptions::default())
+        // Acknowledged, because the leg that fails is ours. The request
+        // arriving proves only the way here; the page goes back along the
+        // route this node holds to the requester, and without an ack a dead
+        // route loses every page silently and is never repaired. With one,
+        // the loss fails the route and earns the page a Route Retry.
+        //
+        // One at a time, though. An unanswered page holds a pending-ack slot
+        // through its whole ladder and its Route Retry, the slots are few on
+        // a repeater, and anyone can ask. While one is in flight the next
+        // page goes unacknowledged, as a plain answer.
+        let acknowledged = !self
+            .state
+            .borrow()
+            .peer_repeaters_page
+            .as_ref()
+            .is_some_and(|ticket| !ticket.is_finished());
+        // The acknowledged page may flood back as far as the request came,
+        // and a hop more, so that its Route Retry reaches an asker farther
+        // out than the usual budget. A learned route still narrows the first
+        // attempt. Only that one page: the distance is read off fields any
+        // sender can forge, and the one in flight is all a forger can widen.
+        // A plain answer has no Route Retry to carry and keeps the usual
+        // budget.
+        let options = SendOptions::default().with_ack_requested(acknowledged);
+        let options = match (acknowledged, options.flood_hops, request_hops) {
+            (true, Some(usual), Some(hops)) if hops > usual => {
+                options.with_flood_hops(hops.min(umsh_mac::MAX_FLOOD_HOPS))
+            }
+            _ => options,
+        };
+        let sent = self
+            .send_response(&to, channel, &framed[..len + 1], options)
             .await;
+        if acknowledged && let Ok(receipt) = sent {
+            let ticket = self.register_ack_send(self.identity_id, receipt, true);
+            self.state.borrow_mut().peer_repeaters_page = Some(ticket);
+        }
     }
 
     fn add_transmitted_handler<F>(&self, handler: F) -> SubscriptionHandle
@@ -2249,6 +2296,10 @@ impl<M: MacBackend> LocalNode<M> {
         command: &OwnedMacCommand,
         options: &SendOptions,
     ) -> Result<Option<PfsLifecycle>, NodeError<M>> {
+        // Whatever is sent from here answers the peer's command, so it is a
+        // reply: acknowledging the End an unsolicited response earns must
+        // not raise a stranger's standing.
+        let options = &options.clone().as_reply();
         match *command {
             OwnedMacCommand::PfsSessionRequest {
                 ephemeral_key,

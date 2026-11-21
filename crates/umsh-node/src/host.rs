@@ -366,8 +366,8 @@ impl<M: MacBackend> Host<M> {
 
         let peer_repeater_requests: Vec<PeerRepeaterRequest<M>> =
             pending_peer_repeaters.borrow_mut().drain(..).collect();
-        for (node, from, channel, request) in peer_repeater_requests {
-            node.answer_peer_repeaters_request(from, channel, &request)
+        for (node, from, channel, request, hops) in peer_repeater_requests {
+            node.answer_peer_repeaters_request(from, channel, &request, hops)
                 .await;
         }
 
@@ -643,12 +643,13 @@ type Deferred<T> = Rc<RefCell<Vec<T>>>;
 /// arrived, and the command.
 type PfsCommand = (LocalIdentityId, PublicKey, PfsCarriage, OwnedMacCommand);
 /// A Peer Repeaters Request to answer: the node asked, who asked, the channel
-/// it arrived on, and the request's body.
+/// it arrived on, the request's body, and how many radio links it crossed.
 type PeerRepeaterRequest<M> = (
     LocalNode<M>,
     umsh_core::PublicKey,
     Option<umsh_core::ChannelKey>,
     Vec<u8>,
+    Option<u8>,
 );
 
 #[allow(
@@ -741,6 +742,7 @@ fn dispatch_payload_callbacks<M: MacBackend>(
                 from,
                 reply_channel,
                 Vec::from(options),
+                packet.hop_count(),
             ));
         }
         let owned = OwnedMacCommand::from(command);

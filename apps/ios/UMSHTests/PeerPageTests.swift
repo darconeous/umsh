@@ -104,7 +104,8 @@ struct PingPathTests {
             traceSignal: trace,
             rssiDBm: rssi,
             signalToNoiseCentibels: snr,
-            linkQuality: nil
+            linkQuality: nil,
+            viaRouteRetry: false
         )
     }
 

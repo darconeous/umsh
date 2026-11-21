@@ -420,7 +420,7 @@ async fn respond<CS: CounterStore + 'static>(
         ..SendOptions::default()
     };
     if node
-        .send_response(&PublicKey(*to), channel, &wire, &options)
+        .send_response(&PublicKey(*to), channel, &wire, options)
         .await
         .is_err()
     {

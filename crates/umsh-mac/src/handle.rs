@@ -545,6 +545,15 @@ impl<
         self.mac.borrow_mut().await.rng_mut().fill_bytes(dest);
     }
 
+    /// How long to wait for an acknowledged answer to a question crossing
+    /// `forwards` repeaters. See [`Mac::acknowledged_answer_wait_ms`].
+    pub async fn acknowledged_answer_wait_ms(&self, forwards: u8) -> u64 {
+        self.mac
+            .borrow()
+            .await
+            .acknowledged_answer_wait_ms(forwards)
+    }
+
     /// Returns the current coordinator clock time in milliseconds.
     pub async fn now_ms(&self) -> u64 {
         self.mac.borrow().await.clock().now_ms()

@@ -200,6 +200,10 @@ pub struct MobileMeshPingEventRecord {
     pub rssi_dbm: Option<i16>,
     pub snr_centibels: Option<i16>,
     pub lqi: Option<u8>,
+    /// The reply answered the ping's Route Retry, not its first send: the
+    /// first attempt was lost on the way out or its acknowledgment on the
+    /// way back.
+    pub via_route_retry: bool,
 }
 
 /// The record of a ping answered as `metadata` says. The record has no way
@@ -228,6 +232,7 @@ fn ping_reply_record(operation_id: u64, metadata: &PongMetadata) -> MobileMeshPi
         rssi_dbm: metadata.rssi_dbm,
         snr_centibels: metadata.snr_centibels,
         lqi: metadata.lqi,
+        via_route_retry: metadata.via_route_retry,
     }
 }
 
@@ -4327,6 +4332,7 @@ async fn run_worker(
                 rssi_dbm: None,
                 snr_centibels: None,
                 lqi: None,
+                via_route_retry: false,
             });
         }
     });
@@ -4788,8 +4794,18 @@ async fn run_worker(
                                     break nonce;
                                 }
                             };
+                            // Traced either way: the page comes back along
+                            // whatever route the repeater holds to this
+                            // phone, and a trace is what offers it a better
+                            // one—or a replacement for one a Route Retry has
+                            // left in doubt. Unrouted, it reaches as far as
+                            // anything else asked for.
                             let options = if source_route.is_empty() {
-                                Ok(SendOptions::default())
+                                Ok(with_flood_reach(
+                                    SendOptions::default(),
+                                    flood_hops.default_hops,
+                                )
+                                .with_trace())
                             } else {
                                 explicit_route_options(SendOptions::default(), &source_route, 0)
                             };
@@ -4807,9 +4823,19 @@ async fn run_worker(
                                 let _ = response.send(Err(MobileMeshError::SendFailed));
                                 continue;
                             }
-                            let deadline_ms = handle.now_ms().await
-                                + u64::try_from(PEER_REPEATERS_PAGE_TIMEOUT.as_millis())
-                                    .unwrap_or(u64::MAX);
+                            let reach = if source_route.is_empty() {
+                                flood_hops.default_hops
+                            } else {
+                                u8::try_from(source_route.len()).unwrap_or(u8::MAX)
+                            };
+                            let wait_ms = handle
+                                .acknowledged_answer_wait_ms(peer_repeaters_page_forwards(reach))
+                                .await
+                                .max(
+                                    u64::try_from(PEER_REPEATERS_PAGE_MIN_WAIT.as_millis())
+                                        .unwrap_or(u64::MAX),
+                                );
+                            let deadline_ms = handle.now_ms().await + wait_ms;
                             peer_repeater_pages.borrow_mut().insert(
                                 nonce,
                                 PendingPeerRepeatersPage {
@@ -5495,12 +5521,24 @@ fn channel_identity_request_options(route: Option<&MemberRoute>, flood_hops: u8)
     }
 }
 
-/// How long one page of a Peer Repeaters listing is waited for.
+/// The least time one page of a Peer Repeaters listing is waited for.
 ///
 /// A repeater builds its answer from tables it already holds, so the wait is
 /// the mesh crossing and the responder's own channel-access window, not any
 /// work on its part.
-const PEER_REPEATERS_PAGE_TIMEOUT: Duration = Duration::from_secs(30);
+const PEER_REPEATERS_PAGE_MIN_WAIT: Duration = Duration::from_secs(30);
+
+/// Repeaters a page may cross back to an ask that reached `reach`
+/// repeaters out.
+///
+/// The repeater floods its page, and its Route Retry, as far as the ask
+/// came and a hop more, and never less than a send's usual budget; the
+/// wait for the page has to cover that distance.
+fn peer_repeaters_page_forwards(reach: u8) -> u8 {
+    reach
+        .saturating_add(1)
+        .max(SendOptions::default().flood_hops.unwrap_or(0))
+}
 
 /// One Peer Repeaters page asked for and not yet answered.
 struct PendingPeerRepeatersPage {
@@ -5853,6 +5891,7 @@ fn emit_ping_outcome(
         rssi_dbm: None,
         snr_centibels: None,
         lqi: None,
+        via_route_retry: false,
     });
 }
 
@@ -5901,6 +5940,25 @@ mod tests {
             assert_eq!(partial.hop_count, hop_count);
             assert_eq!(partial.rssi_dbm, Some(-90));
         }
+    }
+
+    /// A reply that answered only the Route Retry says so: the first
+    /// attempt failed on one leg or the other.
+    #[test]
+    fn a_ping_answered_by_its_route_retry_says_so() {
+        let metadata = |via_route_retry| PongMetadata {
+            round_trip_ms: 900,
+            hop_count: Some(1),
+            route_hints: Vec::new(),
+            trace_signal: Vec::new(),
+            trace_truncated: false,
+            rssi_dbm: None,
+            snr_centibels: None,
+            lqi: None,
+            via_route_retry,
+        };
+        assert!(ping_reply_record(7, &metadata(true)).via_route_retry);
+        assert!(!ping_reply_record(7, &metadata(false)).via_route_retry);
     }
 
     fn identity(seed: u8) -> Arc<MobileIdentity> {
@@ -6852,7 +6910,7 @@ mod tests {
         let bob_identity = identity(53);
         let alice_store =
             MobileCounterStore::new(directory.path().join("alice").display().to_string()).unwrap();
-        // Virtual time collapses the 30-second page wait once the worker is
+        // Virtual time collapses the page wait once the worker is
         // idle, which it is as soon as the frame below is completed.
         let alice = MobileMeshSession::new_with_virtual_time(alice_identity, alice_store)
             .await
@@ -6874,6 +6932,20 @@ mod tests {
             result.expect("the page deadline never fired"),
             Err(MobileMeshError::NoAnswer)
         );
+    }
+
+    /// The wait for a page covers the distance the repeater floods it back
+    /// over: as far as the ask came and a hop more, and never less than a
+    /// send's usual budget.
+    #[test]
+    fn the_page_wait_covers_how_far_the_page_floods_back() {
+        let usual = SendOptions::default().flood_hops.unwrap();
+        assert_eq!(peer_repeaters_page_forwards(0), usual);
+        assert_eq!(
+            peer_repeaters_page_forwards(DEFAULT_FLOOD_HOPS),
+            DEFAULT_FLOOD_HOPS + 1
+        );
+        assert_eq!(peer_repeaters_page_forwards(u8::MAX), u8::MAX);
     }
 
     /// The page record is the wire page, decoded: every entry option the

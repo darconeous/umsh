@@ -745,6 +745,9 @@ struct PeerPingReply: Equatable, Sendable {
     let rssiDBm: Int16?
     let signalToNoiseCentibels: Int16?
     let linkQuality: UInt8?
+    /// The reply answered the ping's Route Retry: the first attempt, or
+    /// its acknowledgment, was lost along the route it took.
+    let viaRouteRetry: Bool
 }
 
 /// What this phone's MAC has learned about how to reach a peer. It is the

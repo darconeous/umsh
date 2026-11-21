@@ -5279,7 +5279,7 @@ public protocol MobileVirtualRadioProtocol: AnyObject, Sendable {
 
     /**
      * A host in this process attached, taking replies at `sink`: the
-     * device starts a session, announcing it with `CMD_SESSION_RESET`.
+     * device starts a session, which the attach itself does not announce.
      */
     func attach(sink: MobileWireSink)
 
@@ -5397,7 +5397,7 @@ public static func start(stateDir: String, enablePhy: Bool, listener: MobileVirt
 
     /**
      * A host in this process attached, taking replies at `sink`: the
-     * device starts a session, announcing it with `CMD_SESSION_RESET`.
+     * device starts a session, which the attach itself does not announce.
      */
 open func attach(sink: MobileWireSink)  {try! rustCall() {
         uniffiCallStatus in
@@ -8595,6 +8595,12 @@ public struct MobileMeshPingEventRecord: Equatable, Hashable {
     public var rssiDbm: Int16?
     public var snrCentibels: Int16?
     public var lqi: UInt8?
+    /**
+     * The reply answered the ping's Route Retry, not its first send: the
+     * first attempt was lost on the way out or its acknowledgment on the
+     * way back.
+     */
+    public var viaRouteRetry: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -8618,7 +8624,12 @@ public struct MobileMeshPingEventRecord: Equatable, Hashable {
          */traceSignal: [MobileTraceSignalRecord],
         /**
          * Signal measurements for the final radio hop into this device.
-         */rssiDbm: Int16?, snrCentibels: Int16?, lqi: UInt8?) {
+         */rssiDbm: Int16?, snrCentibels: Int16?, lqi: UInt8?,
+        /**
+         * The reply answered the ping's Route Retry, not its first send: the
+         * first attempt was lost on the way out or its acknowledgment on the
+         * way back.
+         */viaRouteRetry: Bool) {
         self.operationId = operationId
         self.outcome = outcome
         self.roundTripMilliseconds = roundTripMilliseconds
@@ -8628,6 +8639,7 @@ public struct MobileMeshPingEventRecord: Equatable, Hashable {
         self.rssiDbm = rssiDbm
         self.snrCentibels = snrCentibels
         self.lqi = lqi
+        self.viaRouteRetry = viaRouteRetry
     }
 
 
@@ -8654,7 +8666,8 @@ public struct FfiConverterTypeMobileMeshPingEventRecord: FfiConverterRustBuffer 
                 traceSignal: FfiConverterSequenceTypeMobileTraceSignalRecord.read(from: &buf),
                 rssiDbm: FfiConverterOptionInt16.read(from: &buf),
                 snrCentibels: FfiConverterOptionInt16.read(from: &buf),
-                lqi: FfiConverterOptionUInt8.read(from: &buf)
+                lqi: FfiConverterOptionUInt8.read(from: &buf),
+                viaRouteRetry: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -8668,6 +8681,7 @@ public struct FfiConverterTypeMobileMeshPingEventRecord: FfiConverterRustBuffer 
         FfiConverterOptionInt16.write(value.rssiDbm, into: &buf)
         FfiConverterOptionInt16.write(value.snrCentibels, into: &buf)
         FfiConverterOptionUInt8.write(value.lqi, into: &buf)
+        FfiConverterBool.write(value.viaRouteRetry, into: &buf)
     }
 }
 
@@ -22837,7 +22851,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_transmit_raw() != 28787) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobilevirtualradio_attach() != 60687) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobilevirtualradio_attach() != 18359) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilevirtualradio_detach() != 64719) {

@@ -593,6 +593,9 @@ struct RadioPingReply: Equatable, Sendable {
     let rssiDBm: Int16?
     let signalToNoiseCentibels: Int16?
     let linkQuality: UInt8?
+    /// The reply answered the ping's Route Retry: the first attempt, or
+    /// its acknowledgment, was lost along the route it took.
+    let viaRouteRetry: Bool
 }
 
 /// How one hop of a path was heard. Both readings are absent when the hop

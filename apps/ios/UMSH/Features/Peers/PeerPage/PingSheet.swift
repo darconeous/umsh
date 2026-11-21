@@ -205,9 +205,8 @@ struct PingSheet: View {
             } else if let latest {
                 switch latest.result {
                 case let .reply(reply):
-                    Image(systemName: "checkmark.circle.fill")
+                    Self.replyMark(reply)
                         .font(.title)
-                        .foregroundStyle(.green)
                     Text(verbatim: Self.secondsText(Double(reply.roundTripMilliseconds) / 1_000))
                         .font(.largeTitle.bold().monospacedDigit())
                     Spacer()
@@ -251,10 +250,15 @@ struct PingSheet: View {
             switch result {
             case let .reply(reply):
                 let time = Self.secondsText(Double(reply.roundTripMilliseconds) / 1_000)
-                if let hops = RoutePresentation.replyHopsText(reply.hopCount) {
-                    Text("\(time) · \(hops)", comment: "An earlier ping: its round trip, then how many hops it took.")
-                } else {
-                    Text(verbatim: time)
+                HStack(spacing: 6) {
+                    if reply.viaRouteRetry {
+                        Self.replyMark(reply)
+                    }
+                    if let hops = RoutePresentation.replyHopsText(reply.hopCount) {
+                        Text("\(time) · \(hops)", comment: "An earlier ping: its round trip, then how many hops it took.")
+                    } else {
+                        Text(verbatim: time)
+                    }
                 }
             case .timedOut:
                 Text("No reply", comment: "Ping result: nothing came back.")
@@ -265,6 +269,21 @@ struct PingSheet: View {
                 Text(verbatim: reason)
                     .foregroundStyle(.secondary)
             }
+        }
+    }
+
+    /// A reply's mark: a check, or—when only the Route Retry was
+    /// answered—the retry arrows, since the first attempt failed one way or
+    /// the other.
+    @ViewBuilder
+    static func replyMark(_ reply: PeerPingReply) -> some View {
+        if reply.viaRouteRetry {
+            Image(systemName: "arrow.triangle.2.circlepath.circle.fill")
+                .foregroundStyle(.orange)
+                .accessibilityLabel(Text("Answered on retry", comment: "Accessibility: a ping's first attempt failed and its retry was answered."))
+        } else {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
         }
     }
 

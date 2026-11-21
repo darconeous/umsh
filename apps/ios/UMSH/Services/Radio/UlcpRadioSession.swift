@@ -2664,7 +2664,8 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
                                 },
                                 rssiDBm: event.rssiDbm,
                                 signalToNoiseCentibels: event.snrCentibels,
-                                linkQuality: event.lqi
+                                linkQuality: event.lqi,
+                                viaRouteRetry: event.viaRouteRetry
                             )
                         )
                     )

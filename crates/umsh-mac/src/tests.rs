@@ -3590,18 +3590,27 @@ fn pending_request_to(
     remote: &DummyIdentity,
     keys: &PairwiseKeys,
 ) -> (TestMac, LocalIdentityId, SendReceipt, [u8; 8]) {
+    pending_send_to(
+        remote,
+        keys,
+        &SendOptions::default().with_ack_requested(true).no_flood(),
+    )
+}
+
+/// An acknowledged send of `options` to `remote`, under `keys`, waiting on
+/// its acknowledgment.
+fn pending_send_to(
+    remote: &DummyIdentity,
+    keys: &PairwiseKeys,
+    options: &SendOptions,
+) -> (TestMac, LocalIdentityId, SendReceipt, [u8; 8]) {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let peer_id = mac.add_peer(*remote.public_key()).unwrap();
     mac.install_pairwise_keys(local_id, peer_id, keys.clone())
         .unwrap();
     let receipt = mac
-        .queue_unicast(
-            local_id,
-            remote.public_key(),
-            b"request",
-            &SendOptions::default().with_ack_requested(true).no_flood(),
-        )
+        .queue_unicast(local_id, remote.public_key(), b"request", options)
         .unwrap()
         .unwrap();
     let trailer = mac.ack_trailer_for_test(local_id, &receipt);
@@ -5691,6 +5700,56 @@ fn frame_verified_ack_completes_the_held_send() {
     );
 }
 
+/// A Frame Verified stands in for the send it vouches for, so its
+/// acknowledgment earns no more than the send's would: a reply's, nothing.
+#[test]
+fn frame_verified_for_a_reply_earns_no_standing() {
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let keys = PairwiseKeys {
+        k_enc: [1; 32],
+        k_mic: [2; 32],
+    };
+    let (mut mac, local_id, receipt, trailer) = pending_send_to(
+        &remote,
+        &keys,
+        &SendOptions::default()
+            .with_ack_requested(true)
+            .no_flood()
+            .as_reply(),
+    );
+    let _ = receive_verify_frame(
+        &mut mac,
+        local_id,
+        &remote,
+        &keys,
+        trailer[..4].try_into().unwrap(),
+        7,
+        40,
+    );
+    while block_on(mac.transmit_next(&mut |_, _| {}))
+        .unwrap()
+        .is_some()
+    {}
+    let answer_trailer = mac.ack_trailer_for_test(local_id, &receipt);
+
+    mac.radio_mut().queue_received_mac_ack(answer_trailer);
+    let mut acked = std::vec::Vec::new();
+    let _ = block_on(mac.receive_one(|_, event| {
+        if let MacEventRef::AckReceived { receipt, .. } = event {
+            acked.push(receipt);
+        }
+    }))
+    .unwrap();
+    assert_eq!(acked, [receipt]);
+    assert!(
+        !mac.peer_registry()
+            .lookup_by_key(remote.public_key())
+            .unwrap()
+            .1
+            .acknowledged
+    );
+}
+
 #[test]
 fn unanswered_frame_verified_fails_the_held_send() {
     let remote = DummyIdentity::new([0xAB; 32]);
@@ -6236,6 +6295,68 @@ fn stranger_registrations_are_held_to_a_quota() {
             .lookup_by_key(late.public_key())
             .is_some()
     );
+}
+
+/// Each repeater on the way adds the same to the wait for an acknowledged
+/// answer: one crossing for the question, two for the answer and its
+/// acknowledgment, one for the Route Retry.
+#[test]
+fn an_acknowledged_answer_is_waited_for_by_the_distance() {
+    let mac = make_mac();
+    let waits: std::vec::Vec<u64> = (1..=4)
+        .map(|forwards| mac.acknowledged_answer_wait_ms(forwards))
+        .collect();
+    let step = waits[1] - waits[0];
+    assert!(step > 0);
+    assert!(waits.windows(2).all(|pair| pair[1] - pair[0] == step));
+    assert_eq!(
+        mac.acknowledged_answer_wait_ms(0),
+        waits[0],
+        "never less than one"
+    );
+}
+
+/// Acknowledging a reply earns no standing: anyone can get one by asking,
+/// so the asker stays as displaceable as any other stranger.
+#[test]
+fn acknowledging_a_reply_earns_no_standing() {
+    let mut mac = make_small_peer_mac::<1>();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    mac.set_auto_register_full_key_peers(true);
+    let asker = DummyIdentity::new([0xAB; 32]);
+    let asker_key = *asker.public_key();
+    assert!(receive_full_key_unicast(&mut mac, local_id, &asker, None));
+
+    let receipt = mac
+        .queue_unicast(
+            local_id,
+            &asker_key,
+            b"reply",
+            &SendOptions::default()
+                .with_ack_requested(true)
+                .no_flood()
+                .as_reply(),
+        )
+        .unwrap()
+        .unwrap();
+    let ack_v = mac
+        .identity(local_id)
+        .unwrap()
+        .pending_ack(&receipt)
+        .unwrap()
+        .ack_v;
+    assert!(mac.complete_ack(&asker_key, &ack_v).is_some());
+    assert!(
+        !mac.peer_registry()
+            .lookup_by_key(&asker_key)
+            .unwrap()
+            .1
+            .acknowledged
+    );
+
+    let second = DummyIdentity::new([0xBC; 32]);
+    assert!(receive_full_key_unicast(&mut mac, local_id, &second, None));
+    assert!(mac.peer_registry().lookup_by_key(&asker_key).is_none());
 }
 
 /// A peer that has acknowledged a send of ours is never displaced by a

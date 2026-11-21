@@ -552,7 +552,8 @@ actor FakeRadioConnection: RadioConnection {
                 },
                 rssiDBm: -72,
                 signalToNoiseCentibels: 650,
-                linkQuality: 180
+                linkQuality: 180,
+                viaRouteRetry: false
             )
         )
     }

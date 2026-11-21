@@ -5345,7 +5345,9 @@ impl<
         }
         self.peer_registry
             .confirm_route(peer, pending.cached_route_revision, now_ms);
-        if let Some((peer_id, _)) = self.peer_registry.lookup_by_key(peer) {
+        if !pending.reply
+            && let Some((peer_id, _)) = self.peer_registry.lookup_by_key(peer)
+        {
             self.peer_registry.mark_acknowledged(peer_id);
         }
         if pending.held_route_missed {
@@ -6090,6 +6092,7 @@ impl<
         };
         pending.cached_route_revision = cached_route_revision;
         pending.reachability_test = options.reachability_test;
+        pending.reply = options.reply;
         slot.try_insert_pending_ack(receipt, pending)
             .map_err(|_| SendError::PendingAckFull)?;
         Ok(receipt)
@@ -7002,6 +7005,9 @@ impl<
             return;
         };
         pending.adopt_on_ack = adopt_on_ack;
+        // The answer stands in for the send, so its acknowledgment earns what
+        // the send's would have: nothing, for a reply.
+        pending.reply = entry.reply;
         *entry = pending;
         self.tx_queue.remove_all_matching(|queued| {
             queued.receipt == Some(vouched) && queued.identity_id == Some(identity_id)
@@ -9596,21 +9602,51 @@ impl<
     /// single frame time, which is what this allowed before, only ever
     /// sufficed for a one-hop return.
     fn forwarded_ack_timeout_ms(&self, forwards: u8) -> u64 {
-        let t_frame_ms = u64::from(self.radio.t_frame_ms());
-        let per_hop_ms = self
-            .forward_confirm_timeout_ms()
-            .saturating_sub(t_frame_ms)
-            .max(t_frame_ms);
+        self.first_hop_ladder_ms().saturating_add(
+            self.forward_crossing_ms()
+                .saturating_mul(2)
+                .saturating_mul(u64::from(forwards.max(1))),
+        )
+    }
+
+    /// The forwarding-confirmation ladder a send climbs on its first hop
+    /// before it is given up on: every retry, each waited out.
+    fn first_hop_ladder_ms(&self) -> u64 {
         Self::repeat_confirm_timeout_ms(
             self.forward_confirm_timeout_ms(),
             self.forward_retry_period_ms(),
             MAX_FORWARD_RETRIES,
         )
-        .saturating_add(
-            per_hop_ms
-                .saturating_mul(2)
-                .saturating_mul(u64::from(forwards.max(1))),
-        )
+    }
+
+    /// What one repeater's forward of a frame costs: the frame time, the
+    /// forwarder's contention window, and the ACK guard.
+    fn forward_crossing_ms(&self) -> u64 {
+        let t_frame_ms = u64::from(self.radio.t_frame_ms());
+        self.forward_confirm_timeout_ms()
+            .saturating_sub(t_frame_ms)
+            .max(t_frame_ms)
+    }
+
+    /// How long a node that asks a question waits for the answer, when the
+    /// question crosses `forwards` repeaters and the answer is sent asking
+    /// for an acknowledgment.
+    ///
+    /// Allows for the question arriving only on its last forwarding retry,
+    /// the answer being lost, the answerer waiting out its acknowledgment,
+    /// and its Route Retry crossing back after its backoff. An estimate, not
+    /// a bound: time the answer spends queued at the answerer is not
+    /// counted, and this node's radio and repeater settings stand in for the
+    /// answerer's.
+    pub fn acknowledged_answer_wait_ms(&self, forwards: u8) -> u64 {
+        let crossing_ms = self
+            .forward_crossing_ms()
+            .saturating_mul(u64::from(forwards.max(1)));
+        let question_ms = self.first_hop_ladder_ms().saturating_add(crossing_ms);
+        let retry_ms = u64::from(self.forward_retry_backoff_cap_ms()).saturating_add(crossing_ms);
+        question_ms
+            .saturating_add(self.forwarded_ack_timeout_ms(forwards))
+            .saturating_add(retry_ms)
     }
 
     /// Repeater forwards the sender allowed this frame, and so the distance

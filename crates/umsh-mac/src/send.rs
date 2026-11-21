@@ -131,6 +131,11 @@ pub struct SendOptions {
     /// Route Retry even when the peer has not been heard recently, which
     /// is otherwise what earns one.
     pub reachability_test: bool,
+    /// Whether this send answers a request the destination made. Its
+    /// acknowledgment confirms delivery and the route as for any send, but
+    /// raises the peer's standing no higher: anyone can earn a reply by
+    /// asking, so acknowledging one shows nothing a stranger could not.
+    pub reply: bool,
     /// Transmit power in dBm for this send and every retransmission of
     /// it, ahead of the sending identity's; `None` leaves it to the
     /// identity.
@@ -155,6 +160,7 @@ impl Default for SendOptions {
             ack_mic: None,
             signed: false,
             reachability_test: false,
+            reply: false,
             power_dbm: None,
         }
     }
@@ -279,6 +285,13 @@ impl SendOptions {
     /// without one the test reports a reachable peer as unreachable.
     pub fn as_reachability_test(mut self) -> Self {
         self.reachability_test = true;
+        self
+    }
+
+    /// Mark the send as a [reply](Self::reply) to a request the
+    /// destination made.
+    pub fn as_reply(mut self) -> Self {
+        self.reply = true;
         self
     }
 
@@ -484,6 +497,9 @@ pub struct PendingAck<const FRAME: usize = MAX_RESEND_FRAME_LEN> {
     /// The send was a [reachability test](SendOptions::reachability_test),
     /// which earns its Route Retry without the peer having been heard.
     pub(crate) reachability_test: bool,
+    /// The send was a [reply](SendOptions::reply), whose acknowledgment
+    /// raises no standing.
+    pub(crate) reply: bool,
     /// Set when this entry carries a Frame Verified on behalf of the send
     /// it vouches for, and the Verify Frame's counter fell outside our
     /// window for the requester: the acknowledgment that completes the
@@ -528,6 +544,7 @@ impl<const FRAME: usize> PendingAck<FRAME> {
             held_route_missed: false,
             route_retry_spent: false,
             reachability_test: false,
+            reply: false,
             adopt_on_ack: None,
             power_dbm: None,
         }
@@ -552,6 +569,7 @@ impl<const FRAME: usize> PendingAck<FRAME> {
             held_route_missed: false,
             route_retry_spent: false,
             reachability_test: false,
+            reply: false,
             adopt_on_ack: None,
             power_dbm: None,
         }
@@ -577,6 +595,7 @@ impl<const FRAME: usize> PendingAck<FRAME> {
             held_route_missed: false,
             route_retry_spent: false,
             reachability_test: false,
+            reply: false,
             adopt_on_ack: None,
             power_dbm: None,
         }

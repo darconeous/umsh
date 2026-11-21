@@ -389,6 +389,9 @@
     "Another phone's radio" : {
 
     },
+    "Answered on retry" : {
+      "comment" : "Accessibility: a ping's first attempt failed and its retry was answered."
+    },
     "Answers nearby nodes that ask it to identify itself." : {
 
     },

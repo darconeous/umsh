@@ -1833,6 +1833,8 @@ mod tests {
                 parse_owned_mac_command(&sent[0].payload),
                 OwnedMacCommand::EndPfsSession
             );
+            // An answer, so acknowledging it earns no standing.
+            assert!(sent[0].options.reply);
         };
 
         // Nothing was asked of this peer.
@@ -3182,17 +3184,52 @@ mod tests {
 
     #[cfg(feature = "software-crypto")]
     fn responder_node(mac: &FakeMac) -> crate::LocalNode<FakeMac> {
+        responder_node_and_dispatcher(mac).0
+    }
+
+    /// A responder node, and the dispatcher that settles its sends' tickets.
+    #[cfg(feature = "software-crypto")]
+    fn responder_node_and_dispatcher(
+        mac: &FakeMac,
+    ) -> (
+        crate::LocalNode<FakeMac>,
+        Rc<RefCell<crate::dispatch::EventDispatcher>>,
+    ) {
         use crate::node::{LocalNode, LocalNodeState, NodeMembership};
         let dispatcher = Rc::new(RefCell::new(crate::dispatch::EventDispatcher::new()));
         let membership = Rc::new(RefCell::new(NodeMembership::new()));
         let state = Rc::new(RefCell::new(LocalNodeState::new()));
-        LocalNode::new(
+        let node = LocalNode::new(
             LocalIdentityId(1),
             mac.clone(),
-            dispatcher,
+            dispatcher.clone(),
             membership,
             state,
-        )
+        );
+        (node, dispatcher)
+    }
+
+    /// The ways the MAC settles an acknowledged send: acknowledged, timed
+    /// out, or abandoned unaired.
+    #[cfg(feature = "software-crypto")]
+    fn settlements(receipt: SendReceipt) -> [MacEventRef<'static>; 3] {
+        let peer = PublicKey([0x41; 32]);
+        [
+            MacEventRef::AckReceived {
+                peer,
+                receipt,
+                via_route_retry: false,
+                rx: Default::default(),
+                hop_count: None,
+                trace: None,
+            },
+            MacEventRef::AckTimeout { peer, receipt },
+            MacEventRef::TxAbandoned {
+                identity_id: LocalIdentityId(1),
+                receipt: Some(receipt),
+                reason: umsh_mac::TxAbandonReason::ChannelBusy,
+            },
+        ]
     }
 
     #[cfg(feature = "software-crypto")]
@@ -4093,11 +4130,136 @@ mod tests {
             PublicKey([0x41; 32]),
             Some(channel),
             &peer_repeaters_request(Some(7), None),
+            None,
         ));
 
         let sent = mac.take_unicasts();
         assert_eq!(sent.len(), 1);
         assert_eq!(sent[0].channel, Some(channel));
+    }
+
+    /// A page goes back along this node's own route to the asker, which the
+    /// request arriving says nothing about. The ack is what tells this node
+    /// that route failed.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn a_peer_repeaters_response_asks_for_an_ack() {
+        let mac = FakeMac::new(Vec::new());
+        let node = responder_node(&mac);
+        node.enable_peer_repeaters_responder();
+
+        block_on_ready(node.answer_peer_repeaters_request(
+            PublicKey([0x41; 32]),
+            None,
+            &peer_repeaters_request(Some(7), None),
+            None,
+        ));
+
+        let sent = mac.take_unicasts();
+        assert_eq!(sent.len(), 1);
+        assert!(sent[0].options.ack_requested);
+        // Acknowledging it earns the asker no standing.
+        assert!(sent[0].options.reply);
+    }
+
+    /// The acknowledged page can flood back as far as its request came, and
+    /// a hop more, so its Route Retry reaches an asker beyond the usual
+    /// budget. A plain answer, which has no Route Retry, keeps the usual
+    /// budget however far its request claims to have come; so does a near
+    /// asker's.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn a_page_reaches_as_far_as_its_request_came() {
+        let mac = FakeMac::new(Vec::new());
+        let (node, dispatcher) = responder_node_and_dispatcher(&mac);
+        node.enable_peer_repeaters_responder();
+        let request = peer_repeaters_request(Some(7), None);
+        let usual = SendOptions::default().flood_hops;
+        let answer = |asker: u8, hops: u8| {
+            block_on_ready(node.answer_peer_repeaters_request(
+                PublicKey([asker; 32]),
+                None,
+                &request,
+                Some(hops),
+            ));
+            mac.take_unicasts().remove(0).options
+        };
+
+        let far = answer(0x41, 9);
+        assert!(far.ack_requested);
+        assert_eq!(far.flood_hops, Some(9));
+
+        let plain = answer(0x42, 9);
+        assert!(!plain.ack_requested);
+        assert_eq!(plain.flood_hops, usual);
+
+        let [acked, ..] = settlements(SendReceipt(42));
+        dispatcher
+            .borrow_mut()
+            .dispatch_ticket_state(LocalIdentityId(1), &acked);
+        let near = answer(0x43, 2);
+        assert!(near.ack_requested);
+        assert_eq!(near.flood_hops, usual);
+    }
+
+    /// However the page in flight is settled, the next page is acknowledged
+    /// again.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn a_settled_page_lets_the_next_be_acknowledged() {
+        let request = peer_repeaters_request(Some(7), None);
+        for index in 0..3 {
+            let mac = FakeMac::new(Vec::new());
+            let (node, dispatcher) = responder_node_and_dispatcher(&mac);
+            node.enable_peer_repeaters_responder();
+            let answer = |asker: u8| {
+                block_on_ready(node.answer_peer_repeaters_request(
+                    PublicKey([asker; 32]),
+                    None,
+                    &request,
+                    None,
+                ));
+                mac.take_unicasts().remove(0).options.ack_requested
+            };
+
+            assert!(answer(0x41));
+            assert!(!answer(0x42), "held back while the first is in flight");
+            let settlement = settlements(SendReceipt(42))[index].clone();
+            dispatcher
+                .borrow_mut()
+                .dispatch_ticket_state(LocalIdentityId(1), &settlement);
+            assert!(answer(0x43), "settlement {index}");
+        }
+    }
+
+    /// Only one page is acknowledged at a time: while one is unanswered,
+    /// the next goes out as a plain answer, so askers who never acknowledge
+    /// cannot fill the responder's pending-ack slots.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn a_second_page_in_flight_is_not_acknowledged() {
+        let mac = FakeMac::new(Vec::new());
+        let node = responder_node(&mac);
+        node.enable_peer_repeaters_responder();
+        let request = peer_repeaters_request(Some(7), None);
+
+        block_on_ready(node.answer_peer_repeaters_request(
+            PublicKey([0x41; 32]),
+            None,
+            &request,
+            None,
+        ));
+        block_on_ready(node.answer_peer_repeaters_request(
+            PublicKey([0x42; 32]),
+            None,
+            &request,
+            None,
+        ));
+
+        let sent = mac.take_unicasts();
+        assert_eq!(sent.len(), 2);
+        assert!(sent[0].options.ack_requested);
+        assert!(!sent[1].options.ack_requested);
     }
 
     /// Pull the one response the responder sent back off the fake MAC and
@@ -4170,6 +4332,7 @@ mod tests {
             PublicKey([0x41; 32]),
             None,
             &peer_repeaters_request(None, None),
+            None,
         ));
         assert!(mac.take_unicasts().is_empty());
     }
@@ -4185,14 +4348,19 @@ mod tests {
         node.enable_peer_repeaters_responder_for(&[asker.0]);
         let request = peer_repeaters_request(Some(7), None);
 
-        block_on_ready(node.answer_peer_repeaters_request(PublicKey([0x42; 32]), None, &request));
+        block_on_ready(node.answer_peer_repeaters_request(
+            PublicKey([0x42; 32]),
+            None,
+            &request,
+            None,
+        ));
         assert!(mac.take_unicasts().is_empty(), "a stranger");
 
-        block_on_ready(node.answer_peer_repeaters_request(asker, None, &request));
+        block_on_ready(node.answer_peer_repeaters_request(asker, None, &request, None));
         assert_eq!(sent_response(&mac).0, asker);
 
         let channel = ChannelKey([0x5A; 32]);
-        block_on_ready(node.answer_peer_repeaters_request(asker, Some(channel), &request));
+        block_on_ready(node.answer_peer_repeaters_request(asker, Some(channel), &request, None));
         assert_eq!(sent_response(&mac).0, asker, "blind");
     }
 
@@ -4230,6 +4398,7 @@ mod tests {
             requester,
             None,
             &peer_repeaters_request(Some(0xBEEF), None),
+            None,
         ));
 
         let (to, body) = sent_response(&mac);
@@ -4291,6 +4460,7 @@ mod tests {
                 requester,
                 None,
                 &peer_repeaters_request(Some(1), cursor.as_deref()),
+                None,
             ));
             let (_, body) = sent_response(&mac);
             let view = crate::mac_command::PeerRepeatersResponseView::new(&body);
@@ -4353,6 +4523,7 @@ mod tests {
             PublicKey([0x41; 32]),
             None,
             &peer_repeaters_request(None, Some(&[generation[0], generation[1], 2])),
+            None,
         ));
         let (_, body) = sent_response(&mac);
         let view = crate::mac_command::PeerRepeatersResponseView::new(&body);
@@ -4371,6 +4542,7 @@ mod tests {
             PublicKey([0x41; 32]),
             None,
             &peer_repeaters_request(None, Some(&[generation[0], generation[1], 2])),
+            None,
         ));
         let (_, body) = sent_response(&mac);
         let view = crate::mac_command::PeerRepeatersResponseView::new(&body);
@@ -4394,6 +4566,7 @@ mod tests {
             PublicKey([0x41; 32]),
             None,
             &peer_repeaters_request(None, None),
+            None,
         ));
         let (_, body) = sent_response(&mac);
         let view = crate::mac_command::PeerRepeatersResponseView::new(&body);
@@ -4493,6 +4666,7 @@ mod tests {
             PublicKey([0x41; 32]),
             None,
             &peer_repeaters_request(None, Some(&[generation[0], generation[1], 1])),
+            None,
         ));
         let (_, body) = sent_response(&mac);
         let view = crate::mac_command::PeerRepeatersResponseView::new(&body);

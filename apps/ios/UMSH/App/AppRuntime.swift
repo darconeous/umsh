@@ -3564,7 +3564,8 @@ final class AppRuntime {
                         traceSignal: reply.traceSignal,
                         rssiDBm: reply.rssiDBm,
                         signalToNoiseCentibels: reply.signalToNoiseCentibels,
-                        linkQuality: reply.linkQuality
+                        linkQuality: reply.linkQuality,
+                        viaRouteRetry: reply.viaRouteRetry
                     )
                 )
             case .timedOut:
