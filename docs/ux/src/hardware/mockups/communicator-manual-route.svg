@@ -1,0 +1,1743 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="3240" height="6530" viewBox="0 0 3240 6530" role="img" aria-labelledby="t" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif"><title id="t">Manual route on the communicator, mockups</title><defs><filter id="shadow" x="-5%" y="-5%" width="110%" height="110%"><feDropShadow dx="0" dy="3" stdDeviation="8" flood-opacity="0.22"/></filter></defs><rect width="3240" height="6530" fill="#ECECEF"/>
+<text x="80.0" y="130.0" font-size="56" fill="#1C1C1E" font-weight="700">Manual route and Neighbors · communicator</text>
+<text x="80.0" y="178.0" font-size="22" fill="#3A3A3C">T-LoRa Pager, 480×222, drawn at 2×. Turn moves, press selects, Backspace goes back. Modeled on the iOS manual path.</text>
+<text x="80.0" y="270.0" font-size="34" fill="#1C1C1E" font-weight="700">Route</text>
+<text x="80.0" y="308.0" font-size="19" fill="#3A3A3C">The Route screen gains Edit route. While a manual route is held, the route names it, and Clear manual route takes Reset route's place.</text>
+<text x="80.0" y="366.0" font-size="22" fill="#1C1C1E" font-weight="700">1 · Route, learned</text>
+<rect x="80.0" y="380.0" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
+<clipPath id="scr1"><rect width="480" height="222"/></clipPath>
+<g transform="translate(92,392) scale(2)"><g clip-path="url(#scr1)">
+<rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
+<clipPath id="cl12"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl12)">
+<path d="M26 -53.0 V-43.0" fill="none" stroke="#3A414B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M26 -13.0 V-3.0" fill="none" stroke="#3A414B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M26 27.0 V37.0" fill="none" stroke="#3A414B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M26 67.0 V77.0" fill="none" stroke="#3A414B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="26.0" cy="-68.0" r="12" fill="#9AA3AE"/>
+<path d="M20.7 -72.9 H31.3 Q33.1 -72.9 33.1 -71.2 V-64.8 Q33.1 -63.1 31.3 -63.1 H20.7 Q18.9 -63.1 18.9 -64.8 V-71.2 Q18.9 -72.9 20.7 -72.9 Z" fill="none" stroke="#0B0D10" stroke-width="1.2705882352941178" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="21.4" y="-70.8" width="9.2" height="3.2" fill="#0B0D10" rx="1"/>
+<circle cx="22.2" cy="-65.5" r="0.6352941176470589" fill="#0B0D10"/>
+<circle cx="24.7" cy="-65.5" r="0.6352941176470589" fill="#0B0D10"/>
+<circle cx="27.3" cy="-65.5" r="0.6352941176470589" fill="#0B0D10"/>
+<circle cx="29.8" cy="-65.5" r="0.6352941176470589" fill="#0B0D10"/>
+<path d="M22.40 -38.92A4.16 4.16 0 0 1 29.60 -38.92L39.81 -21.24A4.16 4.16 0 0 1 36.21 -15.00L15.79 -15.00A4.16 4.16 0 0 1 12.19 -21.24Z" fill="#452D45"/>
+<text x="26.0" y="-26.5" font-size="8.10" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Bt</text>
+<text x="26.0" y="-17.8" font-size="8.10" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">C5</text>
+<path d="M22.40 1.08A4.16 4.16 0 0 1 29.60 1.08L39.81 18.76A4.16 4.16 0 0 1 36.21 25.00L15.79 25.00A4.16 4.16 0 0 1 12.19 18.76Z" fill="#EB8AE3"/>
+<text x="26.0" y="13.5" font-size="8.10" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">55</text>
+<text x="26.0" y="22.2" font-size="8.10" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Hk</text>
+<path d="M12.49 54.60A5.20 5.20 0 0 1 12.49 49.40L16.99 41.60A5.20 5.20 0 0 1 21.50 39.00L30.50 39.00A5.20 5.20 0 0 1 35.01 41.60L39.51 49.40A5.20 5.20 0 0 1 39.51 54.60L35.01 62.40A5.20 5.20 0 0 1 30.50 65.00L21.50 65.00A5.20 5.20 0 0 1 16.99 62.40Z" fill="#808080"/>
+<text x="26.0" y="50.2" font-size="9.88" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">7N</text>
+<text x="26.0" y="60.9" font-size="9.88" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">*</text>
+<circle cx="26.0" cy="92.0" r="13" fill="#B3F69E"/>
+<text x="26.0" y="90.2" font-size="9.88" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Ym</text>
+<text x="26.0" y="100.9" font-size="9.88" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">RG</text>
+<text x="50.0" y="-61.0" font-size="20" fill="#9AA3AE">You</text>
+<text x="50.0" y="-21.0" font-size="20" fill="#EEF1F5">Spencer Butte</text>
+<path d="M460 -34.0 L466 -28.0 L460 -22.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="50.0" y="19.0" font-size="20" fill="#EEF1F5">Skinner Ridge</text>
+<path d="M460 6.0 L466 12.0 L460 18.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="50.0" y="59.0" font-size="20" fill="#EEF1F5">7N*</text>
+<circle cx="458.0" cy="50.0" r="5" fill="none" stroke="#4DA3FF" stroke-width="2"/>
+<path d="M462 54.0 L466 58.0" fill="none" stroke="#4DA3FF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="50.0" y="99.0" font-size="20" fill="#EEF1F5">Pat Okafor</text>
+<text x="12.0" y="142.0" font-size="20" fill="#EEF1F5">Confirmed</text>
+<text x="466.0" y="141.0" font-size="17" fill="#9AA3AE" text-anchor="end">4 min ago</text>
+<path d="M12.0 151.5 L480.0 151.5" stroke="#20252C" stroke-width="1"/>
+<rect x="4.0" y="153.0" width="472.0" height="32.0" fill="#18304D" rx="8" stroke="#4DA3FF" stroke-width="1.6"/>
+<text x="12.0" y="176.0" font-size="20" fill="#EEF1F5" font-weight="700">Edit route</text>
+<path d="M460 163.0 L466 169.0 L460 175.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="12.0" y="210.0" font-size="20" fill="#FF6B5E">Reset route</text>
+<path d="M12.0 219.5 L480.0 219.5" stroke="#20252C" stroke-width="1"/>
+</g>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="22.0" y="44.0" font-size="20" fill="#EEF1F5" font-weight="700">Route</text>
+<text x="88.6" y="43.0" font-size="16" fill="#7F8995" font-weight="500">3 hops</text>
+<rect x="0.0" y="0.0" width="480.0" height="22.0" fill="#0E1115"/>
+<text x="8.0" y="16.5" font-size="16" fill="#9AA3AE" font-weight="600">Juniper</text>
+<text x="240.0" y="16.5" font-size="16" fill="#EEF1F5" font-weight="700" text-anchor="middle">14:32</text>
+<g transform="translate(459.0,11.0) scale(1.3) translate(-459.0,-11.0)">
+<rect x="449.0" y="6.5" width="19.0" height="9.0" fill="none" rx="2" stroke="#9AA3AE" stroke-width="1"/>
+<rect x="468.5" y="9.0" width="1.8" height="4.0" fill="#9AA3AE" rx="0.6"/>
+<rect x="451.0" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="454.9" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="458.8" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+</g>
+<g transform="translate(426.0,11.0) scale(1.3) translate(-426.0,-11.0)">
+<circle cx="426.0" cy="11.0" r="3.6" fill="none" stroke="#9AA3AE" stroke-width="1.1"/>
+<circle cx="426.0" cy="11.0" r="1.1" fill="#9AA3AE"/>
+<path d="M426 5 V7 M426 15 V17 M420 11 H422 M430 11 H432" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(406.0,11.0) scale(1.3) translate(-406.0,-11.0)">
+<path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g></g>
+<text x="82.0" y="878.0" font-size="17" fill="#3A3A3C">Edit route sits between Confirmed and Reset route. It opens the editor seeded with the route shown; with nothing learned, the</text>
+<text x="82.0" y="902.0" font-size="17" fill="#3A3A3C">editor starts with only You and the peer.</text>
+<text x="1128.0" y="366.0" font-size="22" fill="#1C1C1E" font-weight="700">2 · Route, manual route held</text>
+<rect x="1128.0" y="380.0" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
+<clipPath id="scr2"><rect width="480" height="222"/></clipPath>
+<g transform="translate(1140,392) scale(2)"><g clip-path="url(#scr2)">
+<rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
+<clipPath id="cl13"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl13)">
+<path d="M26 -101.0 V-91.0" fill="none" stroke="#3A414B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M26 -61.0 V-51.0" fill="none" stroke="#3A414B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M26 -21.0 V-11.0" fill="none" stroke="#3A414B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M26 19.0 V29.0" fill="none" stroke="#3A414B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="26.0" cy="-116.0" r="12" fill="#9AA3AE"/>
+<path d="M20.7 -120.9 H31.3 Q33.1 -120.9 33.1 -119.2 V-112.8 Q33.1 -111.1 31.3 -111.1 H20.7 Q18.9 -111.1 18.9 -112.8 V-119.2 Q18.9 -120.9 20.7 -120.9 Z" fill="none" stroke="#0B0D10" stroke-width="1.2705882352941178" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="21.4" y="-118.8" width="9.2" height="3.2" fill="#0B0D10" rx="1"/>
+<circle cx="22.2" cy="-113.5" r="0.6352941176470589" fill="#0B0D10"/>
+<circle cx="24.7" cy="-113.5" r="0.6352941176470589" fill="#0B0D10"/>
+<circle cx="27.3" cy="-113.5" r="0.6352941176470589" fill="#0B0D10"/>
+<circle cx="29.8" cy="-113.5" r="0.6352941176470589" fill="#0B0D10"/>
+<path d="M22.40 -86.92A4.16 4.16 0 0 1 29.60 -86.92L39.81 -69.24A4.16 4.16 0 0 1 36.21 -63.00L15.79 -63.00A4.16 4.16 0 0 1 12.19 -69.24Z" fill="#452D45"/>
+<text x="26.0" y="-74.5" font-size="8.10" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Bt</text>
+<text x="26.0" y="-65.8" font-size="8.10" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">C5</text>
+<path d="M22.40 -46.92A4.16 4.16 0 0 1 29.60 -46.92L39.81 -29.24A4.16 4.16 0 0 1 36.21 -23.00L15.79 -23.00A4.16 4.16 0 0 1 12.19 -29.24Z" fill="#EB8AE3"/>
+<text x="26.0" y="-34.5" font-size="8.10" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">55</text>
+<text x="26.0" y="-25.8" font-size="8.10" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Hk</text>
+<path d="M12.49 6.60A5.20 5.20 0 0 1 12.49 1.40L16.99 -6.40A5.20 5.20 0 0 1 21.50 -9.00L30.50 -9.00A5.20 5.20 0 0 1 35.01 -6.40L39.51 1.40A5.20 5.20 0 0 1 39.51 6.60L35.01 14.40A5.20 5.20 0 0 1 30.50 17.00L21.50 17.00A5.20 5.20 0 0 1 16.99 14.40Z" fill="#808080"/>
+<text x="26.0" y="2.2" font-size="9.88" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">7N</text>
+<text x="26.0" y="12.9" font-size="9.88" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">*</text>
+<circle cx="26.0" cy="44.0" r="13" fill="#B3F69E"/>
+<text x="26.0" y="42.2" font-size="9.88" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Ym</text>
+<text x="26.0" y="52.9" font-size="9.88" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">RG</text>
+<text x="50.0" y="-109.0" font-size="20" fill="#9AA3AE">You</text>
+<text x="50.0" y="-69.0" font-size="20" fill="#EEF1F5">Spencer Butte</text>
+<path d="M460 -82.0 L466 -76.0 L460 -70.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="50.0" y="-29.0" font-size="20" fill="#EEF1F5">Skinner Ridge</text>
+<path d="M460 -42.0 L466 -36.0 L460 -30.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="50.0" y="11.0" font-size="20" fill="#EEF1F5">7N*</text>
+<circle cx="458.0" cy="2.0" r="5" fill="none" stroke="#4DA3FF" stroke-width="2"/>
+<path d="M462 6.0 L466 10.0" fill="none" stroke="#4DA3FF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="50.0" y="51.0" font-size="20" fill="#EEF1F5">Pat Okafor</text>
+<text x="12.0" y="94.0" font-size="20" fill="#EEF1F5">Then flood</text>
+<text x="466.0" y="93.0" font-size="17" fill="#9AA3AE" text-anchor="end">1 hop</text>
+<path d="M12.0 103.5 L480.0 103.5" stroke="#20252C" stroke-width="1"/>
+<text x="12.0" y="128.0" font-size="20" fill="#EEF1F5">Held</text>
+<text x="466.0" y="127.0" font-size="17" fill="#9AA3AE" text-anchor="end">52 min left</text>
+<path d="M12.0 137.5 L480.0 137.5" stroke="#20252C" stroke-width="1"/>
+<text x="12.0" y="162.0" font-size="20" fill="#EEF1F5">Confirmed</text>
+<text x="466.0" y="161.0" font-size="17" fill="#9AA3AE" text-anchor="end">2 min ago</text>
+<path d="M12.0 171.5 L480.0 171.5" stroke="#20252C" stroke-width="1"/>
+<rect x="4.0" y="173.0" width="472.0" height="32.0" fill="#18304D" rx="8" stroke="#4DA3FF" stroke-width="1.6"/>
+<text x="12.0" y="196.0" font-size="20" fill="#EEF1F5" font-weight="700">Edit route</text>
+<path d="M460 183.0 L466 189.0 L460 195.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="12.0" y="230.0" font-size="20" fill="#FF6B5E">Clear manual route</text>
+<path d="M12.0 239.5 L480.0 239.5" stroke="#20252C" stroke-width="1"/>
+</g>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="22.0" y="44.0" font-size="20" fill="#EEF1F5" font-weight="700">Route</text>
+<text x="88.6" y="43.0" font-size="16" fill="#7F8995" font-weight="500">Manual · 3 hops</text>
+<rect x="0.0" y="0.0" width="480.0" height="22.0" fill="#0E1115"/>
+<text x="8.0" y="16.5" font-size="16" fill="#9AA3AE" font-weight="600">Juniper</text>
+<text x="240.0" y="16.5" font-size="16" fill="#EEF1F5" font-weight="700" text-anchor="middle">14:32</text>
+<g transform="translate(459.0,11.0) scale(1.3) translate(-459.0,-11.0)">
+<rect x="449.0" y="6.5" width="19.0" height="9.0" fill="none" rx="2" stroke="#9AA3AE" stroke-width="1"/>
+<rect x="468.5" y="9.0" width="1.8" height="4.0" fill="#9AA3AE" rx="0.6"/>
+<rect x="451.0" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="454.9" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="458.8" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+</g>
+<g transform="translate(426.0,11.0) scale(1.3) translate(-426.0,-11.0)">
+<circle cx="426.0" cy="11.0" r="3.6" fill="none" stroke="#9AA3AE" stroke-width="1.1"/>
+<circle cx="426.0" cy="11.0" r="1.1" fill="#9AA3AE"/>
+<path d="M426 5 V7 M426 15 V17 M420 11 H422 M430 11 H432" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(406.0,11.0) scale(1.3) translate(-406.0,-11.0)">
+<path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g></g>
+<text x="1130.0" y="878.0" font-size="17" fill="#3A3A3C">The header reads Manual. Then flood and Held join Confirmed. Held counts down instead of naming a time, so it needs no clock.</text>
+<text x="1130.0" y="902.0" font-size="17" fill="#3A3A3C">Clear manual route returns to the learned route, or to flooding, without asking.</text>
+<text x="2176.0" y="366.0" font-size="22" fill="#1C1C1E" font-weight="700">3 · Peer, manual route held</text>
+<rect x="2176.0" y="380.0" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
+<clipPath id="scr3"><rect width="480" height="222"/></clipPath>
+<g transform="translate(2188,392) scale(2)"><g clip-path="url(#scr3)">
+<rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
+<clipPath id="cl14"><rect x="0" y="22" width="480" height="200"/></clipPath><g clip-path="url(#cl14)">
+<text x="12.0" y="46.0" font-size="20" fill="#EEF1F5">Alias</text>
+<text x="466.0" y="45.0" font-size="17" fill="#9AA3AE" text-anchor="end">Pat Okafor</text>
+<path d="M12.0 55.5 L480.0 55.5" stroke="#20252C" stroke-width="1"/>
+<rect x="4.0" y="57.0" width="472.0" height="32.0" fill="#18304D" rx="8" stroke="#4DA3FF" stroke-width="1.6"/>
+<text x="12.0" y="80.0" font-size="20" fill="#EEF1F5" font-weight="700">Route</text>
+<path d="M460 67.0 L466 73.0 L460 79.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="450.0" y="79.0" font-size="17" fill="#9AA3AE" text-anchor="end">Manual · 3 hops</text>
+<text x="12.0" y="114.0" font-size="20" fill="#EEF1F5">Last heard</text>
+<text x="466.0" y="113.0" font-size="17" fill="#9AA3AE" text-anchor="end">5 min ago</text>
+<path d="M12.0 123.5 L480.0 123.5" stroke="#20252C" stroke-width="1"/>
+<text x="12.0" y="148.0" font-size="20" fill="#EEF1F5">Forward secrecy</text>
+<rect x="426.0" y="130.0" width="40.0" height="22.0" fill="#3A414B" rx="11.0"/>
+<circle cx="437.0" cy="141.0" r="8.5" fill="#C9CED6"/>
+<path d="M12.0 157.5 L480.0 157.5" stroke="#20252C" stroke-width="1"/>
+<text x="12.0" y="182.0" font-size="20" fill="#EEF1F5">Ping</text>
+<path d="M460 169.0 L466 175.0 L460 181.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M12.0 191.5 L480.0 191.5" stroke="#20252C" stroke-width="1"/>
+</g>
+<rect x="0.0" y="0.0" width="480.0" height="22.0" fill="#0E1115"/>
+<text x="8.0" y="16.5" font-size="16" fill="#9AA3AE" font-weight="600">Juniper</text>
+<text x="240.0" y="16.5" font-size="16" fill="#EEF1F5" font-weight="700" text-anchor="middle">14:32</text>
+<g transform="translate(459.0,11.0) scale(1.3) translate(-459.0,-11.0)">
+<rect x="449.0" y="6.5" width="19.0" height="9.0" fill="none" rx="2" stroke="#9AA3AE" stroke-width="1"/>
+<rect x="468.5" y="9.0" width="1.8" height="4.0" fill="#9AA3AE" rx="0.6"/>
+<rect x="451.0" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="454.9" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="458.8" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+</g>
+<g transform="translate(426.0,11.0) scale(1.3) translate(-426.0,-11.0)">
+<circle cx="426.0" cy="11.0" r="3.6" fill="none" stroke="#9AA3AE" stroke-width="1.1"/>
+<circle cx="426.0" cy="11.0" r="1.1" fill="#9AA3AE"/>
+<path d="M426 5 V7 M426 15 V17 M420 11 H422 M430 11 H432" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(406.0,11.0) scale(1.3) translate(-406.0,-11.0)">
+<path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g></g>
+<text x="2178.0" y="878.0" font-size="17" fill="#3A3A3C">The peer's Route row and the conversation header say Manual too, so a held route is never a surprise.</text>
+<text x="80.0" y="1026.0" font-size="34" fill="#1C1C1E" font-weight="700">Editor</text>
+<text x="80.0" y="1064.0" font-size="19" fill="#3A3A3C">One screen, the iOS editor's rows in one list. Turn walks the hops, then the rows below. You and the peer are fixed, so they are not stops.</text>
+<text x="80.0" y="1122.0" font-size="22" fill="#1C1C1E" font-weight="700">4 · Edit route</text>
+<rect x="80.0" y="1136.0" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
+<clipPath id="scr4"><rect width="480" height="222"/></clipPath>
+<g transform="translate(92,1148) scale(2)"><g clip-path="url(#scr4)">
+<rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
+<clipPath id="cl15"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl15)">
+<rect x="4.0" y="91.0" width="472.0" height="32.0" fill="#18304D" rx="8" stroke="#4DA3FF" stroke-width="1.6"/>
+<path d="M26 87.0 V93.0" fill="none" stroke="#3A414B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M26 121.0 V127.0" fill="none" stroke="#3A414B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M26 155.0 V161.0" fill="none" stroke="#3A414B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M26 189.0 V195.0" fill="none" stroke="#3A414B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M26 223.0 V229.0" fill="none" stroke="#3A414B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M26 257.0 V263.0" fill="none" stroke="#3A414B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="2 5"/>
+<circle cx="26.0" cy="73.0" r="12" fill="#9AA3AE"/>
+<path d="M20.7 68.1 H31.3 Q33.1 68.1 33.1 69.8 V76.2 Q33.1 77.9 31.3 77.9 H20.7 Q18.9 77.9 18.9 76.2 V69.8 Q18.9 68.1 20.7 68.1 Z" fill="none" stroke="#0B0D10" stroke-width="1.2705882352941178" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="21.4" y="70.2" width="9.2" height="3.2" fill="#0B0D10" rx="1"/>
+<circle cx="22.2" cy="75.5" r="0.6352941176470589" fill="#0B0D10"/>
+<circle cx="24.7" cy="75.5" r="0.6352941176470589" fill="#0B0D10"/>
+<circle cx="27.3" cy="75.5" r="0.6352941176470589" fill="#0B0D10"/>
+<circle cx="29.8" cy="75.5" r="0.6352941176470589" fill="#0B0D10"/>
+<path d="M22.40 96.08A4.16 4.16 0 0 1 29.60 96.08L39.81 113.76A4.16 4.16 0 0 1 36.21 120.00L15.79 120.00A4.16 4.16 0 0 1 12.19 113.76Z" fill="#452D45"/>
+<text x="26.0" y="108.5" font-size="8.10" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Bt</text>
+<text x="26.0" y="117.2" font-size="8.10" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">C5</text>
+<path d="M22.40 130.08A4.16 4.16 0 0 1 29.60 130.08L39.81 147.76A4.16 4.16 0 0 1 36.21 154.00L15.79 154.00A4.16 4.16 0 0 1 12.19 147.76Z" fill="#EB8AE3"/>
+<text x="26.0" y="142.5" font-size="8.10" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">55</text>
+<text x="26.0" y="151.2" font-size="8.10" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Hk</text>
+<path d="M12.49 177.60A5.20 5.20 0 0 1 12.49 172.40L16.99 164.60A5.20 5.20 0 0 1 21.50 162.00L30.50 162.00A5.20 5.20 0 0 1 35.01 164.60L39.51 172.40A5.20 5.20 0 0 1 39.51 177.60L35.01 185.40A5.20 5.20 0 0 1 30.50 188.00L21.50 188.00A5.20 5.20 0 0 1 16.99 185.40Z" fill="#808080"/>
+<text x="26.0" y="173.2" font-size="9.88" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">7N</text>
+<text x="26.0" y="183.9" font-size="9.88" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">*</text>
+<circle cx="26.0" cy="209.0" r="12" fill="#0B0D10"/>
+<circle cx="26.0" cy="209.0" r="11" fill="none" stroke="#4DA3FF" stroke-width="1.8"/>
+<path d="M20 209.0 H32 M26 203.0 V215.0" fill="none" stroke="#4DA3FF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="26.0" cy="235.0" r="2.6" fill="#0B0D10" stroke="#7F8995" stroke-width="1.4"/>
+<circle cx="26.0" cy="243.0" r="2.6" fill="#0B0D10" stroke="#7F8995" stroke-width="1.4"/>
+<circle cx="26.0" cy="251.0" r="2.6" fill="#0B0D10" stroke="#7F8995" stroke-width="1.4"/>
+<circle cx="26.0" cy="277.0" r="13" fill="#B3F69E"/>
+<text x="26.0" y="275.2" font-size="9.88" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Ym</text>
+<text x="26.0" y="285.9" font-size="9.88" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">RG</text>
+<text x="50.0" y="80.0" font-size="20" fill="#9AA3AE">You</text>
+<text x="50.0" y="114.0" font-size="20" fill="#EEF1F5" font-weight="700">Spencer Butte</text>
+<path d="M451 103.0 H465 M451 107.0 H465 M451 111.0 H465" fill="none" stroke="#7F8995" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="50.0" y="148.0" font-size="20" fill="#EEF1F5">Skinner Ridge</text>
+<path d="M451 137.0 H465 M451 141.0 H465 M451 145.0 H465" fill="none" stroke="#20252C" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="50.0" y="182.0" font-size="20" fill="#EEF1F5">7N*</text>
+<path d="M451 171.0 H465 M451 175.0 H465 M451 179.0 H465" fill="none" stroke="#20252C" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="50.0" y="216.0" font-size="20" fill="#4DA3FF" font-weight="600">Add hop</text>
+<text x="50.0" y="250.0" font-size="20" fill="#EEF1F5">Then flood</text>
+<text x="466.0" y="249.0" font-size="17" fill="#9AA3AE" text-anchor="end">1 hop</text>
+<text x="50.0" y="284.0" font-size="20" fill="#9AA3AE">Pat Okafor</text>
+<text x="12.0" y="318.0" font-size="20" fill="#EEF1F5">Ping along route</text>
+<path d="M460 305.0 L466 311.0 L460 317.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M12.0 327.5 L480.0 327.5" stroke="#20252C" stroke-width="1"/>
+<text x="12.0" y="352.0" font-size="20" fill="#EEF1F5">Hold for</text>
+<text x="466.0" y="351.0" font-size="17" fill="#9AA3AE" text-anchor="end">1 hour</text>
+<path d="M12.0 361.5 L480.0 361.5" stroke="#20252C" stroke-width="1"/>
+<text x="12.0" y="386.0" font-size="20" fill="#4DA3FF" font-weight="700">Save</text>
+<path d="M12.0 395.5 L480.0 395.5" stroke="#20252C" stroke-width="1"/>
+</g>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="22.0" y="44.0" font-size="20" fill="#EEF1F5" font-weight="700">Edit route</text>
+<text x="122.7" y="43.0" font-size="16" fill="#7F8995" font-weight="500">Pat Okafor</text>
+<rect x="0.0" y="0.0" width="480.0" height="22.0" fill="#0E1115"/>
+<text x="8.0" y="16.5" font-size="16" fill="#9AA3AE" font-weight="600">Juniper</text>
+<text x="240.0" y="16.5" font-size="16" fill="#EEF1F5" font-weight="700" text-anchor="middle">14:32</text>
+<g transform="translate(459.0,11.0) scale(1.3) translate(-459.0,-11.0)">
+<rect x="449.0" y="6.5" width="19.0" height="9.0" fill="none" rx="2" stroke="#9AA3AE" stroke-width="1"/>
+<rect x="468.5" y="9.0" width="1.8" height="4.0" fill="#9AA3AE" rx="0.6"/>
+<rect x="451.0" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="454.9" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="458.8" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+</g>
+<g transform="translate(426.0,11.0) scale(1.3) translate(-426.0,-11.0)">
+<circle cx="426.0" cy="11.0" r="3.6" fill="none" stroke="#9AA3AE" stroke-width="1.1"/>
+<circle cx="426.0" cy="11.0" r="1.1" fill="#9AA3AE"/>
+<path d="M426 5 V7 M426 15 V17 M420 11 H422 M430 11 H432" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(406.0,11.0) scale(1.3) translate(-406.0,-11.0)">
+<path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g></g>
+<text x="82.0" y="1634.0" font-size="17" fill="#3A3A3C">Seeded from the learned route. Each hop is a stop. The grip says it moves. Add hop sits after the last repeater and goes away at</text>
+<text x="82.0" y="1658.0" font-size="17" fill="#3A3A3C">15.</text>
+<text x="1128.0" y="1122.0" font-size="22" fill="#1C1C1E" font-weight="700">5 · A hop's menu</text>
+<rect x="1128.0" y="1136.0" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
+<clipPath id="scr5"><rect width="480" height="222"/></clipPath>
+<g transform="translate(1140,1148) scale(2)"><g clip-path="url(#scr5)">
+<rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
+<clipPath id="cl16"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl16)">
+<rect x="4.0" y="159.0" width="472.0" height="32.0" fill="#18304D" rx="8" stroke="#4DA3FF" stroke-width="1.6"/>
+<path d="M26 87.0 V93.0" fill="none" stroke="#3A414B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M26 121.0 V127.0" fill="none" stroke="#3A414B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M26 155.0 V161.0" fill="none" stroke="#3A414B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M26 189.0 V195.0" fill="none" stroke="#3A414B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M26 223.0 V229.0" fill="none" stroke="#3A414B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M26 257.0 V263.0" fill="none" stroke="#3A414B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="2 5"/>
+<circle cx="26.0" cy="73.0" r="12" fill="#9AA3AE"/>
+<path d="M20.7 68.1 H31.3 Q33.1 68.1 33.1 69.8 V76.2 Q33.1 77.9 31.3 77.9 H20.7 Q18.9 77.9 18.9 76.2 V69.8 Q18.9 68.1 20.7 68.1 Z" fill="none" stroke="#0B0D10" stroke-width="1.2705882352941178" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="21.4" y="70.2" width="9.2" height="3.2" fill="#0B0D10" rx="1"/>
+<circle cx="22.2" cy="75.5" r="0.6352941176470589" fill="#0B0D10"/>
+<circle cx="24.7" cy="75.5" r="0.6352941176470589" fill="#0B0D10"/>
+<circle cx="27.3" cy="75.5" r="0.6352941176470589" fill="#0B0D10"/>
+<circle cx="29.8" cy="75.5" r="0.6352941176470589" fill="#0B0D10"/>
+<path d="M22.40 96.08A4.16 4.16 0 0 1 29.60 96.08L39.81 113.76A4.16 4.16 0 0 1 36.21 120.00L15.79 120.00A4.16 4.16 0 0 1 12.19 113.76Z" fill="#452D45"/>
+<text x="26.0" y="108.5" font-size="8.10" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Bt</text>
+<text x="26.0" y="117.2" font-size="8.10" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">C5</text>
+<path d="M22.40 130.08A4.16 4.16 0 0 1 29.60 130.08L39.81 147.76A4.16 4.16 0 0 1 36.21 154.00L15.79 154.00A4.16 4.16 0 0 1 12.19 147.76Z" fill="#EB8AE3"/>
+<text x="26.0" y="142.5" font-size="8.10" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">55</text>
+<text x="26.0" y="151.2" font-size="8.10" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Hk</text>
+<path d="M12.49 177.60A5.20 5.20 0 0 1 12.49 172.40L16.99 164.60A5.20 5.20 0 0 1 21.50 162.00L30.50 162.00A5.20 5.20 0 0 1 35.01 164.60L39.51 172.40A5.20 5.20 0 0 1 39.51 177.60L35.01 185.40A5.20 5.20 0 0 1 30.50 188.00L21.50 188.00A5.20 5.20 0 0 1 16.99 185.40Z" fill="#808080"/>
+<text x="26.0" y="173.2" font-size="9.88" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">7N</text>
+<text x="26.0" y="183.9" font-size="9.88" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">*</text>
+<circle cx="26.0" cy="209.0" r="12" fill="#0B0D10"/>
+<circle cx="26.0" cy="209.0" r="11" fill="none" stroke="#4DA3FF" stroke-width="1.8"/>
+<path d="M20 209.0 H32 M26 203.0 V215.0" fill="none" stroke="#4DA3FF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="26.0" cy="235.0" r="2.6" fill="#0B0D10" stroke="#7F8995" stroke-width="1.4"/>
+<circle cx="26.0" cy="243.0" r="2.6" fill="#0B0D10" stroke="#7F8995" stroke-width="1.4"/>
+<circle cx="26.0" cy="251.0" r="2.6" fill="#0B0D10" stroke="#7F8995" stroke-width="1.4"/>
+<circle cx="26.0" cy="277.0" r="13" fill="#B3F69E"/>
+<text x="26.0" y="275.2" font-size="9.88" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Ym</text>
+<text x="26.0" y="285.9" font-size="9.88" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">RG</text>
+<text x="50.0" y="80.0" font-size="20" fill="#9AA3AE">You</text>
+<text x="50.0" y="114.0" font-size="20" fill="#EEF1F5">Spencer Butte</text>
+<path d="M451 103.0 H465 M451 107.0 H465 M451 111.0 H465" fill="none" stroke="#20252C" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="50.0" y="148.0" font-size="20" fill="#EEF1F5">Skinner Ridge</text>
+<path d="M451 137.0 H465 M451 141.0 H465 M451 145.0 H465" fill="none" stroke="#20252C" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="50.0" y="182.0" font-size="20" fill="#EEF1F5" font-weight="700">7N*</text>
+<path d="M451 171.0 H465 M451 175.0 H465 M451 179.0 H465" fill="none" stroke="#7F8995" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="50.0" y="216.0" font-size="20" fill="#4DA3FF" font-weight="600">Add hop</text>
+<text x="50.0" y="250.0" font-size="20" fill="#EEF1F5">Then flood</text>
+<text x="466.0" y="249.0" font-size="17" fill="#9AA3AE" text-anchor="end">1 hop</text>
+<text x="50.0" y="284.0" font-size="20" fill="#9AA3AE">Pat Okafor</text>
+<text x="12.0" y="318.0" font-size="20" fill="#EEF1F5">Ping along route</text>
+<path d="M460 305.0 L466 311.0 L460 317.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M12.0 327.5 L480.0 327.5" stroke="#20252C" stroke-width="1"/>
+<text x="12.0" y="352.0" font-size="20" fill="#EEF1F5">Hold for</text>
+<text x="466.0" y="351.0" font-size="17" fill="#9AA3AE" text-anchor="end">1 hour</text>
+<path d="M12.0 361.5 L480.0 361.5" stroke="#20252C" stroke-width="1"/>
+<text x="12.0" y="386.0" font-size="20" fill="#4DA3FF" font-weight="700">Save</text>
+<path d="M12.0 395.5 L480.0 395.5" stroke="#20252C" stroke-width="1"/>
+</g>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="22.0" y="44.0" font-size="20" fill="#EEF1F5" font-weight="700">Edit route</text>
+<text x="122.7" y="43.0" font-size="16" fill="#7F8995" font-weight="500">Pat Okafor</text>
+<rect x="273.0" y="89.0" width="200.0" height="74.0" fill="#000" rx="12" opacity="0.5"/>
+<rect x="272.0" y="86.0" width="200.0" height="74.0" fill="#1B2027" rx="12" stroke="#2E3540" stroke-width="1"/>
+<rect x="277.0" y="91.0" width="190.0" height="30.0" fill="#18304D" rx="7" stroke="#4DA3FF" stroke-width="1.6"/>
+<text x="288.0" y="113.0" font-size="20" fill="#EEF1F5" font-weight="700">Move</text>
+<text x="288.0" y="145.0" font-size="20" fill="#FF6B5E">Remove</text>
+<rect x="0.0" y="0.0" width="480.0" height="22.0" fill="#0E1115"/>
+<text x="8.0" y="16.5" font-size="16" fill="#9AA3AE" font-weight="600">Juniper</text>
+<text x="240.0" y="16.5" font-size="16" fill="#EEF1F5" font-weight="700" text-anchor="middle">14:32</text>
+<g transform="translate(459.0,11.0) scale(1.3) translate(-459.0,-11.0)">
+<rect x="449.0" y="6.5" width="19.0" height="9.0" fill="none" rx="2" stroke="#9AA3AE" stroke-width="1"/>
+<rect x="468.5" y="9.0" width="1.8" height="4.0" fill="#9AA3AE" rx="0.6"/>
+<rect x="451.0" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="454.9" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="458.8" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+</g>
+<g transform="translate(426.0,11.0) scale(1.3) translate(-426.0,-11.0)">
+<circle cx="426.0" cy="11.0" r="3.6" fill="none" stroke="#9AA3AE" stroke-width="1.1"/>
+<circle cx="426.0" cy="11.0" r="1.1" fill="#9AA3AE"/>
+<path d="M426 5 V7 M426 15 V17 M420 11 H422 M430 11 H432" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(406.0,11.0) scale(1.3) translate(-406.0,-11.0)">
+<path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g></g>
+<text x="1130.0" y="1634.0" font-size="17" fill="#3A3A3C">Press on a hop: Move or Remove. No confirmation; nothing is saved until Save.</text>
+<text x="2176.0" y="1122.0" font-size="22" fill="#1C1C1E" font-weight="700">6 · Moving a hop</text>
+<rect x="2176.0" y="1136.0" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
+<clipPath id="scr6"><rect width="480" height="222"/></clipPath>
+<g transform="translate(2188,1148) scale(2)"><g clip-path="url(#scr6)">
+<rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
+<clipPath id="cl17"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl17)">
+<rect x="7.0" y="128.0" width="472.0" height="32.0" fill="#000" rx="8" opacity="0.55"/>
+<rect x="4.0" y="123.0" width="472.0" height="32.0" fill="#1F3D63" rx="8" stroke="#4DA3FF" stroke-width="2.2"/>
+<path d="M12.49 143.60A5.20 5.20 0 0 1 12.49 138.40L16.99 130.60A5.20 5.20 0 0 1 21.50 128.00L30.50 128.00A5.20 5.20 0 0 1 35.01 130.60L39.51 138.40A5.20 5.20 0 0 1 39.51 143.60L35.01 151.40A5.20 5.20 0 0 1 30.50 154.00L21.50 154.00A5.20 5.20 0 0 1 16.99 151.40Z" fill="#808080"/>
+<text x="26.0" y="139.2" font-size="9.88" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">7N</text>
+<text x="26.0" y="149.9" font-size="9.88" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">*</text>
+<path d="M26 87.0 V93.0" fill="none" stroke="#3A414B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M26 121.0 V127.0" fill="none" stroke="#3A414B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M26 155.0 V161.0" fill="none" stroke="#3A414B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M26 189.0 V195.0" fill="none" stroke="#3A414B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M26 223.0 V229.0" fill="none" stroke="#3A414B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M26 257.0 V263.0" fill="none" stroke="#3A414B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="2 5"/>
+<circle cx="26.0" cy="73.0" r="12" fill="#9AA3AE"/>
+<path d="M20.7 68.1 H31.3 Q33.1 68.1 33.1 69.8 V76.2 Q33.1 77.9 31.3 77.9 H20.7 Q18.9 77.9 18.9 76.2 V69.8 Q18.9 68.1 20.7 68.1 Z" fill="none" stroke="#0B0D10" stroke-width="1.2705882352941178" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="21.4" y="70.2" width="9.2" height="3.2" fill="#0B0D10" rx="1"/>
+<circle cx="22.2" cy="75.5" r="0.6352941176470589" fill="#0B0D10"/>
+<circle cx="24.7" cy="75.5" r="0.6352941176470589" fill="#0B0D10"/>
+<circle cx="27.3" cy="75.5" r="0.6352941176470589" fill="#0B0D10"/>
+<circle cx="29.8" cy="75.5" r="0.6352941176470589" fill="#0B0D10"/>
+<path d="M22.40 96.08A4.16 4.16 0 0 1 29.60 96.08L39.81 113.76A4.16 4.16 0 0 1 36.21 120.00L15.79 120.00A4.16 4.16 0 0 1 12.19 113.76Z" fill="#452D45"/>
+<text x="26.0" y="108.5" font-size="8.10" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Bt</text>
+<text x="26.0" y="117.2" font-size="8.10" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">C5</text>
+<path d="M22.40 164.08A4.16 4.16 0 0 1 29.60 164.08L39.81 181.76A4.16 4.16 0 0 1 36.21 188.00L15.79 188.00A4.16 4.16 0 0 1 12.19 181.76Z" fill="#EB8AE3"/>
+<text x="26.0" y="176.5" font-size="8.10" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">55</text>
+<text x="26.0" y="185.2" font-size="8.10" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Hk</text>
+<circle cx="26.0" cy="209.0" r="12" fill="#0B0D10"/>
+<circle cx="26.0" cy="209.0" r="11" fill="none" stroke="#4DA3FF" stroke-width="1.8"/>
+<path d="M20 209.0 H32 M26 203.0 V215.0" fill="none" stroke="#4DA3FF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="26.0" cy="235.0" r="2.6" fill="#0B0D10" stroke="#7F8995" stroke-width="1.4"/>
+<circle cx="26.0" cy="243.0" r="2.6" fill="#0B0D10" stroke="#7F8995" stroke-width="1.4"/>
+<circle cx="26.0" cy="251.0" r="2.6" fill="#0B0D10" stroke="#7F8995" stroke-width="1.4"/>
+<circle cx="26.0" cy="277.0" r="13" fill="#B3F69E"/>
+<text x="26.0" y="275.2" font-size="9.88" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Ym</text>
+<text x="26.0" y="285.9" font-size="9.88" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">RG</text>
+<text x="50.0" y="80.0" font-size="20" fill="#9AA3AE">You</text>
+<text x="50.0" y="114.0" font-size="20" fill="#EEF1F5">Spencer Butte</text>
+<path d="M451 103.0 H465 M451 107.0 H465 M451 111.0 H465" fill="none" stroke="#20252C" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="50.0" y="148.0" font-size="20" fill="#EEF1F5" font-weight="700">7N*</text>
+<path d="M453.0 138.0 L458 133.0 L463.0 138.0 M453.0 144.0 L458 149.0 L463.0 144.0" fill="none" stroke="#4DA3FF" stroke-width="2.0" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="50.0" y="182.0" font-size="20" fill="#EEF1F5">Skinner Ridge</text>
+<path d="M451 171.0 H465 M451 175.0 H465 M451 179.0 H465" fill="none" stroke="#20252C" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="50.0" y="216.0" font-size="20" fill="#4DA3FF" font-weight="600">Add hop</text>
+<text x="50.0" y="250.0" font-size="20" fill="#EEF1F5">Then flood</text>
+<text x="466.0" y="249.0" font-size="17" fill="#9AA3AE" text-anchor="end">1 hop</text>
+<text x="50.0" y="284.0" font-size="20" fill="#9AA3AE">Pat Okafor</text>
+<text x="12.0" y="318.0" font-size="20" fill="#EEF1F5">Ping along route</text>
+<path d="M460 305.0 L466 311.0 L460 317.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M12.0 327.5 L480.0 327.5" stroke="#20252C" stroke-width="1"/>
+<text x="12.0" y="352.0" font-size="20" fill="#EEF1F5">Hold for</text>
+<text x="466.0" y="351.0" font-size="17" fill="#9AA3AE" text-anchor="end">1 hour</text>
+<path d="M12.0 361.5 L480.0 361.5" stroke="#20252C" stroke-width="1"/>
+<text x="12.0" y="386.0" font-size="20" fill="#4DA3FF" font-weight="700">Save</text>
+<path d="M12.0 395.5 L480.0 395.5" stroke="#20252C" stroke-width="1"/>
+</g>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="22.0" y="44.0" font-size="20" fill="#EEF1F5" font-weight="700">Edit route</text>
+<text x="122.7" y="43.0" font-size="16" fill="#7F8995" font-weight="500">Pat Okafor</text>
+<rect x="0.0" y="0.0" width="480.0" height="22.0" fill="#0E1115"/>
+<text x="8.0" y="16.5" font-size="16" fill="#9AA3AE" font-weight="600">Juniper</text>
+<text x="240.0" y="16.5" font-size="16" fill="#EEF1F5" font-weight="700" text-anchor="middle">14:32</text>
+<g transform="translate(459.0,11.0) scale(1.3) translate(-459.0,-11.0)">
+<rect x="449.0" y="6.5" width="19.0" height="9.0" fill="none" rx="2" stroke="#9AA3AE" stroke-width="1"/>
+<rect x="468.5" y="9.0" width="1.8" height="4.0" fill="#9AA3AE" rx="0.6"/>
+<rect x="451.0" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="454.9" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="458.8" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+</g>
+<g transform="translate(426.0,11.0) scale(1.3) translate(-426.0,-11.0)">
+<circle cx="426.0" cy="11.0" r="3.6" fill="none" stroke="#9AA3AE" stroke-width="1.1"/>
+<circle cx="426.0" cy="11.0" r="1.1" fill="#9AA3AE"/>
+<path d="M426 5 V7 M426 15 V17 M420 11 H422 M430 11 H432" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(406.0,11.0) scale(1.3) translate(-406.0,-11.0)">
+<path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g></g>
+<text x="2178.0" y="1634.0" font-size="17" fill="#3A3A3C">Move lifts the hop. Turning carries it through the others; press puts it down, Backspace puts it back where it was.</text>
+<text x="80.0" y="1748.0" font-size="22" fill="#1C1C1E" font-weight="700">7 · Then flood, changing</text>
+<rect x="80.0" y="1762.0" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
+<clipPath id="scr7"><rect width="480" height="222"/></clipPath>
+<g transform="translate(92,1774) scale(2)"><g clip-path="url(#scr7)">
+<rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
+<clipPath id="cl18"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl18)">
+<rect x="4.0" y="99.0" width="472.0" height="32.0" fill="#18304D" rx="8" stroke="#4DA3FF" stroke-width="1.6"/>
+<path d="M26 -41.0 V-35.0" fill="none" stroke="#3A414B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M26 -7.0 V-1.0" fill="none" stroke="#3A414B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M26 27.0 V33.0" fill="none" stroke="#3A414B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M26 61.0 V67.0" fill="none" stroke="#3A414B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M26 95.0 V101.0" fill="none" stroke="#3A414B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M26 129.0 V135.0" fill="none" stroke="#3A414B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="2 5"/>
+<circle cx="26.0" cy="-55.0" r="12" fill="#9AA3AE"/>
+<path d="M20.7 -59.9 H31.3 Q33.1 -59.9 33.1 -58.2 V-51.8 Q33.1 -50.1 31.3 -50.1 H20.7 Q18.9 -50.1 18.9 -51.8 V-58.2 Q18.9 -59.9 20.7 -59.9 Z" fill="none" stroke="#0B0D10" stroke-width="1.2705882352941178" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="21.4" y="-57.8" width="9.2" height="3.2" fill="#0B0D10" rx="1"/>
+<circle cx="22.2" cy="-52.5" r="0.6352941176470589" fill="#0B0D10"/>
+<circle cx="24.7" cy="-52.5" r="0.6352941176470589" fill="#0B0D10"/>
+<circle cx="27.3" cy="-52.5" r="0.6352941176470589" fill="#0B0D10"/>
+<circle cx="29.8" cy="-52.5" r="0.6352941176470589" fill="#0B0D10"/>
+<path d="M22.40 -31.92A4.16 4.16 0 0 1 29.60 -31.92L39.81 -14.24A4.16 4.16 0 0 1 36.21 -8.00L15.79 -8.00A4.16 4.16 0 0 1 12.19 -14.24Z" fill="#452D45"/>
+<text x="26.0" y="-19.5" font-size="8.10" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Bt</text>
+<text x="26.0" y="-10.8" font-size="8.10" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">C5</text>
+<path d="M22.40 2.08A4.16 4.16 0 0 1 29.60 2.08L39.81 19.76A4.16 4.16 0 0 1 36.21 26.00L15.79 26.00A4.16 4.16 0 0 1 12.19 19.76Z" fill="#EB8AE3"/>
+<text x="26.0" y="14.5" font-size="8.10" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">55</text>
+<text x="26.0" y="23.2" font-size="8.10" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Hk</text>
+<path d="M12.49 49.60A5.20 5.20 0 0 1 12.49 44.40L16.99 36.60A5.20 5.20 0 0 1 21.50 34.00L30.50 34.00A5.20 5.20 0 0 1 35.01 36.60L39.51 44.40A5.20 5.20 0 0 1 39.51 49.60L35.01 57.40A5.20 5.20 0 0 1 30.50 60.00L21.50 60.00A5.20 5.20 0 0 1 16.99 57.40Z" fill="#808080"/>
+<text x="26.0" y="45.2" font-size="9.88" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">7N</text>
+<text x="26.0" y="55.9" font-size="9.88" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">*</text>
+<circle cx="26.0" cy="81.0" r="12" fill="#0B0D10"/>
+<circle cx="26.0" cy="81.0" r="11" fill="none" stroke="#4DA3FF" stroke-width="1.8"/>
+<path d="M20 81.0 H32 M26 75.0 V87.0" fill="none" stroke="#4DA3FF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="26.0" cy="107.0" r="2.6" fill="#0B0D10" stroke="#7F8995" stroke-width="1.4"/>
+<circle cx="26.0" cy="115.0" r="2.6" fill="#0B0D10" stroke="#7F8995" stroke-width="1.4"/>
+<circle cx="26.0" cy="123.0" r="2.6" fill="#0B0D10" stroke="#7F8995" stroke-width="1.4"/>
+<circle cx="26.0" cy="149.0" r="13" fill="#B3F69E"/>
+<text x="26.0" y="147.2" font-size="9.88" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Ym</text>
+<text x="26.0" y="157.9" font-size="9.88" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">RG</text>
+<text x="50.0" y="-48.0" font-size="20" fill="#9AA3AE">You</text>
+<text x="50.0" y="-14.0" font-size="20" fill="#EEF1F5">Spencer Butte</text>
+<path d="M451 -25.0 H465 M451 -21.0 H465 M451 -17.0 H465" fill="none" stroke="#20252C" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="50.0" y="20.0" font-size="20" fill="#EEF1F5">Skinner Ridge</text>
+<path d="M451 9.0 H465 M451 13.0 H465 M451 17.0 H465" fill="none" stroke="#20252C" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="50.0" y="54.0" font-size="20" fill="#EEF1F5">7N*</text>
+<path d="M451 43.0 H465 M451 47.0 H465 M451 51.0 H465" fill="none" stroke="#20252C" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="50.0" y="88.0" font-size="20" fill="#4DA3FF" font-weight="600">Add hop</text>
+<text x="50.0" y="122.0" font-size="20" fill="#EEF1F5" font-weight="700">Then flood</text>
+<rect x="382.9" y="102.0" width="89.1" height="26.0" fill="#1A2333" rx="13" stroke="#4DA3FF" stroke-width="2"/>
+<path d="M393.91396 112.6 L397.91396 108.6 L401.91396 112.6 M393.91396 117.4 L397.91396 121.4 L401.91396 117.4" fill="none" stroke="#4DA3FF" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="458.0" y="121.0" font-size="17" fill="#EEF1F5" font-weight="700" text-anchor="end">1 hop</text>
+<text x="50.0" y="156.0" font-size="20" fill="#9AA3AE">Pat Okafor</text>
+<text x="12.0" y="190.0" font-size="20" fill="#EEF1F5">Ping along route</text>
+<path d="M460 177.0 L466 183.0 L460 189.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M12.0 199.5 L480.0 199.5" stroke="#20252C" stroke-width="1"/>
+<text x="12.0" y="224.0" font-size="20" fill="#EEF1F5">Hold for</text>
+<text x="466.0" y="223.0" font-size="17" fill="#9AA3AE" text-anchor="end">1 hour</text>
+<path d="M12.0 233.5 L480.0 233.5" stroke="#20252C" stroke-width="1"/>
+<text x="12.0" y="258.0" font-size="20" fill="#4DA3FF" font-weight="700">Save</text>
+<path d="M12.0 267.5 L480.0 267.5" stroke="#20252C" stroke-width="1"/>
+</g>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="22.0" y="44.0" font-size="20" fill="#EEF1F5" font-weight="700">Edit route</text>
+<text x="122.7" y="43.0" font-size="16" fill="#7F8995" font-weight="500">Pat Okafor</text>
+<rect x="0.0" y="0.0" width="480.0" height="22.0" fill="#0E1115"/>
+<text x="8.0" y="16.5" font-size="16" fill="#9AA3AE" font-weight="600">Juniper</text>
+<text x="240.0" y="16.5" font-size="16" fill="#EEF1F5" font-weight="700" text-anchor="middle">14:32</text>
+<g transform="translate(459.0,11.0) scale(1.3) translate(-459.0,-11.0)">
+<rect x="449.0" y="6.5" width="19.0" height="9.0" fill="none" rx="2" stroke="#9AA3AE" stroke-width="1"/>
+<rect x="468.5" y="9.0" width="1.8" height="4.0" fill="#9AA3AE" rx="0.6"/>
+<rect x="451.0" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="454.9" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="458.8" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+</g>
+<g transform="translate(426.0,11.0) scale(1.3) translate(-426.0,-11.0)">
+<circle cx="426.0" cy="11.0" r="3.6" fill="none" stroke="#9AA3AE" stroke-width="1.1"/>
+<circle cx="426.0" cy="11.0" r="1.1" fill="#9AA3AE"/>
+<path d="M426 5 V7 M426 15 V17 M420 11 H422 M430 11 H432" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(406.0,11.0) scale(1.3) translate(-406.0,-11.0)">
+<path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g></g>
+<text x="82.0" y="2260.0" font-size="17" fill="#3A3A3C">Press makes the value active; turning steps Off, 1 hop … 15 hops; press sets it. The rail past it is dashed while it is on. Hold for</text>
+<text x="82.0" y="2284.0" font-size="17" fill="#3A3A3C">works the same: 30 min, 1 hour, 4 hours, 12 hours, 1 day.</text>
+<text x="1128.0" y="1748.0" font-size="22" fill="#1C1C1E" font-weight="700">8 · Ping along route, then Save</text>
+<rect x="1128.0" y="1762.0" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
+<clipPath id="scr8"><rect width="480" height="222"/></clipPath>
+<g transform="translate(1140,1774) scale(2)"><g clip-path="url(#scr8)">
+<rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
+<clipPath id="cl19"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl19)">
+<rect x="4.0" y="167.0" width="472.0" height="32.0" fill="#18304D" rx="8" stroke="#4DA3FF" stroke-width="1.6"/>
+<path d="M26 -109.0 V-103.0" fill="none" stroke="#3A414B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M26 -75.0 V-69.0" fill="none" stroke="#3A414B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M26 -41.0 V-35.0" fill="none" stroke="#3A414B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M26 -7.0 V-1.0" fill="none" stroke="#3A414B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M26 27.0 V33.0" fill="none" stroke="#3A414B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M26 61.0 V67.0" fill="none" stroke="#3A414B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="2 5"/>
+<circle cx="26.0" cy="-123.0" r="12" fill="#9AA3AE"/>
+<path d="M20.7 -127.9 H31.3 Q33.1 -127.9 33.1 -126.2 V-119.8 Q33.1 -118.1 31.3 -118.1 H20.7 Q18.9 -118.1 18.9 -119.8 V-126.2 Q18.9 -127.9 20.7 -127.9 Z" fill="none" stroke="#0B0D10" stroke-width="1.2705882352941178" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="21.4" y="-125.8" width="9.2" height="3.2" fill="#0B0D10" rx="1"/>
+<circle cx="22.2" cy="-120.5" r="0.6352941176470589" fill="#0B0D10"/>
+<circle cx="24.7" cy="-120.5" r="0.6352941176470589" fill="#0B0D10"/>
+<circle cx="27.3" cy="-120.5" r="0.6352941176470589" fill="#0B0D10"/>
+<circle cx="29.8" cy="-120.5" r="0.6352941176470589" fill="#0B0D10"/>
+<path d="M22.40 -99.92A4.16 4.16 0 0 1 29.60 -99.92L39.81 -82.24A4.16 4.16 0 0 1 36.21 -76.00L15.79 -76.00A4.16 4.16 0 0 1 12.19 -82.24Z" fill="#452D45"/>
+<text x="26.0" y="-87.5" font-size="8.10" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Bt</text>
+<text x="26.0" y="-78.8" font-size="8.10" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">C5</text>
+<path d="M22.40 -65.92A4.16 4.16 0 0 1 29.60 -65.92L39.81 -48.24A4.16 4.16 0 0 1 36.21 -42.00L15.79 -42.00A4.16 4.16 0 0 1 12.19 -48.24Z" fill="#EB8AE3"/>
+<text x="26.0" y="-53.5" font-size="8.10" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">55</text>
+<text x="26.0" y="-44.8" font-size="8.10" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Hk</text>
+<path d="M12.49 -18.40A5.20 5.20 0 0 1 12.49 -23.60L16.99 -31.40A5.20 5.20 0 0 1 21.50 -34.00L30.50 -34.00A5.20 5.20 0 0 1 35.01 -31.40L39.51 -23.60A5.20 5.20 0 0 1 39.51 -18.40L35.01 -10.60A5.20 5.20 0 0 1 30.50 -8.00L21.50 -8.00A5.20 5.20 0 0 1 16.99 -10.60Z" fill="#808080"/>
+<text x="26.0" y="-22.8" font-size="9.88" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">7N</text>
+<text x="26.0" y="-12.1" font-size="9.88" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">*</text>
+<circle cx="26.0" cy="13.0" r="12" fill="#0B0D10"/>
+<circle cx="26.0" cy="13.0" r="11" fill="none" stroke="#4DA3FF" stroke-width="1.8"/>
+<path d="M20 13.0 H32 M26 7.0 V19.0" fill="none" stroke="#4DA3FF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="26.0" cy="39.0" r="2.6" fill="#0B0D10" stroke="#7F8995" stroke-width="1.4"/>
+<circle cx="26.0" cy="47.0" r="2.6" fill="#0B0D10" stroke="#7F8995" stroke-width="1.4"/>
+<circle cx="26.0" cy="55.0" r="2.6" fill="#0B0D10" stroke="#7F8995" stroke-width="1.4"/>
+<circle cx="26.0" cy="81.0" r="13" fill="#B3F69E"/>
+<text x="26.0" y="79.2" font-size="9.88" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Ym</text>
+<text x="26.0" y="89.9" font-size="9.88" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">RG</text>
+<text x="50.0" y="-116.0" font-size="20" fill="#9AA3AE">You</text>
+<text x="50.0" y="-82.0" font-size="20" fill="#EEF1F5">Spencer Butte</text>
+<path d="M451 -93.0 H465 M451 -89.0 H465 M451 -85.0 H465" fill="none" stroke="#20252C" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="50.0" y="-48.0" font-size="20" fill="#EEF1F5">Skinner Ridge</text>
+<path d="M451 -59.0 H465 M451 -55.0 H465 M451 -51.0 H465" fill="none" stroke="#20252C" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="50.0" y="-14.0" font-size="20" fill="#EEF1F5">7N*</text>
+<path d="M451 -25.0 H465 M451 -21.0 H465 M451 -17.0 H465" fill="none" stroke="#20252C" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="50.0" y="20.0" font-size="20" fill="#4DA3FF" font-weight="600">Add hop</text>
+<text x="50.0" y="54.0" font-size="20" fill="#EEF1F5">Then flood</text>
+<text x="466.0" y="53.0" font-size="17" fill="#9AA3AE" text-anchor="end">1 hop</text>
+<text x="50.0" y="88.0" font-size="20" fill="#9AA3AE">Pat Okafor</text>
+<text x="12.0" y="122.0" font-size="20" fill="#EEF1F5">Ping along route</text>
+<text x="466.0" y="121.0" font-size="17" fill="#3DD68C" font-weight="600" text-anchor="end">3.8 s</text>
+<path d="M407.83263999999997 115.0 L411.23264 118.4 L418.03264 110.75" fill="none" stroke="#3DD68C" stroke-width="2.04" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M12.0 131.5 L480.0 131.5" stroke="#20252C" stroke-width="1"/>
+<text x="12.0" y="156.0" font-size="20" fill="#EEF1F5">Hold for</text>
+<text x="466.0" y="155.0" font-size="17" fill="#9AA3AE" text-anchor="end">1 hour</text>
+<path d="M12.0 165.5 L480.0 165.5" stroke="#20252C" stroke-width="1"/>
+<text x="12.0" y="190.0" font-size="20" fill="#4DA3FF" font-weight="700">Save</text>
+</g>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="22.0" y="44.0" font-size="20" fill="#EEF1F5" font-weight="700">Edit route</text>
+<text x="122.7" y="43.0" font-size="16" fill="#7F8995" font-weight="500">Pat Okafor</text>
+<rect x="0.0" y="0.0" width="480.0" height="22.0" fill="#0E1115"/>
+<text x="8.0" y="16.5" font-size="16" fill="#9AA3AE" font-weight="600">Juniper</text>
+<text x="240.0" y="16.5" font-size="16" fill="#EEF1F5" font-weight="700" text-anchor="middle">14:32</text>
+<g transform="translate(459.0,11.0) scale(1.3) translate(-459.0,-11.0)">
+<rect x="449.0" y="6.5" width="19.0" height="9.0" fill="none" rx="2" stroke="#9AA3AE" stroke-width="1"/>
+<rect x="468.5" y="9.0" width="1.8" height="4.0" fill="#9AA3AE" rx="0.6"/>
+<rect x="451.0" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="454.9" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="458.8" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+</g>
+<g transform="translate(426.0,11.0) scale(1.3) translate(-426.0,-11.0)">
+<circle cx="426.0" cy="11.0" r="3.6" fill="none" stroke="#9AA3AE" stroke-width="1.1"/>
+<circle cx="426.0" cy="11.0" r="1.1" fill="#9AA3AE"/>
+<path d="M426 5 V7 M426 15 V17 M420 11 H422 M430 11 H432" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(406.0,11.0) scale(1.3) translate(-406.0,-11.0)">
+<path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g></g>
+<text x="1130.0" y="2260.0" font-size="17" fill="#3A3A3C">Ping along route opens the Ping screen for the unsaved draft and comes back with its result in the row. Save holds the route from</text>
+<text x="1130.0" y="2284.0" font-size="17" fill="#3A3A3C">now; Backspace returns to Route.</text>
+<text x="2176.0" y="1748.0" font-size="22" fill="#1C1C1E" font-weight="700">9 · A direct route</text>
+<rect x="2176.0" y="1762.0" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
+<clipPath id="scr9"><rect width="480" height="222"/></clipPath>
+<g transform="translate(2188,1774) scale(2)"><g clip-path="url(#scr9)">
+<rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
+<clipPath id="cl20"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl20)">
+<rect x="4.0" y="91.0" width="472.0" height="32.0" fill="#18304D" rx="8" stroke="#4DA3FF" stroke-width="1.6"/>
+<path d="M26 87.0 V93.0" fill="none" stroke="#3A414B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M26 121.0 V127.0" fill="none" stroke="#3A414B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M26 155.0 V161.0" fill="none" stroke="#3A414B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="26.0" cy="73.0" r="12" fill="#9AA3AE"/>
+<path d="M20.7 68.1 H31.3 Q33.1 68.1 33.1 69.8 V76.2 Q33.1 77.9 31.3 77.9 H20.7 Q18.9 77.9 18.9 76.2 V69.8 Q18.9 68.1 20.7 68.1 Z" fill="none" stroke="#0B0D10" stroke-width="1.2705882352941178" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="21.4" y="70.2" width="9.2" height="3.2" fill="#0B0D10" rx="1"/>
+<circle cx="22.2" cy="75.5" r="0.6352941176470589" fill="#0B0D10"/>
+<circle cx="24.7" cy="75.5" r="0.6352941176470589" fill="#0B0D10"/>
+<circle cx="27.3" cy="75.5" r="0.6352941176470589" fill="#0B0D10"/>
+<circle cx="29.8" cy="75.5" r="0.6352941176470589" fill="#0B0D10"/>
+<circle cx="26.0" cy="107.0" r="12" fill="#0B0D10"/>
+<circle cx="26.0" cy="107.0" r="11" fill="none" stroke="#4DA3FF" stroke-width="1.8"/>
+<path d="M20 107.0 H32 M26 101.0 V113.0" fill="none" stroke="#4DA3FF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="26.0" cy="141.0" r="2.6" fill="#0B0D10" stroke="#20252C" stroke-width="1.4"/>
+<circle cx="26.0" cy="175.0" r="13" fill="#B3F69E"/>
+<text x="26.0" y="173.2" font-size="9.88" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Ym</text>
+<text x="26.0" y="183.9" font-size="9.88" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">RG</text>
+<text x="50.0" y="80.0" font-size="20" fill="#9AA3AE">You</text>
+<text x="50.0" y="114.0" font-size="20" fill="#4DA3FF" font-weight="700">Add hop</text>
+<text x="50.0" y="148.0" font-size="20" fill="#EEF1F5">Flood</text>
+<text x="466.0" y="147.0" font-size="17" fill="#9AA3AE" text-anchor="end">Off</text>
+<text x="50.0" y="182.0" font-size="20" fill="#9AA3AE">Pat Okafor</text>
+<text x="12.0" y="216.0" font-size="20" fill="#EEF1F5">Ping along route</text>
+<path d="M460 203.0 L466 209.0 L460 215.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M12.0 225.5 L480.0 225.5" stroke="#20252C" stroke-width="1"/>
+<text x="12.0" y="250.0" font-size="20" fill="#EEF1F5">Hold for</text>
+<text x="466.0" y="249.0" font-size="17" fill="#9AA3AE" text-anchor="end">1 hour</text>
+<path d="M12.0 259.5 L480.0 259.5" stroke="#20252C" stroke-width="1"/>
+<text x="12.0" y="284.0" font-size="20" fill="#4DA3FF" font-weight="700">Save</text>
+<path d="M12.0 293.5 L480.0 293.5" stroke="#20252C" stroke-width="1"/>
+</g>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="22.0" y="44.0" font-size="20" fill="#EEF1F5" font-weight="700">Edit route</text>
+<text x="122.7" y="43.0" font-size="16" fill="#7F8995" font-weight="500">Pat Okafor</text>
+<rect x="0.0" y="0.0" width="480.0" height="22.0" fill="#0E1115"/>
+<text x="8.0" y="16.5" font-size="16" fill="#9AA3AE" font-weight="600">Juniper</text>
+<text x="240.0" y="16.5" font-size="16" fill="#EEF1F5" font-weight="700" text-anchor="middle">14:32</text>
+<g transform="translate(459.0,11.0) scale(1.3) translate(-459.0,-11.0)">
+<rect x="449.0" y="6.5" width="19.0" height="9.0" fill="none" rx="2" stroke="#9AA3AE" stroke-width="1"/>
+<rect x="468.5" y="9.0" width="1.8" height="4.0" fill="#9AA3AE" rx="0.6"/>
+<rect x="451.0" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="454.9" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="458.8" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+</g>
+<g transform="translate(426.0,11.0) scale(1.3) translate(-426.0,-11.0)">
+<circle cx="426.0" cy="11.0" r="3.6" fill="none" stroke="#9AA3AE" stroke-width="1.1"/>
+<circle cx="426.0" cy="11.0" r="1.1" fill="#9AA3AE"/>
+<path d="M426 5 V7 M426 15 V17 M420 11 H422 M430 11 H432" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(406.0,11.0) scale(1.3) translate(-406.0,-11.0)">
+<path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g></g>
+<text x="2178.0" y="2260.0" font-size="17" fill="#3A3A3C">Every hop removed. The flood row reads Flood, counted from this device, and the route saves as direct.</text>
+<text x="80.0" y="2374.0" font-size="22" fill="#1C1C1E" font-weight="700">10 · Leaving with changes</text>
+<rect x="80.0" y="2388.0" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
+<clipPath id="scr10"><rect width="480" height="222"/></clipPath>
+<g transform="translate(92,2400) scale(2)"><g clip-path="url(#scr10)">
+<rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
+<clipPath id="cl21"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl21)">
+<rect x="4.0" y="91.0" width="472.0" height="32.0" fill="#18304D" rx="8" stroke="#4DA3FF" stroke-width="1.6"/>
+<path d="M26 87.0 V93.0" fill="none" stroke="#3A414B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M26 121.0 V127.0" fill="none" stroke="#3A414B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M26 155.0 V161.0" fill="none" stroke="#3A414B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M26 189.0 V195.0" fill="none" stroke="#3A414B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M26 223.0 V229.0" fill="none" stroke="#3A414B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M26 257.0 V263.0" fill="none" stroke="#3A414B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="2 5"/>
+<circle cx="26.0" cy="73.0" r="12" fill="#9AA3AE"/>
+<path d="M20.7 68.1 H31.3 Q33.1 68.1 33.1 69.8 V76.2 Q33.1 77.9 31.3 77.9 H20.7 Q18.9 77.9 18.9 76.2 V69.8 Q18.9 68.1 20.7 68.1 Z" fill="none" stroke="#0B0D10" stroke-width="1.2705882352941178" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="21.4" y="70.2" width="9.2" height="3.2" fill="#0B0D10" rx="1"/>
+<circle cx="22.2" cy="75.5" r="0.6352941176470589" fill="#0B0D10"/>
+<circle cx="24.7" cy="75.5" r="0.6352941176470589" fill="#0B0D10"/>
+<circle cx="27.3" cy="75.5" r="0.6352941176470589" fill="#0B0D10"/>
+<circle cx="29.8" cy="75.5" r="0.6352941176470589" fill="#0B0D10"/>
+<path d="M22.40 96.08A4.16 4.16 0 0 1 29.60 96.08L39.81 113.76A4.16 4.16 0 0 1 36.21 120.00L15.79 120.00A4.16 4.16 0 0 1 12.19 113.76Z" fill="#452D45"/>
+<text x="26.0" y="108.5" font-size="8.10" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Bt</text>
+<text x="26.0" y="117.2" font-size="8.10" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">C5</text>
+<path d="M22.40 130.08A4.16 4.16 0 0 1 29.60 130.08L39.81 147.76A4.16 4.16 0 0 1 36.21 154.00L15.79 154.00A4.16 4.16 0 0 1 12.19 147.76Z" fill="#EB8AE3"/>
+<text x="26.0" y="142.5" font-size="8.10" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">55</text>
+<text x="26.0" y="151.2" font-size="8.10" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Hk</text>
+<path d="M12.49 177.60A5.20 5.20 0 0 1 12.49 172.40L16.99 164.60A5.20 5.20 0 0 1 21.50 162.00L30.50 162.00A5.20 5.20 0 0 1 35.01 164.60L39.51 172.40A5.20 5.20 0 0 1 39.51 177.60L35.01 185.40A5.20 5.20 0 0 1 30.50 188.00L21.50 188.00A5.20 5.20 0 0 1 16.99 185.40Z" fill="#808080"/>
+<text x="26.0" y="173.2" font-size="9.88" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">7N</text>
+<text x="26.0" y="183.9" font-size="9.88" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">*</text>
+<circle cx="26.0" cy="209.0" r="12" fill="#0B0D10"/>
+<circle cx="26.0" cy="209.0" r="11" fill="none" stroke="#4DA3FF" stroke-width="1.8"/>
+<path d="M20 209.0 H32 M26 203.0 V215.0" fill="none" stroke="#4DA3FF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="26.0" cy="235.0" r="2.6" fill="#0B0D10" stroke="#7F8995" stroke-width="1.4"/>
+<circle cx="26.0" cy="243.0" r="2.6" fill="#0B0D10" stroke="#7F8995" stroke-width="1.4"/>
+<circle cx="26.0" cy="251.0" r="2.6" fill="#0B0D10" stroke="#7F8995" stroke-width="1.4"/>
+<circle cx="26.0" cy="277.0" r="13" fill="#B3F69E"/>
+<text x="26.0" y="275.2" font-size="9.88" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Ym</text>
+<text x="26.0" y="285.9" font-size="9.88" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">RG</text>
+<text x="50.0" y="80.0" font-size="20" fill="#9AA3AE">You</text>
+<text x="50.0" y="114.0" font-size="20" fill="#EEF1F5" font-weight="700">Spencer Butte</text>
+<path d="M451 103.0 H465 M451 107.0 H465 M451 111.0 H465" fill="none" stroke="#7F8995" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="50.0" y="148.0" font-size="20" fill="#EEF1F5">Skinner Ridge</text>
+<path d="M451 137.0 H465 M451 141.0 H465 M451 145.0 H465" fill="none" stroke="#20252C" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="50.0" y="182.0" font-size="20" fill="#EEF1F5">7N*</text>
+<path d="M451 171.0 H465 M451 175.0 H465 M451 179.0 H465" fill="none" stroke="#20252C" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="50.0" y="216.0" font-size="20" fill="#4DA3FF" font-weight="600">Add hop</text>
+<text x="50.0" y="250.0" font-size="20" fill="#EEF1F5">Then flood</text>
+<text x="466.0" y="249.0" font-size="17" fill="#9AA3AE" text-anchor="end">1 hop</text>
+<text x="50.0" y="284.0" font-size="20" fill="#9AA3AE">Pat Okafor</text>
+<text x="12.0" y="318.0" font-size="20" fill="#EEF1F5">Ping along route</text>
+<path d="M460 305.0 L466 311.0 L460 317.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M12.0 327.5 L480.0 327.5" stroke="#20252C" stroke-width="1"/>
+<text x="12.0" y="352.0" font-size="20" fill="#EEF1F5">Hold for</text>
+<text x="466.0" y="351.0" font-size="17" fill="#9AA3AE" text-anchor="end">1 hour</text>
+<path d="M12.0 361.5 L480.0 361.5" stroke="#20252C" stroke-width="1"/>
+<text x="12.0" y="386.0" font-size="20" fill="#4DA3FF" font-weight="700">Save</text>
+<path d="M12.0 395.5 L480.0 395.5" stroke="#20252C" stroke-width="1"/>
+</g>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="22.0" y="44.0" font-size="20" fill="#EEF1F5" font-weight="700">Edit route</text>
+<text x="122.7" y="43.0" font-size="16" fill="#7F8995" font-weight="500">Pat Okafor</text>
+<rect x="91.0" y="69.0" width="300.0" height="112.0" fill="#000" rx="12" opacity="0.5"/>
+<rect x="90.0" y="66.0" width="300.0" height="112.0" fill="#1B2027" rx="12" stroke="#2E3540" stroke-width="1"/>
+<rect x="95.0" y="71.0" width="290.0" height="32.0" fill="#18304D" rx="7" stroke="#4DA3FF" stroke-width="1.6"/>
+<text x="106.0" y="94.0" font-size="20" fill="#EEF1F5" font-weight="700">Save</text>
+<text x="106.0" y="128.0" font-size="20" fill="#FF6B5E">Discard changes</text>
+<text x="106.0" y="162.0" font-size="20" fill="#EEF1F5">Keep editing</text>
+<rect x="0.0" y="0.0" width="480.0" height="22.0" fill="#0E1115"/>
+<text x="8.0" y="16.5" font-size="16" fill="#9AA3AE" font-weight="600">Juniper</text>
+<text x="240.0" y="16.5" font-size="16" fill="#EEF1F5" font-weight="700" text-anchor="middle">14:32</text>
+<g transform="translate(459.0,11.0) scale(1.3) translate(-459.0,-11.0)">
+<rect x="449.0" y="6.5" width="19.0" height="9.0" fill="none" rx="2" stroke="#9AA3AE" stroke-width="1"/>
+<rect x="468.5" y="9.0" width="1.8" height="4.0" fill="#9AA3AE" rx="0.6"/>
+<rect x="451.0" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="454.9" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="458.8" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+</g>
+<g transform="translate(426.0,11.0) scale(1.3) translate(-426.0,-11.0)">
+<circle cx="426.0" cy="11.0" r="3.6" fill="none" stroke="#9AA3AE" stroke-width="1.1"/>
+<circle cx="426.0" cy="11.0" r="1.1" fill="#9AA3AE"/>
+<path d="M426 5 V7 M426 15 V17 M420 11 H422 M430 11 H432" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(406.0,11.0) scale(1.3) translate(-406.0,-11.0)">
+<path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g></g>
+<text x="82.0" y="2886.0" font-size="17" fill="#3A3A3C">Backspace with unsaved changes asks. Without changes it just leaves.</text>
+<text x="80.0" y="3010.0" font-size="34" fill="#1C1C1E" font-weight="700">Add hop</text>
+<text x="80.0" y="3048.0" font-size="19" fill="#3A3A3C">Add hop opens a list of candidates for the next hop. Choosing one appends it and moves on to the hop after it; Backspace returns to the editor with every hop added so far.</text>
+<text x="80.0" y="3106.0" font-size="22" fill="#1C1C1E" font-weight="700">11 · Add hop, neighbors</text>
+<rect x="80.0" y="3120.0" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
+<clipPath id="scr11"><rect width="480" height="222"/></clipPath>
+<g transform="translate(92,3132) scale(2)"><g clip-path="url(#scr11)">
+<rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
+<clipPath id="cl22"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl22)">
+<text x="12.0" y="71.0" font-size="16" fill="#9AA3AE" font-weight="700">Heard by Skinner Ridge</text>
+<text x="466.0" y="71.0" font-size="16" fill="#7F8995" font-weight="500" text-anchor="end">Read 12m ago</text>
+<rect x="4.0" y="79.0" width="472.0" height="42.0" fill="#18304D" rx="8" stroke="#4DA3FF" stroke-width="1.6"/>
+<circle cx="26.0" cy="100.0" r="14" fill="#B3F69E"/>
+<text x="26.0" y="98.1" font-size="10.64" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Ym</text>
+<text x="26.0" y="109.6" font-size="10.64" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">RG</text>
+<text x="50.0" y="98.0" font-size="20" fill="#EEF1F5" font-weight="700">Pat Okafor</text>
+<rect x="50.0" y="113.0" width="3.2" height="4.0" fill="#F5B544" rx="0.6"/>
+<rect x="54.6" y="110.0" width="3.2" height="7.0" fill="#F5B544" rx="0.6"/>
+<rect x="59.2" y="107.0" width="3.2" height="10.0" fill="#7F8995" rx="0.6"/>
+<rect x="63.8" y="104.0" width="3.2" height="13.0" fill="#7F8995" rx="0.6"/>
+<text x="74.0" y="116.0" font-size="16" fill="#7F8995" font-weight="500">−101 dBm · SNR 1.5 dB · 6m</text>
+<text x="466.0" y="98.0" font-size="17" fill="#4DA3FF" font-weight="700" text-anchor="end">Finish here</text>
+<path d="M22.12 132.24A4.48 4.48 0 0 1 29.88 132.24L40.87 151.28A4.48 4.48 0 0 1 36.99 158.00L15.01 158.00A4.48 4.48 0 0 1 11.13 151.28Z" fill="#163F27"/>
+<text x="26.0" y="145.6" font-size="8.72" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Pg</text>
+<text x="26.0" y="155.0" font-size="8.72" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">3e</text>
+<text x="50.0" y="142.0" font-size="20" fill="#EEF1F5">Mt. Pisgah</text>
+<rect x="50.0" y="157.0" width="3.2" height="4.0" fill="#3DD68C" rx="0.6"/>
+<rect x="54.6" y="154.0" width="3.2" height="7.0" fill="#3DD68C" rx="0.6"/>
+<rect x="59.2" y="151.0" width="3.2" height="10.0" fill="#3DD68C" rx="0.6"/>
+<rect x="63.8" y="148.0" width="3.2" height="13.0" fill="#3DD68C" rx="0.6"/>
+<text x="74.0" y="160.0" font-size="16" fill="#7F8995" font-weight="500">−88 dBm · SNR 7.5 dB · 4m · 6.1 km</text>
+<path d="M50.0 165.5 L480.0 165.5" stroke="#20252C" stroke-width="1"/>
+<path d="M11.45 190.80A5.60 5.60 0 0 1 11.45 185.20L16.30 176.80A5.60 5.60 0 0 1 21.15 174.00L30.85 174.00A5.60 5.60 0 0 1 35.70 176.80L40.55 185.20A5.60 5.60 0 0 1 40.55 190.80L35.70 199.20A5.60 5.60 0 0 1 30.85 202.00L21.15 202.00A5.60 5.60 0 0 1 16.30 199.20Z" fill="#808080"/>
+<text x="26.0" y="186.1" font-size="10.64" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">8C</text>
+<text x="26.0" y="197.6" font-size="10.64" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">*</text>
+<text x="50.0" y="186.0" font-size="20" fill="#EEF1F5" font-family="Menlo, 'SF Mono', Consolas, monospace">8C*</text>
+<rect x="50.0" y="201.0" width="3.2" height="4.0" fill="#3DD68C" rx="0.6"/>
+<rect x="54.6" y="198.0" width="3.2" height="7.0" fill="#3DD68C" rx="0.6"/>
+<rect x="59.2" y="195.0" width="3.2" height="10.0" fill="#3DD68C" rx="0.6"/>
+<rect x="63.8" y="192.0" width="3.2" height="13.0" fill="#7F8995" rx="0.6"/>
+<text x="74.0" y="204.0" font-size="16" fill="#7F8995" font-weight="500">−95 dBm · SNR 3.0 dB · 20m</text>
+<path d="M50.0 209.5 L480.0 209.5" stroke="#20252C" stroke-width="1"/>
+<g opacity="0.4">
+<path d="M22.12 220.24A4.48 4.48 0 0 1 29.88 220.24L40.87 239.28A4.48 4.48 0 0 1 36.99 246.00L15.01 246.00A4.48 4.48 0 0 1 11.13 239.28Z" fill="#452D45"/>
+<text x="26.0" y="233.6" font-size="8.72" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Bt</text>
+<text x="26.0" y="243.0" font-size="8.72" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">C5</text>
+</g>
+<text x="50.0" y="230.0" font-size="20" fill="#7F8995">Spencer Butte</text>
+<g opacity="0.4">
+<rect x="50.0" y="245.0" width="3.2" height="4.0" fill="#3DD68C" rx="0.6"/>
+<rect x="54.6" y="242.0" width="3.2" height="7.0" fill="#3DD68C" rx="0.6"/>
+<rect x="59.2" y="239.0" width="3.2" height="10.0" fill="#3DD68C" rx="0.6"/>
+<rect x="63.8" y="236.0" width="3.2" height="13.0" fill="#3DD68C" rx="0.6"/>
+<text x="74.0" y="248.0" font-size="16" fill="#7F8995" font-weight="500">−84 dBm · SNR 8.5 dB · 1m</text>
+</g>
+<text x="466.0" y="230.0" font-size="17" fill="#7F8995" font-weight="600" text-anchor="end">In path</text>
+<path d="M50.0 253.5 L480.0 253.5" stroke="#20252C" stroke-width="1"/>
+<g opacity="0.4">
+<path d="M22.12 264.24A4.48 4.48 0 0 1 29.88 264.24L40.87 283.28A4.48 4.48 0 0 1 36.99 290.00L15.01 290.00A4.48 4.48 0 0 1 11.13 283.28Z" fill="#05C2BD"/>
+<text x="26.0" y="277.6" font-size="8.72" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Cb</text>
+<text x="26.0" y="287.0" font-size="8.72" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">4r</text>
+</g>
+<text x="50.0" y="274.0" font-size="20" fill="#7F8995">Coburg Hills</text>
+<g opacity="0.4">
+<rect x="50.0" y="289.0" width="3.2" height="4.0" fill="#F5B544" rx="0.6"/>
+<rect x="54.6" y="286.0" width="3.2" height="7.0" fill="#F5B544" rx="0.6"/>
+<rect x="59.2" y="283.0" width="3.2" height="10.0" fill="#7F8995" rx="0.6"/>
+<rect x="63.8" y="280.0" width="3.2" height="13.0" fill="#7F8995" rx="0.6"/>
+<text x="74.0" y="292.0" font-size="16" fill="#7F8995" font-weight="500">−104 dBm · SNR −3.5 dB · 1d</text>
+</g>
+<path d="M50.0 297.5 L480.0 297.5" stroke="#20252C" stroke-width="1"/>
+<text x="50.0" y="322.0" font-size="20" fill="#4DA3FF" font-weight="600">Load more</text>
+<text x="466.0" y="321.0" font-size="16" fill="#7F8995" font-weight="600" text-anchor="end">5 of 9</text>
+<path d="M50.0 331.5 L480.0 331.5" stroke="#20252C" stroke-width="1"/>
+<text x="50.0" y="356.0" font-size="20" fill="#4DA3FF" font-weight="600">Refresh</text>
+<path d="M50.0 365.5 L480.0 365.5" stroke="#20252C" stroke-width="1"/>
+<text x="12.0" y="385.0" font-size="16" fill="#9AA3AE" font-weight="700">Known repeaters</text>
+<path d="M22.40 398.08A4.16 4.16 0 0 1 29.60 398.08L39.81 415.76A4.16 4.16 0 0 1 36.21 422.00L15.79 422.00A4.16 4.16 0 0 1 12.19 415.76Z" fill="#AFE854"/>
+<text x="26.0" y="410.5" font-size="8.10" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Fx</text>
+<text x="26.0" y="419.2" font-size="8.10" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">9b</text>
+<text x="50.0" y="416.0" font-size="20" fill="#EEF1F5">Fox Hollow</text>
+<text x="466.0" y="415.0" font-size="16" fill="#7F8995" font-weight="600" text-anchor="end">2h</text>
+<path d="M50.0 425.5 L480.0 425.5" stroke="#20252C" stroke-width="1"/>
+<path d="M12.49 445.60A5.20 5.20 0 0 1 12.49 440.40L16.99 432.60A5.20 5.20 0 0 1 21.50 430.00L30.50 430.00A5.20 5.20 0 0 1 35.01 432.60L39.51 440.40A5.20 5.20 0 0 1 39.51 445.60L35.01 453.40A5.20 5.20 0 0 1 30.50 456.00L21.50 456.00A5.20 5.20 0 0 1 16.99 453.40Z" fill="#748C7D"/>
+<text x="26.0" y="441.2" font-size="9.88" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Eb</text>
+<text x="26.0" y="451.9" font-size="9.88" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">2W</text>
+<text x="50.0" y="450.0" font-size="20" fill="#EEF1F5">Eugene Bridge</text>
+<text x="466.0" y="449.0" font-size="16" fill="#7F8995" font-weight="600" text-anchor="end">1d</text>
+<path d="M50.0 459.5 L480.0 459.5" stroke="#20252C" stroke-width="1"/>
+</g>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="22.0" y="44.0" font-size="20" fill="#EEF1F5" font-weight="700">Add hop 3</text>
+<text x="128.7" y="43.0" font-size="16" fill="#7F8995" font-weight="500">after Skinner Ridge</text>
+<rect x="0.0" y="0.0" width="480.0" height="22.0" fill="#0E1115"/>
+<text x="8.0" y="16.5" font-size="16" fill="#9AA3AE" font-weight="600">Juniper</text>
+<text x="240.0" y="16.5" font-size="16" fill="#EEF1F5" font-weight="700" text-anchor="middle">14:32</text>
+<g transform="translate(459.0,11.0) scale(1.3) translate(-459.0,-11.0)">
+<rect x="449.0" y="6.5" width="19.0" height="9.0" fill="none" rx="2" stroke="#9AA3AE" stroke-width="1"/>
+<rect x="468.5" y="9.0" width="1.8" height="4.0" fill="#9AA3AE" rx="0.6"/>
+<rect x="451.0" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="454.9" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="458.8" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+</g>
+<g transform="translate(426.0,11.0) scale(1.3) translate(-426.0,-11.0)">
+<circle cx="426.0" cy="11.0" r="3.6" fill="none" stroke="#9AA3AE" stroke-width="1.1"/>
+<circle cx="426.0" cy="11.0" r="1.1" fill="#9AA3AE"/>
+<path d="M426 5 V7 M426 15 V17 M420 11 H422 M430 11 H432" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(406.0,11.0) scale(1.3) translate(-406.0,-11.0)">
+<path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g></g>
+<text x="82.0" y="3618.0" font-size="17" fill="#3A3A3C">What the previous hop last reported hearing, in the Neighbors row form (17), asked along the route so far; for hop 1, this device's</text>
+<text x="82.0" y="3642.0" font-size="17" fill="#3A3A3C">own list. Opening sends nothing. When the peer is among them, it pins to the top with Finish here, which ends the route.</text>
+<text x="1128.0" y="3106.0" font-size="22" fill="#1C1C1E" font-weight="700">12 · Add hop, further down</text>
+<rect x="1128.0" y="3120.0" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
+<clipPath id="scr12"><rect width="480" height="222"/></clipPath>
+<g transform="translate(1140,3132) scale(2)"><g clip-path="url(#scr12)">
+<rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
+<clipPath id="cl23"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl23)">
+<text x="12.0" y="-117.0" font-size="16" fill="#9AA3AE" font-weight="700">Heard by Skinner Ridge</text>
+<text x="466.0" y="-117.0" font-size="16" fill="#7F8995" font-weight="500" text-anchor="end">Read 12m ago</text>
+<rect x="4.0" y="-109.0" width="472.0" height="42.0" fill="#18304D" rx="8" stroke="#4DA3FF" stroke-width="1.6"/>
+<circle cx="26.0" cy="-88.0" r="14" fill="#B3F69E"/>
+<text x="26.0" y="-89.9" font-size="10.64" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Ym</text>
+<text x="26.0" y="-78.4" font-size="10.64" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">RG</text>
+<text x="50.0" y="-90.0" font-size="20" fill="#EEF1F5" font-weight="700">Pat Okafor</text>
+<rect x="50.0" y="-75.0" width="3.2" height="4.0" fill="#F5B544" rx="0.6"/>
+<rect x="54.6" y="-78.0" width="3.2" height="7.0" fill="#F5B544" rx="0.6"/>
+<rect x="59.2" y="-81.0" width="3.2" height="10.0" fill="#7F8995" rx="0.6"/>
+<rect x="63.8" y="-84.0" width="3.2" height="13.0" fill="#7F8995" rx="0.6"/>
+<text x="74.0" y="-72.0" font-size="16" fill="#7F8995" font-weight="500">−101 dBm · SNR 1.5 dB · 6m</text>
+<text x="466.0" y="-90.0" font-size="17" fill="#4DA3FF" font-weight="700" text-anchor="end">Finish here</text>
+<path d="M22.12 -55.76A4.48 4.48 0 0 1 29.88 -55.76L40.87 -36.72A4.48 4.48 0 0 1 36.99 -30.00L15.01 -30.00A4.48 4.48 0 0 1 11.13 -36.72Z" fill="#163F27"/>
+<text x="26.0" y="-42.4" font-size="8.72" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Pg</text>
+<text x="26.0" y="-33.0" font-size="8.72" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">3e</text>
+<text x="50.0" y="-46.0" font-size="20" fill="#EEF1F5">Mt. Pisgah</text>
+<rect x="50.0" y="-31.0" width="3.2" height="4.0" fill="#3DD68C" rx="0.6"/>
+<rect x="54.6" y="-34.0" width="3.2" height="7.0" fill="#3DD68C" rx="0.6"/>
+<rect x="59.2" y="-37.0" width="3.2" height="10.0" fill="#3DD68C" rx="0.6"/>
+<rect x="63.8" y="-40.0" width="3.2" height="13.0" fill="#3DD68C" rx="0.6"/>
+<text x="74.0" y="-28.0" font-size="16" fill="#7F8995" font-weight="500">−88 dBm · SNR 7.5 dB · 4m · 6.1 km</text>
+<path d="M50.0 -22.5 L480.0 -22.5" stroke="#20252C" stroke-width="1"/>
+<path d="M11.45 2.80A5.60 5.60 0 0 1 11.45 -2.80L16.30 -11.20A5.60 5.60 0 0 1 21.15 -14.00L30.85 -14.00A5.60 5.60 0 0 1 35.70 -11.20L40.55 -2.80A5.60 5.60 0 0 1 40.55 2.80L35.70 11.20A5.60 5.60 0 0 1 30.85 14.00L21.15 14.00A5.60 5.60 0 0 1 16.30 11.20Z" fill="#808080"/>
+<text x="26.0" y="-1.9" font-size="10.64" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">8C</text>
+<text x="26.0" y="9.6" font-size="10.64" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">*</text>
+<text x="50.0" y="-2.0" font-size="20" fill="#EEF1F5" font-family="Menlo, 'SF Mono', Consolas, monospace">8C*</text>
+<rect x="50.0" y="13.0" width="3.2" height="4.0" fill="#3DD68C" rx="0.6"/>
+<rect x="54.6" y="10.0" width="3.2" height="7.0" fill="#3DD68C" rx="0.6"/>
+<rect x="59.2" y="7.0" width="3.2" height="10.0" fill="#3DD68C" rx="0.6"/>
+<rect x="63.8" y="4.0" width="3.2" height="13.0" fill="#7F8995" rx="0.6"/>
+<text x="74.0" y="16.0" font-size="16" fill="#7F8995" font-weight="500">−95 dBm · SNR 3.0 dB · 20m</text>
+<path d="M50.0 21.5 L480.0 21.5" stroke="#20252C" stroke-width="1"/>
+<g opacity="0.4">
+<path d="M22.12 32.24A4.48 4.48 0 0 1 29.88 32.24L40.87 51.28A4.48 4.48 0 0 1 36.99 58.00L15.01 58.00A4.48 4.48 0 0 1 11.13 51.28Z" fill="#452D45"/>
+<text x="26.0" y="45.6" font-size="8.72" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Bt</text>
+<text x="26.0" y="55.0" font-size="8.72" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">C5</text>
+</g>
+<text x="50.0" y="42.0" font-size="20" fill="#7F8995">Spencer Butte</text>
+<g opacity="0.4">
+<rect x="50.0" y="57.0" width="3.2" height="4.0" fill="#3DD68C" rx="0.6"/>
+<rect x="54.6" y="54.0" width="3.2" height="7.0" fill="#3DD68C" rx="0.6"/>
+<rect x="59.2" y="51.0" width="3.2" height="10.0" fill="#3DD68C" rx="0.6"/>
+<rect x="63.8" y="48.0" width="3.2" height="13.0" fill="#3DD68C" rx="0.6"/>
+<text x="74.0" y="60.0" font-size="16" fill="#7F8995" font-weight="500">−84 dBm · SNR 8.5 dB · 1m</text>
+</g>
+<text x="466.0" y="42.0" font-size="17" fill="#7F8995" font-weight="600" text-anchor="end">In path</text>
+<path d="M50.0 65.5 L480.0 65.5" stroke="#20252C" stroke-width="1"/>
+<g opacity="0.4">
+<path d="M22.12 76.24A4.48 4.48 0 0 1 29.88 76.24L40.87 95.28A4.48 4.48 0 0 1 36.99 102.00L15.01 102.00A4.48 4.48 0 0 1 11.13 95.28Z" fill="#05C2BD"/>
+<text x="26.0" y="89.6" font-size="8.72" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Cb</text>
+<text x="26.0" y="99.0" font-size="8.72" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">4r</text>
+</g>
+<text x="50.0" y="86.0" font-size="20" fill="#7F8995">Coburg Hills</text>
+<g opacity="0.4">
+<rect x="50.0" y="101.0" width="3.2" height="4.0" fill="#F5B544" rx="0.6"/>
+<rect x="54.6" y="98.0" width="3.2" height="7.0" fill="#F5B544" rx="0.6"/>
+<rect x="59.2" y="95.0" width="3.2" height="10.0" fill="#7F8995" rx="0.6"/>
+<rect x="63.8" y="92.0" width="3.2" height="13.0" fill="#7F8995" rx="0.6"/>
+<text x="74.0" y="104.0" font-size="16" fill="#7F8995" font-weight="500">−104 dBm · SNR −3.5 dB · 1d</text>
+</g>
+<path d="M50.0 109.5 L480.0 109.5" stroke="#20252C" stroke-width="1"/>
+<text x="50.0" y="134.0" font-size="20" fill="#4DA3FF" font-weight="600">Load more</text>
+<text x="466.0" y="133.0" font-size="16" fill="#7F8995" font-weight="600" text-anchor="end">5 of 9</text>
+<path d="M50.0 143.5 L480.0 143.5" stroke="#20252C" stroke-width="1"/>
+<text x="50.0" y="168.0" font-size="20" fill="#4DA3FF" font-weight="600">Refresh</text>
+<path d="M50.0 177.5 L480.0 177.5" stroke="#20252C" stroke-width="1"/>
+<text x="12.0" y="197.0" font-size="16" fill="#9AA3AE" font-weight="700">Known repeaters</text>
+<path d="M22.40 210.08A4.16 4.16 0 0 1 29.60 210.08L39.81 227.76A4.16 4.16 0 0 1 36.21 234.00L15.79 234.00A4.16 4.16 0 0 1 12.19 227.76Z" fill="#AFE854"/>
+<text x="26.0" y="222.5" font-size="8.10" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Fx</text>
+<text x="26.0" y="231.2" font-size="8.10" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">9b</text>
+<text x="50.0" y="228.0" font-size="20" fill="#EEF1F5">Fox Hollow</text>
+<text x="466.0" y="227.0" font-size="16" fill="#7F8995" font-weight="600" text-anchor="end">2h</text>
+<path d="M50.0 237.5 L480.0 237.5" stroke="#20252C" stroke-width="1"/>
+<path d="M12.49 257.60A5.20 5.20 0 0 1 12.49 252.40L16.99 244.60A5.20 5.20 0 0 1 21.50 242.00L30.50 242.00A5.20 5.20 0 0 1 35.01 244.60L39.51 252.40A5.20 5.20 0 0 1 39.51 257.60L35.01 265.40A5.20 5.20 0 0 1 30.50 268.00L21.50 268.00A5.20 5.20 0 0 1 16.99 265.40Z" fill="#748C7D"/>
+<text x="26.0" y="253.2" font-size="9.88" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Eb</text>
+<text x="26.0" y="263.9" font-size="9.88" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">2W</text>
+<text x="50.0" y="262.0" font-size="20" fill="#EEF1F5">Eugene Bridge</text>
+<text x="466.0" y="261.0" font-size="16" fill="#7F8995" font-weight="600" text-anchor="end">1d</text>
+<path d="M50.0 271.5 L480.0 271.5" stroke="#20252C" stroke-width="1"/>
+</g>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="22.0" y="44.0" font-size="20" fill="#EEF1F5" font-weight="700">Add hop 3</text>
+<text x="128.7" y="43.0" font-size="16" fill="#7F8995" font-weight="500">after Skinner Ridge</text>
+<rect x="0.0" y="0.0" width="480.0" height="22.0" fill="#0E1115"/>
+<text x="8.0" y="16.5" font-size="16" fill="#9AA3AE" font-weight="600">Juniper</text>
+<text x="240.0" y="16.5" font-size="16" fill="#EEF1F5" font-weight="700" text-anchor="middle">14:32</text>
+<g transform="translate(459.0,11.0) scale(1.3) translate(-459.0,-11.0)">
+<rect x="449.0" y="6.5" width="19.0" height="9.0" fill="none" rx="2" stroke="#9AA3AE" stroke-width="1"/>
+<rect x="468.5" y="9.0" width="1.8" height="4.0" fill="#9AA3AE" rx="0.6"/>
+<rect x="451.0" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="454.9" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="458.8" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+</g>
+<g transform="translate(426.0,11.0) scale(1.3) translate(-426.0,-11.0)">
+<circle cx="426.0" cy="11.0" r="3.6" fill="none" stroke="#9AA3AE" stroke-width="1.1"/>
+<circle cx="426.0" cy="11.0" r="1.1" fill="#9AA3AE"/>
+<path d="M426 5 V7 M426 15 V17 M420 11 H422 M430 11 H432" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(406.0,11.0) scale(1.3) translate(-406.0,-11.0)">
+<path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g></g>
+<text x="1130.0" y="3618.0" font-size="17" fill="#3A3A3C">Load more and Refresh each send one request. Nodes already on the route are dimmed and say In path. Known repeaters</text>
+<text x="1130.0" y="3642.0" font-size="17" fill="#3A3A3C">follow, most recently heard first.</text>
+<text x="2176.0" y="3106.0" font-size="22" fill="#1C1C1E" font-weight="700">13 · Add hop after a bare hint</text>
+<rect x="2176.0" y="3120.0" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
+<clipPath id="scr13"><rect width="480" height="222"/></clipPath>
+<g transform="translate(2188,3132) scale(2)"><g clip-path="url(#scr13)">
+<rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
+<clipPath id="cl24"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl24)">
+<text x="12.0" y="71.0" font-size="16" fill="#9AA3AE" font-weight="700">Known repeaters</text>
+<rect x="4.0" y="79.0" width="472.0" height="32.0" fill="#18304D" rx="8" stroke="#4DA3FF" stroke-width="1.6"/>
+<path d="M22.40 84.08A4.16 4.16 0 0 1 29.60 84.08L39.81 101.76A4.16 4.16 0 0 1 36.21 108.00L15.79 108.00A4.16 4.16 0 0 1 12.19 101.76Z" fill="#163F27"/>
+<text x="26.0" y="96.5" font-size="8.10" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Pg</text>
+<text x="26.0" y="105.2" font-size="8.10" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">3e</text>
+<text x="50.0" y="102.0" font-size="20" fill="#EEF1F5" font-weight="700">Mt. Pisgah</text>
+<text x="466.0" y="101.0" font-size="16" fill="#7F8995" font-weight="600" text-anchor="end">4m</text>
+<path d="M22.40 118.08A4.16 4.16 0 0 1 29.60 118.08L39.81 135.76A4.16 4.16 0 0 1 36.21 142.00L15.79 142.00A4.16 4.16 0 0 1 12.19 135.76Z" fill="#AFE854"/>
+<text x="26.0" y="130.5" font-size="8.10" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Fx</text>
+<text x="26.0" y="139.2" font-size="8.10" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">9b</text>
+<text x="50.0" y="136.0" font-size="20" fill="#EEF1F5">Fox Hollow</text>
+<text x="466.0" y="135.0" font-size="16" fill="#7F8995" font-weight="600" text-anchor="end">2h</text>
+<path d="M50.0 145.5 L480.0 145.5" stroke="#20252C" stroke-width="1"/>
+<path d="M12.49 165.60A5.20 5.20 0 0 1 12.49 160.40L16.99 152.60A5.20 5.20 0 0 1 21.50 150.00L30.50 150.00A5.20 5.20 0 0 1 35.01 152.60L39.51 160.40A5.20 5.20 0 0 1 39.51 165.60L35.01 173.40A5.20 5.20 0 0 1 30.50 176.00L21.50 176.00A5.20 5.20 0 0 1 16.99 173.40Z" fill="#748C7D"/>
+<text x="26.0" y="161.2" font-size="9.88" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Eb</text>
+<text x="26.0" y="171.9" font-size="9.88" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">2W</text>
+<text x="50.0" y="170.0" font-size="20" fill="#EEF1F5">Eugene Bridge</text>
+<text x="466.0" y="169.0" font-size="16" fill="#7F8995" font-weight="600" text-anchor="end">1d</text>
+<path d="M50.0 179.5 L480.0 179.5" stroke="#20252C" stroke-width="1"/>
+<path d="M22.40 186.08A4.16 4.16 0 0 1 29.60 186.08L39.81 203.76A4.16 4.16 0 0 1 36.21 210.00L15.79 210.00A4.16 4.16 0 0 1 12.19 203.76Z" fill="#EBF764"/>
+<text x="26.0" y="198.5" font-size="8.10" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Mq</text>
+<text x="26.0" y="207.2" font-size="8.10" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">7t</text>
+<text x="50.0" y="204.0" font-size="20" fill="#EEF1F5">Mary's Peak</text>
+<text x="466.0" y="203.0" font-size="16" fill="#7F8995" font-weight="600" text-anchor="end">3d</text>
+<path d="M50.0 213.5 L480.0 213.5" stroke="#20252C" stroke-width="1"/>
+<path d="M22.40 220.08A4.16 4.16 0 0 1 29.60 220.08L39.81 237.76A4.16 4.16 0 0 1 36.21 244.00L15.79 244.00A4.16 4.16 0 0 1 12.19 237.76Z" fill="#05C2BD"/>
+<text x="26.0" y="232.5" font-size="8.10" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Cb</text>
+<text x="26.0" y="241.2" font-size="8.10" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">4r</text>
+<text x="50.0" y="238.0" font-size="20" fill="#EEF1F5">Coburg Hills</text>
+<text x="466.0" y="237.0" font-size="16" fill="#7F8995" font-weight="600" text-anchor="end">5d</text>
+<path d="M50.0 247.5 L480.0 247.5" stroke="#20252C" stroke-width="1"/>
+</g>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="22.0" y="44.0" font-size="20" fill="#EEF1F5" font-weight="700">Add hop 4</text>
+<text x="128.7" y="43.0" font-size="16" fill="#7F8995" font-weight="500">after 7N*</text>
+<rect x="0.0" y="0.0" width="480.0" height="22.0" fill="#0E1115"/>
+<text x="8.0" y="16.5" font-size="16" fill="#9AA3AE" font-weight="600">Juniper</text>
+<text x="240.0" y="16.5" font-size="16" fill="#EEF1F5" font-weight="700" text-anchor="middle">14:32</text>
+<g transform="translate(459.0,11.0) scale(1.3) translate(-459.0,-11.0)">
+<rect x="449.0" y="6.5" width="19.0" height="9.0" fill="none" rx="2" stroke="#9AA3AE" stroke-width="1"/>
+<rect x="468.5" y="9.0" width="1.8" height="4.0" fill="#9AA3AE" rx="0.6"/>
+<rect x="451.0" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="454.9" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="458.8" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+</g>
+<g transform="translate(426.0,11.0) scale(1.3) translate(-426.0,-11.0)">
+<circle cx="426.0" cy="11.0" r="3.6" fill="none" stroke="#9AA3AE" stroke-width="1.1"/>
+<circle cx="426.0" cy="11.0" r="1.1" fill="#9AA3AE"/>
+<path d="M426 5 V7 M426 15 V17 M420 11 H422 M430 11 H432" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(406.0,11.0) scale(1.3) translate(-406.0,-11.0)">
+<path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g></g>
+<text x="2178.0" y="3618.0" font-size="17" fill="#3A3A3C">A hop known only by its hint has no address to ask, so only Known repeaters are listed.</text>
+<text x="80.0" y="3732.0" font-size="22" fill="#1C1C1E" font-weight="700">14 · Typing a router hint</text>
+<rect x="80.0" y="3746.0" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
+<clipPath id="scr14"><rect width="480" height="222"/></clipPath>
+<g transform="translate(92,3758) scale(2)"><g clip-path="url(#scr14)">
+<rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
+<rect x="8.0" y="55.0" width="464.0" height="28.0" fill="#1A2333" rx="14" stroke="#4DA3FF" stroke-width="2.2"/>
+<g transform="translate(23.0,69.0) scale(1.4) translate(-23.0,-69.0)">
+<circle cx="22.0" cy="68.0" r="4" fill="none" stroke="#9AA3AE" stroke-width="1.3"/>
+<path d="M25 71 L28 74" fill="none" stroke="#9AA3AE" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<text x="40.0" y="76.0" font-size="20" fill="#EEF1F5" font-family="Menlo, 'SF Mono', Consolas, monospace">7Nq4</text>
+<rect x="89.2" y="59.0" width="2.5" height="20.0" fill="#4DA3FF"/>
+<text x="458.0" y="75.0" font-size="16" fill="#7F8995" font-weight="500" text-anchor="end">1 found</text>
+<clipPath id="cl25"><rect x="0" y="86" width="480" height="136"/></clipPath><g clip-path="url(#cl25)">
+<text x="12.0" y="105.0" font-size="16" fill="#9AA3AE" font-weight="700">Router hint</text>
+<rect x="0.0" y="112.0" width="480.0" height="34.0" fill="#18304D"/>
+<path d="M12.49 131.60A5.20 5.20 0 0 1 12.49 126.40L16.99 118.60A5.20 5.20 0 0 1 21.50 116.00L30.50 116.00A5.20 5.20 0 0 1 35.01 118.60L39.51 126.40A5.20 5.20 0 0 1 39.51 131.60L35.01 139.40A5.20 5.20 0 0 1 30.50 142.00L21.50 142.00A5.20 5.20 0 0 1 16.99 139.40Z" fill="#808080"/>
+<text x="26.0" y="127.2" font-size="9.88" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">7N</text>
+<text x="26.0" y="137.9" font-size="9.88" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">*</text>
+<text x="50.0" y="136.0" font-size="20" fill="#EEF1F5" font-family="Menlo, 'SF Mono', Consolas, monospace">7N*</text>
+<text x="96.1" y="135.0" font-size="17" fill="#7F8995">5EBD · Unknown node</text>
+</g>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="22.0" y="44.0" font-size="20" fill="#EEF1F5" font-weight="700">Add hop 3</text>
+<text x="128.7" y="43.0" font-size="16" fill="#7F8995" font-weight="500">after Skinner Ridge</text>
+<rect x="0.0" y="0.0" width="480.0" height="22.0" fill="#0E1115"/>
+<text x="8.0" y="16.5" font-size="16" fill="#9AA3AE" font-weight="600">Juniper</text>
+<text x="240.0" y="16.5" font-size="16" fill="#EEF1F5" font-weight="700" text-anchor="middle">14:32</text>
+<g transform="translate(459.0,11.0) scale(1.3) translate(-459.0,-11.0)">
+<rect x="449.0" y="6.5" width="19.0" height="9.0" fill="none" rx="2" stroke="#9AA3AE" stroke-width="1"/>
+<rect x="468.5" y="9.0" width="1.8" height="4.0" fill="#9AA3AE" rx="0.6"/>
+<rect x="451.0" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="454.9" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="458.8" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+</g>
+<g transform="translate(426.0,11.0) scale(1.3) translate(-426.0,-11.0)">
+<circle cx="426.0" cy="11.0" r="3.6" fill="none" stroke="#9AA3AE" stroke-width="1.1"/>
+<circle cx="426.0" cy="11.0" r="1.1" fill="#9AA3AE"/>
+<path d="M426 5 V7 M426 15 V17 M420 11 H422 M430 11 H432" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(406.0,11.0) scale(1.3) translate(-406.0,-11.0)">
+<path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g></g>
+<text x="82.0" y="4244.0" font-size="17" fill="#3A3A3C">Typing filters, as on every list. Four or more Base58 characters also offer the router hint they fix, with its hex. Enter adds the</text>
+<text x="82.0" y="4268.0" font-size="17" fill="#3A3A3C">tinted top result.</text>
+<text x="1128.0" y="3732.0" font-size="22" fill="#1C1C1E" font-weight="700">15 · A hint read two ways</text>
+<rect x="1128.0" y="3746.0" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
+<clipPath id="scr15"><rect width="480" height="222"/></clipPath>
+<g transform="translate(1140,3758) scale(2)"><g clip-path="url(#scr15)">
+<rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
+<rect x="8.0" y="55.0" width="464.0" height="28.0" fill="#1A2333" rx="14" stroke="#4DA3FF" stroke-width="2.2"/>
+<g transform="translate(23.0,69.0) scale(1.4) translate(-23.0,-69.0)">
+<circle cx="22.0" cy="68.0" r="4" fill="none" stroke="#9AA3AE" stroke-width="1.3"/>
+<path d="M25 71 L28 74" fill="none" stroke="#9AA3AE" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<text x="40.0" y="76.0" font-size="20" fill="#EEF1F5" font-family="Menlo, 'SF Mono', Consolas, monospace">3D9F</text>
+<rect x="89.2" y="59.0" width="2.5" height="20.0" fill="#4DA3FF"/>
+<text x="458.0" y="75.0" font-size="16" fill="#7F8995" font-weight="500" text-anchor="end">2 found</text>
+<clipPath id="cl26"><rect x="0" y="86" width="480" height="136"/></clipPath><g clip-path="url(#cl26)">
+<text x="12.0" y="105.0" font-size="16" fill="#9AA3AE" font-weight="700">Router hints</text>
+<rect x="0.0" y="112.0" width="480.0" height="34.0" fill="#18304D"/>
+<path d="M12.49 131.60A5.20 5.20 0 0 1 12.49 126.40L16.99 118.60A5.20 5.20 0 0 1 21.50 116.00L30.50 116.00A5.20 5.20 0 0 1 35.01 118.60L39.51 126.40A5.20 5.20 0 0 1 39.51 131.60L35.01 139.40A5.20 5.20 0 0 1 30.50 142.00L21.50 142.00A5.20 5.20 0 0 1 16.99 139.40Z" fill="#808080"/>
+<text x="26.0" y="127.2" font-size="9.88" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">3D</text>
+<text x="26.0" y="137.9" font-size="9.88" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">*</text>
+<text x="50.0" y="136.0" font-size="20" fill="#EEF1F5" font-family="Menlo, 'SF Mono', Consolas, monospace">3D*</text>
+<text x="96.1" y="135.0" font-size="17" fill="#7F8995">Prefix · 20D3</text>
+<path d="M12.49 165.60A5.20 5.20 0 0 1 12.49 160.40L16.99 152.60A5.20 5.20 0 0 1 21.50 150.00L30.50 150.00A5.20 5.20 0 0 1 35.01 152.60L39.51 160.40A5.20 5.20 0 0 1 39.51 165.60L35.01 173.40A5.20 5.20 0 0 1 30.50 176.00L21.50 176.00A5.20 5.20 0 0 1 16.99 173.40Z" fill="#808080"/>
+<text x="26.0" y="161.2" font-size="9.88" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">59</text>
+<text x="26.0" y="171.9" font-size="9.88" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">*</text>
+<text x="50.0" y="170.0" font-size="20" fill="#EEF1F5" font-family="Menlo, 'SF Mono', Consolas, monospace">59*</text>
+<text x="96.1" y="169.0" font-size="17" fill="#7F8995">Hex · 3D9F</text>
+<path d="M50.0 179.5 L480.0 179.5" stroke="#20252C" stroke-width="1"/>
+</g>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="22.0" y="44.0" font-size="20" fill="#EEF1F5" font-weight="700">Add hop 3</text>
+<text x="128.7" y="43.0" font-size="16" fill="#7F8995" font-weight="500">after Skinner Ridge</text>
+<rect x="0.0" y="0.0" width="480.0" height="22.0" fill="#0E1115"/>
+<text x="8.0" y="16.5" font-size="16" fill="#9AA3AE" font-weight="600">Juniper</text>
+<text x="240.0" y="16.5" font-size="16" fill="#EEF1F5" font-weight="700" text-anchor="middle">14:32</text>
+<g transform="translate(459.0,11.0) scale(1.3) translate(-459.0,-11.0)">
+<rect x="449.0" y="6.5" width="19.0" height="9.0" fill="none" rx="2" stroke="#9AA3AE" stroke-width="1"/>
+<rect x="468.5" y="9.0" width="1.8" height="4.0" fill="#9AA3AE" rx="0.6"/>
+<rect x="451.0" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="454.9" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="458.8" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+</g>
+<g transform="translate(426.0,11.0) scale(1.3) translate(-426.0,-11.0)">
+<circle cx="426.0" cy="11.0" r="3.6" fill="none" stroke="#9AA3AE" stroke-width="1.1"/>
+<circle cx="426.0" cy="11.0" r="1.1" fill="#9AA3AE"/>
+<path d="M426 5 V7 M426 15 V17 M420 11 H422 M430 11 H432" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(406.0,11.0) scale(1.3) translate(-406.0,-11.0)">
+<path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g></g>
+<text x="1130.0" y="4244.0" font-size="17" fill="#3A3A3C">“3D9F” is a Base58 prefix and also four hex digits, so both are offered, each labeled. A prefix that straddles two hints is offered</text>
+<text x="1130.0" y="4268.0" font-size="17" fill="#3A3A3C">twice the same way.</text>
+<text x="80.0" y="4392.0" font-size="34" fill="#1C1C1E" font-weight="700">While held</text>
+<text x="80.0" y="4430.0" font-size="19" fill="#3A3A3C">A held route is used for every send to the peer. A missed ack still falls back to one flood, and the route stays.</text>
+<text x="80.0" y="4488.0" font-size="22" fill="#1C1C1E" font-weight="700">16 · Switch to the learned route?</text>
+<rect x="80.0" y="4502.0" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
+<clipPath id="scr16"><rect width="480" height="222"/></clipPath>
+<g transform="translate(92,4514) scale(2)"><g clip-path="url(#scr16)">
+<rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
+<clipPath id="cl27"><rect x="0" y="52" width="480" height="136"/></clipPath><g clip-path="url(#cl27)">
+<path d="M236.1 75.0 H458.0 Q472.0 75.0 472.0 89.0 V102.0 Q472.0 107.0 467.0 107.0 H236.1 Q222.1 107.0 222.1 93.0 V89.0 Q222.1 75.0 236.1 75.0 Z" fill="#2A62C9"/>
+<text x="233.1" y="97.0" font-size="20" fill="#fff">Leaving the trailhead now</text>
+<text x="472.0" y="125.0" font-size="16" fill="#7F8995" font-weight="600" text-anchor="end">Delivered · flooded</text>
+<path d="M350.6 131.0 H458.0 Q472.0 131.0 472.0 145.0 V158.0 Q472.0 163.0 467.0 163.0 H350.6 Q336.6 163.0 336.6 149.0 V145.0 Q336.6 131.0 350.6 131.0 Z" fill="#2A62C9"/>
+<text x="347.6" y="153.0" font-size="20" fill="#fff">Pass is clear</text>
+<text x="472.0" y="181.0" font-size="16" fill="#7F8995" font-weight="600" text-anchor="end">Delivered · flooded</text>
+</g>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="35.0" cy="37.0" r="13" fill="#B3F69E"/>
+<text x="35.0" y="35.2" font-size="9.88" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Ym</text>
+<text x="35.0" y="45.9" font-size="9.88" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">RG</text>
+<text x="54.0" y="44.0" font-size="20" fill="#EEF1F5" font-weight="700">Pat Okafor</text>
+<text x="165.3" y="43.0" font-size="16" fill="#7F8995" font-weight="500">Manual · 3 hops</text>
+<rect x="0.0" y="188.0" width="480.0" height="34.0" fill="#0B0D10"/>
+<rect x="8.0" y="191.0" width="464.0" height="28.0" fill="#161A20" rx="14" stroke="#2E3540" stroke-width="1.2"/>
+<text x="24.0" y="211.5" font-size="20" fill="#7F8995">Message</text>
+<rect x="31.0" y="55.0" width="420.0" height="140.0" fill="#000" rx="12" opacity="0.5"/>
+<rect x="30.0" y="52.0" width="420.0" height="140.0" fill="#1B2027" rx="12" stroke="#2E3540" stroke-width="1"/>
+<text x="46.0" y="79.0" font-size="20" fill="#EEF1F5" font-weight="700">Switch to the learned route?</text>
+<text x="46.0" y="103.0" font-size="16" fill="#9AA3AE" font-weight="500">Learned: 2 hops, via Mt. Pisgah</text>
+<rect x="35.0" y="114.0" width="410.0" height="32.0" fill="#18304D" rx="7" stroke="#4DA3FF" stroke-width="1.6"/>
+<text x="46.0" y="137.0" font-size="20" fill="#EEF1F5" font-weight="700">Use learned route</text>
+<text x="46.0" y="171.0" font-size="20" fill="#EEF1F5">Keep manual route</text>
+<rect x="0.0" y="0.0" width="480.0" height="22.0" fill="#0E1115"/>
+<text x="8.0" y="16.5" font-size="16" fill="#9AA3AE" font-weight="600">Juniper</text>
+<text x="240.0" y="16.5" font-size="16" fill="#EEF1F5" font-weight="700" text-anchor="middle">14:32</text>
+<g transform="translate(459.0,11.0) scale(1.3) translate(-459.0,-11.0)">
+<rect x="449.0" y="6.5" width="19.0" height="9.0" fill="none" rx="2" stroke="#9AA3AE" stroke-width="1"/>
+<rect x="468.5" y="9.0" width="1.8" height="4.0" fill="#9AA3AE" rx="0.6"/>
+<rect x="451.0" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="454.9" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="458.8" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+</g>
+<g transform="translate(426.0,11.0) scale(1.3) translate(-426.0,-11.0)">
+<circle cx="426.0" cy="11.0" r="3.6" fill="none" stroke="#9AA3AE" stroke-width="1.1"/>
+<circle cx="426.0" cy="11.0" r="1.1" fill="#9AA3AE"/>
+<path d="M426 5 V7 M426 15 V17 M420 11 H422 M430 11 H432" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(406.0,11.0) scale(1.3) translate(-406.0,-11.0)">
+<path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g></g>
+<text x="82.0" y="5000.0" font-size="17" fill="#3A3A3C">After two sends in a row miss on the manual route while their floods are acknowledged (one, if this device moved far). Once per</text>
+<text x="82.0" y="5024.0" font-size="17" fill="#3A3A3C">saved route. Keep manual route stops asking until it is edited.</text>
+<text x="80.0" y="5148.0" font-size="34" fill="#1C1C1E" font-weight="700">Neighbors</text>
+<text x="80.0" y="5186.0" font-size="19" fill="#3A3A3C">The repeaters one router reports hearing, a page at a time. Opening shows the last listing and sends nothing; every page is one exchange across the mesh.</text>
+<text x="80.0" y="5244.0" font-size="22" fill="#1C1C1E" font-weight="700">17 · A repeater, Neighbors focused</text>
+<rect x="80.0" y="5258.0" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
+<clipPath id="scr17"><rect width="480" height="222"/></clipPath>
+<g transform="translate(92,5270) scale(2)"><g clip-path="url(#scr17)">
+<rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
+<clipPath id="cl28"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl28)">
+<path d="M25.90 63.52A7.04 7.04 0 0 1 38.10 63.52L55.37 93.44A7.04 7.04 0 0 1 49.27 104.00L14.73 104.00A7.04 7.04 0 0 1 8.63 93.44Z" fill="#452D45"/>
+<text x="32.0" y="84.5" font-size="13.71" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Bt</text>
+<text x="32.0" y="99.3" font-size="13.71" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">C5</text>
+<text x="64.0" y="77.0" font-size="20" fill="#EEF1F5" font-weight="700">Spencer Butte</text>
+<text x="64.0" y="98.0" font-size="16" fill="#7F8995" font-weight="500">Repeater · heard 2m</text>
+<text x="10.0" y="129.0" font-size="16" fill="#9AA3AE" font-family="Menlo, 'SF Mono', Consolas, monospace">BtC5HZEryssSatm6m9fsVtno1ebJLWGD4fVQnKx3vVvJ</text>
+<text x="12.0" y="160.0" font-size="20" fill="#EEF1F5">Save peer</text>
+<path d="M12.0 169.5 L480.0 169.5" stroke="#20252C" stroke-width="1"/>
+<rect x="4.0" y="171.0" width="472.0" height="32.0" fill="#18304D" rx="8" stroke="#4DA3FF" stroke-width="1.6"/>
+<text x="12.0" y="194.0" font-size="20" fill="#EEF1F5" font-weight="700">Neighbors</text>
+<path d="M460 181.0 L466 187.0 L460 193.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="12.0" y="228.0" font-size="20" fill="#EEF1F5">Ping</text>
+<path d="M460 215.0 L466 221.0 L460 227.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M12.0 237.5 L480.0 237.5" stroke="#20252C" stroke-width="1"/>
+</g>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="22.0" y="44.0" font-size="20" fill="#EEF1F5" font-weight="700">Spencer Butte</text>
+<rect x="0.0" y="0.0" width="480.0" height="22.0" fill="#0E1115"/>
+<text x="8.0" y="16.5" font-size="16" fill="#9AA3AE" font-weight="600">Juniper</text>
+<text x="240.0" y="16.5" font-size="16" fill="#EEF1F5" font-weight="700" text-anchor="middle">14:32</text>
+<g transform="translate(459.0,11.0) scale(1.3) translate(-459.0,-11.0)">
+<rect x="449.0" y="6.5" width="19.0" height="9.0" fill="none" rx="2" stroke="#9AA3AE" stroke-width="1"/>
+<rect x="468.5" y="9.0" width="1.8" height="4.0" fill="#9AA3AE" rx="0.6"/>
+<rect x="451.0" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="454.9" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="458.8" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+</g>
+<g transform="translate(426.0,11.0) scale(1.3) translate(-426.0,-11.0)">
+<circle cx="426.0" cy="11.0" r="3.6" fill="none" stroke="#9AA3AE" stroke-width="1.1"/>
+<circle cx="426.0" cy="11.0" r="1.1" fill="#9AA3AE"/>
+<path d="M426 5 V7 M426 15 V17 M420 11 H422 M430 11 H432" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(406.0,11.0) scale(1.3) translate(-406.0,-11.0)">
+<path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g></g>
+<text x="82.0" y="5756.0" font-size="17" fill="#3A3A3C">Offered on any node that advertises repeating, whatever its role, and from a saved peer's page the same way.</text>
+<text x="1128.0" y="5244.0" font-size="22" fill="#1C1C1E" font-weight="700">18 · Neighbors</text>
+<rect x="1128.0" y="5258.0" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
+<clipPath id="scr18"><rect width="480" height="222"/></clipPath>
+<g transform="translate(1140,5270) scale(2)"><g clip-path="url(#scr18)">
+<rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
+<clipPath id="cl29"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl29)">
+<text x="12.0" y="71.0" font-size="16" fill="#9AA3AE" font-weight="700">Read 12m ago</text>
+<rect x="4.0" y="79.0" width="472.0" height="42.0" fill="#18304D" rx="8" stroke="#4DA3FF" stroke-width="1.6"/>
+<path d="M22.12 88.24A4.48 4.48 0 0 1 29.88 88.24L40.87 107.28A4.48 4.48 0 0 1 36.99 114.00L15.01 114.00A4.48 4.48 0 0 1 11.13 107.28Z" fill="#163F27"/>
+<text x="26.0" y="101.6" font-size="8.72" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Pg</text>
+<text x="26.0" y="111.0" font-size="8.72" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">3e</text>
+<text x="50.0" y="98.0" font-size="20" fill="#EEF1F5" font-weight="700">Mt. Pisgah</text>
+<rect x="50.0" y="113.0" width="3.2" height="4.0" fill="#3DD68C" rx="0.6"/>
+<rect x="54.6" y="110.0" width="3.2" height="7.0" fill="#3DD68C" rx="0.6"/>
+<rect x="59.2" y="107.0" width="3.2" height="10.0" fill="#3DD68C" rx="0.6"/>
+<rect x="63.8" y="104.0" width="3.2" height="13.0" fill="#3DD68C" rx="0.6"/>
+<text x="74.0" y="116.0" font-size="16" fill="#7F8995" font-weight="500">−88 dBm · SNR 7.5 dB · 4m · 6.1 km</text>
+<path d="M460 94.0 L466 100.0 L460 106.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M22.12 132.24A4.48 4.48 0 0 1 29.88 132.24L40.87 151.28A4.48 4.48 0 0 1 36.99 158.00L15.01 158.00A4.48 4.48 0 0 1 11.13 151.28Z" fill="#EB8AE3"/>
+<text x="26.0" y="145.6" font-size="8.72" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">55</text>
+<text x="26.0" y="155.0" font-size="8.72" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Hk</text>
+<text x="50.0" y="142.0" font-size="20" fill="#EEF1F5">Skinner Ridge</text>
+<rect x="50.0" y="157.0" width="3.2" height="4.0" fill="#3DD68C" rx="0.6"/>
+<rect x="54.6" y="154.0" width="3.2" height="7.0" fill="#3DD68C" rx="0.6"/>
+<rect x="59.2" y="151.0" width="3.2" height="10.0" fill="#3DD68C" rx="0.6"/>
+<rect x="63.8" y="148.0" width="3.2" height="13.0" fill="#7F8995" rx="0.6"/>
+<text x="74.0" y="160.0" font-size="16" fill="#7F8995" font-weight="500">−96 dBm · SNR 3.5 dB · 9m · 11 km</text>
+<path d="M460 138.0 L466 144.0 L460 150.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M50.0 165.5 L480.0 165.5" stroke="#20252C" stroke-width="1"/>
+<path d="M11.45 190.80A5.60 5.60 0 0 1 11.45 185.20L16.30 176.80A5.60 5.60 0 0 1 21.15 174.00L30.85 174.00A5.60 5.60 0 0 1 35.70 176.80L40.55 185.20A5.60 5.60 0 0 1 40.55 190.80L35.70 199.20A5.60 5.60 0 0 1 30.85 202.00L21.15 202.00A5.60 5.60 0 0 1 16.30 199.20Z" fill="#808080"/>
+<text x="26.0" y="186.1" font-size="10.64" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">8C</text>
+<text x="26.0" y="197.6" font-size="10.64" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">*</text>
+<text x="50.0" y="186.0" font-size="20" fill="#EEF1F5" font-family="Menlo, 'SF Mono', Consolas, monospace">8C*</text>
+<rect x="50.0" y="201.0" width="3.2" height="4.0" fill="#3DD68C" rx="0.6"/>
+<rect x="54.6" y="198.0" width="3.2" height="7.0" fill="#3DD68C" rx="0.6"/>
+<rect x="59.2" y="195.0" width="3.2" height="10.0" fill="#3DD68C" rx="0.6"/>
+<rect x="63.8" y="192.0" width="3.2" height="13.0" fill="#7F8995" rx="0.6"/>
+<text x="74.0" y="204.0" font-size="16" fill="#7F8995" font-weight="500">−95 dBm · SNR 3.0 dB · 20m</text>
+<circle cx="458.0" cy="186.0" r="5" fill="none" stroke="#4DA3FF" stroke-width="2"/>
+<path d="M462 190.0 L466 194.0" fill="none" stroke="#4DA3FF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M50.0 209.5 L480.0 209.5" stroke="#20252C" stroke-width="1"/>
+<path d="M11.45 234.80A5.60 5.60 0 0 1 11.45 229.20L16.30 220.80A5.60 5.60 0 0 1 21.15 218.00L30.85 218.00A5.60 5.60 0 0 1 35.70 220.80L40.55 229.20A5.60 5.60 0 0 1 40.55 234.80L35.70 243.20A5.60 5.60 0 0 1 30.85 246.00L21.15 246.00A5.60 5.60 0 0 1 16.30 243.20Z" fill="#748C7D"/>
+<text x="26.0" y="230.1" font-size="10.64" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Eb</text>
+<text x="26.0" y="241.6" font-size="10.64" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">2W</text>
+<text x="50.0" y="230.0" font-size="20" fill="#EEF1F5">Eugene Bridge</text>
+<rect x="50.0" y="239.0" width="10.0" height="8.0" fill="none" rx="4" stroke="#7F8995" stroke-width="1.7"/>
+<rect x="56.0" y="239.0" width="10.0" height="8.0" fill="none" rx="4" stroke="#7F8995" stroke-width="1.7"/>
+<text x="72.0" y="248.0" font-size="16" fill="#7F8995" font-weight="500">Bridged · 2m</text>
+<path d="M460 226.0 L466 232.0 L460 238.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M50.0 253.5 L480.0 253.5" stroke="#20252C" stroke-width="1"/>
+<g opacity="0.4">
+<path d="M22.12 264.24A4.48 4.48 0 0 1 29.88 264.24L40.87 283.28A4.48 4.48 0 0 1 36.99 290.00L15.01 290.00A4.48 4.48 0 0 1 11.13 283.28Z" fill="#05C2BD"/>
+<text x="26.0" y="277.6" font-size="8.72" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Cb</text>
+<text x="26.0" y="287.0" font-size="8.72" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">4r</text>
+</g>
+<text x="50.0" y="274.0" font-size="20" fill="#7F8995">Coburg Hills</text>
+<g opacity="0.4">
+<rect x="50.0" y="289.0" width="3.2" height="4.0" fill="#F5B544" rx="0.6"/>
+<rect x="54.6" y="286.0" width="3.2" height="7.0" fill="#F5B544" rx="0.6"/>
+<rect x="59.2" y="283.0" width="3.2" height="10.0" fill="#7F8995" rx="0.6"/>
+<rect x="63.8" y="280.0" width="3.2" height="13.0" fill="#7F8995" rx="0.6"/>
+<text x="74.0" y="292.0" font-size="16" fill="#7F8995" font-weight="500">−104 dBm · SNR −3.5 dB · 1d · 24 km</text>
+</g>
+<path d="M460 270.0 L466 276.0 L460 282.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M50.0 297.5 L480.0 297.5" stroke="#20252C" stroke-width="1"/>
+<text x="50.0" y="322.0" font-size="20" fill="#4DA3FF" font-weight="600">Load more</text>
+<text x="466.0" y="321.0" font-size="16" fill="#7F8995" font-weight="600" text-anchor="end">5 of 9</text>
+<path d="M50.0 331.5 L480.0 331.5" stroke="#20252C" stroke-width="1"/>
+<text x="50.0" y="356.0" font-size="20" fill="#4DA3FF" font-weight="600">Refresh</text>
+<path d="M50.0 365.5 L480.0 365.5" stroke="#20252C" stroke-width="1"/>
+</g>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="22.0" y="44.0" font-size="20" fill="#EEF1F5" font-weight="700">Neighbors</text>
+<text x="128.6" y="43.0" font-size="16" fill="#7F8995" font-weight="500">Spencer Butte</text>
+<rect x="0.0" y="0.0" width="480.0" height="22.0" fill="#0E1115"/>
+<text x="8.0" y="16.5" font-size="16" fill="#9AA3AE" font-weight="600">Juniper</text>
+<text x="240.0" y="16.5" font-size="16" fill="#EEF1F5" font-weight="700" text-anchor="middle">14:32</text>
+<g transform="translate(459.0,11.0) scale(1.3) translate(-459.0,-11.0)">
+<rect x="449.0" y="6.5" width="19.0" height="9.0" fill="none" rx="2" stroke="#9AA3AE" stroke-width="1"/>
+<rect x="468.5" y="9.0" width="1.8" height="4.0" fill="#9AA3AE" rx="0.6"/>
+<rect x="451.0" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="454.9" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="458.8" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+</g>
+<g transform="translate(426.0,11.0) scale(1.3) translate(-426.0,-11.0)">
+<circle cx="426.0" cy="11.0" r="3.6" fill="none" stroke="#9AA3AE" stroke-width="1.1"/>
+<circle cx="426.0" cy="11.0" r="1.1" fill="#9AA3AE"/>
+<path d="M426 5 V7 M426 15 V17 M420 11 H422 M430 11 H432" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(406.0,11.0) scale(1.3) translate(-406.0,-11.0)">
+<path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g></g>
+<text x="1130.0" y="5756.0" font-size="17" fill="#3A3A3C">Name, then how the router heard each one: bars, RSSI and SNR, how long ago, and how far from the router when both placed</text>
+<text x="1130.0" y="5780.0" font-size="17" fill="#3A3A3C">themselves. A known node opens its page, which has Neighbors too.</text>
+<text x="2176.0" y="5244.0" font-size="22" fill="#1C1C1E" font-weight="700">19 · Asking who a hint is</text>
+<rect x="2176.0" y="5258.0" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
+<clipPath id="scr19"><rect width="480" height="222"/></clipPath>
+<g transform="translate(2188,5270) scale(2)"><g clip-path="url(#scr19)">
+<rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
+<clipPath id="cl30"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl30)">
+<text x="12.0" y="-9.0" font-size="16" fill="#9AA3AE" font-weight="700">Read 12m ago</text>
+<path d="M22.12 8.24A4.48 4.48 0 0 1 29.88 8.24L40.87 27.28A4.48 4.48 0 0 1 36.99 34.00L15.01 34.00A4.48 4.48 0 0 1 11.13 27.28Z" fill="#163F27"/>
+<text x="26.0" y="21.6" font-size="8.72" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Pg</text>
+<text x="26.0" y="31.0" font-size="8.72" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">3e</text>
+<text x="50.0" y="18.0" font-size="20" fill="#EEF1F5">Mt. Pisgah</text>
+<rect x="50.0" y="33.0" width="3.2" height="4.0" fill="#3DD68C" rx="0.6"/>
+<rect x="54.6" y="30.0" width="3.2" height="7.0" fill="#3DD68C" rx="0.6"/>
+<rect x="59.2" y="27.0" width="3.2" height="10.0" fill="#3DD68C" rx="0.6"/>
+<rect x="63.8" y="24.0" width="3.2" height="13.0" fill="#3DD68C" rx="0.6"/>
+<text x="74.0" y="36.0" font-size="16" fill="#7F8995" font-weight="500">−88 dBm · SNR 7.5 dB · 4m · 6.1 km</text>
+<path d="M460 14.0 L466 20.0 L460 26.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M50.0 41.5 L480.0 41.5" stroke="#20252C" stroke-width="1"/>
+<path d="M22.12 52.24A4.48 4.48 0 0 1 29.88 52.24L40.87 71.28A4.48 4.48 0 0 1 36.99 78.00L15.01 78.00A4.48 4.48 0 0 1 11.13 71.28Z" fill="#EB8AE3"/>
+<text x="26.0" y="65.6" font-size="8.72" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">55</text>
+<text x="26.0" y="75.0" font-size="8.72" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Hk</text>
+<text x="50.0" y="62.0" font-size="20" fill="#EEF1F5">Skinner Ridge</text>
+<rect x="50.0" y="77.0" width="3.2" height="4.0" fill="#3DD68C" rx="0.6"/>
+<rect x="54.6" y="74.0" width="3.2" height="7.0" fill="#3DD68C" rx="0.6"/>
+<rect x="59.2" y="71.0" width="3.2" height="10.0" fill="#3DD68C" rx="0.6"/>
+<rect x="63.8" y="68.0" width="3.2" height="13.0" fill="#7F8995" rx="0.6"/>
+<text x="74.0" y="80.0" font-size="16" fill="#7F8995" font-weight="500">−96 dBm · SNR 3.5 dB · 9m · 11 km</text>
+<path d="M460 58.0 L466 64.0 L460 70.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M50.0 85.5 L480.0 85.5" stroke="#20252C" stroke-width="1"/>
+<rect x="4.0" y="87.0" width="472.0" height="42.0" fill="#18304D" rx="8" stroke="#4DA3FF" stroke-width="1.6"/>
+<path d="M11.45 110.80A5.60 5.60 0 0 1 11.45 105.20L16.30 96.80A5.60 5.60 0 0 1 21.15 94.00L30.85 94.00A5.60 5.60 0 0 1 35.70 96.80L40.55 105.20A5.60 5.60 0 0 1 40.55 110.80L35.70 119.20A5.60 5.60 0 0 1 30.85 122.00L21.15 122.00A5.60 5.60 0 0 1 16.30 119.20Z" fill="#808080"/>
+<text x="26.0" y="106.1" font-size="10.64" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">8C</text>
+<text x="26.0" y="117.6" font-size="10.64" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">*</text>
+<text x="50.0" y="106.0" font-size="20" fill="#EEF1F5" font-family="Menlo, 'SF Mono', Consolas, monospace" font-weight="700">8C*</text>
+<rect x="50.0" y="121.0" width="3.2" height="4.0" fill="#3DD68C" rx="0.6"/>
+<rect x="54.6" y="118.0" width="3.2" height="7.0" fill="#3DD68C" rx="0.6"/>
+<rect x="59.2" y="115.0" width="3.2" height="10.0" fill="#3DD68C" rx="0.6"/>
+<rect x="63.8" y="112.0" width="3.2" height="13.0" fill="#7F8995" rx="0.6"/>
+<text x="74.0" y="124.0" font-size="16" fill="#7F8995" font-weight="500">−95 dBm · SNR 3.0 dB · 20m</text>
+<circle cx="458.0" cy="100.0" r="1.9" fill="#25496E"/>
+<circle cx="463.7" cy="102.3" r="1.9" fill="#2F6FB0"/>
+<circle cx="466.0" cy="108.0" r="1.9" fill="#4DA3FF"/>
+<circle cx="463.7" cy="113.7" r="1.9" fill="#2A3038"/>
+<circle cx="458.0" cy="116.0" r="1.9" fill="#2A3038"/>
+<circle cx="452.3" cy="113.7" r="1.9" fill="#2A3038"/>
+<circle cx="450.0" cy="108.0" r="1.9" fill="#2A3038"/>
+<circle cx="452.3" cy="102.3" r="1.9" fill="#2A3038"/>
+<path d="M11.45 154.80A5.60 5.60 0 0 1 11.45 149.20L16.30 140.80A5.60 5.60 0 0 1 21.15 138.00L30.85 138.00A5.60 5.60 0 0 1 35.70 140.80L40.55 149.20A5.60 5.60 0 0 1 40.55 154.80L35.70 163.20A5.60 5.60 0 0 1 30.85 166.00L21.15 166.00A5.60 5.60 0 0 1 16.30 163.20Z" fill="#748C7D"/>
+<text x="26.0" y="150.1" font-size="10.64" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Eb</text>
+<text x="26.0" y="161.6" font-size="10.64" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">2W</text>
+<text x="50.0" y="150.0" font-size="20" fill="#EEF1F5">Eugene Bridge</text>
+<rect x="50.0" y="159.0" width="10.0" height="8.0" fill="none" rx="4" stroke="#7F8995" stroke-width="1.7"/>
+<rect x="56.0" y="159.0" width="10.0" height="8.0" fill="none" rx="4" stroke="#7F8995" stroke-width="1.7"/>
+<text x="72.0" y="168.0" font-size="16" fill="#7F8995" font-weight="500">Bridged · 2m</text>
+<path d="M460 146.0 L466 152.0 L460 158.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M50.0 173.5 L480.0 173.5" stroke="#20252C" stroke-width="1"/>
+<g opacity="0.4">
+<path d="M22.12 184.24A4.48 4.48 0 0 1 29.88 184.24L40.87 203.28A4.48 4.48 0 0 1 36.99 210.00L15.01 210.00A4.48 4.48 0 0 1 11.13 203.28Z" fill="#05C2BD"/>
+<text x="26.0" y="197.6" font-size="8.72" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Cb</text>
+<text x="26.0" y="207.0" font-size="8.72" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">4r</text>
+</g>
+<text x="50.0" y="194.0" font-size="20" fill="#7F8995">Coburg Hills</text>
+<g opacity="0.4">
+<rect x="50.0" y="209.0" width="3.2" height="4.0" fill="#F5B544" rx="0.6"/>
+<rect x="54.6" y="206.0" width="3.2" height="7.0" fill="#F5B544" rx="0.6"/>
+<rect x="59.2" y="203.0" width="3.2" height="10.0" fill="#7F8995" rx="0.6"/>
+<rect x="63.8" y="200.0" width="3.2" height="13.0" fill="#7F8995" rx="0.6"/>
+<text x="74.0" y="212.0" font-size="16" fill="#7F8995" font-weight="500">−104 dBm · SNR −3.5 dB · 1d · 24 km</text>
+</g>
+<path d="M460 190.0 L466 196.0 L460 202.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M50.0 217.5 L480.0 217.5" stroke="#20252C" stroke-width="1"/>
+<text x="50.0" y="242.0" font-size="20" fill="#4DA3FF" font-weight="600">Load more</text>
+<text x="466.0" y="241.0" font-size="16" fill="#7F8995" font-weight="600" text-anchor="end">5 of 9</text>
+<path d="M50.0 251.5 L480.0 251.5" stroke="#20252C" stroke-width="1"/>
+<text x="50.0" y="276.0" font-size="20" fill="#4DA3FF" font-weight="600">Refresh</text>
+<path d="M50.0 285.5 L480.0 285.5" stroke="#20252C" stroke-width="1"/>
+</g>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="22.0" y="44.0" font-size="20" fill="#EEF1F5" font-weight="700">Neighbors</text>
+<text x="128.6" y="43.0" font-size="16" fill="#7F8995" font-weight="500">Spencer Butte</text>
+<rect x="0.0" y="0.0" width="480.0" height="22.0" fill="#0E1115"/>
+<text x="8.0" y="16.5" font-size="16" fill="#9AA3AE" font-weight="600">Juniper</text>
+<text x="240.0" y="16.5" font-size="16" fill="#EEF1F5" font-weight="700" text-anchor="middle">14:32</text>
+<g transform="translate(459.0,11.0) scale(1.3) translate(-459.0,-11.0)">
+<rect x="449.0" y="6.5" width="19.0" height="9.0" fill="none" rx="2" stroke="#9AA3AE" stroke-width="1"/>
+<rect x="468.5" y="9.0" width="1.8" height="4.0" fill="#9AA3AE" rx="0.6"/>
+<rect x="451.0" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="454.9" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="458.8" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+</g>
+<g transform="translate(426.0,11.0) scale(1.3) translate(-426.0,-11.0)">
+<circle cx="426.0" cy="11.0" r="3.6" fill="none" stroke="#9AA3AE" stroke-width="1.1"/>
+<circle cx="426.0" cy="11.0" r="1.1" fill="#9AA3AE"/>
+<path d="M426 5 V7 M426 15 V17 M420 11 H422 M430 11 H432" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(406.0,11.0) scale(1.3) translate(-406.0,-11.0)">
+<path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g></g>
+<text x="2178.0" y="5756.0" font-size="17" fill="#3A3A3C">A bare hint shows the search glyph. Press asks it who it is, steered down the route to the router; the answer names it in place.</text>
+<text x="2178.0" y="5780.0" font-size="17" fill="#3A3A3C">Bridged: heard over a link, not the air. Rows unheard for 6 hours fade.</text>
+<text x="80.0" y="5870.0" font-size="22" fill="#1C1C1E" font-weight="700">20 · Refreshing</text>
+<rect x="80.0" y="5884.0" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
+<clipPath id="scr20"><rect width="480" height="222"/></clipPath>
+<g transform="translate(92,5896) scale(2)"><g clip-path="url(#scr20)">
+<rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
+<clipPath id="cl31"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl31)">
+<text x="12.0" y="-73.0" font-size="16" fill="#9AA3AE" font-weight="700">Read 12m ago</text>
+<path d="M22.12 -55.76A4.48 4.48 0 0 1 29.88 -55.76L40.87 -36.72A4.48 4.48 0 0 1 36.99 -30.00L15.01 -30.00A4.48 4.48 0 0 1 11.13 -36.72Z" fill="#163F27"/>
+<text x="26.0" y="-42.4" font-size="8.72" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Pg</text>
+<text x="26.0" y="-33.0" font-size="8.72" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">3e</text>
+<text x="50.0" y="-46.0" font-size="20" fill="#EEF1F5">Mt. Pisgah</text>
+<rect x="50.0" y="-31.0" width="3.2" height="4.0" fill="#3DD68C" rx="0.6"/>
+<rect x="54.6" y="-34.0" width="3.2" height="7.0" fill="#3DD68C" rx="0.6"/>
+<rect x="59.2" y="-37.0" width="3.2" height="10.0" fill="#3DD68C" rx="0.6"/>
+<rect x="63.8" y="-40.0" width="3.2" height="13.0" fill="#3DD68C" rx="0.6"/>
+<text x="74.0" y="-28.0" font-size="16" fill="#7F8995" font-weight="500">−88 dBm · SNR 7.5 dB · 4m · 6.1 km</text>
+<path d="M460 -50.0 L466 -44.0 L460 -38.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M50.0 -22.5 L480.0 -22.5" stroke="#20252C" stroke-width="1"/>
+<path d="M22.12 -11.76A4.48 4.48 0 0 1 29.88 -11.76L40.87 7.28A4.48 4.48 0 0 1 36.99 14.00L15.01 14.00A4.48 4.48 0 0 1 11.13 7.28Z" fill="#EB8AE3"/>
+<text x="26.0" y="1.6" font-size="8.72" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">55</text>
+<text x="26.0" y="11.0" font-size="8.72" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Hk</text>
+<text x="50.0" y="-2.0" font-size="20" fill="#EEF1F5">Skinner Ridge</text>
+<rect x="50.0" y="13.0" width="3.2" height="4.0" fill="#3DD68C" rx="0.6"/>
+<rect x="54.6" y="10.0" width="3.2" height="7.0" fill="#3DD68C" rx="0.6"/>
+<rect x="59.2" y="7.0" width="3.2" height="10.0" fill="#3DD68C" rx="0.6"/>
+<rect x="63.8" y="4.0" width="3.2" height="13.0" fill="#7F8995" rx="0.6"/>
+<text x="74.0" y="16.0" font-size="16" fill="#7F8995" font-weight="500">−96 dBm · SNR 3.5 dB · 9m · 11 km</text>
+<path d="M460 -6.0 L466 0.0 L460 6.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M50.0 21.5 L480.0 21.5" stroke="#20252C" stroke-width="1"/>
+<path d="M11.45 46.80A5.60 5.60 0 0 1 11.45 41.20L16.30 32.80A5.60 5.60 0 0 1 21.15 30.00L30.85 30.00A5.60 5.60 0 0 1 35.70 32.80L40.55 41.20A5.60 5.60 0 0 1 40.55 46.80L35.70 55.20A5.60 5.60 0 0 1 30.85 58.00L21.15 58.00A5.60 5.60 0 0 1 16.30 55.20Z" fill="#808080"/>
+<text x="26.0" y="42.1" font-size="10.64" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">8C</text>
+<text x="26.0" y="53.6" font-size="10.64" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">*</text>
+<text x="50.0" y="42.0" font-size="20" fill="#EEF1F5" font-family="Menlo, 'SF Mono', Consolas, monospace">8C*</text>
+<rect x="50.0" y="57.0" width="3.2" height="4.0" fill="#3DD68C" rx="0.6"/>
+<rect x="54.6" y="54.0" width="3.2" height="7.0" fill="#3DD68C" rx="0.6"/>
+<rect x="59.2" y="51.0" width="3.2" height="10.0" fill="#3DD68C" rx="0.6"/>
+<rect x="63.8" y="48.0" width="3.2" height="13.0" fill="#7F8995" rx="0.6"/>
+<text x="74.0" y="60.0" font-size="16" fill="#7F8995" font-weight="500">−95 dBm · SNR 3.0 dB · 20m</text>
+<circle cx="458.0" cy="42.0" r="5" fill="none" stroke="#4DA3FF" stroke-width="2"/>
+<path d="M462 46.0 L466 50.0" fill="none" stroke="#4DA3FF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M50.0 65.5 L480.0 65.5" stroke="#20252C" stroke-width="1"/>
+<path d="M11.45 90.80A5.60 5.60 0 0 1 11.45 85.20L16.30 76.80A5.60 5.60 0 0 1 21.15 74.00L30.85 74.00A5.60 5.60 0 0 1 35.70 76.80L40.55 85.20A5.60 5.60 0 0 1 40.55 90.80L35.70 99.20A5.60 5.60 0 0 1 30.85 102.00L21.15 102.00A5.60 5.60 0 0 1 16.30 99.20Z" fill="#748C7D"/>
+<text x="26.0" y="86.1" font-size="10.64" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Eb</text>
+<text x="26.0" y="97.6" font-size="10.64" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">2W</text>
+<text x="50.0" y="86.0" font-size="20" fill="#EEF1F5">Eugene Bridge</text>
+<rect x="50.0" y="95.0" width="10.0" height="8.0" fill="none" rx="4" stroke="#7F8995" stroke-width="1.7"/>
+<rect x="56.0" y="95.0" width="10.0" height="8.0" fill="none" rx="4" stroke="#7F8995" stroke-width="1.7"/>
+<text x="72.0" y="104.0" font-size="16" fill="#7F8995" font-weight="500">Bridged · 2m</text>
+<path d="M460 82.0 L466 88.0 L460 94.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M50.0 109.5 L480.0 109.5" stroke="#20252C" stroke-width="1"/>
+<g opacity="0.4">
+<path d="M22.12 120.24A4.48 4.48 0 0 1 29.88 120.24L40.87 139.28A4.48 4.48 0 0 1 36.99 146.00L15.01 146.00A4.48 4.48 0 0 1 11.13 139.28Z" fill="#05C2BD"/>
+<text x="26.0" y="133.6" font-size="8.72" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Cb</text>
+<text x="26.0" y="143.0" font-size="8.72" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">4r</text>
+</g>
+<text x="50.0" y="130.0" font-size="20" fill="#7F8995">Coburg Hills</text>
+<g opacity="0.4">
+<rect x="50.0" y="145.0" width="3.2" height="4.0" fill="#F5B544" rx="0.6"/>
+<rect x="54.6" y="142.0" width="3.2" height="7.0" fill="#F5B544" rx="0.6"/>
+<rect x="59.2" y="139.0" width="3.2" height="10.0" fill="#7F8995" rx="0.6"/>
+<rect x="63.8" y="136.0" width="3.2" height="13.0" fill="#7F8995" rx="0.6"/>
+<text x="74.0" y="148.0" font-size="16" fill="#7F8995" font-weight="500">−104 dBm · SNR −3.5 dB · 1d · 24 km</text>
+</g>
+<path d="M460 126.0 L466 132.0 L460 138.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M50.0 153.5 L480.0 153.5" stroke="#20252C" stroke-width="1"/>
+<text x="50.0" y="178.0" font-size="20" fill="#4DA3FF" font-weight="600">Load more</text>
+<text x="466.0" y="177.0" font-size="16" fill="#7F8995" font-weight="600" text-anchor="end">5 of 9</text>
+<path d="M50.0 187.5 L480.0 187.5" stroke="#20252C" stroke-width="1"/>
+<rect x="4.0" y="189.0" width="472.0" height="32.0" fill="#18304D" rx="8" stroke="#4DA3FF" stroke-width="1.6"/>
+<text x="50.0" y="212.0" font-size="20" fill="#4DA3FF" font-weight="700">Refresh</text>
+<circle cx="456.0" cy="197.0" r="1.9" fill="#2A3038"/>
+<circle cx="461.7" cy="199.3" r="1.9" fill="#25496E"/>
+<circle cx="464.0" cy="205.0" r="1.9" fill="#2F6FB0"/>
+<circle cx="461.7" cy="210.7" r="1.9" fill="#4DA3FF"/>
+<circle cx="456.0" cy="213.0" r="1.9" fill="#2A3038"/>
+<circle cx="450.3" cy="210.7" r="1.9" fill="#2A3038"/>
+<circle cx="448.0" cy="205.0" r="1.9" fill="#2A3038"/>
+<circle cx="450.3" cy="199.3" r="1.9" fill="#2A3038"/>
+</g>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="22.0" y="44.0" font-size="20" fill="#EEF1F5" font-weight="700">Neighbors</text>
+<text x="128.6" y="43.0" font-size="16" fill="#7F8995" font-weight="500">Spencer Butte</text>
+<rect x="0.0" y="0.0" width="480.0" height="22.0" fill="#0E1115"/>
+<text x="8.0" y="16.5" font-size="16" fill="#9AA3AE" font-weight="600">Juniper</text>
+<text x="240.0" y="16.5" font-size="16" fill="#EEF1F5" font-weight="700" text-anchor="middle">14:32</text>
+<g transform="translate(459.0,11.0) scale(1.3) translate(-459.0,-11.0)">
+<rect x="449.0" y="6.5" width="19.0" height="9.0" fill="none" rx="2" stroke="#9AA3AE" stroke-width="1"/>
+<rect x="468.5" y="9.0" width="1.8" height="4.0" fill="#9AA3AE" rx="0.6"/>
+<rect x="451.0" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="454.9" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="458.8" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+</g>
+<g transform="translate(426.0,11.0) scale(1.3) translate(-426.0,-11.0)">
+<circle cx="426.0" cy="11.0" r="3.6" fill="none" stroke="#9AA3AE" stroke-width="1.1"/>
+<circle cx="426.0" cy="11.0" r="1.1" fill="#9AA3AE"/>
+<path d="M426 5 V7 M426 15 V17 M420 11 H422 M430 11 H432" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(406.0,11.0) scale(1.3) translate(-406.0,-11.0)">
+<path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g></g>
+<text x="82.0" y="6382.0" font-size="17" fill="#3A3A3C">Load more asks for the page after the last one held; Refresh asks for the top again. Either spins in its own row, and the rows stay</text>
+<text x="82.0" y="6406.0" font-size="17" fill="#3A3A3C">until the answer replaces them.</text>
+<text x="1128.0" y="5870.0" font-size="22" fill="#1C1C1E" font-weight="700">21 · No answer</text>
+<rect x="1128.0" y="5884.0" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
+<clipPath id="scr21"><rect width="480" height="222"/></clipPath>
+<g transform="translate(1140,5896) scale(2)"><g clip-path="url(#scr21)">
+<rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
+<clipPath id="cl32"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl32)">
+<text x="12.0" y="-117.0" font-size="16" fill="#9AA3AE" font-weight="700">Read 12m ago</text>
+<path d="M22.12 -99.76A4.48 4.48 0 0 1 29.88 -99.76L40.87 -80.72A4.48 4.48 0 0 1 36.99 -74.00L15.01 -74.00A4.48 4.48 0 0 1 11.13 -80.72Z" fill="#163F27"/>
+<text x="26.0" y="-86.4" font-size="8.72" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Pg</text>
+<text x="26.0" y="-77.0" font-size="8.72" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">3e</text>
+<text x="50.0" y="-90.0" font-size="20" fill="#EEF1F5">Mt. Pisgah</text>
+<rect x="50.0" y="-75.0" width="3.2" height="4.0" fill="#3DD68C" rx="0.6"/>
+<rect x="54.6" y="-78.0" width="3.2" height="7.0" fill="#3DD68C" rx="0.6"/>
+<rect x="59.2" y="-81.0" width="3.2" height="10.0" fill="#3DD68C" rx="0.6"/>
+<rect x="63.8" y="-84.0" width="3.2" height="13.0" fill="#3DD68C" rx="0.6"/>
+<text x="74.0" y="-72.0" font-size="16" fill="#7F8995" font-weight="500">−88 dBm · SNR 7.5 dB · 4m · 6.1 km</text>
+<path d="M460 -94.0 L466 -88.0 L460 -82.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M50.0 -66.5 L480.0 -66.5" stroke="#20252C" stroke-width="1"/>
+<path d="M22.12 -55.76A4.48 4.48 0 0 1 29.88 -55.76L40.87 -36.72A4.48 4.48 0 0 1 36.99 -30.00L15.01 -30.00A4.48 4.48 0 0 1 11.13 -36.72Z" fill="#EB8AE3"/>
+<text x="26.0" y="-42.4" font-size="8.72" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">55</text>
+<text x="26.0" y="-33.0" font-size="8.72" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Hk</text>
+<text x="50.0" y="-46.0" font-size="20" fill="#EEF1F5">Skinner Ridge</text>
+<rect x="50.0" y="-31.0" width="3.2" height="4.0" fill="#3DD68C" rx="0.6"/>
+<rect x="54.6" y="-34.0" width="3.2" height="7.0" fill="#3DD68C" rx="0.6"/>
+<rect x="59.2" y="-37.0" width="3.2" height="10.0" fill="#3DD68C" rx="0.6"/>
+<rect x="63.8" y="-40.0" width="3.2" height="13.0" fill="#7F8995" rx="0.6"/>
+<text x="74.0" y="-28.0" font-size="16" fill="#7F8995" font-weight="500">−96 dBm · SNR 3.5 dB · 9m · 11 km</text>
+<path d="M460 -50.0 L466 -44.0 L460 -38.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M50.0 -22.5 L480.0 -22.5" stroke="#20252C" stroke-width="1"/>
+<path d="M11.45 2.80A5.60 5.60 0 0 1 11.45 -2.80L16.30 -11.20A5.60 5.60 0 0 1 21.15 -14.00L30.85 -14.00A5.60 5.60 0 0 1 35.70 -11.20L40.55 -2.80A5.60 5.60 0 0 1 40.55 2.80L35.70 11.20A5.60 5.60 0 0 1 30.85 14.00L21.15 14.00A5.60 5.60 0 0 1 16.30 11.20Z" fill="#808080"/>
+<text x="26.0" y="-1.9" font-size="10.64" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">8C</text>
+<text x="26.0" y="9.6" font-size="10.64" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">*</text>
+<text x="50.0" y="-2.0" font-size="20" fill="#EEF1F5" font-family="Menlo, 'SF Mono', Consolas, monospace">8C*</text>
+<rect x="50.0" y="13.0" width="3.2" height="4.0" fill="#3DD68C" rx="0.6"/>
+<rect x="54.6" y="10.0" width="3.2" height="7.0" fill="#3DD68C" rx="0.6"/>
+<rect x="59.2" y="7.0" width="3.2" height="10.0" fill="#3DD68C" rx="0.6"/>
+<rect x="63.8" y="4.0" width="3.2" height="13.0" fill="#7F8995" rx="0.6"/>
+<text x="74.0" y="16.0" font-size="16" fill="#7F8995" font-weight="500">−95 dBm · SNR 3.0 dB · 20m</text>
+<circle cx="458.0" cy="-2.0" r="5" fill="none" stroke="#4DA3FF" stroke-width="2"/>
+<path d="M462 2.0 L466 6.0" fill="none" stroke="#4DA3FF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M50.0 21.5 L480.0 21.5" stroke="#20252C" stroke-width="1"/>
+<path d="M11.45 46.80A5.60 5.60 0 0 1 11.45 41.20L16.30 32.80A5.60 5.60 0 0 1 21.15 30.00L30.85 30.00A5.60 5.60 0 0 1 35.70 32.80L40.55 41.20A5.60 5.60 0 0 1 40.55 46.80L35.70 55.20A5.60 5.60 0 0 1 30.85 58.00L21.15 58.00A5.60 5.60 0 0 1 16.30 55.20Z" fill="#748C7D"/>
+<text x="26.0" y="42.1" font-size="10.64" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Eb</text>
+<text x="26.0" y="53.6" font-size="10.64" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">2W</text>
+<text x="50.0" y="42.0" font-size="20" fill="#EEF1F5">Eugene Bridge</text>
+<rect x="50.0" y="51.0" width="10.0" height="8.0" fill="none" rx="4" stroke="#7F8995" stroke-width="1.7"/>
+<rect x="56.0" y="51.0" width="10.0" height="8.0" fill="none" rx="4" stroke="#7F8995" stroke-width="1.7"/>
+<text x="72.0" y="60.0" font-size="16" fill="#7F8995" font-weight="500">Bridged · 2m</text>
+<path d="M460 38.0 L466 44.0 L460 50.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M50.0 65.5 L480.0 65.5" stroke="#20252C" stroke-width="1"/>
+<g opacity="0.4">
+<path d="M22.12 76.24A4.48 4.48 0 0 1 29.88 76.24L40.87 95.28A4.48 4.48 0 0 1 36.99 102.00L15.01 102.00A4.48 4.48 0 0 1 11.13 95.28Z" fill="#05C2BD"/>
+<text x="26.0" y="89.6" font-size="8.72" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Cb</text>
+<text x="26.0" y="99.0" font-size="8.72" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">4r</text>
+</g>
+<text x="50.0" y="86.0" font-size="20" fill="#7F8995">Coburg Hills</text>
+<g opacity="0.4">
+<rect x="50.0" y="101.0" width="3.2" height="4.0" fill="#F5B544" rx="0.6"/>
+<rect x="54.6" y="98.0" width="3.2" height="7.0" fill="#F5B544" rx="0.6"/>
+<rect x="59.2" y="95.0" width="3.2" height="10.0" fill="#7F8995" rx="0.6"/>
+<rect x="63.8" y="92.0" width="3.2" height="13.0" fill="#7F8995" rx="0.6"/>
+<text x="74.0" y="104.0" font-size="16" fill="#7F8995" font-weight="500">−104 dBm · SNR −3.5 dB · 1d · 24 km</text>
+</g>
+<path d="M460 82.0 L466 88.0 L460 94.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M50.0 109.5 L480.0 109.5" stroke="#20252C" stroke-width="1"/>
+<text x="50.0" y="134.0" font-size="20" fill="#4DA3FF" font-weight="600">Load more</text>
+<text x="466.0" y="133.0" font-size="16" fill="#7F8995" font-weight="600" text-anchor="end">5 of 9</text>
+<path d="M50.0 143.5 L480.0 143.5" stroke="#20252C" stroke-width="1"/>
+<text x="50.0" y="164.0" font-size="20" fill="#F5B544" font-weight="700">No answer</text>
+<text x="50.0" y="182.0" font-size="16" fill="#7F8995" font-weight="500">Out of reach, or it keeps no neighbor list</text>
+<path d="M50.0 187.5 L480.0 187.5" stroke="#20252C" stroke-width="1"/>
+<rect x="4.0" y="189.0" width="472.0" height="32.0" fill="#18304D" rx="8" stroke="#4DA3FF" stroke-width="1.6"/>
+<text x="50.0" y="212.0" font-size="20" fill="#4DA3FF" font-weight="700">Refresh</text>
+</g>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="22.0" y="44.0" font-size="20" fill="#EEF1F5" font-weight="700">Neighbors</text>
+<text x="128.6" y="43.0" font-size="16" fill="#7F8995" font-weight="500">Spencer Butte</text>
+<rect x="0.0" y="0.0" width="480.0" height="22.0" fill="#0E1115"/>
+<text x="8.0" y="16.5" font-size="16" fill="#9AA3AE" font-weight="600">Juniper</text>
+<text x="240.0" y="16.5" font-size="16" fill="#EEF1F5" font-weight="700" text-anchor="middle">14:32</text>
+<g transform="translate(459.0,11.0) scale(1.3) translate(-459.0,-11.0)">
+<rect x="449.0" y="6.5" width="19.0" height="9.0" fill="none" rx="2" stroke="#9AA3AE" stroke-width="1"/>
+<rect x="468.5" y="9.0" width="1.8" height="4.0" fill="#9AA3AE" rx="0.6"/>
+<rect x="451.0" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="454.9" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="458.8" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+</g>
+<g transform="translate(426.0,11.0) scale(1.3) translate(-426.0,-11.0)">
+<circle cx="426.0" cy="11.0" r="3.6" fill="none" stroke="#9AA3AE" stroke-width="1.1"/>
+<circle cx="426.0" cy="11.0" r="1.1" fill="#9AA3AE"/>
+<path d="M426 5 V7 M426 15 V17 M420 11 H422 M430 11 H432" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(406.0,11.0) scale(1.3) translate(-406.0,-11.0)">
+<path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g></g>
+<text x="1130.0" y="6382.0" font-size="17" fill="#3A3A3C">The listing held stays. The line says why, and Refresh is focused, so a press asks again.</text>
+<text x="2176.0" y="5870.0" font-size="22" fill="#1C1C1E" font-weight="700">22 · Never read</text>
+<rect x="2176.0" y="5884.0" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
+<clipPath id="scr22"><rect width="480" height="222"/></clipPath>
+<g transform="translate(2188,5896) scale(2)"><g clip-path="url(#scr22)">
+<rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
+<clipPath id="cl33"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl33)">
+<text x="50.0" y="81.0" font-size="20" fill="#7F8995">Not read</text>
+<path d="M50.0 95.5 L480.0 95.5" stroke="#20252C" stroke-width="1"/>
+<rect x="4.0" y="97.0" width="472.0" height="32.0" fill="#18304D" rx="8" stroke="#4DA3FF" stroke-width="1.6"/>
+<text x="50.0" y="120.0" font-size="20" fill="#4DA3FF" font-weight="700">Refresh</text>
+</g>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="22.0" y="44.0" font-size="20" fill="#EEF1F5" font-weight="700">Neighbors</text>
+<text x="128.6" y="43.0" font-size="16" fill="#7F8995" font-weight="500">Spencer Butte</text>
+<rect x="0.0" y="0.0" width="480.0" height="22.0" fill="#0E1115"/>
+<text x="8.0" y="16.5" font-size="16" fill="#9AA3AE" font-weight="600">Juniper</text>
+<text x="240.0" y="16.5" font-size="16" fill="#EEF1F5" font-weight="700" text-anchor="middle">14:32</text>
+<g transform="translate(459.0,11.0) scale(1.3) translate(-459.0,-11.0)">
+<rect x="449.0" y="6.5" width="19.0" height="9.0" fill="none" rx="2" stroke="#9AA3AE" stroke-width="1"/>
+<rect x="468.5" y="9.0" width="1.8" height="4.0" fill="#9AA3AE" rx="0.6"/>
+<rect x="451.0" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="454.9" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+<rect x="458.8" y="8.5" width="3.1" height="5.0" fill="#EEF1F5" rx="0.5"/>
+</g>
+<g transform="translate(426.0,11.0) scale(1.3) translate(-426.0,-11.0)">
+<circle cx="426.0" cy="11.0" r="3.6" fill="none" stroke="#9AA3AE" stroke-width="1.1"/>
+<circle cx="426.0" cy="11.0" r="1.1" fill="#9AA3AE"/>
+<path d="M426 5 V7 M426 15 V17 M420 11 H422 M430 11 H432" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g transform="translate(406.0,11.0) scale(1.3) translate(-406.0,-11.0)">
+<path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g></g>
+<text x="2178.0" y="6382.0" font-size="17" fill="#3A3A3C">Not read until Refresh. A router asked that lists nobody says None instead.</text>
+</svg>
