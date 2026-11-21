@@ -1,5 +1,6 @@
 # A saved peer's route edited by hand: the editor, a hop's menu, a hop
-# lifted, Then flood and Hold for adjusted, and leaving with changes.
+# lifted, Then flood and Hold for adjusted, and leaving with changes. Add
+# hop has its own tour.
 backspace
 turn 1
 press
@@ -20,7 +21,7 @@ shot hop-lifted
 turn 1
 shot hop-moved
 press
-turn 1
+turn 2
 shot then-flood
 press
 turn 2

@@ -19,7 +19,7 @@ use umsh_ux_communicator::model::{
     brightness_level,
 };
 use umsh_ux_communicator::nav::{
-    ChatMenu, DevicePage, EditOver, MemberFrom, RouteDraft, Screen, Unsent, keys,
+    ChatMenu, DevicePage, EditOver, EditRow, MemberFrom, PickRow, RouteDraft, Screen, Unsent, keys,
 };
 use umsh_ux_communicator::model::Cue;
 use umsh_ux_communicator::model::WifiStatus;
@@ -5252,4 +5252,240 @@ fn a_walk_through_neighbors_past_the_stack_replaces_the_page_shown() {
     // The listing of the screen beneath is kept while others are asked.
     run(&mut app, &[Input::Press]);
     assert!(app.state().node.listing(&riverbend).is_some());
+}
+
+/// Add hop's router, what it finds by what is typed, and its rows.
+fn shown_pick(state: &State) -> (String, String, umsh_ux_communicator::nav::PickRows) {
+    let Screen::Neighbors {
+        router,
+        pick: Some(pick),
+        ..
+    } = state.screen()
+    else {
+        panic!("expected Add hop, got {:?}", state.screen());
+    };
+    (
+        router.to_string(),
+        pick.find.to_string(),
+        state.pick_rows().expect("Add hop's rows"),
+    )
+}
+
+/// The known repeaters Add hop's rows offer, in order.
+fn known_rows(
+    state: &State,
+    rows: &umsh_ux_communicator::nav::PickRows,
+) -> Vec<umsh_ux_communicator::model::KnownRepeater> {
+    (0..rows.len())
+        .filter_map(|index| match rows.row(index) {
+            Some(PickRow::KnownAt(at, _)) => state.node.known_repeater(usize::from(at)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Opens Add hop in the editor of the route to `name`.
+fn add_hop_to<V, F>(app: &mut App<V, State, F>, name: &str)
+where
+    V: ViewLayout<State>,
+    V::FocusTree: DefaultFocus,
+    V::Renderables: AnimatedJoin,
+    F: Fn(&State) -> V,
+{
+    edit_route_to(app, name);
+    turn_to(app, keys::ROUTE_ADD);
+    run(app, &[Input::Press]);
+    shown_pick(app.state());
+}
+
+#[test]
+fn add_hop_after_a_bare_hint_offers_known_repeaters_and_asks_along_the_route() {
+    let store = store();
+    let mut app = app!(store);
+    let learned = {
+        edit_route_to(&mut app, "Jo Reyes");
+        route_draft(app.state()).hints().to_vec()
+    };
+    turn_to(&mut app, keys::ROUTE_ADD);
+    run(&mut app, &[Input::Press]);
+    // The last hop is known by its hint alone: nobody to ask.
+    let (router, _, rows) = shown_pick(app.state());
+    assert_eq!(router, "");
+    assert_eq!(rows.row(0), Some(PickRow::Known));
+    let names: Vec<_> = known_rows(app.state(), &rows)
+        .iter()
+        .map(|k| k.name.to_string())
+        .collect();
+    assert_eq!(names, ["Riverbend Camp", "Bald Knob", "Ridge Runner"]);
+    // Hops already on the route are marked, and focus passes them by.
+    assert!(rows.in_path(1) && rows.in_path(2) && !rows.in_path(3));
+    let ridge = known_rows(app.state(), &rows)[2].hint;
+    assert_eq!(focus(app.state()), Some(keys::known(ridge)));
+    run(&mut app, &[Input::Turn(-1)]);
+    assert_eq!(focus(app.state()), Some(keys::known(ridge)));
+
+    // A press goes to the row with the key it was drawn with, wherever
+    // the rows have since moved it.
+    app.state_mut().press_sheet(1, keys::known(ridge));
+    app.finalize_view();
+    let (router, _, rows) = shown_pick(app.state());
+    assert!(!router.is_empty());
+    let draft = *app.state().pick_draft().unwrap();
+    assert_eq!(draft.hints().len(), 3);
+    assert!(draft.dirty);
+    // Now on the route, Ridge Runner is in its path.
+    let known = known_rows(app.state(), &rows);
+    let ridge = known.iter().find(|k| k.name.as_str() == "Ridge Runner");
+    assert!(draft.hints().contains(&ridge.unwrap().hint));
+    // Opening asks nothing; Refresh asks along the route up to it.
+    assert_eq!(app.state().node.listing(&router), None);
+    assert_eq!(focus(app.state()), Some(keys::NEIGHBORS_REFRESH));
+    run(&mut app, &[Input::Press]);
+    assert_eq!(
+        store.listing_route().as_deref(),
+        Some(&learned[..]),
+        "asked by way of the hops before it"
+    );
+
+    // Backspace returns to the editor with every hop added.
+    run(&mut app, &[Input::Backspace]);
+    assert_eq!(route_draft(app.state()).hints().len(), 3);
+    assert_eq!(focus(app.state()), Some(keys::ROUTE_ADD));
+}
+
+#[test]
+fn add_hop_reads_this_devices_own_list_and_finishes_beside_the_peer() {
+    let store = store();
+    let mut app = app!(store);
+    add_hop_to(&mut app, "Pat Okafor");
+    let (router, _, _) = shown_pick(app.state());
+    assert_eq!(router, app.state().node.address().as_str());
+    answer(&mut app, store);
+    // Pat is heard here: pinned to the top, where focus lands.
+    let (_, _, rows) = shown_pick(app.state());
+    assert_eq!(rows.row(1), Some(PickRow::Neighbor(1)));
+    assert_eq!(rows.peer_at, Some(1));
+    assert_eq!(focus(app.state()), Some(keys::neighbor(1)));
+    // Finish here ends the route where it is, at Save.
+    run(&mut app, &[Input::Press]);
+    assert!(route_draft(app.state()).hints().is_empty());
+    assert_eq!(focus(app.state()), Some(keys::ROUTE_SAVE));
+
+    // Riverbend, then on to what Riverbend hears.
+    turn_to(&mut app, keys::ROUTE_ADD);
+    run(&mut app, &[Input::Press]);
+    answer(&mut app, store);
+    turn_to(&mut app, keys::neighbor(0));
+    run(&mut app, &[Input::Press]);
+    let (router, _, _) = shown_pick(app.state());
+    let hops = app.state().pick_draft().unwrap().hints().to_vec();
+    assert_eq!(hops.len(), 1);
+    assert_eq!(
+        app.state().node.repeater(hops[0]).unwrap().name.as_str(),
+        "Riverbend Camp"
+    );
+    assert_eq!(
+        app.state().node.known_member(&router).unwrap().sender.name,
+        "Riverbend Camp"
+    );
+}
+
+#[test]
+fn typing_in_add_hop_narrows_it_and_offers_the_hints_it_fixes() {
+    let store = store();
+    let mut app = app!(store);
+    add_hop_to(&mut app, "Pat Okafor");
+    answer(&mut app, store);
+
+    // A word of a name narrows to it.
+    run(&mut app, &typed("riv"));
+    let (_, find, rows) = shown_pick(app.state());
+    assert_eq!(find, "riv");
+    assert_eq!(rows.found, Some(1));
+    // The field heads the rows, then what matches.
+    assert_eq!(rows.row(0), Some(PickRow::Field));
+    assert_eq!(rows.row(2), Some(PickRow::Neighbor(0)));
+    assert_eq!(rows.top(), Some(2));
+    assert_eq!(focus(app.state()), Some(keys::PICK_FIELD));
+    // Backspace takes back what was typed before it leaves.
+    run(&mut app, &[Input::Backspace; 3]);
+    let (_, find, rows) = shown_pick(app.state());
+    assert_eq!((find.as_str(), rows.found), ("", None));
+
+    // Four hex digits, which are Base58 too: read both ways, labeled.
+    run(&mut app, &typed("4b21"));
+    let (_, _, rows) = shown_pick(app.state());
+    assert!(rows.hints.len() >= 2, "{:?}", rows.hints);
+    let hex = rows.hints.len() - 1;
+    assert!(rows.hints[hex].hex);
+    assert_eq!(rows.hints[hex].hint, [0x4b, 0x21]);
+    assert_eq!(focus(app.state()), Some(keys::PICK_FIELD));
+    turn_to(&mut app, keys::hint_read(hex));
+    run(&mut app, &[Input::Press]);
+    let (router, find, _) = shown_pick(app.state());
+    assert_eq!(app.state().pick_draft().unwrap().hints(), &[[0x4b, 0x21]]);
+    // Known by its hint alone, the next hop has nobody to ask.
+    assert_eq!((router.as_str(), find.as_str()), ("", ""));
+}
+
+#[test]
+fn add_hop_puts_down_a_lifted_hop_first() {
+    let mut app = app!();
+    let learned = edit_route_to(&mut app, "Jo Reyes");
+    run(&mut app, &[Input::Press, Input::Press, Input::Turn(1)]);
+    assert_eq!(route_draft(app.state()).lifted, Some((1, 0)));
+    // As a touch on the Add hop row would.
+    app.state_mut().add_hop();
+    let draft = *app.state().pick_draft().unwrap();
+    assert_eq!(draft.lifted, None);
+    assert_eq!(draft.hints(), &[learned[1], learned[0]]);
+}
+
+#[test]
+fn add_hop_never_offers_the_peer_as_a_known_repeater() {
+    let store = store();
+    // Riverbend, saved as a peer, has a route of its own to edit.
+    store.gather_known("", "", "");
+    let riverbend = store.known_repeater(0).unwrap().address;
+    let member = store.known_member(&riverbend).expect("Riverbend is known");
+    store.save_peer(&member).expect("saved");
+    let mut app = app!(store);
+    add_hop_to(&mut app, "Riverbend Camp");
+    let (_, _, rows) = shown_pick(app.state());
+    let known = known_rows(app.state(), &rows);
+    assert!(
+        known.iter().all(|k| k.address != riverbend),
+        "{:?}",
+        known.iter().map(|k| k.name.as_str()).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn a_peer_forgotten_while_add_hop_is_open_closes_it() {
+    let mut app = app!();
+    add_hop_to(&mut app, "Jo Reyes");
+    let peer = app.state().screen().peer().expect("Add hop's peer");
+    app.state().node.forget_peer(peer);
+    input::events(&mut app, tick(0));
+    assert!(app.state().pick_rows().is_none());
+    assert!(app.state().route_draft().is_none());
+    assert_eq!(app.state().screen().peer(), None);
+}
+
+#[test]
+fn add_hop_goes_away_once_the_route_is_full() {
+    let mut app = app!();
+    add_hop_to(&mut app, "Pat Okafor");
+    for hop in 0..15u8 {
+        // Hex alone: a zero is no Base58 digit.
+        run(&mut app, &typed(&format!("01{hop:02X}")));
+        assert_eq!(shown_pick(app.state()).2.hints.len(), 1);
+        // Enter in the field adds the top row.
+        run(&mut app, &[Input::Enter]);
+    }
+    let draft = route_draft(app.state());
+    assert_eq!(draft.hints().len(), 15);
+    assert!(!draft.has_room());
+    assert_eq!(focus(app.state()), Some(keys::path(14)));
+    assert!((0..draft.rows()).all(|row| draft.row(row) != Some(EditRow::Add)));
 }

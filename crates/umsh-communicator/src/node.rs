@@ -22,10 +22,11 @@ use umsh_ux_communicator::heapless::{String, Vec};
 use umsh_ux_communicator::model::Directions;
 use umsh_ux_communicator::model::{
     About, ChannelChats, ChannelEntry, ChatId, ChatSummary, Chats, ClockSettings, ClockSource,
-    ContactUri, Details, EventQueue, Forwarding, Heard, Invite, KeyboardSettings, Listed, Listing,
-    MAX_HEARD, MAX_PATH, MeetState, Member, Message, MessageId, NearbyId, Neighbor, Node,
-    NodeEvent, PeerDetail, PeerEntry, PeerId, PeerRoute, PeerSummary, PingView, RadioSettings,
-    Reaction, Repeater, Setting, ShareUri, Shareable, Statistics, WifiReading, WifiSecurity,
+    ContactUri, Details, EventQueue, Forwarding, Heard, HintRead, Invite, KeyboardSettings,
+    KnownRepeater, Listed, Listing, MAX_HEARD, MAX_HINT_READS, MAX_KNOWN, MAX_PATH, MeetState,
+    Member, Message, MessageId, NearbyId, Neighbor, Node, NodeEvent, PeerDetail, PeerEntry, PeerId,
+    PeerRoute, PeerSummary, PingView, RadioSettings, Reaction, Repeater, Setting, ShareUri,
+    Shareable, Statistics, WifiReading, WifiSecurity,
 };
 use umsh_ux_communicator::picker::RecentText;
 use umsh_ux_communicator::text::TextHeap;
@@ -37,7 +38,7 @@ use crate::memory::MemoryStore;
 use crate::record::StoreError;
 use crate::settings::Settings;
 use crate::store::ChatStore;
-use crate::task::{Arrival, Command};
+use crate::task::{Arrival, AskWay, Command};
 
 /// How many events wait for the interface before they collapse into a
 /// resync.
@@ -68,6 +69,8 @@ pub struct CommunicatorNode<P, S = MemoryStore> {
     /// The saved peers in the order the list shows them, as of the last
     /// [`Node::sort_peers`].
     peer_order: RefCell<alloc::vec::Vec<PeerId>>,
+    /// The known repeaters of the last [`Node::gather_known`].
+    known: RefCell<Vec<KnownRepeater, MAX_KNOWN>>,
     /// Add peer's contact exchange.
     #[cfg(feature = "software-crypto")]
     meeting: RefCell<Meeting>,
@@ -96,6 +99,7 @@ impl<P: LocalPort, S: ChatStore> CommunicatorNode<P, S> {
             settings: RefCell::new(Settings::new(port)),
             chats: RefCell::new(ChatHalf::new(store, crypto, heap)),
             peer_order: RefCell::new(alloc::vec::Vec::new()),
+            known: RefCell::new(Vec::new()),
             #[cfg(feature = "software-crypto")]
             meeting: RefCell::new(Meeting::new()),
             events: RefCell::new(EventQueue::new()),
@@ -669,11 +673,48 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
         self.chats.borrow().listed(address, index)
     }
 
-    fn ask_listing(&self, address: &str, more: bool, shown: &[&str]) {
+    fn ask_listing(&self, address: &str, more: bool, shown: &[&str], along: Option<&[[u8; 2]]>) {
+        let way = match along {
+            _ if address == self.address().as_str() => AskWay::Here,
+            Some(hints) => AskWay::Along(
+                hints
+                    .iter()
+                    .copied()
+                    .map(RouterHint)
+                    .take(MAX_PATH)
+                    .collect(),
+            ),
+            None => AskWay::Routed,
+        };
         self.with_chats(|chats, now_ms, _, events| {
-            chats.ask_listing(address, more, shown, now_ms, events);
+            chats.ask_listing(address, more, shown, way, now_ms, events);
         });
         self.wake();
+    }
+
+    fn listed_place(&self, router: &str, node: &str) -> Option<usize> {
+        self.chats.borrow().listed_place(router, node)
+    }
+
+    fn gather_known(&self, query: &str, router: &str, peer: &str) -> usize {
+        let known = self.chats.borrow().known_repeaters(
+            query,
+            router,
+            peer,
+            self.clock.now_ms(),
+            self.clock.wall(),
+        );
+        let count = known.len();
+        *self.known.borrow_mut() = known;
+        count
+    }
+
+    fn known_repeater(&self, index: usize) -> Option<KnownRepeater> {
+        self.known.borrow().get(index).cloned()
+    }
+
+    fn hint_reads(&self, text: &str) -> Vec<HintRead, MAX_HINT_READS> {
+        hint_reads(text)
     }
 
     /// A new chat is drawn as the node it is with, whatever `avatar` says.
@@ -1259,4 +1300,25 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
             });
         }
     }
+}
+
+/// The router hints `text` fixes: as the start of an address in Base58,
+/// which can straddle two, then as four hexadecimal digits.
+pub(crate) fn hint_reads(text: &str) -> Vec<HintRead, MAX_HINT_READS> {
+    let mut reads = Vec::new();
+    if let Ok(prefix) = RouterHint::candidates_from_base58_prefix(text) {
+        for hint in core::iter::once(prefix.first).chain(prefix.second) {
+            _ = reads.push(HintRead {
+                hint: hint.0,
+                hex: false,
+            });
+        }
+    }
+    if let Ok(hint) = RouterHint::from_hex(text) {
+        _ = reads.push(HintRead {
+            hint: hint.0,
+            hex: true,
+        });
+    }
+    reads
 }

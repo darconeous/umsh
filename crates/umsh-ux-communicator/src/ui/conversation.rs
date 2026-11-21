@@ -490,7 +490,7 @@ pub(super) fn titled_with(
         m,
     };
     _ = heading.name.push_str(umsh_grapheme::cut(name, 48));
-    _ = heading.about.push_str(umsh_grapheme::cut(about, 16));
+    _ = heading.about.push_str(umsh_grapheme::cut(about, 24));
     HStack::new((back(m, |s| _ = s.back()), Lazy::new(heading, heading_look)))
         .with_spacing(ARROW_GAP)
         .padding(Edges::Leading, if m.back { 0 } else { LEADING })
@@ -509,7 +509,7 @@ pub(super) fn titled_with(
 #[derive(Clone)]
 struct Heading {
     name: heapless::String<48>,
-    about: heapless::String<16>,
+    about: heapless::String<32>,
     avatar: Option<AvatarStyle>,
     color: Rgb565,
     about_color: Rgb565,

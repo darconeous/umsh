@@ -13,16 +13,17 @@ use umsh_node::NodeIdentityPayload;
 use umsh_node::location::NodeLocation;
 use umsh_node::mac_command::PeerRepeatersResponseView;
 use umsh_ux_communicator::avatar::AvatarStyle;
-use umsh_ux_communicator::heapless::String;
+use umsh_ux_communicator::heapless::{String, Vec};
 use umsh_ux_communicator::model::{
-    Listed, Listing, ListingAsk, MAX_LISTED, NodeEvent, Signal, meters_between,
+    KnownRepeater, Listed, Listing, ListingAsk, MAX_KNOWN, MAX_LISTED, NodeEvent, Signal,
+    meters_between, word_match,
 };
 
-use super::peers::{avatar, name};
+use super::peers::{avatar, forwards, name, short_age};
 use super::{Chats, cut};
-use crate::record::PeerRecord;
+use crate::record::{PeerFilter, PeerRecord};
 use crate::store::ChatStore;
-use crate::task::{Command, NeighborsCursor};
+use crate::task::{AskWay, Command, NeighborsCursor};
 
 /// How many routers' listings are kept. Past it, the one asked longest ago
 /// whose screen is not open goes. More than the interface can have open at
@@ -83,13 +84,15 @@ impl Entry {
 
 impl<S: ChatStore> Chats<S> {
     /// Asks the router at `address` for the top of what it hears, or, when
-    /// `more`, the page after the last one held. An ask already waiting is
-    /// left to its answer. The listings of the routers at `shown` are kept.
+    /// `more`, the page after the last one held, the way `way` says. An
+    /// ask already waiting is left to its answer. The listings of the
+    /// routers at `shown` are kept.
     pub fn ask_listing(
         &mut self,
         address: &str,
         more: bool,
         shown: &[&str],
+        way: AskWay,
         now_ms: u64,
         events: &mut dyn FnMut(NodeEvent),
     ) {
@@ -141,7 +144,7 @@ impl<S: ChatStore> Chats<S> {
             router: key,
             nonce,
             cursor,
-            route: heapless::Vec::new(),
+            way,
         });
         events(NodeEvent::ListingChanged);
     }
@@ -290,6 +293,84 @@ impl<S: ChatStore> Chats<S> {
             heard_min: entry.heard_min,
             distance_m,
         })
+    }
+
+    /// Where the node at `node` is in what the router at `router` reports
+    /// hearing.
+    pub fn listed_place(&self, router: &str, node: &str) -> Option<usize> {
+        let node = key_at(node)?;
+        self.routers
+            .get(&key_at(router)?.0)?
+            .entries
+            .iter()
+            .position(|entry| node.0.starts_with(entry.hint()))
+    }
+
+    /// Known nodes that forward others' frames, whose names have a word
+    /// starting with `query` (all, when it is empty), the most recently
+    /// heard first, one to a router hint, leaving out the node at `peer`
+    /// and those the router at `router` reports hearing.
+    pub fn known_repeaters(
+        &self,
+        query: &str,
+        router: &str,
+        peer: &str,
+        now_ms: u64,
+        wall: Option<u32>,
+    ) -> Vec<KnownRepeater, MAX_KNOWN> {
+        let listed = key_at(router).and_then(|key| self.routers.get(&key.0));
+        let left_out = key_at(peer);
+        // The most recently heard so far, in order: each goes into its
+        // place as it is met, which for so few costs less than a sort.
+        let mut kept: Vec<(u32, KnownRepeater), MAX_KNOWN> = Vec::new();
+        for peer in self.store.peers(PeerFilter::All).flatten() {
+            if !forwards(&peer)
+                || left_out.is_some_and(|key| key.0 == peer.key.0)
+                || listed.is_some_and(|listed| {
+                    listed
+                        .entries
+                        .iter()
+                        .any(|entry| peer.key.0.starts_with(entry.hint()))
+                })
+            {
+                continue;
+            }
+            let called = name(&peer.key, Some(&peer));
+            if !query.is_empty() && word_match(&called, query).is_none() {
+                continue;
+            }
+            let ago = self.heard_ago(&peer.key, Some(&peer), now_ms, wall);
+            let order = ago.unwrap_or(u32::MAX);
+            // Two under one hint are the same hop of a route: the more
+            // recently heard stands for both.
+            let hint = [peer.key.0[0], peer.key.0[1]];
+            if let Some(same) = kept.iter().position(|(_, known)| known.hint == hint) {
+                if kept[same].0 <= order {
+                    continue;
+                }
+                kept.remove(same);
+            }
+            let Some(at) =
+                (0..=kept.len()).find(|&at| kept.get(at).is_none_or(|(o, _)| order < *o))
+            else {
+                continue;
+            };
+            if at == MAX_KNOWN {
+                continue;
+            }
+            if kept.is_full() {
+                kept.pop();
+            }
+            let known = KnownRepeater {
+                address: super::address(&peer.key.0),
+                name: cut::<24>(&called),
+                avatar: avatar(&peer.key, Some(&peer)),
+                hint,
+                age: ago.map(short_age).unwrap_or_default(),
+            };
+            _ = kept.insert(at, (order, known));
+        }
+        kept.into_iter().map(|(_, known)| known).collect()
     }
 
     /// The known node `hint`, two or three bytes of an address, most

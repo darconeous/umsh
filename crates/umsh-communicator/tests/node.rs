@@ -12,7 +12,7 @@ mod support;
 use support::{Port, SharedFlash, config, device, phone_inserts, provision, starting_keys};
 use umsh_communicator::settings::{SAVE_DELAY_MS, STATISTICS_READ_MS};
 use umsh_communicator::task::Command;
-use umsh_communicator::task::{Arrival, HeldRoute, Secrecy};
+use umsh_communicator::task::{Arrival, AskWay, HeldRoute, Secrecy};
 use umsh_communicator::{
     ChannelCrypto, Clock, CommunicatorNode, FlashMap, FlashMapStore, MemoryStore, Quota, Seeds,
 };
@@ -39,7 +39,7 @@ use umsh_ulcp::ids::prop;
 use umsh_ulcp::profiles::VETTED;
 use umsh_ulcp_simdev::{SessionConfig, SimulatedDevice, TimeConfig};
 use umsh_ux_communicator::model::{
-    ChannelAccess, ChannelEntry, ChatKind, Chats, Delivery, Direction, Forwarding,
+    ChannelAccess, ChannelEntry, ChatKind, Chats, Delivery, Direction, Forwarding, HintRead,
     KeyboardSettings, Leg, ListingAsk, MESSAGE_LEN, Node, NodeEvent, PeerEntry, PeerSummary,
     PingView, Presence, Profile, Reaction, RouteKind, Rule, Setting, Shareable, Signal,
 };
@@ -3135,14 +3135,14 @@ fn a_routers_listing_is_read_a_page_at_a_time() {
 
     let asked = |more: bool| {
         let sent = Cell::new(None);
-        node.ask_listing(&address, more, &[]);
+        node.ask_listing(&address, more, &[], None);
         assert!(asks(&node, |c| match c {
             Command::AskNeighbors {
                 router: to,
                 nonce,
                 cursor,
-                route,
-            } if *to == router && route.is_empty() => {
+                way: AskWay::Routed,
+            } if *to == router => {
                 sent.set(Some((*nonce, cursor.as_deref().map(<[u8]>::to_vec))));
                 true
             }
@@ -3223,4 +3223,153 @@ fn a_routers_listing_is_read_a_page_at_a_time() {
     let listing = node.listing(&address).unwrap();
     assert!(listing.no_answer && listing.asking.is_none());
     assert_eq!(listing.count, 3);
+}
+
+/// A repeater's identity, named `name`, of twelve bytes at most.
+fn repeater_named(name: &str) -> NodeIdentityPayload {
+    let mut bytes = vec![
+        NodeRole::Repeater.as_byte(),
+        NodeCapabilities::REPEATER.bits(),
+        name.len() as u8,
+    ];
+    bytes.extend_from_slice(name.as_bytes());
+    NodeIdentityPayload::from_bytes(&bytes).unwrap()
+}
+
+/// Add hop asks a router along the route before it, flooding no further,
+/// with none as direct; this device's own list is read here.
+#[test]
+fn an_ask_goes_the_way_add_hop_says() {
+    let sim = device();
+    let (node, _) = started(&sim);
+    let router = PublicKey([0x52; 32]);
+    let address = address_of(&router);
+    let way = |along: Option<&[[u8; 2]]>, of: &str| {
+        node.ask_listing(of, false, &[], along);
+        let seen = RefCell::new(None);
+        assert!(asks(&node, |c| match c {
+            Command::AskNeighbors { way, .. } => {
+                *seen.borrow_mut() = Some(way.clone());
+                true
+            }
+            _ => false,
+        }));
+        seen.take().unwrap()
+    };
+    assert_eq!(
+        way(Some(&[[0xA1, 0x01]]), &address),
+        AskWay::Along([RouterHint([0xA1, 0x01])].into_iter().collect())
+    );
+    let other = address_of(&PublicKey([0x53; 32]));
+    assert_eq!(
+        way(Some(&[]), &other),
+        AskWay::Along([].into_iter().collect())
+    );
+    assert_eq!(way(None, &node.address()), AskWay::Here);
+}
+
+/// Known repeaters are those that forward, the most recently heard first,
+/// narrowed by a word of their names, less those the router lists; the
+/// peer's place in a listing is found by its address.
+#[test]
+fn known_repeaters_come_most_recent_first_less_those_listed() {
+    use umsh_communicator::task::NeighborsBody;
+    use umsh_node::mac_command::{PeerRepeaterEntry, PeerRepeatersResponseBuilder};
+    let sim = device();
+    let (node, clock) = started(&sim);
+    let heard = |key: PublicKey, identity: NodeIdentityPayload, at: u64| {
+        clock.set(at);
+        node.arrive(Arrival::Identity {
+            key,
+            identity,
+            payload: Vec::new(),
+            update: IdentityUpdate::Replace,
+            rx: rx(1),
+        });
+    };
+    let (fox, eugene, coburg) = (
+        PublicKey([0x61; 32]),
+        PublicKey([0x62; 32]),
+        PublicKey([0x63; 32]),
+    );
+    heard(fox, repeater_named("Fox Hollow"), 1_000);
+    heard(PublicKey([0x64; 32]), chatter("Robin"), 2_000);
+    heard(eugene, repeater_named("Eugene"), 3_000);
+    heard(coburg, repeater_named("Coburg"), 4_000);
+    clock.set(60_000);
+    let names_but = |query: &str, router: &str, peer: &str| -> Vec<String> {
+        (0..node.gather_known(query, router, peer))
+            .map(|at| node.known_repeater(at).unwrap().name.to_string())
+            .collect()
+    };
+    let names = |query: &str, router: &str| names_but(query, router, "");
+    assert_eq!(names("", ""), ["Coburg", "Eugene", "Fox Hollow"]);
+    assert_eq!(names("hol", ""), ["Fox Hollow"]);
+    node.gather_known("", "", "");
+    let first = node.known_repeater(0).unwrap();
+    assert_eq!(node.known_repeater(3), None);
+    assert_eq!(first.address.as_str(), address_of(&coburg));
+    assert_eq!(first.hint, [0x63, 0x63]);
+
+    // Coburg and Fox Hollow are listed by the router, and so are left out.
+    let router = PublicKey([0x52; 32]);
+    let at = address_of(&router);
+    node.ask_listing(&at, false, &[], None);
+    let nonce = Cell::new(0);
+    assert!(asks(&node, |c| match c {
+        Command::AskNeighbors { nonce: n, .. } => {
+            nonce.set(*n);
+            true
+        }
+        _ => false,
+    }));
+    let nonce = nonce.get();
+    let mut page = PeerRepeatersResponseBuilder::new(160).nonce(nonce);
+    for hint in [&[0x63, 0x63, 0x63][..], &[0x61, 0x61, 0x61]] {
+        assert!(
+            page.try_push(&PeerRepeaterEntry {
+                hint,
+                ..PeerRepeaterEntry::default()
+            })
+            .unwrap()
+        );
+    }
+    node.arrive(Arrival::Neighbors {
+        router,
+        body: NeighborsBody::from_slice(&page.build().unwrap()).unwrap(),
+    });
+    assert_eq!(names("", &at), ["Eugene"]);
+    assert_eq!(node.listed_place(&at, &address_of(&fox)), Some(1));
+    assert_eq!(node.listed_place(&at, &address_of(&eugene)), None);
+
+    // The peer of the route is left out, and the slot goes to the next.
+    assert_eq!(
+        names_but("", "", &address_of(&coburg)),
+        ["Eugene", "Fox Hollow"]
+    );
+    // Under one hint, the more recently heard stands for both.
+    let mut twin = [0x70; 32];
+    twin[..2].copy_from_slice(&[0x61, 0x61]);
+    heard(PublicKey(twin), repeater_named("Fox Twin"), 61_000);
+    assert_eq!(names("", ""), ["Fox Twin", "Coburg", "Eugene"]);
+}
+
+/// Four hexadecimal digits are also read as Base58, and a Base58 prefix
+/// too short to fix a hint is read as nothing.
+#[test]
+fn typed_text_is_read_as_the_router_hints_it_fixes() {
+    let sim = device();
+    let (node, _) = started(&sim);
+    let reads = node.hint_reads("3D9F");
+    assert!(reads.len() >= 2, "{reads:?}");
+    assert_eq!(
+        reads.last(),
+        Some(&HintRead {
+            hint: [0x3D, 0x9F],
+            hex: true
+        })
+    );
+    assert!(reads[..reads.len() - 1].iter().all(|read| !read.hex));
+    assert!(node.hint_reads("3D9").is_empty());
+    assert!(node.hint_reads("zzzz").iter().all(|read| !read.hex));
 }

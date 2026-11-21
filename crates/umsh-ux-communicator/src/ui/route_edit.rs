@@ -28,6 +28,8 @@ const MENU_WIDTH: u32 = 220;
 const LEAVE_WIDTH: u32 = 300;
 /// The hollow dots of the flood row.
 const DOT: u32 = 6;
+/// Add hop's plus.
+const PLUS: u32 = 24;
 
 /// How the latest ping along the route went, as its row says.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -46,6 +48,8 @@ pub(super) enum Pinged {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Value {
     None,
+    /// Add hop's plus, on the rail.
+    Add,
     Flood(u8),
     /// Which of [`HOLD_CHOICES`].
     Hold(u8),
@@ -83,7 +87,7 @@ pub(super) fn row_look((look, on_rail): &(Look, bool)) -> impl View<Rgb565, ()> 
     let mut check = false;
     let mut chevron = false;
     match look.value {
-        Value::None => {}
+        Value::None | Value::Add => {}
         Value::Flood(hops) => _ = value.push_str(&flood_text(hops)),
         Value::Hold(hold) => {
             _ = value.push_str(HOLD_LABELS[usize::from(hold).min(HOLD_LABELS.len() - 1)]);
@@ -107,6 +111,7 @@ pub(super) fn row_look((look, on_rail): &(Look, bool)) -> impl View<Rgb565, ()> 
         }
     }
     let flooding = matches!(look.value, Value::Flood(1..));
+    let add = matches!(look.value, Value::Add);
     let dot = move || {
         Circle
             .stroked(1)
@@ -151,15 +156,28 @@ pub(super) fn row_look((look, on_rail): &(Look, bool)) -> impl View<Rgb565, ()> 
             Edges::Leading,
             if *on_rail { NAME_X - 4 } else { INSET - 4 },
         )
-        // The flood past the last hop: dots on the rail, one when off.
+        // The flood past the last hop: dots on the rail, one when off;
+        // or Add hop's plus.
         .overlay(
             Alignment::Leading,
             on_rail.then(|| {
-                VStack::new((dot(), flooding.then(dot), flooding.then(dot)))
-                    .with_spacing(2)
-                    .frame()
-                    .with_width(AVATAR)
-                    .padding(Edges::Leading, INSET - 4)
+                HStack::new((
+                    (!add).then(|| {
+                        VStack::new((dot(), flooding.then(dot), flooding.then(dot))).with_spacing(2)
+                    }),
+                    add.then(|| {
+                        ZStack::new((
+                            Circle.foreground_color(theme::BACKGROUND),
+                            Image::new(&icon::ADD_HOP)
+                                .as_template()
+                                .foreground_color(theme::ACCENT),
+                        ))
+                        .frame_sized(PLUS, PLUS)
+                    }),
+                ))
+                .frame()
+                .with_width(AVATAR)
+                .padding(Edges::Leading, INSET - 4)
             }),
         ),
         look.focused,

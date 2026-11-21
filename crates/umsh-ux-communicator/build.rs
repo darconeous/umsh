@@ -601,6 +601,16 @@ const ICONS: &[(&str, u32, f32, &[Layer])] = &[
             stroke("M-6 0 H6 M0 -6 V6", 2.2),
         ],
     ),
+    // The route editor's Add hop, on the rail where a hop's avatar sits.
+    (
+        "ADD_HOP",
+        24,
+        0.78,
+        &[
+            stroke("M-14 0 A14 14 0 1 0 14 0 A14 14 0 1 0 -14 0 Z", 2.2),
+            stroke("M-6 0 H6 M0 -6 V6", 2.6),
+        ],
+    ),
     (
         "WARNING",
         18,

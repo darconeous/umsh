@@ -123,6 +123,17 @@ pub const NEIGHBORS_CURSOR: usize = 8;
 /// Where the next page of a listing starts, as its router wrote it.
 pub type NeighborsCursor = umsh_ux_communicator::heapless::Vec<u8, NEIGHBORS_CURSOR, u8>;
 
+/// How a router is asked what it hears.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AskWay {
+    /// As the device node sends to it.
+    Routed,
+    /// By way of these repeaters, flooding no further; none is direct.
+    Along(heapless::Vec<RouterHint, { CachedRoute::MAX_HINTS }>),
+    /// It is this device: its own list is read, and nothing is sent.
+    Here,
+}
+
 /// A route chosen by hand, while the device node holds it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HeldRoute {
@@ -183,14 +194,13 @@ pub enum Command {
         hold_ms: u32,
     },
     /// Ask `router` for a page of the repeaters it hears, starting at
-    /// `cursor`, or at the top. `nonce` pairs the answer with this ask.
-    /// By way of `route` with no flood past it, or as the device node
-    /// sends to `router` when it is empty.
+    /// `cursor`, or at the top, the way `way` says. `nonce` pairs the
+    /// answer with this ask.
     AskNeighbors {
         router: PublicKey,
         nonce: u16,
         cursor: Option<NeighborsCursor>,
-        route: heapless::Vec<RouterHint, { CachedRoute::MAX_HINTS }>,
+        way: AskWay,
     },
     /// Ask a channel for the identity of whoever holds a hint.
     AskChannel {
@@ -559,19 +569,23 @@ async fn execute<P: LocalPort, S: ChatStore, M: MacBackend>(
             router,
             nonce,
             cursor,
-            route,
+            way,
         } => {
             // By full key, in case the router has not registered us; and
             // along a route given, flooding no further, as a ping along
             // one does.
             let options = SendOptions::default().with_full_source();
-            let options = if route.is_empty() {
-                Some(options)
-            } else {
-                options
+            let options = match way {
+                AskWay::Routed => Some(options),
+                // Given even when empty: no route at all would let the MAC
+                // send by the route it holds, and an empty one is direct.
+                AskWay::Along(route) => options
                     .try_with_source_route(&route)
                     .ok()
-                    .map(|options| options.with_trace().with_route_slack(0))
+                    .map(|options| options.with_trace().with_route_slack(0)),
+                AskWay::Here => {
+                    return own_neighbors(mesh, router, nonce, cursor.as_deref()).await;
+                }
             };
             if let (Some(options), Ok(connection)) = (options, mesh.peer(router).await) {
                 _ = connection
@@ -621,6 +635,47 @@ async fn execute<P: LocalPort, S: ChatStore, M: MacBackend>(
         Command::CloseMeet => mesh.close_meet().await,
     }
     None
+}
+
+/// A page of the repeaters this device hears, from `cursor` on, written
+/// as a router answering `nonce` would write it, so that it is read as one.
+/// Its cursor is the place the next page starts.
+async fn own_neighbors<M: MacBackend>(
+    mesh: &LocalNode<M>,
+    own: PublicKey,
+    nonce: u16,
+    cursor: Option<&[u8]>,
+) -> Option<Arrival> {
+    use umsh_node::mac_command::{PeerRepeaterEntry, PeerRepeatersResponseBuilder};
+    let peers = mesh.peer_repeaters().await;
+    let start = cursor
+        .and_then(<[u8]>::first)
+        .map_or(0, |&at| usize::from(at));
+    let mut page = PeerRepeatersResponseBuilder::new(NEIGHBORS_BODY)
+        .nonce(nonce)
+        .total(u8::try_from(peers.len()).unwrap_or(u8::MAX))
+        .reserve_cursor(1);
+    let mut next = start;
+    for peer in peers.iter().skip(start) {
+        let entry = PeerRepeaterEntry {
+            hint: &peer.hint,
+            name: peer.name.as_deref(),
+            rssi_snr: peer.rssi_dbm.zip(peer.snr),
+            last_heard_min: peer.last_heard_min,
+            location: peer.location,
+            regions: &[],
+        };
+        // One too large for a page is passed over, as a router does.
+        match page.try_push(&entry) {
+            Ok(false) => break,
+            Ok(true) | Err(_) => next += 1,
+        }
+    }
+    if next < peers.len() {
+        page = page.cursor(&[u8::try_from(next).unwrap_or(u8::MAX)]);
+    }
+    let body = NeighborsBody::from_slice(&page.build().ok()?).ok()?;
+    Some(Arrival::Neighbors { router: own, body })
 }
 
 /// The route the device node holds to `peer`.

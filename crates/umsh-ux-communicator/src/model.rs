@@ -1584,6 +1584,34 @@ pub struct Listed {
     pub distance_m: Option<u32>,
 }
 
+/// A known node that forwards others' frames, as Add hop offers it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KnownRepeater {
+    pub address: String<44>,
+    pub name: String<24>,
+    pub avatar: AvatarStyle,
+    /// The router hint it forwards under.
+    pub hint: [u8; 2],
+    /// How long ago it was last heard, such as `2h`.
+    pub age: String<6>,
+}
+
+/// The most known repeaters Add hop offers.
+pub const MAX_KNOWN: usize = 5;
+
+/// A router hint that typed text fixes: as the start of an address in
+/// Base58, or as four hexadecimal digits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HintRead {
+    pub hint: [u8; 2],
+    /// Read as hexadecimal digits.
+    pub hex: bool,
+}
+
+/// The most router hints typed text fixes: two that a Base58 prefix
+/// straddles, and its reading as hexadecimal.
+pub const MAX_HINT_READS: usize = 3;
+
 /// How far apart two places are, each a latitude and longitude in
 /// degrees, in meters, along the earth's surface.
 #[must_use]
@@ -2094,10 +2122,32 @@ pub trait Node {
     fn listed(&self, address: &str, index: usize) -> Option<Listed>;
 
     /// Asks the router at `address` for the top of what it hears, or, when
-    /// `more`, the page after the last one held. How it goes comes as
-    /// [`NodeEvent::ListingChanged`]. The listings of the routers at
-    /// `shown`, whose screens are open, are kept.
-    fn ask_listing(&self, address: &str, more: bool, shown: &[&str]);
+    /// `more`, the page after the last one held: by way of `along`, the
+    /// repeater nearest this device first, flooding no further, or as a
+    /// message to it would go when that is `None`. This device's own
+    /// address reads what it hears itself, sending nothing. How it goes
+    /// comes as [`NodeEvent::ListingChanged`]. The listings of the routers
+    /// at `shown`, whose screens are open, are kept.
+    fn ask_listing(&self, address: &str, more: bool, shown: &[&str], along: Option<&[[u8; 2]]>);
+
+    /// Where the node at `node` is in what the router at `router` reports
+    /// hearing, as last read.
+    fn listed_place(&self, router: &str, node: &str) -> Option<usize>;
+
+    /// Gathers up to [`MAX_KNOWN`] known nodes that forward others'
+    /// frames, whose names have a word starting with `query` (all, when it
+    /// is empty), the most recently heard first, one to a router hint,
+    /// leaving out the node at `peer` and those the router at `router`
+    /// reports hearing; returns how many there are.
+    /// [`Node::known_repeater`] reads them by place until the next
+    /// gathering.
+    fn gather_known(&self, query: &str, router: &str, peer: &str) -> usize;
+
+    /// The known repeater at `index` of the last gathering.
+    fn known_repeater(&self, index: usize) -> Option<KnownRepeater>;
+
+    /// The router hints `text` fixes, Base58 readings first.
+    fn hint_reads(&self, text: &str) -> Vec<HintRead, MAX_HINT_READS>;
 
     /// The clock's settings as they stand.
     fn clock(&self) -> ClockSettings;
@@ -2901,7 +2951,7 @@ impl State {
             // The route screen reads the node as it is drawn.
             NodeEvent::RouteChanged(_) => self.refresh_peer(),
             // So does the Neighbors screen.
-            NodeEvent::ListingChanged => {}
+            NodeEvent::ListingChanged => self.listing_landed(),
             NodeEvent::SettingRefused(Setting::WifiFull) => {
                 self.banner = Some(Banner {
                     notice: Notice::WifiFull,

@@ -1330,3 +1330,53 @@ async fn a_held_route_that_misses_floods_and_stays_held() {
         })
         .await;
 }
+
+/// What this device hears is read from its own device node, a page as a
+/// router would give it, with nothing sent: the repeater heard carrying a
+/// ping is listed.
+#[tokio::test(flavor = "current_thread")]
+async fn this_devices_own_list_is_read_here() {
+    LocalSet::new()
+        .run_until(async {
+            let network = SimulatedNetwork::new();
+            let near = network.add_radio_with_config(255, 20);
+            let middle = network.add_radio_with_config(255, 20);
+            let far = network.add_radio_with_config(255, 20);
+            let (near_id, middle_id) = (near.id(), middle.id());
+            network.connect_bidirectional(near_id, middle_id);
+            network.connect_bidirectional(middle.id(), far.id());
+            let alice = board(near, [0x11; 32]).await;
+            let ridge = repeater(middle, [0x33; 32]).await;
+            let bob = board(far, [0x22; 32]).await;
+
+            phone_inserts(&alice.sim, prop::DEV_PEERS, &bob.key.0);
+            alice.node.pump();
+            let peer = alice.node.peers()[0].id;
+            alice.node.ping(peer);
+            until("the ping was not answered", || {
+                matches!(alice.node.ping_view(peer), Some(PingView::Reply(_)))
+            })
+            .await;
+
+            // With alice cut off, only her own table can answer.
+            network.disconnect(near_id, middle_id);
+            network.disconnect(middle_id, near_id);
+            let here = alice.node.address();
+            alice.node.ask_listing(&here, false, &[], None);
+            until("this device's own list was not read", || {
+                alice
+                    .node
+                    .listing(&here)
+                    .is_some_and(|listing| listing.asking.is_none() && listing.count > 0)
+            })
+            .await;
+            let listing = alice.node.listing(&here).unwrap();
+            assert!(!listing.no_answer, "{listing:?}");
+            assert_eq!(listing.total, Some(listing.count), "{listing:?}");
+            assert_eq!(
+                alice.node.listed(&here, 0).unwrap().hint,
+                [ridge.0[0], ridge.0[1]]
+            );
+        })
+        .await;
+}

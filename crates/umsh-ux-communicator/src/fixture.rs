@@ -11,14 +11,15 @@ use crate::model::{
     About, BatteryReading, Bluetooth, BluetoothReading, Card, ChannelAccess, ChannelChats,
     ChannelEntry, Charge, ChatId, ChatKind, ChatSummary, Chats, ClockSettings, ClockSource,
     Contact, ContactUri, Delivery, Details, Direction, EventQueue, Exchange, ExchangeEnd, Fix,
-    Forwarding, GaugeReading, Gnss, GnssReading, Heard, Invite, KeyboardFirmware, KeyboardSettings,
-    Leg, Links, Listed, Listing, ListingAsk, MAX_CHATS, MAX_HEARD, MAX_NEARBY_NETWORKS, MAX_PATH,
-    MAX_SAVED_NETWORKS, MESSAGE_LEN, ManualRoute, MeetState, Member, Message, MessageId,
-    NearbyDevice, NearbyId, NearbyNetwork, Neighbor, Node, NodeEvent, Parts, PeerDetail, PeerEntry,
-    PeerId, PeerRoute, PeerSummary, PingReply, PingView, Presence, Profile, Quote, RadioSettings,
-    Reacted, Reaction, Reactions, Reactor, Repeater, RouteKind, Rule, SavedNetwork, Sender,
-    Setting, ShareUri, Shareable, Signal, Ssid, State, Statistics, StatusStrip, TRANSMIT_POWER,
-    Via, WifiReading, WifiSecurity, WifiStatus, route_text, word_match,
+    Forwarding, GaugeReading, Gnss, GnssReading, Heard, HintRead, Invite, KeyboardFirmware,
+    KeyboardSettings, KnownRepeater, Leg, Links, Listed, Listing, ListingAsk, MAX_CHATS, MAX_HEARD,
+    MAX_HINT_READS, MAX_KNOWN, MAX_NEARBY_NETWORKS, MAX_PATH, MAX_SAVED_NETWORKS, MESSAGE_LEN,
+    ManualRoute, MeetState, Member, Message, MessageId, NearbyDevice, NearbyId, NearbyNetwork,
+    Neighbor, Node, NodeEvent, Parts, PeerDetail, PeerEntry, PeerId, PeerRoute, PeerSummary,
+    PingReply, PingView, Presence, Profile, Quote, RadioSettings, Reacted, Reaction, Reactions,
+    Reactor, Repeater, RouteKind, Rule, SavedNetwork, Sender, Setting, ShareUri, Shareable, Signal,
+    Ssid, State, Statistics, StatusStrip, TRANSMIT_POWER, Via, WifiReading, WifiSecurity,
+    WifiStatus, route_text, word_match,
 };
 use crate::models;
 use crate::picker::RecentText;
@@ -384,6 +385,14 @@ const BALD_KNOB: Carrier = Carrier {
     known: false,
 };
 
+/// The repeater Riverbend hears furthest off.
+const RIDGE_RUNNER: Carrier = Carrier {
+    address: HEARD[1].address,
+    name: HEARD[1].name,
+    color: HEARD[1].color,
+    known: true,
+};
+
 /// The repeaters heard carrying my message `index` in `chat`, and how many
 /// more named none.
 fn carriers(chat: ChatId, index: usize) -> (&'static [Carrier], u16) {
@@ -427,6 +436,8 @@ const LISTINGS: usize = 4;
 /// waited for before it goes unanswered.
 const LISTING_DELAY: u64 = 1_500;
 const NO_ANSWER_AFTER: u64 = 30_000;
+/// How long this device takes to read what it hears itself.
+const HERE_DELAY: u64 = 100;
 /// How many repeaters a page lists.
 const LISTING_PAGE: usize = 3;
 
@@ -443,11 +454,7 @@ struct FixtureListing {
 
 impl FixtureListing {
     fn count(&self) -> usize {
-        if self.address == RIVERBEND.address {
-            (usize::from(self.pages) * LISTING_PAGE).min(RIVERBEND_LISTS.len())
-        } else {
-            0
-        }
+        (usize::from(self.pages) * LISTING_PAGE).min(lists_of(&self.address).len())
     }
 
     /// Answers the ask whose time has come. Returns whether it did.
@@ -456,7 +463,7 @@ impl FixtureListing {
             return false;
         };
         self.asking = None;
-        if self.address != RIVERBEND.address {
+        if lists_of(&self.address).is_empty() {
             self.no_answer = true;
         } else if more {
             self.pages += 1;
@@ -468,6 +475,62 @@ impl FixtureListing {
     }
 }
 
+/// What the router at `address` reports hearing: Riverbend and this
+/// device answer, and no other.
+fn lists_of(address: &str) -> &'static [ListsAs] {
+    match address {
+        _ if address == RIVERBEND.address => &RIVERBEND_LISTS,
+        ADDRESS => &HERE_LISTS,
+        _ => &[],
+    }
+}
+
+/// What this device hears: Riverbend, Pat, whose route can end there, and
+/// a repeater known by its hint.
+const HERE_LISTS: [ListsAs; 3] = [
+    ListsAs {
+        address: Some(RIVERBEND.address),
+        name: RIVERBEND.name,
+        color: RIVERBEND.color,
+        shape: PeerShape::Triangle,
+        hint: [0; 2],
+        signal: Some(Signal { rssi: -92, snr: 60 }),
+        heard_min: 3,
+        distance_m: None,
+    },
+    ListsAs {
+        address: Some(PEERS[0].address),
+        name: PEERS[0].name,
+        color: PEERS[0].color,
+        shape: PeerShape::Circle,
+        hint: [0x9d, 0x14],
+        signal: Some(Signal { rssi: -80, snr: 95 }),
+        heard_min: 5,
+        distance_m: None,
+    },
+    ListsAs {
+        address: None,
+        name: "Gateway North",
+        color: [0; 3],
+        shape: PeerShape::Triangle,
+        hint: [0x4b, 0x21],
+        signal: Some(Signal {
+            rssi: -112,
+            snr: -40,
+        }),
+        heard_min: 30,
+        distance_m: None,
+    },
+];
+
+/// The repeaters the fixture knows, as Add hop offers them, the most
+/// recently heard first.
+const KNOWN_REPEATERS: [(Carrier, PeerShape, &str); 3] = [
+    (RIVERBEND, PeerShape::Triangle, "12m"),
+    (BALD_KNOB, PeerShape::Triangle, "2h"),
+    (RIDGE_RUNNER, PeerShape::Circle, "1d"),
+];
+
 /// A repeater Riverbend reports hearing.
 struct ListsAs {
     /// Its address, when the fixture knows it.
@@ -475,7 +538,7 @@ struct ListsAs {
     name: &'static str,
     color: [u8; 3],
     shape: PeerShape,
-    /// Its hint, for one with no address.
+    /// Its hint, for one with no address, or with one that is no key.
     hint: [u8; 2],
     signal: Option<Signal>,
     heard_min: u16,
@@ -965,6 +1028,11 @@ pub struct Store {
     repeater_route: RefCell<Vec<[u8; 2], MAX_PATH>>,
     /// What routers were asked to list, and what they answered.
     listings: RefCell<Vec<FixtureListing, LISTINGS>>,
+    /// The repeaters the last router asked to list was asked by way of,
+    /// when it was asked along a route.
+    listing_route: RefCell<Option<Vec<[u8; 2], MAX_PATH>>>,
+    /// The known repeaters of the last `gather_known`.
+    known: RefCell<Vec<KnownRepeater, MAX_KNOWN>>,
     wifi: RefCell<FakeWifi>,
 }
 
@@ -1205,6 +1273,8 @@ impl Store {
             repeater_identified: Cell::new(false),
             repeater_route: RefCell::new(Vec::new()),
             listings: RefCell::new(Vec::new()),
+            listing_route: RefCell::new(None),
+            known: RefCell::new(Vec::new()),
             wifi: RefCell::new(FakeWifi::new()),
         }
     }
@@ -1740,6 +1810,22 @@ impl Store {
         self.along.borrow().clone()
     }
 
+    /// How many repeaters the router at `router` is held to report hearing.
+    fn listing_count(&self, router: &str) -> usize {
+        self.listings
+            .borrow()
+            .iter()
+            .find(|listing| listing.address == router)
+            .map_or(0, FixtureListing::count)
+    }
+
+    /// The repeaters the last router asked to list was asked by way of, in
+    /// the order they forward, when it was asked along a route.
+    #[must_use]
+    pub fn listing_route(&self) -> Option<Vec<[u8; 2], MAX_PATH>> {
+        self.listing_route.borrow().clone()
+    }
+
     /// The repeaters the last repeater asked who it is was asked by way
     /// of, in the order they forward.
     #[must_use]
@@ -1803,7 +1889,7 @@ impl Store {
     /// The repeater on a route held by hand that `hint` names: one of the
     /// fixture's carriers, else the hint alone.
     fn held_repeater(&self, hint: [u8; 2]) -> Option<Repeater> {
-        if let Some(carrier) = [RIVERBEND, BALD_KNOB]
+        if let Some(carrier) = [RIVERBEND, BALD_KNOB, RIDGE_RUNNER]
             .iter()
             .find(|carrier| router_hint(carrier.address).is_some_and(|(h, _)| h == hint))
         {
@@ -2813,11 +2899,12 @@ impl Node for Store {
         let listings = self.listings.borrow();
         let listing = listings.iter().find(|listing| listing.address == address)?;
         let count = listing.count();
-        let answered = address == RIVERBEND.address && listing.pages > 0;
+        let lists = lists_of(address);
+        let answered = !lists.is_empty() && listing.pages > 0;
         Some(Listing {
             count: count as u8,
-            total: answered.then_some(RIVERBEND_LISTS.len() as u8),
-            more: answered && count < RIVERBEND_LISTS.len(),
+            total: answered.then_some(lists.len() as u8),
+            more: answered && count < lists.len(),
             read_ms_ago: listing.read_at.map(|at| self.now.get().saturating_sub(at)),
             asking: listing.asking.map(|(more, _)| {
                 if more {
@@ -2837,15 +2924,16 @@ impl Node for Store {
         if index >= listing.count() {
             return None;
         }
-        let entry = RIVERBEND_LISTS.get(index)?;
+        let entry = lists_of(address).get(index)?;
         let known = match entry.address {
             Some(address) if address != BALD_KNOB.address || self.repeater_identified.get() => {
                 Some(address)
             }
             _ => None,
         };
-        let (hint, hint_text) = match entry.address {
-            Some(address) => router_hint(address)?,
+        // A made-up address that is no key goes by the hint given it.
+        let (hint, hint_text) = match entry.address.and_then(router_hint) {
+            Some(read) => read,
             None => {
                 let mut text = String::new();
                 core::fmt::write(
@@ -2883,8 +2971,9 @@ impl Node for Store {
         })
     }
 
-    fn ask_listing(&self, address: &str, more: bool, shown: &[&str]) {
+    fn ask_listing(&self, address: &str, more: bool, shown: &[&str], along: Option<&[[u8; 2]]>) {
         let now = self.now.get();
+        *self.listing_route.borrow_mut() = along.map(|along| along.iter().copied().collect());
         let mut listings = self.listings.borrow_mut();
         let index = match listings
             .iter()
@@ -2910,18 +2999,75 @@ impl Node for Store {
             }
         };
         let listing = &mut listings[index];
-        if listing.asking.is_some() || (more && listing.count() >= RIVERBEND_LISTS.len()) {
+        if listing.asking.is_some() || (more && listing.count() >= lists_of(address).len()) {
             return;
         }
-        let wait = if address == RIVERBEND.address {
-            LISTING_DELAY
-        } else {
-            NO_ANSWER_AFTER
+        let wait = match address {
+            ADDRESS => HERE_DELAY,
+            _ if lists_of(address).is_empty() => NO_ANSWER_AFTER,
+            _ => LISTING_DELAY,
         };
         listing.asking = Some((more, now + wait));
         listing.no_answer = false;
         drop(listings);
         self.queue(NodeEvent::ListingChanged);
+    }
+
+    fn listed_place(&self, router: &str, node: &str) -> Option<usize> {
+        let count = self.listing_count(router);
+        lists_of(router)[..count]
+            .iter()
+            .position(|entry| entry.address == Some(node))
+    }
+
+    fn gather_known(&self, query: &str, router: &str, peer: &str) -> usize {
+        let listed = &lists_of(router)[..self.listing_count(router)];
+        let known: Vec<KnownRepeater, MAX_KNOWN> = KNOWN_REPEATERS
+            .iter()
+            .filter(|(carrier, _, _)| {
+                carrier.address != peer
+                    && !listed
+                        .iter()
+                        .any(|entry| entry.address == Some(carrier.address))
+                    && (query.is_empty() || word_match(carrier.name, query).is_some())
+            })
+            .filter_map(|(carrier, shape, age)| {
+                Some(KnownRepeater {
+                    address: s(carrier.address),
+                    name: s(carrier.name),
+                    avatar: AvatarStyle::peer(carrier.color, &carrier.address[..4], *shape),
+                    hint: router_hint(carrier.address)?.0,
+                    age: s(age),
+                })
+            })
+            .take(MAX_KNOWN)
+            .collect();
+        let count = known.len();
+        *self.known.borrow_mut() = known;
+        count
+    }
+
+    fn known_repeater(&self, index: usize) -> Option<KnownRepeater> {
+        self.known.borrow().get(index).cloned()
+    }
+
+    fn hint_reads(&self, text: &str) -> Vec<HintRead, MAX_HINT_READS> {
+        let mut reads = Vec::new();
+        if let Ok(prefix) = umsh_core::RouterHint::candidates_from_base58_prefix(text) {
+            for hint in core::iter::once(prefix.first).chain(prefix.second) {
+                _ = reads.push(HintRead {
+                    hint: hint.0,
+                    hex: false,
+                });
+            }
+        }
+        if let Ok(hint) = umsh_core::RouterHint::from_hex(text) {
+            _ = reads.push(HintRead {
+                hint: hint.0,
+                hex: true,
+            });
+        }
+        reads
     }
 
     fn ping_view(&self, peer: PeerId) -> Option<PingView> {
