@@ -2,22 +2,23 @@
 //!
 //! The staged radio is a soft device, the companion's own ULCP session,
 //! that the phone reaches through a [`MobileRadioDriver`] like any radio.
-//! What it transmits reaches the staged peers, real mesh sessions under
-//! the scenario's fixed keys, and what they transmit reaches it. A message
-//! sent in staging is encrypted, framed, transmitted, decrypted, and
-//! acknowledged by the code that does it over RF. Only the medium is
-//! fabricated: frames move through memory, and airtime is free.
+//! Every staged node is a real mesh session under the scenario's fixed
+//! key, and what one station transmits reaches the stations in range of
+//! it ([`LINKS`]). A message sent in staging is encrypted, framed,
+//! transmitted, forwarded, decrypted, and acknowledged by the code that
+//! does it over RF. Only the medium is fabricated: frames move through
+//! memory, and airtime is free.
 //!
-//! The topology is a star: everything the radio transmits reaches every
-//! peer, and everything a peer transmits reaches only the radio. Peers
-//! never hear each other, which keeps a mesh of chat nodes that do not
-//! forward from needing a channel-access model.
+//! The two repeaters forward, and answer pings and Peer Repeaters
+//! Requests. One of them is also the managed remote device: a soft device
+//! under the repeater's identity, served through the responder the
+//! firmware uses.
 //!
-//! Each peer keeps its chat in an in-memory store of its own, as the app
-//! keeps the phone's: that is where it answers a request to send something
-//! again from, and where it finds what the phone last said.
+//! Each chat peer keeps its chat in an in-memory store of its own, as the
+//! app keeps the phone's: that is where it answers a request to send
+//! something again from, and where it finds what the phone last said.
 //!
-//! The radio and the peers run on one thread of the air's own for as long
+//! The radio and the nodes run on one thread of the air's own for as long
 //! as the air lives.
 
 use std::fmt;
@@ -29,23 +30,28 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
-use umsh_core::{Fcf, FloodHops, PublicKey};
+use umsh_core::{PayloadType, PublicKey};
 use umsh_node::location::NodeLocation;
+use umsh_node_mgmt::{Admission, Admitted, Answer, Responder, admit, authorize};
 use umsh_ulcp::battery::{BatteryChargeState, BatteryStatus};
+use umsh_ulcp::frame as ulcp_frame;
 use umsh_ulcp::gnss::{FixKind, GnssSnapshot};
+use umsh_ulcp::ids::prop;
 use umsh_ulcp::{hdlc, profiles};
-use umsh_ulcp_device::{Effect, TxOutcome};
+use umsh_ulcp_device::{Effect, MULTI_MAX, TxOutcome};
 use umsh_ulcp_simdev::driven::{self, HOST_EVENT_DEPTH, Heard, HostEvent, Medium, WireSink};
 use umsh_ulcp_simdev::soft::{DeviceSession, SoftDevice, SoftPlatform};
 use umsh_ulcp_simdev::{
-    BatteryFields, DutyLedger, GnssConfig, RadioRxInfo, RadioSettings, SessionConfig, TimeConfig,
+    BatteryFields, DutyLedger, GnssConfig, RadioRxInfo, RadioSettings, SessionConfig,
+    SimulatedPlatform, TimeConfig, WifiConfig,
 };
 
 use super::{CHANNEL_NAME, NODES, Node, PRIVATE_CHANNEL_KEY, Role};
 use crate::mobile_chat::MobileChatRegardingRef;
 use crate::mobile_mesh::{
     MobileChannelRegistrationRecord, MobileChatSendRequest, MobileMeshRxRecord,
-    MobileMeshWakeListener, MobilePeerRegistrationRecord,
+    MobileMeshSharedLocationRecord, MobileMeshWakeListener, MobilePeerRegistrationRecord, NodeKind,
+    NodeOptions, ReceiveTap,
 };
 use crate::radio_driver::{
     MobileRadioDriver, MobileRadioTransportPhase, MobileRadioTransportStateRecord, RadioLink,
@@ -61,9 +67,45 @@ const DEV_VERSION: &str = concat!("umsh-mobile-staging/", env!("CARGO_PKG_VERSIO
 /// What the staged radio is called until the phone renames it.
 const RADIO_NAME: &str = "T-Echo";
 
-/// The staged radio's identity secret: fixed, so its key reads the same
-/// every run.
-const RADIO_SECRET: [u8; 32] = [0x88; 32];
+/// The staged radio's link identifier, fixed so the app remembers it like
+/// any other radio.
+const RADIO_LINK_ID: &str = "3F6C2A9E-1B47-4D85-8E21-7A0C5D9B4E10";
+
+/// The staged radio's identity secret fills all 32 bytes with this, as a
+/// staged node's does with its seed: fixed, so its key reads the same
+/// every run. It names the radio in [`LINKS`].
+const RADIO_SEED: u8 = 0x88;
+
+/// The speaking peer, by its place in [`NODES`]: a chat node in range of
+/// the radio.
+const SPEAKER: usize = 0;
+const _: () = assert!(matches!(NODES[SPEAKER].role, Role::Chat));
+
+/// The staged repeater the phone manages across the mesh: Tallac Ridge.
+const MANAGED_SEED: u8 = 0x22;
+const MANAGED: usize = place(MANAGED_SEED);
+const _: () = assert!(matches!(NODES[MANAGED].role, Role::Repeater));
+
+/// The place in [`NODES`] of the node with `seed`. A seed no node has
+/// fails the build.
+const fn place(seed: u8) -> usize {
+    let mut index = 0;
+    while index < NODES.len() {
+        if NODES[index].seed == seed {
+            return index;
+        }
+        index += 1;
+    }
+    panic!("no staged node has this seed");
+}
+
+/// The Node Management payload the managed repeater answers within: the
+/// least a device may have.
+const MANAGED_PAYLOAD: usize = umsh_node_mgmt::PAYLOAD_MAX;
+
+/// Room for the replies the managed repeater retains, as the harnesses
+/// size it.
+const MANAGED_POOL: usize = 2 * MULTI_MAX;
 
 /// Where the staged radio's receiver says it is, in units of 1e-7 degrees:
 /// the middle of the staged mesh.
@@ -80,10 +122,6 @@ const MEET_MODEL: u16 = 9;
 /// told to say.
 const FLUSH_WAIT: Duration = Duration::from_secs(5);
 
-/// How the radio hears a repeater's echo of its own flood.
-const ECHO_RSSI_DBM: i16 = -96;
-const ECHO_SNR_CB: i16 = 40;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Error)]
 pub enum MobileStagingAirError {
     /// The air's state directory could not be created.
@@ -92,7 +130,7 @@ pub enum MobileStagingAirError {
     WorkerUnavailable,
     /// The air has stopped.
     Stopped,
-    /// No staged peer could be stood up.
+    /// The speaking peer did not stand up.
     PeerUnavailable,
     /// The phone has not tethered the staged radio, so no peer knows it.
     NoPhone,
@@ -122,17 +160,18 @@ impl fmt::Display for MobileStagingAirError {
 
 impl std::error::Error for MobileStagingAirError {}
 
-/// The staged mesh: a radio for the phone, and the peers around it.
+/// The staged mesh: a radio for the phone, and the nodes around it.
 ///
-/// The staging controls are its methods, and each acts through the first
-/// staged peer, the one that speaks. Dropping the air, or calling
-/// [`Self::stop`], ends the radio and the peers.
+/// The staging controls are its methods. Those that speak act through the
+/// first staged peer. Dropping the air, or calling [`Self::stop`], ends the
+/// radio and the nodes.
 #[derive(uniffi::Object)]
 pub struct MobileStagingAir {
     radio: Arc<MobileRadioDriver>,
     link: Arc<AirLink>,
     controls: mpsc::UnboundedSender<Control>,
     failing: Arc<AtomicBool>,
+    remote_reachable: Arc<AtomicBool>,
     /// Dropped to stop the air.
     stop: Mutex<Option<oneshot::Sender<()>>>,
 }
@@ -145,10 +184,15 @@ impl Drop for MobileStagingAir {
 
 #[uniffi::export]
 impl MobileStagingAir {
-    /// Start the staged mesh, keeping each peer's frame counters under
+    /// Start the staged mesh, keeping each node's frame counters under
     /// `state_dir`. The radio waits detached until [`Self::connect`].
+    /// `wifi_scan_only` gives the managed repeater a receiver that scans
+    /// and never joins.
     #[uniffi::constructor]
-    pub fn start(state_dir: String) -> Result<Arc<Self>, MobileStagingAirError> {
+    pub fn start(
+        state_dir: String,
+        wifi_scan_only: bool,
+    ) -> Result<Arc<Self>, MobileStagingAirError> {
         let dir = PathBuf::from(state_dir);
         std::fs::create_dir_all(&dir).map_err(|_| MobileStagingAirError::StateUnavailable)?;
 
@@ -165,6 +209,8 @@ impl MobileStagingAir {
         let (controls, control_queue) = mpsc::unbounded_channel();
         let failing = Arc::new(AtomicBool::new(false));
         let medium_failing = failing.clone();
+        let remote_reachable = Arc::new(AtomicBool::new(true));
+        let air_reachable = remote_reachable.clone();
         let stop = driven::spawn("umsh-staging-air", move || {
             let (air_events, air_queue) = mpsc::unbounded_channel();
             let (heard, heard_queue) = mpsc::unbounded_channel();
@@ -177,7 +223,8 @@ impl MobileStagingAir {
             let device = SoftDevice::new(radio_config(), StagedRadio::default());
             Ok::<_, std::convert::Infallible>(async move {
                 let radio = driven::run(device, medium, host_events, |_| {});
-                let air = Air::new(dir, heard).run(air_queue, control_queue);
+                let air = Air::new(dir, heard, air_reachable, wifi_scan_only)
+                    .run(air_queue, control_queue);
                 tokio::select! {
                     () = radio => {}
                     () = air => {}
@@ -190,6 +237,7 @@ impl MobileStagingAir {
             link,
             controls,
             failing,
+            remote_reachable,
             stop: Mutex::new(Some(stop)),
         }))
     }
@@ -212,6 +260,12 @@ impl MobileStagingAir {
     /// While `failing`, every transmission the staged radio makes fails.
     pub fn set_transmissions_failing(&self, failing: bool) {
         self.failing.store(failing, Ordering::Relaxed);
+    }
+
+    /// While not `reachable`, the managed repeater neither hears nor is
+    /// heard, so whatever asks it across the mesh meets silence.
+    pub fn set_remote_device_reachable(&self, reachable: bool) {
+        self.remote_reachable.store(reachable, Ordering::Relaxed);
     }
 
     /// The speaking peer says `body` to the phone, or with `on_channel` to
@@ -258,14 +312,18 @@ impl MobileStagingAir {
         self.control(Order::OpenAddPeer { asking }).await
     }
 
-    /// Stand the peers up afresh, with no frame counters: for a phone whose
-    /// identity is starting over.
-    pub async fn reset(&self) -> Result<(), MobileStagingAirError> {
-        self.control(Order::Reset).await
+    /// The staged radio's link identifier, which its snapshot reports.
+    pub fn radio_link_id(&self) -> String {
+        RADIO_LINK_ID.to_owned()
+    }
+
+    /// What the staged radio is called until the phone renames it.
+    pub fn radio_name(&self) -> String {
+        RADIO_NAME.to_owned()
     }
 
     /// Stop the air. The radio's link goes down, and the radio and the
-    /// peers end. It cannot be started again; make another.
+    /// nodes end. It cannot be started again; make another.
     pub fn stop(&self) {
         let stop = self
             .stop
@@ -287,6 +345,13 @@ impl MobileStagingAir {
             .map_err(|_| MobileStagingAirError::Stopped)?;
         answer.await.map_err(|_| MobileStagingAirError::Stopped)?
     }
+
+    /// Stand every staged node up afresh, as another identity taking the
+    /// radio does.
+    #[cfg(test)]
+    async fn reset(&self) -> Result<(), MobileStagingAirError> {
+        self.control(Order::Reset).await
+    }
 }
 
 // --- The staged radio ---
@@ -302,7 +367,7 @@ impl Default for StagedRadio {
     fn default() -> Self {
         Self {
             snapshot: None,
-            identity: Some(RADIO_SECRET),
+            identity: Some([RADIO_SEED; 32]),
         }
     }
 }
@@ -503,7 +568,7 @@ fn transport(phase: MobileRadioTransportPhase) -> MobileRadioTransportStateRecor
     MobileRadioTransportStateRecord {
         phase,
         name: Some(RADIO_NAME.to_owned()),
-        link_id: Some("staging".to_owned()),
+        link_id: Some(RADIO_LINK_ID.to_owned()),
         problem: None,
     }
 }
@@ -603,30 +668,284 @@ impl Medium for AirMedium {
     }
 }
 
-// --- The peers ---
+// --- The air between stations ---
 
-struct Peer {
-    name: &'static str,
-    session: Arc<MobileMeshSession>,
-    store: Arc<MobileAppStore>,
-    /// How the radio hears this peer, and how this peer hears the radio.
-    /// Fixed per peer, so a staged conversation reads the same every run.
+/// Two stations in range of each other, by seed, and how each hears the
+/// other.
+struct Link {
+    a: u8,
+    b: u8,
     rssi_dbm: i16,
     snr_cb: i16,
     lqi: u8,
 }
 
-/// Tells the air that a peer's session has an update.
-struct PeerWake {
+impl Link {
+    /// The station across this link from `seed`, if the link touches it.
+    fn across(&self, seed: u8) -> Option<u8> {
+        match seed {
+            _ if self.a == seed => Some(self.b),
+            _ if self.b == seed => Some(self.a),
+            _ => None,
+        }
+    }
+}
+
+/// Who hears whom. Links are symmetric and fixed, so a staged conversation
+/// reads the same every run.
+///
+/// Each node that does not forward hears one station, which keeps it from
+/// needing a channel-access model: the chat peers hear the radio, and Sam
+/// Ihara, out of the radio's range, hears only Glen Alpine Relay. The
+/// repeaters hear the radio and each other.
+const LINKS: &[Link] = &[
+    Link {
+        a: RADIO_SEED,
+        b: 0x11,
+        rssi_dbm: -52,
+        snr_cb: 74,
+        lqi: 214,
+    },
+    Link {
+        a: RADIO_SEED,
+        b: MANAGED_SEED,
+        rssi_dbm: -61,
+        snr_cb: 60,
+        lqi: 190,
+    },
+    Link {
+        a: RADIO_SEED,
+        b: 0x33,
+        rssi_dbm: -58,
+        snr_cb: 65,
+        lqi: 201,
+    },
+    Link {
+        a: RADIO_SEED,
+        b: 0x44,
+        rssi_dbm: -64,
+        snr_cb: 56,
+        lqi: 188,
+    },
+    Link {
+        a: RADIO_SEED,
+        b: 0x55,
+        rssi_dbm: -70,
+        snr_cb: 47,
+        lqi: 175,
+    },
+    Link {
+        a: RADIO_SEED,
+        b: 0x77,
+        rssi_dbm: -88,
+        snr_cb: 22,
+        lqi: 120,
+    },
+    Link {
+        a: MANAGED_SEED,
+        b: 0x77,
+        rssi_dbm: -95,
+        snr_cb: 12,
+        lqi: 96,
+    },
+    Link {
+        a: 0x77,
+        b: 0x66,
+        rssi_dbm: -84,
+        snr_cb: 30,
+        lqi: 140,
+    },
+];
+
+// Every link joins the radio or a staged node to a staged node.
+const _: () = {
+    let mut index = 0;
+    while index < LINKS.len() {
+        let link = &LINKS[index];
+        if link.a != RADIO_SEED {
+            place(link.a);
+        }
+        place(link.b);
+        index += 1;
+    }
+};
+
+// --- The staged nodes ---
+
+/// A staged node standing on the air: a mesh session under the node's
+/// fixed key.
+struct Station {
+    node: &'static Node,
+    session: Arc<MobileMeshSession>,
+    /// Where a chat peer keeps its chat. A repeater carries none.
+    store: Option<Arc<MobileAppStore>>,
+}
+
+/// Tells the air that a station's session has an update.
+struct StationWake {
     index: usize,
     wakes: mpsc::UnboundedSender<usize>,
 }
 
-impl MobileMeshWakeListener for PeerWake {
+impl MobileMeshWakeListener for StationWake {
     fn on_update_pending(&self) {
         let _ = self.wakes.send(self.index);
     }
 }
+
+// --- The managed repeater ---
+
+/// The managed repeater's device: the companion's own ULCP session over a
+/// simulated platform, under the repeater's identity, so the device key
+/// the phone reads is the address it manages.
+///
+/// A write changes the device's properties, not the repeater's behavior:
+/// the firmware mirrors its device domain into its MAC, and the air does
+/// not. Staging needs the screens, not the behavior.
+struct Managed {
+    device: SoftDevice<SimulatedPlatform>,
+    responder: Responder<MANAGED_PAYLOAD, MANAGED_POOL>,
+    /// What the repeater's receive tap admits against.
+    admins: Arc<Mutex<Vec<[u8; 32]>>>,
+}
+
+/// What reaches the managed repeater's responder.
+enum Management {
+    /// A request the receive tap admitted.
+    Request {
+        admitted: Admitted,
+        payload: Vec<u8>,
+    },
+    /// The response to a request never went out.
+    Unsent { from: [u8; 32], payload: Vec<u8> },
+}
+
+impl Managed {
+    fn new(duty: &'static DutyLedger, wifi_scan_only: bool) -> Self {
+        let mut config = umsh_ulcp_simdev::full_config(duty, None);
+        config.dev_version = DEV_VERSION;
+        config.default_device_name = NODES[MANAGED].name;
+        config.dev_model = Some("SenseCAP Solar P1");
+        // A repeater on a ridge: no screen, keyboard, or speaker.
+        config.display = None;
+        config.keyboard = false;
+        config.sound = false;
+        config.illuminance = false;
+        config.mac_node = true;
+        if wifi_scan_only {
+            config.wifi = Some(WifiConfig::SCAN_ONLY);
+        }
+        Self {
+            device: SoftDevice::new(config, SimulatedPlatform::with_identity([MANAGED_SEED; 32])),
+            responder: Responder::new(rand::random()),
+            admins: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    /// The repeater's receive tap: admit Node Management Requests against
+    /// the device's administrators, as the firmware's responder does, and
+    /// hand them to the air. It claims nothing, so every other observer
+    /// still sees the packet. The repeater is never tethered, so it has no
+    /// host to hear beside its administrators.
+    fn tap(&self, requests: mpsc::UnboundedSender<Management>) -> ReceiveTap {
+        let admins = self.admins.clone();
+        Box::new(move |packet| {
+            let admission = admit(
+                packet,
+                |from| {
+                    let admins = admins.lock().unwrap_or_else(PoisonError::into_inner);
+                    authorize(from, &admins, None)
+                },
+                MANAGED_PAYLOAD,
+            );
+            match admission {
+                Admission::Ignored => {}
+                Admission::Refused(refusal) => {
+                    log::debug!(refusal:? = refusal; "the managed repeater refused a request");
+                }
+                Admission::Admitted(admitted) => {
+                    let _ = requests.send(Management::Request {
+                        admitted,
+                        payload: packet.payload().to_vec(),
+                    });
+                }
+            }
+            false
+        })
+    }
+
+    /// Keep the tap's administrators in step with the device's.
+    fn mirror(&self) {
+        *self.admins.lock().unwrap_or_else(PoisonError::into_inner) =
+            self.device.session().dev_admins().collect();
+    }
+
+    /// List `phone` as an administrator and save, as the repeater's owner
+    /// would over USB before going up the ridge.
+    fn administer(&mut self, phone: [u8; 32], now_ms: u64) {
+        if self.device.session().dev_admins().any(|key| key == phone) {
+            return;
+        }
+        self.device.attach();
+        let mut frame = [0u8; 64];
+        let inserted = ulcp_frame::prop_insert(&mut frame, 1, prop::DEV_ADMINS, &phone);
+        self.ingest(inserted.map(|len| &frame[..len]), now_ms);
+        let mut frame = [0u8; 8];
+        let saved = ulcp_frame::save(&mut frame, 2);
+        self.ingest(saved.map(|len| &frame[..len]), now_ms);
+        while self.device.take_outbound().is_some() {}
+        self.device.detach();
+        self.mirror();
+    }
+
+    fn ingest(&mut self, frame: Result<&[u8], ulcp_frame::WriteError>, now_ms: u64) {
+        let Ok(frame) = frame else {
+            log::warn!("the managed repeater's provisioning frame did not encode");
+            return;
+        };
+        let mut wire = vec![0; hdlc::max_encoded_len(frame.len())];
+        let Ok(length) = hdlc::encode_frame(frame, &mut wire) else {
+            return;
+        };
+        if let Err(error) = self.device.ingest(&wire[..length], now_ms) {
+            log::warn!("the managed repeater did not take its provisioning: {error}");
+        }
+    }
+
+    /// Answer one admitted request. Returns the response payload, its
+    /// payload-type octet first, when one goes back.
+    fn answer(&mut self, admitted: &Admitted, payload: &[u8], now_ms: u64) -> Option<Vec<u8>> {
+        let mut out = [0u8; MANAGED_PAYLOAD];
+        let device = &mut self.device;
+        let answer =
+            self.responder
+                .exchange(&admitted.from, payload, now_ms, &mut out, |dispatch| {
+                    // One frame answers an exchange.
+                    device
+                        .admin_request(dispatch.frame, dispatch.budget, now_ms)
+                        .pop()
+                        .unwrap_or_default()
+                });
+        self.mirror();
+        let len = match answer {
+            Answer::Respond(len) => len?,
+            Answer::Dropped(reason) => {
+                log::debug!(reason:? = reason; "the managed repeater dropped a request");
+                return None;
+            }
+            Answer::Unanswerable(error) => {
+                log::warn!(error:? = error; "the managed repeater could not carry its reply");
+                return None;
+            }
+        };
+        let mut response = Vec::with_capacity(len + 1);
+        response.push(PayloadType::NodeManagementResponse as u8);
+        response.extend_from_slice(&out[..len]);
+        Some(response)
+    }
+}
+
+// --- The air ---
 
 struct Control {
     order: Order,
@@ -634,28 +953,52 @@ struct Control {
 }
 
 enum Order {
-    Say { body: String, on_channel: bool },
-    SayLosingOne { bodies: [String; 3] },
-    React { body: String },
-    Reply { body: String },
-    OpenAddPeer { asking: bool },
+    Say {
+        body: String,
+        on_channel: bool,
+    },
+    SayLosingOne {
+        bodies: [String; 3],
+    },
+    React {
+        body: String,
+    },
+    Reply {
+        body: String,
+    },
+    OpenAddPeer {
+        asking: bool,
+    },
+    #[cfg(test)]
     Reset,
 }
 
-/// The peers, and what the air knows of the phone.
+/// The staged nodes, and what the air knows of the phone.
 struct Air {
-    /// Where the peers keep their frame counters: a numbered generation
-    /// directory, then one per peer.
+    /// Where the nodes keep their frame counters: a numbered generation
+    /// directory, then one per node.
     dir: PathBuf,
-    /// The generation the standing peers keep their counters in.
+    /// The generation the standing nodes keep their counters in.
     generation: u32,
-    peers: Vec<Peer>,
-    /// The phone's address, once it tethers the radio.
-    phone: Option<String>,
+    /// One per staged node, in [`NODES`] order; `None` for a node that did
+    /// not stand up.
+    stations: Vec<Option<Station>>,
+    managed: Option<Managed>,
+    management: mpsc::UnboundedSender<Management>,
+    management_queue: mpsc::UnboundedReceiver<Management>,
+    /// The duty ledger of the managed repeater's device, one per air.
+    duty: &'static DutyLedger,
+    started: Instant,
+    /// The phone's key, once it tethers the radio.
+    phone: Option<[u8; 32]>,
     /// To the radio's receiver.
     heard: mpsc::UnboundedSender<Heard>,
     wakes: mpsc::UnboundedSender<usize>,
     wake_queue: mpsc::UnboundedReceiver<usize>,
+    /// While false, the managed repeater neither hears nor is heard.
+    remote_reachable: Arc<AtomicBool>,
+    /// The managed repeater's Wi-Fi scans and never joins.
+    wifi_scan_only: bool,
     /// The speaking peer asks the first device Add Peer lists.
     asks_when_listed: bool,
     /// The speaking peer has pressed Same on the code now showing.
@@ -665,17 +1008,31 @@ struct Air {
 }
 
 impl Air {
-    fn new(dir: PathBuf, heard: mpsc::UnboundedSender<Heard>) -> Self {
+    fn new(
+        dir: PathBuf,
+        heard: mpsc::UnboundedSender<Heard>,
+        remote_reachable: Arc<AtomicBool>,
+        wifi_scan_only: bool,
+    ) -> Self {
         let (wakes, wake_queue) = mpsc::unbounded_channel();
+        let (management, management_queue) = mpsc::unbounded_channel();
         let generation = generations(&dir).max().unwrap_or(0);
         Self {
             dir,
             generation,
-            peers: Vec::new(),
+            stations: Vec::new(),
+            managed: None,
+            management,
+            management_queue,
+            // One ledger per air, for as long as the process runs.
+            duty: Box::leak(Box::new(DutyLedger::new())),
+            started: Instant::now(),
             phone: None,
             heard,
             wakes,
             wake_queue,
+            remote_reachable,
+            wifi_scan_only,
             asks_when_listed: false,
             pressed_same: false,
             losing: false,
@@ -698,6 +1055,9 @@ impl Air {
                 Some(index) = self.wake_queue.recv() => {
                     self.pump(index);
                 }
+                Some(management) = self.management_queue.recv() => {
+                    self.manage(management);
+                }
                 control = controls.recv() => match control {
                     Some(Control { order, reply }) => {
                         let _ = reply.send(self.obey(order).await);
@@ -708,68 +1068,127 @@ impl Air {
         }
     }
 
-    /// Stand up a session for every staged node that carries chat. The
-    /// repeaters stay out: a phone-role session does not forward.
+    fn now_ms(&self) -> u64 {
+        u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX)
+    }
+
+    /// Stand up a session for every staged node, then let the repeaters
+    /// introduce themselves, so each one's neighborhood lists the other.
     async fn stand_up(&mut self) {
-        for node in NODES
-            .iter()
-            .filter(|node| !matches!(node.role, Role::Repeater))
-        {
-            match self.stand_up_peer(node).await {
-                Ok(peer) => self.peers.push(peer),
-                // A peer that cannot stand up is a node the staged mesh
-                // never hears from; everything else keeps working.
-                Err(error) => log::warn!("staged peer {} did not stand up: {error}", node.name),
+        let managed = Managed::new(self.duty, self.wifi_scan_only);
+        self.stations = Vec::with_capacity(NODES.len());
+        for (index, node) in NODES.iter().enumerate() {
+            let tap = (node.seed == MANAGED_SEED).then(|| managed.tap(self.management.clone()));
+            match self.stand_up_node(index, node, tap).await {
+                Ok(station) => self.stations.push(Some(station)),
+                // A node that cannot stand up is one the staged mesh never
+                // hears from; everything else keeps working.
+                Err(error) => {
+                    log::warn!("staged node {} did not stand up: {error}", node.name);
+                    self.stations.push(None);
+                }
             }
+        }
+        self.managed = Some(managed);
+        if let Some(phone) = self.phone {
+            self.administer(phone);
+        }
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .ok()
+            .and_then(|now| u32::try_from(now.as_secs()).ok());
+        // Each on a task of its own: a transmission completes only as the
+        // air pumps it, and the air is busy here until this returns.
+        for station in self.stations.iter().flatten() {
+            if !matches!(station.node.role, Role::Repeater) {
+                continue;
+            }
+            let session = station.session.clone();
+            let name = station.node.name;
+            tokio::spawn(async move {
+                if let Err(error) = session
+                    .advertise_identity(Some(name.to_owned()), timestamp)
+                    .await
+                {
+                    log::warn!("staged repeater {name} did not advertise: {error}");
+                }
+            });
         }
     }
 
-    async fn stand_up_peer(&self, node: &'static Node) -> Result<Peer, Box<dyn std::error::Error>> {
-        let index = self.peers.len();
+    async fn stand_up_node(
+        &self,
+        index: usize,
+        node: &'static Node,
+        tap: Option<ReceiveTap>,
+    ) -> Result<Station, Box<dyn std::error::Error>> {
         let identity = MobileIdentity::unlock(vec![node.seed; 32])?;
         let counters = MobileCounterStore::new(self.counter_dir(node).display().to_string())?;
-        let session = MobileMeshSession::start(identity.clone(), counters).await?;
-        let store = MobileAppStore::open(":memory:".to_owned())?;
-        store.upsert_identity(
-            PEER_OWNER.to_owned(),
-            identity.public_identity().canonical_address,
-            0,
-        )?;
-        session
-            .clone()
-            .attach_chat_store(store.clone(), PEER_OWNER.to_owned(), None)?;
-        session.set_chat_display_name(node.name.to_owned()).await?;
-        session
-            .register_channels(
-                channel_keys()
-                    .into_iter()
-                    .map(|key| MobileChannelRegistrationRecord {
-                        key,
-                        max_flood_hops: None,
-                    })
-                    .collect(),
-            )
-            .await?;
-        if let Some(phone) = &self.phone {
-            session.register_peers(vec![phone_record(phone)]).await?;
+        let repeater = matches!(node.role, Role::Repeater);
+        let options = NodeOptions {
+            kind: NodeKind {
+                role: node.role.node_role(),
+                capabilities: node.capabilities,
+            },
+            repeater,
+            tap,
+        };
+        let session = MobileMeshSession::start_node(options, identity.clone(), counters).await?;
+        let store = match repeater {
+            true => {
+                session
+                    .set_discoverable(true, Some(node.name.to_owned()))
+                    .await?;
+                session
+                    .set_advertised_location(Some(MobileMeshSharedLocationRecord {
+                        latitude_degrees: node.latitude,
+                        longitude_degrees: node.longitude,
+                        precision_bytes: super::LOCATION_PRECISION,
+                    }))
+                    .await?;
+                None
+            }
+            false => {
+                let store = MobileAppStore::open(":memory:".to_owned())?;
+                store.upsert_identity(
+                    PEER_OWNER.to_owned(),
+                    identity.public_identity().canonical_address,
+                    0,
+                )?;
+                session
+                    .clone()
+                    .attach_chat_store(store.clone(), PEER_OWNER.to_owned(), None)?;
+                session.set_chat_display_name(node.name.to_owned()).await?;
+                session
+                    .register_channels(
+                        channel_keys()
+                            .into_iter()
+                            .map(|key| MobileChannelRegistrationRecord {
+                                key,
+                                max_flood_hops: None,
+                            })
+                            .collect(),
+                    )
+                    .await?;
+                Some(store)
+            }
+        };
+        if let Some(phone) = self.phone {
+            session.register_peers(vec![phone_record(&phone)]).await?;
         }
-        session.set_wake_listener(Arc::new(PeerWake {
+        session.set_wake_listener(Arc::new(StationWake {
             index,
             wakes: self.wakes.clone(),
         }));
-        let step = i16::try_from(index).unwrap_or(i16::MAX);
-        Ok(Peer {
-            name: node.name,
+        Ok(Station {
+            node,
             session,
             store,
-            rssi_dbm: (-52i16).saturating_sub(step.saturating_mul(6)),
-            snr_cb: 74i16.saturating_sub(step.saturating_mul(9)),
-            lqi: 214u8.saturating_sub(u8::try_from(index).unwrap_or(u8::MAX).saturating_mul(13)),
         })
     }
 
     /// Frame counters must survive relaunches for replay protection to
-    /// hold between a peer and the phone, so each peer keeps its own.
+    /// hold between a node and the phone, so each node keeps its own.
     fn counter_dir(&self, node: &Node) -> PathBuf {
         self.dir
             .join(self.generation.to_string())
@@ -788,108 +1207,173 @@ impl Air {
         }
     }
 
-    async fn on_air(&mut self, event: AirEvent) {
-        match event {
-            AirEvent::Host(Some(key)) => {
-                let phone = public_identity_record(&PublicKey(key)).canonical_address;
-                if self.phone.as_ref() == Some(&phone) {
-                    return;
-                }
-                for peer in &self.peers {
-                    if let Err(error) = peer
-                        .session
-                        .register_peers(vec![phone_record(&phone)])
-                        .await
-                    {
-                        log::warn!("staged peer {} did not learn the phone: {error}", peer.name);
-                    }
-                }
-                self.phone = Some(phone);
-            }
-            // A radio that lets its host go keeps what its peers know.
-            AirEvent::Host(None) => {}
-            AirEvent::Transmitted(frame) => {
-                for index in 0..self.peers.len() {
-                    let peer = &self.peers[index];
-                    let _ = peer.session.receive(MobileMeshRxRecord {
-                        data: frame.clone(),
-                        rssi_dbm: Some(peer.rssi_dbm),
-                        lqi: Some(peer.lqi),
-                        snr_cb: Some(peer.snr_cb),
-                        was_buffered: false,
-                        was_acknowledged: false,
-                        age_seconds: 0,
-                    });
-                    self.pump(index);
-                }
-                self.echo(&frame);
-            }
+    fn administer(&mut self, phone: [u8; 32]) {
+        let now_ms = self.now_ms();
+        if let Some(managed) = self.managed.as_mut() {
+            managed.administer(phone, now_ms);
         }
     }
 
-    /// Let the radio hear its flood carried onward, as a real mesh would
-    /// answer it. The staged repeaters do not forward, so each one's copy
-    /// is fabricated: a moment apart, one flood hop spent, and no trace to
-    /// say whose it is.
-    fn echo(&self, frame: &[u8]) {
-        let Some(echo) = forwarded(frame) else {
+    async fn on_air(&mut self, event: AirEvent) {
+        match event {
+            AirEvent::Host(Some(key)) => match self.phone.replace(key) {
+                Some(phone) if phone == key => {}
+                // Another identity on the radio is a phone starting over,
+                // and the staged mesh starts over with it: nothing keeps
+                // the old key as a peer or an administrator.
+                Some(_) => self.reset().await,
+                None => self.learn_phone(key).await,
+            },
+            // A radio that lets its host go keeps what its peers know.
+            AirEvent::Host(None) => {}
+            AirEvent::Transmitted(frame) => self.transmit(RADIO_SEED, &frame),
+        }
+    }
+
+    /// Introduce the phone to every station standing, and list it as the
+    /// managed repeater's administrator.
+    async fn learn_phone(&mut self, key: [u8; 32]) {
+        for station in self.stations.iter().flatten() {
+            if let Err(error) = station
+                .session
+                .register_peers(vec![phone_record(&key)])
+                .await
+            {
+                log::warn!(
+                    "staged node {} did not learn the phone: {error}",
+                    station.node.name
+                );
+            }
+        }
+        self.administer(key);
+    }
+
+    /// Whether the station with `seed` is on the air at all.
+    fn in_reach(&self, seed: u8) -> bool {
+        seed != MANAGED_SEED || self.remote_reachable.load(Ordering::Relaxed)
+    }
+
+    /// Put `frame` from the station with `seed` on the air, to every
+    /// station in range of it.
+    fn transmit(&self, seed: u8, frame: &[u8]) {
+        if !self.in_reach(seed) {
             return;
-        };
-        let repeaters = NODES
-            .iter()
-            .filter(|node| matches!(node.role, Role::Repeater));
-        for (index, _) in repeaters.enumerate() {
-            let heard = self.heard.clone();
-            let frame = echo.clone();
-            let delay = Duration::from_millis(400 + 600 * index as u64);
-            tokio::spawn(async move {
-                tokio::time::sleep(delay).await;
-                let _ = heard.send(Heard {
-                    frame,
-                    info: RadioRxInfo::measured(ECHO_RSSI_DBM, ECHO_SNR_CB, None),
+        }
+        for link in LINKS {
+            let Some(to) = link.across(seed).filter(|&to| self.in_reach(to)) else {
+                continue;
+            };
+            if to == RADIO_SEED {
+                let _ = self.heard.send(Heard {
+                    frame: frame.to_vec(),
+                    info: RadioRxInfo::measured(
+                        link.rssi_dbm,
+                        link.snr_cb,
+                        NonZeroU8::new(link.lqi),
+                    ),
                 });
+                continue;
+            }
+            let Some(station) = self.station_by_seed(to) else {
+                continue;
+            };
+            // A full queue is a frame lost, as it would be over the air.
+            let _ = station.session.receive(MobileMeshRxRecord {
+                data: frame.to_vec(),
+                rssi_dbm: Some(link.rssi_dbm),
+                lqi: Some(link.lqi),
+                snr_cb: Some(link.snr_cb),
+                was_buffered: false,
+                was_acknowledged: false,
+                age_seconds: 0,
             });
         }
     }
 
-    /// Drain one peer: complete its transmissions and put them on the
-    /// air. Its chat keeps itself, in the peer's own store. Answers how
-    /// many frames it transmitted.
+    fn station_by_seed(&self, seed: u8) -> Option<&Station> {
+        self.stations
+            .iter()
+            .flatten()
+            .find(|station| station.node.seed == seed)
+    }
+
+    /// Drain one station: complete its transmissions and put them on the
+    /// air. A peer's chat keeps itself, in its own store. Answers how many
+    /// frames it transmitted.
     fn pump(&mut self, index: usize) -> usize {
-        let Some(peer) = self.peers.get(index) else {
+        let Some(Some(station)) = self.stations.get(index) else {
             return 0;
         };
-        let update = peer.session.poll_update();
+        let update = station.session.poll_update();
         for frame in &update.outbound_frames {
-            let _ = peer.session.complete_outbound_frame(frame.id, true);
+            let _ = station.session.complete_outbound_frame(frame.id, true);
         }
-        let info = RadioRxInfo::measured(peer.rssi_dbm, peer.snr_cb, NonZeroU8::new(peer.lqi));
-        let session = peer.session.clone();
-        if index == 0
+        let seed = station.node.seed;
+        let session = station.session.clone();
+        if index == SPEAKER
             && let Some(meet) = update.meet
         {
             self.follow_meet(meet, session);
         }
         let transmitted = update.outbound_frames.len();
-        if index == 0 && self.losing && transmitted > 0 {
+        if index == SPEAKER && self.losing && transmitted > 0 {
             self.losing = false;
             return transmitted;
         }
         for frame in update.outbound_frames {
-            let _ = self.heard.send(Heard {
-                frame: frame.data,
-                info,
-            });
+            self.transmit(seed, &frame.data);
         }
         transmitted
+    }
+
+    /// Answer the managed repeater's admitted requests through its session.
+    fn manage(&mut self, management: Management) {
+        let now_ms = self.now_ms();
+        let Some(managed) = self.managed.as_mut() else {
+            return;
+        };
+        let (admitted, payload) = match management {
+            Management::Unsent { from, payload } => {
+                managed.responder.unsent(&from, &payload);
+                return;
+            }
+            Management::Request { admitted, payload } => (admitted, payload),
+        };
+        let Some(response) = managed.answer(&admitted, &payload, now_ms) else {
+            return;
+        };
+        let Some(station) = self.station_by_seed(MANAGED_SEED) else {
+            return;
+        };
+        // Sent on a task of its own: the session transmits only as the air
+        // pumps it.
+        let session = station.session.clone();
+        let unsent = self.management.clone();
+        tokio::spawn(async move {
+            let sent = session
+                .send_response(
+                    PublicKey(admitted.from),
+                    admitted.channel,
+                    admitted.ack_mic,
+                    response,
+                )
+                .await;
+            if let Err(error) = sent {
+                log::warn!("the managed repeater's response did not go out: {error}");
+                let _ = unsent.send(Management::Unsent {
+                    from: admitted.from,
+                    payload,
+                });
+            }
+        });
     }
 
     /// Pump until the speaking peer transmits, or [`FLUSH_WAIT`] passes.
     async fn flush(&mut self) -> Result<(), MobileStagingAirError> {
         let deadline = Instant::now() + FLUSH_WAIT;
-        while self.pump(0) == 0 {
+        while self.pump(SPEAKER) == 0 {
             match tokio::time::timeout_at(deadline, self.wake_queue.recv()).await {
-                Ok(Some(0)) => {}
+                Ok(Some(SPEAKER)) => {}
                 Ok(Some(other)) => {
                     self.pump(other);
                 }
@@ -908,7 +1392,7 @@ impl Air {
                 self.say(first, true).await?;
                 // Only what the lost message produces is lost: anything
                 // the peer already has queued goes out first.
-                self.pump(0);
+                self.pump(SPEAKER);
                 self.losing = true;
                 let said = self.say(lost, true).await;
                 self.losing = false;
@@ -939,9 +1423,10 @@ impl Air {
                 self.pressed_same = false;
                 self.asks_when_listed = asking;
                 session.open_meet(MEET_MODEL).await.map_err(refused)?;
-                self.pump(0);
+                self.pump(SPEAKER);
                 Ok(())
             }
+            #[cfg(test)]
             Order::Reset => {
                 self.reset().await;
                 Ok(())
@@ -970,14 +1455,17 @@ impl Air {
         self.flush().await
     }
 
-    fn speaker(&self) -> Result<&Peer, MobileStagingAirError> {
-        self.peers
-            .first()
+    fn speaker(&self) -> Result<&Station, MobileStagingAirError> {
+        self.stations
+            .get(SPEAKER)
+            .and_then(Option::as_ref)
             .ok_or(MobileStagingAirError::PeerUnavailable)
     }
 
     fn phone(&self) -> Result<String, MobileStagingAirError> {
-        self.phone.clone().ok_or(MobileStagingAirError::NoPhone)
+        self.phone
+            .map(|key| public_identity_record(&PublicKey(key)).canonical_address)
+            .ok_or(MobileStagingAirError::NoPhone)
     }
 
     /// The newest message the speaking peer has from the phone, as its own
@@ -987,6 +1475,8 @@ impl Air {
         let page = self
             .speaker()?
             .store
+            .as_ref()
+            .ok_or(MobileStagingAirError::PeerUnavailable)?
             .chat_message_page_newest(PEER_OWNER.to_owned(), phone, 50)
             .map_err(|_| MobileStagingAirError::NothingToAnswer)?;
         let message = page
@@ -1045,11 +1535,14 @@ impl Air {
         }
     }
 
-    /// Shut the peers down and stand them up afresh, with counters in a
-    /// generation of their own: the old sessions may still be writing to
-    /// theirs as they end.
+    /// Shut every node down and stand them up afresh, the managed
+    /// repeater's device too, with counters in a generation of their own:
+    /// the old sessions may still be writing to theirs as they end.
     async fn reset(&mut self) {
-        self.peers.clear();
+        self.stations.clear();
+        self.managed = None;
+        // What the old repeater's tap queued is for a responder that is gone.
+        while self.management_queue.try_recv().is_ok() {}
         self.asks_when_listed = false;
         self.pressed_same = false;
         self.losing = false;
@@ -1073,11 +1566,11 @@ fn refused(error: impl fmt::Display) -> MobileStagingAirError {
     MobileStagingAirError::Refused
 }
 
-/// The phone, as a peer registers it: its identity always advertises
+/// The phone, as a node registers it: its identity always advertises
 /// itself as mobile.
-fn phone_record(address: &str) -> MobilePeerRegistrationRecord {
+fn phone_record(key: &[u8; 32]) -> MobilePeerRegistrationRecord {
     MobilePeerRegistrationRecord {
-        address: address.to_owned(),
+        address: public_identity_record(&PublicKey(*key)).canonical_address,
         mobile: true,
     }
 }
@@ -1095,26 +1588,6 @@ fn channel_address() -> String {
         umsh_node::Channel::named(CHANNEL_NAME).expect("the staged channel name derives a key");
     channel_conversation_address(named.key().0.to_vec())
         .expect("a channel key names a conversation")
-}
-
-/// `frame` as a flood repeater sends it on, or `None` when it may not
-/// travel further.
-fn forwarded(frame: &[u8]) -> Option<Vec<u8>> {
-    // The flood-hops byte follows the frame control field.
-    let (&fcf, rest) = frame.split_first()?;
-    if !Fcf(fcf).flood_hops_present() {
-        return None;
-    }
-    let hops = FloodHops(*rest.first()?);
-    // A count that cannot move on is a flood that has gone as far as it
-    // may.
-    let next = hops.decremented();
-    if next == hops {
-        return None;
-    }
-    let mut bytes = frame.to_vec();
-    bytes[1] = next.0;
-    Some(bytes)
 }
 
 #[cfg(test)]

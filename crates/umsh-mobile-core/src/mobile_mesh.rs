@@ -33,7 +33,10 @@ use umsh_hal::{
     Clock, CounterStore, KeyValueStore, Radio, RxBuffered, RxInfo, RxOrigin, Snr, TxError,
     TxOptions,
 };
-use umsh_mac::{Mac, MacHandle, OperatingPolicy, RepeaterConfig, SendDestination, SendOptions};
+use umsh_mac::{
+    Mac, MacHandle, OperatingPolicy, ReceivedPacketRef, RepeaterConfig, RepeaterMode,
+    SendDestination, SendOptions,
+};
 use umsh_node::meet::MeetCommand;
 use umsh_node::{
     Host, LocalNode, MacBackend, NodeCapabilities, NodeIdentityPayload, NodeIdentityProfile,
@@ -1180,6 +1183,14 @@ enum WorkerCommand {
     Beacon {
         response: oneshot::Sender<Result<(), MobileMeshError>>,
     },
+    /// A response over the carriage its request arrived on.
+    SendResponse {
+        to: PublicKey,
+        channel: Option<ChannelKey>,
+        ack_mic: Option<[u8; 4]>,
+        payload: Vec<u8>,
+        response: oneshot::Sender<Result<(), MobileMeshError>>,
+    },
     SignIdentityBundle {
         name: Option<String>,
         timestamp: Option<u32>,
@@ -1799,6 +1810,7 @@ impl MobileMeshSession {
         counter_store: Arc<MobileCounterStore>,
     ) -> Result<Arc<Self>, MobileMeshError> {
         Self::build(
+            NodeOptions::default(),
             identity,
             counter_store,
             false,
@@ -3240,7 +3252,7 @@ impl MobileMeshSession {
         identity: Arc<MobileIdentity>,
         counter_store: Arc<MobileCounterStore>,
     ) -> Result<Arc<Self>, MobileMeshError> {
-        Self::build(identity, counter_store, true, None).await
+        Self::build(NodeOptions::default(), identity, counter_store, true, None).await
     }
 
     /// [`new_with_virtual_time`](Self::new_with_virtual_time), with a
@@ -3251,10 +3263,61 @@ impl MobileMeshSession {
         counter_store: Arc<MobileCounterStore>,
         completion_timeout: Duration,
     ) -> Result<Arc<Self>, MobileMeshError> {
-        Self::build(identity, counter_store, true, Some(completion_timeout)).await
+        Self::build(
+            NodeOptions::default(),
+            identity,
+            counter_store,
+            true,
+            Some(completion_timeout),
+        )
+        .await
+    }
+
+    /// A session for a node other than this phone, as `options` say.
+    pub(crate) async fn start_node(
+        options: NodeOptions,
+        identity: Arc<MobileIdentity>,
+        counter_store: Arc<MobileCounterStore>,
+    ) -> Result<Arc<Self>, MobileMeshError> {
+        Self::build(
+            options,
+            identity,
+            counter_store,
+            false,
+            Some(TRANSMIT_COMPLETION_TIMEOUT),
+        )
+        .await
+    }
+
+    /// Send `payload`, its payload-type octet first, to `to` as a response
+    /// over the carriage its request arrived on: `channel` when that was a
+    /// blind unicast. `ack_mic` is the request's, so the response
+    /// acknowledges it should the standalone acknowledgment be lost.
+    pub(crate) async fn send_response(
+        &self,
+        to: PublicKey,
+        channel: Option<ChannelKey>,
+        ack_mic: Option<[u8; 4]>,
+        payload: Vec<u8>,
+    ) -> Result<(), MobileMeshError> {
+        let (response, result) = oneshot::channel();
+        self.commands
+            .send(WorkerCommand::SendResponse {
+                to,
+                channel,
+                ack_mic,
+                payload,
+                response,
+            })
+            .await
+            .map_err(|_| MobileMeshError::SessionUnavailable)?;
+        result
+            .await
+            .map_err(|_| MobileMeshError::SessionUnavailable)?
     }
 
     async fn build(
+        options: NodeOptions,
         identity: Arc<MobileIdentity>,
         counter_store: Arc<MobileCounterStore>,
         virtual_time: bool,
@@ -3325,6 +3388,7 @@ impl MobileMeshSession {
                 local.block_on(
                     &runtime,
                     Box::pin(run_worker(
+                        options,
                         worker_identity,
                         SharedCounterStore(counter_store),
                         command_rx,
@@ -3405,21 +3469,58 @@ fn disclosed_cell(record: MobileMeshSharedLocationRecord) -> Result<NodeLocation
     ))
 }
 
-/// The identity profile the phone's Identity Request responder serves:
-/// the same role Chat / Mobile + Text messages statement the signed
-/// advertisement makes, with the display name truncated identically and
-/// the same disclosed location, so a node that asks and a node that
-/// listens hear one description.
-fn phone_identity_profile(
+/// What a session's node says it is.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct NodeKind {
+    pub(crate) role: NodeRole,
+    pub(crate) capabilities: NodeCapabilities,
+}
+
+impl NodeKind {
+    /// This phone: role Chat, capabilities Mobile and Text messages.
+    pub(crate) const PHONE: Self = Self {
+        role: NodeRole::Chat,
+        capabilities: NodeCapabilities::MOBILE.union(NodeCapabilities::TEXT_MESSAGES),
+    };
+}
+
+/// Handed each packet the node accepts, after presence is noted and ahead
+/// of the session's own handlers; claims the packet by answering `true`.
+/// It runs on the session's worker, inside the MAC's borrow, so it only
+/// takes note and hands work elsewhere.
+pub(crate) type ReceiveTap = Box<dyn FnMut(&ReceivedPacketRef<'_>) -> bool + Send>;
+
+/// How a session's node differs from this phone's. Crate-internal: the
+/// staging air's nodes are sessions too.
+pub(crate) struct NodeOptions {
+    pub(crate) kind: NodeKind,
+    /// Forward as a repeater, and answer Peer Repeaters Requests.
+    pub(crate) repeater: bool,
+    pub(crate) tap: Option<ReceiveTap>,
+}
+
+impl Default for NodeOptions {
+    fn default() -> Self {
+        Self {
+            kind: NodeKind::PHONE,
+            repeater: false,
+            tap: None,
+        }
+    }
+}
+
+/// The identity profile a node's Identity Request responder serves: the
+/// same role and capabilities statement its signed advertisement makes,
+/// with the display name truncated identically and the same disclosed
+/// location, so a node that asks and a node that listens hear one
+/// description.
+fn identity_profile(
+    kind: NodeKind,
     public_key: PublicKey,
     name: Option<&str>,
     location: Option<NodeLocation>,
 ) -> NodeIdentityProfile {
-    let mut profile = NodeIdentityProfile::new(
-        public_key,
-        NodeRole::Chat,
-        NodeCapabilities::MOBILE | NodeCapabilities::TEXT_MESSAGES,
-    );
+    let mut profile = NodeIdentityProfile::new(public_key, kind.role, kind.capabilities);
     profile.name = name
         .map(|name| umsh_grapheme::cut(name, 24).to_owned())
         .filter(|name| !name.is_empty());
@@ -3427,11 +3528,11 @@ fn phone_identity_profile(
     profile
 }
 
-/// This phone's node identity: role Chat, capabilities Mobile + Text
-/// messages, optional display name (truncated to the 24-byte wire limit
-/// between grapheme clusters), and the disclosed location when one is being
-/// shared.
-fn phone_identity_payload(
+/// A node's identity: its kind, optional display name (truncated to the
+/// 24-byte wire limit between grapheme clusters), and the disclosed
+/// location when one is being shared.
+fn identity_payload(
+    kind: NodeKind,
     name: Option<&str>,
     timestamp: Option<u32>,
     location: Option<NodeLocation>,
@@ -3440,8 +3541,8 @@ fn phone_identity_payload(
         .map(|name| umsh_grapheme::cut(name, 24).to_owned())
         .filter(|name| !name.is_empty());
     NodeIdentityPayload {
-        role: NodeRole::Chat,
-        capabilities: NodeCapabilities::MOBILE | NodeCapabilities::TEXT_MESSAGES,
+        role: kind.role,
+        capabilities: kind.capabilities,
         name,
         location,
         altitude_m: None,
@@ -3452,10 +3553,11 @@ fn phone_identity_payload(
     }
 }
 
-/// The advertisement frame's payload: [`phone_identity_payload`] behind
+/// The advertisement frame's payload: [`identity_payload`] behind
 /// its payload-type byte, with no signature of its own. The frame that
 /// carries it is signed, which is what authenticates it.
 fn advertisement_payload(
+    kind: NodeKind,
     name: Option<&str>,
     timestamp: Option<u32>,
     location: Option<NodeLocation>,
@@ -3463,24 +3565,25 @@ fn advertisement_payload(
 ) -> Result<Vec<u8>, MobileMeshError> {
     let mut frame = vec![0u8; capacity.max(1)];
     frame[0] = PayloadType::NodeIdentity as u8;
-    let len = phone_identity_payload(name, timestamp, location)
+    let len = identity_payload(kind, name, timestamp, location)
         .encode(&mut frame[1..])
         .map_err(|_| MobileMeshError::SendFailed)?;
     frame.truncate(1 + len);
     Ok(frame)
 }
 
-/// Build the signed standalone node-identity bundle for this phone, what a
-/// QR code or an exported contact carries: [`phone_identity_payload`] with
+/// Build a node's signed standalone node-identity bundle, what a
+/// QR code or an exported contact carries: [`identity_payload`] with
 /// its detached signature. The result is ROLE through the trailing 64-byte
 /// signature, without the payload-type byte.
 async fn build_signed_identity_bundle(
     signer: &SoftwareIdentity,
+    kind: NodeKind,
     name: Option<&str>,
     timestamp: Option<u32>,
     location: Option<NodeLocation>,
 ) -> Result<Vec<u8>, MobileMeshError> {
-    let payload = phone_identity_payload(name, timestamp, location);
+    let payload = identity_payload(kind, name, timestamp, location);
     let mut buf = [0u8; 192];
     let len = payload
         .encode_for_signing(&mut buf)
@@ -4025,6 +4128,7 @@ async fn service_management<M: MacBackend>(
     reason = "the worker owns one end of each channel; a struct would only be unpacked here"
 )]
 async fn run_worker(
+    options: NodeOptions,
     identity: SoftwareIdentity,
     counter_store: SharedCounterStore,
     mut commands: mpsc::Receiver<WorkerCommand>,
@@ -4061,9 +4165,20 @@ async fn run_worker(
         MobileClock::new(),
         rand::rng(),
         counter_store,
-        RepeaterConfig::default(),
+        RepeaterConfig {
+            mode: match options.repeater {
+                true => RepeaterMode::On,
+                false => RepeaterMode::Off,
+            },
+            ..RepeaterConfig::default()
+        },
         OperatingPolicy::default(),
     );
+    let NodeOptions {
+        kind,
+        repeater,
+        tap,
+    } = options;
     let cell = AsyncRefCell::new(mac);
     let handle = MacHandle::new(&cell);
     let identity_id = match handle.add_identity(identity).await {
@@ -4087,6 +4202,9 @@ async fn run_worker(
 
     let mut host = Host::new(handle);
     let node = host.add_node(identity_id);
+    if repeater {
+        node.enable_peer_repeaters_responder();
+    }
     // The sessions with forward secrecy the previous run held. Their keys
     // went with it, but a peer still using one is told the session is
     // over. Restored before the first pump and the first report of the
@@ -4128,7 +4246,8 @@ async fn run_worker(
     let mut advertised_location: Option<NodeLocation> = None;
     // How far what this phone sends may travel; pushed the same way.
     let mut flood_hops = FloodHopSettings::default();
-    node.enable_identity_responder_default(phone_identity_profile(
+    node.enable_identity_responder_default(identity_profile(
+        kind,
         local_key,
         responder_name.as_deref(),
         advertised_location,
@@ -4151,6 +4270,7 @@ async fn run_worker(
         });
         false
     });
+    let tap_subscription = tap.map(|tap| node.on_receive(tap));
     let inbound_text = Rc::new(RefCell::new(Vec::<InboundText>::new()));
     let inbound_text_callback = inbound_text.clone();
     let text_subscription = node.on_receive(move |packet| {
@@ -4298,6 +4418,7 @@ async fn run_worker(
         advertisement_subscription,
         meet_subscription,
         peer_repeaters_subscription,
+        tap_subscription,
         pfs_records_subscription,
         pfs_established_subscription,
         pfs_ended_subscription,
@@ -4576,6 +4697,7 @@ async fn run_worker(
                                 .await
                             {
                                 Ok(capacity) => match advertisement_payload(
+                                    kind,
                                     name.as_deref(),
                                     timestamp,
                                     advertised_location,
@@ -4594,6 +4716,26 @@ async fn run_worker(
                                 Err(MobileMeshError::SendFailed)
                             } else {
                                 result
+                            };
+                            let _ = response.send(result);
+                        }
+                        Some(WorkerCommand::SendResponse {
+                            to,
+                            channel,
+                            ack_mic,
+                            payload,
+                            response,
+                        }) => {
+                            let options = SendOptions {
+                                ack_mic,
+                                ..SendOptions::default()
+                            };
+                            let result = match node
+                                .send_response(&to, channel, &payload, &options)
+                                .await
+                            {
+                                Ok(_) if persist_counters().await => Ok(()),
+                                _ => Err(MobileMeshError::SendFailed),
                             };
                             let _ = response.send(result);
                         }
@@ -4626,6 +4768,7 @@ async fn run_worker(
                             // stale and then travels wherever it does.
                             let result = build_signed_identity_bundle(
                                 &signer,
+                                kind,
                                 name.as_deref(),
                                 timestamp,
                                 None,
@@ -4791,7 +4934,8 @@ async fn run_worker(
                             discoverable = enabled;
                             responder_name = name;
                             if discoverable {
-                                node.enable_identity_responder_default(phone_identity_profile(
+                                node.enable_identity_responder_default(identity_profile(
+                                    kind,
                                     local_key,
                                     responder_name.as_deref(),
                                     advertised_location,
@@ -4808,7 +4952,8 @@ async fn run_worker(
                             // position. Not discoverable means not
                             // installed—nothing to refresh.
                             if discoverable {
-                                node.enable_identity_responder_default(phone_identity_profile(
+                                node.enable_identity_responder_default(identity_profile(
+                                    kind,
                                     local_key,
                                     responder_name.as_deref(),
                                     advertised_location,
@@ -5209,6 +5354,7 @@ async fn run_worker(
                                         // location, as for the QR bundle.
                                         match build_signed_identity_bundle(
                                             &signer,
+                                            kind,
                                             responder_name.as_deref(),
                                             Some(unix_seconds()),
                                             None,

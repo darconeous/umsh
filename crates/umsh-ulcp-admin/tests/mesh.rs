@@ -12,7 +12,8 @@ use std::collections::VecDeque;
 use umsh_crypto::CryptoEngine;
 use umsh_crypto::software::{SoftwareAes, SoftwareSha256};
 use umsh_node_mgmt::admin::{self, Outcome, RESPONSE_WAIT_MIN_MS, Reassembly, Step};
-use umsh_node_mgmt::device::{DeviceEngine, Dispatch, Ingress};
+use umsh_node_mgmt::device::Dispatch;
+use umsh_node_mgmt::{Answer, Responder};
 use umsh_ulcp::frame::{self, Cmd, Frame};
 use umsh_ulcp::ids::{cap, prop, saved};
 use umsh_ulcp::status::Status;
@@ -46,7 +47,7 @@ const ADMIN_KEY: [u8; 32] = [0xA1; 32];
 
 struct Device<const PAYLOAD: usize> {
     session: Session<SoftwareAes, SoftwareSha256>,
-    engine: DeviceEngine<PAYLOAD, { 2 * MULTI_MAX }, 2>,
+    responder: Responder<PAYLOAD, { 2 * MULTI_MAX }, 2>,
     /// Requests the session actually ran, as opposed to those answered
     /// from the retained response.
     executed: u32,
@@ -114,7 +115,7 @@ impl<const PAYLOAD: usize> Device<PAYLOAD> {
         session.attach(false);
         Self {
             session,
-            engine: DeviceEngine::new(0x5AA5),
+            responder: Responder::new(0x5AA5),
             executed: 0,
         }
     }
@@ -124,39 +125,17 @@ impl<const PAYLOAD: usize> Device<PAYLOAD> {
     /// authorization is node-mgmt's to test, not this crate's.
     fn deliver(&mut self, payload: &[u8], now_ms: u64) -> Option<Vec<u8>> {
         let mut out = [0u8; PAYLOAD];
-        let len = match self.engine.begin(&ADMIN_KEY, payload, now_ms, &mut out) {
-            Ingress::Drop(_) => return None,
-            Ingress::Respond { len } => Some(len),
-            Ingress::Dispatch(dispatch) => {
+        let answer = self
+            .responder
+            .exchange(&ADMIN_KEY, payload, now_ms, &mut out, |dispatch| {
                 self.executed += 1;
-                let reply = self.serve(&dispatch, now_ms);
-                self.engine.complete(&reply, &mut out).expect("complete")
-            }
-        };
-        len.map(|len| out[..len].to_vec())
-    }
-
-    fn serve(&mut self, dispatch: &Dispatch<'_>, now_ms: u64) -> Vec<u8> {
-        let mut emitted: Vec<Vec<u8>> = Vec::new();
-        let mut pending = self.session.handle_admin_frame(
-            dispatch.frame,
-            now_ms,
-            dispatch.budget,
-            &mut |bytes: &[u8]| emitted.push(bytes.to_vec()),
-        );
-        while let Some(effect) = pending.take() {
-            if let Effect::SaveSnapshot { tid } = effect {
-                self.session.respond_save(tid, Ok(()), &mut |bytes: &[u8]| {
-                    emitted.push(bytes.to_vec())
-                });
-            }
-            pending = self
-                .session
-                .resume_multi(now_ms, &mut |bytes: &[u8]| emitted.push(bytes.to_vec()));
+                serve(&mut self.session, dispatch, now_ms)
+            });
+        match answer {
+            Answer::Dropped(_) => None,
+            Answer::Respond(len) => len.map(|len| out[..len].to_vec()),
+            Answer::Unanswerable(error) => panic!("complete: {error:?}"),
         }
-        self.session.end_admin_exchange();
-        assert!(emitted.len() <= 1, "one frame answers an exchange");
-        emitted.pop().unwrap_or_default()
     }
 
     /// Read a property over the tethered binding, to see what a remote
@@ -173,6 +152,31 @@ impl<const PAYLOAD: usize> Device<PAYLOAD> {
         let (_, consumed) = umsh_ulcp::pui::decode(parsed.payload).unwrap();
         parsed.payload[consumed..].to_vec()
     }
+}
+
+fn serve(
+    session: &mut Session<SoftwareAes, SoftwareSha256>,
+    dispatch: &Dispatch<'_>,
+    now_ms: u64,
+) -> Vec<u8> {
+    let mut emitted: Vec<Vec<u8>> = Vec::new();
+    let mut pending = session.handle_admin_frame(
+        dispatch.frame,
+        now_ms,
+        dispatch.budget,
+        &mut |bytes: &[u8]| emitted.push(bytes.to_vec()),
+    );
+    while let Some(effect) = pending.take() {
+        if let Effect::SaveSnapshot { tid } = effect {
+            session.respond_save(tid, Ok(()), &mut |bytes: &[u8]| {
+                emitted.push(bytes.to_vec())
+            });
+        }
+        pending = session.resume_multi(now_ms, &mut |bytes: &[u8]| emitted.push(bytes.to_vec()));
+    }
+    session.end_admin_exchange();
+    assert!(emitted.len() <= 1, "one frame answers an exchange");
+    emitted.pop().unwrap_or_default()
 }
 
 // ─── The administrator's link ────────────────────────────────────────────

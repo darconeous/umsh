@@ -37,7 +37,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, ObservableObject {
     private var currentMode: Mode
 
     #if DEBUG
-    private var stagingConnection: FakeRadioConnection?
+    private var stagingConnection: (any RadioConnection)?
     /// The bridged connection, rebuilt only when the endpoint itself
     /// changes: the session accumulates state that must not be discarded
     /// because something unrelated wrote to defaults.
@@ -72,11 +72,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, ObservableObject {
             runtime = AppRuntime(radioConnection: connection)
         #if DEBUG
         case .staging:
-            let connection = FakeRadioConnection(
-                snapshot: StagingScenario.radioSnapshot,
-                air: StagingMeshAir(),
-                wifiScanOnly: UserDefaults.standard.bool(forKey: "staging.wifiScanOnly")
-            )
+            let connection = Self.makeStagingConnection()
             stagingConnection = connection
             // A staged mesh gets a store of its own; nothing fabricated
             // reaches the real one.
@@ -185,15 +181,28 @@ final class AppDelegate: NSObject, UIApplicationDelegate, ObservableObject {
         return connection
     }
 
-    private func stagingRadioConnection() -> FakeRadioConnection {
+    private func stagingRadioConnection() -> any RadioConnection {
         if let stagingConnection { return stagingConnection }
-        let connection = FakeRadioConnection(
-            snapshot: StagingScenario.radioSnapshot,
-            air: StagingMeshAir(),
-            wifiScanOnly: UserDefaults.standard.bool(forKey: "staging.wifiScanOnly")
-        )
+        let connection = Self.makeStagingConnection()
         stagingConnection = connection
         return connection
+    }
+
+    /// The staged radio, over the core's staging air. An air that cannot
+    /// start leaves a radio in an empty room, so staging can still be
+    /// switched off from Settings.
+    private static func makeStagingConnection() -> any RadioConnection {
+        do {
+            return try StagingRadioConnection(
+                stateDirectory: StagingRadioConnection.stateDirectory,
+                wifiScanOnly: UserDefaults.standard.bool(forKey: "staging.wifiScanOnly")
+            )
+        } catch {
+            logger.error(
+                "the staging air did not start: \(String(describing: error), privacy: .public)"
+            )
+            return FakeRadioConnection()
+        }
     }
 
     private func tcpRadioConnection(for endpoint: TcpEndpoint) -> TcpRadioConnection {

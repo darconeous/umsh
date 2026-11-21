@@ -36,6 +36,7 @@ extern crate alloc;
 
 pub mod admin;
 pub mod device;
+pub mod device_adapter;
 pub mod envelope;
 pub mod fragment;
 #[cfg(feature = "node")]
@@ -43,6 +44,9 @@ pub mod node_adapter;
 
 pub use admin::{Exchange, Failure, Outcome, Reassembly, Step};
 pub use device::{DeviceEngine, Dispatch, DropReason, Ingress, PublicKey};
+#[cfg(feature = "receive")]
+pub use device_adapter::{Admission, Admitted, admit};
+pub use device_adapter::{Answer, Refusal, Responder, authorize};
 pub use envelope::{Envelope, EnvelopeError, Token};
 pub use fragment::{continuable, trailing, trailing_offset};
 #[cfg(feature = "node")]

@@ -115,8 +115,9 @@ class RadioDriverAdapter: NSObject, @unchecked Sendable {
     /// Owned for the adapter's life and stopped with it.
     let driver: MobileRadioDriver
 
-    /// Carries the driver's link calls to the transport.
-    private let linkBridge: DriverLinkBridge
+    /// Carries the driver's link calls to the transport; `nil` when the
+    /// link lives in the core.
+    private let linkBridge: DriverLinkBridge?
 
     /// The transport, set by the subclass that is also the link.
     private(set) weak var link: (any UlcpFrameLink)?
@@ -141,6 +142,16 @@ class RadioDriverAdapter: NSObject, @unchecked Sendable {
         // Only fails when the system will not start a thread, which leaves
         // nothing to recover with.
         driver = try! MobileRadioDriver(link: bridge)
+        super.init()
+        driver.setListener(listener: DriverUpdateListener(adapter: self))
+    }
+
+    /// Over a driver whose link lives in the core, which reports its own
+    /// transport states: the staging air's.
+    init(sessionQueue: DispatchQueue, driver: MobileRadioDriver) {
+        self.sessionQueue = sessionQueue
+        linkBridge = nil
+        self.driver = driver
         super.init()
         driver.setListener(listener: DriverUpdateListener(adapter: self))
     }
@@ -406,7 +417,7 @@ class RadioDriverAdapter: NSObject, @unchecked Sendable {
     /// the subclass is its own link.
     func adopt(link: any UlcpFrameLink) {
         self.link = link
-        linkBridge.link = link
+        linkBridge?.link = link
     }
 
     /// The transport carries no frames, and stands here. Every state the

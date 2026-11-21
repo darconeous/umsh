@@ -1,8 +1,20 @@
 use std::future::Future;
 
 use super::*;
+use crate::mobile_mesh::{
+    MobileMeshExplicitPath, MobileMeshManagementEventRecord, MobileMeshManagementOutcome,
+    MobileMeshPingEventRecord, MobileMeshPingOutcome,
+};
 use crate::secret_vault::memory::MemoryVault;
 use crate::{MobileRadioPhase, public_identity_bytes};
+
+/// Sam Ihara, out of the radio's range behind Glen Alpine Relay.
+const SAM: u8 = 0x66;
+const GLEN: u8 = 0x77;
+
+/// Long enough for a device's silence to be called: a management response
+/// is waited for 20 s once its request is acknowledged.
+const SILENCE_WAIT: Duration = Duration::from_secs(45);
 
 /// The phone's identity secret.
 const PHONE_SEED: u8 = 0x09;
@@ -23,12 +35,23 @@ fn address_of(seed: u8) -> String {
         .canonical_address
 }
 
+/// A node's router hint: the first two octets of its key.
+fn router_hint(seed: u8) -> Vec<u8> {
+    public_identity_bytes(address_of(seed)).unwrap()[..2].to_vec()
+}
+
 /// Retry `probe` until it answers, or fail after ten seconds.
-async fn eventually<T, F: Future<Output = Option<T>>>(
+async fn eventually<T, F: Future<Output = Option<T>>>(what: &str, probe: impl FnMut() -> F) -> T {
+    eventually_within(what, Duration::from_secs(10), probe).await
+}
+
+/// Retry `probe` until it answers, or fail after `limit`.
+async fn eventually_within<T, F: Future<Output = Option<T>>>(
     what: &str,
+    limit: Duration,
     mut probe: impl FnMut() -> F,
 ) -> T {
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + limit;
     loop {
         if let Some(value) = probe().await {
             return value;
@@ -52,7 +75,7 @@ struct Phone {
 impl Phone {
     async fn tethered() -> Self {
         let air_dir = tempfile::tempdir().unwrap();
-        let air = MobileStagingAir::start(air_dir.path().display().to_string()).unwrap();
+        let air = MobileStagingAir::start(air_dir.path().display().to_string(), false).unwrap();
         let driver = air.radio();
         let address = address_of(PHONE_SEED);
         driver
@@ -142,6 +165,55 @@ impl Phone {
         .expect_err("the phone has said nothing yet");
     }
 
+    /// Register the staged nodes `seeds` with the phone's session.
+    async fn knows(&self, seeds: &[u8]) {
+        self.session
+            .register_peers(
+                seeds
+                    .iter()
+                    .map(|&seed| MobilePeerRegistrationRecord {
+                        address: address_of(seed),
+                        mobile: false,
+                    })
+                    .collect(),
+            )
+            .await
+            .unwrap();
+    }
+
+    /// Ping the staged node `seed`, and wait for the ping to end.
+    async fn ping(
+        &self,
+        seed: u8,
+        path: Option<MobileMeshExplicitPath>,
+        limit: Duration,
+    ) -> MobileMeshPingEventRecord {
+        let operation = self.session.ping(address_of(seed), path).unwrap();
+        eventually_within("the ping ends", limit, || async {
+            self.session
+                .poll_update()
+                .ping_events
+                .into_iter()
+                .find(|event| event.operation_id == operation)
+        })
+        .await
+    }
+
+    /// Wait for the management operation `operation` to end.
+    async fn managed(&self, operation: u64, limit: Duration) -> MobileMeshManagementEventRecord {
+        eventually_within("the management operation ends", limit, || async {
+            self.session
+                .poll_update()
+                .management_events
+                .into_iter()
+                .find(|event| {
+                    event.operation_id == operation
+                        && event.outcome != MobileMeshManagementOutcome::Progress
+                })
+        })
+        .await
+    }
+
     /// The bodies of the phone's conversation at `address`, oldest first.
     fn bodies(&self, address: &str) -> Vec<(bool, String)> {
         self.store
@@ -167,14 +239,6 @@ impl Phone {
     }
 }
 
-#[test]
-fn a_flood_is_forwarded_with_one_hop_spent() {
-    // Flood hops follow: three left, one spent.
-    assert_eq!(forwarded(&[0x01, 0x31, 0xAA]), Some(vec![0x01, 0x22, 0xAA]));
-    assert_eq!(forwarded(&[0x01, 0x05]), None, "no hops left");
-    assert_eq!(forwarded(&[0x00, 0x31]), None, "not a flood");
-}
-
 #[tokio::test]
 async fn the_staged_radio_attaches_as_a_tracker() {
     let phone = Phone::tethered().await;
@@ -188,7 +252,7 @@ async fn the_staged_radio_attaches_as_a_tracker() {
 #[tokio::test]
 async fn a_control_needs_a_tethered_phone() {
     let dir = tempfile::tempdir().unwrap();
-    let air = MobileStagingAir::start(dir.path().display().to_string()).unwrap();
+    let air = MobileStagingAir::start(dir.path().display().to_string(), false).unwrap();
     assert_eq!(
         air.peer_says("hello".to_owned(), false).await,
         Err(MobileStagingAirError::NoPhone)
@@ -205,7 +269,7 @@ async fn a_control_needs_a_tethered_phone() {
 #[tokio::test]
 async fn a_stopped_air_reports_no_link() {
     let dir = tempfile::tempdir().unwrap();
-    let air = MobileStagingAir::start(dir.path().display().to_string()).unwrap();
+    let air = MobileStagingAir::start(dir.path().display().to_string(), false).unwrap();
     let driver = air.radio();
     air.stop();
     air.connect();
@@ -329,4 +393,239 @@ async fn a_reset_starts_the_peers_over() {
         generation(1).join(&speaker_dir).exists(),
         "the peers keep counters in a new generation"
     );
+}
+
+/// Another identity taking the radio is a phone starting over, and the
+/// staged mesh starts over with it.
+#[tokio::test]
+async fn another_identity_on_the_radio_starts_the_mesh_over() {
+    let phone = Phone::tethered().await;
+    phone.knows_the_phone().await;
+    let generation = |number: u32| phone.air_dir.path().join(number.to_string());
+    assert!(!generation(1).exists());
+
+    // As erasing the phone's identity does: the radio is let go, and the
+    // new identity attaches it.
+    let driver = phone.air.radio();
+    driver.release_host().await;
+    phone.air.disconnect();
+    let stranger = public_identity_bytes(address_of(0x99)).unwrap();
+    driver.set_host_key(Some(stranger)).unwrap();
+    phone.air.connect();
+    tokio::time::timeout(Duration::from_secs(10), driver.attached())
+        .await
+        .expect("the staged radio attaches again")
+        .unwrap();
+    eventually("the staged nodes stand up again", || async {
+        generation(1).exists().then_some(())
+    })
+    .await;
+}
+
+/// What `event` says `property` is worth.
+fn answered(event: &MobileMeshManagementEventRecord, property: u32) -> Option<Vec<u8>> {
+    event
+        .answers
+        .iter()
+        .find(|answer| answer.property_id == property)
+        .and_then(|answer| answer.value.clone())
+}
+
+#[tokio::test]
+async fn a_peer_behind_a_repeater_is_reached_in_two_hops() {
+    let phone = Phone::tethered().await;
+    phone.knows(&[SAM]).await;
+    let reply = phone.ping(SAM, None, Duration::from_secs(20)).await;
+    assert_eq!(reply.outcome, MobileMeshPingOutcome::Reply);
+    assert_eq!(reply.hop_count, Some(2));
+    assert_eq!(reply.route_hints, vec![router_hint(GLEN)]);
+    assert_eq!(
+        reply.trace_signal.len(),
+        1,
+        "the repeater says how it heard"
+    );
+}
+
+#[tokio::test]
+async fn a_flood_from_the_phone_is_echoed_by_both_repeaters() {
+    let phone = Phone::tethered().await;
+    phone
+        .driver
+        .reconcile_host_channel_keys(channel_keys())
+        .await
+        .unwrap();
+    let channel = channel_address();
+    let body = "Anyone on the ridge?";
+    phone
+        .session
+        .send_chat(
+            channel.clone(),
+            MobileChatSendRequest::Text {
+                body: body.to_owned(),
+            },
+        )
+        .await
+        .unwrap();
+    // The message floods untraced, so each forward is a repeater that
+    // names no hint.
+    eventually("both repeaters echo the flood", || async {
+        let page = phone
+            .store
+            .chat_message_page_newest(PHONE_OWNER.to_owned(), channel.clone(), 50)
+            .ok()?;
+        let message = page
+            .messages
+            .into_iter()
+            .find(|message| message.outbound && message.body == body)?;
+        (message.repeats?.anonymous == 2).then_some(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn each_repeater_lists_the_other() {
+    let phone = Phone::tethered().await;
+    phone.knows(&[MANAGED_SEED, GLEN]).await;
+    for (asked, other) in [(MANAGED_SEED, GLEN), (GLEN, MANAGED_SEED)] {
+        let page = phone
+            .session
+            .request_peer_repeaters_page(address_of(asked), None, Vec::new())
+            .await
+            .unwrap();
+        let name = NODES[place(other)].name;
+        assert!(
+            page.entries
+                .iter()
+                .any(|entry| entry.name.as_deref() == Some(name)),
+            "{asked:02x} lists {name}: {page:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_held_path_stands_beside_the_one_learned() {
+    let phone = Phone::tethered().await;
+    phone.knows(&[SAM]).await;
+    let sam = address_of(SAM);
+    // Tallac Ridge cannot reach Sam, so sends down the held path miss and
+    // the flood fallback finds the way through Glen Alpine Relay.
+    let held = MobileMeshExplicitPath {
+        hints: vec![router_hint(MANAGED_SEED)],
+        flood_hops: 0,
+    };
+    assert!(
+        phone
+            .session
+            .hold_peer_route(sam.clone(), held, 600_000)
+            .await
+            .unwrap()
+    );
+    let reply = phone.ping(SAM, None, SILENCE_WAIT).await;
+    assert_eq!(reply.outcome, MobileMeshPingOutcome::Reply);
+    let route = phone.session.peer_route(sam).await.unwrap();
+    assert_eq!(
+        route.hints,
+        vec![router_hint(MANAGED_SEED)],
+        "the hold stands"
+    );
+    assert_eq!(route.candidate_hints, vec![router_hint(GLEN)]);
+}
+
+#[tokio::test]
+async fn the_managed_repeater_is_read_written_and_saved() {
+    let phone = Phone::tethered().await;
+    phone.knows(&[MANAGED_SEED]).await;
+    let tallac = address_of(MANAGED_SEED);
+    let limit = Duration::from_secs(20);
+
+    let read = phone
+        .session
+        .begin_management_fetch(tallac.clone(), vec![prop::DEV_KEY, prop::DEV_NAME], true)
+        .unwrap();
+    let read = phone.managed(read, limit).await;
+    assert_eq!(read.outcome, MobileMeshManagementOutcome::Replied);
+    assert_eq!(
+        answered(&read, prop::DEV_KEY),
+        Some(public_identity_bytes(tallac.clone()).unwrap()),
+        "the device key is the address the phone manages"
+    );
+    assert_eq!(
+        answered(&read, prop::DEV_NAME).as_deref(),
+        Some(NODES[MANAGED].name.as_bytes())
+    );
+
+    let written = phone
+        .session
+        .begin_management_set(tallac.clone(), prop::DEV_NAME, b"Tallac Summit".to_vec())
+        .unwrap();
+    let written = phone.managed(written, limit).await;
+    assert_eq!(written.outcome, MobileMeshManagementOutcome::Replied);
+    assert_eq!(
+        answered(&written, prop::DEV_NAME).as_deref(),
+        Some(&b"Tallac Summit"[..])
+    );
+
+    let saved = phone.session.begin_management_save(tallac).unwrap();
+    let saved = phone.managed(saved, limit).await;
+    assert_eq!(saved.outcome, MobileMeshManagementOutcome::Replied);
+    assert_eq!(saved.refusal, None);
+}
+
+#[tokio::test]
+async fn a_non_administrator_meets_silence() {
+    let phone = Phone::tethered().await;
+    phone.knows(&[MANAGED_SEED]).await;
+    let tallac = address_of(MANAGED_SEED);
+    let removed = phone
+        .session
+        .begin_management_remove_admin(tallac.clone(), phone.session.node_public_key())
+        .unwrap();
+    let removed = phone.managed(removed, Duration::from_secs(20)).await;
+    assert_eq!(removed.outcome, MobileMeshManagementOutcome::Replied);
+
+    let refused = phone
+        .session
+        .begin_management_get(tallac, prop::DEV_NAME)
+        .unwrap();
+    let refused = phone.managed(refused, SILENCE_WAIT).await;
+    assert_eq!(refused.outcome, MobileMeshManagementOutcome::TimedOut);
+}
+
+#[tokio::test]
+async fn an_unreachable_repeater_is_not_reached() {
+    let phone = Phone::tethered().await;
+    phone.knows(&[MANAGED_SEED]).await;
+    phone.air.set_remote_device_reachable(false);
+    let get = phone
+        .session
+        .begin_management_get(address_of(MANAGED_SEED), prop::DEV_NAME)
+        .unwrap();
+    let get = phone.managed(get, SILENCE_WAIT).await;
+    assert_eq!(get.outcome, MobileMeshManagementOutcome::Unreachable);
+}
+
+#[tokio::test]
+async fn a_reset_rebuilds_the_repeaters() {
+    let phone = Phone::tethered().await;
+    phone.knows(&[MANAGED_SEED]).await;
+    phone.air.reset().await.unwrap();
+    phone.knows_the_phone().await;
+    let managed_dir = format!("{MANAGED_SEED:02x}");
+    eventually(
+        "the managed repeater stands in the new generation",
+        || async {
+            phone
+                .air_dir
+                .path()
+                .join("1")
+                .join(&managed_dir)
+                .exists()
+                .then_some(())
+        },
+    )
+    .await;
+    let reply = phone
+        .ping(MANAGED_SEED, None, Duration::from_secs(20))
+        .await;
+    assert_eq!(reply.outcome, MobileMeshPingOutcome::Reply);
 }

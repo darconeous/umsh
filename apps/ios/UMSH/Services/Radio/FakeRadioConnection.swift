@@ -1,21 +1,9 @@
 import Foundation
 import UMSHMobileCore
 
-/// The ether around a fake radio: takes whatever the phone's mesh session
-/// transmits and delivers whatever the rest of the fabricated mesh says back.
-///
-/// A `FakeRadioConnection` with no air is a radio in an empty room—sends
-/// complete without ever being heard, which is all a preview needs. Staging
-/// hangs a whole mesh of real Rust sessions on this seam.
-protocol FakeRadioAir: Sendable {
-    /// Install the handler that carries mesh traffic back to the phone.
-    func attach(onAir: @escaping @Sendable ([MobileMeshRxRecord]) -> Void) async
-    /// Tell the mesh who the phone is, so peers can address it by name.
-    func registerPhone(address: String) async
-    /// One of the phone's frames hits the air.
-    func transmit(_ data: Data) async
-}
-
+/// A radio in an empty room: sends complete without ever being heard, and
+/// canned answers stand in for everything a mesh would say. All a preview
+/// or a test host needs.
 actor FakeRadioConnection: RadioConnection {
     private var snapshot: RadioSnapshot
     private var continuations: [UUID: AsyncStream<RadioSnapshot>.Continuation] = [:]
@@ -29,20 +17,13 @@ actor FakeRadioConnection: RadioConnection {
     /// What the app registered, by key, so a late-built session gets the
     /// same set—and the same ceilings—the app believes it registered.
     private var registeredChannels: [Data: ChannelRegistration] = [:]
-    /// What surrounds this radio. Without one, transmitted frames vanish.
-    private let air: (any FakeRadioAir)?
     /// The same Rust session a real radio would drive. When the app installs
     /// one, the chat surface below stops pretending and delegates to it.
     private var meshSession: MobileMeshSession?
     private var wakeListener: FakeMeshSessionWakeListener?
-    /// Frames on their way to the air, drained in order by one task so
-    /// concurrent pumps cannot interleave a batch.
-    private var airOutbox: [Data] = []
-    private var airDrainer: Task<Void, Never>?
     /// The device the remote-management screens manage. Writes land on it,
     /// so a preview can change a setting and see the change stick.
     private var managedDevice = FakeManagedDevice()
-    private var remoteDeviceReachable = true
     /// Screens listening for what this device announces on its own. Only
     /// the local link has any: a device pushes to the host it is attached
     /// to and to nobody else.
@@ -51,72 +32,13 @@ actor FakeRadioConnection: RadioConnection {
     /// The scan or the link change now playing out, so a second one
     /// replaces it rather than interleaving with it.
     private var wifiTheater: Task<Void, Never>?
-    /// Staging only: swallow every outbound frame, as a dead link would.
-    private var transmissionsFail = false
     private var meetContinuations: [UUID: AsyncStream<MobileMeetStateRecord?>.Continuation] = [:]
     private var latestMeetState: MobileMeetStateRecord?
     private var forwardSecretContinuations: [UUID: AsyncStream<Set<String>>.Continuation] = [:]
     private var latestForwardSecretConversations: Set<String> = []
 
-    init(
-        snapshot: RadioSnapshot = .previewReady,
-        air: (any FakeRadioAir)? = nil,
-        wifiScanOnly: Bool = false
-    ) {
+    init(snapshot: RadioSnapshot = .previewReady) {
         self.snapshot = snapshot
-        self.air = air
-        managedDevice = FakeManagedDevice(scanOnly: wifiScanOnly)
-    }
-
-    /// Ask the staging air to have a staged peer message the phone. A no-op
-    /// on any other air—previews have no peers to speak as.
-    func stagedPeerSendsMessage(body: String, onChannel: Bool) async {
-        #if DEBUG
-        await (air as? StagingMeshAir)?.sendFromPeer(body: body, onChannel: onChannel)
-        #endif
-    }
-
-    /// Ask the staging air to have a staged peer send three channel messages,
-    /// the middle one lost on the way.
-    func stagedPeerLosesChannelMessage(bodies: (String, String, String)) async {
-        #if DEBUG
-        await (air as? StagingMeshAir)?.sendFromPeerLosingOne(bodies: bodies)
-        #endif
-    }
-
-    /// Ask the staging air to have a staged peer react to the phone's last
-    /// message to it.
-    func stagedPeerReacts(body: String) async {
-        #if DEBUG
-        await (air as? StagingMeshAir)?.reactFromPeer(body: body)
-        #endif
-    }
-
-    /// Ask the staging air to have a staged peer reply to the phone's last
-    /// message to it.
-    func stagedPeerReplies(body: String) async {
-        #if DEBUG
-        await (air as? StagingMeshAir)?.replyFromPeer(body: body)
-        #endif
-    }
-
-    /// Ask the staging air to have a staged peer open Add Peer, and with
-    /// `asking`, ask the phone to exchange contacts once it lists it.
-    func stagedPeerMeets(asking: Bool) async {
-        #if DEBUG
-        await (air as? StagingMeshAir)?.peerOpensAddPeer(asking: asking)
-        #endif
-    }
-
-    /// Fail everything handed to this radio, as a link that has dropped
-    /// would. The session hears that the transmission did not happen and
-    /// gives up on the message, which is what a delivery failure is.
-    ///
-    /// A standing state rather than a one-shot: acknowledgements are frames
-    /// too, so a single-use switch would be spent on the ack for whatever
-    /// arrived next rather than on the message being tested.
-    func setTransmissionsFailing(_ failing: Bool) {
-        transmissionsFail = failing
     }
 
     func snapshots() -> AsyncStream<RadioSnapshot> {
@@ -295,11 +217,7 @@ actor FakeRadioConnection: RadioConnection {
 
     func stopDiscovery() async {}
 
-    func useHostIdentity(_ identity: MeshPublicIdentity?) async throws {
-        if let identity {
-            await air?.registerPhone(address: identity.canonicalAddress)
-        }
-    }
+    func useHostIdentity(_ identity: MeshPublicIdentity?) async throws {}
 
     func useMeshSession(_ session: MobileMeshSession?) async {
         meshSession = session
@@ -318,12 +236,6 @@ actor FakeRadioConnection: RadioConnection {
             try? await session.registerChannels(
                 channels: registeredChannels.values.map(\.record)
             )
-        }
-        if let air {
-            await air.attach { [weak self] records in
-                guard let self else { return }
-                Task { await self.receiveAirFrames(records) }
-            }
         }
         pump()
     }
@@ -564,16 +476,6 @@ actor FakeRadioConnection: RadioConnection {
     /// tell "this phone" apart from any other administrator.
     func nodePublicKey() async -> Data? { FakeManagedDevice.phoneKey }
 
-    /// Make every remote-management operation report a device out of
-    /// reach, which is the state these screens are built to survive.
-    ///
-    /// The canned device answers by default, because a preview of a
-    /// settings screen that can only show a timeout is a preview of
-    /// nothing.
-    func setRemoteDeviceReachable(_ reachable: Bool) {
-        remoteDeviceReachable = reachable
-    }
-
     func fetchRemoteProperties(
         peerAddress: String,
         propertyIDs: [UInt32],
@@ -797,10 +699,8 @@ actor FakeRadioConnection: RadioConnection {
         case id.wifiScanning:
             guard write.value.first == 1 else { return .store }
             // Nothing to scan with while the radio is off, which is what
-            // `STATUS_INVALID_STATE` says. A device that only ever scans
-            // has no station to have switched off.
-            guard !managedDevice.joinsNetworks
-                || managedDevice.values[id.wifiEnabled]?.first == 1
+            // `STATUS_INVALID_STATE` says.
+            guard managedDevice.values[id.wifiEnabled]?.first == 1
             else { return .refused(4) }
             // The scan raises the flag itself, on its own announcement,
             // so this write is answered rather than stored.
@@ -870,7 +770,6 @@ actor FakeRadioConnection: RadioConnection {
     /// them would never render either.
     private func settleLink(up: Bool) async {
         let id = ulcpProperties
-        guard managedDevice.joinsNetworks else { return }
         guard up else {
             setLink(Data([0, 0]))
             setFamilies(state: 1)
@@ -998,12 +897,10 @@ actor FakeRadioConnection: RadioConnection {
     /// property it was asked for.
     private static let propertyNotFound: UInt32 = 13
 
-    /// Refuse when the canned device is switched out of reach, and
-    /// otherwise take long enough that a screen's in-flight state is
-    /// visible rather than a flicker. Canceling the caller ends the wait,
-    /// as it does over the air.
+    /// Take long enough that a screen's in-flight state is visible rather
+    /// than a flicker. Canceling the caller ends the wait, as it does over
+    /// the air.
     private func answerAsIfOverTheAir() async throws {
-        guard remoteDeviceReachable else { throw RemoteManagementError.noAnswer }
         try await Task.sleep(for: .milliseconds(400))
     }
 
@@ -1230,24 +1127,14 @@ actor FakeRadioConnection: RadioConnection {
     // MARK: - Mesh session pump
 
     /// Drain the Rust session the way a real radio link would: transmitted
-    /// frames complete instantly (a fake radio's airtime is free), traffic
-    /// goes to the air, and what the stored chat changed surfaces to the
+    /// frames complete instantly, since a fake radio's airtime is free and
+    /// nobody hears it, and what the stored chat changed surfaces to the
     /// app.
     func pump() {
         guard let meshSession else { return }
         let update = meshSession.pollUpdate()
-        if !update.outboundFrames.isEmpty {
-            let transmitted = !transmissionsFail
-            for frame in update.outboundFrames {
-                try? meshSession.completeOutboundFrame(
-                    frameId: frame.id,
-                    transmitted: transmitted
-                )
-            }
-            // Frames that never went out never reach the air either.
-            if transmitted {
-                queueForAir(update.outboundFrames.map(\.data))
-            }
+        for frame in update.outboundFrames {
+            try? meshSession.completeOutboundFrame(frameId: frame.id, transmitted: true)
         }
         if let meet = update.meet {
             publishMeetState(meet)
@@ -1256,30 +1143,6 @@ actor FakeRadioConnection: RadioConnection {
             publishForwardSecretConversations(Set(addresses))
         }
         yieldChatChanges(from: update)
-    }
-
-    private func queueForAir(_ frames: [Data]) {
-        guard air != nil, !frames.isEmpty else { return }
-        airOutbox.append(contentsOf: frames)
-        guard airDrainer == nil else { return }
-        airDrainer = Task { await drainAir() }
-    }
-
-    private func drainAir() async {
-        while !airOutbox.isEmpty {
-            let frame = airOutbox.removeFirst()
-            await air?.transmit(frame)
-        }
-        airDrainer = nil
-    }
-
-    /// Frames the surrounding mesh sends back to this radio.
-    private func receiveAirFrames(_ records: [MobileMeshRxRecord]) {
-        guard let meshSession else { return }
-        for record in records {
-            try? meshSession.receive(frame: record)
-        }
-        pump()
     }
 
     /// The core stores its own chat; what it changed is all that comes
@@ -1331,8 +1194,7 @@ private final class FakeMeshSessionWakeListener: MobileMeshWakeListener, @unchec
 /// coarse cell, so the map has a reported pin to draw with its uncertainty;
 /// one is a bare two-byte hint with a signal and nothing else; the second
 /// page holds a named node without a position and an identity-only entry
-/// nobody has heard. The staged repeater is excluded from the staged air,
-/// so this is where its listing comes from.
+/// nobody has heard.
 enum FakePeerRepeatersListing {
     /// The cursor the first page hands back, shaped like the responder's
     /// own: a table generation and an index.
@@ -1456,20 +1318,10 @@ struct FakeManagedDevice: Sendable {
         return answer
     }
 
-    /// Whether this device has a station to join networks with, or only
-    /// the receiver to hear them.
-    ///
-    /// The second kind is a real device: a tracker that scans for access
-    /// points to fix its position by has every reason to report what it
-    /// heard and no way to associate with any of it. The Wi-Fi screen has
-    /// to render for both, so both are stageable.
-    let joinsNetworks: Bool
-
-    init(scanOnly: Bool = false) {
-        joinsNetworks = !scanOnly
+    init() {
         let id = ulcpProperties
         values = [
-            id.caps: scanOnly ? Self.scanOnlyCapabilities : Self.capabilities,
+            id.caps: Self.capabilities,
             id.deviceVersion: Data("fw-2026.08.11".utf8),
             id.deviceModel: Data("T1000-E".utf8),
             id.deviceName: Data("Ridgeline".utf8),
@@ -1560,12 +1412,9 @@ struct FakeManagedDevice: Sendable {
             id.meshcoreRegions: Data(),
             id.devPeers: Self.peerKey,
             id.devAdmins: Self.phoneKey + Self.otherAdminKey,
-            // A scan every device can run, whether or not it can join
-            // what it hears.
             id.wifiScanning: Data([0]),
             id.wifiScanResults: Data(),
         ]
-        guard joinsNetworks else { return }
         for (property, value) in Self.stationValues { values[property] = value }
         values[id.bridgeEnabled] = Data([0])
         values[id.bridgeHost] = Data([0])
@@ -1796,14 +1645,6 @@ struct FakeManagedDevice: Sendable {
     private static let capabilities = Data([
         0x10, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F, 0x3D, 0x31, 0x32,
         0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x3A, 0x3E, 0x3F, 0x83, 0x04,
-    ])
-
-    /// The same tracker with a receiver and no station: it lists Wi-Fi
-    /// scanning (53) and neither the station nor either IP family, which
-    /// is the shape a device that scans to place itself really has.
-    private static let scanOnlyCapabilities = Data([
-        0x10, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F, 0x3D, 0x31, 0x32,
-        0x33, 0x34, 0x35, 0x3E, 0x83, 0x04,
     ])
 
     /// The local network settings that fall back to a default, at that

@@ -11,12 +11,15 @@ documentation = "https://darconeous.github.io/umsh/docs/rust/umsh_node_mgmt/"
 default = ["std"]
 std = ["alloc", "node", "umsh-core/std", "umsh-mac/std", "umsh-node/std"]
 alloc = []
+# A device admitting requests straight from the packets the MAC hands
+# its receive path (`device_adapter::admit`).
+receive = ["dep:umsh-mac"]
 # The administrator half bound to a node: everything a device needs is
 # in the sans-IO engines, so a firmware build never pulls this in.
 # `umsh-node`'s PFS handling is behind its own `software-crypto`, and a
 # `Host` is not buildable without it.
 node = [
-    "dep:umsh-mac",
+    "receive",
     "dep:umsh-node",
     "umsh-node/software-crypto",
     "alloc",

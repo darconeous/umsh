@@ -122,13 +122,16 @@ enum Role {
 }
 
 impl Role {
-    fn code(self) -> u8 {
+    fn node_role(self) -> umsh_node::NodeRole {
         match self {
             Self::Repeater => umsh_node::NodeRole::Repeater,
             Self::Chat => umsh_node::NodeRole::Chat,
             Self::Tracker => umsh_node::NodeRole::Tracker,
         }
-        .as_byte()
+    }
+
+    fn code(self) -> u8 {
+        self.node_role().as_byte()
     }
 
     fn kind(self) -> MobileStoredNodeKind {

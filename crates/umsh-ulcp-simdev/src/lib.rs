@@ -521,6 +521,15 @@ impl SimulatedPlatform {
         }
     }
 
+    /// A platform holding `secret` as its device identity, for a device
+    /// whose key must match a node it stands beside.
+    pub fn with_identity(secret: [u8; 32]) -> Self {
+        Self {
+            identity: Some(secret),
+            ..Self::new()
+        }
+    }
+
     /// Append a sensor without changing any existing index or name.
     pub fn append_temperature_sensor(&mut self, name: &str, value: u16) -> Result<usize, Status> {
         if !umsh_ulcp::temperature::valid_name(name) {

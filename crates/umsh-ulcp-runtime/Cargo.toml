@@ -88,6 +88,7 @@ device-node = [
     "dep:umsh-mac",
     "dep:umsh-node",
     "dep:umsh-node-mgmt",
+    "umsh-node-mgmt/receive",
     "dep:umsh-sync",
     "umsh-hal/embassy",
     "dep:rand",

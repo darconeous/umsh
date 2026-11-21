@@ -26,8 +26,9 @@ use embassy_time::{Duration, Instant, Timer};
 use umsh_core::{ChannelKey, PayloadType, PublicKey};
 use umsh_hal::CounterStore;
 use umsh_mac::SendOptions;
-use umsh_node::{PacketFamily, ReceivedPacketRef};
-use umsh_node_mgmt::device::{DeviceEngine, Dispatch, Ingress};
+use umsh_node::ReceivedPacketRef;
+use umsh_node_mgmt::device::{Dispatch, Ingress};
+use umsh_node_mgmt::device_adapter::{self, Admission, Admitted, Refusal, Responder};
 use umsh_ulcp_device::MAX_DEV_ADMINS;
 
 use crate::device_node::{DeviceNode, NodeMutex};
@@ -96,17 +97,7 @@ const _: () = assert!(
 
 /// One admitted request on its way to the responder.
 struct Request {
-    from: [u8; 32],
-    /// `from` is listed in `PROP_DEV_ADMINS`; otherwise it is the host.
-    listed_admin: bool,
-    /// The channel the request arrived on, when it came as a blind unicast.
-    /// The response follows it back rather than naming both parties in the
-    /// clear.
-    channel: Option<ChannelKey>,
-    /// The request's `ack_mic`, which the response carries back so the
-    /// administrator's MAC can take the response as the acknowledgment
-    /// should the standalone one be lost.
-    ack_mic: Option<[u8; 4]>,
+    admitted: Admitted,
     payload: heapless::Vec<u8, ADMIN_PAYLOAD_MAX>,
 }
 
@@ -191,82 +182,41 @@ pub fn publish_host_key(key: Option<[u8; 32]>) {
     HOST_KEY.lock(|cell| *cell.borrow_mut() = key);
 }
 
-/// Whether an authenticated request from `from` is heard: `Some(true)`
-/// from a listed administrator, `Some(false)` from the host identity that
-/// is not one, `None` from anyone else.
-fn authorize(from: &[u8; 32], admins: &[[u8; 32]], host: Option<&[u8; 32]>) -> Option<bool> {
-    if admins.contains(from) {
-        Some(true)
-    } else if host == Some(from) {
-        Some(false)
-    } else {
-        None
-    }
-}
-
-/// [`authorize`] against the published administrator list and host key.
-fn admission(from: &[u8; 32]) -> Option<bool> {
+/// `device_adapter::authorize` against the published administrator list
+/// and host key.
+fn authorize(from: &[u8; 32]) -> Option<bool> {
     ADMINS.lock(|admins| {
-        HOST_KEY.lock(|host| authorize(from, &admins.borrow(), host.borrow().as_ref()))
+        HOST_KEY
+            .lock(|host| device_adapter::authorize(from, &admins.borrow(), host.borrow().as_ref()))
     })
 }
 
 /// Decide whether an arriving packet is a Node Management Request this
-/// device will act on, and queue it if so.
+/// device will act on (`device_adapter::admit`), and queue it if so.
 ///
 /// Registered as a receive handler at bring-up; returns `false` always,
 /// so the packet still reaches every other observer. Everything refused
-/// is refused silently—an unlisted sender learns nothing about whether
-/// the device is manageable, not even that it declined to say.
+/// is refused silently, and counted.
 pub fn admit(packet: &ReceivedPacketRef<'_>) {
-    match packet.payload_type() {
-        PayloadType::NodeManagementRequest => {}
-        // A device never solicits anything, so a response addressed to it
-        // is either misdirected or an attempt to confuse it.
-        PayloadType::NodeManagementResponse => {
-            RESPONSES_DROPPED.fetch_add(1, Ordering::Relaxed);
+    let admitted = match device_adapter::admit(packet, authorize, ADMIN_PAYLOAD_MAX) {
+        Admission::Ignored => return,
+        Admission::Refused(refusal) => {
+            match refusal {
+                Refusal::Response => &RESPONSES_DROPPED,
+                Refusal::NotUnicast => &NOT_UNICAST,
+                Refusal::Unauthorized => &UNAUTHORIZED,
+                Refusal::Oversize => &OVERSIZE,
+            }
+            .fetch_add(1, Ordering::Relaxed);
             return;
         }
-        _ => return,
-    }
-    if !matches!(
-        packet.packet_family(),
-        PacketFamily::Unicast | PacketFamily::BlindUnicast
-    ) {
-        NOT_UNICAST.fetch_add(1, Ordering::Relaxed);
-        return;
-    }
-    // Both conditions matter and neither implies the other: an
-    // unauthenticated source could claim any key, and an authenticated
-    // one that is not listed is simply not an administrator here. The
-    // host identity is heard too, for the one write it may make; the
-    // session holds it to that.
-    let Some(from) = packet.from_key().filter(|_| packet.source_authenticated()) else {
-        UNAUTHORIZED.fetch_add(1, Ordering::Relaxed);
-        return;
+        Admission::Admitted(admitted) => admitted,
     };
-    let Some(listed_admin) = admission(&from.0) else {
-        UNAUTHORIZED.fetch_add(1, Ordering::Relaxed);
-        return;
-    };
+    // Admission refused anything past ADMIN_PAYLOAD_MAX, this capacity.
     let mut payload = heapless::Vec::new();
-    if payload.extend_from_slice(packet.payload()).is_err() {
-        // Larger than this device can answer within. Dropped rather than
-        // truncated: a truncated envelope would be answered
-        // STATUS_PARSE_ERROR, which is a worse explanation than silence.
-        OVERSIZE.fetch_add(1, Ordering::Relaxed);
-        return;
-    }
-    if REQUESTS
-        .try_send(Request {
-            from: from.0,
-            listed_admin,
-            channel: packet.channel().map(|c| *c.key),
-            ack_mic: packet.ack_mic(),
-            payload,
-        })
-        .is_err()
-    {
+    let copied = payload.extend_from_slice(packet.payload());
+    debug_assert!(copied.is_ok(), "admission let an oversize request by");
+    if REQUESTS.try_send(Request { admitted, payload }).is_err() {
         BUSY.fetch_add(1, Ordering::Relaxed);
     }
 }
@@ -281,22 +231,23 @@ pub async fn responder_loop<CS: CounterStore + 'static, M: RawMutex + 'static>(
     input: &'static InputChannel<M>,
     nonce: u16,
 ) {
-    let mut engine: DeviceEngine<ADMIN_PAYLOAD_MAX, ADMIN_POOL> = DeviceEngine::new(nonce);
+    let mut responder: Responder<ADMIN_PAYLOAD_MAX, ADMIN_POOL> = Responder::new(nonce);
     let mut out = [0u8; ADMIN_PAYLOAD_MAX];
     loop {
         let request = REQUESTS.receive().await;
         let now_ms = Instant::now().as_millis();
+        let admitted = &request.admitted;
         let mut completion = None;
-        let len = match engine.begin(&request.from, &request.payload, now_ms, &mut out) {
+        let len = match responder.begin(&admitted.from, &request.payload, now_ms, &mut out) {
             Ingress::Drop(reason) => {
                 debug_log(format_args!("admin: dropped {reason:?}"));
                 continue;
             }
             Ingress::Respond { len } => Some(len),
             Ingress::Dispatch(dispatch) => {
-                let reply = serve(input, &request, &dispatch).await;
+                let reply = serve(input, admitted, &dispatch).await;
                 completion = reply.completion;
-                match engine.complete(&reply.frame, &mut out) {
+                match responder.complete(&reply.frame, &mut out) {
                     Ok(len) => len,
                     Err(error) => {
                         if let Some(completion) = completion {
@@ -316,9 +267,9 @@ pub async fn responder_loop<CS: CounterStore + 'static, M: RawMutex + 'static>(
         let Some(len) = len else { continue };
         let sent = respond(
             &node,
-            &request.from,
-            request.channel,
-            request.ack_mic,
+            &admitted.from,
+            admitted.channel,
+            admitted.ack_mic,
             &out[..len],
             completion,
         )
@@ -326,7 +277,7 @@ pub async fn responder_loop<CS: CounterStore + 'static, M: RawMutex + 'static>(
         if let Some(completion) = completion
             && !completion.complete(sent)
         {
-            engine.fail_retained(&request.from, [request.payload[0], request.payload[1]]);
+            responder.unsent(&admitted.from, &request.payload);
         }
     }
 }
@@ -338,7 +289,7 @@ pub async fn responder_loop<CS: CounterStore + 'static, M: RawMutex + 'static>(
 /// reset—so this never has to time out.
 async fn serve<M: RawMutex + 'static>(
     input: &'static InputChannel<M>,
-    request: &Request,
+    request: &Admitted,
     dispatch: &Dispatch<'_>,
 ) -> AdminReply {
     let mut frame = AdminFrame::new();
@@ -437,22 +388,7 @@ async fn respond<CS: CounterStore + 'static>(
 mod tests {
     use super::*;
 
-    const ADMIN: [u8; 32] = [0xA1; 32];
     const HOST: [u8; 32] = [0xC4; 32];
-    const STRANGER: [u8; 32] = [0x55; 32];
-
-    #[test]
-    fn the_host_is_heard_beside_the_administrators() {
-        let admins = [ADMIN];
-        assert_eq!(authorize(&ADMIN, &admins, Some(&HOST)), Some(true));
-        assert_eq!(authorize(&HOST, &admins, Some(&HOST)), Some(false));
-        assert_eq!(authorize(&STRANGER, &admins, Some(&HOST)), None);
-        // With no host configured, only administrators are heard.
-        assert_eq!(authorize(&HOST, &admins, None), None);
-        assert_eq!(authorize(&ADMIN, &admins, None), Some(true));
-        // A host that is also listed is heard as an administrator.
-        assert_eq!(authorize(&HOST, &[HOST], Some(&HOST)), Some(true));
-    }
 
     /// The driver's publication is what admission reads: a host key
     /// published is heard, and one replaced or erased stops being heard.
@@ -460,12 +396,12 @@ mod tests {
     fn admission_follows_the_published_host_key() {
         let other = [0x77; 32];
         publish_host_key(Some(HOST));
-        assert_eq!(admission(&HOST), Some(false));
-        assert_eq!(admission(&other), None);
+        assert_eq!(authorize(&HOST), Some(false));
+        assert_eq!(authorize(&other), None);
         publish_host_key(Some(other));
-        assert_eq!(admission(&HOST), None);
-        assert_eq!(admission(&other), Some(false));
+        assert_eq!(authorize(&HOST), None);
+        assert_eq!(authorize(&other), Some(false));
         publish_host_key(None);
-        assert_eq!(admission(&other), None);
+        assert_eq!(authorize(&other), None);
     }
 }

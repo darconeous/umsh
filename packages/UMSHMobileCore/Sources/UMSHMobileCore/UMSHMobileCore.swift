@@ -7033,11 +7033,11 @@ public func FfiConverterTypeMobileRegionDatabase_lower(_ value: MobileRegionData
 
 
 /**
- * The staged mesh: a radio for the phone, and the peers around it.
+ * The staged mesh: a radio for the phone, and the nodes around it.
  *
- * The staging controls are its methods, and each acts through the first
- * staged peer, the one that speaks. Dropping the air, or calling
- * [`Self::stop`], ends the radio and the peers.
+ * The staging controls are its methods. Those that speak act through the
+ * first staged peer. Dropping the air, or calling [`Self::stop`], ends the
+ * radio and the nodes.
  */
 public protocol MobileStagingAirProtocol: AnyObject, Sendable {
 
@@ -7089,10 +7089,20 @@ public protocol MobileStagingAirProtocol: AnyObject, Sendable {
     func radio()  -> MobileRadioDriver
 
     /**
-     * Stand the peers up afresh, with no frame counters: for a phone whose
-     * identity is starting over.
+     * The staged radio's link identifier, which its snapshot reports.
      */
-    func reset() async throws
+    func radioLinkId()  -> String
+
+    /**
+     * What the staged radio is called until the phone renames it.
+     */
+    func radioName()  -> String
+
+    /**
+     * While not `reachable`, the managed repeater neither hears nor is
+     * heard, so whatever asks it across the mesh meets silence.
+     */
+    func setRemoteDeviceReachable(reachable: Bool)
 
     /**
      * While `failing`, every transmission the staged radio makes fails.
@@ -7101,17 +7111,17 @@ public protocol MobileStagingAirProtocol: AnyObject, Sendable {
 
     /**
      * Stop the air. The radio's link goes down, and the radio and the
-     * peers end. It cannot be started again; make another.
+     * nodes end. It cannot be started again; make another.
      */
     func stop()
 
 }
 /**
- * The staged mesh: a radio for the phone, and the peers around it.
+ * The staged mesh: a radio for the phone, and the nodes around it.
  *
- * The staging controls are its methods, and each acts through the first
- * staged peer, the one that speaks. Dropping the air, or calling
- * [`Self::stop`], ends the radio and the peers.
+ * The staging controls are its methods. Those that speak act through the
+ * first staged peer. Dropping the air, or calling [`Self::stop`], ends the
+ * radio and the nodes.
  */
 open class MobileStagingAir: MobileStagingAirProtocol, @unchecked Sendable {
     fileprivate let handle: UInt64
@@ -7165,14 +7175,17 @@ open class MobileStagingAir: MobileStagingAirProtocol, @unchecked Sendable {
 
 
     /**
-     * Start the staged mesh, keeping each peer's frame counters under
+     * Start the staged mesh, keeping each node's frame counters under
      * `state_dir`. The radio waits detached until [`Self::connect`].
+     * `wifi_scan_only` gives the managed repeater a receiver that scans
+     * and never joins.
      */
-public static func start(stateDir: String)throws  -> MobileStagingAir  {
+public static func start(stateDir: String, wifiScanOnly: Bool)throws  -> MobileStagingAir  {
     return try  FfiConverterTypeMobileStagingAir_lift(try rustCallWithError(FfiConverterTypeMobileStagingAirError_lift) {
         uniffiCallStatus in
     uniffi_umsh_mobile_core_fn_constructor_mobilestagingair_start(
-        FfiConverterString.lower(stateDir),uniffiCallStatus
+        FfiConverterString.lower(stateDir),
+        FfiConverterBool.lower(wifiScanOnly),uniffiCallStatus
     )
 })
 }
@@ -7316,23 +7329,40 @@ open func radio() -> MobileRadioDriver  {
 }
 
     /**
-     * Stand the peers up afresh, with no frame counters: for a phone whose
-     * identity is starting over.
+     * The staged radio's link identifier, which its snapshot reports.
      */
-open func reset()async throws   {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_umsh_mobile_core_fn_method_mobilestagingair_reset(
-                        self.uniffiCloneHandle()
-                )
-            },
-            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
-            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
-            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
-            liftFunc: { $0 },
-            errorHandler: FfiConverterTypeMobileStagingAirError_lift
-        )
+open func radioLinkId() -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilestagingair_radio_link_id(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * What the staged radio is called until the phone renames it.
+     */
+open func radioName() -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilestagingair_radio_name(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * While not `reachable`, the managed repeater neither hears nor is
+     * heard, so whatever asks it across the mesh meets silence.
+     */
+open func setRemoteDeviceReachable(reachable: Bool)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilestagingair_set_remote_device_reachable(
+            self.uniffiCloneHandle(),
+        FfiConverterBool.lower(reachable),uniffiCallStatus
+    )
+}
 }
 
     /**
@@ -7349,7 +7379,7 @@ open func setTransmissionsFailing(failing: Bool)  {try! rustCall() {
 
     /**
      * Stop the air. The radio's link goes down, and the radio and the
-     * peers end. It cannot be started again; make another.
+     * nodes end. It cannot be started again; make another.
      */
 open func stop()  {try! rustCall() {
         uniffiCallStatus in
@@ -25350,7 +25380,7 @@ enum MobileStagingAirError: Swift.Error, Equatable, Hashable, Foundation.Localiz
      */
     case Stopped
     /**
-     * No staged peer could be stood up.
+     * The speaking peer did not stand up.
      */
     case PeerUnavailable
     /**
@@ -32491,13 +32521,19 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilestagingair_radio() != 40582) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobilestagingair_reset() != 15463) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobilestagingair_radio_link_id() != 62548) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilestagingair_radio_name() != 47963) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilestagingair_set_remote_device_reachable() != 25516) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilestagingair_set_transmissions_failing() != 59180) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobilestagingair_stop() != 33025) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobilestagingair_stop() != 42919) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileappstore_erase_all_content() != 17594) {
@@ -32863,7 +32899,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_constructor_mobileregiondatabase_open() != 34206) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_constructor_mobilestagingair_start() != 23756) {
+    if (uniffi_umsh_mobile_core_checksum_constructor_mobilestagingair_start() != 40631) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_constructor_mobileappstore_open() != 2451) {

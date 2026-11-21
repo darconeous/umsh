@@ -1231,11 +1231,6 @@ final class AppRuntime {
         try? FileManager.default.removeItem(
             at: root.appendingPathComponent("CounterReservations", isDirectory: true)
         )
-        #if DEBUG
-        try? FileManager.default.removeItem(
-            at: root.appendingPathComponent("StagingAirCounters", isDirectory: true)
-        )
-        #endif
     }
 
     /// Forget every preference this phone has accumulated, so the next
@@ -3308,14 +3303,14 @@ final class AppRuntime {
     /// Staging only: a staged peer opens Add Peer, so it shows on Nearby,
     /// or asks the phone to exchange.
     func stagedPeerMeets(asking: Bool) {
-        guard let staging = radioConnection as? FakeRadioConnection else { return }
+        guard let staging = radioConnection as? StagingRadioConnection else { return }
         Task { await staging.stagedPeerMeets(asking: asking) }
     }
 
     /// Staging only: have a staged peer react to the phone's last message,
     /// after the same delay and for the same reason as a staged message.
     func stagedPeerReacts() {
-        guard let staging = radioConnection as? FakeRadioConnection else { return }
+        guard let staging = radioConnection as? StagingRadioConnection else { return }
         let glyph = ReactionEmoji.palette.randomElement()?.token ?? "+1"
         Task {
             let assertion = UIApplication.shared.beginBackgroundTask(
@@ -3332,7 +3327,7 @@ final class AppRuntime {
     /// Staging only: have a staged peer reply to the phone's last message,
     /// after the same delay as a staged reaction.
     func stagedPeerReplies() {
-        guard let staging = radioConnection as? FakeRadioConnection else { return }
+        guard let staging = radioConnection as? StagingRadioConnection else { return }
         Task {
             let assertion = UIApplication.shared.beginBackgroundTask(
                 withName: "umsh.staging.delayed-reply"
@@ -3348,15 +3343,15 @@ final class AppRuntime {
     /// Staging only: make the radio drop everything handed to it, so sends
     /// fail the way they would over a link that has gone.
     func stagedDropTransmissions(_ dropping: Bool) {
-        guard let staging = radioConnection as? FakeRadioConnection else { return }
-        Task { await staging.setTransmissionsFailing(dropping) }
+        guard let staging = radioConnection as? StagingRadioConnection else { return }
+        staging.setTransmissionsFailing(dropping)
     }
 
-    /// Staging only: put every canned remote device out of reach, so the
+    /// Staging only: put the managed remote device out of reach, so the
     /// screens that ask across the mesh show what silence looks like.
     func stagedRemoteDevicesReachable(_ reachable: Bool) {
-        guard let staging = radioConnection as? FakeRadioConnection else { return }
-        Task { await staging.setRemoteDeviceReachable(reachable) }
+        guard let staging = radioConnection as? StagingRadioConnection else { return }
+        staging.setRemoteDeviceReachable(reachable)
     }
 
     /// Staging only: have a staged peer message this phone after a short
@@ -3370,13 +3365,13 @@ final class AppRuntime {
     /// Staging only: have a staged peer say three things on the staged channel
     /// with the middle one lost on the air, leaving a gap in the transcript.
     func stagedPeerLosesChannelMessage() {
-        guard let staging = radioConnection as? FakeRadioConnection else { return }
+        guard let staging = radioConnection as? StagingRadioConnection else { return }
         let lines = Self.stagedPeerLines.shuffled()
         Task { await staging.stagedPeerLosesChannelMessage(bodies: (lines[0], lines[1], lines[2])) }
     }
 
     func stagedPeerSendsMessage(onChannel: Bool) {
-        guard let staging = radioConnection as? FakeRadioConnection else { return }
+        guard let staging = radioConnection as? StagingRadioConnection else { return }
         let line = Self.stagedPeerLines[
             Int.random(in: 0..<Self.stagedPeerLines.count)
         ]

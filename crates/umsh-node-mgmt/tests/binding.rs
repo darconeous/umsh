@@ -14,7 +14,8 @@
 use umsh_crypto::CryptoEngine;
 use umsh_crypto::software::{SoftwareAes, SoftwareSha256};
 use umsh_node_mgmt::admin::{Exchange, Outcome, RESPONSE_WAIT_MIN_MS, Reassembly, Step};
-use umsh_node_mgmt::device::{DeviceEngine, Ingress};
+use umsh_node_mgmt::device::Dispatch;
+use umsh_node_mgmt::{Answer, Responder, authorize};
 use umsh_ulcp::frame::{Cmd, Frame, MultiEntries};
 use umsh_ulcp::ids::prop;
 use umsh_ulcp::status::Status;
@@ -42,7 +43,7 @@ const STRANGER_KEY: [u8; 32] = [0x5F; 32];
 /// device engine, and a real session behind them.
 struct Device<const PAYLOAD: usize> {
     session: Session<SoftwareAes, SoftwareSha256>,
-    engine: DeviceEngine<PAYLOAD, { 2 * MULTI_MAX }, 2>,
+    responder: Responder<PAYLOAD, { 2 * MULTI_MAX }, 2>,
     /// The mirrored `PROP_DEV_ADMINS`, as the firmware's receive path
     /// mirrors it: authorization happens before the session is reached.
     admins: Vec<[u8; 32]>,
@@ -50,11 +51,18 @@ struct Device<const PAYLOAD: usize> {
     /// from the retained response. The at-most-once property is measured
     /// here.
     executed: u32,
-    battery_samples: u32,
-    temperature_samples: u32,
     /// Requests refused before the engine saw them.
     unauthorized: u32,
-    /// The peripheral on the simulated bus, counting what reached it.
+    peripherals: Peripherals,
+}
+
+/// What stands behind the session's deferred round trips, counting what
+/// reached it.
+#[derive(Default)]
+struct Peripherals {
+    battery_samples: u32,
+    temperature_samples: u32,
+    /// The peripheral on the simulated bus.
     i2c: umsh_ulcp_simdev::SimulatedI2c,
 }
 
@@ -126,13 +134,11 @@ impl<const PAYLOAD: usize> Device<PAYLOAD> {
         session.attach(false);
         Self {
             session,
-            engine: DeviceEngine::new(0x5AA5),
+            responder: Responder::new(0x5AA5),
             admins: Vec::new(),
             executed: 0,
-            battery_samples: 0,
-            temperature_samples: 0,
             unauthorized: 0,
-            i2c: Default::default(),
+            peripherals: Peripherals::default(),
         }
     }
 
@@ -195,142 +201,24 @@ impl<const PAYLOAD: usize> Device<PAYLOAD> {
     /// response payload, or `None` where the device says nothing at all.
     fn deliver(&mut self, from: &[u8; 32], payload: &[u8], now_ms: u64) -> Option<Vec<u8>> {
         // Authorization, exactly as the receive path applies it: an
-        // unlisted sender is dropped with accounting and no response.
-        if !self.admins.iter().any(|listed| listed == from) {
+        // unlisted sender is dropped with accounting and no response. No
+        // host is configured, so only administrators are heard.
+        if authorize(from, &self.admins, None).is_none() {
             self.unauthorized += 1;
             return None;
         }
         let mut out = [0u8; PAYLOAD];
-        let len = match self.engine.begin(from, payload, now_ms, &mut out) {
-            Ingress::Drop(_) => return None,
-            Ingress::Respond { len } => Some(len),
-            Ingress::Dispatch(dispatch) => {
+        let answer = self
+            .responder
+            .exchange(from, payload, now_ms, &mut out, |dispatch| {
                 self.executed += 1;
-                let reply = self.serve(&dispatch, now_ms);
-                self.engine.complete(&reply, &mut out).expect("complete")
-            }
-        };
-        len.map(|len| out[..len].to_vec())
-    }
-
-    /// Run one frame through the session, serving the deferred platform
-    /// round trips the way the driver's event loop does.
-    fn serve(&mut self, dispatch: &umsh_node_mgmt::device::Dispatch<'_>, now_ms: u64) -> Vec<u8> {
-        let mut emitted: Vec<Vec<u8>> = Vec::new();
-        let mut pending = self.session.handle_admin_frame(
-            dispatch.frame,
-            now_ms,
-            dispatch.budget,
-            &mut |bytes: &[u8]| emitted.push(bytes.to_vec()),
-        );
-        while let Some(effect) = pending.take() {
-            match effect {
-                Effect::SampleBatteryGroup {
-                    tid,
-                    key,
-                    fields: _,
-                } => {
-                    use umsh_ulcp::battery_diagnostics::{Sample, Value};
-                    self.battery_samples += 1;
-                    let mut sample = Sample::default();
-                    sample.snapshot = Ok(umsh_ulcp::BatteryStatus::default());
-                    let mut config = umsh_ulcp::battery_gauge_config::Config::default();
-                    config.set(4, self.battery_samples).unwrap();
-                    sample.gauge_config = Ok(config);
-                    let mut telemetry = umsh_ulcp::battery_gauge_telemetry::Telemetry::default();
-                    telemetry.raw[11] = self.battery_samples as u16;
-                    sample.gauge_telemetry = Ok(telemetry);
-                    sample.set(
-                        prop::BATTERY_CURRENT,
-                        Ok(Some(Value::Current(-100 * self.battery_samples as i32))),
-                    );
-                    self.session
-                        .respond_battery_group(tid, key, sample, &mut |b: &[u8]| {
-                            emitted.push(b.to_vec())
-                        });
-                }
-                Effect::SampleBattery { tid } => self.session.respond_battery(
-                    tid,
-                    Ok(umsh_ulcp::BatteryStatus::default()),
-                    &mut |bytes: &[u8]| emitted.push(bytes.to_vec()),
-                ),
-                Effect::ReadTime { tid } => {
-                    self.session
-                        .respond_time(tid, Some(1_700_000_000), &mut |bytes: &[u8]| {
-                            emitted.push(bytes.to_vec())
-                        })
-                }
-                Effect::SampleTemperatures { tid } => {
-                    self.temperature_samples += 1;
-                    self.session
-                        .respond_temperatures(tid, Ok(&[2981, 0xffff]), &mut |bytes| {
-                            emitted.push(bytes.to_vec())
-                        });
-                }
-                Effect::ReadTemperatureNames { tid } => self.session.respond_temperature_names(
-                    tid,
-                    Ok(b"\x03Die\x03Die"),
-                    &mut |bytes| emitted.push(bytes.to_vec()),
-                ),
-                Effect::SampleIlluminance { tid } => {
-                    self.session
-                        .respond_illuminance(tid, Some(1234), &mut |bytes: &[u8]| {
-                            emitted.push(bytes.to_vec())
-                        })
-                }
-                Effect::SampleRssi { tid } => {
-                    self.session
-                        .respond_rssi(tid, Err(()), &mut |bytes: &[u8]| {
-                            emitted.push(bytes.to_vec())
-                        })
-                }
-                Effect::SaveSnapshot { tid } => {
-                    self.session.respond_save(tid, Ok(()), &mut |bytes: &[u8]| {
-                        emitted.push(bytes.to_vec())
-                    })
-                }
-                Effect::ClearBleBonds { tid } => {
-                    self.session.set_ble_bond_count(0, &mut |_| {});
-                    self.session
-                        .respond_ble_bond_count(tid, Ok(()), &mut |bytes: &[u8]| {
-                            emitted.push(bytes.to_vec())
-                        })
-                }
-                Effect::SetBlePairing { tid, open } => {
-                    self.session
-                        .respond_ble_pairing(tid, Ok(open), &mut |bytes: &[u8]| {
-                            emitted.push(bytes.to_vec())
-                        })
-                }
-                Effect::I2cTransfer { tid } => {
-                    let request = self.session.i2c_request();
-                    let result = self.i2c.transact(request.addr, request);
-                    self.session.respond_i2c(
-                        tid,
-                        result.as_deref().map_err(|status| *status),
-                        &mut |bytes: &[u8]| emitted.push(bytes.to_vec()),
-                    );
-                }
-                Effect::I2cScan { tid } => {
-                    let found = self.i2c.scan(self.session.i2c_scan_request());
-                    self.session
-                        .respond_i2c(tid, Ok(&found), &mut |bytes: &[u8]| {
-                            emitted.push(bytes.to_vec())
-                        });
-                }
-                // Radio and platform effects with no reply of their own.
-                _ => {}
-            }
-            pending = self
-                .session
-                .resume_multi(now_ms, &mut |bytes: &[u8]| emitted.push(bytes.to_vec()));
+                serve(&mut self.session, &mut self.peripherals, dispatch, now_ms)
+            });
+        match answer {
+            Answer::Dropped(_) => None,
+            Answer::Respond(len) => len.map(|len| out[..len].to_vec()),
+            Answer::Unanswerable(error) => panic!("complete: {error:?}"),
         }
-        self.session.end_admin_exchange();
-        assert!(
-            emitted.len() <= 1,
-            "an administrative exchange answers with at most one frame"
-        );
-        emitted.pop().unwrap_or_default()
     }
 
     /// Read a property over the local binding, for checking what a
@@ -345,6 +233,123 @@ impl<const PAYLOAD: usize> Device<PAYLOAD> {
             });
         value_of(&emitted[0])
     }
+}
+
+/// Run one frame through the session, serving the deferred platform
+/// round trips the way the driver's event loop does.
+fn serve(
+    session: &mut Session<SoftwareAes, SoftwareSha256>,
+    peripherals: &mut Peripherals,
+    dispatch: &Dispatch<'_>,
+    now_ms: u64,
+) -> Vec<u8> {
+    let mut emitted: Vec<Vec<u8>> = Vec::new();
+    let mut pending = session.handle_admin_frame(
+        dispatch.frame,
+        now_ms,
+        dispatch.budget,
+        &mut |bytes: &[u8]| emitted.push(bytes.to_vec()),
+    );
+    while let Some(effect) = pending.take() {
+        match effect {
+            Effect::SampleBatteryGroup {
+                tid,
+                key,
+                fields: _,
+            } => {
+                use umsh_ulcp::battery_diagnostics::{Sample, Value};
+                peripherals.battery_samples += 1;
+                let mut sample = Sample::default();
+                sample.snapshot = Ok(umsh_ulcp::BatteryStatus::default());
+                let mut config = umsh_ulcp::battery_gauge_config::Config::default();
+                config.set(4, peripherals.battery_samples).unwrap();
+                sample.gauge_config = Ok(config);
+                let mut telemetry = umsh_ulcp::battery_gauge_telemetry::Telemetry::default();
+                telemetry.raw[11] = peripherals.battery_samples as u16;
+                sample.gauge_telemetry = Ok(telemetry);
+                sample.set(
+                    prop::BATTERY_CURRENT,
+                    Ok(Some(Value::Current(
+                        -100 * peripherals.battery_samples as i32,
+                    ))),
+                );
+                session.respond_battery_group(tid, key, sample, &mut |b: &[u8]| {
+                    emitted.push(b.to_vec())
+                });
+            }
+            Effect::SampleBattery { tid } => session.respond_battery(
+                tid,
+                Ok(umsh_ulcp::BatteryStatus::default()),
+                &mut |bytes: &[u8]| emitted.push(bytes.to_vec()),
+            ),
+            Effect::ReadTime { tid } => {
+                session.respond_time(tid, Some(1_700_000_000), &mut |bytes: &[u8]| {
+                    emitted.push(bytes.to_vec())
+                })
+            }
+            Effect::SampleTemperatures { tid } => {
+                peripherals.temperature_samples += 1;
+                session.respond_temperatures(tid, Ok(&[2981, 0xffff]), &mut |bytes| {
+                    emitted.push(bytes.to_vec())
+                });
+            }
+            Effect::ReadTemperatureNames { tid } => {
+                session.respond_temperature_names(tid, Ok(b"\x03Die\x03Die"), &mut |bytes| {
+                    emitted.push(bytes.to_vec())
+                })
+            }
+            Effect::SampleIlluminance { tid } => {
+                session.respond_illuminance(tid, Some(1234), &mut |bytes: &[u8]| {
+                    emitted.push(bytes.to_vec())
+                })
+            }
+            Effect::SampleRssi { tid } => {
+                session.respond_rssi(tid, Err(()), &mut |bytes: &[u8]| {
+                    emitted.push(bytes.to_vec())
+                })
+            }
+            Effect::SaveSnapshot { tid } => {
+                session.respond_save(tid, Ok(()), &mut |bytes: &[u8]| {
+                    emitted.push(bytes.to_vec())
+                })
+            }
+            Effect::ClearBleBonds { tid } => {
+                session.set_ble_bond_count(0, &mut |_| {});
+                session.respond_ble_bond_count(tid, Ok(()), &mut |bytes: &[u8]| {
+                    emitted.push(bytes.to_vec())
+                })
+            }
+            Effect::SetBlePairing { tid, open } => {
+                session.respond_ble_pairing(tid, Ok(open), &mut |bytes: &[u8]| {
+                    emitted.push(bytes.to_vec())
+                })
+            }
+            Effect::I2cTransfer { tid } => {
+                let request = session.i2c_request();
+                let result = peripherals.i2c.transact(request.addr, request);
+                session.respond_i2c(
+                    tid,
+                    result.as_deref().map_err(|status| *status),
+                    &mut |bytes: &[u8]| emitted.push(bytes.to_vec()),
+                );
+            }
+            Effect::I2cScan { tid } => {
+                let found = peripherals.i2c.scan(session.i2c_scan_request());
+                session.respond_i2c(tid, Ok(&found), &mut |bytes: &[u8]| {
+                    emitted.push(bytes.to_vec())
+                });
+            }
+            // Radio and platform effects with no reply of their own.
+            _ => {}
+        }
+        pending = session.resume_multi(now_ms, &mut |bytes: &[u8]| emitted.push(bytes.to_vec()));
+    }
+    session.end_admin_exchange();
+    assert!(
+        emitted.len() <= 1,
+        "an administrative exchange answers with at most one frame"
+    );
+    emitted.pop().unwrap_or_default()
 }
 
 // ─── The administrator ───────────────────────────────────────────────────
@@ -671,7 +676,7 @@ fn a_retried_temperature_read_samples_again() {
         panic!("expected a request")
     };
     device.deliver(&ADMIN_KEY, &request[..len], 0).unwrap();
-    assert_eq!(device.temperature_samples, 1);
+    assert_eq!(device.peripherals.temperature_samples, 1);
 
     // Acknowledged, but no answer arrived, so the identical request goes
     // out again.
@@ -682,7 +687,7 @@ fn a_retried_temperature_read_samples_again() {
     device
         .deliver(&ADMIN_KEY, &request[..len], RESPONSE_WAIT_MIN_MS)
         .unwrap();
-    assert_eq!(device.temperature_samples, 2);
+    assert_eq!(device.peripherals.temperature_samples, 2);
     assert_eq!(device.executed, 2);
 }
 
@@ -715,8 +720,8 @@ fn a_retransmitted_bus_write_is_answered_without_touching_the_bus_again() {
 
     let first = device.deliver(&ADMIN_KEY, &request, 0).expect("a response");
     assert_eq!(device.executed, 1);
-    assert_eq!(device.i2c.executed(), 1);
-    assert_eq!(device.i2c.registers()[4], 0x5A);
+    assert_eq!(device.peripherals.i2c.executed(), 1);
+    assert_eq!(device.peripherals.i2c.registers()[4], 0x5A);
 
     let again = device
         .deliver(&ADMIN_KEY, &request, RESPONSE_WAIT_MIN_MS)
@@ -724,7 +729,7 @@ fn a_retransmitted_bus_write_is_answered_without_touching_the_bus_again() {
     assert_eq!(again, first, "the retained response is repeated verbatim");
     assert_eq!(device.executed, 1, "the request did not run twice");
     assert_eq!(
-        device.i2c.executed(),
+        device.peripherals.i2c.executed(),
         1,
         "the retransmission never reached the bus"
     );
@@ -753,14 +758,18 @@ fn an_oversize_bus_read_is_refused_before_the_bus() {
     let reply = Frame::parse(&conversation.reply).unwrap();
     assert_eq!(reply.command(), Some(Cmd::I2cResult));
     assert_eq!(reply.payload.len(), fits);
-    assert_eq!(device.i2c.executed(), 1);
+    assert_eq!(device.peripherals.i2c.executed(), 1);
 
     let len =
         encode_transfer(&mut buf, 0, 0, SimulatedI2c::ADDRESS, &[Op::Read(fits + 1)]).unwrap();
     let conversation = converse(&mut device, &buf[..len], 8);
     assert!(matches!(conversation.outcome, Outcome::Replied { .. }));
     assert_eq!(status_of(&conversation.reply), Status::NOMEM);
-    assert_eq!(device.i2c.executed(), 1, "the refused read never ran");
+    assert_eq!(
+        device.peripherals.i2c.executed(),
+        1,
+        "the refused read never ran"
+    );
 }
 
 /// One battery multi-get is one acquisition, duplicate keys included. Its
@@ -788,13 +797,13 @@ fn battery_multi_get_samples_once_and_a_retry_samples_again() {
                 .deliver(&STRANGER_KEY, &wire[..wire_len], 0)
                 .is_none()
         );
-        assert_eq!(device.battery_samples, 0);
+        assert_eq!(device.peripherals.battery_samples, 0);
         let first = device.deliver(&ADMIN_KEY, &wire[..wire_len], 0).unwrap();
-        assert_eq!(device.battery_samples, 1);
+        assert_eq!(device.peripherals.battery_samples, 1);
         let retry = device
             .deliver(&ADMIN_KEY, &wire[..wire_len], RESPONSE_WAIT_MIN_MS)
             .unwrap();
-        assert_eq!(device.battery_samples, 2);
+        assert_eq!(device.peripherals.battery_samples, 2);
         assert_ne!(first, retry, "a fresh reading, not the lost one");
 
         let mut storage = [0u8; 512];
@@ -969,7 +978,7 @@ fn a_continued_read_samples_once() {
     let read = converse(&mut device, &buf[..len], 1);
     assert!(matches!(read.outcome, Outcome::Replied { .. }));
     assert_eq!(device.executed, 1);
-    assert_eq!(device.battery_samples, 1);
+    assert_eq!(device.peripherals.battery_samples, 1);
 
     let parsed = Frame::parse(&read.reply).unwrap();
     let entries: Vec<_> = MultiEntries::new(parsed.payload)
