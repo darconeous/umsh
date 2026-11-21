@@ -59,6 +59,9 @@ pub enum Change<'b> {
         fragment: Option<u8>,
         fragments: u8,
         state: DeliveryState,
+        /// The acknowledgment answered the flood that followed a miss on
+        /// the peer's route.
+        via_flood: bool,
     },
     /// That an outbound message goes under a session with forward
     /// secrecy, or never does.
@@ -89,6 +92,7 @@ enum Entry {
         fragment: Option<u8>,
         fragments: u8,
         state: DeliveryState,
+        via_flood: bool,
     },
     Secrecy {
         message: Subject,
@@ -179,7 +183,7 @@ impl<'a> Batch<'a> {
                 fragment,
                 fragments,
                 state,
-            }) => self.delivery(*handle, *fragment, *fragments, *state),
+            }) => self.delivery(*handle, *fragment, *fragments, *state, false),
             Output::Event(_) | Output::LookupOutbound { .. } | Output::Diagnostic(_) => {
                 return false;
             }
@@ -203,6 +207,7 @@ impl<'a> Batch<'a> {
                     delivery.fragment,
                     delivery.fragments,
                     delivery.state,
+                    delivery.via_flood,
                 );
             }
             ChatOutput::StoreArchive(archive) => {
@@ -249,6 +254,7 @@ impl<'a> Batch<'a> {
                     delivery.fragment,
                     delivery.fragments,
                     delivery.state,
+                    delivery.via_flood,
                 );
             }
         }
@@ -309,12 +315,14 @@ impl<'a> Batch<'a> {
         fragment: Option<u8>,
         fragments: u8,
         state: DeliveryState,
+        via_flood: bool,
     ) {
         self.entries.push(Entry::Delivery {
             handle,
             fragment,
             fragments,
             state,
+            via_flood,
         });
     }
 
@@ -355,11 +363,13 @@ impl<'a> Batch<'a> {
                 fragment,
                 fragments,
                 state,
+                via_flood,
             } => Change::Delivery {
                 handle: *handle,
                 fragment: *fragment,
                 fragments: *fragments,
                 state: *state,
+                via_flood: *via_flood,
             },
             Entry::Secrecy {
                 message,

@@ -209,12 +209,21 @@ impl Keyboard {
         self.field.is_some() && self.active
     }
 
+    /// Whether a text field is being edited, counting one whose edit has
+    /// begun before focus caught up with it.
+    #[must_use]
+    pub fn editing(&self) -> bool {
+        self.active
+    }
+
     /// Focus is on `field`, or on no text field. Moving between fields
-    /// starts afresh.
+    /// starts afresh, but for an edit begun as focus came onto `field`
+    /// from no field: that one is its own, told before focus caught up.
     pub fn focus(&mut self, field: Option<Field>) {
         if field != self.field {
+            let begun = self.field.is_none() && self.active;
             self.field = field;
-            self.active = false;
+            self.active = begun && field.is_some();
             self.clear();
         }
     }

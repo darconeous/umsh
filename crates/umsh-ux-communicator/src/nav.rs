@@ -358,6 +358,9 @@ pub mod keys {
     /// The warning before the first message sent on `EMERGENCY`.
     pub const EMERGENCY_CERTIFY: FocusKey = FocusKey(0x1900_0005);
     pub const EMERGENCY_CANCEL: FocusKey = FocusKey(0x1900_0006);
+    /// The learned route, offered in place of one held by hand.
+    pub const LEARNED_USE: FocusKey = FocusKey(0x1900_0007);
+    pub const LEARNED_KEEP: FocusKey = FocusKey(0x1900_0008);
     /// Shut down's confirmation.
     pub const SHUT_DOWN_CONFIRM: FocusKey = FocusKey(0x1600_0000);
     pub const SHUT_DOWN_CANCEL: FocusKey = FocusKey(0x1600_0001);
@@ -599,7 +602,8 @@ impl ChatMenu {
     }
 }
 
-/// What is open over a message not yet sent, or not confirmed.
+/// What is open over the conversation: about a message not yet sent, or
+/// not confirmed, or about the route its messages go by.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Unsent {
     /// How to send again one that was to go under forward secrecy.
@@ -609,6 +613,9 @@ pub enum Unsent {
     /// The warning before the first thing sent on `EMERGENCY` since the
     /// device started, asking to be certified, with what waits on it.
     CertifyEmergency { then: Certified },
+    /// The route learned while the peer's was held by hand, offered in
+    /// its place.
+    Learned,
 }
 
 /// What waits on `EMERGENCY`'s warning: anything that would go on the air
@@ -635,7 +642,7 @@ impl Unsent {
     pub const fn message(self) -> Option<MessageId> {
         match self {
             Self::Resend(message) | Self::ConfirmDelete(message) => Some(message),
-            Self::CertifyEmergency { .. } => None,
+            Self::CertifyEmergency { .. } | Self::Learned => None,
         }
     }
 }
@@ -1536,6 +1543,7 @@ impl State {
             reply: None,
             unsent: None,
         });
+        self.refresh_learned_route(false);
     }
 
     /// Opens the actions menu of `message` in the conversation shown, with
@@ -1744,6 +1752,115 @@ impl State {
                 true
             }
         }
+    }
+
+    /// Whether something is under way over the conversation shown that an
+    /// offer opening now would cut into: a menu, a card other than the
+    /// learned route's offer, the picker, the wheel or a finger down, or
+    /// the lock screen.
+    pub(crate) fn conversation_busy(&self) -> bool {
+        matches!(
+            self.screens.last(),
+            Some(Screen::Conversation { actions, unsent, .. })
+                if actions.is_some()
+                    || unsent.is_some_and(|over| over != Unsent::Learned)
+                    || self.picker.is_some()
+                    || self.press.is_some()
+                    || self.touch.is_some()
+                    || self.lock.locked
+        )
+    }
+
+    /// Offers the route learned while the peer's was held by hand, over the
+    /// conversation with them, once it is time to and nothing is under way
+    /// there; and takes the offer back once it is no longer made. One that
+    /// comes `unasked`, while the conversation is in use, waits while a
+    /// draft or a reply is being written, or the composer is taken up to
+    /// write one: the next key meant for it would answer the offer.
+    pub(crate) fn refresh_learned_route(&mut self, unasked: bool) {
+        let node = self.node;
+        let Some(&Screen::Conversation { chat, reply, .. }) = self.screens.last() else {
+            return;
+        };
+        let writing = unasked
+            && (reply.is_some()
+                || self.keyboard.editing()
+                || self
+                    .chats
+                    .iter()
+                    .find(|summary| summary.id == chat)
+                    .is_some_and(|summary| !summary.draft.text().is_empty()));
+        let busy = self.conversation_busy();
+        let Some(Screen::Conversation { unsent, focus, .. }) = self.screens.last_mut() else {
+            return;
+        };
+        let offered = node
+            .chat_peer(chat)
+            .is_some_and(|peer| node.learned_route(peer).is_some());
+        match *unsent {
+            None if offered && !busy && !writing => {
+                *unsent = Some(Unsent::Learned);
+                focus.request(keys::LEARNED_USE);
+            }
+            Some(Unsent::Learned) if !offered => {
+                *unsent = None;
+                focus.request(keys::COMPOSER);
+            }
+            _ => {}
+        }
+    }
+
+    /// `key`, or the composer in its place when `key` is one of the learned
+    /// route's choices and the offer is no longer open.
+    pub(crate) fn still_offered(&self, key: FocusKey) -> FocusKey {
+        let offer = key == keys::LEARNED_USE || key == keys::LEARNED_KEEP;
+        let open = matches!(
+            self.screens.last(),
+            Some(Screen::Conversation {
+                unsent: Some(Unsent::Learned),
+                ..
+            })
+        );
+        if offer && !open { keys::COMPOSER } else { key }
+    }
+
+    /// Switches to the learned route offered over the conversation.
+    pub fn use_learned_route(&mut self) {
+        if let Some(peer) = self.close_learned_route() {
+            self.node.adopt_learned_route(peer);
+        }
+    }
+
+    /// Keeps the route held by hand that the offer over the conversation
+    /// would replace, and asks no more until it is held again. Returns
+    /// whether the offer was open.
+    pub fn keep_manual_route(&mut self) -> bool {
+        let Some(peer) = self.close_learned_route() else {
+            return false;
+        };
+        self.node.keep_manual_route(peer);
+        true
+    }
+
+    /// Closes the learned route's offer, returning to the composer. Returns
+    /// the peer it was made for, if it was open.
+    fn close_learned_route(&mut self) -> Option<PeerId> {
+        let node = self.node;
+        let Some(Screen::Conversation {
+            chat,
+            unsent,
+            focus,
+            ..
+        }) = self.screens.last_mut()
+        else {
+            return None;
+        };
+        if *unsent != Some(Unsent::Learned) {
+            return None;
+        }
+        *unsent = None;
+        focus.request(keys::COMPOSER);
+        node.chat_peer(*chat)
     }
 
     /// Shows the channel the message whose actions menu is open invites to,
@@ -4588,6 +4705,8 @@ impl State {
             self.close_conversation();
         }
         self.settle();
+        // Back on a conversation, what came due over it meanwhile is offered.
+        self.refresh_learned_route(false);
         // Focus returns where it was, unless the screen was left asking for
         // somewhere else.
         let focus = self.focus();

@@ -77,12 +77,14 @@ pub enum Arrival {
     PingTimeout { peer: PublicKey },
     /// The route the device node holds to a peer, how long ago a send on it
     /// was last acknowledged, and whether it is a route chosen by hand and
-    /// held against learned ones.
+    /// held against learned ones. `changed` when it is read back after the
+    /// route was reset, held or switched, not merely read.
     Route {
         peer: PublicKey,
         route: Option<CachedRoute>,
         confirmed_age_ms: Option<u64>,
         held: Option<HeldRoute>,
+        changed: bool,
     },
     /// A session with forward secrecy began, ended, or could not be had.
     Secrecy { peer: PublicKey, change: Secrecy },
@@ -141,6 +143,32 @@ pub struct HeldRoute {
     pub remaining_ms: u64,
     /// How many hops a frame may flood past its last repeater.
     pub flood_hops: u8,
+    /// How many sends in a row missed on it and were acknowledged by the
+    /// flood that followed.
+    pub fallback_acks: u8,
+    /// The best route those floods taught, which can take its place.
+    pub learned: Option<Learned>,
+}
+
+/// A route learned while another was held by hand.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Learned {
+    /// Its hops; a direct route is one.
+    pub hops: u8,
+    /// The repeater nearest this device, when it names one.
+    pub via: Option<RouterHint>,
+}
+
+impl Learned {
+    fn of(route: &CachedRoute) -> Self {
+        Self {
+            hops: route.hop_count(),
+            via: match route {
+                CachedRoute::Source(hints) => hints.first().copied(),
+                CachedRoute::Direct | CachedRoute::Flood { .. } => None,
+            },
+        }
+    }
 }
 
 /// What became of a session with forward secrecy.
@@ -193,6 +221,9 @@ pub enum Command {
         flood_hops: u8,
         hold_ms: u32,
     },
+    /// Have the device node switch the route it holds by hand to a peer for
+    /// the one learned meanwhile, then read it back.
+    AdoptRoute { peer: PublicKey },
     /// Ask `router` for a page of the repeaters it hears, starting at
     /// `cursor`, or at the top, the way `way` says. `nonce` pairs the
     /// answer with this ask.
@@ -600,10 +631,14 @@ async fn execute<P: LocalPort, S: ChatStore, M: MacBackend>(
             };
             _ = mesh.request_identities(&filter, &route).await;
         }
-        Command::ReadRoute { peer } => return Some(read_route(mesh, peer).await),
+        Command::ReadRoute { peer } => return Some(read_route(mesh, peer, false).await),
         Command::ResetRoute { peer } => {
             mesh.clear_peer_route(&peer).await;
-            return Some(read_route(mesh, peer).await);
+            return Some(read_route(mesh, peer, true).await);
+        }
+        Command::AdoptRoute { peer } => {
+            mesh.adopt_learned_peer_route(&peer).await;
+            return Some(read_route(mesh, peer, true).await);
         }
         Command::HoldRoute {
             peer,
@@ -623,7 +658,7 @@ async fn execute<P: LocalPort, S: ChatStore, M: MacBackend>(
                 mesh.hold_peer_route(&peer, route, flood_hops, u64::from(hold_ms))
                     .await;
             }
-            return Some(read_route(mesh, peer).await);
+            return Some(read_route(mesh, peer, true).await);
         }
         #[cfg(feature = "software-crypto")]
         Command::OpenMeet => return Some(Arrival::MeetOpened(mesh.open_meet().await.ok())),
@@ -678,16 +713,20 @@ async fn own_neighbors<M: MacBackend>(
     Some(Arrival::Neighbors { router: own, body })
 }
 
-/// The route the device node holds to `peer`.
-async fn read_route<M: MacBackend>(mesh: &LocalNode<M>, peer: PublicKey) -> Arrival {
+/// The route the device node holds to `peer`, read back after a change to
+/// it when `changed`.
+async fn read_route<M: MacBackend>(mesh: &LocalNode<M>, peer: PublicKey, changed: bool) -> Arrival {
     let status = mesh.peer_route_status(&peer).await;
     Arrival::Route {
         peer,
+        changed,
         confirmed_age_ms: status.as_ref().and_then(|status| status.confirmed_age_ms),
         held: status.as_ref().and_then(|status| {
             Some(HeldRoute {
                 remaining_ms: status.hold_remaining_ms?,
                 flood_hops: status.hold_flood_hops.unwrap_or(0),
+                fallback_acks: status.fallback_acks,
+                learned: status.candidate.as_ref().map(Learned::of),
             })
         }),
         route: status.and_then(|status| status.route),

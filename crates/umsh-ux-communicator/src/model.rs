@@ -440,7 +440,10 @@ impl ChatSummary {
             last_activity: None,
             unread: false,
             muted: false,
-            kind: ChatKind::Peer { hops: None },
+            kind: ChatKind::Peer {
+                hops: None,
+                manual: false,
+            },
             forward_secret: false,
             secret_draft: false,
             draft: EditBuffer::with_text(DraftText::new(heap)),
@@ -1014,8 +1017,9 @@ pub struct PeerSummary {
 /// Whom a chat is with.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ChatKind {
-    /// One peer, and how many hops away it is when that is known.
-    Peer { hops: Option<u8> },
+    /// One peer, and how many hops away it is when that is known: how
+    /// far the route chosen by hand goes, while one is held (`manual`).
+    Peer { hops: Option<u8>, manual: bool },
     /// Everyone holding the channel's key.
     Channel { access: ChannelAccess },
 }
@@ -1194,6 +1198,9 @@ pub enum Delivery {
     /// The peer's radio acknowledged every fragment. That says it arrived,
     /// never that it was read.
     Delivered,
+    /// Delivered, but only by the flood that followed a miss on the peer's
+    /// route: the route may be failing.
+    Flooded,
     /// A fragment was not acknowledged: it may not have arrived.
     Unconfirmed,
     /// A fragment never went where the peer could read it, as when the
@@ -1203,6 +1210,11 @@ pub enum Delivery {
 }
 
 impl Delivery {
+    /// Whether the peer's radio acknowledged every fragment, however.
+    pub fn delivered(self) -> bool {
+        matches!(self, Self::Delivered | Self::Flooded)
+    }
+
     /// Whether it came out short of delivered, to be sent again or
     /// deleted.
     pub fn failed(self) -> bool {
@@ -1676,6 +1688,16 @@ pub struct ManualRoute {
     pub left: String<12>,
 }
 
+/// A route the mesh taught while another was held by hand, offered in
+/// its place.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LearnedRoute {
+    /// Its hops; a direct route is one.
+    pub hops: u8,
+    /// The repeater nearest this device, when it names one.
+    pub via: Option<SharedText>,
+}
+
 /// How far `route` goes, and how: such as `Direct`, `3 hops`, `Flood ·
 /// 4 hops`, `Manual · 3 hops`, or `Not learned`.
 #[must_use]
@@ -1823,7 +1845,8 @@ pub enum NodeEvent {
         message: MessageId,
     },
     /// My `message` in `chat` became [`Delivery::Delivered`],
-    /// [`Delivery::Unconfirmed`], or [`Delivery::Undelivered`]: it changed, as
+    /// [`Delivery::Flooded`], [`Delivery::Unconfirmed`], or
+    /// [`Delivery::Undelivered`]: it changed, as
     /// [`NodeEvent::MessageChanged`] says, and that is how it came out.
     Settled {
         chat: ChatId,
@@ -2112,6 +2135,20 @@ pub trait Node {
     /// lets a message flood `flood_hops` past the last of them. No hints is
     /// a direct route. The change comes as [`NodeEvent::RouteChanged`].
     fn hold_route(&self, peer: PeerId, hints: &[[u8; 2]], flood_hops: u8, hold_ms: u32);
+
+    /// The route learned while the one to `peer` was held by hand, once it
+    /// is time to offer it: sends in a row have missed on the held route
+    /// and been carried by the flood after, and the offer has not been
+    /// turned down since the route was held.
+    fn learned_route(&self, peer: PeerId) -> Option<LearnedRoute>;
+
+    /// Switches the route held by hand to `peer` for the one learned
+    /// meanwhile. The change comes as [`NodeEvent::RouteChanged`].
+    fn adopt_learned_route(&self, peer: PeerId);
+
+    /// Keeps the route held by hand to `peer`, and stops offering the
+    /// learned one until the route is held again.
+    fn keep_manual_route(&self, peer: PeerId);
 
     /// What the router at `address` reports hearing, as last read; `None`
     /// when it has not been asked.
@@ -2946,10 +2983,17 @@ impl State {
                 self.refresh_peer();
                 self.refresh_details(None);
             }
-            NodeEvent::PeerRemoved(peer) => self.remove_peer(peer),
+            NodeEvent::PeerRemoved(peer) => {
+                self.remove_peer(peer);
+                // An offer over the chat with them goes with them.
+                self.refresh_learned_route(true);
+            }
             NodeEvent::PingSettled(peer) => self.refresh_ping(Some(peer)),
             // The route screen reads the node as it is drawn.
-            NodeEvent::RouteChanged(_) => self.refresh_peer(),
+            NodeEvent::RouteChanged(_) => {
+                self.refresh_peer();
+                self.refresh_learned_route(true);
+            }
             // So does the Neighbors screen.
             NodeEvent::ListingChanged => self.listing_landed(),
             NodeEvent::SettingRefused(Setting::WifiFull) => {
@@ -3218,7 +3262,7 @@ impl State {
     /// Sounds how my `message` in `chat` came out.
     fn settled(&mut self, chat: ChatId, message: MessageId) {
         match self.node.message(chat, message).map(|m| m.delivery) {
-            Some(Delivery::Delivered) => self.chime(Cue::Delivered),
+            Some(delivery) if delivery.delivered() => self.chime(Cue::Delivered),
             Some(delivery) if delivery.failed() => self.chime(Cue::Unconfirmed),
             _ => {}
         }

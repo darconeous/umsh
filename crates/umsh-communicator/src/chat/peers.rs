@@ -453,7 +453,7 @@ impl<S: ChatStore> Chats<S> {
         let kept = self.saved_peer(peer)?;
         self.store.update_peer(&kept.key, PeerChange::Unsave).ok()?;
         self.saved.retain(|key| *key != kept.key.0);
-        self.forget_way(&kept.key);
+        self.forget_way(&kept.key, events);
         events(NodeEvent::PeerRemoved(peer));
         Some(kept.key)
     }

@@ -131,6 +131,9 @@ impl State {
         };
         self.picker = None;
         self.banner = None;
+        // The lock screen takes the place of the field being edited, which
+        // returns not being edited.
+        self.keyboard.focus(None);
         self.settle();
     }
 
@@ -143,9 +146,12 @@ impl State {
         if !self.node.setup_complete() && !self.in_setup() {
             self.start_setup();
         } else if let Some(key) = held {
+            let key = self.still_offered(key);
             self.focus().request(key);
         }
         self.settle();
+        // What came due while locked is offered now.
+        self.refresh_learned_route(true);
     }
 
     /// Whether a press now unlocks: once the steps are turned, or always

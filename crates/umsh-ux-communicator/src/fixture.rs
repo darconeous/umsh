@@ -12,14 +12,14 @@ use crate::model::{
     ChannelEntry, Charge, ChatId, ChatKind, ChatSummary, Chats, ClockSettings, ClockSource,
     Contact, ContactUri, Delivery, Details, Direction, EventQueue, Exchange, ExchangeEnd, Fix,
     Forwarding, GaugeReading, Gnss, GnssReading, Heard, HintRead, Invite, KeyboardFirmware,
-    KeyboardSettings, KnownRepeater, Leg, Links, Listed, Listing, ListingAsk, MAX_CHATS, MAX_HEARD,
-    MAX_HINT_READS, MAX_KNOWN, MAX_NEARBY_NETWORKS, MAX_PATH, MAX_SAVED_NETWORKS, MESSAGE_LEN,
-    ManualRoute, MeetState, Member, Message, MessageId, NearbyDevice, NearbyId, NearbyNetwork,
-    Neighbor, Node, NodeEvent, Parts, PeerDetail, PeerEntry, PeerId, PeerRoute, PeerSummary,
-    PingReply, PingView, Presence, Profile, Quote, RadioSettings, Reacted, Reaction, Reactions,
-    Reactor, Repeater, RouteKind, Rule, SavedNetwork, Sender, Setting, ShareUri, Shareable, Signal,
-    Ssid, State, Statistics, StatusStrip, TRANSMIT_POWER, Via, WifiReading, WifiSecurity,
-    WifiStatus, route_text, word_match,
+    KeyboardSettings, KnownRepeater, LearnedRoute, Leg, Links, Listed, Listing, ListingAsk,
+    MAX_CHATS, MAX_HEARD, MAX_HINT_READS, MAX_KNOWN, MAX_NEARBY_NETWORKS, MAX_PATH,
+    MAX_SAVED_NETWORKS, MESSAGE_LEN, ManualRoute, MeetState, Member, Message, MessageId,
+    NearbyDevice, NearbyId, NearbyNetwork, Neighbor, Node, NodeEvent, Parts, PeerDetail, PeerEntry,
+    PeerId, PeerRoute, PeerSummary, PingReply, PingView, Presence, Profile, Quote, RadioSettings,
+    Reacted, Reaction, Reactions, Reactor, Repeater, RouteKind, Rule, SavedNetwork, Sender,
+    Setting, ShareUri, Shareable, Signal, Ssid, State, Statistics, StatusStrip, TRANSMIT_POWER,
+    Via, WifiReading, WifiSecurity, WifiStatus, route_text, word_match,
 };
 use crate::models;
 use crate::picker::RecentText;
@@ -182,7 +182,10 @@ fn mockup_chats(heap: TextHeap) -> [ChatRow; 7] {
             .flatten(),
         limit: None,
     };
-    let peer = |hops| ChatKind::Peer { hops: Some(hops) };
+    let peer = |hops| ChatKind::Peer {
+        hops: Some(hops),
+        manual: false,
+    };
     let channel = |access| ChatKind::Channel { access };
     [
         row(
@@ -957,6 +960,14 @@ pub struct Store {
     pinged: RefCell<Vec<(PeerId, u64, bool), KEPT>>,
     reset: RefCell<Vec<PeerId, KEPT>>,
     held: RefCell<Vec<HeldRoute, KEPT>>,
+    /// My messages sent on a route held by hand, every one of which misses
+    /// and is carried by the flood after.
+    flooded: RefCell<Vec<MessageId, KEPT>>,
+    /// The peers whose held route's learned rival was turned down.
+    kept_manual: RefCell<Vec<PeerId, KEPT>>,
+    /// How many of my messages to each peer the flood carried since their
+    /// route was last held.
+    floods: RefCell<Vec<(PeerId, u8), KEPT>>,
     /// The latest ping sent along a route not held: to whom, its hints,
     /// and how far it floods past the last.
     along: RefCell<Option<PingAlong>>,
@@ -1220,6 +1231,9 @@ impl Store {
             pinged: RefCell::new(Vec::new()),
             reset: RefCell::new(Vec::new()),
             held: RefCell::new(Vec::new()),
+            flooded: RefCell::new(Vec::new()),
+            kept_manual: RefCell::new(Vec::new()),
+            floods: RefCell::new(Vec::new()),
             along: RefCell::new(None),
             aliases: RefCell::new(Vec::new()),
             forgotten: RefCell::new(Vec::new()),
@@ -1299,7 +1313,10 @@ impl Store {
                     avatar: AvatarStyle::peer([120, 120, 120], "qqqq", PeerShape::Circle),
                     name: s("Quiet"),
                     alias: None,
-                    kind: ChatKind::Peer { hops: Some(1) },
+                    kind: ChatKind::Peer {
+                        hops: Some(1),
+                        manual: false,
+                    },
                     unread: false,
                     muted: false,
                     activity: index,
@@ -1694,12 +1711,20 @@ impl Store {
                     && delivered_at <= now
                     && self
                         .message(chat, id)
-                        .is_some_and(|m| m.delivery == Delivery::Delivered);
+                        .is_some_and(|m| m.delivery.delivered());
                 self.queue(if settled {
                     NodeEvent::Settled { chat, message: id }
                 } else {
                     NodeEvent::MessageChanged { chat, message: id }
                 });
+                // What the flood carried has taught a route.
+                if settled
+                    && self.flooded.borrow().contains(&id)
+                    && let Some(peer) = self.chat_peer(chat)
+                {
+                    self.flooded_once(peer);
+                    self.queue(NodeEvent::RouteChanged(peer));
+                }
             }
         }
         for (peer, sent, settled) in self.pinged.borrow_mut().iter_mut() {
@@ -1785,6 +1810,7 @@ impl Store {
             Some(ago) if ago < SENT_AFTER => Delivery::Sending,
             Some(ago) if ago < CONFIRMING_AFTER => Delivery::Sent,
             Some(ago) if ago < DELIVERED_AFTER => Delivery::Confirming,
+            Some(_) if self.flooded.borrow().contains(&id) => Delivery::Flooded,
             Some(_) => Delivery::Delivered,
             None => delivery,
         }
@@ -1883,6 +1909,80 @@ impl Store {
                 avatar: AvatarStyle::router_hint(&text),
                 address: None,
             })
+        }
+    }
+
+    /// That the route to `peer` changed, and with it their chat's header.
+    fn route_changed(&self, peer: PeerId) {
+        self.queue(NodeEvent::RouteChanged(peer));
+        if let Some(chat) = PEERS
+            .get(usize::try_from(peer).unwrap_or(usize::MAX).wrapping_sub(1))
+            .and_then(|saved| saved.chat)
+        {
+            self.queue(NodeEvent::ChatChanged(chat));
+        }
+    }
+
+    /// The route the fixture's mesh learns to `peer` on its own.
+    fn ordinary_route(&self, peer: PeerId) -> PeerRoute {
+        let unknown = PeerRoute {
+            kind: RouteKind::Unknown,
+            hops: None,
+            repeaters: Vec::new(),
+            unnamed: 0,
+            confirmed: None,
+            signal: None,
+            manual: None,
+        };
+        let confirmed = Some(s("4 min ago"));
+        match peer {
+            // Pat, heard directly.
+            1 => PeerRoute {
+                kind: RouteKind::Direct,
+                hops: Some(1),
+                confirmed,
+                signal: Some(DIRECT_SIGNAL),
+                ..unknown
+            },
+            // Jo, through the repeater nearby and the one known by its hint.
+            2 => PeerRoute {
+                kind: RouteKind::Source,
+                hops: Some(3),
+                repeaters: [RIVERBEND, BALD_KNOB]
+                    .iter()
+                    .filter_map(|carrier| self.repeater(carrier))
+                    .collect(),
+                confirmed,
+                ..unknown
+            },
+            // Rick, by flood.
+            3 => PeerRoute {
+                kind: RouteKind::Flood,
+                hops: Some(3),
+                unnamed: 2,
+                confirmed,
+                ..unknown
+            },
+            _ => unknown,
+        }
+    }
+
+    /// How many of my messages to `peer` the flood has carried since their
+    /// route was last held.
+    fn floods_since_held(&self, peer: PeerId) -> u8 {
+        self.floods
+            .borrow()
+            .iter()
+            .find(|(id, _)| *id == peer)
+            .map_or(0, |(_, floods)| *floods)
+    }
+
+    /// Counts one more message to `peer` carried by the flood.
+    fn flooded_once(&self, peer: PeerId) {
+        let mut floods = self.floods.borrow_mut();
+        match floods.iter_mut().find(|(id, _)| *id == peer) {
+            Some((_, count)) => *count = count.saturating_add(1),
+            None => _ = floods.push((peer, 1)),
         }
     }
 
@@ -2217,6 +2317,18 @@ impl Store {
         let name = row.alias.as_ref().unwrap_or(&row.name);
         let mut summary = ChatSummary::new(row.id, row.avatar.clone(), name, self.heap);
         summary.kind = row.kind;
+        if let Some((_, hints, ..)) = self.chat_peer(row.id).and_then(|peer| {
+            self.held
+                .borrow()
+                .iter()
+                .find(|(id, ..)| *id == peer)
+                .cloned()
+        }) {
+            summary.kind = ChatKind::Peer {
+                hops: u8::try_from(hints.len() + 1).ok(),
+                manual: true,
+            };
+        }
         summary.unread = row.unread;
         summary.muted = row.muted;
         summary.last_activity = Some(row.activity);
@@ -2707,6 +2819,16 @@ impl Node for Store {
         }
         _ = sends.push((message.id, self.now.get()));
         drop(sends);
+        if self
+            .chat_peer(chat)
+            .is_some_and(|peer| self.held.borrow().iter().any(|(id, ..)| *id == peer))
+        {
+            let mut flooded = self.flooded.borrow_mut();
+            if flooded.is_full() {
+                flooded.remove(0);
+            }
+            _ = flooded.push(message.id);
+        }
         if let Some(mut row) = self.touch(chat) {
             row.draft = None;
         }
@@ -2824,7 +2946,15 @@ impl Node for Store {
                 direct.push(String::try_from(address).ok()?).ok()?;
                 let chat = FIRST_DIRECT + (direct.len() - 1) as ChatId;
                 drop(direct);
-                self.make_chat(chat, avatar.clone(), name, ChatKind::Peer { hops: None });
+                self.make_chat(
+                    chat,
+                    avatar.clone(),
+                    name,
+                    ChatKind::Peer {
+                        hops: None,
+                        manual: false,
+                    },
+                );
                 chat
             }
         };
@@ -3120,37 +3250,7 @@ impl Node for Store {
         if self.reset.borrow().contains(&peer) {
             return Some(unknown);
         }
-        let confirmed = Some(s("4 min ago"));
-        Some(match peer {
-            // Pat, heard directly.
-            1 => PeerRoute {
-                kind: RouteKind::Direct,
-                hops: Some(1),
-                confirmed,
-                signal: Some(DIRECT_SIGNAL),
-                ..unknown
-            },
-            // Jo, through the repeater nearby and the one known by its hint.
-            2 => PeerRoute {
-                kind: RouteKind::Source,
-                hops: Some(3),
-                repeaters: [RIVERBEND, BALD_KNOB]
-                    .iter()
-                    .filter_map(|carrier| self.repeater(carrier))
-                    .collect(),
-                confirmed,
-                ..unknown
-            },
-            // Rick, by flood.
-            3 => PeerRoute {
-                kind: RouteKind::Flood,
-                hops: Some(3),
-                unnamed: 2,
-                confirmed,
-                ..unknown
-            },
-            _ => unknown,
-        })
+        Some(self.ordinary_route(peer))
     }
 
     fn reset_route(&self, peer: PeerId) {
@@ -3160,7 +3260,7 @@ impl Node for Store {
             _ = reset.push(peer);
         }
         drop(reset);
-        self.queue(NodeEvent::RouteChanged(peer));
+        self.route_changed(peer);
     }
 
     fn hold_route(&self, peer: PeerId, hints: &[[u8; 2]], flood_hops: u8, hold_ms: u32) {
@@ -3170,7 +3270,44 @@ impl Node for Store {
         _ = held.push((peer, hints, flood_hops, hold_ms));
         drop(held);
         self.reset.borrow_mut().retain(|id| *id != peer);
-        self.queue(NodeEvent::RouteChanged(peer));
+        // Held again, it starts over: floods counted, and the offer asked.
+        self.floods.borrow_mut().retain(|(id, _)| *id != peer);
+        self.kept_manual.borrow_mut().retain(|id| *id != peer);
+        self.route_changed(peer);
+    }
+
+    fn learned_route(&self, peer: PeerId) -> Option<LearnedRoute> {
+        if !self.held.borrow().iter().any(|(id, ..)| *id == peer)
+            || self.kept_manual.borrow().contains(&peer)
+            || self.floods_since_held(peer) < 2
+        {
+            return None;
+        }
+        // What the floods taught is the fixture's own route to them.
+        let learned = self.ordinary_route(peer);
+        Some(LearnedRoute {
+            hops: learned.hops?,
+            via: learned
+                .repeaters
+                .first()
+                .map(|repeater| repeater.name.clone()),
+        })
+    }
+
+    fn adopt_learned_route(&self, peer: PeerId) {
+        if self.learned_route(peer).is_none() {
+            return;
+        }
+        // The learned route is the fixture's own route to them.
+        self.held.borrow_mut().retain(|(id, ..)| *id != peer);
+        self.route_changed(peer);
+    }
+
+    fn keep_manual_route(&self, peer: PeerId) {
+        let mut kept = self.kept_manual.borrow_mut();
+        if !kept.contains(&peer) && !kept.is_full() {
+            _ = kept.push(peer);
+        }
     }
 
     fn clock(&self) -> ClockSettings {

@@ -250,7 +250,10 @@ async fn a_direct_message_is_delivered() {
             assert_eq!(&*message.text, "Meet at the ridge");
             assert_eq!(
                 bob.node.chat(chat).unwrap().kind,
-                ChatKind::Peer { hops: Some(1) }
+                ChatKind::Peer {
+                    hops: Some(1),
+                    manual: false
+                }
             );
 
             // The answer goes back the same way.
@@ -1275,10 +1278,13 @@ async fn a_ping_through_a_repeater_names_it_and_reads_each_hop() {
         .await;
 }
 
-/// A route held by hand through a repeater nobody hears misses, the message
-/// floods instead and is delivered, and the route is held still.
+/// A route held by hand through a repeater nobody hears misses, each
+/// message floods instead and is delivered so, and the route is held
+/// still. After two, the route the floods taught is offered in its place;
+/// turned down, it is not offered again until the route is held anew, and
+/// taken, it replaces the held route.
 #[tokio::test(flavor = "current_thread")]
-async fn a_held_route_that_misses_floods_and_stays_held() {
+async fn a_held_route_that_misses_floods_and_offers_what_the_floods_taught() {
     LocalSet::new()
         .run_until(async {
             let network = SimulatedNetwork::new();
@@ -1288,15 +1294,20 @@ async fn a_held_route_that_misses_floods_and_stays_held() {
             network.connect_bidirectional(near.id(), middle.id());
             network.connect_bidirectional(middle.id(), far.id());
             let alice = board(near, [0x11; 32]).await;
-            let _ridge = repeater(middle, [0x33; 32]).await;
+            let ridge = repeater(middle, [0x33; 32]).await;
             let bob = board(far, [0x22; 32]).await;
 
             phone_inserts(&alice.sim, prop::DEV_PEERS, &bob.key.0);
             alice.node.pump();
             let peer = alice.node.peers()[0].id;
+            let chat = alice
+                .node
+                .direct_chat(&address(&bob.key), "Bob", &alice.node.avatar())
+                .unwrap();
             // No repeater answers to this hint.
             let nobody = [0xEE, 0xEE];
-            alice.node.hold_route(peer, &[nobody], 0, 3_600_000);
+            let hold = || alice.node.hold_route(peer, &[nobody], 0, 3_600_000);
+            hold();
             until("the held route was not read", || {
                 alice
                     .node
@@ -1304,20 +1315,24 @@ async fn a_held_route_that_misses_floods_and_stays_held() {
                     .is_some_and(|route| route.manual.is_some())
             })
             .await;
+            // The chat's header says how far the held route goes.
+            assert_eq!(
+                alice.node.chat(chat.id).unwrap().kind,
+                ChatKind::Peer {
+                    hops: Some(2),
+                    manual: true
+                }
+            );
 
-            let chat = alice
-                .node
-                .direct_chat(&address(&bob.key), "Bob", &alice.node.avatar())
-                .unwrap();
-            let sent = alice
-                .node
-                .send(chat.id, "By the ridge", None, false)
-                .unwrap();
-            until("the message was not delivered", || {
-                how_sent(&alice, chat.id, sent.id).0 == Delivery::Delivered
-            })
-            .await;
-
+            let alice = &alice;
+            let flooded = |text: &'static str| async move {
+                let sent = alice.node.send(chat.id, text, None, false).unwrap();
+                until("the message was not delivered", || {
+                    how_sent(alice, chat.id, sent.id).0 == Delivery::Flooded
+                })
+                .await;
+            };
+            flooded("By the ridge").await;
             // The route missed and the flood after it was acknowledged, and
             // the device node holds the same route still.
             let status = alice.mesh.peer_route_status(&bob.key).await.unwrap();
@@ -1327,6 +1342,57 @@ async fn a_held_route_that_misses_floods_and_stays_held() {
                 status.route,
                 umsh::mac::CachedRoute::source(&[umsh_core::RouterHint(nobody)]),
             );
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            assert_eq!(
+                alice.node.learned_route(peer),
+                None,
+                "one miss is not enough"
+            );
+
+            flooded("Past the pass").await;
+            until("the learned route was not offered", || {
+                alice.node.learned_route(peer).is_some()
+            })
+            .await;
+            let learned = alice.node.learned_route(peer).unwrap();
+            assert_eq!(learned.hops, 2);
+            assert!(learned.via.is_some(), "{learned:?}");
+
+            // Turned down, it is not offered again while the route is held.
+            alice.node.keep_manual_route(peer);
+            assert_eq!(alice.node.learned_route(peer), None);
+            // Held anew, it is, once the floods have taught it again: not
+            // before the new hold is read back.
+            hold();
+            assert_eq!(alice.node.learned_route(peer), None);
+            flooded("Down the far side").await;
+            flooded("Nearly there").await;
+            until("the learned route was not offered again", || {
+                alice.node.learned_route(peer).is_some()
+            })
+            .await;
+
+            // Taken, it replaces the held route.
+            alice.node.adopt_learned_route(peer);
+            assert_eq!(alice.node.learned_route(peer), None);
+            until("the learned route was not taken", || {
+                alice
+                    .node
+                    .peer_route(peer)
+                    .is_some_and(|route| route.manual.is_none())
+            })
+            .await;
+            let status = alice.mesh.peer_route_status(&bob.key).await.unwrap();
+            assert_eq!(status.hold_remaining_ms, None, "{status:?}");
+            assert_eq!(
+                status.route,
+                umsh::mac::CachedRoute::source(&[umsh_core::RouterHint([ridge.0[0], ridge.0[1]])]),
+            );
+            assert_eq!(alice.node.learned_route(peer), None);
+            assert!(matches!(
+                alice.node.chat(chat.id).unwrap().kind,
+                ChatKind::Peer { manual: false, .. }
+            ));
         })
         .await;
 }

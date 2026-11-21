@@ -63,6 +63,8 @@ const fn status_max(m: &Metrics) -> u32 {
 }
 /// The card of how to send a message again.
 const RESEND_WIDTH: u32 = 360;
+/// The card offering the learned route.
+const LEARNED_WIDTH: u32 = 400;
 const BUBBLE_PAD_X: u32 = 11;
 const BUBBLE_PAD_Y: u32 = 4;
 /// A line of a bubble's text: 1.2 em.
@@ -147,12 +149,17 @@ pub fn view(state: &State, chat: ChatId) -> impl View<Rgb565, State> + use<> {
             };
             Over::Actions(m.my_reaction(), m.sender.is_some(), card)
         })
-        .or(unsent.map(|unsent| match unsent {
-            Unsent::Resend(_) => Over::Resend,
-            Unsent::ConfirmDelete(_) => Over::ConfirmDelete,
-            Unsent::CertifyEmergency { then } => Over::CertifyEmergency {
+        .or(unsent.and_then(|unsent| match unsent {
+            Unsent::Resend(_) => Some(Over::Resend),
+            Unsent::ConfirmDelete(_) => Some(Over::ConfirmDelete),
+            Unsent::CertifyEmergency { then } => Some(Over::CertifyEmergency {
                 sends: matches!(then, Certified::Draft | Certified::Contact(_)),
-            },
+            }),
+            Unsent::Learned => state
+                .node
+                .chat_peer(chat)
+                .and_then(|peer| state.node.learned_route(peer))
+                .map(Over::Learned),
         }));
     let quoted = find(reply).map(|message| quote(m, &message, summary.map_or("", |s| &s.name)));
     let kind = summary.map(|s| s.kind);
@@ -223,12 +230,14 @@ pub fn view(state: &State, chat: ChatId) -> impl View<Rgb565, State> + use<> {
             Over::Resend => resend_choices(m),
             Over::ConfirmDelete => delete_choices(m),
             Over::CertifyEmergency { sends } => emergency_warning(m, *sends),
+            Over::Learned(learned) => learned_choices(m, learned),
         })
     })
     // A tap outside closes either, as Backspace does, choosing nothing; the
-    // EMERGENCY warning, turned down, leaves the conversation too.
+    // EMERGENCY warning, turned down, leaves the conversation too, and the
+    // learned route, turned down, is not offered again.
     .on_blur(|s: &mut State| {
-        if !s.decline_emergency() && s.cancel_resend().is_none() {
+        if !s.decline_emergency() && !s.keep_manual_route() && s.cancel_resend().is_none() {
             s.close_actions();
         }
         Dismissal::Dismiss
@@ -261,6 +270,9 @@ enum Over {
     /// The warning before the first transmission on `EMERGENCY`, and
     /// whether agreeing to it sends something composed.
     CertifyEmergency { sends: bool },
+    /// The route learned while the peer's was held by hand, offered in its
+    /// place.
+    Learned(model::LearnedRoute),
 }
 
 /// What `EMERGENCY` is for, and what sending there gives away.
@@ -388,6 +400,76 @@ fn delete_choices(m: &'static Metrics) -> impl View<Rgb565, State> + use<> {
     )
 }
 
+/// The learned route, offered in place of the one held by hand, Use
+/// focused. Backspace keeps the manual route.
+#[inline(never)]
+fn learned_choices(
+    m: &'static Metrics,
+    learned: &model::LearnedRoute,
+) -> impl View<Rgb565, State> + use<> {
+    let text = |text: &str| heapless::String::try_from(text).unwrap_or_default();
+    let mut about = heapless::String::<48>::new();
+    _ = about.push_str("Learned: ");
+    _ = about.push_str(&model::hops_text(learned.hops));
+    if let Some(via) = &learned.via {
+        _ = about.push_str(", via ");
+        _ = about.push_str(umsh_grapheme::cut(via.as_str(), 48 - about.len()));
+    }
+    card(
+        m,
+        VStack::new((
+            Lazy::new((about, m), learned_heading),
+            choice(
+                m,
+                text("Use learned route"),
+                keys::LEARNED_USE,
+                State::use_learned_route,
+                theme::TEXT,
+                None,
+            ),
+            choice(
+                m,
+                text("Keep manual route"),
+                keys::LEARNED_KEEP,
+                |s| _ = s.keep_manual_route(),
+                theme::TEXT,
+                None,
+            ),
+        ))
+        .with_spacing(0),
+        LEARNED_WIDTH,
+        HorizontalAlignment::Center,
+        |s| _ = s.keep_manual_route(),
+    )
+}
+
+/// The learned route's question, and what was learned. Built each time it
+/// is drawn ([`Lazy`]).
+fn learned_heading(
+    (about, m): &(heapless::String<48>, &'static Metrics),
+) -> impl View<Rgb565, ()> + use<> {
+    VStack::new((
+        super::line(
+            "Switch to the learned route?",
+            &font::BOLD,
+            m.body,
+            theme::TEXT,
+        ),
+        super::line(
+            about.clone(),
+            &font::REGULAR,
+            m.secondary,
+            theme::TEXT_SECONDARY,
+        ),
+    ))
+    .with_spacing(4)
+    .with_alignment(HorizontalAlignment::Leading)
+    .flex_infinite_width(HorizontalAlignment::Leading)
+    .padding(Edges::Horizontal, 16)
+    .padding(Edges::Top, 8)
+    .padding(Edges::Bottom, 6)
+}
+
 /// How to send again a message that was to go under forward secrecy.
 #[inline(never)]
 fn resend_choices(m: &'static Metrics) -> impl View<Rgb565, State> + use<> {
@@ -435,7 +517,7 @@ pub(super) fn header(
     avatar: Option<&AvatarStyle>,
     kind: Option<ChatKind>,
 ) -> impl View<Rgb565, State> + use<> {
-    let mut distance: heapless::String<16> = heapless::String::new();
+    let mut distance: heapless::String<24> = heapless::String::new();
     // A channel sent in the clear says so, in red.
     let clear = matches!(
         kind,
@@ -444,12 +526,22 @@ pub(super) fn header(
         })
     );
     match kind {
-        Some(ChatKind::Peer { hops: Some(hops) }) => _ = distance.push_str(&hops_text(hops)),
+        Some(ChatKind::Peer { hops, manual }) => {
+            if manual {
+                _ = distance.push_str("Manual");
+            }
+            if let Some(hops) = hops {
+                if manual {
+                    _ = distance.push_str(" \u{B7} ");
+                }
+                _ = distance.push_str(&hops_text(hops));
+            }
+        }
         Some(ChatKind::Channel {
             access: ChannelAccess::Clear,
         }) => _ = distance.push_str("Not encrypted"),
         Some(ChatKind::Channel { .. }) => _ = distance.push_str("Channel"),
-        Some(ChatKind::Peer { hops: None }) | None => {}
+        None => {}
     }
     titled(
         m,
@@ -1512,12 +1604,14 @@ enum Status {
 /// Whether a sent message says how its delivery went. One that is settled
 /// says so only as the newest sent, since every row would repeat it: a
 /// delivered one, or a channel's once sent, as nobody acknowledges those.
-/// One still under way, or left unconfirmed, always says.
+/// One still under way, left unconfirmed, or carried only by a flood,
+/// which says the route may be failing, always says.
 fn delivery_shows(delivery: Delivery, newest: bool, channel: bool) -> bool {
     let settled = match delivery {
         Delivery::Delivered => true,
         Delivery::Sent => channel,
         Delivery::Sending
+        | Delivery::Flooded
         | Delivery::Confirming
         | Delivery::Unconfirmed
         | Delivery::Undelivered => false,
@@ -1541,6 +1635,7 @@ fn caption(message: &Message, delivery: bool) -> Option<Caption> {
             },
             Delivery::Confirming => Status::Said("Confirming delivery"),
             Delivery::Delivered => Status::Said("Delivered"),
+            Delivery::Flooded => Status::Said("Delivered \u{B7} flooded"),
             Delivery::Unconfirmed => {
                 color = theme::AMBER;
                 Status::Said("Unconfirmed")
@@ -2296,6 +2391,7 @@ mod tests {
             Delivery::Sending,
             Delivery::Sent,
             Delivery::Confirming,
+            Delivery::Flooded,
             Delivery::Unconfirmed,
             Delivery::Undelivered,
         ] {

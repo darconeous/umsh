@@ -225,6 +225,9 @@ pub(crate) struct Chats<S> {
     routes: BTreeMap<[u8; 32], routes::Route>,
     /// The peers whose route the device node is asked for.
     reading: BTreeSet<[u8; 32]>,
+    /// How many changes to each peer's route the device node has yet to
+    /// answer: a route read before them is stale.
+    changing: routes::Changing,
     /// Sessions with forward secrecy, asked for or held, by peer.
     secrecy: BTreeMap<[u8; 32], peers::Session>,
     /// What routers report hearing, by router.
@@ -275,6 +278,7 @@ impl<S: ChatStore> Chats<S> {
             pings: BTreeMap::new(),
             routes: BTreeMap::new(),
             reading: BTreeSet::new(),
+            changing: routes::Changing::new(),
             secrecy: BTreeMap::new(),
             routers: BTreeMap::new(),
             nonce: 0,
@@ -637,7 +641,14 @@ impl<S: ChatStore> Chats<S> {
                     }
                     ChatOutput::SenderResolved(_) => events(NodeEvent::IdentitiesLearned),
                     ChatOutput::Repeats(repeats) => self.heard_repeats(repeats, now_ms, events),
-                    ChatOutput::Delivery(delivery) => self.heard_delivery(delivery, now_ms),
+                    ChatOutput::Delivery(delivery) => {
+                        self.heard_delivery(delivery, now_ms);
+                        if delivery.state == umsh_text::engine::DeliveryState::Acked
+                            && let Some(&id) = self.handles.get(&delivery.handle)
+                        {
+                            self.delivered_on_hold(id);
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -1748,11 +1759,20 @@ impl<S: ChatStore> Chats<S> {
                     None => cut(lettering),
                 };
                 let hint = peer.hint().0;
-                let hops = self.links.get(&peer.0).and_then(Link::hops);
+                // How far a route held by hand goes, while one is: told in
+                // the direct chat, where the hold is chosen and its rival
+                // offered.
+                let held = matches!(record.conversation, ConversationKey::Direct { .. })
+                    .then(|| self.held_hops(&peer))
+                    .flatten();
+                let hops = held.or_else(|| self.links.get(&peer.0).and_then(Link::hops));
                 Some((
                     name,
                     AvatarStyle::peer(hint, lettering, shape(kept.as_ref())),
-                    ChatKind::Peer { hops },
+                    ChatKind::Peer {
+                        hops,
+                        manual: held.is_some(),
+                    },
                 ))
             }
             ConversationKey::Room { .. } => None,
@@ -1787,6 +1807,8 @@ impl<S: ChatStore> Chats<S> {
                     model::Delivery::Undelivered
                 } else if delivery.failed != 0 {
                     model::Delivery::Unconfirmed
+                } else if acknowledged(&delivery) && delivery.flooded() {
+                    model::Delivery::Flooded
                 } else if acknowledged(&delivery) {
                     model::Delivery::Delivered
                 } else if delivery.sent == 0 {

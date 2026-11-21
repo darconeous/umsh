@@ -5489,3 +5489,464 @@ fn add_hop_goes_away_once_the_route_is_full() {
     assert_eq!(focus(app.state()), Some(keys::path(14)));
     assert!((0..draft.rows()).all(|row| draft.row(row) != Some(EditRow::Add)));
 }
+
+/// Jo Reyes, as a saved peer of the fixture's.
+const JO_PEER: u32 = 2;
+
+/// Sends `text` to Jo and lets the fixture carry it to its end. Returns
+/// the message.
+fn sent_to_jo<V, F>(app: &mut App<V, State, F>, store: &fixture::Store, text: &str) -> u32
+where
+    V: ViewLayout<State>,
+    V::FocusTree: DefaultFocus,
+    V::Renderables: AnimatedJoin,
+    F: Fn(&State) -> V,
+{
+    let sent = app.state().node.send(JO, text, None, false).expect("sent");
+    input::events(app, tick(0));
+    while let Some(at) = store.next_deadline() {
+        store.advance(at);
+        input::events(app, at);
+    }
+    sent.id
+}
+
+/// What is open over the conversation shown.
+fn over_chat(state: &State) -> Option<Unsent> {
+    match state.screen() {
+        Screen::Conversation { unsent, .. } => *unsent,
+        screen => panic!("expected a conversation, got {screen:?}"),
+    }
+}
+
+#[test]
+fn a_held_route_the_flood_carries_twice_offers_the_learned_one() {
+    let store = store();
+    let mut app = app!(store);
+    app.state()
+        .node
+        .hold_route(JO_PEER, &[[0x4b, 0x21]], 0, 3_600_000);
+    input::events(&mut app, tick(0));
+    open_chat(&mut app, JO);
+    // The header says how far the route held by hand goes.
+    assert_eq!(
+        app.state().chat(JO).unwrap().kind,
+        ChatKind::Peer {
+            hops: Some(2),
+            manual: true
+        }
+    );
+
+    // The route misses, and the flood after carries it.
+    let first = sent_to_jo(&mut app, store, "Leaving the trailhead now");
+    assert_eq!(delivery(app.state(), first), Delivery::Flooded);
+    assert_eq!(over_chat(app.state()), None, "once is not enough");
+    sent_to_jo(&mut app, store, "Pass is clear");
+    assert_eq!(over_chat(app.state()), Some(Unsent::Learned));
+    assert_eq!(focus(app.state()), Some(keys::LEARNED_USE));
+
+    // Backspace keeps the manual route, and it is not offered again.
+    run(&mut app, &[Input::Backspace]);
+    assert_eq!(over_chat(app.state()), None);
+    assert_eq!(focus(app.state()), Some(keys::COMPOSER));
+    sent_to_jo(&mut app, store, "Still flooding");
+    assert_eq!(over_chat(app.state()), None);
+
+    // Held anew, it is offered again; Use takes the learned route.
+    app.state()
+        .node
+        .hold_route(JO_PEER, &[[0x4b, 0x21]], 0, 3_600_000);
+    input::events(&mut app, tick(0));
+    sent_to_jo(&mut app, store, "Over the saddle");
+    sent_to_jo(&mut app, store, "At the lake");
+    assert_eq!(over_chat(app.state()), Some(Unsent::Learned));
+    // What is offered is the route the floods taught.
+    let learned = app.state().node.learned_route(JO_PEER).expect("offered");
+    assert_eq!(learned.hops, 3);
+    run(&mut app, &[Input::Press]);
+    assert_eq!(over_chat(app.state()), None);
+    let route = app.state().node.peer_route(JO_PEER).unwrap();
+    assert_eq!((route.manual, route.hops), (None, Some(learned.hops)));
+    assert!(matches!(
+        app.state().chat(JO).unwrap().kind,
+        ChatKind::Peer { manual: false, .. }
+    ));
+    // What the flood carried still says so.
+    assert_eq!(delivery(app.state(), first), Delivery::Flooded);
+}
+
+/// A learned route that comes due while a message's actions are open is
+/// offered once they close, from the keyboard too.
+#[test]
+fn the_learned_route_is_offered_once_the_actions_over_it_close() {
+    let store = store();
+    let mut app = app!(store);
+    app.state()
+        .node
+        .hold_route(JO_PEER, &[[0x4b, 0x21]], 0, 3_600_000);
+    input::events(&mut app, tick(0));
+    open_chat(&mut app, JO);
+    let first = sent_to_jo(&mut app, store, "One");
+    run(&mut app, &[Input::Turn(-1), Input::Press]);
+    assert_eq!(actions(app.state()), Some(first));
+    sent_to_jo(&mut app, store, "Two");
+    assert_eq!(over_chat(app.state()), None, "not over the actions");
+    run(&mut app, &[Input::Backspace]);
+    assert_eq!(actions(app.state()), None);
+    assert_eq!(over_chat(app.state()), Some(Unsent::Learned));
+    assert_eq!(focus(app.state()), Some(keys::LEARNED_USE));
+}
+
+/// Holds Jo's route, opens the conversation, sends a first message the
+/// flood carries, and opens its actions. Returns the message.
+fn actions_on_a_flood<V, F>(app: &mut App<V, State, F>, store: &fixture::Store) -> u32
+where
+    V: ViewLayout<State>,
+    V::FocusTree: DefaultFocus,
+    V::Renderables: AnimatedJoin,
+    F: Fn(&State) -> V,
+{
+    app.state()
+        .node
+        .hold_route(JO_PEER, &[[0x4b, 0x21]], 0, 3_600_000);
+    input::events(app, tick(0));
+    open_chat(app, JO);
+    let first = sent_to_jo(app, store, "One");
+    run(app, &[Input::Turn(-1), Input::Press]);
+    assert_eq!(actions(app.state()), Some(first));
+    sent_to_jo(app, store, "Two");
+    assert_eq!(over_chat(app.state()), None, "not over the actions");
+    first
+}
+
+/// Closing the actions to write, by typing or by Reply, leaves the learned
+/// route waiting: the keys that follow are for the draft.
+#[test]
+fn the_learned_route_waits_when_the_actions_close_to_write() {
+    let store = store();
+    let mut app = app!(store);
+    actions_on_a_flood(&mut app, store);
+    run(&mut app, &typed("ok"));
+    assert_eq!(over_chat(app.state()), None);
+    assert_eq!(app.state().chat(JO).unwrap().draft.text(), "ok");
+
+    let store = self::store();
+    let mut app = app!(store);
+    actions_on_a_flood(&mut app, store);
+    run(&mut app, &[Input::Press]);
+    assert_eq!(over_chat(app.state()), None, "Reply writes");
+    assert_eq!(focus(app.state()), Some(keys::COMPOSER));
+    run(&mut app, &typed("Sure"));
+    assert_eq!(app.state().chat(JO).unwrap().draft.text(), "Sure");
+    // Enter goes to the composer too.
+    let store = self::store();
+    let mut app = app!(store);
+    actions_on_a_flood(&mut app, store);
+    run(&mut app, &[Input::Enter]);
+    assert_eq!(over_chat(app.state()), None, "Enter writes");
+    assert_eq!(focus(app.state()), Some(keys::COMPOSER));
+}
+
+/// A learned route that comes due while the picker is open waits for it.
+#[test]
+fn the_learned_route_waits_for_the_picker() {
+    let store = store();
+    let mut app = app!(store);
+    app.state()
+        .node
+        .hold_route(JO_PEER, &[[0x4b, 0x21]], 0, 3_600_000);
+    input::events(&mut app, tick(0));
+    open_chat(&mut app, JO);
+    for text in ["One", "Two"] {
+        app.state().node.send(JO, text, None, false).expect("sent");
+    }
+    // The picker opens while typing.
+    run(&mut app, &typed("a"));
+    run(&mut app, &[Input::Backspace, Input::Picker]);
+    assert!(app.state().picker.is_some());
+    while let Some(at) = store.next_deadline() {
+        store.advance(at);
+        input::events(&mut app, at);
+    }
+    assert_eq!(over_chat(app.state()), None, "not under the picker");
+    // Closed, it leaves the composer being written in.
+    run(&mut app, &[Input::Picker]);
+    assert!(app.state().picker.is_none());
+    assert_eq!(over_chat(app.state()), None);
+    // Sent, the next flood the message takes offers it.
+    run(&mut app, &typed("Hi"));
+    run(&mut app, &[Input::Enter]);
+    while let Some(at) = store.next_deadline() {
+        store.advance(at);
+        input::events(&mut app, at);
+    }
+    assert_eq!(over_chat(app.state()), Some(Unsent::Learned));
+}
+
+/// A click that takes up the composer to write in it leaves the offer
+/// waiting: the keys after it are for the message.
+#[test]
+fn the_learned_route_waits_for_a_click_into_the_composer() {
+    let store = store();
+    let mut app = app!(store);
+    app.state()
+        .node
+        .hold_route(JO_PEER, &[[0x4b, 0x21]], 0, 3_600_000);
+    input::events(&mut app, tick(0));
+    open_chat(&mut app, JO);
+    for text in ["One", "Two"] {
+        app.state().node.send(JO, text, None, false).expect("sent");
+    }
+    run(&mut app, &typed("On my way"));
+    while let Some(at) = store.next_deadline() {
+        store.advance(at);
+        input::events(&mut app, at);
+    }
+    run(&mut app, &[Input::Enter]);
+    assert_eq!(focus(app.state()), Some(keys::COMPOSER));
+    run(&mut app, &[Input::Press]);
+    assert_eq!(over_chat(app.state()), None);
+    run(&mut app, &typed("ok"));
+    assert_eq!(app.state().chat(JO).unwrap().draft.text(), "Ok");
+    assert!(app.state().node.peer_route(JO_PEER).unwrap().manual.is_some());
+}
+
+/// Taken up from a message, by a letter typed there, the composer is being
+/// written in even once its draft is erased: the offer waits.
+#[test]
+fn the_learned_route_waits_for_a_composer_taken_up_from_a_message() {
+    let store = store();
+    let mut app = app!(store);
+    app.state()
+        .node
+        .hold_route(JO_PEER, &[[0x4b, 0x21]], 0, 3_600_000);
+    input::events(&mut app, tick(0));
+    open_chat(&mut app, JO);
+    sent_to_jo(&mut app, store, "One");
+    run(&mut app, &[Input::Turn(-1)]);
+    assert_ne!(focus(app.state()), Some(keys::COMPOSER));
+    run(&mut app, &typed("a"));
+    assert!(app.state().keyboard.active(), "the letter takes it up");
+    run(&mut app, &[Input::Backspace]);
+    assert!(app.state().keyboard.active());
+    sent_to_jo(&mut app, store, "Two");
+    assert_eq!(over_chat(app.state()), None);
+}
+
+/// Locked while the composer was taken up, it comes back not being
+/// written in, and what came due meanwhile is offered.
+#[test]
+fn the_learned_route_after_a_lock_over_the_composer() {
+    let store = store();
+    let mut app = app!(store);
+    app.state()
+        .node
+        .hold_route(JO_PEER, &[[0x4b, 0x21]], 0, 3_600_000);
+    input::events(&mut app, tick(0));
+    open_chat(&mut app, JO);
+    for text in ["One", "Two"] {
+        app.state().node.send(JO, text, None, false).expect("sent");
+    }
+    run(&mut app, &[Input::Press]);
+    assert!(app.state().keyboard.active());
+    app.state_mut().lock();
+    app.finalize_view();
+    while let Some(at) = store.next_deadline() {
+        store.advance(at);
+        input::events(&mut app, at);
+    }
+    unlock(&mut app);
+    assert!(!app.state().keyboard.active());
+    assert_eq!(over_chat(app.state()), Some(Unsent::Learned));
+}
+
+/// A learned route that comes due while the wheel is down waits for it to
+/// come up: the press goes where it was meant to.
+#[test]
+fn the_learned_route_waits_for_a_press() {
+    let store = store();
+    let mut app = app!(store);
+    app.state()
+        .node
+        .hold_route(JO_PEER, &[[0x4b, 0x21]], 0, 3_600_000);
+    input::events(&mut app, tick(0));
+    open_chat(&mut app, JO);
+    let first = sent_to_jo(&mut app, store, "One");
+    run(&mut app, &[Input::Turn(-1)]);
+    app.state().node.send(JO, "Two", None, false).expect("sent");
+    input::apply(&mut app, Input::Press, tick(0));
+    let mut now = tick(0);
+    while let Some(at) = store.next_deadline() {
+        store.advance(at);
+        input::events(&mut app, at);
+        now = at;
+    }
+    assert_eq!(over_chat(app.state()), None, "not under the press");
+    input::apply(&mut app, Input::Release, now);
+    assert_eq!(actions(app.state()), Some(first), "the press opened them");
+    run(&mut app, &[Input::Backspace]);
+    assert_eq!(over_chat(app.state()), Some(Unsent::Learned));
+    assert!(app.state().node.peer_route(JO_PEER).unwrap().manual.is_some());
+}
+
+/// What comes due while locked is offered on unlocking; an offer taken
+/// back while locked, or just before, leaves the composer focused.
+#[test]
+fn the_learned_route_across_the_lock() {
+    let store = store();
+    let mut app = app!(store);
+    app.state()
+        .node
+        .hold_route(JO_PEER, &[[0x4b, 0x21]], 0, 3_600_000);
+    input::events(&mut app, tick(0));
+    open_chat(&mut app, JO);
+    for text in ["One", "Two"] {
+        app.state().node.send(JO, text, None, false).expect("sent");
+    }
+    app.state_mut().lock();
+    app.finalize_view();
+    while let Some(at) = store.next_deadline() {
+        store.advance(at);
+        input::events(&mut app, at);
+    }
+    assert_eq!(over_chat(app.state()), None, "not while locked");
+    unlock(&mut app);
+    assert!(!app.state().lock.locked);
+    assert_eq!(over_chat(app.state()), Some(Unsent::Learned));
+    assert_eq!(focus(app.state()), Some(keys::LEARNED_USE));
+
+    // Locked over the offer, which the hold, let go, takes with it.
+    app.state_mut().lock();
+    app.finalize_view();
+    app.state().node.reset_route(JO_PEER);
+    input::events(&mut app, tick(0));
+    unlock(&mut app);
+    assert_eq!(over_chat(app.state()), None);
+    assert_eq!(focus(app.state()), Some(keys::COMPOSER));
+
+    // Taken back in the same pass of events that locks.
+    app.state()
+        .node
+        .hold_route(JO_PEER, &[[0x4b, 0x21]], 0, 3_600_000);
+    input::events(&mut app, tick(0));
+    sent_to_jo(&mut app, store, "Three");
+    sent_to_jo(&mut app, store, "Four");
+    assert_eq!(focus(app.state()), Some(keys::LEARNED_USE));
+    app.state().node.reset_route(JO_PEER);
+    {
+        let mut state = app.state_mut();
+        while let Some(event) = state.node.next_event() {
+            state.apply(event, tick(0));
+        }
+        state.lock();
+    }
+    app.finalize_view();
+    unlock(&mut app);
+    assert_eq!(over_chat(app.state()), None);
+    assert_eq!(focus(app.state()), Some(keys::COMPOSER));
+}
+
+/// Held anew after more messages than the fixture keeps, the route is
+/// offered again once the floods carry two more.
+#[test]
+fn the_learned_route_is_offered_again_after_many_messages() {
+    let store = store();
+    let mut app = app!(store);
+    let hold = |app: &mut App<_, State, _>| {
+        app.state()
+            .node
+            .hold_route(JO_PEER, &[[0x4b, 0x21]], 0, 3_600_000);
+        input::events(app, tick(0));
+    };
+    hold(&mut app);
+    open_chat(&mut app, JO);
+    for text in ["1", "2"] {
+        sent_to_jo(&mut app, store, text);
+    }
+    run(&mut app, &[Input::Backspace]);
+    for text in ["3", "4", "5", "6", "7", "8", "9", "10", "11"] {
+        sent_to_jo(&mut app, store, text);
+    }
+    assert_eq!(over_chat(app.state()), None);
+    hold(&mut app);
+    sent_to_jo(&mut app, store, "12");
+    assert_eq!(over_chat(app.state()), None, "once is not enough");
+    sent_to_jo(&mut app, store, "13");
+    assert_eq!(over_chat(app.state()), Some(Unsent::Learned));
+}
+
+/// A learned route that comes due while a draft is being written waits, so
+/// no key meant for the draft answers it; it is offered once the
+/// conversation is opened again, and goes with the peer.
+#[test]
+fn the_learned_route_waits_for_a_draft_and_goes_with_the_peer() {
+    let store = store();
+    let mut app = app!(store);
+    app.state()
+        .node
+        .hold_route(JO_PEER, &[[0x4b, 0x21]], 0, 3_600_000);
+    input::events(&mut app, tick(0));
+    open_chat(&mut app, JO);
+    for text in ["One", "Two"] {
+        app.state().node.send(JO, text, None, false).expect("sent");
+    }
+    run(&mut app, &typed("On my wa"));
+    while let Some(at) = store.next_deadline() {
+        store.advance(at);
+        input::events(&mut app, at);
+    }
+    assert_eq!(over_chat(app.state()), None, "it waits for the draft");
+    run(&mut app, &typed("y"));
+    assert_eq!(focus(app.state()), Some(keys::COMPOSER));
+
+    // Opened again, the conversation offers it.
+    assert!(app.state_mut().back());
+    app.finalize_view();
+    turn_to(&mut app, keys::chat(JO));
+    run(&mut app, &[Input::Press]);
+    assert_eq!(over_chat(app.state()), Some(Unsent::Learned));
+
+    // Jo forgotten elsewhere, the offer goes with them.
+    app.state().node.forget_peer(JO_PEER);
+    input::events(&mut app, tick(0));
+    assert_eq!(over_chat(app.state()), None);
+    assert_eq!(focus(app.state()), Some(keys::COMPOSER));
+}
+
+/// Opened while the learned route is due, the conversation offers it at
+/// once; the offer goes once the hold that made it is let go.
+#[test]
+fn the_learned_route_is_offered_on_opening_and_goes_with_its_hold() {
+    let store = store();
+    let mut app = app!(store);
+    app.state()
+        .node
+        .hold_route(JO_PEER, &[[0x4b, 0x21]], 0, 3_600_000);
+    input::events(&mut app, tick(0));
+    open_chat(&mut app, JO);
+    sent_to_jo(&mut app, store, "One");
+    sent_to_jo(&mut app, store, "Two");
+    run(&mut app, &[Input::Backspace]);
+    // Turned down; held anew elsewhere and flooded twice more, then opened.
+    run(&mut app, &[Input::Backspace]);
+    app.state()
+        .node
+        .hold_route(JO_PEER, &[[0x4b, 0x21]], 0, 3_600_000);
+    for text in ["Three", "Four"] {
+        app.state().node.send(JO, text, None, false).expect("sent");
+    }
+    while let Some(at) = store.next_deadline() {
+        store.advance(at);
+        input::events(&mut app, at);
+    }
+    turn_to(&mut app, keys::chat(JO));
+    run(&mut app, &[Input::Press]);
+    assert_eq!(over_chat(app.state()), Some(Unsent::Learned));
+    assert_eq!(focus(app.state()), Some(keys::LEARNED_USE));
+
+    // Let go of elsewhere, the hold takes the offer with it.
+    app.state().node.reset_route(JO_PEER);
+    input::events(&mut app, tick(0));
+    assert_eq!(over_chat(app.state()), None);
+    assert_eq!(focus(app.state()), Some(keys::COMPOSER));
+}

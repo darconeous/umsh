@@ -860,12 +860,16 @@ impl<D: Durable> MemoryStore<D> {
                     fragment,
                     fragments,
                     state,
+                    via_flood,
                 } => {
                     if let Some(id) = self.resolve(batch, &committed, handle)
                         && let Some(message) = self.disk.messages.get_mut(&id)
                     {
                         self.dirty.mark(RecordKey::Message(id));
                         message.record.delivery.set(fragment, fragments, state);
+                        if via_flood {
+                            message.record.delivery.flood(fragment);
+                        }
                         committed.touch_message(MessageId(id));
                     }
                 }

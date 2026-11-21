@@ -12,7 +12,7 @@ mod support;
 use support::{Port, SharedFlash, config, device, phone_inserts, provision, starting_keys};
 use umsh_communicator::settings::{SAVE_DELAY_MS, STATISTICS_READ_MS};
 use umsh_communicator::task::Command;
-use umsh_communicator::task::{Arrival, AskWay, HeldRoute, Secrecy};
+use umsh_communicator::task::{Arrival, AskWay, HeldRoute, Learned, Secrecy};
 use umsh_communicator::{
     ChannelCrypto, Clock, CommunicatorNode, FlashMap, FlashMapStore, MemoryStore, Quota, Seeds,
 };
@@ -1434,7 +1434,13 @@ fn a_direct_message_goes_out_and_can_be_retried() {
         .direct_chat(&address_of(&robin), "Robin", &avatar)
         .unwrap();
     assert_eq!(chat.name, "Robin");
-    assert_eq!(chat.kind, ChatKind::Peer { hops: None });
+    assert_eq!(
+        chat.kind,
+        ChatKind::Peer {
+            hops: None,
+            manual: false
+        }
+    );
     events(&node);
 
     let message = node.send(chat.id, "On my way", None, false).unwrap();
@@ -1901,7 +1907,13 @@ fn a_heard_node_is_found_by_name() {
         .direct_chat(&address_of(&robin), "Robin Ridge", &avatar)
         .unwrap();
     assert_eq!(chat.name, "Robin Ridge");
-    assert_eq!(chat.kind, ChatKind::Peer { hops: Some(1) });
+    assert_eq!(
+        chat.kind,
+        ChatKind::Peer {
+            hops: Some(1),
+            manual: false
+        }
+    );
 }
 
 /// A member saved is kept by the device, listed among the peers, and let
@@ -2788,6 +2800,7 @@ fn a_saved_peers_route_is_read_from_the_device_node() {
         route: route(),
         confirmed_age_ms: Some(60_000),
         held: None,
+        changed: false,
     });
     assert_eq!(events(&node), [NodeEvent::RouteChanged(peer)]);
     let shown = node.peer_route(peer).unwrap();
@@ -2807,6 +2820,7 @@ fn a_saved_peers_route_is_read_from_the_device_node() {
         route: route(),
         confirmed_age_ms: Some(60_300),
         held: None,
+        changed: false,
     });
     assert!(events(&node).is_empty());
 
@@ -2828,6 +2842,7 @@ fn a_saved_peers_route_is_read_from_the_device_node() {
         route: None,
         confirmed_age_ms: None,
         held: None,
+        changed: false,
     });
     assert!(events(&node).contains(&NodeEvent::RouteChanged(peer)));
     assert_eq!(node.peer_route(peer).unwrap().kind, RouteKind::Unknown);
@@ -2841,6 +2856,81 @@ fn a_saved_peers_route_is_read_from_the_device_node() {
 /// manual, with how far it floods and how long it has left; a read a
 /// moment later changes nothing, and once the hold runs out the route is an
 /// ordinary one.
+/// Forgetting a peer whose route is held by hand tells the chat with them
+/// that its header no longer says so.
+#[test]
+fn forgetting_a_peer_held_by_hand_retells_their_chat() {
+    let sim = device();
+    let (node, clock) = started(&sim);
+    let (robin, peer) = saved_robin(&sim, &node, clock);
+    let chat = node
+        .direct_chat(&address_of(&robin), "Robin", &node.avatar())
+        .unwrap();
+    node.arrive(Arrival::Route {
+        peer: robin,
+        route: CachedRoute::source(&[RouterHint([0xA1, 0x01])]),
+        confirmed_age_ms: None,
+        held: Some(HeldRoute {
+            remaining_ms: 3_600_000,
+            flood_hops: 0,
+            fallback_acks: 0,
+            learned: None,
+        }),
+        changed: false,
+    });
+    assert!(matches!(
+        node.chat(chat.id).unwrap().kind,
+        ChatKind::Peer { manual: true, .. }
+    ));
+    events(&node);
+    node.forget_peer(peer);
+    assert!(events(&node).contains(&NodeEvent::ChatChanged(chat.id)));
+    assert!(matches!(
+        node.chat(chat.id).unwrap().kind,
+        ChatKind::Peer { manual: false, .. }
+    ));
+}
+
+/// A route read before the hold was changed, and answered after the
+/// change was asked for, offers nothing: what it says is stale.
+#[test]
+fn a_route_read_before_a_change_offers_nothing() {
+    let sim = device();
+    let (node, clock) = started(&sim);
+    let (robin, peer) = saved_robin(&sim, &node, clock);
+    let route = || CachedRoute::source(&[RouterHint([0xA1, 0x01])]);
+    let read = |changed, learned: Option<Learned>| Arrival::Route {
+        peer: robin,
+        route: route(),
+        confirmed_age_ms: None,
+        held: Some(HeldRoute {
+            remaining_ms: 3_600_000,
+            flood_hops: 0,
+            fallback_acks: if learned.is_some() { 2 } else { 0 },
+            learned,
+        }),
+        changed,
+    };
+    let learned = Some(Learned {
+        hops: 2,
+        via: Some(RouterHint([0xB2, 0x02])),
+    });
+    clock.set(10_000);
+    node.arrive(read(false, learned));
+    assert!(node.learned_route(peer).is_some());
+
+    // Held anew while a plain read is under way, which then lands.
+    node.hold_route(peer, &[[0xA1, 0x01]], 0, 3_600_000);
+    assert_eq!(node.learned_route(peer), None);
+    node.arrive(read(false, learned));
+    assert_eq!(node.learned_route(peer), None, "a stale read");
+    // The hold's own answer stands, and so does a read after it.
+    node.arrive(read(true, None));
+    assert_eq!(node.learned_route(peer), None);
+    node.arrive(read(false, learned));
+    assert!(node.learned_route(peer).is_some());
+}
+
 #[test]
 fn a_route_held_by_hand_counts_down_and_then_is_ordinary() {
     let sim = device();
@@ -2858,6 +2948,8 @@ fn a_route_held_by_hand_counts_down_and_then_is_ordinary() {
         Some(HeldRoute {
             remaining_ms,
             flood_hops: 1,
+            fallback_acks: 0,
+            learned: None,
         })
     };
     clock.set(10_000);
@@ -2866,6 +2958,7 @@ fn a_route_held_by_hand_counts_down_and_then_is_ordinary() {
         route: route(),
         confirmed_age_ms: None,
         held: held(3_600_000),
+        changed: false,
     });
     assert_eq!(events(&node), [NodeEvent::RouteChanged(peer)]);
     let manual = node.peer_route(peer).unwrap().manual.unwrap();
@@ -2885,6 +2978,7 @@ fn a_route_held_by_hand_counts_down_and_then_is_ordinary() {
         route: route(),
         confirmed_age_ms: None,
         held: held(3_599_500),
+        changed: false,
     });
     assert!(events(&node).is_empty());
 
@@ -2910,6 +3004,7 @@ fn a_route_held_by_hand_counts_down_and_then_is_ordinary() {
         route: route(),
         confirmed_age_ms: None,
         held: held(600_000),
+        changed: false,
     });
     assert_eq!(events(&node), [NodeEvent::RouteChanged(peer)]);
     clock.set(now + 1_000);
@@ -2918,6 +3013,7 @@ fn a_route_held_by_hand_counts_down_and_then_is_ordinary() {
         route: route(),
         confirmed_age_ms: None,
         held: None,
+        changed: false,
     });
     assert_eq!(events(&node), [NodeEvent::RouteChanged(peer)]);
     assert_eq!(node.peer_route(peer).unwrap().manual, None);
@@ -2986,6 +3082,7 @@ fn a_direct_route_has_its_reading_and_a_flood_its_unnamed_repeaters() {
         route: Some(CachedRoute::Direct),
         confirmed_age_ms: None,
         held: None,
+        changed: false,
     });
     let shown = node.peer_route(peer).unwrap();
     assert_eq!(shown.kind, RouteKind::Direct);
@@ -2997,6 +3094,7 @@ fn a_direct_route_has_its_reading_and_a_flood_its_unnamed_repeaters() {
         route: CachedRoute::flood(3, &[]),
         confirmed_age_ms: None,
         held: None,
+        changed: false,
     });
     let shown = node.peer_route(peer).unwrap();
     assert_eq!(shown.kind, RouteKind::Flood);

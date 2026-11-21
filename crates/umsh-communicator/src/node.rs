@@ -23,10 +23,10 @@ use umsh_ux_communicator::model::Directions;
 use umsh_ux_communicator::model::{
     About, ChannelChats, ChannelEntry, ChatId, ChatSummary, Chats, ClockSettings, ClockSource,
     ContactUri, Details, EventQueue, Forwarding, Heard, HintRead, Invite, KeyboardSettings,
-    KnownRepeater, Listed, Listing, MAX_HEARD, MAX_HINT_READS, MAX_KNOWN, MAX_PATH, MeetState,
-    Member, Message, MessageId, NearbyId, Neighbor, Node, NodeEvent, PeerDetail, PeerEntry, PeerId,
-    PeerRoute, PeerSummary, PingView, RadioSettings, Reaction, Repeater, Setting, ShareUri,
-    Shareable, Statistics, WifiReading, WifiSecurity,
+    KnownRepeater, LearnedRoute, Listed, Listing, MAX_HEARD, MAX_HINT_READS, MAX_KNOWN, MAX_PATH,
+    MeetState, Member, Message, MessageId, NearbyId, Neighbor, Node, NodeEvent, PeerDetail,
+    PeerEntry, PeerId, PeerRoute, PeerSummary, PingView, RadioSettings, Reaction, Repeater,
+    Setting, ShareUri, Shareable, Statistics, WifiReading, WifiSecurity,
 };
 use umsh_ux_communicator::picker::RecentText;
 use umsh_ux_communicator::text::TextHeap;
@@ -232,7 +232,8 @@ impl<P: LocalPort, S: ChatStore> CommunicatorNode<P, S> {
                 route,
                 confirmed_age_ms,
                 held,
-            } => chats.route_read(peer, route, confirmed_age_ms, held, now_ms, events),
+                changed,
+            } => chats.route_read(peer, route, confirmed_age_ms, held, changed, now_ms, events),
             Arrival::Secrecy { peer, change } => chats.secrecy(peer, change, now_ms, time, events),
             #[cfg(feature = "software-crypto")]
             Arrival::Meet { .. } | Arrival::MeetOpened(_) => {}
@@ -795,6 +796,19 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
             .borrow_mut()
             .hold_route(peer, hints, flood_hops, hold_ms);
         self.wake();
+    }
+
+    fn learned_route(&self, peer: PeerId) -> Option<LearnedRoute> {
+        self.chats.borrow().learned_route(peer, self.clock.now_ms())
+    }
+
+    fn adopt_learned_route(&self, peer: PeerId) {
+        self.chats.borrow_mut().adopt_learned_route(peer);
+        self.wake();
+    }
+
+    fn keep_manual_route(&self, peer: PeerId) {
+        self.chats.borrow_mut().keep_manual_route(peer);
     }
 
     fn clock(&self) -> ClockSettings {
