@@ -99,6 +99,7 @@ impl MobileAppStore {
         longitude: Option<f64>,
         accuracy: Option<f64>,
     ) -> Result<(), MobileStoreError> {
+        let _counted = self.wrote_content();
         if hints.iter().any(|hint| hint.len() != HINT_WIDTH) {
             return Err(MobileStoreError::InvalidArgument);
         }
@@ -133,6 +134,7 @@ impl MobileAppStore {
         owner_identity_id: String,
         public_address: String,
     ) -> Result<(), MobileStoreError> {
+        let _counted = self.wrote_content();
         self.connection().execute(
             "DELETE FROM node_manual_route WHERE node_id IN (
                 SELECT id FROM node WHERE owner_identity_id = ? AND public_address = ?

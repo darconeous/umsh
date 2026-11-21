@@ -994,7 +994,7 @@ fn command_refused<T>(error: mpsc::error::TrySendError<T>) -> MobileMeshError {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, uniffi::Record)]
 pub struct MobileMeshSessionUpdateRecord {
     /// Complete raw UMSH frames ready for the ULCP PHY transport. Each
     /// frame must be completed after the device reports the physical radio
@@ -1797,6 +1797,12 @@ pub struct MobileMeshSession {
     dropped: Arc<Dropped>,
     next_operation_id: Mutex<u64>,
     wake: Arc<WakeSignal>,
+    /// Set while an app core holds the session: the wake and the updates
+    /// are the core's, so `set_wake_listener`, `clear_wake_listener`, and
+    /// `poll_update` do nothing.
+    held: AtomicBool,
+    /// Answered once the worker's thread has ended, its runtime gone.
+    worker_exit: Mutex<Option<oneshot::Receiver<()>>>,
 }
 
 #[uniffi::export]
@@ -2904,7 +2910,8 @@ impl MobileMeshSession {
         self.chat_store
             .get()
             .ok_or(MobileMeshError::SessionUnavailable)?
-            .send(ChatStoreCommand::SilentTestsIn(conversation_address))
+            .set_silent_tests_in(conversation_address);
+        Ok(())
     }
 
     /// Send a message into a conversation, addressed by a peer's address
@@ -2980,14 +2987,60 @@ impl MobileMeshSession {
     /// has new data for `poll_update`. If data is already pending, the
     /// listener fires immediately.
     pub fn set_wake_listener(&self, listener: Arc<dyn MobileMeshWakeListener>) {
-        self.wake.set_listener(Some(listener));
+        if !self.held.load(Ordering::Acquire) {
+            self.wake.set_listener(Some(listener));
+        }
     }
 
     pub fn clear_wake_listener(&self) {
-        self.wake.set_listener(None);
+        if !self.held.load(Ordering::Acquire) {
+            self.wake.set_listener(None);
+        }
     }
 
+    /// What happened since the last poll. Empty while an app core holds
+    /// the session.
     pub fn poll_update(&self) -> MobileMeshSessionUpdateRecord {
+        if self.held.load(Ordering::Acquire) {
+            return MobileMeshSessionUpdateRecord::default();
+        }
+        self.take_update()
+    }
+}
+
+impl MobileMeshSession {
+    /// Take the session's wake and updates for an app core: from now on
+    /// only `listener` is woken, and only `take_update` drains.
+    pub(crate) fn hold(&self, listener: Arc<dyn MobileMeshWakeListener>) {
+        self.held.store(true, Ordering::Release);
+        self.wake.set_listener(Some(listener));
+    }
+
+    /// End the session and wait for its threads: fail every transmission
+    /// in flight, so the pump lets go of the MAC; end the worker; then end
+    /// the chat store, once it has stored what the worker reported. Called
+    /// on the app core's worker, never as a blocking join. Every call on
+    /// the session fails with `SessionUnavailable` afterward.
+    pub(crate) async fn shutdown(&self) {
+        self.transmit_completions.poison();
+        self.transmit_completions.fail_all();
+        let _ = self.commands.send(WorkerCommand::Shutdown).await;
+        let exit = self
+            .worker_exit
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        if let Some(exit) = exit {
+            // A worker that never started has dropped its sender.
+            let _ = exit.await;
+        }
+        if let Some(store) = self.chat_store.get() {
+            store.stop().await;
+        }
+    }
+
+    /// Everything waiting for a poll.
+    pub(crate) fn take_update(&self) -> MobileMeshSessionUpdateRecord {
         // Re-arm before draining: anything enqueued mid-drain triggers a
         // fresh notification rather than being silently swallowed.
         self.wake.drained();
@@ -3255,6 +3308,16 @@ impl MobileMeshSession {
         Self::build(NodeOptions::default(), identity, counter_store, true, None).await
     }
 
+    /// [`new_with_virtual_time`](Self::new_with_virtual_time), for the
+    /// app core's tests.
+    #[cfg(test)]
+    pub(crate) async fn start_on_virtual_time(
+        identity: Arc<MobileIdentity>,
+        counter_store: Arc<MobileCounterStore>,
+    ) -> Result<Arc<Self>, MobileMeshError> {
+        Self::new_with_virtual_time(identity, counter_store).await
+    }
+
     /// [`new_with_virtual_time`](Self::new_with_virtual_time), with a
     /// transmit completion timeout, for testing that timeout.
     #[cfg(test)]
@@ -3353,6 +3416,7 @@ impl MobileMeshSession {
         let worker_forward_secret_conversations = forward_secret_conversations.clone();
         let worker_meet_states = meet_states.clone();
         let (ready_tx, ready_rx) = oneshot::channel();
+        let (exit_tx, exit_rx) = oneshot::channel();
         let worker_identity = identity.take_for_session()?;
         let local_key = *worker_identity.public_key();
         let transmit_completions = Arc::new(BridgeTransmitCompletions::new(completion_timeout));
@@ -3407,6 +3471,10 @@ impl MobileMeshSession {
                         ready_tx,
                     )),
                 );
+                // Everything the worker held goes before the exit is told.
+                drop(local);
+                drop(runtime);
+                let _ = exit_tx.send(());
             })
             .map_err(|_| MobileMeshError::SessionUnavailable)?;
 
@@ -3435,6 +3503,8 @@ impl MobileMeshSession {
             dropped,
             next_operation_id: Mutex::new(1),
             wake,
+            held: AtomicBool::new(false),
+            worker_exit: Mutex::new(Some(exit_rx)),
         }))
     }
 }
@@ -10808,5 +10878,82 @@ mod tests {
             );
             assert_eq!(seen.heard_peers, 0, "a session key was taken for a peer");
         }
+    }
+
+    struct NeverWoken;
+
+    impl MobileMeshWakeListener for NeverWoken {
+        fn on_update_pending(&self) {}
+    }
+
+    #[tokio::test]
+    async fn a_held_session_answers_only_its_holder() {
+        let directory = tempfile::tempdir().unwrap();
+        let counters = MobileCounterStore::new(directory.path().display().to_string()).unwrap();
+        let phone = MobileMeshSession::start(identity(40), counters)
+            .await
+            .unwrap();
+        phone.hold(Arc::new(NeverWoken));
+        phone.ping(address(&identity(41)), None).unwrap();
+        // The ping's frame waits for whoever holds the session.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            assert_eq!(
+                phone.poll_update(),
+                MobileMeshSessionUpdateRecord::default()
+            );
+            if !phone.take_update().outbound_frames.is_empty() {
+                break;
+            }
+            assert!(Instant::now() < deadline, "the ping never left");
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn a_shut_session_refuses_everything_and_its_threads_end() {
+        let directory = tempfile::tempdir().unwrap();
+        let counters =
+            MobileCounterStore::new(directory.path().join("counters").display().to_string())
+                .unwrap();
+        let store = MobileAppStore::open(directory.path().join("app.sqlite").display().to_string())
+            .unwrap();
+        let phone_identity = identity(42);
+        store
+            .insert_identity("owner".into(), address(&phone_identity), 1)
+            .unwrap();
+        let phone = MobileMeshSession::start(phone_identity, counters.clone())
+            .await
+            .unwrap();
+        phone
+            .clone()
+            .attach_chat_store(store, "owner".into(), None)
+            .unwrap();
+        // A frame in flight with nobody to answer it: the pump waits on it,
+        // and shutdown must not.
+        phone.ping(address(&identity(43)), None).unwrap();
+
+        tokio::time::timeout(Duration::from_secs(5), phone.shutdown())
+            .await
+            .expect("the session ended promptly");
+        assert_eq!(
+            phone.ping(address(&identity(43)), None),
+            Err(MobileMeshError::SessionUnavailable)
+        );
+        assert_eq!(
+            phone.advertise_identity(None, None).await,
+            Err(MobileMeshError::SessionUnavailable)
+        );
+
+        counters.shutdown().await;
+        std::fs::remove_dir_all(directory.path().join("counters")).ok();
+        assert_eq!(
+            counters.commit_boundary(vec![1], 7),
+            Err(crate::CounterStoreError::IoFailure)
+        );
+        assert!(
+            !directory.path().join("counters").exists(),
+            "a stopped counter store wrote its directory again"
+        );
     }
 }

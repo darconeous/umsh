@@ -73,7 +73,8 @@ impl From<SecretVaultError> for MobileStagingError {
 /// account's history. Run on every launch of that store: the timeline is
 /// written relative to `now_ms`, which is what keeps the newest message
 /// reading "4 minutes ago" in a screenshot taken next month. Every write is
-/// keyed, so repeating it replaces rather than accumulates.
+/// keyed, so repeating it replaces rather than accumulates. Runs before
+/// the identity starts, so it makes the identity's row when there is none.
 #[uniffi::export]
 pub async fn seed_staging(
     store: Arc<MobileAppStore>,
@@ -81,6 +82,7 @@ pub async fn seed_staging(
     owner_identity_id: String,
     now_ms: i64,
 ) -> Result<(), MobileStagingError> {
+    store.ensure_identity(&owner_identity_id, now_ms)?;
     let seeder = Seeder {
         store: &store,
         vault: vault.as_ref(),
@@ -141,6 +143,20 @@ impl Role {
             Self::Tracker => MobileStoredNodeKind::Tracker,
         }
     }
+}
+
+/// The address of the staged peer that speaks to the phone: the first
+/// staged node that carries chat.
+#[cfg(test)]
+pub(crate) fn staged_speaker_address() -> String {
+    let node = NODES
+        .iter()
+        .find(|node| !matches!(node.role, Role::Repeater))
+        .expect("a staged node carries chat");
+    crate::MobileIdentity::unlock(vec![node.seed; 32])
+        .expect("a staged seed unlocks")
+        .public_identity()
+        .canonical_address
 }
 
 /// One node in the staged mesh.

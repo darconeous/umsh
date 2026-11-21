@@ -23,6 +23,7 @@ use crate::mobile_mesh::{
 use crate::ulcp::{
     MobileAnnouncementRecord, UlcpAdvertSettingsRecord, UlcpDeviceConfigRecord,
     UlcpGnssSettingsRecord, UlcpItemMutationRecord, UlcpLocalManagementEventRecord,
+    UlcpPropertyPushRecord,
 };
 use crate::{
     MobileMeshSession, MobileUlcpSession, UlcpAlertState, UlcpDfuMode, UlcpRadioSettingsRecord,
@@ -105,23 +106,67 @@ struct Shared {
     state: Mutex<MobileRadioStateRecord>,
     update: Mutex<MobileRadioDriverUpdateRecord>,
     wake: WakeSignal<dyn MobileRadioDriverListener>,
+    /// The app core holding the driver, when one does: it takes every
+    /// update, and native code's listener and poll go quiet.
+    core: Mutex<Option<CoreHold>>,
+}
+
+/// An app core's hold on a driver.
+struct CoreHold {
+    wake: Arc<dyn Fn() + Send + Sync>,
+    update: CoreDriverUpdate,
+}
+
+/// What a driver published for the app core holding it, since the core
+/// last took it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct CoreDriverUpdate {
+    /// Every state the driver passed through, oldest first, so no
+    /// detach and attach between two takes goes unseen.
+    pub(crate) states: Vec<MobileRadioStateRecord>,
+    pub(crate) pushed_properties: Vec<UlcpPropertyPushRecord>,
+    /// Pushes let go of, oldest first, past the newest kept.
+    pub(crate) pushed_properties_dropped: u64,
+    pub(crate) host_releases: Vec<Vec<u8>>,
 }
 
 impl Shared {
-    /// Add what one round of effects published, and wake the listener.
-    fn publish(&self, batch: MobileRadioDriverUpdateRecord) {
+    /// Add what one round of effects published, and wake whoever takes
+    /// it. `states` is every state the round passed through; `batch`
+    /// carries only the last.
+    fn publish(&self, batch: MobileRadioDriverUpdateRecord, states: Vec<MobileRadioStateRecord>) {
         if let Some(state) = &batch.state {
             self.state
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .clone_from(state);
         }
+        let core_wake = {
+            let mut core = self.core.lock().unwrap_or_else(PoisonError::into_inner);
+            core.as_mut().map(|hold| {
+                let update = &mut hold.update;
+                update.states.extend(states);
+                update.pushed_properties_dropped += keep_newest(
+                    &mut update.pushed_properties,
+                    batch.pushed_properties.clone(),
+                    PUSHES_KEPT,
+                );
+                update
+                    .host_releases
+                    .extend(batch.host_releases.iter().cloned());
+                hold.wake.clone()
+            })
+        };
+        if let Some(wake) = core_wake {
+            wake();
+            return;
+        }
         {
             let mut update = self.update.lock().unwrap_or_else(PoisonError::into_inner);
             if batch.state.is_some() {
                 update.state = batch.state;
             }
-            keep_newest(
+            update.pushed_properties_dropped += keep_newest(
                 &mut update.pushed_properties,
                 batch.pushed_properties,
                 PUSHES_KEPT,
@@ -130,14 +175,22 @@ impl Shared {
         }
         self.wake.notify();
     }
+
+    fn held(&self) -> bool {
+        self.core
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_some()
+    }
 }
 
-/// Append `more`, then let go of the oldest values past `limit`.
-fn keep_newest<T>(values: &mut Vec<T>, more: Vec<T>, limit: usize) {
+/// Append `more`, then let go of the oldest values past `limit`. Returns
+/// how many were let go.
+fn keep_newest<T>(values: &mut Vec<T>, more: Vec<T>, limit: usize) -> u64 {
     values.extend(more);
-    if values.len() > limit {
-        values.drain(..values.len() - limit);
-    }
+    let excess = values.len().saturating_sub(limit);
+    values.drain(..excess);
+    excess as u64
 }
 
 /// Tells the driver's thread that its mesh session has frames.
@@ -207,10 +260,16 @@ impl MobileRadioDriver {
         let _ = self.inputs.send(Input::Stop);
     }
 
-    /// Everything that changed since the last poll.
+    /// Everything that changed since the last poll. Empty while an app
+    /// core holds the driver: the updates are the core's.
     pub fn poll_update(&self) -> MobileRadioDriverUpdateRecord {
-        // Re-armed first, so anything published mid-drain wakes again.
+        // Re-armed first, so anything published mid-drain wakes again,
+        // and so a wake pending when a core took the driver is not left
+        // pending once it lets go.
         self.shared.wake.drained();
+        if self.shared.held() {
+            return MobileRadioDriverUpdateRecord::default();
+        }
         std::mem::take(
             &mut *self
                 .shared
@@ -278,7 +337,101 @@ impl MobileRadioDriver {
     // --- What the app supplies. ---
 
     /// This phone's host key: its identity's public key, once unlocked.
+    ///
+    /// Refused with `RadioUnavailable` while an app core holds the driver:
+    /// the host key is then the core's to set.
     pub fn set_host_key(&self, host_key: Option<Vec<u8>>) -> Result<(), MobileRadioError> {
+        if self.shared.held() {
+            return Err(MobileRadioError::RadioUnavailable);
+        }
+        self.core_set_host_key(host_key)
+    }
+
+    /// The mesh session whose frames this radio carries, or none. Frames
+    /// received while there is none are kept, a bounded few, for the next.
+    ///
+    /// Refused with `RadioUnavailable` while an app core holds the driver.
+    pub async fn use_mesh_session(
+        &self,
+        session: Option<Arc<MobileMeshSession>>,
+    ) -> Result<(), MobileRadioError> {
+        if self.shared.held() {
+            return Err(MobileRadioError::RadioUnavailable);
+        }
+        self.core_use_mesh_session(session).await
+    }
+}
+
+impl MobileRadioDriver {
+    /// Hand every update to an app core from now on. `wake` is called, on
+    /// the driver's thread or the caller's, whenever one is waiting; the
+    /// first carries the state the driver is in now.
+    pub(crate) fn hold(&self, wake: Arc<dyn Fn() + Send + Sync>) {
+        {
+            let mut core = self
+                .shared
+                .core
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            // Read under the hold's lock: `publish` writes the state before
+            // it takes this lock, so a state published meanwhile is either
+            // read here or added to the hold after it, never sent to native
+            // code instead.
+            let current = self.state();
+            *core = Some(CoreHold {
+                wake: wake.clone(),
+                update: CoreDriverUpdate {
+                    states: vec![current],
+                    ..CoreDriverUpdate::default()
+                },
+            });
+        }
+        // Native code's last update predates the hold: what it holds of the
+        // state is replaced when the hold ends.
+        self.shared
+            .update
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .state = None;
+        wake();
+    }
+
+    /// Give the updates back to native code, starting from the state the
+    /// driver is in now.
+    pub(crate) fn release_hold(&self) {
+        let mut core = self
+            .shared
+            .core
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if core.take().is_none() {
+            return;
+        }
+        let current = self.state();
+        self.shared
+            .update
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .state = Some(current);
+        drop(core);
+        self.shared.wake.notify();
+    }
+
+    /// What the driver published for the core since the last take.
+    pub(crate) fn take_core_update(&self) -> CoreDriverUpdate {
+        self.shared
+            .core
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_mut()
+            .map(|hold| std::mem::take(&mut hold.update))
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn core_set_host_key(
+        &self,
+        host_key: Option<Vec<u8>>,
+    ) -> Result<(), MobileRadioError> {
         let host_key = host_key
             .map(|key| key.try_into())
             .transpose()
@@ -286,9 +439,7 @@ impl MobileRadioDriver {
         self.send(Event::HostKey(host_key))
     }
 
-    /// The mesh session whose frames this radio carries, or none. Frames
-    /// received while there is none are kept, a bounded few, for the next.
-    pub async fn use_mesh_session(
+    pub(crate) async fn core_use_mesh_session(
         &self,
         session: Option<Arc<MobileMeshSession>>,
     ) -> Result<(), MobileRadioError> {
@@ -298,7 +449,10 @@ impl MobileRadioDriver {
             .map_err(|_| MobileRadioError::Stopped)?;
         finished.await.map_err(|_| MobileRadioError::Stopped)
     }
+}
 
+#[uniffi::export]
+impl MobileRadioDriver {
     // --- Operations on the radio. ---
 
     /// Wait for the attach to finish. Answers with the state once the
@@ -590,6 +744,7 @@ impl MobileRadioDriver {
             state: Mutex::new(core.state().clone()),
             update: Mutex::new(MobileRadioDriverUpdateRecord::default()),
             wake: WakeSignal::new(),
+            core: Mutex::new(None),
         });
         let runner = Runner {
             core,
@@ -759,6 +914,7 @@ impl Runner {
     /// round of effects wakes the listener once.
     fn execute(&mut self, effects: Vec<Effect>) {
         let mut batch = MobileRadioDriverUpdateRecord::default();
+        let mut states = Vec::new();
         for effect in effects {
             match effect {
                 Effect::Send {
@@ -806,13 +962,16 @@ impl Runner {
                         session.set_frame_time_ms(frame_ms);
                     }
                 }
-                Effect::State(state) => batch.state = Some(*state),
+                Effect::State(state) => {
+                    states.push((*state).clone());
+                    batch.state = Some(*state);
+                }
                 Effect::Pushed(push) => batch.pushed_properties.push(push),
                 Effect::HostReleased(key) => batch.host_releases.push(key),
             }
         }
         if batch != MobileRadioDriverUpdateRecord::default() {
-            self.shared.publish(batch);
+            self.shared.publish(batch, states);
         }
     }
 }

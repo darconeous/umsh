@@ -1154,7 +1154,15 @@ fn compare(store_name: &str, golden_name: &str, owner: &str) {
     let path = scratch.path().join(store_name);
     std::fs::copy(directory().join(store_name), &path).unwrap();
     let store = MobileAppStore::open(path.to_string_lossy().into_owned()).unwrap();
-    let core = super::MobileAppCore::new(store).unwrap();
+    let core = super::MobileAppCore::new(
+        store,
+        Arc::new(crate::secret_vault::memory::MemoryVault::default()),
+        super::MobileAppConfigRecord {
+            counter_directory: scratch.path().join("counters").display().to_string(),
+            platform_model: 0,
+        },
+    )
+    .unwrap();
     core.set_owner(Some(owner.to_owned())).unwrap();
 
     let state = core.state(false).unwrap();

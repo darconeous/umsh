@@ -82,6 +82,9 @@ enum Job {
         records: Vec<u8>,
         reply: Reply<Result<(), CounterStoreError>>,
     },
+    /// End the thread. Jobs queued behind it fail, and every later one
+    /// fails at once, so nothing can write the directory again.
+    Stop { reply: Reply<()> },
 }
 
 /// Where a result goes: back to an awaiting task, or to a blocked caller.
@@ -174,6 +177,16 @@ impl MobileCounterStore {
         })?
     }
 
+    /// Land everything asked for so far, then end the thread. Afterward
+    /// every call fails, so the directory can be removed without a late
+    /// commit recreating it.
+    pub(crate) async fn shutdown(&self) {
+        // Jobs run in order, so the flush's answer means every earlier
+        // commit has landed. A failed flush still ends the thread.
+        let _ = self.queue(|reply| Job::Flush { reply }).await;
+        let _ = self.queue(|reply| Job::Stop { reply }).await;
+    }
+
     /// Queue a job and wait on this thread for its result.
     fn block<T>(&self, job: impl FnOnce(Reply<T>) -> Job) -> Result<T, CounterStoreError> {
         let (reply, result) = mpsc::sync_channel(1);
@@ -220,6 +233,10 @@ impl CounterFiles {
                     records,
                     reply,
                 } => reply.send(self.keep_forward_secrecy_records(&node, &records)),
+                Job::Stop { reply } => {
+                    reply.send(());
+                    return;
+                }
             }
         }
     }

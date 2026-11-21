@@ -123,6 +123,9 @@ pub struct MobileStoredChatNotificationTargetRecord {
     pub sender_handle: Option<String>,
     /// Status text, which reads as its sender's name followed by its body.
     pub is_status: bool,
+    /// A test message on `EMERGENCY` that arrived while tests were to
+    /// arrive silently: kept, and not to be announced.
+    pub silent: bool,
 }
 
 /// An inbound reaction worth telling the user about: who put what on which
@@ -455,7 +458,7 @@ pub(super) fn chat_notification_target(
         .query_row(
             &format!(
                 "SELECT conversation_address, body, sender_address, sender_hint,
-                    sender_handle, {is_status}
+                    sender_handle, {is_status}, silent
                 FROM chat_message
                 WHERE owner_identity_id = ? AND session_id = ? AND handle = ?
                     AND direction = 0 AND deleted = 0 AND presence = 0 AND body <> ''
@@ -473,6 +476,7 @@ pub(super) fn chat_notification_target(
                     // NULL when the message has no type, which is not
                     // status.
                     is_status: row.get::<_, Option<i64>>(5)?.unwrap_or(0) != 0,
+                    silent: row.get(6)?,
                 })
             },
         )

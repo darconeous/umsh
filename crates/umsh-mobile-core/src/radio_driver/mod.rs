@@ -222,6 +222,10 @@ pub struct MobileRadioDriverUpdateRecord {
     pub state: Option<MobileRadioStateRecord>,
     /// Values the radio announced on its own, verbatim.
     pub pushed_properties: Vec<UlcpPropertyPushRecord>,
+    /// Pushes let go of, oldest first, because more arrived than are kept
+    /// between two polls. Nonzero means a property may have moved since:
+    /// read it again.
+    pub pushed_properties_dropped: u64,
     /// The device keys of radios that confirmed they let go of this phone.
     pub host_releases: Vec<Vec<u8>>,
 }

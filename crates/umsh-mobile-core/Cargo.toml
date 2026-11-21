@@ -29,6 +29,9 @@ umsh-lan-bearer = { path = "../umsh-lan-bearer", features = ["tokio"] }
 umsh-ulcp-device = { path = "../umsh-ulcp-device" }
 umsh-ulcp-simdev = { path = "../umsh-ulcp-simdev", features = ["lan"] }
 embedded-hal-async.workspace = true
+# The app core's schedules read a clock that keeps counting while the phone
+# sleeps, which `std` does not offer.
+libc = "0.2"
 lwuri.workspace = true
 # The core logs through the `log` facade; the platform installs the logger.
 # `kv` carries the private values as fields of their own.

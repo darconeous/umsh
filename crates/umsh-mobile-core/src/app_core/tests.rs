@@ -1,7 +1,8 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
+use super::clock::manual::ManualClock;
 use super::mapping::PeerIndex;
 use super::*;
 use crate::store::{
@@ -11,14 +12,6 @@ use crate::store::{
 use crate::{NodeIdentityProfileRecord, public_identity_record, signed_node_identity_bundle};
 
 const NOW_MS: i64 = 1_790_000_000_000;
-
-struct ManualClock(AtomicI64);
-
-impl Clock for ManualClock {
-    fn now_ms(&self) -> i64 {
-        self.0.load(Ordering::SeqCst)
-    }
-}
 
 struct Counting(AtomicUsize);
 
@@ -50,8 +43,18 @@ impl Fixture {
         store
             .insert_identity(owner.clone(), owner.clone(), 1)
             .unwrap();
-        let clock = Arc::new(ManualClock(AtomicI64::new(NOW_MS)));
-        let core = MobileAppCore::with_clock(store.clone(), clock.clone()).unwrap();
+        let clock = Arc::new(ManualClock::new(NOW_MS));
+        let core = MobileAppCore::with_parts(
+            store.clone(),
+            Arc::new(crate::secret_vault::memory::MemoryVault::default()),
+            MobileAppConfigRecord {
+                counter_directory: directory.path().join("counters").display().to_string(),
+                platform_model: 0,
+            },
+            clock.clone(),
+            Options::default(),
+        )
+        .unwrap();
         core.set_owner(Some(owner.clone())).unwrap();
         core.poll_changes();
         Self {
@@ -129,7 +132,11 @@ fn queries_need_an_owner() {
     assert_eq!(
         fixture.core.status(),
         Ok(MobileAppStatusRecord {
-            lifecycle: MobileAppLifecycle::Idle
+            lifecycle: MobileAppLifecycle::Idle,
+            radio: None,
+            forward_secret_conversations: Vec::new(),
+            meet: None,
+            revoking_claimed_radios: false,
         })
     );
 }
@@ -145,10 +152,10 @@ fn setting_the_owner_raises_every_list_once() {
     assert_eq!(
         fixture.core.poll_changes(),
         MobileAppChangesRecord {
-            lifecycle: None,
             peers_changed: true,
             channels_changed: true,
             conversations_changed: true,
+            ..MobileAppChangesRecord::default()
         }
     );
     assert_eq!(
@@ -172,7 +179,11 @@ fn while_stopping_queries_are_busy_and_status_answers() {
     assert_eq!(
         fixture.core.status(),
         Ok(MobileAppStatusRecord {
-            lifecycle: MobileAppLifecycle::Stopping
+            lifecycle: MobileAppLifecycle::Stopping,
+            radio: None,
+            forward_secret_conversations: Vec::new(),
+            meet: None,
+            revoking_claimed_radios: false,
         })
     );
     // Kept, for when the core runs again.
@@ -404,7 +415,7 @@ fn stranded_radios_leave_out_the_attached_host_and_lapsed_claims() {
         .collect();
     assert_eq!(stranded, [elsewhere]);
 
-    fixture.clock.0.store(NOW_MS + lapse, Ordering::SeqCst);
+    fixture.clock.set_wall(NOW_MS + lapse);
     assert_eq!(fixture.core.claimed_radios(), Ok(Vec::new()));
 }
 

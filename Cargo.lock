@@ -4870,6 +4870,7 @@ name = "umsh-mobile-core"
 version = "0.1.0"
 dependencies = [
  "embedded-hal-async",
+ "libc",
  "log",
  "lwuri",
  "rand 0.10.1",

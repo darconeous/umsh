@@ -26,17 +26,24 @@ mod regions;
 mod secret_vault;
 mod staging;
 mod store;
+#[cfg(test)]
+mod test_support;
 mod time_zone;
 mod ulcp;
 mod virtual_radio;
 
 pub use app_core::{
     MobileAppChangesRecord, MobileAppChannelConversationRecord, MobileAppChannelPreviewRecord,
-    MobileAppChannelRecord, MobileAppCore, MobileAppCoreListener,
-    MobileAppDirectConversationRecord, MobileAppError, MobileAppLifecycle, MobileAppMessageRecord,
-    MobileAppMessageRepeaterRecord, MobileAppNeighborReportRecord, MobileAppPeerRecord,
+    MobileAppChannelRecord, MobileAppConfigRecord, MobileAppCore, MobileAppCoreListener,
+    MobileAppDirectConversationRecord, MobileAppError, MobileAppLearnedPathOffer,
+    MobileAppLifecycle, MobileAppMessageRecord, MobileAppMessageRepeaterRecord,
+    MobileAppNeighborReportRecord, MobileAppOperationProgressRecord, MobileAppPeerRecord,
+    MobileAppPingReplyRecord, MobileAppPingResult, MobileAppPolicyRecord, MobileAppPositionReading,
     MobileAppPreviewRecord, MobileAppRepeaterListingRecord, MobileAppRepeaterNeighborRecord,
+    MobileAppRouteCandidateRecord, MobileAppRouteRecord, MobileAppStartFailure,
     MobileAppStateRecord, MobileAppStatusRecord, MobileAppTranscriptPageRecord,
+    MobileNotificationEventRecord, MobileNotificationReactionRecord, MobileOperation,
+    MobilePositionRecord,
 };
 pub use counter_store::{CounterStoreError, MobileCounterStore};
 pub use logging::{MobileLogField, MobileLogLevel, MobileLogRecord, MobileLogger, set_logger};
@@ -114,7 +121,7 @@ uniffi::setup_scaffolding!();
 ///
 /// Increment this when a binding-visible operation, record, or error contract
 /// changes incompatibly. It is independent of the UMSH wire version.
-pub const MOBILE_API_VERSION: u16 = 86;
+pub const MOBILE_API_VERSION: u16 = 87;
 
 /// Stable error categories consumed by platform adapters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Error)]

@@ -66,7 +66,10 @@ pub trait SecretVault: Send + Sync {
 pub(crate) mod memory {
     use std::{
         collections::BTreeMap,
-        sync::{Mutex, PoisonError},
+        sync::{
+            Mutex, PoisonError,
+            atomic::{AtomicBool, Ordering},
+        },
     };
 
     use super::{SecretVault, SecretVaultError};
@@ -74,9 +77,16 @@ pub(crate) mod memory {
     #[derive(Default)]
     pub(crate) struct MemoryVault {
         secrets: Mutex<BTreeMap<String, Vec<u8>>>,
+        /// Loads answer `Unavailable`, as a vault does before the first
+        /// unlock.
+        locked: AtomicBool,
     }
 
     impl MemoryVault {
+        pub(crate) fn set_locked(&self, locked: bool) {
+            self.locked.store(locked, Ordering::SeqCst);
+        }
+
         pub(crate) fn accounts(&self) -> Vec<String> {
             self.secrets().keys().cloned().collect()
         }
@@ -88,6 +98,9 @@ pub(crate) mod memory {
 
     impl SecretVault for MemoryVault {
         fn load(&self, account: String) -> Result<Option<Vec<u8>>, SecretVaultError> {
+            if self.locked.load(Ordering::SeqCst) {
+                return Err(SecretVaultError::Unavailable);
+            }
             Ok(self.secrets().get(&account.to_uppercase()).cloned())
         }
 

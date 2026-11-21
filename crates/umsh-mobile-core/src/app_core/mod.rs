@@ -6,34 +6,67 @@
 //! raised only after the snapshot that reflects it is published, so a query
 //! made on the wake sees it.
 //!
-//! This landing has the reads: the queries, the owner they read for, and a
-//! lifecycle without a session (idle, stopping, stopped).
+//! Everything else runs on the worker (see `worker`): `start`, `erase`,
+//! `stop` and `use_radio` change the session and the radio in turn, and
+//! commands run as tasks beside the pipeline and the policy pass.
 
+use std::future::Future;
+use std::rc::Rc;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
-use std::time::{SystemTime, UNIX_EPOCH};
 
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc, oneshot, watch};
 
-use crate::MobileError;
 use crate::mobile_mesh::{UpdateListener, WakeSignal};
+use crate::radio_driver::{MobileRadioDriver, MobileRadioStateRecord};
+use crate::secret_vault::{SecretVault, SecretVaultError};
 use crate::store::{MobileAppStore, MobileStoreError};
+use crate::{MobileError, MobileIdentity, MobileMeshError, MobileMeshSession};
 
+#[cfg(test)]
+mod air_tests;
+mod bootstrap;
+mod channels;
+mod clock;
+mod commands;
+mod lifecycle;
+#[cfg(test)]
+mod lifecycle_tests;
+mod management;
 mod mapping;
 #[cfg(test)]
 mod parity;
+mod pipeline;
+mod policy;
 mod queries;
 mod records;
+mod routes;
+mod settings;
+#[cfg(test)]
+mod test_support;
 #[cfg(test)]
 mod tests;
+mod waiters;
+mod worker;
 
+pub(crate) use clock::Clock;
+use clock::SystemClock;
+pub use commands::{MobileAppPingReplyRecord, MobileAppPingResult};
+pub use management::MobileOperation;
 pub use records::{
     MobileAppChangesRecord, MobileAppChannelConversationRecord, MobileAppChannelPreviewRecord,
-    MobileAppChannelRecord, MobileAppDirectConversationRecord, MobileAppLifecycle,
-    MobileAppMessageRecord, MobileAppMessageRepeaterRecord, MobileAppNeighborReportRecord,
-    MobileAppPeerRecord, MobileAppPreviewRecord, MobileAppRepeaterListingRecord,
-    MobileAppRepeaterNeighborRecord, MobileAppStateRecord, MobileAppStatusRecord,
-    MobileAppTranscriptPageRecord,
+    MobileAppChannelRecord, MobileAppConfigRecord, MobileAppDirectConversationRecord,
+    MobileAppLifecycle, MobileAppMessageRecord, MobileAppMessageRepeaterRecord,
+    MobileAppNeighborReportRecord, MobileAppOperationProgressRecord, MobileAppPeerRecord,
+    MobileAppPreviewRecord, MobileAppRepeaterListingRecord, MobileAppRepeaterNeighborRecord,
+    MobileAppStartFailure, MobileAppStateRecord, MobileAppStatusRecord,
+    MobileAppTranscriptPageRecord, MobileNotificationEventRecord, MobileNotificationReactionRecord,
 };
+pub use routes::{
+    MobileAppLearnedPathOffer, MobileAppPositionReading, MobileAppRouteCandidateRecord,
+    MobileAppRouteRecord,
+};
+pub use settings::{MobileAppPolicyRecord, MobilePositionRecord};
+use worker::{Job, Signals, Worker, WorkerParts};
 
 /// Why the core could not answer.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Error)]
@@ -42,12 +75,47 @@ pub enum MobileAppError {
     Store { error: MobileStoreError },
     /// An argument does not parse: an address, a channel invitation.
     InvalidInput { error: MobileError },
+    /// The session would not make the request as asked: a key of the wrong
+    /// length, a path it cannot carry, a request too large to send.
+    InvalidRequest,
     /// No owner is set, so there is nobody to read for.
     NoOwner,
-    /// The core is stopping.
+    /// The core is starting, erasing or stopping.
     Busy,
     /// The core has stopped.
     Stopped,
+    /// No identity is running.
+    NotRunning,
+    /// `start` failed, for the reason the lifecycle also reports.
+    StartFailed { reason: MobileAppStartFailure },
+    /// The vault failed.
+    Vault { error: SecretVaultError },
+    /// `erase` could not remove the counter reservations.
+    CountersNotRemoved,
+    /// No radio is attached.
+    NoRadio,
+    /// The attached radio is not this phone's.
+    NotThisPhone,
+    /// Nothing answered in time.
+    NoAnswer,
+    /// The device could not be reached.
+    Unreachable,
+    /// The device refused, with its status.
+    Refused { status: u32 },
+    /// The device's answer could not be read.
+    Unreadable,
+    /// The operation was cancelled.
+    Cancelled,
+    /// The operation was already used.
+    OperationReused,
+    /// The session could not send.
+    SendFailed,
+    /// The device cannot enter firmware update.
+    DfuUnsupported,
+    /// The device refused firmware update, with its status.
+    DfuRefused { status: u32 },
+    /// The device did not confirm entering firmware update.
+    DfuUnconfirmed,
 }
 
 impl std::fmt::Display for MobileAppError {
@@ -55,9 +123,30 @@ impl std::fmt::Display for MobileAppError {
         match self {
             Self::Store { error } => error.fmt(formatter),
             Self::InvalidInput { error } => error.fmt(formatter),
+            Self::InvalidRequest => formatter.write_str("the request cannot be made as asked"),
             Self::NoOwner => formatter.write_str("no owner is set"),
             Self::Busy => formatter.write_str("the core is busy"),
             Self::Stopped => formatter.write_str("the core has stopped"),
+            Self::NotRunning => formatter.write_str("no identity is running"),
+            Self::StartFailed { reason } => write!(formatter, "start failed: {reason:?}"),
+            Self::Vault { error } => write!(formatter, "the vault failed: {error:?}"),
+            Self::CountersNotRemoved => {
+                formatter.write_str("the counter reservations were not removed")
+            }
+            Self::NoRadio => formatter.write_str("no radio is attached"),
+            Self::NotThisPhone => formatter.write_str("the radio is not this phone's"),
+            Self::NoAnswer => formatter.write_str("nothing answered"),
+            Self::Unreachable => formatter.write_str("the device could not be reached"),
+            Self::Refused { status } => write!(formatter, "refused with status {status}"),
+            Self::Unreadable => formatter.write_str("the answer could not be read"),
+            Self::Cancelled => formatter.write_str("cancelled"),
+            Self::OperationReused => formatter.write_str("the operation was already used"),
+            Self::SendFailed => formatter.write_str("the session could not send"),
+            Self::DfuUnsupported => formatter.write_str("firmware update is unsupported"),
+            Self::DfuRefused { status } => {
+                write!(formatter, "firmware update refused with status {status}")
+            }
+            Self::DfuUnconfirmed => formatter.write_str("firmware update was not confirmed"),
         }
     }
 }
@@ -73,6 +162,12 @@ impl From<MobileStoreError> for MobileAppError {
 impl From<MobileError> for MobileAppError {
     fn from(error: MobileError) -> Self {
         Self::InvalidInput { error }
+    }
+}
+
+impl From<SecretVaultError> for MobileAppError {
+    fn from(error: SecretVaultError) -> Self {
+        Self::Vault { error }
     }
 }
 
@@ -92,24 +187,6 @@ impl UpdateListener for dyn MobileAppCoreListener {
     }
 }
 
-/// The wall clock, which tests replace.
-pub(crate) trait Clock: Send + Sync {
-    /// Unix milliseconds.
-    fn now_ms(&self) -> i64;
-}
-
-struct SystemClock;
-
-impl Clock for SystemClock {
-    fn now_ms(&self) -> i64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |since| {
-                i64::try_from(since.as_millis()).unwrap_or(i64::MAX)
-            })
-    }
-}
-
 /// What queries read besides the store.
 #[derive(Clone, Debug)]
 struct Snapshot {
@@ -120,6 +197,11 @@ struct Snapshot {
     /// host.
     attached_host: Option<String>,
     unknown_device_channels: Vec<Vec<u8>>,
+    /// The attached radio's state, while one is attached.
+    radio: Option<MobileRadioStateRecord>,
+    forward_secret_conversations: Vec<String>,
+    meet: Option<crate::MobileMeetStateRecord>,
+    revoking_claimed_radios: bool,
 }
 
 /// What the object and its worker share.
@@ -164,9 +246,17 @@ impl Shared {
     }
 }
 
-/// Requests from the object to its worker.
-enum WorkerCommand {
-    Stop,
+/// What a session error means to a caller of the core.
+pub(super) fn mesh_error(error: MobileMeshError) -> MobileAppError {
+    match error {
+        MobileMeshError::SessionUnavailable => MobileAppError::NotRunning,
+        MobileMeshError::NoAnswer => MobileAppError::NoAnswer,
+        MobileMeshError::InvalidPeer
+        | MobileMeshError::InvalidRequest
+        | MobileMeshError::InvalidRoute
+        | MobileMeshError::InvalidLocation => MobileAppError::InvalidRequest,
+        _ => MobileAppError::SendFailed,
+    }
 }
 
 /// The application core.
@@ -175,9 +265,9 @@ pub struct MobileAppCore {
     store: Arc<MobileAppStore>,
     clock: Arc<dyn Clock>,
     shared: Arc<Shared>,
-    /// Dropping the object closes this, which ends the worker as `stop`
-    /// does, without waiting for it.
-    commands: mpsc::UnboundedSender<WorkerCommand>,
+    /// Dropping the object closes this, which takes the identity down and
+    /// ends the worker as `stop` does, without waiting for it.
+    jobs: mpsc::UnboundedSender<Job>,
     /// Becomes true when the worker has ended.
     finished: watch::Receiver<bool>,
 }
@@ -185,12 +275,23 @@ pub struct MobileAppCore {
 #[uniffi::export]
 impl MobileAppCore {
     /// A core over `store`, which native code opened and keeps using: both
-    /// share its one connection.
+    /// share its one connection. `vault` holds channel keys.
     #[uniffi::constructor]
-    pub fn new(store: Arc<MobileAppStore>) -> Result<Arc<Self>, MobileAppError> {
-        Self::with_clock(store, Arc::new(SystemClock))
+    pub fn new(
+        store: Arc<MobileAppStore>,
+        vault: Arc<dyn SecretVault>,
+        config: MobileAppConfigRecord,
+    ) -> Result<Arc<Self>, MobileAppError> {
+        Self::with_parts(
+            store,
+            vault,
+            config,
+            Arc::new(SystemClock),
+            Options::default(),
+        )
     }
 
+    /// Replaces any listener set before.
     pub fn set_listener(&self, listener: Arc<dyn MobileAppCoreListener>) {
         self.shared.wake.set_listener(Some(listener));
     }
@@ -214,8 +315,8 @@ impl MobileAppCore {
     }
 
     /// Whose rows the queries read, or nobody's. Kept in every state but
-    /// stopped. Raises every list's change flag, since each now reads
-    /// differently.
+    /// stopped; `start` sets it and `erase` clears it. Raises every list's
+    /// change flag, since each now reads differently.
     pub fn set_owner(&self, owner_identity_id: Option<String>) -> Result<(), MobileAppError> {
         let mut refused = None;
         self.shared.publish(|snapshot| {
@@ -225,53 +326,147 @@ impl MobileAppCore {
             }
             snapshot.owner = owner_identity_id;
             MobileAppChangesRecord {
-                lifecycle: None,
                 peers_changed: true,
                 channels_changed: true,
                 conversations_changed: true,
+                ..MobileAppChangesRecord::default()
             }
         });
         refused.map_or(Ok(()), Err)
     }
 
     pub fn status(&self) -> Result<MobileAppStatusRecord, MobileAppError> {
-        let lifecycle = self.shared.snapshot().lifecycle;
-        match lifecycle {
+        let snapshot = self.shared.snapshot();
+        match snapshot.lifecycle {
             MobileAppLifecycle::Stopped => Err(MobileAppError::Stopped),
-            lifecycle => Ok(MobileAppStatusRecord { lifecycle }),
+            lifecycle => Ok(MobileAppStatusRecord {
+                lifecycle,
+                radio: snapshot.radio.clone(),
+                forward_secret_conversations: snapshot.forward_secret_conversations.clone(),
+                meet: snapshot.meet.clone(),
+                revoking_claimed_radios: snapshot.revoking_claimed_radios,
+            }),
         }
+    }
+
+    /// Bring `identity` up: the host key to the radio, the mesh session,
+    /// the store's repairs, channels and chat, held paths, and the
+    /// settings; then the radio's traffic. Resolves once running, or once
+    /// failed. The session takes the secret out of `identity`, so a failed
+    /// start needs a fresh unlock.
+    pub async fn start(&self, identity: Arc<MobileIdentity>) -> Result<(), MobileAppError> {
+        self.on_worker(move |worker| async move { worker.start(identity).await })
+            .await
+    }
+
+    /// Take the identity down: the radio stops carrying it, the session
+    /// shuts down, the channel keys and counter reservations go, and with
+    /// `also_content` the store's content too. Native code erases the
+    /// identity's secret first, and stops if that fails. Leaves the core
+    /// idle, even when a later part fails.
+    pub async fn erase(&self, also_content: bool) -> Result<(), MobileAppError> {
+        self.on_worker(move |worker| async move { worker.erase(also_content).await })
+            .await
     }
 
     /// Finish the core. It resolves once the worker has ended; a second
     /// call waits for the same end, and a call on a stopped core does
     /// nothing.
     pub async fn stop(&self) {
-        let mut stopping = false;
-        self.shared.publish(|snapshot| {
-            if snapshot.lifecycle != MobileAppLifecycle::Idle {
-                return MobileAppChangesRecord::default();
-            }
-            stopping = true;
-            snapshot.lifecycle = MobileAppLifecycle::Stopping;
-            MobileAppChangesRecord {
-                lifecycle: Some(MobileAppLifecycle::Stopping),
-                ..MobileAppChangesRecord::default()
-            }
-        });
-        if stopping {
-            // A worker already gone has published its end.
-            let _ = self.commands.send(WorkerCommand::Stop);
-        }
+        let job: Job = Box::new(|worker: Rc<Worker>| Box::pin(async move { worker.stop().await }));
+        // A worker already gone has published its end.
+        let _ = self.jobs.send(job);
         let mut finished = self.finished.clone();
         // The worker's sender goes with it, which ends the wait too.
         let _ = finished.wait_for(|finished| *finished).await;
     }
+
+    /// Carry the mesh over `driver`, or over none. The core then takes the
+    /// driver's updates and sets its host key and session; the previous
+    /// driver is withdrawn from, not released. Native code calls this
+    /// before dropping a driver's owner, never on a link loss.
+    pub async fn use_radio(
+        &self,
+        driver: Option<Arc<MobileRadioDriver>>,
+    ) -> Result<(), MobileAppError> {
+        self.on_worker(move |worker| async move { worker.use_radio(driver).await })
+            .await
+    }
+
+    /// The user's preferences. Kept in every state but stopped, and acted
+    /// on while running.
+    pub async fn set_policy(&self, policy: MobileAppPolicyRecord) -> Result<(), MobileAppError> {
+        self.on_worker(move |worker| async move {
+            worker.set_policy(policy).await;
+            Ok(())
+        })
+        .await
+    }
+
+    /// The latest location reading while sharing, or `None` when there is
+    /// none.
+    pub async fn set_location(
+        &self,
+        position: Option<MobilePositionRecord>,
+    ) -> Result<(), MobileAppError> {
+        self.on_worker(move |worker| async move {
+            worker.set_location(position).await;
+            Ok(())
+        })
+        .await
+    }
+
+    /// The app came to the foreground: check the schedules and retry what
+    /// waits for a retry.
+    pub fn resumed(&self) {
+        let job: Job = Box::new(|worker: Rc<Worker>| {
+            Box::pin(async move {
+                worker.schedule_check.notify_waiters();
+                worker.policy_triggered();
+            })
+        });
+        let _ = self.jobs.send(job);
+    }
+
+    /// The running identity's session, for the commands native code has
+    /// not moved here yet. Fetch it for each call; never keep it. Deleted
+    /// once they have moved.
+    pub async fn mesh_session(&self) -> Result<Arc<MobileMeshSession>, MobileAppError> {
+        self.on_worker(|worker| async move {
+            let _command = worker.begin_command()?;
+            worker.session().ok_or(MobileAppError::NotRunning)
+        })
+        .await
+    }
+
+    /// Native code wrote peers or channels: bring the core's view up to
+    /// date. Resolves once it is. Deleted once those writes have moved.
+    pub async fn content_changed(&self) -> Result<(), MobileAppError> {
+        self.on_worker(|worker| async move {
+            let _command = worker.begin_command()?;
+            worker.refresh_channels().await;
+            worker.policy_triggered();
+            Ok(())
+        })
+        .await
+    }
+}
+
+/// What tests change about a core.
+#[derive(Default)]
+pub(crate) struct Options {
+    /// Sessions run on virtual time.
+    #[cfg(test)]
+    pub(crate) virtual_time: bool,
 }
 
 impl MobileAppCore {
-    pub(crate) fn with_clock(
+    pub(crate) fn with_parts(
         store: Arc<MobileAppStore>,
+        vault: Arc<dyn SecretVault>,
+        config: MobileAppConfigRecord,
         clock: Arc<dyn Clock>,
+        options: Options,
     ) -> Result<Arc<Self>, MobileAppError> {
         let shared = Arc::new(Shared {
             snapshot: Mutex::new(Snapshot {
@@ -279,58 +474,70 @@ impl MobileAppCore {
                 owner: None,
                 attached_host: None,
                 unknown_device_channels: Vec::new(),
+                radio: None,
+                forward_secret_conversations: Vec::new(),
+                meet: None,
+                revoking_claimed_radios: false,
             }),
             changes: Mutex::new(MobileAppChangesRecord::default()),
             wake: WakeSignal::new(),
         });
-        let (commands, command_rx) = mpsc::unbounded_channel();
+        let parts = WorkerParts {
+            store: store.clone(),
+            vault,
+            clock: clock.clone(),
+            shared: shared.clone(),
+            config,
+            signals: Arc::new(Signals::default()),
+            #[cfg(test)]
+            virtual_time: options.virtual_time,
+        };
+        #[cfg(not(test))]
+        let _ = options;
+        let (jobs, job_rx) = mpsc::unbounded_channel();
         let (finished_tx, finished) = watch::channel(false);
-        let worker_shared = shared.clone();
         std::thread::Builder::new()
             .name("umsh-app-core".to_owned())
-            .spawn(move || run_worker(&worker_shared, command_rx, &finished_tx))
+            .spawn(move || worker::run(parts, job_rx, &finished_tx))
             .map_err(|_| MobileAppError::Stopped)?;
         Ok(Arc::new(Self {
             store,
             clock,
             shared,
-            commands,
+            jobs,
             finished,
         }))
+    }
+
+    /// Run `work` on the worker as its own task, and answer with its result.
+    async fn on_worker<T, F, Fut>(&self, work: F) -> Result<T, MobileAppError>
+    where
+        T: Send + 'static,
+        F: FnOnce(Rc<Worker>) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<T, MobileAppError>> + 'static,
+    {
+        let (answer, result) = oneshot::channel();
+        let job: Job = Box::new(move |worker| {
+            Box::pin(async move {
+                let _ = answer.send(work(worker).await);
+            })
+        });
+        self.jobs.send(job).map_err(|_| MobileAppError::Stopped)?;
+        result.await.map_err(|_| MobileAppError::Stopped)?
     }
 
     /// The owner to read for, when the lifecycle allows a query.
     fn reader(&self) -> Result<String, MobileAppError> {
         let snapshot = self.shared.snapshot();
         match snapshot.lifecycle {
-            MobileAppLifecycle::Idle => snapshot.owner.clone().ok_or(MobileAppError::NoOwner),
-            MobileAppLifecycle::Stopping => Err(MobileAppError::Busy),
+            MobileAppLifecycle::Erasing | MobileAppLifecycle::Stopping => Err(MobileAppError::Busy),
             MobileAppLifecycle::Stopped => Err(MobileAppError::Stopped),
+            MobileAppLifecycle::Idle
+            | MobileAppLifecycle::Starting
+            | MobileAppLifecycle::Running
+            | MobileAppLifecycle::Failed { .. } => {
+                snapshot.owner.clone().ok_or(MobileAppError::NoOwner)
+            }
         }
     }
-}
-
-/// The worker: a current-thread runtime with a `LocalSet`, where the
-/// core's own work runs. It ends on `Stop`, or when the object is dropped
-/// and its sender with it.
-fn run_worker(
-    shared: &Shared,
-    mut commands: mpsc::UnboundedReceiver<WorkerCommand>,
-    finished: &watch::Sender<bool>,
-) {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .build();
-    if let Ok(runtime) = runtime {
-        let local = tokio::task::LocalSet::new();
-        local.block_on(&runtime, async {
-            // Stop is the only command yet, so the first one, or the
-            // sender closing, ends the worker.
-            match commands.recv().await {
-                Some(WorkerCommand::Stop) | None => {}
-            }
-        });
-    }
-    shared.enter(MobileAppLifecycle::Stopped);
-    finished.send_replace(true);
 }

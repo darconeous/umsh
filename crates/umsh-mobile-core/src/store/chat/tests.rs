@@ -1831,6 +1831,7 @@ fn a_notification_target_is_an_inbound_message_a_person_reads() {
             sender_hint: Some(vec![1, 2, 3]),
             sender_handle: Some("Ridge".into()),
             is_status: false,
+            silent: false,
         })
     );
     assert!(target(2).unwrap().is_status);

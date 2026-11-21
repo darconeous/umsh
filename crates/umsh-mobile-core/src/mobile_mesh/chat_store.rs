@@ -148,18 +148,23 @@ impl std::fmt::Display for MobileChatSendError {
 impl std::error::Error for MobileChatSendError {}
 
 pub(super) enum ChatStoreCommand {
-    SilentTestsIn(Option<String>),
     Send {
         conversation_address: String,
         request: ChatComposeRequest,
         response: oneshot::Sender<Result<(), MobileChatSendError>>,
     },
+    /// Store what the worker has reported, once more, then end the thread.
+    /// `done` is answered once the thread has ended.
+    Stop { done: oneshot::Sender<()> },
 }
 
 /// The session's end of its chat store's thread. Dropping it ends the
 /// thread, once it has finished what it is doing.
 pub(super) struct ChatStore {
     commands: mpsc::UnboundedSender<ChatStoreCommand>,
+    /// Where tests arrive silently. Shared rather than sent, so a batch
+    /// stored after a change, on whichever thread, reads it.
+    silent_tests_in: Arc<std::sync::Mutex<Option<String>>>,
     /// Makes the radio refuse every stored message, for the tests of what
     /// a send does then.
     #[cfg(test)]
@@ -182,6 +187,7 @@ impl ChatStore {
         retry_delay: Duration,
     ) -> Result<Self, MobileMeshError> {
         let (commands, receiver) = mpsc::unbounded_channel();
+        let silent_tests_in = Arc::new(std::sync::Mutex::new(silent_tests_in));
         #[cfg(test)]
         let refuse_release = Arc::new(std::sync::atomic::AtomicBool::new(false));
         #[cfg(test)]
@@ -190,7 +196,7 @@ impl ChatStore {
             session: Arc::downgrade(session),
             store,
             owner_identity_id,
-            silent_tests_in,
+            silent_tests_in: silent_tests_in.clone(),
             retry_delay,
             held: None,
             #[cfg(test)]
@@ -207,11 +213,16 @@ impl ChatStore {
                 else {
                     return;
                 };
-                runtime.block_on(storer.run(receiver, ready));
+                let done = runtime.block_on(storer.run(receiver, ready));
+                drop(runtime);
+                if let Some(done) = done {
+                    let _ = done.send(());
+                }
             })
             .map_err(|_| MobileMeshError::SessionUnavailable)?;
         Ok(Self {
             commands,
+            silent_tests_in,
             #[cfg(test)]
             refuse_release,
             #[cfg(test)]
@@ -219,10 +230,27 @@ impl ChatStore {
         })
     }
 
+    /// Where tests arrive silently, for every batch stored from now on.
+    pub(super) fn set_silent_tests_in(&self, conversation_address: Option<String>) {
+        *self
+            .silent_tests_in
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = conversation_address;
+    }
+
     pub(super) fn send(&self, command: ChatStoreCommand) -> Result<(), MobileMeshError> {
         self.commands
             .send(command)
             .map_err(|_| MobileMeshError::SessionUnavailable)
+    }
+
+    /// End the thread, once it has stored what the worker reported. A
+    /// thread already gone counts as ended.
+    pub(super) async fn stop(&self) {
+        let (done, ended) = oneshot::channel();
+        if self.send(ChatStoreCommand::Stop { done }).is_ok() {
+            let _ = ended.await;
+        }
     }
 }
 
@@ -237,7 +265,7 @@ struct Storer {
     session: Weak<MobileMeshSession>,
     store: Arc<MobileAppStore>,
     owner_identity_id: String,
-    silent_tests_in: Option<String>,
+    silent_tests_in: Arc<std::sync::Mutex<Option<String>>>,
     retry_delay: Duration,
     held: Option<HeldBatch>,
     #[cfg(test)]
@@ -247,35 +275,47 @@ struct Storer {
 }
 
 impl Storer {
+    /// Serve until the session goes or `Stop` comes, returning `Stop`'s
+    /// answer to send once the thread's runtime is gone.
     async fn run(
         mut self,
         mut commands: mpsc::UnboundedReceiver<ChatStoreCommand>,
         ready: Arc<Notify>,
-    ) {
+    ) -> Option<oneshot::Sender<()>> {
         let mut retry_at = None;
         loop {
             if retry_at.is_none() {
-                let Some(session) = self.session.upgrade() else {
-                    return;
-                };
+                let session = self.session.upgrade()?;
                 if !self.store_waiting(&session) {
                     retry_at = Some(tokio::time::Instant::now() + self.retry_delay);
                 }
             }
             tokio::select! {
                 command = commands.recv() => match command {
-                    None => return,
-                    Some(ChatStoreCommand::SilentTestsIn(address)) => {
-                        self.silent_tests_in = address;
+                    None => return None,
+                    Some(ChatStoreCommand::Stop { done }) => {
+                        // What the worker reported before it ended. Each
+                        // batch, one held for a retry included, gets one
+                        // last attempt; what still fails is given up on
+                        // with the usual accounting.
+                        if let Some(session) = self.session.upgrade() {
+                            loop {
+                                if let Some(held) = self.held.as_mut() {
+                                    held.attempts = held.attempts.max(ATTEMPT_LIMIT - 1);
+                                }
+                                if self.store_waiting(&session) {
+                                    break;
+                                }
+                            }
+                        }
+                        return Some(done);
                     }
                     Some(ChatStoreCommand::Send {
                         conversation_address,
                         request,
                         response,
                     }) => {
-                        let Some(session) = self.session.upgrade() else {
-                            return;
-                        };
+                        let session = self.session.upgrade()?;
                         let result = self.send(&session, conversation_address, request).await;
                         let _ = response.send(result);
                     }
@@ -311,10 +351,15 @@ impl Storer {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .clone();
+            let silent_tests_in = self
+                .silent_tests_in
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone();
             let context = ChatBatchContext {
                 owner_identity_id: &self.owner_identity_id,
                 channel_digests: &channel_digests,
-                silent_tests_in: self.silent_tests_in.as_deref(),
+                silent_tests_in: silent_tests_in.as_deref(),
                 now_ms: unix_ms(),
             };
             match self.store.apply_chat_batch(&context, &held.effects) {

@@ -131,6 +131,7 @@ impl MobileAppStore {
         key_digest: String,
         created_at_ms: i64,
     ) -> Result<(), MobileStoreError> {
+        let _counted = self.wrote_content();
         let id = channel_id(&channel.id)?;
         self.connection().execute(
             "INSERT INTO channel (
@@ -172,6 +173,7 @@ impl MobileAppStore {
         max_flood_hops: Option<u8>,
         notifications_enabled: bool,
     ) -> Result<(), MobileStoreError> {
+        let _counted = self.wrote_content();
         let id = channel_id(&id)?;
         self.connection().execute(
             "UPDATE channel
@@ -200,6 +202,7 @@ impl MobileAppStore {
         joined_device: bool,
         now_ms: i64,
     ) -> Result<(), MobileStoreError> {
+        let _counted = self.wrote_content();
         let id = channel_id(&id)?;
         self.connection().execute(
             "UPDATE channel
@@ -220,6 +223,7 @@ impl MobileAppStore {
     /// here refuses a built-in channel; leaving one clears its flags
     /// instead, and that is the caller's to choose.
     pub fn delete_channel(&self, id: String) -> Result<(), MobileStoreError> {
+        let _counted = self.wrote_content();
         let id = channel_id(&id)?;
         self.connection()
             .execute("DELETE FROM channel WHERE id = ?", params![id])?;
@@ -295,3 +299,24 @@ pub(super) fn canonical_uuid(value: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests;
+
+impl MobileAppStore {
+    /// Record whether the companion radio's device identity holds a
+    /// channel, leaving the phone's membership alone: the radio is
+    /// authoritative for this flag only, and a write of both could undo a
+    /// join or leave made meanwhile. A channel that does not exist is not
+    /// an error.
+    pub(crate) fn set_channel_joined_device(
+        &self,
+        id: &str,
+        joined_device: bool,
+    ) -> Result<(), MobileStoreError> {
+        let _counted = self.wrote_content();
+        let id = channel_id(id)?;
+        self.connection().execute(
+            "UPDATE channel SET joined_device = ? WHERE id = ?",
+            params![joined_device, id],
+        )?;
+        Ok(())
+    }
+}

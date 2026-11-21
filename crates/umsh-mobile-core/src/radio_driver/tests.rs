@@ -1643,93 +1643,22 @@ fn an_administered_radios_tables_are_edited_whoever_its_host_is() {
 /// The driver whole, on its own thread, over a soft device that answers
 /// from inside the link's calls, as a fast transport would.
 mod runner {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{Arc, Mutex, OnceLock, Weak};
+    use std::sync::atomic::Ordering;
+    use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 
     use super::super::core::{CONTROL_DEADLINE_MS, HOST_RELEASE_TIMEOUT_MS};
+    use super::super::runner::CoreDriverUpdate;
 
-    use umsh_ulcp::hdlc;
-    use umsh_ulcp_simdev::soft::{SoftDevice, SoftPlatform};
-    use umsh_ulcp_simdev::{DutyLedger, SimulatedPlatform, full_config};
+    use crate::test_support::{DeviceLink, eventually};
 
     use super::super::{
-        MobileRadioDriver, MobileRadioDriverListener, MobileRadioPhase, MobileRadioTransportPhase,
-        MobileRadioTransportStateRecord, RadioLink,
+        MobileRadioDriver, MobileRadioDriverListener, MobileRadioDriverUpdateRecord,
+        MobileRadioError, MobileRadioPhase, MobileRadioTransportPhase,
+        MobileRadioTransportStateRecord,
     };
     use super::HOST_KEY;
     use crate::{MobileCounterStore, MobileIdentity, MobileMeshSession};
-
-    struct DeviceLink {
-        device: Mutex<SoftDevice<SimulatedPlatform>>,
-        decoder: Mutex<hdlc::Decoder<{ umsh_ulcp::gatt::MAX_FRAME }>>,
-        driver: OnceLock<Weak<MobileRadioDriver>>,
-        attached: Mutex<u32>,
-        /// Whether the link swallows what the driver sends: a radio that
-        /// has stopped answering.
-        silent: AtomicBool,
-    }
-
-    impl DeviceLink {
-        fn new() -> Arc<Self> {
-            let duty = Box::leak(Box::new(DutyLedger::new()));
-            let mut platform = SimulatedPlatform::new();
-            platform.store_identity(Some(&[1; 32])).unwrap();
-            Arc::new(Self {
-                device: Mutex::new(SoftDevice::new(full_config(duty, None), platform)),
-                decoder: Mutex::new(hdlc::Decoder::new()),
-                driver: OnceLock::new(),
-                attached: Mutex::new(0),
-                silent: AtomicBool::new(false),
-            })
-        }
-
-        /// Hand the driver whatever the device has said.
-        fn deliver(&self) {
-            let Some(driver) = self.driver.get().and_then(Weak::upgrade) else {
-                return;
-            };
-            let mut frames = Vec::new();
-            {
-                let mut device = self.device.lock().unwrap();
-                let mut decoder = self.decoder.lock().unwrap();
-                while let Some(wire) = device.take_outbound() {
-                    for byte in wire {
-                        if let Some(frame) = decoder.push(byte) {
-                            frames.push(frame.unwrap().to_vec());
-                        }
-                    }
-                }
-            }
-            for frame in frames {
-                driver.link_received(frame);
-            }
-        }
-    }
-
-    impl RadioLink for DeviceLink {
-        fn send(&self, frame: Vec<u8>, _raw_transaction_id: Option<u8>) {
-            if self.silent.load(Ordering::Relaxed) {
-                return;
-            }
-            let mut wire = vec![0; hdlc::max_encoded_len(frame.len())];
-            let length = hdlc::encode_frame(&frame, &mut wire).unwrap();
-            self.device
-                .lock()
-                .unwrap()
-                .ingest(&wire[..length], 0)
-                .unwrap();
-            self.deliver();
-        }
-        fn reset_framing(&self) {}
-        fn invalidate(&self, _retry: bool) {}
-        fn did_attach(&self) {
-            *self.attached.lock().unwrap() += 1;
-        }
-        fn did_report_name(&self, _name: String) {}
-        fn abandon_binding(&self) {}
-        fn did_enter_dfu(&self) {}
-    }
 
     struct Wakes(Mutex<u32>);
 
@@ -1739,38 +1668,10 @@ mod runner {
         }
     }
 
-    fn eventually(what: &str, mut done: impl FnMut() -> bool) {
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while !done() {
-            assert!(Instant::now() < deadline, "never: {what}");
-            std::thread::sleep(Duration::from_millis(5));
-        }
-    }
-
     /// A driver attached to a soft device of its own, as this phone's
     /// radio.
     fn attached_driver() -> (Arc<DeviceLink>, Arc<MobileRadioDriver>) {
-        let link = DeviceLink::new();
-        let driver = MobileRadioDriver::new(link.clone()).unwrap();
-        link.driver.set(Arc::downgrade(&driver)).unwrap();
-        driver.set_host_key(Some(HOST_KEY.to_vec())).unwrap();
-        driver.transport_changed(MobileRadioTransportStateRecord {
-            phase: MobileRadioTransportPhase::Connecting,
-            name: Some("Device link".to_owned()),
-            link_id: Some("device".to_owned()),
-            problem: None,
-        });
-        link.device.lock().unwrap().attach();
-        link.deliver();
-        driver.link_ready(true);
-        eventually("attached", || {
-            driver.state().phase == MobileRadioPhase::Attached
-                && driver
-                    .state()
-                    .provisioning
-                    .is_some_and(|provisioning| provisioning.phy_enabled)
-        });
-        (link, driver)
+        crate::test_support::attached_driver(&HOST_KEY)
     }
 
     /// A mesh session, and the directory its counters live in.
@@ -1880,6 +1781,65 @@ mod runner {
         );
         // Nothing to release.
         driver.release_host().await;
+    }
+
+    #[test]
+    fn a_core_holding_the_driver_sees_every_state_and_native_code_none() {
+        let (link, driver) = attached_driver();
+        let wakes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = wakes.clone();
+        driver.hold(Arc::new(move || {
+            counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }));
+        assert!(wakes.load(std::sync::atomic::Ordering::SeqCst) > 0);
+        let phases = |update: CoreDriverUpdate| -> Vec<MobileRadioPhase> {
+            update.states.into_iter().map(|state| state.phase).collect()
+        };
+        assert_eq!(
+            phases(driver.take_core_update()),
+            [MobileRadioPhase::Attached]
+        );
+        assert_eq!(
+            driver.set_host_key(None),
+            Err(MobileRadioError::RadioUnavailable)
+        );
+
+        // Lost and found again between two takes: the detach still shows.
+        driver.transport_changed(MobileRadioTransportStateRecord {
+            phase: MobileRadioTransportPhase::Idle,
+            name: None,
+            link_id: Some("device".to_owned()),
+            problem: None,
+        });
+        eventually("detached", || {
+            driver.state().phase != MobileRadioPhase::Attached
+        });
+        driver.transport_changed(MobileRadioTransportStateRecord {
+            phase: MobileRadioTransportPhase::Connecting,
+            name: Some("Device link".to_owned()),
+            link_id: Some("device".to_owned()),
+            problem: None,
+        });
+        link.device.lock().unwrap().attach();
+        link.deliver();
+        driver.link_ready(true);
+        eventually("attached again", || {
+            driver.state().phase == MobileRadioPhase::Attached
+        });
+        let seen = phases(driver.take_core_update());
+        assert_eq!(seen.last(), Some(&MobileRadioPhase::Attached));
+        assert!(
+            seen.iter()
+                .any(|phase| *phase != MobileRadioPhase::Attached),
+            "the detach was lost: {seen:?}"
+        );
+        assert_eq!(
+            driver.poll_update(),
+            MobileRadioDriverUpdateRecord::default()
+        );
+
+        driver.release_hold();
+        driver.set_host_key(Some(HOST_KEY.to_vec())).unwrap();
     }
 }
 

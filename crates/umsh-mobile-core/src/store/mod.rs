@@ -26,6 +26,7 @@
 //!   the radio measured, what a reply answers) reads as absent.
 //! - Anything else, a key column above all, fails the read.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -174,6 +175,11 @@ impl From<rusqlite::Error> for MobileStoreError {
 #[derive(uniffi::Object)]
 pub struct MobileAppStore {
     connection: Mutex<Connection>,
+    /// Bumped by every write to what the app core derives its radio
+    /// tables from (peers, channels, conversations, manual routes), but
+    /// not by last-heard or chat writes, which move it all the time. The
+    /// core compares it to catch a write it was not told of.
+    content_writes: AtomicU64,
 }
 
 #[uniffi::export]
@@ -196,6 +202,7 @@ impl MobileAppStore {
         migrate(&mut connection, MIGRATIONS)?;
         Ok(Arc::new(Self {
             connection: Mutex::new(connection),
+            content_writes: AtomicU64::new(0),
         }))
     }
 
@@ -231,7 +238,30 @@ impl MobileAppStore {
     }
 }
 
+/// Moves the content write count when dropped.
+struct ContentWrite<'a>(&'a AtomicU64);
+
+impl Drop for ContentWrite<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_add(1, Ordering::AcqRel);
+    }
+}
+
 impl MobileAppStore {
+    /// How many writes the app core's derived state could depend on have
+    /// been asked for.
+    pub(crate) fn content_writes(&self) -> u64 {
+        self.content_writes.load(Ordering::Acquire)
+    }
+
+    /// Count a write the app core's derived state could depend on. The
+    /// count moves when the returned guard drops, after the write: a reader
+    /// that reads the count before the rows then never records a count
+    /// whose write it has not seen.
+    fn wrote_content(&self) -> ContentWrite<'_> {
+        ContentWrite(&self.content_writes)
+    }
+
     fn connection(&self) -> MutexGuard<'_, Connection> {
         // A panic while holding the lock leaves SQLite itself consistent:
         // every write is a transaction that rolls back on drop.
