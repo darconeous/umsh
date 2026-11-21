@@ -1072,12 +1072,15 @@ extension AdministrativeDeviceSession: UlcpFrameLink {
             // session is the connection, for the reasons
             // `peripheral(_:didUpdateValueFor:error:)` gives in the
             // tethered connection.
-            fail(
-                "A frame from the device was lost",
-                error: RadioConnectionError.incompatibleProtocol,
-                detail: "cause=\(UlcpFrameDiagnostic.cause(error)) segment=\(value.count)B",
-                bytes: value
+            Self.logger.error(
+                """
+                administrative session: a frame from the device was lost; \
+                closing the link \
+                cause=\(UlcpFrameDiagnostic.cause(error), privacy: .public) \
+                segment=\(value.count)B
+                """
             )
+            fault(RadioTransportProblem.linkLost.problem)
         }
     }
 }

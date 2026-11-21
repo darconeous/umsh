@@ -491,15 +491,13 @@ fn radio_config() -> SessionConfig {
         time: Some(TimeConfig),
         gnss: Some(GnssConfig::ALWAYS_ON),
         display_motion_wake: false,
-        display: None,
-        keyboard: false,
-        sound: false,
         host_custody: false,
         illuminance: false,
         temperatures: false,
         ble: false,
         ble_pairing: false,
         ble_pin: false,
+        uart_links: Default::default(),
         // The device is a task of the air's; there is nothing for
         // `CMD_REBOOT` to restart.
         reboot: false,
@@ -514,6 +512,7 @@ fn radio_config() -> SessionConfig {
         bridge_client: false,
         i2c_buses: &[],
         i2c_devices: &[],
+        node_msg: None,
     }
 }
 
@@ -826,10 +825,7 @@ impl Managed {
         config.dev_version = DEV_VERSION;
         config.default_device_name = NODES[MANAGED].name;
         config.dev_model = Some("SenseCAP Solar P1");
-        // A repeater on a ridge: no screen, keyboard, or speaker.
-        config.display = None;
-        config.keyboard = false;
-        config.sound = false;
+        // A repeater on a ridge: no light sensor.
         config.illuminance = false;
         config.mac_node = true;
         if wifi_scan_only {

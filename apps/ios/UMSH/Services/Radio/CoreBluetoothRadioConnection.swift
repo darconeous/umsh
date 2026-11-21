@@ -1761,12 +1761,14 @@ extension CoreBluetoothRadioConnection: CBPeripheralDelegate {
             // and in order, so the link has failed at what it exists to
             // do, and the session ends with it (spec §Sessions): the
             // connection is closed and comes back as any dropped link does.
-            terminateConnectionForFatalProtocolError(
-                "A frame from the radio was lost",
-                detail: "cause=\(UlcpFrameDiagnostic.cause(error)) segment=\(value.count)B",
-                bytes: value,
-                name: displayName(for: peripheral)
+            Self.logger.error(
+                """
+                ulcp: a frame from the radio was lost; closing the link \
+                cause=\(UlcpFrameDiagnostic.cause(error), privacy: .public) \
+                segment=\(value.count)B
+                """
             )
+            fault(RadioTransportProblem.linkLost.problem)
         }
     }
 }

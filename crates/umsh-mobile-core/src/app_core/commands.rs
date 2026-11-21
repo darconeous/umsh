@@ -47,6 +47,8 @@ pub struct MobileAppPingReplyRecord {
     pub rssi_dbm: Option<i16>,
     pub snr_centibels: Option<i16>,
     pub lqi: Option<u8>,
+    /// Only the ping's Route Retry was answered: the route it held failed.
+    pub via_route_retry: bool,
 }
 
 impl Worker {
@@ -118,6 +120,7 @@ impl Worker {
                         rssi_dbm: event.rssi_dbm,
                         snr_centibels: event.snr_centibels,
                         lqi: event.lqi,
+                        via_route_retry: event.via_route_retry,
                     },
                 })
             }

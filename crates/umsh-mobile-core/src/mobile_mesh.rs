@@ -4801,7 +4801,7 @@ async fn run_worker(
                                 ..SendOptions::default()
                             };
                             let result = match node
-                                .send_response(&to, channel, &payload, &options)
+                                .send_response(&to, channel, &payload, options)
                                 .await
                             {
                                 Ok(_) if persist_counters().await => Ok(()),

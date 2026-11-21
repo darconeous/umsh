@@ -13431,6 +13431,10 @@ public struct MobileAppPingReplyRecord: Equatable, Hashable {
     public var rssiDbm: Int16?
     public var snrCentibels: Int16?
     public var lqi: UInt8?
+    /**
+     * Only the ping's Route Retry was answered: the route it held failed.
+     */
+    public var viaRouteRetry: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -13438,7 +13442,10 @@ public struct MobileAppPingReplyRecord: Equatable, Hashable {
         /**
          * The path the reply took, rendered. A hint that does not render is
          * left out.
-         */routeHints: [RouterHintRecord], traceSignal: [MobileTraceSignalRecord], rssiDbm: Int16?, snrCentibels: Int16?, lqi: UInt8?) {
+         */routeHints: [RouterHintRecord], traceSignal: [MobileTraceSignalRecord], rssiDbm: Int16?, snrCentibels: Int16?, lqi: UInt8?,
+        /**
+         * Only the ping's Route Retry was answered: the route it held failed.
+         */viaRouteRetry: Bool) {
         self.roundTripMs = roundTripMs
         self.hopCount = hopCount
         self.routeHints = routeHints
@@ -13446,6 +13453,7 @@ public struct MobileAppPingReplyRecord: Equatable, Hashable {
         self.rssiDbm = rssiDbm
         self.snrCentibels = snrCentibels
         self.lqi = lqi
+        self.viaRouteRetry = viaRouteRetry
     }
 
 
@@ -13470,7 +13478,8 @@ public struct FfiConverterTypeMobileAppPingReplyRecord: FfiConverterRustBuffer {
                 traceSignal: FfiConverterSequenceTypeMobileTraceSignalRecord.read(from: &buf),
                 rssiDbm: FfiConverterOptionInt16.read(from: &buf),
                 snrCentibels: FfiConverterOptionInt16.read(from: &buf),
-                lqi: FfiConverterOptionUInt8.read(from: &buf)
+                lqi: FfiConverterOptionUInt8.read(from: &buf),
+                viaRouteRetry: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -13482,6 +13491,7 @@ public struct FfiConverterTypeMobileAppPingReplyRecord: FfiConverterRustBuffer {
         FfiConverterOptionInt16.write(value.rssiDbm, into: &buf)
         FfiConverterOptionInt16.write(value.snrCentibels, into: &buf)
         FfiConverterOptionUInt8.write(value.lqi, into: &buf)
+        FfiConverterBool.write(value.viaRouteRetry, into: &buf)
     }
 }
 
