@@ -1,27 +1,23 @@
-//! A route to a saved peer chosen by hand, edited in place of the Route
-//! screen: this device, the hops, how far it floods past them, and the
-//! peer, then Ping along route, Hold for, and Save. A press on a hop opens
-//! Move and Remove; a lifted hop rides the wheel until a press puts it
-//! down. Then flood and Hold for change by turning once pressed. Nothing
-//! reaches the node before Save, and Backspace with changes asks.
+//! The rows of a route to a saved peer chosen by hand, edited in place of
+//! the Route screen, and what opens over them. [`super::sheet`] lays them
+//! out: this device, the hops, how far it floods past them, and the peer,
+//! then Ping along route, Hold for, and Save. A press on a hop opens Move
+//! and Remove; a lifted hop rides the wheel until a press puts it down.
+//! Then flood and Hold for change by turning once pressed. Nothing reaches
+//! the node before Save, and Backspace with changes asks.
 
-use buoyant::event::{Key, KeyResponse};
-use buoyant::focus::BoundaryBehavior;
-use buoyant::view::Lazy;
-use buoyant::view::popover::Dismissal;
 use buoyant::view::prelude::*;
 use embedded_graphics::pixelcolor::Rgb565;
 use heapless::String;
 
-use super::conversation::titled;
 use super::details::{AVATAR, INSET, NAME_X};
 use super::line;
 use super::member::action_look;
-use super::path::{self, Half, NODE, halves, rail};
+use super::path::{Half, NODE, halves, rail};
 use super::setting::{card, choice};
 use crate::board::Metrics;
-use crate::model::{MAX_PATH, PeerId, PeerSummary, PingView, Repeater, State, flood_text};
-use crate::nav::{Adjust, EditOver, HOLD_CHOICES, RouteDraft, keys};
+use crate::model::{Repeater, State, flood_text};
+use crate::nav::{EditOver, HOLD_CHOICES, keys};
 use crate::{font, icon, theme};
 
 /// What Hold for reads, by [`HOLD_CHOICES`].
@@ -33,121 +29,9 @@ const LEAVE_WIDTH: u32 = 300;
 /// The hollow dots of the flood row.
 const DOT: u32 = 6;
 
-static INDICES: [usize; MAX_PATH] = {
-    let mut a = [0; MAX_PATH];
-    let mut i = 0;
-    while i < MAX_PATH {
-        a[i] = i;
-        i += 1;
-    }
-    a
-};
-
-/// The route to the saved peer `id`, `peer`, as `draft` has it.
-// Out of line, as every page of `peer_or_channel` is.
-#[inline(never)]
-pub fn view(
-    state: &State,
-    id: PeerId,
-    peer: &PeerSummary,
-    draft: &RouteDraft,
-) -> impl View<Rgb565, State> + use<> {
-    let m = state.metrics();
-    let focused = state.screen().focus().current();
-    let adjusting = state.adjusting_route();
-    // Only the hints are kept: each row names its repeater as it is laid
-    // out, so that the view holds no repeater.
-    let node = state.node;
-    let hints: [[u8; 2]; MAX_PATH] = {
-        let mut hints = [[0; 2]; MAX_PATH];
-        hints[..draft.hints().len()].copy_from_slice(draft.hints());
-        hints
-    };
-    let count = draft.hints().len();
-    let lifted = draft.lifted.map(|(now, _)| usize::from(now));
-    let pinged = if draft.pinged {
-        match state.node.ping_view(id) {
-            Some(PingView::Reply(reply)) if reply.flooded => Pinged::Flooded,
-            Some(PingView::Reply(reply)) => Pinged::Reply(reply.round_trip_ms),
-            Some(PingView::NoReply) => Pinged::NoReply,
-            Some(PingView::Waiting) | None => Pinged::Waiting,
-        }
-    } else {
-        Pinged::Not
-    };
-    let look = move |label, value, key, accent| Look {
-        label,
-        value,
-        active: false,
-        focused: focused == Some(key),
-        accent,
-        m,
-    };
-    let flood = Look {
-        label: if count == 0 { "Flood" } else { "Then flood" },
-        active: adjusting == Some(Adjust::Flood),
-        ..look("", Value::Flood(draft.flood), keys::ROUTE_FLOOD, false)
-    };
-    let ping = look(
-        "Ping along route",
-        Value::Ping(pinged),
-        keys::ROUTE_PING_ALONG,
-        false,
-    );
-    let hold = Look {
-        active: adjusting == Some(Adjust::Hold),
-        ..look("Hold for", Value::Hold(draft.hold), keys::ROUTE_HOLD, false)
-    };
-    let save = look("Save", Value::None, keys::ROUTE_SAVE, true);
-    let mut name: String<32> = String::new();
-    _ = name.push_str(umsh_grapheme::cut(peer.name.as_str(), 32));
-    VStack::new((
-        titled(m, "Edit route", theme::TEXT, None, peer.name.as_str()),
-        super::list(
-            VStack::new((
-                path::you(m),
-                ForEach::<MAX_PATH>::new_vertical(&INDICES[..count], move |&i| {
-                    let repeater = node.repeater(hints[i]);
-                    let lifted = lifted == Some(i);
-                    Button::new(
-                        move |s: &mut State| s.press_hop(i),
-                        move |button: ButtonState| {
-                            Lazy::new((repeater.clone(), button.is_focused(), lifted, m), hop_look)
-                        },
-                    )
-                })
-                .keyed(|&i| keys::path(i))
-                .with_spacing(0),
-                row(flood, true, State::press_flood).focus_key(keys::ROUTE_FLOOD),
-                path::end(m, peer.avatar.clone(), name, false, draft.flood > 0),
-                row(ping, false, State::ping_along).focus_key(keys::ROUTE_PING_ALONG),
-                row(hold, false, State::press_hold).focus_key(keys::ROUTE_HOLD),
-                row(save, false, State::save_route).focus_key(keys::ROUTE_SAVE),
-            ))
-            .with_spacing(0),
-        )
-        .with_scroll_step(NODE),
-    ))
-    .with_spacing(0)
-    .bound_focus(BoundaryBehavior::Stop)
-    .on_key(|key, s: &mut State| match key {
-        Key::Backspace => {
-            s.back();
-            KeyResponse::Handled
-        }
-        _ => KeyResponse::Ignored,
-    })
-    .popover(draft.over.as_ref(), move |over| over_view(m, *over))
-    // A tap outside closes it, as Backspace does.
-    .on_blur(|s: &mut State| {
-        s.close_route_over();
-        Dismissal::Dismiss
-    })
-}
-
 /// How the latest ping along the route went, as its row says.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Pinged {
+pub(super) enum Pinged {
     /// None went along it as it stands.
     Not,
     Waiting,
@@ -160,7 +44,7 @@ enum Pinged {
 
 /// What a row of the editor reads at its end, formatted as it is drawn.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Value {
+pub(super) enum Value {
     None,
     Flood(u8),
     /// Which of [`HOLD_CHOICES`].
@@ -170,36 +54,19 @@ enum Value {
 
 /// A row of the editor past its hops.
 #[derive(Clone, Copy)]
-struct Look {
-    label: &'static str,
-    value: Value,
+pub(super) struct Look {
+    pub(super) label: &'static str,
+    pub(super) value: Value,
     /// Turning changes its value.
-    active: bool,
-    focused: bool,
+    pub(super) active: bool,
+    pub(super) focused: bool,
     /// Its label is in the accent: what the editor is for.
-    accent: bool,
-    m: &'static Metrics,
-}
-
-/// A row that does `act`, drawn by `look`; `on_rail` when it sits on the
-/// path, as the flood past the last hop does.
-fn row(look: Look, on_rail: bool, act: fn(&mut State)) -> impl View<Rgb565, State> + use<> {
-    Button::new(act, move |button: ButtonState| {
-        Lazy::new(
-            (
-                Look {
-                    focused: button.is_focused(),
-                    ..look
-                },
-                on_rail,
-            ),
-            row_look,
-        )
-    })
+    pub(super) accent: bool,
+    pub(super) m: &'static Metrics,
 }
 
 /// A row past the hops. Built each time it is drawn, as every row is.
-fn row_look((look, on_rail): &(Look, bool)) -> impl View<Rgb565, ()> + use<> {
+pub(super) fn row_look((look, on_rail): &(Look, bool)) -> impl View<Rgb565, ()> + use<> {
     let m = look.m;
     let face = if look.focused || look.accent {
         &font::BOLD
@@ -305,7 +172,7 @@ fn row_look((look, on_rail): &(Look, bool)) -> impl View<Rgb565, ()> + use<> {
 
 /// A hop of the route: the node it most plausibly is, on the rail, and a
 /// grip, or arrows while it is lifted. Built each time it is drawn.
-fn hop_look(
+pub(super) fn hop_look(
     (repeater, focused, lifted, m): &(Option<Repeater>, bool, bool, &'static Metrics),
 ) -> impl View<Rgb565, ()> + use<> {
     let face = if *focused || *lifted {
@@ -355,7 +222,7 @@ fn hop_look(
 /// focused. Backspace closes either.
 // Out of line, as `setting::row` is, against the Xtensa back end's failure.
 #[inline(never)]
-fn over_view(m: &'static Metrics, over: EditOver) -> impl View<Rgb565, State> + use<> {
+pub(super) fn over_view(m: &'static Metrics, over: EditOver) -> impl View<Rgb565, State> + use<> {
     let text = |text: &str| String::try_from(text).unwrap_or_default();
     let (first, second, third, width, alignment) = match over {
         EditOver::Hop(_) => (

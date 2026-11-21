@@ -53,11 +53,12 @@ mod ping;
 mod profile;
 mod rail;
 mod route;
-pub mod route_edit;
+mod route_edit;
 mod setting;
 mod setup;
 mod share;
 mod share_contact;
+mod sheet;
 mod sounds;
 mod statistics;
 mod status;
@@ -223,20 +224,14 @@ fn peer_or_channel(state: &State) -> impl View<Rgb565, State> + use<> {
         Screen::ShareContact { peer, .. } => state
             .peer(*peer)
             .map(|summary| share_contact::view(state, &summary.name)),
-        Screen::Route {
-            peer,
-            edit: Some(draft),
-            ..
-        } => state
-            .peer(*peer)
-            .map(|summary| route_edit::view(state, *peer, &summary, draft)),
+        // The route editor and Neighbors share one tree.
+        Screen::Route { edit: Some(_), .. } | Screen::Neighbors { .. } => sheet::view(state),
         Screen::Route { peer, .. } => state
             .peer(*peer)
             .map(|summary| route::view(state, *peer, &summary)),
         Screen::Ping { peer, earlier, .. } => state
             .peer(*peer)
             .map(|summary| ping::view(state, *peer, &summary, earlier)),
-        Screen::Neighbors { router, .. } => neighbors::view(state, router),
         // A channel's, the only other screen sent here.
         _ => channel_screen(state),
     })

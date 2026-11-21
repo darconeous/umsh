@@ -2867,7 +2867,8 @@ impl Node for Store {
                 distance_m: entry.distance_m,
             },
             None => Listed {
-                name: if entry.address.is_some() {
+                // Named as the router heard it, else by its hint.
+                name: if entry.address.is_some() || entry.name.is_empty() {
                     s(&hint_text)
                 } else {
                     s(entry.name)

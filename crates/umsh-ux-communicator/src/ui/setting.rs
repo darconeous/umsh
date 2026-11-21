@@ -9,7 +9,6 @@ use embedded_graphics::pixelcolor::Rgb565;
 use heapless::String;
 
 use super::conversation::header;
-use super::label;
 use crate::board::Metrics;
 use crate::model::{LEVELS, State};
 use crate::nav::keys;
@@ -438,18 +437,7 @@ pub(super) fn card<V: View<Rgb565, State>>(
         .padding(Edges::Vertical, 5)
         .frame()
         .with_width(width.min(m.width - 2 * CARD_MARGIN))
-        .background(
-            Alignment::Center,
-            ZStack::new((
-                RoundedRectangle::new(12)
-                    .foreground_color(Rgb565::new(0, 0, 0))
-                    .offset(1, 3),
-                RoundedRectangle::new(12).foreground_color(theme::MENU),
-                RoundedRectangle::new(12)
-                    .stroked(1)
-                    .foreground_color(theme::MENU_LINE),
-            )),
-        )
+        .background(Alignment::Center, Lazy::new((), card_back))
         .padding(Edges::Horizontal, CARD_MARGIN)
         .flex_infinite_width(alignment)
         .flex_infinite_height(VerticalAlignment::Center)
@@ -460,6 +448,20 @@ pub(super) fn card<V: View<Rgb565, State>>(
             }
             _ => KeyResponse::Ignored,
         })
+}
+
+/// A card's shadow, fill, and edge. Built each time it is drawn
+/// ([`Lazy`]), as a card's choices are.
+fn card_back((): &()) -> impl View<Rgb565, ()> + use<> {
+    ZStack::new((
+        RoundedRectangle::new(12)
+            .foreground_color(Rgb565::new(0, 0, 0))
+            .offset(1, 3),
+        RoundedRectangle::new(12).foreground_color(theme::MENU),
+        RoundedRectangle::new(12)
+            .stroked(1)
+            .foreground_color(theme::MENU_LINE),
+    ))
 }
 
 /// One of a card's choices. `checked` marks the current one of choices that
@@ -473,41 +475,67 @@ pub(super) fn choice(
     checked: Option<bool>,
 ) -> impl View<Rgb565, State> + use<> {
     Button::new(act, move |button: ButtonState| {
-        let focused = button.is_focused();
-        let face = if focused { &font::BOLD } else { &font::REGULAR };
-        HStack::new((
-            checked.map(|checked| {
-                checked
-                    .then(|| {
-                        Image::new(&icon::CHECK)
-                            .as_template()
-                            .foreground_color(theme::ACCENT)
-                    })
-                    .frame()
-                    .with_width(CHECK)
-            }),
-            label::<48>(&text, face, m.body, color),
-        ))
-        .with_spacing(0)
-        .hint_background_color(if focused { theme::FOCUS } else { theme::MENU })
-        // The check mark's column brings its own margin.
-        .padding(Edges::Leading, if checked.is_some() { 6 } else { 11 })
-        .flex_infinite_width(HorizontalAlignment::Leading)
-        .frame()
-        .with_height(CHOICE - 2)
-        .background(
-            Alignment::Center,
-            focused.then(|| {
-                ZStack::new((
-                    RoundedRectangle::new(7).foreground_color(theme::FOCUS),
-                    RoundedRectangle::new(7)
-                        .stroked(2)
-                        .foreground_color(theme::ACCENT),
-                ))
-            }),
+        Lazy::new(
+            ChoiceLook {
+                text: text.clone(),
+                color,
+                checked,
+                focused: button.is_focused(),
+                m,
+            },
+            choice_look,
         )
-        .padding(Edges::Horizontal, 5)
-        .padding(Edges::Bottom, 2)
     })
     .focus_key(key)
+}
+
+/// A card's choice, as [`choice`] draws it.
+#[derive(Clone)]
+struct ChoiceLook {
+    text: String<48>,
+    color: Rgb565,
+    checked: Option<bool>,
+    focused: bool,
+    m: &'static Metrics,
+}
+
+/// A choice's look. Built each time it is drawn ([`Lazy`]): kept in the
+/// view tree, each card's choices would be compiled into every pass over
+/// it.
+fn choice_look(look: &ChoiceLook) -> impl View<Rgb565, ()> + use<> {
+    let focused = look.focused;
+    let face = if focused { &font::BOLD } else { &font::REGULAR };
+    HStack::new((
+        look.checked.map(|checked| {
+            checked
+                .then(|| {
+                    Image::new(&icon::CHECK)
+                        .as_template()
+                        .foreground_color(theme::ACCENT)
+                })
+                .frame()
+                .with_width(CHECK)
+        }),
+        super::line(look.text.clone(), face, look.m.body, look.color),
+    ))
+    .with_spacing(0)
+    .hint_background_color(if focused { theme::FOCUS } else { theme::MENU })
+    // The check mark's column brings its own margin.
+    .padding(Edges::Leading, if look.checked.is_some() { 6 } else { 11 })
+    .flex_infinite_width(HorizontalAlignment::Leading)
+    .frame()
+    .with_height(CHOICE - 2)
+    .background(
+        Alignment::Center,
+        focused.then(|| {
+            ZStack::new((
+                RoundedRectangle::new(7).foreground_color(theme::FOCUS),
+                RoundedRectangle::new(7)
+                    .stroked(2)
+                    .foreground_color(theme::ACCENT),
+            ))
+        }),
+    )
+    .padding(Edges::Horizontal, 5)
+    .padding(Edges::Bottom, 2)
 }

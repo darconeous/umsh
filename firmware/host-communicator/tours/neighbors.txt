@@ -1,0 +1,29 @@
+# A repeater's Neighbors: never read, asking, read, a page more, and a
+# hint asked who it is.
+press
+turn -2
+press
+turn 1
+press
+turn 2
+press
+shot riverbend
+turn 2
+shot riverbend-neighbors-row
+press
+shot neighbors-unread
+press
+shot neighbors-asking
+wait 2
+shot neighbors-read
+turn -1
+shot neighbors-load-more
+press
+shot neighbors-loading
+wait 2
+shot neighbors-more
+turn -8
+press
+shot neighbors-identifying
+wait 3
+shot neighbors-identified

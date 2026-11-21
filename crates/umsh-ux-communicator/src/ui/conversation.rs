@@ -481,28 +481,63 @@ pub(super) fn titled_with(
     about: &str,
     about_color: Rgb565,
 ) -> impl View<Rgb565, State> + use<> {
+    let mut heading = Heading {
+        name: heapless::String::new(),
+        about: heapless::String::new(),
+        avatar: avatar.cloned(),
+        color,
+        about_color,
+        m,
+    };
+    _ = heading.name.push_str(umsh_grapheme::cut(name, 48));
+    _ = heading.about.push_str(umsh_grapheme::cut(about, 16));
+    HStack::new((back(m, |s| _ = s.back()), Lazy::new(heading, heading_look)))
+        .with_spacing(ARROW_GAP)
+        .padding(Edges::Leading, if m.back { 0 } else { LEADING })
+        .frame()
+        .with_height(m.header)
+        .overlay(
+            Alignment::Bottom,
+            Rectangle
+                .foreground_color(theme::LINE)
+                .frame()
+                .with_height(1),
+        )
+}
+
+/// What a header says after Back.
+#[derive(Clone)]
+struct Heading {
+    name: heapless::String<48>,
+    about: heapless::String<16>,
+    avatar: Option<AvatarStyle>,
+    color: Rgb565,
+    about_color: Rgb565,
+    m: &'static Metrics,
+}
+
+/// A header's avatar, name, and what it says after the name. Built each
+/// time it is drawn ([`Lazy`]): every screen has a header, and kept in the
+/// view tree, each would be compiled into every pass over it.
+fn heading_look(heading: &Heading) -> impl View<Rgb565, ()> + use<> {
+    let m = heading.m;
     HStack::new((
-        back(m, |s| _ = s.back()),
-        HStack::new((
-            avatar.map(|style| super::avatar::view(style, AVATAR)),
-            // An emoji's name, a channel's title, runs past a name's 32.
-            label::<48>(name, &font::BOLD, m.body, color).fixed_size(true, false),
-            label::<16>(about, &font::MEDIUM, m.small, about_color),
-            Spacer::default(),
-        ))
-        .with_spacing(6),
+        heading
+            .avatar
+            .as_ref()
+            .map(|style| super::avatar::view(style, AVATAR)),
+        // An emoji's name, a channel's title, runs past a name's 32.
+        super::line(heading.name.clone(), &font::BOLD, m.body, heading.color)
+            .fixed_size(true, false),
+        super::line(
+            heading.about.clone(),
+            &font::MEDIUM,
+            m.small,
+            heading.about_color,
+        ),
+        Spacer::default(),
     ))
-    .with_spacing(ARROW_GAP)
-    .padding(Edges::Leading, if m.back { 0 } else { LEADING })
-    .frame()
-    .with_height(m.header)
-    .overlay(
-        Alignment::Bottom,
-        Rectangle
-            .foreground_color(theme::LINE)
-            .frame()
-            .with_height(1),
-    )
+    .with_spacing(6)
 }
 
 /// The way back, doing `act`, for touch alone, where the board has touch:

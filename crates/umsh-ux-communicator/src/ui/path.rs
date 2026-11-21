@@ -88,7 +88,7 @@ pub(super) fn view(
     _ = name.push_str(umsh_grapheme::cut(peer.1, 32));
     VStack::new((
         you(m),
-        hop_row(m, first),
+        hop_gap(m, first),
         ForEach::<MAX_PATH>::new_vertical(&INDICES[..stops.len()], move |&i| {
             let (repeater, waiting, after) = stops[i].clone();
             stop(m, i, repeater, waiting, phase, after)
@@ -96,7 +96,7 @@ pub(super) fn view(
         .keyed(|&i| keys::path(i))
         .with_spacing(0),
         (unnamed != Some(0))
-            .then(|| VStack::new((nobody(m, unnamed), hop_row(m, past))).with_spacing(0)),
+            .then(|| VStack::new((nobody(m, unnamed), hop_gap(m, past))).with_spacing(0)),
         end(m, avatar, name, dim, false),
     ))
     .with_spacing(0)
@@ -108,7 +108,7 @@ pub(super) fn you(m: &'static Metrics) -> impl View<Rgb565, State> + use<> {
 }
 
 /// This device's row. Built each time it is drawn, as every row is.
-fn you_look(m: &&'static Metrics) -> impl View<Rgb565, ()> + use<> {
+pub(super) fn you_look(m: &&'static Metrics) -> impl View<Rgb565, ()> + use<> {
     node_row(
         Image::new(&icon::HANDHELD_26)
             .as_template()
@@ -133,7 +133,7 @@ pub(super) fn end(
 }
 
 /// The peer's row. Built each time it is drawn, as every row is.
-fn end_look(
+pub(super) fn end_look(
     (avatar, name, dim, flooding, m): &(AvatarStyle, String<32>, bool, bool, &'static Metrics),
 ) -> impl View<Rgb565, ()> + use<> {
     let color = if *dim {
@@ -313,6 +313,17 @@ pub(super) fn halves<C>(height: u32, above: Half, below: Half) -> impl View<Rgb5
     VStack::new((half(above), half(below)))
         .with_spacing(0)
         .padding(Edges::Leading, RAIL_X)
+}
+
+/// [`hop_row`], built each time it is drawn ([`Lazy`]), as the rows
+/// around it are. Only a hop with a reading takes room: `hop_row` is
+/// otherwise empty, and a stack passes over it, which a [`Lazy`] would not.
+fn hop_gap(m: &'static Metrics, hop: Hop) -> Option<impl View<Rgb565, State> + use<>> {
+    matches!(hop, Hop::Read(_)).then(|| {
+        Lazy::new((m, hop), |&(m, hop): &(&'static Metrics, Hop)| {
+            hop_row::<()>(m, hop)
+        })
+    })
 }
 
 /// One hop between two rows.

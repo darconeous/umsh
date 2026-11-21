@@ -1,155 +1,41 @@
-//! The repeaters one router reports hearing, as last read: each one's
-//! name, how the router heard it and how long ago, and how far from the
-//! router, then Load more and Refresh. Opening asks for nothing; every
-//! page is one exchange across the mesh. A known node's row opens its
-//! page; a bare hint's asks who it is. Backspace goes back.
+//! The rows of a router's Neighbors, what it reports hearing as last read,
+//! which [`super::sheet`] lays out: each repeater's name, how the router
+//! heard it and how long ago, and how far from the router, then Load more
+//! and Refresh. Opening asks for nothing; every page is one exchange across
+//! the mesh. A known node's row opens its page; a bare hint's asks who it
+//! is. Backspace goes back.
 
-use buoyant::event::{Key, KeyResponse};
-use buoyant::focus::BoundaryBehavior;
-use buoyant::view::Lazy;
-use buoyant::view::LazyForEach;
-use buoyant::view::lazy_foreach::Extent;
 use buoyant::view::prelude::*;
 use embedded_graphics::pixelcolor::Rgb565;
 use heapless::String;
 
-use super::conversation::titled;
 use super::details::{AVATAR, INSET, NAME_X, spinner};
 use super::line;
 use super::path::{bar_color, lit};
 use super::peers::bars;
 use crate::avatar::AvatarStyle;
 use crate::board::Metrics;
-use crate::model::{Listing, ListingAsk, MAX_LISTED, Signal, State, age};
-use crate::nav::keys;
+use crate::model::{Signal, age};
 use crate::{font, icon, theme};
 
 /// A repeater's row: its name, then how the router heard it.
-const NEIGHBOR: u32 = 44;
+pub(super) const NEIGHBOR: u32 = 44;
 /// The label over the list.
 const LABEL: u32 = 26;
 /// How long a repeater goes unheard before its row fades, in minutes.
 const STALE_MIN: u16 = 6 * 60;
 
-/// What the router at `router` reports hearing.
-// Out of line, as every page of `peer_or_channel` is.
-#[inline(never)]
-pub fn view(state: &State, router: &str) -> impl View<Rgb565, State> + use<> {
-    let m = state.metrics();
-    let node = state.node;
-    let listing = node.listing(router);
-    let name = node
-        .known_member(router)
-        .map(|member| member.sender.name)
-        .unwrap_or_default();
-    let identifying = state.identifying();
-    let phase = state.spinner_phase();
-    let count = listing
-        .as_ref()
-        .map_or(0, |listing| usize::from(listing.count));
-    let read = listing.as_ref().and_then(|listing| listing.read_ms_ago);
-    let asking = listing.as_ref().and_then(|listing| listing.asking);
-    let no_answer = listing.as_ref().is_some_and(|listing| listing.no_answer);
-    let shown: String<44> = String::try_from(router).unwrap_or_default();
-    let text_row = move |label, key, act: fn(&mut State), busy, count| {
-        Button::new(act, move |button: ButtonState| {
-            Lazy::new(
-                TextLook {
-                    label,
-                    count,
-                    busy,
-                    phase,
-                    focused: button.is_focused(),
-                    m,
-                },
-                text_look,
-            )
-        })
-        .focus_key(key)
-    };
-    let more = listing
-        .as_ref()
-        .filter(|listing| listing.more)
-        .map(|listing: &Listing| (listing.count, listing.total));
-    VStack::new((
-        titled(m, "Neighbors", theme::TEXT, None, &name),
-        super::list(
-            VStack::new((
-                read.map(|ms| read_label(m, ms)),
-                read.is_none()
-                    .then(|| note(m, "Not read", None, theme::TEXT_TERTIARY)),
-                LazyForEach::<MAX_LISTED>::new_vertical(count, Extent::Fixed(NEIGHBOR), move |i| {
-                    let listed = node.listed(&shown, i)?;
-                    let look = NeighborLook {
-                        known: listed.address.is_some(),
-                        waiting: listed.address.is_none() && identifying.contains(&listed.hint),
-                        name: listed.name,
-                        avatar: listed.avatar,
-                        signal: listed.signal,
-                        heard_min: listed.heard_min,
-                        distance_m: listed.distance_m,
-                        phase,
-                        focused: false,
-                        m,
-                    };
-                    Some(Button::new(
-                        move |s: &mut State| s.press_neighbor(i),
-                        move |button: ButtonState| {
-                            Lazy::new(
-                                NeighborLook {
-                                    focused: button.is_focused(),
-                                    ..look.clone()
-                                },
-                                neighbor_look,
-                            )
-                        },
-                    ))
-                })
-                .keyed(keys::neighbor),
-                no_answer.then(|| {
-                    note(
-                        m,
-                        "No answer",
-                        Some("Out of reach, or it keeps no neighbor list"),
-                        theme::AMBER,
-                    )
-                }),
-                (read.is_some() && count == 0 && !no_answer && asking.is_none())
-                    .then(|| note(m, "None", None, theme::TEXT_TERTIARY)),
-                more.map(|more| {
-                    text_row(
-                        "Load more",
-                        keys::NEIGHBORS_MORE,
-                        State::more_neighbors,
-                        asking == Some(ListingAsk::More),
-                        Some(more),
-                    )
-                }),
-                text_row(
-                    "Refresh",
-                    keys::NEIGHBORS_REFRESH,
-                    State::refresh_neighbors,
-                    asking == Some(ListingAsk::Top),
-                    None,
-                ),
-            ))
-            .with_spacing(0),
-        )
-        .with_scroll_step(NEIGHBOR),
-    ))
-    .with_spacing(0)
-    .bound_focus(BoundaryBehavior::Stop)
-    .on_key(|key, s: &mut State| match key {
-        Key::Backspace => {
-            s.back();
-            KeyResponse::Handled
-        }
-        _ => KeyResponse::Ignored,
-    })
+/// What the listing says around its rows: when it was read, or in their
+/// place, that it was never read, that the router listed nobody, or that
+/// it did not answer and why.
+#[derive(Clone)]
+pub(super) enum Caption {
+    Read(String<24>),
+    Note(&'static str, Option<&'static str>, Rgb565),
 }
 
-/// When the listing was read, over it.
-fn read_label(m: &'static Metrics, ms: u64) -> impl View<Rgb565, State> + use<> {
+/// When the listing was read, such as `Read 12m ago`.
+pub(super) fn read_text(ms: u64) -> String<24> {
     let ago = age(Some(0), Some((ms / 1000).min(u64::from(u32::MAX)) as u32));
     let mut text: String<24> = String::new();
     if ago == "now" {
@@ -157,72 +43,75 @@ fn read_label(m: &'static Metrics, ms: u64) -> impl View<Rgb565, State> + use<> 
     } else {
         _ = core::fmt::write(&mut text, format_args!("Read {ago} ago"));
     }
-    line(text, &font::BOLD, m.small, theme::TEXT_SECONDARY)
-        .padding(Edges::Leading, INSET)
-        .padding(Edges::Top, 6)
-        .flex_infinite_width(HorizontalAlignment::Leading)
-        .frame()
-        .with_height(LABEL)
+    text
 }
 
-/// What the listing says in place of rows: that it was never read, that
-/// the router listed nobody, or that it did not answer and why.
-fn note(
-    m: &'static Metrics,
-    title: &'static str,
-    why: Option<&'static str>,
-    color: Rgb565,
-) -> impl View<Rgb565, State> + use<> {
+/// A caption's look. Built each time it is drawn ([`Lazy`]): kept in the
+/// view tree, each would be compiled into every pass over it.
+pub(super) fn caption_look(
+    (said, m): &(Caption, &'static Metrics),
+) -> impl View<Rgb565, ()> + use<> {
+    let (read, title, why, color) = match said {
+        Caption::Read(text) => (Some(text.clone()), "", None, theme::TEXT_SECONDARY),
+        Caption::Note(title, why, color) => (None, *title, *why, *color),
+    };
+    let note = read.is_none();
     VStack::new((
-        line(
-            title,
-            if why.is_some() {
-                &font::BOLD
-            } else {
-                &font::REGULAR
-            },
-            m.body,
-            color,
-        ),
+        read.map(|text| line(text, &font::BOLD, m.small, color)),
+        note.then(|| {
+            line(
+                title,
+                if why.is_some() {
+                    &font::BOLD
+                } else {
+                    &font::REGULAR
+                },
+                m.body,
+                color,
+            )
+        }),
         why.map(|why| line(why, &font::REGULAR, m.small, theme::TEXT_TERTIARY)),
     ))
     .with_spacing(2)
     .with_alignment(HorizontalAlignment::Leading)
-    .padding(Edges::Leading, NAME_X)
+    .padding(Edges::Leading, if note { NAME_X } else { INSET })
+    .padding(Edges::Top, if note { 0 } else { 6 })
     .flex_infinite_width(HorizontalAlignment::Leading)
     .frame()
-    .with_height(NEIGHBOR)
+    .with_height(if note { NEIGHBOR } else { LABEL })
     .overlay(
         Alignment::Bottom,
-        Rectangle
-            .foreground_color(theme::LINE)
-            .frame()
-            .with_height(1)
-            .padding(Edges::Leading, NAME_X),
+        note.then(|| {
+            Rectangle
+                .foreground_color(theme::LINE)
+                .frame()
+                .with_height(1)
+                .padding(Edges::Leading, NAME_X)
+        }),
     )
 }
 
 /// A repeater the router reported, as its row draws it.
 #[derive(Clone)]
-struct NeighborLook {
-    name: String<24>,
-    avatar: AvatarStyle,
+pub(super) struct NeighborLook {
+    pub(super) name: String<24>,
+    pub(super) avatar: AvatarStyle,
     /// A known node, whose page a press opens; else a bare hint.
-    known: bool,
+    pub(super) known: bool,
     /// Who the bare hint is was asked, and is waited for.
-    waiting: bool,
-    signal: Option<Signal>,
-    heard_min: Option<u16>,
-    distance_m: Option<u32>,
-    phase: u8,
-    focused: bool,
-    m: &'static Metrics,
+    pub(super) waiting: bool,
+    pub(super) signal: Option<Signal>,
+    pub(super) heard_min: Option<u16>,
+    pub(super) distance_m: Option<u32>,
+    pub(super) phase: u8,
+    pub(super) focused: bool,
+    pub(super) m: &'static Metrics,
 }
 
 /// A repeater's row: its avatar and name, then the bars and the reading
 /// (or that a bridge carried it), how long ago, and how far from the
 /// router. Built each time it is drawn.
-fn neighbor_look(look: &NeighborLook) -> impl View<Rgb565, ()> + use<> {
+pub(super) fn neighbor_look(look: &NeighborLook) -> impl View<Rgb565, ()> + use<> {
     let m = look.m;
     let stale = look.heard_min.is_some_and(|min| min >= STALE_MIN);
     let face = if look.focused {
@@ -357,18 +246,18 @@ fn reading(look: &NeighborLook) -> String<48> {
 
 /// Load more or Refresh, as its row draws it.
 #[derive(Clone, Copy)]
-struct TextLook {
-    label: &'static str,
+pub(super) struct TextLook {
+    pub(super) label: &'static str,
     /// How many are held, of how many the router said it hears.
-    count: Option<(u8, Option<u8>)>,
+    pub(super) count: Option<(u8, Option<u8>)>,
     /// What it asked for is waited for.
-    busy: bool,
-    phase: u8,
-    focused: bool,
-    m: &'static Metrics,
+    pub(super) busy: bool,
+    pub(super) phase: u8,
+    pub(super) focused: bool,
+    pub(super) m: &'static Metrics,
 }
 
-fn text_look(look: &TextLook) -> impl View<Rgb565, ()> + use<> {
+pub(super) fn text_look(look: &TextLook) -> impl View<Rgb565, ()> + use<> {
     let m = look.m;
     let mut count: String<12> = String::new();
     if let Some((held, total)) = look.count {

@@ -16,9 +16,9 @@ use crate::keyboard::Field;
 use crate::model::Directions;
 use crate::model::{
     AUTO_LOCK_CHOICES, BANDWIDTHS, CODING_RATES, ChannelAccess, ChannelEntry, ChatId, ChatKind,
-    ChatSummary, Details, Exchange, Found, FoundKind, Invite, KeyboardSettings, LoraChoice,
-    MAX_FOUND, MAX_PATH, MAX_REPEATERS, MAX_SCREENS, Member, MessageId, NearbyId, PeerDetail,
-    PeerEntry, PeerId, PingView, Profile, RadioSettings, Reaction, Repeater, RouteKind,
+    ChatSummary, Details, Exchange, Found, FoundKind, Invite, KeyboardSettings, Listing,
+    LoraChoice, MAX_FOUND, MAX_PATH, MAX_REPEATERS, MAX_SCREENS, Member, MessageId, NearbyId,
+    PeerDetail, PeerEntry, PeerId, PingView, Profile, RadioSettings, Reaction, Repeater, RouteKind,
     SPREADING_FACTORS, Section, Shareable, State, TRANSMIT_LIMITS, TRANSMIT_POWER, word_match,
 };
 use crate::ui::GammaTest;
@@ -88,6 +88,7 @@ pub mod keys {
     const NEARBY: u32 = 0x2000_0000;
     const AUTO_LOCK_ROW: u32 = 0x2400_0000;
     const NEIGHBOR: u32 = 0x2200_0000;
+    const SHEET: u32 = 0x2700_0000;
     const PATH: u32 = 0x2B00_0000;
     const WIFI_ROW: u32 = 0x2E00_0000;
     const LORA_CHOICE_ROW: u32 = 0x2F00_0000;
@@ -402,6 +403,13 @@ pub mod keys {
     #[must_use]
     pub const fn neighbor(index: usize) -> FocusKey {
         FocusKey(NEIGHBOR | (index as u32 & !KIND))
+    }
+
+    /// A row of the route editor or of Neighbors that focus passes over,
+    /// by its place.
+    #[must_use]
+    pub const fn sheet(index: usize) -> FocusKey {
+        FocusKey(SHEET | (index as u32 & !KIND))
     }
 
     /// One of Find's results, by its place among them.
@@ -870,6 +878,66 @@ pub enum Adjust {
     Hold,
 }
 
+/// A row of the route editor, from the top.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EditRow {
+    You,
+    /// The hop at this place, the one nearest this device first.
+    Hop(usize),
+    Flood,
+    Peer,
+    Ping,
+    Hold,
+    Save,
+}
+
+/// A row of a router's Neighbors, from the top.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ListRow {
+    /// When the listing was read, or that it never was.
+    Read,
+    /// The repeater at this place in the listing.
+    Neighbor(usize),
+    /// That the router listed nobody, or did not answer.
+    Said,
+    More,
+    Refresh,
+}
+
+/// The row at `index` of a router's Neighbors, `listing` as last read.
+#[must_use]
+pub fn listing_row(listing: Option<&Listing>, index: usize) -> Option<ListRow> {
+    let count = listing.map_or(0, |listing| usize::from(listing.count));
+    let read = listing.is_some_and(|listing| listing.read_ms_ago.is_some());
+    let no_answer = listing.is_some_and(|listing| listing.no_answer);
+    let asking = listing.is_some_and(|listing| listing.asking.is_some());
+    let said = no_answer || (read && count == 0 && !asking);
+    let more = listing.is_some_and(|listing| listing.more);
+    let rows = [
+        (true, ListRow::Read),
+        (said, ListRow::Said),
+        (more, ListRow::More),
+        (true, ListRow::Refresh),
+    ];
+    match index {
+        0 => Some(ListRow::Read),
+        i if i <= count => Some(ListRow::Neighbor(i - 1)),
+        i => rows[1..]
+            .iter()
+            .filter(|(shown, _)| *shown)
+            .nth(i - count - 1)
+            .map(|&(_, row)| row),
+    }
+}
+
+/// How many rows a router's Neighbors has, `listing` as last read.
+#[must_use]
+pub fn listing_rows(listing: Option<&Listing>) -> usize {
+    (0..)
+        .take_while(|&i| listing_row(listing, i).is_some())
+        .count()
+}
+
 /// What is open over the route editor.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EditOver {
@@ -905,6 +973,30 @@ impl RouteDraft {
     #[must_use]
     pub fn hints(&self) -> &[[u8; 2]] {
         &self.hints[..usize::from(self.len)]
+    }
+
+    /// The editor's row at `index`.
+    #[must_use]
+    pub fn row(&self, index: usize) -> Option<EditRow> {
+        let hops = usize::from(self.len);
+        Some(match index {
+            0 => EditRow::You,
+            i if i <= hops => EditRow::Hop(i - 1),
+            i => match i - hops {
+                1 => EditRow::Flood,
+                2 => EditRow::Peer,
+                3 => EditRow::Ping,
+                4 => EditRow::Hold,
+                5 => EditRow::Save,
+                _ => return None,
+            },
+        })
+    }
+
+    /// How many rows the editor has.
+    #[must_use]
+    pub fn rows(&self) -> usize {
+        usize::from(self.len) + 6
     }
 
     /// How long it is to be held, in milliseconds.
@@ -3567,6 +3659,32 @@ impl State {
             asked: Asked::new(),
             focus: FocusState::requesting(first),
         });
+    }
+
+    /// Presses the row at `index` of the route editor or of Neighbors,
+    /// whichever is shown.
+    pub fn press_sheet(&mut self, index: usize) {
+        match self.screens.last() {
+            Some(Screen::Route {
+                edit: Some(draft), ..
+            }) => match draft.row(index) {
+                Some(EditRow::Hop(hop)) => self.press_hop(hop),
+                Some(EditRow::Flood) => self.press_flood(),
+                Some(EditRow::Ping) => self.ping_along(),
+                Some(EditRow::Hold) => self.press_hold(),
+                Some(EditRow::Save) => self.save_route(),
+                Some(EditRow::You | EditRow::Peer) | None => {}
+            },
+            Some(Screen::Neighbors { router, .. }) => {
+                match listing_row(self.node.listing(router).as_ref(), index) {
+                    Some(ListRow::Neighbor(at)) => self.press_neighbor(at),
+                    Some(ListRow::More) => self.more_neighbors(),
+                    Some(ListRow::Refresh) => self.refresh_neighbors(),
+                    Some(ListRow::Read | ListRow::Said) | None => {}
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Asks the router shown for the top of what it hears again.
