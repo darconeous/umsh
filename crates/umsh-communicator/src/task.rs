@@ -158,6 +158,14 @@ pub enum Command {
     CloseMeet,
 }
 
+// Every queued arrival and command takes a slot the size of the largest
+// variant, so a variant that outgrows these grows them all. Raise a bound
+// only on purpose; something large travels in parts or behind a pointer.
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(size_of::<Arrival>() <= 208 && size_of::<Command>() <= 104);
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(size_of::<Arrival>() <= 264 && size_of::<Command>() <= 120);
+
 /// What a full [`Inbox`] has dropped since boot.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct InboxDrops {

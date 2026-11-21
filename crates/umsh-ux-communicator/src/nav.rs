@@ -787,6 +787,13 @@ pub enum Screen {
     },
 }
 
+// The navigation stack holds `MAX_SCREENS` of these, so a variant that
+// outgrows the rest costs every slot. Raise a bound only on purpose.
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(size_of::<Screen>() <= 1016);
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(size_of::<Screen>() <= 1192);
+
 impl Screen {
     /// The Chats screen, its list focused.
     #[must_use]
