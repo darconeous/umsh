@@ -22,7 +22,7 @@ use umsh_ux_communicator::nav::{ChatMenu, DevicePage, MemberFrom, Screen, Unsent
 use umsh_ux_communicator::model::Cue;
 use umsh_ux_communicator::model::WifiStatus;
 use umsh_ux_communicator::model::{LoraChoice, SPREADING_FACTORS, TRANSMIT_LIMITS};
-use umsh_ux_communicator::model::{Leg, PeerRoute, PingView, RouteKind};
+use umsh_ux_communicator::model::{Leg, PeerRoute, PingView, RouteKind, route_text};
 use umsh_ux_communicator::{fixture, ui, zones};
 
 /// The fixture's chats, in list order.
@@ -4586,6 +4586,55 @@ fn a_route_reset_is_not_learned_and_offers_a_ping() {
     assert_eq!(shown_ping(app.state()), Some(PingView::Waiting));
     run(&mut app, &[Input::Backspace, Input::Backspace]);
     assert_eq!(peer_detail(app.state()).route.as_deref(), Some("Not learned"));
+}
+
+#[test]
+fn a_route_held_by_hand_says_so_until_it_is_cleared() {
+    let mut app = app!();
+    open_route_to(&mut app, "Jo Reyes");
+    let Screen::Route { peer, .. } = app.state().screen().clone() else {
+        unreachable!()
+    };
+    let hints: Vec<[u8; 2]> = shown_route(app.state())
+        .unwrap()
+        .repeaters
+        .iter()
+        .map(|repeater| repeater.hint)
+        .collect();
+    app.state().node.hold_route(peer, &hints, 1, 3_600_000);
+    input::events(&mut app, tick(0));
+    let route = shown_route(app.state()).unwrap();
+    assert_eq!(route.kind, RouteKind::Source);
+    assert_eq!(route.repeaters.len(), 2);
+    let manual = route.manual.as_ref().expect("held");
+    assert_eq!(manual.flood_hops, 1);
+    assert_eq!(manual.left.as_str(), "60 min left");
+    assert_eq!(route_text(&route).as_str(), "Manual \u{B7} 3 hops");
+
+    // Clear manual route stands where Reset route did, and lets it go.
+    turn_to(&mut app, keys::ROUTE_RESET);
+    run(&mut app, &[Input::Press]);
+    let route = shown_route(app.state()).unwrap();
+    assert_eq!(route.manual, None);
+    run(&mut app, &[Input::Backspace]);
+    assert_eq!(peer_detail(app.state()).route.as_deref(), Some("Not learned"));
+}
+
+#[test]
+fn a_direct_route_held_by_hand_is_manual_and_direct() {
+    let mut app = app!();
+    open_route_to(&mut app, "Jo Reyes");
+    let Screen::Route { peer, .. } = app.state().screen().clone() else {
+        unreachable!()
+    };
+    app.state().node.hold_route(peer, &[], 0, 4 * 3_600_000);
+    input::events(&mut app, tick(0));
+    let route = shown_route(app.state()).unwrap();
+    assert_eq!(route.kind, RouteKind::Direct);
+    assert_eq!(route.manual.as_ref().unwrap().left.as_str(), "4 hr left");
+    assert_eq!(route_text(&route).as_str(), "Manual \u{B7} Direct");
+    run(&mut app, &[Input::Backspace]);
+    assert_eq!(peer_detail(app.state()).route.as_deref(), Some("Manual \u{B7} Direct"));
 }
 
 #[test]

@@ -559,6 +559,7 @@ impl<S: ChatStore> Chats<S> {
         self.settle(None, now_ms, time, events);
         self.lapse_links(now_ms, events);
         self.lapse_repeats(now_ms, events);
+        self.lapse_holds(now_ms, events);
     }
 
     /// Asks again for `message` in `chat`, a message missing here or one

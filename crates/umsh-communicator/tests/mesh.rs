@@ -38,8 +38,9 @@ use support::{Port, device, phone_inserts, provision};
 
 type Platform = TokioPlatform<SimulatedRadio, MemoryCounterStore, MemoryKeyValueStore>;
 /// Room for the board's identity and the ephemeral ones its sessions with
-/// forward secrecy take, as the device node has.
-type MeshMac = Mac<Platform, 5, 16, 4, 8, 8, 255, 32>;
+/// forward secrecy take, and for routes held by hand, as the device node
+/// has.
+type MeshMac = Mac<Platform, 5, 16, 4, 8, 8, 255, 32, 8>;
 
 /// A test that stops making progress fails rather than hangs.
 const PATIENCE: Duration = Duration::from_secs(20);
@@ -62,7 +63,7 @@ impl Clock for Since {
 struct Board {
     node: &'static CommunicatorNode<Port>,
     sim: Rc<RefCell<SimulatedDevice>>,
-    mesh: LocalNode<MacHandle<'static, Platform, 5, 16, 4, 8, 8, 255, 32>>,
+    mesh: LocalNode<MacHandle<'static, Platform, 5, 16, 4, 8, 8, 255, 32, 8>>,
     key: PublicKey,
 }
 
@@ -1270,6 +1271,62 @@ async fn a_ping_through_a_repeater_names_it_and_reads_each_hop() {
                 alice.node.peer_route(peer).is_some()
             })
             .await;
+        })
+        .await;
+}
+
+/// A route held by hand through a repeater nobody hears misses, the message
+/// floods instead and is delivered, and the route is held still.
+#[tokio::test(flavor = "current_thread")]
+async fn a_held_route_that_misses_floods_and_stays_held() {
+    LocalSet::new()
+        .run_until(async {
+            let network = SimulatedNetwork::new();
+            let near = network.add_radio_with_config(255, 20);
+            let middle = network.add_radio_with_config(255, 20);
+            let far = network.add_radio_with_config(255, 20);
+            network.connect_bidirectional(near.id(), middle.id());
+            network.connect_bidirectional(middle.id(), far.id());
+            let alice = board(near, [0x11; 32]).await;
+            let _ridge = repeater(middle, [0x33; 32]).await;
+            let bob = board(far, [0x22; 32]).await;
+
+            phone_inserts(&alice.sim, prop::DEV_PEERS, &bob.key.0);
+            alice.node.pump();
+            let peer = alice.node.peers()[0].id;
+            // No repeater answers to this hint.
+            let nobody = [0xEE, 0xEE];
+            alice.node.hold_route(peer, &[nobody], 0, 3_600_000);
+            until("the held route was not read", || {
+                alice
+                    .node
+                    .peer_route(peer)
+                    .is_some_and(|route| route.manual.is_some())
+            })
+            .await;
+
+            let chat = alice
+                .node
+                .direct_chat(&address(&bob.key), "Bob", &alice.node.avatar())
+                .unwrap();
+            let sent = alice
+                .node
+                .send(chat.id, "By the ridge", None, false)
+                .unwrap();
+            until("the message was not delivered", || {
+                how_sent(&alice, chat.id, sent.id).0 == Delivery::Delivered
+            })
+            .await;
+
+            // The route missed and the flood after it was acknowledged, and
+            // the device node holds the same route still.
+            let status = alice.mesh.peer_route_status(&bob.key).await.unwrap();
+            assert_eq!(status.fallback_acks, 1, "{status:?}");
+            assert!(status.hold_remaining_ms.is_some(), "{status:?}");
+            assert_eq!(
+                status.route,
+                umsh::mac::CachedRoute::source(&[umsh_core::RouterHint(nobody)]),
+            );
         })
         .await;
 }

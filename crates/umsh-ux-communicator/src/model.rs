@@ -1566,13 +1566,27 @@ pub struct PeerRoute {
     pub confirmed: Option<String<12>>,
     /// How this device heard the peer, when the route is direct.
     pub signal: Option<Signal>,
+    /// While it is a route chosen by hand, held against learned ones.
+    pub manual: Option<ManualRoute>,
+}
+
+/// A route chosen by hand, while it is held.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ManualRoute {
+    /// How many hops a message may flood past the last repeater.
+    pub flood_hops: u8,
+    /// How long it is held for yet, such as `52 min left`.
+    pub left: String<12>,
 }
 
 /// How far `route` goes, and how: such as `Direct`, `3 hops`, `Flood ·
-/// 4 hops`, or `Not learned`.
+/// 4 hops`, `Manual · 3 hops`, or `Not learned`.
 #[must_use]
 pub fn route_text(route: &PeerRoute) -> String<24> {
     let mut text = String::new();
+    if route.manual.is_some() {
+        _ = text.push_str("Manual \u{B7} ");
+    }
     match (route.kind, route.hops) {
         (RouteKind::Unknown, _) => _ = text.push_str("Not learned"),
         (RouteKind::Flood, Some(hops)) => {
@@ -1582,6 +1596,19 @@ pub fn route_text(route: &PeerRoute) -> String<24> {
         (RouteKind::Flood, None) => _ = text.push_str("Flood"),
         (_, Some(hops)) => _ = text.push_str(&hops_text(hops)),
         (_, None) => {}
+    }
+    text
+}
+
+/// How far a route floods past its last repeater: `Off`, `1 hop`, or
+/// `4 hops`.
+#[must_use]
+pub fn flood_text(hops: u8) -> String<12> {
+    let mut text = String::new();
+    match hops {
+        0 => _ = text.push_str("Off"),
+        1 => _ = text.push_str("1 hop"),
+        n => _ = core::fmt::write(&mut text, format_args!("{n} hops")),
     }
     text
 }
@@ -1961,9 +1988,16 @@ pub trait Node {
     /// The route to `peer` as last read; `None` before it has been.
     fn peer_route(&self, peer: PeerId) -> Option<PeerRoute>;
 
-    /// Forgets the route to `peer`, so that the next message floods. The
-    /// change comes as [`NodeEvent::RouteChanged`].
+    /// Forgets the route to `peer`, so that the next message floods. A
+    /// route held by hand is let go with it. The change comes as
+    /// [`NodeEvent::RouteChanged`].
     fn reset_route(&self, peer: PeerId);
+
+    /// Holds `hints`, the repeater nearest this device first, as the route
+    /// to `peer` for `hold_ms`, ahead of any route learned meanwhile, and
+    /// lets a message flood `flood_hops` past the last of them. No hints is
+    /// a direct route. The change comes as [`NodeEvent::RouteChanged`].
+    fn hold_route(&self, peer: PeerId, hints: &[[u8; 2]], flood_hops: u8, hold_ms: u32);
 
     /// The clock's settings as they stand.
     fn clock(&self) -> ClockSettings;

@@ -12,7 +12,7 @@ mod support;
 use support::{Port, SharedFlash, config, device, phone_inserts, provision, starting_keys};
 use umsh_communicator::settings::{SAVE_DELAY_MS, STATISTICS_READ_MS};
 use umsh_communicator::task::Command;
-use umsh_communicator::task::{Arrival, Secrecy};
+use umsh_communicator::task::{Arrival, HeldRoute, Secrecy};
 use umsh_communicator::{
     ChannelCrypto, Clock, CommunicatorNode, FlashMap, FlashMapStore, MemoryStore, Quota, Seeds,
 };
@@ -2787,6 +2787,7 @@ fn a_saved_peers_route_is_read_from_the_device_node() {
         peer: robin,
         route: route(),
         confirmed_age_ms: Some(60_000),
+        held: None,
     });
     assert_eq!(events(&node), [NodeEvent::RouteChanged(peer)]);
     let shown = node.peer_route(peer).unwrap();
@@ -2805,6 +2806,7 @@ fn a_saved_peers_route_is_read_from_the_device_node() {
         peer: robin,
         route: route(),
         confirmed_age_ms: Some(60_300),
+        held: None,
     });
     assert!(events(&node).is_empty());
 
@@ -2825,6 +2827,7 @@ fn a_saved_peers_route_is_read_from_the_device_node() {
         peer: robin,
         route: None,
         confirmed_age_ms: None,
+        held: None,
     });
     assert!(events(&node).contains(&NodeEvent::RouteChanged(peer)));
     assert_eq!(node.peer_route(peer).unwrap().kind, RouteKind::Unknown);
@@ -2832,6 +2835,92 @@ fn a_saved_peers_route_is_read_from_the_device_node() {
         node.peer_detail(peer).unwrap().route.as_deref(),
         Some("Not learned")
     );
+}
+
+/// A route held by hand is asked of the device node and read back as
+/// manual, with how far it floods and how long it has left; a read a
+/// moment later changes nothing, and once the hold runs out the route is an
+/// ordinary one.
+#[test]
+fn a_route_held_by_hand_counts_down_and_then_is_ordinary() {
+    let sim = device();
+    let (node, clock) = started(&sim);
+    let (robin, peer) = saved_robin(&sim, &node, clock);
+    node.hold_route(peer, &[[0xA1, 0x01]], 1, 3_600_000);
+    assert!(asks(&node, |c| matches!(
+        c,
+        Command::HoldRoute { peer, hints, flood_hops: 1, hold_ms: 3_600_000 }
+            if *peer == robin && hints.as_slice() == [RouterHint([0xA1, 0x01])]
+    )));
+
+    let route = || CachedRoute::source(&[RouterHint([0xA1, 0x01])]);
+    let held = |remaining_ms| {
+        Some(HeldRoute {
+            remaining_ms,
+            flood_hops: 1,
+        })
+    };
+    clock.set(10_000);
+    node.arrive(Arrival::Route {
+        peer: robin,
+        route: route(),
+        confirmed_age_ms: None,
+        held: held(3_600_000),
+    });
+    assert_eq!(events(&node), [NodeEvent::RouteChanged(peer)]);
+    let manual = node.peer_route(peer).unwrap().manual.unwrap();
+    assert_eq!(
+        (manual.flood_hops, manual.left.as_str()),
+        (1, "60 min left")
+    );
+    assert_eq!(
+        node.peer_detail(peer).unwrap().route.as_deref(),
+        Some("Manual \u{B7} 2 hops")
+    );
+
+    // Read again half a second on: the same hold.
+    clock.set(10_500);
+    node.arrive(Arrival::Route {
+        peer: robin,
+        route: route(),
+        confirmed_age_ms: None,
+        held: held(3_599_500),
+    });
+    assert!(events(&node).is_empty());
+
+    clock.set(10_000 + 3_600_000 - 61_000);
+    let manual = node.peer_route(peer).unwrap().manual.unwrap();
+    assert_eq!(manual.left.as_str(), "2 min left");
+    // Running out is told, so the peer's page stops saying Manual.
+    clock.set(10_000 + 3_600_000);
+    node.tick();
+    assert!(events(&node).contains(&NodeEvent::RouteChanged(peer)));
+    let shown = node.peer_route(peer).unwrap();
+    assert_eq!(shown.manual, None);
+    assert_eq!(shown.kind, RouteKind::Source, "the route itself stays");
+    assert_eq!(
+        node.peer_detail(peer).unwrap().route.as_deref(),
+        Some("2 hops")
+    );
+
+    // Only the hold changing is a change too.
+    let now = 10_000 + 3_600_000;
+    node.arrive(Arrival::Route {
+        peer: robin,
+        route: route(),
+        confirmed_age_ms: None,
+        held: held(600_000),
+    });
+    assert_eq!(events(&node), [NodeEvent::RouteChanged(peer)]);
+    clock.set(now + 1_000);
+    node.arrive(Arrival::Route {
+        peer: robin,
+        route: route(),
+        confirmed_age_ms: None,
+        held: None,
+    });
+    assert_eq!(events(&node), [NodeEvent::RouteChanged(peer)]);
+    assert_eq!(node.peer_route(peer).unwrap().manual, None);
 }
 
 /// A direct route shows how this device last heard the peer, and a flood
@@ -2850,6 +2939,7 @@ fn a_direct_route_has_its_reading_and_a_flood_its_unnamed_repeaters() {
         peer: robin,
         route: Some(CachedRoute::Direct),
         confirmed_age_ms: None,
+        held: None,
     });
     let shown = node.peer_route(peer).unwrap();
     assert_eq!(shown.kind, RouteKind::Direct);
@@ -2860,6 +2950,7 @@ fn a_direct_route_has_its_reading_and_a_flood_its_unnamed_repeaters() {
         peer: robin,
         route: CachedRoute::flood(3, &[]),
         confirmed_age_ms: None,
+        held: None,
     });
     let shown = node.peer_route(peer).unwrap();
     assert_eq!(shown.kind, RouteKind::Flood);

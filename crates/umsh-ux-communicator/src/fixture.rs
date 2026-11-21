@@ -13,12 +13,12 @@ use crate::model::{
     Contact, ContactUri, Delivery, Details, Direction, EventQueue, Exchange, ExchangeEnd, Fix,
     Forwarding, GaugeReading, Gnss, GnssReading, Heard, Invite, KeyboardFirmware, KeyboardSettings,
     Leg, Links, MAX_CHATS, MAX_HEARD, MAX_NEARBY_NETWORKS, MAX_PATH, MAX_SAVED_NETWORKS,
-    MESSAGE_LEN, MeetState, Member, Message, MessageId, NearbyDevice, NearbyId, NearbyNetwork,
-    Neighbor, Node, NodeEvent, Parts, PeerDetail, PeerEntry, PeerId, PeerRoute, PeerSummary,
-    PingReply, PingView, Presence, Profile, Quote, RadioSettings, Reacted, Reaction, Reactions,
-    Reactor, Repeater, RouteKind, Rule, SavedNetwork, Sender, Setting, ShareUri, Shareable, Signal,
-    Ssid, State, Statistics, StatusStrip, TRANSMIT_POWER, Via, WifiReading, WifiSecurity,
-    WifiStatus, route_text, word_match,
+    MESSAGE_LEN, ManualRoute, MeetState, Member, Message, MessageId, NearbyDevice, NearbyId,
+    NearbyNetwork, Neighbor, Node, NodeEvent, Parts, PeerDetail, PeerEntry, PeerId, PeerRoute,
+    PeerSummary, PingReply, PingView, Presence, Profile, Quote, RadioSettings, Reacted, Reaction,
+    Reactions, Reactor, Repeater, RouteKind, Rule, SavedNetwork, Sender, Setting, ShareUri,
+    Shareable, Signal, Ssid, State, Statistics, StatusStrip, TRANSMIT_POWER, Via, WifiReading,
+    WifiSecurity, WifiStatus, route_text, word_match,
 };
 use crate::models;
 use crate::picker::RecentText;
@@ -419,6 +419,23 @@ fn router_hint(address: &str) -> Option<([u8; 2], String<8>)> {
     Some((hint.0, text))
 }
 
+/// A route held by hand: to whom, its hints, how far it floods past the
+/// last, and for how long it was held.
+type HeldRoute = (PeerId, Vec<[u8; 2], MAX_PATH>, u8, u32);
+
+/// How long a route the fixture holds by hand has left: all of it, since
+/// the fixture's time stands still.
+fn held_for(hold_ms: u32) -> String<12> {
+    let minutes = hold_ms.div_ceil(60_000);
+    let mut left = String::new();
+    if minutes < 120 {
+        _ = core::fmt::write(&mut left, format_args!("{minutes} min left"));
+    } else {
+        _ = core::fmt::write(&mut left, format_args!("{} hr left", minutes / 60));
+    }
+    left
+}
+
 /// Messages that arrive after the fixture starts, in order.
 const ARRIVALS: [(ChatId, From, &str); 3] = [
     (
@@ -746,6 +763,7 @@ pub struct Store {
     secrecy: RefCell<Vec<PeerId, KEPT>>,
     pinged: RefCell<Vec<(PeerId, u64, bool), KEPT>>,
     reset: RefCell<Vec<PeerId, KEPT>>,
+    held: RefCell<Vec<HeldRoute, KEPT>>,
     aliases: RefCell<Vec<(PeerId, String<32>), KEPT>>,
     forgotten: RefCell<Vec<PeerId, KEPT>>,
     /// The chat of message states' session with forward secrecy ended.
@@ -998,6 +1016,7 @@ impl Store {
             secrecy: RefCell::new(Vec::new()),
             pinged: RefCell::new(Vec::new()),
             reset: RefCell::new(Vec::new()),
+            held: RefCell::new(Vec::new()),
             aliases: RefCell::new(Vec::new()),
             forgotten: RefCell::new(Vec::new()),
             secrecy_ended: Cell::new(false),
@@ -1622,6 +1641,25 @@ impl Store {
                 address: None,
             })
         }
+    }
+
+    /// The repeater on a route held by hand that `hint` names: one of the
+    /// fixture's carriers, else the hint alone.
+    fn held_repeater(&self, hint: [u8; 2]) -> Option<Repeater> {
+        if let Some(carrier) = [RIVERBEND, BALD_KNOB]
+            .iter()
+            .find(|carrier| router_hint(carrier.address).is_some_and(|(h, _)| h == hint))
+        {
+            return self.repeater(carrier);
+        }
+        let mut text: String<8> = String::new();
+        core::fmt::write(&mut text, format_args!("{}", umsh_core::RouterHint(hint))).ok()?;
+        Some(Repeater {
+            hint,
+            name: SharedText::new(self.heap, &text)?,
+            avatar: AvatarStyle::router_hint(&text),
+            address: None,
+        })
     }
 
     /// The repeaters heard carrying my message `id` in `chat`, as its
@@ -2607,9 +2645,31 @@ impl Node for Store {
             unnamed: 0,
             confirmed: None,
             signal: None,
+            manual: None,
         };
         if self.forgotten.borrow().contains(&peer) {
             return None;
+        }
+        if let Some((_, hints, flood_hops, hold_ms)) =
+            self.held.borrow().iter().find(|(id, ..)| *id == peer)
+        {
+            return Some(PeerRoute {
+                kind: if hints.is_empty() {
+                    RouteKind::Direct
+                } else {
+                    RouteKind::Source
+                },
+                hops: u8::try_from(hints.len() + 1).ok(),
+                repeaters: hints
+                    .iter()
+                    .filter_map(|&hint| self.held_repeater(hint))
+                    .collect(),
+                manual: Some(ManualRoute {
+                    flood_hops: *flood_hops,
+                    left: held_for(*hold_ms),
+                }),
+                ..unknown
+            });
         }
         if self.reset.borrow().contains(&peer) {
             return Some(unknown);
@@ -2648,11 +2708,22 @@ impl Node for Store {
     }
 
     fn reset_route(&self, peer: PeerId) {
+        self.held.borrow_mut().retain(|(id, ..)| *id != peer);
         let mut reset = self.reset.borrow_mut();
         if !reset.contains(&peer) {
             _ = reset.push(peer);
         }
         drop(reset);
+        self.queue(NodeEvent::RouteChanged(peer));
+    }
+
+    fn hold_route(&self, peer: PeerId, hints: &[[u8; 2]], flood_hops: u8, hold_ms: u32) {
+        let mut held = self.held.borrow_mut();
+        held.retain(|(id, ..)| *id != peer);
+        let hints = hints.iter().take(MAX_PATH).copied().collect();
+        _ = held.push((peer, hints, flood_hops, hold_ms));
+        drop(held);
+        self.reset.borrow_mut().retain(|id| *id != peer);
         self.queue(NodeEvent::RouteChanged(peer));
     }
 

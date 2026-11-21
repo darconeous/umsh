@@ -214,7 +214,8 @@ impl<P: LocalPort, S: ChatStore> CommunicatorNode<P, S> {
                 peer,
                 route,
                 confirmed_age_ms,
-            } => chats.route_read(peer, route, confirmed_age_ms, now_ms, events),
+                held,
+            } => chats.route_read(peer, route, confirmed_age_ms, held, now_ms, events),
             Arrival::Secrecy { peer, change } => chats.secrecy(peer, change, now_ms, time, events),
             #[cfg(feature = "software-crypto")]
             Arrival::Meet { .. } | Arrival::MeetOpened(_) => {}
@@ -708,6 +709,13 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
 
     fn reset_route(&self, peer: PeerId) {
         self.chats.borrow_mut().reset_route(peer);
+        self.wake();
+    }
+
+    fn hold_route(&self, peer: PeerId, hints: &[[u8; 2]], flood_hops: u8, hold_ms: u32) {
+        self.chats
+            .borrow_mut()
+            .hold_route(peer, hints, flood_hops, hold_ms);
         self.wake();
     }
 

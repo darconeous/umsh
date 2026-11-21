@@ -7,19 +7,21 @@
 
 use alloc::collections::BTreeMap;
 
+use core::fmt::Write as _;
+
 use umsh_core::options::HopSignal;
 use umsh_core::{PublicKey, RouterHint};
 use umsh_mac::CachedRoute;
 use umsh_text::node_adapter::RxSummary;
-use umsh_ux_communicator::heapless::Vec;
+use umsh_ux_communicator::heapless::{String, Vec};
 use umsh_ux_communicator::model::{
-    self, Leg, MAX_PATH, NodeEvent, PeerRoute, PingReply, PingView, RouteKind, Signal,
+    self, Leg, MAX_PATH, ManualRoute, NodeEvent, PeerRoute, PingReply, PingView, RouteKind, Signal,
 };
 
 use super::Chats;
 use super::peers::long_age;
 use crate::store::ChatStore;
-use crate::task::Command;
+use crate::task::{Command, HeldRoute};
 
 /// How many peers' routes, and how many peers' pings, are kept. Past it,
 /// the one heard of longest ago goes.
@@ -36,6 +38,10 @@ pub(crate) struct Route {
     route: Option<CachedRoute>,
     /// When, on the board's clock, a send on it was last acknowledged.
     confirmed_at_ms: Option<u64>,
+    /// While it is a route chosen by hand: when, on the board's clock, the
+    /// device node stops holding it, and how far it floods past its last
+    /// repeater.
+    held: Option<(u64, u8)>,
     at_ms: u64,
 }
 
@@ -97,24 +103,56 @@ impl<S: ChatStore> Chats<S> {
             .push_back(Command::ResetRoute { peer: kept.key });
     }
 
+    /// Has the device node hold `hints`, the repeater nearest this device
+    /// first, as the route to the saved peer `peer` for `hold_ms`, flooding
+    /// `flood_hops` past the last of them; no hints is a direct route.
+    pub fn hold_route(
+        &mut self,
+        peer: model::PeerId,
+        hints: &[[u8; 2]],
+        flood_hops: u8,
+        hold_ms: u32,
+    ) {
+        let Some(kept) = self.saved_peer(peer) else {
+            return;
+        };
+        self.reading.insert(kept.key.0);
+        self.commands.push_back(Command::HoldRoute {
+            peer: kept.key,
+            hints: hints
+                .iter()
+                .take(CachedRoute::MAX_HINTS)
+                .map(|&hint| RouterHint(hint))
+                .collect(),
+            flood_hops,
+            hold_ms,
+        });
+    }
+
     /// Takes the route to `key` the device node holds, `route`, whose
-    /// sends were last acknowledged `confirmed_age_ms` ago.
+    /// sends were last acknowledged `confirmed_age_ms` ago, and which it
+    /// holds by hand as `held` says.
+    #[allow(clippy::too_many_arguments)]
     pub fn route_read(
         &mut self,
         key: PublicKey,
         route: Option<CachedRoute>,
         confirmed_age_ms: Option<u64>,
+        held: Option<HeldRoute>,
         now_ms: u64,
         events: &mut dyn FnMut(NodeEvent),
     ) {
         self.reading.remove(&key.0);
         let confirmed_at_ms = confirmed_age_ms.map(|age| now_ms.saturating_sub(age));
+        let held = held.map(|held| (now_ms.saturating_add(held.remaining_ms), held.flood_hops));
         let changed = self.routes.get(&key.0).is_none_or(|was| {
             was.route != route
-                || match (was.confirmed_at_ms, confirmed_at_ms) {
-                    (Some(was), Some(now)) => was.abs_diff(now) > CONFIRMED_SLACK_MS,
-                    (was, now) => was.is_some() != now.is_some(),
-                }
+                || !same_moment(was.confirmed_at_ms, confirmed_at_ms)
+                || was.held.map(|(_, flood)| flood) != held.map(|(_, flood)| flood)
+                || !same_moment(
+                    was.held.map(|(until, _)| until),
+                    held.map(|(until, _)| until),
+                )
         });
         make_room(&mut self.routes, &key.0, |route| route.at_ms);
         self.routes.insert(
@@ -122,11 +160,29 @@ impl<S: ChatStore> Chats<S> {
             Route {
                 route,
                 confirmed_at_ms,
+                held,
                 at_ms: now_ms,
             },
         );
         if changed && let Ok(Some(record)) = self.store.peer(&key) {
             events(NodeEvent::RouteChanged(record.id.0));
+        }
+    }
+
+    /// Lets go of the holds that have run out, so that whatever shows their
+    /// routes says so: the device node keeps each route as an ordinary one.
+    pub(super) fn lapse_holds(&mut self, now_ms: u64, events: &mut dyn FnMut(NodeEvent)) {
+        let mut lapsed: Vec<[u8; 32], KEPT> = Vec::new();
+        for (key, route) in &mut self.routes {
+            if route.held.is_some_and(|(until, _)| now_ms >= until) {
+                route.held = None;
+                _ = lapsed.push(*key);
+            }
+        }
+        for key in lapsed {
+            if let Ok(Some(record)) = self.store.peer(&PublicKey(key)) {
+                events(NodeEvent::RouteChanged(record.id.0));
+            }
         }
     }
 
@@ -141,6 +197,7 @@ impl<S: ChatStore> Chats<S> {
             unnamed: 0,
             confirmed: None,
             signal: None,
+            manual: None,
         };
         let Some(route) = &held.route else {
             return Some(shown);
@@ -149,6 +206,14 @@ impl<S: ChatStore> Chats<S> {
         shown.confirmed = held.confirmed_at_ms.map(|at| {
             long_age(u32::try_from(now_ms.saturating_sub(at) / 1_000).unwrap_or(u32::MAX))
         });
+        // A hold that has run out leaves the route as an ordinary one.
+        shown.manual = held
+            .held
+            .filter(|&(until, _)| now_ms < until)
+            .map(|(until, flood_hops)| ManualRoute {
+                flood_hops,
+                left: time_left(until - now_ms),
+            });
         match route {
             CachedRoute::Direct => {
                 shown.kind = RouteKind::Direct;
@@ -303,6 +368,29 @@ impl<S: ChatStore> Chats<S> {
         self.pings.remove(&key.0);
         self.routes.remove(&key.0);
     }
+}
+
+/// Whether two readings of a moment, each worked out from an age on the
+/// board's clock, are the same moment.
+fn same_moment(was: Option<u64>, now: Option<u64>) -> bool {
+    match (was, now) {
+        (Some(was), Some(now)) => was.abs_diff(now) <= CONFIRMED_SLACK_MS,
+        (was, now) => was.is_some() == now.is_some(),
+    }
+}
+
+/// How long a held route has left, such as `52 min left`: whole minutes,
+/// rounded up, and whole hours from two hours on.
+fn time_left(ms: u64) -> String<12> {
+    const MINUTE: u64 = 60_000;
+    let minutes = ms.div_ceil(MINUTE);
+    let mut left = String::new();
+    if minutes < 120 {
+        _ = write!(left, "{minutes} min left");
+    } else {
+        _ = write!(left, "{} hr left", minutes / 60);
+    }
+    left
 }
 
 /// How a repeater says it heard a hop.

@@ -1,8 +1,10 @@
 //! The route the next message to a saved peer takes: this device, the
 //! repeaters it names, and the peer, then when a send on it was last
-//! acknowledged and Reset route. With none learned, Ping, which is how one
-//! is. The wheel stops on each repeater, which a press opens or asks who it
-//! is; Backspace goes back.
+//! acknowledged and Reset route. A route chosen by hand also says how far
+//! it floods past its last repeater and how long it is held, and Clear
+//! manual route takes Reset route's place. With none learned, Ping, which
+//! is how one is. The wheel stops on each repeater, which a press opens or
+//! asks who it is; Backspace goes back.
 
 use buoyant::event::{Key, KeyResponse};
 use buoyant::focus::BoundaryBehavior;
@@ -13,7 +15,9 @@ use heapless::{String, Vec};
 use super::conversation::titled;
 use super::path::{self, Hop};
 use super::setting::{End, readout, row};
-use crate::model::{Leg, MAX_PATH, PeerId, PeerRoute, PeerSummary, RouteKind, State, route_text};
+use crate::model::{
+    Leg, MAX_PATH, PeerId, PeerRoute, PeerSummary, RouteKind, State, flood_text, route_text,
+};
 use crate::nav::keys;
 use crate::theme;
 
@@ -54,6 +58,13 @@ pub fn view(state: &State, id: PeerId, peer: &PeerSummary) -> impl View<Rgb565, 
         _ => _ = hops.push(Hop::Dashed),
     }
     let confirmed = route.and_then(|r| r.confirmed.clone()).filter(|_| held);
+    let manual = route.and_then(|r| r.manual.as_ref()).filter(|_| held);
+    // Past no repeater, the flood starts from this device.
+    let flood = if kind == Some(RouteKind::Direct) {
+        "Flood"
+    } else {
+        "Then flood"
+    };
     VStack::new((
         titled(m, "Route", theme::TEXT, None, &about(route)),
         super::list(
@@ -68,11 +79,17 @@ pub fn view(state: &State, id: PeerId, peer: &PeerSummary) -> impl View<Rgb565, 
                     phase,
                     !held,
                 ),
+                manual.map(|manual| readout(m, flood, &flood_text(manual.flood_hops), ROW)),
+                manual.map(|manual| readout(m, "Held", &manual.left, ROW)),
                 confirmed.map(|confirmed| readout(m, "Confirmed", &confirmed, ROW)),
                 held.then(|| {
                     row(
                         m,
-                        "Reset route",
+                        if manual.is_some() {
+                            "Clear manual route"
+                        } else {
+                            "Reset route"
+                        },
                         keys::ROUTE_RESET,
                         State::reset_route,
                         End::Nothing,

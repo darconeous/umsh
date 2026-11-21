@@ -199,13 +199,20 @@ pub const NODE_TX: usize = 4;
 #[cfg(feature = "communicator")]
 pub const NODE_TX: usize = 8;
 
+/// Routes a person has chosen and the MAC holds against learned ones: none
+/// on a device without a screen, and a handful on a communicator.
+#[cfg(not(feature = "communicator"))]
+pub const NODE_ROUTE_HOLDS: usize = 0;
+#[cfg(feature = "communicator")]
+pub const NODE_ROUTE_HOLDS: usize = 8;
+
 /// Device-node MAC sized to the session's device-domain tables, which are
 /// the only provisioning source it has: [`NODE_IDENTITIES`] identities,
 /// [`NODE_PEERS`] peers,
 /// `MAX_CHANNEL_KEYS` channels (a smaller MAC table would refuse channels
 /// the property surface accepted), [`NODE_ACKS`] pending ACKs,
-/// [`NODE_TX`] TX slots, 255-byte frames, 32-entry dup cache. No route
-/// holds (a device has no person choosing paths). [`NODE_RX_STRANGERS`] stranger
+/// [`NODE_TX`] TX slots, 255-byte frames, 32-entry dup cache,
+/// [`NODE_ROUTE_HOLDS`] held routes, and [`NODE_RX_STRANGERS`] stranger
 /// receive windows beside one per peer.
 pub type DeviceNodeMac<CS> = umsh_mac::Mac<
     DeviceNodePlatform<CS>,
@@ -216,7 +223,7 @@ pub type DeviceNodeMac<CS> = umsh_mac::Mac<
     NODE_TX,
     255,
     32,
-    0,
+    NODE_ROUTE_HOLDS,
     NODE_RX_STRANGERS,
 >;
 pub type DeviceNodeHandle<CS> = MacHandle<
@@ -229,7 +236,7 @@ pub type DeviceNodeHandle<CS> = MacHandle<
     NODE_TX,
     255,
     32,
-    0,
+    NODE_ROUTE_HOLDS,
     NODE_RX_STRANGERS,
 >;
 pub type DeviceNodeHost<CS> = Host<DeviceNodeHandle<CS>>;

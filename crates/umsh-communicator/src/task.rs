@@ -72,12 +72,14 @@ pub enum Arrival {
     },
     /// A ping went unanswered, or could not be sent.
     PingTimeout { peer: PublicKey },
-    /// The route the device node holds to a peer, and how long ago a send
-    /// on it was last acknowledged.
+    /// The route the device node holds to a peer, how long ago a send on it
+    /// was last acknowledged, and whether it is a route chosen by hand and
+    /// held against learned ones.
     Route {
         peer: PublicKey,
         route: Option<CachedRoute>,
         confirmed_age_ms: Option<u64>,
+        held: Option<HeldRoute>,
     },
     /// A session with forward secrecy began, ended, or could not be had.
     Secrecy { peer: PublicKey, change: Secrecy },
@@ -94,6 +96,15 @@ pub enum Arrival {
     /// or could not.
     #[cfg(feature = "software-crypto")]
     MeetOpened(Option<(PublicKey, [u8; 32])>),
+}
+
+/// A route chosen by hand, while the device node holds it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HeldRoute {
+    /// How much longer it is held.
+    pub remaining_ms: u64,
+    /// How many hops a frame may flood past its last repeater.
+    pub flood_hops: u8,
 }
 
 /// What became of a session with forward secrecy.
@@ -135,8 +146,17 @@ pub enum Command {
     /// Read the route the device node holds to a peer.
     ReadRoute { peer: PublicKey },
     /// Have the device node forget its route to a peer, then read the one
-    /// it holds after.
+    /// it holds after. A held route is let go with it.
     ResetRoute { peer: PublicKey },
+    /// Hold `hints` as the route to a peer for `hold_ms`, ahead of any
+    /// route learned meanwhile, flooding `flood_hops` past the last of
+    /// them; no hints is a direct route. Then read it back.
+    HoldRoute {
+        peer: PublicKey,
+        hints: heapless::Vec<RouterHint, { CachedRoute::MAX_HINTS }>,
+        flood_hops: u8,
+        hold_ms: u32,
+    },
     /// Ask a channel for the identity of whoever holds a hint.
     AskChannel {
         channel: ChannelKey,
@@ -493,6 +513,26 @@ async fn execute<P: LocalPort, S: ChatStore, M: MacBackend>(
             mesh.clear_peer_route(&peer).await;
             return Some(read_route(mesh, peer).await);
         }
+        Command::HoldRoute {
+            peer,
+            hints,
+            flood_hops,
+            hold_ms,
+        } => {
+            // The MAC holds routes to its registered peers alone, so the
+            // peer is registered first; one it has no room for is read
+            // back unheld.
+            if mesh.peer(peer).await.is_ok() {
+                let route = if hints.is_empty() {
+                    CachedRoute::Direct
+                } else {
+                    CachedRoute::Source(hints)
+                };
+                mesh.hold_peer_route(&peer, route, flood_hops, u64::from(hold_ms))
+                    .await;
+            }
+            return Some(read_route(mesh, peer).await);
+        }
         #[cfg(feature = "software-crypto")]
         Command::OpenMeet => return Some(Arrival::MeetOpened(mesh.open_meet().await.ok())),
         // One that cannot go is as good as lost on the air: the exchange
@@ -511,6 +551,12 @@ async fn read_route<M: MacBackend>(mesh: &LocalNode<M>, peer: PublicKey) -> Arri
     Arrival::Route {
         peer,
         confirmed_age_ms: status.as_ref().and_then(|status| status.confirmed_age_ms),
+        held: status.as_ref().and_then(|status| {
+            Some(HeldRoute {
+                remaining_ms: status.hold_remaining_ms?,
+                flood_hops: status.hold_flood_hops.unwrap_or(0),
+            })
+        }),
         route: status.and_then(|status| status.route),
     }
 }
